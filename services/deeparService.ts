@@ -220,15 +220,16 @@ export function switchDeepAREffect(deepARRef: React.MutableRefObject<any>, filte
   try {
     const isRemote = filter.path.startsWith('http');
     if (isRemote) {
-      // v0.11+ supports passing a URL directly to switchEffectWithPath
+      // v0.11 API: switchEffectWithPath({ path, slot })
       deepARRef.current.switchEffectWithPath({
-        path:   filter.path,
-        slot:   'effect',
+        path: filter.path,
+        slot: 'effect',
       });
     } else {
+      // v0.11 API: switchEffect({ mask, slot })
       deepARRef.current.switchEffect({
+        mask: filter.path,
         slot: 'effect',
-        path: filter.path,
       });
     }
     console.log('[DeepAR] Effect switched to:', filter.id);
@@ -243,7 +244,8 @@ export function switchDeepAREffect(deepARRef: React.MutableRefObject<any>, filte
 export function clearDeepAREffect(deepARRef: React.MutableRefObject<any>) {
   if (!isDeepARAvailable() || !deepARRef.current) return;
   try {
-    deepARRef.current.clearEffect({ slot: 'effect' });
+    // v0.11 API: switchEffect with empty mask clears the slot
+    deepARRef.current.switchEffect({ mask: '', slot: 'effect' });
   } catch (e) {
     console.warn('[DeepAR] clearEffect failed:', e);
   }
@@ -302,9 +304,10 @@ export function startDeepARRecording(deepARRef: React.MutableRefObject<any>) {
 export function stopDeepARRecording(deepARRef: React.MutableRefObject<any>) {
   if (!isDeepARAvailable() || !deepARRef.current) return;
   try {
-    deepARRef.current.stopRecording();
+    // v0.11 API: the correct method is finishRecording() (not stopRecording)
+    deepARRef.current.finishRecording();
   } catch (e) {
-    console.warn('[DeepAR] stopRecording failed:', e);
+    console.warn('[DeepAR] finishRecording failed:', e);
   }
 }
 

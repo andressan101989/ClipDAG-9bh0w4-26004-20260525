@@ -381,10 +381,12 @@ function EffectsTab() {
   // (prevents infinite "Iniciando DeepAR..." spinner in case of a silent SDK issue)
   useEffect(() => {
     if (!deepARCameraOk) return;
+    // Reduced to 2s: camera renders immediately (confirmed by screenshot),
+    // so if onInitialized hasn't fired in 2s the SDK is ready but callback is silent
     deepARTimeoutRef.current = setTimeout(() => {
-      console.warn('[DeepAR] ⚠️ onInitialized timeout — forcing ready state after 8s');
+      console.warn('[DeepAR] ⚠️ Safety timeout — forcing deepARReady after 2s');
       setDeepARReady(true);
-    }, 8000);
+    }, 2000);
     return () => { if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current); };
   }, [deepARCameraOk]);
 
@@ -428,8 +430,8 @@ function EffectsTab() {
   // ── Record video ────────────────────────────────────────────────────────
   const toggleRecord = useCallback(async () => {
     if (isRecording) {
-      if (deepARActive) {
-        stopDeepARRecording(deepARRef);
+      if (deepARActive && deepARRef.current) {
+        try { deepARRef.current.finishRecording(); } catch (_) {}
       } else if (cameraRef.current) {
         try { await cameraRef.current.stopRecording(); } catch (_) {}
       }
@@ -582,9 +584,33 @@ function EffectsTab() {
             ref={deepARRef}
             apiKey={DEEPAR_API_KEY}
             style={StyleSheet.absoluteFillObject}
-            cameraFacing={facing}
+            position={facing}
+            onEventSent={({ nativeEvent }: { nativeEvent: { type: string; value: string; value2?: string } }) => {
+              console.log('[DeepAR] onEventSent:', nativeEvent.type, nativeEvent.value);
+              // Primary init detection — fires for ALL events including 'initialized'
+              if (nativeEvent.type === 'initialized') {
+                console.log('[DeepAR] ✅ initialized via onEventSent');
+                if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
+                setDeepARReady(true);
+              }
+              if (nativeEvent.type === 'screenshotTaken') {
+                setCapturedUri(nativeEvent.value);
+                setMode('preview');
+                setIsCapturing(false);
+              }
+              if (nativeEvent.type === 'videoRecordingFinished') {
+                if (recTimerRef.current) clearInterval(recTimerRef.current);
+                setIsRecording(false); setRecSeconds(0);
+                setCapturedUri(nativeEvent.value); setMode('preview');
+              }
+              if (nativeEvent.type === 'error') {
+                console.error('[DeepAR] ❌ error:', nativeEvent.value);
+                if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
+                setDeepARReady(true);
+              }
+            }}
             onInitialized={() => {
-              console.log('[DeepAR] ✅ onInitialized fired — camera session ready');
+              console.log('[DeepAR] ✅ onInitialized prop fired');
               if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
               setDeepARReady(true);
             }}
@@ -600,9 +626,8 @@ function EffectsTab() {
               setIsRecording(false); setRecSeconds(0);
               setCapturedUri(path); setMode('preview');
             }}
-            onError={(text: string, type: number) => {
+            onError={(text: string, type: any) => {
               console.error('[DeepAR] ❌ Error type', type, ':', text);
-              // On error, clear timeout and mark ready to dismiss infinite spinner
               if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
               setDeepARReady(true);
               showAlert('DeepAR Error', `[${type}] ${text}`);
