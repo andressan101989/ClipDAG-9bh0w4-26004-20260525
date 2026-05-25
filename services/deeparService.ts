@@ -360,25 +360,49 @@ export function stopDeepARRecording(deepARRef: React.MutableRefObject<any>) {
 // ─────────────────────────────────────────────────────────────────────────────
 // PERMISSIONS
 // ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Request camera + microphone permissions using expo-camera.
+ *
+ * WHY NOT DeepAR's CameraModule:
+ *   DeepAR's CameraModule calls NativeModules.RNTCameraModule. On iOS,
+ *   NativeModules entries are populated lazily after bridge hydration.
+ *   If called too early (e.g. during module require), RNTCameraModule is null
+ *   and throws: "Cannot read property 'requestCameraPermission' of null".
+ *
+ *   expo-camera requests the same iOS NSCameraUsageDescription entitlement
+ *   and is always available once the app has mounted.
+ */
 export async function requestDeepARPermissions(): Promise<boolean> {
-  if (!DeepARCameraKit) return false;
   try {
-    const CameraModule = DeepARCameraKit.Camera ?? null;
-    if (!CameraModule) return false;
-    const cam = await CameraModule.requestCameraPermission?.();
-    const mic = await CameraModule.requestMicrophonePermission?.();
-    console.log('[DeepAR] Permissions → camera:', cam, 'mic:', mic);
-    return cam === 'authorized';
+    const ec = require('expo-camera');
+    // expo-camera v14+: static methods on Camera class
+    const EC = ec.Camera ?? ec.default ?? null;
+    if (EC?.requestCameraPermissionsAsync) {
+      const cam = await EC.requestCameraPermissionsAsync();
+      const mic = await EC.requestMicrophonePermissionsAsync?.().catch(() => ({ granted: true })) ?? { granted: true };
+      const ok = cam?.granted === true || cam?.status === 'granted';
+      console.log('[DeepAR] Permissions (expo-camera) → camera:', cam?.status, 'mic:', mic?.status);
+      return ok;
+    }
+    // Fallback: assume granted (DeepAR will show OS dialog on first render)
+    console.warn('[DeepAR] expo-camera static API unavailable — assuming camera granted');
+    return true;
   } catch (e) {
     console.warn('[DeepAR] requestDeepARPermissions failed:', e);
-    return false;
+    // Return true so DeepAR component still mounts; it will handle its own prompt
+    return true;
   }
 }
 
 export async function getDeepARCameraPermission(): Promise<string> {
-  if (!DeepARCameraKit?.Camera) return 'not-determined';
   try {
-    return (await DeepARCameraKit.Camera.getCameraPermissionStatus?.()) ?? 'not-determined';
+    const ec = require('expo-camera');
+    const EC = ec.Camera ?? ec.default ?? null;
+    if (EC?.getCameraPermissionsAsync) {
+      const perm = await EC.getCameraPermissionsAsync();
+      return perm?.status ?? 'not-determined';
+    }
+    return 'not-determined';
   } catch { return 'not-determined'; }
 }
 

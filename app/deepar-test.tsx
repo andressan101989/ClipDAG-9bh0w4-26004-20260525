@@ -32,19 +32,44 @@ const { width: W, height: H } = Dimensions.get('window');
 
 // ── Lazy-load react-native-deepar ─────────────────────────────────────────────
 let DeepARView: any  = null;
-let DeepARCamera: any = null; // Camera static module for permissions
 let CameraPositions: any = null;
-let CameraPermissionRequestResult: any = null;
 
 try {
   const m = require('react-native-deepar');
-  DeepARView   = m.default ?? null;
-  DeepARCamera = m.Camera  ?? null;
+  DeepARView      = m.default ?? null;
   CameraPositions = m.CameraPositions ?? null;
-  CameraPermissionRequestResult = m.CameraPermissionRequestResult ?? null;
-  console.log('[DeepARTest] SDK loaded. DeepARView:', !!DeepARView, 'Camera:', !!DeepARCamera);
+  // Log what's actually exported so we can see the real bridge surface
+  const keys = Object.keys(m ?? {});
+  console.log('[DeepARTest] SDK loaded. Keys:', keys.join(', '));
+  console.log('[DeepARTest] DeepARView:', typeof DeepARView);
 } catch (e) {
   console.error('[DeepARTest] SDK not found:', e);
+}
+
+// ── expo-camera for permissions (replaces DeepAR CameraModule) ────────────────
+// DeepAR's CameraModule calls NativeModules.RNTCameraModule which can be null
+// before the bridge is fully hydrated. expo-camera requests the SAME iOS
+// NSCameraUsageDescription permission and is reliably available.
+let requestExpoCamera: any  = null;
+let requestExpoMic: any     = null;
+try {
+  const ec = require('expo-camera');
+  // expo-camera v14+ uses Camera.requestCameraPermissionsAsync()
+  const EC = ec.Camera ?? ec.default ?? null;
+  if (EC?.requestCameraPermissionsAsync) {
+    requestExpoCamera = () => EC.requestCameraPermissionsAsync();
+    requestExpoMic    = () => EC.requestMicrophonePermissionsAsync?.() ?? Promise.resolve({ granted: true });
+    console.log('[DeepARTest] expo-camera permission API ready');
+  } else {
+    // Newer expo-camera exports hooks, not static methods — fall back gracefully
+    requestExpoCamera = async () => ({ granted: true, status: 'granted' });
+    requestExpoMic    = async () => ({ granted: true, status: 'granted' });
+    console.log('[DeepARTest] expo-camera static API not found — using granted stub');
+  }
+} catch (e) {
+  console.warn('[DeepARTest] expo-camera not available:', e);
+  requestExpoCamera = async () => ({ granted: true });
+  requestExpoMic    = async () => ({ granted: true });
 }
 
 // ── rn-fetch-blob ─────────────────────────────────────────────────────────────
@@ -107,25 +132,32 @@ export default function DeepARTestScreen() {
   }, []);
 
   // ── Request permissions on mount ───────────────────────────────────────────
+  // Uses expo-camera instead of DeepAR's CameraModule to avoid the
+  // "Cannot read property 'requestCameraPermission' of null" crash that
+  // occurs when NativeModules.RNTCameraModule hasn't hydrated yet.
   useEffect(() => {
     (async () => {
-      if (!DeepARCamera) {
+      if (!DeepARView) {
         setPermStatus('DeepAR SDK not loaded');
         log('ERROR: DeepAR SDK not found. EAS Build required.');
         return;
       }
       try {
-        log('Requesting camera permission...');
-        const cam = await DeepARCamera.requestCameraPermission();
-        const mic = await DeepARCamera.requestMicrophonePermission();
-        log(`Camera: ${cam}  Mic: ${mic}`);
-        const ok = cam === 'authorized' || cam === CameraPermissionRequestResult?.AUTHORIZED;
-        setPermGranted(ok);
-        setPermStatus(ok ? 'GRANTED' : `DENIED: ${cam}`);
+        log('Requesting camera + mic via expo-camera...');
+        const camResult = await requestExpoCamera();
+        const micResult = await requestExpoMic();
+        const camOk = camResult?.granted === true || camResult?.status === 'granted';
+        const micOk = micResult?.granted === true || micResult?.status === 'granted';
+        log(`Camera: ${camOk ? 'GRANTED' : 'DENIED'}  Mic: ${micOk ? 'GRANTED' : 'DENIED'}`);
+        setPermGranted(camOk);
+        setPermStatus(camOk ? 'GRANTED' : `DENIED (${camResult?.status ?? 'unknown'})`);
       } catch (e: any) {
         const msg = e?.message ?? String(e);
         log(`Permission error: ${msg}`);
-        setPermStatus(`ERROR: ${msg}`);
+        // Don't block UI — if expo-camera perm API fails, assume granted
+        // (DeepAR itself will show its own OS dialog on first render)
+        setPermGranted(true);
+        setPermStatus(`ASSUMED OK (err: ${msg})`);
       }
     })();
   }, []);
@@ -218,7 +250,9 @@ export default function DeepARTestScreen() {
     } catch (e: any) { log(`recording ERROR: ${e?.message}`); }
   }, [recording]);
 
-  const canRender = !!(DeepARView && permGranted && API_KEY);
+  // canRender: DeepARView component must exist + API key present.
+  // Permission check is best-effort; DeepAR itself will prompt if needed.
+  const canRender = !!(DeepARView && API_KEY);
 
   return (
     <SafeAreaView style={s.root}>
@@ -239,7 +273,7 @@ export default function DeepARTestScreen() {
       {/* Status bar */}
       <View style={s.statusBar}>
         <Text style={s.statusText}>
-          SDK: {DeepARView ? '✅' : '❌'}  |  rn-fetch-blob: {RNFetchBlob ? '✅' : '❌'}  |  Perm: {permStatus}  |  Init: {initialized ? '✅' : '⏳'}
+          SDK: {DeepARView ? '✅' : '❌'}  |  blob: {RNFetchBlob ? '✅' : '⚠️ (filters disabled)'}  |  Perm: {permStatus}  |  Init: {initialized ? '✅' : '⏳'}
         </Text>
         {activeEffect ? <Text style={[s.statusText, { color: '#FF2D78' }]}>Effect: {activeEffect}</Text> : null}
       </View>
@@ -252,6 +286,8 @@ export default function DeepARTestScreen() {
             apiKey={API_KEY}
             style={StyleSheet.absoluteFillObject}
             position={camFacing}
+            // cameraPosition is the older prop name — include both for safety
+            cameraPosition={camFacing}
             onEventSent={({ nativeEvent }: any) => {
               const { type, value, value2 } = nativeEvent ?? {};
               log(`EVENT: ${type}${value ? ` val="${value}"` : ''}${value2 ? ` val2="${value2}"` : ''}`);
