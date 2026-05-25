@@ -72,11 +72,14 @@ try {
   requestExpoMic    = async () => ({ granted: true });
 }
 
-// ── expo-file-system (replaces rn-fetch-blob) ────────────────────────────────
+// ── expo-file-system (lazy-loaded — avoids static import crash on web preview) ──
 // DeepAR iOS needs a raw POSIX path (no file:// prefix).
 // expo-file-system.downloadAsync() returns a file:// URI.
 // Strip it: uri.replace('file://', '') → /var/mobile/Containers/...
-import * as FileSystem from 'expo-file-system';
+let FileSystem: any = null;
+try {
+  FileSystem = require('expo-file-system');
+} catch (_) {}
 const hasFS = typeof FileSystem?.downloadAsync === 'function';
 console.log('[DeepARTest] expo-file-system available:', hasFS);
 
@@ -194,17 +197,17 @@ export default function DeepARTestScreen() {
     const tryDownload = async (url: string, cacheKey: string): Promise<string | null> => {
       log(`Trying: ${url}`);
       try {
-        const cacheDir = (FileSystem.cacheDirectory ?? 'file:///tmp/') + 'deepar-filters/';
-        await FileSystem.makeDirectoryAsync(cacheDir, { intermediates: true }).catch(() => {});
+        const cacheDir = ((FileSystem?.cacheDirectory) ?? 'file:///tmp/') + 'deepar-filters/';
+        await FileSystem?.makeDirectoryAsync(cacheDir, { intermediates: true }).catch(() => {});
         const localUri = cacheDir + cacheKey;
-        const result   = await FileSystem.downloadAsync(url, localUri);
+        const result   = await FileSystem?.downloadAsync(url, localUri);
         if (!result?.uri) { log('No URI returned'); return null; }
-        const info  = await FileSystem.getInfoAsync(result.uri, { size: true }).catch(() => null);
+        const info  = await FileSystem?.getInfoAsync(result.uri, { size: true }).catch(() => null);
         const bytes = (info as any)?.size ?? 0;
         log(`Got ${bytes}b → ${result.uri}`);
         if (!info?.exists || bytes < 64) {
           log(`WARN: file too small (${bytes}b) — likely 404 HTML`);
-          await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+          await FileSystem?.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
           return null;
         }
         // Strip file:// prefix — DeepAR iOS requires raw POSIX path

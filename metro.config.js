@@ -27,11 +27,16 @@ const config = getDefaultConfig(__dirname);
 const EMPTY_STUB = path.resolve(__dirname, '_metro_empty_stub.js');
 
 // Blocked on ALL platforms
+// react-native-deepar calls requireNativeComponent at module-level.
+// On web/preview requireNativeComponent is not a function → crash.
+// Native builds resolve the real package through the native module registry,
+// NOT through Metro JS bundling, so stubbing it here does not break EAS builds.
 const ALWAYS_BLOCKED = [
   'react-native-dynamic',
   'react-native-webrtc',
   'react-native-elements',
   'snack-content',
+  'react-native-deepar',
 ];
 
 // ── OpenTelemetry packages — block on ALL platforms ─────────────────────────
@@ -62,9 +67,6 @@ const OTEL_BLOCKED = [
 // listed here — they are only used on native via .native.ts file extensions.
 // Metro automatically resolves .native.ts on iOS/Android, so blocking on web is safe.
 const WEB_ONLY_BLOCKED = [
-  // DeepAR calls requireNativeComponent at module-level — crashes on web
-  // before any try-catch can intercept it
-  'react-native-deepar',
   'react-native-vision-camera',
   'react-native-vision-camera-face-detector',
   'react-native-worklets-core',
