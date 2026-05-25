@@ -1,0 +1,434 @@
+/**
+ * app/deepar-test.tsx — DeepAR Minimal Sandbox
+ *
+ * PURPOSE: Validate DeepAR render pipeline on physical iPhone before
+ *          integrating with the full Creator Studio.
+ *
+ * Tests covered:
+ *  1. Camera permissions via Camera.requestCameraPermission()
+ *  2. DeepAR component mount + render surface
+ *  3. onEventSent → 'initialized' event firing
+ *  4. switchEffect() with bundled mask name (no download required)
+ *  5. rn-fetch-blob remote download + switchEffectWithPath()
+ *  6. takeScreenshot() callback
+ *  7. startRecording() / finishRecording() callbacks
+ *
+ * IMPORTANT:
+ *  - No Skia overlays — they conflict with DeepAR's Metal render surface
+ *  - No expo-file-system for filters — use rn-fetch-blob (.path() returns
+ *    raw fs path without file:// prefix, required by DeepAR iOS SDK)
+ *  - All native events logged in the on-screen console
+ */
+
+import React, { useRef, useState, useEffect, useCallback } from 'react';
+import {
+  View, Text, Pressable, StyleSheet, ScrollView,
+  Platform, Dimensions, SafeAreaView,
+} from 'react-native';
+import { useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+
+const { width: W, height: H } = Dimensions.get('window');
+
+// ── Lazy-load react-native-deepar ─────────────────────────────────────────────
+let DeepARView: any  = null;
+let DeepARCamera: any = null; // Camera static module for permissions
+let CameraPositions: any = null;
+let CameraPermissionRequestResult: any = null;
+
+try {
+  const m = require('react-native-deepar');
+  DeepARView   = m.default ?? null;
+  DeepARCamera = m.Camera  ?? null;
+  CameraPositions = m.CameraPositions ?? null;
+  CameraPermissionRequestResult = m.CameraPermissionRequestResult ?? null;
+  console.log('[DeepARTest] SDK loaded. DeepARView:', !!DeepARView, 'Camera:', !!DeepARCamera);
+} catch (e) {
+  console.error('[DeepARTest] SDK not found:', e);
+}
+
+// ── rn-fetch-blob ─────────────────────────────────────────────────────────────
+let RNFetchBlob: any = null;
+try {
+  RNFetchBlob = require('rn-fetch-blob').default ?? require('rn-fetch-blob');
+  console.log('[DeepARTest] rn-fetch-blob loaded');
+} catch (e) {
+  console.warn('[DeepARTest] rn-fetch-blob not found — remote filter test disabled:', e);
+}
+
+// ── API Key ───────────────────────────────────────────────────────────────────
+const API_KEY_IOS     = process.env.EXPO_PUBLIC_DEEPAR_API_KEY_IOS     ?? 'b5ed95b597e2d095a99d348245484f5ca0ea76dd4297a6e03d0a0b630cb2f2b4511186a4577ef72a';
+const API_KEY_ANDROID = process.env.EXPO_PUBLIC_DEEPAR_API_KEY_ANDROID ?? '26eb786956b608da971d30ec64fc5bcec72ce89cd1914b3cfc5ed32c3232f6da70a5923630b8696b';
+const API_KEY = Platform.select({ ios: API_KEY_IOS, android: API_KEY_ANDROID, default: API_KEY_ANDROID }) ?? '';
+
+/**
+ * Remote filter CDN — official public endpoint used in the react-native-deepar
+ * example app (Config.TEST.REMOTE_EFFECT_URL).
+ * Files have NO extension in this CDN.
+ */
+const REMOTE_CDN = 'https://storage.deepar.ai/effects/';
+
+/** Known-working remote effects from DeepAR's public test CDN */
+const REMOTE_EFFECTS = [
+  'flower_crown',
+  'viking_helmet',
+  'lion',
+  'aviators',
+  'dalmatian',
+  'beauty',
+  'background_segmentation',
+  'fire',
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCREEN
+// ─────────────────────────────────────────────────────────────────────────────
+export default function DeepARTestScreen() {
+  const router      = useRouter();
+  const deepARRef   = useRef<any>(null);
+
+  const [permGranted,   setPermGranted]   = useState(false);
+  const [permStatus,    setPermStatus]    = useState('checking...');
+  const [initialized,   setInitialized]   = useState(false);
+  const [events,        setEvents]        = useState<string[]>([]);
+  const [activeEffect,  setActiveEffect]  = useState<string | null>(null);
+  const [downloading,   setDownloading]   = useState(false);
+  const [camFacing,     setCamFacing]     = useState<'front' | 'back'>('front');
+  const [capturedUri,   setCapturedUri]   = useState<string | null>(null);
+  const [recording,     setRecording]     = useState(false);
+
+  const log = useCallback((msg: string) => {
+    const ts = new Date().toISOString().slice(11, 23);
+    const line = `[${ts}] ${msg}`;
+    console.log('[DeepARTest]', line);
+    setEvents(prev => [line, ...prev].slice(0, 40));
+  }, []);
+
+  // ── Request permissions on mount ───────────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      if (!DeepARCamera) {
+        setPermStatus('DeepAR SDK not loaded');
+        log('ERROR: DeepAR SDK not found. EAS Build required.');
+        return;
+      }
+      try {
+        log('Requesting camera permission...');
+        const cam = await DeepARCamera.requestCameraPermission();
+        const mic = await DeepARCamera.requestMicrophonePermission();
+        log(`Camera: ${cam}  Mic: ${mic}`);
+        const ok = cam === 'authorized' || cam === CameraPermissionRequestResult?.AUTHORIZED;
+        setPermGranted(ok);
+        setPermStatus(ok ? 'GRANTED' : `DENIED: ${cam}`);
+      } catch (e: any) {
+        const msg = e?.message ?? String(e);
+        log(`Permission error: ${msg}`);
+        setPermStatus(`ERROR: ${msg}`);
+      }
+    })();
+  }, []);
+
+  // ── Apply bundled effect (switchEffect — no download) ──────────────────────
+  const applyBundledEffect = useCallback((maskName: string) => {
+    if (!deepARRef.current) { log('ERROR: ref is null'); return; }
+    try {
+      log(`switchEffect mask="${maskName}" slot="effect"`);
+      deepARRef.current.switchEffect({ mask: maskName, slot: 'effect' });
+      setActiveEffect(maskName);
+    } catch (e: any) { log(`switchEffect ERROR: ${e?.message}`); }
+  }, []);
+
+  // ── Clear effect ───────────────────────────────────────────────────────────
+  const clearEffect = useCallback(() => {
+    if (!deepARRef.current) return;
+    try {
+      deepARRef.current.switchEffect({ mask: '', slot: 'effect' });
+      setActiveEffect(null);
+      log('Effect cleared');
+    } catch (e: any) { log(`clearEffect ERROR: ${e?.message}`); }
+  }, []);
+
+  // ── Download + apply remote effect via rn-fetch-blob ──────────────────────
+  const applyRemoteEffect = useCallback(async (effectName: string) => {
+    if (!deepARRef.current) { log('ERROR: ref is null'); return; }
+    if (!RNFetchBlob) { log('ERROR: rn-fetch-blob not available'); return; }
+
+    const url = `${REMOTE_CDN}${effectName}`;
+    log(`Downloading: ${url}`);
+    setDownloading(true);
+
+    try {
+      const res = await RNFetchBlob.config({ fileCache: true }).fetch('GET', url);
+      const localPath = res.path(); // raw path, NO file:// prefix — required by DeepAR iOS
+      log(`Downloaded to: ${localPath}`);
+
+      if (!deepARRef.current) { log('ERROR: ref lost during download'); setDownloading(false); return; }
+
+      log(`switchEffectWithPath path="${localPath}" slot="effect"`);
+      deepARRef.current.switchEffectWithPath({ path: localPath, slot: 'effect' });
+      setActiveEffect(effectName);
+      log(`Effect applied: ${effectName}`);
+    } catch (e: any) {
+      log(`Download/apply ERROR: ${e?.message ?? e}`);
+    }
+
+    setDownloading(false);
+  }, []);
+
+  // ── Screenshot ────────────────────────────────────────────────────────────
+  const takeScreenshot = useCallback(() => {
+    if (!deepARRef.current) { log('ERROR: ref is null'); return; }
+    try { deepARRef.current.takeScreenshot(); log('takeScreenshot() called'); }
+    catch (e: any) { log(`takeScreenshot ERROR: ${e?.message}`); }
+  }, []);
+
+  // ── Recording ────────────────────────────────────────────────────────────
+  const toggleRecording = useCallback(() => {
+    if (!deepARRef.current) { log('ERROR: ref is null'); return; }
+    try {
+      if (recording) {
+        deepARRef.current.finishRecording();
+        log('finishRecording() called');
+      } else {
+        deepARRef.current.startRecording();
+        log('startRecording() called');
+        setRecording(true);
+      }
+    } catch (e: any) { log(`recording ERROR: ${e?.message}`); }
+  }, [recording]);
+
+  const canRender = !!(DeepARView && permGranted && API_KEY);
+
+  return (
+    <SafeAreaView style={s.root}>
+      <StatusBar style="light" />
+
+      {/* Header */}
+      <View style={s.header}>
+        <Pressable style={s.backBtn} onPress={() => router.back()}>
+          <Text style={s.backBtnText}>←</Text>
+        </Pressable>
+        <View>
+          <Text style={s.title}>DeepAR Sandbox</Text>
+          <Text style={s.subtitle}>Minimal test — physical device only</Text>
+        </View>
+        <View style={[s.statusDot, { backgroundColor: initialized ? '#00E5A0' : permGranted ? '#FF9D00' : '#FF3B3B' }]} />
+      </View>
+
+      {/* Status bar */}
+      <View style={s.statusBar}>
+        <Text style={s.statusText}>
+          SDK: {DeepARView ? '✅' : '❌'}  |  rn-fetch-blob: {RNFetchBlob ? '✅' : '❌'}  |  Perm: {permStatus}  |  Init: {initialized ? '✅' : '⏳'}
+        </Text>
+        {activeEffect ? <Text style={[s.statusText, { color: '#FF2D78' }]}>Effect: {activeEffect}</Text> : null}
+      </View>
+
+      {/* Camera viewport */}
+      <View style={s.cameraWrap}>
+        {canRender ? (
+          <DeepARView
+            ref={deepARRef}
+            apiKey={API_KEY}
+            style={StyleSheet.absoluteFillObject}
+            position={camFacing}
+            onEventSent={({ nativeEvent }: any) => {
+              const { type, value, value2 } = nativeEvent ?? {};
+              log(`EVENT: ${type}${value ? ` val="${value}"` : ''}${value2 ? ` val2="${value2}"` : ''}`);
+
+              switch (type) {
+                case 'initialized':
+                  setInitialized(true);
+                  log('✅ INITIALIZED — DeepAR render surface is ready');
+                  break;
+                case 'screenshotTaken':
+                  setCapturedUri(value);
+                  log(`📸 Screenshot saved: ${value}`);
+                  break;
+                case 'videoRecordingStarted':
+                  setRecording(true);
+                  log('🔴 Recording started');
+                  break;
+                case 'videoRecordingFinished':
+                  setRecording(false);
+                  log(`🎬 Recording saved: ${value}`);
+                  break;
+                case 'videoRecordingPrepared':
+                  log('Recording prepared');
+                  break;
+                case 'faceVisibilityChanged':
+                  log(`Face visible: ${value}`);
+                  break;
+                case 'effectSwitched':
+                  log(`Effect slot "${value}" switched`);
+                  break;
+                case 'cameraSwitched':
+                  log(`Camera → ${value}`);
+                  break;
+                case 'error':
+                  log(`❌ NATIVE ERROR: ${value} (type: ${value2})`);
+                  break;
+                default:
+                  break;
+              }
+            }}
+            onInitialized={() => {
+              setInitialized(true);
+              log('✅ onInitialized callback fired');
+            }}
+            onError={(text: string, type: any) => {
+              log(`❌ onError: ${text} (${type})`);
+              // Force ready so UI doesn't hang
+              setInitialized(true);
+            }}
+          />
+        ) : (
+          <View style={s.noCamera}>
+            <Text style={s.noCameraTitle}>
+              {!DeepARView ? 'DeepAR SDK not loaded\n(EAS Build required)' :
+               !permGranted ? `Camera permission:\n${permStatus}` :
+               'API key missing'}
+            </Text>
+            <Text style={s.noCameraHint}>
+              This page only works on a physical iPhone/Android{'\n'}
+              compiled with EAS Build (not Expo Go / web preview)
+            </Text>
+          </View>
+        )}
+
+        {/* Overlay — MINIMAL, no Skia, just absolute-positioned native Views */}
+        {initialized ? (
+          <View style={s.initBadge} pointerEvents="none">
+            <Text style={s.initBadgeText}>✅ DeepAR LIVE</Text>
+          </View>
+        ) : canRender ? (
+          <View style={s.initBadge} pointerEvents="none">
+            <Text style={s.initBadgeText}>⏳ Initializing...</Text>
+          </View>
+        ) : null}
+
+        {recording ? (
+          <View style={s.recBadge} pointerEvents="none">
+            <Text style={s.recBadgeText}>🔴 REC</Text>
+          </View>
+        ) : null}
+
+        {capturedUri ? (
+          <View style={s.capturedBadge} pointerEvents="none">
+            <Text style={s.capturedBadgeText}>📸 Saved</Text>
+          </View>
+        ) : null}
+
+        {/* Flip camera */}
+        <Pressable
+          style={s.flipBtn}
+          onPress={() => {
+            setCamFacing(f => f === 'front' ? 'back' : 'front');
+            log(`Camera flipped → ${camFacing === 'front' ? 'back' : 'front'}`);
+          }}
+        >
+          <Text style={s.flipBtnText}>⟳</Text>
+        </Pressable>
+      </View>
+
+      {/* Controls */}
+      <View style={s.controls}>
+        {/* Row 1: Bundled effects */}
+        <Text style={s.sectionLabel}>BUNDLED (switchEffect — instant)</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}
+          contentContainerStyle={s.effectRow}>
+          <Pressable style={[s.effectBtn, !activeEffect && s.effectBtnActive]} onPress={clearEffect}>
+            <Text style={s.effectBtnText}>None</Text>
+          </Pressable>
+          {['flower_crown', 'lion', 'aviators', 'viking_helmet', 'dalmatian', 'pug', 'beauty', 'makeup'].map(name => (
+            <Pressable key={name}
+              style={[s.effectBtn, activeEffect === name && s.effectBtnActive]}
+              onPress={() => applyBundledEffect(name)}>
+              <Text style={s.effectBtnText}>{name}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+
+        {/* Row 2: Remote effects via rn-fetch-blob */}
+        <Text style={s.sectionLabel}>REMOTE (rn-fetch-blob download) {downloading ? '⏳' : ''}</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}
+          contentContainerStyle={s.effectRow}>
+          {REMOTE_EFFECTS.map(name => (
+            <Pressable key={name}
+              style={[s.effectBtn, s.remoteBtn, activeEffect === name && s.effectBtnActive]}
+              onPress={() => applyRemoteEffect(name)}
+              disabled={downloading}>
+              <Text style={s.effectBtnText}>{name}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+
+        {/* Row 3: Capture actions */}
+        <View style={s.actionRow}>
+          <Pressable style={s.actionBtn} onPress={takeScreenshot} disabled={!initialized}>
+            <Text style={s.actionBtnText}>📸 Screenshot</Text>
+          </Pressable>
+          <Pressable
+            style={[s.actionBtn, recording && { backgroundColor: '#FF3B3B' }]}
+            onPress={toggleRecording} disabled={!initialized}>
+            <Text style={s.actionBtnText}>{recording ? '⏹ Stop' : '⏺ Record'}</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      {/* Event log */}
+      <View style={s.logWrap}>
+        <Text style={s.logTitle}>Native Events Log</Text>
+        <ScrollView style={s.logScroll} showsVerticalScrollIndicator={false}>
+          {events.length === 0
+            ? <Text style={s.logEmpty}>No events yet — mount the camera above</Text>
+            : events.map((e, i) => (
+              <Text key={i} style={[s.logLine,
+                e.includes('✅') ? { color: '#00E5A0' } :
+                e.includes('❌') ? { color: '#FF3B3B' } :
+                e.includes('📸') || e.includes('🎬') ? { color: '#FF9D00' } : {}
+              ]}>{e}</Text>
+            ))}
+        </ScrollView>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+const s = StyleSheet.create({
+  root:            { flex: 1, backgroundColor: '#07070F' },
+  header:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#1A1A2E', gap: 10 },
+  backBtn:         { width: 36, height: 36, borderRadius: 8, backgroundColor: '#1A1A2E', alignItems: 'center', justifyContent: 'center' },
+  backBtnText:     { color: '#fff', fontSize: 18 },
+  title:           { color: '#fff', fontSize: 15, fontWeight: '700' },
+  subtitle:        { color: '#666', fontSize: 10 },
+  statusDot:       { width: 12, height: 12, borderRadius: 6, marginLeft: 'auto' },
+  statusBar:       { backgroundColor: '#0E0E18', paddingHorizontal: 12, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#1A1A2E', gap: 2 },
+  statusText:      { color: '#888', fontSize: 9, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+  cameraWrap:      { width: W, height: W * 0.82, backgroundColor: '#000', position: 'relative' },
+  noCamera:        { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 },
+  noCameraTitle:   { color: '#FF6B6B', fontSize: 16, fontWeight: '700', textAlign: 'center', lineHeight: 24 },
+  noCameraHint:    { color: '#555', fontSize: 12, textAlign: 'center', lineHeight: 18 },
+  initBadge:       { position: 'absolute', top: 10, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5 },
+  initBadgeText:   { color: '#fff', fontSize: 11, fontWeight: '700' },
+  recBadge:        { position: 'absolute', top: 10, left: 12, backgroundColor: 'rgba(200,0,0,0.8)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4 },
+  recBadgeText:    { color: '#fff', fontSize: 11, fontWeight: '700' },
+  capturedBadge:   { position: 'absolute', bottom: 10, right: 12, backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4 },
+  capturedBadgeText:{ color: '#FF9D00', fontSize: 11, fontWeight: '700' },
+  flipBtn:         { position: 'absolute', top: 10, right: 12, width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' },
+  flipBtnText:     { color: '#fff', fontSize: 20 },
+  controls:        { backgroundColor: '#0E0E18', borderBottomWidth: 1, borderBottomColor: '#1A1A2E' },
+  sectionLabel:    { color: '#444', fontSize: 9, fontWeight: '700', letterSpacing: 1, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4, textTransform: 'uppercase' },
+  effectRow:       { flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingBottom: 8, alignItems: 'center' },
+  effectBtn:       { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10, backgroundColor: '#1A1A2E', borderWidth: 1, borderColor: '#2A2A3E' },
+  remoteBtn:       { borderColor: '#FF9D0044', backgroundColor: '#1A110A' },
+  effectBtnActive: { backgroundColor: '#7C5CFF', borderColor: '#7C5CFF' },
+  effectBtnText:   { color: '#ccc', fontSize: 9, fontWeight: '600' },
+  actionRow:       { flexDirection: 'row', gap: 10, paddingHorizontal: 12, paddingVertical: 8 },
+  actionBtn:       { flex: 1, backgroundColor: '#1A1A2E', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: '#2A2A3E' },
+  actionBtnText:   { color: '#fff', fontSize: 12, fontWeight: '700' },
+  logWrap:         { flex: 1, backgroundColor: '#05050D', borderTopWidth: 1, borderTopColor: '#1A1A2E' },
+  logTitle:        { color: '#333', fontSize: 9, fontWeight: '700', letterSpacing: 1, paddingHorizontal: 12, paddingTop: 6, paddingBottom: 2, textTransform: 'uppercase' },
+  logScroll:       { flex: 1, paddingHorizontal: 12 },
+  logEmpty:        { color: '#333', fontSize: 10, fontStyle: 'italic', paddingVertical: 12 },
+  logLine:         { color: '#666', fontSize: 9, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', lineHeight: 14, paddingVertical: 1 },
+});

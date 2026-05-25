@@ -161,6 +161,7 @@ export default function CreatorStudioScreen() {
 
   const deepARActive = isDeepARAvailable();
   const deepARStatus = getDeepARStatus();
+  const router2 = router; // alias for deepar-test link
 
   return (
     <View style={[root.container, { paddingTop: insets.top }]}>
@@ -192,10 +193,23 @@ export default function CreatorStudioScreen() {
         <View style={root.statusBar}>
           <MaterialCommunityIcons name="information-outline" size={12} color={Colors.warning} />
           <Text style={root.statusBarText}>
-            Cámara + efectos Skia activos. DeepAR disponible en EAS Build.
+            Skia activo. DeepAR disponible en EAS Build.
           </Text>
+          <Pressable onPress={() => router2.push('/deepar-test' as any)}>
+            <Text style={[root.statusBarText, { color: '#2D9EFF', textDecorationLine: 'underline' }]}>Test</Text>
+          </Pressable>
         </View>
-      ) : null}
+      ) : (
+        <View style={[root.statusBar, { backgroundColor: '#00E5A022', borderBottomColor: '#00E5A033' }]}>
+          <MaterialCommunityIcons name="check-circle-outline" size={12} color="#00E5A0" />
+          <Text style={[root.statusBarText, { color: '#00E5A0' }]}>
+            DeepAR listo. {!deepARStatus.hasFetchBlob ? 'Instala rn-fetch-blob para filtros remotos.' : 'Filtros remotos activos.'}
+          </Text>
+          <Pressable onPress={() => router2.push('/deepar-test' as any)}>
+            <Text style={[root.statusBarText, { color: '#2D9EFF', textDecorationLine: 'underline' }]}>Sandbox</Text>
+          </Pressable>
+        </View>
+      )}
 
       <Animated.View style={[{ flex: 1 }, tabSty]}>
         {tab === 'ar'      ? <EffectsTab />  : null}
@@ -293,6 +307,8 @@ function EffectsTab() {
       setFilterLoadState(s => ({ ...s, [filter.id]: 'idle' }));
       return;
     }
+    // Disable Skia when activating a DeepAR filter (Metal surface conflict)
+    setSkiaEffectId('none');
     setDeepARFilterId(filter.id);
     await switchDeepAREffect(deepARRef, filter, (state, msg) => {
       setFilterLoadState(s => ({ ...s, [filter.id]: state }));
@@ -308,6 +324,9 @@ function EffectsTab() {
     setSkiaEffectId('none');
     if (deepARFilterId) { clearDeepAREffect(deepARRef); setDeepARFilterId(null); }
   }, [deepARFilterId]);
+
+  // When a DeepAR filter is activated, disable Skia (they cannot share Metal surface)
+  // This is enforced in handleDeepARFilter below.
 
   // ── PHOTO CAPTURE ─────────────────────────────────────────────────────────
   const capturePhoto = useCallback(async () => {
@@ -548,8 +567,15 @@ function EffectsTab() {
           />
         ) : null}
 
-        {/* Skia effects — zIndex 5: above camera surface, below UI buttons */}
-        {skiaEffectId !== 'none' ? (
+        {/*
+          Skia overlay — ONLY shown when DeepAR is NOT active.
+          DeepAR uses a Metal/CAEAGLLayer render surface. Placing any GPU-
+          composited View (Skia Canvas, etc.) on top of it destroys the Metal
+          pipeline → black camera. UIKit-backed Views (badges, buttons) are
+          safe because they don't composite on the same GPU surface.
+          Rule: deepARCameraOk active → no Skia. Skia active → no DeepAR.
+        */}
+        {skiaEffectId !== 'none' && !deepARCameraOk ? (
           <View
             style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }}
             pointerEvents="none"
@@ -624,12 +650,19 @@ function EffectsTab() {
           {(skiaEffectId === 'none' && !deepARFilterId) ? <View style={ef.chipDot} /> : null}
         </Pressable>
 
-        <Text style={ef.sectionLabel}>SKIA GPU</Text>
+        <Text style={ef.sectionLabel}>SKIA GPU{deepARCameraOk ? ' (desactiva DeepAR)' : ''}</Text>
         {SKIA_EFFECTS.map(e => (
           <Pressable
             key={e.id}
             style={[ef.chip, skiaEffectId === e.id && ef.chipActive]}
-            onPress={() => { setSkiaEffectId(e.id); setDeepARFilterId(null); }}
+            onPress={() => {
+              // Skia and DeepAR cannot run simultaneously (Metal surface conflict)
+              if (deepARCameraOk && deepARFilterId) {
+                clearDeepAREffect(deepARRef);
+                setDeepARFilterId(null);
+              }
+              setSkiaEffectId(e.id);
+            }}
           >
             <LinearGradient colors={e.gradient} style={ef.chipGrad} />
             <Text style={ef.chipEmoji}>{e.emoji}</Text>
@@ -1013,6 +1046,7 @@ function VideosTab() {
             onDuration={setDurationMs} onPosition={setPositionMs} onPlayingChange={setIsPlaying}
             playerRef={playerRef}
           />
+          {/* Video editor Skia overlay — safe here because no DeepAR surface in video editor */}
           {skiaPreviewId !== 'none' ? (
             <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }} pointerEvents="none">
               <SkiaEffectsLayer effectId={skiaPreviewId} width={W} height={W * 0.62} />

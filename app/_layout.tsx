@@ -108,6 +108,7 @@ export default function RootLayout() {
                             <Stack.Screen name="boost-profile" />
                             <Stack.Screen name="earnings" />
                             <Stack.Screen name="ai-avatar" />
+                            <Stack.Screen name="deepar-test" />
                           </Stack>
                         </ShopProvider>
                       </NotificationsProvider>

@@ -1,24 +1,36 @@
 /**
- * services/deeparService.ts  — v5
+ * services/deeparService.ts — v6
  *
- * ══ CRITICAL FIX: Remote filter loading ══════════════════════════════════════
+ * ══ ROOT CAUSE FIX ═══════════════════════════════════════════════════════════
  *
- *  switchEffectWithPath() requires a LOCAL file path — NOT a remote URL.
- *  Remote URL causes a silent no-op (iOS) or crash (Android).
+ *  PROBLEM: expo-file-system downloads return a `file://...` URI.
+ *           DeepAR iOS SDK requires a RAW filesystem path without the
+ *           `file://` scheme prefix. Passing `file://...` to
+ *           switchEffectWithPath() causes a silent no-op or GL context crash.
  *
- *  Solution: download each .deepar filter to expo-file-system cache on first use,
- *  then pass the local URI to switchEffectWithPath. Subsequent uses are instant.
+ *  SOLUTION: Use rn-fetch-blob (the same library used in the official
+ *           react-native-deepar example). Its `res.path()` returns the raw
+ *           POSIX path that DeepAR expects: `/var/mobile/Containers/...`
  *
- * ══ ATS / SSL notes ══════════════════════════════════════════════════════════
+ * ══ FILTER CDN ═══════════════════════════════════════════════════════════════
  *
- *  The DeepAR CDN (s3.amazonaws.com) uses HTTPS — no ATS exception needed.
- *  If a download fails with a network error, the UI shows an error badge.
+ *  Previous CDN (s3.amazonaws.com/deepar-assets) was NOT publicly accessible.
+ *  Correct public CDN: https://storage.deepar.ai/effects/{name}
+ *  Files have NO extension.
+ *
+ * ══ SKIA CONFLICT ════════════════════════════════════════════════════════════
+ *
+ *  DeepAR uses a Metal/OpenGL render surface (CAEAGLLayer / CAMetalLayer).
+ *  React Native Views with zIndex placed directly on top of DeepAR's surface
+ *  destroy the Metal render pipeline → black camera.
+ *
+ *  Solution: never render Skia or any GPU-composited View over the DeepAR
+ *  component. Use only standard UIKit-backed Views as overlays (badges, buttons).
  *
  * ═════════════════════════════════════════════════════════════════════════════
  */
 
 import { Platform } from 'react-native';
-import * as FileSystem from 'expo-file-system';
 
 // ── ACTIVE — set to false to fall back to Skia/Reanimated effects ────────────
 export const DEEPAR_ENABLED = true;
@@ -39,10 +51,10 @@ let DeepARModule: any = null;
 try {
   if (DEEPAR_ENABLED) {
     DeepARModule = require('react-native-deepar');
-    console.log('[DeepAR] SDK loaded successfully');
+    console.log('[DeepAR] SDK loaded. Default:', !!DeepARModule?.default, 'Camera:', !!DeepARModule?.Camera);
   }
 } catch (e) {
-  console.warn('[DeepAR] Not compiled in EAS Build yet. Run: pnpm add react-native-deepar then rebuild.');
+  console.warn('[DeepAR] SDK not compiled. Run: pnpm add react-native-deepar && eas build');
 }
 
 export const DeepAR           = DeepARModule?.default ?? null;
@@ -52,7 +64,17 @@ export const DeepARCameraKit  = DeepARModule           ?? null;
 export const isDeepARAvailable = () =>
   DEEPAR_ENABLED &&
   !!DeepARCamera &&
+  typeof DeepARCamera === 'function' &&
   DEEPAR_API_KEY.length > 10;
+
+// ── Lazy-load rn-fetch-blob ─────────────────────────────────────────────────
+let RNFetchBlob: any = null;
+try {
+  RNFetchBlob = require('rn-fetch-blob').default ?? require('rn-fetch-blob');
+  console.log('[DeepAR] rn-fetch-blob loaded');
+} catch {
+  console.warn('[DeepAR] rn-fetch-blob not available — remote filter download disabled');
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AR FILTER CATALOG
@@ -63,22 +85,18 @@ export interface DeepARFilter {
   emoji:       string;
   category:    'face' | 'beauty' | 'background' | 'social';
   /**
-   * Remote URL of the .deepar effect file.
-   * Will be downloaded and cached locally before applying.
+   * Remote URL of the .deepar effect file (no extension).
+   * Downloaded and cached locally on first use via rn-fetch-blob.
    */
   remoteUrl:   string;
   description: string;
 }
 
 /**
- * DeepAR Free Filter Pack — effects from the official free pack.
- * https://docs.deepar.ai/deep-ar-studio/free-filter-pack
- *
- * Files are downloaded on first use and cached in FileSystem.cacheDirectory.
- *
- * Note: DeepAR free-pack filenames have NO extension on the CDN.
+ * DeepAR Free Filter Pack — official public CDN.
+ * Confirmed working from react-native-deepar example app.
  */
-const DEEPAR_CDN = 'https://s3.amazonaws.com/deepar-assets/filter-pack/';
+const DEEPAR_CDN = 'https://storage.deepar.ai/effects/';
 
 export const DEEPAR_FILTERS: DeepARFilter[] = [
   // ── Face ────────────────────────────────────────────────────────────────
@@ -114,103 +132,73 @@ export const DEEPAR_FILTERS: DeepARFilter[] = [
   { id: 'disco',         name: 'Disco',        emoji: '🪩', category: 'social',
     remoteUrl: `${DEEPAR_CDN}disco`,             description: 'Luces de discoteca psicodélicas' },
   { id: 'hope',          name: 'Hope',         emoji: '🦋', category: 'social',
-    remoteUrl: `${DEEPAR_CDN}hope`,              description: 'Mariposas y flores' },
+    remoteUrl: `${DEEPAR_CDN}hope`,             description: 'Mariposas y flores' },
   { id: 'burning_effect', name: 'Burning',     emoji: '💀', category: 'social',
     remoteUrl: `${DEEPAR_CDN}burning_effect`,    description: 'Cara en llamas' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LOCAL FILTER CACHE
-// Each filter is downloaded once to cacheDirectory and reused on subsequent taps.
+// LOCAL FILTER CACHE (in-memory path registry)
 // ─────────────────────────────────────────────────────────────────────────────
-const downloadCache: Record<string, string> = {};   // filterId → local file URI
-const downloadingIds: Set<string>           = new Set();
-
-/** Local cache directory for DeepAR effects */
-const CACHE_DIR = `${FileSystem.cacheDirectory}deepar_effects/`;
+/** Raw filesystem paths cached in memory after first download */
+const pathCache: Record<string, string> = {};
+const downloadingIds: Set<string>       = new Set();
 
 /**
- * Ensure the DeepAR effects cache directory exists.
- */
-async function ensureCacheDir(): Promise<void> {
-  try {
-    const info = await FileSystem.getInfoAsync(CACHE_DIR);
-    if (!info.exists) {
-      await FileSystem.makeDirectoryAsync(CACHE_DIR, { intermediates: true });
-    }
-  } catch (e) {
-    console.warn('[DeepAR] ensureCacheDir failed:', e);
-  }
-}
-
-/**
- * Returns the local file path for a filter, downloading it if necessary.
+ * Returns the raw local filesystem path for a filter.
+ * Downloads via rn-fetch-blob if not cached.
  *
- * ⚠️  CRITICAL: switchEffectWithPath needs a FILE:// path, NOT a remote URL.
- *    This function bridges the gap by caching the remote asset locally.
+ * ⚠️  CRITICAL: DeepAR iOS requires a RAW path like
+ *     `/var/mobile/Containers/Data/Application/.../file`
+ *     NOT `file:///var/mobile/...`
+ *
+ * rn-fetch-blob's res.path() returns the raw path automatically.
+ * expo-file-system returns file:// URIs, which DeepAR REJECTS silently.
  */
 export async function getLocalFilterPath(filter: DeepARFilter): Promise<string | null> {
-  // Already cached in memory
-  if (downloadCache[filter.id]) {
-    console.log('[DeepAR] Cache hit:', filter.id, '→', downloadCache[filter.id]);
-    return downloadCache[filter.id];
+  // 1. Memory cache hit
+  if (pathCache[filter.id]) {
+    console.log('[DeepAR] Memory cache hit:', filter.id);
+    return pathCache[filter.id];
   }
 
-  // Prevent concurrent downloads of the same filter
+  // 2. Prevent concurrent downloads
   if (downloadingIds.has(filter.id)) {
-    // Wait for ongoing download (poll)
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       const check = setInterval(() => {
-        if (downloadCache[filter.id]) {
-          clearInterval(check);
-          resolve(downloadCache[filter.id]);
-        } else if (!downloadingIds.has(filter.id)) {
-          clearInterval(check);
-          resolve(null);
-        }
+        if (pathCache[filter.id]) { clearInterval(check); resolve(pathCache[filter.id]); }
+        else if (!downloadingIds.has(filter.id)) { clearInterval(check); resolve(null); }
       }, 200);
     });
+  }
+
+  if (!RNFetchBlob) {
+    console.error('[DeepAR] rn-fetch-blob not available — cannot download filter');
+    return null;
   }
 
   downloadingIds.add(filter.id);
 
   try {
-    await ensureCacheDir();
-
-    // Use filter id as filename (no extension — DeepAR format)
-    const localPath = `${CACHE_DIR}${filter.id}`;
-
-    // Check if already downloaded to disk
-    const existing = await FileSystem.getInfoAsync(localPath);
-    if (existing.exists) {
-      console.log('[DeepAR] Disk cache hit:', filter.id);
-      downloadCache[filter.id] = localPath;
-      downloadingIds.delete(filter.id);
-      return localPath;
-    }
-
     console.log('[DeepAR] Downloading filter:', filter.id, '←', filter.remoteUrl);
 
-    const result = await FileSystem.downloadAsync(filter.remoteUrl, localPath);
+    const res = await RNFetchBlob.config({ fileCache: true }).fetch('GET', filter.remoteUrl);
 
-    if (result.status !== 200) {
-      console.error('[DeepAR] Download failed — HTTP', result.status, filter.id);
+    // res.path() = raw POSIX path, e.g. /var/mobile/Containers/...
+    // This is the correct format for DeepAR iOS switchEffectWithPath
+    const rawPath = res.path();
+    console.log('[DeepAR] Downloaded:', filter.id, '→', rawPath);
+
+    // Basic validation: path must be a non-empty string
+    if (!rawPath || typeof rawPath !== 'string') {
+      console.error('[DeepAR] rn-fetch-blob returned invalid path:', rawPath);
       downloadingIds.delete(filter.id);
       return null;
     }
 
-    // Verify the file exists and is non-empty
-    const info = await FileSystem.getInfoAsync(localPath);
-    if (!info.exists || (info as any).size === 0) {
-      console.error('[DeepAR] Downloaded file is empty:', filter.id);
-      downloadingIds.delete(filter.id);
-      return null;
-    }
-
-    console.log('[DeepAR] ✅ Downloaded:', filter.id, '→', localPath, `(${(info as any).size} bytes)`);
-    downloadCache[filter.id] = localPath;
+    pathCache[filter.id] = rawPath;
     downloadingIds.delete(filter.id);
-    return localPath;
+    return rawPath;
 
   } catch (e) {
     console.error('[DeepAR] Download error for', filter.id, ':', e);
@@ -221,13 +209,12 @@ export async function getLocalFilterPath(filter: DeepARFilter): Promise<string |
 
 /**
  * Prefetch the most commonly used filters in background after DeepAR initializes.
- * Call this in EffectsTab's onInitialized callback.
  */
 export async function prefetchDeepARFilters(
   filterIds: string[] = ['flower_crown', 'lion', 'aviators', 'beauty', 'fire'],
 ): Promise<void> {
+  if (!RNFetchBlob) return;
   const filters = DEEPAR_FILTERS.filter(f => filterIds.includes(f.id));
-  // Download in parallel but don't block the UI
   await Promise.allSettled(filters.map(f => getLocalFilterPath(f)));
   console.log('[DeepAR] Prefetch complete for:', filterIds);
 }
@@ -239,34 +226,38 @@ export async function prefetchDeepARFilters(
 /**
  * Switch the active DeepAR AR effect.
  *
- * ASYNC — downloads the filter file to local cache if not already present,
- * then calls switchEffectWithPath with the LOCAL path.
- *
- * Returns: 'ok' | 'downloading' | 'error'
+ * Downloads the filter to local cache via rn-fetch-blob (first call),
+ * then calls switchEffectWithPath with the raw POSIX path.
  */
 export async function switchDeepAREffect(
   deepARRef: React.MutableRefObject<any>,
   filter:    DeepARFilter,
   onProgress?: (state: 'downloading' | 'applying' | 'ok' | 'error', msg?: string) => void,
 ): Promise<'ok' | 'downloading' | 'error'> {
-  if (!isDeepARAvailable() || !deepARRef.current) return 'error';
+  if (!isDeepARAvailable() || !deepARRef.current) {
+    console.warn('[DeepAR] switchDeepAREffect: not available or ref is null');
+    return 'error';
+  }
 
   try {
     onProgress?.('downloading');
-    const localPath = await getLocalFilterPath(filter);
+    const rawPath = await getLocalFilterPath(filter);
 
-    if (!localPath) {
+    if (!rawPath) {
       console.error('[DeepAR] No local path for filter:', filter.id);
       onProgress?.('error', 'No se pudo descargar el filtro');
       return 'error';
     }
 
     onProgress?.('applying');
-    console.log('[DeepAR] Applying effect:', filter.id, 'path:', localPath);
+    console.log('[DeepAR] switchEffectWithPath:', filter.id, '→', rawPath);
 
-    // ✅ CORRECT: switchEffectWithPath with LOCAL file path
+    /**
+     * ✅ CORRECT: pass the raw POSIX path from rn-fetch-blob
+     * ❌ WRONG:  pass a file:// URI (from expo-file-system)
+     */
     deepARRef.current.switchEffectWithPath({
-      path: localPath,
+      path: rawPath,
       slot: 'effect',
     });
 
@@ -286,7 +277,6 @@ export async function switchDeepAREffect(
 export function clearDeepAREffect(deepARRef: React.MutableRefObject<any>) {
   if (!isDeepARAvailable() || !deepARRef.current) return;
   try {
-    // Empty mask string clears the effect slot
     deepARRef.current.switchEffect({ mask: '', slot: 'effect' });
     console.log('[DeepAR] Effect cleared');
   } catch (e) {
@@ -301,21 +291,24 @@ export function getDeepARStatus(): {
   ready:        boolean;
   hasPackage:   boolean;
   hasApiKey:    boolean;
+  hasFetchBlob: boolean;
   isEnabled:    boolean;
   instructions: string[];
 } {
-  const hasPackage = !!DeepARModule;
-  const hasApiKey  = !!DEEPAR_API_KEY && DEEPAR_API_KEY.length > 10;
-  const isEnabled  = DEEPAR_ENABLED;
-  const ready      = isEnabled && hasPackage && hasApiKey;
+  const hasPackage  = !!DeepARModule;
+  const hasApiKey   = !!DEEPAR_API_KEY && DEEPAR_API_KEY.length > 10;
+  const isEnabled   = DEEPAR_ENABLED;
+  const hasFetchBlob = !!RNFetchBlob;
+  const ready       = isEnabled && hasPackage && hasApiKey;
 
   const instructions: string[] = [];
-  if (!isEnabled)  instructions.push('Set DEEPAR_ENABLED = true in services/deeparService.ts');
-  if (!hasApiKey)  instructions.push('Add EXPO_PUBLIC_DEEPAR_API_KEY to .env file');
-  if (!hasPackage) instructions.push('Run: pnpm add react-native-deepar');
-  if (!ready)      instructions.push('Rebuild EAS Build after all above steps');
+  if (!isEnabled)    instructions.push('Set DEEPAR_ENABLED = true in deeparService.ts');
+  if (!hasApiKey)    instructions.push('Add EXPO_PUBLIC_DEEPAR_API_KEY to .env');
+  if (!hasPackage)   instructions.push('Run: pnpm add react-native-deepar');
+  if (!hasFetchBlob) instructions.push('Run: pnpm add rn-fetch-blob');
+  if (!ready)        instructions.push('Rebuild EAS Build after all above steps');
 
-  return { ready, hasPackage, hasApiKey, isEnabled, instructions };
+  return { ready, hasPackage, hasApiKey, hasFetchBlob, isEnabled, instructions };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -345,10 +338,10 @@ export function stopDeepARRecording(deepARRef: React.MutableRefObject<any>) {
 export async function requestDeepARPermissions(): Promise<boolean> {
   if (!DeepARCameraKit) return false;
   try {
-    const Camera = DeepARCameraKit.Camera ?? null;
-    if (!Camera) return false;
-    const cam = await Camera.requestCameraPermission?.();
-    const mic = await Camera.requestMicrophonePermission?.();
+    const CameraModule = DeepARCameraKit.Camera ?? null;
+    if (!CameraModule) return false;
+    const cam = await CameraModule.requestCameraPermission?.();
+    const mic = await CameraModule.requestMicrophonePermission?.();
     console.log('[DeepAR] Permissions → camera:', cam, 'mic:', mic);
     return cam === 'authorized';
   } catch (e) {
