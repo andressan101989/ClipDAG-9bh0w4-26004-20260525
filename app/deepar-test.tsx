@@ -72,14 +72,13 @@ try {
   requestExpoMic    = async () => ({ granted: true });
 }
 
-// ── rn-fetch-blob ─────────────────────────────────────────────────────────────
-let RNFetchBlob: any = null;
-try {
-  RNFetchBlob = require('rn-fetch-blob').default ?? require('rn-fetch-blob');
-  console.log('[DeepARTest] rn-fetch-blob loaded');
-} catch (e) {
-  console.warn('[DeepARTest] rn-fetch-blob not found — remote filter test disabled:', e);
-}
+// ── expo-file-system (replaces rn-fetch-blob) ────────────────────────────────
+// DeepAR iOS needs a raw POSIX path (no file:// prefix).
+// expo-file-system.downloadAsync() returns a file:// URI.
+// Strip it: uri.replace('file://', '') → /var/mobile/Containers/...
+import * as FileSystem from 'expo-file-system';
+const hasFS = typeof FileSystem?.downloadAsync === 'function';
+console.log('[DeepARTest] expo-file-system available:', hasFS);
 
 // ── API Key ───────────────────────────────────────────────────────────────────
 const API_KEY_IOS     = process.env.EXPO_PUBLIC_DEEPAR_API_KEY_IOS     ?? 'b5ed95b597e2d095a99d348245484f5ca0ea76dd4297a6e03d0a0b630cb2f2b4511186a4577ef72a';
@@ -182,32 +181,45 @@ export default function DeepARTestScreen() {
     } catch (e: any) { log(`clearEffect ERROR: ${e?.message}`); }
   }, []);
 
-  // ── Download + apply remote effect via rn-fetch-blob + CDN fallback ─────────
+  // ── Download + apply remote effect via expo-file-system ──────────────────────
+  // expo-file-system.downloadAsync() returns a file:// URI.
+  // DeepAR iOS switchEffectWithPath() requires a raw POSIX path (no file:// prefix).
+  // Fix: strip with .replace('file://', '')
   const applyRemoteEffect = useCallback(async (effectName: string) => {
     if (!deepARRef.current) { log('ERROR: ref is null'); return; }
-    if (!RNFetchBlob)        { log('ERROR: rn-fetch-blob not available'); return; }
+    if (!hasFS) { log('ERROR: expo-file-system not available'); return; }
 
     setDownloading(true);
 
-    const tryDownload = async (url: string): Promise<string | null> => {
+    const tryDownload = async (url: string, cacheKey: string): Promise<string | null> => {
       log(`Trying: ${url}`);
       try {
-        const res   = await RNFetchBlob.config({ fileCache: true, timeout: 30000 }).fetch('GET', url);
-        const path  = res.path();
-        const stat  = await RNFetchBlob.fs.stat(path).catch(() => null);
-        const bytes = stat?.size ?? 0;
-        log(`Got ${bytes}b → ${path}`);
-        if (bytes < 64) { log(`WARN: file too small (${bytes}b) — likely 404 HTML`); return null; }
-        return path;
+        const cacheDir = (FileSystem.cacheDirectory ?? 'file:///tmp/') + 'deepar-filters/';
+        await FileSystem.makeDirectoryAsync(cacheDir, { intermediates: true }).catch(() => {});
+        const localUri = cacheDir + cacheKey;
+        const result   = await FileSystem.downloadAsync(url, localUri);
+        if (!result?.uri) { log('No URI returned'); return null; }
+        const info  = await FileSystem.getInfoAsync(result.uri, { size: true }).catch(() => null);
+        const bytes = (info as any)?.size ?? 0;
+        log(`Got ${bytes}b → ${result.uri}`);
+        if (!info?.exists || bytes < 64) {
+          log(`WARN: file too small (${bytes}b) — likely 404 HTML`);
+          await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+          return null;
+        }
+        // Strip file:// prefix — DeepAR iOS requires raw POSIX path
+        const rawPath = result.uri.replace('file://', '');
+        log(`Raw path: ${rawPath}`);
+        return rawPath;
       } catch (e: any) { log(`Fetch error: ${e?.message ?? e}`); return null; }
     };
 
     // 1. Primary CDN
-    let localPath = await tryDownload(`${REMOTE_CDN_PRIMARY}${effectName}`);
+    let localPath = await tryDownload(`${REMOTE_CDN_PRIMARY}${effectName}`, effectName);
     // 2. Mirror fallback
     if (!localPath) {
       log('Primary failed — trying mirror...');
-      localPath = await tryDownload(`${REMOTE_CDN_MIRROR}${effectName}`);
+      localPath = await tryDownload(`${REMOTE_CDN_MIRROR}${effectName}`, `${effectName}_mirror`);
     }
 
     if (!localPath) {
@@ -273,7 +285,7 @@ export default function DeepARTestScreen() {
       {/* Status bar */}
       <View style={s.statusBar}>
         <Text style={s.statusText}>
-          SDK: {DeepARView ? '✅' : '❌'}  |  blob: {RNFetchBlob ? '✅' : '⚠️ (filters disabled)'}  |  Perm: {permStatus}  |  Init: {initialized ? '✅' : '⏳'}
+          SDK: {DeepARView ? '✅' : '❌'}  |  FS: {hasFS ? '✅' : '❌'}  |  Perm: {permStatus}  |  Init: {initialized ? '✅' : '⏳'}
         </Text>
         {activeEffect ? <Text style={[s.statusText, { color: '#FF2D78' }]}>Effect: {activeEffect}</Text> : null}
       </View>

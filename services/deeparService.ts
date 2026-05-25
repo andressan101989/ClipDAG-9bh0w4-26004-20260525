@@ -67,14 +67,13 @@ export const isDeepARAvailable = () =>
   typeof DeepARCamera === 'function' &&
   DEEPAR_API_KEY.length > 10;
 
-// ── Lazy-load rn-fetch-blob ─────────────────────────────────────────────────
-let RNFetchBlob: any = null;
-try {
-  RNFetchBlob = require('rn-fetch-blob').default ?? require('rn-fetch-blob');
-  console.log('[DeepAR] rn-fetch-blob loaded');
-} catch {
-  console.warn('[DeepAR] rn-fetch-blob not available — remote filter download disabled');
-}
+// ── expo-file-system (replaces rn-fetch-blob — no native module needed) ────────
+// DeepAR iOS requires a raw POSIX path: /var/mobile/Containers/...
+// expo-file-system.downloadAsync() returns a file:// URI.
+// Strip the scheme with .replace('file://', '') to get the raw path DeepAR needs.
+import * as FileSystem from 'expo-file-system';
+const hasFileSystem = typeof FileSystem?.downloadAsync === 'function';
+console.log('[DeepAR] expo-file-system available:', hasFileSystem);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AR FILTER CATALOG
@@ -158,20 +157,47 @@ const downloadingIds: Set<string>       = new Set();
  * expo-file-system returns file:// URIs, which DeepAR REJECTS silently.
  */
 /**
- * Try to download from a URL. Returns raw path or null.
+ * Try to download from a URL using expo-file-system.
+ * Returns a raw POSIX path (no file:// prefix) or null.
+ *
+ * CRITICAL: DeepAR iOS switchEffectWithPath() requires a raw path.
+ *   ✅ CORRECT: /var/mobile/Containers/Data/.../flower_crown
+ *   ❌ WRONG:   file:///var/mobile/Containers/Data/.../flower_crown
+ *
+ * expo-file-system returns file:// URIs — strip the prefix with .replace('file://', '').
  */
-async function tryDownload(url: string): Promise<string | null> {
+async function tryDownload(url: string, effectId: string): Promise<string | null> {
   try {
-    const res     = await RNFetchBlob.config({ fileCache: true, timeout: 30000 }).fetch('GET', url);
-    const rawPath = res.path();
-    if (!rawPath || typeof rawPath !== 'string') return null;
-    // Validate the downloaded file has meaningful content
-    const stat = await RNFetchBlob.fs.stat(rawPath).catch(() => null);
-    if (!stat || (stat.size ?? 0) < 64) {
-      console.warn('[DeepAR] Downloaded file too small (', stat?.size, 'bytes) from', url);
+    // Ensure cache directory exists
+    const cacheDir = (FileSystem.cacheDirectory ?? 'file:///tmp/') + 'deepar-filters/';
+    await FileSystem.makeDirectoryAsync(cacheDir, { intermediates: true }).catch(() => {});
+
+    const localUri = cacheDir + effectId;
+    console.log('[DeepAR] Downloading:', url, '→', localUri);
+
+    const result = await FileSystem.downloadAsync(url, localUri);
+
+    if (!result?.uri) {
+      console.warn('[DeepAR] downloadAsync returned no URI from', url);
       return null;
     }
+
+    // Validate file size — a 404 HTML page is ~1–5KB; a real .deepar is >64KB
+    const info = await FileSystem.getInfoAsync(result.uri, { size: true }).catch(() => null);
+    const bytes = (info as any)?.size ?? 0;
+    console.log('[DeepAR] Downloaded', bytes, 'bytes from', url);
+
+    if (!info?.exists || bytes < 64) {
+      console.warn('[DeepAR] File too small (', bytes, 'bytes) — likely 404 HTML from', url);
+      await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+      return null;
+    }
+
+    // Strip file:// scheme → raw POSIX path required by DeepAR iOS SDK
+    const rawPath = result.uri.replace('file://', '');
+    console.log('[DeepAR] Raw path:', rawPath);
     return rawPath;
+
   } catch (e) {
     console.warn('[DeepAR] Download failed from', url, ':', e);
     return null;
@@ -205,13 +231,13 @@ export async function getLocalFilterPath(filter: DeepARFilter): Promise<string |
   try {
     // Primary CDN
     console.log('[DeepAR] Downloading filter:', filter.id, '← primary:', filter.remoteUrl);
-    let rawPath = await tryDownload(filter.remoteUrl);
+    let rawPath = await tryDownload(filter.remoteUrl, filter.id);
 
     // Mirror fallback if primary failed or returned empty file
     if (!rawPath) {
       const mirrorUrl = `${DEEPAR_CDN_MIRROR}${filter.id}`;
       console.log('[DeepAR] Primary failed — trying mirror:', mirrorUrl);
-      rawPath = await tryDownload(mirrorUrl);
+      rawPath = await tryDownload(mirrorUrl, `${filter.id}_mirror`);
     }
 
     if (!rawPath) {
@@ -313,27 +339,33 @@ export function clearDeepAREffect(deepARRef: React.MutableRefObject<any>) {
 // DIAGNOSTICS
 // ─────────────────────────────────────────────────────────────────────────────
 export function getDeepARStatus(): {
-  ready:        boolean;
-  hasPackage:   boolean;
-  hasApiKey:    boolean;
-  hasFetchBlob: boolean;
-  isEnabled:    boolean;
-  instructions: string[];
+  ready:           boolean;
+  hasPackage:      boolean;
+  hasApiKey:       boolean;
+  hasFetchBlob:    boolean;  // kept for API compat — now always true (uses expo-file-system)
+  hasFileSystem:   boolean;
+  isEnabled:       boolean;
+  instructions:    string[];
 } {
-  const hasPackage  = !!DeepARModule;
-  const hasApiKey   = !!DEEPAR_API_KEY && DEEPAR_API_KEY.length > 10;
-  const isEnabled   = DEEPAR_ENABLED;
-  const hasFetchBlob = !!RNFetchBlob;
-  const ready       = isEnabled && hasPackage && hasApiKey;
+  const hasPackage    = !!DeepARModule;
+  const hasApiKey     = !!DEEPAR_API_KEY && DEEPAR_API_KEY.length > 10;
+  const isEnabled     = DEEPAR_ENABLED;
+  const hasFileSystemOk = hasFileSystem;
+  const ready         = isEnabled && hasPackage && hasApiKey;
 
   const instructions: string[] = [];
-  if (!isEnabled)    instructions.push('Set DEEPAR_ENABLED = true in deeparService.ts');
-  if (!hasApiKey)    instructions.push('Add EXPO_PUBLIC_DEEPAR_API_KEY to .env');
-  if (!hasPackage)   instructions.push('Run: pnpm add react-native-deepar');
-  if (!hasFetchBlob) instructions.push('Run: pnpm add rn-fetch-blob');
-  if (!ready)        instructions.push('Rebuild EAS Build after all above steps');
+  if (!isEnabled)        instructions.push('Set DEEPAR_ENABLED = true in deeparService.ts');
+  if (!hasApiKey)        instructions.push('Add EXPO_PUBLIC_DEEPAR_API_KEY to .env');
+  if (!hasPackage)       instructions.push('Run: pnpm add react-native-deepar && eas build');
+  if (!hasFileSystemOk)  instructions.push('expo-file-system missing — check Expo SDK version');
+  if (!ready)            instructions.push('Rebuild EAS Build after all above steps');
 
-  return { ready, hasPackage, hasApiKey, hasFetchBlob, isEnabled, instructions };
+  return {
+    ready, hasPackage, hasApiKey,
+    hasFetchBlob: true,   // expo-file-system is always available in Expo SDK 53
+    hasFileSystem: hasFileSystemOk,
+    isEnabled, instructions,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
