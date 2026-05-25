@@ -62,6 +62,9 @@ const OTEL_BLOCKED = [
 // listed here — they are only used on native via .native.ts file extensions.
 // Metro automatically resolves .native.ts on iOS/Android, so blocking on web is safe.
 const WEB_ONLY_BLOCKED = [
+  // DeepAR calls requireNativeComponent at module-level — crashes on web
+  // before any try-catch can intercept it
+  'react-native-deepar',
   'react-native-vision-camera',
   'react-native-vision-camera-face-detector',
   'react-native-worklets-core',
