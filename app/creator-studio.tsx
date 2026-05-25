@@ -56,6 +56,7 @@ import SkiaEffectsLayer, { type SkiaEffectId } from '@/components/feature/SkiaEf
 import {
   isDeepARAvailable, DEEPAR_API_KEY, DEEPAR_FILTERS,
   switchDeepAREffect, clearDeepAREffect,
+  prefetchDeepARFilters,
   triggerDeepARScreenshot, startDeepARRecording, stopDeepARRecording,
   requestDeepARPermissions,
   DeepARCamera as DeepARCameraComponent,
@@ -320,6 +321,46 @@ export default function CreatorStudioScreen() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DEEPAR FILTER CHIP — shows download/apply/error state inline
+// ─────────────────────────────────────────────────────────────────────────────
+function DeepARFilterChip({
+  filter, activeId, loadState, accentColor, gradColors, onPress,
+}: {
+  filter:      DeepARFilter;
+  activeId:    string | null;
+  loadState:   string;  // 'idle' | 'downloading' | 'applying' | 'ok' | 'error'
+  accentColor: string;
+  gradColors:  [string, string];
+  onPress:     (f: DeepARFilter) => void;
+}) {
+  const isActive  = activeId === filter.id;
+  const isLoading = loadState === 'downloading' || loadState === 'applying';
+  const isError   = loadState === 'error';
+  return (
+    <Pressable
+      style={[ef.chip, isActive && ef.chipDeepARActive, isError && { borderColor: '#FF6B6B' }]}
+      onPress={() => onPress(filter)}
+      disabled={isLoading}
+    >
+      <LinearGradient colors={gradColors} style={ef.chipGrad} />
+      {isLoading ? (
+        <ActivityIndicator size="small" color={accentColor} style={{ position: 'absolute', top: 12 }} />
+      ) : (
+        <Text style={ef.chipEmoji}>{isError ? '⚠️' : filter.emoji}</Text>
+      )}
+      <Text style={[ef.chipName, isActive && { color: accentColor }]}>{filter.name}</Text>
+      {isLoading ? (
+        <Text style={[ef.chipDownloadLabel, { color: accentColor }]}>
+          {loadState === 'downloading' ? '↓' : '...'}
+        </Text>
+      ) : isActive ? (
+        <View style={[ef.chipDot, { backgroundColor: accentColor }]} />
+      ) : null}
+    </Pressable>
+  );
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // TAB 1 — EFFECTS  (DeepAR primary / Skia+Camera fallback)
 // ═════════════════════════════════════════════════════════════════════════════
@@ -393,16 +434,32 @@ function EffectsTab() {
   const shutterScale = useSharedValue(1);
   const shutterSty   = useAnimatedStyle(() => ({ transform: [{ scale: shutterScale.value }] }));
 
-  // ── DeepAR filter select ────────────────────────────────────────────────
-  const handleDeepARFilter = useCallback((filter: DeepARFilter) => {
+  // Per-filter loading state: 'idle' | 'downloading' | 'applying' | 'ok' | 'error'
+  const [filterLoadState, setFilterLoadState] = useState<Record<string, string>>({});
+
+  // ── DeepAR filter select (async: downloads to local cache then applies) ──
+  const handleDeepARFilter = useCallback(async (filter: DeepARFilter) => {
+    // Deselect if already active
     if (deepARFilterId === filter.id) {
       clearDeepAREffect(deepARRef);
       setDeepARFilterId(null);
-    } else {
-      switchDeepAREffect(deepARRef, filter);
-      setDeepARFilterId(filter.id);
+      setFilterLoadState(s => ({ ...s, [filter.id]: 'idle' }));
+      return;
     }
-  }, [deepARFilterId]);
+    setDeepARFilterId(filter.id);
+    await switchDeepAREffect(
+      deepARRef,
+      filter,
+      (state, msg) => {
+        console.log('[DeepAR] filter', filter.id, '\u2192', state, msg ?? '');
+        setFilterLoadState(s => ({ ...s, [filter.id]: state }));
+        if (state === 'error') {
+          showAlert('Error de filtro', msg ?? 'No se pudo descargar el filtro');
+          setDeepARFilterId(prev => prev === filter.id ? null : prev);
+        }
+      },
+    );
+  }, [deepARFilterId, showAlert]);
 
   // ── Capture photo ───────────────────────────────────────────────────────
   const capturePhoto = useCallback(async () => {
@@ -592,6 +649,7 @@ function EffectsTab() {
                 console.log('[DeepAR] ✅ initialized via onEventSent');
                 if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
                 setDeepARReady(true);
+                prefetchDeepARFilters(['flower_crown', 'lion', 'aviators', 'beauty', 'fire']);
               }
               if (nativeEvent.type === 'screenshotTaken') {
                 setCapturedUri(nativeEvent.value);
@@ -613,6 +671,8 @@ function EffectsTab() {
               console.log('[DeepAR] ✅ onInitialized prop fired');
               if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
               setDeepARReady(true);
+              // Prefetch top filters in background so first tap is instant
+              prefetchDeepARFilters(['flower_crown', 'lion', 'aviators', 'beauty', 'fire']);
             }}
             onScreenshotTaken={(path: string) => {
               console.log('[DeepAR] Screenshot saved:', path);
@@ -754,50 +814,34 @@ function EffectsTab() {
           contentContainerStyle={ef.filterStrip}>
           <Text style={ef.sectionLabel}>CARA</Text>
           {faceFilters.map(f => (
-            <Pressable key={f.id}
-              style={[ef.chip, deepARFilterId === f.id && ef.chipDeepARActive]}
-              onPress={() => handleDeepARFilter(f)}>
-              <LinearGradient colors={['#FF2D7844','#7C5CFF44']} style={ef.chipGrad} />
-              <Text style={ef.chipEmoji}>{f.emoji}</Text>
-              <Text style={[ef.chipName, deepARFilterId === f.id && { color: '#FF2D78' }]}>{f.name}</Text>
-              {deepARFilterId === f.id ? <View style={[ef.chipDot, { backgroundColor: '#FF2D78' }]} /> : null}
-            </Pressable>
+            <DeepARFilterChip key={f.id} filter={f} activeId={deepARFilterId}
+              loadState={filterLoadState[f.id] ?? 'idle'}
+              accentColor="#FF2D78" gradColors={['#FF2D7844','#7C5CFF44']}
+              onPress={handleDeepARFilter} />
           ))}
           <View style={ef.divider} />
           <Text style={ef.sectionLabel}>BEAUTY</Text>
           {beautyFilters.map(f => (
-            <Pressable key={f.id}
-              style={[ef.chip, deepARFilterId === f.id && ef.chipDeepARActive]}
-              onPress={() => handleDeepARFilter(f)}>
-              <LinearGradient colors={['#FF9D0044','#FF2D7844']} style={ef.chipGrad} />
-              <Text style={ef.chipEmoji}>{f.emoji}</Text>
-              <Text style={[ef.chipName, deepARFilterId === f.id && { color: '#FF2D78' }]}>{f.name}</Text>
-              {deepARFilterId === f.id ? <View style={[ef.chipDot, { backgroundColor: '#FF9D00' }]} /> : null}
-            </Pressable>
+            <DeepARFilterChip key={f.id} filter={f} activeId={deepARFilterId}
+              loadState={filterLoadState[f.id] ?? 'idle'}
+              accentColor="#FF9D00" gradColors={['#FF9D0044','#FF2D7844']}
+              onPress={handleDeepARFilter} />
           ))}
           <View style={ef.divider} />
           <Text style={ef.sectionLabel}>FONDO</Text>
           {bgFilters.map(f => (
-            <Pressable key={f.id}
-              style={[ef.chip, deepARFilterId === f.id && ef.chipDeepARActive]}
-              onPress={() => handleDeepARFilter(f)}>
-              <LinearGradient colors={['#7C5CFF44','#00E5A044']} style={ef.chipGrad} />
-              <Text style={ef.chipEmoji}>{f.emoji}</Text>
-              <Text style={[ef.chipName, deepARFilterId === f.id && { color: '#00E5A0' }]}>{f.name}</Text>
-              {deepARFilterId === f.id ? <View style={[ef.chipDot, { backgroundColor: '#00E5A0' }]} /> : null}
-            </Pressable>
+            <DeepARFilterChip key={f.id} filter={f} activeId={deepARFilterId}
+              loadState={filterLoadState[f.id] ?? 'idle'}
+              accentColor="#00E5A0" gradColors={['#7C5CFF44','#00E5A044']}
+              onPress={handleDeepARFilter} />
           ))}
           <View style={ef.divider} />
           <Text style={ef.sectionLabel}>SOCIAL</Text>
           {socialFilters.map(f => (
-            <Pressable key={f.id}
-              style={[ef.chip, deepARFilterId === f.id && ef.chipDeepARActive]}
-              onPress={() => handleDeepARFilter(f)}>
-              <LinearGradient colors={['#FF9D0044','#FF5A0044']} style={ef.chipGrad} />
-              <Text style={ef.chipEmoji}>{f.emoji}</Text>
-              <Text style={[ef.chipName, deepARFilterId === f.id && { color: '#FF9D00' }]}>{f.name}</Text>
-              {deepARFilterId === f.id ? <View style={[ef.chipDot, { backgroundColor: '#FF9D00' }]} /> : null}
-            </Pressable>
+            <DeepARFilterChip key={f.id} filter={f} activeId={deepARFilterId}
+              loadState={filterLoadState[f.id] ?? 'idle'}
+              accentColor="#FF9D00" gradColors={['#FF9D0044','#FF5A0044']}
+              onPress={handleDeepARFilter} />
           ))}
         </ScrollView>
       ) : null}
@@ -868,7 +912,7 @@ const ef = StyleSheet.create({
   chipEmoji:           { position: 'absolute', top: 14, fontSize: 18 },
   chipName:            { color: Colors.textSubtle, fontSize: 9, fontWeight: FontWeight.medium },
   chipDot:             { width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.secondary, position: 'absolute', top: 4, right: 4 },
-  newBadge:            { position: 'absolute', top: 3, left: 3, backgroundColor: '#00E5A0', borderRadius: 4, paddingHorizontal: 3, paddingVertical: 1 },
+  chipDownloadLabel:  { position: 'absolute', top: 3, right: 3, fontSize: 8, fontWeight: FontWeight.bold },
   newBadgeText:        { color: '#000', fontSize: 7, fontWeight: FontWeight.bold },
   captureRow:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 10, backgroundColor: Colors.bg, paddingHorizontal: 16 },
   shutterOuter:        { width: 74, height: 74, borderRadius: 37, borderWidth: 3, borderColor: Colors.secondary + '66', alignItems: 'center', justifyContent: 'center' },
