@@ -1,23 +1,22 @@
 /**
- * app/creator-studio.tsx — Creator Studio v13 (FULL REWRITE — all features working)
+ * app/creator-studio.tsx — Creator Studio v14
  *
- * FIXES:
- * 1. Photo capture: DeepAR + expo-camera fallback with 4s timeout
- * 2. Video recording: DeepAR + expo-camera fallback, reliable stop
- * 3. Effects: Skia works ALWAYS as overlay on camera, no tab switching required
- * 4. Avatars: OnSpace AI via ai-avatar Edge Function
- * 5. Video edit: FFmpeg when available, JS fallback otherwise (clip pass-through)
- * 6. Gallery picker always available as backup
+ * FIXES v14:
+ * 1. expo-video lazy-loaded (was crashing on web/preview — static import removed)
+ * 2. useVideoPlayer called with plain string URI (was passing {uri:string} object)
+ * 3. Skia overlay uses explicit zIndex:5 wrapper so DeepAR render surface stays visible
+ * 4. UI badges/buttons use zIndex:20 to stay above Skia overlay
+ * 5. Avatar photo upload: iOS ph:// URIs read via expo-file-system (fetch() crashes on ph://)
+ * 6. "Normal" chip added to clear all effects
  */
 import React, {
   useState, useCallback, useRef, useEffect, useMemo,
 } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView, FlatList,
-  TextInput, ActivityIndicator, Dimensions, Modal, Platform, Alert,
+  TextInput, ActivityIndicator, Dimensions, Modal, Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { VideoView, useVideoPlayer } from 'expo-video';
 import { Audio } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
@@ -36,6 +35,15 @@ import { getSupabaseClient } from '@/template';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 
+// ── expo-video — lazy-load: crashes on web/Expo Go without native build ───────
+let VideoView: any = null;
+let useVideoPlayer: any = (_src: any, _setup?: any): any => null;
+try {
+  const ev = require('expo-video');
+  VideoView      = ev.VideoView      ?? null;
+  useVideoPlayer = ev.useVideoPlayer ?? ((_src: any, _setup?: any) => null);
+} catch { /* web / preview */ }
+
 // ── DeepAR ────────────────────────────────────────────────────────────────────
 import {
   isDeepARAvailable, DEEPAR_API_KEY, DEEPAR_FILTERS,
@@ -50,19 +58,18 @@ import {
 // ── FFmpeg ────────────────────────────────────────────────────────────────────
 import {
   isFFmpegAvailable, exportFinal,
-  type ExportParams,
 } from '@/services/ffmpegService';
 
 // ── Skia effects ──────────────────────────────────────────────────────────────
 import SkiaEffectsLayer, { type SkiaEffectId } from '@/components/feature/SkiaEffectsLayer';
 
-// ── expo-camera (always needed as fallback) ───────────────────────────────────
+// ── expo-camera (fallback when DeepAR unavailable) ────────────────────────────
 let CameraView: any = null;
 let _useCameraPermissions: any = null;
 try {
   const ec = require('expo-camera');
-  CameraView = ec.CameraView ?? null;
-  _useCameraPermissions = ec.useCameraPermissions ?? null;
+  CameraView            = ec.CameraView            ?? null;
+  _useCameraPermissions = ec.useCameraPermissions  ?? null;
 } catch { /* web */ }
 
 function useSafeCameraPermissions(): [{ granted: boolean } | null, () => Promise<any>] {
@@ -88,17 +95,11 @@ const TABS: { key: StudioTab; icon: string; label: string; color: string }[] = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SKIA EFFECTS CATALOG
+// SKIA EFFECTS CATALOG  (id:'none' excluded — handled by "Normal" chip)
 // ─────────────────────────────────────────────────────────────────────────────
-interface EffectDef {
-  id: SkiaEffectId;
-  name: string;
-  emoji: string;
-  gradient: [string, string];
-}
+interface EffectDef { id: SkiaEffectId; name: string; emoji: string; gradient: [string,string] }
 
 const SKIA_EFFECTS: EffectDef[] = [
-  { id: 'none',      name: 'Normal',     emoji: '✨', gradient: ['#444','#222'] },
   { id: 'vintage',   name: 'Vintage',    emoji: '📷', gradient: ['#8B5E3C','#C27540'] },
   { id: 'cine',      name: 'Cine',       emoji: '🎬', gradient: ['#1A1A2E','#333355'] },
   { id: 'frio',      name: 'Frío',       emoji: '🧊', gradient: ['#2D9EFF','#7CC4FF'] },
@@ -137,7 +138,6 @@ function fmtMs(ms: number) {
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
 }
-
 function fmtSec(s: number) {
   return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
 }
@@ -188,7 +188,6 @@ export default function CreatorStudioScreen() {
         <View style={{ width: 36 }} />
       </View>
 
-      {/* Status bar for DeepAR */}
       {!deepARStatus.ready ? (
         <View style={root.statusBar}>
           <MaterialCommunityIcons name="information-outline" size={12} color={Colors.warning} />
@@ -234,32 +233,31 @@ function EffectsTab() {
   const deepARRef  = useRef<any>(null);
   const cameraRef  = useRef<any>(null);
 
-  const deepARActive = isDeepARAvailable();
+  const deepARActive  = isDeepARAvailable();
   const deepARCameraOk =
     deepARActive &&
     DeepARCameraComponent !== null &&
     typeof (DeepARCameraComponent as any) === 'function';
 
-  const [skiaEffectId,   setSkiaEffectId]   = useState<SkiaEffectId>('none');
-  const [deepARFilterId, setDeepARFilterId] = useState<string | null>(null);
-  const [camLayout,      setCamLayout]      = useState({ width: W, height: W * 1.25 });
-  const [isCapturing,    setIsCapturing]    = useState(false);
-  const [capturedUri,    setCapturedUri]    = useState<string | null>(null);
-  const [mode,           setMode]           = useState<'camera' | 'preview'>('camera');
-  const [isRecording,    setIsRecording]    = useState(false);
-  const [recSeconds,     setRecSeconds]     = useState(0);
-  const [facing,         setFacing]         = useState<'front' | 'back'>('front');
-  const [deepARReady,    setDeepARReady]    = useState(false);
+  const [skiaEffectId,    setSkiaEffectId]    = useState<SkiaEffectId>('none');
+  const [deepARFilterId,  setDeepARFilterId]  = useState<string | null>(null);
+  const [camLayout,       setCamLayout]       = useState({ width: W, height: W * 1.25 });
+  const [isCapturing,     setIsCapturing]     = useState(false);
+  const [capturedUri,     setCapturedUri]     = useState<string | null>(null);
+  const [mode,            setMode]            = useState<'camera' | 'preview'>('camera');
+  const [isRecording,     setIsRecording]     = useState(false);
+  const [recSeconds,      setRecSeconds]      = useState(0);
+  const [facing,          setFacing]          = useState<'front' | 'back'>('front');
+  const [deepARReady,     setDeepARReady]     = useState(false);
   const [filterLoadState, setFilterLoadState] = useState<Record<string, string>>({});
 
-  const recTimerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-  const deepARTimeoutRef = useRef<ReturnType<typeof setTimeout>  | null>(null);
-  const captureTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recTimerRef       = useRef<ReturnType<typeof setInterval> | null>(null);
+  const deepARTimeoutRef  = useRef<ReturnType<typeof setTimeout>  | null>(null);
+  const captureTimeoutRef = useRef<ReturnType<typeof setTimeout>  | null>(null);
 
   const [camPerm, requestCamPerm] = useSafeCameraPermissions();
   const hasPerm = camPerm?.granted ?? false;
 
-  // Request permissions on mount
   useEffect(() => {
     async function initPerms() {
       if (deepARActive) await requestDeepARPermissions();
@@ -268,14 +266,13 @@ function EffectsTab() {
     initPerms();
   }, []);
 
-  // Cleanup on unmount
   useEffect(() => () => {
-    if (recTimerRef.current)      clearInterval(recTimerRef.current);
-    if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
+    if (recTimerRef.current)       clearInterval(recTimerRef.current);
+    if (deepARTimeoutRef.current)  clearTimeout(deepARTimeoutRef.current);
     if (captureTimeoutRef.current) clearTimeout(captureTimeoutRef.current);
   }, []);
 
-  // Safety timeout: force deepARReady after 2s if onInitialized never fires
+  // Safety timeout: force deepARReady=true after 2s if onInitialized never fires
   useEffect(() => {
     if (!deepARCameraOk) return;
     deepARTimeoutRef.current = setTimeout(() => {
@@ -306,91 +303,65 @@ function EffectsTab() {
     });
   }, [deepARFilterId, showAlert]);
 
-  // ── PHOTO CAPTURE — with reliable fallback ────────────────────────────────
+  // ── Clear all effects ─────────────────────────────────────────────────────
+  const clearAllEffects = useCallback(() => {
+    setSkiaEffectId('none');
+    if (deepARFilterId) { clearDeepAREffect(deepARRef); setDeepARFilterId(null); }
+  }, [deepARFilterId]);
+
+  // ── PHOTO CAPTURE ─────────────────────────────────────────────────────────
   const capturePhoto = useCallback(async () => {
     if (isCapturing || isRecording) return;
     setIsCapturing(true);
     shutterScale.value = withSequence(withSpring(0.82), withSpring(1));
 
-    // ── Path A: DeepAR screenshot ─────────────────────────────────────────
     if (deepARCameraOk && deepARReady && deepARRef.current) {
-      // Set a 4s timeout — if DeepAR callback doesn't fire, fall back to expo-camera
       captureTimeoutRef.current = setTimeout(async () => {
-        console.warn('[Capture] DeepAR screenshot timeout — falling back to expo-camera');
+        console.warn('[Capture] DeepAR screenshot timeout — falling back');
         if (cameraRef.current) {
           try {
             const photo = await cameraRef.current.takePictureAsync({ quality: 0.9 });
-            setCapturedUri(photo.uri);
-            setMode('preview');
-          } catch (e) {
-            showAlert('Error', 'No se pudo tomar la foto. Intenta de nuevo.');
-          }
-        } else {
-          showAlert('Error', 'Cámara no disponible');
-        }
+            setCapturedUri(photo.uri); setMode('preview');
+          } catch { showAlert('Error', 'No se pudo tomar la foto.'); }
+        } else { showAlert('Error', 'Cámara no disponible'); }
         setIsCapturing(false);
       }, 4000);
-
-      try {
-        triggerDeepARScreenshot(deepARRef);
-        // Callback handled in onEventSent — will clear timeout on success
-      } catch {
-        clearTimeout(captureTimeoutRef.current!);
-        setIsCapturing(false);
-        showAlert('Error', 'No se pudo capturar');
-      }
+      try { triggerDeepARScreenshot(deepARRef); }
+      catch { clearTimeout(captureTimeoutRef.current!); setIsCapturing(false); showAlert('Error', 'No se pudo capturar'); }
       return;
     }
 
-    // ── Path B: expo-camera ───────────────────────────────────────────────
     if (cameraRef.current) {
       try {
         const photo = await cameraRef.current.takePictureAsync({ quality: 0.9, skipProcessing: false });
-        setCapturedUri(photo.uri);
-        setMode('preview');
-      } catch (e: any) {
-        showAlert('Error de cámara', e?.message ?? 'No se pudo tomar la foto');
-      }
+        setCapturedUri(photo.uri); setMode('preview');
+      } catch (e: any) { showAlert('Error de cámara', e?.message ?? 'No se pudo tomar la foto'); }
     } else {
-      // ── Path C: gallery picker as final fallback ──────────────────────
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) { showAlert('Permiso requerido', 'Necesitamos acceso a la galería'); setIsCapturing(false); return; }
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [3,4], quality: 0.9 });
-      if (!result.canceled && result.assets[0]) {
-        setCapturedUri(result.assets[0].uri);
-        setMode('preview');
-      }
+      if (!result.canceled && result.assets[0]) { setCapturedUri(result.assets[0].uri); setMode('preview'); }
     }
     setIsCapturing(false);
   }, [isCapturing, isRecording, deepARCameraOk, deepARReady, showAlert]);
 
-  // ── VIDEO RECORDING — with reliable stop ─────────────────────────────────
+  // ── VIDEO RECORDING ───────────────────────────────────────────────────────
   const toggleRecord = useCallback(async () => {
     if (isRecording) {
-      // STOP recording
       if (recTimerRef.current) clearInterval(recTimerRef.current);
-
       if (deepARCameraOk && deepARReady && deepARRef.current) {
         try { deepARRef.current.finishRecording(); } catch (_) {}
-        // Wait for videoRecordingFinished event (handled in onEventSent)
-        // Fallback: set isRecording false after 3s if callback doesn't come
         setTimeout(() => setIsRecording(false), 3000);
       } else if (cameraRef.current) {
         try { await cameraRef.current.stopRecording(); } catch (_) {}
         setIsRecording(false); setRecSeconds(0);
-      } else {
-        setIsRecording(false); setRecSeconds(0);
-      }
+      } else { setIsRecording(false); setRecSeconds(0); }
     } else {
-      // START recording
       if (!deepARCameraOk && !cameraRef.current) {
-        showAlert('Sin cámara', 'La grabación de video requiere una cámara nativa (EAS Build)');
-        return;
+        showAlert('Sin cámara', 'La grabación requiere EAS Build nativo'); return;
       }
-
       setIsRecording(true); setRecSeconds(0);
       recTimerRef.current = setInterval(() => setRecSeconds(s => s + 1), 1000);
-
       if (deepARCameraOk && deepARReady && deepARRef.current) {
         startDeepARRecording(deepARRef);
       } else if (cameraRef.current) {
@@ -402,26 +373,19 @@ function EffectsTab() {
         } catch (e: any) {
           if (recTimerRef.current) clearInterval(recTimerRef.current);
           setIsRecording(false); setRecSeconds(0);
-          if (e?.message && !e.message.includes('stopped')) {
-            showAlert('Error de grabación', e.message);
-          }
+          if (e?.message && !e.message.includes('stopped')) showAlert('Error de grabación', e.message);
         }
       }
     }
   }, [isRecording, deepARCameraOk, deepARReady, showAlert]);
 
-  // ── Save to camera roll ───────────────────────────────────────────────────
   const saveToGallery = useCallback(async (uri: string) => {
     try {
       const { status } = await MediaLibrary.requestPermissionsAsync();
-      if (status === 'granted') {
-        await MediaLibrary.saveToLibraryAsync(uri);
-        showAlert('Guardado', 'Guardado en tu galería');
-      }
+      if (status === 'granted') { await MediaLibrary.saveToLibraryAsync(uri); showAlert('Guardado', 'Guardado en tu galería'); }
     } catch { /* ignore */ }
   }, [showAlert]);
 
-  // ── Publish ───────────────────────────────────────────────────────────────
   const handlePublish = useCallback(async () => {
     if (!capturedUri) return;
     const activeFilter = deepARFilterId
@@ -477,16 +441,14 @@ function EffectsTab() {
     );
   }
 
-  const camH          = W * 1.22;
-  const deepARFilters = DEEPAR_FILTERS;
+  const camH = W * 1.22;
 
-  // ── No camera available ───────────────────────────────────────────────────
   if (!CameraView && !DeepARCameraComponent) {
     return (
       <View style={ef.noPerm}>
         <MaterialCommunityIcons name="cellphone-off" size={52} color={Colors.warning} />
         <Text style={ef.noPermTitle}>Requiere dispositivo físico</Text>
-        <Text style={ef.noPermSub}>La cámara solo funciona en un iPhone/Android con la app instalada via EAS Build o TestFlight</Text>
+        <Text style={ef.noPermSub}>La cámara solo funciona en iPhone/Android con EAS Build o TestFlight</Text>
         <Pressable style={ef.permBtn} onPress={async () => {
           const p = await ImagePicker.requestMediaLibraryPermissionsAsync();
           if (!p.granted) return;
@@ -501,13 +463,12 @@ function EffectsTab() {
     );
   }
 
-  // ── Permission request ────────────────────────────────────────────────────
   if (!hasPerm && !deepARCameraOk) {
     return (
       <View style={ef.noPerm}>
         <MaterialIcons name="no-photography" size={52} color={Colors.textSubtle} />
         <Text style={ef.noPermTitle}>Permiso de cámara requerido</Text>
-        <Text style={ef.noPermSub}>Necesitamos acceso a tu cámara para los efectos AR y la grabación</Text>
+        <Text style={ef.noPermSub}>Necesitamos acceso a tu cámara para los efectos AR</Text>
         <Pressable style={ef.permBtn} onPress={requestCamPerm}>
           <LinearGradient colors={['#7C5CFF','#FF2D78']} style={ef.permBtnInner}>
             <Text style={ef.permBtnText}>Conceder permiso</Text>
@@ -527,7 +488,7 @@ function EffectsTab() {
           height: e.nativeEvent.layout.height,
         })}
       >
-        {/* DeepAR Camera */}
+        {/* DeepAR Camera — zIndex 0 (base layer) */}
         {deepARCameraOk ? (
           <DeepARCameraComponent
             ref={deepARRef}
@@ -542,7 +503,6 @@ function EffectsTab() {
                 prefetchDeepARFilters(['flower_crown', 'lion', 'aviators', 'beauty', 'fire']);
               }
               if (nativeEvent.type === 'screenshotTaken') {
-                // Clear the fallback timeout
                 if (captureTimeoutRef.current) clearTimeout(captureTimeoutRef.current);
                 setCapturedUri(nativeEvent.value);
                 setMode('preview');
@@ -556,7 +516,7 @@ function EffectsTab() {
               if (nativeEvent.type === 'error') {
                 console.error('[DeepAR] error:', nativeEvent.value);
                 if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
-                setDeepARReady(true); // unblock UI even on error
+                setDeepARReady(true);
               }
             }}
             onInitialized={() => {
@@ -580,7 +540,6 @@ function EffectsTab() {
             }}
           />
         ) : CameraView ? (
-          /* expo-camera fallback */
           <CameraView
             ref={cameraRef}
             style={StyleSheet.absoluteFillObject}
@@ -589,37 +548,44 @@ function EffectsTab() {
           />
         ) : null}
 
-        {/* Skia effects — always rendered as overlay regardless of DeepAR state */}
+        {/* Skia effects — zIndex 5: above camera surface, below UI buttons */}
         {skiaEffectId !== 'none' ? (
-          <SkiaEffectsLayer effectId={skiaEffectId} width={camLayout.width} height={camLayout.height} />
+          <View
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }}
+            pointerEvents="none"
+          >
+            <SkiaEffectsLayer
+              effectId={skiaEffectId}
+              width={camLayout.width}
+              height={camLayout.height}
+            />
+          </View>
         ) : null}
 
-        {/* REC indicator */}
+        {/* UI controls — zIndex 20: always on top */}
         {isRecording ? (
-          <View style={ef.recIndicator}>
+          <View style={[ef.recIndicator, { zIndex: 20 }]}>
             <PulsingDot color="#FF3B3B" />
             <Text style={ef.recText}>REC {fmtSec(recSeconds)}</Text>
           </View>
         ) : null}
 
-        {/* DeepAR loading */}
         {deepARCameraOk && !deepARReady ? (
-          <View style={ef.deepARLoading}>
+          <View style={[ef.deepARLoading, { zIndex: 20 }]}>
             <ActivityIndicator color="#fff" size="small" />
             <Text style={ef.deepARLoadingText}>Iniciando DeepAR...</Text>
           </View>
         ) : null}
 
-        {/* Active filter badge */}
         {deepARFilterId ? (
-          <View style={ef.effectBadge}>
+          <View style={[ef.effectBadge, { zIndex: 20 }]}>
             <Text style={ef.effectBadgeText}>
-              {deepARFilters.find(f => f.id === deepARFilterId)?.emoji}{' '}
-              {deepARFilters.find(f => f.id === deepARFilterId)?.name}
+              {DEEPAR_FILTERS.find(f => f.id === deepARFilterId)?.emoji}{' '}
+              {DEEPAR_FILTERS.find(f => f.id === deepARFilterId)?.name}
             </Text>
           </View>
         ) : skiaEffectId !== 'none' ? (
-          <View style={ef.effectBadge}>
+          <View style={[ef.effectBadge, { zIndex: 20 }]}>
             <Text style={ef.effectBadgeText}>
               {SKIA_EFFECTS.find(e => e.id === skiaEffectId)?.emoji}{' '}
               {SKIA_EFFECTS.find(e => e.id === skiaEffectId)?.name}
@@ -627,9 +593,8 @@ function EffectsTab() {
           </View>
         ) : null}
 
-        {/* DeepAR live badge */}
         {deepARCameraOk && deepARReady ? (
-          <View style={ef.deepARLiveBadge}>
+          <View style={[ef.deepARLiveBadge, { zIndex: 20 }]}>
             <LinearGradient colors={['#FF2D78','#7C5CFF']} style={ef.deepARLiveBadgeInner}>
               <PulsingDot color="#fff" />
               <Text style={ef.deepARLiveBadgeText}>DeepAR LIVE</Text>
@@ -637,8 +602,7 @@ function EffectsTab() {
           </View>
         ) : null}
 
-        {/* Camera flip */}
-        <Pressable style={ef.flipBtn} onPress={() => setFacing(f => f === 'front' ? 'back' : 'front')}>
+        <Pressable style={[ef.flipBtn, { zIndex: 20 }]} onPress={() => setFacing(f => f === 'front' ? 'back' : 'front')}>
           <MaterialCommunityIcons name="camera-flip-outline" size={22} color="#fff" />
         </Pressable>
       </View>
@@ -649,13 +613,23 @@ function EffectsTab() {
         style={ef.filterScrollWrap}
         contentContainerStyle={ef.filterStrip}
       >
-        {/* Skia effects */}
+        {/* Normal chip — clears all effects */}
+        <Pressable
+          style={[ef.chip, (skiaEffectId === 'none' && !deepARFilterId) && ef.chipActive]}
+          onPress={clearAllEffects}
+        >
+          <View style={[ef.chipGrad, { backgroundColor: '#1A1A2E', borderRadius: 21 }]} />
+          <Text style={ef.chipEmoji}>📷</Text>
+          <Text style={[ef.chipName, (skiaEffectId === 'none' && !deepARFilterId) && { color: '#fff' }]}>Normal</Text>
+          {(skiaEffectId === 'none' && !deepARFilterId) ? <View style={ef.chipDot} /> : null}
+        </Pressable>
+
         <Text style={ef.sectionLabel}>SKIA GPU</Text>
         {SKIA_EFFECTS.map(e => (
           <Pressable
             key={e.id}
             style={[ef.chip, skiaEffectId === e.id && ef.chipActive]}
-            onPress={() => { setSkiaEffectId(e.id); }}
+            onPress={() => { setSkiaEffectId(e.id); setDeepARFilterId(null); }}
           >
             <LinearGradient colors={e.gradient} style={ef.chipGrad} />
             <Text style={ef.chipEmoji}>{e.emoji}</Text>
@@ -664,12 +638,11 @@ function EffectsTab() {
           </Pressable>
         ))}
 
-        {/* DeepAR filters (only when available) */}
         {deepARCameraOk ? (
           <>
             <View style={ef.divider} />
             <Text style={ef.sectionLabel}>DEEPAR AR</Text>
-            {deepARFilters.map(f => {
+            {DEEPAR_FILTERS.map(f => {
               const loadState = filterLoadState[f.id] ?? 'idle';
               const isActive  = deepARFilterId === f.id;
               const isLoading = loadState === 'downloading' || loadState === 'applying';
@@ -681,11 +654,10 @@ function EffectsTab() {
                   disabled={isLoading}
                 >
                   <LinearGradient colors={['#FF2D7844','#7C5CFF44']} style={ef.chipGrad} />
-                  {isLoading ? (
-                    <ActivityIndicator size="small" color="#FF2D78" style={{ position: 'absolute', top: 12 }} />
-                  ) : (
-                    <Text style={ef.chipEmoji}>{f.emoji}</Text>
-                  )}
+                  {isLoading
+                    ? <ActivityIndicator size="small" color="#FF2D78" style={{ position: 'absolute', top: 12 }} />
+                    : <Text style={ef.chipEmoji}>{f.emoji}</Text>
+                  }
                   <Text style={[ef.chipName, isActive && { color: '#FF2D78' }]}>{f.name}</Text>
                   {isLoading ? <Text style={[ef.chipDownloadLabel, { color: '#FF2D78' }]}>↓</Text> : null}
                   {isActive && !isLoading ? <View style={[ef.chipDot, { backgroundColor: '#FF2D78' }]} /> : null}
@@ -698,7 +670,6 @@ function EffectsTab() {
 
       {/* ── Capture controls ────────────────────────────────────────────── */}
       <View style={ef.captureRow}>
-        {/* Record button */}
         <Pressable style={[ef.recordBtn, isRecording && ef.recordBtnActive]} onPress={toggleRecord}>
           <LinearGradient
             colors={isRecording ? ['#FF3B3B','#CC1A1A'] : ['#333','#222']}
@@ -708,7 +679,6 @@ function EffectsTab() {
           </LinearGradient>
         </Pressable>
 
-        {/* Shutter */}
         <Animated.View style={shutterSty}>
           <Pressable
             style={ef.shutterOuter}
@@ -724,7 +694,6 @@ function EffectsTab() {
           </Pressable>
         </Animated.View>
 
-        {/* Gallery picker */}
         <Pressable style={ef.recordBtn} onPress={async () => {
           const p = await ImagePicker.requestMediaLibraryPermissionsAsync();
           if (!p.granted) return;
@@ -794,6 +763,7 @@ const ef = StyleSheet.create({
 
 // ═════════════════════════════════════════════════════════════════════════════
 // VIDEO PLAYER COMPONENT
+// FIX: useVideoPlayer takes a plain string URI (not {uri:string})
 // ═════════════════════════════════════════════════════════════════════════════
 function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingChange, playerRef }: {
   uri: string; volume: number; rate: number;
@@ -802,15 +772,19 @@ function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingC
   onPlayingChange: (p: boolean) => void;
   playerRef: React.MutableRefObject<any>;
 }) {
-  const player = useVideoPlayer({ uri }, p => {
-    p.volume = volume; p.playbackRate = rate; p.loop = false;
+  // IMPORTANT: pass plain string, not { uri }
+  const player = useVideoPlayer(uri, (p: any) => {
+    if (!p) return;
+    try { p.volume = volume; p.playbackRate = rate; p.loop = false; } catch (_) {}
   });
+
   React.useEffect(() => { playerRef.current = player; }, [player]);
-  React.useEffect(() => { try { player.volume = volume; } catch (_) {} }, [volume]);
-  React.useEffect(() => { try { player.playbackRate = rate; } catch (_) {} }, [rate]);
+  React.useEffect(() => { try { if (player) player.volume = volume; } catch (_) {} }, [volume, player]);
+  React.useEffect(() => { try { if (player) player.playbackRate = rate; } catch (_) {} }, [rate, player]);
   React.useEffect(() => {
     const iv = setInterval(() => {
       try {
+        if (!player) return;
         onPosition(((player as any).currentTime ?? 0) * 1000);
         const dur = (player as any).duration ?? 0;
         if (dur > 0) onDuration(dur * 1000);
@@ -819,6 +793,15 @@ function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingC
     }, 250);
     return () => clearInterval(iv);
   }, [player]);
+
+  if (!VideoView || !player) {
+    return (
+      <View style={[vid.player, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#0A0A14' }]}>
+        <MaterialCommunityIcons name="video-outline" size={32} color="#333" />
+        <Text style={{ color: '#555', fontSize: 11, marginTop: 6 }}>Cargando video...</Text>
+      </View>
+    );
+  }
   return <VideoView player={player} style={vid.player} contentFit="cover" nativeControls={false} />;
 }
 
@@ -827,7 +810,7 @@ function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingC
 // ═════════════════════════════════════════════════════════════════════════════
 const SPEED_PRESETS = [
   { label: '0.5×', value: 0.5 }, { label: '1×', value: 1.0 },
-  { label: '2×', value: 2.0 }, { label: '4×', value: 4.0 },
+  { label: '2×', value: 2.0 },  { label: '4×', value: 4.0 },
 ];
 
 type ColorFilterName = 'vintage' | 'cine' | 'frio' | 'calido' | 'bn' | 'neon' | 'none';
@@ -843,17 +826,17 @@ const VIDEO_COLOR_FILTERS: { id: ColorFilterName; name: string; emoji: string; g
 
 interface Clip { id: string; uri: string; durationMs: number }
 interface DeezerArtist { name: string }
-interface DeezerAlbum { cover_medium: string; title: string }
-interface DeezerTrack { id: number; title: string; preview: string; duration: number; artist: DeezerArtist; album: DeezerAlbum }
+interface DeezerAlbum  { cover_medium: string; title: string }
+interface DeezerTrack  { id: number; title: string; preview: string; duration: number; artist: DeezerArtist; album: DeezerAlbum }
 
 const DEEZER_CATS = [
-  { id: 'pop', q: 'top pop 2025', label: 'Pop', emoji: '🎤' },
-  { id: 'reggaeton', q: 'reggaeton hits', label: 'Reggaetón', emoji: '🔥' },
-  { id: 'hiphop', q: 'hip hop rap', label: 'Hip Hop', emoji: '🎧' },
-  { id: 'electronic', q: 'electronic edm', label: 'Electrónica', emoji: '⚡' },
-  { id: 'lofi', q: 'lofi chill beats', label: 'Lo-Fi', emoji: '☕' },
-  { id: 'latin', q: 'latin hits', label: 'Latino', emoji: '🌶️' },
-  { id: 'viral', q: 'trending viral 2025', label: 'Viral', emoji: '📈' },
+  { id: 'pop',        q: 'top pop 2025',        label: 'Pop',        emoji: '🎤' },
+  { id: 'reggaeton',  q: 'reggaeton hits',       label: 'Reggaetón',  emoji: '🔥' },
+  { id: 'hiphop',     q: 'hip hop rap',          label: 'Hip Hop',    emoji: '🎧' },
+  { id: 'electronic', q: 'electronic edm',       label: 'Electrónica',emoji: '⚡' },
+  { id: 'lofi',       q: 'lofi chill beats',     label: 'Lo-Fi',      emoji: '☕' },
+  { id: 'latin',      q: 'latin hits',           label: 'Latino',     emoji: '🌶️' },
+  { id: 'viral',      q: 'trending viral 2025',  label: 'Viral',      emoji: '📈' },
 ];
 
 function VideosTab() {
@@ -863,24 +846,24 @@ function VideosTab() {
   const playerRef     = useRef<any>(null);
   const soundRef      = useRef<Audio.Sound | null>(null);
 
-  const [clips,         setClips]         = useState<Clip[]>([]);
-  const [activeClipIdx, setActiveClipIdx] = useState(0);
-  const [isPlaying,     setIsPlaying]     = useState(false);
-  const [speed,         setSpeed]         = useState(1.0);
-  const [trimStart,     setTrimStart]     = useState(0.0);
-  const [trimEnd,       setTrimEnd]       = useState(1.0);
-  const [durationMs,    setDurationMs]    = useState(0);
-  const [positionMs,    setPositionMs]    = useState(0);
-  const [selectedTrack, setSelectedTrack] = useState<DeezerTrack | null>(null);
-  const [videoVol,      setVideoVol]      = useState(0.8);
-  const [musicVol,      setMusicVol]      = useState(0.6);
-  const [caption,       setCaption]       = useState('');
-  const [captionModal,  setCaptionModal]  = useState(false);
-  const [isPublishing,  setIsPublishing]  = useState(false);
-  const [musicModal,    setMusicModal]    = useState(false);
-  const [colorFilter,   setColorFilter]   = useState<ColorFilterName>('none');
+  const [clips,          setClips]          = useState<Clip[]>([]);
+  const [activeClipIdx,  setActiveClipIdx]  = useState(0);
+  const [isPlaying,      setIsPlaying]      = useState(false);
+  const [speed,          setSpeed]          = useState(1.0);
+  const [trimStart,      setTrimStart]      = useState(0.0);
+  const [trimEnd,        setTrimEnd]        = useState(1.0);
+  const [durationMs,     setDurationMs]     = useState(0);
+  const [positionMs,     setPositionMs]     = useState(0);
+  const [selectedTrack,  setSelectedTrack]  = useState<DeezerTrack | null>(null);
+  const [videoVol,       setVideoVol]       = useState(0.8);
+  const [musicVol,       setMusicVol]       = useState(0.6);
+  const [caption,        setCaption]        = useState('');
+  const [captionModal,   setCaptionModal]   = useState(false);
+  const [isPublishing,   setIsPublishing]   = useState(false);
+  const [musicModal,     setMusicModal]     = useState(false);
+  const [colorFilter,    setColorFilter]    = useState<ColorFilterName>('none');
   const [exportProgress, setExportProgress] = useState<string | null>(null);
-  const [isExporting,   setIsExporting]   = useState(false);
+  const [isExporting,    setIsExporting]    = useState(false);
 
   const skiaPreviewId = colorFilter !== 'none' ? colorFilter as SkiaEffectId : 'none';
 
@@ -916,7 +899,7 @@ function VideosTab() {
     const p = playerRef.current; if (!p) return;
     try {
       if (isPlaying) { p.pause?.(); setIsPlaying(false); }
-      else           { p.play?.();  setIsPlaying(true); }
+      else           { p.play?.();  setIsPlaying(true);  }
     } catch (_) {}
   }, [isPlaying]);
 
@@ -937,15 +920,14 @@ function VideosTab() {
       const result = await exportFinal({
         clips: clips.map(c => ({
           uri: c.uri,
-          trimStart: c.id === activeClip.id ? trimStart : 0,
-          trimEnd:   c.id === activeClip.id ? trimEnd   : 1,
+          trimStart:  c.id === activeClip.id ? trimStart : 0,
+          trimEnd:    c.id === activeClip.id ? trimEnd   : 1,
           durationMs: c.durationMs,
         })),
         speed, colorFilter, musicUri: selectedTrack?.preview,
         musicVol, videoVol,
         onProgress: (step, pct) => setExportProgress(`${step} (${pct}%)`),
       });
-
       setExportProgress('Publicando...');
       const finalUri = result.uri || activeClip.uri;
       await addVideo({
@@ -981,7 +963,7 @@ function VideosTab() {
           <View style={vid.ffmpegBadge}>
             <MaterialCommunityIcons name="information" size={14} color={Colors.warning} />
             <Text style={[vid.ffmpegBadgeText, { color: Colors.warning }]}>
-              Tip: El video se publica tal cual (FFmpeg disponible en EAS Build nativo)
+              Tip: El video se publica tal cual (FFmpeg en EAS Build nativo)
             </Text>
           </View>
         )}
@@ -1026,24 +1008,28 @@ function VideosTab() {
       {/* Video player */}
       {activeClip ? (
         <View style={vid.playerWrap}>
-          <ClipVideoPlayer key={activeClip.id} uri={activeClip.uri} volume={videoVol} rate={speed}
+          <ClipVideoPlayer
+            key={activeClip.id} uri={activeClip.uri} volume={videoVol} rate={speed}
             onDuration={setDurationMs} onPosition={setPositionMs} onPlayingChange={setIsPlaying}
-            playerRef={playerRef} />
+            playerRef={playerRef}
+          />
           {skiaPreviewId !== 'none' ? (
-            <SkiaEffectsLayer effectId={skiaPreviewId} width={W} height={W * 0.62} />
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }} pointerEvents="none">
+              <SkiaEffectsLayer effectId={skiaPreviewId} width={W} height={W * 0.62} />
+            </View>
           ) : null}
-          <Pressable style={vid.playOverlay} onPress={togglePlay}>
+          <Pressable style={[vid.playOverlay, { zIndex: 10 }]} onPress={togglePlay}>
             {!isPlaying
               ? <View style={vid.playBtn}><MaterialIcons name="play-arrow" size={42} color="#fff" /></View>
               : <View style={vid.pauseBtn}><MaterialIcons name="pause" size={26} color="#fff" /></View>}
           </Pressable>
           {speed !== 1 ? (
-            <View style={vid.speedBadge}>
+            <View style={[vid.speedBadge, { zIndex: 10 }]}>
               <PulsingDot color="#FF9D00" /><Text style={vid.speedBadgeText}>{speed}×</Text>
             </View>
           ) : null}
           {selectedTrack ? (
-            <View style={vid.musicBadge}>
+            <View style={[vid.musicBadge, { zIndex: 10 }]}>
               <MaterialCommunityIcons name="music-note" size={11} color="#fff" />
               <Text style={vid.musicBadgeText} numberOfLines={1}>{selectedTrack.title}</Text>
             </View>
@@ -1102,12 +1088,9 @@ function VideosTab() {
       {/* Speed */}
       <View style={vid.section}>
         <Text style={vid.sectionTitle}>⚡ Velocidad</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ flexDirection: 'row', gap: 8 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', gap: 8 }}>
           {SPEED_PRESETS.map(sp => (
-            <Pressable key={sp.value}
-              style={[vid.speedChip, speed === sp.value && vid.speedChipActive]}
-              onPress={() => handleSetSpeed(sp.value)}>
+            <Pressable key={sp.value} style={[vid.speedChip, speed === sp.value && vid.speedChipActive]} onPress={() => handleSetSpeed(sp.value)}>
               <Text style={[vid.speedLabel, speed === sp.value && { color: '#fff' }]}>{sp.label}</Text>
             </Pressable>
           ))}
@@ -1117,12 +1100,9 @@ function VideosTab() {
       {/* Color filter */}
       <View style={vid.section}>
         <Text style={vid.sectionTitle}>🎨 Filtro de color</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ flexDirection: 'row', gap: 8 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', gap: 8 }}>
           {VIDEO_COLOR_FILTERS.map(f => (
-            <Pressable key={f.id}
-              style={[vid.filterChip, colorFilter === f.id && vid.filterChipActive]}
-              onPress={() => setColorFilter(f.id)}>
+            <Pressable key={f.id} style={[vid.filterChip, colorFilter === f.id && vid.filterChipActive]} onPress={() => setColorFilter(f.id)}>
               <LinearGradient colors={f.gradient} style={vid.filterChipGrad} />
               <Text style={vid.filterChipEmoji}>{f.emoji}</Text>
               <Text style={[vid.filterChipName, colorFilter === f.id && { color: '#fff' }]}>{f.name}</Text>
@@ -1163,28 +1143,23 @@ function VideosTab() {
         </Pressable>
       </View>
 
-      {/* Volume */}
       {selectedTrack ? (
         <View style={vid.section}>
           <Text style={vid.sectionTitle}>🔊 Mezcla de audio</Text>
-          <VolumeSlider label="Video" value={videoVol} onChange={setVideoVol} color={Colors.primary} />
+          <VolumeSlider label="Video"  value={videoVol} onChange={setVideoVol} color={Colors.primary} />
           <VolumeSlider label="Música" value={musicVol} onChange={setMusicVol} color={Colors.warning} />
         </View>
       ) : null}
 
-      {/* Publish */}
       <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
         <Pressable style={vid.publishBtn} onPress={() => setCaptionModal(true)} disabled={isExporting}>
           <LinearGradient colors={['#7C5CFF','#FF2D78']} style={vid.publishBtnInner}>
             <MaterialCommunityIcons name="send-circle-outline" size={20} color="#fff" />
-            <Text style={vid.publishBtnText}>
-              {isFFmpegAvailable() ? 'Exportar y publicar' : 'Publicar video'}
-            </Text>
+            <Text style={vid.publishBtnText}>{isFFmpegAvailable() ? 'Exportar y publicar' : 'Publicar video'}</Text>
           </LinearGradient>
         </Pressable>
       </View>
 
-      {/* Caption modal */}
       <Modal visible={captionModal} transparent animationType="slide" presentationStyle="overFullScreen"
         onRequestClose={() => !isPublishing && setCaptionModal(false)}>
         <Pressable style={cm.backdrop} onPress={() => !isPublishing && setCaptionModal(false)} />
@@ -1205,9 +1180,7 @@ function VideosTab() {
             onPress={handleExportAndPublish} disabled={isPublishing}>
             <LinearGradient colors={['#7C5CFF','#FF2D78']} style={cm.pubBtnInner}>
               {isPublishing ? <ActivityIndicator color="#fff" size="small" /> : null}
-              <Text style={cm.pubBtnText}>
-                {isPublishing ? (exportProgress ?? 'Procesando...') : '🚀 Publicar'}
-              </Text>
+              <Text style={cm.pubBtnText}>{isPublishing ? (exportProgress ?? 'Procesando...') : '🚀 Publicar'}</Text>
             </LinearGradient>
           </Pressable>
         </View>
@@ -1311,17 +1284,17 @@ const vid = StyleSheet.create({
 });
 
 const cm = StyleSheet.create({
-  backdrop:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)' },
-  sheet:      { backgroundColor: Colors.surfaceElevated, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, gap: 14, borderTopWidth: 1, borderColor: Colors.border },
-  handle:     { width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border, alignSelf: 'center' },
-  title:      { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
+  backdrop:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)' },
+  sheet:        { backgroundColor: Colors.surfaceElevated, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, gap: 14, borderTopWidth: 1, borderColor: Colors.border },
+  handle:       { width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border, alignSelf: 'center' },
+  title:        { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
   progressWrap: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: Colors.primary + '22', borderRadius: Radius.md, padding: 12 },
   progressText: { color: Colors.primary, fontSize: FontSize.sm, flex: 1 },
-  input:      { backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.md, paddingHorizontal: 14, paddingVertical: 12, color: Colors.textPrimary, fontSize: FontSize.md, minHeight: 80, textAlignVertical: 'top' },
-  count:      { color: Colors.textSubtle, fontSize: 11, textAlign: 'right' },
-  pubBtn:     { borderRadius: Radius.lg, overflow: 'hidden' },
-  pubBtnInner:{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
-  pubBtnText: { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
+  input:        { backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.md, paddingHorizontal: 14, paddingVertical: 12, color: Colors.textPrimary, fontSize: FontSize.md, minHeight: 80, textAlignVertical: 'top' },
+  count:        { color: Colors.textSubtle, fontSize: 11, textAlign: 'right' },
+  pubBtn:       { borderRadius: Radius.lg, overflow: 'hidden' },
+  pubBtnInner:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
+  pubBtnText:   { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1343,7 +1316,7 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
     if (!q.trim()) return;
     setLoading(true); setError('');
     try {
-      const res = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=25&output=json`);
+      const res  = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=25&output=json`);
       if (!res.ok) throw new Error(`${res.status}`);
       const json = await res.json();
       setTracks((json.data ?? []) as DeezerTrack[]);
@@ -1486,6 +1459,7 @@ const dm = StyleSheet.create({
 
 // ═════════════════════════════════════════════════════════════════════════════
 // TAB 3 — AVATARS (AI via OnSpace AI)
+// FIX: iOS ph:// URIs read via expo-file-system (fetch() crashes on ph://)
 // ═════════════════════════════════════════════════════════════════════════════
 const AVATAR_STYLES_LIST = [
   { id: 'cartoon',    label: 'Cartoon',   emoji: '🎨', g: ['#7C5CFF','#B44FFF'] as [string,string] },
@@ -1503,14 +1477,43 @@ function AvatarsTab() {
   const { addVideo }  = useFeed();
   const supabase      = getSupabaseClient();
 
-  const [step,            setStep]            = useState<'pick' | 'style' | 'generating' | 'result'>('pick');
-  const [photoUri,        setPhotoUri]        = useState<string | null>(null);
-  const [uploadedUrl,     setUploadedUrl]     = useState<string | null>(null);
-  const [selectedStyle,   setSelectedStyle]   = useState('cartoon');
-  const [avatarUrl,       setAvatarUrl]       = useState<string | null>(null);
-  const [isUploading,     setIsUploading]     = useState(false);
-  const [isGenerating,    setIsGenerating]    = useState(false);
+  const [step,             setStep]             = useState<'pick' | 'style' | 'generating' | 'result'>('pick');
+  const [photoUri,         setPhotoUri]         = useState<string | null>(null);
+  const [uploadedUrl,      setUploadedUrl]      = useState<string | null>(null);
+  const [selectedStyle,    setSelectedStyle]    = useState('cartoon');
+  const [avatarUrl,        setAvatarUrl]        = useState<string | null>(null);
+  const [isUploading,      setIsUploading]      = useState(false);
+  const [isGenerating,     setIsGenerating]     = useState(false);
   const [generatingStatus, setGeneratingStatus] = useState('');
+
+  /**
+   * FIX: iOS ph:// URIs from ImagePicker cannot be fetched with fetch().
+   * Must use expo-file-system readAsStringAsync with Base64 encoding.
+   */
+  const readUriAsBytes = useCallback(async (uri: string): Promise<Uint8Array> => {
+    const FS = require('expo-file-system');
+    if (uri.startsWith('ph://') || uri.startsWith('assets-library://')) {
+      const b64    = await FS.readAsStringAsync(uri, { encoding: FS.EncodingType.Base64 });
+      const binary = atob(b64);
+      const bytes  = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return bytes;
+    }
+    // file:// URIs work fine with fetch
+    const resp = await fetch(uri);
+    const ab   = await resp.arrayBuffer();
+    return new Uint8Array(ab);
+  }, []);
+
+  const uploadPhoto = useCallback(async (uri: string, prefix: string): Promise<string> => {
+    const bytes    = await readUriAsBytes(uri);
+    const fileName = `${prefix}_${Date.now()}.jpg`;
+    const { error: upErr } = await supabase.storage
+      .from('images').upload(fileName, bytes, { contentType: 'image/jpeg', upsert: true });
+    if (upErr) throw upErr;
+    const { data: { publicUrl } } = supabase.storage.from('images').getPublicUrl(fileName);
+    return publicUrl;
+  }, [supabase, readUriAsBytes]);
 
   const pickPhoto = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -1524,15 +1527,7 @@ function AvatarsTab() {
     setPhotoUri(uri);
     setIsUploading(true);
     try {
-      const resp  = await fetch(uri);
-      const blob  = await resp.blob();
-      const ab    = await blob.arrayBuffer();
-      const bytes = new Uint8Array(ab);
-      const fileName = `avatar_src_${Date.now()}.jpg`;
-      const { error: upErr } = await supabase.storage
-        .from('images').upload(fileName, bytes, { contentType: 'image/jpeg', upsert: true });
-      if (upErr) throw upErr;
-      const { data: { publicUrl } } = supabase.storage.from('images').getPublicUrl(fileName);
+      const publicUrl = await uploadPhoto(uri, 'avatar_src');
       setUploadedUrl(publicUrl);
       setStep('style');
     } catch (e: any) {
@@ -1540,7 +1535,7 @@ function AvatarsTab() {
       setPhotoUri(null);
     }
     setIsUploading(false);
-  }, [supabase, showAlert]);
+  }, [supabase, showAlert, uploadPhoto]);
 
   const takeSelfie = useCallback(async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
@@ -1554,15 +1549,7 @@ function AvatarsTab() {
     setPhotoUri(uri);
     setIsUploading(true);
     try {
-      const resp  = await fetch(uri);
-      const blob  = await resp.blob();
-      const ab    = await blob.arrayBuffer();
-      const bytes = new Uint8Array(ab);
-      const fileName = `selfie_${Date.now()}.jpg`;
-      const { error: upErr } = await supabase.storage
-        .from('images').upload(fileName, bytes, { contentType: 'image/jpeg', upsert: true });
-      if (upErr) throw upErr;
-      const { data: { publicUrl } } = supabase.storage.from('images').getPublicUrl(fileName);
+      const publicUrl = await uploadPhoto(uri, 'selfie');
       setUploadedUrl(publicUrl);
       setStep('style');
     } catch (e: any) {
@@ -1570,7 +1557,7 @@ function AvatarsTab() {
       setPhotoUri(null);
     }
     setIsUploading(false);
-  }, [supabase, showAlert]);
+  }, [supabase, showAlert, uploadPhoto]);
 
   const generateAvatar = useCallback(async () => {
     if (!uploadedUrl) { showAlert('Sin foto', 'Primero sube una foto'); return; }
@@ -1591,7 +1578,7 @@ function AvatarsTab() {
       setAvatarUrl(data.imageUrl);
       setStep('result');
     } catch (e: any) {
-      showAlert('Error de generación', e?.message ?? 'No se pudo generar el avatar. Verifica tu conexión e intenta de nuevo.');
+      showAlert('Error de generación', e?.message ?? 'No se pudo generar el avatar.');
       setStep('style');
     }
     setIsGenerating(false);
@@ -1610,7 +1597,6 @@ function AvatarsTab() {
     } catch (e: any) { showAlert('Error', e?.message ?? 'No se pudo publicar'); }
   }, [avatarUrl, selectedStyle, addVideo, showAlert]);
 
-  // ── Step: Pick photo ────────────────────────────────────────────────────────
   if (step === 'pick') {
     return (
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 20, gap: 20 }}>
@@ -1624,7 +1610,6 @@ function AvatarsTab() {
             </View>
           </LinearGradient>
         </View>
-
         {isUploading ? (
           <View style={av.uploadingBox}>
             <ActivityIndicator color={Colors.primary} size="large" />
@@ -1646,14 +1631,9 @@ function AvatarsTab() {
             </Pressable>
           </>
         )}
-
         <View style={av.tipBox}>
           <Text style={av.tipTitle}>Tips para mejor resultado:</Text>
-          {[
-            'Foto frontal con el rostro bien visible',
-            'Buena iluminación, sin sombras fuertes',
-            'Fondo neutro o claro',
-          ].map((tip, i) => (
+          {['Foto frontal con el rostro bien visible','Buena iluminación, sin sombras fuertes','Fondo neutro o claro'].map((tip, i) => (
             <View key={i} style={av.tipRow}>
               <MaterialCommunityIcons name="check-circle-outline" size={13} color={Colors.primary} />
               <Text style={av.tipText}>{tip}</Text>
@@ -1664,7 +1644,6 @@ function AvatarsTab() {
     );
   }
 
-  // ── Step: Choose style ──────────────────────────────────────────────────────
   if (step === 'style') {
     return (
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16, gap: 16 }}>
@@ -1676,17 +1655,11 @@ function AvatarsTab() {
         <Text style={av.stepTitle}>Elige tu estilo</Text>
         <View style={av.grid}>
           {AVATAR_STYLES_LIST.map(s => (
-            <Pressable key={s.id}
-              style={[av.card, selectedStyle === s.id && av.cardActive]}
-              onPress={() => setSelectedStyle(s.id)}>
+            <Pressable key={s.id} style={[av.card, selectedStyle === s.id && av.cardActive]} onPress={() => setSelectedStyle(s.id)}>
               <LinearGradient colors={s.g} style={av.cardGrad} />
               <Text style={av.cardEmoji}>{s.emoji}</Text>
               <Text style={[av.cardLabel, selectedStyle === s.id && { color: Colors.primary }]}>{s.label}</Text>
-              {selectedStyle === s.id ? (
-                <View style={av.cardCheck}>
-                  <MaterialIcons name="check-circle" size={14} color={Colors.primary} />
-                </View>
-              ) : null}
+              {selectedStyle === s.id ? <View style={av.cardCheck}><MaterialIcons name="check-circle" size={14} color={Colors.primary} /></View> : null}
             </Pressable>
           ))}
         </View>
@@ -1705,7 +1678,6 @@ function AvatarsTab() {
     );
   }
 
-  // ── Step: Generating ────────────────────────────────────────────────────────
   if (step === 'generating') {
     return (
       <View style={av.generatingWrap}>
@@ -1720,7 +1692,6 @@ function AvatarsTab() {
     );
   }
 
-  // ── Step: Result ─────────────────────────────────────────────────────────────
   if (step === 'result' && avatarUrl) {
     const styleDef = AVATAR_STYLES_LIST.find(s => s.id === selectedStyle);
     return (
@@ -1755,7 +1726,6 @@ function AvatarsTab() {
       </ScrollView>
     );
   }
-
   return null;
 }
 
@@ -1907,7 +1877,9 @@ function MusicTab() {
       {loading
         ? <View style={mu.center}><ActivityIndicator color={Colors.warning} size="large" /><Text style={mu.centerText}>Cargando desde Deezer...</Text></View>
         : error
-        ? <View style={mu.center}><MaterialCommunityIcons name="wifi-off" size={44} color={Colors.textSubtle} /><Text style={mu.centerText}>{error}</Text>
+        ? <View style={mu.center}>
+            <MaterialCommunityIcons name="wifi-off" size={44} color={Colors.textSubtle} />
+            <Text style={mu.centerText}>{error}</Text>
             <Pressable style={mu.retryBtn} onPress={() => { const c = DEEZER_CATS.find(x => x.id === catId); if (c) searchDeezer(c.q); }}>
               <Text style={mu.retryBtnText}>Reintentar</Text>
             </Pressable>
