@@ -10,7 +10,11 @@
     "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
-      "deploymentTarget": "16.4"
+      "deploymentTarget": "16.4",
+      "bundleIdentifier": "com.clipdag.onspaceapp",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {

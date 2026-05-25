@@ -1,8 +1,0 @@
-packages:
-  - '.'
-
-allowBuilds:
-  dtrace-provider: set this to true or false
-  protobufjs: true
-  react-native-elements: true
-  unrs-resolver: true
