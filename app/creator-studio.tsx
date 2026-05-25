@@ -63,12 +63,23 @@ import {
 
 // ── expo-camera (fallback) ───────────────────────────────────────────────────
 let CameraView: any = null;
-let useCameraPermissions: any = null;
+let _useCameraPermissions: any = null;
 try {
   const ec = require('expo-camera');
-  CameraView           = ec.CameraView           ?? null;
-  useCameraPermissions = ec.useCameraPermissions ?? null;
+  CameraView              = ec.CameraView           ?? null;
+  _useCameraPermissions   = ec.useCameraPermissions ?? null;
 } catch { /* web */ }
+
+// Safe hook wrapper — must be called unconditionally at component level
+function useSafeCameraPermissions(): [{ granted: boolean } | null, () => Promise<any>] {
+  // Always call the real hook if available, otherwise return a no-op pair.
+  // This must be called at the TOP of every component that uses it — never conditionally.
+  if (_useCameraPermissions) {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    return _useCameraPermissions();
+  }
+  return [{ granted: false }, async () => {}];
+}
 
 const { width: W } = Dimensions.get('window');
 
@@ -229,42 +240,7 @@ function PulsingDot({ color }: { color: string }) {
   return <Animated.View style={sty} />;
 }
 
-function HeartsOverlay({ width, height }: { width: number; height: number }) {
-  const HEARTS = ['💕','❤️','💖','💗','🩷','💝'];
-  const items = useMemo(() => Array.from({ length: 10 }, (_, i) => ({
-    id: i, x: 20 + Math.random() * (width - 60),
-    y: height * 0.4 + Math.random() * height * 0.4,
-    emoji: HEARTS[i % HEARTS.length], size: 16 + Math.random() * 14, delay: i * 200,
-  })), [width, height]);
-  return (
-    <View style={[StyleSheet.absoluteFillObject, { zIndex: 10 }]} pointerEvents="none">
-      {items.map(h => <FloatingEmoji key={h.id} {...h} />)}
-    </View>
-  );
-}
-
-function FloatingEmoji({ x, y, emoji, size, delay }: any) {
-  const op = useSharedValue(0);
-  const ty = useSharedValue(0);
-  useEffect(() => {
-    const t = setTimeout(() => {
-      const run = () => {
-        op.value = 0; ty.value = 0;
-        op.value = withTiming(1, { duration: 300 });
-        ty.value = withTiming(-100, { duration: 2200, easing: Easing.out(Easing.quad) });
-      };
-      run();
-      const iv = setInterval(run, 2600 + Math.random() * 800);
-      return () => clearInterval(iv);
-    }, delay);
-    return () => clearTimeout(t);
-  }, []);
-  const sty = useAnimatedStyle(() => ({
-    position: 'absolute', left: x, top: y,
-    opacity: op.value, transform: [{ translateY: ty.value }],
-  }));
-  return <Animated.View style={sty}><Text style={{ fontSize: size }}>{emoji}</Text></Animated.View>;
-}
+// Hearts effect moved to SkiaEffectsLayer (effectId: 'hearts')
 
 function fmtMs(ms: number) {
   const s = Math.floor(ms / 1000);
@@ -371,8 +347,7 @@ function EffectsTab() {
 
   const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const [camPerm, requestCamPerm] = useCameraPermissions
-    ? useCameraPermissions() : [{ granted: false }, async () => {}];
+  const [camPerm, requestCamPerm] = useSafeCameraPermissions();
   const hasPerm = camPerm?.granted ?? false;
 
   useEffect(() => { requestCamPerm(); }, []);
@@ -558,7 +533,7 @@ function EffectsTab() {
         onLayout={e => setCamLayout({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
       >
         {/* DeepAR Camera — primary when available */}
-        {deepARActive && DeepARCameraComponent ? (
+        {deepARActive && DeepARCameraComponent !== null && DeepARCameraComponent !== undefined ? (
           <DeepARCameraComponent
             ref={deepARRef}
             apiKey={DEEPAR_API_KEY}
@@ -595,11 +570,9 @@ function EffectsTab() {
           ) : null
         )}
 
-        {/* Skia overlays — only when DeepAR not active or for GPU effects on top */}
+        {/* Skia overlays — only when DeepAR not active */}
         {!deepARActive && skiaEffectId !== 'none' ? (
-          skiaEffectId === 'hearts'
-            ? <HeartsOverlay width={camLayout.width} height={camLayout.height} />
-            : <SkiaEffectsLayer effectId={skiaEffectId} width={camLayout.width} height={camLayout.height} />
+          <SkiaEffectsLayer effectId={skiaEffectId} width={camLayout.width} height={camLayout.height} />
         ) : null}
 
         {/* Status overlays */}
