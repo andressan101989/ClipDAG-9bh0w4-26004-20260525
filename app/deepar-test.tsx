@@ -62,13 +62,15 @@ const API_KEY_ANDROID = process.env.EXPO_PUBLIC_DEEPAR_API_KEY_ANDROID ?? '26eb7
 const API_KEY = Platform.select({ ios: API_KEY_IOS, android: API_KEY_ANDROID, default: API_KEY_ANDROID }) ?? '';
 
 /**
- * Remote filter CDN — official public endpoint used in the react-native-deepar
- * example app (Config.TEST.REMOTE_EFFECT_URL).
- * Files have NO extension in this CDN.
+ * Remote filter CDN — primary + mirror fallback.
+ * Primary: storage.deepar.ai (official)
+ * Mirror:  betacoins.magix.net (react-native-deepar example Config.TEST)
+ * Files have NO extension in both CDNs.
  */
-const REMOTE_CDN = 'https://storage.deepar.ai/effects/';
+const REMOTE_CDN_PRIMARY = 'https://storage.deepar.ai/effects/';
+const REMOTE_CDN_MIRROR  = 'http://betacoins.magix.net/public/deepar-filters/';
 
-/** Known-working remote effects from DeepAR's public test CDN */
+/** Known-working remote effects from DeepAR public CDNs */
 const REMOTE_EFFECTS = [
   'flower_crown',
   'viking_helmet',
@@ -148,29 +150,48 @@ export default function DeepARTestScreen() {
     } catch (e: any) { log(`clearEffect ERROR: ${e?.message}`); }
   }, []);
 
-  // ── Download + apply remote effect via rn-fetch-blob ──────────────────────
+  // ── Download + apply remote effect via rn-fetch-blob + CDN fallback ─────────
   const applyRemoteEffect = useCallback(async (effectName: string) => {
     if (!deepARRef.current) { log('ERROR: ref is null'); return; }
-    if (!RNFetchBlob) { log('ERROR: rn-fetch-blob not available'); return; }
+    if (!RNFetchBlob)        { log('ERROR: rn-fetch-blob not available'); return; }
 
-    const url = `${REMOTE_CDN}${effectName}`;
-    log(`Downloading: ${url}`);
     setDownloading(true);
 
+    const tryDownload = async (url: string): Promise<string | null> => {
+      log(`Trying: ${url}`);
+      try {
+        const res   = await RNFetchBlob.config({ fileCache: true, timeout: 30000 }).fetch('GET', url);
+        const path  = res.path();
+        const stat  = await RNFetchBlob.fs.stat(path).catch(() => null);
+        const bytes = stat?.size ?? 0;
+        log(`Got ${bytes}b → ${path}`);
+        if (bytes < 64) { log(`WARN: file too small (${bytes}b) — likely 404 HTML`); return null; }
+        return path;
+      } catch (e: any) { log(`Fetch error: ${e?.message ?? e}`); return null; }
+    };
+
+    // 1. Primary CDN
+    let localPath = await tryDownload(`${REMOTE_CDN_PRIMARY}${effectName}`);
+    // 2. Mirror fallback
+    if (!localPath) {
+      log('Primary failed — trying mirror...');
+      localPath = await tryDownload(`${REMOTE_CDN_MIRROR}${effectName}`);
+    }
+
+    if (!localPath) {
+      log(`❌ Both CDNs failed for '${effectName}'`);
+      setDownloading(false);
+      return;
+    }
+
+    if (!deepARRef.current) { log('ERROR: ref lost during download'); setDownloading(false); return; }
+
+    log(`switchEffectWithPath path="${localPath}" slot="effect"`);
     try {
-      const res = await RNFetchBlob.config({ fileCache: true }).fetch('GET', url);
-      const localPath = res.path(); // raw path, NO file:// prefix — required by DeepAR iOS
-      log(`Downloaded to: ${localPath}`);
-
-      if (!deepARRef.current) { log('ERROR: ref lost during download'); setDownloading(false); return; }
-
-      log(`switchEffectWithPath path="${localPath}" slot="effect"`);
       deepARRef.current.switchEffectWithPath({ path: localPath, slot: 'effect' });
       setActiveEffect(effectName);
-      log(`Effect applied: ${effectName}`);
-    } catch (e: any) {
-      log(`Download/apply ERROR: ${e?.message ?? e}`);
-    }
+      log(`✅ Effect applied: ${effectName}`);
+    } catch (e: any) { log(`switchEffectWithPath ERROR: ${e?.message ?? e}`); }
 
     setDownloading(false);
   }, []);

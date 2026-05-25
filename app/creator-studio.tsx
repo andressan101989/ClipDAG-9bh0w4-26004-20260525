@@ -44,6 +44,15 @@ try {
   useVideoPlayer = ev.useVideoPlayer ?? ((_src: any, _setup?: any) => null);
 } catch { /* web / preview */ }
 
+// ── expo-av Video — fallback when expo-video stub returns null ───────────────
+let AVVideo: any     = null;
+let AVResizeMode: any = null;
+try {
+  const avMod  = require('expo-av');
+  AVVideo      = avMod.Video      ?? null;
+  AVResizeMode = avMod.ResizeMode ?? null;
+} catch { /* not compiled */ }
+
 // ── DeepAR ────────────────────────────────────────────────────────────────────
 import {
   isDeepARAvailable, DEEPAR_API_KEY, DEEPAR_FILTERS,
@@ -795,8 +804,15 @@ const ef = StyleSheet.create({
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// VIDEO PLAYER COMPONENT
-// FIX: useVideoPlayer takes a plain string URI (not {uri:string})
+// VIDEO PLAYER COMPONENT — expo-video primary, expo-av fallback
+//
+// Rendering strategy:
+//  1. expo-video (VideoView + useVideoPlayer) — preferred, hardware accelerated
+//  2. expo-av  (Video) — fallback when expo-video stub returns null
+//  3. Static placeholder — no native build available
+//
+// Parent interface (playerRef.current):
+//  .play()   .pause()   .currentTime (seconds)   .duration   .playing
 // ═════════════════════════════════════════════════════════════════════════════
 function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingChange, playerRef }: {
   uri: string; volume: number; rate: number;
@@ -805,16 +821,26 @@ function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingC
   onPlayingChange: (p: boolean) => void;
   playerRef: React.MutableRefObject<any>;
 }) {
-  // IMPORTANT: pass plain string, not { uri }
+  const avRef = React.useRef<any>(null);
+
+  // ── expo-video path ────────────────────────────────────────────────────────
+  // useVideoPlayer is always called (hooks rules) — stub returns null
   const player = useVideoPlayer(uri, (p: any) => {
     if (!p) return;
     try { p.volume = volume; p.playbackRate = rate; p.loop = false; } catch (_) {}
   });
 
-  React.useEffect(() => { playerRef.current = player; }, [player]);
+  // Expose expo-video player via ref
+  React.useEffect(() => {
+    if (player) playerRef.current = player;
+  }, [player]);
+
   React.useEffect(() => { try { if (player) player.volume = volume; } catch (_) {} }, [volume, player]);
   React.useEffect(() => { try { if (player) player.playbackRate = rate; } catch (_) {} }, [rate, player]);
+
+  // Poll expo-video status
   React.useEffect(() => {
+    if (!player) return;
     const iv = setInterval(() => {
       try {
         if (!player) return;
@@ -827,15 +853,60 @@ function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingC
     return () => clearInterval(iv);
   }, [player]);
 
-  if (!VideoView || !player) {
+  // ── Render: expo-video ─────────────────────────────────────────────────────
+  if (VideoView && player) {
+    return <VideoView player={player} style={vid.player} contentFit="cover" nativeControls={false} />;
+  }
+
+  // ── Render: expo-av fallback ───────────────────────────────────────────────
+  if (AVVideo) {
     return (
-      <View style={[vid.player, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#0A0A14' }]}>
-        <MaterialCommunityIcons name="video-outline" size={32} color="#333" />
-        <Text style={{ color: '#555', fontSize: 11, marginTop: 6 }}>Cargando video...</Text>
-      </View>
+      <AVVideo
+        ref={avRef}
+        source={{ uri }}
+        style={vid.player}
+        resizeMode={AVResizeMode?.COVER ?? 'cover'}
+        shouldPlay={false}
+        isLooping={false}
+        volume={volume}
+        rate={rate}
+        progressUpdateIntervalMillis={250}
+        onLoad={(status: any) => {
+          if (status?.durationMillis) onDuration(status.durationMillis);
+          // Expose expo-av adapter as playerRef so parent .play()/.pause() work
+          playerRef.current = {
+            play:    () => avRef.current?.playAsync?.(),
+            pause:   () => avRef.current?.pauseAsync?.(),
+            get currentTime() {
+              // read via latest status — best-effort
+              return 0;
+            },
+            set volume(v: number) { avRef.current?.setVolumeAsync?.(v); },
+            set playbackRate(r: number) { avRef.current?.setRateAsync?.(r, true); },
+          };
+        }}
+        onPlaybackStatusUpdate={(status: any) => {
+          if (!status?.isLoaded) return;
+          onPosition(status.positionMillis ?? 0);
+          if (status.durationMillis) onDuration(status.durationMillis);
+          onPlayingChange(status.isPlaying ?? false);
+          // Keep playerRef current so parent seekTo works
+          if (avRef.current && playerRef.current) {
+            (playerRef.current as any)._avRef = avRef.current;
+          }
+        }}
+      />
     );
   }
-  return <VideoView player={player} style={vid.player} contentFit="cover" nativeControls={false} />;
+
+  // ── Render: no native player available ────────────────────────────────────
+  return (
+    <View style={[vid.player, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#0A0A14' }]}>
+      <MaterialCommunityIcons name="video-outline" size={32} color="#333" />
+      <Text style={{ color: '#555', fontSize: 11, marginTop: 6 }}>Video player</Text>
+      <Text style={{ color: '#444', fontSize: 9, marginTop: 2 }}>Requiere EAS Build nativo</Text>
+    </View>
+  );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -931,14 +1002,34 @@ function VideosTab() {
   const togglePlay = useCallback(() => {
     const p = playerRef.current; if (!p) return;
     try {
-      if (isPlaying) { p.pause?.(); setIsPlaying(false); }
-      else           { p.play?.();  setIsPlaying(true);  }
+      if (isPlaying) {
+        // expo-video  
+        if (typeof p.pause === 'function') p.pause();
+        setIsPlaying(false);
+      } else {
+        // expo-video
+        if (typeof p.play === 'function') p.play();
+        setIsPlaying(true);
+      }
     } catch (_) {}
   }, [isPlaying]);
 
   const seekTo = useCallback((fraction: number) => {
     if (!playerRef.current || durationMs <= 0) return;
-    try { playerRef.current.currentTime = (fraction * durationMs) / 1000; } catch (_) {}
+    const targetSec = (fraction * durationMs) / 1000;
+    try {
+      // expo-video interface
+      if (typeof playerRef.current.currentTime !== 'undefined') {
+        playerRef.current.currentTime = targetSec;
+        return;
+      }
+      // expo-av adapter
+      const avRef = playerRef.current._avRef ?? null;
+      if (avRef?.setPositionAsync) {
+        avRef.setPositionAsync(targetSec * 1000);
+        return;
+      }
+    } catch (_) {}
   }, [durationMs]);
 
   const handleSetSpeed = useCallback((v: number) => {

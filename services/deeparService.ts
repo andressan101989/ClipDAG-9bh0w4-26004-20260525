@@ -95,8 +95,10 @@ export interface DeepARFilter {
 /**
  * DeepAR Free Filter Pack — official public CDN.
  * Confirmed working from react-native-deepar example app.
+ * Mirror: betacoins.magix.net (used in react-native-deepar example Config.TEST)
  */
-const DEEPAR_CDN = 'https://storage.deepar.ai/effects/';
+const DEEPAR_CDN         = 'https://storage.deepar.ai/effects/';
+const DEEPAR_CDN_MIRROR  = 'http://betacoins.magix.net/public/deepar-filters/';
 
 export const DEEPAR_FILTERS: DeepARFilter[] = [
   // ── Face ────────────────────────────────────────────────────────────────
@@ -155,6 +157,27 @@ const downloadingIds: Set<string>       = new Set();
  * rn-fetch-blob's res.path() returns the raw path automatically.
  * expo-file-system returns file:// URIs, which DeepAR REJECTS silently.
  */
+/**
+ * Try to download from a URL. Returns raw path or null.
+ */
+async function tryDownload(url: string): Promise<string | null> {
+  try {
+    const res     = await RNFetchBlob.config({ fileCache: true, timeout: 30000 }).fetch('GET', url);
+    const rawPath = res.path();
+    if (!rawPath || typeof rawPath !== 'string') return null;
+    // Validate the downloaded file has meaningful content
+    const stat = await RNFetchBlob.fs.stat(rawPath).catch(() => null);
+    if (!stat || (stat.size ?? 0) < 64) {
+      console.warn('[DeepAR] Downloaded file too small (', stat?.size, 'bytes) from', url);
+      return null;
+    }
+    return rawPath;
+  } catch (e) {
+    console.warn('[DeepAR] Download failed from', url, ':', e);
+    return null;
+  }
+}
+
 export async function getLocalFilterPath(filter: DeepARFilter): Promise<string | null> {
   // 1. Memory cache hit
   if (pathCache[filter.id]) {
@@ -180,22 +203,24 @@ export async function getLocalFilterPath(filter: DeepARFilter): Promise<string |
   downloadingIds.add(filter.id);
 
   try {
-    console.log('[DeepAR] Downloading filter:', filter.id, '←', filter.remoteUrl);
+    // Primary CDN
+    console.log('[DeepAR] Downloading filter:', filter.id, '← primary:', filter.remoteUrl);
+    let rawPath = await tryDownload(filter.remoteUrl);
 
-    const res = await RNFetchBlob.config({ fileCache: true }).fetch('GET', filter.remoteUrl);
+    // Mirror fallback if primary failed or returned empty file
+    if (!rawPath) {
+      const mirrorUrl = `${DEEPAR_CDN_MIRROR}${filter.id}`;
+      console.log('[DeepAR] Primary failed — trying mirror:', mirrorUrl);
+      rawPath = await tryDownload(mirrorUrl);
+    }
 
-    // res.path() = raw POSIX path, e.g. /var/mobile/Containers/...
-    // This is the correct format for DeepAR iOS switchEffectWithPath
-    const rawPath = res.path();
-    console.log('[DeepAR] Downloaded:', filter.id, '→', rawPath);
-
-    // Basic validation: path must be a non-empty string
-    if (!rawPath || typeof rawPath !== 'string') {
-      console.error('[DeepAR] rn-fetch-blob returned invalid path:', rawPath);
+    if (!rawPath) {
+      console.error('[DeepAR] Both CDN sources failed for filter:', filter.id);
       downloadingIds.delete(filter.id);
       return null;
     }
 
+    console.log('[DeepAR] Downloaded:', filter.id, '→', rawPath);
     pathCache[filter.id] = rawPath;
     downloadingIds.delete(filter.id);
     return rawPath;
