@@ -1,21 +1,24 @@
 /**
  * metro.config.js
  *
- * Blocks incompatible packages from crashing the Metro bundler.
+ * Blocks packages that crash Metro/Hermes:
  *
- * Always-blocked (all platforms):
- *   - react-native-dynamic  (requires react ^16.11.0)
- *   - react-native-webrtc   (requires unregistered native modules)
- *   - react-native-elements (legacy peer dep conflict)
- *   - snack-content         (Expo Snack internal, not for production)
+ * ALWAYS_BLOCKED (all platforms):
+ *   - react-native-deepar              → requireNativeComponent at module-level
+ *   - react-native-dynamic             → requires react ^16.11.0
+ *   - react-native-webrtc              → unregistered native modules
+ *   - react-native-elements            → legacy peer dep conflict
+ *   - snack-content                    → Expo Snack internal
  *
- * Web-only blocked (native modules that crash the Node/web bundler):
- *   - react-native-vision-camera          (native frames API, no web support)
- *   - react-native-vision-camera-face-detector (ML Kit, native only)
- *   - react-native-worklets-core          (JSI worklets, native only)
- *   - react-native-get-random-values      (native crypto, no web)
- *   - @walletconnect/modal-react-native   (native WalletConnect, no web)
- *   - @walletconnect/react-native-compat  (native WalletConnect, no web)
+ * OTEL_BLOCKED (all platforms):
+ *   - @opentelemetry/*                 → dynamic import() incompatible with Hermes iOS
+ *     Pulled in as transitive dep by @walletconnect packages.
+ *     Contains:  import(webpackIgnore / turbopackIgnore)
+ *     Hermes rejects this syntax → "Invalid expression encountered" in main.jsbundle
+ *
+ * WEB_ONLY_BLOCKED:
+ *   - react-native-vision-camera, react-native-worklets-core, etc.
+ *   - @walletconnect/* native packages crash on web/preview
  */
 
 const { getDefaultConfig } = require('expo/metro-config');
@@ -23,49 +26,21 @@ const path = require('path');
 
 const config = getDefaultConfig(__dirname);
 
-// ── Stub file: an empty CommonJS module returned for blocked packages ─────────
 const EMPTY_STUB = path.resolve(__dirname, '_metro_empty_stub.js');
 
-// Blocked on ALL platforms
-// react-native-deepar calls requireNativeComponent at module-level.
-// On web/preview requireNativeComponent is not a function → crash.
-// Native builds resolve the real package through the native module registry,
-// NOT through Metro JS bundling, so stubbing it here does not break EAS builds.
 const ALWAYS_BLOCKED = [
+  'react-native-deepar',
   'react-native-dynamic',
   'react-native-webrtc',
   'react-native-elements',
   'snack-content',
-  'react-native-deepar',
 ];
 
-// ── OpenTelemetry packages — block on ALL platforms ─────────────────────────
-// @walletconnect/* pulls in @opentelemetry/* as transitive deps.
-// These packages contain:  import(/* webpackIgnore */ /* turbopackIgnore */ ...)
-// Hermes on iOS cannot parse that syntax → "Invalid expression encountered" in
-// main.jsbundle.  They are pure Node.js/web instrumentation and serve no purpose
-// in a React Native binary.
-const OTEL_BLOCKED = [
-  '@opentelemetry/api',
-  '@opentelemetry/core',
-  '@opentelemetry/context-async-hooks',
-  '@opentelemetry/propagator-b3',
-  '@opentelemetry/propagator-jaeger',
-  '@opentelemetry/sdk-trace-base',
-  '@opentelemetry/semantic-conventions',
-  '@opentelemetry/instrumentation',
-  '@opentelemetry/resources',
-  '@opentelemetry/exporter-trace-otlp-http',
-  '@opentelemetry/exporter-trace-otlp-grpc',
-  '@opentelemetry/exporter-trace-otlp-proto',
-  '@opentelemetry/sdk-metrics',
-  '@opentelemetry/sdk-node',
-];
+// ALL @opentelemetry/* packages — block on every platform.
+// These are Node.js/web instrumentation libs pulled in by @walletconnect.
+// They contain dynamic import(/* webpackIgnore */ ...) syntax that Hermes rejects.
+const OTEL_PREFIXES = ['@opentelemetry/'];
 
-// Blocked ONLY on web (native-only modules that cannot be resolved in Node)
-// NOTE: react-native-vision-camera and react-native-worklets-core are intentionally
-// listed here — they are only used on native via .native.ts file extensions.
-// Metro automatically resolves .native.ts on iOS/Android, so blocking on web is safe.
 const WEB_ONLY_BLOCKED = [
   'react-native-vision-camera',
   'react-native-vision-camera-face-detector',
@@ -73,6 +48,10 @@ const WEB_ONLY_BLOCKED = [
   'react-native-get-random-values',
   '@walletconnect/modal-react-native',
   '@walletconnect/react-native-compat',
+  // WalletConnect core packages also pull in @opentelemetry on web
+  '@walletconnect/core',
+  '@walletconnect/sign-client',
+  '@walletconnect/web3wallet',
 ];
 
 const originalResolver = config.resolver?.resolveRequest;
@@ -80,32 +59,31 @@ const originalResolver = config.resolver?.resolveRequest;
 config.resolver = {
   ...config.resolver,
   resolveRequest: (context, moduleName, platform) => {
-    // Block ALL @opentelemetry/* packages — they contain dynamic import() syntax
-    // incompatible with Hermes iOS bundler
-    const isOtelBlocked =
-      moduleName.startsWith('@opentelemetry/') ||
-      OTEL_BLOCKED.some(blocked => moduleName === blocked || moduleName.startsWith(blocked + '/'));
-    if (isOtelBlocked) {
-      console.warn(`[Metro] Stubbing @opentelemetry package (Hermes-incompatible): ${moduleName}`);
-      return { type: 'sourceFile', filePath: EMPTY_STUB };
-    }
-
-    const isAlwaysBlocked = ALWAYS_BLOCKED.some(
-      blocked => moduleName === blocked || moduleName.startsWith(blocked + '/'),
+    // 1. Block ALL @opentelemetry/* on every platform
+    const isOtel = OTEL_PREFIXES.some(
+      prefix => moduleName === prefix.slice(0, -1) || moduleName.startsWith(prefix),
     );
-    if (isAlwaysBlocked) {
-      console.warn(`[Metro] Stubbing incompatible module: ${moduleName}`);
+    if (isOtel) {
       return { type: 'sourceFile', filePath: EMPTY_STUB };
     }
 
-    const isWebBlocked =
-      platform === 'web' &&
-      WEB_ONLY_BLOCKED.some(
-        blocked => moduleName === blocked || moduleName.startsWith(blocked + '/'),
-      );
-    if (isWebBlocked) {
-      console.warn(`[Metro] Stubbing web-incompatible native module: ${moduleName}`);
+    // 2. Always blocked
+    const isAlways = ALWAYS_BLOCKED.some(
+      b => moduleName === b || moduleName.startsWith(b + '/'),
+    );
+    if (isAlways) {
       return { type: 'sourceFile', filePath: EMPTY_STUB };
+    }
+
+    // 3. Web-only blocked
+    const isWeb = platform === 'web';
+    if (isWeb) {
+      const isWebBlocked = WEB_ONLY_BLOCKED.some(
+        b => moduleName === b || moduleName.startsWith(b + '/'),
+      );
+      if (isWebBlocked) {
+        return { type: 'sourceFile', filePath: EMPTY_STUB };
+      }
     }
 
     if (originalResolver) {
