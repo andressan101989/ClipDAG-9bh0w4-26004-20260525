@@ -34,6 +34,29 @@ const ALWAYS_BLOCKED = [
   'snack-content',
 ];
 
+// ── OpenTelemetry packages — block on ALL platforms ─────────────────────────
+// @walletconnect/* pulls in @opentelemetry/* as transitive deps.
+// These packages contain:  import(/* webpackIgnore */ /* turbopackIgnore */ ...)
+// Hermes on iOS cannot parse that syntax → "Invalid expression encountered" in
+// main.jsbundle.  They are pure Node.js/web instrumentation and serve no purpose
+// in a React Native binary.
+const OTEL_BLOCKED = [
+  '@opentelemetry/api',
+  '@opentelemetry/core',
+  '@opentelemetry/context-async-hooks',
+  '@opentelemetry/propagator-b3',
+  '@opentelemetry/propagator-jaeger',
+  '@opentelemetry/sdk-trace-base',
+  '@opentelemetry/semantic-conventions',
+  '@opentelemetry/instrumentation',
+  '@opentelemetry/resources',
+  '@opentelemetry/exporter-trace-otlp-http',
+  '@opentelemetry/exporter-trace-otlp-grpc',
+  '@opentelemetry/exporter-trace-otlp-proto',
+  '@opentelemetry/sdk-metrics',
+  '@opentelemetry/sdk-node',
+];
+
 // Blocked ONLY on web (native-only modules that cannot be resolved in Node)
 // NOTE: react-native-vision-camera and react-native-worklets-core are intentionally
 // listed here — they are only used on native via .native.ts file extensions.
@@ -52,6 +75,16 @@ const originalResolver = config.resolver?.resolveRequest;
 config.resolver = {
   ...config.resolver,
   resolveRequest: (context, moduleName, platform) => {
+    // Block ALL @opentelemetry/* packages — they contain dynamic import() syntax
+    // incompatible with Hermes iOS bundler
+    const isOtelBlocked =
+      moduleName.startsWith('@opentelemetry/') ||
+      OTEL_BLOCKED.some(blocked => moduleName === blocked || moduleName.startsWith(blocked + '/'));
+    if (isOtelBlocked) {
+      console.warn(`[Metro] Stubbing @opentelemetry package (Hermes-incompatible): ${moduleName}`);
+      return { type: 'sourceFile', filePath: EMPTY_STUB };
+    }
+
     const isAlwaysBlocked = ALWAYS_BLOCKED.some(
       blocked => moduleName === blocked || moduleName.startsWith(blocked + '/'),
     );
