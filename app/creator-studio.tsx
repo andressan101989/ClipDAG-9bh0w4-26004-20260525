@@ -57,6 +57,7 @@ import {
   isDeepARAvailable, DEEPAR_API_KEY, DEEPAR_FILTERS,
   switchDeepAREffect, clearDeepAREffect,
   triggerDeepARScreenshot, startDeepARRecording, stopDeepARRecording,
+  requestDeepARPermissions,
   DeepARCamera as DeepARCameraComponent,
   type DeepARFilter,
 } from '@/services/deeparService';
@@ -351,13 +352,41 @@ function EffectsTab() {
   const [deepARReady,     setDeepARReady]     = useState(false);
   const [filterCategory,  setFilterCategory]  = useState<'deepar' | 'skia'>('deepar');
 
-  const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recTimerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
+  const deepARTimeoutRef = useRef<ReturnType<typeof setTimeout>  | null>(null);
 
   const [camPerm, requestCamPerm] = useSafeCameraPermissions();
   const hasPerm = camPerm?.granted ?? false;
 
-  useEffect(() => { requestCamPerm(); }, []);
-  useEffect(() => () => { if (recTimerRef.current) clearInterval(recTimerRef.current); }, []);
+  // Request permissions: DeepAR's own permission system + expo-camera as fallback
+  useEffect(() => {
+    async function initPerms() {
+      console.log('[EffectsTab] initPerms — deepARActive:', deepARActive);
+      if (deepARActive) {
+        const ok = await requestDeepARPermissions();
+        console.log('[EffectsTab] DeepAR perm result:', ok);
+      }
+      // Always also request via expo-camera (belt-and-suspenders for AVFoundation)
+      await requestCamPerm();
+    }
+    initPerms();
+  }, []);
+
+  useEffect(() => () => {
+    if (recTimerRef.current)    clearInterval(recTimerRef.current);
+    if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
+  }, []);
+
+  // Safety timeout: if onInitialized never fires within 8s, force ready state
+  // (prevents infinite "Iniciando DeepAR..." spinner in case of a silent SDK issue)
+  useEffect(() => {
+    if (!deepARCameraOk) return;
+    deepARTimeoutRef.current = setTimeout(() => {
+      console.warn('[DeepAR] ⚠️ onInitialized timeout — forcing ready state after 8s');
+      setDeepARReady(true);
+    }, 8000);
+    return () => { if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current); };
+  }, [deepARCameraOk]);
 
   const shutterScale = useSharedValue(1);
   const shutterSty   = useAnimatedStyle(() => ({ transform: [{ scale: shutterScale.value }] }));
@@ -538,30 +567,45 @@ function EffectsTab() {
         style={[ef.cameraWrap, { height: camH }]}
         onLayout={e => setCamLayout({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
       >
-        {/* DeepAR Camera — primary when available */}
+        {/*
+          DeepAR Camera — primary when available.
+          Props (react-native-deepar v0.11 API):
+            apiKey        — licence string
+            cameraFacing  — "front" | "back"  ← correct prop name (NOT "facing")
+            onInitialized — () => void  ← fires once SDK + AVFoundation are ready
+            onScreenshotTaken — (path: string) => void
+            onVideoRecordingFinished — (path: string) => void
+            onError — (text: string, type: number) => void
+        */}
         {deepARCameraOk ? (
           <DeepARCameraComponent
             ref={deepARRef}
             apiKey={DEEPAR_API_KEY}
             style={StyleSheet.absoluteFillObject}
-            facing={facing}
+            cameraFacing={facing}
             onInitialized={() => {
+              console.log('[DeepAR] ✅ onInitialized fired — camera session ready');
+              if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
               setDeepARReady(true);
-              console.log('[DeepAR] Camera ready');
             }}
             onScreenshotTaken={(path: string) => {
+              console.log('[DeepAR] Screenshot saved:', path);
               setCapturedUri(path);
               setMode('preview');
               setIsCapturing(false);
             }}
             onVideoRecordingFinished={(path: string) => {
+              console.log('[DeepAR] Video saved:', path);
               if (recTimerRef.current) clearInterval(recTimerRef.current);
               setIsRecording(false); setRecSeconds(0);
               setCapturedUri(path); setMode('preview');
             }}
             onError={(text: string, type: number) => {
-              console.error('[DeepAR] Error:', type, text);
-              showAlert('DeepAR Error', text);
+              console.error('[DeepAR] ❌ Error type', type, ':', text);
+              // On error, clear timeout and mark ready to dismiss infinite spinner
+              if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
+              setDeepARReady(true);
+              showAlert('DeepAR Error', `[${type}] ${text}`);
             }}
           />
         ) : (

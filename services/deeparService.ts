@@ -53,9 +53,11 @@ try {
   console.warn('[DeepAR] Not compiled in EAS Build yet. Run: pnpm add react-native-deepar then rebuild.');
 }
 
-export const DeepAR           = DeepARModule?.default ?? DeepARModule?.DeepAR ?? null;
-export const DeepARCamera     = DeepARModule?.Camera  ?? null;
-export const DeepARCameraKit  = DeepARModule          ?? null;
+// react-native-deepar exports the camera component as default export
+// Named export `Camera` is the static permission manager (not the view component)
+export const DeepAR           = DeepARModule?.default ?? null;
+export const DeepARCamera     = DeepARModule?.default ?? null;   // The renderable camera view
+export const DeepARCameraKit  = DeepARModule           ?? null;  // Static permission helpers
 
 export const isDeepARAvailable = () =>
   DEEPAR_ENABLED &&
@@ -210,7 +212,7 @@ export function getDeepARStatus(): {
 
 /**
  * Switch the active DeepAR AR effect via the camera ref.
- * Supports both local bundled paths and remote CDN URLs.
+ * For remote CDN URLs: uses switchEffectWithPath (requires rn-fetch-blob OR direct URL support in v0.11+).
  * No-op if DeepAR not available.
  */
 export function switchDeepAREffect(deepARRef: React.MutableRefObject<any>, filter: DeepARFilter) {
@@ -218,10 +220,10 @@ export function switchDeepAREffect(deepARRef: React.MutableRefObject<any>, filte
   try {
     const isRemote = filter.path.startsWith('http');
     if (isRemote) {
-      // Use switchEffectWithPath for remote/cached paths
+      // v0.11+ supports passing a URL directly to switchEffectWithPath
       deepARRef.current.switchEffectWithPath({
-        path: filter.path,
-        slot: 'effect',
+        path:   filter.path,
+        slot:   'effect',
       });
     } else {
       deepARRef.current.switchEffect({
@@ -290,7 +292,8 @@ export function triggerDeepARScreenshot(deepARRef: React.MutableRefObject<any>) 
 export function startDeepARRecording(deepARRef: React.MutableRefObject<any>) {
   if (!isDeepARAvailable() || !deepARRef.current) return;
   try {
-    deepARRef.current.startRecording({ maxDuration: 60 });
+    // v0.11 API: startRecording() with no args; width/height optional
+    deepARRef.current.startRecording();
   } catch (e) {
     console.warn('[DeepAR] startRecording failed:', e);
   }
@@ -310,6 +313,36 @@ export function stopDeepARRecording(deepARRef: React.MutableRefObject<any>) {
 // Returns null if DeepAR not enabled — caller falls back to expo-camera
 // ─────────────────────────────────────────────────────────────────────────────
 export { DeepARCamera as DeepARCameraComponent };
+
+/**
+ * Request camera + microphone permissions via DeepAR's own permission system.
+ * Must be called BEFORE mounting the DeepAR camera component.
+ * Returns true if both permissions are authorized.
+ */
+export async function requestDeepARPermissions(): Promise<boolean> {
+  if (!DeepARCameraKit) return false;
+  try {
+    const Camera = DeepARCameraKit.Camera ?? null;
+    if (!Camera) return false;
+    const cam = await Camera.requestCameraPermission?.();
+    const mic = await Camera.requestMicrophonePermission?.();
+    console.log('[DeepAR] Permissions → camera:', cam, 'mic:', mic);
+    return cam === 'authorized';
+  } catch (e) {
+    console.warn('[DeepAR] requestDeepARPermissions failed:', e);
+    return false;
+  }
+}
+
+/**
+ * Get the current DeepAR camera permission status without prompting.
+ */
+export async function getDeepARCameraPermission(): Promise<string> {
+  if (!DeepARCameraKit?.Camera) return 'not-determined';
+  try {
+    return (await DeepARCameraKit.Camera.getCameraPermissionStatus?.()) ?? 'not-determined';
+  } catch { return 'not-determined'; }
+}
 
 /**
  * When DeepAR is enabled, replace CameraView with DeepARCamera in EffectsTab.
