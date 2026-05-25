@@ -18,6 +18,7 @@ try {
   useVideoPlayer = ev.useVideoPlayer ?? ((_src: any, _setup?: any) => null);
 } catch { /* web / preview — no-op */ }
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -99,6 +100,32 @@ export default function AIAvatarScreen() {
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stepIndex = { upload: 0, style: 1, script: 2, generating: 3, result: 4 }[step];
 
+  // Helper: read any URI (file://, ph://, content://) as Uint8Array via expo-file-system
+  const readUriAsBytes = useCallback(async (uri: string): Promise<Uint8Array> => {
+    try {
+      if (uri.startsWith('file://')) {
+        // file:// — fetch works on iOS/Android
+        const resp = await fetch(uri);
+        const blob = await resp.blob();
+        const ab = await blob.arrayBuffer();
+        return new Uint8Array(ab);
+      } else {
+        // ph:// (iOS Photos) or content:// (Android) — must use FileSystem
+        const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        const binary = atob(b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+      }
+    } catch (e: any) {
+      // Last resort: try fetch anyway
+      const resp = await fetch(uri);
+      const blob = await resp.blob();
+      const ab = await blob.arrayBuffer();
+      return new Uint8Array(ab);
+    }
+  }, []);
+
   const handlePickPhoto = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { showAlert('Sin acceso', 'Habilita la galería en Ajustes'); return; }
@@ -108,15 +135,15 @@ export default function AIAvatarScreen() {
     setPhotoUri(uri);
     setUploadingPhoto(true);
     try {
-      const resp = await fetch(uri); const blob = await resp.blob(); const ab = await blob.arrayBuffer(); const bytes = new Uint8Array(ab);
+      const bytes = await readUriAsBytes(uri);
       const fileName = `${user?.id ?? 'anon'}/avatar_src_${Date.now()}.jpg`;
       const { error: upErr } = await supabase.storage.from('images').upload(fileName, bytes, { contentType: 'image/jpeg', upsert: true });
       if (upErr) throw upErr;
       const { data: { publicUrl } } = supabase.storage.from('images').getPublicUrl(fileName);
       setUploadedUrl(publicUrl);
-    } catch (e: any) { showAlert('Error', e?.message || 'Intenta de nuevo'); setPhotoUri(null); setUploadingPhoto(false); return; }
+    } catch (e: any) { showAlert('Error al subir foto', e?.message || 'Intenta de nuevo'); setPhotoUri(null); setUploadingPhoto(false); return; }
     setUploadingPhoto(false); setStep('style');
-  }, [user, supabase, showAlert]);
+  }, [user, supabase, showAlert, readUriAsBytes]);
 
   const handleTakeSelfie = useCallback(async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
@@ -127,15 +154,15 @@ export default function AIAvatarScreen() {
     setPhotoUri(uri);
     setUploadingPhoto(true);
     try {
-      const resp = await fetch(uri); const blob = await resp.blob(); const ab = await blob.arrayBuffer(); const bytes = new Uint8Array(ab);
+      const bytes = await readUriAsBytes(uri);
       const fileName = `${user?.id ?? 'anon'}/selfie_${Date.now()}.jpg`;
       const { error: upErr } = await supabase.storage.from('images').upload(fileName, bytes, { contentType: 'image/jpeg', upsert: true });
       if (upErr) throw upErr;
       const { data: { publicUrl } } = supabase.storage.from('images').getPublicUrl(fileName);
       setUploadedUrl(publicUrl);
-    } catch (e: any) { showAlert('Error', e?.message || 'Intenta de nuevo'); setPhotoUri(null); setUploadingPhoto(false); return; }
+    } catch (e: any) { showAlert('Error al subir selfie', e?.message || 'Intenta de nuevo'); setPhotoUri(null); setUploadingPhoto(false); return; }
     setUploadingPhoto(false); setStep('style');
-  }, [user, supabase, showAlert]);
+  }, [user, supabase, showAlert, readUriAsBytes]);
 
   const callEdgeFn = useCallback(async (body: object) => {
     const { data, error } = await supabase.functions.invoke('ai-avatar', { body });

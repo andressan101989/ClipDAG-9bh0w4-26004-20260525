@@ -43,10 +43,12 @@ const ALWAYS_BLOCKED = [
   'snack-content',
 ];
 
-// ALL @walletconnect/* and @web3modal/* — blocked on all platforms in preview.
-// These require native modules that don't exist in the Expo Go / OnSpace preview
-// runtime, and pull in @opentelemetry with dynamic import() that Hermes rejects.
-// WalletConnect only works in a proper EAS native build.
+// @walletconnect/* and @web3modal/* — blocked on web/preview only.
+// On native (iOS/Android EAS builds) these packages are allowed through so
+// WalletConnect QR modal works. They are still blocked on web/PC preview
+// because they require native modules not available there.
+// NOTE: @opentelemetry/* (their transitive dep with bad dynamic imports) is
+// blocked on ALL platforms separately — that alone prevents the Hermes crash.
 const WALLETCONNECT_PREFIXES = [
   '@walletconnect/',
   '@web3modal/',
@@ -79,12 +81,15 @@ config.resolver = {
       return { type: 'sourceFile', filePath: EMPTY_STUB };
     }
 
-    // 2. Block ALL @walletconnect/* and @web3modal/* on every platform
-    const isWC = WALLETCONNECT_PREFIXES.some(
-      prefix => moduleName === prefix.slice(0, -1) || moduleName.startsWith(prefix),
-    );
-    if (isWC) {
-      return { type: 'sourceFile', filePath: EMPTY_STUB };
+    // 2. Block @walletconnect/* and @web3modal/* on web/preview only
+    // On native iOS/Android they are allowed so WalletConnect QR modal works
+    if (platform === 'web' || platform === null) {
+      const isWC = WALLETCONNECT_PREFIXES.some(
+        prefix => moduleName === prefix.slice(0, -1) || moduleName.startsWith(prefix),
+      );
+      if (isWC) {
+        return { type: 'sourceFile', filePath: EMPTY_STUB };
+      }
     }
 
     // 3. Always blocked
