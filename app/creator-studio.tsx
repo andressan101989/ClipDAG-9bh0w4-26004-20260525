@@ -332,6 +332,12 @@ function EffectsTab() {
   const cameraRef  = useRef<any>(null);
 
   const deepARActive = isDeepARAvailable();
+  // Guard: only render when it is a valid callable React component
+  const deepARCameraOk: boolean =
+    deepARActive &&
+    DeepARCameraComponent !== null &&
+    DeepARCameraComponent !== undefined &&
+    typeof (DeepARCameraComponent as any) === 'function';
 
   const [skiaEffectId,    setSkiaEffectId]    = useState<SkiaEffectId>('none');
   const [deepARFilterId,  setDeepARFilterId]  = useState<string | null>(null);
@@ -533,7 +539,7 @@ function EffectsTab() {
         onLayout={e => setCamLayout({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
       >
         {/* DeepAR Camera — primary when available */}
-        {deepARActive && DeepARCameraComponent !== null && DeepARCameraComponent !== undefined ? (
+        {deepARCameraOk ? (
           <DeepARCameraComponent
             ref={deepARRef}
             apiKey={DEEPAR_API_KEY}
@@ -1532,7 +1538,7 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
                     </View>
                     {item.preview ? (
                       <Pressable style={[dm.previewBtn, isPrev && { backgroundColor: Colors.warning }]}
-                        onPress={e => { e.stopPropagation?.(); handlePreview(item); }}>
+                        onPress={() => { handlePreview(item); }}>
                         <MaterialCommunityIcons name={isPrev ? 'pause' : 'play'} size={16} color={isPrev ? '#fff' : Colors.warning} />
                       </Pressable>
                     ) : null}
@@ -1751,7 +1757,7 @@ function MusicTab() {
                   <View style={{ alignItems: 'center', gap: 6 }}>
                     {item.preview ? (
                       <Pressable style={[mu.previewBtn, isPrev && { backgroundColor: Colors.warning, borderColor: Colors.warning }]}
-                        onPress={e => { e.stopPropagation?.(); handlePreview(item); }}>
+                        onPress={() => { handlePreview(item); }}>
                         <MaterialCommunityIcons name={isPrev ? 'pause' : 'play'} size={16} color={isPrev ? '#fff' : Colors.warning} />
                       </Pressable>
                     ) : null}
