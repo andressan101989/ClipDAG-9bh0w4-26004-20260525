@@ -14,7 +14,10 @@ import {
   TextInput, ActivityIndicator, Dimensions, Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { VideoView, useVideoPlayer } from 'expo-video';
+// expo-video is platform-split: see ai-avatar.native.tsx / ai-avatar.web.tsx
+let VideoView: any = null;
+const useVideoPlayer: any = () => null;
+try { const ev = require('expo-video'); VideoView = ev.VideoView; } catch { /* web */ }
 import * as ImagePicker from 'expo-image-picker';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
