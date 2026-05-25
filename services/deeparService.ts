@@ -221,11 +221,6 @@ export async function getLocalFilterPath(filter: DeepARFilter): Promise<string |
     });
   }
 
-  if (!RNFetchBlob) {
-    console.error('[DeepAR] rn-fetch-blob not available — cannot download filter');
-    return null;
-  }
-
   downloadingIds.add(filter.id);
 
   try {

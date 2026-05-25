@@ -4,7 +4,16 @@ import {
   Animated, PanResponder,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { useVideoPlayer, VideoView } from 'expo-video';
+// expo-video — lazy-loaded to prevent Hermes crash from dynamic import() syntax
+// bundled into main.jsbundle. Static import of expo-video causes:
+//   "Invalid expression encountered" at line ~110k in main.jsbundle
+let VideoView: any = null;
+let _useVideoPlayer: any = (_src: any, _setup?: any): any => null;
+try {
+  const ev = require('expo-video');
+  VideoView       = ev.VideoView      ?? null;
+  _useVideoPlayer = ev.useVideoPlayer ?? ((_src: any, _setup?: any) => null);
+} catch { /* web / preview */ }
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,7 +33,7 @@ interface StoryViewerProps {
 
 function StoryMedia({ story, isActive }: { story: StoryItem; isActive: boolean }) {
   const isVideo = story.mediaType === 'video';
-  const player = useVideoPlayer(isVideo ? story.mediaUrl : '', p => {
+  const player = _useVideoPlayer(isVideo ? story.mediaUrl : '', p => {
     p.loop = false;
     p.muted = false;
   });

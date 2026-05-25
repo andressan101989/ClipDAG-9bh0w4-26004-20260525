@@ -3,7 +3,16 @@ import {
   View, Text, Pressable, StyleSheet, Dimensions, Animated, Share,
   FlatList, NativeScrollEvent, NativeSyntheticEvent,
 } from 'react-native';
-import { useVideoPlayer, VideoView } from 'expo-video';
+// expo-video — lazy-loaded to prevent Hermes crash from dynamic import() syntax
+// in expo-video's internal JS when bundled for iOS.
+// Static import of expo-video triggers: "Invalid expression encountered" (main.jsbundle)
+let VideoView: any = null;
+let _useVideoPlayer: any = (_src: any, _setup?: any): any => null;
+try {
+  const ev = require('expo-video');
+  VideoView       = ev.VideoView      ?? null;
+  _useVideoPlayer = ev.useVideoPlayer ?? ((_src: any, _setup?: any) => null);
+} catch { /* web / preview — no native build */ }
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -278,7 +287,7 @@ const CarouselSlide = memo(function CarouselSlide({ uri, width, isActive: _isAct
   const height = width * aspectRatio;
   const [error, setError] = useState(false);
 
-  const player = useVideoPlayer(isVideo && isValidUrl(uri) ? uri : '', p => {
+  const player = _useVideoPlayer(isVideo && isValidUrl(uri) ? uri : '', p => {
     p.loop = true;
     p.muted = true;
   });
@@ -761,7 +770,7 @@ const VideoReelCard = memo(function VideoReelCard(props: VideoCardProps) {
   const hasValidVideo = isValidUrl(video.videoUrl);
   const hasValidThumb = isValidUrl(video.thumbnailUrl) && !thumbError;
 
-  const player = useVideoPlayer(hasValidVideo ? video.videoUrl : '', p => {
+  const player = _useVideoPlayer(hasValidVideo ? video.videoUrl : '', p => {
     p.loop = true;
     p.muted = true;
   });
