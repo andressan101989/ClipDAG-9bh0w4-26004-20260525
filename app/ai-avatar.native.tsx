@@ -1,6 +1,6 @@
 /**
  * app/ai-avatar.native.tsx — AI Avatar Generator (iOS + Android)
- * Uses expo-video for result video playback.
+ * Uses expo-video for result video playback (lazy-loaded to avoid preview crashes).
  */
 import React, { useState, useCallback, useRef } from 'react';
 import {
@@ -8,7 +8,15 @@ import {
   TextInput, ActivityIndicator, Dimensions, Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { VideoView, useVideoPlayer } from 'expo-video';
+
+// expo-video — lazy-loaded: crashes on web/preview without native build
+let VideoView: any = null;
+let useVideoPlayer: any = (_src: any, _setup?: any): any => null;
+try {
+  const ev = require('expo-video');
+  VideoView      = ev.VideoView      ?? null;
+  useVideoPlayer = ev.useVideoPlayer ?? ((_src: any, _setup?: any) => null);
+} catch { /* web / preview — no-op */ }
 import * as ImagePicker from 'expo-image-picker';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -76,8 +84,8 @@ export default function AIAvatarScreen() {
   const [predictionId,  setPredictionId]  = useState<string | null>(null);
 
   const resultPlayer = useVideoPlayer(
-    videoUrl ? { uri: videoUrl } : null,
-    p => { if (p && videoUrl) { p.loop = true; p.play(); } }
+    videoUrl ?? '',
+    (p: any) => { if (p && videoUrl) { try { p.loop = true; p.play(); } catch (_) {} } }
   );
 
   const [uploadingPhoto,   setUploadingPhoto]   = useState(false);
@@ -337,7 +345,9 @@ export default function AIAvatarScreen() {
           <View style={sr.wrap}>
             <Text style={sr.title}>{videoUrl ? '🎬 Video Avatar Listo!' : '✨ Avatar Listo!'}</Text>
             {videoUrl ? (
-              <VideoView player={resultPlayer} style={sr.media} contentFit="cover" nativeControls={false} />
+              VideoView && resultPlayer
+                ? <VideoView player={resultPlayer} style={sr.media} contentFit="cover" nativeControls={false} />
+                : <Image source={{ uri: videoUrl }} style={sr.media} contentFit="cover" transition={200} />
             ) : avatarUrl ? (
               <Image source={{ uri: avatarUrl }} style={sr.media} contentFit="cover" transition={300} />
             ) : null}
