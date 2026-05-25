@@ -9,17 +9,20 @@
  *   react-native-webrtc          → unregistered native modules
  *   react-native-elements        → legacy peer dep conflict
  *   snack-content                → Expo Snack internal
- *   @walletconnect/*             → require native modules not in Expo Go / OnSpace preview
- *                                  They also pull in @opentelemetry with dynamic import()
- *                                  that Hermes cannot parse. WalletConnect only works in
- *                                  a full EAS build with native module support; gracefully
- *                                  degrade to no-op in preview.
- *   @web3modal/*                 → same issue, web3modal native dependencies
+ *
+ * ── CJS_ALIASES: Force CommonJS builds for ESM-only packages ────────────────
+ *   valtio                       → ESM build uses import.meta (Hermes incompatible)
+ *                                  Force the CJS build instead so no babel transform needed
  *
  * ── OTEL_BLOCKED (all platforms) ────────────────────────────────────────────
  *   @opentelemetry/*             → Node.js/web instrumentation pulled in by @walletconnect.
  *                                  Contains: import(webpackIgnore / turbopackIgnore)
  *                                  Hermes rejects this → "Invalid expression encountered"
+ *
+ * ── WALLETCONNECT: web/preview blocked, native EAS allowed ──────────────────
+ *   @walletconnect/*             → requires native modules not in Expo Go / OnSpace preview.
+ *                                  Allowed in native EAS builds where modules are available.
+ *   @web3modal/*                 → same constraint
  *
  * ── WEB_ONLY_BLOCKED ────────────────────────────────────────────────────────
  *   react-native-vision-camera   → requires native camera module
@@ -34,7 +37,7 @@ const config = getDefaultConfig(__dirname);
 
 const EMPTY_STUB = path.resolve(__dirname, '_metro_empty_stub.js');
 
-// Blocked on ALL platforms (preview + EAS build native + web)
+// ── Blocked on ALL platforms (preview + EAS build native + web) ──────────────
 const ALWAYS_BLOCKED = [
   'react-native-deepar',
   'react-native-dynamic',
@@ -43,7 +46,17 @@ const ALWAYS_BLOCKED = [
   'snack-content',
 ];
 
-// @walletconnect/* and @web3modal/* — blocked on web/preview only.
+// ── CJS aliases: force CommonJS builds for packages that ship broken ESM ─────
+// valtio ships an ESM build (valtio/esm/react.mjs) with `import.meta.env`
+// which Hermes cannot parse. Metro resolves ESM by default; redirect to CJS.
+const CJS_ALIASES = {
+  'valtio/esm/react.mjs':  'valtio/react',
+  'valtio/esm/index.mjs':  'valtio',
+  'valtio/esm/vanilla.mjs': 'valtio/vanilla',
+  'valtio/esm/utils.mjs':  'valtio/utils',
+};
+
+// ── @walletconnect/* and @web3modal/* — blocked on web/preview only ───────────
 // On native (iOS/Android EAS builds) these packages are allowed through so
 // WalletConnect QR modal works. They are still blocked on web/PC preview
 // because they require native modules not available there.
@@ -55,12 +68,12 @@ const WALLETCONNECT_PREFIXES = [
   'react-native-modal',  // pulled in by @walletconnect/modal-react-native
 ];
 
-// ALL @opentelemetry/* — blocked on every platform.
+// ── ALL @opentelemetry/* — blocked on every platform ─────────────────────────
 // Contains: import(/* webpackIgnore */ /* turbopackIgnore */) syntax
 // that Hermes on iOS cannot parse → "Invalid expression encountered" in main.jsbundle
 const OTEL_PREFIXES = ['@opentelemetry/'];
 
-// Blocked only on web / PC preview
+// ── Blocked only on web / PC preview ─────────────────────────────────────────
 const WEB_ONLY_BLOCKED = [
   'react-native-vision-camera',
   'react-native-vision-camera-face-detector',
@@ -73,7 +86,12 @@ const originalResolver = config.resolver?.resolveRequest;
 config.resolver = {
   ...config.resolver,
   resolveRequest: (context, moduleName, platform) => {
-    // 1. Block ALL @opentelemetry/* on every platform
+    // 1. CJS aliases — redirect ESM builds with import.meta to their CJS equivalents
+    if (CJS_ALIASES[moduleName]) {
+      return context.resolveRequest(context, CJS_ALIASES[moduleName], platform);
+    }
+
+    // 2. Block ALL @opentelemetry/* on every platform
     const isOtel = OTEL_PREFIXES.some(
       prefix => moduleName === prefix.slice(0, -1) || moduleName.startsWith(prefix),
     );
@@ -81,7 +99,7 @@ config.resolver = {
       return { type: 'sourceFile', filePath: EMPTY_STUB };
     }
 
-    // 2. Block @walletconnect/* and @web3modal/* on web/preview only
+    // 3. Block @walletconnect/* and @web3modal/* on web/preview only
     // On native iOS/Android they are allowed so WalletConnect QR modal works
     if (platform === 'web' || platform === null) {
       const isWC = WALLETCONNECT_PREFIXES.some(
@@ -92,7 +110,7 @@ config.resolver = {
       }
     }
 
-    // 3. Always blocked
+    // 4. Always blocked
     const isAlways = ALWAYS_BLOCKED.some(
       b => moduleName === b || moduleName.startsWith(b + '/'),
     );
@@ -100,7 +118,7 @@ config.resolver = {
       return { type: 'sourceFile', filePath: EMPTY_STUB };
     }
 
-    // 4. Web-only blocked
+    // 5. Web-only blocked
     if (platform === 'web' || platform === null) {
       const isWebBlocked = WEB_ONLY_BLOCKED.some(
         b => moduleName === b || moduleName.startsWith(b + '/'),

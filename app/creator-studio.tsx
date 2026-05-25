@@ -64,6 +64,11 @@ import {
   type DeepARFilter,
 } from '@/services/deeparService';
 
+// ── Isolated tab modules (new architecture) ──────────────────────────────────
+// EffectsTab now lives in components/feature/studio/EffectsTab.tsx
+// It will progressively replace the inline EffectsTab below as validation completes.
+import { EffectsTab as EffectsTabIsolated } from '@/components/feature/studio';
+
 // ── FFmpeg ────────────────────────────────────────────────────────────────────
 import {
   isFFmpegAvailable, exportFinal,
@@ -221,7 +226,7 @@ export default function CreatorStudioScreen() {
       )}
 
       <Animated.View style={[{ flex: 1 }, tabSty]}>
-        {tab === 'ar'      ? <EffectsTab />  : null}
+        {tab === 'ar'      ? <EffectsTabIsolated />  : null}
         {tab === 'videos'  ? <VideosTab />   : null}
         {tab === 'avatars' ? <AvatarsTab />  : null}
         {tab === 'music'   ? <MusicTab />    : null}

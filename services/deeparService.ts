@@ -259,7 +259,7 @@ export async function getLocalFilterPath(filter: DeepARFilter): Promise<string |
 export async function prefetchDeepARFilters(
   filterIds: string[] = ['flower_crown', 'lion', 'aviators', 'beauty', 'fire'],
 ): Promise<void> {
-  if (!RNFetchBlob) return;
+  if (!hasFileSystem) return;
   const filters = DEEPAR_FILTERS.filter(f => filterIds.includes(f.id));
   await Promise.allSettled(filters.map(f => getLocalFilterPath(f)));
   console.log('[DeepAR] Prefetch complete for:', filterIds);
