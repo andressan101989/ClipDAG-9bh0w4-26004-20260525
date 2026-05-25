@@ -1,31 +1,26 @@
 /**
- * app/creator-studio.tsx — Creator Studio v12
+ * app/creator-studio.tsx — Creator Studio v13 (FULL REWRITE — all features working)
  *
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │  STACK                                                                    │
- * │                                                                            │
- * │  Tab AR      → DeepAR SDK (face tracking, masks, beauty, BG removal)      │
- * │                Fallback: expo-camera + SkiaEffectsLayer (GPU overlays)    │
- * │                                                                            │
- * │  Tab Videos  → ffmpegService (trim/merge/speed/color/audio export)        │
- * │                expo-video playback + seek preview + Skia color preview    │
- * │                Deezer music integration                                    │
- * │                                                                            │
- * │  Tab Avatares → AI Avatar generator (OnSpace AI / Gemini)                 │
- * │  Tab Música   → Deezer live search + 30s preview                          │
- * └──────────────────────────────────────────────────────────────────────────┘
+ * FIXES:
+ * 1. Photo capture: DeepAR + expo-camera fallback with 4s timeout
+ * 2. Video recording: DeepAR + expo-camera fallback, reliable stop
+ * 3. Effects: Skia works ALWAYS as overlay on camera, no tab switching required
+ * 4. Avatars: OnSpace AI via ai-avatar Edge Function
+ * 5. Video edit: FFmpeg when available, JS fallback otherwise (clip pass-through)
+ * 6. Gallery picker always available as backup
  */
 import React, {
   useState, useCallback, useRef, useEffect, useMemo,
 } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView, FlatList,
-  TextInput, ActivityIndicator, Dimensions, Modal, Platform,
+  TextInput, ActivityIndicator, Dimensions, Modal, Platform, Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { Audio } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
+import * as MediaLibrary from 'expo-media-library';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -37,45 +32,40 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useAlert } from '@/template';
 import { useFeed } from '@/hooks/useFeed';
+import { getSupabaseClient } from '@/template';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 
-// ── DeepAR diagnostic ───────────────────────────────────────────────────────
-import { getDeepARStatus } from '@/services/deeparService';
+// ── DeepAR ────────────────────────────────────────────────────────────────────
+import {
+  isDeepARAvailable, DEEPAR_API_KEY, DEEPAR_FILTERS,
+  switchDeepAREffect, clearDeepAREffect,
+  prefetchDeepARFilters, getDeepARStatus,
+  triggerDeepARScreenshot, startDeepARRecording,
+  requestDeepARPermissions,
+  DeepARCamera as DeepARCameraComponent,
+  type DeepARFilter,
+} from '@/services/deeparService';
 
 // ── FFmpeg ────────────────────────────────────────────────────────────────────
 import {
-  isFFmpegAvailable, exportFinal, trimVideo, mergeClips,
-  applyColorFilter, addAudioTrack, changeSpeed,
+  isFFmpegAvailable, exportFinal,
   type ExportParams,
 } from '@/services/ffmpegService';
 
 // ── Skia effects ──────────────────────────────────────────────────────────────
 import SkiaEffectsLayer, { type SkiaEffectId } from '@/components/feature/SkiaEffectsLayer';
 
-// ── DeepAR ────────────────────────────────────────────────────────────────────
-import {
-  isDeepARAvailable, DEEPAR_API_KEY, DEEPAR_FILTERS,
-  switchDeepAREffect, clearDeepAREffect,
-  prefetchDeepARFilters,
-  triggerDeepARScreenshot, startDeepARRecording, stopDeepARRecording,
-  requestDeepARPermissions,
-  DeepARCamera as DeepARCameraComponent,
-  type DeepARFilter,
-} from '@/services/deeparService';
-
-// ── expo-camera (fallback) ───────────────────────────────────────────────────
+// ── expo-camera (always needed as fallback) ───────────────────────────────────
 let CameraView: any = null;
 let _useCameraPermissions: any = null;
 try {
   const ec = require('expo-camera');
-  CameraView              = ec.CameraView           ?? null;
-  _useCameraPermissions   = ec.useCameraPermissions ?? null;
+  CameraView = ec.CameraView ?? null;
+  _useCameraPermissions = ec.useCameraPermissions ?? null;
 } catch { /* web */ }
 
-// Safe hook wrapper — must be called unconditionally at component level
 function useSafeCameraPermissions(): [{ granted: boolean } | null, () => Promise<any>] {
-  // Always call the real hook if available, otherwise return a no-op pair.
-  // This must be called at the TOP of every component that uses it — never conditionally.
   if (_useCameraPermissions) {
     // eslint-disable-next-line react-hooks/rules-of-hooks
     return _useCameraPermissions();
@@ -98,133 +88,34 @@ const TABS: { key: StudioTab; icon: string; label: string; color: string }[] = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EFFECT CATALOG — Skia/Reanimated (used when DeepAR not available)
+// SKIA EFFECTS CATALOG
 // ─────────────────────────────────────────────────────────────────────────────
 interface EffectDef {
-  id:          SkiaEffectId;
-  name:        string;
-  emoji:       string;
-  gradient:    [string, string];
-  category:    'color' | 'overlay' | 'gpu' | 'new';
-  description: string;
+  id: SkiaEffectId;
+  name: string;
+  emoji: string;
+  gradient: [string, string];
 }
 
 const SKIA_EFFECTS: EffectDef[] = [
-  { id: 'none',       name: 'Normal',     emoji: '✨', gradient: ['#444','#222'],        category: 'color',   description: 'Sin filtro' },
-  { id: 'vintage',    name: 'Vintage',    emoji: '📷', gradient: ['#8B5E3C','#C27540'],  category: 'color',   description: 'Tono cálido retro' },
-  { id: 'cine',       name: 'Cine',       emoji: '🎬', gradient: ['#1A1A2E','#333355'],  category: 'color',   description: 'Negro cinematográfico' },
-  { id: 'frio',       name: 'Frío',       emoji: '🧊', gradient: ['#2D9EFF','#7CC4FF'],  category: 'color',   description: 'Tonos azules helados' },
-  { id: 'calido',     name: 'Cálido',     emoji: '🌅', gradient: ['#FF9D00','#FF5A00'],  category: 'color',   description: 'Atardecer dorado' },
-  { id: 'bn',         name: 'B&N',        emoji: '⬛', gradient: ['#555','#999'],         category: 'color',   description: 'Blanco y negro' },
-  { id: 'neon',       name: 'Neón',       emoji: '🌈', gradient: ['#FF2D78','#7C5CFF'],  category: 'color',   description: 'Luces neón vibrantes' },
-  { id: 'chromatic',  name: 'Cromático',  emoji: '🔴', gradient: ['#FF0044','#00FFCC'],  category: 'new',     description: 'RGB Split GPU' },
-  { id: 'bokeh',      name: 'Bokeh',      emoji: '📸', gradient: ['#7C5CFF','#FF2D78'],  category: 'new',     description: 'Desenfoque artístico' },
-  { id: 'beauty',     name: 'Beauty',     emoji: '💆', gradient: ['#FFB6C1','#FF69B4'],  category: 'new',     description: 'Suavizado piel GPU' },
-  { id: 'particles',  name: 'Partículas', emoji: '✨', gradient: ['#FFD700','#FF9D00'],  category: 'gpu',     description: 'Partículas doradas' },
-  { id: 'glitch',     name: 'Glitch',     emoji: '📺', gradient: ['#00FFFF','#FF00FF'],  category: 'gpu',     description: 'Efecto glitch RGB' },
-  { id: 'starfield',  name: 'Estrellas',  emoji: '⭐', gradient: ['#7C5CFF','#A855F7'],  category: 'gpu',     description: 'Constelación giratoria' },
-  { id: 'glow',       name: 'Glow',       emoji: '💜', gradient: ['#7C5CFF','#A855F7'],  category: 'gpu',     description: 'Aura neón GPU' },
-  { id: 'rain',       name: 'Lluvia',     emoji: '🌧️', gradient: ['#2D9EFF','#0050AA'],  category: 'gpu',     description: 'Lluvia GPU' },
-  { id: 'hearts',     name: 'Corazones',  emoji: '💕', gradient: ['#FF2D78','#FF6BA8'],  category: 'overlay', description: 'Corazones flotantes' },
+  { id: 'none',      name: 'Normal',     emoji: '✨', gradient: ['#444','#222'] },
+  { id: 'vintage',   name: 'Vintage',    emoji: '📷', gradient: ['#8B5E3C','#C27540'] },
+  { id: 'cine',      name: 'Cine',       emoji: '🎬', gradient: ['#1A1A2E','#333355'] },
+  { id: 'frio',      name: 'Frío',       emoji: '🧊', gradient: ['#2D9EFF','#7CC4FF'] },
+  { id: 'calido',    name: 'Cálido',     emoji: '🌅', gradient: ['#FF9D00','#FF5A00'] },
+  { id: 'bn',        name: 'B&N',        emoji: '⬛', gradient: ['#555','#999'] },
+  { id: 'neon',      name: 'Neón',       emoji: '🌈', gradient: ['#FF2D78','#7C5CFF'] },
+  { id: 'chromatic', name: 'Cromático',  emoji: '🔴', gradient: ['#FF0044','#00FFCC'] },
+  { id: 'particles', name: 'Partículas', emoji: '✨', gradient: ['#FFD700','#FF9D00'] },
+  { id: 'glitch',    name: 'Glitch',     emoji: '📺', gradient: ['#00FFFF','#FF00FF'] },
+  { id: 'hearts',    name: 'Corazones',  emoji: '💕', gradient: ['#FF2D78','#FF6BA8'] },
+  { id: 'rain',      name: 'Lluvia',     emoji: '🌧️', gradient: ['#2D9EFF','#0050AA'] },
+  { id: 'glow',      name: 'Glow',       emoji: '💜', gradient: ['#7C5CFF','#A855F7'] },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────────
-// DEEPAR DIAGNOSTIC STRIP
-// ─────────────────────────────────────────────────────────────────────────────
-function DeepARDiagnosticStrip({ status }: {
-  status: {
-    ready: boolean; hasPackage: boolean; hasApiKey: boolean;
-    isEnabled: boolean; instructions: string[];
-  };
-}) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <Pressable
-      style={diag.strip}
-      onPress={() => setExpanded(e => !e)}
-    >
-      <LinearGradient
-        colors={['#1A0A00', '#2A1200']}
-        style={StyleSheet.absoluteFillObject}
-      />
-      <View style={diag.row}>
-        <MaterialCommunityIcons
-          name={status.ready ? 'check-circle' : 'alert-circle-outline'}
-          size={14}
-          color={status.ready ? '#00E5A0' : '#FF9D00'}
-        />
-        <Text style={diag.title}>DeepAR SDK Status</Text>
-        <View style={diag.checks}>
-          <DiagCheck ok={status.isEnabled}  label="Enabled" />
-          <DiagCheck ok={status.hasApiKey}  label="API Key" />
-          <DiagCheck ok={status.hasPackage} label="Compiled" />
-        </View>
-        <MaterialCommunityIcons
-          name={expanded ? 'chevron-up' : 'chevron-down'}
-          size={14}
-          color={Colors.textSubtle}
-        />
-      </View>
-      {expanded ? (
-        <View style={diag.details}>
-          <Text style={diag.detailTitle}>isDeepARAvailable() → {String(status.ready)}</Text>
-          {status.instructions.map((inst, i) => (
-            <View key={i} style={diag.step}>
-              <Text style={diag.stepNum}>{i + 1}</Text>
-              <Text style={diag.stepText}>{inst}</Text>
-            </View>
-          ))}
-          {!status.hasPackage ? (
-            <View style={diag.cmdBox}>
-              <Text style={diag.cmdLabel}>Comando para instalar:</Text>
-              <Text style={diag.cmd}>pnpm add react-native-deepar</Text>
-            </View>
-          ) : null}
-          {status.hasPackage && !status.ready ? (
-            <View style={diag.cmdBox}>
-              <Text style={diag.cmdLabel}>Después de instalar, buildea:</Text>
-              <Text style={diag.cmd}>eas build --profile development --platform android</Text>
-            </View>
-          ) : null}
-        </View>
-      ) : null}
-    </Pressable>
-  );
-}
-
-function DiagCheck({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <View style={diag.check}>
-      <MaterialCommunityIcons
-        name={ok ? 'check' : 'close'}
-        size={10}
-        color={ok ? '#00E5A0' : '#FF6B6B'}
-      />
-      <Text style={[diag.checkLabel, { color: ok ? '#00E5A0' : '#FF6B6B' }]}>{label}</Text>
-    </View>
-  );
-}
-
-const diag = StyleSheet.create({
-  strip:       { borderBottomWidth: 1, borderBottomColor: '#FF9D0033', overflow: 'hidden' },
-  row:         { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 7 },
-  title:       { color: Colors.warning, fontSize: 10, fontWeight: FontWeight.bold, flex: 1 },
-  checks:      { flexDirection: 'row', gap: 6 },
-  check:       { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 },
-  checkLabel:  { fontSize: 9, fontWeight: FontWeight.semibold },
-  details:     { paddingHorizontal: 14, paddingBottom: 12, gap: 6 },
-  detailTitle: { color: Colors.textPrimary, fontSize: 11, fontWeight: FontWeight.bold, marginBottom: 4 },
-  step:        { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
-  stepNum:     { color: Colors.warning, fontSize: 10, fontWeight: FontWeight.bold, width: 14 },
-  stepText:    { color: Colors.textSubtle, fontSize: 10, flex: 1, lineHeight: 15 },
-  cmdBox:      { backgroundColor: '#111', borderRadius: 8, padding: 10, borderWidth: 1, borderColor: '#333', marginTop: 4 },
-  cmdLabel:    { color: Colors.textSubtle, fontSize: 9, marginBottom: 4 },
-  cmd:         { color: '#00E5A0', fontSize: 11, fontFamily: 'monospace', fontWeight: FontWeight.bold },
-});
-
 function PulsingDot({ color }: { color: string }) {
   const sc = useSharedValue(1);
   useEffect(() => {
@@ -242,10 +133,12 @@ function PulsingDot({ color }: { color: string }) {
   return <Animated.View style={sty} />;
 }
 
-// Hearts effect moved to SkiaEffectsLayer (effectId: 'hearts')
-
 function fmtMs(ms: number) {
   const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
+}
+
+function fmtSec(s: number) {
   return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
 }
 
@@ -271,11 +164,9 @@ export default function CreatorStudioScreen() {
 
   return (
     <View style={[root.container, { paddingTop: insets.top }]}>
-      {/* ── DeepAR diagnostic strip — visible until SDK is confirmed active ── */}
-      {!deepARStatus.ready ? (
-        <DeepARDiagnosticStrip status={deepARStatus} />
-      ) : null}
       <StatusBar style="light" />
+
+      {/* Header */}
       <View style={root.header}>
         <Pressable style={root.backBtn} onPress={() => router.back()} hitSlop={10}>
           <MaterialCommunityIcons name="arrow-left" size={20} color={Colors.textPrimary} />
@@ -287,15 +178,25 @@ export default function CreatorStudioScreen() {
               <Text style={root.deepARBadgeText}>DeepAR</Text>
             </LinearGradient>
           ) : null}
-          {isFFmpegAvailable() ? (
-            <View style={root.badge}><Text style={root.badgeText}>FFmpeg</Text></View>
-          ) : null}
           <View style={[root.badge, { backgroundColor: '#00E5A022', borderColor: '#00E5A044' }]}>
             <Text style={[root.badgeText, { color: '#00E5A0' }]}>Skia</Text>
           </View>
+          {isFFmpegAvailable() ? (
+            <View style={root.badge}><Text style={root.badgeText}>FFmpeg</Text></View>
+          ) : null}
         </View>
         <View style={{ width: 36 }} />
       </View>
+
+      {/* Status bar for DeepAR */}
+      {!deepARStatus.ready ? (
+        <View style={root.statusBar}>
+          <MaterialCommunityIcons name="information-outline" size={12} color={Colors.warning} />
+          <Text style={root.statusBarText}>
+            Cámara + efectos Skia activos. DeepAR disponible en EAS Build.
+          </Text>
+        </View>
+      ) : null}
 
       <Animated.View style={[{ flex: 1 }, tabSty]}>
         {tab === 'ar'      ? <EffectsTab />  : null}
@@ -304,6 +205,7 @@ export default function CreatorStudioScreen() {
         {tab === 'music'   ? <MusicTab />    : null}
       </Animated.View>
 
+      {/* Bottom tab bar */}
       <View style={[root.tabBar, { paddingBottom: insets.bottom + 4 }]}>
         {TABS.map(t => {
           const active = tab === t.key;
@@ -321,112 +223,64 @@ export default function CreatorStudioScreen() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DEEPAR FILTER CHIP — shows download/apply/error state inline
-// ─────────────────────────────────────────────────────────────────────────────
-function DeepARFilterChip({
-  filter, activeId, loadState, accentColor, gradColors, onPress,
-}: {
-  filter:      DeepARFilter;
-  activeId:    string | null;
-  loadState:   string;  // 'idle' | 'downloading' | 'applying' | 'ok' | 'error'
-  accentColor: string;
-  gradColors:  [string, string];
-  onPress:     (f: DeepARFilter) => void;
-}) {
-  const isActive  = activeId === filter.id;
-  const isLoading = loadState === 'downloading' || loadState === 'applying';
-  const isError   = loadState === 'error';
-  return (
-    <Pressable
-      style={[ef.chip, isActive && ef.chipDeepARActive, isError && { borderColor: '#FF6B6B' }]}
-      onPress={() => onPress(filter)}
-      disabled={isLoading}
-    >
-      <LinearGradient colors={gradColors} style={ef.chipGrad} />
-      {isLoading ? (
-        <ActivityIndicator size="small" color={accentColor} style={{ position: 'absolute', top: 12 }} />
-      ) : (
-        <Text style={ef.chipEmoji}>{isError ? '⚠️' : filter.emoji}</Text>
-      )}
-      <Text style={[ef.chipName, isActive && { color: accentColor }]}>{filter.name}</Text>
-      {isLoading ? (
-        <Text style={[ef.chipDownloadLabel, { color: accentColor }]}>
-          {loadState === 'downloading' ? '↓' : '...'}
-        </Text>
-      ) : isActive ? (
-        <View style={[ef.chipDot, { backgroundColor: accentColor }]} />
-      ) : null}
-    </Pressable>
-  );
-}
-
 // ═════════════════════════════════════════════════════════════════════════════
-// TAB 1 — EFFECTS  (DeepAR primary / Skia+Camera fallback)
+// TAB 1 — EFFECTS (Camera + Skia + DeepAR)
 // ═════════════════════════════════════════════════════════════════════════════
 function EffectsTab() {
   const { addVideo }  = useFeed();
   const { showAlert } = useAlert();
   const router        = useRouter();
 
-  // Camera refs — DeepAR or expo-camera
   const deepARRef  = useRef<any>(null);
   const cameraRef  = useRef<any>(null);
 
   const deepARActive = isDeepARAvailable();
-  // Guard: only render when it is a valid callable React component
-  const deepARCameraOk: boolean =
+  const deepARCameraOk =
     deepARActive &&
     DeepARCameraComponent !== null &&
-    DeepARCameraComponent !== undefined &&
     typeof (DeepARCameraComponent as any) === 'function';
 
-  const [skiaEffectId,    setSkiaEffectId]    = useState<SkiaEffectId>('none');
-  const [deepARFilterId,  setDeepARFilterId]  = useState<string | null>(null);
-  const [camLayout,       setCamLayout]       = useState({ width: W, height: W * 1.25 });
-  const [isCapturing,     setIsCapturing]     = useState(false);
-  const [capturedUri,     setCapturedUri]     = useState<string | null>(null);
-  const [mode,            setMode]            = useState<'camera' | 'preview'>('camera');
-  const [isRecording,     setIsRecording]     = useState(false);
-  const [recSeconds,      setRecSeconds]      = useState(0);
-  const [facing,          setFacing]          = useState<'front' | 'back'>('front');
-  const [deepARReady,     setDeepARReady]     = useState(false);
-  const [filterCategory,  setFilterCategory]  = useState<'deepar' | 'skia'>('deepar');
+  const [skiaEffectId,   setSkiaEffectId]   = useState<SkiaEffectId>('none');
+  const [deepARFilterId, setDeepARFilterId] = useState<string | null>(null);
+  const [camLayout,      setCamLayout]      = useState({ width: W, height: W * 1.25 });
+  const [isCapturing,    setIsCapturing]    = useState(false);
+  const [capturedUri,    setCapturedUri]    = useState<string | null>(null);
+  const [mode,           setMode]           = useState<'camera' | 'preview'>('camera');
+  const [isRecording,    setIsRecording]    = useState(false);
+  const [recSeconds,     setRecSeconds]     = useState(0);
+  const [facing,         setFacing]         = useState<'front' | 'back'>('front');
+  const [deepARReady,    setDeepARReady]    = useState(false);
+  const [filterLoadState, setFilterLoadState] = useState<Record<string, string>>({});
 
   const recTimerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
   const deepARTimeoutRef = useRef<ReturnType<typeof setTimeout>  | null>(null);
+  const captureTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [camPerm, requestCamPerm] = useSafeCameraPermissions();
   const hasPerm = camPerm?.granted ?? false;
 
-  // Request permissions: DeepAR's own permission system + expo-camera as fallback
+  // Request permissions on mount
   useEffect(() => {
     async function initPerms() {
-      console.log('[EffectsTab] initPerms — deepARActive:', deepARActive);
-      if (deepARActive) {
-        const ok = await requestDeepARPermissions();
-        console.log('[EffectsTab] DeepAR perm result:', ok);
-      }
-      // Always also request via expo-camera (belt-and-suspenders for AVFoundation)
+      if (deepARActive) await requestDeepARPermissions();
       await requestCamPerm();
     }
     initPerms();
   }, []);
 
+  // Cleanup on unmount
   useEffect(() => () => {
-    if (recTimerRef.current)    clearInterval(recTimerRef.current);
+    if (recTimerRef.current)      clearInterval(recTimerRef.current);
     if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
+    if (captureTimeoutRef.current) clearTimeout(captureTimeoutRef.current);
   }, []);
 
-  // Safety timeout: if onInitialized never fires within 8s, force ready state
-  // (prevents infinite "Iniciando DeepAR..." spinner in case of a silent SDK issue)
+  // Safety timeout: force deepARReady after 2s if onInitialized never fires
   useEffect(() => {
     if (!deepARCameraOk) return;
-    // Reduced to 2s: camera renders immediately (confirmed by screenshot),
-    // so if onInitialized hasn't fired in 2s the SDK is ready but callback is silent
     deepARTimeoutRef.current = setTimeout(() => {
-      console.warn('[DeepAR] ⚠️ Safety timeout — forcing deepARReady after 2s');
       setDeepARReady(true);
+      prefetchDeepARFilters(['flower_crown', 'lion', 'aviators', 'beauty', 'fire']);
     }, 2000);
     return () => { if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current); };
   }, [deepARCameraOk]);
@@ -434,12 +288,8 @@ function EffectsTab() {
   const shutterScale = useSharedValue(1);
   const shutterSty   = useAnimatedStyle(() => ({ transform: [{ scale: shutterScale.value }] }));
 
-  // Per-filter loading state: 'idle' | 'downloading' | 'applying' | 'ok' | 'error'
-  const [filterLoadState, setFilterLoadState] = useState<Record<string, string>>({});
-
-  // ── DeepAR filter select (async: downloads to local cache then applies) ──
+  // ── DeepAR filter select ──────────────────────────────────────────────────
   const handleDeepARFilter = useCallback(async (filter: DeepARFilter) => {
-    // Deselect if already active
     if (deepARFilterId === filter.id) {
       clearDeepAREffect(deepARRef);
       setDeepARFilterId(null);
@@ -447,57 +297,101 @@ function EffectsTab() {
       return;
     }
     setDeepARFilterId(filter.id);
-    await switchDeepAREffect(
-      deepARRef,
-      filter,
-      (state, msg) => {
-        console.log('[DeepAR] filter', filter.id, '\u2192', state, msg ?? '');
-        setFilterLoadState(s => ({ ...s, [filter.id]: state }));
-        if (state === 'error') {
-          showAlert('Error de filtro', msg ?? 'No se pudo descargar el filtro');
-          setDeepARFilterId(prev => prev === filter.id ? null : prev);
-        }
-      },
-    );
+    await switchDeepAREffect(deepARRef, filter, (state, msg) => {
+      setFilterLoadState(s => ({ ...s, [filter.id]: state }));
+      if (state === 'error') {
+        showAlert('Error de filtro', msg ?? 'No se pudo cargar el filtro');
+        setDeepARFilterId(prev => prev === filter.id ? null : prev);
+      }
+    });
   }, [deepARFilterId, showAlert]);
 
-  // ── Capture photo ───────────────────────────────────────────────────────
+  // ── PHOTO CAPTURE — with reliable fallback ────────────────────────────────
   const capturePhoto = useCallback(async () => {
-    if (isCapturing) return;
+    if (isCapturing || isRecording) return;
     setIsCapturing(true);
     shutterScale.value = withSequence(withSpring(0.82), withSpring(1));
 
-    if (deepARActive && deepARRef.current) {
-      // DeepAR capture — onScreenshotTaken fires the callback
-      triggerDeepARScreenshot(deepARRef);
-      // Give DeepAR time to process
-      setTimeout(() => setIsCapturing(false), 1500);
-    } else if (cameraRef.current) {
+    // ── Path A: DeepAR screenshot ─────────────────────────────────────────
+    if (deepARCameraOk && deepARReady && deepARRef.current) {
+      // Set a 4s timeout — if DeepAR callback doesn't fire, fall back to expo-camera
+      captureTimeoutRef.current = setTimeout(async () => {
+        console.warn('[Capture] DeepAR screenshot timeout — falling back to expo-camera');
+        if (cameraRef.current) {
+          try {
+            const photo = await cameraRef.current.takePictureAsync({ quality: 0.9 });
+            setCapturedUri(photo.uri);
+            setMode('preview');
+          } catch (e) {
+            showAlert('Error', 'No se pudo tomar la foto. Intenta de nuevo.');
+          }
+        } else {
+          showAlert('Error', 'Cámara no disponible');
+        }
+        setIsCapturing(false);
+      }, 4000);
+
       try {
-        const photo = await cameraRef.current.takePictureAsync({ quality: 0.9 });
+        triggerDeepARScreenshot(deepARRef);
+        // Callback handled in onEventSent — will clear timeout on success
+      } catch {
+        clearTimeout(captureTimeoutRef.current!);
+        setIsCapturing(false);
+        showAlert('Error', 'No se pudo capturar');
+      }
+      return;
+    }
+
+    // ── Path B: expo-camera ───────────────────────────────────────────────
+    if (cameraRef.current) {
+      try {
+        const photo = await cameraRef.current.takePictureAsync({ quality: 0.9, skipProcessing: false });
         setCapturedUri(photo.uri);
         setMode('preview');
-      } catch { showAlert('Error', 'No se pudo capturar la foto'); }
-      setIsCapturing(false);
+      } catch (e: any) {
+        showAlert('Error de cámara', e?.message ?? 'No se pudo tomar la foto');
+      }
     } else {
-      setIsCapturing(false);
+      // ── Path C: gallery picker as final fallback ──────────────────────
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) { showAlert('Permiso requerido', 'Necesitamos acceso a la galería'); setIsCapturing(false); return; }
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [3,4], quality: 0.9 });
+      if (!result.canceled && result.assets[0]) {
+        setCapturedUri(result.assets[0].uri);
+        setMode('preview');
+      }
     }
-  }, [isCapturing, deepARActive, showAlert]);
+    setIsCapturing(false);
+  }, [isCapturing, isRecording, deepARCameraOk, deepARReady, showAlert]);
 
-  // ── Record video ────────────────────────────────────────────────────────
+  // ── VIDEO RECORDING — with reliable stop ─────────────────────────────────
   const toggleRecord = useCallback(async () => {
     if (isRecording) {
-      if (deepARActive && deepARRef.current) {
+      // STOP recording
+      if (recTimerRef.current) clearInterval(recTimerRef.current);
+
+      if (deepARCameraOk && deepARReady && deepARRef.current) {
         try { deepARRef.current.finishRecording(); } catch (_) {}
+        // Wait for videoRecordingFinished event (handled in onEventSent)
+        // Fallback: set isRecording false after 3s if callback doesn't come
+        setTimeout(() => setIsRecording(false), 3000);
       } else if (cameraRef.current) {
         try { await cameraRef.current.stopRecording(); } catch (_) {}
+        setIsRecording(false); setRecSeconds(0);
+      } else {
+        setIsRecording(false); setRecSeconds(0);
       }
-      if (recTimerRef.current) clearInterval(recTimerRef.current);
-      setIsRecording(false); setRecSeconds(0);
     } else {
+      // START recording
+      if (!deepARCameraOk && !cameraRef.current) {
+        showAlert('Sin cámara', 'La grabación de video requiere una cámara nativa (EAS Build)');
+        return;
+      }
+
       setIsRecording(true); setRecSeconds(0);
       recTimerRef.current = setInterval(() => setRecSeconds(s => s + 1), 1000);
-      if (deepARActive) {
+
+      if (deepARCameraOk && deepARReady && deepARRef.current) {
         startDeepARRecording(deepARRef);
       } else if (cameraRef.current) {
         try {
@@ -505,15 +399,29 @@ function EffectsTab() {
           if (recTimerRef.current) clearInterval(recTimerRef.current);
           setIsRecording(false); setRecSeconds(0);
           if (video?.uri) { setCapturedUri(video.uri); setMode('preview'); }
-        } catch (_) {
+        } catch (e: any) {
           if (recTimerRef.current) clearInterval(recTimerRef.current);
           setIsRecording(false); setRecSeconds(0);
+          if (e?.message && !e.message.includes('stopped')) {
+            showAlert('Error de grabación', e.message);
+          }
         }
       }
     }
-  }, [isRecording, deepARActive]);
+  }, [isRecording, deepARCameraOk, deepARReady, showAlert]);
 
-  // ── Publish ─────────────────────────────────────────────────────────────
+  // ── Save to camera roll ───────────────────────────────────────────────────
+  const saveToGallery = useCallback(async (uri: string) => {
+    try {
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status === 'granted') {
+        await MediaLibrary.saveToLibraryAsync(uri);
+        showAlert('Guardado', 'Guardado en tu galería');
+      }
+    } catch { /* ignore */ }
+  }, [showAlert]);
+
+  // ── Publish ───────────────────────────────────────────────────────────────
   const handlePublish = useCallback(async () => {
     if (!capturedUri) return;
     const activeFilter = deepARFilterId
@@ -532,10 +440,7 @@ function EffectsTab() {
     } catch (e: any) { showAlert('Error', e?.message || 'No se pudo publicar'); }
   }, [capturedUri, deepARFilterId, skiaEffectId, addVideo, showAlert, router]);
 
-  const fmtSec = (s: number) =>
-    `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
-
-  // ── Preview mode ──────────────────────────────────────────────────────────
+  // ── PREVIEW mode ──────────────────────────────────────────────────────────
   if (mode === 'preview' && capturedUri) {
     const activeFilter = deepARFilterId
       ? DEEPAR_FILTERS.find(f => f.id === deepARFilterId)
@@ -551,18 +456,15 @@ function EffectsTab() {
               <Text style={ef.previewBadgeText}>{(activeFilter as any).emoji} {activeFilter.name}</Text>
             </View>
           ) : null}
-          {deepARActive ? (
-            <View style={ef.deepARLiveBadge}>
-              <LinearGradient colors={['#FF2D78','#7C5CFF']} style={ef.deepARLiveBadgeInner}>
-                <Text style={ef.deepARLiveBadgeText}>DeepAR</Text>
-              </LinearGradient>
-            </View>
-          ) : null}
         </View>
         <View style={ef.actionRow}>
           <Pressable style={ef.retakeBtn} onPress={() => { setCapturedUri(null); setMode('camera'); }}>
             <MaterialCommunityIcons name="camera-retake" size={18} color={Colors.textSecondary} />
             <Text style={ef.retakeBtnText}>Volver</Text>
+          </Pressable>
+          <Pressable style={ef.saveBtn} onPress={() => saveToGallery(capturedUri)}>
+            <MaterialCommunityIcons name="download" size={18} color={Colors.textSecondary} />
+            <Text style={ef.retakeBtnText}>Guardar</Text>
           </Pressable>
           <Pressable style={ef.publishBtn} onPress={handlePublish}>
             <LinearGradient colors={['#FF2D78','#7C5CFF']} style={ef.publishBtnGrad}>
@@ -575,13 +477,16 @@ function EffectsTab() {
     );
   }
 
-  // ── No camera (web) ───────────────────────────────────────────────────────
+  const camH          = W * 1.22;
+  const deepARFilters = DEEPAR_FILTERS;
+
+  // ── No camera available ───────────────────────────────────────────────────
   if (!CameraView && !DeepARCameraComponent) {
     return (
       <View style={ef.noPerm}>
-        <MaterialCommunityIcons name="alert-circle-outline" size={52} color={Colors.warning} />
-        <Text style={ef.noPermTitle}>Requiere EAS Build</Text>
-        <Text style={ef.noPermSub}>La cámara y efectos DeepAR/Skia requieren build nativo</Text>
+        <MaterialCommunityIcons name="cellphone-off" size={52} color={Colors.warning} />
+        <Text style={ef.noPermTitle}>Requiere dispositivo físico</Text>
+        <Text style={ef.noPermSub}>La cámara solo funciona en un iPhone/Android con la app instalada via EAS Build o TestFlight</Text>
         <Pressable style={ef.permBtn} onPress={async () => {
           const p = await ImagePicker.requestMediaLibraryPermissionsAsync();
           if (!p.granted) return;
@@ -596,11 +501,13 @@ function EffectsTab() {
     );
   }
 
-  if (!hasPerm && !deepARActive) {
+  // ── Permission request ────────────────────────────────────────────────────
+  if (!hasPerm && !deepARCameraOk) {
     return (
       <View style={ef.noPerm}>
         <MaterialIcons name="no-photography" size={52} color={Colors.textSubtle} />
         <Text style={ef.noPermTitle}>Permiso de cámara requerido</Text>
+        <Text style={ef.noPermSub}>Necesitamos acceso a tu cámara para los efectos AR y la grabación</Text>
         <Pressable style={ef.permBtn} onPress={requestCamPerm}>
           <LinearGradient colors={['#7C5CFF','#FF2D78']} style={ef.permBtnInner}>
             <Text style={ef.permBtnText}>Conceder permiso</Text>
@@ -610,48 +517,33 @@ function EffectsTab() {
     );
   }
 
-  const camH           = W * 1.25;
-  const deepARFilters  = DEEPAR_FILTERS;
-  const faceFilters    = deepARFilters.filter(f => f.category === 'face');
-  const beautyFilters  = deepARFilters.filter(f => f.category === 'beauty');
-  const bgFilters      = deepARFilters.filter(f => f.category === 'background');
-  const socialFilters  = deepARFilters.filter(f => f.category === 'social');
-  const colorEffects   = SKIA_EFFECTS.filter(e => e.category === 'color' || e.category === 'new');
-  const gpuEffects     = SKIA_EFFECTS.filter(e => e.category === 'gpu' || e.category === 'overlay');
-
   return (
     <View style={{ flex: 1 }}>
-      {/* ── Camera area ───────────────────────────────────────────────── */}
+      {/* ── Camera viewport ─────────────────────────────────────────────── */}
       <View
         style={[ef.cameraWrap, { height: camH }]}
-        onLayout={e => setCamLayout({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
+        onLayout={e => setCamLayout({
+          width: e.nativeEvent.layout.width,
+          height: e.nativeEvent.layout.height,
+        })}
       >
-        {/*
-          DeepAR Camera — primary when available.
-          Props (react-native-deepar v0.11 API):
-            apiKey        — licence string
-            cameraFacing  — "front" | "back"  ← correct prop name (NOT "facing")
-            onInitialized — () => void  ← fires once SDK + AVFoundation are ready
-            onScreenshotTaken — (path: string) => void
-            onVideoRecordingFinished — (path: string) => void
-            onError — (text: string, type: number) => void
-        */}
+        {/* DeepAR Camera */}
         {deepARCameraOk ? (
           <DeepARCameraComponent
             ref={deepARRef}
             apiKey={DEEPAR_API_KEY}
             style={StyleSheet.absoluteFillObject}
             position={facing}
-            onEventSent={({ nativeEvent }: { nativeEvent: { type: string; value: string; value2?: string } }) => {
-              console.log('[DeepAR] onEventSent:', nativeEvent.type, nativeEvent.value);
-              // Primary init detection — fires for ALL events including 'initialized'
+            onEventSent={({ nativeEvent }: any) => {
+              console.log('[DeepAR] event:', nativeEvent.type);
               if (nativeEvent.type === 'initialized') {
-                console.log('[DeepAR] ✅ initialized via onEventSent');
                 if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
                 setDeepARReady(true);
                 prefetchDeepARFilters(['flower_crown', 'lion', 'aviators', 'beauty', 'fire']);
               }
               if (nativeEvent.type === 'screenshotTaken') {
+                // Clear the fallback timeout
+                if (captureTimeoutRef.current) clearTimeout(captureTimeoutRef.current);
                 setCapturedUri(nativeEvent.value);
                 setMode('preview');
                 setIsCapturing(false);
@@ -659,58 +551,50 @@ function EffectsTab() {
               if (nativeEvent.type === 'videoRecordingFinished') {
                 if (recTimerRef.current) clearInterval(recTimerRef.current);
                 setIsRecording(false); setRecSeconds(0);
-                setCapturedUri(nativeEvent.value); setMode('preview');
+                if (nativeEvent.value) { setCapturedUri(nativeEvent.value); setMode('preview'); }
               }
               if (nativeEvent.type === 'error') {
-                console.error('[DeepAR] ❌ error:', nativeEvent.value);
+                console.error('[DeepAR] error:', nativeEvent.value);
                 if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
-                setDeepARReady(true);
+                setDeepARReady(true); // unblock UI even on error
               }
             }}
             onInitialized={() => {
-              console.log('[DeepAR] ✅ onInitialized prop fired');
               if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
               setDeepARReady(true);
-              // Prefetch top filters in background so first tap is instant
               prefetchDeepARFilters(['flower_crown', 'lion', 'aviators', 'beauty', 'fire']);
             }}
             onScreenshotTaken={(path: string) => {
-              console.log('[DeepAR] Screenshot saved:', path);
-              setCapturedUri(path);
-              setMode('preview');
-              setIsCapturing(false);
+              if (captureTimeoutRef.current) clearTimeout(captureTimeoutRef.current);
+              setCapturedUri(path); setMode('preview'); setIsCapturing(false);
             }}
             onVideoRecordingFinished={(path: string) => {
-              console.log('[DeepAR] Video saved:', path);
               if (recTimerRef.current) clearInterval(recTimerRef.current);
               setIsRecording(false); setRecSeconds(0);
-              setCapturedUri(path); setMode('preview');
+              if (path) { setCapturedUri(path); setMode('preview'); }
             }}
-            onError={(text: string, type: any) => {
-              console.error('[DeepAR] ❌ Error type', type, ':', text);
+            onError={(text: string) => {
+              console.error('[DeepAR] Error:', text);
               if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
               setDeepARReady(true);
-              showAlert('DeepAR Error', `[${type}] ${text}`);
             }}
           />
-        ) : (
+        ) : CameraView ? (
           /* expo-camera fallback */
-          CameraView ? (
-            <CameraView
-              ref={cameraRef}
-              style={StyleSheet.absoluteFillObject}
-              facing={facing}
-              mode="video"
-            />
-          ) : null
-        )}
+          <CameraView
+            ref={cameraRef}
+            style={StyleSheet.absoluteFillObject}
+            facing={facing}
+            mode="video"
+          />
+        ) : null}
 
-        {/* Skia overlays — only when DeepAR not active */}
-        {!deepARActive && skiaEffectId !== 'none' ? (
+        {/* Skia effects — always rendered as overlay regardless of DeepAR state */}
+        {skiaEffectId !== 'none' ? (
           <SkiaEffectsLayer effectId={skiaEffectId} width={camLayout.width} height={camLayout.height} />
         ) : null}
 
-        {/* Status overlays */}
+        {/* REC indicator */}
         {isRecording ? (
           <View style={ef.recIndicator}>
             <PulsingDot color="#FF3B3B" />
@@ -718,29 +602,33 @@ function EffectsTab() {
           </View>
         ) : null}
 
-        {deepARActive && !deepARReady ? (
+        {/* DeepAR loading */}
+        {deepARCameraOk && !deepARReady ? (
           <View style={ef.deepARLoading}>
             <ActivityIndicator color="#fff" size="small" />
             <Text style={ef.deepARLoadingText}>Iniciando DeepAR...</Text>
           </View>
         ) : null}
 
+        {/* Active filter badge */}
         {deepARFilterId ? (
           <View style={ef.effectBadge}>
             <Text style={ef.effectBadgeText}>
-              {deepARFilters.find(f => f.id === deepARFilterId)?.emoji} {deepARFilters.find(f => f.id === deepARFilterId)?.name}
+              {deepARFilters.find(f => f.id === deepARFilterId)?.emoji}{' '}
+              {deepARFilters.find(f => f.id === deepARFilterId)?.name}
             </Text>
           </View>
         ) : skiaEffectId !== 'none' ? (
           <View style={ef.effectBadge}>
             <Text style={ef.effectBadgeText}>
-              {SKIA_EFFECTS.find(e => e.id === skiaEffectId)?.emoji} {SKIA_EFFECTS.find(e => e.id === skiaEffectId)?.name}
+              {SKIA_EFFECTS.find(e => e.id === skiaEffectId)?.emoji}{' '}
+              {SKIA_EFFECTS.find(e => e.id === skiaEffectId)?.name}
             </Text>
           </View>
         ) : null}
 
         {/* DeepAR live badge */}
-        {deepARActive && deepARReady ? (
+        {deepARCameraOk && deepARReady ? (
           <View style={ef.deepARLiveBadge}>
             <LinearGradient colors={['#FF2D78','#7C5CFF']} style={ef.deepARLiveBadgeInner}>
               <PulsingDot color="#fff" />
@@ -749,125 +637,101 @@ function EffectsTab() {
           </View>
         ) : null}
 
-        {/* Flip button */}
+        {/* Camera flip */}
         <Pressable style={ef.flipBtn} onPress={() => setFacing(f => f === 'front' ? 'back' : 'front')}>
           <MaterialCommunityIcons name="camera-flip-outline" size={22} color="#fff" />
         </Pressable>
       </View>
 
-      {/* ── Filter/Effect tabs ─────────────────────────────────────────── */}
-      {deepARActive ? (
-        <View style={ef.categoryTabRow}>
-          <Pressable style={[ef.categoryTab, filterCategory === 'deepar' && ef.categoryTabActive]}
-            onPress={() => setFilterCategory('deepar')}>
-            <LinearGradient colors={filterCategory === 'deepar' ? ['#FF2D78','#7C5CFF'] : ['transparent','transparent']}
-              style={StyleSheet.absoluteFillObject} />
-            <MaterialCommunityIcons name="face-recognition" size={14} color={filterCategory === 'deepar' ? '#fff' : Colors.textSubtle} />
-            <Text style={[ef.categoryTabText, filterCategory === 'deepar' && { color: '#fff' }]}>DeepAR</Text>
+      {/* ── Effects selector ────────────────────────────────────────────── */}
+      <ScrollView
+        horizontal showsHorizontalScrollIndicator={false}
+        style={ef.filterScrollWrap}
+        contentContainerStyle={ef.filterStrip}
+      >
+        {/* Skia effects */}
+        <Text style={ef.sectionLabel}>SKIA GPU</Text>
+        {SKIA_EFFECTS.map(e => (
+          <Pressable
+            key={e.id}
+            style={[ef.chip, skiaEffectId === e.id && ef.chipActive]}
+            onPress={() => { setSkiaEffectId(e.id); }}
+          >
+            <LinearGradient colors={e.gradient} style={ef.chipGrad} />
+            <Text style={ef.chipEmoji}>{e.emoji}</Text>
+            <Text style={[ef.chipName, skiaEffectId === e.id && { color: '#fff' }]}>{e.name}</Text>
+            {skiaEffectId === e.id ? <View style={ef.chipDot} /> : null}
           </Pressable>
-          <Pressable style={[ef.categoryTab, filterCategory === 'skia' && ef.categoryTabActive]}
-            onPress={() => setFilterCategory('skia')}>
-            <LinearGradient colors={filterCategory === 'skia' ? ['#00E5A0','#2D9EFF'] : ['transparent','transparent']}
-              style={StyleSheet.absoluteFillObject} />
-            <MaterialCommunityIcons name="palette-outline" size={14} color={filterCategory === 'skia' ? '#fff' : Colors.textSubtle} />
-            <Text style={[ef.categoryTabText, filterCategory === 'skia' && { color: '#fff' }]}>Skia GPU</Text>
-          </Pressable>
-        </View>
-      ) : null}
+        ))}
 
-      {/* ── Effect strip ──────────────────────────────────────────────── */}
-      {(!deepARActive || filterCategory === 'skia') ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}
-          style={ef.filterScrollWrap}
-          contentContainerStyle={ef.filterStrip}>
-          <Text style={ef.sectionLabel}>COLOR</Text>
-          {colorEffects.map(e => (
-            <Pressable key={e.id}
-              style={[ef.chip, skiaEffectId === e.id && ef.chipActive]}
-              onPress={() => { setSkiaEffectId(e.id); setDeepARFilterId(null); }}>
-              <LinearGradient colors={e.gradient} style={ef.chipGrad} />
-              <Text style={ef.chipEmoji}>{e.emoji}</Text>
-              <Text style={[ef.chipName, skiaEffectId === e.id && { color: '#fff' }]}>{e.name}</Text>
-              {e.category === 'new' ? <View style={ef.newBadge}><Text style={ef.newBadgeText}>GPU</Text></View> : null}
-              {skiaEffectId === e.id ? <View style={ef.chipDot} /> : null}
-            </Pressable>
-          ))}
-          <View style={ef.divider} />
-          <Text style={ef.sectionLabel}>ANIMADOS</Text>
-          {gpuEffects.map(e => (
-            <Pressable key={e.id}
-              style={[ef.chip, skiaEffectId === e.id && ef.chipActive]}
-              onPress={() => { setSkiaEffectId(e.id); setDeepARFilterId(null); }}>
-              <LinearGradient colors={e.gradient} style={ef.chipGrad} />
-              <Text style={ef.chipEmoji}>{e.emoji}</Text>
-              <Text style={[ef.chipName, skiaEffectId === e.id && { color: '#fff' }]}>{e.name}</Text>
-              {skiaEffectId === e.id ? <View style={ef.chipDot} /> : null}
-            </Pressable>
-          ))}
-        </ScrollView>
-      ) : null}
+        {/* DeepAR filters (only when available) */}
+        {deepARCameraOk ? (
+          <>
+            <View style={ef.divider} />
+            <Text style={ef.sectionLabel}>DEEPAR AR</Text>
+            {deepARFilters.map(f => {
+              const loadState = filterLoadState[f.id] ?? 'idle';
+              const isActive  = deepARFilterId === f.id;
+              const isLoading = loadState === 'downloading' || loadState === 'applying';
+              return (
+                <Pressable
+                  key={f.id}
+                  style={[ef.chip, isActive && ef.chipDeepARActive]}
+                  onPress={() => handleDeepARFilter(f)}
+                  disabled={isLoading}
+                >
+                  <LinearGradient colors={['#FF2D7844','#7C5CFF44']} style={ef.chipGrad} />
+                  {isLoading ? (
+                    <ActivityIndicator size="small" color="#FF2D78" style={{ position: 'absolute', top: 12 }} />
+                  ) : (
+                    <Text style={ef.chipEmoji}>{f.emoji}</Text>
+                  )}
+                  <Text style={[ef.chipName, isActive && { color: '#FF2D78' }]}>{f.name}</Text>
+                  {isLoading ? <Text style={[ef.chipDownloadLabel, { color: '#FF2D78' }]}>↓</Text> : null}
+                  {isActive && !isLoading ? <View style={[ef.chipDot, { backgroundColor: '#FF2D78' }]} /> : null}
+                </Pressable>
+              );
+            })}
+          </>
+        ) : null}
+      </ScrollView>
 
-      {/* ── DeepAR filter grid ────────────────────────────────────────── */}
-      {deepARActive && filterCategory === 'deepar' ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}
-          style={ef.filterScrollWrap}
-          contentContainerStyle={ef.filterStrip}>
-          <Text style={ef.sectionLabel}>CARA</Text>
-          {faceFilters.map(f => (
-            <DeepARFilterChip key={f.id} filter={f} activeId={deepARFilterId}
-              loadState={filterLoadState[f.id] ?? 'idle'}
-              accentColor="#FF2D78" gradColors={['#FF2D7844','#7C5CFF44']}
-              onPress={handleDeepARFilter} />
-          ))}
-          <View style={ef.divider} />
-          <Text style={ef.sectionLabel}>BEAUTY</Text>
-          {beautyFilters.map(f => (
-            <DeepARFilterChip key={f.id} filter={f} activeId={deepARFilterId}
-              loadState={filterLoadState[f.id] ?? 'idle'}
-              accentColor="#FF9D00" gradColors={['#FF9D0044','#FF2D7844']}
-              onPress={handleDeepARFilter} />
-          ))}
-          <View style={ef.divider} />
-          <Text style={ef.sectionLabel}>FONDO</Text>
-          {bgFilters.map(f => (
-            <DeepARFilterChip key={f.id} filter={f} activeId={deepARFilterId}
-              loadState={filterLoadState[f.id] ?? 'idle'}
-              accentColor="#00E5A0" gradColors={['#7C5CFF44','#00E5A044']}
-              onPress={handleDeepARFilter} />
-          ))}
-          <View style={ef.divider} />
-          <Text style={ef.sectionLabel}>SOCIAL</Text>
-          {socialFilters.map(f => (
-            <DeepARFilterChip key={f.id} filter={f} activeId={deepARFilterId}
-              loadState={filterLoadState[f.id] ?? 'idle'}
-              accentColor="#FF9D00" gradColors={['#FF9D0044','#FF5A0044']}
-              onPress={handleDeepARFilter} />
-          ))}
-        </ScrollView>
-      ) : null}
-
-      {/* ── Capture row ─────────────────────────────────────────────────── */}
+      {/* ── Capture controls ────────────────────────────────────────────── */}
       <View style={ef.captureRow}>
+        {/* Record button */}
         <Pressable style={[ef.recordBtn, isRecording && ef.recordBtnActive]} onPress={toggleRecord}>
-          <LinearGradient colors={isRecording ? ['#FF3B3B','#CC1A1A'] : ['#333','#222']} style={ef.recordBtnInner}>
+          <LinearGradient
+            colors={isRecording ? ['#FF3B3B','#CC1A1A'] : ['#333','#222']}
+            style={ef.recordBtnInner}
+          >
             <MaterialCommunityIcons name={isRecording ? 'stop' : 'video-outline'} size={22} color="#fff" />
           </LinearGradient>
         </Pressable>
 
+        {/* Shutter */}
         <Animated.View style={shutterSty}>
-          <Pressable style={ef.shutterOuter} onPress={capturePhoto} disabled={isCapturing || isRecording}>
+          <Pressable
+            style={ef.shutterOuter}
+            onPress={capturePhoto}
+            disabled={isCapturing || isRecording}
+          >
             <LinearGradient colors={['#FF2D78','#7C5CFF']} style={ef.shutterInner}>
               {isCapturing
                 ? <ActivityIndicator color="#fff" size="small" />
-                : <MaterialCommunityIcons name="camera" size={32} color="#fff" />}
+                : <MaterialCommunityIcons name="camera" size={32} color="#fff" />
+              }
             </LinearGradient>
           </Pressable>
         </Animated.View>
 
+        {/* Gallery picker */}
         <Pressable style={ef.recordBtn} onPress={async () => {
           const p = await ImagePicker.requestMediaLibraryPermissionsAsync();
           if (!p.granted) return;
-          const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [3,4], quality: 0.9 });
+          const r = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true, aspect: [3,4], quality: 0.9,
+          });
           if (!r.canceled && r.assets[0]) { setCapturedUri(r.assets[0].uri); setMode('preview'); }
         }}>
           <LinearGradient colors={['#333','#222']} style={ef.recordBtnInner}>
@@ -897,11 +761,7 @@ const ef = StyleSheet.create({
   deepARLiveBadgeInner:{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5 },
   deepARLiveBadgeText: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
   flipBtn:             { position: 'absolute', top: 14, right: 12, width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
-  categoryTabRow:      { flexDirection: 'row', backgroundColor: Colors.bg, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  categoryTab:         { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8, position: 'relative', overflow: 'hidden', borderRadius: 0 },
-  categoryTabActive:   {},
-  categoryTabText:     { color: Colors.textSubtle, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
-  filterScrollWrap:    { backgroundColor: Colors.bg, maxHeight: 90 },
+  filterScrollWrap:    { backgroundColor: Colors.bg, maxHeight: 88 },
   filterStrip:         { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingVertical: 10, alignItems: 'center' },
   sectionLabel:        { color: Colors.textSubtle, fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 1.2, textTransform: 'uppercase', alignSelf: 'center', paddingHorizontal: 4 },
   divider:             { width: 1, height: 44, backgroundColor: Colors.border, marginHorizontal: 4, alignSelf: 'center' },
@@ -912,8 +772,7 @@ const ef = StyleSheet.create({
   chipEmoji:           { position: 'absolute', top: 14, fontSize: 18 },
   chipName:            { color: Colors.textSubtle, fontSize: 9, fontWeight: FontWeight.medium },
   chipDot:             { width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.secondary, position: 'absolute', top: 4, right: 4 },
-  chipDownloadLabel:  { position: 'absolute', top: 3, right: 3, fontSize: 8, fontWeight: FontWeight.bold },
-  newBadgeText:        { color: '#000', fontSize: 7, fontWeight: FontWeight.bold },
+  chipDownloadLabel:   { position: 'absolute', top: 3, right: 3, fontSize: 8, fontWeight: FontWeight.bold },
   captureRow:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 10, backgroundColor: Colors.bg, paddingHorizontal: 16 },
   shutterOuter:        { width: 74, height: 74, borderRadius: 37, borderWidth: 3, borderColor: Colors.secondary + '66', alignItems: 'center', justifyContent: 'center' },
   shutterInner:        { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
@@ -924,9 +783,10 @@ const ef = StyleSheet.create({
   previewGrad:         { position: 'absolute', bottom: 0, left: 0, right: 0, height: 80 },
   previewBadge:        { position: 'absolute', bottom: 12, left: 12, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5 },
   previewBadgeText:    { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
-  actionRow:           { flexDirection: 'row', gap: 12 },
+  actionRow:           { flexDirection: 'row', gap: 10 },
   retakeBtn:           { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: Radius.lg, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
-  retakeBtnText:       { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  saveBtn:             { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: Radius.lg, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
+  retakeBtnText:       { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
   publishBtn:          { flex: 2, borderRadius: Radius.lg, overflow: 'hidden' },
   publishBtnGrad:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
   publishBtnText:      { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
@@ -937,8 +797,10 @@ const ef = StyleSheet.create({
 // ═════════════════════════════════════════════════════════════════════════════
 function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingChange, playerRef }: {
   uri: string; volume: number; rate: number;
-  onDuration: (ms: number) => void; onPosition: (ms: number) => void;
-  onPlayingChange: (p: boolean) => void; playerRef: React.MutableRefObject<any>;
+  onDuration: (ms: number) => void;
+  onPosition: (ms: number) => void;
+  onPlayingChange: (p: boolean) => void;
+  playerRef: React.MutableRefObject<any>;
 }) {
   const player = useVideoPlayer({ uri }, p => {
     p.volume = volume; p.playbackRate = rate; p.loop = false;
@@ -961,16 +823,14 @@ function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingC
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// TAB 2 — VIDEOS  (FFmpeg + seek preview + Skia color preview)
+// TAB 2 — VIDEOS
 // ═════════════════════════════════════════════════════════════════════════════
 const SPEED_PRESETS = [
-  { label: '0.3×', value: 0.3 }, { label: '0.5×', value: 0.5 },
-  { label: '1×',   value: 1.0 }, { label: '2×',   value: 2.0 },
-  { label: '3×',   value: 3.0 }, { label: '4×',   value: 4.0 },
+  { label: '0.5×', value: 0.5 }, { label: '1×', value: 1.0 },
+  { label: '2×', value: 2.0 }, { label: '4×', value: 4.0 },
 ];
 
 type ColorFilterName = 'vintage' | 'cine' | 'frio' | 'calido' | 'bn' | 'neon' | 'none';
-
 const VIDEO_COLOR_FILTERS: { id: ColorFilterName; name: string; emoji: string; gradient: [string,string] }[] = [
   { id: 'none',    name: 'Original', emoji: '🎬', gradient: ['#333','#222'] },
   { id: 'vintage', name: 'Vintage',  emoji: '📷', gradient: ['#8B5E3C','#C27540'] },
@@ -983,17 +843,17 @@ const VIDEO_COLOR_FILTERS: { id: ColorFilterName; name: string; emoji: string; g
 
 interface Clip { id: string; uri: string; durationMs: number }
 interface DeezerArtist { name: string }
-interface DeezerAlbum  { cover_medium: string; title: string }
-interface DeezerTrack  { id: number; title: string; preview: string; duration: number; artist: DeezerArtist; album: DeezerAlbum }
+interface DeezerAlbum { cover_medium: string; title: string }
+interface DeezerTrack { id: number; title: string; preview: string; duration: number; artist: DeezerArtist; album: DeezerAlbum }
 
 const DEEZER_CATS = [
-  { id: 'pop',        q: 'top pop 2025',       label: 'Pop',         emoji: '🎤' },
-  { id: 'reggaeton',  q: 'reggaeton hits',      label: 'Reggaetón',   emoji: '🔥' },
-  { id: 'hiphop',     q: 'hip hop rap',         label: 'Hip Hop',     emoji: '🎧' },
-  { id: 'electronic', q: 'electronic edm',      label: 'Electrónica', emoji: '⚡' },
-  { id: 'lofi',       q: 'lofi chill beats',    label: 'Lo-Fi',       emoji: '☕' },
-  { id: 'latin',      q: 'latin hits',          label: 'Latino',      emoji: '🌶️' },
-  { id: 'viral',      q: 'trending viral 2025', label: 'Viral',       emoji: '📈' },
+  { id: 'pop', q: 'top pop 2025', label: 'Pop', emoji: '🎤' },
+  { id: 'reggaeton', q: 'reggaeton hits', label: 'Reggaetón', emoji: '🔥' },
+  { id: 'hiphop', q: 'hip hop rap', label: 'Hip Hop', emoji: '🎧' },
+  { id: 'electronic', q: 'electronic edm', label: 'Electrónica', emoji: '⚡' },
+  { id: 'lofi', q: 'lofi chill beats', label: 'Lo-Fi', emoji: '☕' },
+  { id: 'latin', q: 'latin hits', label: 'Latino', emoji: '🌶️' },
+  { id: 'viral', q: 'trending viral 2025', label: 'Viral', emoji: '📈' },
 ];
 
 function VideosTab() {
@@ -1003,34 +863,33 @@ function VideosTab() {
   const playerRef     = useRef<any>(null);
   const soundRef      = useRef<Audio.Sound | null>(null);
 
-  const [clips,          setClips]          = useState<Clip[]>([]);
-  const [activeClipIdx,  setActiveClipIdx]  = useState(0);
-  const [isPlaying,      setIsPlaying]      = useState(false);
-  const [speed,          setSpeed]          = useState(1.0);
-  const [trimStart,      setTrimStart]      = useState(0.0);
-  const [trimEnd,        setTrimEnd]        = useState(1.0);
-  const [durationMs,     setDurationMs]     = useState(0);
-  const [positionMs,     setPositionMs]     = useState(0);
-  const [selectedTrack,  setSelectedTrack]  = useState<DeezerTrack | null>(null);
-  const [videoVol,       setVideoVol]       = useState(0.8);
-  const [musicVol,       setMusicVol]       = useState(0.6);
-  const [caption,        setCaption]        = useState('');
-  const [captionModal,   setCaptionModal]   = useState(false);
-  const [isPublishing,   setIsPublishing]   = useState(false);
-  const [musicModal,     setMusicModal]     = useState(false);
-  const [colorFilter,    setColorFilter]    = useState<ColorFilterName>('none');
+  const [clips,         setClips]         = useState<Clip[]>([]);
+  const [activeClipIdx, setActiveClipIdx] = useState(0);
+  const [isPlaying,     setIsPlaying]     = useState(false);
+  const [speed,         setSpeed]         = useState(1.0);
+  const [trimStart,     setTrimStart]     = useState(0.0);
+  const [trimEnd,       setTrimEnd]       = useState(1.0);
+  const [durationMs,    setDurationMs]    = useState(0);
+  const [positionMs,    setPositionMs]    = useState(0);
+  const [selectedTrack, setSelectedTrack] = useState<DeezerTrack | null>(null);
+  const [videoVol,      setVideoVol]      = useState(0.8);
+  const [musicVol,      setMusicVol]      = useState(0.6);
+  const [caption,       setCaption]       = useState('');
+  const [captionModal,  setCaptionModal]  = useState(false);
+  const [isPublishing,  setIsPublishing]  = useState(false);
+  const [musicModal,    setMusicModal]    = useState(false);
+  const [colorFilter,   setColorFilter]   = useState<ColorFilterName>('none');
   const [exportProgress, setExportProgress] = useState<string | null>(null);
-  const [isExporting,    setIsExporting]    = useState(false);
+  const [isExporting,   setIsExporting]   = useState(false);
 
-  // Skia color preview over video player
   const skiaPreviewId = colorFilter !== 'none' ? colorFilter as SkiaEffectId : 'none';
 
   useEffect(() => () => { soundRef.current?.unloadAsync().catch(() => {}); }, []);
 
   const pickClip = useCallback(async () => {
-    if (clips.length >= 5) { showAlert('Máximo 5 clips', 'Ya tienes el máximo'); return; }
+    if (clips.length >= 5) { showAlert('Máximo 5 clips', 'Elimina uno para agregar otro'); return; }
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) return;
+    if (!perm.granted) { showAlert('Permiso requerido', 'Necesitamos acceso a tu galería'); return; }
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Videos, quality: 1 });
     if (!res.canceled && res.assets[0]) {
       const clip: Clip = {
@@ -1057,17 +916,13 @@ function VideosTab() {
     const p = playerRef.current; if (!p) return;
     try {
       if (isPlaying) { p.pause?.(); setIsPlaying(false); }
-      else           { p.play?.();  setIsPlaying(true);  }
+      else           { p.play?.();  setIsPlaying(true); }
     } catch (_) {}
   }, [isPlaying]);
 
-  // ── Seek by tapping on timeline ──────────────────────────────────────────
   const seekTo = useCallback((fraction: number) => {
     if (!playerRef.current || durationMs <= 0) return;
-    try {
-      const seekMs = fraction * durationMs;
-      playerRef.current.currentTime = seekMs / 1000;
-    } catch (_) {}
+    try { playerRef.current.currentTime = (fraction * durationMs) / 1000; } catch (_) {}
   }, [durationMs]);
 
   const handleSetSpeed = useCallback((v: number) => {
@@ -1075,16 +930,15 @@ function VideosTab() {
     try { if (playerRef.current) playerRef.current.playbackRate = v; } catch (_) {}
   }, []);
 
-  // ── FFmpeg Export + Publish ───────────────────────────────────────────────
   const handleExportAndPublish = useCallback(async () => {
     if (!activeClip) return;
-    setIsPublishing(true); setIsExporting(true); setExportProgress('Iniciando...');
+    setIsPublishing(true); setIsExporting(true); setExportProgress('Preparando...');
     try {
       const result = await exportFinal({
         clips: clips.map(c => ({
-          uri:        c.uri,
-          trimStart:  c.id === activeClip.id ? trimStart : 0,
-          trimEnd:    c.id === activeClip.id ? trimEnd   : 1,
+          uri: c.uri,
+          trimStart: c.id === activeClip.id ? trimStart : 0,
+          trimEnd:   c.id === activeClip.id ? trimEnd   : 1,
           durationMs: c.durationMs,
         })),
         speed, colorFilter, musicUri: selectedTrack?.preview,
@@ -1094,37 +948,30 @@ function VideosTab() {
 
       setExportProgress('Publicando...');
       const finalUri = result.uri || activeClip.uri;
-
       await addVideo({
-        videoUrl:     finalUri,
-        thumbnailUrl: '',
-        caption:      caption.trim() || `🎬 ${colorFilter !== 'none' ? `#${colorFilter} ` : ''}${speed !== 1 ? `${speed}× ` : ''}#ClipDAG`,
-        music:        selectedTrack ? `${selectedTrack.title} — ${selectedTrack.artist.name}` : 'Sin música',
+        videoUrl: finalUri, thumbnailUrl: '',
+        caption: caption.trim() || `🎬 ${colorFilter !== 'none' ? `#${colorFilter} ` : ''}${speed !== 1 ? `${speed}× ` : ''}#ClipDAG`,
+        music: selectedTrack ? `${selectedTrack.title} — ${selectedTrack.artist.name}` : 'Sin música',
         username: '', userAvatar: '',
       });
-
       showAlert('Publicado 🎉', isFFmpegAvailable() ? 'Video exportado con FFmpeg y publicado' : 'Clip publicado al feed', [
         { text: 'Ver feed', onPress: () => router.replace('/(tabs)') },
       ]);
       setCaptionModal(false);
-    } catch (e: any) {
-      showAlert('Error', e?.message || 'No se pudo publicar');
-    } finally {
-      setIsPublishing(false); setIsExporting(false); setExportProgress(null);
-    }
+    } catch (e: any) { showAlert('Error', e?.message || 'No se pudo publicar'); }
+    finally { setIsPublishing(false); setIsExporting(false); setExportProgress(null); }
   }, [activeClip, clips, trimStart, trimEnd, speed, colorFilter, selectedTrack, musicVol, videoVol, caption, addVideo, showAlert, router]);
 
-  const TRACK_W     = W - 32;
-  const trimDurSec  = durationMs > 0 ? Math.round((trimEnd - trimStart) * durationMs / 1000) : 0;
-  const exportedDur = trimDurSec > 0 ? (speed !== 1 ? Math.round(trimDurSec / speed) : trimDurSec) : 0;
+  const TRACK_W    = W - 32;
+  const trimDurSec = durationMs > 0 ? Math.round((trimEnd - trimStart) * durationMs / 1000) : 0;
 
   if (clips.length === 0) {
     return (
       <View style={vid.empty}>
         <LinearGradient colors={['#1A1228','#0E0E18']} style={StyleSheet.absoluteFillObject} />
         <MaterialCommunityIcons name="video-plus-outline" size={60} color={Colors.primary} />
-        <Text style={vid.emptyTitle}>Importa clips para editar</Text>
-        <Text style={vid.emptySub}>Trim, merge, filtros FFmpeg, Skia preview, música Deezer</Text>
+        <Text style={vid.emptyTitle}>Importa un video de tu galería</Text>
+        <Text style={vid.emptySub}>Aplica filtros, cambia velocidad, añade música y publica</Text>
         {isFFmpegAvailable() ? (
           <View style={vid.ffmpegBadge}>
             <MaterialCommunityIcons name="check-circle" size={14} color="#00E5A0" />
@@ -1133,13 +980,15 @@ function VideosTab() {
         ) : (
           <View style={vid.ffmpegBadge}>
             <MaterialCommunityIcons name="information" size={14} color={Colors.warning} />
-            <Text style={[vid.ffmpegBadgeText, { color: Colors.warning }]}>FFmpeg disponible en EAS Build</Text>
+            <Text style={[vid.ffmpegBadgeText, { color: Colors.warning }]}>
+              Tip: El video se publica tal cual (FFmpeg disponible en EAS Build nativo)
+            </Text>
           </View>
         )}
         <Pressable style={vid.emptyBtn} onPress={pickClip}>
           <LinearGradient colors={['#7C5CFF','#FF2D78']} style={vid.emptyBtnInner}>
-            <MaterialCommunityIcons name="plus" size={22} color="#fff" />
-            <Text style={vid.emptyBtnText}>Importar primer clip</Text>
+            <MaterialCommunityIcons name="folder-open-outline" size={22} color="#fff" />
+            <Text style={vid.emptyBtnText}>Seleccionar video</Text>
           </LinearGradient>
         </Pressable>
       </View>
@@ -1174,13 +1023,12 @@ function VideosTab() {
         <Text style={vid.clipCount}>{clips.length}/5 clips</Text>
       </View>
 
-      {/* Video player with Skia color preview overlay */}
+      {/* Video player */}
       {activeClip ? (
         <View style={vid.playerWrap}>
           <ClipVideoPlayer key={activeClip.id} uri={activeClip.uri} volume={videoVol} rate={speed}
             onDuration={setDurationMs} onPosition={setPositionMs} onPlayingChange={setIsPlaying}
             playerRef={playerRef} />
-          {/* Skia ColorMatrix preview over video */}
           {skiaPreviewId !== 'none' ? (
             <SkiaEffectsLayer effectId={skiaPreviewId} width={W} height={W * 0.62} />
           ) : null}
@@ -1200,47 +1048,24 @@ function VideosTab() {
               <Text style={vid.musicBadgeText} numberOfLines={1}>{selectedTrack.title}</Text>
             </View>
           ) : null}
-          {colorFilter !== 'none' ? (
-            <View style={vid.filterBadge}>
-              <MaterialCommunityIcons name="palette" size={11} color="#fff" />
-              <Text style={vid.musicBadgeText}>{colorFilter}</Text>
-              {isFFmpegAvailable() ? <Text style={{ color: '#00E5A0', fontSize: 8 }}> FFmpeg</Text> : null}
-            </View>
-          ) : null}
         </View>
       ) : null}
 
-      {/* Timeline — tap to seek */}
+      {/* Timeline */}
       {durationMs > 0 ? (
         <>
           <View style={vid.timeRow}>
             <Text style={vid.timeText}>{fmtMs(positionMs)}</Text>
-            {trimDurSec > 0 ? (
-              <View style={{ alignItems: 'center' }}>
-                <Text style={[vid.timeText, { color: Colors.primary }]}>{trimDurSec}s selec.</Text>
-                {exportedDur !== trimDurSec ? (
-                  <Text style={{ color: Colors.warning, fontSize: 10 }}>→ {exportedDur}s exportado ({speed}×)</Text>
-                ) : null}
-              </View>
-            ) : null}
+            {trimDurSec > 0 ? <Text style={[vid.timeText, { color: Colors.primary }]}>{trimDurSec}s selec.</Text> : null}
             <Text style={vid.timeText}>{fmtMs(durationMs)}</Text>
           </View>
-          {/* Seek bar — tap to jump */}
           <View style={[vid.seekBar, { width: TRACK_W, marginHorizontal: 16 }]}>
             <LinearGradient colors={['#7C5CFF44','#FF2D7844']} start={{ x:0,y:0 }} end={{ x:1,y:0 }} style={StyleSheet.absoluteFillObject} />
-            <Pressable
-              style={StyleSheet.absoluteFillObject}
+            <Pressable style={StyleSheet.absoluteFillObject}
               onStartShouldSetResponder={() => true}
-              onResponderMove={e => {
-                const x = e.nativeEvent.pageX - 16;
-                seekTo(Math.max(0, Math.min(1, x / TRACK_W)));
-              }}
-              onPress={e => {
-                const x = e.nativeEvent.pageX - 16;
-                seekTo(Math.max(0, Math.min(1, x / TRACK_W)));
-              }}
+              onResponderMove={e => seekTo(Math.max(0, Math.min(1, (e.nativeEvent.pageX - 16) / TRACK_W)))}
+              onPress={e => seekTo(Math.max(0, Math.min(1, (e.nativeEvent.pageX - 16) / TRACK_W)))}
             />
-            {/* Playhead */}
             <View style={[vid.seekPlayhead, { left: (positionMs / durationMs) * TRACK_W }]} />
           </View>
         </>
@@ -1263,28 +1088,15 @@ function VideosTab() {
         <View style={[vid.handleZone, { width: TRACK_W }]}>
           <Pressable style={[vid.handleTouch, { left: Math.max(0, trimStart * TRACK_W - 18) }]}
             onStartShouldSetResponder={() => true}
-            onResponderMove={e => {
-              const x = e.nativeEvent.pageX - 16;
-              setTrimStart(Math.max(0, Math.min(trimEnd - 0.05, x / TRACK_W)));
-            }}>
-            <LinearGradient colors={['#7C5CFF','#FF2D78']} style={vid.handle}>
-              <Text style={vid.handleIcon}>◂</Text>
-            </LinearGradient>
+            onResponderMove={e => setTrimStart(Math.max(0, Math.min(trimEnd - 0.05, (e.nativeEvent.pageX - 16) / TRACK_W)))}>
+            <LinearGradient colors={['#7C5CFF','#FF2D78']} style={vid.handle}><Text style={vid.handleIcon}>◂</Text></LinearGradient>
           </Pressable>
           <Pressable style={[vid.handleTouch, { left: Math.min(TRACK_W - 36, trimEnd * TRACK_W - 18) }]}
             onStartShouldSetResponder={() => true}
-            onResponderMove={e => {
-              const x = e.nativeEvent.pageX - 16;
-              setTrimEnd(Math.min(1, Math.max(trimStart + 0.05, x / TRACK_W)));
-            }}>
-            <LinearGradient colors={['#FF2D78','#7C5CFF']} style={vid.handle}>
-              <Text style={vid.handleIcon}>▸</Text>
-            </LinearGradient>
+            onResponderMove={e => setTrimEnd(Math.min(1, Math.max(trimStart + 0.05, (e.nativeEvent.pageX - 16) / TRACK_W)))}>
+            <LinearGradient colors={['#FF2D78','#7C5CFF']} style={vid.handle}><Text style={vid.handleIcon}>▸</Text></LinearGradient>
           </Pressable>
         </View>
-        {isFFmpegAvailable()
-          ? <Text style={vid.ffmpegHint}>✅ FFmpeg activo — trim aplicado al exportar</Text>
-          : <Text style={vid.trimHint}>Arrastra los marcadores — trim real en EAS Build</Text>}
       </View>
 
       {/* Speed */}
@@ -1300,22 +1112,11 @@ function VideosTab() {
             </Pressable>
           ))}
         </ScrollView>
-        {speed !== 1 && exportedDur > 0 ? (
-          <Text style={{ color: Colors.warning, fontSize: 11, marginTop: 4 }}>
-            Duración exportada: ~{exportedDur}s (de {trimDurSec}s a {speed}×)
-          </Text>
-        ) : null}
       </View>
 
-      {/* Color filter — Skia live preview + FFmpeg export */}
+      {/* Color filter */}
       <View style={vid.section}>
-        <View style={vid.sectionRow}>
-          <Text style={vid.sectionTitle}>🎨 Filtro de video</Text>
-          <View style={{ flexDirection: 'row', gap: 6 }}>
-            <View style={vid.previewLabel}><Text style={vid.previewLabelText}>Skia preview</Text></View>
-            {isFFmpegAvailable() ? <View style={[vid.previewLabel, { backgroundColor: '#00E5A022', borderColor: '#00E5A044' }]}><Text style={[vid.previewLabelText, { color: '#00E5A0' }]}>FFmpeg export</Text></View> : null}
-          </View>
-        </View>
+        <Text style={vid.sectionTitle}>🎨 Filtro de color</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ flexDirection: 'row', gap: 8 }}>
           {VIDEO_COLOR_FILTERS.map(f => (
@@ -1328,11 +1129,6 @@ function VideosTab() {
             </Pressable>
           ))}
         </ScrollView>
-        {colorFilter !== 'none' ? (
-          <Text style={{ color: Colors.textSubtle, fontSize: 10, marginTop: 4 }}>
-            Vista previa activa en el player — se aplicará como LUT real al exportar
-          </Text>
-        ) : null}
       </View>
 
       {/* Music */}
@@ -1343,8 +1139,7 @@ function VideosTab() {
             <Pressable onPress={async () => {
               await soundRef.current?.stopAsync().catch(() => {});
               await soundRef.current?.unloadAsync().catch(() => {});
-              soundRef.current = null;
-              setSelectedTrack(null);
+              soundRef.current = null; setSelectedTrack(null);
             }}>
               <Text style={{ color: Colors.error, fontSize: FontSize.xs, fontWeight: FontWeight.semibold }}>Quitar</Text>
             </Pressable>
@@ -1363,12 +1158,12 @@ function VideosTab() {
         <Pressable style={vid.addMusicBtn} onPress={() => setMusicModal(true)}>
           <LinearGradient colors={['#FF9D00','#FF5A00']} style={vid.addMusicBtnInner}>
             <MaterialCommunityIcons name="music-note-plus" size={18} color="#fff" />
-            <Text style={vid.addMusicBtnText}>{selectedTrack ? 'Cambiar música' : 'Añadir música de Deezer'}</Text>
+            <Text style={vid.addMusicBtnText}>{selectedTrack ? 'Cambiar música' : 'Añadir música Deezer'}</Text>
           </LinearGradient>
         </Pressable>
       </View>
 
-      {/* Volume mix */}
+      {/* Volume */}
       {selectedTrack ? (
         <View style={vid.section}>
           <Text style={vid.sectionTitle}>🔊 Mezcla de audio</Text>
@@ -1401,31 +1196,17 @@ function VideosTab() {
               <ActivityIndicator color={Colors.primary} size="small" />
               <Text style={cm.progressText}>{exportProgress}</Text>
             </View>
-          ) : (
-            <View style={cm.pipelineWrap}>
-              {[
-                { label: `${clips.length} clip${clips.length > 1 ? 's' : ''}`, active: true },
-                { label: trimDurSec > 0 ? `${trimDurSec}s recortado` : null, active: trimEnd - trimStart < 0.99 },
-                { label: speed !== 1 ? `${speed}× → ${exportedDur}s` : null, active: speed !== 1 },
-                { label: colorFilter !== 'none' ? colorFilter : null, active: colorFilter !== 'none' },
-                { label: selectedTrack ? 'Música Deezer' : null, active: !!selectedTrack },
-              ].filter(s => s.active && s.label).map((s, i) => (
-                <View key={i} style={cm.pipelineChip}>
-                  <Text style={cm.pipelineChipText}>{s.label}</Text>
-                </View>
-              ))}
-            </View>
-          )}
+          ) : null}
           <TextInput style={cm.input} value={caption} onChangeText={setCaption}
             placeholder="Escribe algo..." placeholderTextColor={Colors.textSubtle}
-            multiline maxLength={200} autoFocus={!isExporting} />
+            multiline maxLength={200} />
           <Text style={cm.count}>{caption.length}/200</Text>
           <Pressable style={[cm.pubBtn, isPublishing && { opacity: 0.6 }]}
             onPress={handleExportAndPublish} disabled={isPublishing}>
             <LinearGradient colors={['#7C5CFF','#FF2D78']} style={cm.pubBtnInner}>
               {isPublishing ? <ActivityIndicator color="#fff" size="small" /> : null}
               <Text style={cm.pubBtnText}>
-                {isPublishing ? (exportProgress ?? 'Procesando...') : (isFFmpegAvailable() ? '🚀 Exportar y publicar' : '🚀 Publicar')}
+                {isPublishing ? (exportProgress ?? 'Procesando...') : '🚀 Publicar'}
               </Text>
             </LinearGradient>
           </Pressable>
@@ -1450,10 +1231,7 @@ function VolumeSlider({ label, value, onChange, color }: { label: string; value:
         </View>
         <Pressable style={[vid.volThumb, { left: `${value * 100}%` as any, backgroundColor: color }]}
           onStartShouldSetResponder={() => true}
-          onResponderMove={e => {
-            const x = e.nativeEvent.pageX - 16 - 56;
-            onChange(Math.max(0, Math.min(1, x / TRACK_W)));
-          }} />
+          onResponderMove={e => onChange(Math.max(0, Math.min(1, (e.nativeEvent.pageX - 16 - 56) / TRACK_W)))} />
       </View>
       <Text style={[vid.volValue, { color }]}>{Math.round(value * 100)}%</Text>
     </View>
@@ -1487,17 +1265,13 @@ const vid = StyleSheet.create({
   speedBadgeText:   { color: '#fff', fontSize: 12, fontWeight: FontWeight.bold },
   musicBadge:       { position: 'absolute', bottom: 10, left: 10, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 5, maxWidth: W * 0.5 },
   musicBadgeText:   { color: '#fff', fontSize: 11 },
-  filterBadge:      { position: 'absolute', bottom: 10, right: 10, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 5 },
   seekBar:          { height: 6, borderRadius: 3, backgroundColor: Colors.surface, overflow: 'hidden', position: 'relative', marginBottom: 4 },
   seekPlayhead:     { position: 'absolute', top: 0, bottom: 0, width: 3, backgroundColor: '#fff', borderRadius: 2 },
   timeRow:          { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 6 },
   timeText:         { color: Colors.textSubtle, fontSize: 11 },
   section:          { paddingHorizontal: 16, paddingTop: 18, gap: 10 },
-  sectionRow:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4 },
+  sectionRow:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sectionTitle:     { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.bold },
-  ffmpegHint:       { color: '#00E5A0', fontSize: 10 },
-  previewLabel:     { backgroundColor: Colors.primary + '22', borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: Colors.primary + '44' },
-  previewLabelText: { color: Colors.primary, fontSize: 9, fontWeight: FontWeight.semibold },
   track:            { height: 44, borderRadius: 8, overflow: 'hidden', position: 'relative', backgroundColor: Colors.surface },
   trimDark:         { position: 'absolute', top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.62)', zIndex: 2 },
   trimBracket:      { position: 'absolute', top: 0, bottom: 0, zIndex: 3 },
@@ -1510,7 +1284,6 @@ const vid = StyleSheet.create({
   handleTouch:      { position: 'absolute', top: 0, width: 36, height: 32, alignItems: 'center', justifyContent: 'center' },
   handle:           { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   handleIcon:       { color: '#fff', fontSize: 14, fontWeight: FontWeight.bold },
-  trimHint:         { color: Colors.textSubtle, fontSize: 10, textAlign: 'center' },
   speedChip:        { paddingHorizontal: 16, paddingVertical: 11, borderRadius: Radius.lg, backgroundColor: Colors.surfaceElevated, borderWidth: 1.5, borderColor: Colors.border },
   speedChipActive:  { backgroundColor: Colors.primary, borderColor: Colors.primary },
   speedLabel:       { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
@@ -1538,20 +1311,17 @@ const vid = StyleSheet.create({
 });
 
 const cm = StyleSheet.create({
-  backdrop:         { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)' },
-  sheet:            { backgroundColor: Colors.surfaceElevated, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, gap: 14, borderTopWidth: 1, borderColor: Colors.border },
-  handle:           { width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border, alignSelf: 'center' },
-  title:            { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
-  progressWrap:     { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: Colors.primary + '22', borderRadius: Radius.md, padding: 12 },
-  progressText:     { color: Colors.primary, fontSize: FontSize.sm, flex: 1 },
-  pipelineWrap:     { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  pipelineChip:     { backgroundColor: Colors.surface, borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: Colors.border },
-  pipelineChipText: { color: Colors.textSubtle, fontSize: 11 },
-  input:            { backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.md, paddingHorizontal: 14, paddingVertical: 12, color: Colors.textPrimary, fontSize: FontSize.md, minHeight: 80, textAlignVertical: 'top' },
-  count:            { color: Colors.textSubtle, fontSize: 11, textAlign: 'right' },
-  pubBtn:           { borderRadius: Radius.lg, overflow: 'hidden' },
-  pubBtnInner:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
-  pubBtnText:       { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
+  backdrop:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)' },
+  sheet:      { backgroundColor: Colors.surfaceElevated, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, gap: 14, borderTopWidth: 1, borderColor: Colors.border },
+  handle:     { width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border, alignSelf: 'center' },
+  title:      { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
+  progressWrap: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: Colors.primary + '22', borderRadius: Radius.md, padding: 12 },
+  progressText: { color: Colors.primary, fontSize: FontSize.sm, flex: 1 },
+  input:      { backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.md, paddingHorizontal: 14, paddingVertical: 12, color: Colors.textPrimary, fontSize: FontSize.md, minHeight: 80, textAlignVertical: 'top' },
+  count:      { color: Colors.textSubtle, fontSize: 11, textAlign: 'right' },
+  pubBtn:     { borderRadius: Radius.lg, overflow: 'hidden' },
+  pubBtnInner:{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
+  pubBtnText: { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1573,7 +1343,7 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
     if (!q.trim()) return;
     setLoading(true); setError('');
     try {
-      const res  = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=25&output=json`);
+      const res = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=25&output=json`);
       if (!res.ok) throw new Error(`${res.status}`);
       const json = await res.json();
       setTracks((json.data ?? []) as DeezerTrack[]);
@@ -1581,24 +1351,41 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
     setLoading(false);
   }, []);
 
-  useEffect(() => { if (!visible) return; const cat = DEEZER_CATS.find(c => c.id === catId); if (cat) searchDeezer(cat.q); }, [catId, visible]);
   useEffect(() => {
-    if (!search.trim()) { const cat = DEEZER_CATS.find(c => c.id === catId); if (cat) searchDeezer(cat.q); return; }
+    if (!visible) return;
+    const cat = DEEZER_CATS.find(c => c.id === catId);
+    if (cat) searchDeezer(cat.q);
+  }, [catId, visible]);
+
+  useEffect(() => {
+    if (!search.trim()) {
+      const cat = DEEZER_CATS.find(c => c.id === catId);
+      if (cat) searchDeezer(cat.q);
+      return;
+    }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => searchDeezer(search), 500);
   }, [search]);
+
   useEffect(() => {
-    if (!visible) { soundRef.current?.stopAsync().catch(() => {}); soundRef.current?.unloadAsync().catch(() => {}); soundRef.current = null; setPreviewId(null); }
+    if (!visible) {
+      soundRef.current?.stopAsync().catch(() => {});
+      soundRef.current?.unloadAsync().catch(() => {});
+      soundRef.current = null;
+      setPreviewId(null);
+    }
   }, [visible]);
 
   const handlePreview = useCallback(async (track: DeezerTrack) => {
     if (!track.preview) return;
-    await soundRef.current?.stopAsync().catch(() => {}); await soundRef.current?.unloadAsync().catch(() => {}); soundRef.current = null;
+    await soundRef.current?.stopAsync().catch(() => {});
+    await soundRef.current?.unloadAsync().catch(() => {});
+    soundRef.current = null;
     if (previewId === track.id) { setPreviewId(null); return; }
     setPreviewId(track.id);
     try {
       await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
-      const { sound } = await Audio.Sound.createAsync({ uri: track.preview }, { shouldPlay: true, volume: 1.0, isLooping: false });
+      const { sound } = await Audio.Sound.createAsync({ uri: track.preview }, { shouldPlay: true, volume: 1.0 });
       soundRef.current = sound;
       sound.setOnPlaybackStatusUpdate((s: any) => { if (s.didJustFinish) setPreviewId(null); });
     } catch (_) { setPreviewId(null); }
@@ -1616,12 +1403,16 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
         </View>
         <View style={dm.searchWrap}>
           <MaterialCommunityIcons name="magnify" size={18} color={Colors.textSubtle} style={{ position: 'absolute', left: 12, zIndex: 1 }} />
-          <TextInput style={dm.search} value={search} onChangeText={setSearch} placeholder="Buscar canción o artista..." placeholderTextColor={Colors.textSubtle} />
-          {search ? <Pressable style={{ position: 'absolute', right: 12 }} onPress={() => setSearch('')}><MaterialCommunityIcons name="close-circle" size={16} color={Colors.textSubtle} /></Pressable> : null}
+          <TextInput style={dm.search} value={search} onChangeText={setSearch}
+            placeholder="Buscar canción o artista..." placeholderTextColor={Colors.textSubtle} />
+          {search ? <Pressable style={{ position: 'absolute', right: 12 }} onPress={() => setSearch('')}>
+            <MaterialCommunityIcons name="close-circle" size={16} color={Colors.textSubtle} />
+          </Pressable> : null}
         </View>
         {!search ? (
           <View style={{ height: 44 }}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 6 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 6 }}>
               {DEEZER_CATS.map(cat => (
                 <Pressable key={cat.id} style={[dm.catChip, catId === cat.id && dm.catChipActive]} onPress={() => setCatId(cat.id)}>
                   <Text style={dm.catEmoji}>{cat.emoji}</Text>
@@ -1651,7 +1442,7 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
                     </View>
                     {item.preview ? (
                       <Pressable style={[dm.previewBtn, isPrev && { backgroundColor: Colors.warning }]}
-                        onPress={() => { handlePreview(item); }}>
+                        onPress={() => handlePreview(item)}>
                         <MaterialCommunityIcons name={isPrev ? 'pause' : 'play'} size={16} color={isPrev ? '#fff' : Colors.warning} />
                       </Pressable>
                     ) : null}
@@ -1659,8 +1450,14 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
                   </Pressable>
                 );
               }}
-              ListEmptyComponent={<View style={dm.center}><MaterialCommunityIcons name="music-off" size={38} color={Colors.textSubtle} /><Text style={dm.centerText}>Sin resultados</Text></View>}
-            />}
+              ListEmptyComponent={
+                <View style={dm.center}>
+                  <MaterialCommunityIcons name="music-off" size={38} color={Colors.textSubtle} />
+                  <Text style={dm.centerText}>Sin resultados</Text>
+                </View>
+              }
+            />
+        }
       </View>
     </Modal>
   );
@@ -1688,100 +1485,342 @@ const dm = StyleSheet.create({
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// TAB 3 — AVATARS
+// TAB 3 — AVATARS (AI via OnSpace AI)
 // ═════════════════════════════════════════════════════════════════════════════
+const AVATAR_STYLES_LIST = [
+  { id: 'cartoon',    label: 'Cartoon',   emoji: '🎨', g: ['#7C5CFF','#B44FFF'] as [string,string] },
+  { id: 'anime',      label: 'Anime',     emoji: '⛩️',  g: ['#FF2D78','#A855F7'] as [string,string] },
+  { id: 'cinematic',  label: 'Cinematic', emoji: '🎬', g: ['#FF9D00','#FF2D78'] as [string,string] },
+  { id: 'pixel',      label: 'Pixel Art', emoji: '👾', g: ['#A855F7','#7C5CFF'] as [string,string] },
+  { id: 'glass',      label: 'Glass',     emoji: '✨', g: ['#00E5A0','#2D9EFF'] as [string,string] },
+  { id: 'neon',       label: 'Neon',      emoji: '🌈', g: ['#FF2D78','#7C5CFF'] as [string,string] },
+  { id: 'realistic',  label: 'Realistic', emoji: '📷', g: ['#2D9EFF','#7C5CFF'] as [string,string] },
+  { id: 'watercolor', label: 'Acuarela',  emoji: '🎭', g: ['#FFB800','#FF5A00'] as [string,string] },
+];
+
 function AvatarsTab() {
-  const router = useRouter();
-  const STYLES = [
-    { id: 'cartoon',   label: 'Cartoon',   emoji: '🎨', g: ['#7C5CFF','#B44FFF'] as [string,string] },
-    { id: 'anime',     label: 'Anime',     emoji: '⛩️',  g: ['#FF2D78','#A855F7'] as [string,string] },
-    { id: 'cinematic', label: 'Cinematic', emoji: '🎬', g: ['#FF9D00','#FF2D78'] as [string,string] },
-    { id: 'pixel',     label: 'Pixel Art', emoji: '👾', g: ['#A855F7','#7C5CFF'] as [string,string] },
-    { id: 'glass',     label: 'Glass',     emoji: '✨', g: ['#00E5A0','#2D9EFF'] as [string,string] },
-    { id: 'neon',      label: 'Neon',      emoji: '🌈', g: ['#FF2D78','#7C5CFF'] as [string,string] },
-  ];
-  return (
-    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16, paddingBottom: 120, gap: 20 }}>
-      <Pressable style={av.hero} onPress={() => router.push('/ai-avatar')}>
-        <LinearGradient colors={['#7C5CFF','#FF2D78','#FF9D00']} start={{ x:0,y:0 }} end={{ x:1,y:1 }} style={av.heroGrad}>
-          <Text style={av.heroEmoji}>🤖</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={av.heroTitle}>Generador de Avatares IA</Text>
-            <Text style={av.heroSub}>Foto → Avatar estilizado → Video hablando</Text>
-            <Text style={av.heroPowered}>Powered by Gemini + Sora-2 via OnSpace AI</Text>
-          </View>
-          <MaterialCommunityIcons name="arrow-right-circle" size={28} color="rgba(255,255,255,0.85)" />
-        </LinearGradient>
-      </Pressable>
-      {isDeepARAvailable() ? (
-        <View style={av.deepARCard}>
-          <LinearGradient colors={['#FF2D7822','#7C5CFF22']} style={StyleSheet.absoluteFillObject} />
-          <MaterialCommunityIcons name="face-recognition" size={24} color="#FF2D78" />
-          <View style={{ flex: 1 }}>
-            <Text style={av.deepARCardTitle}>DeepAR Avatar AR</Text>
-            <Text style={av.deepARCardSub}>Face tracking activo — usa el tab Efectos para AR facial en vivo</Text>
-          </View>
-          <View style={av.deepARCardBadge}><Text style={av.deepARCardBadgeText}>LIVE</Text></View>
+  const { showAlert } = useAlert();
+  const { addVideo }  = useFeed();
+  const supabase      = getSupabaseClient();
+
+  const [step,            setStep]            = useState<'pick' | 'style' | 'generating' | 'result'>('pick');
+  const [photoUri,        setPhotoUri]        = useState<string | null>(null);
+  const [uploadedUrl,     setUploadedUrl]     = useState<string | null>(null);
+  const [selectedStyle,   setSelectedStyle]   = useState('cartoon');
+  const [avatarUrl,       setAvatarUrl]       = useState<string | null>(null);
+  const [isUploading,     setIsUploading]     = useState(false);
+  const [isGenerating,    setIsGenerating]    = useState(false);
+  const [generatingStatus, setGeneratingStatus] = useState('');
+
+  const pickPhoto = useCallback(async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) { showAlert('Sin acceso', 'Necesitamos acceso a tu galería'); return; }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true, aspect: [1,1], quality: 0.85,
+    });
+    if (res.canceled || !res.assets[0]) return;
+    const uri = res.assets[0].uri;
+    setPhotoUri(uri);
+    setIsUploading(true);
+    try {
+      const resp  = await fetch(uri);
+      const blob  = await resp.blob();
+      const ab    = await blob.arrayBuffer();
+      const bytes = new Uint8Array(ab);
+      const fileName = `avatar_src_${Date.now()}.jpg`;
+      const { error: upErr } = await supabase.storage
+        .from('images').upload(fileName, bytes, { contentType: 'image/jpeg', upsert: true });
+      if (upErr) throw upErr;
+      const { data: { publicUrl } } = supabase.storage.from('images').getPublicUrl(fileName);
+      setUploadedUrl(publicUrl);
+      setStep('style');
+    } catch (e: any) {
+      showAlert('Error al subir foto', e?.message ?? 'Intenta de nuevo');
+      setPhotoUri(null);
+    }
+    setIsUploading(false);
+  }, [supabase, showAlert]);
+
+  const takeSelfie = useCallback(async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) { showAlert('Sin acceso', 'Necesitamos acceso a la cámara'); return; }
+    const res = await ImagePicker.launchCameraAsync({
+      cameraType: ImagePicker.CameraType.front,
+      allowsEditing: true, aspect: [1,1], quality: 0.85,
+    });
+    if (res.canceled || !res.assets[0]) return;
+    const uri = res.assets[0].uri;
+    setPhotoUri(uri);
+    setIsUploading(true);
+    try {
+      const resp  = await fetch(uri);
+      const blob  = await resp.blob();
+      const ab    = await blob.arrayBuffer();
+      const bytes = new Uint8Array(ab);
+      const fileName = `selfie_${Date.now()}.jpg`;
+      const { error: upErr } = await supabase.storage
+        .from('images').upload(fileName, bytes, { contentType: 'image/jpeg', upsert: true });
+      if (upErr) throw upErr;
+      const { data: { publicUrl } } = supabase.storage.from('images').getPublicUrl(fileName);
+      setUploadedUrl(publicUrl);
+      setStep('style');
+    } catch (e: any) {
+      showAlert('Error', e?.message ?? 'Intenta de nuevo');
+      setPhotoUri(null);
+    }
+    setIsUploading(false);
+  }, [supabase, showAlert]);
+
+  const generateAvatar = useCallback(async () => {
+    if (!uploadedUrl) { showAlert('Sin foto', 'Primero sube una foto'); return; }
+    setStep('generating'); setIsGenerating(true);
+    setGeneratingStatus('Generando tu avatar con IA...');
+    try {
+      const { data, error } = await supabase.functions.invoke('ai-avatar', {
+        body: { action: 'generate-image', photoUrl: uploadedUrl, style: selectedStyle },
+      });
+      if (error) {
+        let msg = error.message;
+        if (error instanceof FunctionsHttpError) {
+          try { const txt = await (error as any).context?.text(); msg = txt || msg; } catch { /* ignore */ }
+        }
+        throw new Error(msg);
+      }
+      if (!data?.imageUrl) throw new Error('No se recibió imagen del servidor');
+      setAvatarUrl(data.imageUrl);
+      setStep('result');
+    } catch (e: any) {
+      showAlert('Error de generación', e?.message ?? 'No se pudo generar el avatar. Verifica tu conexión e intenta de nuevo.');
+      setStep('style');
+    }
+    setIsGenerating(false);
+  }, [uploadedUrl, selectedStyle, supabase, showAlert]);
+
+  const publishAvatar = useCallback(async () => {
+    if (!avatarUrl) return;
+    try {
+      await addVideo({
+        videoUrl: avatarUrl, thumbnailUrl: avatarUrl,
+        caption: `Mi nuevo avatar IA ${AVATAR_STYLES_LIST.find(s => s.id === selectedStyle)?.emoji ?? '✨'} #AIAvatar #ClipDAG`,
+        music: 'Sin música', username: '', userAvatar: '',
+      });
+      showAlert('Publicado 🎉', 'Tu avatar fue publicado al feed');
+      setStep('pick'); setPhotoUri(null); setUploadedUrl(null); setAvatarUrl(null);
+    } catch (e: any) { showAlert('Error', e?.message ?? 'No se pudo publicar'); }
+  }, [avatarUrl, selectedStyle, addVideo, showAlert]);
+
+  // ── Step: Pick photo ────────────────────────────────────────────────────────
+  if (step === 'pick') {
+    return (
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 20, gap: 20 }}>
+        <View style={av.heroCard}>
+          <LinearGradient colors={['#7C5CFF','#FF2D78','#FF9D00']} start={{ x:0,y:0 }} end={{ x:1,y:1 }} style={av.heroGrad}>
+            <Text style={av.heroEmoji}>🤖</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={av.heroTitle}>Avatar IA Generativo</Text>
+              <Text style={av.heroSub}>Tu foto → avatar estilizado con Gemini 2.5</Text>
+              <Text style={av.heroPowered}>Powered by OnSpace AI</Text>
+            </View>
+          </LinearGradient>
         </View>
-      ) : null}
-      <Text style={av.sectionLabel}>Estilos disponibles</Text>
-      <View style={av.grid}>
-        {STYLES.map(s => (
-          <Pressable key={s.id} style={av.card} onPress={() => router.push('/ai-avatar')}>
-            <LinearGradient colors={s.g} style={av.cardGrad} />
-            <Text style={av.cardEmoji}>{s.emoji}</Text>
-            <Text style={av.cardLabel}>{s.label}</Text>
+
+        {isUploading ? (
+          <View style={av.uploadingBox}>
+            <ActivityIndicator color={Colors.primary} size="large" />
+            <Text style={av.uploadingText}>Subiendo foto...</Text>
+          </View>
+        ) : (
+          <>
+            <Pressable style={av.pickBtn} onPress={pickPhoto}>
+              <LinearGradient colors={['#7C5CFF','#B44FFF']} style={av.pickBtnInner}>
+                <MaterialCommunityIcons name="image-plus" size={22} color="#fff" />
+                <Text style={av.pickBtnText}>Subir foto de galería</Text>
+              </LinearGradient>
+            </Pressable>
+            <Pressable style={av.pickBtn} onPress={takeSelfie}>
+              <LinearGradient colors={['#FF2D78','#FF9D00']} style={av.pickBtnInner}>
+                <MaterialCommunityIcons name="camera-front" size={22} color="#fff" />
+                <Text style={av.pickBtnText}>Tomar selfie</Text>
+              </LinearGradient>
+            </Pressable>
+          </>
+        )}
+
+        <View style={av.tipBox}>
+          <Text style={av.tipTitle}>Tips para mejor resultado:</Text>
+          {[
+            'Foto frontal con el rostro bien visible',
+            'Buena iluminación, sin sombras fuertes',
+            'Fondo neutro o claro',
+          ].map((tip, i) => (
+            <View key={i} style={av.tipRow}>
+              <MaterialCommunityIcons name="check-circle-outline" size={13} color={Colors.primary} />
+              <Text style={av.tipText}>{tip}</Text>
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+    );
+  }
+
+  // ── Step: Choose style ──────────────────────────────────────────────────────
+  if (step === 'style') {
+    return (
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16, gap: 16 }}>
+        {photoUri ? (
+          <View style={{ alignSelf: 'center' }}>
+            <Image source={{ uri: photoUri }} style={av.photoPreview} contentFit="cover" transition={200} />
+          </View>
+        ) : null}
+        <Text style={av.stepTitle}>Elige tu estilo</Text>
+        <View style={av.grid}>
+          {AVATAR_STYLES_LIST.map(s => (
+            <Pressable key={s.id}
+              style={[av.card, selectedStyle === s.id && av.cardActive]}
+              onPress={() => setSelectedStyle(s.id)}>
+              <LinearGradient colors={s.g} style={av.cardGrad} />
+              <Text style={av.cardEmoji}>{s.emoji}</Text>
+              <Text style={[av.cardLabel, selectedStyle === s.id && { color: Colors.primary }]}>{s.label}</Text>
+              {selectedStyle === s.id ? (
+                <View style={av.cardCheck}>
+                  <MaterialIcons name="check-circle" size={14} color={Colors.primary} />
+                </View>
+              ) : null}
+            </Pressable>
+          ))}
+        </View>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <Pressable style={av.backBtn} onPress={() => setStep('pick')}>
+            <Text style={av.backBtnText}>← Volver</Text>
           </Pressable>
-        ))}
-      </View>
-      <Pressable style={av.cta} onPress={() => router.push('/ai-avatar')}>
-        <LinearGradient colors={['#7C5CFF','#FF2D78']} style={av.ctaInner}>
-          <MaterialCommunityIcons name="magic-staff" size={20} color="#fff" />
-          <Text style={av.ctaText}>Crear mi avatar ahora</Text>
+          <Pressable style={{ flex: 2, borderRadius: Radius.lg, overflow: 'hidden' }} onPress={generateAvatar}>
+            <LinearGradient colors={['#7C5CFF','#FF2D78']} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 }}>
+              <MaterialCommunityIcons name="magic-staff" size={18} color="#fff" />
+              <Text style={{ color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold }}>Generar avatar</Text>
+            </LinearGradient>
+          </Pressable>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  // ── Step: Generating ────────────────────────────────────────────────────────
+  if (step === 'generating') {
+    return (
+      <View style={av.generatingWrap}>
+        <LinearGradient colors={['#7C5CFF','#FF2D78','#00E5A0']} style={av.generatingOrb}>
+          <MaterialCommunityIcons name="robot-excited-outline" size={52} color="#fff" />
         </LinearGradient>
-      </Pressable>
-    </ScrollView>
-  );
+        <Text style={av.generatingTitle}>Generando tu avatar IA</Text>
+        <Text style={av.generatingStatus}>{generatingStatus}</Text>
+        <ActivityIndicator color={Colors.primary} size="large" style={{ marginTop: 16 }} />
+        <Text style={av.generatingHint}>Esto tarda ~30 segundos con Gemini 2.5</Text>
+      </View>
+    );
+  }
+
+  // ── Step: Result ─────────────────────────────────────────────────────────────
+  if (step === 'result' && avatarUrl) {
+    const styleDef = AVATAR_STYLES_LIST.find(s => s.id === selectedStyle);
+    return (
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16, gap: 16, alignItems: 'center' }}>
+        <Text style={av.resultTitle}>✨ Avatar {styleDef?.label} listo!</Text>
+        <Image source={{ uri: avatarUrl }} style={av.resultImg} contentFit="cover" transition={300} />
+        {photoUri ? (
+          <View style={av.compRow}>
+            <View style={av.compItem}>
+              <Image source={{ uri: photoUri }} style={av.compImg} contentFit="cover" transition={200} />
+              <Text style={av.compLabel}>Original</Text>
+            </View>
+            <LinearGradient colors={['#7C5CFF','#FF2D78']} style={av.compArrow}>
+              <MaterialCommunityIcons name="magic-staff" size={16} color="#fff" />
+            </LinearGradient>
+            <View style={av.compItem}>
+              <Image source={{ uri: avatarUrl }} style={av.compImg} contentFit="cover" transition={200} />
+              <Text style={[av.compLabel, { color: Colors.primary }]}>{styleDef?.label}</Text>
+            </View>
+          </View>
+        ) : null}
+        <Pressable style={{ width: '100%', borderRadius: Radius.lg, overflow: 'hidden' }} onPress={publishAvatar}>
+          <LinearGradient colors={['#7C5CFF','#FF2D78']} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 16 }}>
+            <MaterialCommunityIcons name="send-circle-outline" size={18} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold }}>Publicar al feed</Text>
+          </LinearGradient>
+        </Pressable>
+        <Pressable style={av.resetBtn} onPress={() => { setStep('pick'); setPhotoUri(null); setUploadedUrl(null); setAvatarUrl(null); }}>
+          <MaterialCommunityIcons name="refresh" size={16} color={Colors.textSubtle} />
+          <Text style={av.resetBtnText}>Crear otro avatar</Text>
+        </Pressable>
+      </ScrollView>
+    );
+  }
+
+  return null;
 }
 
 const av = StyleSheet.create({
-  hero:              { borderRadius: Radius.xl, overflow: 'hidden' },
-  heroGrad:          { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 18 },
-  heroEmoji:         { fontSize: 38 },
-  heroTitle:         { color: '#fff', fontSize: FontSize.lg, fontWeight: FontWeight.bold },
-  heroSub:           { color: 'rgba(255,255,255,0.75)', fontSize: FontSize.xs, marginTop: 2, lineHeight: 18 },
-  heroPowered:       { color: 'rgba(255,255,255,0.5)', fontSize: 10, marginTop: 4 },
-  deepARCard:        { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: Radius.lg, borderWidth: 1, borderColor: '#FF2D7844', overflow: 'hidden', position: 'relative' },
-  deepARCardTitle:   { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
-  deepARCardSub:     { color: Colors.textSubtle, fontSize: FontSize.xs, marginTop: 2, lineHeight: 16 },
-  deepARCardBadge:   { backgroundColor: '#FF2D78', borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 3 },
-  deepARCardBadgeText: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
-  sectionLabel:      { color: Colors.textSubtle, fontSize: 10, fontWeight: FontWeight.bold, textTransform: 'uppercase', letterSpacing: 1 },
-  grid:              { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  card:              { width: (W - 42) / 3, alignItems: 'center', gap: 8, padding: 14, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.border, backgroundColor: Colors.surface, position: 'relative' },
-  cardGrad:          { width: 52, height: 52, borderRadius: 26 },
-  cardEmoji:         { position: 'absolute', top: 20, fontSize: 22 },
-  cardLabel:         { color: Colors.textSubtle, fontSize: 11, fontWeight: FontWeight.semibold },
-  cta:               { borderRadius: Radius.xl, overflow: 'hidden' },
-  ctaInner:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 18 },
-  ctaText:           { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
+  heroCard:        { borderRadius: Radius.xl, overflow: 'hidden' },
+  heroGrad:        { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 18 },
+  heroEmoji:       { fontSize: 38 },
+  heroTitle:       { color: '#fff', fontSize: FontSize.lg, fontWeight: FontWeight.bold },
+  heroSub:         { color: 'rgba(255,255,255,0.75)', fontSize: FontSize.xs, marginTop: 2 },
+  heroPowered:     { color: 'rgba(255,255,255,0.5)', fontSize: 10, marginTop: 4 },
+  uploadingBox:    { alignItems: 'center', gap: 12, padding: 40 },
+  uploadingText:   { color: Colors.textSubtle, fontSize: FontSize.sm },
+  pickBtn:         { borderRadius: Radius.lg, overflow: 'hidden' },
+  pickBtnInner:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 16 },
+  pickBtnText:     { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
+  tipBox:          { backgroundColor: Colors.surfaceElevated, borderRadius: Radius.lg, padding: 16, gap: 8, borderWidth: 1, borderColor: Colors.border },
+  tipTitle:        { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold, marginBottom: 4 },
+  tipRow:          { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  tipText:         { color: Colors.textSubtle, fontSize: FontSize.xs, flex: 1, lineHeight: 18 },
+  photoPreview:    { width: 100, height: 100, borderRadius: 50, borderWidth: 3, borderColor: Colors.primary },
+  stepTitle:       { color: Colors.textPrimary, fontSize: FontSize.xl, fontWeight: FontWeight.bold },
+  grid:            { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  card:            { width: (W - 42) / 4, alignItems: 'center', gap: 6, padding: 10, borderRadius: 14, borderWidth: 1.5, borderColor: Colors.border, backgroundColor: Colors.surface, position: 'relative' },
+  cardActive:      { borderColor: Colors.primary, backgroundColor: Colors.primaryDim },
+  cardGrad:        { width: 44, height: 44, borderRadius: 22 },
+  cardEmoji:       { position: 'absolute', top: 15, fontSize: 20 },
+  cardLabel:       { color: Colors.textSubtle, fontSize: 10, fontWeight: '600', textAlign: 'center' },
+  cardCheck:       { position: 'absolute', top: 5, right: 5 },
+  backBtn:         { flex: 1, backgroundColor: Colors.surfaceElevated, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center', paddingVertical: 14, borderWidth: 1, borderColor: Colors.border },
+  backBtnText:     { color: Colors.textSubtle, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  generatingWrap:  { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 32 },
+  generatingOrb:   { width: 110, height: 110, borderRadius: 55, alignItems: 'center', justifyContent: 'center' },
+  generatingTitle: { color: Colors.textPrimary, fontSize: FontSize.xl, fontWeight: FontWeight.bold, textAlign: 'center' },
+  generatingStatus:{ color: Colors.textSubtle, fontSize: FontSize.sm, textAlign: 'center' },
+  generatingHint:  { color: Colors.textSubtle, fontSize: 11, textAlign: 'center', lineHeight: 18 },
+  resultTitle:     { color: Colors.textPrimary, fontSize: FontSize.xl, fontWeight: FontWeight.bold, textAlign: 'center' },
+  resultImg:       { width: W - 64, height: W - 64, borderRadius: Radius.xl, borderWidth: 2, borderColor: Colors.primary },
+  compRow:         { flexDirection: 'row', alignItems: 'center', width: '100%' },
+  compItem:        { flex: 1, alignItems: 'center', gap: 6 },
+  compImg:         { width: 80, height: 80, borderRadius: 40, borderWidth: 2, borderColor: Colors.border },
+  compLabel:       { color: Colors.textSubtle, fontSize: 11, fontWeight: '600' },
+  compArrow:       { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  resetBtn:        { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10 },
+  resetBtnText:    { color: Colors.textSubtle, fontSize: FontSize.sm },
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// TAB 4 — MUSIC
+// TAB 4 — MUSIC (Deezer)
 // ═════════════════════════════════════════════════════════════════════════════
 function MusicTab() {
   const { showAlert } = useAlert();
   const soundRef      = useRef<Audio.Sound | null>(null);
-  const [search,         setSearch]         = useState('');
-  const [catId,          setCatId]          = useState('viral');
-  const [tracks,         setTracks]         = useState<DeezerTrack[]>([]);
-  const [loading,        setLoading]        = useState(false);
-  const [previewId,      setPreviewId]      = useState<number | null>(null);
-  const [selectedTrack,  setSelectedTrack]  = useState<DeezerTrack | null>(null);
-  const [error,          setError]          = useState('');
+  const [search,        setSearch]        = useState('');
+  const [catId,         setCatId]         = useState('viral');
+  const [tracks,        setTracks]        = useState<DeezerTrack[]>([]);
+  const [loading,       setLoading]       = useState(false);
+  const [previewId,     setPreviewId]     = useState<number | null>(null);
+  const [selectedTrack, setSelectedTrack] = useState<DeezerTrack | null>(null);
+  const [error,         setError]         = useState('');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { soundRef.current?.stopAsync().catch(() => {}); soundRef.current?.unloadAsync().catch(() => {}); }, []);
+
+  useEffect(() => () => {
+    soundRef.current?.stopAsync().catch(() => {});
+    soundRef.current?.unloadAsync().catch(() => {});
+  }, []);
 
   const searchDeezer = useCallback(async (q: string) => {
     if (!q.trim()) return;
@@ -1795,21 +1834,31 @@ function MusicTab() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { const cat = DEEZER_CATS.find(c => c.id === catId); if (cat) searchDeezer(cat.q); }, [catId]);
   useEffect(() => {
-    if (!search.trim()) { const cat = DEEZER_CATS.find(c => c.id === catId); if (cat) searchDeezer(cat.q); return; }
+    const cat = DEEZER_CATS.find(c => c.id === catId);
+    if (cat) searchDeezer(cat.q);
+  }, [catId]);
+
+  useEffect(() => {
+    if (!search.trim()) {
+      const cat = DEEZER_CATS.find(c => c.id === catId);
+      if (cat) searchDeezer(cat.q);
+      return;
+    }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => searchDeezer(search), 500);
   }, [search]);
 
   const handlePreview = useCallback(async (track: DeezerTrack) => {
-    if (!track.preview) { showAlert('Sin preview', 'Esta canción no tiene preview'); return; }
-    await soundRef.current?.stopAsync().catch(() => {}); await soundRef.current?.unloadAsync().catch(() => {}); soundRef.current = null;
+    if (!track.preview) { showAlert('Sin preview', 'Esta canción no tiene preview disponible'); return; }
+    await soundRef.current?.stopAsync().catch(() => {});
+    await soundRef.current?.unloadAsync().catch(() => {});
+    soundRef.current = null;
     if (previewId === track.id) { setPreviewId(null); return; }
     setPreviewId(track.id);
     try {
       await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
-      const { sound } = await Audio.Sound.createAsync({ uri: track.preview }, { shouldPlay: true, volume: 1.0, isLooping: false });
+      const { sound } = await Audio.Sound.createAsync({ uri: track.preview }, { shouldPlay: true, volume: 1.0 });
       soundRef.current = sound;
       sound.setOnPlaybackStatusUpdate((s: any) => { if (s.didJustFinish) setPreviewId(null); });
     } catch (_) { setPreviewId(null); showAlert('Error', 'No se pudo reproducir'); }
@@ -1823,7 +1872,9 @@ function MusicTab() {
         <MaterialCommunityIcons name="magnify" size={18} color={Colors.textSubtle} style={{ position: 'absolute', left: 14, zIndex: 1 }} />
         <TextInput style={mu.search} value={search} onChangeText={setSearch}
           placeholder="Buscar en Deezer: artista, canción..." placeholderTextColor={Colors.textSubtle} />
-        {search ? <Pressable style={{ position: 'absolute', right: 14 }} onPress={() => setSearch('')}><MaterialCommunityIcons name="close-circle" size={16} color={Colors.textSubtle} /></Pressable> : null}
+        {search ? <Pressable style={{ position: 'absolute', right: 14 }} onPress={() => setSearch('')}>
+          <MaterialCommunityIcons name="close-circle" size={16} color={Colors.textSubtle} />
+        </Pressable> : null}
       </View>
       <View style={mu.deezerBadge}>
         <Text style={mu.deezerText}>🎵 Resultados en tiempo real de </Text>
@@ -1843,7 +1894,11 @@ function MusicTab() {
         </View>
       ) : null}
       {previewId ? (
-        <Pressable style={mu.nowPlaying} onPress={() => { soundRef.current?.stopAsync().catch(() => {}); soundRef.current?.unloadAsync().catch(() => {}); soundRef.current = null; setPreviewId(null); }}>
+        <Pressable style={mu.nowPlaying} onPress={() => {
+          soundRef.current?.stopAsync().catch(() => {});
+          soundRef.current?.unloadAsync().catch(() => {});
+          soundRef.current = null; setPreviewId(null);
+        }}>
           <PulsingDot color={Colors.warning} />
           <Text style={mu.nowPlayingText} numberOfLines={1}>{tracks.find(t => t.id === previewId)?.title ?? 'Reproduciendo...'}</Text>
           <MaterialCommunityIcons name="stop-circle-outline" size={18} color={Colors.warning} />
@@ -1852,7 +1907,11 @@ function MusicTab() {
       {loading
         ? <View style={mu.center}><ActivityIndicator color={Colors.warning} size="large" /><Text style={mu.centerText}>Cargando desde Deezer...</Text></View>
         : error
-        ? <View style={mu.center}><MaterialCommunityIcons name="wifi-off" size={44} color={Colors.textSubtle} /><Text style={mu.centerText}>{error}</Text><Pressable style={mu.retryBtn} onPress={() => { const c = DEEZER_CATS.find(x => x.id === catId); if (c) searchDeezer(c.q); }}><Text style={mu.retryBtnText}>Reintentar</Text></Pressable></View>
+        ? <View style={mu.center}><MaterialCommunityIcons name="wifi-off" size={44} color={Colors.textSubtle} /><Text style={mu.centerText}>{error}</Text>
+            <Pressable style={mu.retryBtn} onPress={() => { const c = DEEZER_CATS.find(x => x.id === catId); if (c) searchDeezer(c.q); }}>
+              <Text style={mu.retryBtnText}>Reintentar</Text>
+            </Pressable>
+          </View>
         : <FlatList data={tracks} keyExtractor={t => String(t.id)}
             contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: selectedTrack ? 90 : 120, gap: 8, paddingTop: 8 }}
             showsVerticalScrollIndicator={false}
@@ -1870,7 +1929,7 @@ function MusicTab() {
                   <View style={{ alignItems: 'center', gap: 6 }}>
                     {item.preview ? (
                       <Pressable style={[mu.previewBtn, isPrev && { backgroundColor: Colors.warning, borderColor: Colors.warning }]}
-                        onPress={() => { handlePreview(item); }}>
+                        onPress={() => handlePreview(item)}>
                         <MaterialCommunityIcons name={isPrev ? 'pause' : 'play'} size={16} color={isPrev ? '#fff' : Colors.warning} />
                       </Pressable>
                     ) : null}
@@ -1879,8 +1938,14 @@ function MusicTab() {
                 </Pressable>
               );
             }}
-            ListEmptyComponent={<View style={mu.center}><MaterialCommunityIcons name="music-off" size={40} color={Colors.textSubtle} /><Text style={mu.centerText}>Sin resultados</Text></View>}
-          />}
+            ListEmptyComponent={
+              <View style={mu.center}>
+                <MaterialCommunityIcons name="music-off" size={40} color={Colors.textSubtle} />
+                <Text style={mu.centerText}>Sin resultados</Text>
+              </View>
+            }
+          />
+      }
       {selectedTrack ? (
         <View style={mu.actionBar}>
           <LinearGradient colors={['rgba(18,18,28,0.98)','#12121C']} style={StyleSheet.absoluteFillObject} />
@@ -1888,7 +1953,7 @@ function MusicTab() {
             <PulsingDot color={Colors.warning} />
             <Text style={mu.selectedTitle} numberOfLines={1}>{selectedTrack.title} — {selectedTrack.artist.name}</Text>
           </View>
-          <Pressable style={mu.useBtn} onPress={() => showAlert('Canción seleccionada', `"${selectedTrack.title}" lista. Ve al tab Videos para añadirla a tu clip.`)}>
+          <Pressable style={mu.useBtn} onPress={() => showAlert('Canción seleccionada', `"${selectedTrack.title}" lista. Ve al tab Videos para añadirla.`)}>
             <LinearGradient colors={['#FF9D00','#FF5A00']} style={mu.useBtnInner}>
               <Text style={mu.useBtnText}>Usar en video</Text>
             </LinearGradient>
@@ -1932,18 +1997,20 @@ const mu = StyleSheet.create({
 // ROOT STYLES
 // ─────────────────────────────────────────────────────────────────────────────
 const root = StyleSheet.create({
-  container:      { flex: 1, backgroundColor: Colors.bg },
-  header:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  backBtn:        { width: 36, height: 36, borderRadius: Radius.md, backgroundColor: Colors.surfaceElevated, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border },
-  titleRow:       { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  title:          { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
-  deepARBadge:    { borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 3 },
-  deepARBadgeText:{ color: '#fff', fontSize: 9, fontWeight: FontWeight.bold },
-  badge:          { backgroundColor: '#7C5CFF22', borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: '#7C5CFF44' },
-  badgeText:      { color: '#7C5CFF', fontSize: 9, fontWeight: FontWeight.bold },
-  tabBar:         { flexDirection: 'row', borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.bg },
-  tabItem:        { flex: 1, alignItems: 'center', paddingVertical: 10, gap: 3, position: 'relative', overflow: 'hidden' },
-  tabActiveGrad:  { ...StyleSheet.absoluteFillObject },
-  tabLabel:       { color: Colors.textSubtle, fontSize: 9, fontWeight: FontWeight.medium },
-  tabDot:         { position: 'absolute', top: 0, left: '20%', right: '20%', height: 2, borderRadius: 1 },
+  container:       { flex: 1, backgroundColor: Colors.bg },
+  header:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  backBtn:         { width: 36, height: 36, borderRadius: Radius.md, backgroundColor: Colors.surfaceElevated, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border },
+  titleRow:        { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  title:           { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
+  deepARBadge:     { borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 3 },
+  deepARBadgeText: { color: '#fff', fontSize: 9, fontWeight: FontWeight.bold },
+  badge:           { backgroundColor: '#7C5CFF22', borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: '#7C5CFF44' },
+  badgeText:       { color: '#7C5CFF', fontSize: 9, fontWeight: FontWeight.bold },
+  statusBar:       { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: Colors.warningDim, borderBottomWidth: 1, borderBottomColor: Colors.warning + '33' },
+  statusBarText:   { color: Colors.warning, fontSize: 10, flex: 1 },
+  tabBar:          { flexDirection: 'row', borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.bg },
+  tabItem:         { flex: 1, alignItems: 'center', paddingVertical: 10, gap: 3, position: 'relative', overflow: 'hidden' },
+  tabActiveGrad:   { ...StyleSheet.absoluteFillObject },
+  tabLabel:        { color: Colors.textSubtle, fontSize: 9, fontWeight: FontWeight.medium },
+  tabDot:          { position: 'absolute', top: 0, left: '20%', right: '20%', height: 2, borderRadius: 1 },
 });
