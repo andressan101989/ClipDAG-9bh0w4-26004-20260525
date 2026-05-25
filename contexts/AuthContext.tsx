@@ -161,7 +161,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Listen to auth state changes
   useEffect(() => {
+    // Safety timeout: force isLoading=false after 5s so the app never hangs
+    const timeout = setTimeout(() => setIsLoading(false), 5000);
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      clearTimeout(timeout);
       try {
         if (session?.user) {
           const profile = await loadProfile(session.user.id, session.user.email || '');
@@ -179,7 +183,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
     });
 
-    return () => subscription?.unsubscribe?.();
+    return () => { clearTimeout(timeout); subscription?.unsubscribe?.(); };
   }, [loadProfile, loadFollows]);
 
   const login = useCallback(async (email: string, password: string) => {
