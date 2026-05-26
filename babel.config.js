@@ -12,6 +12,19 @@ module.exports = function (api) {
       },
     ]],
     plugins: [
+      // ── strip-dynamic-variable-imports ──────────────────────────────────────
+      // Converts:  import(/* webpackIgnore */ OTEL_PKG)  →  Promise.resolve(null)
+      //
+      // Root cause: @supabase/realtime-js ships tracing/extract.ts which does
+      // import(/* webpackIgnore: true */ /* turbopackIgnore: true */ OTEL_PKG)
+      // where OTEL_PKG = '@opentelemetry/api'. Hermes cannot parse dynamic
+      // imports of variables — only string literals. This Babel pass runs
+      // BEFORE Metro serialises the bundle, so Hermes never sees the bad syntax.
+      //
+      // String-literal dynamic imports (import('./file')) are untouched.
+      // This plugin is safe to apply on all platforms.
+      './plugins/babel-strip-dynamic-imports',
+
       // reanimated MUST be the last plugin
       'react-native-reanimated/plugin',
     ],

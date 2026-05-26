@@ -1,4 +1,3 @@
-// Empty stub module.
-// Metro redirects blocked/incompatible packages here so they resolve
-// to an empty export instead of crashing the bundler or app launch.
+// Metro empty stub — replaces incompatible packages in the bundle.
+// This file is intentionally empty. Imports of blocked modules resolve here.
 module.exports = {};

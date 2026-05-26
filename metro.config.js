@@ -1,7 +1,33 @@
 /**
- * metro.config.js
+ * metro.config.js  — v3 (Hermes Hardened)
  *
- * Blocks packages that crash Metro/Hermes in preview and EAS builds.
+ * ════════════════════════════════════════════════════════════════════════════
+ * ROOT CAUSE: OTEL_PKG dynamic import in @supabase/realtime-js
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * @supabase/realtime-js ships packages/shared/tracing/src/extract.ts which
+ * contains:
+ *
+ *   const OTEL_PKG = '@opentelemetry/api'
+ *   otelModulePromise = import(/* webpackIgnore * / OTEL_PKG).catch(() => null)
+ *
+ * Metro bundles this verbatim. Hermes on iOS/Android cannot parse dynamic
+ * imports of variables — only string literals. Result:
+ *
+ *   main.jsbundle:102219:57: error: Invalid expression encountered
+ *   ...se = import(/* webpackIgnore: true * / OTEL_PKG).catch...
+ *
+ * ── TWO-LAYER FIX ────────────────────────────────────────────────────────────
+ *
+ * Layer 1 (Babel, plugins/babel-strip-dynamic-imports.js):
+ *   Transforms import(variable) → Promise.resolve(null) at Babel time.
+ *   Runs BEFORE Metro serialises the bundle so Hermes never sees the bad syntax.
+ *   String-literal dynamic imports are untouched.
+ *
+ * Layer 2 (Metro resolver — this file):
+ *   Block all @opentelemetry/* on every platform as a belt-and-suspenders.
+ *   Even if the Babel pass misses a file, the blocked import returns an empty
+ *   stub and the optional-dependency load fails gracefully.
  *
  * ── ALWAYS_BLOCKED (all platforms, including native preview) ─────────────────
  *   react-native-deepar          → requireNativeComponent at module-level
@@ -15,13 +41,12 @@
  *                                  Force the CJS build instead so no babel transform needed
  *
  * ── OTEL_BLOCKED (all platforms) ────────────────────────────────────────────
- *   @opentelemetry/*             → Node.js/web instrumentation pulled in by @walletconnect.
- *                                  Contains: import(webpackIgnore / turbopackIgnore)
- *                                  Hermes rejects this → "Invalid expression encountered"
+ *   @opentelemetry/*             → Node.js/web instrumentation pulled in by @walletconnect
+ *                                  AND by @supabase/realtime-js tracing module.
+ *                                  Contains: import(OTEL_PKG) — Hermes fatal.
  *
  * ── WALLETCONNECT: web/preview blocked, native EAS allowed ──────────────────
  *   @walletconnect/*             → requires native modules not in Expo Go / OnSpace preview.
- *                                  Allowed in native EAS builds where modules are available.
  *   @web3modal/*                 → same constraint
  *
  * ── WEB_ONLY_BLOCKED ────────────────────────────────────────────────────────
@@ -50,11 +75,30 @@ const ALWAYS_BLOCKED = [
 // valtio ships an ESM build (valtio/esm/react.mjs) with `import.meta.env`
 // which Hermes cannot parse. Metro resolves ESM by default; redirect to CJS.
 const CJS_ALIASES = {
-  'valtio/esm/react.mjs':  'valtio/react',
-  'valtio/esm/index.mjs':  'valtio',
+  'valtio/esm/react.mjs':   'valtio/react',
+  'valtio/esm/index.mjs':   'valtio',
   'valtio/esm/vanilla.mjs': 'valtio/vanilla',
-  'valtio/esm/utils.mjs':  'valtio/utils',
+  'valtio/esm/utils.mjs':   'valtio/utils',
 };
+
+// ── SUPABASE_TRACING_BLOCKED ─────────────────────────────────────────────────
+// @supabase/realtime-js and @supabase/supabase-js ship a tracing module that
+// does: import(/* webpackIgnore */ OTEL_PKG) — a dynamic import of a variable.
+// Hermes cannot parse this. Block the entire tracing sub-path so it resolves
+// to an empty stub. Supabase core functionality is unaffected; only the
+// optional OpenTelemetry tracing integration is disabled.
+//
+// The module paths observed in the wild:
+//   @supabase/realtime-js/dist/module/lib/tracing/...
+//   @supabase/supabase-js/dist/module/lib/tracing/...
+//   @supabase/shared/tracing/...
+const SUPABASE_TRACING_PATHS = [
+  '@supabase/realtime-js/dist/module/lib/tracing',
+  '@supabase/realtime-js/dist/cjs/lib/tracing',
+  '@supabase/realtime-js/src/lib/tracing',
+  '@supabase/supabase-js/dist/module/lib/tracing',
+  '@supabase/supabase-js/dist/cjs/lib/tracing',
+];
 
 // ── @walletconnect/* and @web3modal/* — blocked on web/preview only ───────────
 // On native (iOS/Android EAS builds) these packages are allowed through so
@@ -96,6 +140,14 @@ config.resolver = {
       prefix => moduleName === prefix.slice(0, -1) || moduleName.startsWith(prefix),
     );
     if (isOtel) {
+      return { type: 'sourceFile', filePath: EMPTY_STUB };
+    }
+
+    // 2b. Block Supabase tracing sub-paths (contain import(OTEL_PKG) dynamic imports)
+    const isSupabaseTracing = SUPABASE_TRACING_PATHS.some(
+      p => moduleName === p || moduleName.startsWith(p + '/'),
+    );
+    if (isSupabaseTracing) {
       return { type: 'sourceFile', filePath: EMPTY_STUB };
     }
 
