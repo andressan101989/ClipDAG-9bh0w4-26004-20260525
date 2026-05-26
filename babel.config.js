@@ -4,11 +4,14 @@ module.exports = function (api) {
     presets: [[
       'babel-preset-expo',
       {
-        // unstable_transformImportMeta intentionally REMOVED.
-        // metro.config.js CJS_ALIASES redirect valtio ESM paths (valtio/esm/*.mjs)
-        // to their CJS equivalents before Metro ever tries to parse them.
-        // The transform is therefore unnecessary and risks re-introducing
-        // incompatible dynamic-import rewrites for any future ESM transitive dep.
+        // unstable_transformImportMeta: replaces import.meta.env with a
+        // process.env-based polyfill that Hermes can parse.
+        // Required because valtio ships ESM builds with import.meta.env
+        // (e.g. valtio/esm/react.mjs line 53) that Hermes cannot handle.
+        // The metro.config.js CJS_ALIASES are a belt-and-suspenders but
+        // the Metro resolver intercepts by module name — when a transitive
+        // dep already resolved to the full file path Babel is the last guard.
+        unstable_transformImportMeta: true,
       },
     ]],
     plugins: [
