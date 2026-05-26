@@ -109,13 +109,15 @@ export default function VideoCallScreen() {
       }
     });
 
-    // Initiate outgoing call
+    // Initiate outgoing call — navigate back immediately on any failure
     CallManager.startCall(user.id, partnerId, 'video').then(result => {
       if (!mountedRef.current) return;
-      if ('error' in result) {
+      if (!result.success) {
         console.warn('[VideoCall] startCall failed:', result.error);
         router.back();
       }
+    }).catch(() => {
+      if (mountedRef.current) router.back();
     });
 
     // Pulse animation

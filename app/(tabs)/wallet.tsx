@@ -1,9 +1,12 @@
-import React, { useState, useRef, useEffect, useCallback, Component } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, Pressable, TextInput,
   StyleSheet, Modal, KeyboardAvoidingView, Platform,
   ActivityIndicator, Dimensions, Linking, Alert,
 } from 'react-native';
+import { WalletErrorBoundary } from '@/components/wallet/WalletErrorBoundary';
+import { TransactionRow } from '@/components/wallet/TransactionRow';
+import type { TransactionItem } from '@/components/wallet/TransactionRow';
 import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -63,90 +66,8 @@ const C = {
   transfer:  '#FF9D00',
 };
 
-// ── Error Boundary ────────────────────────────────────────────────────────────
-interface EBState { hasError: boolean; errorMsg: string }
-class WalletErrorBoundary extends Component<{ children: React.ReactNode }, EBState> {
-  constructor(props: any) { super(props); this.state = { hasError: false, errorMsg: '' }; }
-  static getDerivedStateFromError(e: any): EBState {
-    return { hasError: true, errorMsg: e?.message ?? String(e) };
-  }
-  componentDidCatch(e: any, info: any) {
-    console.error('═══ WALLET CRASH ═══', e?.message, info?.componentStack);
-  }
-  render() {
-    if (this.state.hasError) return (
-      <View style={{ flex: 1, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-        <MaterialCommunityIcons name="alert-circle-outline" size={52} color={C.error} />
-        <Text style={{ color: C.text, fontSize: 18, fontWeight: '700', marginTop: 16, textAlign: 'center' }}>Error al cargar billetera</Text>
-        <Text style={{ color: C.textSub, fontSize: 13, marginTop: 8, textAlign: 'center', lineHeight: 20 }}>{this.state.errorMsg}</Text>
-        <Pressable style={{ marginTop: 24, backgroundColor: C.primary, borderRadius: 14, paddingHorizontal: 28, paddingVertical: 12 }}
-          onPress={() => this.setState({ hasError: false, errorMsg: '' })}>
-          <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>Reintentar</Text>
-        </Pressable>
-      </View>
-    );
-    return this.props.children;
-  }
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function timeAgo(iso: string): string {
-  try {
-    const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-    if (s < 60) return 'Ahora';
-    if (s < 3600) return `${Math.floor(s / 60)}m`;
-    if (s < 86400) return `${Math.floor(s / 3600)}h`;
-    return `${Math.floor(s / 86400)}d`;
-  } catch { return ''; }
-}
-function txColor(type: string, status: string) {
-  if (status === 'failed' || status === 'canceled') return C.textMuted;
-  switch (type) {
-    case 'reward': return C.accent;
-    case 'tip': return C.primary;
-    case 'gift': return C.gold;
-    case 'deposit': return C.blue;
-    case 'withdraw': return C.secondary;
-    case 'transfer_sent': return C.transfer;
-    case 'transfer_received': return C.accent;
-    default: return '#888';
-  }
-}
-function txIcon(type: string): any {
-  switch (type) {
-    case 'reward': return 'star';
-    case 'tip': return 'card-giftcard';
-    case 'gift': return 'redeem';
-    case 'deposit': return 'arrow-downward';
-    case 'withdraw': return 'arrow-upward';
-    case 'transfer_sent': return 'send';
-    case 'transfer_received': return 'call-received';
-    default: return 'swap-horiz';
-  }
-}
-function txLabel(type: string) {
-  const m: Record<string, string> = {
-    reward: 'Recompensa', tip: 'Propina', gift: 'Regalo',
-    deposit: 'Depósito', withdraw: 'Retiro',
-    transfer_sent: 'Enviado', transfer_received: 'Recibido',
-  };
-  return m[type] ?? type;
-}
-function statusColor(s: string) {
-  switch (s) {
-    case 'completed': return C.accent;
-    case 'pending': case 'queued': case 'processing': return C.warning;
-    case 'failed': case 'canceled': return C.error;
-    default: return '#888';
-  }
-}
-function statusLabel(s: string) {
-  const m: Record<string, string> = {
-    completed: 'OK', pending: 'Pend.', queued: 'En cola',
-    processing: 'Proc.', failed: 'Fallido', canceled: 'Cancelado',
-  };
-  return m[s] ?? s;
-}
 function safeFmt(n: number | undefined | null, dec = 2): string {
   const v = Number(n ?? 0);
   return isNaN(v) ? '0.00' : v.toFixed(dec);
@@ -156,20 +77,13 @@ function safeFmt(n: number | undefined | null, dec = 2): string {
 type ModalView = 'none' | 'deposit' | 'withdraw' | 'transfer' | 'info';
 type TxFilter  = 'all' | 'earned' | 'deposits' | 'withdrawals' | 'transfers';
 const FILTERS: { key: TxFilter; label: string }[] = [
-  { key: 'all',       label: 'Todos' },
-  { key: 'earned',    label: 'Ganancias' },
-  { key: 'deposits',  label: 'Depósitos' },
+  { key: 'all',         label: 'Todos' },
+  { key: 'earned',      label: 'Ganancias' },
+  { key: 'deposits',    label: 'Depósitos' },
   { key: 'withdrawals', label: 'Retiros' },
-  { key: 'transfers', label: 'Transferencias' },
+  { key: 'transfers',   label: 'Transferencias' },
 ];
 
-interface HistoryItem {
-  id: string; kind: 'tx'; type: string;
-  amount: number; status: string; description: string;
-  txHash?: string; createdAt: string;
-}
-
-// Recipient search result
 interface RecipientUser {
   id: string;
   username: string;
@@ -184,49 +98,6 @@ const PRIMARY_NETWORKS = [
   { key: 'base',     label: 'Base',     color: C.base, icon: 'circle-multiple' as const },
 ];
 
-// ── Transaction row ──────────────────────────────────────────────────────────
-function TransactionRow({ item, activeChainId }: {
-  item: HistoryItem; activeChainId?: number | null;
-}) {
-  const color  = txColor(item.type, item.status);
-  const sc     = statusColor(item.status);
-  const sign   = (item.type === 'withdraw' || item.type === 'transfer_sent') ? '-' : '+';
-  const usdEq  = bdagToUsd(item.amount);
-
-  return (
-    <View style={sty.txRow}>
-      <View style={[sty.txIcon, { backgroundColor: color + '1C' }]}>
-        <MaterialIcons name={txIcon(item.type)} size={17} color={color} />
-      </View>
-      <View style={sty.txBody}>
-        <View style={sty.txTop}>
-          <Text style={sty.txLabel}>{txLabel(item.type)}</Text>
-          <View style={{ alignItems: 'flex-end' }}>
-            <Text style={[sty.txAmt, { color }]}>{sign}{safeFmt(item.amount)} BDAG</Text>
-            <Text style={sty.txUsdEq}>{sign}${safeFmt(usdEq)}</Text>
-          </View>
-        </View>
-        <View style={sty.txBottom}>
-          <Text style={sty.txDesc} numberOfLines={1}>{item.description || ' '}</Text>
-          <View style={sty.txMeta}>
-            <Text style={sty.txTime}>{timeAgo(item.createdAt)}</Text>
-            <View style={[sty.statusPill, { backgroundColor: sc + '20' }]}>
-              <Text style={[sty.statusText, { color: sc }]}>{statusLabel(item.status)}</Text>
-            </View>
-          </View>
-        </View>
-        {item.txHash ? (
-          <Pressable onPress={() => {
-            const cid = activeChainId ?? 1;
-            Linking.openURL(getExplorerTxUrl(item.txHash!, cid)).catch(() => {});
-          }}>
-            <Text style={sty.txLink}>TX: {shortAddress(item.txHash)} ↗</Text>
-          </Pressable>
-        ) : null}
-      </View>
-    </View>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WALLET SCREEN INNER
@@ -601,7 +472,7 @@ function WalletScreenInner() {
   };
 
   // ── Build history ────────────────────────────────────────────────────────
-  const allHistory: HistoryItem[] = transactions
+  const allHistory: TransactionItem[] = transactions
     .filter(tx => {
       if (txFilter === 'earned')      return ['reward', 'tip', 'gift'].includes(tx.type);
       if (txFilter === 'deposits')    return tx.type === 'deposit';
@@ -610,7 +481,7 @@ function WalletScreenInner() {
       return true;
     })
     .map(tx => ({
-      id: tx.id, kind: 'tx' as const, type: tx.type, amount: tx.amount,
+      id: tx.id, type: tx.type, amount: tx.amount,
       status: tx.status, description: tx.description, txHash: tx.txHash, createdAt: tx.createdAt,
     }))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
