@@ -19,17 +19,25 @@ const fs   = require('fs');
 const path = require('path');
 
 // ── API Keys ──────────────────────────────────────────────────────────────────
-// IMPORTANT: Replace these with your actual DeepAR API keys from
-// https://developer.deepar.ai/projects
+// Keys are read ONLY from environment variables at EAS build time.
+// Set them as EAS secrets:
+//   eas secret:create --scope project --name DEEPAR_API_KEY_IOS     --value <key>
+//   eas secret:create --scope project --name DEEPAR_API_KEY_ANDROID --value <key>
+// Obtain keys at https://developer.deepar.ai/projects
 //
-// Each platform requires its own key (bundle-ID specific).
-// iOS:     com.clipdag.onspaceapp
-// Android: com.clipdag.onspaceapp
-const DEEPAR_API_KEY_IOS     = process.env.DEEPAR_API_KEY_IOS
-  ?? 'b5ed95b597e2d095a99d348245484f5ca0ea76dd4297a6e03d0a0b630cb2f2b4511186a4577ef72a';
+// IMPORTANT: No fallback values — the build will use an empty string if the
+// env var is absent, which will cause DeepAR to fail to initialize at runtime
+// (visible as a warning in Xcode/Logcat). This is intentional: it forces the
+// developer to configure the secret before shipping a production build.
+const DEEPAR_API_KEY_IOS     = process.env.DEEPAR_API_KEY_IOS     ?? '';
+const DEEPAR_API_KEY_ANDROID = process.env.DEEPAR_API_KEY_ANDROID ?? '';
 
-const DEEPAR_API_KEY_ANDROID = process.env.DEEPAR_API_KEY_ANDROID
-  ?? '26eb786956b608da971d30ec64fc5bcec72ce89cd1914b3cfc5ed32c3232f6da70a5923630b8696b';
+if (!DEEPAR_API_KEY_IOS) {
+  console.warn('[withDeepARiOS] ⚠️  DEEPAR_API_KEY_IOS env var not set — DeepAR will not initialize on iOS');
+}
+if (!DEEPAR_API_KEY_ANDROID) {
+  console.warn('[withDeepARiOS] ⚠️  DEEPAR_API_KEY_ANDROID env var not set — DeepAR will not initialize on Android');
+}
 
 // ── iOS: Patch Info.plist ──────────────────────────────────────────────────────
 const withDeepARInfoPlist = (config) => {

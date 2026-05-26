@@ -437,6 +437,27 @@ export default function SettingsScreen() {
           <SettingsRow icon="shield-check-outline" iconColor={Colors.textSubtle} label="Politica de privacidad" last onPress={() => {}} />
         </SettingsSection>
 
+        {/* Dev tools — only in __DEV__ builds */}
+        {__DEV__ ? (
+          <SettingsSection title="Herramientas de Desarrollo">
+            <SettingsRow
+              icon="monitor-dashboard"
+              iconColor="#00E5A0"
+              label="Debug Dashboard"
+              sublabel="FPS, GPU, RTC, streams, memoria"
+              onPress={() => router.push('/debug')}
+            />
+            <SettingsRow
+              icon="bug-outline"
+              iconColor="#FFB800"
+              label="Boot Test"
+              sublabel="Verificar inicio de la app"
+              last
+              onPress={() => router.push('/boot-test')}
+            />
+          </SettingsSection>
+        ) : null}
+
         {/* Session */}
         <SettingsSection title="Sesion">
           <SettingsRow

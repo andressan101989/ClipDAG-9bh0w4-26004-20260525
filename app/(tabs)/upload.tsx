@@ -1,8 +1,19 @@
+/**
+ * app/(tabs)/upload.tsx — Create content screen
+ *
+ * Modes: Video | Photo | Carousel | Camera | Live
+ *
+ * Live mode is now fully wired to useLiveStream + LiveCameraPreview.
+ * When the user taps "Abrir Cámara y Transmitir", a title modal is shown,
+ * then LiveCameraPreview opens directly with the session lifecycle managed
+ * by useLiveStream (SessionOrchestrator, ResourceManager, GPUManager, etc.).
+ */
+
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, Pressable, StyleSheet, TextInput,
   ScrollView, KeyboardAvoidingView, Platform,
-  ActivityIndicator, Dimensions, Switch,
+  ActivityIndicator, Dimensions, Switch, Modal,
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -13,6 +24,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
 import { useFeed } from '@/hooks/useFeed';
+import { useLiveStream } from '@/hooks/streaming/useLiveStream';
 import { LiveCameraPreview } from '@/components/feature/LiveCameraPreview';
 import { MusicPicker } from '@/components/feature/MusicPicker';
 import { useAlert } from '@/template';
@@ -40,6 +52,131 @@ interface SelectedMedia {
   filterId?: string;
 }
 
+// ── Live Title Modal ──────────────────────────────────────────────────────────
+function LiveTitleModal({
+  visible, onCancel, onStart,
+}: {
+  visible: boolean;
+  onCancel: () => void;
+  onStart: (title: string) => void;
+}) {
+  const [title, setTitle] = useState('');
+  const insets = useSafeAreaInsets();
+
+  const handleStart = useCallback(() => {
+    const t = title.trim();
+    if (!t) return;
+    onStart(t);
+    setTitle('');
+  }, [title, onStart]);
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      <View style={lm.overlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={lm.kav}
+        >
+          <View style={[lm.card, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+            {/* Header */}
+            <LinearGradient
+              colors={['rgba(255,45,85,0.15)', 'rgba(255,45,85,0.05)']}
+              style={lm.header}
+            >
+              <View style={lm.liveDot} />
+              <Text style={lm.headerTitle}>Iniciar Live</Text>
+            </LinearGradient>
+
+            <View style={lm.body}>
+              <Text style={lm.label}>Título de tu transmisión *</Text>
+              <TextInput
+                style={lm.input}
+                value={title}
+                onChangeText={setTitle}
+                placeholder="ej: Tutorial BlockDAG en vivo"
+                placeholderTextColor={Colors.textSubtle}
+                maxLength={100}
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={handleStart}
+              />
+              <Text style={lm.hint}>
+                Un buen título atrae más espectadores y aumenta tus ganancias en $DAG
+              </Text>
+
+              <View style={lm.btns}>
+                <Pressable style={lm.cancelBtn} onPress={onCancel}>
+                  <Text style={lm.cancelText}>Cancelar</Text>
+                </Pressable>
+                <Pressable
+                  style={[lm.startBtn, !title.trim() && lm.startBtnDisabled]}
+                  onPress={handleStart}
+                  disabled={!title.trim()}
+                >
+                  <LinearGradient
+                    colors={['#FF2D55', '#FF6B35']}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                    style={lm.startBtnGrad}
+                  >
+                    <View style={lm.startDot} />
+                    <Text style={lm.startText}>Abrir Cámara</Text>
+                  </LinearGradient>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
+const lm = StyleSheet.create({
+  overlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'flex-end',
+  },
+  kav: { width: '100%' },
+  card: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    borderWidth: 1, borderColor: 'rgba(255,45,85,0.2)',
+    overflow: 'hidden',
+  },
+  header: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
+    borderBottomWidth: 1, borderBottomColor: 'rgba(255,45,85,0.15)',
+  },
+  liveDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: Colors.secondary },
+  headerTitle: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
+  body: { padding: Spacing.lg, gap: Spacing.md },
+  label: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  input: {
+    backgroundColor: Colors.surfaceElevated,
+    borderWidth: 1, borderColor: Colors.border,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md, paddingVertical: 12,
+    color: Colors.textPrimary, fontSize: FontSize.md,
+  },
+  hint: { color: Colors.textSubtle, fontSize: FontSize.xs, lineHeight: 18 },
+  btns: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.xs },
+  cancelBtn: {
+    flex: 1, paddingVertical: 13, borderRadius: Radius.md,
+    backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  cancelText: { color: Colors.textSecondary, fontSize: FontSize.md, fontWeight: FontWeight.semibold },
+  startBtn: { flex: 2, borderRadius: Radius.md, overflow: 'hidden' },
+  startBtnDisabled: { opacity: 0.4 },
+  startBtnGrad: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 13, gap: 8,
+  },
+  startDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
+  startText: { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold, letterSpacing: 0.5 },
+});
+
 // ── Exclusive Content Toggle Card ─────────────────────────────────────────────
 function ExclusiveToggle({
   enabled, price, onToggle, onPriceChange,
@@ -56,7 +193,6 @@ function ExclusiveToggle({
         colors={enabled ? ['rgba(168,85,247,0.18)', 'rgba(124,92,255,0.10)'] : ['rgba(255,255,255,0.04)', 'rgba(255,255,255,0.02)']}
         style={exc.card}
       >
-        {/* Toggle row */}
         <View style={exc.row}>
           <View style={exc.left}>
             <LinearGradient
@@ -81,13 +217,10 @@ function ExclusiveToggle({
           />
         </View>
 
-        {/* Price section */}
         {enabled ? (
           <View style={exc.priceSection}>
             <View style={exc.priceDivider} />
             <Text style={exc.priceLabel}>Precio de desbloqueo</Text>
-
-            {/* Quick price chips */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={exc.quickRow}>
               {QUICK_PRICES.map(v => (
                 <Pressable
@@ -101,8 +234,6 @@ function ExclusiveToggle({
                 </Pressable>
               ))}
             </ScrollView>
-
-            {/* Custom price input */}
             <View style={exc.priceInputRow}>
               <MaterialCommunityIcons name="hexagon-multiple" size={16} color="#A855F7" />
               <TextInput
@@ -115,7 +246,6 @@ function ExclusiveToggle({
               />
               <Text style={exc.bdagUnit}>BDAG</Text>
             </View>
-
             {parseFloat(price) > 0 ? (
               <View style={exc.feeRow}>
                 <MaterialCommunityIcons name="information-outline" size={11} color={Colors.textSubtle} />
@@ -124,8 +254,6 @@ function ExclusiveToggle({
                 </Text>
               </View>
             ) : null}
-
-            {/* Benefits explainer */}
             <View style={exc.benefitsWrap}>
               {[
                 { icon: 'lock', text: 'Preview borroso para no suscriptores' },
@@ -172,6 +300,7 @@ const exc = StyleSheet.create({
   benefitText:{ color: Colors.textSecondary, fontSize: 11 },
 });
 
+// ── Main Screen ───────────────────────────────────────────────────────────────
 export default function UploadScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
@@ -187,22 +316,53 @@ export default function UploadScreen() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
 
-  // Single media (video / photo)
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
-  // Carousel: multiple photos
   const [carouselMedias, setCarouselMedias] = useState<SelectedMedia[]>([]);
 
-  // ── Exclusive content state ───────────────────────────────────────────────
   const [isExclusive, setIsExclusive] = useState(false);
   const [exclusivePrice, setExclusivePrice] = useState('100');
 
-  const [liveTitle, setLiveTitle] = useState('');
+  // ── Live ────────────────────────────────────────────────────────────────────
+  const [showLiveTitleModal, setShowLiveTitleModal] = useState(false);
   const [liveCameraVisible, setLiveCameraVisible] = useState(false);
-  const hostUser = user ? { id: user.id, username: user.username || user.email?.split('@')[0] || 'user', avatar: user.avatar } : null;
+  const [liveTitleForCamera, setLiveTitleForCamera] = useState('');
 
-  // ── Handle camera capture ─────────────────────────────────────────────────
+  const { startStream, endStream, isStreaming, isStarting, error: streamError } = useLiveStream(
+    user?.id ?? '',
+  );
+
+  const hostUser = user
+    ? { id: user.id, username: user.username || user.email?.split('@')[0] || 'user', avatar: user.avatar }
+    : null;
+
+  // ── Live: user taps "Abrir Cámara y Transmitir" ───────────────────────────
+  const handleGoLive = useCallback(() => {
+    if (!user) { showAlert('No autenticado', 'Inicia sesión para transmitir'); return; }
+    setShowLiveTitleModal(true);
+  }, [user, showAlert]);
+
+  // ── Live: title confirmed → open camera ──────────────────────────────────
+  const handleLiveTitleConfirmed = useCallback(async (title: string) => {
+    setShowLiveTitleModal(false);
+    setLiveTitleForCamera(title);
+
+    // Start the Supabase session + resource acquisition via useLiveStream
+    await startStream(title);
+    // Then open the camera UI regardless (camera is separate from session)
+    setLiveCameraVisible(true);
+  }, [startStream]);
+
+  // ── Live: camera closed ───────────────────────────────────────────────────
+  const handleLiveCameraClose = useCallback(async () => {
+    setLiveCameraVisible(false);
+    if (isStreaming) {
+      await endStream();
+    }
+    setLiveTitleForCamera('');
+  }, [isStreaming, endStream]);
+
+  // ── Camera capture ────────────────────────────────────────────────────────
   const handleCameraCapture = useCallback((uri: string, type: 'photo' | 'video', filterId: string) => {
-    setCameraVisible(false);
     const mimeType = type === 'video' ? 'video/mp4' : 'image/jpeg';
     if (mode === 'carousel' && type === 'image') {
       setCarouselMedias(prev => [...prev, { uri, type: 'image', mimeType, filterId }]);
@@ -214,7 +374,6 @@ export default function UploadScreen() {
   }, [mode]);
 
   const openCamera = useCallback(async (captureMode: 'photo' | 'video') => {
-    setCameraMode(captureMode);
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
       showAlert('Permiso requerido', 'Habilita la cámara en los ajustes del dispositivo');
@@ -236,7 +395,6 @@ export default function UploadScreen() {
     }
   }, [showAlert, handleCameraCapture]);
 
-  // ── Pick single media ─────────────────────────────────────────────────────
   const pickSingleMedia = useCallback(async (fromCamera: boolean) => {
     const isPhoto = mode === 'photo';
     const permFn = fromCamera
@@ -262,7 +420,6 @@ export default function UploadScreen() {
     }
   }, [mode, showAlert]);
 
-  // ── Pick carousel (multiple images) ──────────────────────────────────────
   const pickCarouselImages = useCallback(async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
@@ -295,12 +452,11 @@ export default function UploadScreen() {
     setCaption(prev => (prev.includes(tag) ? prev : prev ? `${prev} ${tag}` : tag));
   }, []);
 
-  // ── Music selection ───────────────────────────────────────────────────────
   const handleMusicSelect = useCallback((track: MusicTrack) => {
     setSelectedMusic(track.isOriginalSound ? null : track);
   }, []);
 
-  // ── Upload single media ───────────────────────────────────────────────────
+  // ── Upload ────────────────────────────────────────────────────────────────
   const uploadMediaToStorage = useCallback(async (media: SelectedMedia, index?: number): Promise<string | null> => {
     if (!user) return null;
     const isVideo = media.type === 'video';
@@ -312,11 +468,10 @@ export default function UploadScreen() {
     return await uploadFileFromUri(supabase, media.uri, bucket, fileName, mimeType, media.base64);
   }, [user, supabase]);
 
-  // ── Register exclusive content in DB ──────────────────────────────────────
   const registerExclusiveContent = useCallback(async (opts: {
     title: string; contentType: string;
     previewUrl: string; contentUrl: string;
-    priceBdag: number; videoId?: string;
+    priceBdag: number;
   }): Promise<string | undefined> => {
     const result = await createExclusiveContent({
       title: opts.title,
@@ -330,13 +485,6 @@ export default function UploadScreen() {
     return result.content_id;
   }, []);
 
-  // ── Start Live ────────────────────────────────────────────────────────────
-  const handleStartLive = useCallback(() => {
-    if (!liveTitle.trim()) { showAlert('Sin título', 'Escribe el título de tu live'); return; }
-    setLiveCameraVisible(true);
-  }, [liveTitle, showAlert]);
-
-  // ── Publish single video/photo ────────────────────────────────────────────
   const handleUploadSingle = useCallback(async () => {
     if (!selectedMedia) { showAlert('Sin contenido', `Selecciona ${mode === 'photo' ? 'una foto' : 'un video'}`); return; }
     if (!caption.trim()) { showAlert('Sin descripción', 'Agrega una descripción'); return; }
@@ -360,8 +508,7 @@ export default function UploadScreen() {
         exclusiveContentId = await registerExclusiveContent({
           title: caption.trim().slice(0, 80),
           contentType: selectedMedia.type === 'video' ? 'video' : 'image',
-          previewUrl: finalUrl,
-          contentUrl: finalUrl,
+          previewUrl: finalUrl, contentUrl: finalUrl,
           priceBdag: parseFloat(exclusivePrice),
         });
       }
@@ -377,25 +524,19 @@ export default function UploadScreen() {
         ...(isExclusive ? { isExclusive: true, exclusivePrice: parseFloat(exclusivePrice), exclusiveContentId } : {}),
       } as any);
 
-      setCaption('');
-      setSelectedMedia(null);
-      setSelectedMusic(null);
-      setIsExclusive(false);
-      setExclusivePrice('100');
-      setUploadProgress('');
+      setCaption(''); setSelectedMedia(null); setSelectedMusic(null);
+      setIsExclusive(false); setExclusivePrice('100'); setUploadProgress('');
       showAlert(
         isExclusive ? '¡Contenido exclusivo publicado!' : (mode === 'photo' ? 'Foto publicada!' : 'Video publicado!'),
         isExclusive ? `Precio: ${exclusivePrice} BDAG · Tus suscriptores acceden gratis` : 'Tu contenido ya está en el feed',
-        [{ text: 'Ver Feed', onPress: () => router.push('/(tabs)') }, { text: 'Crear otro' }]
+        [{ text: 'Ver Feed', onPress: () => router.push('/(tabs)') }, { text: 'Crear otro' }],
       );
     } catch (_) {
       showAlert('Error', 'No se pudo publicar. Intenta de nuevo.');
     }
-    setIsUploading(false);
-    setUploadProgress('');
+    setIsUploading(false); setUploadProgress('');
   }, [selectedMedia, caption, mode, selectedMusic, isExclusive, exclusivePrice, user, uploadMediaToStorage, addVideo, registerExclusiveContent, router, showAlert]);
 
-  // ── Publish carousel ──────────────────────────────────────────────────────
   const handleUploadCarousel = useCallback(async () => {
     if (carouselMedias.length < 2) { showAlert('Carrusel requerido', 'Selecciona al menos 2 fotos'); return; }
     if (!caption.trim()) { showAlert('Sin descripción', 'Agrega una descripción'); return; }
@@ -407,53 +548,38 @@ export default function UploadScreen() {
 
     setIsUploading(true);
     setUploadProgress(`Subiendo ${carouselMedias.length} fotos...`);
-
     try {
       const urls = await Promise.all(carouselMedias.map((m, i) => uploadMediaToStorage(m, i)));
       const validUrls = urls.filter(Boolean) as string[];
       if (validUrls.length === 0) throw new Error('No se pudieron subir las imágenes');
-
       setUploadProgress('Guardando carrusel...');
-
       let exclusiveContentId: string | undefined;
       if (isExclusive) {
         setUploadProgress('Registrando contenido exclusivo...');
         exclusiveContentId = await registerExclusiveContent({
-          title: caption.trim().slice(0, 80),
-          contentType: 'image',
-          previewUrl: validUrls[0],
-          contentUrl: validUrls[0],
+          title: caption.trim().slice(0, 80), contentType: 'image',
+          previewUrl: validUrls[0], contentUrl: validUrls[0],
           priceBdag: parseFloat(exclusivePrice),
         });
       }
-
       await (addVideo as any)({
         userId: user.id,
         username: user.username || user.email?.split('@')[0] || 'user',
         userAvatar: user.avatar || '',
-        videoUrl: validUrls[0],
-        thumbnailUrl: validUrls[0],
-        caption: caption.trim(),
-        music: 'Sin musica',
+        videoUrl: validUrls[0], thumbnailUrl: validUrls[0],
+        caption: caption.trim(), music: 'Sin musica',
         mediaUrls: validUrls,
         ...(isExclusive ? { isExclusive: true, exclusivePrice: parseFloat(exclusivePrice), exclusiveContentId } : {}),
       });
-
-      setCaption('');
-      setCarouselMedias([]);
-      setSelectedMusic(null);
-      setIsExclusive(false);
-      setExclusivePrice('100');
+      setCaption(''); setCarouselMedias([]); setSelectedMusic(null);
+      setIsExclusive(false); setExclusivePrice('100');
       showAlert(
         isExclusive ? '¡Carrusel exclusivo publicado!' : 'Carrusel publicado!',
         isExclusive ? `${validUrls.length} fotos · Precio: ${exclusivePrice} BDAG` : `${validUrls.length} fotos publicadas`,
-        [{ text: 'Ver Feed', onPress: () => router.push('/(tabs)') }, { text: 'Crear otro' }]
+        [{ text: 'Ver Feed', onPress: () => router.push('/(tabs)') }, { text: 'Crear otro' }],
       );
-    } catch (_) {
-      showAlert('Error', 'No se pudo publicar el carrusel.');
-    }
-    setIsUploading(false);
-    setUploadProgress('');
+    } catch (_) { showAlert('Error', 'No se pudo publicar el carrusel.'); }
+    setIsUploading(false); setUploadProgress('');
   }, [carouselMedias, caption, isExclusive, exclusivePrice, user, uploadMediaToStorage, addVideo, registerExclusiveContent, router, showAlert]);
 
   const MODES: { key: Mode; icon: string; label: string; color?: string }[] = [
@@ -466,7 +592,25 @@ export default function UploadScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <LiveCameraPreview visible={liveCameraVisible} title={liveTitle} hostUser={hostUser} onClose={() => setLiveCameraVisible(false)} onStreamStarted={() => {}} />
+      {/* ── Live Title Modal ─────────────────────────────────────────────── */}
+      <LiveTitleModal
+        visible={showLiveTitleModal}
+        onCancel={() => setShowLiveTitleModal(false)}
+        onStart={handleLiveTitleConfirmed}
+      />
+
+      {/* ── Live Camera (full-screen) ────────────────────────────────────── */}
+      <LiveCameraPreview
+        visible={liveCameraVisible}
+        title={liveTitleForCamera}
+        hostUser={hostUser}
+        onClose={handleLiveCameraClose}
+        onStreamStarted={() => {
+          // Session is already created by useLiveStream.startStream()
+          // This callback signals that the camera preview is active
+          console.log('[Upload] LiveCameraPreview: stream UI started');
+        }}
+      />
 
       <MusicPicker
         visible={musicPickerVisible}
@@ -485,7 +629,12 @@ export default function UploadScreen() {
       </View>
 
       {/* Mode selector */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.modeSelectorContent} style={styles.modeSelector}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.modeSelectorContent}
+        style={styles.modeSelector}
+      >
         {MODES.map(m => {
           const isActive = mode === m.key;
           const bgColor = m.key === 'live' ? Colors.secondary
@@ -522,21 +671,71 @@ export default function UploadScreen() {
       </ScrollView>
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: 100 + insets.bottom }]} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: 100 + insets.bottom }]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
 
           {/* ── LIVE MODE ─────────────────────────────────────────────────── */}
           {mode === 'live' ? (
             <>
-              <LinearGradient colors={['rgba(255,45,85,0.14)', 'rgba(255,45,85,0.05)']} style={styles.livePreview}>
-                <View style={styles.liveIconWrap}><View style={styles.liveRedDot} /><MaterialIcons name="live-tv" size={46} color={Colors.secondary} /></View>
+              <LinearGradient
+                colors={['rgba(255,45,85,0.14)', 'rgba(255,45,85,0.05)']}
+                style={styles.livePreview}
+              >
+                <View style={styles.liveIconWrap}>
+                  <View style={styles.liveRedDot} />
+                  <MaterialIcons name="live-tv" size={46} color={Colors.secondary} />
+                </View>
                 <Text style={styles.livePreviewTitle}>Transmisión en Vivo</Text>
                 <Text style={styles.livePreviewSub}>Gana $DAG por tips de tus fans en tiempo real</Text>
+
+                {/* Live stats if currently streaming */}
+                {isStreaming ? (
+                  <View style={styles.liveActiveBadge}>
+                    <View style={styles.liveActiveDot} />
+                    <Text style={styles.liveActiveText}>TRANSMITIENDO AHORA</Text>
+                  </View>
+                ) : null}
               </LinearGradient>
-              <View style={styles.section}>
-                <Text style={styles.sectionLabel}>Título del Live *</Text>
-                <TextInput style={styles.captionInput} value={liveTitle} onChangeText={setLiveTitle} placeholder="ej: Tutorial BlockDAG en vivo" placeholderTextColor={Colors.textSubtle} maxLength={100} />
+
+              {streamError ? (
+                <View style={styles.streamErrorCard}>
+                  <MaterialIcons name="error-outline" size={16} color={Colors.secondary} />
+                  <Text style={styles.streamErrorText}>{streamError}</Text>
+                </View>
+              ) : null}
+
+              {isStreaming ? (
+                <CyberButton
+                  label="Volver a la cámara"
+                  onPress={() => setLiveCameraVisible(true)}
+                  variant="secondary"
+                  size="lg"
+                  fullWidth
+                />
+              ) : (
+                <CyberButton
+                  label={isStarting ? 'Iniciando...' : 'Abrir Cámara y Transmitir'}
+                  onPress={handleGoLive}
+                  loading={isStarting}
+                  variant="secondary"
+                  size="lg"
+                  fullWidth
+                />
+              )}
+
+              {/* Tips */}
+              <View style={styles.liveTipsCard}>
+                {[
+                  '💡 Los mejores lives duran al menos 20 minutos',
+                  '🎯 Interactúa con el chat para retener espectadores',
+                  '💎 Activa el modo exclusivo para cobrar por ingreso',
+                ].map(tip => (
+                  <Text key={tip} style={styles.liveTip}>{tip}</Text>
+                ))}
               </View>
-              <CyberButton label="Abrir Cámara y Transmitir" onPress={handleStartLive} variant="secondary" size="lg" fullWidth />
             </>
 
           /* ── CAROUSEL MODE ──────────────────────────────────────────── */
@@ -609,13 +808,7 @@ export default function UploadScreen() {
                 </ScrollView>
               </View>
 
-              {/* Exclusive toggle */}
-              <ExclusiveToggle
-                enabled={isExclusive}
-                price={exclusivePrice}
-                onToggle={setIsExclusive}
-                onPriceChange={setExclusivePrice}
-              />
+              <ExclusiveToggle enabled={isExclusive} price={exclusivePrice} onToggle={setIsExclusive} onPriceChange={setExclusivePrice} />
 
               {isUploading && uploadProgress ? (
                 <View style={styles.progressRow}>
@@ -680,7 +873,6 @@ export default function UploadScreen() {
                 </View>
               )}
 
-              {/* Caption */}
               <View style={styles.section}>
                 <Text style={styles.sectionLabel}>Descripción *</Text>
                 <TextInput style={styles.captionInput} value={caption} onChangeText={setCaption} placeholder="De qué trata tu contenido..." placeholderTextColor={Colors.textSubtle} multiline maxLength={300} />
@@ -694,13 +886,15 @@ export default function UploadScreen() {
                 </ScrollView>
               </View>
 
-              {/* Music picker */}
               <Pressable style={styles.musicPickerBtn} onPress={() => setMusicPickerVisible(true)}>
                 <LinearGradient
                   colors={selectedMusic ? ['rgba(124,92,255,0.15)', 'rgba(255,45,120,0.1)'] : ['rgba(255,255,255,0.04)', 'rgba(255,255,255,0.02)']}
                   style={styles.musicPickerInner}
                 >
-                  <LinearGradient colors={selectedMusic ? ['#7C5CFF', '#FF2D78'] : [Colors.surfaceHighlight, Colors.surfaceHighlight]} style={styles.musicPickerIconWrap}>
+                  <LinearGradient
+                    colors={selectedMusic ? ['#7C5CFF', '#FF2D78'] : [Colors.surfaceHighlight, Colors.surfaceHighlight]}
+                    style={styles.musicPickerIconWrap}
+                  >
                     <MaterialCommunityIcons name="music-note" size={18} color={selectedMusic ? '#fff' : Colors.textSubtle} />
                   </LinearGradient>
                   <View style={styles.musicPickerMeta}>
@@ -720,13 +914,7 @@ export default function UploadScreen() {
                 </LinearGradient>
               </Pressable>
 
-              {/* ── EXCLUSIVE CONTENT TOGGLE ── */}
-              <ExclusiveToggle
-                enabled={isExclusive}
-                price={exclusivePrice}
-                onToggle={setIsExclusive}
-                onPriceChange={setExclusivePrice}
-              />
+              <ExclusiveToggle enabled={isExclusive} price={exclusivePrice} onToggle={setIsExclusive} onPriceChange={setExclusivePrice} />
 
               {isUploading && uploadProgress ? (
                 <View style={styles.progressRow}>
@@ -819,8 +1007,8 @@ const styles = StyleSheet.create({
   carouselRemoveBtn: { position: 'absolute', top: 4, right: 4, width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
   carouselIndexBadge: { position: 'absolute', bottom: 4, left: 4, width: 20, height: 20, borderRadius: 10, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center' },
   carouselIndexText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.bold },
-  carouselAddMoreBtn: { alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderColor: Colors.blue + '88', backgroundColor: Colors.blueDim },
-  carouselAddMoreText: { color: Colors.blue, fontSize: 10, fontWeight: FontWeight.semibold, marginTop: 2 },
+  carouselAddMoreBtn: { alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderColor: (Colors as any).blue + '88', backgroundColor: (Colors as any).blueDim },
+  carouselAddMoreText: { color: (Colors as any).blue, fontSize: 10, fontWeight: FontWeight.semibold, marginTop: 2 },
 
   captionInput: { backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.md, paddingHorizontal: Spacing.md, paddingVertical: Spacing.md, color: Colors.textPrimary, fontSize: FontSize.md, minHeight: 100, textAlignVertical: 'top' },
   charCount: { color: Colors.textSubtle, fontSize: FontSize.xs, textAlign: 'right' },
@@ -843,9 +1031,30 @@ const styles = StyleSheet.create({
   infoCardTitle: { color: Colors.primary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold, marginBottom: 3 },
   infoCardText: { color: Colors.textSecondary, fontSize: FontSize.xs, lineHeight: 16 },
 
+  // Live mode
   livePreview: { alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingVertical: Spacing.xxl, borderRadius: Radius.lg, borderWidth: 1, borderColor: 'rgba(255,45,85,0.3)' },
   liveIconWrap: { position: 'relative', alignItems: 'center', justifyContent: 'center' },
   liveRedDot: { position: 'absolute', top: 0, right: 0, width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.secondary },
   livePreviewTitle: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
   livePreviewSub: { color: Colors.textSecondary, fontSize: FontSize.sm, textAlign: 'center', paddingHorizontal: Spacing.lg },
+  liveActiveBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: 'rgba(255,45,85,0.2)', borderRadius: Radius.full,
+    paddingHorizontal: 12, paddingVertical: 5,
+    borderWidth: 1, borderColor: 'rgba(255,45,85,0.5)',
+  },
+  liveActiveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.secondary },
+  liveActiveText: { color: Colors.secondary, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 0.8 },
+  streamErrorCard: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    backgroundColor: 'rgba(255,45,85,0.1)', borderRadius: Radius.md, padding: Spacing.md,
+    borderWidth: 1, borderColor: 'rgba(255,45,85,0.3)',
+  },
+  streamErrorText: { color: Colors.secondary, fontSize: FontSize.sm, flex: 1 },
+  liveTipsCard: {
+    backgroundColor: Colors.surfaceElevated, borderRadius: Radius.md,
+    padding: Spacing.md, gap: 8,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  liveTip: { color: Colors.textSecondary, fontSize: FontSize.xs, lineHeight: 18 },
 });
