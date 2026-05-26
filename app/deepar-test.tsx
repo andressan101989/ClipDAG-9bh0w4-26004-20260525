@@ -35,15 +35,22 @@ let DeepARView: any  = null;
 let CameraPositions: any = null;
 
 try {
-  const m = require('react-native-deepar');
-  // Metro stubs return {} — validate it's a real renderable component (function/class)
-  const candidate = m.default ?? m.DeepARCamera ?? m.Camera ?? null;
-  DeepARView      = (typeof candidate === 'function') ? candidate : null;
-  CameraPositions = (m.CameraPositions && typeof m.CameraPositions === 'object') ? m.CameraPositions : null;
-  const keys = Object.keys(m ?? {});
-  console.log('[DeepARTest] SDK keys:', keys.join(', '));
-  console.log('[DeepARTest] DeepARView resolved:', typeof DeepARView);
-  if (!DeepARView) console.warn('[DeepARTest] SDK blocked by Metro (preview/web) — EAS Build required');
+  // Skip native require entirely on web — requireNativeComponent is not available.
+  // app/deepar-test.web.tsx should handle the web route, but guard here as a
+  // fallback in case Metro platform resolution doesn't redirect to the .web file.
+  if (Platform.OS !== 'web') {
+    const m = require('react-native-deepar');
+    // Metro stubs return {} — validate it's a real renderable component (function/class)
+    const candidate = m.default ?? m.DeepARCamera ?? m.Camera ?? null;
+    DeepARView      = (typeof candidate === 'function') ? candidate : null;
+    CameraPositions = (m.CameraPositions && typeof m.CameraPositions === 'object') ? m.CameraPositions : null;
+    const keys = Object.keys(m ?? {});
+    console.log('[DeepARTest] SDK keys:', keys.join(', '));
+    console.log('[DeepARTest] DeepARView resolved:', typeof DeepARView);
+    if (!DeepARView) console.warn('[DeepARTest] SDK blocked by Metro (preview/web) — EAS Build required');
+  } else {
+    console.log('[DeepARTest] Web platform — native SDK skipped');
+  }
 } catch (e) {
   console.error('[DeepARTest] SDK not found:', e);
 }
