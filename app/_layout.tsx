@@ -58,6 +58,8 @@ RenderQueue.initialize();            // restore queued background renders
 import { Stack } from 'expo-router';
 console.log('[BOOT] 1 - expo-router imported');
 
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
+
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 console.log('[BOOT] 2 - safe-area imported');
 
@@ -90,6 +92,7 @@ console.log('[BOOT] 9 - all imports done');
 export default function RootLayout() {
   console.log('[BOOT] 10 - RootLayout render');
   return (
+    <ErrorBoundary module="RootLayout" showReset>
     <AlertProvider>
       <SafeAreaProvider>
         <TemplateAuthProvider>
@@ -143,5 +146,6 @@ export default function RootLayout() {
         </TemplateAuthProvider>
       </SafeAreaProvider>
     </AlertProvider>
+    </ErrorBoundary>
   );
 }

@@ -48,8 +48,6 @@ import {
 import { useCreatorSession }      from '@/hooks/useCreatorSession';
 import { useNavigationTelemetry } from '@/hooks/navigation/useNavigationTelemetry';
 import { useStabilityMode }       from '@/hooks/core/useStabilityMode';
-import { CrashIntelligence }      from '@/modules/core/CrashIntelligence';
-import { ProductionStabilityMode } from '@/modules/core/ProductionStabilityMode';
 
 // ── Tab definitions ────────────────────────────────────────────────────────
 type StudioTab = 'ar' | 'videos' | 'avatars' | 'music';
@@ -76,7 +74,7 @@ export default function CreatorStudioScreen() {
   const tabSty  = useAnimatedStyle(() => ({ opacity: tabAnim.value }));
 
   // ── Session init via hook (architecture: no @/modules imports in screens) ──
-  const { sessionReady, saveCheckpoint, clearDraft } = useCreatorSession(
+  const { sessionReady, saveCheckpoint, clearDraft, addBreadcrumb } = useCreatorSession(
     {
       onDraftFound: useCallback((draft: any) => {
         Alert.alert(
@@ -87,7 +85,7 @@ export default function CreatorStudioScreen() {
               text: 'Restaurar',
               onPress: () => {
                 if (draft.metadata?.tab) setTab(draft.metadata.tab as StudioTab);
-                CrashIntelligence.addBreadcrumb('state', 'Draft restored');
+                addBreadcrumb('state', 'Draft restored');
               },
             },
             {
@@ -120,8 +118,8 @@ export default function CreatorStudioScreen() {
       tabAnim.value = withTiming(1, { duration: 180 });
     });
     setTab(t);
-    CrashIntelligence.addBreadcrumb('user_action', `Studio tab: ${t}`);
-  }, [tabAnim]); // Added tabAnim to dependencies
+    addBreadcrumb('user_action', `Studio tab: ${t}`);
+  }, [tabAnim, addBreadcrumb]);
 
   // ── Back with unsaved work warning ─────────────────────────────────────
 

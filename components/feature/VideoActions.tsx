@@ -17,17 +17,7 @@ import { CounterBadge }  from '@/components/ui/CounterBadge';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 import type { Video }    from '@/services/mockData';
 
-// ── Module boundary: access SecurityManager + CrashIntelligence via thin wrappers
-// so this component never imports from @/modules directly (architecture rule).
-import { SecurityManager }   from '@/modules/core/SecurityManager';
-import { CrashIntelligence } from '@/modules/core/CrashIntelligence';
-
-function checkSecureAction(action: 'like' | 'comment' | 'search', userId: string): boolean {
-  return SecurityManager.checkAction(action, userId);
-}
-function addBreadcrumb(category: string, message: string, data?: Record<string, unknown>): void {
-  CrashIntelligence.addBreadcrumb(category, message, data);
-}
+import { useVideoActions } from '@/hooks/useVideoActions';
 
 let Haptics: any = null;
 try { Haptics = require('expo-haptics'); } catch { /* optional */ }
@@ -165,6 +155,7 @@ export const VideoActions = memo(function VideoActions({
   onShare,
   onProfilePress,
 }: VideoActionsProps) {
+  const { checkAction, addBreadcrumb } = useVideoActions();
   const [likeBlocked,    setLikeBlocked]    = useState(false);
   const [commentBlocked, setCommentBlocked] = useState(false);
   const [shareBlocked,   setShareBlocked]   = useState(false);
@@ -196,7 +187,7 @@ export const VideoActions = memo(function VideoActions({
     label:      string,
   ) => {
     if (!currentUserId) return;
-    const allowed = checkSecureAction(action, currentUserId);
+    const allowed = checkAction(action, currentUserId);
     if (!allowed) {
       setBlocked(true);
       setTimeout(() => setBlocked(false), 2000);
@@ -205,7 +196,7 @@ export const VideoActions = memo(function VideoActions({
     }
     addBreadcrumb('user_action', label, { videoId: video.id });
     handler();
-  }, [currentUserId, video.id]);
+  }, [currentUserId, video.id, checkAction, addBreadcrumb]);
 
   const handleLike = useCallback(() => {
     secureAction('like', setLikeBlocked, () => {

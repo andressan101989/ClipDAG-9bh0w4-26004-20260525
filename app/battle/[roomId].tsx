@@ -29,10 +29,11 @@ import { useBattle }              from '@/hooks/gaming/useBattle';
 import { PresenceManager }        from '@/modules/realtime/PresenceManager';
 import { useNavigationTelemetry } from '@/hooks/navigation/useNavigationTelemetry';
 import { useStabilityMode }       from '@/hooks/core/useStabilityMode';
+import { ErrorBoundary }          from '@/components/ui/ErrorBoundary';
 
 const BATTLE_DURATION_SEC = 60;
 
-export default function BattleScreen() {
+function BattleScreenInner() {
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
   const insets     = useSafeAreaInsets();
   const router     = useRouter();
@@ -416,6 +417,14 @@ export default function BattleScreen() {
         </View>
       </Modal>
     </View>
+  );
+}
+
+export default function BattleScreen() {
+  return (
+    <ErrorBoundary module="Battle" showReset>
+      <BattleScreenInner />
+    </ErrorBoundary>
   );
 }
 
