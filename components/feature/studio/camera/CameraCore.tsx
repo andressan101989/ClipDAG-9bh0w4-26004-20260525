@@ -36,23 +36,24 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 import { log } from '@/services/logger';
-import {
-  isDeepARAvailable, DEEPAR_API_KEY,
-  requestDeepARPermissions,
-  prefetchDeepARFilters,
-  triggerDeepARScreenshot,
-  startDeepARRecording,
-  DeepARCamera as DeepARCameraComponent,
-} from '@/services/deeparService';
+// DeepAR fully removed — crash isolation build
+// import { ... } from '@/services/deeparService';
 
 // ── Lazy-load expo-camera ────────────────────────────────────────────────────
-let CameraView: any                 = null;
-let useCameraPermissionsImpl: any   = null;
+let CameraView: any                = null;
+let useCameraPermissionsImpl: any  = null;
 try {
   const ec = require('expo-camera');
-  CameraView                = ec.CameraView           ?? null;
-  useCameraPermissionsImpl  = ec.useCameraPermissions ?? null;
+  CameraView               = ec.CameraView           ?? null;
+  useCameraPermissionsImpl = ec.useCameraPermissions ?? null;
 } catch { /* web / preview */ }
+
+// ── DeepAR stubs (disabled) ──────────────────────────────────────────────────
+const isDeepARAvailable      = () => false;
+const DeepARCameraComponent  = null;
+const prefetchDeepARFilters  = async (_ids?: string[]) => {};
+const triggerDeepARScreenshot = (_ref: any) => {};
+const startDeepARRecording   = (_ref: any) => {};
 
 function useSafeCameraPermissions(): [{ granted: boolean } | null, () => Promise<any>] {
   if (useCameraPermissionsImpl) {
@@ -124,71 +125,37 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
   const deepARRef     = useRef<any>(null);
   const expoCamRef    = useRef<any>(null);
 
-  const deepARActive  = isDeepARAvailable();
-  const deepARCompOk  =
-    deepARActive &&
-    DeepARCameraComponent !== null &&
-    typeof (DeepARCameraComponent as any) === 'function';
+  // DeepAR fully disabled — always use expo-camera
+  const deepARCompOk  = false;
 
-  const [facing,       setFacing]       = useState<'front' | 'back'>('front');
-  const [deepARReady,  setDeepARReady]  = useState(false);
-  const [isRecording,  setIsRecording]  = useState(false);
-  const [recSeconds,   setRecSeconds]   = useState(0);
+  const [facing,      setFacing]      = useState<'front' | 'back'>('front');
+  const [isRecording, setIsRecording] = useState(false);
+  const [recSeconds,  setRecSeconds]  = useState(0);
 
-  const recTimerRef       = useRef<ReturnType<typeof setInterval>  | null>(null);
-  const deepARTimeoutRef  = useRef<ReturnType<typeof setTimeout>   | null>(null);
-  const screenshotCbRef   = useRef<((uri: string) => void) | null>(null);
-  const videoCbRef        = useRef<((uri: string) => void) | null>(null);
+  const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [camPerm, requestCamPerm] = useSafeCameraPermissions();
   const hasPerm = camPerm?.granted ?? false;
 
-  // ── Permissions + DeepAR init ───────────────────────────────────────────────
+  // ── Permissions — expo-camera only ───────────────────────────────────────────
   useEffect(() => {
-    async function init() {
-      if (deepARCompOk) {
-        const ok = await requestDeepARPermissions();
-        log.camera.info('DeepAR permissions', { granted: ok });
-      } else {
-        await requestCamPerm();
-      }
-    }
-    init();
+    requestCamPerm();
   }, []);
-
-  // Safety timeout: mark DeepAR ready after 2 s even without init event
-  useEffect(() => {
-    if (!deepARCompOk) return;
-    deepARTimeoutRef.current = setTimeout(() => {
-      log.deepar.warn('Init timeout — forcing ready');
-      setDeepARReady(true);
-      prefetchDeepARFilters(['flower_crown', 'lion', 'aviators', 'beauty', 'fire']);
-      onDeepARReady?.();
-    }, 2000);
-    return () => { if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current); };
-  }, [deepARCompOk]);
 
   // Cleanup on unmount
   useEffect(() => () => {
-    if (recTimerRef.current)      clearInterval(recTimerRef.current);
-    if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
-    try { if (isRecording && deepARRef.current) deepARRef.current.finishRecording(); } catch { /* ignore */ }
+    if (recTimerRef.current) clearInterval(recTimerRef.current);
     try { if (isRecording && expoCamRef.current) expoCamRef.current.stopRecording(); } catch { /* ignore */ }
   }, []);
 
   // ── Imperative handle ───────────────────────────────────────────────────────
   useImperativeHandle(ref, () => ({
-    isDeepAR:  deepARCompOk,
-    isReady:   deepARCompOk ? deepARReady : hasPerm,
+    isDeepAR:  false,
+    isReady:   hasPerm,
     deepARRef,
 
     takePhoto: () => new Promise<string | null>(resolve => {
-      if (deepARCompOk && deepARReady && deepARRef.current) {
-        screenshotCbRef.current = uri => { screenshotCbRef.current = null; resolve(uri); };
-        const timeout = setTimeout(() => { screenshotCbRef.current = null; resolve(null); }, 5000);
-        screenshotCbRef.current = uri => { clearTimeout(timeout); resolve(uri); };
-        triggerDeepARScreenshot(deepARRef);
-      } else if (expoCamRef.current) {
+      if (expoCamRef.current) {
         expoCamRef.current.takePictureAsync({ quality: 0.9 })
           .then((p: any) => resolve(p?.uri ?? null))
           .catch(() => resolve(null));
@@ -202,9 +169,7 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
       setIsRecording(true);
       setRecSeconds(0);
       recTimerRef.current = setInterval(() => setRecSeconds(s => s + 1), 1000);
-      if (deepARCompOk && deepARReady && deepARRef.current) {
-        startDeepARRecording(deepARRef);
-      } else if (expoCamRef.current) {
+      if (expoCamRef.current) {
         expoCamRef.current.recordAsync({ maxDuration: 60 })
           .then((v: any) => {
             if (recTimerRef.current) clearInterval(recTimerRef.current);
@@ -222,53 +187,15 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
     stopRecording: () => new Promise<string | null>(resolve => {
       if (!isRecording) { resolve(null); return; }
       if (recTimerRef.current) clearInterval(recTimerRef.current);
-      if (deepARCompOk && deepARReady && deepARRef.current) {
-        videoCbRef.current = uri => { videoCbRef.current = null; resolve(uri); };
-        const timeout = setTimeout(() => { videoCbRef.current = null; resolve(null); }, 8000);
-        videoCbRef.current = uri => { clearTimeout(timeout); resolve(uri); };
-        try { deepARRef.current.finishRecording(); } catch { resolve(null); }
-        setTimeout(() => { setIsRecording(false); setRecSeconds(0); }, 3000);
-      } else if (expoCamRef.current) {
+      if (expoCamRef.current) {
         try { expoCamRef.current.stopRecording(); } catch { /* ignore */ }
-        setIsRecording(false); setRecSeconds(0);
-        resolve(null);
-      } else {
-        setIsRecording(false); setRecSeconds(0);
-        resolve(null);
       }
+      setIsRecording(false); setRecSeconds(0);
+      resolve(null);
     }),
 
     flipCamera: () => setFacing(f => f === 'front' ? 'back' : 'front'),
   }), [deepARCompOk, deepARReady, hasPerm, isRecording]);
-
-  // ── DeepAR event handler ────────────────────────────────────────────────────
-  const handleDeepAREvent = useCallback(({ nativeEvent }: any) => {
-    log.deepar.native(nativeEvent.type, nativeEvent.value);
-    switch (nativeEvent.type) {
-      case 'initialized':
-        if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
-        setDeepARReady(true);
-        prefetchDeepARFilters(['flower_crown', 'lion', 'aviators', 'beauty', 'fire']);
-        onDeepARReady?.();
-        break;
-      case 'screenshotTaken':
-        if (screenshotCbRef.current) { screenshotCbRef.current(nativeEvent.value); }
-        else { onScreenshot?.(nativeEvent.value); }
-        break;
-      case 'videoRecordingFinished':
-        if (recTimerRef.current) clearInterval(recTimerRef.current);
-        setIsRecording(false); setRecSeconds(0);
-        if (videoCbRef.current) { videoCbRef.current(nativeEvent.value); }
-        else if (nativeEvent.value) { onVideoReady?.(nativeEvent.value); }
-        break;
-      case 'error':
-        if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
-        setDeepARReady(true);
-        log.deepar.error('Native error', nativeEvent.value);
-        onError?.(nativeEvent.value ?? 'DeepAR error');
-        break;
-    }
-  }, [onDeepARReady, onScreenshot, onVideoReady, onError]);
 
   // ── No camera available ─────────────────────────────────────────────────────
   if (!CameraView && !deepARCompOk) {
@@ -299,37 +226,8 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
   // ── Camera viewport ─────────────────────────────────────────────────────────
   return (
     <View style={[c.wrap, { height: camHeight }]}>
-      {/* Camera surface */}
-      {deepARCompOk ? (
-        <DeepARCameraComponent
-          ref={deepARRef}
-          apiKey={DEEPAR_API_KEY}
-          style={StyleSheet.absoluteFillObject}
-          position={facing}
-          onEventSent={handleDeepAREvent}
-          onInitialized={() => {
-            if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
-            setDeepARReady(true);
-            prefetchDeepARFilters(['flower_crown', 'lion', 'aviators', 'beauty', 'fire']);
-            onDeepARReady?.();
-          }}
-          onScreenshotTaken={(path: string) => {
-            if (screenshotCbRef.current) screenshotCbRef.current(path);
-            else onScreenshot?.(path);
-          }}
-          onVideoRecordingFinished={(path: string) => {
-            if (recTimerRef.current) clearInterval(recTimerRef.current);
-            setIsRecording(false); setRecSeconds(0);
-            if (videoCbRef.current) videoCbRef.current(path);
-            else if (path) onVideoReady?.(path);
-          }}
-          onError={(text: string) => {
-            if (deepARTimeoutRef.current) clearTimeout(deepARTimeoutRef.current);
-            setDeepARReady(true);
-            onError?.(text);
-          }}
-        />
-      ) : CameraView ? (
+      {/* Camera surface — expo-camera only (DeepAR disabled) */}
+      {CameraView ? (
         <CameraView
           ref={expoCamRef}
           style={StyleSheet.absoluteFillObject}
@@ -349,23 +247,13 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
         </View>
       ) : null}
 
-      {/* DeepAR init spinner */}
-      {deepARCompOk && !deepARReady ? (
-        <View style={c.initOverlay} pointerEvents="none">
-          <ActivityIndicator color="#fff" size="small" />
-          <Text style={c.initText}>Iniciando DeepAR...</Text>
+      {/* expo-camera badge */}
+      <View style={c.liveBadge} pointerEvents="none">
+        <View style={[c.liveBadgeInner, { backgroundColor: 'rgba(44,44,80,0.85)' }]}>
+          <PulsingDot color="#7C5CFF" />
+          <Text style={c.liveBadgeText}>expo-camera</Text>
         </View>
-      ) : null}
-
-      {/* DeepAR live badge */}
-      {deepARCompOk && deepARReady ? (
-        <View style={c.liveBadge} pointerEvents="none">
-          <LinearGradient colors={['#FF2D78', '#7C5CFF']} style={c.liveBadgeInner}>
-            <PulsingDot color="#fff" />
-            <Text style={c.liveBadgeText}>DeepAR LIVE</Text>
-          </LinearGradient>
-        </View>
-      ) : null}
+      </View>
 
       {/* Flip button */}
       <Pressable style={c.flipBtn} onPress={() => setFacing(f => f === 'front' ? 'back' : 'front')}>
