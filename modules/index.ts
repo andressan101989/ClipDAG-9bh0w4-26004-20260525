@@ -1,48 +1,26 @@
 /**
- * modules/index.ts — Master barrel for all ClipDAG feature modules
+ * modules/index.ts — Top-level module barrel
  *
- * Import from here instead of digging into module internals:
- *
+ * Import from here when you need multiple modules:
  *   import { EventBus, PollingManager, UploadQueue } from '@/modules';
- *   import { CallManager, useCallState }             from '@/modules';
- *   import { StreamManager, useStreamState }         from '@/modules';
- *   import { AppLifecycle, Perf }                    from '@/modules';
  *
- * Module directory:
- *
- *   modules/core/        — EventBus, AppLifecycle, PerformanceMonitor
- *   modules/realtime/    — PollingManager (no WebSocket needed)
- *   modules/media/       — UploadQueue, CacheManager
- *   modules/calls/       — CallManager, useCallState
- *   modules/streaming/   — StreamManager, useStreamState
- *   modules/battle/      — BattleManager
- *
- * FUTURE MODULES (add when implementing):
- *   modules/gaming/      — MiniGame launcher, score board
- *   modules/ai/          — AI pipeline, prompt templates, model selector
- *   modules/webrtc/      — WebRTC peer connection pool (when WC unblocked)
+ * Or import directly from a module for tree-shaking:
+ *   import { CameraController } from '@/modules/creator';
  */
 
-// ── Core infrastructure ───────────────────────────────────────────────────────
-export { EventBus, AppLifecycle, Perf } from './core';
-export type { AppEvents, AppEventName, AppEventPayload } from './core';
+// Core infrastructure
+export * from './core';
 
-// ── Realtime ──────────────────────────────────────────────────────────────────
-export { PollingManager } from './realtime';
-export type { PollConfig } from './realtime';
+// Realtime layer
+export * from './realtime';
 
-// ── Media ─────────────────────────────────────────────────────────────────────
-export { UploadQueue, CacheManager } from './media';
-export type { UploadJob, UploadState, UploadStatus } from './media';
+// Media pipeline
+export { UploadQueue }   from './media/UploadQueue';
+export { CacheManager }  from './media/CacheManager';
 
-// ── Calls ─────────────────────────────────────────────────────────────────────
-export { CallManager, useCallState } from './calls';
-export type { CallType, CallStatus, CallSession } from './calls';
-
-// ── Streaming ─────────────────────────────────────────────────────────────────
-export { StreamManager, useStreamState } from './streaming';
-export type { StreamStatus, LiveSession, StreamGift } from './streaming';
-
-// ── Battle ────────────────────────────────────────────────────────────────────
-export { BattleManager } from './battle';
-export type { BattleStatus, BattleScore, Battle } from './battle';
+// Feature modules (lazy — only import what you use)
+export * from './calls';
+export * from './streaming';
+export * from './battle';
+export * from './gaming';
+export * from './creator';
