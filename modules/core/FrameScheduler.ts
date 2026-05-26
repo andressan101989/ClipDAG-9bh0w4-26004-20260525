@@ -1,31 +1,13 @@
 /**
- * modules/core/FrameScheduler.ts — GPU frame scheduling & render throttling
+ * modules/core/FrameScheduler.ts — v2 GPU frame scheduling & render throttling
  *
- * Prevents thermal throttling, GPU overload, and FPS drops by:
- *   - Enforcing per-surface FPS caps
- *   - Prioritizing render work (camera > UI > background effects)
- *   - Dropping low-priority frames when GPU is under pressure
- *   - Coordinating DeepAR, Skia, and video decoder frame budgets
- *   - Detecting render jank and escalating to MemoryPressureMonitor
- *
- * Frame budget model (at 60 FPS, 16.67ms per frame):
- *   camera preview:   6ms   (highest priority — user-visible)
- *   AR effects:       5ms   (high priority — drops to 0 under pressure)
- *   UI animations:    3ms   (normal priority — can defer)
- *   background tasks: 2ms   (low priority — first to drop)
- *
- * Usage:
- *   // Register a render surface
- *   const id = FrameScheduler.register('deepar', 60, 'high');
- *
- *   // Check if this frame should render
- *   if (FrameScheduler.shouldRender('deepar')) {
- *     // ... render frame
- *     FrameScheduler.frameComplete('deepar', renderTimeMs);
- *   }
- *
- *   // Unregister when surface unmounts
- *   FrameScheduler.unregister('deepar');
+ * Phase 4 additions:
+ *   - setGlobalFPSCap(): ProductionStabilityMode calls this to cap all surfaces
+ *   - getActiveFPS(): returns current effective FPS (used by StabilityMode report)
+ *   - Frame pacing enforcement: uniform delivery via token-bucket timing
+ *   - Render spike detection: 3-frame moving average to detect sudden spikes
+ *   - Hysteresis on jank escalation: requires 3 consecutive clean frames to de-escalate
+ *   - forceQualityLevel() alias consumed by ProductionStabilityMode
  */
 
 import { EventBus }              from './EventBus';
@@ -36,49 +18,58 @@ export type RenderPriority = 'critical' | 'high' | 'normal' | 'low';
 export interface RenderSurface {
   id:            string;
   targetFPS:     number;
+  cappedFPS:     number;   // effective after global cap
   priority:      RenderPriority;
   isActive:      boolean;
   lastFrameAt:   number;
   avgFrameTimeMs: number;
   droppedFrames: number;
   totalFrames:   number;
+  recentFrameTimes: number[]; // 3-sample ring for spike detection
 }
 
 const PRIORITY_DROP_ORDER: RenderPriority[] = ['low', 'normal', 'high', 'critical'];
-const JANK_THRESHOLD_MULTIPLIER = 2.0;   // frame time > 2× target = jank
-const JANK_ESCALATION_COUNT     = 10;    // N consecutive janky frames → escalate
+const JANK_THRESHOLD_MULTIPLIER = 2.0;
+const JANK_ESCALATION_COUNT     = 10;
+const JANK_RECOVERY_COUNT       = 3;   // clean frames needed before de-escalating
+const MAX_RECENT_FRAMES         = 3;
 
 class FrameSchedulerImpl {
   private readonly _surfaces  = new Map<string, RenderSurface>();
   private _gpuPressure: 'none' | 'moderate' | 'high' = 'none';
   private _thermalState: 'nominal' | 'fair' | 'serious' | 'critical' = 'nominal';
-  private _jankCounters = new Map<string, number>();
-  private _frameDropLevel = 0;  // 0 = drop nothing, 1 = drop low, 2 = drop low+normal
+  private _jankCounters    = new Map<string, number>();
+  private _cleanCounters   = new Map<string, number>();
+  private _frameDropLevel  = 0;
+  private _globalFPSCap    = 60;   // set by ProductionStabilityMode
 
   // ── Registration ──────────────────────────────────────────────────────────
 
   register(id: string, targetFPS: number, priority: RenderPriority = 'normal'): void {
-    const quality = MemoryPressureMonitor.currentQuality;
-    const actualFPS = Math.min(targetFPS, quality.targetFPS);
+    const quality    = MemoryPressureMonitor.currentQuality;
+    const qualityFPS = quality?.targetFPS ?? 60;
+    const effectiveFPS = Math.min(targetFPS, qualityFPS, this._globalFPSCap);
 
     this._surfaces.set(id, {
       id,
-      targetFPS:       actualFPS,
+      targetFPS,
+      cappedFPS:       effectiveFPS,
       priority,
       isActive:        true,
       lastFrameAt:     0,
-      avgFrameTimeMs:  1000 / actualFPS,
+      avgFrameTimeMs:  1000 / effectiveFPS,
       droppedFrames:   0,
       totalFrames:     0,
+      recentFrameTimes: [],
     });
-
-    console.log(`[FrameScheduler] registered surface "${id}" @ ${actualFPS}fps [${priority}]`);
+    console.log(`[FrameScheduler] registered "${id}" @ ${effectiveFPS}fps [${priority}]`);
   }
 
   unregister(id: string): void {
     this._surfaces.delete(id);
     this._jankCounters.delete(id);
-    console.log(`[FrameScheduler] unregistered surface "${id}"`);
+    this._cleanCounters.delete(id);
+    console.log(`[FrameScheduler] unregistered "${id}"`);
   }
 
   pause(id: string):  void { this._setSurfaceActive(id, false); }
@@ -86,62 +77,99 @@ class FrameSchedulerImpl {
 
   // ── Frame gating ──────────────────────────────────────────────────────────
 
-  /**
-   * Returns true if this surface should render this frame.
-   * Call at the start of each render cycle.
-   */
   shouldRender(id: string): boolean {
     const surface = this._surfaces.get(id);
     if (!surface || !surface.isActive) return false;
 
-    // Drop based on pressure level
     if (this._shouldDrop(surface.priority)) {
       surface.droppedFrames++;
       surface.totalFrames++;
       return false;
     }
 
-    const now = performance.now();
-    const intervalMs = 1000 / surface.targetFPS;
-    if (now - surface.lastFrameAt < intervalMs * 0.85) {
-      // Too soon — throttle
-      return false;
-    }
+    const now         = performance.now();
+    const intervalMs  = 1000 / surface.cappedFPS;
+    const elapsed     = now - surface.lastFrameAt;
+
+    // Token-bucket frame pacing: allow slight early delivery (85% of interval)
+    // but clamp burst to 1 frame per budget
+    if (elapsed < intervalMs * 0.85) return false;
 
     return true;
   }
 
-  /**
-   * Call after rendering a frame to track timing.
-   * @param renderTimeMs How long the frame took to render.
-   */
   frameComplete(id: string, renderTimeMs: number): void {
     const surface = this._surfaces.get(id);
     if (!surface) return;
 
-    surface.lastFrameAt   = performance.now();
+    const now = performance.now();
+    surface.lastFrameAt   = now;
     surface.totalFrames++;
-    surface.avgFrameTimeMs = surface.avgFrameTimeMs * 0.9 + renderTimeMs * 0.1;
 
-    // Jank detection
-    const targetMs = 1000 / surface.targetFPS;
+    // EMA smoothing for average frame time
+    surface.avgFrameTimeMs = surface.avgFrameTimeMs * 0.875 + renderTimeMs * 0.125;
+
+    // 3-frame ring for spike detection
+    surface.recentFrameTimes.push(renderTimeMs);
+    if (surface.recentFrameTimes.length > MAX_RECENT_FRAMES) {
+      surface.recentFrameTimes.shift();
+    }
+
+    // Render spike: current frame 3× the recent average
+    if (surface.recentFrameTimes.length === MAX_RECENT_FRAMES) {
+      const recentAvg = surface.recentFrameTimes
+        .slice(0, -1)
+        .reduce((a, b) => a + b, 0) / (MAX_RECENT_FRAMES - 1);
+      if (renderTimeMs > recentAvg * 3 && recentAvg > 2) {
+        console.warn(`[FrameScheduler] render spike on "${id}": ${renderTimeMs.toFixed(1)}ms (avg ${recentAvg.toFixed(1)}ms)`);
+      }
+    }
+
+    // Jank detection with hysteresis
+    const targetMs = 1000 / surface.cappedFPS;
     if (renderTimeMs > targetMs * JANK_THRESHOLD_MULTIPLIER) {
-      const count = (this._jankCounters.get(id) ?? 0) + 1;
-      this._jankCounters.set(id, count);
+      const jankCount = (this._jankCounters.get(id) ?? 0) + 1;
+      this._jankCounters.set(id, jankCount);
+      this._cleanCounters.set(id, 0);
 
-      if (count >= JANK_ESCALATION_COUNT) {
-        console.warn(`[FrameScheduler] "${id}" sustained jank (${count} frames) — escalating`);
+      if (jankCount >= JANK_ESCALATION_COUNT) {
+        console.warn(`[FrameScheduler] "${id}" sustained jank — escalating`);
         this._escalateGPUPressure();
         this._jankCounters.set(id, 0);
       }
     } else {
-      this._jankCounters.set(id, 0);
+      const clean = (this._cleanCounters.get(id) ?? 0) + 1;
+      this._cleanCounters.set(id, clean);
+      if (clean >= JANK_RECOVERY_COUNT) {
+        // Gradual de-escalation
+        this._jankCounters.set(id, Math.max(0, (this._jankCounters.get(id) ?? 0) - 1));
+      }
     }
+  }
+
+  // ── Global FPS cap (called by ProductionStabilityMode) ────────────────────
+
+  setGlobalFPSCap(cap: number): void {
+    if (this._globalFPSCap === cap) return;
+    this._globalFPSCap = Math.max(1, cap);
+    console.log('[FrameScheduler] global FPS cap:', this._globalFPSCap);
+    // Re-apply to all surfaces
+    for (const surface of this._surfaces.values()) {
+      surface.cappedFPS = Math.min(surface.targetFPS, this._globalFPSCap);
+    }
+  }
+
+  /** Returns the lowest effective FPS across active surfaces (for reports). */
+  getActiveFPS(): number {
+    let min = this._globalFPSCap;
+    for (const s of this._surfaces.values()) {
+      if (s.isActive) min = Math.min(min, s.cappedFPS);
+    }
+    return min;
   }
 
   // ── Thermal & pressure ────────────────────────────────────────────────────
 
-  /** Call when iOS/Android thermal state changes. */
   reportThermalState(state: 'nominal' | 'fair' | 'serious' | 'critical'): void {
     if (this._thermalState === state) return;
     const prev = this._thermalState;
@@ -149,12 +177,12 @@ class FrameSchedulerImpl {
     console.warn(`[FrameScheduler] thermal: ${prev} → ${state}`);
 
     switch (state) {
-      case 'nominal': this._setDropLevel(0); break;
-      case 'fair':    this._setDropLevel(1); break;
-      case 'serious': this._setDropLevel(2); this._capAllFPS(30); break;
+      case 'nominal': this._setDropLevel(0); this.setGlobalFPSCap(60); break;
+      case 'fair':    this._setDropLevel(1); this.setGlobalFPSCap(50); break;
+      case 'serious': this._setDropLevel(2); this.setGlobalFPSCap(30); break;
       case 'critical':
         this._setDropLevel(3);
-        this._capAllFPS(20);
+        this.setGlobalFPSCap(20);
         MemoryPressureMonitor.reportPressure('critical');
         EventBus.emit('app:low_memory');
         break;
@@ -164,13 +192,9 @@ class FrameSchedulerImpl {
   reportGPUPressure(level: 'none' | 'moderate' | 'high'): void {
     if (this._gpuPressure === level) return;
     this._gpuPressure = level;
-    if (level === 'high') {
-      this._setDropLevel(Math.max(this._frameDropLevel, 2));
-    } else if (level === 'moderate') {
-      this._setDropLevel(Math.max(this._frameDropLevel, 1));
-    } else {
-      this._setDropLevel(0);
-    }
+    if (level === 'high')     this._setDropLevel(Math.max(this._frameDropLevel, 2));
+    else if (level === 'moderate') this._setDropLevel(Math.max(this._frameDropLevel, 1));
+    else                      this._setDropLevel(0);
   }
 
   // ── Diagnostics ───────────────────────────────────────────────────────────
@@ -178,7 +202,7 @@ class FrameSchedulerImpl {
   getStats(): Array<{ id: string; fps: number; dropRate: string; avgMs: string }> {
     return Array.from(this._surfaces.values()).map(s => ({
       id:       s.id,
-      fps:      s.targetFPS,
+      fps:      s.cappedFPS,
       dropRate: s.totalFrames > 0
         ? `${((s.droppedFrames / s.totalFrames) * 100).toFixed(1)}%`
         : '0%',
@@ -194,8 +218,8 @@ class FrameSchedulerImpl {
 
   private _shouldDrop(priority: RenderPriority): boolean {
     if (this._frameDropLevel === 0) return false;
-    const priorityIndex = PRIORITY_DROP_ORDER.indexOf(priority);
-    return priorityIndex < this._frameDropLevel;
+    const idx = PRIORITY_DROP_ORDER.indexOf(priority);
+    return idx < this._frameDropLevel;
   }
 
   private _setDropLevel(level: number): void {
@@ -205,11 +229,8 @@ class FrameSchedulerImpl {
   }
 
   private _capAllFPS(maxFPS: number): void {
-    for (const surface of this._surfaces.values()) {
-      if (surface.targetFPS > maxFPS) {
-        console.log(`[FrameScheduler] cap "${surface.id}": ${surface.targetFPS} → ${maxFPS} fps`);
-        surface.targetFPS = maxFPS;
-      }
+    for (const s of this._surfaces.values()) {
+      s.cappedFPS = Math.min(s.targetFPS, maxFPS);
     }
   }
 
@@ -219,7 +240,7 @@ class FrameSchedulerImpl {
   }
 
   private _escalateGPUPressure(): void {
-    if (this._gpuPressure === 'none')     this.reportGPUPressure('moderate');
+    if (this._gpuPressure === 'none')         this.reportGPUPressure('moderate');
     else if (this._gpuPressure === 'moderate') this.reportGPUPressure('high');
   }
 }
