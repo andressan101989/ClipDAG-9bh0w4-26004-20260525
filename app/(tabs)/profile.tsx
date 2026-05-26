@@ -19,6 +19,8 @@ import { useWallet } from '@/hooks/useWallet';
 import { useAlert } from '@/template';
 import { getSupabaseClient } from '@/template';
 import { CyberButton } from '@/components/ui/CyberButton';
+import { FadeIn, SlideUp, ProfileGridSkeleton } from '@/components/ui/SkeletonLoader';
+import { AnimatedPressable } from '@/components/ui/AnimatedPressable';
 import { Avatar } from '@/components/ui/Avatar';
 import { AnalyticsSheet } from '@/components/feature/AnalyticsSheet';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
@@ -112,6 +114,14 @@ export default function ProfileScreen() {
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [profileLoaded, setProfileLoaded] = useState(false);
+
+  useEffect(() => {
+    if (user && !profileLoaded) {
+      const t = setTimeout(() => setProfileLoaded(true), 80);
+      return () => clearTimeout(t);
+    }
+  }, [user?.id, profileLoaded]);
   const [contentTab, setContentTab] = useState<ContentTab>('posts');
 
   // Analytics
@@ -278,6 +288,7 @@ export default function ProfileScreen() {
         }
       >
         {/* ── Profile hero ────────────────────────────────────────────────── */}
+        <SlideUp delay={60} distance={18}>
         <View style={styles.hero}>
           {/* Avatar */}
           <Pressable onPress={handlePickAvatar} style={styles.avatarOuter} hitSlop={4}>
@@ -335,20 +346,22 @@ export default function ProfileScreen() {
 
           {/* Edit + share buttons */}
           <View style={styles.profileBtns}>
-            <Pressable style={styles.editBtn} onPress={openEditModal}>
+            <AnimatedPressable style={styles.editBtn} onPress={openEditModal} haptic="selection">
               <Text style={styles.editBtnText}>{t('profile.editProfile')}</Text>
-            </Pressable>
-            <Pressable style={styles.shareBtn} onPress={() => router.push('/(tabs)/wallet')}>
+            </AnimatedPressable>
+            <AnimatedPressable style={styles.shareBtn} onPress={() => router.push('/(tabs)/wallet')} haptic="light" pressedScale={0.88}>
               <MaterialCommunityIcons name="share-variant-outline" size={18} color={Colors.textSecondary} />
-            </Pressable>
-            <Pressable style={styles.shareBtn} onPress={() => router.push('/messages')}>
+            </AnimatedPressable>
+            <AnimatedPressable style={styles.shareBtn} onPress={() => router.push('/messages')} haptic="light" pressedScale={0.88}>
               <MaterialCommunityIcons name="message-text-outline" size={18} color={Colors.textSecondary} />
-            </Pressable>
+            </AnimatedPressable>
           </View>
         </View>
+        </SlideUp>
 
         {/* ── DAG balance strip ─────────────────────────────────────────────── */}
-        <Pressable onPress={() => router.push('/(tabs)/wallet')} style={{ marginHorizontal: Spacing.md, marginBottom: Spacing.sm }}>
+        <FadeIn delay={160} duration={320}>
+        <AnimatedPressable onPress={() => router.push('/(tabs)/wallet')} style={{ marginHorizontal: Spacing.md, marginBottom: Spacing.sm }} haptic="selection" pressedScale={0.97}>
           <LinearGradient
             colors={['rgba(124,92,255,0.22)', 'rgba(255,157,0,0.12)']}
             start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
@@ -367,7 +380,8 @@ export default function ProfileScreen() {
             </View>
             <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textSubtle} />
           </LinearGradient>
-        </Pressable>
+        </AnimatedPressable>
+        </FadeIn>
 
         {/* ── Quick actions ─────────────────────────────────────────────────── */}
         <View style={styles.quickActionsRow}>
@@ -418,7 +432,9 @@ export default function ProfileScreen() {
         </View>
 
         {/* Content grid */}
-        {gridVideos.length === 0 ? (
+        {isRefreshing && gridVideos.length === 0 ? (
+          <ProfileGridSkeleton />
+        ) : gridVideos.length === 0 ? (
           <View style={styles.emptyGrid}>
             <MaterialCommunityIcons name="video-plus-outline" size={44} color={Colors.textSubtle} />
             <Text style={styles.emptyGridTitle}>{t('profile.noPosts')}</Text>
@@ -436,9 +452,9 @@ export default function ProfileScreen() {
               </LinearGradient>
             </Pressable>
           </View>
-        ) : (
+        ) : isRefreshing && gridVideos.length === 0 ? null : (
           <View style={styles.grid}>
-            {gridVideos.map(video => {
+            {gridVideos.map((video, _vidIdx) => {
               const imgSrc = video.thumbnailUrl?.startsWith('http')
                 ? { uri: video.thumbnailUrl }
                 : video.videoUrl?.startsWith('http')

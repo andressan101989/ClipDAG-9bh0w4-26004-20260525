@@ -1,19 +1,16 @@
 /**
- * modules/streaming/LiveOrchestrator.ts — Real streaming pipeline
+ * modules/streaming/LiveOrchestrator.ts — v2 Real streaming pipeline
  *
- * Full production live session lifecycle:
- *   - Supabase session create/end with real status tracking
- *   - Bitrate adaptation: thermal + network → 3-tier quality (HD/SD/LD)
- *   - Stream health scoring (0–100) with automatic quality downgrade
- *   - Viewer count polling (real Supabase, 3s intervals, background-paused)
- *   - Stream recovery: host network drop → auto-rejoin with same session
- *   - Gift event queue (BackpressureQueue, max 100, 200ms flush)
- *   - Reaction flood protection (per-user rate limiting)
- *   - Moderation pipeline hooks (comment flag, ban event)
- *   - Co-host management (accept/reject join requests)
- *   - PresenceManager status sync (streaming → away on end)
- *   - CrashIntelligence breadcrumbs
- *   - Guaranteed cleanup
+ * Phase 4 cleanup:
+ *   - startHostSession: removed naked throw — returns typed error object instead
+ *   - PresenceManager.setStatus: removed undefined second arg (typed correctly)
+ *   - _giftQueue construction: graceful init, no throw if BackpressureQueue unavailable
+ *   - _startThermalWatcher: stores unsub correctly (was overwriting null)
+ *   - end(): calls _thermalUnsub safely, double-end guard
+ *   - _attemptRecovery(): exponential backoff capped at 16s, no unhandled throw
+ *   - Reaction map: reset on end to free memory
+ *   - Cleanup: guaranteed even if Supabase throws
+ *   - PresenceManager.registerStreamSession / unregisterStreamSession used correctly
  */
 
 import { EventBus }               from '../core/EventBus';
@@ -28,16 +25,15 @@ import { getSupabaseClient }      from '@/template';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type StreamHealth = 'excellent' | 'good' | 'degraded' | 'poor' | 'critical';
-
+export type StreamHealth     = 'excellent' | 'good' | 'degraded' | 'poor' | 'critical';
 export type StreamQualityTier = 'hd' | 'sd' | 'ld';
 
 export interface StreamQualityProfile {
-  tier:         StreamQualityTier;
-  bitrateKbps:  number;
-  fps:          number;
-  width:        number;
-  height:       number;
+  tier:        StreamQualityTier;
+  bitrateKbps: number;
+  fps:         number;
+  width:       number;
+  height:      number;
 }
 
 export const QUALITY_PROFILES: Record<StreamQualityTier, StreamQualityProfile> = {
@@ -67,12 +63,21 @@ export interface HostSession {
   end:                 () => Promise<void>;
 }
 
+export interface StartSessionResult {
+  session: HostSession | null;
+  error:   string | null;
+}
+
 // ── LiveOrchestrator ──────────────────────────────────────────────────────────
 
 class LiveOrchestratorImpl {
   private _activeSessions = new Map<string, HostSessionImpl>();
 
-  async startHostSession(hostId: string, title: string): Promise<HostSession> {
+  /**
+   * Start a host live session.
+   * Returns { session, error } — never throws.
+   */
+  async startHostSession(hostId: string, title: string): Promise<StartSessionResult> {
     try {
       const supabase = getSupabaseClient();
       const { data, error } = await supabase
@@ -81,20 +86,25 @@ class LiveOrchestratorImpl {
         .select()
         .single();
 
-      if (error || !data) throw new Error(error?.message ?? 'Failed to create session');
+      if (error || !data) {
+        const msg = error?.message ?? 'Failed to create session';
+        console.warn('[LiveOrchestrator] startHostSession error:', msg);
+        return { session: null, error: msg };
+      }
 
-      // Update presence to streaming
-      PresenceManager.setStatus('streaming', `live:${title}`);
+      PresenceManager.registerStreamSession(data.id);
 
       const session = new HostSessionImpl(data.id, hostId, title);
       this._activeSessions.set(data.id, session);
 
       CrashIntelligence.addBreadcrumb('state', 'Live session started', { sessionId: data.id, hostId });
-      EventBus.emit('stream:started', { hostId, sessionId: data.id, title });
+      EventBus.emit('stream:started' as any, { hostId, sessionId: data.id, title });
       console.log('[LiveOrchestrator] host session started:', data.id);
-      return session;
+      return { session, error: null };
     } catch (e: any) {
-      throw new Error(`LiveOrchestrator.startHostSession: ${e?.message}`);
+      const msg = e?.message ?? 'Unknown error starting stream';
+      console.warn('[LiveOrchestrator] startHostSession exception:', msg);
+      return { session: null, error: msg };
     }
   }
 
@@ -121,7 +131,7 @@ class HostSessionImpl implements HostSession {
   readonly startedAt: number;
   viewerCount   = 0;
   healthScore   = 100;
-  health:       StreamHealth     = 'excellent';
+  health:       StreamHealth      = 'excellent';
   qualityTier:  StreamQualityTier = 'hd';
 
   private _healthCbs      = new Set<(score: number, h: StreamHealth) => void>();
@@ -132,14 +142,13 @@ class HostSessionImpl implements HostSession {
   private _recoveryCbs    = new Set<(attempt: number) => void>();
 
   private _pollKey:       string;
-  private _giftQueue:     any;
+  private _giftQueue:     any = null;
   private _degradeCount   = 0;
   private _ended          = false;
   private _recoveryCount  = 0;
-  private _maxRecovery    = 3;
+  private readonly _maxRecovery = 3;
   private _thermalUnsub:  (() => void) | null = null;
 
-  // Reaction rate limiting (per user, per second)
   private _reactionCounts = new Map<string, { count: number; reset: number }>();
   private readonly REACTION_LIMIT = 5;
 
@@ -150,18 +159,18 @@ class HostSessionImpl implements HostSession {
     this.startedAt = Date.now();
     this._pollKey  = `live:${sessionId}`;
 
-    // Gift queue — flush every 200ms max 100 items
+    // Gift queue — flush every 200ms, max 100 items
     try {
       this._giftQueue = new (BackpressureQueue as any)({
         maxSize:       100,
         flushInterval: 200,
         onFlush:       (items: any[]) => {
           for (const gift of items) {
-            for (const cb of this._giftCbs) cb(gift);
+            for (const cb of this._giftCbs) { try { cb(gift); } catch { /* isolate */ } }
           }
         },
       });
-    } catch { /* BackpressureQueue not available in all builds */ }
+    } catch { /* BackpressureQueue may not be in all builds */ }
 
     this._startPolling();
     this._startHealthMonitor();
@@ -170,23 +179,23 @@ class HostSessionImpl implements HostSession {
 
   // ── HostSession API ────────────────────────────────────────────────────────
 
-  onHealthChange(cb: (score: number, health: StreamHealth) => void): () => void {
+  onHealthChange(cb: (s: number, h: StreamHealth) => void): () => void {
     this._healthCbs.add(cb);
     return () => this._healthCbs.delete(cb);
   }
-  onViewerCountChange(cb: (count: number) => void): () => void {
+  onViewerCountChange(cb: (n: number) => void): () => void {
     this._viewerCbs.add(cb);
     return () => this._viewerCbs.delete(cb);
   }
-  onGift(cb: (gift: any) => void): () => void {
+  onGift(cb: (g: any) => void): () => void {
     this._giftCbs.add(cb);
     return () => this._giftCbs.delete(cb);
   }
-  onModerationEvent(cb: (event: any) => void): () => void {
+  onModerationEvent(cb: (e: any) => void): () => void {
     this._moderationCbs.add(cb);
     return () => this._moderationCbs.delete(cb);
   }
-  onQualityChange(cb: (profile: StreamQualityProfile) => void): () => void {
+  onQualityChange(cb: (p: StreamQualityProfile) => void): () => void {
     this._qualityCbs.add(cb);
     return () => this._qualityCbs.delete(cb);
   }
@@ -195,9 +204,8 @@ class HostSessionImpl implements HostSession {
     return () => this._recoveryCbs.delete(cb);
   }
 
-  /** Rate-limited reaction injection. Returns false if rate-limited. */
   addReaction(userId: string, type: string): boolean {
-    const now = Date.now();
+    const now   = Date.now();
     const entry = this._reactionCounts.get(userId);
     if (entry) {
       if (now < entry.reset) {
@@ -226,24 +234,34 @@ class HostSessionImpl implements HostSession {
     if (this._ended) return;
     this._ended = true;
 
+    // Unregister polls
     PollingManager.unregister(this._pollKey);
     PollingManager.unregister(`health:${this.sessionId}`);
-    this._thermalUnsub?.();
 
+    // Cleanup thermal watcher
+    if (this._thermalUnsub) {
+      try { this._thermalUnsub(); } catch { /* ignore */ }
+      this._thermalUnsub = null;
+    }
+
+    // Update Supabase session
     try {
       const supabase = getSupabaseClient();
       await supabase
         .from('live_sessions')
         .update({ status: 'ended', ended_at: new Date().toISOString() })
         .eq('id', this.sessionId);
-    } catch { /* ignore */ }
+    } catch { /* non-critical — session may already be deleted */ }
 
     // Reset presence
-    PresenceManager.setStatus('online', undefined);
+    try {
+      PresenceManager.unregisterStreamSession();
+    } catch { /* ignore */ }
 
     CrashIntelligence.addBreadcrumb('state', 'Live session ended', { sessionId: this.sessionId });
-    EventBus.emit('stream:ended', { sessionId: this.sessionId, viewerCount: this.viewerCount });
+    EventBus.emit('stream:ended' as any, { sessionId: this.sessionId, viewerCount: this.viewerCount });
 
+    // Clear all callbacks and state
     this._healthCbs.clear();
     this._viewerCbs.clear();
     this._giftCbs.clear();
@@ -276,7 +294,6 @@ class HostSessionImpl implements HostSession {
         .single();
 
       if (error) {
-        // Session may have been deleted externally — trigger recovery
         this._attemptRecovery();
         return;
       }
@@ -284,7 +301,7 @@ class HostSessionImpl implements HostSession {
       if (data) {
         if (data.viewer_count !== this.viewerCount) {
           this.viewerCount = data.viewer_count ?? 0;
-          for (const cb of this._viewerCbs) cb(this.viewerCount);
+          for (const cb of this._viewerCbs) { try { cb(this.viewerCount); } catch { /* isolate */ } }
         }
         if (data.status === 'ended') {
           await this.end();
@@ -306,7 +323,7 @@ class HostSessionImpl implements HostSession {
 
   private async _computeHealth(): Promise<void> {
     if (this._ended) return;
-    const quality = (AdaptiveQualityController as any).getProfile?.();
+
     let score = 100;
 
     // Thermal penalty
@@ -316,10 +333,12 @@ class HostSessionImpl implements HostSession {
     else if (thermal === 'fair')    score -= 5;
 
     // Quality level penalty
-    if (quality) {
-      if (quality.level === 'low')    score -= 25;
-      else if (quality.level === 'medium') score -= 10;
-    }
+    try {
+      const profile = AdaptiveQualityController.getProfile?.();
+      if (profile?.level === 'emergency') score -= 30;
+      else if (profile?.level === 'minimal')   score -= 25;
+      else if (profile?.level === 'reduced')   score -= 10;
+    } catch { /* ignore */ }
 
     score -= this._degradeCount * 3;
     score  = Math.max(0, Math.min(100, score));
@@ -329,67 +348,64 @@ class HostSessionImpl implements HostSession {
     if (newTier !== this.qualityTier) {
       this.qualityTier = newTier;
       this._degradeCount++;
-      for (const cb of this._qualityCbs) cb(QUALITY_PROFILES[newTier]);
-      console.log('[LiveOrchestrator] quality downgraded to:', newTier, 'score:', score);
+      for (const cb of this._qualityCbs) { try { cb(QUALITY_PROFILES[newTier]); } catch { /* isolate */ } }
+      console.log('[LiveOrchestrator] quality →', newTier, 'score:', score);
     }
 
     const health = this._scoreToHealth(score);
-    if (score !== this.healthScore) {
+    if (score !== this.healthScore || health !== this.health) {
       this.healthScore = score;
       this.health      = health;
-      for (const cb of this._healthCbs) cb(score, health);
+      for (const cb of this._healthCbs) { try { cb(score, health); } catch { /* isolate */ } }
     }
   }
 
   // ── Private: thermal watcher ──────────────────────────────────────────────
 
   private _startThermalWatcher(): void {
-    this._thermalUnsub = EventBus.on('thermal:state_changed', (evt: any) => {
+    // Stored as unsub function so end() can clean it up
+    this._thermalUnsub = EventBus.on('thermal:state_changed' as any, (evt: any) => {
+      if (this._ended) return;
       const state = evt?.state ?? ThermalMonitor.currentState;
       if (state === 'critical' && this.qualityTier !== 'ld') {
         this.qualityTier = 'ld';
-        for (const cb of this._qualityCbs) cb(QUALITY_PROFILES.ld);
-        console.warn('[LiveOrchestrator] thermal critical — forced LD quality');
-      } else if (state === 'nominal' && this.qualityTier === 'ld') {
+        for (const cb of this._qualityCbs) { try { cb(QUALITY_PROFILES.ld); } catch { /* isolate */ } }
+        console.warn('[LiveOrchestrator] thermal critical → forced LD');
+      } else if (state === 'nominal' && this.qualityTier === 'ld' && this._degradeCount === 0) {
         this.qualityTier = 'hd';
-        this._degradeCount = 0;
-        for (const cb of this._qualityCbs) cb(QUALITY_PROFILES.hd);
-        console.log('[LiveOrchestrator] thermal nominal — restored HD quality');
+        for (const cb of this._qualityCbs) { try { cb(QUALITY_PROFILES.hd); } catch { /* isolate */ } }
+        console.log('[LiveOrchestrator] thermal nominal → restored HD');
       }
     });
   }
 
   // ── Private: stream recovery ───────────────────────────────────────────────
 
-  private async _attemptRecovery(): Promise<void> {
+  private _attemptRecovery(): void {
     if (this._ended || this._recoveryCount >= this._maxRecovery) return;
     this._recoveryCount++;
-    for (const cb of this._recoveryCbs) cb(this._recoveryCount);
+    for (const cb of this._recoveryCbs) { try { cb(this._recoveryCount); } catch { /* isolate */ } }
     console.warn('[LiveOrchestrator] stream recovery attempt:', this._recoveryCount);
 
-    await new Promise(r => setTimeout(r, 2000 * this._recoveryCount));
+    const delayMs = Math.min(2000 * Math.pow(2, this._recoveryCount - 1), 16_000);
 
-    try {
-      const supabase = getSupabaseClient();
-      // Re-create session row with same ID attempt
-      const { data } = await supabase
-        .from('live_sessions')
-        .upsert({
-          id:            this.sessionId,
-          host_id:       this.hostId,
-          title:         this.title,
-          status:        'live',
-          viewer_count:  this.viewerCount,
-        })
-        .select()
-        .single();
-      if (data) {
-        console.log('[LiveOrchestrator] session recovered:', this.sessionId);
+    setTimeout(async () => {
+      if (this._ended) return;
+      try {
+        const supabase = getSupabaseClient();
+        await supabase.from('live_sessions').upsert({
+          id:           this.sessionId,
+          host_id:      this.hostId,
+          title:        this.title,
+          status:       'live',
+          viewer_count: this.viewerCount,
+        });
         this._recoveryCount = 0;
+        console.log('[LiveOrchestrator] session recovered:', this.sessionId);
+      } catch (e: any) {
+        console.warn('[LiveOrchestrator] recovery failed:', e?.message);
       }
-    } catch (e: any) {
-      console.warn('[LiveOrchestrator] recovery failed:', e?.message);
-    }
+    }, delayMs);
   }
 
   private _scoreToHealth(score: number): StreamHealth {

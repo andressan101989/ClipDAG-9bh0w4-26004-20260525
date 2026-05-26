@@ -1,26 +1,26 @@
 /**
- * components/feature/VideoActions.tsx — Video interaction sidebar
+ * components/feature/VideoActions.tsx — v2 with enhanced microanimations
  *
- * Deep SecurityManager integration:
- *   - Per-action rate limiting (like, comment, share, gift)
- *   - Suspicious activity detection on rapid taps
- *   - Throttled UI feedback (disabled state during cooldown)
- *   - CrashIntelligence breadcrumbs for user action tracing
- *   - TelemetryPipeline action event recording
- *
- * All actions validated through SecurityManager.checkAction()
- * before being forwarded to parent handlers.
+ * Changes vs v1:
+ *   - AnimatedPressable wraps each action for scale+haptic feedback
+ *   - CounterBadge replaces raw Text for animated number transitions
+ *   - Like button: burst heart animation (emoji overlay) on tap
+ *   - Rate-limited actions show brief shake animation (security feedback)
+ *   - Avatar ring pulses on first view
  */
 
-import React, { useState, useRef, useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet, Animated } from 'react-native';
+import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
+import { View, Text, Animated, StyleSheet } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Avatar }        from '@/components/ui/Avatar';
+import { CounterBadge }  from '@/components/ui/CounterBadge';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 import type { Video }    from '@/services/mockData';
-import { formatNumber }  from '@/services/mockData';
 import { SecurityManager }   from '@/modules/core/SecurityManager';
 import { CrashIntelligence } from '@/modules/core/CrashIntelligence';
+
+let Haptics: any = null;
+try { Haptics = require('expo-haptics'); } catch { /* optional */ }
 
 interface VideoActionsProps {
   video:         Video;
@@ -32,7 +32,121 @@ interface VideoActionsProps {
   onProfilePress: () => void;
 }
 
-export function VideoActions({
+// ── Shake animation ───────────────────────────────────────────────────────────
+
+function useShake(): [Animated.Value, () => void] {
+  const anim = useRef(new Animated.Value(0)).current;
+  const shake = useCallback(() => {
+    Animated.sequence([
+      Animated.timing(anim, { toValue:  5, duration: 50, useNativeDriver: true }),
+      Animated.timing(anim, { toValue: -5, duration: 50, useNativeDriver: true }),
+      Animated.timing(anim, { toValue:  4, duration: 50, useNativeDriver: true }),
+      Animated.timing(anim, { toValue: -4, duration: 50, useNativeDriver: true }),
+      Animated.timing(anim, { toValue:  0, duration: 40, useNativeDriver: true }),
+    ]).start();
+  }, [anim]);
+  return [anim, shake];
+}
+
+// ── Single action item ────────────────────────────────────────────────────────
+
+interface ActionItemProps {
+  icon:     string;
+  count:    number;
+  active?:  boolean;
+  activeColor?: string;
+  blocked?: boolean;
+  onPress:  () => void;
+  size?:    number;
+}
+
+const ActionItem = memo(function ActionItem({
+  icon, count, active = false, activeColor = Colors.secondary,
+  blocked = false, onPress, size = 32,
+}: ActionItemProps) {
+  const scale     = useRef(new Animated.Value(1)).current;
+  const [shakeX, shake] = useShake();
+
+  const handlePress = useCallback(() => {
+    if (blocked) { shake(); return; }
+    // Pop animation
+    Animated.sequence([
+      Animated.spring(scale, { toValue: 1.4, useNativeDriver: true, speed: 40, bounciness: 10 }),
+      Animated.spring(scale, { toValue: 1,   useNativeDriver: true, speed: 40, bounciness: 10 }),
+    ]).start();
+    try { Haptics?.impactAsync?.(Haptics?.ImpactFeedbackStyle?.Light); } catch { /* ignore */ }
+    onPress();
+  }, [blocked, shake, onPress]);
+
+  return (
+    <Animated.View style={[
+      s.action,
+      blocked && s.actionBlocked,
+      { transform: [{ translateX: shakeX }] },
+    ]}>
+      <Animated.View style={{ transform: [{ scale }] }}>
+        <MaterialIcons
+          name={icon as any}
+          size={size}
+          color={blocked ? Colors.textSubtle : active ? activeColor : '#ffffff'}
+          onPress={handlePress}
+          suppressHighlighting
+        />
+      </Animated.View>
+      <CounterBadge
+        value={count}
+        color={blocked ? Colors.textSubtle : active ? activeColor : '#fff'}
+        fontSize={FontSize.sm}
+        fontWeight={FontWeight.semibold}
+      />
+    </Animated.View>
+  );
+});
+
+// ── Avatar with pulse ring ────────────────────────────────────────────────────
+
+const PulsingAvatar = memo(function PulsingAvatar({
+  uri, username, onPress,
+}: { uri?: string; username: string; onPress: () => void }) {
+  const pulseScale = useRef(new Animated.Value(1)).current;
+  const pulseOpacity = useRef(new Animated.Value(0.5)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(pulseScale,   { toValue: 1.25, duration: 900, useNativeDriver: true }),
+          Animated.timing(pulseOpacity, { toValue: 0,    duration: 900, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.timing(pulseScale,   { toValue: 1, duration: 0, useNativeDriver: true }),
+          Animated.timing(pulseOpacity, { toValue: 0.5, duration: 0, useNativeDriver: true }),
+        ]),
+        Animated.delay(800),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
+
+  return (
+    <View style={s.avatarWrap}>
+      {/* Pulsing ring */}
+      <Animated.View style={[
+        s.avatarPulse,
+        { transform: [{ scale: pulseScale }], opacity: pulseOpacity },
+      ]} pointerEvents="none" />
+      <Avatar uri={uri} username={username} size={48} showBorder />
+      <View style={s.followDot}>
+        <MaterialIcons name="add" size={12} color="#fff" onPress={onPress} suppressHighlighting />
+      </View>
+    </View>
+  );
+});
+
+// ── Main component ────────────────────────────────────────────────────────────
+
+export const VideoActions = memo(function VideoActions({
   video,
   isLiked,
   currentUserId,
@@ -41,12 +155,29 @@ export function VideoActions({
   onShare,
   onProfilePress,
 }: VideoActionsProps) {
-  const heartScale   = useRef(new Animated.Value(1)).current;
-  const [likeBlocked, setLikeBlocked]    = useState(false);
+  const [likeBlocked,    setLikeBlocked]    = useState(false);
   const [commentBlocked, setCommentBlocked] = useState(false);
-  const [shareBlocked, setShareBlocked]   = useState(false);
+  const [shareBlocked,   setShareBlocked]   = useState(false);
 
-  // ── Secure action wrapper ────────────────────────────────────────────────
+  // Burst heart overlay on double-like
+  const heartScale   = useRef(new Animated.Value(0)).current;
+  const heartOpacity = useRef(new Animated.Value(0)).current;
+  const [showBurst, setShowBurst] = useState(false);
+
+  const triggerHeartBurst = useCallback(() => {
+    setShowBurst(true);
+    Animated.sequence([
+      Animated.parallel([
+        Animated.spring(heartScale,   { toValue: 1.2, useNativeDriver: true, speed: 28, bounciness: 14 }),
+        Animated.timing(heartOpacity, { toValue: 1,   duration: 100,         useNativeDriver: true }),
+      ]),
+      Animated.delay(400),
+      Animated.timing(heartOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
+    ]).start(() => {
+      setShowBurst(false);
+      heartScale.setValue(0);
+    });
+  }, [heartScale, heartOpacity]);
 
   const secureAction = useCallback((
     action: 'like' | 'comment' | 'search',
@@ -55,148 +186,109 @@ export function VideoActions({
     label:      string,
   ) => {
     if (!currentUserId) return;
-
     const allowed = SecurityManager.checkAction(action, currentUserId);
     if (!allowed) {
-      // Brief visual block — user is rate limited
       setBlocked(true);
       setTimeout(() => setBlocked(false), 2000);
-      CrashIntelligence.addBreadcrumb(
-        'user_action',
-        `Action blocked by SecurityManager: ${label}`,
-        { action, userId: currentUserId },
-      );
+      CrashIntelligence.addBreadcrumb('user_action', `Blocked: ${label}`, { action, userId: currentUserId });
       return;
     }
-
     CrashIntelligence.addBreadcrumb('user_action', label, { videoId: video.id });
     handler();
   }, [currentUserId, video.id]);
 
-  // ── Like handler with animation ──────────────────────────────────────────
-
   const handleLike = useCallback(() => {
     secureAction('like', setLikeBlocked, () => {
-      Animated.sequence([
-        Animated.spring(heartScale, { toValue: 1.4, useNativeDriver: true, speed: 40 }),
-        Animated.spring(heartScale, { toValue: 1,   useNativeDriver: true, speed: 40 }),
-      ]).start();
+      if (!isLiked) triggerHeartBurst();
       onLike();
     }, 'like_video');
-  }, [secureAction, heartScale, onLike]);
-
-  // ── Comment handler ──────────────────────────────────────────────────────
+  }, [secureAction, isLiked, triggerHeartBurst, onLike]);
 
   const handleComment = useCallback(() => {
     secureAction('comment', setCommentBlocked, onComment, 'open_comments');
   }, [secureAction, onComment]);
 
-  // ── Share handler ────────────────────────────────────────────────────────
-
   const handleShare = useCallback(() => {
-    // Share uses 'search' slot (lowest rate limit impact)
     secureAction('search', setShareBlocked, onShare, 'share_video');
   }, [secureAction, onShare]);
 
   return (
-    <View style={styles.container}>
-      {/* Avatar with follow dot */}
-      <View style={styles.avatarWrap}>
-        <Pressable onPress={onProfilePress} hitSlop={4}>
-          <Avatar uri={video.userAvatar} username={video.username} size={48} showBorder />
-        </Pressable>
-        <View style={styles.followDot}>
-          <MaterialIcons name="add" size={12} color="#fff" />
-        </View>
+    <View style={s.container}>
+      {/* Avatar */}
+      <PulsingAvatar uri={video.userAvatar} username={video.username} onPress={onProfilePress} />
+
+      {/* Like with heart burst */}
+      <View style={{ position: 'relative' }}>
+        <ActionItem
+          icon={isLiked ? 'favorite' : 'favorite-border'}
+          count={video.likes}
+          active={isLiked}
+          activeColor={Colors.secondary}
+          blocked={likeBlocked}
+          onPress={handleLike}
+        />
+        {showBurst ? (
+          <Animated.Text style={[s.heartBurst, { opacity: heartOpacity, transform: [{ scale: heartScale }] }]}>
+            ❤️
+          </Animated.Text>
+        ) : null}
       </View>
 
-      {/* Like */}
-      <Pressable
-        style={[styles.action, likeBlocked && styles.actionBlocked]}
-        onPress={handleLike}
-        hitSlop={8}
-        disabled={likeBlocked}
-      >
-        <Animated.View style={{ transform: [{ scale: heartScale }] }}>
-          <MaterialIcons
-            name={isLiked ? 'favorite' : 'favorite-border'}
-            size={32}
-            color={likeBlocked ? Colors.textSubtle : isLiked ? Colors.secondary : '#ffffff'}
-          />
-        </Animated.View>
-        <Text style={[styles.actionCount, likeBlocked && styles.actionCountMuted]}>
-          {formatNumber(video.likes)}
-        </Text>
-      </Pressable>
-
       {/* Comment */}
-      <Pressable
-        style={[styles.action, commentBlocked && styles.actionBlocked]}
+      <ActionItem
+        icon="chat-bubble-outline"
+        count={video.comments}
+        blocked={commentBlocked}
         onPress={handleComment}
-        hitSlop={8}
-        disabled={commentBlocked}
-      >
-        <MaterialIcons
-          name="chat-bubble-outline"
-          size={30}
-          color={commentBlocked ? Colors.textSubtle : '#ffffff'}
-        />
-        <Text style={[styles.actionCount, commentBlocked && styles.actionCountMuted]}>
-          {formatNumber(video.comments)}
-        </Text>
-      </Pressable>
+      />
 
       {/* Share */}
-      <Pressable
-        style={[styles.action, shareBlocked && styles.actionBlocked]}
+      <ActionItem
+        icon="share"
+        count={video.shares}
+        blocked={shareBlocked}
         onPress={handleShare}
-        hitSlop={8}
-        disabled={shareBlocked}
-      >
-        <MaterialIcons
-          name="share"
-          size={30}
-          color={shareBlocked ? Colors.textSubtle : '#ffffff'}
-        />
-        <Text style={[styles.actionCount, shareBlocked && styles.actionCountMuted]}>
-          {formatNumber(video.shares)}
-        </Text>
-      </Pressable>
+        size={30}
+      />
 
-      {/* DAG Reward badge */}
-      <View style={styles.dagIndicator}>
-        <Text style={styles.dagIcon}>◈</Text>
-        <Text style={styles.dagText}>0.01</Text>
+      {/* DAG badge */}
+      <View style={s.dagIndicator}>
+        <Text style={s.dagIcon}>◈</Text>
+        <Text style={s.dagText}>0.01</Text>
       </View>
 
       {/* Music disc */}
-      <View style={styles.musicDisc}>
-        <Text style={styles.musicNote}>♪</Text>
-      </View>
+      <Animated.View style={s.musicDisc}>
+        <Text style={s.musicNote}>♪</Text>
+      </Animated.View>
     </View>
   );
-}
+});
 
-const styles = StyleSheet.create({
-  container: {
-    alignItems: 'center',
-    gap: Spacing.lg,
-    paddingBottom: Spacing.lg,
+const s = StyleSheet.create({
+  container: { alignItems: 'center', gap: Spacing.lg, paddingBottom: Spacing.lg },
+
+  avatarWrap: { position: 'relative', alignItems: 'center', justifyContent: 'center' },
+  avatarPulse: {
+    position: 'absolute',
+    width: 58, height: 58, borderRadius: 29,
+    borderWidth: 2, borderColor: Colors.primary + '88',
   },
-  avatarWrap: { position: 'relative' },
   followDot: {
     position: 'absolute', bottom: -6, left: '50%', marginLeft: -8,
     width: 16, height: 16, borderRadius: 8,
     backgroundColor: Colors.secondary,
     alignItems: 'center', justifyContent: 'center',
   },
+
   action: { alignItems: 'center', gap: Spacing.xs },
   actionBlocked: { opacity: 0.4 },
-  actionCount: {
-    color: '#FFFFFF', fontSize: FontSize.sm, fontWeight: FontWeight.semibold,
-    textShadowColor: '#000', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4,
+
+  heartBurst: {
+    position: 'absolute', top: -20, left: '50%', marginLeft: -24,
+    fontSize: 48, zIndex: 30,
   },
-  actionCountMuted: { color: Colors.textSubtle },
+
   dagIndicator: {
     alignItems: 'center',
     backgroundColor: 'rgba(0, 212, 255, 0.2)',

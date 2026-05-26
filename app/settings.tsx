@@ -448,6 +448,13 @@ export default function SettingsScreen() {
               onPress={() => router.push('/debug')}
             />
             <SettingsRow
+              icon="lightning-bolt"
+              iconColor="#FF3D5E"
+              label="Stress Tests"
+              sublabel="Fase 5 — Validación de estabilidad"
+              onPress={() => router.push('/stress-test')}
+            />
+            <SettingsRow
               icon="bug-outline"
               iconColor="#FFB800"
               label="Boot Test"
