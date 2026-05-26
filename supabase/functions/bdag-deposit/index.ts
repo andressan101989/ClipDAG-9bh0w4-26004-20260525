@@ -86,8 +86,12 @@ async function fetchEthPriceUsd(): Promise<number> {
   }
 
   // Fallback: use a conservative estimate
+  // ⚠️ IMPORTANT: Using fallback price — all live price sources failed.
+  // BDAG credited may be lower than market rate if ETH price is above $2,000.
+  // The eth_price_usd field in deposit_confirmations will record this fallback
+  // value so the discrepancy can be audited and corrected manually if needed.
   const fallback = 2000;
-  console.warn('[bdag-deposit] ETH price: all sources failed, using fallback $' + fallback);
+  console.warn('[bdag-deposit] ETH price: all sources failed, using fallback $' + fallback + ' — BDAG may be under-credited if live ETH price is higher');
   _cachedEthPrice = fallback;
   return fallback;
 }
@@ -503,15 +507,24 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     console.log(`[LEDGER_DEBUG] COMPLETE: credited ${validation.bdagAmount} BDAG | new_balance=${cr.new_balance} | eth_price=$${validation.ethPriceUsd} | usd=$${validation.usdValue}`);
 
+    // Warn client when fallback ETH price was used so UI can surface the info
+    const usedFallbackPrice = validation.tokenType === 'ETH' && validation.ethPriceUsd === 2000;
+    if (usedFallbackPrice) {
+      console.warn('[bdag-deposit] NOTICE: fallback ETH price used — bdag_credited may be conservative');
+    }
+
     return ok({
-      bdag_credited: validation.bdagAmount,
-      token_type:    validation.tokenType,
-      usd_value:     validation.usdValue,
-      eth_price_usd: validation.ethPriceUsd,
-      new_balance:   cr.new_balance ?? 0,
-      fin_txn_id:    cr.fin_txn_id ?? '',
-      block_number:  blockNumber ?? 0,
-      status:        depositStatus,
+      bdag_credited:       validation.bdagAmount,
+      token_type:          validation.tokenType,
+      usd_value:           validation.usdValue,
+      eth_price_usd:       validation.ethPriceUsd,
+      new_balance:         cr.new_balance ?? 0,
+      fin_txn_id:          cr.fin_txn_id ?? '',
+      block_number:        blockNumber ?? 0,
+      status:              depositStatus,
+      price_source_warning: usedFallbackPrice
+        ? 'ETH price fetched from fallback ($2,000). If live ETH price was higher, contact support to audit your credit.'
+        : null,
     });
 
   } catch (e: unknown) {

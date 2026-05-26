@@ -13,6 +13,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useMessages } from '@/hooks/useMessages';
 import { useAuth } from '@/hooks/useAuth';
+import { PollingManager } from '@/modules/realtime/PollingManager';
 import { useWallet } from '@/hooks/useWallet';
 import { getSupabaseClient } from '@/template';
 import { useAlert } from '@/template';
@@ -215,7 +216,7 @@ export default function ChatScreen() {
   const [isSending,    setIsSending]    = useState(false);
   const [isUploading,  setIsUploading]  = useState(false);
   const flatListRef = useRef<FlatList>(null);
-  const pollRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollKey = useRef(`chat:${partnerId ?? 'unknown'}`);
 
   // Premium DM state
   const [premiumConfig,   setPremiumConfig]   = useState<{ enabled: boolean; price_bdag: number; welcome_message: string } | null>(null);
@@ -278,13 +279,19 @@ export default function ChatScreen() {
     if (partnerId) load();
   }, [partnerId, user?.id, chatMessages.length]);
 
-  // ── Poll ──────────────────────────────────────────────────────────────────
+  // ── Poll via PollingManager (pauses in background, no timer accumulation) ──
   useEffect(() => {
     if (!partnerId) return;
     loadConversation(partnerId);
     markConversationRead(partnerId);
-    pollRef.current = setInterval(() => loadConversation(partnerId), 3000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    const key = pollKey.current;
+    PollingManager.register({
+      key,
+      intervalMs:     3_000,
+      runImmediately: false,
+      fn:             () => loadConversation(partnerId),
+    });
+    return () => { PollingManager.unregister(key); };
   }, [partnerId]);
 
   useEffect(() => {

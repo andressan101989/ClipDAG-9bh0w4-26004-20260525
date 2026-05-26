@@ -36,9 +36,14 @@ export function BoostProfileSheet({ visible, creatorName, balance, onClose, onBo
 
   const handleBoost = async () => {
     setLoading(true);
-    await onBoost(tier);
-    setLoading(false);
-    onClose();
+    try {
+      await onBoost(tier);
+      onClose();
+    } catch (e: any) {
+      console.warn('[BoostProfileSheet] boost error:', e?.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

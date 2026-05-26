@@ -352,10 +352,11 @@ export function useWallet() {
         asset:     withdrawAsset,
       });
 
+      if (!result.success) return { success: false, error: result.error };
+
+      // Only sync on confirmed success — avoids confusing balance flicker on failure
       await dbBalance();
       await loadTx();
-
-      if (!result.success) return { success: false, error: result.error };
 
       const netAsset = bdagToWithdrawAsset(result.netBdag ?? 0, withdrawAsset);
       return { success: true, netAssetAmount: netAsset };
