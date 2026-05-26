@@ -13,18 +13,29 @@ console.log('[BOOT] 0 - _layout module start');
 // Initialize AppLifecycle singleton immediately at module load — before any
 // component mounts — so all subsequent onForeground/onBackground registrations
 // start receiving events from the very first AppState change.
-import { AppLifecycle }   from '@/modules/core/AppLifecycle';
-import { CrashManager }   from '@/modules/core/CrashManager';
-import { ThermalMonitor } from '@/modules/core/ThermalMonitor';
-import { Diagnostics }    from '@/modules/core/Diagnostics';
-import { CleanupWorker }  from '@/background/CleanupWorker';
-import { UploadWorker }   from '@/background/UploadWorker';
-AppLifecycle.initialize();
-CrashManager.initialize();
-ThermalMonitor.start();
-Diagnostics.startCollection();
-CleanupWorker.start();
-UploadWorker.start();
+import { AppLifecycle }          from '@/modules/core/AppLifecycle';
+import { CrashManager }          from '@/modules/core/CrashManager';
+import { ThermalMonitor }        from '@/modules/core/ThermalMonitor';
+import { Diagnostics }           from '@/modules/core/Diagnostics';
+import { PowerManager }          from '@/modules/core/PowerManager';
+import { LeakDetector }          from '@/modules/core/LeakDetector';
+import { RenderIsolationManager }    from '@/modules/core/RenderIsolationManager';
+import { AdaptiveQualityController } from '@/modules/core/AdaptiveQualityController';
+import { CleanupWorker }             from '@/background/CleanupWorker';
+import { UploadWorker }              from '@/background/UploadWorker';
+import { UploadRecoveryManager }     from '@/modules/media/UploadRecoveryManager';
+
+// ── Boot sequence (order matters) ────────────────────────────────────────────
+AppLifecycle.initialize();             // must be first — others register listeners
+CrashManager.initialize();             // global error boundary
+ThermalMonitor.start();                // start thermal sampling
+PowerManager.initialize();             // wire thermal → power tier
+AdaptiveQualityController.initialize(); // wire power tier → all subsystems
+Diagnostics.startCollection();         // ring-buffer metrics
+LeakDetector.startMonitoring(60_000);  // scan for stale resources every 60s
+CleanupWorker.start();                 // background temp file cleanup
+UploadWorker.start();                  // background upload processor
+UploadRecoveryManager.initialize();   // restore interrupted uploads on foreground
 
 import { Stack } from 'expo-router';
 console.log('[BOOT] 1 - expo-router imported');
