@@ -25,6 +25,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { getSupabaseClient } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { SecurityManager } from '@/modules/core/SecurityManager';
 import { CrashIntelligence } from '@/modules/core/CrashIntelligence';
 
@@ -73,7 +74,7 @@ const POLL_INTERVAL_MS = 3000;
 const MAX_MESSAGES     = 100;
 const SPAM_THROTTLE_MS = 2500;
 
-export default function LiveViewerScreen() {
+function LiveViewerScreenInner() {
   const { sessionId } = useLocalSearchParams<{ sessionId: string }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -570,6 +571,14 @@ export default function LiveViewerScreen() {
         </KeyboardAvoidingView>
       </View>
     </View>
+  );
+}
+
+export default function LiveViewerScreen() {
+  return (
+    <ErrorBoundary module="LiveStream" showReset>
+      <LiveViewerScreenInner />
+    </ErrorBoundary>
   );
 }
 

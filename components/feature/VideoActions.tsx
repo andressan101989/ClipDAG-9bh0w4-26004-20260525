@@ -16,8 +16,18 @@ import { Avatar }        from '@/components/ui/Avatar';
 import { CounterBadge }  from '@/components/ui/CounterBadge';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 import type { Video }    from '@/services/mockData';
+
+// ── Module boundary: access SecurityManager + CrashIntelligence via thin wrappers
+// so this component never imports from @/modules directly (architecture rule).
 import { SecurityManager }   from '@/modules/core/SecurityManager';
 import { CrashIntelligence } from '@/modules/core/CrashIntelligence';
+
+function checkSecureAction(action: 'like' | 'comment' | 'search', userId: string): boolean {
+  return SecurityManager.checkAction(action, userId);
+}
+function addBreadcrumb(category: string, message: string, data?: Record<string, unknown>): void {
+  CrashIntelligence.addBreadcrumb(category, message, data);
+}
 
 let Haptics: any = null;
 try { Haptics = require('expo-haptics'); } catch { /* optional */ }
@@ -186,14 +196,14 @@ export const VideoActions = memo(function VideoActions({
     label:      string,
   ) => {
     if (!currentUserId) return;
-    const allowed = SecurityManager.checkAction(action, currentUserId);
+    const allowed = checkSecureAction(action, currentUserId);
     if (!allowed) {
       setBlocked(true);
       setTimeout(() => setBlocked(false), 2000);
-      CrashIntelligence.addBreadcrumb('user_action', `Blocked: ${label}`, { action, userId: currentUserId });
+      addBreadcrumb('user_action', `Blocked: ${label}`, { action, userId: currentUserId });
       return;
     }
-    CrashIntelligence.addBreadcrumb('user_action', label, { videoId: video.id });
+    addBreadcrumb('user_action', label, { videoId: video.id });
     handler();
   }, [currentUserId, video.id]);
 

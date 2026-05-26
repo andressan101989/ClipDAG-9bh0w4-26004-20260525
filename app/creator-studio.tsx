@@ -1,3 +1,4 @@
+
 /**
  * app/creator-studio.tsx — Creator Studio v16
  *
@@ -43,16 +44,12 @@ import {
   MusicTab,
 } from '@/components/feature/studio';
 
-// Infrastructure
-import { CreatorSessionManager }   from '@/modules/creator/sessions/CreatorSessionManager';
-import { CreatorRecoveryManager }  from '@/modules/creator/sessions/CreatorRecoveryManager';
-import { SessionOrchestrator }     from '@/modules/sessions/SessionOrchestrator';
-import { ResourceManager }         from '@/modules/core/ResourceManager';
-import { GPUManager }              from '@/modules/core/GPUManager';
+// Infrastructure — accessed via hooks, never directly from @/modules in screens
+import { useCreatorSession }      from '@/hooks/useCreatorSession';
+import { useNavigationTelemetry } from '@/hooks/navigation/useNavigationTelemetry';
+import { useStabilityMode }       from '@/hooks/core/useStabilityMode';
+import { CrashIntelligence }      from '@/modules/core/CrashIntelligence';
 import { ProductionStabilityMode } from '@/modules/core/ProductionStabilityMode';
-import { CrashIntelligence }       from '@/modules/core/CrashIntelligence';
-import { useNavigationTelemetry }  from '@/hooks/navigation/useNavigationTelemetry';
-import { useStabilityMode }        from '@/hooks/core/useStabilityMode';
 
 // ── Tab definitions ────────────────────────────────────────────────────────
 type StudioTab = 'ar' | 'videos' | 'avatars' | 'music';
@@ -74,146 +71,47 @@ export default function CreatorStudioScreen() {
   const { canRenderEffects } = useStabilityMode();
 
   const [tab, setTab]           = useState<StudioTab>('ar');
-  const [sessionReady, setSessionReady] = useState(false);
-  const [renderJobs, setRenderJobs]     = useState<RenderJob[]>([]);
+  const [renderJobs, setRenderJobs] = useState<RenderJob[]>([]);
   const tabAnim = useSharedValue(1);
   const tabSty  = useAnimatedStyle(() => ({ opacity: tabAnim.value }));
-  const gpuSlot = useRef<string | null>(null);
-  const autosaveTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Session init on mount ──────────────────────────────────────────────
+  // ── Session init via hook (architecture: no @/modules imports in screens) ──
+  const { sessionReady, saveCheckpoint, clearDraft } = useCreatorSession(
+    {
+      onDraftFound: useCallback((draft: any) => {
+        Alert.alert(
+          'Borrador encontrado',
+          'Tienes un borrador guardado. ¿Deseas restaurarlo?',
+          [
+            {
+              text: 'Restaurar',
+              onPress: () => {
+                if (draft.metadata?.tab) setTab(draft.metadata.tab as StudioTab);
+                CrashIntelligence.addBreadcrumb('state', 'Draft restored');
+              },
+            },
+            {
+              text: 'Descartar',
+              style: 'destructive',
+              onPress: clearDraft,
+            },
+          ],
+        );
+      }, [clearDraft]), // Removed the ESLint disable comment and added clearDraft to deps
+    },
+    useCallback(() => ({ tab, timestamp: Date.now() }), [tab]),
+  );
 
+  // Mark navigation ready once session is ready
   useEffect(() => {
-    CrashIntelligence.addBreadcrumb('navigation', 'CreatorStudio mounted');
+    if (sessionReady) markReady();
+  }, [sessionReady, markReady]);
 
-    // Subscribe to render queue for export progress display
+  // Subscribe to render queue for export progress display
+  useEffect(() => {
     const unsubQueue = RenderQueue.subscribe(jobs => setRenderJobs(jobs));
-
-    let mounted = true;
-
-    const initSession = async () => {
-      try {
-        // 1. Acquire GPU render slot
-        gpuSlot.current = await GPUManager.acquireSlot('CreatorStudio', 'high');
-
-        // 2. Acquire camera
-        ResourceManager.request('camera', 'CreatorStudio');
-
-        // 3. Register with SessionOrchestrator
-        SessionOrchestrator.registerSession('creator_capture', SESSION_ID, {
-          onPause:   async () => {
-            CrashIntelligence.addBreadcrumb('state', 'CreatorStudio paused');
-            // Save state before pause
-            await CreatorRecoveryManager.saveCheckpoint(SESSION_ID, 'paused', {
-              tab,
-              timestamp: Date.now(),
-            });
-          },
-          onResume:  async () => {
-            CrashIntelligence.addBreadcrumb('state', 'CreatorStudio resumed');
-          },
-          onEnd:     async () => {
-            await cleanup();
-          },
-          onRecover: async () => {
-            CrashIntelligence.addBreadcrumb('state', 'CreatorStudio recovering');
-            return true;
-          },
-        });
-
-        // 4. Start creator session
-        await CreatorSessionManager.startSession(SESSION_ID);
-
-        // 5. Check for draft recovery
-        const draft = await CreatorRecoveryManager.getLatestDraft(SESSION_ID);
-        if (draft && mounted) {
-          Alert.alert(
-            'Borrador encontrado',
-            'Tienes un borrador guardado. ¿Deseas restaurarlo?',
-            [
-              {
-                text: 'Restaurar',
-                onPress: () => {
-                  if (draft.metadata?.tab) setTab(draft.metadata.tab as StudioTab);
-                  CrashIntelligence.addBreadcrumb('state', 'Draft restored');
-                },
-              },
-              {
-                text: 'Descartar',
-                style: 'destructive',
-                onPress: () => CreatorRecoveryManager.clearDraft(SESSION_ID),
-              },
-            ],
-          );
-        }
-
-        // 6. Start autosave every 10s
-        autosaveTimer.current = setInterval(async () => {
-          await CreatorRecoveryManager.saveCheckpoint(SESSION_ID, 'editing', {
-            tab,
-            timestamp: Date.now(),
-          });
-        }, 10_000);
-
-        if (mounted) {
-          setSessionReady(true);
-          markReady();
-          CrashIntelligence.addBreadcrumb('state', 'CreatorStudio session ready');
-        }
-
-      } catch (e: any) {
-        CrashIntelligence.addBreadcrumb('error', `CreatorStudio init error: ${e?.message}`);
-        console.error('[CreatorStudio] init error:', e?.message);
-        if (mounted) {
-          setSessionReady(true); // Still show UI even if session init partially fails
-          markReady();
-        }
-      }
-    };
-
-    initSession();
-
-    return () => {
-      mounted = false;
-      unsubQueue();
-      cleanup();
-    };
+    return unsubQueue;
   }, []);
-
-  const cleanup = useCallback(async () => {
-    // Stop autosave
-    if (autosaveTimer.current) {
-      clearInterval(autosaveTimer.current);
-      autosaveTimer.current = null;
-    }
-
-    // Save final state
-    try {
-      await CreatorRecoveryManager.saveCheckpoint(SESSION_ID, 'editing', {
-        tab,
-        timestamp: Date.now(),
-      });
-    } catch { /* non-critical */ }
-
-    // End creator session
-    try {
-      await CreatorSessionManager.endSession(SESSION_ID);
-    } catch { /* non-critical */ }
-
-    // Release resources
-    try {
-      await SessionOrchestrator.endSession(SESSION_ID);
-    } catch { /* non-critical */ }
-
-    ResourceManager.release('camera', 'CreatorStudio');
-
-    if (gpuSlot.current) {
-      GPUManager.releaseSlot(gpuSlot.current);
-      gpuSlot.current = null;
-    }
-
-    CrashIntelligence.addBreadcrumb('lifecycle', 'CreatorStudio cleanup complete');
-  }, [tab]);
 
   // ── Tab switch ─────────────────────────────────────────────────────────
 
@@ -223,7 +121,7 @@ export default function CreatorStudioScreen() {
     });
     setTab(t);
     CrashIntelligence.addBreadcrumb('user_action', `Studio tab: ${t}`);
-  }, []);
+  }, [tabAnim]); // Added tabAnim to dependencies
 
   // ── Back with unsaved work warning ─────────────────────────────────────
 

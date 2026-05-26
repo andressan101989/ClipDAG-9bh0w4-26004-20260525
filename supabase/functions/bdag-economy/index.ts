@@ -296,7 +296,7 @@ Deno.serve(async (req: Request) => {
       .select('id')
       .single();
 
-    if (insertErr) return fail('Error al crear contenido: ' + insertErr.message);
+    if (insertErr) { console.error('[economy] create_content insert error:', insertErr.message); return fail('Error al crear contenido. Intenta de nuevo.'); }
     return ok({ success: true, content_id: newContent?.id });
   }
 

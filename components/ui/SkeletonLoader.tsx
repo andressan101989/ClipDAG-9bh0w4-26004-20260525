@@ -161,13 +161,23 @@ interface ContentSkeletonProps {
   header?: boolean;
 }
 
+// Pre-computed widths — Math.random() must never be called during render
+// because it produces a different value on every re-render cycle.
+const CONTENT_ROW_WIDTHS = ['92%', '86%', '98%', '79%', '90%', '84%', '95%'] as const;
+
 export const ContentSkeleton = memo(function ContentSkeleton({ rows = 3, header = true }: ContentSkeletonProps) {
   return (
     <Shimmer>
       <View style={sk.contentBlock}>
         {header ? <Bone width={160} height={14} borderRadius={6} style={{ marginBottom: 12 }} /> : null}
         {Array.from({ length: rows }).map((_, i) => (
-          <Bone key={i} width={`${85 + Math.random() * 15}%` as any} height={11} borderRadius={5} style={{ marginBottom: 8 }} />
+          <Bone
+            key={i}
+            width={CONTENT_ROW_WIDTHS[i % CONTENT_ROW_WIDTHS.length] as any}
+            height={11}
+            borderRadius={5}
+            style={{ marginBottom: 8 }}
+          />
         ))}
       </View>
     </Shimmer>
@@ -177,11 +187,11 @@ export const ContentSkeleton = memo(function ContentSkeleton({ rows = 3, header 
 // ── Loading Dots ──────────────────────────────────────────────────────────────
 
 export const LoadingDots = memo(function LoadingDots({ color = 'rgba(255,255,255,0.6)', size = 8 }: { color?: string; size?: number }) {
-  const anims = [
-    useRef(new Animated.Value(0)).current,
-    useRef(new Animated.Value(0)).current,
-    useRef(new Animated.Value(0)).current,
-  ];
+  // Hooks must be called unconditionally at the top level — never inside arrays
+  const anim0 = useRef(new Animated.Value(0)).current;
+  const anim1 = useRef(new Animated.Value(0)).current;
+  const anim2 = useRef(new Animated.Value(0)).current;
+  const anims = [anim0, anim1, anim2];
 
   useEffect(() => {
     const createAnim = (anim: Animated.Value, delay: number) =>
