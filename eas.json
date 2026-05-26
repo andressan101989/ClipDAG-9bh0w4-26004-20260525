@@ -26,9 +26,29 @@
         "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
       }
     },
+    "preview-clean": {
+      "extends": "preview",
+      "cache": {
+        "disabled": true
+      },
+      "env": {
+        "APP_VARIANT": "preview",
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+      }
+    },
     "production": {
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "APP_VARIANT": "production",
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+      }
+    },
+    "production-clean": {
+      "extends": "production",
+      "cache": {
+        "disabled": true
       },
       "env": {
         "APP_VARIANT": "production",

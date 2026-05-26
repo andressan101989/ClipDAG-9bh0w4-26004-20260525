@@ -1,35 +1,20 @@
 /**
- * app/_layout.tsx — PHASE 0: ABSOLUTE MINIMUM
+ * app/_layout.tsx — PHASE 1: AlertProvider + I18nProvider
  *
  * ═══════════════════════════════════════════════════════════════════════
- * STARTUP ISOLATION — TOTAL STRIP
+ * PROGRESSIVE RESTORE — Phase 1 ACTIVE
  *
- * REMOVED:
- *   ❌ AlertProvider
- *   ❌ I18nProvider
- *   ❌ TemplateAuthProvider
- *   ❌ AuthProvider
- *   ❌ FeedProvider
- *   ❌ StoriesProvider
- *   ❌ MessagesProvider
- *   ❌ NotificationsProvider
- *   ❌ ShopProvider
- *   ❌ WalletConnectProvider
- *   ❌ GlobalErrorBoundary
+ * ✅ SafeAreaProvider  — always needed
+ * ✅ AlertProvider     — pure UI, no native modules, no Supabase
+ * ✅ I18nProvider      — AsyncStorage only, no Supabase, no native modules
  *
- * ONLY:
- *   ✅ SafeAreaProvider  (needed by useSafeAreaInsets in tab bar)
- *   ✅ Stack             (expo-router navigation)
- *
- * RESTORE ORDER (rebuild EAS + test iPhone after EACH step):
- *   Phase 1: Add AlertProvider
- *   Phase 2: Add I18nProvider
- *   Phase 3: Add TemplateAuthProvider
- *   Phase 4: Add AuthProvider
- *   Phase 5: Add FeedProvider
- *   Phase 6: Add StoriesProvider + MessagesProvider + NotificationsProvider
- *   Phase 7: Add ShopProvider
- *   Phase 8: Add WalletConnectProvider  ← highest crash risk
+ * NEXT PHASES (rebuild EAS + test iPhone after EACH step):
+ *   Phase 2: Add AuthProvider (TemplateAuthProvider + AuthContext)
+ *   Phase 3: Add FeedProvider + StoriesProvider
+ *   Phase 4: Add MessagesProvider + NotificationsProvider
+ *   Phase 5: Add ShopProvider
+ *   Phase 6: Add WalletConnectProvider  ← highest crash risk
+ *   Phase 7: Restore full app navigation (remove boot-test redirect)
  * ═══════════════════════════════════════════════════════════════════════
  */
 
@@ -41,16 +26,26 @@ console.log('[BOOT] 1 - expo-router imported');
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 console.log('[BOOT] 2 - safe-area imported');
 
-console.log('[BOOT] 3 - all imports done');
+import { AlertProvider } from '@/template';
+console.log('[BOOT] 3 - AlertProvider imported');
+
+import { I18nProvider } from '@/contexts/I18nContext';
+console.log('[BOOT] 4 - I18nProvider imported');
+
+console.log('[BOOT] 5 - all imports done');
 
 export default function RootLayout() {
-  console.log('[BOOT] 4 - RootLayout render');
+  console.log('[BOOT] 6 - RootLayout render');
   return (
-    <SafeAreaProvider>
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="index" />
-        <Stack.Screen name="boot-test" />
-      </Stack>
-    </SafeAreaProvider>
+    <AlertProvider>
+      <SafeAreaProvider>
+        <I18nProvider>
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="boot-test" />
+          </Stack>
+        </I18nProvider>
+      </SafeAreaProvider>
+    </AlertProvider>
   );
 }
