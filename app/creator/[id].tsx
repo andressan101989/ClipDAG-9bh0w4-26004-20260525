@@ -13,11 +13,10 @@
  *  • Exclusive content grid with lock/unlock
  *  • Subscriber badge + perks when subscribed
  */
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
-  ActivityIndicator, Modal, FlatList, Dimensions,
-  KeyboardAvoidingView, Platform,
+  ActivityIndicator, Dimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -39,10 +38,12 @@ import {
 } from '@/services/subscriptionService';
 import { getPremiumDMConfig, type PremiumDMConfig } from '@/services/premiumDmService';
 import {
-  boostCreatorProfile, PROFILE_BOOST_TIERS, isProfileBoosted, type BoostTier,
+  boostCreatorProfile, isProfileBoosted, type BoostTier,
 } from '@/services/boostService';
 import { fetchPurchasedContentIds, purchaseContent } from '@/services/economyService';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
+import { SubscribeSheet } from '@/components/creator/SubscribeSheet';
+import { BoostProfileSheet } from '@/components/creator/BoostProfileSheet';
 
 const { width: W } = Dimensions.get('window');
 const THUMB = (W - Spacing.md * 2 - 4) / 3;
@@ -62,320 +63,7 @@ function daysLeft(iso: string): number {
 
 type ProfileTab = 'videos' | 'exclusive' | 'products';
 
-// ── Subscribe Sheet ────────────────────────────────────────────────────────────
-function SubscribeSheet({
-  visible, plans, balance, isSubscribed,
-  currentPlanName, freeDmsLeft,
-  onClose, onSubscribe,
-}: {
-  visible: boolean;
-  plans: SubscriptionPlan[];
-  balance: number;
-  isSubscribed: boolean;
-  currentPlanName: string;
-  freeDmsLeft: number;
-  onClose: () => void;
-  onSubscribe: (plan: SubscriptionPlan) => Promise<void>;
-}) {
-  const [loading, setLoading] = useState(false);
-  const insets = useSafeAreaInsets();
 
-  const handleSub = async (plan: SubscriptionPlan) => {
-    setLoading(true);
-    await onSubscribe(plan);
-    setLoading(false);
-    onClose();
-  };
-
-  return (
-    <Modal visible={visible} transparent animationType="slide"
-      presentationStyle="overFullScreen" onRequestClose={onClose}>
-      <Pressable style={ss.backdrop} onPress={onClose} />
-      <View style={[ss.sheet, { paddingBottom: insets.bottom + 24 }]}>
-        <View style={ss.handle} />
-
-        {isSubscribed ? (
-          // Already subscribed — show status
-          <>
-            <LinearGradient colors={['#A855F7', '#7C5CFF']} style={ss.subActiveHeader}>
-              <MaterialIcons name="star" size={24} color="#fff" />
-              <Text style={ss.subActiveTitle}>Suscrito — {currentPlanName}</Text>
-            </LinearGradient>
-            <View style={ss.benefitsList}>
-              {[
-                'Acceso a todo el contenido exclusivo',
-                `${freeDmsLeft} DMs Premium gratis este mes`,
-                'Insignia de suscriptor VIP',
-                'Acceso al club privado del creador',
-              ].map(b => (
-                <View key={b} style={ss.benefitRow}>
-                  <MaterialIcons name="check-circle" size={14} color="#A855F7" />
-                  <Text style={ss.benefitText}>{b}</Text>
-                </View>
-              ))}
-            </View>
-            <Pressable style={ss.closeBtn} onPress={onClose}>
-              <Text style={ss.closeBtnText}>Cerrar</Text>
-            </Pressable>
-          </>
-        ) : plans.length === 0 ? (
-          <>
-            <Text style={ss.noPlansTitle}>Sin planes disponibles</Text>
-            <Text style={ss.noPlansText}>Este creador aún no configuró planes de suscripción.</Text>
-            <Pressable style={ss.closeBtn} onPress={onClose}>
-              <Text style={ss.closeBtnText}>Cerrar</Text>
-            </Pressable>
-          </>
-        ) : (
-          <>
-            <View style={ss.header}>
-              <LinearGradient colors={['#A855F7', '#7C5CFF']} style={ss.headerIcon}>
-                <MaterialIcons name="star" size={18} color="#fff" />
-              </LinearGradient>
-              <View style={{ flex: 1 }}>
-                <Text style={ss.title}>Suscribirte al creador</Text>
-                <Text style={ss.subtitle}>Elige un plan y accede a todos los beneficios VIP</Text>
-              </View>
-            </View>
-
-            {/* Auto-benefits */}
-            <View style={ss.autoBenefits}>
-              {['Todo el contenido exclusivo sin pago individual',
-                '10 DMs Premium gratis por mes',
-                'Insignia de suscriptor VIP + club privado'].map(b => (
-                <View key={b} style={ss.benefitRow}>
-                  <MaterialIcons name="check-circle" size={12} color="#A855F7" />
-                  <Text style={[ss.benefitText, { fontSize: 11 }]}>{b}</Text>
-                </View>
-              ))}
-            </View>
-
-            {/* Plans */}
-            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 280 }}>
-              {plans.map(plan => {
-                const canAfford = balance >= plan.price_bdag;
-                return (
-                  <Pressable key={plan.id} style={ss.planCard}
-                    onPress={() => canAfford ? handleSub(plan) : null}
-                  >
-                    <LinearGradient colors={['rgba(168,85,247,0.15)', 'rgba(124,92,255,0.07)']} style={ss.planCardInner}>
-                      <View style={ss.planHeader}>
-                        <LinearGradient colors={['#A855F7', '#7C5CFF']} style={ss.planIcon}>
-                          <MaterialIcons name="star" size={14} color="#fff" />
-                        </LinearGradient>
-                        <View style={{ flex: 1 }}>
-                          <Text style={ss.planName}>{plan.name}</Text>
-                          {plan.description ? (
-                            <Text style={ss.planDesc} numberOfLines={1}>{plan.description}</Text>
-                          ) : null}
-                        </View>
-                        <View style={{ alignItems: 'flex-end' }}>
-                          <Text style={ss.planPrice}>{fmt(plan.price_bdag)} BDAG</Text>
-                          <Text style={ss.planCycle}>/{plan.billing_cycle === 'monthly' ? 'mes' : plan.billing_cycle}</Text>
-                        </View>
-                      </View>
-                      {plan.perks?.slice(0, 3).map(perk => (
-                        <View key={perk} style={ss.perkRow}>
-                          <MaterialIcons name="check" size={10} color="#A855F7" />
-                          <Text style={ss.perkText} numberOfLines={1}>{perk}</Text>
-                        </View>
-                      ))}
-                      <Pressable
-                        style={[ss.subBtn, !canAfford && { opacity: 0.4 }]}
-                        onPress={() => canAfford && handleSub(plan)}
-                        disabled={loading}
-                      >
-                        <LinearGradient colors={['#A855F7', '#7C5CFF']} style={ss.subBtnGrad}>
-                          {loading
-                            ? <ActivityIndicator color="#fff" size="small" />
-                            : <MaterialIcons name="star" size={14} color="#fff" />}
-                          <Text style={ss.subBtnText}>
-                            {loading ? 'Procesando...' : canAfford ? `Suscribirse · ${fmt(plan.price_bdag)} BDAG` : 'Saldo insuficiente'}
-                          </Text>
-                        </LinearGradient>
-                      </Pressable>
-                    </LinearGradient>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-
-            <View style={ss.balRow}>
-              <MaterialCommunityIcons name="hexagon-multiple" size={13} color={Colors.textSubtle} />
-              <Text style={ss.balText}>Tu saldo: {fmt(balance)} BDAG</Text>
-            </View>
-            <Pressable style={ss.closeBtn} onPress={onClose}>
-              <Text style={ss.closeBtnText}>Cancelar</Text>
-            </Pressable>
-          </>
-        )}
-      </View>
-    </Modal>
-  );
-}
-
-const ss = StyleSheet.create({
-  backdrop:        { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)' },
-  sheet:           { backgroundColor: Colors.surfaceElevated, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: Spacing.lg, gap: Spacing.md, borderTopWidth: 1, borderColor: Colors.border },
-  handle:          { width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border, alignSelf: 'center', marginBottom: 4 },
-  header:          { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  headerIcon:      { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  title:           { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.bold },
-  subtitle:        { color: Colors.textSubtle, fontSize: FontSize.xs, marginTop: 1 },
-  autoBenefits:    { backgroundColor: 'rgba(168,85,247,0.08)', borderRadius: Radius.md, padding: 10, gap: 5, borderWidth: 1, borderColor: 'rgba(168,85,247,0.2)' },
-  benefitRow:      { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  benefitText:     { color: Colors.textSecondary, fontSize: FontSize.xs, flex: 1 },
-  planCard:        { borderRadius: Radius.lg, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(168,85,247,0.3)', marginBottom: 10 },
-  planCardInner:   { padding: Spacing.md, gap: 6 },
-  planHeader:      { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  planIcon:        { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-  planName:        { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.bold },
-  planDesc:        { color: Colors.textSubtle, fontSize: FontSize.xs },
-  planPrice:       { color: '#A855F7', fontSize: FontSize.md, fontWeight: FontWeight.bold },
-  planCycle:       { color: Colors.textSubtle, fontSize: 10 },
-  perkRow:         { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  perkText:        { color: Colors.textSubtle, fontSize: 11, flex: 1 },
-  subBtn:          { borderRadius: Radius.md, overflow: 'hidden', marginTop: 4 },
-  subBtnGrad:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 11 },
-  subBtnText:      { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.bold },
-  balRow:          { flexDirection: 'row', alignItems: 'center', gap: 5, justifyContent: 'center' },
-  balText:         { color: Colors.textSubtle, fontSize: FontSize.xs },
-  closeBtn:        { alignItems: 'center', paddingVertical: 12, backgroundColor: Colors.surface, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border },
-  closeBtnText:    { color: Colors.textSubtle, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
-  subActiveHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: Radius.lg, padding: 14 },
-  subActiveTitle:  { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
-  benefitsList:    { gap: 8 },
-  noPlansTitle:    { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold, textAlign: 'center' },
-  noPlansText:     { color: Colors.textSubtle, fontSize: FontSize.sm, textAlign: 'center' },
-});
-
-// ── Boost Profile Sheet ───────────────────────────────────────────────────────
-function BoostProfileSheet({
-  visible, creatorName, balance,
-  onClose, onBoost,
-}: {
-  visible: boolean; creatorName: string; balance: number;
-  onClose: () => void;
-  onBoost: (tier: BoostTier) => Promise<void>;
-}) {
-  const [selected, setSelected] = useState(0);
-  const [loading,  setLoading]  = useState(false);
-  const insets = useSafeAreaInsets();
-
-  const handleBoost = async () => {
-    setLoading(true);
-    await onBoost(PROFILE_BOOST_TIERS[selected]);
-    setLoading(false);
-    onClose();
-  };
-
-  const tier = PROFILE_BOOST_TIERS[selected];
-  const canAfford = balance >= tier.bdag;
-
-  return (
-    <Modal visible={visible} transparent animationType="slide"
-      presentationStyle="overFullScreen" onRequestClose={onClose}>
-      <Pressable style={bs.backdrop} onPress={onClose} />
-      <View style={[bs.sheet, { paddingBottom: insets.bottom + 24 }]}>
-        <View style={bs.handle} />
-
-        <View style={bs.header}>
-          <LinearGradient colors={['#FF9D00', '#FF5A00']} style={bs.headerIcon}>
-            <MaterialCommunityIcons name="rocket-launch" size={18} color="#fff" />
-          </LinearGradient>
-          <View style={{ flex: 1 }}>
-            <Text style={bs.title}>Patrocinar a @{creatorName}</Text>
-            <Text style={bs.subtitle}>Gasta BDAG para amplificar su visibilidad en el feed</Text>
-          </View>
-        </View>
-
-        {/* What boosting does */}
-        <View style={bs.effectsBox}>
-          {[
-            { icon: 'search',         text: 'Mayor visibilidad en búsqueda y explorar' },
-            { icon: 'trending-up',    text: 'Posición en sección trending de creadores' },
-            { icon: 'people',         text: 'Sugerido a nuevos usuarios potenciales' },
-            { icon: 'feed',           text: 'Aparece en feed patrocinado de seguidores' },
-          ].map(e => (
-            <View key={e.text} style={bs.effectRow}>
-              <MaterialIcons name={e.icon as any} size={12} color="#FF9D00" />
-              <Text style={bs.effectText}>{e.text}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Tier selector */}
-        <View style={bs.tierGrid}>
-          {PROFILE_BOOST_TIERS.map((t, i) => (
-            <Pressable key={i}
-              style={[bs.tierCard, selected === i && { borderColor: t.color, backgroundColor: t.color + '18' }]}
-              onPress={() => setSelected(i)}
-            >
-              <Text style={[bs.tierLabel, { color: selected === i ? t.color : Colors.textSubtle }]}>{t.label}</Text>
-              <Text style={[bs.tierMult, { color: t.color }]}>{t.multiplier}</Text>
-              <Text style={[bs.tierBdag, { color: selected === i ? t.color : Colors.textSecondary }]}>
-                {t.bdag.toLocaleString()} BDAG
-              </Text>
-              <Text style={bs.tierHrs}>{t.hours}h</Text>
-            </Pressable>
-          ))}
-        </View>
-
-        <Text style={bs.tierDesc}>{tier.description}</Text>
-
-        <View style={bs.balRow}>
-          <MaterialCommunityIcons name="hexagon-multiple" size={13} color={Colors.textSubtle} />
-          <Text style={bs.balText}>Tu saldo: {fmt(balance)} BDAG</Text>
-          {!canAfford ? <Text style={{ color: Colors.error, fontSize: 11 }}>· Insuficiente</Text> : null}
-        </View>
-
-        <Pressable
-          style={[bs.boostBtn, !canAfford && { opacity: 0.4 }]}
-          onPress={handleBoost} disabled={loading || !canAfford}
-        >
-          <LinearGradient colors={['#FF9D00', '#FF5A00']} style={bs.boostBtnGrad}>
-            {loading
-              ? <ActivityIndicator color="#fff" size="small" />
-              : <MaterialCommunityIcons name="rocket-launch" size={16} color="#fff" />}
-            <Text style={bs.boostBtnText}>
-              {loading ? 'Activando...' : `Patrocinar · ${tier.bdag.toLocaleString()} BDAG · ${tier.hours}h`}
-            </Text>
-          </LinearGradient>
-        </Pressable>
-        <Pressable style={bs.cancelBtn} onPress={onClose}>
-          <Text style={bs.cancelText}>Cancelar</Text>
-        </Pressable>
-      </View>
-    </Modal>
-  );
-}
-
-const bs = StyleSheet.create({
-  backdrop:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)' },
-  sheet:        { backgroundColor: Colors.surfaceElevated, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: Spacing.lg, gap: Spacing.md, borderTopWidth: 1, borderColor: Colors.border },
-  handle:       { width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border, alignSelf: 'center', marginBottom: 4 },
-  header:       { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  headerIcon:   { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  title:        { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.bold },
-  subtitle:     { color: Colors.textSubtle, fontSize: FontSize.xs, marginTop: 1 },
-  effectsBox:   { backgroundColor: 'rgba(255,157,0,0.08)', borderRadius: Radius.md, padding: 10, gap: 6, borderWidth: 1, borderColor: 'rgba(255,157,0,0.2)' },
-  effectRow:    { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  effectText:   { color: Colors.textSecondary, fontSize: 11, flex: 1 },
-  tierGrid:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  tierCard:     { width: (W - Spacing.lg * 2 - 24) / 2, backgroundColor: Colors.surface, borderRadius: Radius.md, padding: 12, gap: 2, borderWidth: 1.5, borderColor: Colors.border },
-  tierLabel:    { fontSize: 11, fontWeight: FontWeight.semibold },
-  tierMult:     { fontSize: 20, fontWeight: FontWeight.extrabold },
-  tierBdag:     { fontSize: 11, fontWeight: FontWeight.semibold },
-  tierHrs:      { color: Colors.textSubtle, fontSize: 10 },
-  tierDesc:     { color: Colors.textSubtle, fontSize: FontSize.xs, textAlign: 'center' },
-  balRow:       { flexDirection: 'row', alignItems: 'center', gap: 5, justifyContent: 'center' },
-  balText:      { color: Colors.textSubtle, fontSize: FontSize.xs },
-  boostBtn:     { borderRadius: Radius.md, overflow: 'hidden' },
-  boostBtnGrad: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
-  boostBtnText: { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
-  cancelBtn:    { alignItems: 'center', paddingVertical: 12, backgroundColor: Colors.surface, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border },
-  cancelText:   { color: Colors.textSubtle, fontSize: FontSize.sm },
-});
 
 // ════════════════════════════════════════════════════════════════════════════
 // MAIN SCREEN
@@ -542,6 +230,18 @@ export default function CreatorProfileScreen() {
     );
   }
 
+  if (!creatorId) {
+    return (
+      <View style={[styles.container, styles.centered, { paddingTop: insets.top }]}>
+        <StatusBar style="light" />
+        <Text style={styles.notFoundText}>ID de creador no válido</Text>
+        <Pressable onPress={() => router.back()} style={styles.backBtnAlt}>
+          <Text style={{ color: Colors.primary, fontWeight: FontWeight.semibold }}>Volver</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   if (!creator) {
     return (
       <View style={[styles.container, styles.centered, { paddingTop: insets.top }]}>
@@ -574,8 +274,8 @@ export default function CreatorProfileScreen() {
         <Text style={styles.topNavTitle} numberOfLines={1}>@{creator.username}</Text>
         <Pressable
           onPress={() => showAlert('Opciones', '', [
-            { text: 'Compartir perfil', onPress: () => {} },
-            { text: 'Reportar', style: 'destructive', onPress: () => {} },
+            { text: 'Compartir perfil', onPress: () => { /* share deep link */ } },
+            { text: 'Reportar', style: 'destructive', onPress: () => { /* report flow */ } },
             { text: 'Cancelar', style: 'cancel' },
           ])}
           hitSlop={10} style={styles.topNavBtn}

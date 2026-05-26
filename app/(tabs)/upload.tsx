@@ -27,6 +27,8 @@ import { useFeed } from '@/hooks/useFeed';
 import { useLiveStream } from '@/hooks/streaming/useLiveStream';
 import { LiveCameraPreview } from '@/components/feature/LiveCameraPreview';
 import { MusicPicker } from '@/components/feature/MusicPicker';
+import { LiveTitleModal } from '@/components/upload/LiveTitleModal';
+import { ExclusiveToggle } from '@/components/upload/ExclusiveToggle';
 import { useAlert } from '@/template';
 import { getSupabaseClient } from '@/template';
 import { CyberButton } from '@/components/ui/CyberButton';
@@ -35,6 +37,7 @@ import { uploadFileFromUri, detectMimeType } from '@/contexts/FeedContext';
 import { getTrackById, type MusicTrack } from '@/services/musicLibrary';
 import { createExclusiveContent } from '@/services/economyService';
 
+// ── Hashtag suggestions ────────────────────────────────────────────────────
 const HASHTAG_SUGGESTIONS = [
   '#BlockDAG', '#Web3', '#ClipDAG', '#NFT', '#DeFi', '#CryptoCreator',
   '#EarnCrypto', '#DAG', '#BlockchainLife', '#Crypto',
@@ -52,253 +55,7 @@ interface SelectedMedia {
   filterId?: string;
 }
 
-// ── Live Title Modal ──────────────────────────────────────────────────────────
-function LiveTitleModal({
-  visible, onCancel, onStart,
-}: {
-  visible: boolean;
-  onCancel: () => void;
-  onStart: (title: string) => void;
-}) {
-  const [title, setTitle] = useState('');
-  const insets = useSafeAreaInsets();
 
-  const handleStart = useCallback(() => {
-    const t = title.trim();
-    if (!t) return;
-    onStart(t);
-    setTitle('');
-  }, [title, onStart]);
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <View style={lm.overlay}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={lm.kav}
-        >
-          <View style={[lm.card, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-            {/* Header */}
-            <LinearGradient
-              colors={['rgba(255,45,85,0.15)', 'rgba(255,45,85,0.05)']}
-              style={lm.header}
-            >
-              <View style={lm.liveDot} />
-              <Text style={lm.headerTitle}>Iniciar Live</Text>
-            </LinearGradient>
-
-            <View style={lm.body}>
-              <Text style={lm.label}>Título de tu transmisión *</Text>
-              <TextInput
-                style={lm.input}
-                value={title}
-                onChangeText={setTitle}
-                placeholder="ej: Tutorial BlockDAG en vivo"
-                placeholderTextColor={Colors.textSubtle}
-                maxLength={100}
-                autoFocus
-                returnKeyType="done"
-                onSubmitEditing={handleStart}
-              />
-              <Text style={lm.hint}>
-                Un buen título atrae más espectadores y aumenta tus ganancias en $DAG
-              </Text>
-
-              <View style={lm.btns}>
-                <Pressable style={lm.cancelBtn} onPress={onCancel}>
-                  <Text style={lm.cancelText}>Cancelar</Text>
-                </Pressable>
-                <Pressable
-                  style={[lm.startBtn, !title.trim() && lm.startBtnDisabled]}
-                  onPress={handleStart}
-                  disabled={!title.trim()}
-                >
-                  <LinearGradient
-                    colors={['#FF2D55', '#FF6B35']}
-                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                    style={lm.startBtnGrad}
-                  >
-                    <View style={lm.startDot} />
-                    <Text style={lm.startText}>Abrir Cámara</Text>
-                  </LinearGradient>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </View>
-    </Modal>
-  );
-}
-
-const lm = StyleSheet.create({
-  overlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.75)',
-    justifyContent: 'flex-end',
-  },
-  kav: { width: '100%' },
-  card: {
-    backgroundColor: Colors.surface,
-    borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    borderWidth: 1, borderColor: 'rgba(255,45,85,0.2)',
-    overflow: 'hidden',
-  },
-  header: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
-    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(255,45,85,0.15)',
-  },
-  liveDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: Colors.secondary },
-  headerTitle: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
-  body: { padding: Spacing.lg, gap: Spacing.md },
-  label: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
-  input: {
-    backgroundColor: Colors.surfaceElevated,
-    borderWidth: 1, borderColor: Colors.border,
-    borderRadius: Radius.md,
-    paddingHorizontal: Spacing.md, paddingVertical: 12,
-    color: Colors.textPrimary, fontSize: FontSize.md,
-  },
-  hint: { color: Colors.textSubtle, fontSize: FontSize.xs, lineHeight: 18 },
-  btns: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.xs },
-  cancelBtn: {
-    flex: 1, paddingVertical: 13, borderRadius: Radius.md,
-    backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border,
-    alignItems: 'center',
-  },
-  cancelText: { color: Colors.textSecondary, fontSize: FontSize.md, fontWeight: FontWeight.semibold },
-  startBtn: { flex: 2, borderRadius: Radius.md, overflow: 'hidden' },
-  startBtnDisabled: { opacity: 0.4 },
-  startBtnGrad: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 13, gap: 8,
-  },
-  startDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
-  startText: { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold, letterSpacing: 0.5 },
-});
-
-// ── Exclusive Content Toggle Card ─────────────────────────────────────────────
-function ExclusiveToggle({
-  enabled, price, onToggle, onPriceChange,
-}: {
-  enabled: boolean;
-  price: string;
-  onToggle: (v: boolean) => void;
-  onPriceChange: (v: string) => void;
-}) {
-  const QUICK_PRICES = ['50', '100', '500', '1000', '2500'];
-  return (
-    <View style={exc.wrap}>
-      <LinearGradient
-        colors={enabled ? ['rgba(168,85,247,0.18)', 'rgba(124,92,255,0.10)'] : ['rgba(255,255,255,0.04)', 'rgba(255,255,255,0.02)']}
-        style={exc.card}
-      >
-        <View style={exc.row}>
-          <View style={exc.left}>
-            <LinearGradient
-              colors={enabled ? ['#A855F7', '#7C5CFF'] : ['#2A2A42', '#1C1C32']}
-              style={exc.iconBg}
-            >
-              <MaterialIcons name={enabled ? 'lock' : 'lock-open'} size={18} color={enabled ? '#fff' : Colors.textSubtle} />
-            </LinearGradient>
-            <View>
-              <Text style={[exc.label, enabled && { color: '#A855F7' }]}>Contenido Exclusivo</Text>
-              <Text style={exc.sub}>
-                {enabled ? 'Solo accesible con pago o suscripción' : 'Toca para bloquear este contenido'}
-              </Text>
-            </View>
-          </View>
-          <Switch
-            value={enabled}
-            onValueChange={onToggle}
-            trackColor={{ false: Colors.border, true: '#A855F733' }}
-            thumbColor={enabled ? '#A855F7' : Colors.textSubtle}
-            ios_backgroundColor={Colors.border}
-          />
-        </View>
-
-        {enabled ? (
-          <View style={exc.priceSection}>
-            <View style={exc.priceDivider} />
-            <Text style={exc.priceLabel}>Precio de desbloqueo</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={exc.quickRow}>
-              {QUICK_PRICES.map(v => (
-                <Pressable
-                  key={v}
-                  style={[exc.quickChip, price === v && exc.quickChipActive]}
-                  onPress={() => onPriceChange(v)}
-                >
-                  <Text style={[exc.quickChipText, price === v && exc.quickChipTextActive]}>
-                    {v} BDAG
-                  </Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-            <View style={exc.priceInputRow}>
-              <MaterialCommunityIcons name="hexagon-multiple" size={16} color="#A855F7" />
-              <TextInput
-                style={exc.priceInput}
-                value={price}
-                onChangeText={onPriceChange}
-                placeholder="Precio personalizado"
-                placeholderTextColor={Colors.textSubtle}
-                keyboardType="decimal-pad"
-              />
-              <Text style={exc.bdagUnit}>BDAG</Text>
-            </View>
-            {parseFloat(price) > 0 ? (
-              <View style={exc.feeRow}>
-                <MaterialCommunityIcons name="information-outline" size={11} color={Colors.textSubtle} />
-                <Text style={exc.feeText}>
-                  Tú recibes {(parseFloat(price) * 0.9).toFixed(0)} BDAG · Plataforma {(parseFloat(price) * 0.1).toFixed(0)} BDAG (10%)
-                </Text>
-              </View>
-            ) : null}
-            <View style={exc.benefitsWrap}>
-              {[
-                { icon: 'lock', text: 'Preview borroso para no suscriptores' },
-                { icon: 'star', text: 'Acceso automático para tus suscriptores' },
-                { icon: 'bolt', text: 'Desbloqueo instantáneo con BDAG' },
-                { icon: 'library-books', text: 'Biblioteca de contenido comprado' },
-              ].map(b => (
-                <View key={b.text} style={exc.benefitRow}>
-                  <MaterialIcons name={b.icon as any} size={12} color="#A855F7" />
-                  <Text style={exc.benefitText}>{b.text}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        ) : null}
-      </LinearGradient>
-    </View>
-  );
-}
-
-const exc = StyleSheet.create({
-  wrap:       { borderRadius: Radius.lg, overflow: 'hidden', borderWidth: 1, borderColor: Colors.border },
-  card:       { padding: Spacing.md, gap: Spacing.sm },
-  row:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.md },
-  left:       { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  iconBg:     { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  label:      { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
-  sub:        { color: Colors.textSubtle, fontSize: FontSize.xs, marginTop: 1 },
-  priceSection: { gap: Spacing.sm },
-  priceDivider: { height: 1, backgroundColor: 'rgba(168,85,247,0.2)' },
-  priceLabel: { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: FontWeight.semibold, textTransform: 'uppercase', letterSpacing: 0.5 },
-  quickRow:   { flexDirection: 'row', gap: 8, paddingVertical: 2 },
-  quickChip:  { paddingHorizontal: 12, paddingVertical: 7, borderRadius: Radius.full, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: Colors.border },
-  quickChipActive: { backgroundColor: '#A855F7', borderColor: '#A855F7' },
-  quickChipText: { color: Colors.textSubtle, fontSize: 11, fontWeight: FontWeight.semibold },
-  quickChipTextActive: { color: '#fff' },
-  priceInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(168,85,247,0.1)', borderRadius: Radius.md, borderWidth: 1, borderColor: 'rgba(168,85,247,0.3)', paddingHorizontal: 12, paddingVertical: 10 },
-  priceInput: { flex: 1, color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.semibold },
-  bdagUnit:   { color: '#A855F7', fontSize: FontSize.sm, fontWeight: FontWeight.bold },
-  feeRow:     { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  feeText:    { color: Colors.textSubtle, fontSize: 10 },
-  benefitsWrap: { backgroundColor: 'rgba(168,85,247,0.08)', borderRadius: Radius.md, padding: 10, gap: 6 },
-  benefitRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  benefitText:{ color: Colors.textSecondary, fontSize: 11 },
-});
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
 export default function UploadScreen() {
@@ -348,7 +105,6 @@ export default function UploadScreen() {
 
     // Start the Supabase session + resource acquisition via useLiveStream
     await startStream(title);
-    // Then open the camera UI regardless (camera is separate from session)
     setLiveCameraVisible(true);
   }, [startStream]);
 
@@ -606,9 +362,7 @@ export default function UploadScreen() {
         hostUser={hostUser}
         onClose={handleLiveCameraClose}
         onStreamStarted={() => {
-          // Session is already created by useLiveStream.startStream()
-          // This callback signals that the camera preview is active
-          console.log('[Upload] LiveCameraPreview: stream UI started');
+          // Camera preview active — session managed by useLiveStream.startStream();
         }}
       />
 

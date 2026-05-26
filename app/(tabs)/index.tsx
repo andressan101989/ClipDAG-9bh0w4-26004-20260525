@@ -20,6 +20,7 @@ import { DAGRewardToast } from '@/components/feature/DAGRewardToast';
 import { StoriesBar } from '@/components/feature/StoriesBar';
 import { StoryViewer } from '@/components/feature/StoryViewer';
 import { Colors, FontWeight } from '@/constants/theme';
+import { PostCardSkeleton, FadeIn } from '@/components/ui/SkeletonLoader';
 import { base64ToUint8Array } from '@/contexts/FeedContext';
 import { useRouter } from 'expo-router';
 import { useScrollToTop } from '@react-navigation/native';
@@ -70,6 +71,13 @@ export default function FeedScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [viewingStoryGroup, setViewingStoryGroup] = useState<StoryGroup | null>(null);
   const [storyViewerVisible, setStoryViewerVisible] = useState(false);
+  const [initialLoaded, setInitialLoaded] = useState(false);
+
+  useEffect(() => {
+    if (videos.length > 0 && !initialLoaded) {
+      setInitialLoaded(true);
+    }
+  }, [videos.length, initialLoaded]);
 
   // Ref for scroll-to-top on Home tab press
   const feedListRef = useRef<FlatList<VideoWithMeta>>(null);
@@ -237,6 +245,14 @@ export default function FeedScreen() {
             progressViewOffset={HEADER_TOTAL_HEIGHT}
           />
         }
+        ListEmptyComponent={
+          isLoadingFeed && !initialLoaded ? (
+            <View style={{ paddingTop: FEED_TOP_SPACER }}>
+              <PostCardSkeleton />
+              <PostCardSkeleton />
+            </View>
+          ) : null
+        }
       />
 
       {/* ── Fixed top overlay: header + stories (fades out during reel) ── */}
@@ -285,6 +301,7 @@ export default function FeedScreen() {
         </View>
 
         {/* Stories bar — sits directly below top bar */}
+        <FadeIn delay={120} duration={280}>
         <View pointerEvents="box-none">
           <StoriesBar
             currentUserId={user?.id || ''}
@@ -295,6 +312,7 @@ export default function FeedScreen() {
             onViewStory={handleViewStory}
           />
         </View>
+        </FadeIn>
       </Animated.View>
 
       <DAGRewardToast visible={toastVisible} amount={0.01} onHide={() => setToastVisible(false)} />
