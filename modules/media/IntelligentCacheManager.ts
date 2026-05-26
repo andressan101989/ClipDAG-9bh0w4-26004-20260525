@@ -57,7 +57,7 @@ class IntelligentCacheManagerImpl {
 
   constructor() {
     // React to memory pressure
-    EventBus.subscribe('app:low_memory', () => {
+    EventBus.on('app:low_memory', () => {
       this._emergencyEviction();
     });
   }

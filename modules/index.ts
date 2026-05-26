@@ -1,11 +1,12 @@
 /**
- * modules/index.ts — Top-level module barrel
+ * modules/index.ts — Root module barrel
+ * Single import point for all infrastructure modules.
  *
- * Import from here when you need multiple modules:
- *   import { EventBus, PollingManager, UploadQueue } from '@/modules';
- *
- * Or import directly from a module for tree-shaking:
- *   import { CameraController } from '@/modules/creator';
+ * Usage:
+ *   import { EventBus, PowerManager, AdaptiveQualityController } from '@/modules';
+ *   import { MediaSessionManager, StreamingBufferManager }       from '@/modules';
+ *   import { ConnectionManager, SessionRecovery }                from '@/modules';
+ *   import { CreatorSessionManager, ExportManager }              from '@/modules';
  */
 
 // Core infrastructure
@@ -14,13 +15,12 @@ export * from './core';
 // Realtime layer
 export * from './realtime';
 
-// Media pipeline
-export { UploadQueue }   from './media/UploadQueue';
-export { CacheManager }  from './media/CacheManager';
+// Media engine
+export * from './media';
 
-// Feature modules (lazy — only import what you use)
-export * from './calls';
-export * from './streaming';
-export * from './battle';
-export * from './gaming';
+// Feature modules
+export { BattleManager }  from './battle/BattleManager';
+export { CallManager }    from './calls/CallManager';
+export { StreamManager }  from './streaming/StreamManager';
 export * from './creator';
+export * from './gaming';

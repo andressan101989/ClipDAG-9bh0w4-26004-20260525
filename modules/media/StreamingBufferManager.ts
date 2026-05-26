@@ -78,7 +78,7 @@ class StreamingBufferManagerImpl {
 
   constructor() {
     AppLifecycle.onBackground(() => this._releaseNonCriticalBuffers());
-    EventBus.subscribe('app:low_memory', () => this._emergencyRelease());
+    EventBus.on('app:low_memory', () => this._emergencyRelease());
   }
 
   // ── Public API ────────────────────────────────────────────────────────────

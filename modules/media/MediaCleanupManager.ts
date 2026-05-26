@@ -65,7 +65,7 @@ class MediaCleanupManagerImpl {
     });
 
     // Cleanup on low memory
-    EventBus.subscribe('app:low_memory', async () => {
+    EventBus.on('app:low_memory', async () => {
       await this._runCategory('thumbnails',    'low_memory');
       await this._runCategory('effects_cache', 'low_memory');
       await this._runCategory('ar_textures',   'low_memory');

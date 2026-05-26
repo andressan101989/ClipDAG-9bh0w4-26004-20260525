@@ -130,7 +130,7 @@ class AdaptiveQualityControllerImpl {
     PowerManager.onTierChange(tier => this._onPowerTierChange(tier));
 
     // React to memory pressure independently (even without thermal)
-    EventBus.subscribe('app:low_memory', () => {
+    EventBus.on('app:low_memory', () => {
       if (this._currentLevel !== 'emergency') {
         console.warn('[AdaptiveQuality] emergency triggered by low memory event');
         this._applyLevel('emergency');
