@@ -46,6 +46,9 @@ import {
   prefetchDeepARFilters,
   triggerDeepARScreenshot,
   startDeepARRecording,
+  logDeepARMounted,
+  logDeepARInitialized,
+  logDeepARCameraReady,
 } from '@/services/deeparService';
 
 // ── Lazy-load expo-camera ────────────────────────────────────────────────────
@@ -235,6 +238,9 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
 
   const DeepARCam = deepARCompOk ? (DeepARCameraComponent as any) : null;
 
+  // Emit mount log once per render when DeepAR is the chosen renderer
+  if (deepARCompOk && DeepARCam) logDeepARMounted();
+
   // ── No camera available ─────────────────────────────────────────────────────
   if (!CameraView && !deepARCompOk) {
     return (
@@ -266,16 +272,25 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
     <View style={[c.wrap, { height: camHeight }]}>
       {/* Camera surface — DeepAR (EAS) or expo-camera (preview fallback) */}
       {deepARCompOk && DeepARCam ? (
+        // logDeepARMounted() is called inline — confirms the component
+        // has been placed in the React tree (before native attachment).
+        // logDeepARInitialized() and logDeepARCameraReady() fire from
+        // the native callbacks below to confirm Metal surface attachment.
         <DeepARCam
           ref={deepARRef}
           style={c.cameraFill}
           apiKey={Platform.OS === 'ios' ? DEEPAR_API_KEY_IOS : DEEPAR_API_KEY_ANDROID}
           onInitialized={() => {
+            logDeepARInitialized();
             log.deepar.info('DeepAR initialized');
             setDeepARReady(true);
             onDeepARReady?.();
           }}
+          onCameraReady={() => {
+            logDeepARCameraReady(true);
+          }}
           onError={(text: string, isFatal: boolean) => {
+            logDeepARCameraReady(false, text);
             log.deepar.error('DeepAR error', { text, isFatal });
             if (isFatal) onError?.(`DeepAR: ${text}`);
           }}

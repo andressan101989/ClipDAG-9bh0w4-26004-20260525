@@ -1,66 +1,105 @@
 /**
- * services/deeparService.ts — v8 (DeepAR re-enabled, metro still blocks SDK on preview)
+ * services/deeparService.ts — v9 (strict validation + runtime logs)
  *
- * DeepAR SDK is blocked by metro.config.js ALWAYS_BLOCKED list (react-native-deepar).
- * isDeepARAvailable() checks at runtime whether the native module loaded.
- * On preview/web this returns false gracefully — no crash.
- * On EAS native build: returns true and enables AR filters.
+ * DeepAR SDK resolution:
+ *   - metro.config.js blocks react-native-deepar on web/preview → require() throws → null
+ *   - EAS native build → require() succeeds → validate function type → assign
+ *
+ * Runtime confirmation logs (visible in Metro/Xcode console):
+ *   [DeepAR] SDK require succeeded
+ *   [DeepAR] component resolved ✓  (or detailed failure reason)
+ *   [DeepAR] mounted               (emitted by CameraCore on first render)
+ *   [DeepAR] initialized           (emitted by onInitialized callback)
+ *   [DeepAR] camera surface ready  (emitted by onCameraReady callback)
+ *   [DeepAR] effect applied        (emitted by switchDeepAREffect on success)
+ *
+ * All rn-fetch-blob references removed — expo-file-system is the sole
+ * download mechanism. DeepAR requires raw POSIX paths (no file:// prefix).
  */
 
 import { Platform } from 'react-native';
 
-// ── Re-enabled — metro blocks react-native-deepar on preview, graceful on EAS ─
+// ── Feature flag ──────────────────────────────────────────────────────────────
 export const DEEPAR_ENABLED = true;
 
-// API keys are injected by the native config plugins:
-//   iOS:     Info.plist -> ar_key  (plugins/withDeepARiOS.js)
-//   Android: strings.xml -> deepar_api_key  (plugins/withDeepARAndroidFix.js)
-// These JS constants are used as fallback when the native module reads the key itself.
+// API keys injected by native config plugins at build time:
+//   iOS:     plugins/withDeepARiOS.js      → Info.plist  key: ar_key
+//   Android: plugins/withDeepARAndroidFix.js → strings.xml key: deepar_api_key
+// These JS constants mirror those values so JS-side code can read them if needed.
 export const DEEPAR_API_KEY_IOS     = 'b5ed95b597e2d095a99d348245484f5ca0ea76dd4297a6e03d0a0b630cb2f2b4511186a4577ef72a';
 export const DEEPAR_API_KEY_ANDROID = '26eb786956b608da971d30ec64fc5bcec72ce89cd1914b3cfc5ed32c3232f6da70a5923630b8696b';
-export const DEEPAR_API_KEY         = DEEPAR_API_KEY_IOS;
+export const DEEPAR_API_KEY         = Platform.OS === 'android' ? DEEPAR_API_KEY_ANDROID : DEEPAR_API_KEY_IOS;
 
-// Lazy-load DeepAR — metro blocks the package on preview, so this try/catch
-// gracefully returns null when not available.
-let _DeepAR: any = null;
+// ── Lazy-load DeepAR SDK ──────────────────────────────────────────────────────
+// require() is deferred (not a top-level static import) so that module
+// evaluation at app startup never attempts to touch the native bridge before
+// it is ready. metro.config.js redirects the require to an empty stub on
+// web/preview, so the catch branch runs on those platforms — no crash.
+let _DeepAR: any       = null;
 let _DeepARCamera: any = null;
+
 try {
   const sdk = require('react-native-deepar');
-  console.log('[DeepAR] SDK require succeeded. Keys:', Object.keys(sdk ?? {}));
-  // Try all known export paths for DeepARCamera component
-  _DeepAR =
-    sdk?.DeepAR ??
-    sdk?.default?.DeepAR ??
-    null;
-  _DeepARCamera =
-    sdk?.DeepARCamera ??
-    sdk?.default?.DeepARCamera ??
-    sdk?.default ??
-    null;
-  // Validate it's a renderable component, not just an object
-  if (_DeepARCamera && typeof _DeepARCamera !== 'function') {
-    console.warn('[DeepAR] _DeepARCamera is not a function, type:', typeof _DeepARCamera);
-    _DeepARCamera = null;
+  const exportKeys: string[] = Object.keys(sdk ?? {});
+  console.log('[DeepAR] SDK require succeeded. exports:', exportKeys.join(', '));
+
+  // ── Resolve DeepAR imperative API (ref methods) ───────────────────────────
+  const deepARCandidate: unknown = sdk?.DeepAR ?? sdk?.default?.DeepAR ?? null;
+  if (deepARCandidate !== null && typeof deepARCandidate === 'function') {
+    _DeepAR = deepARCandidate;
+    console.log('[DeepAR] DeepAR class resolved ✓');
+  } else {
+    console.log('[DeepAR] DeepAR class not found (optional — ref methods used instead)');
   }
-  console.log('[DeepAR] _DeepARCamera resolved:', _DeepARCamera !== null ? 'YES ✓' : 'null');
+
+  // ── Resolve DeepARCamera React component ─────────────────────────────────
+  // Defensive priority order — most specific named export first.
+  // sdk.default is intentionally last: it can be a plain module object {}
+  // which would pass an instanceof check but is NOT a React component.
+  const candidates: Array<[string, unknown]> = [
+    ['sdk.DeepARCamera',          sdk?.DeepARCamera],
+    ['sdk.default.DeepARCamera',  sdk?.default?.DeepARCamera],
+    // sdk.default ONLY if it looks like a component (function/class, not plain object)
+    ['sdk.default (fallback)',    typeof sdk?.default === 'function' ? sdk.default : null],
+  ];
+
+  for (const [label, candidate] of candidates) {
+    if (candidate === null || candidate === undefined) continue;
+    if (typeof candidate !== 'function') {
+      console.warn(`[DeepAR] ${label} is type "${typeof candidate}" — skipping (not a React component)`);
+      continue;
+    }
+    _DeepARCamera = candidate;
+    console.log(`[DeepAR] DeepARCamera resolved via ${label} ✓`);
+    break;
+  }
+
+  if (_DeepARCamera === null) {
+    console.warn(
+      '[DeepAR] DeepARCamera NOT resolved from any export path.',
+      'Available keys:', exportKeys.join(', '),
+      '— falling back to expo-camera. Check react-native-deepar version.',
+    );
+  }
 } catch (e: any) {
-  console.warn('[DeepAR] require failed (expected on preview/web):', e?.message ?? e);
+  console.log('[DeepAR] require skipped (expected on web/preview):', e?.message ?? String(e));
 }
 
 export const DeepAR          = _DeepAR;
 export const DeepARCamera    = _DeepARCamera;
-export const DeepARCameraKit = _DeepARCamera;
+export const DeepARCameraKit = _DeepARCamera; // alias used in some older imports
 
-export const isDeepARAvailable = () =>
+/** Returns true only when a valid React component function was resolved. */
+export const isDeepARAvailable = (): boolean =>
   DEEPAR_ENABLED &&
   _DeepARCamera !== null &&
   typeof _DeepARCamera === 'function';
 
-// expo-file-system — lazy-loaded to avoid native module crash at startup.
-// A static top-level import can crash iOS if the native module hasn't
-// hydrated yet during the JS bundle evaluation phase.
+// ── expo-file-system (lazy) ───────────────────────────────────────────────────
+// Lazy-required to avoid native module crash during JS bundle evaluation
+// (same reason as the DeepAR require above).
 let _FileSystem: any = null;
-try { _FileSystem = require('expo-file-system'); } catch { /* not available */ }
+try { _FileSystem = require('expo-file-system'); } catch { /* not available on web */ }
 const hasFileSystem = typeof _FileSystem?.downloadAsync === 'function';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -71,105 +110,93 @@ export interface DeepARFilter {
   name:        string;
   emoji:       string;
   category:    'face' | 'beauty' | 'background' | 'social';
-  /**
-   * Remote URL of the .deepar effect file (no extension).
-   * Downloaded and cached locally on first use via rn-fetch-blob.
-   */
+  /** Remote URL of the .deepar effect file. Downloaded and cached on first use. */
   remoteUrl:   string;
   description: string;
 }
 
-/**
- * DeepAR Free Filter Pack — official public CDN.
- * Confirmed working from react-native-deepar example app.
- * Mirror: betacoins.magix.net (used in react-native-deepar example Config.TEST)
- */
-const DEEPAR_CDN         = 'https://storage.deepar.ai/effects/';
-const DEEPAR_CDN_MIRROR  = 'http://betacoins.magix.net/public/deepar-filters/';
+const DEEPAR_CDN        = 'https://storage.deepar.ai/effects/';
+const DEEPAR_CDN_MIRROR = 'http://betacoins.magix.net/public/deepar-filters/';
 
 export const DEEPAR_FILTERS: DeepARFilter[] = [
   // ── Face ────────────────────────────────────────────────────────────────
-  { id: 'flower_crown',  name: 'Corona',      emoji: '🌸', category: 'face',
-    remoteUrl: `${DEEPAR_CDN}flower_crown`,      description: 'Corona de flores animada' },
-  { id: 'lion',          name: 'León',         emoji: '🦁', category: 'face',
-    remoteUrl: `${DEEPAR_CDN}lion`,              description: 'Máscara facial de león 3D' },
-  { id: 'viking_helmet', name: 'Viking',       emoji: '🪖', category: 'face',
-    remoteUrl: `${DEEPAR_CDN}viking_helmet`,     description: 'Casco vikingo animado' },
-  { id: 'aviators',      name: 'Aviador',      emoji: '😎', category: 'face',
-    remoteUrl: `${DEEPAR_CDN}aviators`,          description: 'Gafas de aviador vintage' },
-  { id: 'dalmatian',     name: 'Perrito',      emoji: '🐶', category: 'face',
-    remoteUrl: `${DEEPAR_CDN}dalmatian`,         description: 'Filtro dálmata con orejas' },
-  { id: 'pug',           name: 'Pug',          emoji: '🐾', category: 'face',
-    remoteUrl: `${DEEPAR_CDN}pug`,               description: 'Cara de pug animado' },
-  { id: 'beard',         name: 'Barba',        emoji: '🧔', category: 'face',
-    remoteUrl: `${DEEPAR_CDN}beard`,             description: 'Barba hipster animada' },
+  { id: 'flower_crown',  name: 'Corona',    emoji: '🌸', category: 'face',
+    remoteUrl: `${DEEPAR_CDN}flower_crown`,    description: 'Corona de flores animada' },
+  { id: 'lion',          name: 'León',      emoji: '🦁', category: 'face',
+    remoteUrl: `${DEEPAR_CDN}lion`,            description: 'Máscara facial de león 3D' },
+  { id: 'viking_helmet', name: 'Viking',    emoji: '🪖', category: 'face',
+    remoteUrl: `${DEEPAR_CDN}viking_helmet`,   description: 'Casco vikingo animado' },
+  { id: 'aviators',      name: 'Aviador',   emoji: '😎', category: 'face',
+    remoteUrl: `${DEEPAR_CDN}aviators`,        description: 'Gafas de aviador vintage' },
+  { id: 'dalmatian',     name: 'Perrito',   emoji: '🐶', category: 'face',
+    remoteUrl: `${DEEPAR_CDN}dalmatian`,       description: 'Filtro dálmata con orejas' },
+  { id: 'pug',           name: 'Pug',       emoji: '🐾', category: 'face',
+    remoteUrl: `${DEEPAR_CDN}pug`,             description: 'Cara de pug animado' },
+  { id: 'beard',         name: 'Barba',     emoji: '🧔', category: 'face',
+    remoteUrl: `${DEEPAR_CDN}beard`,           description: 'Barba hipster animada' },
   // ── Beauty ──────────────────────────────────────────────────────────────
-  { id: 'beauty',        name: 'Beauty',       emoji: '✨', category: 'beauty',
-    remoteUrl: `${DEEPAR_CDN}beauty`,            description: 'Suavizado de piel + mejora facial' },
-  { id: 'makeup',        name: 'Maquillaje',   emoji: '💄', category: 'beauty',
-    remoteUrl: `${DEEPAR_CDN}makeup`,            description: 'Maquillaje labios y ojos' },
-  { id: 'face_painting', name: 'Face Paint',   emoji: '🎨', category: 'beauty',
-    remoteUrl: `${DEEPAR_CDN}face_painting`,     description: 'Pintura artística facial' },
+  { id: 'beauty',        name: 'Beauty',    emoji: '✨', category: 'beauty',
+    remoteUrl: `${DEEPAR_CDN}beauty`,          description: 'Suavizado de piel + mejora facial' },
+  { id: 'makeup',        name: 'Maquillaje',emoji: '💄', category: 'beauty',
+    remoteUrl: `${DEEPAR_CDN}makeup`,          description: 'Maquillaje labios y ojos' },
+  { id: 'face_painting', name: 'Face Paint',emoji: '🎨', category: 'beauty',
+    remoteUrl: `${DEEPAR_CDN}face_painting`,   description: 'Pintura artística facial' },
   // ── Background ──────────────────────────────────────────────────────────
-  { id: 'galaxy_segmentation', name: 'Galaxia', emoji: '🌌', category: 'background',
-    remoteUrl: `${DEEPAR_CDN}galaxy_segmentation`, description: 'Fondo galaxia + remoción BG' },
+  { id: 'galaxy_segmentation',     name: 'Galaxia',   emoji: '🌌', category: 'background',
+    remoteUrl: `${DEEPAR_CDN}galaxy_segmentation`,     description: 'Fondo galaxia + remoción BG' },
   { id: 'background_segmentation', name: 'Sin fondo', emoji: '🫧', category: 'background',
     remoteUrl: `${DEEPAR_CDN}background_segmentation`, description: 'Remoción de fondo en tiempo real' },
   // ── Social ───────────────────────────────────────────────────────────────
-  { id: 'fire',          name: 'Fuego',        emoji: '🔥', category: 'social',
-    remoteUrl: `${DEEPAR_CDN}fire`,              description: 'Llamas animadas alrededor de la cara' },
-  { id: 'disco',         name: 'Disco',        emoji: '🪩', category: 'social',
-    remoteUrl: `${DEEPAR_CDN}disco`,             description: 'Luces de discoteca psicodélicas' },
-  { id: 'hope',          name: 'Hope',         emoji: '🦋', category: 'social',
-    remoteUrl: `${DEEPAR_CDN}hope`,             description: 'Mariposas y flores' },
-  { id: 'burning_effect', name: 'Burning',     emoji: '💀', category: 'social',
-    remoteUrl: `${DEEPAR_CDN}burning_effect`,    description: 'Cara en llamas' },
+  { id: 'fire',          name: 'Fuego',     emoji: '🔥', category: 'social',
+    remoteUrl: `${DEEPAR_CDN}fire`,            description: 'Llamas animadas alrededor de la cara' },
+  { id: 'disco',         name: 'Disco',     emoji: '🪩', category: 'social',
+    remoteUrl: `${DEEPAR_CDN}disco`,           description: 'Luces de discoteca psicodélicas' },
+  { id: 'hope',          name: 'Hope',      emoji: '🦋', category: 'social',
+    remoteUrl: `${DEEPAR_CDN}hope`,            description: 'Mariposas y flores' },
+  { id: 'burning_effect',name: 'Burning',   emoji: '💀', category: 'social',
+    remoteUrl: `${DEEPAR_CDN}burning_effect`,  description: 'Cara en llamas' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LOCAL FILTER CACHE (in-memory path registry)
+// LOCAL FILTER CACHE
 // ─────────────────────────────────────────────────────────────────────────────
-/** Raw filesystem paths cached in memory after first download */
+/** In-memory raw POSIX path cache (populated after first download per session). */
 const pathCache: Record<string, string> = {};
 const downloadingIds: Set<string>       = new Set();
 
 /**
- * Returns the raw local filesystem path for a filter.
- * Downloads via rn-fetch-blob if not cached.
+ * Download a DeepAR effect file via expo-file-system and return the raw
+ * POSIX path (no file:// prefix).
  *
- * ⚠️  CRITICAL: DeepAR iOS requires a RAW path like
- *     `/var/mobile/Containers/Data/Application/.../file`
- *     NOT `file:///var/mobile/...`
+ * CRITICAL — DeepAR iOS switchEffectWithPath() requires a raw path:
+ *   ✅ /var/mobile/Containers/Data/Application/.../flower_crown
+ *   ❌ file:///var/mobile/Containers/Data/Application/.../flower_crown
  *
- * rn-fetch-blob's res.path() returns the raw path automatically.
- * expo-file-system returns file:// URIs, which DeepAR REJECTS silently.
- */
-/**
- * Try to download from a URL using expo-file-system.
- * Returns a raw POSIX path (no file:// prefix) or null.
- *
- * CRITICAL: DeepAR iOS switchEffectWithPath() requires a raw path.
- *   ✅ CORRECT: /var/mobile/Containers/Data/.../flower_crown
- *   ❌ WRONG:   file:///var/mobile/Containers/Data/.../flower_crown
- *
- * expo-file-system returns file:// URIs — strip the prefix with .replace('file://', '').
+ * expo-file-system returns file:// URIs → strip the prefix.
  */
 async function tryDownload(url: string, effectId: string): Promise<string | null> {
   if (!hasFileSystem || !_FileSystem) return null;
   try {
-    const dir  = _FileSystem.cacheDirectory + 'deepar_filters/';
+    const dir  = (_FileSystem.cacheDirectory as string) + 'deepar_filters/';
     const dest = dir + effectId;
-    // Ensure directory exists
     await _FileSystem.makeDirectoryAsync(dir, { intermediates: true }).catch(() => {});
     const { uri, status } = await _FileSystem.downloadAsync(url, dest);
-    if (status !== 200) return null;
-    // DeepAR iOS requires raw POSIX path — strip file:// prefix
-    const rawPath = uri.replace(/^file:\/\//, '');
-    // Validate file is not an HTML error page (must be ≥ 64 bytes)
+    if (status !== 200) {
+      console.warn(`[DeepAR] download HTTP ${status} for ${effectId} from ${url}`);
+      return null;
+    }
+    // Strip file:// — DeepAR iOS native code requires raw POSIX path
+    const rawPath = (uri as string).replace(/^file:\/\//, '');
+    // Guard: reject HTML error pages (< 64 bytes means no real .deepar binary)
     const info = await _FileSystem.getInfoAsync(uri, { size: true }).catch(() => null);
-    if (!info || (info as any).size < 64) return null;
+    if (!info || (info as any).size < 64) {
+      console.warn(`[DeepAR] downloaded file too small for ${effectId} — likely an HTML error page`);
+      return null;
+    }
+    console.log(`[DeepAR] filter cached: ${effectId} → ${rawPath}`);
     return rawPath;
-  } catch {
+  } catch (e: any) {
+    console.warn(`[DeepAR] tryDownload failed for ${effectId}:`, e?.message ?? e);
     return null;
   }
 }
@@ -180,11 +207,12 @@ export async function getLocalFilterPath(filter: DeepARFilter): Promise<string |
   if (downloadingIds.has(filter.id)) return null;
   downloadingIds.add(filter.id);
   try {
-    // Try primary CDN, then mirror
+    // Try primary CDN first, then mirror
     let path = await tryDownload(filter.remoteUrl, filter.id);
-    if (!path) path = await tryDownload(
-      filter.remoteUrl.replace(DEEPAR_CDN, DEEPAR_CDN_MIRROR), filter.id
-    );
+    if (!path) {
+      const mirrorUrl = filter.remoteUrl.replace(DEEPAR_CDN, DEEPAR_CDN_MIRROR);
+      path = await tryDownload(mirrorUrl, filter.id);
+    }
     if (path) pathCache[filter.id] = path;
     return path;
   } finally {
@@ -192,18 +220,14 @@ export async function getLocalFilterPath(filter: DeepARFilter): Promise<string |
   }
 }
 
-/**
- * Prefetch the most commonly used filters in background after DeepAR initializes.
- */
-export async function prefetchDeepARFilters(
-  filterIds?: string[],
-): Promise<void> {
+/** Prefetch the most-used filters in the background after DeepAR initializes. */
+export async function prefetchDeepARFilters(filterIds?: string[]): Promise<void> {
   if (!DEEPAR_ENABLED || !isDeepARAvailable()) return;
   const ids = filterIds ?? ['flower_crown', 'lion', 'beauty', 'fire', 'disco'];
   await Promise.all(
     DEEPAR_FILTERS
       .filter(f => ids.includes(f.id))
-      .map(f => getLocalFilterPath(f).catch(() => null))
+      .map(f => getLocalFilterPath(f).catch(() => null)),
   );
 }
 
@@ -214,12 +238,13 @@ export async function prefetchDeepARFilters(
 /**
  * Switch the active DeepAR AR effect.
  *
- * Downloads the filter to local cache via rn-fetch-blob (first call),
- * then calls switchEffectWithPath with the raw POSIX path.
+ * Downloads the filter file via expo-file-system (first call only),
+ * then calls switchEffectWithPath with the raw POSIX path so the
+ * DeepAR Metal renderer can load it on iOS.
  */
 export async function switchDeepAREffect(
-  deepARRef: React.MutableRefObject<any>,
-  filter:    DeepARFilter,
+  deepARRef:   React.MutableRefObject<any>,
+  filter:      DeepARFilter,
   onProgress?: (state: 'downloading' | 'applying' | 'ok' | 'error', msg?: string) => void,
 ): Promise<'ok' | 'downloading' | 'error'> {
   if (!DEEPAR_ENABLED || !deepARRef?.current) {
@@ -239,17 +264,17 @@ export async function switchDeepAREffect(
     } else if (typeof deepARRef.current.switchEffect === 'function') {
       deepARRef.current.switchEffect({ mask: localPath });
     }
+    console.log('[DeepAR] effect applied:', filter.id);
     onProgress?.('ok');
     return 'ok';
   } catch (e: any) {
+    console.warn('[DeepAR] switchEffect error:', e?.message ?? e);
     onProgress?.('error', e?.message ?? 'Error al aplicar filtro');
     return 'error';
   }
 }
 
-/**
- * Clear/reset the active DeepAR effect (plain camera, no AR).
- */
+/** Clear the active AR effect — returns camera to plain pass-through. */
 export function clearDeepAREffect(deepARRef: React.MutableRefObject<any>) {
   if (!deepARRef?.current) return;
   try {
@@ -260,19 +285,39 @@ export function clearDeepAREffect(deepARRef: React.MutableRefObject<any>) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RUNTIME LIFECYCLE LOGS (called from CameraCore)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Call from CameraCore render to confirm DeepARCamera is about to mount. */
+export function logDeepARMounted() {
+  console.log('[DeepAR] mounted — DeepARCamera component rendered to native tree');
+}
+
+/** Call from DeepARCamera onInitialized callback. */
+export function logDeepARInitialized() {
+  console.log('[DeepAR] initialized — native SDK ready, Metal renderer active');
+}
+
+/** Call from DeepARCamera onCameraReady / onCameraError callbacks. */
+export function logDeepARCameraReady(ready: boolean, error?: string) {
+  if (ready) {
+    console.log('[DeepAR] camera surface ready — texture attached to Metal layer ✓');
+  } else {
+    console.warn('[DeepAR] camera surface error:', error ?? 'unknown');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DIAGNOSTICS
 // ─────────────────────────────────────────────────────────────────────────────
 export function getDeepARStatus() {
-  const hasPackage = _DeepARCamera !== null;
   return {
-    ready:        isDeepARAvailable(),
-    hasPackage,
-    hasApiKey:    false, // API key loaded by native module from app.json config
-    hasFileSystem: hasFileSystem,
-    isEnabled:    DEEPAR_ENABLED,
-    instructions: hasPackage
-      ? ['DeepAR SDK loaded — check API key in app.json expo.plugins config']
-      : ['react-native-deepar not available (preview mode or metro blocked) — use EAS build'],
+    ready:         isDeepARAvailable(),
+    hasCamera:     _DeepARCamera !== null,
+    hasDeepARClass:_DeepAR !== null,
+    hasFileSystem,
+    isEnabled:     DEEPAR_ENABLED,
+    apiKey:        DEEPAR_API_KEY.slice(0, 8) + '…', // partial for logs
   };
 }
 
@@ -293,16 +338,12 @@ export function stopDeepARRecording(deepARRef: React.MutableRefObject<any>) {
 // PERMISSIONS
 // ─────────────────────────────────────────────────────────────────────────────
 /**
- * Request camera + microphone permissions using expo-camera.
+ * Request camera permissions via expo-camera.
  *
- * WHY NOT DeepAR's CameraModule:
- *   DeepAR's CameraModule calls NativeModules.RNTCameraModule. On iOS,
- *   NativeModules entries are populated lazily after bridge hydration.
- *   If called too early (e.g. during module require), RNTCameraModule is null
- *   and throws: "Cannot read property 'requestCameraPermission' of null".
- *
- *   expo-camera requests the same iOS NSCameraUsageDescription entitlement
- *   and is always available once the app has mounted.
+ * DeepAR's own CameraModule (NativeModules.RNTCameraModule) must NOT be
+ * called before the React bridge has fully hydrated — it will be null and
+ * throw at startup. expo-camera uses the same NSCameraUsageDescription
+ * entitlement and is always safe to call after the app mounts.
  */
 export async function requestDeepARPermissions(): Promise<boolean> {
   try {
@@ -313,6 +354,7 @@ export async function requestDeepARPermissions(): Promise<boolean> {
     return false;
   }
 }
+
 export async function getDeepARCameraPermission(): Promise<string> {
   try {
     const { getCameraPermissionsAsync } = require('expo-camera');
@@ -332,8 +374,9 @@ export function setBeautyParams(
 ) {
   try {
     if (!deepARRef?.current) return;
-    if (params.smoothing !== undefined)
+    if (params.smoothing !== undefined) {
       deepARRef.current.setBeautyParams?.({ smoothingFactor: params.smoothing });
+    }
   } catch { /* ignore */ }
 }
 
