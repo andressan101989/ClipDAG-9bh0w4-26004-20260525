@@ -13,8 +13,18 @@ console.log('[BOOT] 0 - _layout module start');
 // Initialize AppLifecycle singleton immediately at module load — before any
 // component mounts — so all subsequent onForeground/onBackground registrations
 // start receiving events from the very first AppState change.
-import { AppLifecycle } from '@/modules/core/AppLifecycle';
+import { AppLifecycle }   from '@/modules/core/AppLifecycle';
+import { CrashManager }   from '@/modules/core/CrashManager';
+import { ThermalMonitor } from '@/modules/core/ThermalMonitor';
+import { Diagnostics }    from '@/modules/core/Diagnostics';
+import { CleanupWorker }  from '@/background/CleanupWorker';
+import { UploadWorker }   from '@/background/UploadWorker';
 AppLifecycle.initialize();
+CrashManager.initialize();
+ThermalMonitor.start();
+Diagnostics.startCollection();
+CleanupWorker.start();
+UploadWorker.start();
 
 import { Stack } from 'expo-router';
 console.log('[BOOT] 1 - expo-router imported');
