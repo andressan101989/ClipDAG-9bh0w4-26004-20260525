@@ -181,6 +181,7 @@ export default function RootLayout() {
             <Stack.Screen name="earnings" />
             <Stack.Screen name="ai-avatar" />
             <Stack.Screen name="deepar-test" />
+            <Stack.Screen name="boot-test" options={{ headerShown: false }} />
           </Stack>
         </SafeAreaProvider>
       </AlertProvider>
