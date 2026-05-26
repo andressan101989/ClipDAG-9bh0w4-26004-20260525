@@ -45,8 +45,9 @@
  *                                  AND by @supabase/realtime-js tracing module.
  *                                  Contains: import(OTEL_PKG) — Hermes fatal.
  *
- * ── WALLETCONNECT: web/preview blocked, native EAS allowed ──────────────────
- *   @walletconnect/*             → requires native modules not in Expo Go / OnSpace preview.
+ * ── WALLETCONNECT: web/preview blocked only, native EAS loads normally ─────
+ *   @walletconnect/*             → blocked on web/preview (no native modules);
+ *                                  native EAS iOS/Android loads the real SDK.
  *   @web3modal/*                 → same constraint
  *
  * ── WEB_ONLY_BLOCKED ────────────────────────────────────────────────────────
@@ -104,13 +105,13 @@ const SUPABASE_TRACING_PATHS = [
   '@supabase/supabase-js/dist/cjs/lib/tracing',
 ];
 
-// ── @walletconnect/* and @web3modal/* — BLOCKED ON ALL PLATFORMS ────────────
-// Previously only blocked on web/preview. Now also blocked on iOS/Android
-// native builds to prevent the WalletConnect SDK from crashing during
-// module evaluation at startup (top-level require in useExternalWallet.native.ts).
-// The SDK executes native bridge calls at module load time which crash the app
-// before React mounts — confirmed as the root cause of "Failed to launch app".
-// WalletConnect will show a graceful "not available" state via IS_AVAILABLE=false.
+// ── @walletconnect/* and @web3modal/* — BLOCKED ON WEB/PREVIEW ONLY ─────────
+// On native EAS builds (iOS/Android) WalletConnect loads normally.
+// On web/preview it's blocked because the SDK requires native modules not
+// available in web/preview environments.
+// NOTE: The startup crash was caused by top-level require() in
+// useExternalWallet.native.ts — that file now uses lazy require() inside
+// openModal() so it never executes at module load time.
 const WALLETCONNECT_PREFIXES = [
   '@walletconnect/',
   '@web3modal/',
@@ -160,12 +161,13 @@ config.resolver = {
       return { type: 'sourceFile', filePath: EMPTY_STUB };
     }
 
-    // 3. Block @walletconnect/* and @web3modal/* on ALL platforms
-    // (was: web/preview only — now also native iOS/Android to prevent startup crash)
+    // 3. Block @walletconnect/* and @web3modal/* only on web/preview
+    // On native EAS builds (iOS/Android) the SDK loads normally — required for
+    // WalletConnect QR modal to work on physical devices.
     const isWC = WALLETCONNECT_PREFIXES.some(
       prefix => moduleName === prefix.slice(0, -1) || moduleName.startsWith(prefix),
     );
-    if (isWC) {
+    if (isWC && (platform === 'web' || platform === null)) {
       return { type: 'sourceFile', filePath: EMPTY_STUB };
     }
 
