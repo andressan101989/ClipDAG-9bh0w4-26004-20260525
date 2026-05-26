@@ -84,7 +84,7 @@ export interface AppEvents {
   'app:foreground':           void;
   'app:background':           void;
   'app:low_memory':           void;
-  'app:network_changed':      { isConnected: boolean; type: string };
+  'app:network_changed':      void;
 }
 
 export type AppEventName = keyof AppEvents;

@@ -10,3 +10,5 @@ export { TimerManager }  from './TimerManager';
 export type { GameTimer } from './TimerManager';
 export { RewardsEngine } from './RewardsEngine';
 export type { RewardInput, RewardPreview } from './RewardsEngine';
+export { MultiplayerEngine } from './MultiplayerEngine';
+export type { GameEventType, GameEvent, PlayerState, RoomState, SyncPriority } from './MultiplayerEngine';
