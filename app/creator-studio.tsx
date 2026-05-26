@@ -33,7 +33,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { getDeepARStatus, isDeepARAvailable } from '@/services/deeparService';
-import { isFFmpegAvailable }                  from '@/services/ffmpegService';
+import { isFFmpegAvailable, RenderQueue, type RenderJob } from '@/services/ffmpegService';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 
 import {
@@ -73,8 +73,9 @@ export default function CreatorStudioScreen() {
   const { markReady } = useNavigationTelemetry('CreatorStudioScreen');
   const { canRenderEffects } = useStabilityMode();
 
-  const [tab, setTab]       = useState<StudioTab>('ar');
+  const [tab, setTab]           = useState<StudioTab>('ar');
   const [sessionReady, setSessionReady] = useState(false);
+  const [renderJobs, setRenderJobs]     = useState<RenderJob[]>([]);
   const tabAnim = useSharedValue(1);
   const tabSty  = useAnimatedStyle(() => ({ opacity: tabAnim.value }));
   const gpuSlot = useRef<string | null>(null);
@@ -84,6 +85,9 @@ export default function CreatorStudioScreen() {
 
   useEffect(() => {
     CrashIntelligence.addBreadcrumb('navigation', 'CreatorStudio mounted');
+
+    // Subscribe to render queue for export progress display
+    const unsubQueue = RenderQueue.subscribe(jobs => setRenderJobs(jobs));
 
     let mounted = true;
 
@@ -171,6 +175,7 @@ export default function CreatorStudioScreen() {
 
     return () => {
       mounted = false;
+      unsubQueue();
       cleanup();
     };
   }, []);
@@ -236,8 +241,9 @@ export default function CreatorStudioScreen() {
     );
   }, [router]);
 
-  const deepARStatus = getDeepARStatus();
-  const deepARActive = isDeepARAvailable();
+  const deepARStatus    = getDeepARStatus();
+  const deepARActive    = isDeepARAvailable();
+  const activeRenderJob = renderJobs.find(j => j.status === 'running');
 
   return (
     <View style={[root.container, { paddingTop: insets.top }]}>
@@ -294,6 +300,19 @@ export default function CreatorStudioScreen() {
           </Pressable>
         </View>
       )}
+
+      {/* Active render job progress banner */}
+      {activeRenderJob ? (
+        <View style={[root.statusBar, { backgroundColor: '#7C5CFF15', borderBottomColor: '#7C5CFF33' }]}>
+          <MaterialCommunityIcons name="video-outline" size={12} color="#7C5CFF" />
+          <Text style={[root.statusBarText, { color: '#7C5CFF' }]}>
+            Exportando: {activeRenderJob.currentStep} ({activeRenderJob.progressPct}%)
+          </Text>
+          <Pressable onPress={() => RenderQueue.cancel(activeRenderJob.id)}>
+            <Text style={[root.statusBarText, { color: Colors.secondary, textDecorationLine: 'underline' }]}>Cancelar</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {/* Stability degradation warning */}
       {!canRenderEffects ? (

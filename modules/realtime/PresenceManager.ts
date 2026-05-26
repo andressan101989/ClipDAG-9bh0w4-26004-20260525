@@ -1,57 +1,105 @@
 /**
- * modules/realtime/PresenceManager.ts — Real Supabase presence system
+ * modules/realtime/PresenceManager.ts — v2 Production presence system
  *
- * Uses user_profiles.updated_at / a lightweight `user_presence` approach:
- *   - Heartbeat: upserts a presence row every 15s while app is active
- *   - isOnline: checks cache for TTL < 35s
- *   - Batch fetch: queries Supabase for a list of userIds
- *   - Background: pauses heartbeat to save battery (backgroundFactor: 0)
- *   - Cleanup: stopHeartbeat() removes polling + marks user offline
- *
- * Presence table (apply migration if not present):
- *   user_presence (
- *     user_id    uuid primary key references user_profiles(id) on delete cascade,
- *     status     text not null default 'online',
- *     activity   text,
- *     updated_at timestamptz not null default now()
- *   )
- *
- * Falls back gracefully if table doesn't exist — no crashes.
+ * Full multiplayer session coordination:
+ *   - Heartbeat: upserts user_presence every 15s while active
+ *   - Session sync: activity field carries structured JSON
+ *     (status, gameId, streamId, callId, etc.)
+ *   - Multi-room awareness: tracks which session a user is in
+ *   - Batch fetch: single query for N user IDs
+ *   - Stale TTL: offline after 35s without heartbeat
+ *   - Background: pauses heartbeat to save battery
+ *   - Subscribe: per-user callbacks on status changes
+ *   - Cross-module: other managers (RTCManager, GameRoom) call
+ *     setStatus() to advertise their current activity
+ *   - Graceful fallback: table missing = cache-only mode
  */
 
 import { getSupabaseClient } from '@/template';
 import { AppLifecycle }       from '../core/AppLifecycle';
 import { PollingManager }     from './PollingManager';
+import { CrashIntelligence }  from '../core/CrashIntelligence';
+import { EventBus }           from '../core/EventBus';
 
-export type PresenceStatus = 'online' | 'away' | 'in_call' | 'streaming' | 'offline';
+export type PresenceStatus = 'online' | 'away' | 'in_call' | 'streaming' | 'in_battle' | 'offline';
 
-export interface PresenceRecord {
-  userId:    string;
-  status:    PresenceStatus;
-  activity?: string;
-  updatedAt: number;   // epoch ms
+export interface PresenceActivity {
+  status:     PresenceStatus;
+  gameId?:    string;
+  streamId?:  string;
+  callId?:    string;
+  latencyMs?: number;
+  version:    number; // monotonic — for conflict-free merge
 }
 
-const OFFLINE_TTL_MS = 35_000;
-const HEARTBEAT_MS   = 15_000;
-const TABLE = 'user_presence';
+export interface PresenceRecord {
+  userId:     string;
+  status:     PresenceStatus;
+  activity?:  PresenceActivity;
+  updatedAt:  number;
+}
+
+export interface MultiplayerSessionInfo {
+  roomId:    string;
+  userIds:   string[];
+  hostId:    string;
+  startedAt: number;
+}
+
+const OFFLINE_TTL_MS  = 35_000;
+const HEARTBEAT_MS    = 15_000;
+const TABLE           = 'user_presence';
 
 // ── PresenceManager ───────────────────────────────────────────────────────────
 
 class PresenceManagerImpl {
   private readonly _cache       = new Map<string, PresenceRecord>();
-  private readonly _subscribers = new Map<string, Set<(status: PresenceStatus) => void>>();
-  private _localUserId:  string | null      = null;
-  private _localStatus:  PresenceStatus     = 'online';
-  private _localActivity?: string;
+  private readonly _subscribers = new Map<string, Set<(r: PresenceRecord) => void>>();
+  private _localUserId:   string | null    = null;
+  private _localStatus:   PresenceStatus   = 'online';
+  private _localActivity: PresenceActivity | null = null;
+  private _activityVersion = 0;
   private _heartbeatActive = false;
-  private _tableExists     = true;   // assume true until proven otherwise
+  private _tableExists     = true;
 
-  // ── Public API ─────────────────────────────────────────────────────────────
+  // ── Multiplayer session coordination ──────────────────────────────────────
+
+  private readonly _activeSessions = new Map<string, MultiplayerSessionInfo>();
+
+  registerMultiplayerSession(info: MultiplayerSessionInfo): void {
+    this._activeSessions.set(info.roomId, info);
+    this.setStatus('in_battle', { gameId: info.roomId, version: ++this._activityVersion });
+    CrashIntelligence.addBreadcrumb('state', 'PresenceManager: battle registered', { roomId: info.roomId });
+  }
+
+  unregisterMultiplayerSession(roomId: string): void {
+    this._activeSessions.delete(roomId);
+    if (this._activeSessions.size === 0 && this._localStatus === 'in_battle') {
+      this.setStatus('online');
+    }
+  }
+
+  registerStreamSession(streamId: string): void {
+    this.setStatus('streaming', { streamId, version: ++this._activityVersion });
+  }
+
+  unregisterStreamSession(): void {
+    if (this._localStatus === 'streaming') this.setStatus('online');
+  }
+
+  registerCallSession(callId: string): void {
+    this.setStatus('in_call', { callId, version: ++this._activityVersion });
+  }
+
+  unregisterCallSession(): void {
+    if (this._localStatus === 'in_call') this.setStatus('online');
+  }
+
+  // ── Core API ───────────────────────────────────────────────────────────────
 
   startHeartbeat(userId: string, initialStatus: PresenceStatus = 'online'): void {
-    this._localUserId  = userId;
-    this._localStatus  = initialStatus;
+    this._localUserId = userId;
+    this._localStatus = initialStatus;
     if (this._heartbeatActive) return;
     this._heartbeatActive = true;
 
@@ -59,13 +107,21 @@ class PresenceManagerImpl {
       key:              'presence:heartbeat',
       intervalMs:       HEARTBEAT_MS,
       runImmediately:   true,
-      backgroundFactor: 0,   // pause in background — saves battery
+      backgroundFactor: 0,
       fn:               () => this._sendHeartbeat(),
     });
 
-    // Re-send heartbeat on foreground
+    // Re-push on foreground
     AppLifecycle.onForeground(() => {
       if (this._localUserId) this._sendHeartbeat();
+    });
+
+    // Handle away on background
+    AppLifecycle.onBackground(() => {
+      if (this._localUserId && this._localStatus !== 'in_call') {
+        // Update local cache but don't block (fire+forget)
+        this._sendHeartbeatWithStatus('away');
+      }
     });
 
     console.log('[PresenceManager] heartbeat started for:', userId);
@@ -74,21 +130,32 @@ class PresenceManagerImpl {
   stopHeartbeat(): void {
     if (!this._heartbeatActive) return;
     this._heartbeatActive = false;
-
-    // Mark offline before stopping
-    if (this._localUserId) {
-      this._setOffline(this._localUserId);
-    }
-
+    if (this._localUserId) this._setOffline(this._localUserId);
     this._localUserId = null;
     PollingManager.unregister('presence:heartbeat');
     console.log('[PresenceManager] heartbeat stopped');
   }
 
-  setStatus(status: PresenceStatus, activity?: string): void {
-    this._localStatus   = status;
-    this._localActivity = activity;
+  setStatus(status: PresenceStatus, activityPatch?: Partial<PresenceActivity>): void {
+    this._localStatus = status;
+    if (activityPatch) {
+      this._localActivity = {
+        ...(this._localActivity ?? { status, version: 0 }),
+        ...activityPatch,
+        status,
+        version: this._activityVersion,
+      };
+    } else {
+      this._localActivity = { status, version: ++this._activityVersion };
+    }
     if (this._heartbeatActive) this._sendHeartbeat();
+
+    // Notify EventBus so other managers can react
+    EventBus.emit('presence:status_changed' as any, {
+      userId: this._localUserId,
+      status,
+      activity: this._localActivity,
+    });
   }
 
   isOnline(userId: string): boolean {
@@ -97,36 +164,31 @@ class PresenceManagerImpl {
     return rec.status !== 'offline' && (Date.now() - rec.updatedAt) < OFFLINE_TTL_MS;
   }
 
+  isInBattle(userId: string): boolean {
+    return this._cache.get(userId)?.status === 'in_battle';
+  }
+
+  isStreaming(userId: string): boolean {
+    return this._cache.get(userId)?.status === 'streaming';
+  }
+
+  isInCall(userId: string): boolean {
+    return this._cache.get(userId)?.status === 'in_call';
+  }
+
   getPresence(userId: string): PresenceRecord | null {
     return this._cache.get(userId) ?? null;
   }
 
-  updatePresence(record: PresenceRecord): void {
-    const prev = this._cache.get(record.userId);
-    this._cache.set(record.userId, record);
-    if (prev?.status !== record.status) {
-      const handlers = this._subscribers.get(record.userId);
-      if (handlers) {
-        for (const fn of handlers) {
-          try { fn(record.status); } catch { /* isolate */ }
-        }
-      }
-    }
-  }
-
-  subscribe(userId: string, fn: (status: PresenceStatus) => void): () => void {
-    if (!this._subscribers.has(userId)) {
-      this._subscribers.set(userId, new Set());
-    }
-    this._subscribers.get(userId)!.add(fn);
-    return () => this._subscribers.get(userId)?.delete(fn);
-  }
-
   /** Batch-fetch presence for a list of user IDs and update cache. */
-  async fetchPresence(userIds: string[]): Promise<void> {
-    if (!this._tableExists || userIds.length === 0) {
+  async fetchPresence(userIds: string[]): Promise<PresenceRecord[]> {
+    if (userIds.length === 0) { this._expireStale(); return []; }
+
+    if (!this._tableExists) {
       this._expireStale();
-      return;
+      return userIds.map(id => this._cache.get(id) ?? {
+        userId: id, status: 'offline' as PresenceStatus, updatedAt: 0,
+      });
     }
 
     try {
@@ -138,44 +200,94 @@ class PresenceManagerImpl {
 
       if (error) {
         if (error.message?.includes('does not exist')) {
-          this._tableExists = false;   // table not yet migrated — skip future calls
-          console.warn('[PresenceManager] user_presence table not found — falling back to TTL expiry only');
+          this._tableExists = false;
+          console.warn('[PresenceManager] user_presence table not found — cache-only mode');
         }
         this._expireStale();
-        return;
+        return [];
       }
 
       const now = Date.now();
+      const results: PresenceRecord[] = [];
+
       for (const row of (data ?? [])) {
         const updatedAt = new Date(row.updated_at).getTime();
-        const status: PresenceStatus =
-          (now - updatedAt) > OFFLINE_TTL_MS ? 'offline' : (row.status as PresenceStatus);
-        this.updatePresence({
-          userId:    row.user_id,
-          status,
-          activity:  row.activity ?? undefined,
-          updatedAt,
-        });
+        const stale     = (now - updatedAt) > OFFLINE_TTL_MS;
+        const rawStatus = row.status as PresenceStatus;
+        const status: PresenceStatus = stale ? 'offline' : rawStatus;
+
+        let activity: PresenceActivity | undefined;
+        if (row.activity) {
+          try { activity = JSON.parse(row.activity); } catch { /* ignore */ }
+        }
+
+        const record: PresenceRecord = { userId: row.user_id, status, activity, updatedAt };
+        this._updateCache(record);
+        results.push(record);
       }
 
       this._expireStale();
+      return results;
     } catch (e: any) {
       console.warn('[PresenceManager] fetchPresence error:', e?.message);
       this._expireStale();
+      return [];
     }
   }
+
+  /** Subscribe to presence updates for a specific user. */
+  subscribe(userId: string, fn: (record: PresenceRecord) => void): () => void {
+    if (!this._subscribers.has(userId)) {
+      this._subscribers.set(userId, new Set());
+    }
+    this._subscribers.get(userId)!.add(fn);
+    // Immediately emit cached value if available
+    const cached = this._cache.get(userId);
+    if (cached) { try { fn(cached); } catch { /* ignore */ } }
+    return () => this._subscribers.get(userId)?.delete(fn);
+  }
+
+  /** Directly push a presence record (used by GameRoom/RTCManager) */
+  updatePresence(record: PresenceRecord): void {
+    this._updateCache(record);
+  }
+
+  /** Poll presence for a set of users on a schedule. */
+  watchUsers(userIds: string[], intervalMs = 15_000): () => void {
+    const key = `presence:watch:${userIds.slice(0, 3).join(',')}`;
+    PollingManager.register({
+      key,
+      intervalMs,
+      runImmediately: true,
+      backgroundFactor: 0,
+      fn: () => this.fetchPresence(userIds).then(() => {}),
+    });
+    return () => PollingManager.unregister(key);
+  }
+
+  get localStatus(): PresenceStatus { return this._localStatus; }
+  get localActivity(): PresenceActivity | null { return this._localActivity; }
+  get cachedCount(): number { return this._cache.size; }
 
   // ── Private ────────────────────────────────────────────────────────────────
 
   private async _sendHeartbeat(): Promise<void> {
+    return this._sendHeartbeatWithStatus(this._localStatus);
+  }
+
+  private async _sendHeartbeatWithStatus(status: PresenceStatus): Promise<void> {
     const uid = this._localUserId;
     if (!uid) return;
 
+    const activityJson = this._localActivity
+      ? JSON.stringify({ ...this._localActivity, status })
+      : null;
+
     // Update local cache immediately
-    this.updatePresence({
+    this._updateCache({
       userId:    uid,
-      status:    this._localStatus,
-      activity:  this._localActivity,
+      status,
+      activity:  this._localActivity ?? undefined,
       updatedAt: Date.now(),
     });
 
@@ -185,17 +297,17 @@ class PresenceManagerImpl {
       const supabase = getSupabaseClient();
       const { error } = await supabase.from(TABLE).upsert({
         user_id:    uid,
-        status:     this._localStatus,
-        activity:   this._localActivity ?? null,
+        status,
+        activity:   activityJson,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id' });
 
       if (error) {
         if (error.message?.includes('does not exist')) {
           this._tableExists = false;
-          console.warn('[PresenceManager] user_presence table not found — heartbeat will update cache only');
+          console.warn('[PresenceManager] user_presence table not found');
         } else {
-          console.warn('[PresenceManager] heartbeat upsert error:', error.message);
+          console.warn('[PresenceManager] heartbeat error:', error.message);
         }
       }
     } catch (e: any) {
@@ -204,23 +316,35 @@ class PresenceManagerImpl {
   }
 
   private async _setOffline(uid: string): Promise<void> {
-    this.updatePresence({ userId: uid, status: 'offline', updatedAt: Date.now() });
+    this._updateCache({ userId: uid, status: 'offline', updatedAt: Date.now() });
     if (!this._tableExists) return;
     try {
       const supabase = getSupabaseClient();
       await supabase.from(TABLE).upsert({
         user_id:    uid,
         status:     'offline',
+        activity:   null,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id' });
     } catch { /* non-critical */ }
+  }
+
+  private _updateCache(record: PresenceRecord): void {
+    const prev = this._cache.get(record.userId);
+    this._cache.set(record.userId, record);
+    if (prev?.status !== record.status) {
+      const handlers = this._subscribers.get(record.userId);
+      if (handlers) {
+        for (const fn of handlers) { try { fn(record); } catch { /* isolate */ } }
+      }
+    }
   }
 
   private _expireStale(): void {
     const now = Date.now();
     for (const [userId, rec] of this._cache.entries()) {
       if (rec.status !== 'offline' && (now - rec.updatedAt) > OFFLINE_TTL_MS) {
-        this.updatePresence({ ...rec, status: 'offline', updatedAt: now });
+        this._updateCache({ ...rec, status: 'offline', updatedAt: now });
       }
     }
   }
