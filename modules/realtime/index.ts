@@ -14,3 +14,5 @@ export { ConnectionManager }  from './ConnectionManager';
 export type { ConnectionState, NetworkType } from './ConnectionManager';
 export { SessionRecovery }    from './SessionRecovery';
 export type { RecoverableSessionType, SessionSnapshot } from './SessionRecovery';
+export { RTCManager }         from './RTCManager';
+export type { RTCConnectionState, RTCQualityLevel, RTCPeerStats, RTCPeerConfig } from './RTCManager';

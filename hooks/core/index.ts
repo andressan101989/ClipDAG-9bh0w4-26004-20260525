@@ -7,3 +7,5 @@ export { useRenderIsolation }  from './useRenderIsolation';
 export { usePowerTier }        from './usePowerTier';
 export { useLeakTracking }     from './useLeakTracking';
 export { useAdaptiveQuality }  from './useAdaptiveQuality';
+export { useGPU }              from './useGPU';
+export { useSessionOrchestrator } from './useSessionOrchestrator';
