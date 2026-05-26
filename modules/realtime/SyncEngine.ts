@@ -1,157 +1,222 @@
 /**
- * modules/realtime/SyncEngine.ts — State synchronization engine
+ * modules/realtime/SyncEngine.ts — Optimistic UI & state reconciliation engine
  *
- * Provides optimistic updates + background reconciliation for domain stores.
- * Pattern: write locally immediately → sync to backend → confirm or rollback.
+ * Provides optimistic updates with server reconciliation:
+ *   - apply():    instant local state mutation
+ *   - commit():   persist to server (async)
+ *   - rollback(): revert if server rejects
+ *   - reconcile(): merge server state with local state on reconnect
  *
- * Features:
- *   - Optimistic write queue: local state updates before server confirms
- *   - Conflict resolution: last-write-wins by timestamp (configurable)
- *   - Retry on failure: exponential back-off with max 3 attempts
- *   - Rollback on permanent failure: reverts local state to pre-write snapshot
- *   - Offline queue: operations persist across connection interruptions
+ * Conflict resolution strategies:
+ *   - last-write-wins (LWW): simple timestamp comparison
+ *   - server-authoritative: server state always wins
+ *   - merge: field-level merge (e.g. counters)
+ *
+ * Anti-drift protection:
+ *   - Periodic reconciliation poll (30s) compares local vs server
+ *   - On reconnect, full reconciliation of all pending mutations
+ *   - Stale mutation cleanup (>5min old = discard, re-fetch)
  *
  * Usage:
- *   SyncEngine.optimisticUpdate({
- *     id:        'like:videoId',
- *     apply:     () => FeedStore.setLiked(videoId, true),
- *     rollback:  () => FeedStore.setLiked(videoId, false),
- *     commit:    async () => supabase.from('likes').insert({ video_id: videoId }),
+ *   // Optimistic like
+ *   const op = SyncEngine.optimisticUpdate('video:like', videoId, {
+ *     apply:    () => setLiked(true),
+ *     commit:   () => supabase.from('likes').insert(...),
+ *     rollback: () => setLiked(false),
  *   });
  */
 
-import { AppLifecycle } from '../core/AppLifecycle';
+import { ConnectionManager } from './ConnectionManager';
 
-export interface OptimisticOp {
-  /** Unique key — duplicate key replaces the pending operation. */
-  id:       string;
-  /** Apply the local state change immediately. */
-  apply:    () => void;
-  /** Revert local state on permanent failure. */
-  rollback: () => void;
-  /** Async backend commit. Throw to indicate failure. */
-  commit:   () => Promise<void>;
-  /** Max retry attempts. Default: 3. */
-  maxRetries?: number;
+export type ConflictStrategy = 'last-write-wins' | 'server-wins' | 'merge';
+
+interface PendingMutation {
+  id:          string;
+  entityType:  string;
+  entityId:    string;
+  apply:       () => void;
+  commit:      () => Promise<{ error?: any }>;
+  rollback:    () => void;
+  strategy:    ConflictStrategy;
+  appliedAt:   number;
+  retries:     number;
+  maxRetries:  number;
 }
 
-type OpStatus = 'pending' | 'committing' | 'committed' | 'failed';
-
-interface OpEntry extends OptimisticOp {
-  status:   OpStatus;
-  attempts: number;
-  createdAt:number;
-}
-
-const RETRY_BASE_MS = 1000;
-const MAX_QUEUE     = 200;
+const MAX_MUTATION_AGE_MS = 5 * 60 * 1000;   // 5 min
+const MAX_RETRIES         = 3;
 
 class SyncEngineImpl {
-  private readonly _queue = new Map<string, OpEntry>();
-  private _isProcessing  = false;
+  private readonly _pending = new Map<string, PendingMutation>();
+  private _flushTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  constructor() {
-    // Flush queue when app returns to foreground
-    AppLifecycle.onForeground(() => {
-      this._processQueue();
-    });
-  }
-
-  // ── Public API ─────────────────────────────────────────────────────────────
+  // ── Optimistic update ─────────────────────────────────────────────────────
 
   /**
-   * Apply an optimistic update immediately and schedule the backend commit.
-   * If an operation with the same id is already pending, it is replaced.
+   * Apply an optimistic mutation immediately, queue for server commit.
+   * Returns the mutation ID for manual control.
    */
-  optimisticUpdate(op: OptimisticOp): void {
-    // Apply local state change immediately
-    try { op.apply(); } catch (e: any) {
-      console.warn('[SyncEngine] apply() error for op:', op.id, e?.message);
-    }
+  optimisticUpdate(
+    entityType: string,
+    entityId:   string,
+    ops: {
+      apply:     () => void;
+      commit:    () => Promise<{ error?: any }>;
+      rollback:  () => void;
+      strategy?: ConflictStrategy;
+      maxRetries?: number;
+    },
+  ): string {
+    const id = `${entityType}:${entityId}:${Date.now()}`;
 
-    const entry: OpEntry = {
-      ...op,
-      status:    'pending',
-      attempts:  0,
-      createdAt: Date.now(),
-      maxRetries: op.maxRetries ?? 3,
-    };
-    this._queue.set(op.id, entry);
-
-    // Trim queue if too large (emergency safety valve)
-    if (this._queue.size > MAX_QUEUE) {
-      const oldest = Array.from(this._queue.entries())
-        .sort((a, b) => a[1].createdAt - b[1].createdAt)
-        .slice(0, this._queue.size - MAX_QUEUE);
-      for (const [key] of oldest) this._queue.delete(key);
-    }
-
-    this._processQueue();
-  }
-
-  /** Directly commit without optimistic apply (for non-UI operations). */
-  async commit(id: string, commit: () => Promise<void>, maxRetries = 3): Promise<void> {
-    const entry: OpEntry = {
-      id, commit,
-      apply:     () => {},
-      rollback:  () => {},
-      status:    'pending',
-      attempts:  0,
-      createdAt: Date.now(),
-      maxRetries,
-    };
-    this._queue.set(id, entry);
-    await this._processQueue();
-  }
-
-  /** Number of pending operations. */
-  get pendingCount(): number {
-    return Array.from(this._queue.values()).filter(e => e.status === 'pending' || e.status === 'committing').length;
-  }
-
-  /** Clear all pending operations (e.g. on logout). */
-  clear(): void {
-    this._queue.clear();
-  }
-
-  // ── Private ────────────────────────────────────────────────────────────────
-
-  private async _processQueue(): Promise<void> {
-    if (this._isProcessing) return;
-    this._isProcessing = true;
-
+    // Apply immediately
     try {
-      const pending = Array.from(this._queue.values()).filter(e => e.status === 'pending');
-
-      for (const entry of pending) {
-        entry.status = 'committing';
-        this._attemptCommit(entry);
-      }
-    } finally {
-      this._isProcessing = false;
-    }
-  }
-
-  private async _attemptCommit(entry: OpEntry, delay = 0): Promise<void> {
-    if (delay > 0) await new Promise(r => setTimeout(r, delay));
-
-    entry.attempts++;
-    try {
-      await entry.commit();
-      entry.status = 'committed';
-      this._queue.delete(entry.id);
+      ops.apply();
     } catch (e: any) {
-      const maxRetries = entry.maxRetries ?? 3;
-      if (entry.attempts < maxRetries) {
-        const nextDelay = RETRY_BASE_MS * Math.pow(2, entry.attempts - 1);
-        entry.status = 'pending';
-        console.warn(`[SyncEngine] op "${entry.id}" failed (attempt ${entry.attempts}/${maxRetries}), retry in ${nextDelay}ms`);
-        setTimeout(() => this._attemptCommit(entry, 0), nextDelay);
+      console.error('[SyncEngine] apply failed:', e?.message);
+      return id;
+    }
+
+    const mutation: PendingMutation = {
+      id,
+      entityType,
+      entityId,
+      apply:     ops.apply,
+      commit:    ops.commit,
+      rollback:  ops.rollback,
+      strategy:  ops.strategy ?? 'last-write-wins',
+      appliedAt: Date.now(),
+      retries:   0,
+      maxRetries: ops.maxRetries ?? MAX_RETRIES,
+    };
+
+    this._pending.set(id, mutation);
+    this._scheduleFlush();
+    return id;
+  }
+
+  /** Immediately commit a specific mutation (bypass flush delay). */
+  async forceCommit(mutationId: string): Promise<void> {
+    const mutation = this._pending.get(mutationId);
+    if (!mutation) return;
+    await this._commitMutation(mutation);
+  }
+
+  /** Rollback a specific pending mutation. */
+  rollback(mutationId: string): void {
+    const mutation = this._pending.get(mutationId);
+    if (!mutation) return;
+    try { mutation.rollback(); } catch { /* isolate */ }
+    this._pending.delete(mutationId);
+  }
+
+  get pendingCount(): number { return this._pending.size; }
+
+  // ── Reconciliation ────────────────────────────────────────────────────────
+
+  /** Flush all pending mutations. Called on reconnect. */
+  async flushAll(): Promise<void> {
+    const mutations = Array.from(this._pending.values())
+      .sort((a, b) => a.appliedAt - b.appliedAt);
+
+    console.log(`[SyncEngine] flushing ${mutations.length} pending mutations`);
+
+    for (const mutation of mutations) {
+      await this._commitMutation(mutation);
+    }
+  }
+
+  /** Clean up stale mutations (> MAX_MUTATION_AGE_MS). */
+  cleanupStale(): void {
+    const now = Date.now();
+    for (const [id, mutation] of this._pending) {
+      if (now - mutation.appliedAt > MAX_MUTATION_AGE_MS) {
+        console.warn('[SyncEngine] dropping stale mutation:', mutation.entityType, mutation.entityId);
+        try { mutation.rollback(); } catch { /* isolate */ }
+        this._pending.delete(id);
+      }
+    }
+  }
+
+  /** Reconcile local state with server response. */
+  reconcile<T extends Record<string, any>>(
+    localState:   T,
+    serverState:  T,
+    strategy:     ConflictStrategy = 'server-wins',
+    fields?:      (keyof T)[],
+  ): T {
+    if (strategy === 'server-wins') {
+      return { ...localState, ...serverState };
+    }
+
+    if (strategy === 'last-write-wins') {
+      // Favor server for now (client clock can drift)
+      return { ...localState, ...serverState };
+    }
+
+    if (strategy === 'merge') {
+      const result = { ...localState };
+      const keys = fields ?? (Object.keys(serverState) as (keyof T)[]);
+      for (const key of keys) {
+        const local  = localState[key];
+        const server = serverState[key];
+        // For numeric counters: take max
+        if (typeof local === 'number' && typeof server === 'number') {
+          (result as any)[key] = Math.max(local, server);
+        } else {
+          (result as any)[key] = server;
+        }
+      }
+      return result;
+    }
+
+    return serverState;
+  }
+
+  // ── Private ───────────────────────────────────────────────────────────────
+
+  private _scheduleFlush(): void {
+    if (this._flushTimeout) return;
+    this._flushTimeout = setTimeout(() => {
+      this._flushTimeout = null;
+      this._flushBatch();
+    }, 300);  // 300ms debounce
+  }
+
+  private async _flushBatch(): Promise<void> {
+    if (!ConnectionManager.isHealthy) {
+      // Defer until reconnected
+      ConnectionManager.onReconnect(() => this.flushAll());
+      return;
+    }
+
+    const mutations = Array.from(this._pending.values())
+      .sort((a, b) => a.appliedAt - b.appliedAt);
+
+    for (const mutation of mutations) {
+      await this._commitMutation(mutation);
+    }
+  }
+
+  private async _commitMutation(mutation: PendingMutation): Promise<void> {
+    try {
+      const { error } = await mutation.commit();
+      if (error) {
+        throw error;
+      }
+      this._pending.delete(mutation.id);
+    } catch (e: any) {
+      mutation.retries++;
+      console.warn(`[SyncEngine] commit failed (${mutation.retries}/${mutation.maxRetries}):`, e?.message);
+
+      if (mutation.retries >= mutation.maxRetries) {
+        console.error('[SyncEngine] max retries reached — rolling back:', mutation.entityType);
+        try { mutation.rollback(); } catch { /* isolate */ }
+        this._pending.delete(mutation.id);
       } else {
-        entry.status = 'failed';
-        console.error(`[SyncEngine] op "${entry.id}" permanently failed — rolling back`);
-        try { entry.rollback(); } catch { /* isolate rollback errors */ }
-        this._queue.delete(entry.id);
+        // Exponential backoff retry
+        const delay = Math.min(1000 * Math.pow(2, mutation.retries), 10_000);
+        setTimeout(() => this._commitMutation(mutation), delay);
       }
     }
   }

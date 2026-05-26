@@ -1,180 +1,200 @@
-/**
- * ARCHITECTURE.md — ClipDAG Module Architecture v2
- * ==================================================
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * DIRECTORY STRUCTURE
- * ─────────────────────────────────────────────────────────────────────────────
- *
- * app/                    Expo Router pages (file-based routing — NEVER move files)
- * ├── (tabs)/             Main tab screens
- * ├── _layout.tsx         Root layout + all providers + AppLifecycle + CrashManager
- * └── *.tsx               Individual screens
- *
- * store/                  Domain state stores (singletons, no React dependency)
- * ├── auth.store.ts        Auth user + session state
- * ├── call.store.ts        Voice/video call state machine
- * ├── stream.store.ts      Live stream session + gifts + chat messages
- * ├── battle.store.ts      Creator battle: votes, timer, BDAG pool
- * ├── game.store.ts        Mini-game session: scores, wager, timer
- * ├── media.store.ts       Upload queue items + recording session
- * └── index.ts            Barrel
- *
- * modules/                Feature domain modules
- * ├── core/               Infrastructure singletons
- * │   ├── EventBus.ts     Typed pub/sub (cross-module comms — 30+ event types)
- * │   ├── AppLifecycle.ts AppState monitoring + cleanup registry
- * │   ├── PerformanceMonitor.ts  Render/op timing ring buffer
- * │   ├── ResourceManager.ts    Exclusive GPU/camera/audio lease system
- * │   ├── MemoryPressureMonitor.ts  Adaptive quality (normal/moderate/critical)
- * │   ├── CrashManager.ts       Global error handler + recovery registry
- * │   └── RetryStrategy.ts      retry() + CircuitBreaker
- * ├── realtime/
- * │   ├── PollingManager.ts     Centralized poll coordinator (background-aware)
- * │   ├── SignalingManager.ts   WebRTC SDP/ICE signaling via polling
- * │   ├── PresenceManager.ts    User online/away/streaming/in-call presence
- * │   ├── SyncEngine.ts         Optimistic updates + rollback
- * │   └── EventGateway.ts       Single entry point for all incoming events
- * ├── media/
- * │   ├── UploadQueue.ts        Concurrent upload queue (retry, progress, EventBus)
- * │   └── CacheManager.ts       LRU memory + disk cache (expo-file-system)
- * ├── creator/            Creator Studio (lazy-loaded sub-modules)
- * │   ├── camera/CameraController.ts   Camera lifecycle + adaptive quality
- * │   ├── effects/EffectsController.ts AR/filter pipeline (DeepAR + Skia)
- * │   └── drafts/DraftManager.ts       Draft persistence (AsyncStorage + Supabase)
- * ├── calls/
- * │   └── CallManager.ts        Voice/video call state machine (WebRTC stub)
- * ├── streaming/
- * │   └── StreamManager.ts      Live stream host/viewer lifecycle
- * ├── battle/
- * │   └── BattleManager.ts      Creator battle orchestrator
- * └── gaming/
- *     ├── GameEngine.ts         Game-type-agnostic session manager
- *     └── Matchmaking.ts        Opponent search with polling + timeout
- *
- * contexts/               React Context providers (global app state)
- * ├── AuthContext.tsx      User authentication + profile
- * ├── FeedContext.tsx      Video feed + likes/saves/comments
- * ├── MessagesContext.tsx  DM conversations (polls via PollingManager)
- * ├── NotificationsContext.tsx  (polls via PollingManager)
- * ├── ShopContext.tsx      Marketplace
- * ├── StoriesContext.tsx   Stories
- * └── I18nContext.tsx      Internationalization
- *
- * hooks/                  Business logic hooks
- * ├── core/               Foundation hooks
- * │   ├── useCleanup.ts   Declarative cleanup (intervals, timeouts, polls)
- * │   └── useEventBus.ts  React hook for EventBus subscriptions
- * ├── store/              Reactive store hooks (subscribe to domain stores)
- * │   └── index.ts        useAuthStore, useCallStore, useStreamStore, etc.
- * ├── useAuth.tsx          Auth state consumer (wraps AuthContext)
- * ├── useWallet.tsx        BDAG balance + transactions
- * ├── useExternalWallet.native.ts  WalletConnect v2 (iOS/Android)
- * ├── useFeed.tsx          Feed actions consumer
- * ├── useMessages.tsx      Messages consumer
- * └── ...
- *
- * services/               Data layer (pure functions, no React)
- * ├── deeparService.ts     DeepAR SDK resolution + filter management
- * ├── walletApi.ts         BDAG deposit/withdrawal/transfer
- * ├── logger.ts            Structured tagged logging
- * └── ...
- *
- * components/
- * ├── ui/                  Atomic UI (Button, Badge, ErrorBoundary)
- * └── feature/             Feature components
- *     └── studio/          Creator Studio rendering components
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * KEY DESIGN DECISIONS
- * ─────────────────────────────────────────────────────────────────────────────
- *
- * 1. THREE-TIER STATE ARCHITECTURE
- *    Module stores (singletons) → hooks/store/ (React binding) → components
- *    Stores are plain objects with subscriber sets — no Zustand/MobX/Redux deps.
- *    Cross-store communication happens via EventBus only.
- *
- * 2. EVENTBUS AS DECOUPLING LAYER
- *    No direct imports between domains. E.g.:
- *    WalletStore emits 'wallet:balance_updated' → StreamStore can listen
- *    without importing WalletStore.
- *
- * 3. RESOURCEMANAGER FOR EXCLUSIVE HARDWARE ACCESS
- *    Camera, GPU, microphone, and audio session each have ONE holder at a time.
- *    Requesting a resource forces release from the current holder.
- *    AppLifecycle.onBackground() auto-releases camera + GPU.
- *
- * 4. MEMORY PRESSURE ADAPTATION
- *    MemoryPressureMonitor tracks normal/moderate/critical levels.
- *    CameraController and EffectsController read currentQuality to cap
- *    resolution and disable effects before the OS kills the process.
- *
- * 5. CRASH ISOLATION
- *    CrashManager hooks into ErrorUtils (React Native) and captures
- *    unhandled rejections. Feature-level ErrorBoundary components prevent
- *    one module crashing the entire screen tree.
- *
- * 6. SIGNALING OVER POLLING
- *    WebRTC SDP/ICE exchange uses SignalingManager at 1s poll rate during
- *    call setup (acceptable latency for connection establishment).
- *    Once connected, WebRTC is peer-to-peer — no polling overhead.
- *
- * 7. OPTIMISTIC UPDATES VIA SYNCENGINE
- *    UI updates immediately (apply). Backend commit is async with retry.
- *    On permanent failure: rollback() reverts local state.
- *
- * 8. CREATOR STUDIO LAZY LOADING
- *    CameraController, EffectsController, DraftManager are never initialized
- *    until the user enters Creator Studio. This prevents memory pressure
- *    during normal browsing.
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * DATA FLOW DIAGRAM
- * ─────────────────────────────────────────────────────────────────────────────
- *
- *   Screen/Component
- *       │  reads
- *       ↓
- *   hooks/store/useXxxStore()   ← subscribes to →  store/xxx.store.ts
- *                                                        ↑ writes
- *                                                   Module (CallManager, StreamManager, etc.)
- *                                                        ↑ listens
- *                                                   EventBus.on('domain:event')
- *                                                        ↑ emits
- *                                                   EventGateway.handle(rawEvent)
- *                                                        ↑ feeds
- *                                                   PollingManager / Push Notification
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * SCALING CHECKLIST (before adding a new feature)
- * ─────────────────────────────────────────────────────────────────────────────
- *
- * [ ] Does it need cross-module state?       → Use EventBus, never direct imports
- * [ ] Does it poll?                          → Use PollingManager
- * [ ] Does it upload media?                  → Use UploadQueue
- * [ ] Does it cache remote files?            → Use CacheManager
- * [ ] Does it use exclusive hardware?        → Register with ResourceManager
- * [ ] Does it run heavy JS?                  → Use React.lazy + lazy require
- * [ ] Does it use native modules?            → Check metro.config.js + react-native.config.js
- * [ ] Does it clean up on unmount?           → Use useCleanup hook
- * [ ] Can it crash?                          → Wrap in <ErrorBoundary module="...">
- * [ ] Does it make API calls?                → Use retry() with CircuitBreaker
- * [ ] Does it update state optimistically?   → Use SyncEngine.optimisticUpdate()
- * [ ] Does it check memory pressure?         → Read MemoryPressureMonitor.currentQuality
- * [ ] Is it a game/battle feature?           → Use GameStore/BattleStore + GameEngine
- * [ ] Is it realtime multiplayer?            → Use SignalingManager + PresenceManager
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * FUTURE MODULES ROADMAP
- * ─────────────────────────────────────────────────────────────────────────────
- *
- * modules/webrtc/         Real WebRTC peer connections
- *                         (when react-native-webrtc re-enabled in config)
- * modules/ai/             OnSpace AI pipeline, prompt templates, model router
- * modules/creator/editor/ Post-capture video editor (trim, crop, text, stickers)
- * modules/creator/audio/  Music picker + audio mixer
- * modules/creator/rendering/ Video compositor (video + audio + effects tracks)
- * modules/analytics/      Creator analytics + engagement metrics
- */
+# ClipDAG — Architecture Reference v4
 
-export {};
+## Quick Navigation
+
+| Layer | Location | Purpose |
+|---|---|---|
+| Pages/Routes | `app/` | Expo Router screens |
+| Core Infra | `modules/core/` | Platform services (lifecycle, memory, render, crash) |
+| Realtime | `modules/realtime/` | Connection, polling, presence, sync, recovery |
+| Media Engine | `modules/media/` | Sessions, compression, bitrate, prefetch, cleanup |
+| Creator Studio | `modules/creator/` | Camera, effects, timeline, filters, export |
+| Gaming | `modules/gaming/` | Engine, matchmaking, anti-cheat, timers, rewards |
+| Battle | `modules/battle/` | Battle lifecycle |
+| Streaming | `modules/streaming/` | Live session management |
+| Calls | `modules/calls/` | Call session management |
+| Background | `background/` | Upload, sync, cleanup workers |
+| State Stores | `store/` | Domain stores (auth, call, stream, battle, game, media) |
+| Contexts | `contexts/` | React state (Auth, Feed, Messages, Notifications, Shop) |
+| Hooks | `hooks/` | Business logic, core utilities, store accessors |
+| Services | `services/` | API clients, SDK wrappers |
+| Components | `components/` | UI (feature/, ui/, studio/) |
+
+---
+
+## Core Infrastructure (`modules/core/`)
+
+```
+AppLifecycle          — AppState change coordination (foreground/background/inactive)
+EventBus              — Typed pub/sub (decouples modules, zero circular deps)
+CrashManager          — Global error boundary + recovery registry
+PerformanceMonitor    — JS FPS, render times, operation durations
+ResourceManager       — GPU/camera/mic exclusive resource leases
+MemoryPressureMonitor — 3-tier quality degradation (normal/moderate/critical)
+FrameScheduler        — Per-surface FPS caps, jank detection, thermal FPS caps
+ThermalMonitor        — JS timer drift heuristics → thermal state estimate
+Diagnostics           — Ring-buffer metrics (memory/screens/uploads/realtime)
+RetryStrategy         — Exponential backoff + CircuitBreaker
+RenderIsolationManager — Viewport-aware suspension, scene grouping, batch rendering ★ NEW
+LeakDetector          — Resource registration + stale detection + force-cleanup ★ NEW
+PowerManager          — Power tier (performance/balanced/saver/emergency), thermal-driven ★ NEW
+RateLimiter           — Token bucket / sliding window / debounce / throttle ★ NEW
+BackpressureQueue     — Priority event queues, coalescing, TTL, load shedding ★ NEW
+```
+
+## Realtime Layer (`modules/realtime/`)
+
+```
+PollingManager        — Background-aware centralized polling scheduler
+ConnectionManager     — Heartbeat, exponential backoff reconnect, circuit breaker
+SignalingManager      — WebRTC signaling channel (polling-based)
+PresenceManager       — User online/away/in_call presence (heartbeat + TTL)
+SyncEngine            — Optimistic updates + conflict resolution
+EventGateway          — Cross-module event routing with priority
+SessionRecovery       — Call/stream/game session recovery after disconnect ★ NEW
+```
+
+## Media Engine (`modules/media/`)
+
+```
+UploadQueue           — Priority upload queue with retry + progress
+CacheManager          — 2-tier LRU cache (memory + disk, 100MB cap)
+IntelligentCacheManager — Thermal-aware eviction, session-scoped, priority TTL ★ NEW
+MediaSessionManager   — Unified camera/mic/playback session lifecycle ★ NEW
+CompressionManager    — Adaptive image/video compression by profile + conditions ★ NEW
+AdaptiveBitrateManager — ABR for streaming/calls/playback with hysteresis ★ NEW
+MediaCleanupManager   — Aggressive cleanup on navigation, background, low memory ★ NEW
+PrefetchMediaManager  — Network+power-aware prefetch with priority scheduling ★ NEW
+```
+
+## Creator Studio (`modules/creator/`)
+
+```
+CameraController      — Camera lifecycle (permission, flip, flash, zoom)
+EffectsController     — Skia effects overlay management
+EditorController      — Non-destructive edit ops with 50-op undo stack
+DraftManager          — Local draft persistence (AsyncStorage)
+RenderCompositor      — Async FFmpeg render pipeline with progress
+FiltersController     — AR/LUT/Skia filter catalog, download, apply ★ NEW
+TimelineController    — Multi-track timeline (video/audio/overlay/effects) ★ NEW
+ExportManager         — Full publish pipeline (render→compress→upload→DB) ★ NEW
+CreatorSessionManager — Full session lifecycle with resource coordination ★ NEW
+```
+
+## Gaming Infrastructure (`modules/gaming/`)
+
+```
+GameEngine            — Game session orchestrator with adapter pattern
+Matchmaking           — Player matching with polling + timeout
+AntiCheat             — Flood/replay/bot detection
+TimerManager          — Precision countdown timers with server sync
+RewardsEngine         — Score calculation, streak bonuses, anti-farming
+```
+
+## State Stores (`store/`)
+
+```
+auth.store.ts         — User session state (reactive, EventBus-synced)
+call.store.ts         — Active call state (participants, status, duration)
+stream.store.ts       — Live session state (viewer count, chat, gifts)
+battle.store.ts       — Battle session state (opponents, wagers, scores)
+game.store.ts         — Game session state (phase, scores, timer, payload)
+media.store.ts        — Upload queue + active playback state
+```
+
+## Background Workers (`background/`)
+
+```
+UploadWorker.ts       — Network-aware upload processor (WiFi priority)
+CleanupWorker.ts      — Periodic temp file + stale cache cleanup
+SyncWorker.ts         — Priority-based data sync coordinator
+```
+
+---
+
+## Data Flow (Simplified)
+
+```
+User Action
+  → RateLimiter.check()          (anti-spam)
+  → Component calls Hook
+  → Hook calls Service
+  → Service calls Supabase / Edge Function
+  → Service emits EventBus event
+  → Context updates state
+  → React re-renders component
+
+Background
+  → AppLifecycle.onForeground()
+  → PollingManager triggers registered fns
+  → ConnectionManager heartbeat
+  → SyncWorker.forceSync()
+
+Thermal Pressure
+  → ThermalMonitor.sample()
+  → PowerManager.onThermalChange()
+  → FrameScheduler.reportThermalState()
+  → RenderIsolationManager caps/drops surfaces
+  → IntelligentCacheManager.thermalEviction()
+  → AdaptiveBitrateManager.setPowerMode()
+
+Navigation Away
+  → MediaCleanupManager.cleanupScreen()
+  → CreatorSessionManager.close()
+  → RenderIsolationManager.suspendScene()
+  → ResourceManager releases leases
+  → LeakDetector verifies all tokens released
+```
+
+---
+
+## Scaling Checklist (for each new feature)
+
+- [ ] Acquires ResourceManager lease for GPU/camera (not raw)
+- [ ] Registers with FrameScheduler via RenderIsolationManager
+- [ ] Uses RateLimiter for user-triggered actions
+- [ ] Uses BackpressureQueue for high-frequency events
+- [ ] Registers MediaCleanupManager handler on mount
+- [ ] Uses LeakDetector.track() for all async resources
+- [ ] Subscribes to PowerManager.onTierChange() and degrades gracefully
+- [ ] Uses IntelligentCacheManager instead of direct CacheManager for media
+- [ ] Registers with SessionRecovery if session-based
+- [ ] Uses AdaptiveBitrateManager for video quality
+- [ ] Respects AppLifecycle.onBackground() (pauses non-essential work)
+- [ ] Emits events via EventBus (never direct cross-module calls)
+- [ ] State in domain store (not local useState for shared state)
+- [ ] Uses ConnectionManager.isHealthy before network ops
+
+---
+
+## Module Dependency Rules
+
+```
+modules/core         ← no internal module deps (foundation)
+modules/realtime     ← depends on core only
+modules/media        ← depends on core only
+modules/creator      ← depends on core + media + gaming (TimerManager)
+modules/gaming       ← depends on core + realtime
+modules/battle       ← depends on core + realtime + gaming
+modules/streaming    ← depends on core + realtime + media
+modules/calls        ← depends on core + realtime + media
+store/               ← depends on core (EventBus)
+hooks/               ← depends on modules + store + contexts
+contexts/            ← depends on hooks + services
+services/            ← depends on @/template (Supabase client) only
+components/          ← depends on hooks only (never direct module/store imports)
+app/                 ← depends on components + hooks only
+```
+
+---
+
+## Next Steps
+
+1. Wire `SyncWorker.register()` calls in AuthContext (login/logout)
+2. Implement `app/(tabs)/index.tsx` FlatList with PrefetchMediaManager
+3. Build `app/videocall/[userId].tsx` UI using CallManager + TimerManager
+4. Connect `FiltersController` to `CameraCore.tsx` (replace direct deeparService calls)
+5. Build in-app debug panel at `app/debug.tsx` using `Diagnostics.getReport()`
+6. Implement `CreatorSessionManager.open()` in `app/creator-studio.tsx`
+7. Add `RateLimiter.check('like_action')` in VideoActions like handler
+8. Wire `AdaptiveBitrateManager` to live streaming quality selector

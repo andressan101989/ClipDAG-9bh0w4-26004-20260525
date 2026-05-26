@@ -1,30 +1,18 @@
 /**
  * modules/creator/index.ts — Creator Studio module barrel
- *
- * Modular creator studio architecture. Each sub-module is independent
- * and lazy-loaded to prevent memory pressure until the user enters the studio.
- *
- * Sub-modules:
- *   camera/    Camera controller (lens, zoom, flash, front/back switching)
- *   effects/   AR effect pipeline (DeepAR, Skia filters, LUTs)
- *   editor/    Post-capture editing (trim, crop, text, stickers)
- *   audio/     Music picker, audio mixing, sound effects
- *   drafts/    Local draft persistence and cloud sync
- *   uploads/   Upload pipeline with progress tracking
- *   rendering/ Compositor — combines video + audio + effects tracks
- *
- * Design principles:
- *   - All modules communicate via EventBus (no direct imports between them)
- *   - Heavy modules (editor, rendering) are never initialized until needed
- *   - ResourceManager controls exclusive camera/GPU access
- *   - MediaStore tracks recording session state
  */
-
-export { CameraController }            from './camera/CameraController';
-export type { CameraConfig, CameraFacing } from './camera/CameraController';
-
-export { EffectsController }           from './effects/EffectsController';
-export type { EffectTrack, EffectType } from './effects/EffectsController';
-
-export { DraftManager }                from './drafts/DraftManager';
-export type { Draft, DraftStatus }     from './drafts/DraftManager';
+export { CameraController }       from './camera/CameraController';
+export { EffectsController }      from './effects/EffectsController';
+export { EditorController }       from './editor/EditorController';
+export type { EditorState, EditOperation, TextOverlay, StickerOverlay } from './editor/EditorController';
+export { DraftManager }           from './drafts/DraftManager';
+export { RenderCompositor }       from './rendering/RenderCompositor';
+export type { RenderJob, RenderStage } from './rendering/RenderCompositor';
+export { FiltersController }      from './filters/FiltersController';
+export type { Filter, AppliedFilter, FilterCategory } from './filters/FiltersController';
+export { TimelineController }     from './timeline/TimelineController';
+export type { TimelineClip, TimelineState, TrackType } from './timeline/TimelineController';
+export { ExportManager }          from './exports/ExportManager';
+export type { ExportJob, ExportOptions, ExportStage, VideoPrivacy } from './exports/ExportManager';
+export { CreatorSessionManager }  from './sessions/CreatorSessionManager';
+export type { CreatorSession, CreatorPhase } from './sessions/CreatorSessionManager';
