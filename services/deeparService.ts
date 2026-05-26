@@ -1,27 +1,39 @@
 /**
- * services/deeparService.ts — v7 (DEEPAR DISABLED — startup crash isolation)
+ * services/deeparService.ts — v8 (DeepAR re-enabled, metro still blocks SDK on preview)
  *
- * DeepAR is COMPLETELY DISABLED to isolate the iOS startup crash.
- * All exports are stubs that return null/false immediately.
- * No react-native-deepar SDK is loaded, no native bridge calls are made.
- *
- * To re-enable: set DEEPAR_ENABLED = true and rebuild with EAS.
+ * DeepAR SDK is blocked by metro.config.js ALWAYS_BLOCKED list (react-native-deepar).
+ * isDeepARAvailable() checks at runtime whether the native module loaded.
+ * On preview/web this returns false gracefully — no crash.
+ * On EAS native build: returns true and enables AR filters.
  */
 
 import { Platform } from 'react-native';
 
-// ── DISABLED for crash isolation ─────────────────────────────────────────────
-export const DEEPAR_ENABLED = false;
+// ── Re-enabled — metro blocks react-native-deepar on preview, graceful on EAS ─
+export const DEEPAR_ENABLED = true;
 
 export const DEEPAR_API_KEY_IOS     = '';
 export const DEEPAR_API_KEY_ANDROID = '';
 export const DEEPAR_API_KEY         = '';
 
-export const DeepAR          = null;
-export const DeepARCamera    = null;
-export const DeepARCameraKit = null;
+// Lazy-load DeepAR — metro blocks the package on preview, so this try/catch
+// gracefully returns null when not available.
+let _DeepAR: any = null;
+let _DeepARCamera: any = null;
+try {
+  const sdk = require('react-native-deepar');
+  _DeepAR       = sdk?.DeepAR       ?? null;
+  _DeepARCamera = sdk?.DeepARCamera ?? sdk?.default ?? null;
+} catch { /* blocked by metro on preview — expected */ }
 
-export const isDeepARAvailable = () => false;
+export const DeepAR          = _DeepAR;
+export const DeepARCamera    = _DeepARCamera;
+export const DeepARCameraKit = _DeepARCamera;
+
+export const isDeepARAvailable = () =>
+  DEEPAR_ENABLED &&
+  _DeepARCamera !== null &&
+  typeof _DeepARCamera === 'function';
 
 // expo-file-system — kept for API surface only (no downloads while disabled)
 import * as FileSystem from 'expo-file-system';
@@ -118,21 +130,57 @@ const downloadingIds: Set<string>       = new Set();
  *
  * expo-file-system returns file:// URIs — strip the prefix with .replace('file://', '').
  */
-async function tryDownload(_url: string, _effectId: string): Promise<string | null> {
-  return null; // DeepAR disabled
+async function tryDownload(url: string, effectId: string): Promise<string | null> {
+  if (!hasFileSystem) return null;
+  try {
+    const dir  = FileSystem.cacheDirectory + 'deepar_filters/';
+    const dest = dir + effectId;
+    // Ensure directory exists
+    await FileSystem.makeDirectoryAsync(dir, { intermediates: true }).catch(() => {});
+    const { uri, status } = await FileSystem.downloadAsync(url, dest);
+    if (status !== 200) return null;
+    // DeepAR iOS requires raw POSIX path — strip file:// prefix
+    const rawPath = uri.replace(/^file:\/\//, '');
+    // Validate file is not an HTML error page (must be ≥ 64 bytes)
+    const info = await FileSystem.getInfoAsync(uri, { size: true }).catch(() => null);
+    if (!info || (info as any).size < 64) return null;
+    return rawPath;
+  } catch {
+    return null;
+  }
 }
 
-export async function getLocalFilterPath(_filter: DeepARFilter): Promise<string | null> {
-  return null; // DeepAR disabled
+export async function getLocalFilterPath(filter: DeepARFilter): Promise<string | null> {
+  if (!DEEPAR_ENABLED) return null;
+  if (pathCache[filter.id]) return pathCache[filter.id];
+  if (downloadingIds.has(filter.id)) return null;
+  downloadingIds.add(filter.id);
+  try {
+    // Try primary CDN, then mirror
+    let path = await tryDownload(filter.remoteUrl, filter.id);
+    if (!path) path = await tryDownload(
+      filter.remoteUrl.replace(DEEPAR_CDN, DEEPAR_CDN_MIRROR), filter.id
+    );
+    if (path) pathCache[filter.id] = path;
+    return path;
+  } finally {
+    downloadingIds.delete(filter.id);
+  }
 }
 
 /**
  * Prefetch the most commonly used filters in background after DeepAR initializes.
  */
 export async function prefetchDeepARFilters(
-  _filterIds?: string[],
+  filterIds?: string[],
 ): Promise<void> {
-  // DeepAR disabled — no-op
+  if (!DEEPAR_ENABLED || !isDeepARAvailable()) return;
+  const ids = filterIds ?? ['flower_crown', 'lion', 'beauty', 'fire', 'disco'];
+  await Promise.all(
+    DEEPAR_FILTERS
+      .filter(f => ids.includes(f.id))
+      .map(f => getLocalFilterPath(f).catch(() => null))
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,39 +194,76 @@ export async function prefetchDeepARFilters(
  * then calls switchEffectWithPath with the raw POSIX path.
  */
 export async function switchDeepAREffect(
-  _deepARRef: React.MutableRefObject<any>,
-  _filter:    DeepARFilter,
+  deepARRef: React.MutableRefObject<any>,
+  filter:    DeepARFilter,
   onProgress?: (state: 'downloading' | 'applying' | 'ok' | 'error', msg?: string) => void,
 ): Promise<'ok' | 'downloading' | 'error'> {
-  onProgress?.('error', 'DeepAR disabled');
-  return 'error';
+  if (!DEEPAR_ENABLED || !deepARRef?.current) {
+    onProgress?.('error', 'DeepAR not available');
+    return 'error';
+  }
+  onProgress?.('downloading');
+  try {
+    const localPath = await getLocalFilterPath(filter);
+    if (!localPath) {
+      onProgress?.('error', 'No se pudo descargar el filtro');
+      return 'error';
+    }
+    onProgress?.('applying');
+    if (typeof deepARRef.current.switchEffectWithPath === 'function') {
+      deepARRef.current.switchEffectWithPath({ path: localPath, slot: 'effect' });
+    } else if (typeof deepARRef.current.switchEffect === 'function') {
+      deepARRef.current.switchEffect({ mask: localPath });
+    }
+    onProgress?.('ok');
+    return 'ok';
+  } catch (e: any) {
+    onProgress?.('error', e?.message ?? 'Error al aplicar filtro');
+    return 'error';
+  }
 }
 
 /**
  * Clear/reset the active DeepAR effect (plain camera, no AR).
  */
-export function clearDeepAREffect(_deepARRef: React.MutableRefObject<any>) {
-  // DeepAR disabled — no-op
+export function clearDeepAREffect(deepARRef: React.MutableRefObject<any>) {
+  if (!deepARRef?.current) return;
+  try {
+    if (typeof deepARRef.current.switchEffectWithPath === 'function') {
+      deepARRef.current.switchEffectWithPath({ path: '', slot: 'effect' });
+    }
+  } catch { /* ignore */ }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DIAGNOSTICS
 // ─────────────────────────────────────────────────────────────────────────────
 export function getDeepARStatus() {
+  const hasPackage = _DeepARCamera !== null;
   return {
-    ready: false, hasPackage: false, hasApiKey: false,
-    hasFetchBlob: true, hasFileSystem: hasFileSystem,
-    isEnabled: false,
-    instructions: ['DeepAR disabled for crash isolation — set DEEPAR_ENABLED = true to re-enable'],
+    ready:        isDeepARAvailable(),
+    hasPackage,
+    hasApiKey:    false, // API key loaded by native module from app.json config
+    hasFileSystem: hasFileSystem,
+    isEnabled:    DEEPAR_ENABLED,
+    instructions: hasPackage
+      ? ['DeepAR SDK loaded — check API key in app.json expo.plugins config']
+      : ['react-native-deepar not available (preview mode or metro blocked) — use EAS build'],
   };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CAPTURE / RECORDING
 // ─────────────────────────────────────────────────────────────────────────────
-export function triggerDeepARScreenshot(_deepARRef: React.MutableRefObject<any>) { /* disabled */ }
-export function startDeepARRecording(_deepARRef: React.MutableRefObject<any>) { /* disabled */ }
-export function stopDeepARRecording(_deepARRef: React.MutableRefObject<any>) { /* disabled */ }
+export function triggerDeepARScreenshot(deepARRef: React.MutableRefObject<any>) {
+  try { deepARRef?.current?.takeScreenshot?.(); } catch { /* ignore */ }
+}
+export function startDeepARRecording(deepARRef: React.MutableRefObject<any>) {
+  try { deepARRef?.current?.startVideoRecording?.(); } catch { /* ignore */ }
+}
+export function stopDeepARRecording(deepARRef: React.MutableRefObject<any>) {
+  try { deepARRef?.current?.finishVideoRecording?.(); } catch { /* ignore */ }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PERMISSIONS
@@ -195,16 +280,38 @@ export function stopDeepARRecording(_deepARRef: React.MutableRefObject<any>) { /
  *   expo-camera requests the same iOS NSCameraUsageDescription entitlement
  *   and is always available once the app has mounted.
  */
-export async function requestDeepARPermissions(): Promise<boolean> { return true; }
-export async function getDeepARCameraPermission(): Promise<string> { return 'not-determined'; }
+export async function requestDeepARPermissions(): Promise<boolean> {
+  try {
+    const { requestCameraPermissionsAsync } = require('expo-camera');
+    const { granted } = await requestCameraPermissionsAsync();
+    return granted;
+  } catch {
+    return false;
+  }
+}
+export async function getDeepARCameraPermission(): Promise<string> {
+  try {
+    const { getCameraPermissionsAsync } = require('expo-camera');
+    const { status } = await getCameraPermissionsAsync();
+    return status;
+  } catch {
+    return 'not-determined';
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BEAUTY PARAMS
 // ─────────────────────────────────────────────────────────────────────────────
 export function setBeautyParams(
-  _deepARRef: React.MutableRefObject<any>,
-  _params: { smoothing?: number; teeth?: number },
-) { /* disabled */ }
+  deepARRef: React.MutableRefObject<any>,
+  params: { smoothing?: number; teeth?: number },
+) {
+  try {
+    if (!deepARRef?.current) return;
+    if (params.smoothing !== undefined)
+      deepARRef.current.setBeautyParams?.({ smoothingFactor: params.smoothing });
+  } catch { /* ignore */ }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EXPORTS
