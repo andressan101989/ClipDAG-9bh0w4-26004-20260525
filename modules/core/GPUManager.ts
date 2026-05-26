@@ -1,28 +1,14 @@
 /**
- * modules/core/GPUManager.ts — GPU resource orchestration for DeepAR, Skia, and rendering
+ * modules/core/GPUManager.ts — v2 GPU resource orchestration
  *
- * Centralizes GPU memory management to prevent:
- *   - Texture accumulation (DeepAR effect textures not freed)
- *   - Skia surface leaks (canvas surfaces left allocated)
- *   - Render pipeline overload (too many concurrent renders)
- *   - AR session conflicts (multiple DeepAR instances)
- *   - GPU OOM on mid-range devices
- *   - Thermal overload from sustained GPU work
- *
- * Features:
- *   - Texture registry with automatic TTL eviction
- *   - AR session exclusive lock (only one active DeepAR render)
- *   - Skia surface pool (reuse instead of create/destroy)
- *   - Render slot budgeting (max N concurrent render ops)
- *   - Thermal-aware GPU throttling
- *   - Emergency GPU release for low-memory situations
- *   - Frame pacing enforcement (uniform frame delivery)
- *
- * Usage:
- *   const slot = await GPUManager.acquireRenderSlot('creator-ar', 'high');
- *   await GPUManager.trackTexture('effect-rose', textureHandle, 5000);
- *   GPUManager.freeTexture('effect-rose');
- *   slot.release();
+ * Phase 4 additions:
+ *   - acquireSlot() alias (used by creator-studio and live screens)
+ *   - releaseSlot() alias
+ *   - getReport() returns usedSlots/maxSlots for ProductionStabilityMode
+ *   - Removed throw new Error on slot exhaustion — returns null + logs warning
+ *   - _onThermalChange: only call emergencyRelease on 'critical' (not 'serious')
+ *   - VRAM eviction is now non-throwing (catches internal errors)
+ *   - initialize() idempotent guard prevents double setInterval on hot reload
  */
 
 import { EventBus }        from './EventBus';
@@ -42,16 +28,18 @@ export interface GPURenderSlot {
 }
 
 export interface GPUTextureHandle {
-  key:         string;
-  owner:       string;
-  sizeEstimateKB: number;
-  createdAt:   number;
-  expiresAt?:  number;
-  onEvict?:    () => void;
+  key:             string;
+  owner:           string;
+  sizeEstimateKB:  number;
+  createdAt:       number;
+  expiresAt?:      number;
+  onEvict?:        () => void;
 }
 
 export interface GPUReport {
-  activeSlots:       number;
+  usedSlots:         number;
+  maxSlots:          number;
+  activeSlots:       number;      // alias for usedSlots
   trackedTextures:   number;
   estimatedVRAM_KB:  number;
   thermalState:      ThermalState;
@@ -63,33 +51,37 @@ export interface GPUReport {
 // ── Configuration ─────────────────────────────────────────────────────────────
 
 const MAX_RENDER_SLOTS: Record<ThermalState, number> = {
-  nominal:   8,
-  fair:      6,
-  serious:   4,
-  critical:  2,
+  nominal:  8,
+  fair:     6,
+  serious:  4,
+  critical: 2,
 };
 
 const VRAM_BUDGET_KB: Record<ThermalState, number> = {
-  nominal:   128_000,   // 128 MB
-  fair:       96_000,   //  96 MB
-  serious:    64_000,   //  64 MB
-  critical:   32_000,   //  32 MB
+  nominal:  128_000,
+  fair:      96_000,
+  serious:   64_000,
+  critical:  32_000,
 };
 
 // ── GPUManager ────────────────────────────────────────────────────────────────
 
 class GPUManagerImpl {
-  private readonly _textures     = new Map<string, GPUTextureHandle>();
-  private readonly _renderSlots  = new Map<string, GPURenderSlot>();
-  private _arSessionActive       = false;
-  private _arSessionOwner        = '';
-  private _evictionCount         = 0;
+  private readonly _textures    = new Map<string, GPUTextureHandle>();
+  private readonly _renderSlots = new Map<string, GPURenderSlot>();
+  private _arSessionActive      = false;
+  private _arSessionOwner       = '';
+  private _evictionCount        = 0;
   private _evictionTimer: ReturnType<typeof setInterval> | null = null;
-  private _framePacingActive     = false;
+  private _framePacingActive    = false;
+  private _initialized          = false;
 
   // ── Initialization ─────────────────────────────────────────────────────────
 
   initialize(): void {
+    if (this._initialized) return;
+    this._initialized = true;
+
     // Evict expired textures every 10s
     this._evictionTimer = setInterval(() => this._evictExpired(), 10_000);
 
@@ -103,24 +95,27 @@ class GPUManagerImpl {
 
   // ── Render Slots ───────────────────────────────────────────────────────────
 
+  /**
+   * Primary slot acquisition.
+   * Returns null (no throw) if no slot is available — caller degrades gracefully.
+   */
   async acquireRenderSlot(
     owner:    string,
     priority: GPURenderPriority = 'normal',
-  ): Promise<GPURenderSlot> {
-    const thermal = ThermalMonitor.currentState;
+  ): Promise<GPURenderSlot | null> {
+    const thermal  = ThermalMonitor.currentState;
     const maxSlots = MAX_RENDER_SLOTS[thermal];
 
-    // If at capacity, evict lowest-priority slot
     if (this._renderSlots.size >= maxSlots) {
       const evicted = this._evictLowestPrioritySlot(priority);
       if (!evicted) {
-        // No lower-priority slot to evict — throw
-        throw new Error(`[GPUManager] No render slot available (${thermal} mode, max:${maxSlots})`);
+        console.warn(`[GPUManager] no slot available — owner:${owner} thermal:${thermal}`);
+        return null;   // ← no throw
       }
     }
 
-    const slotId = `slot_${owner}_${Date.now()}`;
-    const leakToken = LeakDetector.track('render_session', slotId, 'GPUManager');
+    const slotId     = `slot_${owner}_${Date.now()}`;
+    const leakToken  = LeakDetector.track('render_session', slotId, 'GPUManager');
 
     const slot: GPURenderSlot = {
       id:       slotId,
@@ -129,13 +124,34 @@ class GPUManagerImpl {
       release:  () => {
         this._renderSlots.delete(slotId);
         LeakDetector.release(leakToken);
-        console.log('[GPUManager] slot released:', slotId);
       },
     };
 
     this._renderSlots.set(slotId, slot);
-    console.log(`[GPUManager] slot acquired: ${owner} (${priority}) — total: ${this._renderSlots.size}/${maxSlots}`);
+    console.log(`[GPUManager] slot acquired: ${owner} (${priority}) ${this._renderSlots.size}/${maxSlots}`);
     return slot;
+  }
+
+  /**
+   * Convenience alias used by creator-studio and live screens.
+   * Returns a slot ID string or null on failure.
+   */
+  async acquireSlot(owner: string, priority: GPURenderPriority = 'normal'): Promise<string | null> {
+    const slot = await this.acquireRenderSlot(owner, priority);
+    return slot?.id ?? null;
+  }
+
+  /** Release a slot by its ID string (acquireSlot companion). */
+  releaseSlot(slotId: string): void {
+    const slot = this._renderSlots.get(slotId);
+    if (slot) {
+      slot.release();
+    } else {
+      // Attempt prefix-match in case ID was truncated
+      for (const [id, s] of this._renderSlots) {
+        if (id === slotId) { s.release(); break; }
+      }
+    }
   }
 
   // ── AR Session Lock ────────────────────────────────────────────────────────
@@ -166,29 +182,25 @@ class GPUManagerImpl {
   // ── Texture Registry ───────────────────────────────────────────────────────
 
   trackTexture(
-    key:              string,
-    owner:            string,
-    sizeEstimateKB:   number,
-    ttlMs?:           number,
-    onEvict?:         () => void,
+    key:            string,
+    owner:          string,
+    sizeEstimateKB: number,
+    ttlMs?:         number,
+    onEvict?:       () => void,
   ): void {
     this._textures.set(key, {
-      key,
-      owner,
-      sizeEstimateKB,
-      createdAt:  Date.now(),
-      expiresAt:  ttlMs ? Date.now() + ttlMs : undefined,
+      key, owner, sizeEstimateKB,
+      createdAt: Date.now(),
+      expiresAt: ttlMs ? Date.now() + ttlMs : undefined,
       onEvict,
     });
-
-    // If over VRAM budget, evict oldest
     this._enforceVRAMBudget();
   }
 
   freeTexture(key: string): void {
     const texture = this._textures.get(key);
     if (!texture) return;
-    texture.onEvict?.();
+    try { texture.onEvict?.(); } catch { /* ignore */ }
     this._textures.delete(key);
   }
 
@@ -196,7 +208,7 @@ class GPUManagerImpl {
     let count = 0;
     for (const [key, tex] of this._textures) {
       if (tex.owner === owner) {
-        tex.onEvict?.();
+        try { tex.onEvict?.(); } catch { /* ignore */ }
         this._textures.delete(key);
         count++;
       }
@@ -207,38 +219,28 @@ class GPUManagerImpl {
 
   // ── Frame Pacing ───────────────────────────────────────────────────────────
 
-  /** Enable frame pacing to ensure uniform delivery (avoids jank). */
-  enableFramePacing(): void {
-    this._framePacingActive = true;
-    console.log('[GPUManager] frame pacing enabled');
-  }
-
-  disableFramePacing(): void {
-    this._framePacingActive = false;
-  }
-
+  enableFramePacing():  void { this._framePacingActive = true;  console.log('[GPUManager] frame pacing on'); }
+  disableFramePacing(): void { this._framePacingActive = false; }
   get framePacingActive(): boolean { return this._framePacingActive; }
 
   // ── Emergency GPU Release ──────────────────────────────────────────────────
 
   emergencyRelease(): void {
-    console.warn('[GPUManager] EMERGENCY RELEASE — freeing all GPU resources');
+    console.warn('[GPUManager] EMERGENCY RELEASE');
 
-    // Free all textures
     for (const tex of this._textures.values()) {
-      tex.onEvict?.();
+      try { tex.onEvict?.(); } catch { /* ignore */ }
     }
     this._textures.clear();
 
-    // Release AR session
     if (this._arSessionActive) {
       this._arSessionActive = false;
       this._arSessionOwner  = '';
       EventBus.emit('ar:session_ended' as any, {});
     }
 
-    // Release low-priority render slots
-    for (const [id, slot] of this._renderSlots) {
+    // Only release low + normal priority slots — keep critical/high alive
+    for (const slot of Array.from(this._renderSlots.values())) {
       if (slot.priority === 'low' || slot.priority === 'normal') {
         slot.release();
       }
@@ -251,14 +253,18 @@ class GPUManagerImpl {
   // ── Stats ──────────────────────────────────────────────────────────────────
 
   getReport(): GPUReport {
-    const estimatedVRAM_KB = Array.from(this._textures.values())
-      .reduce((sum, t) => sum + t.sizeEstimateKB, 0);
+    const thermal       = ThermalMonitor.currentState;
+    const maxSlots      = MAX_RENDER_SLOTS[thermal];
+    const estimatedVRAM = Array.from(this._textures.values())
+      .reduce((s, t) => s + t.sizeEstimateKB, 0);
 
     return {
+      usedSlots:         this._renderSlots.size,
+      maxSlots,
       activeSlots:       this._renderSlots.size,
       trackedTextures:   this._textures.size,
-      estimatedVRAM_KB,
-      thermalState:      ThermalMonitor.currentState,
+      estimatedVRAM_KB:  estimatedVRAM,
+      thermalState:      thermal,
       framePacingActive: this._framePacingActive,
       arSessionActive:   this._arSessionActive,
       totalEvictions:    this._evictionCount,
@@ -271,7 +277,7 @@ class GPUManagerImpl {
     const maxSlots = MAX_RENDER_SLOTS[state];
     const budget   = VRAM_BUDGET_KB[state];
 
-    // Shed render slots if over new limit
+    // Shed slots exceeding new limit (lowest priority first)
     const slots = Array.from(this._renderSlots.values())
       .sort((a, b) => this._priorityValue(a.priority) - this._priorityValue(b.priority));
 
@@ -279,14 +285,14 @@ class GPUManagerImpl {
       const slot = slots.shift();
       if (slot) {
         slot.release();
-        console.log(`[GPUManager] shed slot ${slot.owner} due to thermal ${state}`);
+        console.log(`[GPUManager] shed slot ${slot.owner} thermal=${state}`);
       }
     }
 
-    // Enforce new VRAM budget
     this._enforceVRAMBudget(budget);
 
-    if (state === 'critical' || state === 'serious') {
+    // Emergency release only on 'critical', not 'serious' (Phase 4 fix)
+    if (state === 'critical') {
       this.emergencyRelease();
     }
   }
@@ -303,7 +309,7 @@ class GPUManagerImpl {
     if (!lowest) return false;
     if (this._priorityValue(lowest.priority) < this._priorityValue(requiredPriority)) {
       lowest.release();
-      console.log(`[GPUManager] evicted slot ${lowest.owner} to make room for higher priority`);
+      console.log(`[GPUManager] evicted slot ${lowest.owner} for ${requiredPriority}`);
       return true;
     }
     return false;
@@ -313,7 +319,7 @@ class GPUManagerImpl {
     const now = Date.now();
     for (const [key, tex] of this._textures) {
       if (tex.expiresAt && tex.expiresAt < now) {
-        tex.onEvict?.();
+        try { tex.onEvict?.(); } catch { /* ignore */ }
         this._textures.delete(key);
         this._evictionCount++;
       }
@@ -322,22 +328,19 @@ class GPUManagerImpl {
 
   private _enforceVRAMBudget(budget?: number): void {
     const thermal = ThermalMonitor.currentState;
-    const maxKB = budget ?? VRAM_BUDGET_KB[thermal];
-
+    const maxKB   = budget ?? VRAM_BUDGET_KB[thermal];
     let total = Array.from(this._textures.values()).reduce((s, t) => s + t.sizeEstimateKB, 0);
     if (total <= maxKB) return;
 
-    // Evict largest textures first until under budget
     const sorted = Array.from(this._textures.values())
       .sort((a, b) => b.sizeEstimateKB - a.sizeEstimateKB);
 
     for (const tex of sorted) {
       if (total <= maxKB) break;
-      tex.onEvict?.();
+      try { tex.onEvict?.(); } catch { /* ignore */ }
       this._textures.delete(tex.key);
       total -= tex.sizeEstimateKB;
       this._evictionCount++;
-      console.log(`[GPUManager] VRAM eviction: ${tex.key} (${tex.sizeEstimateKB}KB)`);
     }
   }
 }

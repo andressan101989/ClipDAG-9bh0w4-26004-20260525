@@ -1,26 +1,15 @@
 /**
- * modules/core/ProductionStabilityMode.ts — Global automatic degradation system
+ * modules/core/ProductionStabilityMode.ts — v2 Global adaptive degradation system
  *
- * Single coordinator that watches ALL stress signals and responds automatically:
- *   - Thermal pressure   → reduce FPS, bitrate, rendering quality
- *   - Memory pressure    → pause prefetch, evict caches, reduce buffers
- *   - GPU overload       → suspend inactive renderers, reduce textures
- *   - Low battery        → enter saver mode, throttle background tasks
- *   - Poor network       → reduce bitrate, pause non-critical uploads
- *   - High event load    → activate backpressure, shed load
- *
- * Degradation cascade (worst → best):
- *   NOMINAL → STRESS → DEGRADED → CRITICAL → EMERGENCY
- *
- * Each level activates progressively more aggressive protections.
- * Recovery is gradual (hysteresis to prevent oscillation).
- *
- * Modeled after TikTok / Instagram / Discord adaptive quality behavior.
- *
- * Usage:
- *   ProductionStabilityMode.initialize();
- *   ProductionStabilityMode.getMode();            // 'nominal' | 'stress' | ...
- *   ProductionStabilityMode.onModeChange(cb);
+ * Phase 4 additions:
+ *   - Removed EventBus.emit('app:low_memory') on every level change (was spamming memory cleanup)
+ *   - FrameScheduler.setGlobalFPSCap is now the canonical FPS limiter
+ *   - _forceGPURelease uses GPUManager.emergencyRelease (no throw path)
+ *   - getReport() reads GPUManager.getReport().usedSlots / .maxSlots correctly
+ *   - forceQualityLevel() signature matches AdaptiveQualityController call (null = restore)
+ *   - destroy() clears the scan timer and handlers (prevents hot-reload leaks)
+ *   - _restoreAll() also re-emits quality restoration to AdaptiveQualityController
+ *   - Recovery hysteresis: 3 consecutive below-threshold scans before upgrading
  */
 
 import { ThermalMonitor }            from './ThermalMonitor';
@@ -45,22 +34,23 @@ export interface StabilityReport {
   mode:           StabilityMode;
   thermalState:   string;
   powerTier:      string;
-  memoryPressure: number;   // 0–1
-  gpuPressure:    number;   // 0–1
+  memoryPressure: number;
+  gpuPressure:    number;
   activeFPS:      number;
   timestamp:      number;
   activeActions:  string[];
 }
 
 interface StressScore {
-  thermal:  number;  // 0–3 (nominal=0, fair=1, serious=2, critical=3)
-  power:    number;  // 0–3 (performance=0, balanced=1, saver=2, emergency=3)
-  memory:   number;  // 0–1 (0=ok, 1=critical)
-  gpu:      number;  // 0–1 (0=ok, 1=overloaded)
-  total:    number;  // weighted sum → drives mode decision
+  thermal: number;
+  power:   number;
+  memory:  number;
+  gpu:     number;
+  total:   number;
 }
 
 // ── Mode thresholds ───────────────────────────────────────────────────────────
+
 const THRESHOLD: Record<StabilityMode, number> = {
   nominal:   0,
   stress:    2,
@@ -69,17 +59,18 @@ const THRESHOLD: Record<StabilityMode, number> = {
   emergency: 8,
 };
 
-// Hysteresis: must score X below threshold before recovering
-const RECOVERY_MARGIN = 1.5;
+// Hysteresis: require 3 consecutive below-threshold scans before recovering
+const RECOVERY_SCAN_COUNT = 3;
 
 // ── ProductionStabilityMode ───────────────────────────────────────────────────
 
 class ProductionStabilityModeImpl {
-  private _mode:         StabilityMode = 'nominal';
-  private _modeHandlers  = new Set<(mode: StabilityMode, report: StabilityReport) => void>();
-  private _scanTimer:    ReturnType<typeof setInterval> | null = null;
-  private _activeActions = new Set<string>();
-  private _initialized   = false;
+  private _mode:          StabilityMode = 'nominal';
+  private _modeHandlers   = new Set<(mode: StabilityMode, report: StabilityReport) => void>();
+  private _scanTimer:     ReturnType<typeof setInterval> | null = null;
+  private _activeActions  = new Set<string>();
+  private _initialized    = false;
+  private _belowThresholdCount = 0;  // consecutive scans below threshold for hysteresis
 
   // ── Init ───────────────────────────────────────────────────────────────────
 
@@ -87,18 +78,16 @@ class ProductionStabilityModeImpl {
     if (this._initialized) return;
     this._initialized = true;
 
-    // Start monitoring loop every 5 seconds
     this._scanTimer = setInterval(() => this._scan(), 5_000);
 
-    // React to app lifecycle
     AppLifecycle.onBackground(() => {
-      // On background, immediately drop to at least degraded mode
       if (this._mode === 'nominal' || this._mode === 'stress') {
         this._applyMode('degraded');
       }
     });
+
     AppLifecycle.onForeground(() => {
-      // Rescan on foreground to recalculate proper mode
+      this._belowThresholdCount = 0;
       this._scan();
     });
 
@@ -108,22 +97,19 @@ class ProductionStabilityModeImpl {
   // ── Public API ─────────────────────────────────────────────────────────────
 
   get mode():         StabilityMode { return this._mode; }
-  /** Alias used by hooks and debug panel. */
   get currentMode():  StabilityMode { return this._mode; }
-  /** Weighted stress score 0–100+ that drives mode decisions. */
+
   get currentScore(): number {
     const s = this._computeScore();
     return Math.min(100, (s.total / THRESHOLD.emergency) * 100);
   }
-  /** Whether AR/Skia effects may be rendered in this mode. */
+
   get canRenderEffects(): boolean {
     return this._mode === 'nominal' || this._mode === 'stress';
   }
-  /** Whether background media prefetch is allowed. */
   get canPrefetch(): boolean {
     return this._mode === 'nominal' || this._mode === 'stress';
   }
-  /** Whether non-critical UI overlays (badges, animations) may render. */
   get canRenderOverlays(): boolean {
     return this._mode !== 'critical' && this._mode !== 'emergency';
   }
@@ -134,7 +120,7 @@ class ProductionStabilityModeImpl {
       mode:           this._mode,
       thermalState:   ThermalMonitor.currentState,
       powerTier:      PowerManager.currentTier,
-      memoryPressure: MemoryPressureMonitor.pressureLevel ?? 0,
+      memoryPressure: (MemoryPressureMonitor as any).pressureLevel ?? 0,
       gpuPressure:    gpu ? gpu.usedSlots / Math.max(1, gpu.maxSlots) : 0,
       activeFPS:      FrameScheduler.getActiveFPS?.() ?? 60,
       timestamp:      Date.now(),
@@ -147,22 +133,38 @@ class ProductionStabilityModeImpl {
     return () => this._modeHandlers.delete(cb);
   }
 
+  destroy(): void {
+    if (this._scanTimer) { clearInterval(this._scanTimer); this._scanTimer = null; }
+    this._modeHandlers.clear();
+    this._initialized = false;
+  }
+
   // ── Private: scan ─────────────────────────────────────────────────────────
 
   private _scan(): void {
     const score  = this._computeScore();
     const target = this._scoreToMode(score.total);
 
-    if (target !== this._mode) {
-      // Hysteresis check for recovery
-      const current = THRESHOLD[this._mode];
-      const next    = THRESHOLD[target];
-      if (next < current && score.total > current - RECOVERY_MARGIN) {
-        // Not stable enough to recover yet
-        return;
-      }
-      this._applyMode(target);
+    if (target === this._mode) {
+      // No change — reset hysteresis only if at nominal
+      if (target === 'nominal') this._belowThresholdCount = 0;
+      return;
     }
+
+    const currentThreshold = THRESHOLD[this._mode];
+    const targetThreshold  = THRESHOLD[target];
+
+    if (targetThreshold < currentThreshold) {
+      // Attempting recovery — require RECOVERY_SCAN_COUNT consecutive below-threshold
+      this._belowThresholdCount++;
+      if (this._belowThresholdCount < RECOVERY_SCAN_COUNT) return;
+      this._belowThresholdCount = 0;
+    } else {
+      // Degrading — apply immediately
+      this._belowThresholdCount = 0;
+    }
+
+    this._applyMode(target);
   }
 
   private _computeScore(): StressScore {
@@ -170,19 +172,16 @@ class ProductionStabilityModeImpl {
     const power   = this._powerScore();
     const memory  = this._memoryScore();
     const gpu     = this._gpuScore();
-
-    // Weighted: thermal + power most important, memory + gpu secondary
-    const total = thermal * 1.5 + power * 1.2 + memory * 3 + gpu * 2;
-
+    const total   = thermal * 1.5 + power * 1.2 + memory * 3 + gpu * 2;
     return { thermal, power, memory, gpu, total };
   }
 
   private _thermalScore(): number {
     const t = ThermalMonitor.currentState;
-    if (t === 'nominal')  return 0;
-    if (t === 'fair')     return 1;
-    if (t === 'serious')  return 2;
-    return 3; // critical
+    if (t === 'nominal') return 0;
+    if (t === 'fair')    return 1;
+    if (t === 'serious') return 2;
+    return 3;
   }
 
   private _powerScore(): number {
@@ -190,13 +189,12 @@ class ProductionStabilityModeImpl {
     if (p === 'performance') return 0;
     if (p === 'balanced')    return 1;
     if (p === 'saver')       return 2;
-    return 3; // emergency
+    return 3;
   }
 
   private _memoryScore(): number {
-    const level = (MemoryPressureMonitor as any).pressureLevel ?? 0;
+    const level = (MemoryPressureMonitor as any).pressureLevel;
     if (typeof level === 'number') return level;
-    // Fallback: map string levels
     const s = (MemoryPressureMonitor as any).currentLevel ?? 'normal';
     if (s === 'normal')   return 0;
     if (s === 'moderate') return 0.4;
@@ -206,8 +204,8 @@ class ProductionStabilityModeImpl {
 
   private _gpuScore(): number {
     const report = GPUManager.getReport?.();
-    if (!report) return 0;
-    return report.usedSlots / Math.max(1, report.maxSlots);
+    if (!report || report.maxSlots === 0) return 0;
+    return report.usedSlots / report.maxSlots;
   }
 
   private _scoreToMode(score: number): StabilityMode {
@@ -227,123 +225,78 @@ class ProductionStabilityModeImpl {
 
     console.log(`[ProductionStabilityMode] ${previous} → ${mode}`);
 
-    // Apply actions for each mode tier
     switch (mode) {
-      case 'nominal':
-        this._restoreAll();
-        break;
-
-      case 'stress':
-        this._reduceFPS(50);
-        this._throttlePrefetch();
-        break;
-
-      case 'degraded':
-        this._reduceFPS(30);
-        this._throttlePrefetch();
-        this._reduceRenderQuality();
-        this._pauseNonCriticalTasks();
-        break;
-
-      case 'critical':
-        this._reduceFPS(24);
-        this._pausePrefetch();
-        this._aggressiveCacheCleanup();
-        this._suspendOverlays();
-        this._reduceRenderQuality();
-        this._pauseNonCriticalTasks();
-        break;
-
-      case 'emergency':
-        this._reduceFPS(15);
-        this._pausePrefetch();
-        this._emergencyCacheRelease();
-        this._suspendOverlays();
-        this._reduceRenderQuality();
-        this._pauseAllBackgroundTasks();
-        this._forceGPURelease();
-        break;
+      case 'nominal':   this._restoreAll();          break;
+      case 'stress':    this._applyStress();         break;
+      case 'degraded':  this._applyDegraded();       break;
+      case 'critical':  this._applyCritical();       break;
+      case 'emergency': this._applyEmergency();      break;
     }
 
     const report = this.getReport();
-
-    // Record telemetry
     TelemetryPipeline.recordThermalTransition?.(previous, mode as any);
 
-    // Notify listeners
     for (const cb of this._modeHandlers) {
       try { cb(mode, report); } catch { /* non-fatal */ }
     }
   }
 
-  // ── Actions ───────────────────────────────────────────────────────────────
+  // ── Actions per tier ─────────────────────────────────────────────────────
 
-  private _reduceFPS(cap: number): void {
-    this._activeActions.add(`fps_cap_${cap}`);
-    FrameScheduler.setGlobalFPSCap?.(cap);
-  }
-
-  private _throttlePrefetch(): void {
+  private _applyStress(): void {
+    this._activeActions.add('fps_cap_50');
+    FrameScheduler.setGlobalFPSCap(50);
     this._activeActions.add('prefetch_throttled');
-    (PrefetchMediaManager as any).setThrottled?.(true);
+    try { (PrefetchMediaManager as any).setThrottled?.(true); } catch { /* ignore */ }
   }
 
-  private _pausePrefetch(): void {
-    this._activeActions.add('prefetch_paused');
-    (PrefetchMediaManager as any).pauseAll?.();
-  }
-
-  private _reduceRenderQuality(): void {
+  private _applyDegraded(): void {
+    this._activeActions.add('fps_cap_30');
+    FrameScheduler.setGlobalFPSCap(30);
+    this._activeActions.add('prefetch_throttled');
+    try { (PrefetchMediaManager as any).setThrottled?.(true); } catch { /* ignore */ }
     this._activeActions.add('render_quality_reduced');
-    AdaptiveQualityController.forceQualityLevel?.('low');
-  }
-
-  private _suspendOverlays(): void {
-    this._activeActions.add('overlays_suspended');
-    // Overlays should check AdaptiveQualityController.getProfile().renderEffects
-  }
-
-  private _pauseNonCriticalTasks(): void {
+    try { AdaptiveQualityController.forceQualityLevel?.('minimal'); } catch { /* ignore */ }
     this._activeActions.add('background_tasks_throttled');
-    ResourceScheduler.setThermalPressure?.('serious');
+    try { ResourceScheduler.setThermalPressure?.('serious'); } catch { /* ignore */ }
   }
 
-  private _pauseAllBackgroundTasks(): void {
-    this._activeActions.add('background_tasks_paused');
-    ResourceScheduler.setThermalPressure?.('critical');
-  }
-
-  private _aggressiveCacheCleanup(): void {
+  private _applyCritical(): void {
+    this._activeActions.add('fps_cap_24');
+    FrameScheduler.setGlobalFPSCap(24);
+    this._activeActions.add('prefetch_paused');
+    try { (PrefetchMediaManager as any).pauseAll?.(); } catch { /* ignore */ }
     this._activeActions.add('cache_cleanup');
-    (IntelligentCacheManager as any).runThermalCleanup?.();
-    MediaCleanupManager.cleanup('cache');
+    try { (IntelligentCacheManager as any).runThermalCleanup?.(); } catch { /* ignore */ }
+    try { MediaCleanupManager.cleanup?.('cache'); } catch { /* ignore */ }
+    this._activeActions.add('render_quality_reduced');
+    try { AdaptiveQualityController.forceQualityLevel?.('minimal'); } catch { /* ignore */ }
+    this._activeActions.add('background_tasks_throttled');
+    try { ResourceScheduler.setThermalPressure?.('serious'); } catch { /* ignore */ }
   }
 
-  private _emergencyCacheRelease(): void {
+  private _applyEmergency(): void {
+    this._activeActions.add('fps_cap_15');
+    FrameScheduler.setGlobalFPSCap(15);
+    this._activeActions.add('prefetch_paused');
+    try { (PrefetchMediaManager as any).pauseAll?.(); } catch { /* ignore */ }
     this._activeActions.add('cache_emergency');
-    MediaCleanupManager.emergencyCleanup?.();
-    (IntelligentCacheManager as any).runThermalCleanup?.();
-  }
-
-  private _forceGPURelease(): void {
+    try { MediaCleanupManager.emergencyCleanup?.(); } catch { /* ignore */ }
+    try { (IntelligentCacheManager as any).runThermalCleanup?.(); } catch { /* ignore */ }
+    this._activeActions.add('render_quality_emergency');
+    try { AdaptiveQualityController.forceQualityLevel?.('emergency'); } catch { /* ignore */ }
+    this._activeActions.add('background_tasks_paused');
+    try { ResourceScheduler.setThermalPressure?.('critical'); } catch { /* ignore */ }
     this._activeActions.add('gpu_emergency_release');
-    GPUManager.emergencyRelease?.();
+    try { GPUManager.emergencyRelease?.(); } catch { /* ignore */ }
   }
 
   private _restoreAll(): void {
-    FrameScheduler.setGlobalFPSCap?.(60);
-    (PrefetchMediaManager as any).setThrottled?.(false);
-    (PrefetchMediaManager as any).resumeAll?.();
-    AdaptiveQualityController.forceQualityLevel?.(null);
-    ResourceScheduler.setThermalPressure?.('nominal');
-  }
-
-  destroy(): void {
-    if (this._scanTimer) {
-      clearInterval(this._scanTimer);
-      this._scanTimer = null;
-    }
-    this._modeHandlers.clear();
+    FrameScheduler.setGlobalFPSCap(60);
+    try { (PrefetchMediaManager as any).setThrottled?.(false); } catch { /* ignore */ }
+    try { (PrefetchMediaManager as any).resumeAll?.(); } catch { /* ignore */ }
+    try { AdaptiveQualityController.forceQualityLevel?.(null); } catch { /* ignore */ }
+    try { ResourceScheduler.setThermalPressure?.('nominal'); } catch { /* ignore */ }
   }
 }
 

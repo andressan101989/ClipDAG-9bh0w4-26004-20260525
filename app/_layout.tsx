@@ -32,6 +32,7 @@ import { CrashIntelligence }         from '@/modules/core/CrashIntelligence';
 import { ResourceScheduler }         from '@/modules/core/ResourceScheduler';
 import { MemoryOptimizer }           from '@/modules/core/MemoryOptimizer';
 import { ProductionStabilityMode }  from '@/modules/core/ProductionStabilityMode';
+import { RenderQueue }              from '@/services/ffmpegService';
 
 // ── Boot sequence (order matters) ────────────────────────────────────────────
 AppLifecycle.initialize();             // must be first — others register listeners
@@ -52,6 +53,7 @@ TelemetryWorker.start();               // background diagnostics flusher
 CacheWorker.start();                   // background cache maintenance
 UploadRecoveryManager.initialize();    // restore interrupted uploads on foreground
 ProductionStabilityMode.initialize(); // global adaptive degradation system
+RenderQueue.initialize();            // restore queued background renders
 
 import { Stack } from 'expo-router';
 console.log('[BOOT] 1 - expo-router imported');

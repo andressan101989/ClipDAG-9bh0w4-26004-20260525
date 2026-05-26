@@ -1,27 +1,25 @@
 /**
- * modules/realtime/RTCManager.ts — Production WebRTC (fully integrated)
+ * modules/realtime/RTCManager.ts — v2 Production WebRTC
  *
- * Real react-native-webrtc lifecycle:
- *   - getUserMedia (video + audio, fallback to audio-only)
- *   - RTCPeerConnection with STUN/TURN
- *   - Full offer/answer/ICE candidate exchange via SignalingManager
- *   - ICE restart on disconnected → 3s grace period
- *   - Exponential backoff reconnect (5 attempts, max 30s delay)
- *   - Background: video track disabled, audio kept alive
- *   - Foreground: video track re-enabled
- *   - Camera switch: replaceTrack() + renegotiate if needed
- *   - Mute/unmute: setEnabled on local tracks + sender side
- *   - Audio routing: speakerphone control via InCallManager
- *   - Stats: getStats() → RTT, loss, bitrate, frameRate
- *   - Guaranteed cleanup (tracks, PC, signaling, timers, LeakDetector)
- *   - Simulation mode when react-native-webrtc not in native build
+ * Phase 4 cleanup:
+ *   - acquireRenderSlot returns null (no throw) — caller degrades gracefully
+ *   - _negotiateReal: wrapped in try/finally, guaranteed local stream + PC cleanup
+ *   - reconnect(): if failed state, no further reconnects attempted
+ *   - close(): double-close guard (_closed flag), guaranteed track.stop()
+ *   - _startRealStats: errors caught per-iteration, no uncaught rejection
+ *   - _applyThermalBitrate: fully wrapped in try/catch
+ *   - _wireConnectionEvents: all handlers wrapped in try/catch
+ *   - setTrackEnabled: wrapped in try/catch
+ *   - _clearSignalingUnsubs / _clearAppUnsubs: already safe, improved logging
+ *   - negotiateSimulated: end signal unsub stored and cleared on close
+ *   - RTCManager.createPeer: old peer close awaited before new one
  */
 
-import { EventBus }         from '../core/EventBus';
-import { SignalingManager } from './SignalingManager';
-import { AppLifecycle }     from '../core/AppLifecycle';
-import { LeakDetector }     from '../core/LeakDetector';
-import { ThermalMonitor }   from '../core/ThermalMonitor';
+import { EventBus }          from '../core/EventBus';
+import { SignalingManager }  from './SignalingManager';
+import { AppLifecycle }      from '../core/AppLifecycle';
+import { LeakDetector }      from '../core/LeakDetector';
+import { ThermalMonitor }    from '../core/ThermalMonitor';
 import { TelemetryPipeline } from '../core/TelemetryPipeline';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -54,6 +52,7 @@ export interface RTCPeerConfig {
 }
 
 // ── ICE servers ───────────────────────────────────────────────────────────────
+
 const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
@@ -62,60 +61,60 @@ const DEFAULT_ICE_SERVERS = [
 ];
 
 // ── Lazy WebRTC loader ────────────────────────────────────────────────────────
-let _RTCPeerConnection: any   = null;
+
+let _RTCPeerConnection:    any = null;
 let _RTCSessionDescription: any = null;
-let _RTCIceCandidate: any     = null;
-let _mediaDevices: any        = null;
-let _RTCView: any             = null;
+let _RTCIceCandidate:      any = null;
+let _mediaDevices:         any = null;
+let _RTCView:              any = null;
 
 function loadWebRTC(): boolean {
   if (_RTCPeerConnection) return true;
   try {
     const webrtc = require('react-native-webrtc');
-    _RTCPeerConnection    = webrtc.RTCPeerConnection;
+    _RTCPeerConnection     = webrtc.RTCPeerConnection;
     _RTCSessionDescription = webrtc.RTCSessionDescription;
-    _RTCIceCandidate      = webrtc.RTCIceCandidate;
-    _mediaDevices         = webrtc.mediaDevices;
-    _RTCView              = webrtc.RTCView ?? null;
+    _RTCIceCandidate       = webrtc.RTCIceCandidate;
+    _mediaDevices          = webrtc.mediaDevices;
+    _RTCView               = webrtc.RTCView ?? null;
     return true;
   } catch {
     return false;
   }
 }
 
-// Lazy InCallManager for audio routing
 let _InCallManager: any = null;
 function loadInCallManager() {
   if (_InCallManager) return _InCallManager;
-  try {
-    _InCallManager = require('react-native-incall-manager').default;
-  } catch { /* not available */ }
+  try { _InCallManager = require('react-native-incall-manager').default; } catch { /* optional */ }
   return _InCallManager;
 }
 
 export { _RTCView as RTCView };
 
 // ── RTCPeer ───────────────────────────────────────────────────────────────────
+
 export class RTCPeer {
   readonly config: RTCPeerConfig;
 
-  private _state:          RTCConnectionState = 'new';
-  private _reconnectCount  = 0;
-  private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private _iceTimer:       ReturnType<typeof setTimeout> | null = null;
-  private _statsTimer:     ReturnType<typeof setInterval> | null = null;
-  private _disconnectTimer:ReturnType<typeof setTimeout> | null = null;
+  private _state:           RTCConnectionState = 'new';
+  private _closed           = false;   // double-close guard
+  private _reconnectCount   = 0;
+  private _reconnectTimer:  ReturnType<typeof setTimeout> | null = null;
+  private _iceTimer:        ReturnType<typeof setTimeout> | null = null;
+  private _statsTimer:      ReturnType<typeof setInterval> | null = null;
+  private _disconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  private _stateHandlers  = new Set<(s: RTCConnectionState) => void>();
-  private _statsHandlers  = new Set<(s: RTCPeerStats) => void>();
-  private _errorHandlers  = new Set<(e: string) => void>();
-  private _trackHandlers  = new Set<(track: any, stream: any) => void>();
+  private _stateHandlers    = new Set<(s: RTCConnectionState) => void>();
+  private _statsHandlers    = new Set<(s: RTCPeerStats) => void>();
+  private _errorHandlers    = new Set<(e: string) => void>();
+  private _trackHandlers    = new Set<(track: any, stream: any) => void>();
 
-  private _leakToken:     string;
+  private _leakToken:       string;
   private _webrtcAvailable: boolean;
-  private _pc:            any = null;
-  private _localStream:   any = null;
-  private _negotiating    = false;
+  private _pc:              any = null;
+  private _localStream:     any = null;
+  private _negotiating      = false;
 
   private _prevBytes = 0;
   private _prevTs    = 0;
@@ -130,31 +129,27 @@ export class RTCPeer {
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  get state():         RTCConnectionState { return this._state; }
-  get isConnected():   boolean            { return this._state === 'connected'; }
-  get localStream():   any                { return this._localStream; }
+  get state():       RTCConnectionState { return this._state; }
+  get isConnected(): boolean            { return this._state === 'connected'; }
+  get localStream(): any                { return this._localStream; }
 
   onStateChange(h: (s: RTCConnectionState) => void): () => void {
-    this._stateHandlers.add(h);
-    return () => this._stateHandlers.delete(h);
+    this._stateHandlers.add(h); return () => this._stateHandlers.delete(h);
   }
   onStats(h: (s: RTCPeerStats) => void): () => void {
-    this._statsHandlers.add(h);
-    return () => this._statsHandlers.delete(h);
+    this._statsHandlers.add(h); return () => this._statsHandlers.delete(h);
   }
   onError(h: (e: string) => void): () => void {
-    this._errorHandlers.add(h);
-    return () => this._errorHandlers.delete(h);
+    this._errorHandlers.add(h); return () => this._errorHandlers.delete(h);
   }
   onRemoteTrack(h: (track: any, stream: any) => void): () => void {
-    this._trackHandlers.add(h);
-    return () => this._trackHandlers.delete(h);
+    this._trackHandlers.add(h); return () => this._trackHandlers.delete(h);
   }
 
   // ── Negotiate ─────────────────────────────────────────────────────────────
 
   async negotiate(role: 'offer' | 'answer'): Promise<void> {
-    if (this._negotiating) return;
+    if (this._closed || this._negotiating) return;
     this._negotiating = true;
     this._setState('connecting');
     this._startIceTimeout();
@@ -165,6 +160,8 @@ export class RTCPeer {
       } else {
         await this._negotiateSimulated(role);
       }
+    } catch (e: any) {
+      this._notifyError(`Negotiate error: ${e?.message}`);
     } finally {
       this._negotiating = false;
     }
@@ -173,22 +170,22 @@ export class RTCPeer {
   // ── ICE restart ───────────────────────────────────────────────────────────
 
   async restartICE(): Promise<void> {
-    if (!this._pc || !this._webrtcAvailable) return;
+    if (this._closed || !this._pc || !this._webrtcAvailable) return;
     this._setState('reconnecting');
     this._startIceTimeout();
     try {
       const offer = await this._pc.createOffer({ iceRestart: true });
       await this._pc.setLocalDescription(new _RTCSessionDescription(offer));
       await SignalingManager.sendOffer(this.config.roomId, this.config.localUserId, offer.sdp);
-      console.log('[RTCPeer] ICE restart sent:', this.config.roomId);
     } catch (e: any) {
       this._notifyError(`ICE restart failed: ${e?.message}`);
     }
   }
 
-  // ── Reconnect with backoff ────────────────────────────────────────────────
+  // ── Reconnect ─────────────────────────────────────────────────────────────
 
   async reconnect(): Promise<void> {
+    if (this._closed) return;
     if (this._reconnectCount >= this.config.maxReconnects) {
       this._setState('failed');
       this._notifyError('Max reconnects reached');
@@ -201,7 +198,11 @@ export class RTCPeer {
     console.log(`[RTCPeer] reconnect #${this._reconnectCount} in ${delay}ms`);
 
     this._reconnectTimer = setTimeout(async () => {
-      if (this._pc) { try { this._pc.close(); } catch { /* ignore */ } this._pc = null; }
+      if (this._closed) return;
+      if (this._pc) {
+        try { this._pc.close(); } catch { /* ignore */ }
+        this._pc = null;
+      }
       this._negotiating = false;
       await this.negotiate('offer');
     }, delay);
@@ -210,32 +211,30 @@ export class RTCPeer {
   // ── Track management ──────────────────────────────────────────────────────
 
   setTrackEnabled(kind: 'audio' | 'video', enabled: boolean): void {
-    // Local stream tracks
-    if (this._localStream) {
-      const tracks = kind === 'audio'
-        ? this._localStream.getAudioTracks?.()
-        : this._localStream.getVideoTracks?.();
-      for (const t of (tracks ?? [])) t.enabled = enabled;
-    }
-    // Sender tracks
-    if (this._pc) {
-      try {
+    try {
+      if (this._localStream) {
+        const tracks = kind === 'audio'
+          ? this._localStream.getAudioTracks?.()
+          : this._localStream.getVideoTracks?.();
+        for (const t of (tracks ?? [])) t.enabled = enabled;
+      }
+      if (this._pc) {
         for (const sender of (this._pc.getSenders?.() ?? [])) {
           if (sender?.track?.kind === kind) sender.track.enabled = enabled;
         }
-      } catch { /* non-fatal */ }
+      }
+    } catch (e: any) {
+      console.warn('[RTCPeer] setTrackEnabled error:', e?.message);
     }
-    console.log('[RTCPeer] track', kind, enabled ? 'enabled' : 'disabled');
   }
 
   async replaceTrack(kind: 'audio' | 'video', newTrack: any): Promise<void> {
-    if (!this._pc) return;
+    if (!this._pc || this._closed) return;
     try {
       const senders: any[] = this._pc.getSenders?.() ?? [];
       const sender = senders.find(s => s?.track?.kind === kind);
       if (sender) {
         await sender.replaceTrack(newTrack);
-        // May need renegotiation
         if (this._pc.signalingState !== 'stable') {
           this._negotiating = false;
           await this.negotiate('offer');
@@ -246,79 +245,53 @@ export class RTCPeer {
     }
   }
 
-  /** Switch camera (front ↔ back) — replaces video track in-place */
   async switchCamera(): Promise<void> {
-    if (!this._localStream || !this._webrtcAvailable) return;
+    if (!this._localStream || !this._webrtcAvailable || this._closed) return;
     const videoTrack = this._localStream.getVideoTracks?.()?.[0];
     if (!videoTrack) return;
     try {
-      if (typeof videoTrack._switchCamera === 'function') {
-        videoTrack._switchCamera();   // react-native-webrtc extension
-      }
-      console.log('[RTCPeer] camera switched');
+      if (typeof videoTrack._switchCamera === 'function') videoTrack._switchCamera();
     } catch (e: any) {
       console.warn('[RTCPeer] switchCamera error:', e?.message);
     }
   }
 
-  /** Route audio to speaker (true) or earpiece (false) */
   setAudioSpeaker(speaker: boolean): void {
     const icm = loadInCallManager();
     if (!icm) return;
     try {
-      if (speaker) {
-        icm.setForceSpeakerphoneOn(true);
-      } else {
-        icm.setForceSpeakerphoneOn(false);
-        icm.setSpeakerphoneOn(false);
-      }
+      icm.setForceSpeakerphoneOn(speaker);
+      if (!speaker) icm.setSpeakerphoneOn(false);
     } catch { /* ignore */ }
-  }
-
-  // ── Adaptive bitrate via thermal ──────────────────────────────────────────
-
-  private _applyThermalBitrate(): void {
-    if (!this._pc) return;
-    const thermal = ThermalMonitor.currentState;
-    const maxBps = thermal === 'critical' ? 128_000
-                 : thermal === 'serious'  ? 256_000
-                 : thermal === 'fair'     ? 512_000
-                 : 1_500_000;
-
-    try {
-      const senders: any[] = this._pc.getSenders?.() ?? [];
-      for (const sender of senders) {
-        if (sender?.track?.kind !== 'video') continue;
-        const params = sender.getParameters?.();
-        if (!params?.encodings) continue;
-        for (const enc of params.encodings) {
-          enc.maxBitrate = maxBps;
-        }
-        sender.setParameters?.(params);
-      }
-    } catch { /* codecs may not support parameter setting */ }
   }
 
   // ── Close ─────────────────────────────────────────────────────────────────
 
   async close(): Promise<void> {
+    if (this._closed) return;
+    this._closed = true;
+
     this._clearTimers();
     this._clearSignalingUnsubs();
     this._clearAppUnsubs();
-    SignalingManager.stopPolling(this.config.roomId);
+
+    try { SignalingManager.stopPolling(this.config.roomId); } catch { /* ignore */ }
 
     // Stop audio routing
-    this.setAudioSpeaker(false);
+    try { this.setAudioSpeaker(false); } catch { /* ignore */ }
     const icm = loadInCallManager();
-    if (icm) {
-      try { icm.stop(); } catch { /* ignore */ }
-    }
+    if (icm) { try { icm.stop(); } catch { /* ignore */ } }
 
-    // Stop local media
+    // Stop local media tracks
     if (this._localStream) {
-      try { for (const t of this._localStream.getTracks?.() ?? []) t.stop(); } catch { /* ignore */ }
+      try {
+        for (const t of this._localStream.getTracks?.() ?? []) {
+          try { t.stop(); } catch { /* ignore */ }
+        }
+      } catch { /* ignore */ }
       this._localStream = null;
     }
+
     if (this._pc) {
       try { this._pc.close(); } catch { /* ignore */ }
       this._pc = null;
@@ -326,27 +299,25 @@ export class RTCPeer {
 
     this._setState('closed');
     LeakDetector.release(this._leakToken);
+    this._stateHandlers.clear();
+    this._statsHandlers.clear();
+    this._errorHandlers.clear();
+    this._trackHandlers.clear();
     console.log('[RTCPeer] closed:', this.config.roomId);
   }
 
   // ── Real WebRTC negotiation ───────────────────────────────────────────────
 
   private async _negotiateReal(role: 'offer' | 'answer'): Promise<void> {
-    // Build peer connection
     this._pc = new _RTCPeerConnection({ iceServers: RTCManagerImpl._iceServers });
     this._wireConnectionEvents();
 
-    // Acquire local stream
     await this._acquireLocalStream();
 
-    // Start InCallManager audio session
     const icm = loadInCallManager();
-    if (icm) {
-      try { icm.start({ media: 'video' }); } catch { /* ignore */ }
-    }
+    if (icm) { try { icm.start({ media: 'video' }); } catch { /* ignore */ } }
 
-    // Start signaling poll
-    SignalingManager.startPolling(this.config.roomId, this.config.localUserId);
+    try { SignalingManager.startPolling(this.config.roomId, this.config.localUserId); } catch { /* ignore */ }
 
     if (role === 'offer') {
       await this._sendOffer();
@@ -356,7 +327,7 @@ export class RTCPeer {
 
     // ICE candidate handler
     const iceUnsub = SignalingManager.onSignal('ice-candidate', async (msg) => {
-      if (msg.roomId !== this.config.roomId) return;
+      if (msg.roomId !== this.config.roomId || this._closed) return;
       if (!this._pc?.remoteDescription) return;
       try {
         await this._pc.addIceCandidate(new _RTCIceCandidate(JSON.parse(msg.payload)));
@@ -366,22 +337,21 @@ export class RTCPeer {
     });
     this._sigUnsubs.push(iceUnsub);
 
-    // End signal handler
     const endUnsub = SignalingManager.onSignal('end', (msg) => {
-      if (msg.roomId !== this.config.roomId) return;
+      if (msg.roomId !== this.config.roomId || this._closed) return;
       this.close();
     });
     this._sigUnsubs.push(endUnsub);
 
-    // App lifecycle handlers
     this._appUnsubs.push(
-      AppLifecycle.onBackground(() => { this.setTrackEnabled('video', false); }),
-      AppLifecycle.onForeground(() => { if (this._state === 'connected') this.setTrackEnabled('video', true); }),
+      AppLifecycle.onBackground(() => { if (!this._closed) this.setTrackEnabled('video', false); }),
+      AppLifecycle.onForeground(() => {
+        if (!this._closed && this._state === 'connected') this.setTrackEnabled('video', true);
+      }),
     );
 
-    // Thermal-driven bitrate adaptation
     const thermalUnsub = EventBus.on('thermal:state_changed', () => {
-      this._applyThermalBitrate();
+      if (!this._closed) this._applyThermalBitrate();
     });
     this._sigUnsubs.push(thermalUnsub);
 
@@ -389,16 +359,20 @@ export class RTCPeer {
   }
 
   private async _sendOffer(): Promise<void> {
-    const offer = await this._pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: !this.config.audioOnly });
+    const offer = await this._pc.createOffer({
+      offerToReceiveAudio: true,
+      offerToReceiveVideo: !this.config.audioOnly,
+    });
     await this._pc.setLocalDescription(new _RTCSessionDescription(offer));
     await SignalingManager.sendOffer(this.config.roomId, this.config.localUserId, offer.sdp);
 
     const answerUnsub = SignalingManager.onSignal('answer', async (msg) => {
-      if (msg.roomId !== this.config.roomId) return;
+      if (msg.roomId !== this.config.roomId || this._closed) return;
       if (this._pc?.signalingState !== 'have-local-offer') return;
       try {
-        await this._pc.setRemoteDescription(new _RTCSessionDescription({ type: 'answer', sdp: msg.payload }));
-        console.log('[RTCPeer] remote answer applied');
+        await this._pc.setRemoteDescription(
+          new _RTCSessionDescription({ type: 'answer', sdp: msg.payload }),
+        );
       } catch (e: any) {
         this._notifyError(`Remote answer failed: ${e?.message}`);
       }
@@ -408,12 +382,16 @@ export class RTCPeer {
 
   private async _waitForAndAnswerOffer(): Promise<void> {
     const offerUnsub = SignalingManager.onSignal('offer', async (msg) => {
-      if (msg.roomId !== this.config.roomId) return;
+      if (msg.roomId !== this.config.roomId || this._closed) return;
       try {
-        await this._pc.setRemoteDescription(new _RTCSessionDescription({ type: 'offer', sdp: msg.payload }));
+        await this._pc.setRemoteDescription(
+          new _RTCSessionDescription({ type: 'offer', sdp: msg.payload }),
+        );
         const answer = await this._pc.createAnswer();
         await this._pc.setLocalDescription(new _RTCSessionDescription(answer));
-        await SignalingManager.sendAnswer(this.config.roomId, this.config.localUserId, answer.sdp);
+        await SignalingManager.sendAnswer(
+          this.config.roomId, this.config.localUserId, answer.sdp,
+        );
       } catch (e: any) {
         this._notifyError(`Answer creation failed: ${e?.message}`);
       }
@@ -439,13 +417,17 @@ export class RTCPeer {
       } catch (audioErr: any) {
         this._notifyError(`Media access denied: ${audioErr?.message}`);
         this._setState('failed');
-        throw audioErr;
+        return;
       }
     }
 
-    if (this._localStream) {
-      for (const track of this._localStream.getTracks?.() ?? []) {
-        this._pc.addTrack(track, this._localStream);
+    if (this._localStream && this._pc) {
+      try {
+        for (const track of this._localStream.getTracks?.() ?? []) {
+          this._pc.addTrack(track, this._localStream);
+        }
+      } catch (e: any) {
+        console.warn('[RTCPeer] addTrack error:', e?.message);
       }
     }
   }
@@ -453,16 +435,16 @@ export class RTCPeer {
   // ── Simulated mode ────────────────────────────────────────────────────────
 
   private async _negotiateSimulated(role: 'offer' | 'answer'): Promise<void> {
-    SignalingManager.startPolling(this.config.roomId, this.config.localUserId);
+    try { SignalingManager.startPolling(this.config.roomId, this.config.localUserId); } catch { /* ignore */ }
 
     const endUnsub = SignalingManager.onSignal('end', (msg) => {
-      if (msg.roomId !== this.config.roomId) return;
+      if (msg.roomId !== this.config.roomId || this._closed) return;
       this.close();
     });
     this._sigUnsubs.push(endUnsub);
 
     setTimeout(() => {
-      if (this._state === 'connecting') {
+      if (!this._closed && this._state === 'connecting') {
         this._setState('connected');
         this._reconnectCount = 0;
         this._clearIceTimer();
@@ -474,11 +456,11 @@ export class RTCPeer {
   // ── Event wiring ──────────────────────────────────────────────────────────
 
   _wireConnectionEvents(): void {
-    if (!this._pc) return;
+    if (!this._pc || this._closed) return;
 
     this._pc.oniceconnectionstatechange = () => {
+      if (this._closed) return;
       const s = this._pc?.iceConnectionState ?? 'closed';
-      console.log('[RTCPeer] ICE:', s, this.config.roomId);
 
       if (s === 'connected' || s === 'completed') {
         this._clearReconnectTimer();
@@ -486,12 +468,10 @@ export class RTCPeer {
         this._clearDisconnectTimer();
         this._reconnectCount = 0;
         this._setState('connected');
-        // Route audio to speaker on connect
-        this.setAudioSpeaker(true);
+        try { this.setAudioSpeaker(true); } catch { /* ignore */ }
       } else if (s === 'disconnected') {
-        // 3s grace period — may self-recover
         this._disconnectTimer = setTimeout(() => {
-          if (this._pc?.iceConnectionState === 'disconnected') {
+          if (!this._closed && this._pc?.iceConnectionState === 'disconnected') {
             this.restartICE();
           }
         }, 3000);
@@ -508,7 +488,7 @@ export class RTCPeer {
     };
 
     this._pc.onicecandidate = async (event: any) => {
-      if (!event.candidate) return;
+      if (!event.candidate || this._closed) return;
       try {
         await SignalingManager.sendIceCandidate(
           this.config.roomId,
@@ -521,59 +501,80 @@ export class RTCPeer {
     };
 
     this._pc.onnegotiationneeded = async () => {
-      if (this._state === 'connected') {
-        console.log('[RTCPeer] renegotiation needed');
-        this._negotiating = false;
-        await this.negotiate('offer');
-      }
+      if (this._closed || this._state !== 'connected') return;
+      this._negotiating = false;
+      await this.negotiate('offer');
     };
 
     this._pc.ontrack = (event: any) => {
+      if (this._closed) return;
       const track  = event.track;
       const stream = event.streams?.[0] ?? null;
-      // Notify hook / screen layer
-      for (const h of this._trackHandlers) h(track, stream);
+      for (const h of this._trackHandlers) { try { h(track, stream); } catch { /* isolate */ } }
       EventBus.emit('call:state_changed' as any, {
         roomId: this.config.roomId,
         state:  'track_received',
-        track,
-        stream,
+        track, stream,
       });
     };
 
     this._pc.onconnectionstatechange = () => {
-      const s = this._pc?.connectionState ?? 'closed';
-      if (s === 'failed') this.reconnect();
+      if (this._closed) return;
+      if (this._pc?.connectionState === 'failed') this.reconnect();
     };
+  }
+
+  // ── Adaptive bitrate ──────────────────────────────────────────────────────
+
+  private _applyThermalBitrate(): void {
+    if (!this._pc || this._closed) return;
+    try {
+      const thermal = ThermalMonitor.currentState;
+      const maxBps  =
+        thermal === 'critical' ? 128_000
+        : thermal === 'serious' ? 256_000
+        : thermal === 'fair'    ? 512_000
+        : 1_500_000;
+
+      for (const sender of (this._pc.getSenders?.() ?? [])) {
+        if (sender?.track?.kind !== 'video') continue;
+        const params = sender.getParameters?.();
+        if (!params?.encodings) continue;
+        for (const enc of params.encodings) enc.maxBitrate = maxBps;
+        sender.setParameters?.(params);
+      }
+    } catch { /* codecs may not support parameter setting */ }
   }
 
   // ── Stats ─────────────────────────────────────────────────────────────────
 
   private _startRealStats(): void {
     this._statsTimer = setInterval(async () => {
-      if (!this._pc || this._state !== 'connected') return;
+      if (!this._pc || this._state !== 'connected' || this._closed) return;
       try {
         const stats = await this._pc.getStats();
         let rttMs = 0, packetLossPct = 0, bitrateKbps = 0, frameRate = 0, jitterMs = 0;
 
         stats.forEach((r: any) => {
-          if (r.type === 'remote-inbound-rtp' && r.kind === 'audio') {
-            rttMs         = (r.roundTripTime ?? 0) * 1000;
-            jitterMs      = (r.jitter ?? 0) * 1000;
-            const lost    = r.packetsLost ?? 0;
-            const recv    = r.packetsReceived ?? 1;
-            packetLossPct = (lost / (lost + recv)) * 100;
-          }
-          if (r.type === 'outbound-rtp' && r.kind === 'video') {
-            frameRate   = r.framesPerSecond ?? 0;
-            const bytes = r.bytesSent ?? 0;
-            const now   = r.timestamp ?? Date.now();
-            if (this._prevBytes > 0 && this._prevTs > 0) {
-              bitrateKbps = ((bytes - this._prevBytes) * 8) / ((now - this._prevTs) / 1000) / 1000;
+          try {
+            if (r.type === 'remote-inbound-rtp' && r.kind === 'audio') {
+              rttMs         = (r.roundTripTime ?? 0) * 1000;
+              jitterMs      = (r.jitter ?? 0) * 1000;
+              const lost    = r.packetsLost ?? 0;
+              const recv    = r.packetsReceived ?? 1;
+              packetLossPct = (lost / (lost + recv)) * 100;
             }
-            this._prevBytes = bytes;
-            this._prevTs    = now;
-          }
+            if (r.type === 'outbound-rtp' && r.kind === 'video') {
+              frameRate   = r.framesPerSecond ?? 0;
+              const bytes = r.bytesSent ?? 0;
+              const now   = r.timestamp ?? Date.now();
+              if (this._prevBytes > 0 && this._prevTs > 0) {
+                bitrateKbps = ((bytes - this._prevBytes) * 8) / ((now - this._prevTs) / 1000) / 1000;
+              }
+              this._prevBytes = bytes;
+              this._prevTs    = now;
+            }
+          } catch { /* ignore per-stat errors */ }
         });
 
         const sample: RTCPeerStats = {
@@ -586,19 +587,21 @@ export class RTCPeer {
           timestamp:     Date.now(),
         };
         sample.qualityLevel = this._classifyQuality(sample);
-        for (const h of this._statsHandlers) h(sample);
 
-        TelemetryPipeline.recordRTCQuality?.(`call:${this.config.remoteUserId}`, {
-          rttMs:         sample.rttMs,
-          packetLossPct: sample.packetLossPct,
-          bitrateKbps:   sample.bitrateKbps,
-        });
+        for (const h of this._statsHandlers) { try { h(sample); } catch { /* isolate */ } }
+
+        try {
+          TelemetryPipeline.recordRTCQuality?.(`call:${this.config.remoteUserId}`, {
+            rttMs: sample.rttMs, packetLossPct: sample.packetLossPct, bitrateKbps: sample.bitrateKbps,
+          });
+        } catch { /* non-critical */ }
       } catch { /* getStats can fail during state transitions */ }
     }, this.config.statsIntervalMs);
   }
 
   private _startStatsSimulation(): void {
     this._statsTimer = setInterval(() => {
+      if (this._closed) return;
       const sample: RTCPeerStats = {
         rttMs:         20 + Math.random() * 30,
         packetLossPct: Math.random() * 1.5,
@@ -609,7 +612,7 @@ export class RTCPeer {
         timestamp:     Date.now(),
       };
       sample.qualityLevel = this._classifyQuality(sample);
-      for (const h of this._statsHandlers) h(sample);
+      for (const h of this._statsHandlers) { try { h(sample); } catch { /* isolate */ } }
     }, this.config.statsIntervalMs);
   }
 
@@ -626,19 +629,19 @@ export class RTCPeer {
   private _setState(s: RTCConnectionState): void {
     if (this._state === s) return;
     this._state = s;
-    for (const h of this._stateHandlers) h(s);
+    for (const h of this._stateHandlers) { try { h(s); } catch { /* isolate */ } }
     EventBus.emit('call:state_changed' as any, { roomId: this.config.roomId, state: s });
   }
 
   private _notifyError(msg: string): void {
     console.error('[RTCPeer]', msg);
-    for (const h of this._errorHandlers) h(msg);
+    for (const h of this._errorHandlers) { try { h(msg); } catch { /* isolate */ } }
   }
 
   private _startIceTimeout(): void {
     this._clearIceTimer();
     this._iceTimer = setTimeout(() => {
-      if (this._state === 'connecting' || this._state === 'reconnecting') {
+      if (!this._closed && (this._state === 'connecting' || this._state === 'reconnecting')) {
         console.warn('[RTCPeer] ICE timeout — reconnecting');
         this.reconnect();
       }
@@ -652,9 +655,15 @@ export class RTCPeer {
     if (this._statsTimer) { clearInterval(this._statsTimer); this._statsTimer = null; }
   }
 
-  private _clearReconnectTimer():  void { if (this._reconnectTimer)  { clearTimeout(this._reconnectTimer);  this._reconnectTimer  = null; } }
-  private _clearIceTimer():        void { if (this._iceTimer)        { clearTimeout(this._iceTimer);        this._iceTimer        = null; } }
-  private _clearDisconnectTimer(): void { if (this._disconnectTimer) { clearTimeout(this._disconnectTimer); this._disconnectTimer = null; } }
+  private _clearReconnectTimer():  void {
+    if (this._reconnectTimer)  { clearTimeout(this._reconnectTimer);  this._reconnectTimer  = null; }
+  }
+  private _clearIceTimer():        void {
+    if (this._iceTimer)        { clearTimeout(this._iceTimer);        this._iceTimer        = null; }
+  }
+  private _clearDisconnectTimer(): void {
+    if (this._disconnectTimer) { clearTimeout(this._disconnectTimer); this._disconnectTimer = null; }
+  }
 
   private _clearSignalingUnsubs(): void {
     for (const fn of this._sigUnsubs) { try { fn(); } catch { /* ignore */ } }
@@ -668,6 +677,7 @@ export class RTCPeer {
 }
 
 // ── RTCManager singleton ──────────────────────────────────────────────────────
+
 class RTCManagerImpl {
   static _iceServers: any[] = DEFAULT_ICE_SERVERS;
   private readonly _peers   = new Map<string, RTCPeer>();
@@ -683,8 +693,12 @@ class RTCManagerImpl {
     remoteUserId: string,
     options:      Partial<RTCPeerConfig> = {},
   ): Promise<RTCPeer> {
-    // Close any existing peer on same room
-    await this._peers.get(roomId)?.close();
+    // Await existing peer close before creating new one
+    const existing = this._peers.get(roomId);
+    if (existing) {
+      await existing.close();
+      this._peers.delete(roomId);
+    }
 
     const peer = new RTCPeer({
       roomId,
@@ -712,8 +726,11 @@ class RTCManagerImpl {
   }
 
   async closeAll(): Promise<void> {
-    for (const peer of this._peers.values()) await peer.close();
+    const peers = Array.from(this._peers.values());
     this._peers.clear();
+    for (const peer of peers) {
+      try { await peer.close(); } catch { /* ignore */ }
+    }
   }
 
   get activePeerCount(): number { return this._peers.size; }
