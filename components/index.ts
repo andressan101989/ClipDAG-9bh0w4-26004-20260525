@@ -6,3 +6,4 @@ export { LiveViewerSheet } from './feature/LiveViewerSheet';
 export { Avatar } from './ui/Avatar';
 export { CyberButton } from './ui/CyberButton';
 export { DAGBadge } from './ui/DAGBadge';
+export { ErrorBoundary } from './ui/ErrorBoundary';

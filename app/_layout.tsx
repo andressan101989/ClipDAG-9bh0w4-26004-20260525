@@ -1,5 +1,5 @@
 /**
- * app/_layout.tsx — FULL APP RESTORED
+ * app/_layout.tsx — FULL APP RESTORED + AppLifecycle initialized
  *
  * WalletConnect: real WalletConnectModalProvider mounted via
  *   components/feature/WalletConnectProvider.native.tsx (iOS/Android)
@@ -9,6 +9,12 @@
  */
 
 console.log('[BOOT] 0 - _layout module start');
+
+// Initialize AppLifecycle singleton immediately at module load — before any
+// component mounts — so all subsequent onForeground/onBackground registrations
+// start receiving events from the very first AppState change.
+import { AppLifecycle } from '@/modules/core/AppLifecycle';
+AppLifecycle.initialize();
 
 import { Stack } from 'expo-router';
 console.log('[BOOT] 1 - expo-router imported');

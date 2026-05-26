@@ -1,8 +1,9 @@
 import React, {
-  createContext, useState, useCallback, useEffect, useRef, useContext, ReactNode,
+  createContext, useState, useCallback, useEffect, useContext, ReactNode,
 } from 'react';
 import { getSupabaseClient } from '@/template';
 import { AuthContext } from './AuthContext';
+import { PollingManager } from '@/modules/realtime/PollingManager';
 
 export type NotificationType =
   | 'like' | 'comment' | 'follow' | 'gift' | 'message' | 'sale' | 'order_update';
@@ -56,8 +57,6 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
   const fetchNotifications = useCallback(async () => {
     if (!user) return;
     try {
@@ -111,17 +110,25 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }, [supabase]);
 
   // ── Deferred polling — starts only after user auth, NOT on startup ────────
-  // Delayed by 3s after user mounts to avoid blocking iOS startup render.
+  // Uses PollingManager: centralized, background-aware, battery-friendly.
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      PollingManager.unregister('notifications');
+      return;
+    }
     console.log('[BOOT] NotificationsProvider — user ready, starting deferred poll');
     const initDelay = setTimeout(() => {
-      fetchNotifications();
-      pollRef.current = setInterval(fetchNotifications, 10000);
+      PollingManager.register({
+        key:             'notifications',
+        intervalMs:      10_000,
+        fn:              fetchNotifications,
+        runImmediately:  true,
+        backgroundFactor: 0,
+      });
     }, 3000);
     return () => {
       clearTimeout(initDelay);
-      if (pollRef.current) clearInterval(pollRef.current);
+      PollingManager.unregister('notifications');
     };
   }, [user?.id]);
 

@@ -1,8 +1,9 @@
 import React, {
-  createContext, useState, useCallback, useEffect, useContext, useRef, ReactNode,
+  createContext, useState, useCallback, useEffect, useContext, ReactNode,
 } from 'react';
 import { getSupabaseClient } from '@/template';
 import { AuthContext } from './AuthContext';
+import { PollingManager } from '@/modules/realtime/PollingManager';
 
 export interface Message {
   id: string;
@@ -59,7 +60,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
   const [isLoading, setIsLoading] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Polling key unique per user to prevent cross-user leaks on re-login
 
   // ── Fetch conversations (latest message per partner) ─────────────────────
   const fetchConversations = useCallback(async () => {
@@ -232,19 +233,28 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
   }, [user, supabase]);
 
   // ── Deferred polling — starts only after user auth, NOT on startup ────────
-  // Polling is delayed by 2s after user mounts to avoid blocking the
-  // React tree during Expo Router startup route registration on iOS.
+  // Uses PollingManager instead of raw setInterval:
+  //   • Centralized scheduling (one master timer, not N independent intervals)
+  //   • Auto-pauses when app backgrounds (battery friendly)
+  //   • Auto-resumes on foreground with immediate run
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      PollingManager.unregister('messages_conversations');
+      return;
+    }
     console.log('[BOOT] MessagesProvider — user ready, starting deferred poll');
-    // Defer initial fetch so it doesn't block startup render
     const initDelay = setTimeout(() => {
-      fetchConversations();
-      pollRef.current = setInterval(fetchConversations, 4000);
+      PollingManager.register({
+        key:             'messages_conversations',
+        intervalMs:      4_000,
+        fn:              fetchConversations,
+        runImmediately:  true,
+        backgroundFactor: 0, // pause when app is in background
+      });
     }, 2000);
     return () => {
       clearTimeout(initDelay);
-      if (pollRef.current) clearInterval(pollRef.current);
+      PollingManager.unregister('messages_conversations');
     };
   }, [user?.id]);
 
