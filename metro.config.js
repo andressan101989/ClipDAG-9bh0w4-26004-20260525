@@ -100,12 +100,13 @@ const SUPABASE_TRACING_PATHS = [
   '@supabase/supabase-js/dist/cjs/lib/tracing',
 ];
 
-// ── @walletconnect/* and @web3modal/* — blocked on web/preview only ───────────
-// On native (iOS/Android EAS builds) these packages are allowed through so
-// WalletConnect QR modal works. They are still blocked on web/PC preview
-// because they require native modules not available there.
-// NOTE: @opentelemetry/* (their transitive dep with bad dynamic imports) is
-// blocked on ALL platforms separately — that alone prevents the Hermes crash.
+// ── @walletconnect/* and @web3modal/* — BLOCKED ON ALL PLATFORMS ────────────
+// Previously only blocked on web/preview. Now also blocked on iOS/Android
+// native builds to prevent the WalletConnect SDK from crashing during
+// module evaluation at startup (top-level require in useExternalWallet.native.ts).
+// The SDK executes native bridge calls at module load time which crash the app
+// before React mounts — confirmed as the root cause of "Failed to launch app".
+// WalletConnect will show a graceful "not available" state via IS_AVAILABLE=false.
 const WALLETCONNECT_PREFIXES = [
   '@walletconnect/',
   '@web3modal/',
@@ -151,15 +152,13 @@ config.resolver = {
       return { type: 'sourceFile', filePath: EMPTY_STUB };
     }
 
-    // 3. Block @walletconnect/* and @web3modal/* on web/preview only
-    // On native iOS/Android they are allowed so WalletConnect QR modal works
-    if (platform === 'web' || platform === null) {
-      const isWC = WALLETCONNECT_PREFIXES.some(
-        prefix => moduleName === prefix.slice(0, -1) || moduleName.startsWith(prefix),
-      );
-      if (isWC) {
-        return { type: 'sourceFile', filePath: EMPTY_STUB };
-      }
+    // 3. Block @walletconnect/* and @web3modal/* on ALL platforms
+    // (was: web/preview only — now also native iOS/Android to prevent startup crash)
+    const isWC = WALLETCONNECT_PREFIXES.some(
+      prefix => moduleName === prefix.slice(0, -1) || moduleName.startsWith(prefix),
+    );
+    if (isWC) {
+      return { type: 'sourceFile', filePath: EMPTY_STUB };
     }
 
     // 4. Always blocked
