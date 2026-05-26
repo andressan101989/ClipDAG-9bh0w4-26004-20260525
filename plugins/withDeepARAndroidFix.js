@@ -269,7 +269,8 @@ function cleanupRootAndroidBuildGradle(projectRoot) {
 // Expo config plugin entry point
 // ─────────────────────────────────────────────────────────────────────────────
 const withDeepARAndroidFix = (config) => {
-  return withDangerousMod(config, [
+  // Android: patch SDK versions in react-native-deepar's build.gradle files
+  config = withDangerousMod(config, [
     'android',
     (modConfig) => {
       const root = modConfig.modRequest.projectRoot;
@@ -278,6 +279,21 @@ const withDeepARAndroidFix = (config) => {
       return modConfig;
     },
   ]);
+
+  // iOS: NO-OP — react-native-deepar is excluded from CocoaPods via
+  // react-native.config.js (ios: null). No iOS native changes are needed.
+  // The SDK is Metro-blocked on JS side (ALWAYS_BLOCKED in metro.config.js).
+  // This no-op prevents any accidental iOS native modification that could
+  // cause the app to crash at startup on physical iPhone devices.
+  config = withDangerousMod(config, [
+    'ios',
+    (modConfig) => {
+      console.log('[withDeepARAndroidFix] iOS: no-op (DeepAR native excluded via react-native.config.js)');
+      return modConfig;
+    },
+  ]);
+
+  return config;
 };
 
 module.exports = withDeepARAndroidFix;
