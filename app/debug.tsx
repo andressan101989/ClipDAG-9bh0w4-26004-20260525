@@ -1,176 +1,255 @@
 /**
- * app/debug.tsx — Internal Developer Debug Panel
+ * app/debug.tsx — Internal Developer Debug Panel v2
  *
- * Accessible by shaking the device (expo-sensors accelerometer) in
- * development builds. Shows real-time infrastructure diagnostics.
+ * Real-time metrics across ALL infrastructure systems:
+ *   - ProductionStabilityMode tier + score
+ *   - RTCManager active peers
+ *   - SessionOrchestrator inventory
+ *   - PresenceManager cache
+ *   - Diagnostics ring-buffer (FPS, memory, GPU, thermal)
+ *   - LeakDetector (open + stale resources)
+ *   - ConnectionManager state
+ *   - StreamingBufferManager (active buffers + stall rate)
+ *   - UploadRecoveryManager (pending jobs)
+ *   - SecurityManager (recent violations)
+ *   - PowerManager tier
+ *   - RenderIsolationManager surfaces
+ *   - AdaptiveQualityController profile
+ *   - MultiplayerEngine active rooms
+ *   - LiveOrchestrator active sessions
  *
- * Data sources:
- *   - Diagnostics.getReport()       → FPS, uploads, realtime latency
- *   - LeakDetector.getReport()      → open resources, stale count
- *   - PowerManager.currentTier      → current power/thermal tier
- *   - RenderIsolationManager        → active render surfaces
- *   - StreamingBufferManager        → buffer states + stall rates
- *   - UploadRecoveryManager         → pending/failed uploads
- *   - BackpressureQueue             → queue depths
- *   - ConnectionManager             → connection state + queue
- *   - AdaptiveQualityController     → current quality profile
- *
- * Navigation:
- *   In development: app automatically includes a "Debug" entry.
- *   On physical device: shake to open (handled via Accelerometer).
- *   Direct route: push('/debug') from any screen.
+ * Auto-refreshes every 2 seconds.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
-  RefreshControl, Platform,
+  RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter }         from 'expo-router';
 
-import { Diagnostics }              from '@/modules/core/Diagnostics';
-import { LeakDetector }             from '@/modules/core/LeakDetector';
-import { PowerManager }             from '@/modules/core/PowerManager';
-import { RenderIsolationManager }   from '@/modules/core/RenderIsolationManager';
+import { Diagnostics }               from '@/modules/core/Diagnostics';
+import { LeakDetector }              from '@/modules/core/LeakDetector';
+import { PowerManager }              from '@/modules/core/PowerManager';
+import { RenderIsolationManager }    from '@/modules/core/RenderIsolationManager';
 import { AdaptiveQualityController } from '@/modules/core/AdaptiveQualityController';
-import { ConnectionManager }        from '@/modules/realtime/ConnectionManager';
-import { StreamingBufferManager }   from '@/modules/media/StreamingBufferManager';
-import { UploadRecoveryManager }    from '@/modules/media/UploadRecoveryManager';
+import { ProductionStabilityMode }   from '@/modules/core/ProductionStabilityMode';
+import { SecurityManager }           from '@/modules/core/SecurityManager';
+import { ConnectionManager }         from '@/modules/realtime/ConnectionManager';
+import { StreamingBufferManager }    from '@/modules/media/StreamingBufferManager';
+import { UploadRecoveryManager }     from '@/modules/media/UploadRecoveryManager';
+import { SessionOrchestrator }       from '@/modules/sessions/SessionOrchestrator';
+import { RTCManager }                from '@/modules/realtime/RTCManager';
+import { PresenceManager }           from '@/modules/realtime/PresenceManager';
+import { MultiplayerEngine }         from '@/modules/gaming/MultiplayerEngine';
+import { LiveOrchestrator }          from '@/modules/streaming/LiveOrchestrator';
+import { TelemetryPipeline }         from '@/modules/core/TelemetryPipeline';
 
-// Conditional import — only render in __DEV__
 const IS_DEV = __DEV__;
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type Section = 'system' | 'render' | 'realtime' | 'media' | 'memory';
+type Section = 'stability' | 'system' | 'sessions' | 'realtime' | 'media' | 'security';
 
 const SECTION_LABELS: Record<Section, string> = {
-  system:   'System',
-  render:   'Render',
-  realtime: 'Realtime',
-  media:    'Media',
-  memory:   'Memory',
+  stability: '🔥 Stability',
+  system:    '⚙️ System',
+  sessions:  '📋 Sessions',
+  realtime:  '📡 Realtime',
+  media:     '🎬 Media',
+  security:  '🛡 Security',
 };
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function MetricRow({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
+function Row({ label, value, warn, good }: {
+  label: string; value: string; warn?: boolean; good?: boolean;
+}) {
   return (
-    <View style={styles.row}>
-      <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={[styles.rowValue, warn && styles.rowValueWarn]}>{value}</Text>
+    <View style={s.row}>
+      <Text style={s.rowLabel}>{label}</Text>
+      <Text style={[
+        s.rowValue,
+        warn ? s.warn : good ? s.good : null,
+      ]}>
+        {value}
+      </Text>
     </View>
   );
 }
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <View style={styles.card}>
-      <Text style={styles.cardTitle}>{title}</Text>
+    <View style={s.card}>
+      <Text style={s.cardTitle}>{title}</Text>
       {children}
     </View>
   );
 }
 
-// ── Sections ──────────────────────────────────────────────────────────────────
+// ── Stability Section ─────────────────────────────────────────────────────────
 
-function SystemSection() {
+function StabilitySection() {
+  const mode    = ProductionStabilityMode.currentMode;
+  const score   = ProductionStabilityMode.currentScore;
+  const tier    = PowerManager.currentTier;
   const report  = Diagnostics.getReport();
-  const leak    = LeakDetector.getReport();
-  const profile = AdaptiveQualityController.currentProfile;
 
-  const tierColor: Record<string, string> = {
-    performance: '#00FF88', balanced: '#FFD700', saver: '#FF8C00', emergency: '#FF2D2D',
+  const modeColor: Record<string, string> = {
+    nominal:   '#00FF88',
+    stress:    '#FFD700',
+    degraded:  '#FF8C00',
+    critical:  '#FF4444',
+    emergency: '#FF2D2D',
   };
 
   return (
     <>
-      <Card title="Power / Quality">
-        <MetricRow label="Power tier"    value={PowerManager.currentTier.toUpperCase()} />
-        <MetricRow label="Quality level" value={profile.level.toUpperCase()} />
-        <MetricRow label="Max FPS"       value={`${profile.maxFPS}`} />
-        <MetricRow label="AR enabled"    value={profile.arEnabled ? 'YES' : 'NO'} warn={!profile.arEnabled} />
-        <MetricRow label="Thermal"       value={report.thermalState.toUpperCase()} warn={report.thermalState !== 'nominal'} />
-        <MetricRow label="GPU pressure"  value={report.gpuPressure.toUpperCase()} warn={report.gpuPressure !== 'none'} />
+      <Card title="Production Stability Mode">
+        <Row label="Mode"           value={mode.toUpperCase()}
+             warn={mode === 'critical' || mode === 'emergency'}
+             good={mode === 'nominal'} />
+        <Row label="Score"          value={`${score.toFixed(1)} / 100`}
+             warn={score > 60} good={score < 30} />
+        <Row label="Can Effects"    value={ProductionStabilityMode.canRenderEffects    ? 'YES' : 'NO'} warn={!ProductionStabilityMode.canRenderEffects} />
+        <Row label="Can Prefetch"   value={ProductionStabilityMode.canPrefetch         ? 'YES' : 'NO'} warn={!ProductionStabilityMode.canPrefetch} />
+        <Row label="Can Overlays"   value={ProductionStabilityMode.canRenderOverlays   ? 'YES' : 'NO'} warn={!ProductionStabilityMode.canRenderOverlays} />
       </Card>
-      <Card title="Leak Detector">
-        <MetricRow label="Tracked resources" value={`${leak.totalTracked}`} />
-        <MetricRow label="Stale (>30s)"      value={`${leak.staleCount}`} warn={leak.staleCount > 0} />
-        <MetricRow label="Force released"    value={`${leak.forceReleasedCount}`} warn={leak.forceReleasedCount > 0} />
-        <MetricRow label="By type"           value={Object.entries(leak.byType).map(([k, v]) => `${k}:${v}`).join(' ') || 'none'} />
+      <Card title="Thermal / Power">
+        <Row label="Thermal"    value={report.thermalState.toUpperCase()}  warn={report.thermalState !== 'nominal'} />
+        <Row label="Power tier" value={tier.toUpperCase()}                 warn={tier !== 'performance'} />
+        <Row label="GPU"        value={report.gpuPressure.toUpperCase()}   warn={report.gpuPressure !== 'none'} />
       </Card>
     </>
   );
 }
 
-function RenderSection() {
+// ── System Section ────────────────────────────────────────────────────────────
+
+function SystemSection() {
   const report   = Diagnostics.getReport();
+  const leak     = LeakDetector.getReport();
+  const profile  = AdaptiveQualityController.currentProfile;
   const surfaces = RenderIsolationManager.getActiveSurfaces();
   const budget   = RenderIsolationManager.getTotalBudgetUsedMs();
 
   return (
     <>
-      <Card title="Frame Stats">
-        {report.frameStats.length === 0 && <MetricRow label="No surfaces" value="—" />}
-        {report.frameStats.map(s => (
-          <MetricRow
-            key={s.surface}
-            label={s.surface}
-            value={`${s.currentFPS}fps drop:${s.dropRate}`}
-            warn={parseFloat(s.dropRate) > 20}
-          />
-        ))}
+      <Card title="Quality Profile">
+        <Row label="Level"   value={profile.level.toUpperCase()} />
+        <Row label="Max FPS" value={`${profile.maxFPS}`} />
+        <Row label="AR"      value={profile.arEnabled ? 'ENABLED' : 'DISABLED'} warn={!profile.arEnabled} />
+      </Card>
+      <Card title="Leak Detector">
+        <Row label="Tracked"        value={`${leak.totalTracked}`} />
+        <Row label="Stale (>30s)"   value={`${leak.staleCount}`}          warn={leak.staleCount > 0} />
+        <Row label="Force-released" value={`${leak.forceReleasedCount}`}  warn={leak.forceReleasedCount > 0} />
+        <Row label="By type"
+             value={Object.entries(leak.byType).map(([k, v]) => `${k}:${v}`).join(' ') || 'none'} />
       </Card>
       <Card title="Render Surfaces">
-        <MetricRow label="Total budget" value={`${budget.toFixed(1)}ms / 16.7ms`} warn={budget > 14} />
-        {surfaces.map(s => (
-          <MetricRow
-            key={s.id}
-            label={s.id}
-            value={`${s.fps}fps ${s.suspended ? '⏸ SUSPENDED' : s.visible ? '▶ ACTIVE' : '👁 OFFSCREEN'}`}
-            warn={s.suspended}
+        <Row label="Budget used" value={`${budget.toFixed(1)} / 16.7ms`} warn={budget > 14} />
+        {surfaces.map(surf => (
+          <Row
+            key={surf.id}
+            label={surf.id}
+            value={`${surf.fps}fps ${surf.suspended ? '⏸' : '▶'}`}
+            warn={surf.suspended}
           />
         ))}
-        {surfaces.length === 0 && <MetricRow label="No surfaces registered" value="—" />}
+        {surfaces.length === 0 && <Row label="No surfaces" value="—" />}
       </Card>
-      <Card title="Recent Screens">
-        {report.recentScreens.slice(-5).map((s, i) => (
-          <MetricRow
+      <Card title="Memory Snapshots">
+        {report.memoryHistory.slice(-4).map((s, i) => (
+          <Row
             key={i}
-            label={s.screen}
-            value={`${s.durationMs ? (s.durationMs / 1000).toFixed(1) + 's' : 'active'} render:${s.renderTimeMs.toFixed(0)}ms`}
-            warn={s.renderTimeMs > 500}
+            label={new Date(s.timestamp).toLocaleTimeString()}
+            value={`${s.heapUsedMB.toFixed(1)} MB`}
+            warn={s.heapUsedMB > 200}
           />
         ))}
-        {report.recentScreens.length === 0 && <MetricRow label="No screen data" value="—" />}
+        {report.memoryHistory.length === 0 && <Row label="No snapshots" value="—" />}
       </Card>
     </>
   );
 }
+
+// ── Sessions Section ──────────────────────────────────────────────────────────
+
+function SessionsSection() {
+  const inventory  = SessionOrchestrator.getInventory();
+  const rtcPeers   = RTCManager.activePeerCount;
+  const mpRooms    = MultiplayerEngine.activeRoomCount;
+  const liveCount  = LiveOrchestrator.activeCount;
+
+  return (
+    <>
+      <Card title="Session Counts">
+        <Row label="SessionOrchestrator" value={`${inventory.length} active`}
+             warn={inventory.length > 5} />
+        <Row label="RTC Peers"           value={`${rtcPeers}`}   warn={rtcPeers > 3} />
+        <Row label="Multiplayer Rooms"   value={`${mpRooms}`} />
+        <Row label="Live Sessions"       value={`${liveCount}`} />
+      </Card>
+      <Card title="Session Inventory">
+        {inventory.length === 0
+          ? <Row label="No sessions" value="—" />
+          : inventory.map(sess => (
+            <Row
+              key={sess.id}
+              label={`${sess.type}`}
+              value={`${sess.status} ${sess.uptimeSec}s`}
+              warn={sess.status === 'recovering'}
+              good={sess.status === 'active'}
+            />
+          ))
+        }
+      </Card>
+    </>
+  );
+}
+
+// ── Realtime Section ──────────────────────────────────────────────────────────
 
 function RealtimeSection() {
   const report = Diagnostics.getReport();
   const conn   = ConnectionManager.state;
   const queue  = ConnectionManager.queueLength;
-  const sessions = UploadRecoveryManager.allJobs;
+  const frames = report.frameStats;
 
   return (
     <>
       <Card title="Connection">
-        <MetricRow label="State"          value={conn.toUpperCase()} warn={conn !== 'connected'} />
-        <MetricRow label="Queue depth"    value={`${queue}`}         warn={queue > 10} />
-        <MetricRow label="Reconnects"     value={`${ConnectionManager.reconnectAttempts}`} warn={ConnectionManager.reconnectAttempts > 0} />
-        <MetricRow label="Network type"   value={ConnectionManager.networkType.toUpperCase()} />
+        <Row label="State"       value={conn.toUpperCase()}                   warn={conn !== 'connected'} good={conn === 'connected'} />
+        <Row label="Queue"       value={`${queue}`}                           warn={queue > 10} />
+        <Row label="Reconnects"  value={`${ConnectionManager.reconnectAttempts}`} warn={ConnectionManager.reconnectAttempts > 0} />
+        <Row label="Network"     value={ConnectionManager.networkType.toUpperCase()} />
       </Card>
-      <Card title="Realtime Diagnostics">
-        <MetricRow label="Keys tracked"  value={`${report.realtimeStats.registeredKeys}`} />
-        <MetricRow label="Avg latency"   value={report.realtimeStats.avgLatencyMs} warn={report.realtimeStats.avgLatencyMs !== 'N/A' && parseFloat(report.realtimeStats.avgLatencyMs) > 500} />
-        <MetricRow label="Miss rate"     value={report.realtimeStats.missRate} warn={report.realtimeStats.missRate !== 'N/A' && parseFloat(report.realtimeStats.missRate) > 5} />
+      <Card title="Realtime Stats">
+        <Row label="Keys tracked" value={`${report.realtimeStats.registeredKeys}`} />
+        <Row label="Avg latency"  value={report.realtimeStats.avgLatencyMs}
+             warn={report.realtimeStats.avgLatencyMs !== 'N/A' &&
+                   parseFloat(report.realtimeStats.avgLatencyMs) > 500} />
+        <Row label="Miss rate"    value={report.realtimeStats.missRate}
+             warn={report.realtimeStats.missRate !== 'N/A' &&
+                   parseFloat(report.realtimeStats.missRate) > 5} />
+      </Card>
+      <Card title="Frame Stats">
+        {frames.length === 0
+          ? <Row label="No surfaces" value="—" />
+          : frames.map(f => (
+            <Row
+              key={f.surface}
+              label={f.surface}
+              value={`${f.currentFPS} fps  drop:${f.dropRate}`}
+              warn={parseFloat(f.dropRate) > 20}
+            />
+          ))
+        }
       </Card>
     </>
   );
 }
+
+// ── Media Section ─────────────────────────────────────────────────────────────
 
 function MediaSection() {
   const report  = Diagnostics.getReport();
@@ -180,113 +259,111 @@ function MediaSection() {
   return (
     <>
       <Card title="Uploads">
-        <MetricRow label="Total recorded"  value={`${report.uploadStats.count}`} />
-        <MetricRow label="Success rate"    value={report.uploadStats.successRate} warn={report.uploadStats.successRate !== 'N/A' && parseFloat(report.uploadStats.successRate) < 90} />
-        <MetricRow label="Avg speed"       value={`${report.uploadStats.avgSpeedKBps} KB/s`} />
-        <MetricRow label="Pending recovery" value={`${pending}`} warn={pending > 0} />
+        <Row label="Total"         value={`${report.uploadStats.count}`} />
+        <Row label="Success rate"  value={report.uploadStats.successRate}
+             warn={report.uploadStats.successRate !== 'N/A' &&
+                   parseFloat(report.uploadStats.successRate) < 90}
+             good={report.uploadStats.successRate !== 'N/A' &&
+                   parseFloat(report.uploadStats.successRate) >= 98} />
+        <Row label="Avg speed"     value={`${report.uploadStats.avgSpeedKBps} KB/s`} />
+        <Row label="Pending recovery" value={`${pending}`} warn={pending > 0} />
       </Card>
       <Card title="Stream Buffers">
-        <MetricRow label="Active buffers"  value={`${StreamingBufferManager.activeBufferCount}`} />
-        <MetricRow label="Avg stall rate"  value={`${StreamingBufferManager.getTotalStallRate().toFixed(2)}`} warn={StreamingBufferManager.getTotalStallRate() > 1} />
+        <Row label="Active"     value={`${StreamingBufferManager.activeBufferCount}`} />
+        <Row label="Stall rate" value={`${StreamingBufferManager.getTotalStallRate().toFixed(2)}/s`}
+             warn={StreamingBufferManager.getTotalStallRate() > 1} />
         {buffers.map(b => (
-          <MetricRow
+          <Row
             key={b.videoId}
-            label={`${b.type}:${b.videoId.slice(-6)}`}
-            value={`${b.state} buf:${b.bufferedMs.toFixed(0)}ms stalls:${b.stallCount}`}
+            label={b.videoId.slice(-8)}
+            value={`${b.state}  buf:${b.bufferedMs.toFixed(0)}ms  stalls:${b.stallCount}`}
             warn={b.state === 'stalled'}
           />
         ))}
-        {buffers.length === 0 && <MetricRow label="No active streams" value="—" />}
+        {buffers.length === 0 && <Row label="No active streams" value="—" />}
       </Card>
     </>
   );
 }
 
-function MemorySection() {
-  const report  = Diagnostics.getReport();
-  const heldRes = report.heldResources;
+// ── Security Section ──────────────────────────────────────────────────────────
 
-  const recent5 = report.memoryHistory.slice(-5);
+function SecuritySection() {
+  const violations = SecurityManager.getRecentViolations(20);
 
   return (
     <>
-      <Card title="Heap Snapshots">
-        {recent5.map((s, i) => (
-          <MetricRow
-            key={i}
-            label={new Date(s.timestamp).toLocaleTimeString()}
-            value={`${s.heapUsedMB.toFixed(1)} MB`}
-            warn={s.heapUsedMB > 200}
-          />
-        ))}
-        {recent5.length === 0 && <MetricRow label="No snapshots yet" value="—" />}
-      </Card>
-      <Card title="Held Resources">
-        {heldRes.length === 0
-          ? <MetricRow label="No resources held" value="✓" />
-          : heldRes.map((r, i) => (
-              <MetricRow
-                key={i}
-                label={r.type}
-                value={`holder:${r.holder} pri:${r.priority}`}
-              />
-            ))
+      <Card title="Recent Violations">
+        {violations.length === 0
+          ? <Row label="Clean — no violations" value="✓" good />
+          : violations.slice(-10).reverse().map((v, i) => (
+            <Row
+              key={i}
+              label={`${v.action} — ${v.userId.slice(-8)}`}
+              value={`${v.threatLevel}  ${new Date(v.timestamp).toLocaleTimeString()}`}
+              warn={v.threatLevel === 'warn' || v.threatLevel === 'critical'}
+            />
+          ))
         }
       </Card>
     </>
   );
 }
 
-// ── Main screen ───────────────────────────────────────────────────────────────
+// ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function DebugScreen() {
   const insets  = useSafeAreaInsets();
   const router  = useRouter();
-  const [activeSection, setActiveSection] = useState<Section>('system');
-  const [refreshing, setRefreshing] = useState(false);
-  const [tick, setTick] = useState(0);
+  const [section, setSection] = useState<Section>('stability');
+  const [refresh, setRefresh] = useState(false);
+  const [tick,    setTick]    = useState(0);
 
-  // Auto-refresh every 2 seconds
   useEffect(() => {
-    const timer = setInterval(() => setTick(t => t + 1), 2_000);
-    return () => clearInterval(timer);
+    const t = setInterval(() => setTick(n => n + 1), 2_000);
+    return () => clearInterval(t);
   }, []);
 
   const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    setTick(t => t + 1);
-    setTimeout(() => setRefreshing(false), 500);
+    setRefresh(true);
+    setTick(n => n + 1);
+    setTimeout(() => setRefresh(false), 400);
   }, []);
 
   if (!IS_DEV) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top + 16 }]}>
-        <Text style={styles.empty}>Debug panel only available in development builds.</Text>
+      <View style={[s.container, { paddingTop: insets.top + 16 }]}>
+        <Text style={s.empty}>Debug panel only available in development builds.</Text>
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[s.container, { paddingTop: insets.top }]}>
       {/* Header */}
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
-          <Text style={styles.backText}>← Back</Text>
+      <View style={s.header}>
+        <Pressable onPress={() => router.back()} style={s.back} hitSlop={8}>
+          <Text style={s.backText}>← Back</Text>
         </Pressable>
-        <Text style={styles.title}>Debug Panel</Text>
-        <View style={styles.liveDot} />
+        <Text style={s.title}>Debug Panel</Text>
+        <View style={s.liveDot} />
       </View>
 
       {/* Section tabs */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabs} contentContainerStyle={styles.tabsContent}>
-        {(Object.keys(SECTION_LABELS) as Section[]).map(s => (
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={s.tabs}
+        contentContainerStyle={s.tabsInner}
+      >
+        {(Object.keys(SECTION_LABELS) as Section[]).map(k => (
           <Pressable
-            key={s}
-            onPress={() => setActiveSection(s)}
-            style={[styles.tab, activeSection === s && styles.tabActive]}
+            key={k}
+            onPress={() => setSection(k)}
+            style={[s.tab, section === k && s.tabActive]}
           >
-            <Text style={[styles.tabText, activeSection === s && styles.tabTextActive]}>
-              {SECTION_LABELS[s]}
+            <Text style={[s.tabText, section === k && s.tabTextActive]}>
+              {SECTION_LABELS[k]}
             </Text>
           </Pressable>
         ))}
@@ -294,134 +371,55 @@ export default function DebugScreen() {
 
       {/* Content */}
       <ScrollView
-        style={styles.content}
+        style={s.content}
         contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#7C5CFF" />}
+        refreshControl={
+          <RefreshControl refreshing={refresh} onRefresh={onRefresh} tintColor="#7C5CFF" />
+        }
         showsVerticalScrollIndicator={false}
       >
-        {activeSection === 'system'   && <SystemSection   key={tick} />}
-        {activeSection === 'render'   && <RenderSection   key={tick} />}
-        {activeSection === 'realtime' && <RealtimeSection key={tick} />}
-        {activeSection === 'media'    && <MediaSection    key={tick} />}
-        {activeSection === 'memory'   && <MemorySection   key={tick} />}
+        {section === 'stability' && <StabilitySection key={tick} />}
+        {section === 'system'    && <SystemSection    key={tick} />}
+        {section === 'sessions'  && <SessionsSection  key={tick} />}
+        {section === 'realtime'  && <RealtimeSection  key={tick} />}
+        {section === 'media'     && <MediaSection     key={tick} />}
+        {section === 'security'  && <SecuritySection  key={tick} />}
       </ScrollView>
     </View>
   );
 }
 
 const C = {
-  bg:       '#0A0A0F',
-  surface:  '#12121A',
-  border:   '#1E1E2E',
-  text:     '#E8E8F0',
-  subtle:   'rgba(255,255,255,0.4)',
-  accent:   '#7C5CFF',
-  warn:     '#FF8C00',
-  good:     '#00FF88',
+  bg:      '#0A0A0F',
+  surface: '#12121A',
+  border:  '#1E1E2E',
+  text:    '#E8E8F0',
+  subtle:  'rgba(255,255,255,0.4)',
+  accent:  '#7C5CFF',
+  warn:    '#FF8C00',
+  good:    '#00FF88',
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: C.bg,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  backBtn: { marginRight: 12 },
-  backText: { color: C.accent, fontSize: 14, fontWeight: '600' },
-  title: {
-    flex: 1,
-    color: C.text,
-    fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  liveDot: {
-    width: 8, height: 8,
-    borderRadius: 4,
-    backgroundColor: C.good,
-  },
-  tabs: {
-    maxHeight: 44,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  tabsContent: {
-    paddingHorizontal: 12,
-    gap: 4,
-    alignItems: 'center',
-  },
-  tab: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  tabActive: {
-    backgroundColor: C.accent + '33',
-  },
-  tabText: {
-    color: C.subtle,
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  tabTextActive: {
-    color: C.accent,
-    fontWeight: '600',
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: 12,
-    paddingTop: 12,
-  },
-  card: {
-    backgroundColor: C.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: C.border,
-    padding: 12,
-    marginBottom: 10,
-  },
-  cardTitle: {
-    color: C.accent,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-    marginBottom: 8,
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  rowLabel: {
-    color: C.subtle,
-    fontSize: 12,
-    flex: 1,
-  },
-  rowValue: {
-    color: C.text,
-    fontSize: 12,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-    textAlign: 'right',
-    flex: 1,
-  },
-  rowValueWarn: {
-    color: C.warn,
-  },
-  empty: {
-    color: C.subtle,
-    textAlign: 'center',
-    marginTop: 40,
-  },
+const s = StyleSheet.create({
+  container:   { flex: 1, backgroundColor: C.bg },
+  header:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.border },
+  back:        { marginRight: 12 },
+  backText:    { color: C.accent, fontSize: 14, fontWeight: '600' },
+  title:       { flex: 1, color: C.text, fontSize: 16, fontWeight: '700' },
+  liveDot:     { width: 8, height: 8, borderRadius: 4, backgroundColor: C.good },
+  tabs:        { maxHeight: 44, borderBottomWidth: 1, borderBottomColor: C.border },
+  tabsInner:   { paddingHorizontal: 12, gap: 4, alignItems: 'center' },
+  tab:         { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  tabActive:   { backgroundColor: C.accent + '33' },
+  tabText:     { color: C.subtle, fontSize: 12, fontWeight: '500' },
+  tabTextActive: { color: C.accent, fontWeight: '700' },
+  content:     { flex: 1, paddingHorizontal: 12, paddingTop: 12 },
+  card:        { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, padding: 12, marginBottom: 10 },
+  cardTitle:   { color: C.accent, fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8 },
+  row:         { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: C.border },
+  rowLabel:    { color: C.subtle, fontSize: 12, flex: 1 },
+  rowValue:    { color: C.text, fontSize: 12, fontWeight: '600', textAlign: 'right', flex: 1 },
+  warn:        { color: C.warn },
+  good:        { color: C.good },
+  empty:       { color: C.subtle, textAlign: 'center', marginTop: 40 },
 });

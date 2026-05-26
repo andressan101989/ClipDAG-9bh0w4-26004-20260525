@@ -369,13 +369,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         : u
       );
 
-      // Fallback: manual separate queries if RPC doesn't exist yet
+      // Fallback: manual separate queries if RPC doesn't exist yet.
+      // All counter updates use the functional form of setUser so we read
+      // the LATEST state, never the stale closure value.
       try {
         if (isFollowingNow) {
           await supabase.from('follows').delete()
             .eq('follower_id', user.id).eq('following_id', targetUserId);
-          await supabase.from('user_profiles')
-            .update({ following_count: Math.max(0, user.following - 1) }).eq('id', user.id);
+          // Use functional setter — avoids stale closure on `user.following`
+          setUser(u => u ? { ...u, following: Math.max(0, u.following - 1) } : u);
           const { data: tp } = await supabase.from('user_profiles')
             .select('followers_count').eq('id', targetUserId).single();
           if (tp) await supabase.from('user_profiles')
@@ -385,24 +387,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await supabase.from('follows')
             .insert({ follower_id: user.id, following_id: targetUserId })
             .select().single().catch(() => null);
-          await supabase.from('user_profiles')
-            .update({ following_count: user.following + 1 }).eq('id', user.id);
+          // Use functional setter — avoids stale closure on `user.following`
+          setUser(u => u ? { ...u, following: u.following + 1 } : u);
           const { data: tp } = await supabase.from('user_profiles')
             .select('followers_count').eq('id', targetUserId).single();
           if (tp) await supabase.from('user_profiles')
             .update({ followers_count: (tp.followers_count || 0) + 1 })
             .eq('id', targetUserId);
         }
-        // Re-apply correct optimistic state after fallback succeeds
+        // Re-apply correct follow-set state after fallback succeeds
         setFollowedUsers(prev => {
           const next = new Set(prev);
           isFollowingNow ? next.delete(targetUserId) : next.add(targetUserId);
           return next;
         });
-        setUser(u => u
-          ? { ...u, following: Math.max(0, u.following + (isFollowingNow ? -1 : 1)) }
-          : u
-        );
         await loadFollows(user.id);
       } catch { /* fallback also failed — UI already reverted */ }
     }

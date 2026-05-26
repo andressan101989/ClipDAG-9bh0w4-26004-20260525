@@ -156,7 +156,9 @@ Deno.serve(async (req: Request) => {
       from_user_id:   senderId,
       from_username:  senderProfile?.username ?? '',
       type:           'transfer_received',
-      message:        `${senderName} sent you ${bdagAmount.toFixed(2)} BDAG${note ? ': ' + note.slice(0, 100) : ''}`,  // cap notification text
+      // NOTE POLICY: note is already capped at 200 chars at parse time.
+      // Notification message uses the full sanitised note (up to 200 chars).
+      message:        `${senderName} sent you ${bdagAmount.toFixed(2)} BDAG${note ? ': ' + note : ''}`,
       reference_type: 'transfer',
     });
   } catch (e: any) {

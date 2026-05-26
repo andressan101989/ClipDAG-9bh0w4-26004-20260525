@@ -13,7 +13,7 @@ export type { VideoQualityLevel, QualityConfig, NetworkProbe } from './AdaptiveB
 export { MediaCleanupManager }  from './MediaCleanupManager';
 export type { CleanupCategory } from './MediaCleanupManager';
 export { StreamingBufferManager } from './StreamingBufferManager';
-export type { StreamBuffer, BufferState, StreamType } from './StreamingBufferManager';
+export type { StreamBuffer, StreamType } from './StreamingBufferManager';
 export { UploadRecoveryManager }  from './UploadRecoveryManager';
 export type { UploadJob }         from './UploadRecoveryManager';
 export { PrefetchMediaManager } from './PrefetchMediaManager';
