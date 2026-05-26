@@ -36,12 +36,14 @@ let CameraPositions: any = null;
 
 try {
   const m = require('react-native-deepar');
-  DeepARView      = m.default ?? null;
-  CameraPositions = m.CameraPositions ?? null;
-  // Log what's actually exported so we can see the real bridge surface
+  // Metro stubs return {} — validate it's a real renderable component (function/class)
+  const candidate = m.default ?? m.DeepARCamera ?? m.Camera ?? null;
+  DeepARView      = (typeof candidate === 'function') ? candidate : null;
+  CameraPositions = (m.CameraPositions && typeof m.CameraPositions === 'object') ? m.CameraPositions : null;
   const keys = Object.keys(m ?? {});
-  console.log('[DeepARTest] SDK loaded. Keys:', keys.join(', '));
-  console.log('[DeepARTest] DeepARView:', typeof DeepARView);
+  console.log('[DeepARTest] SDK keys:', keys.join(', '));
+  console.log('[DeepARTest] DeepARView resolved:', typeof DeepARView);
+  if (!DeepARView) console.warn('[DeepARTest] SDK blocked by Metro (preview/web) — EAS Build required');
 } catch (e) {
   console.error('[DeepARTest] SDK not found:', e);
 }
