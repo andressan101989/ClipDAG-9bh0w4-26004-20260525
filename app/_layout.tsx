@@ -1,8 +1,11 @@
 /**
  * app/_layout.tsx — FULL APP RESTORED
  *
- * WalletConnect is Metro-blocked on all platforms (metro.config.js).
- * All other providers are safe to load — startup crash has been resolved.
+ * WalletConnect: real WalletConnectModalProvider mounted via
+ *   components/feature/WalletConnectProvider.native.tsx (iOS/Android)
+ *   components/feature/WalletConnectProvider.tsx (web stub)
+ * Metro blocks @walletconnect/* on web/preview only — native EAS builds
+ * load the real SDK. Startup crash has been fully resolved.
  */
 
 console.log('[BOOT] 0 - _layout module start');
@@ -34,6 +37,9 @@ console.log('[BOOT] 7 - Messages+Notifications providers imported');
 import { ShopProvider } from '@/contexts/ShopContext';
 console.log('[BOOT] 8 - ShopProvider imported');
 
+import { WalletConnectProvider } from '@/components/feature/WalletConnectProvider';
+console.log('[BOOT] 8b - WalletConnectProvider imported');
+
 console.log('[BOOT] 9 - all imports done');
 
 export default function RootLayout() {
@@ -49,7 +55,8 @@ export default function RootLayout() {
                   <MessagesProvider>
                     <NotificationsProvider>
                       <ShopProvider>
-                        <Stack screenOptions={{ headerShown: false }}>
+                        <WalletConnectProvider>
+                          <Stack screenOptions={{ headerShown: false }}>
                           <Stack.Screen name="index" />
                           <Stack.Screen name="boot-test" />
                           <Stack.Screen name="login" />
@@ -70,7 +77,8 @@ export default function RootLayout() {
                             name="product/[id]"
                             options={{ headerShown: true, title: '' }}
                           />
-                        </Stack>
+                          </Stack>
+                        </WalletConnectProvider>
                       </ShopProvider>
                     </NotificationsProvider>
                   </MessagesProvider>

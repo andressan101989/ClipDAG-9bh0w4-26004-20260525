@@ -12,9 +12,13 @@ import { Platform } from 'react-native';
 // ── Re-enabled — metro blocks react-native-deepar on preview, graceful on EAS ─
 export const DEEPAR_ENABLED = true;
 
-export const DEEPAR_API_KEY_IOS     = '';
-export const DEEPAR_API_KEY_ANDROID = '';
-export const DEEPAR_API_KEY         = '';
+// API keys are injected by the native config plugins:
+//   iOS:     Info.plist -> ar_key  (plugins/withDeepARiOS.js)
+//   Android: strings.xml -> deepar_api_key  (plugins/withDeepARAndroidFix.js)
+// These JS constants are used as fallback when the native module reads the key itself.
+export const DEEPAR_API_KEY_IOS     = 'b5ed95b597e2d095a99d348245484f5ca0ea76dd4297a6e03d0a0b630cb2f2b4511186a4577ef72a';
+export const DEEPAR_API_KEY_ANDROID = '26eb786956b608da971d30ec64fc5bcec72ce89cd1914b3cfc5ed32c3232f6da70a5923630b8696b';
+export const DEEPAR_API_KEY         = DEEPAR_API_KEY_IOS;
 
 // Lazy-load DeepAR — metro blocks the package on preview, so this try/catch
 // gracefully returns null when not available.
@@ -22,9 +26,26 @@ let _DeepAR: any = null;
 let _DeepARCamera: any = null;
 try {
   const sdk = require('react-native-deepar');
-  _DeepAR       = sdk?.DeepAR       ?? null;
-  _DeepARCamera = sdk?.DeepARCamera ?? sdk?.default ?? null;
-} catch { /* blocked by metro on preview — expected */ }
+  console.log('[DeepAR] SDK require succeeded. Keys:', Object.keys(sdk ?? {}));
+  // Try all known export paths for DeepARCamera component
+  _DeepAR =
+    sdk?.DeepAR ??
+    sdk?.default?.DeepAR ??
+    null;
+  _DeepARCamera =
+    sdk?.DeepARCamera ??
+    sdk?.default?.DeepARCamera ??
+    sdk?.default ??
+    null;
+  // Validate it's a renderable component, not just an object
+  if (_DeepARCamera && typeof _DeepARCamera !== 'function') {
+    console.warn('[DeepAR] _DeepARCamera is not a function, type:', typeof _DeepARCamera);
+    _DeepARCamera = null;
+  }
+  console.log('[DeepAR] _DeepARCamera resolved:', _DeepARCamera !== null ? 'YES ✓' : 'null');
+} catch (e: any) {
+  console.warn('[DeepAR] require failed (expected on preview/web):', e?.message ?? e);
+}
 
 export const DeepAR          = _DeepAR;
 export const DeepARCamera    = _DeepARCamera;
