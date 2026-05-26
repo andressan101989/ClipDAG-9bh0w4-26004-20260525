@@ -4,11 +4,11 @@ module.exports = function (api) {
     presets: [[
       'babel-preset-expo',
       {
-        // Required: valtio (used by @walletconnect) ships ESM with `import.meta.env`.
-        // Hermes does not support import.meta natively — this polyfill rewrites it.
-        // Safe to enable now that @opentelemetry/* is fully blocked in metro.config.js
-        // (those packages contained dynamic import() that conflicted with this option).
-        unstable_transformImportMeta: true,
+        // unstable_transformImportMeta intentionally REMOVED.
+        // metro.config.js CJS_ALIASES redirect valtio ESM paths (valtio/esm/*.mjs)
+        // to their CJS equivalents before Metro ever tries to parse them.
+        // The transform is therefore unnecessary and risks re-introducing
+        // incompatible dynamic-import rewrites for any future ESM transitive dep.
       },
     ]],
     plugins: [

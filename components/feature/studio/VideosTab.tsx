@@ -1,73 +1,66 @@
 /**
- * components/feature/studio/VideosTab.tsx
- * Creator Studio — Tab 2: Video Editor
+ * components/feature/studio/VideosTab.tsx — v2
  *
- * Isolation contract:
- *  - No imports from other studio tabs
- *  - expo-video lazy-loaded (crashes on web/preview without native build)
- *  - expo-av used as fallback
- *  - Skia overlay safe here (no DeepAR surface in video editor)
+ * Creator Studio Tab 2: Video Editor
+ *
+ * Architecture v2:
+ *   - ALL state and business logic delegated to useVideoEditor hook
+ *   - This component is pure UI — layout, controls, modals
+ *   - expo-video lazy-loaded inside ClipVideoPlayer sub-component only
+ *
+ * Module boundary:
+ *   - No imports from other studio tabs
+ *   - No direct ffmpegService calls (all via useVideoEditor.exportAndPublish)
  */
-import React, {
-  useState, useCallback, useRef, useEffect,
-} from 'react';
+import React, { useState, useCallback, useRef, useMemo, memo } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView, FlatList,
   TextInput, ActivityIndicator, Dimensions, Modal,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Audio } from 'expo-av';
-import * as ImagePicker from 'expo-image-picker';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAlert } from '@/template';
 import { useFeed } from '@/hooks/useFeed';
 import { useRouter } from 'expo-router';
-import { isFFmpegAvailable, exportFinal } from '@/services/ffmpegService';
-import SkiaEffectsLayer, { type SkiaEffectId } from '@/components/feature/SkiaEffectsLayer';
+import { isFFmpegAvailable } from '@/services/ffmpegService';
+import SkiaEffectsLayer from '@/components/feature/SkiaEffectsLayer';
+import { useVideoEditor, type DeezerTrack } from '@/hooks/video/useVideoEditor';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 
-// ── expo-video — lazy-loaded ───────────────────────────────────────────────
-let VideoView: any = null;
-let useVideoPlayer: any = (_src: any, _setup?: any): any => null;
+// ── Lazy expo-video / expo-av ────────────────────────────────────────────────
+let VideoView: any      = null;
+let useVideoPlayer: any = (_src: any, _s?: any): any => null;
+let AVVideo: any        = null;
+let AVResizeMode: any   = null;
 try {
   const ev = require('expo-video');
   VideoView      = ev.VideoView      ?? null;
-  useVideoPlayer = ev.useVideoPlayer ?? ((_src: any, _setup?: any) => null);
-} catch { /* web / preview */ }
-
-let AVVideo: any    = null;
-let AVResizeMode: any = null;
+  useVideoPlayer = ev.useVideoPlayer ?? ((_s: any) => null);
+} catch { /* web */ }
 try {
-  const avMod  = require('expo-av');
-  AVVideo      = avMod.Video      ?? null;
-  AVResizeMode = avMod.ResizeMode ?? null;
-} catch { /* not compiled */ }
+  const av = require('expo-av');
+  AVVideo      = av.Video      ?? null;
+  AVResizeMode = av.ResizeMode ?? null;
+} catch { /* web */ }
 
 const { width: W } = Dimensions.get('window');
 
-// ── Types ──────────────────────────────────────────────────────────────────
-interface Clip { id: string; uri: string; durationMs: number }
-interface DeezerArtist { name: string }
-interface DeezerAlbum  { cover_medium: string; title: string }
-interface DeezerTrack  { id: number; title: string; preview: string; duration: number; artist: DeezerArtist; album: DeezerAlbum }
-
-type ColorFilterName = 'vintage' | 'cine' | 'frio' | 'calido' | 'bn' | 'neon' | 'none';
-
-// ── Constants ──────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 const SPEED_PRESETS = [
   { label: '0.5×', value: 0.5 }, { label: '1×', value: 1.0 },
   { label: '2×',  value: 2.0 },  { label: '4×', value: 4.0 },
 ];
 
-const VIDEO_COLOR_FILTERS: { id: ColorFilterName; name: string; emoji: string; gradient: [string, string] }[] = [
-  { id: 'none',    name: 'Original', emoji: '🎬', gradient: ['#333', '#222'] },
-  { id: 'vintage', name: 'Vintage',  emoji: '📷', gradient: ['#8B5E3C', '#C27540'] },
-  { id: 'cine',    name: 'Cine',     emoji: '🎞️', gradient: ['#1A1A2E', '#333355'] },
-  { id: 'frio',    name: 'Frío',     emoji: '🧊', gradient: ['#2D9EFF', '#7CC4FF'] },
-  { id: 'calido',  name: 'Cálido',   emoji: '🌅', gradient: ['#FF9D00', '#FF5A00'] },
-  { id: 'bn',      name: 'B&N',      emoji: '⬛', gradient: ['#555', '#999'] },
-  { id: 'neon',    name: 'Neón',     emoji: '🌈', gradient: ['#FF2D78', '#7C5CFF'] },
+const VIDEO_COLOR_FILTERS = [
+  { id: 'none',    name: 'Original', emoji: '🎬', gradient: ['#333', '#222'] as [string, string] },
+  { id: 'vintage', name: 'Vintage',  emoji: '📷', gradient: ['#8B5E3C', '#C27540'] as [string, string] },
+  { id: 'cine',    name: 'Cine',     emoji: '🎞️', gradient: ['#1A1A2E', '#333355'] as [string, string] },
+  { id: 'frio',    name: 'Frío',     emoji: '🧊', gradient: ['#2D9EFF', '#7CC4FF'] as [string, string] },
+  { id: 'calido',  name: 'Cálido',   emoji: '🌅', gradient: ['#FF9D00', '#FF5A00'] as [string, string] },
+  { id: 'bn',      name: 'B&N',      emoji: '⬛', gradient: ['#555', '#999'] as [string, string] },
+  { id: 'neon',    name: 'Neón',     emoji: '🌈', gradient: ['#FF2D78', '#7C5CFF'] as [string, string] },
 ];
 
 const DEEZER_CATS = [
@@ -80,41 +73,26 @@ const DEEZER_CATS = [
   { id: 'viral',      q: 'trending viral 2025',  label: 'Viral',       emoji: '📈' },
 ];
 
-// ── Helpers ────────────────────────────────────────────────────────────────
 function fmtMs(ms: number) {
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
 }
 
-function PulsingDot({ color }: { color: string }) {
-  const [scale, setScale] = React.useState(1);
-  useEffect(() => {
-    let up = true;
-    const iv = setInterval(() => {
-      setScale(s => { up = s >= 1.5 ? false : s <= 1 ? true : up; return up ? s + 0.05 : s - 0.05; });
-    }, 30);
-    return () => clearInterval(iv);
-  }, []);
-  return <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, transform: [{ scale }] }} />;
-}
-
-// ── ClipVideoPlayer ────────────────────────────────────────────────────────
-function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingChange, playerRef }: {
+// ── ClipVideoPlayer — memoized ────────────────────────────────────────────────
+const ClipVideoPlayer = memo(function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingChange, playerRef }: {
   uri: string; volume: number; rate: number;
-  onDuration: (ms: number) => void;
-  onPosition: (ms: number) => void;
-  onPlayingChange: (p: boolean) => void;
-  playerRef: React.MutableRefObject<any>;
+  onDuration: (ms: number) => void; onPosition: (ms: number) => void;
+  onPlayingChange: (p: boolean) => void; playerRef: React.MutableRefObject<any>;
 }) {
-  const avRef = React.useRef<any>(null);
+  const avRef = useRef<any>(null);
   const player = useVideoPlayer(uri, (p: any) => {
     if (!p) return;
-    try { p.volume = volume; p.playbackRate = rate; p.loop = false; } catch (_) {}
+    try { p.volume = volume; p.playbackRate = rate; p.loop = false; } catch { /* ignore */ }
   });
 
   React.useEffect(() => { if (player) playerRef.current = player; }, [player]);
-  React.useEffect(() => { try { if (player) player.volume = volume; } catch (_) {} }, [volume, player]);
-  React.useEffect(() => { try { if (player) player.playbackRate = rate; } catch (_) {} }, [rate, player]);
+  React.useEffect(() => { try { if (player) player.volume = volume; } catch { /* ignore */ } }, [volume, player]);
+  React.useEffect(() => { try { if (player) player.playbackRate = rate; } catch { /* ignore */ } }, [rate, player]);
 
   React.useEffect(() => {
     if (!player) return;
@@ -124,7 +102,7 @@ function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingC
         const dur = (player as any).duration ?? 0;
         if (dur > 0) onDuration(dur * 1000);
         onPlayingChange((player as any).playing ?? false);
-      } catch (_) {}
+      } catch { /* ignore */ }
     }, 250);
     return () => clearInterval(iv);
   }, [player]);
@@ -139,8 +117,8 @@ function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingC
         resizeMode={AVResizeMode?.COVER ?? 'cover'}
         shouldPlay={false} isLooping={false} volume={volume} rate={rate}
         progressUpdateIntervalMillis={250}
-        onLoad={(status: any) => {
-          if (status?.durationMillis) onDuration(status.durationMillis);
+        onLoad={(s: any) => {
+          if (s?.durationMillis) onDuration(s.durationMillis);
           playerRef.current = {
             play:  () => avRef.current?.playAsync?.(),
             pause: () => avRef.current?.pauseAsync?.(),
@@ -149,11 +127,11 @@ function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingC
             set playbackRate(r: number) { avRef.current?.setRateAsync?.(r, true); },
           };
         }}
-        onPlaybackStatusUpdate={(status: any) => {
-          if (!status?.isLoaded) return;
-          onPosition(status.positionMillis ?? 0);
-          if (status.durationMillis) onDuration(status.durationMillis);
-          onPlayingChange(status.isPlaying ?? false);
+        onPlaybackStatusUpdate={(s: any) => {
+          if (!s?.isLoaded) return;
+          onPosition(s.positionMillis ?? 0);
+          if (s.durationMillis) onDuration(s.durationMillis);
+          onPlayingChange(s.isPlaying ?? false);
         }}
       />
     );
@@ -162,17 +140,17 @@ function ClipVideoPlayer({ uri, volume, rate, onDuration, onPosition, onPlayingC
   return (
     <View style={[v.player, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#0A0A14' }]}>
       <MaterialCommunityIcons name="video-outline" size={32} color="#333" />
-      <Text style={{ color: '#555', fontSize: 11, marginTop: 6 }}>Video player</Text>
-      <Text style={{ color: '#444', fontSize: 9, marginTop: 2 }}>Requiere EAS Build nativo</Text>
+      <Text style={{ color: '#555', fontSize: 11, marginTop: 6 }}>Video player (EAS Build)</Text>
     </View>
   );
-}
+});
 
-// ── VolumeSlider ───────────────────────────────────────────────────────────
-function VolumeSlider({ label, value, onChange, color }: {
+// ── VolumeSlider — memoized ───────────────────────────────────────────────────
+const TRACK_W = W - 32 - 56 - 44;
+
+const VolumeSlider = memo(function VolumeSlider({ label, value, onChange, color }: {
   label: string; value: number; onChange: (v: number) => void; color: string;
 }) {
-  const TRACK_W = W - 32 - 56 - 44;
   return (
     <View style={v.volRow}>
       <Text style={v.volLabel}>{label}</Text>
@@ -189,9 +167,9 @@ function VolumeSlider({ label, value, onChange, color }: {
       <Text style={[v.volValue, { color }]}>{Math.round(value * 100)}%</Text>
     </View>
   );
-}
+});
 
-// ── DeezerMusicModal ───────────────────────────────────────────────────────
+// ── DeezerMusicModal ──────────────────────────────────────────────────────────
 function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: {
   visible: boolean; onClose: () => void; onSelect: (t: DeezerTrack) => void;
   selectedId: number | null; soundRef: React.MutableRefObject<Audio.Sound | null>;
@@ -216,13 +194,13 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
     setLoading(false);
   }, []);
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (!visible) return;
     const cat = DEEZER_CATS.find(c => c.id === catId);
     if (cat) searchDeezer(cat.q);
   }, [catId, visible]);
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (!search.trim()) {
       const cat = DEEZER_CATS.find(c => c.id === catId);
       if (cat) searchDeezer(cat.q);
@@ -232,7 +210,7 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
     debounceRef.current = setTimeout(() => searchDeezer(search), 500);
   }, [search]);
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (!visible) {
       soundRef.current?.stopAsync().catch(() => {});
       soundRef.current?.unloadAsync().catch(() => {});
@@ -253,7 +231,7 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
       const { sound } = await Audio.Sound.createAsync({ uri: track.preview }, { shouldPlay: true, volume: 1.0 });
       soundRef.current = sound;
       sound.setOnPlaybackStatusUpdate((s: any) => { if (s.didJustFinish) setPreviewId(null); });
-    } catch (_) { setPreviewId(null); }
+    } catch { setPreviewId(null); }
   }, [previewId]);
 
   const fmtDur = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
@@ -290,7 +268,7 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
           </View>
         ) : null}
         {loading
-          ? <View style={dm.center}><ActivityIndicator color={Colors.warning} size="large" /><Text style={dm.centerText}>Buscando...</Text></View>
+          ? <View style={dm.center}><ActivityIndicator color={Colors.warning} size="large" /></View>
           : error
           ? <View style={dm.center}><MaterialCommunityIcons name="wifi-off" size={38} color={Colors.textSubtle} /><Text style={dm.centerText}>{error}</Text></View>
           : (
@@ -306,7 +284,6 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
                     <View style={{ flex: 1 }}>
                       <Text style={[dm.trackTitle, isSel && { color: Colors.warning }]} numberOfLines={1}>{item.title}</Text>
                       <Text style={dm.trackArtist} numberOfLines={1}>{item.artist.name}</Text>
-                      <Text style={dm.trackDur}>{fmtDur(item.duration)}</Text>
                     </View>
                     {item.preview ? (
                       <Pressable style={[dm.previewBtn, isPrev && { backgroundColor: Colors.warning }]}
@@ -318,12 +295,7 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
                   </Pressable>
                 );
               }}
-              ListEmptyComponent={
-                <View style={dm.center}>
-                  <MaterialCommunityIcons name="music-off" size={38} color={Colors.textSubtle} />
-                  <Text style={dm.centerText}>Sin resultados</Text>
-                </View>
-              }
+              ListEmptyComponent={<View style={dm.center}><MaterialCommunityIcons name="music-off" size={38} color={Colors.textSubtle} /><Text style={dm.centerText}>Sin resultados</Text></View>}
             />
           )
         }
@@ -332,128 +304,45 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
   );
 }
 
-// ── Main VideosTab ─────────────────────────────────────────────────────────
+// ── Main VideosTab ────────────────────────────────────────────────────────────
 export function VideosTab() {
   const { addVideo }  = useFeed();
   const { showAlert } = useAlert();
   const router        = useRouter();
-  const playerRef     = useRef<any>(null);
-  const soundRef      = useRef<Audio.Sound | null>(null);
 
-  const [clips,          setClips]          = useState<Clip[]>([]);
-  const [activeClipIdx,  setActiveClipIdx]  = useState(0);
-  const [isPlaying,      setIsPlaying]      = useState(false);
-  const [speed,          setSpeed]          = useState(1.0);
-  const [trimStart,      setTrimStart]      = useState(0.0);
-  const [trimEnd,        setTrimEnd]        = useState(1.0);
-  const [durationMs,     setDurationMs]     = useState(0);
-  const [positionMs,     setPositionMs]     = useState(0);
-  const [selectedTrack,  setSelectedTrack]  = useState<DeezerTrack | null>(null);
-  const [videoVol,       setVideoVol]       = useState(0.8);
-  const [musicVol,       setMusicVol]       = useState(0.6);
-  const [caption,        setCaption]        = useState('');
-  const [captionModal,   setCaptionModal]   = useState(false);
-  const [isPublishing,   setIsPublishing]   = useState(false);
-  const [musicModal,     setMusicModal]     = useState(false);
-  const [colorFilter,    setColorFilter]    = useState<ColorFilterName>('none');
-  const [exportProgress, setExportProgress] = useState<string | null>(null);
-  const [isExporting,    setIsExporting]    = useState(false);
+  const editor = useVideoEditor();
+  const [captionModal, setCaptionModal] = useState(false);
+  const [caption,      setCaption]      = useState('');
+  const [musicModal,   setMusicModal]   = useState(false);
 
-  const skiaPreviewId = colorFilter !== 'none' ? colorFilter as SkiaEffectId : 'none';
-
-  useEffect(() => () => { soundRef.current?.unloadAsync().catch(() => {}); }, []);
-
-  const pickClip = useCallback(async () => {
-    if (clips.length >= 5) { showAlert('Máximo 5 clips', 'Elimina uno para agregar otro'); return; }
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) { showAlert('Permiso requerido', 'Necesitamos acceso a tu galería'); return; }
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Videos, quality: 1 });
-    if (!res.canceled && res.assets[0]) {
-      const clip: Clip = {
-        id: `c_${Date.now()}`, uri: res.assets[0].uri,
-        durationMs: (res.assets[0].duration ?? 30) * 1000,
-      };
-      setClips(prev => [...prev, clip]);
-      setActiveClipIdx(clips.length);
-      setTrimStart(0); setTrimEnd(1);
-    }
-  }, [clips.length, showAlert]);
-
-  const removeClip = useCallback((id: string) => {
-    setClips(prev => {
-      const n = prev.filter(c => c.id !== id);
-      setActiveClipIdx(i => Math.min(i, Math.max(0, n.length - 1)));
-      return n;
-    });
-  }, []);
-
-  const activeClip = clips[activeClipIdx];
-
-  const togglePlay = useCallback(() => {
-    const p = playerRef.current; if (!p) return;
-    try {
-      if (isPlaying) {
-        if (typeof p.pause === 'function') p.pause();
-        setIsPlaying(false);
-      } else {
-        if (typeof p.play === 'function') p.play();
-        setIsPlaying(true);
-      }
-    } catch (_) {}
-  }, [isPlaying]);
-
-  const seekTo = useCallback((fraction: number) => {
-    if (!playerRef.current || durationMs <= 0) return;
-    const targetSec = (fraction * durationMs) / 1000;
-    try {
-      if (typeof playerRef.current.currentTime !== 'undefined') {
-        playerRef.current.currentTime = targetSec; return;
-      }
-      const avRef = playerRef.current._avRef ?? null;
-      if (avRef?.setPositionAsync) { avRef.setPositionAsync(targetSec * 1000); return; }
-    } catch (_) {}
-  }, [durationMs]);
-
-  const handleSetSpeed = useCallback((val: number) => {
-    setSpeed(val);
-    try { if (playerRef.current) playerRef.current.playbackRate = val; } catch (_) {}
-  }, []);
+  const TRACK_W_FULL = W - 32;
 
   const handleExportAndPublish = useCallback(async () => {
-    if (!activeClip) return;
-    setIsPublishing(true); setIsExporting(true); setExportProgress('Preparando...');
+    const { uri, ok, error } = await editor.exportAndPublish(caption);
+    if (!ok || !uri) { showAlert('Error', error ?? 'No se pudo exportar'); return; }
     try {
-      const result = await exportFinal({
-        clips: clips.map(c => ({
-          uri: c.uri,
-          trimStart:  c.id === activeClip.id ? trimStart : 0,
-          trimEnd:    c.id === activeClip.id ? trimEnd   : 1,
-          durationMs: c.durationMs,
-        })),
-        speed, colorFilter, musicUri: selectedTrack?.preview,
-        musicVol, videoVol,
-        onProgress: (step, pct) => setExportProgress(`${step} (${pct}%)`),
-      });
-      setExportProgress('Publicando...');
-      const finalUri = result.uri || activeClip.uri;
       await addVideo({
-        videoUrl: finalUri, thumbnailUrl: '',
-        caption: caption.trim() || `🎬 ${colorFilter !== 'none' ? `#${colorFilter} ` : ''}${speed !== 1 ? `${speed}× ` : ''}#ClipDAG`,
-        music: selectedTrack ? `${selectedTrack.title} — ${selectedTrack.artist.name}` : 'Sin música',
+        videoUrl: uri, thumbnailUrl: '',
+        caption: caption.trim() || `🎬 ${editor.colorFilter !== 'none' ? `#${editor.colorFilter} ` : ''}${editor.speed !== 1 ? `${editor.speed}× ` : ''}#ClipDAG`,
+        music: editor.selectedTrack
+          ? `${editor.selectedTrack.title} — ${editor.selectedTrack.artist.name}`
+          : 'Sin música',
         username: '', userAvatar: '',
       });
-      showAlert('Publicado 🎉', isFFmpegAvailable() ? 'Video exportado con FFmpeg y publicado' : 'Clip publicado al feed', [
+      showAlert('Publicado 🎉', isFFmpegAvailable() ? 'Video exportado y publicado' : 'Clip publicado', [
         { text: 'Ver feed', onPress: () => router.replace('/(tabs)') },
       ]);
       setCaptionModal(false);
+      editor.reset();
     } catch (e: any) { showAlert('Error', e?.message || 'No se pudo publicar'); }
-    finally { setIsPublishing(false); setIsExporting(false); setExportProgress(null); }
-  }, [activeClip, clips, trimStart, trimEnd, speed, colorFilter, selectedTrack, musicVol, videoVol, caption, addVideo, showAlert, router]);
+  }, [editor, caption, addVideo, showAlert, router]);
 
-  const TRACK_W    = W - 32;
-  const trimDurSec = durationMs > 0 ? Math.round((trimEnd - trimStart) * durationMs / 1000) : 0;
+  const trimDurSec = editor.durationMs > 0
+    ? Math.round((editor.trimEnd - editor.trimStart) * editor.durationMs / 1000)
+    : 0;
 
-  if (clips.length === 0) {
+  // ── Empty state ────────────────────────────────────────────────────────────
+  if (editor.clips.length === 0) {
     return (
       <View style={v.empty}>
         <LinearGradient colors={['#1A1228', '#0E0E18']} style={StyleSheet.absoluteFillObject} />
@@ -471,7 +360,7 @@ export function VideosTab() {
             <Text style={[v.ffmpegBadgeText, { color: Colors.warning }]}>FFmpeg disponible en EAS Build nativo</Text>
           </View>
         )}
-        <Pressable style={v.emptyBtn} onPress={pickClip}>
+        <Pressable style={v.emptyBtn} onPress={editor.pickClip}>
           <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={v.emptyBtnInner}>
             <MaterialCommunityIcons name="folder-open-outline" size={22} color="#fff" />
             <Text style={v.emptyBtnText}>Seleccionar video</Text>
@@ -487,77 +376,81 @@ export function VideosTab() {
       <View style={v.clipRail}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ flexDirection: 'row', gap: 8, padding: 12, alignItems: 'center' }}>
-          {clips.map((clip, i) => (
+          {editor.clips.map((clip, i) => (
             <Pressable key={clip.id}
-              style={[v.clipThumb, activeClipIdx === i && v.clipThumbActive]}
-              onPress={() => setActiveClipIdx(i)}>
+              style={[v.clipThumb, editor.activeIdx === i && v.clipThumbActive]}
+              onPress={() => editor.setActiveIdx(i)}>
               <Text style={v.clipThumbNum}>{i + 1}</Text>
               <Text style={v.clipThumbDur}>{Math.round(clip.durationMs / 1000)}s</Text>
-              {activeClipIdx === i ? <LinearGradient colors={['#7C5CFF44', 'transparent']} style={StyleSheet.absoluteFillObject} /> : null}
-              <Pressable style={v.clipRemove} onPress={() => removeClip(clip.id)}>
+              {editor.activeIdx === i ? <LinearGradient colors={['#7C5CFF44', 'transparent']} style={StyleSheet.absoluteFillObject} /> : null}
+              <Pressable style={v.clipRemove} onPress={() => editor.removeClip(clip.id)}>
                 <MaterialIcons name="close" size={12} color="#fff" />
               </Pressable>
             </Pressable>
           ))}
-          {clips.length < 5 ? (
-            <Pressable style={v.clipAdd} onPress={pickClip}>
+          {editor.clips.length < 5 ? (
+            <Pressable style={v.clipAdd} onPress={editor.pickClip}>
               <MaterialCommunityIcons name="plus" size={22} color={Colors.primary} />
               <Text style={v.clipAddText}>Añadir</Text>
             </Pressable>
           ) : null}
         </ScrollView>
-        <Text style={v.clipCount}>{clips.length}/5 clips</Text>
+        <Text style={v.clipCount}>{editor.clips.length}/5 clips</Text>
       </View>
 
       {/* Video player */}
-      {activeClip ? (
+      {editor.activeClip ? (
         <View style={v.playerWrap}>
           <ClipVideoPlayer
-            key={activeClip.id} uri={activeClip.uri} volume={videoVol} rate={speed}
-            onDuration={setDurationMs} onPosition={setPositionMs} onPlayingChange={setIsPlaying}
-            playerRef={playerRef}
+            key={editor.activeClip.id}
+            uri={editor.activeClip.uri}
+            volume={editor.videoVol}
+            rate={editor.speed}
+            onDuration={editor.setDurationMs}
+            onPosition={editor.setPositionMs}
+            onPlayingChange={editor.setIsPlaying}
+            playerRef={editor.playerRef}
           />
-          {skiaPreviewId !== 'none' ? (
+          {editor.colorFilter !== 'none' ? (
             <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }} pointerEvents="none">
-              <SkiaEffectsLayer effectId={skiaPreviewId} width={W} height={W * 0.62} />
+              <SkiaEffectsLayer effectId={editor.colorFilter as any} width={W} height={W * 0.62} />
             </View>
           ) : null}
-          <Pressable style={[v.playOverlay, { zIndex: 10 }]} onPress={togglePlay}>
-            {!isPlaying
+          <Pressable style={[v.playOverlay, { zIndex: 10 }]} onPress={editor.togglePlay}>
+            {!editor.isPlaying
               ? <View style={v.playBtn}><MaterialIcons name="play-arrow" size={42} color="#fff" /></View>
               : <View style={v.pauseBtn}><MaterialIcons name="pause" size={26} color="#fff" /></View>}
           </Pressable>
-          {speed !== 1 ? (
+          {editor.speed !== 1 ? (
             <View style={[v.speedBadge, { zIndex: 10 }]}>
-              <PulsingDot color="#FF9D00" />
-              <Text style={v.speedBadgeText}>{speed}×</Text>
+              <Text style={v.speedBadgeText}>{editor.speed}×</Text>
             </View>
           ) : null}
-          {selectedTrack ? (
+          {editor.selectedTrack ? (
             <View style={[v.musicBadge, { zIndex: 10 }]}>
               <MaterialCommunityIcons name="music-note" size={11} color="#fff" />
-              <Text style={v.musicBadgeText} numberOfLines={1}>{selectedTrack.title}</Text>
+              <Text style={v.musicBadgeText} numberOfLines={1}>{editor.selectedTrack.title}</Text>
             </View>
           ) : null}
         </View>
       ) : null}
 
       {/* Timeline */}
-      {durationMs > 0 ? (
+      {editor.durationMs > 0 ? (
         <>
           <View style={v.timeRow}>
-            <Text style={v.timeText}>{fmtMs(positionMs)}</Text>
+            <Text style={v.timeText}>{fmtMs(editor.positionMs)}</Text>
             {trimDurSec > 0 ? <Text style={[v.timeText, { color: Colors.primary }]}>{trimDurSec}s selec.</Text> : null}
-            <Text style={v.timeText}>{fmtMs(durationMs)}</Text>
+            <Text style={v.timeText}>{fmtMs(editor.durationMs)}</Text>
           </View>
-          <View style={[v.seekBar, { width: TRACK_W, marginHorizontal: 16 }]}>
+          <View style={[v.seekBar, { width: TRACK_W_FULL, marginHorizontal: 16 }]}>
             <LinearGradient colors={['#7C5CFF44', '#FF2D7844']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={StyleSheet.absoluteFillObject} />
             <Pressable style={StyleSheet.absoluteFillObject}
               onStartShouldSetResponder={() => true}
-              onResponderMove={e => seekTo(Math.max(0, Math.min(1, (e.nativeEvent.pageX - 16) / TRACK_W)))}
-              onPress={e => seekTo(Math.max(0, Math.min(1, (e.nativeEvent.pageX - 16) / TRACK_W)))}
+              onResponderMove={e => editor.seekTo(Math.max(0, Math.min(1, (e.nativeEvent.pageX - 16) / TRACK_W_FULL)))}
+              onPress={e => editor.seekTo(Math.max(0, Math.min(1, (e.nativeEvent.pageX - 16) / TRACK_W_FULL)))}
             />
-            <View style={[v.seekPlayhead, { left: (positionMs / durationMs) * TRACK_W }]} />
+            <View style={[v.seekPlayhead, { left: (editor.positionMs / editor.durationMs) * TRACK_W_FULL }]} />
           </View>
         </>
       ) : null}
@@ -565,26 +458,26 @@ export function VideosTab() {
       {/* Trim */}
       <View style={v.section}>
         <Text style={v.sectionTitle}>✂️ Recortar</Text>
-        <View style={[v.track, { width: TRACK_W }]}>
+        <View style={[v.track, { width: TRACK_W_FULL }]}>
           <LinearGradient colors={['#7C5CFF44', '#FF2D7844']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={StyleSheet.absoluteFillObject} />
-          <View style={[v.trimDark, { left: 0, width: trimStart * TRACK_W }]} />
-          <View style={[v.trimDark, { left: trimEnd * TRACK_W, right: 0 }]} />
-          <View style={[v.trimBracket, { left: trimStart * TRACK_W, width: (trimEnd - trimStart) * TRACK_W }]}>
+          <View style={[v.trimDark, { left: 0, width: editor.trimStart * TRACK_W_FULL }]} />
+          <View style={[v.trimDark, { left: editor.trimEnd * TRACK_W_FULL, right: 0 }]} />
+          <View style={[v.trimBracket, { left: editor.trimStart * TRACK_W_FULL, width: (editor.trimEnd - editor.trimStart) * TRACK_W_FULL }]}>
             <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={v.trimTop} />
             <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={v.trimBottom} />
             <View style={v.trimLeft} /><View style={v.trimRight} />
           </View>
-          {durationMs > 0 ? <View style={[v.playhead, { left: (positionMs / durationMs) * TRACK_W }]} /> : null}
+          {editor.durationMs > 0 ? <View style={[v.playhead, { left: (editor.positionMs / editor.durationMs) * TRACK_W_FULL }]} /> : null}
         </View>
-        <View style={[v.handleZone, { width: TRACK_W }]}>
-          <Pressable style={[v.handleTouch, { left: Math.max(0, trimStart * TRACK_W - 18) }]}
+        <View style={[v.handleZone, { width: TRACK_W_FULL }]}>
+          <Pressable style={[v.handleTouch, { left: Math.max(0, editor.trimStart * TRACK_W_FULL - 18) }]}
             onStartShouldSetResponder={() => true}
-            onResponderMove={e => setTrimStart(Math.max(0, Math.min(trimEnd - 0.05, (e.nativeEvent.pageX - 16) / TRACK_W)))}>
+            onResponderMove={e => editor.setTrimStart(Math.max(0, Math.min(editor.trimEnd - 0.05, (e.nativeEvent.pageX - 16) / TRACK_W_FULL)))}>
             <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={v.handle}><Text style={v.handleIcon}>◂</Text></LinearGradient>
           </Pressable>
-          <Pressable style={[v.handleTouch, { left: Math.min(TRACK_W - 36, trimEnd * TRACK_W - 18) }]}
+          <Pressable style={[v.handleTouch, { left: Math.min(TRACK_W_FULL - 36, editor.trimEnd * TRACK_W_FULL - 18) }]}
             onStartShouldSetResponder={() => true}
-            onResponderMove={e => setTrimEnd(Math.min(1, Math.max(trimStart + 0.05, (e.nativeEvent.pageX - 16) / TRACK_W)))}>
+            onResponderMove={e => editor.setTrimEnd(Math.min(1, Math.max(editor.trimStart + 0.05, (e.nativeEvent.pageX - 16) / TRACK_W_FULL)))}>
             <LinearGradient colors={['#FF2D78', '#7C5CFF']} style={v.handle}><Text style={v.handleIcon}>▸</Text></LinearGradient>
           </Pressable>
         </View>
@@ -595,8 +488,8 @@ export function VideosTab() {
         <Text style={v.sectionTitle}>⚡ Velocidad</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', gap: 8 }}>
           {SPEED_PRESETS.map(sp => (
-            <Pressable key={sp.value} style={[v.speedChip, speed === sp.value && v.speedChipActive]} onPress={() => handleSetSpeed(sp.value)}>
-              <Text style={[v.speedLabel, speed === sp.value && { color: '#fff' }]}>{sp.label}</Text>
+            <Pressable key={sp.value} style={[v.speedChip, editor.speed === sp.value && v.speedChipActive]} onPress={() => editor.setSpeed(sp.value)}>
+              <Text style={[v.speedLabel, editor.speed === sp.value && { color: '#fff' }]}>{sp.label}</Text>
             </Pressable>
           ))}
         </ScrollView>
@@ -607,10 +500,10 @@ export function VideosTab() {
         <Text style={v.sectionTitle}>🎨 Filtro de color</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', gap: 8 }}>
           {VIDEO_COLOR_FILTERS.map(f => (
-            <Pressable key={f.id} style={[v.filterChip, colorFilter === f.id && v.filterChipActive]} onPress={() => setColorFilter(f.id)}>
+            <Pressable key={f.id} style={[v.filterChip, editor.colorFilter === f.id && v.filterChipActive]} onPress={() => editor.setColorFilter(f.id as any)}>
               <LinearGradient colors={f.gradient} style={v.filterChipGrad} />
               <Text style={v.filterChipEmoji}>{f.emoji}</Text>
-              <Text style={[v.filterChipName, colorFilter === f.id && { color: '#fff' }]}>{f.name}</Text>
+              <Text style={[v.filterChipName, editor.colorFilter === f.id && { color: '#fff' }]}>{f.name}</Text>
             </Pressable>
           ))}
         </ScrollView>
@@ -620,44 +513,44 @@ export function VideosTab() {
       <View style={v.section}>
         <View style={v.sectionRow}>
           <Text style={v.sectionTitle}>🎵 Música</Text>
-          {selectedTrack ? (
-            <Pressable onPress={async () => {
-              await soundRef.current?.stopAsync().catch(() => {});
-              await soundRef.current?.unloadAsync().catch(() => {});
-              soundRef.current = null; setSelectedTrack(null);
+          {editor.selectedTrack ? (
+            <Pressable onPress={() => {
+              editor.soundRef.current?.stopAsync().catch(() => {});
+              editor.soundRef.current?.unloadAsync().catch(() => {});
+              editor.soundRef.current = null;
+              editor.setSelectedTrack(null);
             }}>
               <Text style={{ color: Colors.error, fontSize: FontSize.xs, fontWeight: FontWeight.semibold }}>Quitar</Text>
             </Pressable>
           ) : null}
         </View>
-        {selectedTrack ? (
+        {editor.selectedTrack ? (
           <View style={v.trackRow}>
-            <Image source={{ uri: selectedTrack.album.cover_medium }} style={v.trackCover} contentFit="cover" transition={150} />
+            <Image source={{ uri: editor.selectedTrack.album.cover_medium }} style={v.trackCover} contentFit="cover" transition={150} />
             <View style={{ flex: 1 }}>
-              <Text style={v.trackName} numberOfLines={1}>{selectedTrack.title}</Text>
-              <Text style={v.trackArtist} numberOfLines={1}>{selectedTrack.artist.name}</Text>
+              <Text style={v.trackName} numberOfLines={1}>{editor.selectedTrack.title}</Text>
+              <Text style={v.trackArtist} numberOfLines={1}>{editor.selectedTrack.artist.name}</Text>
             </View>
-            <PulsingDot color={Colors.warning} />
           </View>
         ) : null}
         <Pressable style={v.addMusicBtn} onPress={() => setMusicModal(true)}>
           <LinearGradient colors={['#FF9D00', '#FF5A00']} style={v.addMusicBtnInner}>
             <MaterialCommunityIcons name="music-note-plus" size={18} color="#fff" />
-            <Text style={v.addMusicBtnText}>{selectedTrack ? 'Cambiar música' : 'Añadir música Deezer'}</Text>
+            <Text style={v.addMusicBtnText}>{editor.selectedTrack ? 'Cambiar música' : 'Añadir música Deezer'}</Text>
           </LinearGradient>
         </Pressable>
       </View>
 
-      {selectedTrack ? (
+      {editor.selectedTrack ? (
         <View style={v.section}>
           <Text style={v.sectionTitle}>🔊 Mezcla de audio</Text>
-          <VolumeSlider label="Video"  value={videoVol} onChange={setVideoVol} color={Colors.primary} />
-          <VolumeSlider label="Música" value={musicVol} onChange={setMusicVol} color={Colors.warning} />
+          <VolumeSlider label="Video"  value={editor.videoVol} onChange={editor.setVideoVol} color={Colors.primary} />
+          <VolumeSlider label="Música" value={editor.musicVol} onChange={editor.setMusicVol} color={Colors.warning} />
         </View>
       ) : null}
 
       <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
-        <Pressable style={v.publishBtn} onPress={() => setCaptionModal(true)} disabled={isExporting}>
+        <Pressable style={v.publishBtn} onPress={() => setCaptionModal(true)} disabled={editor.isExporting}>
           <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={v.publishBtnInner}>
             <MaterialCommunityIcons name="send-circle-outline" size={20} color="#fff" />
             <Text style={v.publishBtnText}>{isFFmpegAvailable() ? 'Exportar y publicar' : 'Publicar video'}</Text>
@@ -667,39 +560,43 @@ export function VideosTab() {
 
       {/* Caption modal */}
       <Modal visible={captionModal} transparent animationType="slide" presentationStyle="overFullScreen"
-        onRequestClose={() => !isPublishing && setCaptionModal(false)}>
-        <Pressable style={cm.backdrop} onPress={() => !isPublishing && setCaptionModal(false)} />
+        onRequestClose={() => !editor.isPublishing && setCaptionModal(false)}>
+        <Pressable style={cm.backdrop} onPress={() => !editor.isPublishing && setCaptionModal(false)} />
         <View style={cm.sheet}>
           <View style={cm.handle} />
           <Text style={cm.title}>Caption del video</Text>
-          {isExporting && exportProgress ? (
+          {editor.isExporting && editor.exportProgress ? (
             <View style={cm.progressWrap}>
               <ActivityIndicator color={Colors.primary} size="small" />
-              <Text style={cm.progressText}>{exportProgress}</Text>
+              <Text style={cm.progressText}>{editor.exportProgress}</Text>
             </View>
           ) : null}
           <TextInput style={cm.input} value={caption} onChangeText={setCaption}
             placeholder="Escribe algo..." placeholderTextColor={Colors.textSubtle}
             multiline maxLength={200} />
           <Text style={cm.count}>{caption.length}/200</Text>
-          <Pressable style={[cm.pubBtn, isPublishing && { opacity: 0.6 }]}
-            onPress={handleExportAndPublish} disabled={isPublishing}>
+          <Pressable style={[cm.pubBtn, editor.isPublishing && { opacity: 0.6 }]}
+            onPress={handleExportAndPublish} disabled={editor.isPublishing}>
             <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={cm.pubBtnInner}>
-              {isPublishing ? <ActivityIndicator color="#fff" size="small" /> : null}
-              <Text style={cm.pubBtnText}>{isPublishing ? (exportProgress ?? 'Procesando...') : '🚀 Publicar'}</Text>
+              {editor.isPublishing ? <ActivityIndicator color="#fff" size="small" /> : null}
+              <Text style={cm.pubBtnText}>{editor.isPublishing ? (editor.exportProgress ?? 'Procesando...') : '🚀 Publicar'}</Text>
             </LinearGradient>
           </Pressable>
         </View>
       </Modal>
 
-      <DeezerMusicModal visible={musicModal} onClose={() => setMusicModal(false)}
-        onSelect={track => { setSelectedTrack(track); setMusicModal(false); }}
-        selectedId={selectedTrack?.id ?? null} soundRef={soundRef} />
+      <DeezerMusicModal
+        visible={musicModal}
+        onClose={() => setMusicModal(false)}
+        onSelect={track => { editor.setSelectedTrack(track); setMusicModal(false); }}
+        selectedId={editor.selectedTrack?.id ?? null}
+        soundRef={editor.soundRef}
+      />
     </ScrollView>
   );
 }
 
-// ── Styles ─────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 const v = StyleSheet.create({
   empty:            { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 32 },
   emptyTitle:       { color: Colors.textPrimary, fontSize: FontSize.xl, fontWeight: FontWeight.bold, textAlign: 'center' },
@@ -723,7 +620,7 @@ const v = StyleSheet.create({
   playOverlay:      { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
   playBtn:          { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
   pauseBtn:         { position: 'absolute', top: 12, right: 12, width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
-  speedBadge:       { position: 'absolute', top: 10, left: 10, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 5 },
+  speedBadge:       { position: 'absolute', top: 10, left: 10, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 5 },
   speedBadgeText:   { color: '#fff', fontSize: 12, fontWeight: FontWeight.bold },
   musicBadge:       { position: 'absolute', bottom: 10, left: 10, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 5, maxWidth: W * 0.5 },
   musicBadgeText:   { color: '#fff', fontSize: 11 },
@@ -803,6 +700,5 @@ const dm = StyleSheet.create({
   cover:        { width: 50, height: 50, borderRadius: 8 },
   trackTitle:   { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
   trackArtist:  { color: Colors.textSubtle, fontSize: 11, marginTop: 1 },
-  trackDur:     { color: Colors.textSubtle, fontSize: 10, marginTop: 2 },
   previewBtn:   { width: 34, height: 34, borderRadius: 17, backgroundColor: Colors.warningDim, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.warning + '55' },
 });
