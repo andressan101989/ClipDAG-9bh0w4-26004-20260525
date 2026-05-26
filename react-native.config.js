@@ -1,51 +1,58 @@
 /**
  * react-native.config.js
  *
- * Deshabilita el autolinking nativo en iOS para módulos que:
- *  - Requieren setup nativo especial no disponible en EAS managed
- *  - Crashean al inicializarse sin configuración nativa adicional
- *  - Están bloqueados en Metro (JS) pero sus CocoaPods siguen enlazándose
+ * Controla el autolinking nativo (CocoaPods iOS / Gradle Android)
+ * para módulos que requieren configuración especial o que fueron
+ * excluidos para estabilizar el startup nativo iOS.
  *
- * IMPORTANTE: "ios: null" desactiva CocoaPods autolinking en iOS.
- * Los paquetes permanecen instalados — Metro los bloquea en JS también
- * via ALWAYS_BLOCKED / WEB_ONLY_BLOCKED en metro.config.js.
+ * ESTADO ACTUAL (Fase 1 DeepAR re-integración):
+ *  - react-native-deepar: autolinking RE-ACTIVADO en iOS y Android.
+ *    La API key nativa se configura vía plugins/withDeepARiOS.js (Info.plist).
+ *    El SDK JS sigue siendo lazy-loaded (solo en deepar-test y creator-studio).
  *
- * DIAGNÓSTICO iOS "Failed to launch app":
- *  - react-native-deepar: SDK nativo crashea sin API key válido configurado
- *    via plugin iOS. withDeepARAndroidFix solo toca Android, no iOS.
- *  - react-native-webrtc: módulo nativo inestable en Expo managed workflow,
- *    registra NativeModules antes del bridge JS — crash en startup.
- *  - ffmpeg-kit-react-native: binario FFmpeg XCFramework demasiado grande,
- *    incrementa boot time y puede crashear en dispositivos con memoria limitada.
+ *  - react-native-webrtc: sigue excluido — crash nativo en Expo managed.
+ *  - ffmpeg-kit-react-native: excluido iOS — XCFramework demasiado pesado.
+ *  - react-native-vision-camera: excluido — no se usa en la app actualmente.
+ *  - react-native-worklets-core: excluido — dependencia de vision-camera.
  */
 module.exports = {
   dependencies: {
-    // ── Deshabilita autolinking iOS ──────────────────────────────────────────
+    // ── react-native-deepar: CocoaPods autolinking RE-ACTIVADO ────────────────
+    // La API key iOS se inyecta en Info.plist vía plugins/withDeepARiOS.js.
+    // Sin API key, el SDK crashea al inicializar — ese era el root cause original.
+    // El SDK JS es lazy-loaded exclusivamente en deepar-test.tsx y creator-studio.
+    // metro.config.js bloquea react-native-deepar solo en web/preview (no en EAS).
     'react-native-deepar': {
-      platforms: {
-        ios: null,     // DeepAR SDK crashea sin API key nativo — deshabilitar CocoaPods
-        android: null, // Metro bloquea JS; Android build.gradle también excluido
-      },
+      // Sin plataformas null = autolinking habilitado en iOS y Android
     },
+
+    // ── react-native-webrtc: sigue EXCLUIDO ──────────────────────────────────
+    // NativeModules crash en startup en Expo managed workflow iOS.
     'react-native-webrtc': {
       platforms: {
-        ios: null,     // NativeModules crash en startup — Expo managed no soportado
-        android: null, // Metro bloquea JS también
+        ios: null,
+        android: null,
       },
     },
+
+    // ── ffmpeg-kit-react-native: iOS excluido — Android ok ───────────────────
+    // XCFramework demasiado pesado para EAS managed iOS.
     'ffmpeg-kit-react-native': {
       platforms: {
-        ios: null,     // XCFramework demasiado grande — deshabilitar CocoaPods
-        // Android: autolinking habilitado (Gradle funciona correctamente)
+        ios: null,
+        // Android: autolinking habilitado
       },
     },
-    // ── Vision Camera — también excluido de native para evitar pod conflicts ──
+
+    // ── react-native-vision-camera: excluido (no en uso activo) ─────────────
     'react-native-vision-camera': {
       platforms: {
         ios: null,
         android: null,
       },
     },
+
+    // ── react-native-worklets-core: excluido (dependencia de vision-camera) ──
     'react-native-worklets-core': {
       platforms: {
         ios: null,

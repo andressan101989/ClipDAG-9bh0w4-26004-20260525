@@ -64,7 +64,11 @@ const EMPTY_STUB = path.resolve(__dirname, '_metro_empty_stub.js');
 
 // ── Blocked on ALL platforms (preview + EAS build native + web) ──────────────
 const ALWAYS_BLOCKED = [
-  'react-native-deepar',
+  // react-native-deepar: RE-ENABLED for EAS native builds
+  // Removed from ALWAYS_BLOCKED so the JS SDK loads in EAS iOS/Android builds.
+  // Still blocked on web/preview via WEB_ONLY_BLOCKED below.
+  // The native module is re-linked via CocoaPods (react-native.config.js updated).
+  // 'react-native-deepar',  // ← un-commented when iOS native + API key confirmed working
   'react-native-dynamic',
   'react-native-webrtc',
   'react-native-elements',
@@ -119,7 +123,11 @@ const WALLETCONNECT_PREFIXES = [
 const OTEL_PREFIXES = ['@opentelemetry/'];
 
 // ── Blocked only on web / PC preview ─────────────────────────────────────────
+// react-native-deepar is included here so the web preview doesn't crash
+// with "requireNativeComponent is not a function" — but on iOS/Android EAS
+// builds it loads normally (not blocked).
 const WEB_ONLY_BLOCKED = [
+  'react-native-deepar',
   'react-native-vision-camera',
   'react-native-vision-camera-face-detector',
   'react-native-worklets-core',
@@ -169,8 +177,11 @@ config.resolver = {
       return { type: 'sourceFile', filePath: EMPTY_STUB };
     }
 
-    // 5. Web-only blocked
-    if (platform === 'web' || platform === null) {
+    // 5. Web-only / preview blocked (NOT blocked on iOS/Android EAS builds)
+    // react-native-deepar is in this list so web preview stays crash-free,
+    // but the native EAS build loads the real SDK.
+    const isPreview = platform === 'web' || platform === null;
+    if (isPreview) {
       const isWebBlocked = WEB_ONLY_BLOCKED.some(
         b => moduleName === b || moduleName.startsWith(b + '/'),
       );
