@@ -87,6 +87,11 @@ class SignalingManagerImpl {
     this.stopPolling(roomId);
   }
 
+  /** Alias used by CallManager */
+  async sendEnd(roomId: string, fromId: string): Promise<void> {
+    return this.sendEndSignal(roomId, fromId);
+  }
+
   // ── Receive ────────────────────────────────────────────────────────────────
 
   startPolling(roomId: string, localUserId: string): void {

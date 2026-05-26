@@ -182,7 +182,7 @@ class CallManagerImpl {
     const { roomId } = this._current;
     this._clearRingTimer();
     try { await SignalingManager.sendEnd(roomId, localUserId); } catch { /* ignore */ }
-    await this._cleanup();
+    // _endWithStatus calls _cleanup internally — do not call it again here
     this._endWithStatus('ended');
   }
 
@@ -328,17 +328,23 @@ class CallManagerImpl {
     this._current = { ...this._current, status, endedAt: Date.now(), duration };
     this._notify();
     this._mountedRef.mounted = false;
+    // Single cleanup path — all exit routes go through here
     this._cleanup();
-    // Defer null so listeners can read final state
+    if (this._leakToken) { LeakDetector.release(this._leakToken); this._leakToken = null; }
+    EventBus.emit('call:ended', { status, duration });
+    // Defer null so listeners can read final state before it clears
     setTimeout(() => {
       this._current = null;
       this._notify();
     }, 800);
-    if (this._leakToken) { LeakDetector.release(this._leakToken); this._leakToken = null; }
-    EventBus.emit('call:ended', { status, duration });
   }
 
+  private _cleaningUp = false;
+
   private async _cleanup(): Promise<void> {
+    // Idempotent guard — prevents double-close when endCall + _endWithStatus both ran
+    if (this._cleaningUp) return;
+    this._cleaningUp = true;
     this._clearRingTimer();
     for (const fn of this._unsubs) { try { fn(); } catch { /* ignore */ } }
     this._unsubs = [];
@@ -346,6 +352,7 @@ class CallManagerImpl {
       try { await this._peer.close(); } catch { /* ignore */ }
       this._peer = null;
     }
+    this._cleaningUp = false;
   }
 
   private _clearRingTimer(): void {

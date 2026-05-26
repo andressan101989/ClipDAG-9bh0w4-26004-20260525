@@ -136,29 +136,45 @@ Deno.serve(async (req: Request) => {
       return fail('Ya tienes una suscripción activa a este plan');
     }
 
-    // Deduct balance atomically
-    const { data: subProfile } = await supabase
-      .from('user_profiles').select('dag_balance').eq('id', userId).single();
+    // Read balance from authoritative ledger_accounts
+    const { data: buyerLedger } = await supabase
+      .from('ledger_accounts')
+      .select('balance')
+      .eq('owner_id', userId)
+      .eq('account_type', 'user')
+      .maybeSingle();
 
-    const balance = Number(subProfile?.dag_balance ?? 0);
+    const balance = Number(buyerLedger?.balance ?? 0);
     if (balance < plan.price_bdag) {
       return fail(`Saldo insuficiente. Necesitas ${plan.price_bdag} BDAG, tienes ${balance.toFixed(2)} BDAG`);
     }
 
     const platformFee   = Number((plan.price_bdag * SUBSCRIPTION_FEE_PCT / 100).toFixed(8));
     const creatorEarned = Number((plan.price_bdag - platformFee).toFixed(8));
-    const newBuyerBal   = Number((balance - plan.price_bdag).toFixed(8));
 
     const { data: creatorProf } = await supabase
-      .from('user_profiles').select('dag_balance, username').eq('id', plan.creator_id).single();
-    const newCreatorBal = Number((Number(creatorProf?.dag_balance ?? 0) + creatorEarned).toFixed(8));
+      .from('user_profiles').select('username').eq('id', plan.creator_id).single();
 
     // Determine expiry (30 days for monthly)
     const expiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
 
     await Promise.all([
-      supabase.from('user_profiles').update({ dag_balance: newBuyerBal }).eq('id', userId),
-      supabase.from('user_profiles').update({ dag_balance: newCreatorBal }).eq('id', plan.creator_id),
+      // Atomic ledger debit for buyer
+      supabase.rpc('ledger_debit', {
+        p_user_id:        userId,
+        p_amount:         plan.price_bdag,
+        p_operation_type: 'subscription',
+        p_reference_type: 'subscription_plan',
+        p_reference_id:   plan_id,
+      }),
+      // Atomic ledger credit for creator
+      supabase.rpc('ledger_credit', {
+        p_user_id:        plan.creator_id,
+        p_amount:         creatorEarned,
+        p_operation_type: 'subscription',
+        p_reference_type: 'subscription_plan',
+        p_reference_id:   plan_id,
+      }),
       existing
         ? supabase.from('creator_subscriptions').update({
             status: 'active', amount_bdag: plan.price_bdag,
@@ -171,6 +187,7 @@ Deno.serve(async (req: Request) => {
       supabase.from('subscription_plans')
         .update({ subscribers_count: plan.subscribers_count + 1 })
         .eq('id', plan_id),
+      // Legacy transactions table kept for wallet history fallback
       supabase.from('transactions').insert([
         { user_id: userId, amount: plan.price_bdag, type: 'tip', status: 'completed',
           description: `Suscripción: ${plan.name}` },
@@ -192,6 +209,7 @@ Deno.serve(async (req: Request) => {
       });
     } catch { /* non-fatal */ }
 
+    const newBuyerBal = Number((balance - plan.price_bdag).toFixed(8));
     return ok({ success: true, expires_at: expiresAt, new_balance: newBuyerBal, creator_earned: creatorEarned });
   }
 
@@ -204,15 +222,25 @@ Deno.serve(async (req: Request) => {
     if (!title)                        return fail('Título requerido');
     if (!budget_bdag || budget_bdag < 500) return fail('Presupuesto mínimo: 500 BDAG');
 
-    const { data: adProfile } = await supabase
-      .from('user_profiles').select('dag_balance').eq('id', userId).single();
-    const adBalance = Number(adProfile?.dag_balance ?? 0);
+    // Read from authoritative ledger_accounts (not user_profiles.dag_balance)
+    const { data: adLedger } = await supabase
+      .from('ledger_accounts')
+      .select('balance')
+      .eq('owner_id', userId)
+      .eq('account_type', 'user')
+      .maybeSingle();
+    const adBalance = Number(adLedger?.balance ?? 0);
     if (adBalance < budget_bdag) return fail(`Saldo insuficiente. Tienes ${adBalance.toFixed(2)} BDAG`);
 
-    const newAdBalance = Number((adBalance - budget_bdag).toFixed(8));
-
     await Promise.all([
-      supabase.from('user_profiles').update({ dag_balance: newAdBalance }).eq('id', userId),
+      // Atomic ledger debit — no read-then-write on user_profiles
+      supabase.rpc('ledger_debit', {
+        p_user_id:        userId,
+        p_amount:         budget_bdag,
+        p_operation_type: 'boost',
+        p_reference_type: 'ad_campaign',
+        p_reference_id:   null,
+      }),
       supabase.from('ad_campaigns').insert({
         advertiser_id: userId, title, description: description ?? '', media_url: media_url ?? '',
         target_url: '', ad_type, budget_bdag, cpm_bdag,
@@ -227,6 +255,7 @@ Deno.serve(async (req: Request) => {
       }),
     ]);
 
+    const newAdBalance = Number((adBalance - budget_bdag).toFixed(8));
     return ok({ success: true, new_balance: newAdBalance });
   }
 

@@ -395,17 +395,19 @@ Deno.serve(async (req) => {
       .update(updatePayload)
       .eq('id', withdrawalId);
 
-    // ── Update financial_transaction to 'completed' immediately after broadcast ───────
-    // The fin_txn_id was returned by request_withdrawal_from_ledger RPC.
-    // Marking it 'completed' here ensures the wallet history shows correctly
-    // without waiting for bdag-monitor to confirm on-chain (which can take minutes).
+    // ── Update financial_transaction to 'processing' after broadcast ─────────────────
+    // We intentionally use 'processing' (not 'completed') here because the tx has been
+    // broadcast to the mempool but is NOT yet confirmed on-chain. bdag-monitor will
+    // update it to 'completed' once it sees the receipt with status=0x1.
+    // This prevents the wallet history from showing 'completed' for a tx that might
+    // be dropped from the mempool (low gas, nonce collision, network congestion).
     if (rpcData.fin_txn_id) {
       try {
         await admin
           .from('financial_transactions')
-          .update({ status: 'completed', blockchain_txid: txHash })
+          .update({ status: 'processing', blockchain_txid: txHash })
           .eq('id', rpcData.fin_txn_id);
-        log('INFO', 'fin_txn_marked_completed_on_broadcast', { fin_txn_id: rpcData.fin_txn_id });
+        log('INFO', 'fin_txn_marked_processing_on_broadcast', { fin_txn_id: rpcData.fin_txn_id });
       } catch (ftErr) {
         log('WARN', 'fin_txn_update_failed_non_fatal', { fin_txn_id: rpcData.fin_txn_id });
       }

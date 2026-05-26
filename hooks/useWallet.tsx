@@ -120,6 +120,7 @@ export function useWallet() {
     } catch {
       return 0;
     } finally {
+      // Always reset the guard — must be in finally to handle thrown errors too
       isBalWriting.current = false;
     }
   }, []);
