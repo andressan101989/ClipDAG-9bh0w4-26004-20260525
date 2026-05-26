@@ -107,7 +107,26 @@ class ProductionStabilityModeImpl {
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  get mode(): StabilityMode { return this._mode; }
+  get mode():         StabilityMode { return this._mode; }
+  /** Alias used by hooks and debug panel. */
+  get currentMode():  StabilityMode { return this._mode; }
+  /** Weighted stress score 0–100+ that drives mode decisions. */
+  get currentScore(): number {
+    const s = this._computeScore();
+    return Math.min(100, (s.total / THRESHOLD.emergency) * 100);
+  }
+  /** Whether AR/Skia effects may be rendered in this mode. */
+  get canRenderEffects(): boolean {
+    return this._mode === 'nominal' || this._mode === 'stress';
+  }
+  /** Whether background media prefetch is allowed. */
+  get canPrefetch(): boolean {
+    return this._mode === 'nominal' || this._mode === 'stress';
+  }
+  /** Whether non-critical UI overlays (badges, animations) may render. */
+  get canRenderOverlays(): boolean {
+    return this._mode !== 'critical' && this._mode !== 'emergency';
+  }
 
   getReport(): StabilityReport {
     const gpu = GPUManager.getReport();

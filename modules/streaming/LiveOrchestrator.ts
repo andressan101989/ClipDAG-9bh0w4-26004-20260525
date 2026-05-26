@@ -189,7 +189,7 @@ class HostSessionImpl implements HostSession {
       key:         this._pollKey,
       intervalMs:  3_000,
       backgroundFactor: 0,
-      execute:     async () => {
+      fn:          async () => {
         try {
           const supabase = getSupabaseClient();
           const { data } = await supabase
@@ -217,7 +217,7 @@ class HostSessionImpl implements HostSession {
       key:         `health:${this.sessionId}`,
       intervalMs:  5_000,
       backgroundFactor: 0,
-      execute:     async () => {
+      fn:          async () => {
         const quality = AdaptiveQualityController.getProfile?.();
         let score = 100;
 

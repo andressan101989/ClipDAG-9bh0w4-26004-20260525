@@ -55,7 +55,13 @@ Deno.serve(async (req: Request) => {
   try { body = await req.json(); }
   catch { return respFail('invalid JSON body'); }
 
-  const { recipient_query, amount, note = '' } = body;
+  const { recipient_query, amount } = body;
+  // Sanitize note: trim, strip control chars, enforce max 200 chars
+  const rawNote = typeof body.note === 'string' ? body.note : '';
+  const note = rawNote
+    .replace(/[\x00-\x1F\x7F]/g, ' ')  // strip control characters
+    .trim()
+    .slice(0, 200);
 
   const bdagAmount = Number(amount);
   if (!recipient_query || typeof recipient_query !== 'string' || !recipient_query.trim()) {
@@ -150,7 +156,7 @@ Deno.serve(async (req: Request) => {
       from_user_id:   senderId,
       from_username:  senderProfile?.username ?? '',
       type:           'transfer_received',
-      message:        `${senderName} sent you ${bdagAmount.toFixed(2)} BDAG${note ? ': ' + note : ''}`,
+      message:        `${senderName} sent you ${bdagAmount.toFixed(2)} BDAG${note ? ': ' + note.slice(0, 100) : ''}`,  // cap notification text
       reference_type: 'transfer',
     });
   } catch (e: any) {

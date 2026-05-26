@@ -120,6 +120,14 @@ export default function RootLayout() {
                             name="product/[id]"
                             options={{ headerShown: true, title: '' }}
                           />
+                          <Stack.Screen
+                            name="live/[sessionId]"
+                            options={{ presentation: 'fullScreenModal', headerShown: false }}
+                          />
+                          <Stack.Screen
+                            name="battle/[roomId]"
+                            options={{ presentation: 'fullScreenModal', headerShown: false }}
+                          />
                           </Stack>
                         </WalletConnectProvider>
                       </ShopProvider>
