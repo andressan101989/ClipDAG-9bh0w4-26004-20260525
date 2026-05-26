@@ -61,6 +61,21 @@ class CreatorSessionManagerImpl {
   get currentSession(): CreatorSession | null { return this._session; }
   get isOpen():         boolean               { return this._session !== null; }
 
+  /** Convenience: open a named session (creator-studio.tsx API). */
+  async startSession(sessionId: string): Promise<CreatorSession> {
+    const session = await this.open();
+    // Override the generated id with the caller-provided one
+    (session as any).id = sessionId;
+    return session;
+  }
+
+  /** Convenience: end a named session. */
+  async endSession(sessionId: string): Promise<void> {
+    if (this._session?.id === sessionId || this._session) {
+      await this._session?.close();
+    }
+  }
+
   async open(): Promise<CreatorSession> {
     if (this._session) {
       console.warn('[CreatorSession] session already open');

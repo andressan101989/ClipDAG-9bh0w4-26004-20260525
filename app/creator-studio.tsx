@@ -1,24 +1,27 @@
 /**
- * app/creator-studio.tsx — Creator Studio v15
+ * app/creator-studio.tsx — Creator Studio v16
  *
- * ARCHITECTURE v15: Thin shell — composition only.
+ * ARCHITECTURE v16: Full infrastructure integration.
  *
- * This file is responsible ONLY for:
- *   - Tab navigation state
- *   - Header + status bar rendering
- *   - Mounting isolated tab modules
+ * Connected systems:
+ *   - CreatorSessionManager (resource lifecycle coordination)
+ *   - CreatorRecoveryManager (autosave + draft recovery)
+ *   - SessionOrchestrator (conflict with calls/streams)
+ *   - ResourceManager (camera + GPU exclusive lease)
+ *   - GPUManager (render slot)
+ *   - ProductionStabilityMode (effects degradation under stress)
+ *   - CrashIntelligence (breadcrumbs)
+ *   - useNavigationTelemetry
  *
- * ALL tab logic lives in components/feature/studio/:
- *   EffectsTab   → AR camera, Skia effects, DeepAR filters, capture/recording
- *   VideosTab    → Video editor, FFmpeg, trim, speed, color filters, Deezer
- *   AvatarsTab   → AI avatar generation via OnSpace AI (Gemini 2.5)
- *   MusicTab     → Deezer music library and preview
- *
- * No business logic, no API calls, no heavy imports in this file.
+ * Recovery flow:
+ *   - On mount: check for unsaved draft → offer restore
+ *   - Autosave every 10s via CreatorRecoveryManager
+ *   - On unmount: save current state + cleanup all resources
  */
-import React, { useState, useCallback } from 'react';
+
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
-  View, Text, Pressable, StyleSheet,
+  View, Text, Pressable, StyleSheet, Alert,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -30,7 +33,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { getDeepARStatus, isDeepARAvailable } from '@/services/deeparService';
-import { isFFmpegAvailable } from '@/services/ffmpegService';
+import { isFFmpegAvailable }                  from '@/services/ffmpegService';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 
 import {
@@ -39,6 +42,17 @@ import {
   AvatarsTab,
   MusicTab,
 } from '@/components/feature/studio';
+
+// Infrastructure
+import { CreatorSessionManager }   from '@/modules/creator/sessions/CreatorSessionManager';
+import { CreatorRecoveryManager }  from '@/modules/creator/sessions/CreatorRecoveryManager';
+import { SessionOrchestrator }     from '@/modules/sessions/SessionOrchestrator';
+import { ResourceManager }         from '@/modules/core/ResourceManager';
+import { GPUManager }              from '@/modules/core/GPUManager';
+import { ProductionStabilityMode } from '@/modules/core/ProductionStabilityMode';
+import { CrashIntelligence }       from '@/modules/core/CrashIntelligence';
+import { useNavigationTelemetry }  from '@/hooks/navigation/useNavigationTelemetry';
+import { useStabilityMode }        from '@/hooks/core/useStabilityMode';
 
 // ── Tab definitions ────────────────────────────────────────────────────────
 type StudioTab = 'ar' | 'videos' | 'avatars' | 'music';
@@ -50,21 +64,177 @@ const TABS: { key: StudioTab; icon: string; label: string; color: string }[] = [
   { key: 'music',   icon: 'music-note-outline',    label: 'Música',   color: '#FF9D00' },
 ];
 
+const SESSION_ID = 'creator_studio_main';
+
 // ── Main screen ────────────────────────────────────────────────────────────
 export default function CreatorStudioScreen() {
-  const insets  = useSafeAreaInsets();
-  const router  = useRouter();
+  const insets   = useSafeAreaInsets();
+  const router   = useRouter();
+  const { markReady } = useNavigationTelemetry('CreatorStudioScreen');
+  const { canRenderEffects } = useStabilityMode();
 
-  const [tab, setTab] = useState<StudioTab>('ar');
+  const [tab, setTab]       = useState<StudioTab>('ar');
+  const [sessionReady, setSessionReady] = useState(false);
   const tabAnim = useSharedValue(1);
   const tabSty  = useAnimatedStyle(() => ({ opacity: tabAnim.value }));
+  const gpuSlot = useRef<string | null>(null);
+  const autosaveTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Session init on mount ──────────────────────────────────────────────
+
+  useEffect(() => {
+    CrashIntelligence.addBreadcrumb('navigation', 'CreatorStudio mounted');
+
+    let mounted = true;
+
+    const initSession = async () => {
+      try {
+        // 1. Acquire GPU render slot
+        gpuSlot.current = await GPUManager.acquireSlot('CreatorStudio', 'high');
+
+        // 2. Acquire camera
+        ResourceManager.request('camera', 'CreatorStudio');
+
+        // 3. Register with SessionOrchestrator
+        SessionOrchestrator.registerSession('creator_capture', SESSION_ID, {
+          onPause:   async () => {
+            CrashIntelligence.addBreadcrumb('state', 'CreatorStudio paused');
+            // Save state before pause
+            await CreatorRecoveryManager.saveCheckpoint(SESSION_ID, 'paused', {
+              tab,
+              timestamp: Date.now(),
+            });
+          },
+          onResume:  async () => {
+            CrashIntelligence.addBreadcrumb('state', 'CreatorStudio resumed');
+          },
+          onEnd:     async () => {
+            await cleanup();
+          },
+          onRecover: async () => {
+            CrashIntelligence.addBreadcrumb('state', 'CreatorStudio recovering');
+            return true;
+          },
+        });
+
+        // 4. Start creator session
+        await CreatorSessionManager.startSession(SESSION_ID);
+
+        // 5. Check for draft recovery
+        const draft = await CreatorRecoveryManager.getLatestDraft(SESSION_ID);
+        if (draft && mounted) {
+          Alert.alert(
+            'Borrador encontrado',
+            'Tienes un borrador guardado. ¿Deseas restaurarlo?',
+            [
+              {
+                text: 'Restaurar',
+                onPress: () => {
+                  if (draft.metadata?.tab) setTab(draft.metadata.tab as StudioTab);
+                  CrashIntelligence.addBreadcrumb('state', 'Draft restored');
+                },
+              },
+              {
+                text: 'Descartar',
+                style: 'destructive',
+                onPress: () => CreatorRecoveryManager.clearDraft(SESSION_ID),
+              },
+            ],
+          );
+        }
+
+        // 6. Start autosave every 10s
+        autosaveTimer.current = setInterval(async () => {
+          await CreatorRecoveryManager.saveCheckpoint(SESSION_ID, 'editing', {
+            tab,
+            timestamp: Date.now(),
+          });
+        }, 10_000);
+
+        if (mounted) {
+          setSessionReady(true);
+          markReady();
+          CrashIntelligence.addBreadcrumb('state', 'CreatorStudio session ready');
+        }
+
+      } catch (e: any) {
+        CrashIntelligence.addBreadcrumb('error', `CreatorStudio init error: ${e?.message}`);
+        console.error('[CreatorStudio] init error:', e?.message);
+        if (mounted) {
+          setSessionReady(true); // Still show UI even if session init partially fails
+          markReady();
+        }
+      }
+    };
+
+    initSession();
+
+    return () => {
+      mounted = false;
+      cleanup();
+    };
+  }, []);
+
+  const cleanup = useCallback(async () => {
+    // Stop autosave
+    if (autosaveTimer.current) {
+      clearInterval(autosaveTimer.current);
+      autosaveTimer.current = null;
+    }
+
+    // Save final state
+    try {
+      await CreatorRecoveryManager.saveCheckpoint(SESSION_ID, 'editing', {
+        tab,
+        timestamp: Date.now(),
+      });
+    } catch { /* non-critical */ }
+
+    // End creator session
+    try {
+      await CreatorSessionManager.endSession(SESSION_ID);
+    } catch { /* non-critical */ }
+
+    // Release resources
+    try {
+      await SessionOrchestrator.endSession(SESSION_ID);
+    } catch { /* non-critical */ }
+
+    ResourceManager.release('camera', 'CreatorStudio');
+
+    if (gpuSlot.current) {
+      GPUManager.releaseSlot(gpuSlot.current);
+      gpuSlot.current = null;
+    }
+
+    CrashIntelligence.addBreadcrumb('lifecycle', 'CreatorStudio cleanup complete');
+  }, [tab]);
+
+  // ── Tab switch ─────────────────────────────────────────────────────────
 
   const switchTab = useCallback((t: StudioTab) => {
     tabAnim.value = withTiming(0, { duration: 100 }, () => {
       tabAnim.value = withTiming(1, { duration: 180 });
     });
     setTab(t);
+    CrashIntelligence.addBreadcrumb('user_action', `Studio tab: ${t}`);
   }, []);
+
+  // ── Back with unsaved work warning ─────────────────────────────────────
+
+  const handleBack = useCallback(() => {
+    Alert.alert(
+      'Salir del Studio',
+      'Tu progreso se guardará automáticamente.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Salir',
+          onPress: () => router.back(),
+        },
+      ],
+    );
+  }, [router]);
 
   const deepARStatus = getDeepARStatus();
   const deepARActive = isDeepARAvailable();
@@ -75,7 +245,7 @@ export default function CreatorStudioScreen() {
 
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <View style={root.header}>
-        <Pressable style={root.backBtn} onPress={() => router.back()} hitSlop={10}>
+        <Pressable style={root.backBtn} onPress={handleBack} hitSlop={10}>
           <MaterialCommunityIcons name="arrow-left" size={20} color={Colors.textPrimary} />
         </Pressable>
         <View style={root.titleRow}>
@@ -91,6 +261,15 @@ export default function CreatorStudioScreen() {
           {isFFmpegAvailable() ? (
             <View style={root.badge}><Text style={root.badgeText}>FFmpeg</Text></View>
           ) : null}
+          {/* Session ready indicator */}
+          <View style={[root.badge, sessionReady
+            ? { backgroundColor: '#00D4AA22', borderColor: '#00D4AA44' }
+            : { backgroundColor: Colors.warningDim, borderColor: Colors.warning + '44' }
+          ]}>
+            <Text style={[root.badgeText, { color: sessionReady ? '#00D4AA' : Colors.warning }]}>
+              {sessionReady ? 'Activo' : 'Iniciando'}
+            </Text>
+          </View>
         </View>
         <View style={{ width: 36 }} />
       </View>
@@ -115,6 +294,16 @@ export default function CreatorStudioScreen() {
           </Pressable>
         </View>
       )}
+
+      {/* Stability degradation warning */}
+      {!canRenderEffects ? (
+        <View style={[root.statusBar, { backgroundColor: '#FF8C0015', borderBottomColor: '#FF8C0033' }]}>
+          <MaterialCommunityIcons name="thermometer-alert" size={12} color="#FF8C00" />
+          <Text style={[root.statusBarText, { color: '#FF8C00' }]}>
+            Efectos reducidos por temperatura. Pausa para enfriar.
+          </Text>
+        </View>
+      ) : null}
 
       {/* ── Tab content ─────────────────────────────────────────────────── */}
       <Animated.View style={[{ flex: 1 }, tabSty]}>
@@ -155,7 +344,7 @@ const root = StyleSheet.create({
   container:       { flex: 1, backgroundColor: Colors.bg },
   header:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border },
   backBtn:         { width: 36, height: 36, borderRadius: Radius.md, backgroundColor: Colors.surfaceElevated, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border },
-  titleRow:        { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  titleRow:        { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1, justifyContent: 'center' },
   title:           { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
   deepARBadge:     { borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 3 },
   deepARBadgeText: { color: '#fff', fontSize: 9, fontWeight: FontWeight.bold },

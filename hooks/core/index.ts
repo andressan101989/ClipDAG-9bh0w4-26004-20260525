@@ -10,3 +10,4 @@ export { useAdaptiveQuality }  from './useAdaptiveQuality';
 export { useGPU }              from './useGPU';
 export { useSessionOrchestrator } from './useSessionOrchestrator';
 export { useTelemetry }        from './useTelemetry';
+export { useStabilityMode }    from './useStabilityMode';
