@@ -1,39 +1,31 @@
 /**
- * app/_layout.tsx — STARTUP ISOLATION MODE
+ * app/_layout.tsx — STARTUP ISOLATION MODE (Phase 4 active)
  *
  * ═══════════════════════════════════════════════════════════════════════
- * PURPOSE: Diagnose "Failed to launch app" crash on iOS.
- * The Hermes bundle compiles cleanly. The crash is a RUNTIME startup crash.
+ * PROGRESS LOG:
+ *   Phase 0 ✅ — Bare boot confirmed on OnSpace web emulator
+ *   Phase 1 ✅ — AlertProvider + SafeAreaProvider (always active)
+ *   Phase 2 🔄 — I18nProvider (activating now)
+ *   Phase 3 🔄 — TemplateAuthProvider (activating now)
+ *   Phase 4 🔄 — AuthProvider (activating now — needed by tab bar hooks)
+ *   Phase 5–8 — Still commented out
  *
- * ISOLATION STRATEGY:
- *   - PHASE 0 (current): Bare minimum — no providers at all.
- *     If this crashes: problem is in expo-router bootstrap, stack, or
- *     a module-level side effect in a file imported at the top of the tree.
+ * WHY Phase 4 is needed now:
+ *   app/(tabs)/_layout.tsx calls useAuth() via useWallet().
+ *   Even though index.tsx redirects to /boot-test, expo-router evaluates
+ *   ALL layout files at startup for route registration. Without AuthProvider,
+ *   any render of the tabs layout would crash.
+ *   useAuth/useMessages/useNotifications now have safe fallbacks (no throw),
+ *   but AuthProvider should be active anyway for correctness.
  *
- *   - PHASE 1: Add AlertProvider + SafeAreaProvider only.
- *   - PHASE 2: Add I18nProvider.
- *   - PHASE 3: Add TemplateAuthProvider.
- *   - PHASE 4: Add AuthProvider (Supabase auth.onAuthStateChange).
- *   - PHASE 5: Add FeedProvider.
- *   - PHASE 6: Add StoriesProvider + MessagesProvider + NotificationsProvider.
- *   - PHASE 7: Add ShopProvider.
- *   - PHASE 8: Add WalletConnectProvider (most likely candidate for crash).
- *
- * INSTRUCTIONS:
- *   1. Build EAS with THIS file (Phase 0).
- *   2. If app opens → crash was in a provider. Add them back one by one (phases above).
- *   3. Check iOS device console logs for "[BOOT]" entries to pinpoint last step.
- *
- * HOW TO READ CRASH LOGS ON IPHONE:
- *   iPhone Settings → Privacy & Security → Analytics & Improvements → Analytics Data
- *   Look for entries starting with your app bundle ID.
- *   Or use Xcode Organizer → Crashes after connecting the phone.
+ * REMAINING SUSPECTS (uncomment one at a time, rebuild EAS after each):
+ *   Phase 5: FeedProvider
+ *   Phase 6: StoriesProvider + MessagesProvider + NotificationsProvider
+ *   Phase 7: ShopProvider
+ *   Phase 8: WalletConnectProvider ← highest crash risk (native modules)
  * ═══════════════════════════════════════════════════════════════════════
  */
 
-// ── [BOOT] STEP 0: Module evaluation ─────────────────────────────────────────
-// If the app crashes BEFORE this log appears in the console, the crash is
-// in a module that is require()'d at bundle parse time (side-effect imports).
 console.log('[BOOT] 0 - _layout module evaluated');
 
 import { Stack } from 'expo-router';
@@ -51,21 +43,17 @@ console.log('[BOOT] 4 - safe-area-context imported');
 import { AlertProvider } from '@/template';
 console.log('[BOOT] 5 - template/AlertProvider imported');
 
-// ── PHASE 3–8 providers — commented out for isolation ─────────────────────────
-// Uncomment ONE block at a time, rebuild, and test on device.
-// The phase that causes "Failed to launch app" is the culprit module.
-
 // ── PHASE 2 ──────────────────────────────────────────────────────────────────
-// import { I18nProvider } from '@/contexts/I18nContext';
-// console.log('[BOOT] 6 - I18nContext imported');
+import { I18nProvider } from '@/contexts/I18nContext';
+console.log('[BOOT] 6 - I18nContext imported');
 
 // ── PHASE 3 ──────────────────────────────────────────────────────────────────
-// import { AuthProvider as TemplateAuthProvider } from '@/template';
-// console.log('[BOOT] 7 - TemplateAuthProvider imported');
+import { AuthProvider as TemplateAuthProvider } from '@/template';
+console.log('[BOOT] 7 - TemplateAuthProvider imported');
 
 // ── PHASE 4 ──────────────────────────────────────────────────────────────────
-// import { AuthProvider } from '@/contexts/AuthContext';
-// console.log('[BOOT] 8 - AuthContext imported');
+import { AuthProvider } from '@/contexts/AuthContext';
+console.log('[BOOT] 8 - AuthContext imported');
 
 // ── PHASE 5 ──────────────────────────────────────────────────────────────────
 // import { FeedProvider } from '@/contexts/FeedContext';
@@ -102,13 +90,11 @@ class GlobalErrorBoundary extends Component<{ children: ReactNode }, EBState> {
     };
   }
   componentDidCatch(err: any, info: any) {
-    console.error('══════════════════════════════');
     console.error('[GlobalErrorBoundary] CRASH');
     console.error('Name   :', err?.name);
     console.error('Message:', err?.message ?? err);
     console.error('Stack  :', err?.stack ?? '(no stack)');
     console.error('Comp   :', info?.componentStack ?? '(no info)');
-    console.error('══════════════════════════════');
   }
   render() {
     if (!this.state.hasError) return this.props.children;
@@ -118,7 +104,7 @@ class GlobalErrorBoundary extends Component<{ children: ReactNode }, EBState> {
         <Text style={eb.title}>Crash detectado</Text>
         <Text style={eb.msg}>{this.state.error}</Text>
         {this.state.stack ? (
-          <Text style={eb.stack} numberOfLines={16}>{this.state.stack}</Text>
+          <Text style={eb.stack} numberOfLines={20}>{this.state.stack}</Text>
         ) : null}
         <Pressable style={eb.btn} onPress={() => this.setState({ hasError: false, error: '', stack: '' })}>
           <Text style={eb.btnText}>Reintentar</Text>
@@ -138,7 +124,7 @@ const eb = StyleSheet.create({
   btnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 });
 
-// ── Root layout — PHASE 0: bare minimum ──────────────────────────────────────
+// ── Root layout ───────────────────────────────────────────────────────────────
 export default function RootLayout() {
   console.log('[BOOT] 14 - RootLayout render START');
 
@@ -146,43 +132,47 @@ export default function RootLayout() {
     <GlobalErrorBoundary>
       <AlertProvider>
         <SafeAreaProvider>
-          {/*
-           * PHASE 0 TREE — no custom providers.
-           *
-           * Stack must list ALL known route names to avoid "unmatched route" errors
-           * that could look like crashes.
-           */}
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="index" />
-            <Stack.Screen name="login" />
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="chat/[userId]" />
-            <Stack.Screen name="call/[userId]" />
-            <Stack.Screen name="videocall/[userId]" />
-            <Stack.Screen name="product/[id]" />
-            <Stack.Screen name="creator/[id]" />
-            <Stack.Screen name="notifications" />
-            <Stack.Screen name="create-product" />
-            <Stack.Screen name="my-orders" />
-            <Stack.Screen name="new-message" />
-            <Stack.Screen name="settings" />
-            <Stack.Screen name="messages" />
-            <Stack.Screen name="my-content" />
-            <Stack.Screen name="account-settings" />
-            <Stack.Screen name="notification-settings" />
-            <Stack.Screen name="privacy-settings" />
-            <Stack.Screen name="two-factor" />
-            <Stack.Screen name="legal" />
-            <Stack.Screen name="promotions" />
-            <Stack.Screen name="creator-monetization" />
-            <Stack.Screen name="my-subscriptions" />
-            <Stack.Screen name="creator-studio" />
-            <Stack.Screen name="boost-profile" />
-            <Stack.Screen name="earnings" />
-            <Stack.Screen name="ai-avatar" />
-            <Stack.Screen name="deepar-test" />
-            <Stack.Screen name="boot-test" options={{ headerShown: false }} />
-          </Stack>
+          <I18nProvider>
+            <TemplateAuthProvider>
+              <AuthProvider>
+                {/*
+                 * Phases 5–8 wrappers go here once confirmed stable.
+                 * Current tree: I18n → TemplateAuth → AppAuth → Stack
+                 */}
+                <Stack screenOptions={{ headerShown: false }}>
+                  <Stack.Screen name="index" />
+                  <Stack.Screen name="login" />
+                  <Stack.Screen name="(tabs)" />
+                  <Stack.Screen name="chat/[userId]" />
+                  <Stack.Screen name="call/[userId]" />
+                  <Stack.Screen name="videocall/[userId]" />
+                  <Stack.Screen name="product/[id]" />
+                  <Stack.Screen name="creator/[id]" />
+                  <Stack.Screen name="notifications" />
+                  <Stack.Screen name="create-product" />
+                  <Stack.Screen name="my-orders" />
+                  <Stack.Screen name="new-message" />
+                  <Stack.Screen name="settings" />
+                  <Stack.Screen name="messages" />
+                  <Stack.Screen name="my-content" />
+                  <Stack.Screen name="account-settings" />
+                  <Stack.Screen name="notification-settings" />
+                  <Stack.Screen name="privacy-settings" />
+                  <Stack.Screen name="two-factor" />
+                  <Stack.Screen name="legal" />
+                  <Stack.Screen name="promotions" />
+                  <Stack.Screen name="creator-monetization" />
+                  <Stack.Screen name="my-subscriptions" />
+                  <Stack.Screen name="creator-studio" />
+                  <Stack.Screen name="boost-profile" />
+                  <Stack.Screen name="earnings" />
+                  <Stack.Screen name="ai-avatar" />
+                  <Stack.Screen name="deepar-test" />
+                  <Stack.Screen name="boot-test" options={{ headerShown: false }} />
+                </Stack>
+              </AuthProvider>
+            </TemplateAuthProvider>
+          </I18nProvider>
         </SafeAreaProvider>
       </AlertProvider>
     </GlobalErrorBoundary>

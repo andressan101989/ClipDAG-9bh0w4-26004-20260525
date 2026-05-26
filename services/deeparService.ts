@@ -35,9 +35,12 @@ export const isDeepARAvailable = () =>
   _DeepARCamera !== null &&
   typeof _DeepARCamera === 'function';
 
-// expo-file-system — kept for API surface only (no downloads while disabled)
-import * as FileSystem from 'expo-file-system';
-const hasFileSystem = typeof FileSystem?.downloadAsync === 'function';
+// expo-file-system — lazy-loaded to avoid native module crash at startup.
+// A static top-level import can crash iOS if the native module hasn't
+// hydrated yet during the JS bundle evaluation phase.
+let _FileSystem: any = null;
+try { _FileSystem = require('expo-file-system'); } catch { /* not available */ }
+const hasFileSystem = typeof _FileSystem?.downloadAsync === 'function';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AR FILTER CATALOG
@@ -131,18 +134,18 @@ const downloadingIds: Set<string>       = new Set();
  * expo-file-system returns file:// URIs — strip the prefix with .replace('file://', '').
  */
 async function tryDownload(url: string, effectId: string): Promise<string | null> {
-  if (!hasFileSystem) return null;
+  if (!hasFileSystem || !_FileSystem) return null;
   try {
-    const dir  = FileSystem.cacheDirectory + 'deepar_filters/';
+    const dir  = _FileSystem.cacheDirectory + 'deepar_filters/';
     const dest = dir + effectId;
     // Ensure directory exists
-    await FileSystem.makeDirectoryAsync(dir, { intermediates: true }).catch(() => {});
-    const { uri, status } = await FileSystem.downloadAsync(url, dest);
+    await _FileSystem.makeDirectoryAsync(dir, { intermediates: true }).catch(() => {});
+    const { uri, status } = await _FileSystem.downloadAsync(url, dest);
     if (status !== 200) return null;
     // DeepAR iOS requires raw POSIX path — strip file:// prefix
     const rawPath = uri.replace(/^file:\/\//, '');
     // Validate file is not an HTML error page (must be ≥ 64 bytes)
-    const info = await FileSystem.getInfoAsync(uri, { size: true }).catch(() => null);
+    const info = await _FileSystem.getInfoAsync(uri, { size: true }).catch(() => null);
     if (!info || (info as any).size < 64) return null;
     return rawPath;
   } catch {
