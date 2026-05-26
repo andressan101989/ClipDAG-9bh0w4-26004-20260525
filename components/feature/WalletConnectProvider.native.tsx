@@ -17,7 +17,9 @@
 
 import React from 'react';
 
-export const WC_PROJECT_ID = '52504dd1b11201773cc4f803a6125d2e';
+// WalletConnect Project ID — loaded from env var, never hardcoded.
+export const WC_PROJECT_ID: string =
+  process.env.EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID ?? '';
 
 // Metadata shown in wallet apps (MetaMask, Trust, Coinbase) during connection
 const PROVIDER_METADATA = {

@@ -4,7 +4,11 @@
  * WalletConnect is native-only. This stub makes web builds compile without errors.
  */
 
-export const WC_PROJECT_ID = '52504dd1b11201773cc4f803a6125d2e';
+// WalletConnect Project ID — loaded from env var at runtime.
+// Set EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID in your .env file.
+// Obtain a project ID at https://cloud.walletconnect.com
+export const WC_PROJECT_ID: string =
+  process.env.EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID ?? '';
 
 export const SESSION_PARAMS = {
   namespaces: {

@@ -22,13 +22,19 @@ import { Platform } from 'react-native';
 // ── Feature flag ──────────────────────────────────────────────────────────────
 export const DEEPAR_ENABLED = true;
 
-// API keys injected by native config plugins at build time:
+// DeepAR API keys — loaded from env vars, never hardcoded in source.
+// Set EXPO_PUBLIC_DEEPAR_LICENSE_IOS and EXPO_PUBLIC_DEEPAR_LICENSE_ANDROID
+// in your .env file. Obtain keys at https://www.deepar.ai
+//
+// Native config plugins inject the values into Info.plist / strings.xml at build time:
 //   iOS:     plugins/withDeepARiOS.js      → Info.plist  key: ar_key
 //   Android: plugins/withDeepARAndroidFix.js → strings.xml key: deepar_api_key
-// These JS constants mirror those values so JS-side code can read them if needed.
-export const DEEPAR_API_KEY_IOS     = 'b5ed95b597e2d095a99d348245484f5ca0ea76dd4297a6e03d0a0b630cb2f2b4511186a4577ef72a';
-export const DEEPAR_API_KEY_ANDROID = '26eb786956b608da971d30ec64fc5bcec72ce89cd1914b3cfc5ed32c3232f6da70a5923630b8696b';
-export const DEEPAR_API_KEY         = Platform.OS === 'android' ? DEEPAR_API_KEY_ANDROID : DEEPAR_API_KEY_IOS;
+export const DEEPAR_API_KEY_IOS: string =
+  process.env.EXPO_PUBLIC_DEEPAR_LICENSE_IOS ?? '';
+export const DEEPAR_API_KEY_ANDROID: string =
+  process.env.EXPO_PUBLIC_DEEPAR_LICENSE_ANDROID ?? '';
+export const DEEPAR_API_KEY: string =
+  Platform.OS === 'android' ? DEEPAR_API_KEY_ANDROID : DEEPAR_API_KEY_IOS;
 
 // ── Lazy-load DeepAR SDK ──────────────────────────────────────────────────────
 // require() is deferred (not a top-level static import) so that module
