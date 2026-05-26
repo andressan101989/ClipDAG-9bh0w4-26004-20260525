@@ -19,23 +19,39 @@ import { ThermalMonitor }        from '@/modules/core/ThermalMonitor';
 import { Diagnostics }           from '@/modules/core/Diagnostics';
 import { PowerManager }          from '@/modules/core/PowerManager';
 import { LeakDetector }          from '@/modules/core/LeakDetector';
+import { GPUManager }                from '@/modules/core/GPUManager';
 import { RenderIsolationManager }    from '@/modules/core/RenderIsolationManager';
 import { AdaptiveQualityController } from '@/modules/core/AdaptiveQualityController';
 import { CleanupWorker }             from '@/background/CleanupWorker';
 import { UploadWorker }              from '@/background/UploadWorker';
+import { TelemetryWorker }           from '@/background/TelemetryWorker';
+import { CacheWorker }               from '@/background/CacheWorker';
 import { UploadRecoveryManager }     from '@/modules/media/UploadRecoveryManager';
+import { TelemetryPipeline }         from '@/modules/core/TelemetryPipeline';
+import { CrashIntelligence }         from '@/modules/core/CrashIntelligence';
+import { ResourceScheduler }         from '@/modules/core/ResourceScheduler';
+import { MemoryOptimizer }           from '@/modules/core/MemoryOptimizer';
+import { ProductionStabilityMode }  from '@/modules/core/ProductionStabilityMode';
 
 // ── Boot sequence (order matters) ────────────────────────────────────────────
 AppLifecycle.initialize();             // must be first — others register listeners
 CrashManager.initialize();             // global error boundary
 ThermalMonitor.start();                // start thermal sampling
 PowerManager.initialize();             // wire thermal → power tier
+GPUManager.initialize();               // wire thermal → GPU slots + VRAM budget
 AdaptiveQualityController.initialize(); // wire power tier → all subsystems
 Diagnostics.startCollection();         // ring-buffer metrics
+TelemetryPipeline.initialize();        // production telemetry pipeline
+CrashIntelligence.initialize();        // crash fingerprinting + breadcrumbs
+ResourceScheduler.initialize();        // adaptive task scheduler
+MemoryOptimizer.initialize();          // buffer pools + allocation tracking
 LeakDetector.startMonitoring(60_000);  // scan for stale resources every 60s
 CleanupWorker.start();                 // background temp file cleanup
 UploadWorker.start();                  // background upload processor
-UploadRecoveryManager.initialize();   // restore interrupted uploads on foreground
+TelemetryWorker.start();               // background diagnostics flusher
+CacheWorker.start();                   // background cache maintenance
+UploadRecoveryManager.initialize();    // restore interrupted uploads on foreground
+ProductionStabilityMode.initialize(); // global adaptive degradation system
 
 import { Stack } from 'expo-router';
 console.log('[BOOT] 1 - expo-router imported');
