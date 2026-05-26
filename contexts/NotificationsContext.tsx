@@ -110,11 +110,19 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     } catch (_) {}
   }, [supabase]);
 
+  // ── Deferred polling — starts only after user auth, NOT on startup ────────
+  // Delayed by 3s after user mounts to avoid blocking iOS startup render.
   useEffect(() => {
     if (!user) return;
-    fetchNotifications();
-    pollRef.current = setInterval(fetchNotifications, 10000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    console.log('[BOOT] NotificationsProvider — user ready, starting deferred poll');
+    const initDelay = setTimeout(() => {
+      fetchNotifications();
+      pollRef.current = setInterval(fetchNotifications, 10000);
+    }, 3000);
+    return () => {
+      clearTimeout(initDelay);
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, [user?.id]);
 
   const unreadCount = notifications.filter(n => !n.read).length;

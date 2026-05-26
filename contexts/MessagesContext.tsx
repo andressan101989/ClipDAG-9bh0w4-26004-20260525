@@ -231,12 +231,21 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     } catch (_) {}
   }, [user, supabase]);
 
-  // ── Polling for new messages every 4s ────────────────────────────────────
+  // ── Deferred polling — starts only after user auth, NOT on startup ────────
+  // Polling is delayed by 2s after user mounts to avoid blocking the
+  // React tree during Expo Router startup route registration on iOS.
   useEffect(() => {
     if (!user) return;
-    fetchConversations();
-    pollRef.current = setInterval(fetchConversations, 4000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    console.log('[BOOT] MessagesProvider — user ready, starting deferred poll');
+    // Defer initial fetch so it doesn't block startup render
+    const initDelay = setTimeout(() => {
+      fetchConversations();
+      pollRef.current = setInterval(fetchConversations, 4000);
+    }, 2000);
+    return () => {
+      clearTimeout(initDelay);
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, [user?.id]);
 
   const unreadTotal = conversations.reduce((s, c) => s + c.unreadCount, 0);

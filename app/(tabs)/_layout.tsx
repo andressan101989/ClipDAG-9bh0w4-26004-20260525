@@ -1,17 +1,43 @@
+/**
+ * app/(tabs)/_layout.tsx — DUMB TAB BAR (startup isolation mode)
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * ALL hooks with side effects are REMOVED:
+ *   ❌ useMessages()      → was polling Supabase every 4s from startup
+ *   ❌ useNotifications() → was polling Supabase every 10s from startup
+ *   ❌ useWallet()        → was calling useAuth() + Supabase on mount
+ *
+ * These all triggered network I/O + native module calls BEFORE providers
+ * were stable, crashing the iOS runtime.
+ *
+ * CURRENT STATE: Hardcoded zero values — pure static UI, zero side effects.
+ *
+ * RESTORE BADGES (once startup confirmed stable on iPhone):
+ *   1. Uncomment the Phase B import block below
+ *   2. Uncomment the hook calls in CustomTabBar
+ *   3. Remove the hardcoded zero constants
+ * ═══════════════════════════════════════════════════════════════════════
+ */
+
+console.log('[BOOT] (tabs)/_layout module evaluated');
+
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, FontWeight, Radius } from '@/constants/theme';
-import { useMessages } from '@/hooks/useMessages';
-import { useNotifications } from '@/hooks/useNotifications';
-import { useWallet } from '@/hooks/useWallet';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 
-// ── 5 visible tabs — ecosystem-focused ──────────────────────────────────────
-const VISIBLE_TABS = ['index', 'search', 'upload', 'shop', 'profile'] as const;
+// ── PHASE B — re-enable once boot confirmed stable on iPhone ─────────────────
+// import { useMessages } from '@/hooks/useMessages';
+// import { useNotifications } from '@/hooks/useNotifications';
+// import { useWallet } from '@/hooks/useWallet';
 
+console.log('[BOOT] (tabs)/_layout imports done');
+
+// ── 5 visible tabs ────────────────────────────────────────────────────────────
+const VISIBLE_TABS = ['index', 'search', 'upload', 'shop', 'profile'] as const;
 type TabKey = (typeof VISIBLE_TABS)[number];
 
 interface TabConf {
@@ -65,10 +91,17 @@ function TabIcon({ conf, active }: { conf: TabConf; active: boolean }) {
 
 function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
-  const { unreadTotal } = useMessages();
-  const { unreadCount: notifCount } = useNotifications();
-  const walletData = useWallet();
-  const balance = walletData?.balance ?? 0;
+
+  // ── DUMB mode: hardcoded zeros — no hooks, no side effects ───────────────
+  const unreadTotal = 0;
+  const notifCount  = 0;
+  // const balance  = 0; // reserved for future Phase B
+
+  // ── PHASE B: uncomment after boot confirmed stable ────────────────────────
+  // const { unreadTotal } = useMessages();
+  // const { unreadCount: notifCount } = useNotifications();
+  // const walletData = useWallet();
+  // const balance = walletData?.balance ?? 0;
 
   const tabBarHeight = 62 + insets.bottom;
 
@@ -78,7 +111,6 @@ function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
 
   const badges: Partial<Record<TabKey, number>> = {
     profile: notifCount + unreadTotal,
-    shop:    balance > 0 ? 0 : 0,   // can surface economy notifications later
   };
 
   return (
@@ -88,7 +120,7 @@ function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
         colors={['rgba(8,8,18,0.98)', 'rgba(12,12,24,1)']}
         style={StyleSheet.absoluteFillObject}
       />
-      {/* Top separator line — gradient */}
+      {/* Top separator line */}
       <LinearGradient
         colors={['#7C5CFF44', '#FF9D0033', '#FF2D7833', 'transparent']}
         start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
@@ -111,7 +143,7 @@ function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
             if (!isFocused && !event.defaultPrevented) navigation.navigate(route.name);
           };
 
-          // ── Upload pill ──────────────────────────────────────────────────
+          // ── Upload centre pill ──────────────────────────────────────────
           if (isUpload) {
             return (
               <Pressable key={route.key} onPress={onPress}
@@ -126,13 +158,12 @@ function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
             );
           }
 
-          // ── Regular tab ──────────────────────────────────────────────────
+          // ── Regular tab ────────────────────────────────────────────────
           return (
             <Pressable key={route.key} onPress={onPress}
               style={sty.tab} accessibilityRole="button" hitSlop={4}>
-
               <View style={[sty.tabInner, isFocused && sty.tabInnerActive]}>
-                {/* Active highlight pill */}
+                {/* Active highlight */}
                 {isFocused ? (
                   <LinearGradient
                     colors={[conf.accentColor + '22', conf.accentColor + '08']}
@@ -140,7 +171,7 @@ function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
                   />
                 ) : null}
 
-                {/* Icon with badge */}
+                {/* Icon + badge */}
                 <View style={sty.iconWrap}>
                   <TabIcon conf={conf} active={isFocused} />
                   {badge > 0 ? (
@@ -158,7 +189,7 @@ function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
                   {conf.label}
                 </Text>
 
-                {/* Active indicator dot */}
+                {/* Active dot */}
                 {isFocused ? (
                   <View style={[sty.activeDot, { backgroundColor: conf.accentColor }]} />
                 ) : null}
@@ -172,19 +203,20 @@ function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
 }
 
 export default function TabLayout() {
+  console.log('[BOOT] TabLayout render');
   return (
     <Tabs
       tabBar={props => <CustomTabBar {...props} />}
       screenOptions={{ headerShown: false }}
     >
-      {/* ── Visible tabs ── */}
+      {/* ── Visible ── */}
       <Tabs.Screen name="index" />
       <Tabs.Screen name="search" />
       <Tabs.Screen name="upload" />
       <Tabs.Screen name="shop" />
       <Tabs.Screen name="profile" />
 
-      {/* ── Hidden — accessible via push navigation ── */}
+      {/* ── Hidden (accessible via push navigation) ── */}
       <Tabs.Screen name="messages"      options={{ href: null }} />
       <Tabs.Screen name="notifications" options={{ href: null }} />
       <Tabs.Screen name="wallet"        options={{ href: null }} />
@@ -207,8 +239,6 @@ const sty = StyleSheet.create({
   tabRow: {
     flex: 1, flexDirection: 'row', alignItems: 'center', paddingTop: 6,
   },
-
-  // Regular tab
   tab: {
     flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 2,
   },
@@ -218,7 +248,6 @@ const sty = StyleSheet.create({
     minWidth: 52,
   },
   tabInnerActive: {},
-
   iconWrap: { position: 'relative', alignItems: 'center', justifyContent: 'center' },
   tabLabel: {
     fontSize: 9, fontWeight: FontWeight.medium,
@@ -228,8 +257,6 @@ const sty = StyleSheet.create({
     position: 'absolute', bottom: -4,
     width: 4, height: 4, borderRadius: 2,
   },
-
-  // Badge
   badge: {
     position: 'absolute', top: -5, right: -9,
     borderRadius: 8, minWidth: 16, height: 16,
@@ -238,8 +265,6 @@ const sty = StyleSheet.create({
     borderWidth: 1.5, borderColor: Colors.bg,
   },
   badgeText: { color: '#fff', fontSize: 8, fontWeight: FontWeight.bold },
-
-  // Upload centre button
   uploadTab: {
     flex: 1, alignItems: 'center', justifyContent: 'center', marginTop: -10,
   },
