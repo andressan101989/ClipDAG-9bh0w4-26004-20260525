@@ -1,14 +1,23 @@
 /**
- * app/index.tsx — STARTUP ISOLATION: redirects to /boot-test
+ * app/index.tsx — Auth-based routing
  *
- * No hooks. No auth. No providers. Pure redirect.
+ * Redirects to (tabs) if authenticated, login if not.
  */
 
-console.log('[BOOT] index.tsx evaluated');
-
 import { Redirect } from 'expo-router';
+import { useAuth } from '@/hooks/useAuth';
+import { View, ActivityIndicator } from 'react-native';
 
 export default function Index() {
-  console.log('[BOOT] Index render');
-  return <Redirect href="/boot-test" />;
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0a0a0a' }}>
+        <ActivityIndicator size="large" color="#00ff88" />
+      </View>
+    );
+  }
+
+  return <Redirect href={isAuthenticated ? '/(tabs)' : '/login'} />;
 }
