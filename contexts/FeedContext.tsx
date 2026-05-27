@@ -217,8 +217,9 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   // ── Hardened Supabase client — stored in a ref, never crashes React tree ──
   // If getSupabaseClient() throws (missing env, backend unavailable), we
   // degrade gracefully to mock data for the entire session.
-  const supabaseRef = useRef<ReturnType<typeof getSupabaseClient> | null>(null);
-  const supabaseOk  = useRef(true);
+  const supabaseRef   = useRef<ReturnType<typeof getSupabaseClient> | null>(null);
+  const supabaseOk    = useRef(true);
+  const isLoadingRef  = useRef(false);
 
   if (!supabaseRef.current) {
     try {
@@ -240,7 +241,8 @@ export function FeedProvider({ children }: { children: ReactNode }) {
 
   // ── Load videos ───────────────────────────────────────────────────────────
   const loadVideos = useCallback(async (offset = 0) => {
-    if (isLoadingFeed) return;
+    if (isLoadingRef.current) return;
+    isLoadingRef.current = true;
     setIsLoadingFeed(true);
     try {
       const supabase = supabaseRef.current;
@@ -248,6 +250,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         // No backend — show sample data
         if (offset === 0) setVideos(SAMPLE_VIDEOS);
         setHasMoreDb(false);
+        isLoadingRef.current = false;
         setIsLoadingFeed(false);
         setInitialLoaded(true);
         return;
@@ -281,9 +284,10 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       console.warn('[FeedContext] loadVideos error:', e);
       if (offset === 0) setVideos(SAMPLE_VIDEOS);
     }
+    isLoadingRef.current = false;
     setIsLoadingFeed(false);
     setInitialLoaded(true);
-  }, [isLoadingFeed]);
+  }, []);
 
   // ── Load likes + saves ────────────────────────────────────────────────────
   const loadLikesAndSaves = useCallback(async (userId: string) => {
@@ -658,8 +662,8 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const loadMoreVideos = useCallback(async () => {
-    if (!isLoadingFeed && hasMoreDb) await loadVideos(dbOffset);
-  }, [loadVideos, dbOffset, isLoadingFeed, hasMoreDb]);
+    if (!isLoadingRef.current && hasMoreDb) await loadVideos(dbOffset);
+  }, [loadVideos, dbOffset, hasMoreDb]);
 
   return (
     <FeedContext.Provider value={{
