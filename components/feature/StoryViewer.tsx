@@ -7,7 +7,7 @@ import {
   View, Text, Modal, Pressable, StyleSheet, Dimensions,
   Animated, PanResponder,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/SafeImage';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
