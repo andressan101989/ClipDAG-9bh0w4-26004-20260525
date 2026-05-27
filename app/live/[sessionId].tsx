@@ -16,7 +16,7 @@ import {
   TextInput, KeyboardAvoidingView, Platform,
   ActivityIndicator, Dimensions, Animated,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/SafeImage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';

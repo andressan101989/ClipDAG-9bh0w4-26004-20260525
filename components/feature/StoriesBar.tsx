@@ -3,7 +3,7 @@ import {
   View, Text, ScrollView, Pressable, StyleSheet,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/SafeImage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 

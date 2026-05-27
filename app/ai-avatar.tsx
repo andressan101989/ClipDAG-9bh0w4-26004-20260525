@@ -13,7 +13,7 @@ import {
   View, Text, Pressable, StyleSheet, ScrollView,
   TextInput, ActivityIndicator, Dimensions, Platform,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/SafeImage';
 // expo-video is platform-split: see ai-avatar.native.tsx / ai-avatar.web.tsx
 let VideoView: any = null;
 const useVideoPlayer: any = () => null;

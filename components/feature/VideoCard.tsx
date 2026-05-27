@@ -7,7 +7,7 @@
  */
 import React, { memo } from 'react';
 import { View, Text, Pressable, StyleSheet, Dimensions } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/SafeImage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Avatar } from '@/components/ui/Avatar';

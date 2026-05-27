@@ -78,7 +78,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
           {mod ? `Error en ${mod}` : 'Error inesperado'}
         </Text>
         <Text style={s.msg} numberOfLines={3}>
-          {error?.message ?? 'Un error desconocido ocurrió.'}
+          {'Algo salió mal. Por favor intenta de nuevo.'}
         </Text>
         {showReset && (
           <Pressable style={s.btn} onPress={this.reset}>

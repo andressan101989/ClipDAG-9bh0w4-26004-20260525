@@ -14,7 +14,7 @@ try {
   _useVideoPlayer = ev.useVideoPlayer ?? ((_src: any, _setup?: any) => null);
 } catch { /* web / preview — no native build */ }
 import { LinearGradient } from 'expo-linear-gradient';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/SafeImage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Avatar } from '@/components/ui/Avatar';
 import { GiftSheet } from '@/components/feature/GiftSheet';

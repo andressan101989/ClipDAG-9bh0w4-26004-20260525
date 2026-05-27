@@ -4,7 +4,7 @@ import {
   TextInput, Modal, KeyboardAvoidingView, Platform,
   ActivityIndicator, RefreshControl, Dimensions, FlatList,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/SafeImage';
 import * as ImagePicker from 'expo-image-picker';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -229,6 +229,9 @@ export default function ProfileScreen() {
       },
     ]);
   }, [deleteVideo, showAlert]);
+
+  // Like toggle uses atomic RPC on server — profile grid displays read-only counts
+  // from the feed context which re-fetches on refresh. No client-side counter mutation.
 
   if (!user) {
     return (
@@ -484,6 +487,7 @@ export default function ProfileScreen() {
                     >
                       <View style={styles.gridStats}>
                         <MaterialIcons name="favorite" size={10} color={Colors.secondary} />
+                        {/* likes_count is server-authoritative — read from feed context, never mutated client-side */}
                         <Text style={styles.gridStatText}>{formatNumber(video.likes || 0)}</Text>
                         {(video.viewsCount || 0) > 0 ? (
                           <>
