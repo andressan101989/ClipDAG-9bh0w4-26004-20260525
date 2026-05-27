@@ -1,5 +1,5 @@
 import React, {
-  createContext, useState, useCallback, useEffect, useContext, ReactNode,
+  createContext, useState, useCallback, useEffect, useContext, useRef, ReactNode,
 } from 'react';
 import { getSupabaseClient } from '@/template';
 import { AuthContext } from './AuthContext';
@@ -51,7 +51,12 @@ function mapNotification(row: Record<string, unknown>): AppNotification {
 }
 
 export function NotificationsProvider({ children }: { children: ReactNode }) {
-  const supabase = getSupabaseClient();
+  const supabaseRef = useRef<ReturnType<typeof getSupabaseClient> | null>(null);
+  const supabaseOk  = useRef(true);
+  if (!supabaseRef.current) {
+    try { supabaseRef.current = getSupabaseClient(); }
+    catch (e) { console.warn('[NotificationsContext] getSupabaseClient failed:', e); supabaseOk.current = false; }
+  }
   const authCtx = useContext(AuthContext);
   const user = authCtx?.user;
 
@@ -59,6 +64,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const fetchNotifications = useCallback(async () => {
     if (!user) return;
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return;
     try {
       const { data, error } = await supabase
         .from('notifications')
@@ -70,7 +77,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         setNotifications(data.map(r => mapNotification(r as Record<string, unknown>)));
       }
     } catch (_) {}
-  }, [user, supabase]);
+  }, [user]);
 
   const refreshNotifications = useCallback(async () => {
     setIsLoading(true);
@@ -79,21 +86,27 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }, [fetchNotifications]);
 
   const markRead = useCallback(async (id: string) => {
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return;
     try {
       await supabase.from('notifications').update({ read: true }).eq('id', id).eq('user_id', user?.id);
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
     } catch (_) {}
-  }, [user, supabase]);
+  }, [user]);
 
   const markAllRead = useCallback(async () => {
     if (!user) return;
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return;
     try {
       await supabase.from('notifications').update({ read: true }).eq('user_id', user.id).eq('read', false);
       setNotifications(prev => prev.map(n => ({ ...n, read: true })));
     } catch (_) {}
-  }, [user, supabase]);
+  }, [user]);
 
   const addNotification = useCallback(async (n: Omit<AppNotification, 'id' | 'createdAt' | 'read'>) => {
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return;
     try {
       await supabase.from('notifications').insert({
         user_id: n.userId,
@@ -107,7 +120,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         read: false,
       });
     } catch (_) {}
-  }, [supabase]);
+  }, []);
 
   // ── Deferred polling — starts only after user auth, NOT on startup ────────
   // Uses PollingManager: centralized, background-aware, battery-friendly.

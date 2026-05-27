@@ -104,7 +104,6 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     try { supabaseRef.current = getSupabaseClient(); }
     catch (e) { console.warn('[ShopContext] getSupabaseClient failed:', e); supabaseOk.current = false; }
   }
-  const supabase = supabaseRef.current!;
   const authCtx = useContext(AuthContext);
   const user = authCtx?.user;
 
@@ -117,6 +116,8 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   // ── Fetch public products ─────────────────────────────────────────────────
   const fetchProducts = useCallback(async (category?: string, search?: string) => {
     setIsLoading(true);
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) { setIsLoading(false); return; }
     try {
       let query = supabase
         .from('products')
@@ -130,11 +131,13 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       if (!error && data) setProducts(data.map(r => mapProduct(r as Record<string, unknown>)));
     } catch (_) {}
     setIsLoading(false);
-  }, [supabase]);
+  }, []);
 
   // ── Fetch my products ─────────────────────────────────────────────────────
   const fetchMyProducts = useCallback(async () => {
     if (!user) return;
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return;
     try {
       const { data, error } = await supabase
         .from('products')
@@ -144,11 +147,13 @@ export function ShopProvider({ children }: { children: ReactNode }) {
         .order('created_at', { ascending: false });
       if (!error && data) setMyProducts(data.map(r => mapProduct(r as Record<string, unknown>)));
     } catch (_) {}
-  }, [user, supabase]);
+  }, [user]);
 
   // ── Fetch my orders ───────────────────────────────────────────────────────
   const fetchMyOrders = useCallback(async () => {
     if (!user) return;
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return;
     try {
       const { data, error } = await supabase
         .from('orders')
@@ -157,16 +162,18 @@ export function ShopProvider({ children }: { children: ReactNode }) {
         .order('created_at', { ascending: false });
       if (!error && data) setMyOrders(data.map(r => mapOrder(r as Record<string, unknown>)));
     } catch (_) {}
-  }, [user, supabase]);
+  }, [user]);
 
   // ── Fetch saved products ──────────────────────────────────────────────────
   const fetchSaved = useCallback(async () => {
     if (!user) return;
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return;
     try {
       const { data } = await supabase.from('product_saves').select('product_id').eq('user_id', user.id);
       if (data) setSavedProductIds(new Set(data.map((r: { product_id: string }) => r.product_id)));
     } catch (_) {}
-  }, [user, supabase]);
+  }, [user]);
 
   useEffect(() => {
     fetchProducts();
@@ -178,6 +185,8 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     data: Omit<Product, 'id' | 'sellerId' | 'sellerUsername' | 'sellerAvatar' | 'totalSales' | 'createdAt' | 'status'>
   ): Promise<{ success: boolean; error?: string; product?: Product }> => {
     if (!user) return { success: false, error: 'No autenticado' };
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return { success: false, error: 'Backend no disponible' };
     try {
       const { data: row, error } = await supabase
         .from('products')
@@ -210,6 +219,8 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     data: Partial<Pick<Product, 'title' | 'description' | 'price' | 'stock' | 'status'>>
   ): Promise<{ success: boolean; error?: string }> => {
     if (!user) return { success: false, error: 'No autenticado' };
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return { success: false, error: 'Backend no disponible' };
     try {
       const { error } = await supabase
         .from('products')
@@ -228,6 +239,8 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   // ── Delete product ────────────────────────────────────────────────────────
   const deleteProduct = useCallback(async (id: string): Promise<{ success: boolean; error?: string }> => {
     if (!user) return { success: false, error: 'No autenticado' };
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return { success: false, error: 'Backend no disponible' };
     try {
       const { error } = await supabase
         .from('products')
@@ -248,6 +261,8 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     productId: string, quantity: number, shippingAddress: string
   ): Promise<{ success: boolean; error?: string; orderId?: string }> => {
     if (!user) return { success: false, error: 'No autenticado' };
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return { success: false, error: 'Backend no disponible' };
     const product = products.find(p => p.id === productId);
     if (!product) return { success: false, error: 'Producto no encontrado' };
     if (product.stock < quantity) return { success: false, error: 'Stock insuficiente' };
@@ -275,13 +290,15 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     } catch (e: any) {
       return { success: false, error: e.message };
     }
-  }, [user, supabase, products, fetchMyOrders]);
+  }, [user, products, fetchMyOrders]);
 
   // ── Update order status ───────────────────────────────────────────────────
   const updateOrderStatus = useCallback(async (
     orderId: string, status: Order['status']
   ): Promise<{ success: boolean; error?: string }> => {
     if (!user) return { success: false, error: 'No autenticado' };
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return { success: false, error: 'Backend no disponible' };
     try {
       const { error } = await supabase
         .from('orders')
@@ -293,11 +310,13 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     } catch (e: any) {
       return { success: false, error: e.message };
     }
-  }, [user, supabase]);
+  }, [user]);
 
   // ── Toggle save product ───────────────────────────────────────────────────
   const toggleSaveProduct = useCallback(async (productId: string) => {
     if (!user) return;
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return;
     const isSaved = savedProductIds.has(productId);
     setSavedProductIds(prev => {
       const n = new Set(prev);
@@ -311,7 +330,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
         await supabase.from('product_saves').insert({ user_id: user.id, product_id: productId });
       }
     } catch (_) {}
-  }, [user, savedProductIds, supabase]);
+  }, [user, savedProductIds]);
 
   const isSavedProduct = useCallback((id: string) => savedProductIds.has(id), [savedProductIds]);
 

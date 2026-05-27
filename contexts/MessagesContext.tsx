@@ -62,7 +62,6 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     try { supabaseRef.current = getSupabaseClient(); }
     catch (e) { console.warn('[MessagesContext] getSupabaseClient failed:', e); supabaseOk.current = false; }
   }
-  const supabase = supabaseRef.current!;
   const authCtx = useContext(AuthContext);
   const user = authCtx?.user;
 
@@ -74,6 +73,8 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
   // ── Fetch conversations (latest message per partner) ─────────────────────
   const fetchConversations = useCallback(async () => {
     if (!user) return;
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return;
     try {
       const { data, error } = await supabase
         .from('messages')
@@ -131,7 +132,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       convList.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
       setConversations(convList);
     } catch (_) {}
-  }, [user, supabase]);
+  }, [user]);
 
   const refreshConversations = useCallback(async () => {
     setIsLoading(true);
@@ -142,6 +143,8 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
   // ── Load messages with a specific user ──────────────────────────────────
   const loadConversation = useCallback(async (partnerId: string) => {
     if (!user) return;
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return;
     try {
       const { data, error } = await supabase
         .from('messages')
@@ -159,7 +162,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         }));
       }
     } catch (_) {}
-  }, [user, supabase]);
+  }, [user]);
 
   // ── Send a message ───────────────────────────────────────────────────────
   const sendMessage = useCallback(async (
@@ -169,6 +172,8 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     mediaType: string = 'text'
   ) => {
     if (!user || !text.trim()) return;
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return;
     const optimistic: Message = {
       id: `opt_${Date.now()}`,
       senderId: user.id,
@@ -216,11 +221,13 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         }));
       }
     } catch (_) {}
-  }, [user, supabase]);
+  }, [user]);
 
   // ── Mark conversation as read ─────────────────────────────────────────────
   const markConversationRead = useCallback(async (partnerId: string) => {
     if (!user) return;
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return;
     try {
       await supabase
         .from('messages')
@@ -239,7 +246,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         ),
       }));
     } catch (_) {}
-  }, [user, supabase]);
+  }, [user]);
 
   // ── Deferred polling — starts only after user auth, NOT on startup ────────
   // Uses PollingManager instead of raw setInterval:
