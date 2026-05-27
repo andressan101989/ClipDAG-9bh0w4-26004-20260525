@@ -210,12 +210,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 setUser(profile);
                 if (profile) {
                   await loadFollows(session.user.id);
-                  PresenceManager.startHeartbeat(session.user.id, 'online');
+                  PresenceManager.initialize(session.user.id);
                 }
               } else {
                 setUser(null);
                 setFollowedUsers(new Set());
-                PresenceManager.stopHeartbeat();
+                await PresenceManager.destroy();
               }
             } catch (e) {
               console.error('[AuthProvider] auth state handler error:', e);
@@ -279,7 +279,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     const supabase = supabaseRef.current;
-    PresenceManager.stopHeartbeat();
+    await PresenceManager.destroy();
     try { await supabase?.auth.signOut(); } catch { /* ignore */ }
     setUser(null);
     setFollowedUsers(new Set());
