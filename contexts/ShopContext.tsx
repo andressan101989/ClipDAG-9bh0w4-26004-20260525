@@ -211,7 +211,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     } catch (e: any) {
       return { success: false, error: e.message };
     }
-  }, [user, supabase]);
+  }, [user]);
 
   // ── Update product ────────────────────────────────────────────────────────
   const updateProduct = useCallback(async (
@@ -234,7 +234,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     } catch (e: any) {
       return { success: false, error: e.message };
     }
-  }, [user, supabase]);
+  }, [user]);
 
   // ── Delete product ────────────────────────────────────────────────────────
   const deleteProduct = useCallback(async (id: string): Promise<{ success: boolean; error?: string }> => {
@@ -254,7 +254,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     } catch (e: any) {
       return { success: false, error: e.message };
     }
-  }, [user, supabase]);
+  }, [user]);
 
   // ── Place order ───────────────────────────────────────────────────────────
   const placeOrder = useCallback(async (
