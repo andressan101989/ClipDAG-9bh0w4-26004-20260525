@@ -35,25 +35,25 @@ import { ProductionStabilityMode }  from '@/modules/core/ProductionStabilityMode
 import { RenderQueue }              from '@/services/ffmpegService';
 
 // ── Boot sequence (order matters) ────────────────────────────────────────────
-AppLifecycle.initialize();             // must be first — others register listeners
-CrashManager.initialize();             // global error boundary
-ThermalMonitor.start();                // start thermal sampling
-PowerManager.initialize();             // wire thermal → power tier
-GPUManager.initialize();               // wire thermal → GPU slots + VRAM budget
-AdaptiveQualityController.initialize(); // wire power tier → all subsystems
-Diagnostics.startCollection();         // ring-buffer metrics
-TelemetryPipeline.initialize();        // production telemetry pipeline
-CrashIntelligence.initialize();        // crash fingerprinting + breadcrumbs
-ResourceScheduler.initialize();        // adaptive task scheduler
-MemoryOptimizer.initialize();          // buffer pools + allocation tracking
-LeakDetector.startMonitoring(60_000);  // scan for stale resources every 60s
-CleanupWorker.start();                 // background temp file cleanup
-UploadWorker.start();                  // background upload processor
-TelemetryWorker.start();               // background diagnostics flusher
-CacheWorker.start();                   // background cache maintenance
-UploadRecoveryManager.initialize();    // restore interrupted uploads on foreground
-ProductionStabilityMode.initialize(); // global adaptive degradation system
-RenderQueue.initialize();            // restore queued background renders
+try { AppLifecycle.initialize(); } catch { /* isolate */ }             // must be first — others register listeners
+try { CrashManager.initialize(); } catch { /* isolate */ }             // global error boundary
+try { ThermalMonitor.start(); } catch { /* isolate */ }                // start thermal sampling
+try { PowerManager.initialize(); } catch { /* isolate */ }             // wire thermal → power tier
+try { GPUManager.initialize(); } catch { /* isolate */ }               // wire thermal → GPU slots + VRAM budget
+try { AdaptiveQualityController.initialize(); } catch { /* isolate */ } // wire power tier → all subsystems
+try { Diagnostics.startCollection(); } catch { /* isolate */ }         // ring-buffer metrics
+try { TelemetryPipeline.initialize(); } catch { /* isolate */ }        // production telemetry pipeline
+try { CrashIntelligence.initialize(); } catch { /* isolate */ }        // crash fingerprinting + breadcrumbs
+try { ResourceScheduler.initialize(); } catch { /* isolate */ }        // adaptive task scheduler
+try { MemoryOptimizer.initialize(); } catch { /* isolate */ }          // buffer pools + allocation tracking
+try { LeakDetector.startMonitoring(60_000); } catch { /* isolate */ }  // scan for stale resources every 60s
+try { CleanupWorker.start(); } catch { /* isolate */ }                 // background temp file cleanup
+try { UploadWorker.start(); } catch { /* isolate */ }                  // background upload processor
+try { TelemetryWorker.start(); } catch { /* isolate */ }               // background diagnostics flusher
+try { CacheWorker.start(); } catch { /* isolate */ }                   // background cache maintenance
+try { UploadRecoveryManager.initialize(); } catch { /* isolate */ }    // restore interrupted uploads on foreground
+try { ProductionStabilityMode.initialize(); } catch { /* isolate */ }  // global adaptive degradation system
+try { RenderQueue.initialize(); } catch { /* isolate */ }              // restore queued background renders
 
 import { Stack } from 'expo-router';
 console.log('[BOOT] 1 - expo-router imported');
