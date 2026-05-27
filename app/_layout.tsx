@@ -35,25 +35,25 @@ import { ProductionStabilityMode }  from '@/modules/core/ProductionStabilityMode
 import { RenderQueue }              from '@/services/ffmpegService';
 
 // ── Boot sequence (order matters) ────────────────────────────────────────────
-try { AppLifecycle.initialize(); } catch { /* isolate */ }             // must be first — others register listeners
-try { CrashManager.initialize(); } catch { /* isolate */ }             // global error boundary
-try { ThermalMonitor.start(); } catch { /* isolate */ }                // start thermal sampling
-try { PowerManager.initialize(); } catch { /* isolate */ }             // wire thermal → power tier
-try { GPUManager.initialize(); } catch { /* isolate */ }               // wire thermal → GPU slots + VRAM budget
-try { AdaptiveQualityController.initialize(); } catch { /* isolate */ } // wire power tier → all subsystems
-try { Diagnostics.startCollection(); } catch { /* isolate */ }         // ring-buffer metrics
-try { TelemetryPipeline.initialize(); } catch { /* isolate */ }        // production telemetry pipeline
-try { CrashIntelligence.initialize(); } catch { /* isolate */ }        // crash fingerprinting + breadcrumbs
-try { ResourceScheduler.initialize(); } catch { /* isolate */ }        // adaptive task scheduler
-try { MemoryOptimizer.initialize(); } catch { /* isolate */ }          // buffer pools + allocation tracking
-try { LeakDetector.startMonitoring(60_000); } catch { /* isolate */ }  // scan for stale resources every 60s
-try { CleanupWorker.start(); } catch { /* isolate */ }                 // background temp file cleanup
-try { UploadWorker.start(); } catch { /* isolate */ }                  // background upload processor
-try { TelemetryWorker.start(); } catch { /* isolate */ }               // background diagnostics flusher
-try { CacheWorker.start(); } catch { /* isolate */ }                   // background cache maintenance
-try { UploadRecoveryManager.initialize(); } catch { /* isolate */ }    // restore interrupted uploads on foreground
-try { ProductionStabilityMode.initialize(); } catch { /* isolate */ }  // global adaptive degradation system
-try { RenderQueue.initialize(); } catch { /* isolate */ }              // restore queued background renders
+try { AppLifecycle.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: AppLifecycle', e); }
+try { CrashManager.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: CrashManager', e); }
+try { ThermalMonitor.start(); } catch (e) { console.warn('[BOOT] subsystem failed: ThermalMonitor', e); }
+try { PowerManager.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: PowerManager', e); }
+try { GPUManager.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: GPUManager', e); }
+try { AdaptiveQualityController.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: AdaptiveQualityController', e); }
+try { Diagnostics.startCollection(); } catch (e) { console.warn('[BOOT] subsystem failed: Diagnostics', e); }
+try { TelemetryPipeline.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: TelemetryPipeline', e); }
+try { CrashIntelligence.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: CrashIntelligence', e); }
+try { ResourceScheduler.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: ResourceScheduler', e); }
+try { MemoryOptimizer.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: MemoryOptimizer', e); }
+try { LeakDetector.startMonitoring(60_000); } catch (e) { console.warn('[BOOT] subsystem failed: LeakDetector', e); }
+try { CleanupWorker.start(); } catch (e) { console.warn('[BOOT] subsystem failed: CleanupWorker', e); }
+try { UploadWorker.start(); } catch (e) { console.warn('[BOOT] subsystem failed: UploadWorker', e); }
+try { TelemetryWorker.start(); } catch (e) { console.warn('[BOOT] subsystem failed: TelemetryWorker', e); }
+try { CacheWorker.start(); } catch (e) { console.warn('[BOOT] subsystem failed: CacheWorker', e); }
+try { UploadRecoveryManager.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: UploadRecoveryManager', e); }
+try { ProductionStabilityMode.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: ProductionStabilityMode', e); }
+try { RenderQueue.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: RenderQueue', e); }
 
 import { Stack } from 'expo-router';
 console.log('[BOOT] 1 - expo-router imported');
