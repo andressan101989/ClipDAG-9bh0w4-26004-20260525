@@ -65,7 +65,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
   };
 
   render(): React.ReactNode {
-    const { hasError, error } = this.state;
+    const { hasError, error, errorInfo } = this.state;
     const { children, fallback, showReset, module: mod } = this.props;
 
     if (!hasError) return children;
@@ -77,9 +77,14 @@ export class ErrorBoundary extends React.Component<Props, State> {
         <Text style={s.title}>
           {mod ? `Error en ${mod}` : 'Error inesperado'}
         </Text>
-        <Text style={s.msg} numberOfLines={3}>
-          {'Algo salió mal. Por favor intenta de nuevo.'}
+        <Text style={s.msg}>
+          {error?.message ?? 'Sin mensaje de error'}
         </Text>
+        {errorInfo?.componentStack ? (
+          <Text style={s.stack}>
+            {errorInfo.componentStack.trim()}
+          </Text>
+        ) : null}
         {showReset && (
           <Pressable style={s.btn} onPress={this.reset}>
             <Text style={s.btnText}>Reintentar</Text>
@@ -106,10 +111,18 @@ const s = StyleSheet.create({
     textAlign:  'center',
   },
   msg: {
-    color:      'rgba(255,255,255,0.5)',
+    color:      'rgba(255,255,255,0.7)',
     fontSize:   13,
     textAlign:  'center',
     lineHeight: 20,
+  },
+  stack: {
+    color:      'rgba(255,255,255,0.4)',
+    fontSize:   10,
+    textAlign:  'left',
+    lineHeight: 14,
+    fontFamily: 'monospace',
+    marginTop:  4,
   },
   btn: {
     marginTop:       8,
