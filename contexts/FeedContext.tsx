@@ -211,8 +211,6 @@ function canTrackView(videoId: string): boolean {
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 export function FeedProvider({ children }: { children: ReactNode }) {
-  console.log('[FeedProvider] render start');
-  try {
   const authContext = useContext(AuthContext);
   const user = authContext?.user;
 
@@ -667,7 +665,6 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     if (!isLoadingRef.current && hasMoreDb) await loadVideos(dbOffset);
   }, [loadVideos, dbOffset, hasMoreDb]);
 
-  console.log('[FeedProvider] render complete');
   return (
     <FeedContext.Provider value={{
       videos, likedVideos, savedVideos, comments, isLoadingFeed,
@@ -679,8 +676,4 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       {children}
     </FeedContext.Provider>
   );
-  } catch (e) {
-    console.error('[FeedProvider] RENDER CRASH:', e);
-    throw e;
-  }
 }
