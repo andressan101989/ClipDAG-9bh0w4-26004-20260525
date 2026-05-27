@@ -16,9 +16,18 @@
  *   - Graceful fallback when ffmpeg-kit not compiled in
  */
 
-import * as FileSystem from 'expo-file-system';
+// expo-file-system loaded lazily — top-level import crashes OnSpace preview on iOS
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { EventBus } from '@/modules/core/EventBus';
+
+let _FS: typeof import('expo-file-system') | null = null;
+try {
+  _FS = require('expo-file-system');
+} catch (e: any) {
+  console.log('[FFmpeg] expo-file-system not available:', e?.message);
+}
+// Convenience accessor — returns null if module unavailable
+const FS = () => _FS;
 
 // ── Lazy-load FFmpeg Kit ──────────────────────────────────────────────────────
 let FFmpegKit: any      = null;
@@ -40,36 +49,39 @@ try {
 export const isFFmpegAvailable = (): boolean => !!FFmpegKit;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const TMP_DIR           = `${FileSystem.cacheDirectory}ffmpeg_tmp/`;
-const RECOVERY_KEY      = '@ffmpeg_render_queue';
-const THUMBNAIL_DIR     = `${FileSystem.cacheDirectory}thumbnails/`;
+// Computed lazily so cacheDirectory is only accessed after native init
+const getTmpDir       = () => `${FS()?.cacheDirectory ?? ''}ffmpeg_tmp/`;
+const getThumbnailDir = () => `${FS()?.cacheDirectory ?? ''}thumbnails/`;
+const RECOVERY_KEY    = '@ffmpeg_render_queue';
 
 // ── Temp file registry ────────────────────────────────────────────────────────
 const _tempRegistry = new Set<string>();
 
 function tmpFile(tag: string, ext = 'mp4'): string {
-  const path = `${TMP_DIR}${tag}_${Date.now()}_${Math.floor(Math.random() * 10000)}.${ext}`;
+  const path = `${getTmpDir()}${tag}_${Date.now()}_${Math.floor(Math.random() * 10000)}.${ext}`;
   _tempRegistry.add(path);
   return path;
 }
 
 async function ensureDir(dir: string): Promise<void> {
-  const info = await FileSystem.getInfoAsync(dir);
-  if (!info.exists) await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+  const fs = FS(); if (!fs) return;
+  const info = await fs.getInfoAsync(dir);
+  if (!info.exists) await fs.makeDirectoryAsync(dir, { intermediates: true });
 }
 
 function releaseTemp(path: string): void {
   _tempRegistry.delete(path);
-  FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
+  FS()?.deleteAsync(path, { idempotent: true }).catch(() => {});
 }
 
 /** Release ALL temp files created in this session. */
 export async function cleanupTempFiles(): Promise<void> {
+  const fs = FS(); if (!fs) return;
   for (const path of _tempRegistry) {
-    FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
+    fs.deleteAsync(path, { idempotent: true }).catch(() => {});
   }
   _tempRegistry.clear();
-  FileSystem.deleteAsync(TMP_DIR, { idempotent: true }).catch(() => {});
+  fs.deleteAsync(getTmpDir(), { idempotent: true }).catch(() => {});
 }
 
 // ── Execute helper ────────────────────────────────────────────────────────────
@@ -85,7 +97,7 @@ async function exec(
 ): Promise<ExecResult> {
   if (!FFmpegKit) return { success: false, output: 'FFmpegKit not compiled in — EAS Build required' };
 
-  await ensureDir(TMP_DIR);
+  await ensureDir(getTmpDir());
 
   let progressFired = false;
 
@@ -232,7 +244,8 @@ export async function mergeClips(params: {
     }
 
     const content = trimmedUris.map(u => `file '${u}'`).join('\n');
-    await FileSystem.writeAsStringAsync(listPath, content, { encoding: FileSystem.EncodingType.UTF8 });
+    const fs = FS();
+    if (fs) await fs.writeAsStringAsync(listPath, content, { encoding: fs.EncodingType.UTF8 });
 
     const cmd = `-f concat -safe 0 -i "${listPath}" -c:v libx264 -preset fast -crf 22 -c:a aac -b:a 128k -y "${out}"`;
     const res  = await exec(cmd, p => onProgress?.(30 + Math.round(p * 0.7)), totalDur * 1000);
@@ -422,6 +435,7 @@ export async function extractThumbnail(params: {
   atSec:    number;
   width?:   number;
 }): Promise<{ success: boolean; uri: string; error?: string }> {
+  const THUMBNAIL_DIR = getThumbnailDir();
   await ensureDir(THUMBNAIL_DIR);
   const out = `${THUMBNAIL_DIR}thumb_${Date.now()}.jpg`;
   const w   = params.width ?? 360;
@@ -610,7 +624,8 @@ export async function exportFinal(params: ExportParams): Promise<{
     // ── Step 7: Finalize ──────────────────────────────────────────────────
     stepIdx++;
     const finalOut = outputUri ?? tmpFile('final_export');
-    await FileSystem.moveAsync({ from: current, to: finalOut });
+    const fs = FS();
+    if (fs) await fs.moveAsync({ from: current, to: finalOut });
     _tempRegistry.delete(current);
     _tempRegistry.add(finalOut);
 
