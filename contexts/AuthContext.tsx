@@ -39,6 +39,7 @@ export interface AppUser {
 interface AuthContextType {
   user:             AppUser | null;
   isLoading:        boolean;
+  isAuthReady:      boolean;
   isAuthenticated:  boolean;
   followedUsers:    Set<string>;
   login:            (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
@@ -88,6 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // All hooks MUST be called unconditionally — no early returns before this block.
   const [user,          setUser]          = useState<AppUser | null>(null);
   const [isLoading,     setIsLoading]     = useState(true);
+  const [isAuthReady,   setIsAuthReady]   = useState(false);
   const [followedUsers, setFollowedUsers] = useState<Set<string>>(new Set());
 
   // Supabase client — initialised once, stored in ref to avoid re-creating on re-renders.
@@ -184,6 +186,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!supabaseOk.current || !supabaseRef.current) {
       // Backend unavailable — unblock loading immediately
       setIsLoading(false);
+      setIsAuthReady(true);
       return;
     }
 
@@ -194,6 +197,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const safetyTimer = setTimeout(() => {
       console.log('[BOOT] AuthProvider safety timeout — forcing isLoading=false');
       setIsLoading(false);
+      setIsAuthReady(true);
     }, 5_000);
 
     // Defer listener registration by one tick so it never blocks iOS route
@@ -222,6 +226,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               setUser(null);
             }
             setIsLoading(false);
+            setIsAuthReady(true);
           },
         );
         // Store subscription in outer-scope ref so cleanup can reach it
@@ -230,6 +235,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.error('[AuthProvider] onAuthStateChange registration failed:', e);
         clearTimeout(safetyTimer);
         setIsLoading(false);
+        setIsAuthReady(true);
       }
     }, 0);
 
@@ -413,6 +419,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthContextType = {
     user,
     isLoading,
+    isAuthReady,
     isAuthenticated:  !!user,
     followedUsers,
     login,
