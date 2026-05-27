@@ -436,8 +436,8 @@ function WalletScreenInner() {
             const r = await requestWithdrawalFromBackend(withdrawPayload);
             setIsWithdrawing(false);
             console.log('[wallet.tsx] requestWithdrawalFromBackend result:', r);
-            fullSync();
             if (r.success) {
+              fullSync();
               setWithdrawOk(true);
               setTimeout(closeModal, 1600);
               const displayNet = r.netBdag != null
