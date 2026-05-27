@@ -1,5 +1,5 @@
 import React, {
-  createContext, useState, useCallback, useEffect, useContext, ReactNode,
+  createContext, useState, useCallback, useEffect, useContext, useRef, ReactNode,
 } from 'react';
 import { getSupabaseClient } from '@/template';
 import { AuthContext } from './AuthContext';
@@ -53,7 +53,16 @@ function mapMessage(row: Record<string, unknown>): Message {
 }
 
 export function MessagesProvider({ children }: { children: ReactNode }) {
-  const supabase = getSupabaseClient();
+  // Guard getSupabaseClient() in a ref — same pattern as FeedContext/AuthContext.
+  // Calling it directly in the provider body throws when the backend is unavailable,
+  // which crashes the entire React tree ("TypeError: undefined is not a function").
+  const supabaseRef = useRef<ReturnType<typeof getSupabaseClient> | null>(null);
+  const supabaseOk  = useRef(true);
+  if (!supabaseRef.current) {
+    try { supabaseRef.current = getSupabaseClient(); }
+    catch (e) { console.warn('[MessagesContext] getSupabaseClient failed:', e); supabaseOk.current = false; }
+  }
+  const supabase = supabaseRef.current!;
   const authCtx = useContext(AuthContext);
   const user = authCtx?.user;
 

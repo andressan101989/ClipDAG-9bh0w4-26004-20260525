@@ -1,5 +1,5 @@
 import React, {
-  createContext, useState, useCallback, useEffect, useContext, ReactNode,
+  createContext, useState, useCallback, useEffect, useContext, useRef, ReactNode,
 } from 'react';
 import { getSupabaseClient } from '@/template';
 import { AuthContext } from './AuthContext';
@@ -97,7 +97,14 @@ function mapOrder(row: Record<string, unknown>): Order {
 }
 
 export function ShopProvider({ children }: { children: ReactNode }) {
-  const supabase = getSupabaseClient();
+  // Guard getSupabaseClient() in a ref — same pattern as FeedContext/AuthContext.
+  const supabaseRef = useRef<ReturnType<typeof getSupabaseClient> | null>(null);
+  const supabaseOk  = useRef(true);
+  if (!supabaseRef.current) {
+    try { supabaseRef.current = getSupabaseClient(); }
+    catch (e) { console.warn('[ShopContext] getSupabaseClient failed:', e); supabaseOk.current = false; }
+  }
+  const supabase = supabaseRef.current!;
   const authCtx = useContext(AuthContext);
   const user = authCtx?.user;
 

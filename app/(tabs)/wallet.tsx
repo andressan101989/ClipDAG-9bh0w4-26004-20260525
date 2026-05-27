@@ -8,7 +8,7 @@ import { WalletErrorBoundary } from '@/components/wallet/WalletErrorBoundary';
 import { TransactionRow } from '@/components/wallet/TransactionRow';
 import type { TransactionItem } from '@/components/wallet/TransactionRow';
 import * as Clipboard from 'expo-clipboard';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/SafeImage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
