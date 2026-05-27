@@ -19,7 +19,7 @@
  */
 
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 interface Props {
@@ -80,6 +80,11 @@ export class ErrorBoundary extends React.Component<Props, State> {
         <Text style={s.msg}>
           {error?.message ?? 'Sin mensaje'}
         </Text>
+        {errorInfo?.componentStack ? (
+          <ScrollView style={s.stackScroll} contentContainerStyle={s.stackContent}>
+            <Text style={s.stack}>{errorInfo.componentStack.trim()}</Text>
+          </ScrollView>
+        ) : null}
         {showReset && (
           <Pressable style={s.btn} onPress={this.reset}>
             <Text style={s.btnText}>Reintentar</Text>
@@ -122,5 +127,21 @@ const s = StyleSheet.create({
     color:      '#fff',
     fontSize:   15,
     fontWeight: '600',
+  },
+  stackScroll: {
+    maxHeight:   180,
+    width:       '100%',
+    marginTop:   4,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  stackContent: {
+    padding: 10,
+  },
+  stack: {
+    color:       'rgba(255,255,255,0.45)',
+    fontSize:    10,
+    fontFamily:  'monospace',
+    lineHeight:  15,
   },
 });
