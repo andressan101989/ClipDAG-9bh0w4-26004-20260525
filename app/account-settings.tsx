@@ -28,7 +28,7 @@ function Row({
       onPress={onPress}
       disabled={isToggle}
     >
-      <LinearGradient colors={iconGradient} style={styles.rowIcon}>
+      <LinearGradient colors={iconGradient as [string, string, ...string[]]} style={styles.rowIcon}>
         <MaterialCommunityIcons name={icon as any} size={17} color="#fff" />
       </LinearGradient>
       <View style={styles.rowMeta}>

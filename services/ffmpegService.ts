@@ -20,9 +20,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { EventBus } from '@/modules/core/EventBus';
 
-let _FS: typeof import('expo-file-system') | null = null;
+let _FS: typeof import('expo-file-system/legacy') | null = null;
 try {
-  _FS = require('expo-file-system');
+  _FS = require('expo-file-system/legacy');
 } catch (e: any) {
   console.log('[FFmpeg] expo-file-system not available:', e?.message);
 }

@@ -43,7 +43,7 @@ function QuickAction({
   return (
     <Pressable style={styles.quickAction} onPress={onPress}>
       <View style={styles.quickActionIconWrap}>
-        <LinearGradient colors={gradient} style={styles.quickActionIcon}>
+        <LinearGradient colors={gradient as [string, string, ...string[]]} style={styles.quickActionIcon}>
           <MaterialCommunityIcons name={icon as any} size={20} color="#fff" />
         </LinearGradient>
         {badge && badge > 0 ? (
@@ -69,7 +69,7 @@ function SettingsItem({
       style={({ pressed }) => [styles.settingsItem, pressed && { opacity: 0.75 }]}
       onPress={onPress}
     >
-      <LinearGradient colors={gradient} style={styles.settingsItemIcon}>
+      <LinearGradient colors={gradient as [string, string, ...string[]]} style={styles.settingsItemIcon}>
         <MaterialCommunityIcons name={icon as any} size={16} color="#fff" />
       </LinearGradient>
       <View style={styles.settingsItemText}>

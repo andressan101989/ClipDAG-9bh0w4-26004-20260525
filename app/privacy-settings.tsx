@@ -45,7 +45,7 @@ function ToggleRow({
 }) {
   return (
     <View style={[styles.row, last && styles.rowLast]}>
-      <LinearGradient colors={gradient} style={styles.rowIcon}>
+      <LinearGradient colors={gradient as [string, string, ...string[]]} style={styles.rowIcon}>
         <MaterialCommunityIcons name={icon as any} size={17} color="#fff" />
       </LinearGradient>
       <View style={styles.rowMeta}>
@@ -70,7 +70,7 @@ function SelectRow({
 }) {
   return (
     <Pressable style={[styles.row, last && styles.rowLast]} onPress={onPress}>
-      <LinearGradient colors={gradient} style={styles.rowIcon}>
+      <LinearGradient colors={gradient as [string, string, ...string[]]} style={styles.rowIcon}>
         <MaterialCommunityIcons name={icon as any} size={17} color="#fff" />
       </LinearGradient>
       <Text style={[styles.rowLabel, { flex: 1 }]}>{label}</Text>

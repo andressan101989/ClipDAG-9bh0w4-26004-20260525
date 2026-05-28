@@ -40,7 +40,7 @@ function NotifItem({ notif, onPress }: { notif: AppNotification; onPress: () => 
           <Avatar uri={notif.fromAvatar} username={notif.fromUsername} size={46} />
           <View style={styles.iconBadgeWrap}>
             <LinearGradient
-              colors={conf.gradient}
+              colors={conf.gradient as [string, string, ...string[]]}
               style={styles.iconBadge}
             >
               <MaterialCommunityIcons name={conf.icon as any} size={10} color="#fff" />

@@ -190,7 +190,7 @@ function DocCard({ doc, onPress }: { doc: DocConfig; onPress: () => void }) {
       style={({ pressed }) => [styles.docCard, pressed && { opacity: 0.82 }]}
       onPress={onPress}
     >
-      <LinearGradient colors={doc.gradient} style={styles.docCardIcon}>
+      <LinearGradient colors={doc.gradient as [string, string, ...string[]]} style={styles.docCardIcon}>
         <MaterialCommunityIcons name={doc.icon as any} size={20} color="#fff" />
       </LinearGradient>
       <View style={styles.docCardMeta}>
@@ -221,7 +221,7 @@ export default function LegalScreen() {
 
         {/* Doc meta */}
         <View style={styles.docMeta}>
-          <LinearGradient colors={activeDoc.gradient} style={styles.docMetaIcon}>
+          <LinearGradient colors={activeDoc.gradient as [string, string, ...string[]]} style={styles.docMetaIcon}>
             <MaterialCommunityIcons name={activeDoc.icon as any} size={18} color="#fff" />
           </LinearGradient>
           <View>

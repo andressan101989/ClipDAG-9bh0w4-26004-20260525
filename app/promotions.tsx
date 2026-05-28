@@ -28,7 +28,7 @@ function MetricCard({
   const isPositive = change?.startsWith('+');
   return (
     <View style={styles.metricCard}>
-      <LinearGradient colors={gradient} style={styles.metricIcon}>
+      <LinearGradient colors={gradient as [string, string, ...string[]]} style={styles.metricIcon}>
         <MaterialCommunityIcons name={icon as any} size={18} color="#fff" />
       </LinearGradient>
       <Text style={styles.metricValue}>{value}{suffix}</Text>
@@ -239,7 +239,7 @@ export default function PromotionsScreen() {
                 { icon: 'hand-coin-outline', gradient: ['#FFB800', '#FF6B00'], label: 'Donaciones', onPress: () => showAlert('Donaciones', `Has recibido donaciones de tus fans. Ve a tu billetera para ver el total.`) },
               ].map(a => (
                 <Pressable key={a.label} style={styles.quickAction} onPress={a.onPress}>
-                  <LinearGradient colors={a.gradient} style={styles.quickActionIcon}>
+                  <LinearGradient colors={a.gradient as [string, string, ...string[]]} style={styles.quickActionIcon}>
                     <MaterialCommunityIcons name={a.icon as any} size={22} color="#fff" />
                   </LinearGradient>
                   <Text style={styles.quickActionLabel}>{a.label}</Text>

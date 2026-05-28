@@ -20,7 +20,7 @@ function InfoCard({
 }: { icon: string; gradient: string[]; title: string; desc: string }) {
   return (
     <View style={styles.infoCard}>
-      <LinearGradient colors={gradient} style={styles.infoCardIcon}>
+      <LinearGradient colors={gradient as [string, string, ...string[]]} style={styles.infoCardIcon}>
         <MaterialCommunityIcons name={icon as any} size={20} color="#fff" />
       </LinearGradient>
       <View style={{ flex: 1, gap: 2 }}>

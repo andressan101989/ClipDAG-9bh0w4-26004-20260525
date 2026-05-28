@@ -18,7 +18,7 @@ try {
   useVideoPlayer = ev.useVideoPlayer ?? ((_src: any, _setup?: any) => null);
 } catch { /* web / preview — no-op */ }
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';

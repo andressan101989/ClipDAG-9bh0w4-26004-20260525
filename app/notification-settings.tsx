@@ -162,7 +162,7 @@ export default function NotificationSettingsScreen() {
                 const cfg = catSettings[cat.key] || DEFAULT_CHANNELS;
                 return (
                   <View key={cat.key} style={[styles.catRow, idx === arr.length - 1 && styles.catRowLast]}>
-                    <LinearGradient colors={cat.gradient} style={styles.catIcon}>
+                    <LinearGradient colors={cat.gradient as [string, string, ...string[]]} style={styles.catIcon}>
                       <MaterialCommunityIcons name={cat.icon as any} size={16} color="#fff" />
                     </LinearGradient>
                     <View style={styles.catMeta}>
