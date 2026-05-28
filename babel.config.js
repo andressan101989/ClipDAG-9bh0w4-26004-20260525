@@ -28,8 +28,10 @@ module.exports = function (api) {
       // This plugin is safe to apply on all platforms.
       './plugins/babel-strip-dynamic-imports',
 
-      // reanimated MUST be the last plugin
-      'react-native-reanimated/plugin',
+      // reanimated v4: plugin moved to react-native-worklets/plugin
+      // react-native-reanimated/plugin now re-exports this internally but
+      // requires react-native-worklets to be resolvable first.
+      'react-native-worklets/plugin',
     ],
   };
 };
