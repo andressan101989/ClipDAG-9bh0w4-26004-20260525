@@ -13,7 +13,8 @@
       },
       "env": {
         "APP_VARIANT": "development",
-        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
+        "RCT_NEW_ARCH_ENABLED": "1"
       }
     },
     "preview": {
@@ -23,7 +24,8 @@
       },
       "env": {
         "APP_VARIANT": "preview",
-        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
+        "RCT_NEW_ARCH_ENABLED": "1"
       }
     },
     "preview-clean": {
@@ -33,7 +35,8 @@
       },
       "env": {
         "APP_VARIANT": "preview",
-        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
+        "RCT_NEW_ARCH_ENABLED": "1"
       }
     },
     "production": {
@@ -42,7 +45,8 @@
       },
       "env": {
         "APP_VARIANT": "production",
-        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
+        "RCT_NEW_ARCH_ENABLED": "1"
       }
     },
     "production-clean": {
@@ -52,7 +56,8 @@
       },
       "env": {
         "APP_VARIANT": "production",
-        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
+        "RCT_NEW_ARCH_ENABLED": "1"
       }
     }
   },
