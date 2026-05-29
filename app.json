@@ -77,7 +77,47 @@
       "expo-mail-composer",
       "expo-secure-store",
       "expo-sqlite",
-      "expo-video"
+      "expo-video",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/logo.png",
+          "color": "#ffffff",
+          "mode": "production"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "ClipDAG necesita tu ubicación para mostrarte contenido cercano"
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "ClipDAG necesita acceso a tu galería para subir videos y fotos",
+          "savePhotosPermission": "ClipDAG necesita acceso para guardar videos en tu galería",
+          "isAccessMediaLocationEnabled": true
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "ClipDAG usa Face ID para proteger tu cuenta"
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "ClipDAG necesita acceso a tus contactos para que puedas conectar con amigos"
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "ClipDAG necesita acceso al calendario para programar tus publicaciones"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
