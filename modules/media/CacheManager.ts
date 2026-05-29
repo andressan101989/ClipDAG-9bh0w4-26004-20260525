@@ -85,6 +85,14 @@ class CacheManagerImpl {
     this._memory.delete(key);
   }
 
+  /** Evict entries older than ttlMs (default 1 hour). Called by CleanupWorker. */
+  evictExpired(ttlMs = 60 * 60 * 1000): void {
+    const now = Date.now();
+    for (const [key, entry] of this._memory.entries()) {
+      if (now - entry.cachedAt > ttlMs) this.evict(key);
+    }
+  }
+
   /** Clear memory cache (disk files remain). */
   clear(): void {
     this._memory.clear();

@@ -405,7 +405,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         setVideos(prev => {
           const current = prev.find(v => v.id === videoId);
           const newCount = Math.max(0, (current?.savesCount ?? 1) - 1);
-          supabase.from('videos').update({ saves_count: newCount }).eq('id', videoId).catch(() => {});
+          supabase.from('videos').update({ saves_count: newCount }).eq('id', videoId).then(undefined, () => {});
           return prev; // state already updated optimistically
         });
       } else {
@@ -413,7 +413,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         setVideos(prev => {
           const current = prev.find(v => v.id === videoId);
           const newCount = (current?.savesCount ?? 0) + 1;
-          supabase.from('videos').update({ saves_count: newCount }).eq('id', videoId).catch(() => {});
+          supabase.from('videos').update({ saves_count: newCount }).eq('id', videoId).then(undefined, () => {});
           return prev;
         });
       }
@@ -443,7 +443,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         const current = prev.find(v => v.id === videoId);
         if (!current) return prev;
         const newCount = (current.viewsCount || 0) + 1;
-        supabase.from('videos').update({ views_count: newCount }).eq('id', videoId).catch(() => {});
+        supabase.from('videos').update({ views_count: newCount }).eq('id', videoId).then(undefined, () => {});
         return prev.map(v => v.id === videoId ? { ...v, viewsCount: newCount } : v);
       });
     } catch (e) {

@@ -148,6 +148,11 @@ class DiagnosticsImpl {
     }
   }
 
+  /** Public alias for _collect() — called by TelemetryWorker on its snapshot interval. */
+  recordMemorySnapshot(): void {
+    this._collect();
+  }
+
   // ── Upload tracking ───────────────────────────────────────────────────────
 
   recordUpload(data: { bytes: number; durationMs: number; success: boolean; error?: string }): void {
