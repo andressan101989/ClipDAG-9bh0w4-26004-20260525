@@ -7,6 +7,9 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "ios": {
+        "image": "macos-sequoia-15.2-xcode-16.2"
+      },
       "android": {
         "buildType": "apk",
         "gradleCommand": ":app:assembleDebug"
