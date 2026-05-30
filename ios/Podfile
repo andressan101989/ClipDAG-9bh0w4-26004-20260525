@@ -60,5 +60,14 @@ target 'onspaceapp' do
         end
       end
     end
+
+    # Disable folly C++20 coroutines — fixes 'folly/coro/Coroutine.h' not found
+    # when building with Xcode 16.2 / LLVM clang on RN 0.81.
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= ['$(inherited)']
+        config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] << 'FOLLY_CFG_NO_COROUTINES=1'
+      end
+    end
   end
 end
