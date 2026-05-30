@@ -1,0 +1,3 @@
+# Ensure Xcode environment scripts always use LF on all platforms
+ios/.xcode.env text eol=lf
+ios/.xcode.env.local text eol=lf
