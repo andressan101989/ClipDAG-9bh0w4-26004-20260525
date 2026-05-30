@@ -18,14 +18,14 @@ import React, {
 } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView,
-  ActivityIndicator, Dimensions,
+  ActivityIndicator, Dimensions, Animated,
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated, { useSharedValue, useAnimatedStyle, withSequence, withSpring } from 'react-native-reanimated';
+
 import { useAlert } from '@/template';
 import { useFeed } from '@/hooks/useFeed';
 import { useRouter } from 'expo-router';
@@ -78,8 +78,7 @@ export function EffectsTab() {
   const [isCapturing,     setIsCapturing]     = useState(false);
   const [isRecording,     setIsRecording]     = useState(false);
 
-  const shutterScale = useSharedValue(1);
-  const shutterSty   = useAnimatedStyle(() => ({ transform: [{ scale: shutterScale.value }] }));
+  const shutterScale = useRef(new Animated.Value(1)).current;
 
   // ── Deep AR filter apply ─────────────────────────────────────────────────────
   const handleDeepARFilter = useCallback(async (filter: DeepARFilter) => {
@@ -113,7 +112,10 @@ export function EffectsTab() {
   const capturePhoto = useCallback(async () => {
     if (isCapturing || isRecording || !cameraRef.current) return;
     setIsCapturing(true);
-    shutterScale.value = withSequence(withSpring(0.82), withSpring(1));
+    Animated.sequence([
+      Animated.spring(shutterScale, { toValue: 0.82, useNativeDriver: true }),
+      Animated.spring(shutterScale, { toValue: 1,    useNativeDriver: true }),
+    ]).start();
     const uri = await cameraRef.current.takePhoto();
     if (uri) { setCapturedUri(uri); setMode('preview'); }
     else { showAlert('Error', 'No se pudo capturar la foto'); }
@@ -312,7 +314,7 @@ export function EffectsTab() {
         </Pressable>
 
         {/* Shutter */}
-        <Animated.View style={shutterSty}>
+        <Animated.View style={{ transform: [{ scale: shutterScale }] }}>
           <Pressable style={s.shutterOuter} onPress={capturePhoto} disabled={isCapturing || isRecording}>
             <LinearGradient colors={['#FF2D78', '#7C5CFF']} style={s.shutterInner}>
               {isCapturing

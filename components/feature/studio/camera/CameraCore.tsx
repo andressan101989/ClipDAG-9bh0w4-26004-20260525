@@ -24,14 +24,11 @@ import React, {
 } from 'react';
 import {
   View, Text, StyleSheet, Pressable, Dimensions,
-  AppState, AppStateStatus, Platform,
+  AppState, AppStateStatus, Platform, Animated, Easing,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated, {
-  useSharedValue, useAnimatedStyle, withSequence,
-  withTiming, withRepeat, Easing,
-} from 'react-native-reanimated';
+
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 import { log } from '@/services/logger';
 import {
@@ -116,20 +113,23 @@ export interface CameraCoreProps {
 
 // ── Pulsing dot ───────────────────────────────────────────────────────────────
 function PulsingDot({ color }: { color: string }) {
-  const sc = useSharedValue(1);
+  const sc = useRef(new Animated.Value(1)).current;
   useEffect(() => {
-    sc.value = withRepeat(
-      withSequence(
-        withTiming(1.5, { duration: 600, easing: Easing.inOut(Easing.ease) }),
-        withTiming(1.0, { duration: 600, easing: Easing.inOut(Easing.ease) }),
-      ), -1, false,
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(sc, { toValue: 1.5, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(sc, { toValue: 1.0, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      ]),
     );
+    anim.start();
+    return () => anim.stop();
   }, []);
-  const sty = useAnimatedStyle(() => ({
-    width: 8, height: 8, borderRadius: 4,
-    backgroundColor: color, transform: [{ scale: sc.value }],
-  }));
-  return <Animated.View style={sty} />;
+  return (
+    <Animated.View style={{
+      width: 8, height: 8, borderRadius: 4,
+      backgroundColor: color, transform: [{ scale: sc }],
+    }} />
+  );
 }
 
 function fmtSec(s: number) {
