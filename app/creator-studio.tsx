@@ -22,16 +22,14 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
-  View, Text, Pressable, StyleSheet, Alert,
+  View, Text, Pressable, StyleSheet, Alert, Animated,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
-import Animated, {
-  useSharedValue, useAnimatedStyle, withTiming,
-} from 'react-native-reanimated';
+
 
 import { getDeepARStatus, isDeepARAvailable } from '@/services/deeparService';
 import { isFFmpegAvailable, RenderQueue, type RenderJob } from '@/services/ffmpegService';
@@ -70,8 +68,7 @@ export default function CreatorStudioScreen() {
 
   const [tab, setTab]           = useState<StudioTab>('ar');
   const [renderJobs, setRenderJobs] = useState<RenderJob[]>([]);
-  const tabAnim = useSharedValue(1);
-  const tabSty  = useAnimatedStyle(() => ({ opacity: tabAnim.value }));
+  const tabAnim = useRef(new Animated.Value(1)).current;
 
   // ── Session init via hook (architecture: no @/modules imports in screens) ──
   const { sessionReady, saveCheckpoint, clearDraft, addBreadcrumb } = useCreatorSession(
@@ -114,9 +111,10 @@ export default function CreatorStudioScreen() {
   // ── Tab switch ─────────────────────────────────────────────────────────
 
   const switchTab = useCallback((t: StudioTab) => {
-    tabAnim.value = withTiming(0, { duration: 100 }, () => {
-      tabAnim.value = withTiming(1, { duration: 180 });
-    });
+    Animated.sequence([
+      Animated.timing(tabAnim, { toValue: 0, duration: 100, useNativeDriver: true }),
+      Animated.timing(tabAnim, { toValue: 1, duration: 180, useNativeDriver: true }),
+    ]).start();
     setTab(t);
     addBreadcrumb('user_action', `Studio tab: ${t}`);
   }, [tabAnim, addBreadcrumb]);
@@ -221,7 +219,7 @@ export default function CreatorStudioScreen() {
       ) : null}
 
       {/* ── Tab content ─────────────────────────────────────────────────── */}
-      <Animated.View style={[{ flex: 1 }, tabSty]}>
+      <Animated.View style={[{ flex: 1 }, { opacity: tabAnim }]}>
         {tab === 'ar'      ? <EffectsTab />  : null}
         {tab === 'videos'  ? <VideosTab />   : null}
         {tab === 'avatars' ? <AvatarsTab />  : null}
