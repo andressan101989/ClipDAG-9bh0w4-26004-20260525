@@ -65,11 +65,10 @@ const EMPTY_STUB = path.resolve(__dirname, '_metro_empty_stub.js');
 
 // ── Blocked on ALL platforms (preview + EAS build native + web) ──────────────
 const ALWAYS_BLOCKED = [
-  // react-native-deepar: RE-ENABLED for EAS native builds
-  // Removed from ALWAYS_BLOCKED so the JS SDK loads in EAS iOS/Android builds.
-  // Still blocked on web/preview via WEB_ONLY_BLOCKED below.
-  // The native module is re-linked via CocoaPods (react-native.config.js updated).
-  // 'react-native-deepar',  // ← un-commented when iOS native + API key confirmed working
+  // react-native-deepar: blocked until DEEPAR_API_KEY_IOS / DEEPAR_API_KEY_ANDROID
+  // are configured. The native module calls requireNativeComponent at module level
+  // and crashes on startup without valid API keys.
+  'react-native-deepar',
   'react-native-dynamic',
   'react-native-webrtc',
   'react-native-elements',
