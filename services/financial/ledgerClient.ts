@@ -15,7 +15,7 @@
 import { getSupabaseClient } from '@/template';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 
-const supabase = getSupabaseClient();
+const supabase = () => getSupabaseClient();
 
 // ── Idempotency key factory ───────────────────────────────────────────────
 // Uses crypto.randomUUID() when available (modern RN), falls back to Math.random()

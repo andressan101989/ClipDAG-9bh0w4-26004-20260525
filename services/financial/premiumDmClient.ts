@@ -8,7 +8,7 @@
 import { getSupabaseClient } from '@/template';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 
-const supabase = getSupabaseClient();
+const supabase = () => getSupabaseClient();
 
 function makeKey(prefix: string) { return `${prefix}:${crypto.randomUUID()}:${Date.now()}`; }
 

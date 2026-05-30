@@ -25,7 +25,7 @@ import { getSupabaseClient } from '@/template';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { generateIdempotencyKey } from './walletApi';
 
-const supabase = getSupabaseClient();
+const supabase = () => getSupabaseClient();
 
 // ── Error extraction ──────────────────────────────────────────────────────
 async function unpackError(error: unknown): Promise<string> {
