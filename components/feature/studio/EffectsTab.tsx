@@ -35,7 +35,15 @@ import {
   type DeepARFilter,
 } from '@/services/deeparService';
 import { log } from '@/services/logger';
-import SkiaEffectsLayer, { type SkiaEffectId } from '@/components/feature/SkiaEffectsLayer';
+import type { SkiaEffectId } from '@/components/feature/SkiaEffectsLayer';
+
+// Lazy-load to keep react-native-reanimated out of the static module chain.
+// SkiaEffectsLayer imports reanimated for its particle/glitch/glow effects;
+// a static import would crash Expo Router's lazy route load for creator-studio.
+let SkiaEffectsLayer: any = null;
+try {
+  SkiaEffectsLayer = require('@/components/feature/SkiaEffectsLayer').default ?? null;
+} catch { /* reanimated not ready — effects degrade gracefully */ }
 import { CameraCore, type CameraCoreHandle } from './camera/CameraCore';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 
@@ -175,7 +183,7 @@ export function EffectsTab() {
   // ── Camera overlay (Skia + effect badge — only UIKit views, no GPU overlap) ──
   const cameraOverlay = useMemo(() => (
     <>
-      {skiaEffectId !== 'none' && !deepARActive ? (
+      {skiaEffectId !== 'none' && !deepARActive && SkiaEffectsLayer ? (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }} pointerEvents="none">
           <SkiaEffectsLayer effectId={skiaEffectId} width={camSize.width} height={camSize.height} />
         </View>
