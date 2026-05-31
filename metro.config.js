@@ -69,6 +69,9 @@ const ALWAYS_BLOCKED = [
   // are configured. The native module calls requireNativeComponent at module level
   // and crashes on startup without valid API keys.
   'react-native-deepar',
+  // react-native-reanimated: blocked to prevent the SkiaEffectsLayer crash chain at
+  // startup. Components that need reanimated lazy-load it via try/require internally.
+  'react-native-reanimated',
   'react-native-dynamic',
   'react-native-webrtc',
   'react-native-elements',
