@@ -6,8 +6,13 @@ import { Platform } from 'react-native';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 
-// Ensure Web platform correctly handles auth callbacks
-WebBrowser.maybeCompleteAuthSession();
+export function completePendingAuthSession() {
+  try {
+    WebBrowser.maybeCompleteAuthSession();
+  } catch (e) {
+    console.warn('[AuthService] maybeCompleteAuthSession error:', e);
+  }
+}
 
 // Visibility change listener related variables
 let lastVisibilityChange = 0;
