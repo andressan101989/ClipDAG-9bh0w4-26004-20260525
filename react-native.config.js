@@ -6,8 +6,8 @@
  * excluidos para estabilizar el startup nativo iOS.
  *
  * ESTADO ACTUAL (Fase 1 DeepAR re-integración):
- *  - react-native-deepar: autolinking RE-ACTIVADO en iOS y Android.
- *    La API key nativa se configura vía plugins/withDeepARiOS.js (Info.plist).
+ *  - react-native-deepar: iOS autolinking DESACTIVADO para aislar crash.
+ *    Android autolinking sigue activo.
  *    El SDK JS sigue siendo lazy-loaded (solo en deepar-test y creator-studio).
  *
  *  - react-native-webrtc: sigue excluido — crash nativo en Expo managed.
@@ -23,7 +23,10 @@ module.exports = {
     // El SDK JS es lazy-loaded exclusivamente en deepar-test.tsx y creator-studio.
     // metro.config.js bloquea react-native-deepar solo en web/preview (no en EAS).
     'react-native-deepar': {
-      // Sin plataformas null = autolinking habilitado en iOS y Android
+      platforms: {
+        ios: null, // excluded to isolate iOS crash
+        // Android: autolinking habilitado
+      },
     },
 
     // ── react-native-webrtc: sigue EXCLUIDO ──────────────────────────────────
