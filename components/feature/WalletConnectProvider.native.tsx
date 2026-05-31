@@ -15,6 +15,10 @@
  * evaluated on iOS/Android where the native SDK is compiled in.
  */
 
+// Must be the first import in this file — installs crypto, TextEncoder,
+// URL and Buffer polyfills that @walletconnect/modal-react-native requires.
+import '@walletconnect/react-native-compat';
+
 import React from 'react';
 
 // WalletConnect Project ID — loaded from env var, never hardcoded.

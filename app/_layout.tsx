@@ -8,8 +8,6 @@
  * load the real SDK. Startup crash has been fully resolved.
  */
 
-import '@walletconnect/react-native-compat';
-
 console.log('[BOOT] 0 - _layout module start');
 
 // Initialize AppLifecycle singleton immediately at module load — before any
