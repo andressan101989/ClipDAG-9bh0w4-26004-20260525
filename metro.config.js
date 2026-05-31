@@ -132,6 +132,10 @@ const WEB_ONLY_BLOCKED = [
   'react-native-vision-camera-face-detector',
   'react-native-worklets-core',
   'react-native-get-random-values',
+  // Native-only SDKs — crash on web/preview, work fine in EAS native builds
+  'react-native-incall-manager',
+  '@react-native-ml-kit/face-detection',
+  'ffmpeg-kit-react-native',
 ];
 
 const originalResolver = config.resolver?.resolveRequest;
