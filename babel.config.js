@@ -27,8 +27,6 @@ module.exports = function (api) {
       // String-literal dynamic imports (import('./file')) are untouched.
       // This plugin is safe to apply on all platforms.
       './plugins/babel-strip-dynamic-imports',
-
-      'react-native-reanimated/plugin',
     ],
   };
 };

@@ -111,6 +111,13 @@ const withDeepARAndroidStrings = (config) => {
   return withDangerousMod(config, [
     'android',
     (modConfig) => {
+      // Skip entirely when key is absent — Expo rejects empty string resources
+      // and @expo/config-plugins withAndroidStringsBaseMod throws on empty values.
+      if (!DEEPAR_API_KEY_ANDROID) {
+        console.log('[withDeepARiOS] Android strings.xml: skipping deepar_api_key injection (DEEPAR_API_KEY_ANDROID not set)');
+        return modConfig;
+      }
+
       const root        = modConfig.modRequest.projectRoot;
       const stringsPath = path.join(root, 'android', 'app', 'src', 'main', 'res', 'values', 'strings.xml');
 
