@@ -1,38 +1,29 @@
-/**
- * app/_layout.tsx — DIAGNOSTIC: Provider Chain Stripped
- *
- * ALL context providers disabled to isolate iOS startup crash.
- * Only ErrorBoundary + SafeAreaProvider + Stack remain.
- *
- * If the crash persists with this build → root cause is a native module,
- * Expo plugin, or AppDelegate-level initialization (not JS providers).
- *
- * If the crash disappears → re-enable providers one at a time:
- *   1. AlertProvider
- *   2. TemplateAuthProvider
- *   3. I18nProvider
- *   4. AuthProvider
- *   5. FeedProvider + StoriesProvider
- *   6. MessagesProvider + NotificationsProvider
- *   7. ShopProvider
- *   8. WalletConnectProvider
- */
+console.log('[DIAG] JS ENTRY');
 
-console.log('[DIAG] 0 - _layout module start');
+// Sequential require() calls — no static imports.
+// Each require is numbered so the last log visible before a crash
+// identifies the exact module that kills the process.
 
-import { Stack } from 'expo-router';
-console.log('[DIAG] 1 - expo-router imported');
+console.log('[DIAG] 1 - requiring expo-router');
+const { Stack } = require('expo-router');
+console.log('[DIAG] 2 - expo-router OK');
 
-import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
-console.log('[DIAG] 2 - ErrorBoundary imported');
+console.log('[DIAG] 3 - requiring ErrorBoundary');
+const { ErrorBoundary } = require('@/components/ui/ErrorBoundary');
+console.log('[DIAG] 4 - ErrorBoundary OK');
 
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-console.log('[DIAG] 3 - SafeAreaProvider imported');
+console.log('[DIAG] 5 - requiring SafeAreaProvider');
+const { SafeAreaProvider } = require('react-native-safe-area-context');
+console.log('[DIAG] 6 - SafeAreaProvider OK');
 
-console.log('[DIAG] 4 - all imports done, rendering bare tree');
+console.log('[DIAG] 7 - requiring React');
+const React = require('react');
+console.log('[DIAG] 8 - React OK');
+
+console.log('[DIAG] 9 - all requires done, defining RootLayout');
 
 export default function RootLayout() {
-  console.log('[DIAG] 5 - RootLayout render');
+  console.log('[DIAG] 10 - RootLayout render');
   return (
     <ErrorBoundary module="RootLayout" showReset>
       <SafeAreaProvider>
