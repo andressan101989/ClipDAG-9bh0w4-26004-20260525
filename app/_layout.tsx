@@ -10,50 +10,51 @@
 
 console.log('[BOOT] 0 - _layout module start');
 
-// Initialize AppLifecycle singleton immediately at module load — before any
-// component mounts — so all subsequent onForeground/onBackground registrations
-// start receiving events from the very first AppState change.
-import { AppLifecycle }          from '@/modules/core/AppLifecycle';
-import { CrashManager }          from '@/modules/core/CrashManager';
-import { ThermalMonitor }        from '@/modules/core/ThermalMonitor';
-import { Diagnostics }           from '@/modules/core/Diagnostics';
-import { PowerManager }          from '@/modules/core/PowerManager';
-import { LeakDetector }          from '@/modules/core/LeakDetector';
-import { GPUManager }                from '@/modules/core/GPUManager';
-import { RenderIsolationManager }    from '@/modules/core/RenderIsolationManager';
-import { AdaptiveQualityController } from '@/modules/core/AdaptiveQualityController';
-import { CleanupWorker }             from '@/background/CleanupWorker';
-import { UploadWorker }              from '@/background/UploadWorker';
-import { TelemetryWorker }           from '@/background/TelemetryWorker';
-import { CacheWorker }               from '@/background/CacheWorker';
-import { UploadRecoveryManager }     from '@/modules/media/UploadRecoveryManager';
-import { TelemetryPipeline }         from '@/modules/core/TelemetryPipeline';
-import { CrashIntelligence }         from '@/modules/core/CrashIntelligence';
-import { ResourceScheduler }         from '@/modules/core/ResourceScheduler';
-import { MemoryOptimizer }           from '@/modules/core/MemoryOptimizer';
-import { ProductionStabilityMode }  from '@/modules/core/ProductionStabilityMode';
-import { RenderQueue }              from '@/services/ffmpegService';
+// ── DIAGNOSTIC: all startup initializers commented out ───────────────────────
+// Isolates whether any startup module import or initialization call causes the
+// crash. Re-enable one group at a time to bisect the root cause.
+
+// import { AppLifecycle }          from '@/modules/core/AppLifecycle';
+// import { CrashManager }          from '@/modules/core/CrashManager';
+// import { ThermalMonitor }        from '@/modules/core/ThermalMonitor';
+// import { Diagnostics }           from '@/modules/core/Diagnostics';
+// import { PowerManager }          from '@/modules/core/PowerManager';
+// import { LeakDetector }          from '@/modules/core/LeakDetector';
+// import { GPUManager }                from '@/modules/core/GPUManager';
+// import { RenderIsolationManager }    from '@/modules/core/RenderIsolationManager';
+// import { AdaptiveQualityController } from '@/modules/core/AdaptiveQualityController';
+// import { CleanupWorker }             from '@/background/CleanupWorker';
+// import { UploadWorker }              from '@/background/UploadWorker';
+// import { TelemetryWorker }           from '@/background/TelemetryWorker';
+// import { CacheWorker }               from '@/background/CacheWorker';
+// import { UploadRecoveryManager }     from '@/modules/media/UploadRecoveryManager';
+// import { TelemetryPipeline }         from '@/modules/core/TelemetryPipeline';
+// import { CrashIntelligence }         from '@/modules/core/CrashIntelligence';
+// import { ResourceScheduler }         from '@/modules/core/ResourceScheduler';
+// import { MemoryOptimizer }           from '@/modules/core/MemoryOptimizer';
+// import { ProductionStabilityMode }  from '@/modules/core/ProductionStabilityMode';
+// import { RenderQueue }              from '@/services/ffmpegService';
 
 // ── Boot sequence (order matters) ────────────────────────────────────────────
-try { AppLifecycle.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: AppLifecycle', e); }
-try { CrashManager.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: CrashManager', e); }
-try { ThermalMonitor.start(); } catch (e) { console.warn('[BOOT] subsystem failed: ThermalMonitor', e); }
-try { PowerManager.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: PowerManager', e); }
-try { GPUManager.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: GPUManager', e); }
-try { AdaptiveQualityController.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: AdaptiveQualityController', e); }
-try { Diagnostics.startCollection(); } catch (e) { console.warn('[BOOT] subsystem failed: Diagnostics', e); }
-try { TelemetryPipeline.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: TelemetryPipeline', e); }
-try { CrashIntelligence.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: CrashIntelligence', e); }
-try { ResourceScheduler.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: ResourceScheduler', e); }
-try { MemoryOptimizer.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: MemoryOptimizer', e); }
-try { LeakDetector.startMonitoring(60_000); } catch (e) { console.warn('[BOOT] subsystem failed: LeakDetector', e); }
-try { CleanupWorker.start(); } catch (e) { console.warn('[BOOT] subsystem failed: CleanupWorker', e); }
-try { UploadWorker.start(); } catch (e) { console.warn('[BOOT] subsystem failed: UploadWorker', e); }
-try { TelemetryWorker.start(); } catch (e) { console.warn('[BOOT] subsystem failed: TelemetryWorker', e); }
-try { CacheWorker.start(); } catch (e) { console.warn('[BOOT] subsystem failed: CacheWorker', e); }
-try { UploadRecoveryManager.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: UploadRecoveryManager', e); }
-try { ProductionStabilityMode.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: ProductionStabilityMode', e); }
-try { RenderQueue.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: RenderQueue', e); }
+// try { AppLifecycle.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: AppLifecycle', e); }
+// try { CrashManager.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: CrashManager', e); }
+// try { ThermalMonitor.start(); } catch (e) { console.warn('[BOOT] subsystem failed: ThermalMonitor', e); }
+// try { PowerManager.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: PowerManager', e); }
+// try { GPUManager.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: GPUManager', e); }
+// try { AdaptiveQualityController.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: AdaptiveQualityController', e); }
+// try { Diagnostics.startCollection(); } catch (e) { console.warn('[BOOT] subsystem failed: Diagnostics', e); }
+// try { TelemetryPipeline.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: TelemetryPipeline', e); }
+// try { CrashIntelligence.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: CrashIntelligence', e); }
+// try { ResourceScheduler.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: ResourceScheduler', e); }
+// try { MemoryOptimizer.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: MemoryOptimizer', e); }
+// try { LeakDetector.startMonitoring(60_000); } catch (e) { console.warn('[BOOT] subsystem failed: LeakDetector', e); }
+// try { CleanupWorker.start(); } catch (e) { console.warn('[BOOT] subsystem failed: CleanupWorker', e); }
+// try { UploadWorker.start(); } catch (e) { console.warn('[BOOT] subsystem failed: UploadWorker', e); }
+// try { TelemetryWorker.start(); } catch (e) { console.warn('[BOOT] subsystem failed: TelemetryWorker', e); }
+// try { CacheWorker.start(); } catch (e) { console.warn('[BOOT] subsystem failed: CacheWorker', e); }
+// try { UploadRecoveryManager.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: UploadRecoveryManager', e); }
+// try { ProductionStabilityMode.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: ProductionStabilityMode', e); }
+// try { RenderQueue.initialize(); } catch (e) { console.warn('[BOOT] subsystem failed: RenderQueue', e); }
 
 import { useContext } from 'react';
 import { View, ActivityIndicator } from 'react-native';
