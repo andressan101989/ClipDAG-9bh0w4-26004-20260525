@@ -70,10 +70,6 @@ function AppShell() {
                   <Stack.Screen name="login" />
                   <Stack.Screen name="(tabs)" />
                   <Stack.Screen
-                    name="creator-studio"
-                    options={{ presentation: 'fullScreenModal' }}
-                  />
-                  <Stack.Screen
                     name="chat/[userId]"
                     options={{ headerShown: true, title: '' }}
                   />
