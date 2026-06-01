@@ -10,6 +10,7 @@
  *    Android autolinking sigue activo.
  *    El SDK JS sigue siendo lazy-loaded (solo en deepar-test y creator-studio).
  *
+ *  - @walletconnect/react-native-compat: iOS excluido — NSDictionary nil crash en startup.
  *  - react-native-webrtc: sigue excluido — crash nativo en Expo managed.
  *  - ffmpeg-kit-react-native: excluido iOS — XCFramework demasiado pesado.
  *  - react-native-vision-camera: excluido — no se usa en la app actualmente.
@@ -26,6 +27,15 @@ module.exports = {
       platforms: {
         ios: null, // excluded to isolate iOS crash
         // Android: autolinking habilitado
+      },
+    },
+
+    // ── @walletconnect/react-native-compat: iOS EXCLUIDO ─────────────────────
+    // NSDictionary nil crash en startup — confirmed root cause.
+    // Android autolinking sigue activo.
+    '@walletconnect/react-native-compat': {
+      platforms: {
+        ios: null,
       },
     },
 
