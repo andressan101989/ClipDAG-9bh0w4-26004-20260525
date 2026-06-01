@@ -8,7 +8,8 @@
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DIAGNOSTIC BUILD — minimal startup to isolate native vs JS crash
-// All providers and startup logic commented out.
+// Active code below intentionally imports only View and returns only a blank View.
+// All providers and startup logic remain commented out below for restoration.
 // To restore: revert this file to the previous commit on main.
 // ─────────────────────────────────────────────────────────────────────────────
 
