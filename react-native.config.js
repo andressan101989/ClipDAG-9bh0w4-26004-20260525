@@ -11,6 +11,9 @@
  *    El SDK JS sigue siendo lazy-loaded (solo en deepar-test y creator-studio).
  *
  *  - @walletconnect/react-native-compat: iOS excluido — NSDictionary nil crash en startup.
+ *  - react-native-maps: iOS excluido — AIRGoogleMapManager.constantsToExport llama a
+ *    [GMSServices openSourceLicenseInfo] sin API key → nil → NSInvalidArgumentException.
+ *    No se usa en ningún archivo JS. Android activo.
  *  - react-native-webrtc: sigue excluido — crash nativo en Expo managed.
  *  - ffmpeg-kit-react-native: excluido iOS — XCFramework demasiado pesado.
  *  - react-native-vision-camera: excluido — no se usa en la app actualmente.
@@ -34,6 +37,16 @@ module.exports = {
     // NSDictionary nil crash en startup — confirmed root cause.
     // Android autolinking sigue activo.
     '@walletconnect/react-native-compat': {
+      platforms: {
+        ios: null,
+      },
+    },
+
+    // ── react-native-maps: iOS EXCLUIDO ──────────────────────────────────────
+    // AIRGoogleMapManager.constantsToExport calls [GMSServices openSourceLicenseInfo]
+    // at module registration. No API key → nil → NSInvalidArgumentException crash.
+    // Not imported anywhere in JS. Android autolinking remains active.
+    'react-native-maps': {
       platforms: {
         ios: null,
       },
