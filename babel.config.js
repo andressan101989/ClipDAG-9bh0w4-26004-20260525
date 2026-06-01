@@ -1,5 +1,24 @@
 module.exports = function (api) {
   api.cache(true);
+
+  // ── Reanimated plugin resolution ─────────────────────────────────────────
+  // Expo SDK 54 ships with react-native-reanimated ~3.x (v3).
+  // v3 bundles its Babel plugin at 'react-native-reanimated/plugin'.
+  // v4 moved the plugin to a separate 'react-native-worklets' peer package.
+  //
+  // If the installed version is v4 AND react-native-worklets is present,
+  // use 'react-native-worklets/plugin'.
+  // Otherwise fall back to the v3 bundled plugin.
+  let reanimatedPlugin = 'react-native-reanimated/plugin';
+  try {
+    // Check if this is reanimated v4 by looking for the worklets peer
+    require.resolve('react-native-worklets/plugin');
+    reanimatedPlugin = 'react-native-worklets/plugin';
+  } catch (_) {
+    // react-native-worklets not installed → use bundled v3 plugin
+    reanimatedPlugin = 'react-native-reanimated/plugin';
+  }
+
   return {
     presets: [[
       'babel-preset-expo',
@@ -28,7 +47,9 @@ module.exports = function (api) {
       // This plugin is safe to apply on all platforms.
       './plugins/babel-strip-dynamic-imports',
 
-      'react-native-reanimated/plugin',
+      // Resolved above: v3 → 'react-native-reanimated/plugin'
+      //                 v4 → 'react-native-worklets/plugin' (if worklets present)
+      reanimatedPlugin,
     ],
   };
 };
