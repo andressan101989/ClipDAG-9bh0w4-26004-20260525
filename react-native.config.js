@@ -21,15 +21,14 @@
  */
 module.exports = {
   dependencies: {
-    // ── react-native-deepar: CocoaPods autolinking RE-ACTIVADO ────────────────
-    // La API key iOS se inyecta en Info.plist vía plugins/withDeepARiOS.js.
-    // Sin API key, el SDK crashea al inicializar — ese era el root cause original.
-    // El SDK JS es lazy-loaded exclusivamente en deepar-test.tsx y creator-studio.
-    // metro.config.js bloquea react-native-deepar solo en web/preview (no en EAS).
+    // ── react-native-deepar: iOS autolinking RE-ENABLED ──────────────────────
+    // API key injected into Info.plist at build time via plugins/withDeepARiOS.js.
+    // metro.config.js stubs react-native-deepar for web/preview/Android; iOS EAS
+    // builds resolve the real SDK so CocoaPods autolinking picks it up correctly.
     'react-native-deepar': {
       platforms: {
-        ios: null, // excluded to isolate iOS crash
-        // Android: autolinking habilitado
+        // iOS autolinking re-enabled — withDeepARiOS.js injects DEEPAR_API_KEY_IOS
+        // Android: autolinking habilitado (no override needed)
       },
     },
 

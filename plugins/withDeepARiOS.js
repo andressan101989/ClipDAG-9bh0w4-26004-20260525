@@ -29,8 +29,8 @@ const path = require('path');
 // env var is absent, which will cause DeepAR to fail to initialize at runtime
 // (visible as a warning in Xcode/Logcat). This is intentional: it forces the
 // developer to configure the secret before shipping a production build.
-const DEEPAR_API_KEY_IOS     = process.env.DEEPAR_API_KEY_IOS     ?? '';
-const DEEPAR_API_KEY_ANDROID = process.env.DEEPAR_API_KEY_ANDROID ?? '';
+const DEEPAR_API_KEY_IOS     = process.env.DEEPAR_API_KEY_IOS     ?? process.env.EXPO_PUBLIC_DEEPAR_LICENSE_IOS     ?? '';
+const DEEPAR_API_KEY_ANDROID = process.env.DEEPAR_API_KEY_ANDROID ?? process.env.EXPO_PUBLIC_DEEPAR_LICENSE_ANDROID ?? '';
 
 if (!DEEPAR_API_KEY_IOS) {
   console.warn('[withDeepARiOS] ⚠️  DEEPAR_API_KEY_IOS env var not set — DeepAR will not initialize on iOS');
@@ -60,7 +60,7 @@ const withDeepARInfoPlist = (config) => {
     }
 
     console.log('[withDeepARiOS] Info.plist patched:');
-    console.log('  ar_key:', DEEPAR_API_KEY_IOS.slice(0, 20) + '...');
+    console.log('  ar_key:', DEEPAR_API_KEY_IOS ? '[set]' : '[empty — DeepAR will not initialize]');
     console.log('  NSCameraUsageDescription:', plist['NSCameraUsageDescription']);
 
     return cfg;

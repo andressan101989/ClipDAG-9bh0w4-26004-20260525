@@ -17,7 +17,7 @@ import {
   View, Text, Pressable, StyleSheet, ScrollView, FlatList,
   TextInput, ActivityIndicator, Dimensions, Modal,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/SafeImage';
 import { Audio } from 'expo-av';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';

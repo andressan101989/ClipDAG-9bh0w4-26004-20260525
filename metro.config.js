@@ -30,7 +30,7 @@
  *   stub and the optional-dependency load fails gracefully.
  *
  * ── ALWAYS_BLOCKED (all platforms, including native preview) ─────────────────
- *   react-native-deepar          → requireNativeComponent at module-level
+ *   react-native-deepar          → iOS native only; stubbed on web/android/preview
  *   react-native-dynamic         → requires react ^16.11.0
  *   react-native-webrtc          → unregistered native modules
  *   react-native-elements        → legacy peer dep conflict
@@ -65,10 +65,8 @@ const EMPTY_STUB = path.resolve(__dirname, '_metro_empty_stub.js');
 
 // ── Blocked on ALL platforms (preview + EAS build native + web) ──────────────
 const ALWAYS_BLOCKED = [
-  // react-native-deepar: blocked until DEEPAR_API_KEY_IOS / DEEPAR_API_KEY_ANDROID
-  // are configured. The native module calls requireNativeComponent at module level
-  // and crashes on startup without valid API keys.
-  'react-native-deepar',
+  // react-native-deepar is NOT in this list — it is platform-gated below:
+  // iOS native EAS builds resolve the real SDK; everything else gets the stub.
   'react-native-dynamic',
   'react-native-webrtc',
   'react-native-elements',
@@ -172,6 +170,15 @@ config.resolver = {
     );
     if (isWC && (platform === 'web' || platform === null)) {
       return { type: 'sourceFile', filePath: EMPTY_STUB };
+    }
+
+    // 4a. react-native-deepar: iOS native EAS only.
+    // requireNativeComponent is called at module level — crashes without API key
+    // or native module registration. Allow only on iOS; stub everywhere else.
+    if (moduleName === 'react-native-deepar' || moduleName.startsWith('react-native-deepar/')) {
+      if (platform !== 'ios') {
+        return { type: 'sourceFile', filePath: EMPTY_STUB };
+      }
     }
 
     // 4. Always blocked
