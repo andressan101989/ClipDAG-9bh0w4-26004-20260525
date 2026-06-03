@@ -158,7 +158,13 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
   const localStreamRef  = useRef<any>(null);
   const [remoteStream, setRemoteStream] = useState<any>(null);
 
-  const deepARCompOk = isDeepARAvailable() && DeepARCameraComponent !== null;
+  const rawDeepARComponent = isDeepARAvailable() && DeepARCameraComponent
+    ? (DeepARCameraComponent as any).default ?? DeepARCameraComponent
+    : null;
+  const DeepARCam = typeof rawDeepARComponent === 'function' ? rawDeepARComponent : null;
+  const deepARComponentUnavailable = rawDeepARComponent !== null && DeepARCam === null;
+  const deepARCompOk = DeepARCam !== null;
+  const deepARFallbackLoggedRef = useRef(false);
 
   const [facing,        setFacing]        = useState<'front' | 'back'>('front');
   const [deepARReady,   setDeepARReady]   = useState(false);
@@ -175,6 +181,16 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
 
   const [camPerm, requestCamPerm] = useSafeCameraPermissions();
   const hasPerm = camPerm?.granted ?? false;
+
+  useEffect(() => {
+    if (!deepARComponentUnavailable || deepARFallbackLoggedRef.current) return;
+    console.warn('[DeepAR] unavailable: component is not renderable');
+    if (CameraView) {
+      console.log('[DeepAR] fallback camera active');
+    }
+    setDeepARReady(false);
+    deepARFallbackLoggedRef.current = true;
+  }, [deepARComponentUnavailable]);
 
   // ── GPU slot acquisition ──────────────────────────────────────────────────
   useEffect(() => {
@@ -406,13 +422,6 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
     flipCamera: () => setFacing(f => f === 'front' ? 'back' : 'front'),
   }), [deepARCompOk, deepARReady, hasPerm, isRecording, applyEffect, suspendAR, resumeAR]);
 
-  const _raw = deepARCompOk && DeepARCameraComponent
-    ? (DeepARCameraComponent as any).default ?? DeepARCameraComponent
-    : null;
-
-  console.log('[DeepAR] final component type:', typeof _raw);
-
-  const DeepARCam = typeof _raw === 'function' ? _raw : null;
   if (deepARCompOk && DeepARCam) logDeepARMounted();
 
   // ── No camera available ───────────────────────────────────────────────────

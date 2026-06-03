@@ -31,6 +31,7 @@ import { useFeed } from '@/hooks/useFeed';
 import { useRouter } from 'expo-router';
 import {
   isDeepARAvailable, DEEPAR_FILTERS,
+  DeepARCamera as DeepARCameraComponent,
   switchDeepAREffect, clearDeepAREffect,
   type DeepARFilter,
 } from '@/services/deeparService';
@@ -75,7 +76,10 @@ export function EffectsTab() {
 
   const cameraRef = useRef<CameraCoreHandle>(null);
 
-  const deepARActive = isDeepARAvailable();
+  const rawDeepARComponent = isDeepARAvailable() && DeepARCameraComponent
+    ? (DeepARCameraComponent as any).default ?? DeepARCameraComponent
+    : null;
+  const deepARActive = typeof rawDeepARComponent === 'function';
 
   const [skiaEffectId,    setSkiaEffectId]    = useState<SkiaEffectId>('none');
   const [deepARFilterId,  setDeepARFilterId]  = useState<string | null>(null);
@@ -91,7 +95,10 @@ export function EffectsTab() {
   // ── Deep AR filter apply ─────────────────────────────────────────────────────
   const handleDeepARFilter = useCallback(async (filter: DeepARFilter) => {
     const deepARRef = cameraRef.current?.deepARRef;
-    if (!deepARRef) return;
+    if (!deepARActive || !deepARRef?.current) {
+      showAlert('DeepAR no disponible', 'Usando cámara básica. Los filtros AR están desactivados.');
+      return;
+    }
 
     if (deepARFilterId === filter.id) {
       clearDeepAREffect(deepARRef);
@@ -108,7 +115,7 @@ export function EffectsTab() {
         setDeepARFilterId(prev => prev === filter.id ? null : prev);
       }
     });
-  }, [deepARFilterId, showAlert]);
+  }, [deepARActive, deepARFilterId, showAlert]);
 
   const clearAllEffects = useCallback(() => {
     const deepARRef = cameraRef.current?.deepARRef;
@@ -309,7 +316,12 @@ export function EffectsTab() {
               );
             })}
           </>
-        ) : null}
+        ) : (
+          <>
+            <View style={s.divider} />
+            <Text style={s.sectionLabel}>DeepAR no disponible</Text>
+          </>
+        )}
       </ScrollView>
 
       {/* Capture controls */}
