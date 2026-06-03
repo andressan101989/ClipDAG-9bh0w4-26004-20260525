@@ -18,6 +18,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { CreatorSessionManager }  from '@/modules/creator/sessions/CreatorSessionManager';
 import { CreatorRecoveryManager } from '@/modules/creator/sessions/CreatorRecoveryManager';
 import { SessionOrchestrator }    from '@/modules/sessions/SessionOrchestrator';
+import * as ResourceManagerModule from '@/modules/core/ResourceManager';
 import { ResourceManager }        from '@/modules/core/ResourceManager';
 import { GPUManager }             from '@/modules/core/GPUManager';
 import { CrashIntelligence }      from '@/modules/core/CrashIntelligence';
@@ -113,7 +114,20 @@ export function useCreatorSession(
     const init = async () => {
       try {
         gpuSlotRef.current = await GPUManager.acquireSlot('CreatorStudio', 'high');
-        ResourceManager.request('camera', 'CreatorStudio');
+        const resourceManagerAny = ResourceManager as any;
+        console.log('[useCreatorSession] ResourceManager diagnostics', {
+          modulePath: '@/modules/core/ResourceManager',
+          moduleKeys: Object.keys(ResourceManagerModule ?? {}),
+          resourceManagerType: typeof ResourceManager,
+          resourceManagerKeys: Object.keys(resourceManagerAny ?? {}),
+          resourceManagerPrototypeKeys: ResourceManager
+            ? Object.getOwnPropertyNames(Object.getPrototypeOf(ResourceManager))
+            : [],
+          requestType: typeof resourceManagerAny?.request,
+          acquireType: typeof resourceManagerAny?.acquire,
+          releaseType: typeof resourceManagerAny?.release,
+        });
+        resourceManagerAny.request('camera', 'CreatorStudio');
 
         SessionOrchestrator.registerSession('creator_capture', SESSION_ID, {
           onPause:   async () => {
