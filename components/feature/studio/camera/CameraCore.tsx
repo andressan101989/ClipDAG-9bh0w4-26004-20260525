@@ -172,8 +172,9 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
   const [arQuality,     setARQuality]     = useState<ARQuality>('high');
   const [isRecording,   setIsRecording]   = useState(false);
   const [recSeconds,    setRecSeconds]    = useState(0);
-  const [fatalErrors,   setFatalErrors]   = useState(0);
-  const [currentEffect, setCurrentEffect] = useState<string | null>(null);
+  const [fatalErrors,      setFatalErrors]      = useState(0);
+  const [deepARInitFailed, setDeepARInitFailed] = useState(false);
+  const [currentEffect,    setCurrentEffect]    = useState<string | null>(null);
 
   const recTimerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const gpuSlotRef    = useRef<string | null>(null);
@@ -191,6 +192,16 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
     setDeepARReady(false);
     deepARFallbackLoggedRef.current = true;
   }, [deepARComponentUnavailable]);
+
+  // ── Init timeout: stop "Iniciando DeepAR..." if onInitialized never fires ──
+  useEffect(() => {
+    if (!deepARCompOk || deepARReady || deepARInitFailed) return;
+    const timer = setTimeout(() => {
+      console.warn('[DeepAR] initialization timeout — falling back to expo-camera');
+      setDeepARInitFailed(true);
+    }, 10_000);
+    return () => clearTimeout(timer);
+  }, [deepARCompOk, deepARReady, deepARInitFailed]);
 
   // ── GPU slot acquisition ──────────────────────────────────────────────────
   useEffect(() => {
@@ -514,7 +525,7 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
       {overlay}
 
       {/* DeepAR initializing indicator */}
-      {deepARCompOk && !deepARReady ? (
+      {deepARCompOk && !deepARReady && !deepARInitFailed ? (
         <View style={c.initOverlay} pointerEvents="none">
           <PulsingDot color="#7C5CFF" />
           <Text style={c.initText}>Iniciando DeepAR...</Text>
@@ -550,7 +561,7 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
       <View style={c.liveBadge} pointerEvents="none">
         <View style={[c.liveBadgeInner, { backgroundColor: deepARCompOk ? 'rgba(255,45,120,0.25)' : 'rgba(44,44,80,0.85)' }]}>
           <PulsingDot color={deepARCompOk ? '#FF2D78' : '#7C5CFF'} />
-          <Text style={c.liveBadgeText}>{deepARCompOk ? 'DeepAR' : 'expo-cam'}</Text>
+          <Text style={c.liveBadgeText}>{deepARCompOk && !deepARInitFailed ? 'DeepAR' : 'expo-cam'}</Text>
         </View>
       </View>
 

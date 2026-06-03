@@ -91,11 +91,12 @@ export function EffectsTab() {
   const [isRecording,     setIsRecording]     = useState(false);
 
   const shutterScale = useRef(new Animated.Value(1)).current;
+  const [deepARCamReady, setDeepARCamReady] = useState(false);
 
   // ── Deep AR filter apply ─────────────────────────────────────────────────────
   const handleDeepARFilter = useCallback(async (filter: DeepARFilter) => {
     const deepARRef = cameraRef.current?.deepARRef;
-    if (!deepARActive || !deepARRef?.current) {
+    if (!deepARActive || !deepARCamReady || !deepARRef?.current) {
       showAlert('DeepAR no disponible', 'Usando cámara básica. Los filtros AR están desactivados.');
       return;
     }
@@ -115,7 +116,7 @@ export function EffectsTab() {
         setDeepARFilterId(prev => prev === filter.id ? null : prev);
       }
     });
-  }, [deepARActive, deepARFilterId, showAlert]);
+  }, [deepARActive, deepARCamReady, deepARFilterId, showAlert]);
 
   const clearAllEffects = useCallback(() => {
     const deepARRef = cameraRef.current?.deepARRef;
@@ -190,7 +191,7 @@ export function EffectsTab() {
   // ── Camera overlay (Skia + effect badge — only UIKit views, no GPU overlap) ──
   const cameraOverlay = useMemo(() => (
     <>
-      {skiaEffectId !== 'none' && !deepARActive && SkiaEffectsLayer ? (
+      {skiaEffectId !== 'none' && (!deepARActive || !deepARCamReady) && SkiaEffectsLayer ? (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }} pointerEvents="none">
           <SkiaEffectsLayer effectId={skiaEffectId} width={camSize.width} height={camSize.height} />
         </View>
@@ -205,7 +206,7 @@ export function EffectsTab() {
         </View>
       ) : null}
     </>
-  ), [skiaEffectId, deepARFilterId, deepARActive, camSize]);
+  ), [skiaEffectId, deepARFilterId, deepARActive, deepARCamReady, camSize]);
 
   // ── Preview mode ─────────────────────────────────────────────────────────────
   if (mode === 'preview' && capturedUri) {
@@ -253,7 +254,7 @@ export function EffectsTab() {
         ref={cameraRef}
         height={camH}
         overlay={cameraOverlay}
-        onDeepARReady={() => log.deepar.info('Ready from CameraCore')}
+        onDeepARReady={() => { setDeepARCamReady(true); log.deepar.info('Ready from CameraCore'); }}
         onScreenshot={uri => { setCapturedUri(uri); setMode('preview'); setIsCapturing(false); }}
         onVideoReady={uri  => { setCapturedUri(uri); setMode('preview'); setIsRecording(false); }}
         onError={msg => showAlert('Error de cámara', msg)}
@@ -274,12 +275,12 @@ export function EffectsTab() {
         </Pressable>
 
         {/* Skia effects */}
-        <Text style={s.sectionLabel}>SKIA GPU{deepARActive ? ' (desactiva DeepAR)' : ''}</Text>
+        <Text style={s.sectionLabel}>SKIA GPU{deepARActive && deepARCamReady ? ' (desactiva DeepAR)' : ''}</Text>
         {SKIA_EFFECTS.map(e => (
           <Pressable key={e.id} style={[s.chip, skiaEffectId === e.id && s.chipActive]}
             onPress={() => {
               const deepARRef = cameraRef.current?.deepARRef;
-              if (deepARActive && deepARFilterId && deepARRef) {
+              if (deepARActive && deepARCamReady && deepARFilterId && deepARRef) {
                 clearDeepAREffect(deepARRef); setDeepARFilterId(null);
               }
               setSkiaEffectId(e.id);
@@ -292,7 +293,7 @@ export function EffectsTab() {
         ))}
 
         {/* DeepAR filters */}
-        {deepARActive ? (
+        {deepARActive && deepARCamReady ? (
           <>
             <View style={s.divider} />
             <Text style={s.sectionLabel}>DEEPAR AR</Text>
@@ -319,7 +320,9 @@ export function EffectsTab() {
         ) : (
           <>
             <View style={s.divider} />
-            <Text style={s.sectionLabel}>DeepAR no disponible</Text>
+            <Text style={s.sectionLabel}>
+              {deepARActive ? 'DEEPAR — Iniciando...' : 'DeepAR no disponible'}
+            </Text>
           </>
         )}
       </ScrollView>
