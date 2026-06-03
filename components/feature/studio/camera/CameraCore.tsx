@@ -406,9 +406,13 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
     flipCamera: () => setFacing(f => f === 'front' ? 'back' : 'front'),
   }), [deepARCompOk, deepARReady, hasPerm, isRecording, applyEffect, suspendAR, resumeAR]);
 
-  const DeepARCam = deepARCompOk && DeepARCameraComponent
+  const _raw = deepARCompOk && DeepARCameraComponent
     ? (DeepARCameraComponent as any).default ?? DeepARCameraComponent
     : null;
+
+  console.log('[DeepAR] final component type:', typeof _raw);
+
+  const DeepARCam = typeof _raw === 'function' ? _raw : null;
   if (deepARCompOk && DeepARCam) logDeepARMounted();
 
   // ── No camera available ───────────────────────────────────────────────────
