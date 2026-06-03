@@ -48,6 +48,12 @@ try {
   const sdk = require('react-native-deepar');
   const exportKeys: string[] = Object.keys(sdk ?? {});
   console.log('[DeepAR] SDK require succeeded. exports:', exportKeys.join(', '));
+  console.log('[DeepAR] Platform:', Platform.OS);
+  console.log('[DeepAR] Export keys:', exportKeys.join(', '));
+  console.log('[DeepAR] typeof sdk.default:', typeof sdk?.default);
+  console.log('[DeepAR] typeof sdk.DeepARCamera:', typeof sdk?.DeepARCamera);
+  console.log('[DeepAR] typeof sdk.Camera:', typeof sdk?.Camera);
+  console.log('[DeepAR] Empty stub detected:', exportKeys.length === 0);
 
   // ── Resolve DeepAR imperative API (ref methods) ───────────────────────────
   const deepARCandidate: unknown = sdk?.DeepAR ?? sdk?.default?.DeepAR ?? null;
@@ -87,8 +93,11 @@ try {
       '— falling back to expo-camera. Check react-native-deepar version.',
     );
   }
+  console.log('[DeepAR] typeof _DeepARCamera:', typeof _DeepARCamera);
+  console.log('[DeepAR] component resolved:', _DeepARCamera !== null);
 } catch (e: any) {
   console.log('[DeepAR] require skipped (expected on web/preview):', e?.message ?? String(e));
+  console.error('[DeepAR] require failed:', e);
 }
 
 export const DeepAR          = _DeepAR;
@@ -96,10 +105,11 @@ export const DeepARCamera    = _DeepARCamera;
 export const DeepARCameraKit = _DeepARCamera; // alias used in some older imports
 
 /** Returns true only when a valid React component function was resolved. */
-export const isDeepARAvailable = (): boolean =>
-  DEEPAR_ENABLED &&
-  _DeepARCamera !== null &&
-  typeof _DeepARCamera === 'function';
+export const isDeepARAvailable = (): boolean => {
+  const result = DEEPAR_ENABLED && _DeepARCamera !== null && typeof _DeepARCamera === 'function';
+  console.log('[DeepAR] isDeepARAvailable result:', result);
+  return result;
+};
 
 // ── expo-file-system (lazy) ───────────────────────────────────────────────────
 // Lazy-required to avoid native module crash during JS bundle evaluation
