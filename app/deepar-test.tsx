@@ -9,14 +9,14 @@
  *  2. DeepAR component mount + render surface
  *  3. onEventSent → 'initialized' event firing
  *  4. switchEffect() with bundled mask name (no download required)
- *  5. rn-fetch-blob remote download + switchEffectWithPath()
+ *  5. expo-file-system remote download + switchEffectWithPath() via deeparService
  *  6. takeScreenshot() callback
  *  7. startRecording() / finishRecording() callbacks
  *
  * IMPORTANT:
  *  - No Skia overlays — they conflict with DeepAR's Metal render surface
- *  - No expo-file-system for filters — use rn-fetch-blob (.path() returns
- *    raw fs path without file:// prefix, required by DeepAR iOS SDK)
+ *  - Remote filter downloads via deeparService.switchDeepAREffect (expo-file-system,
+ *    file:// prefix stripped before passing to DeepAR iOS switchEffectWithPath)
  *  - All native events logged in the on-screen console
  */
 
@@ -27,33 +27,17 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import {
+  DeepARCamera as DeepARView,
+  isDeepARAvailable,
+  getDeepARStatus,
+  DEEPAR_API_KEY,
+  DEEPAR_FILTERS,
+  switchDeepAREffect,
+  clearDeepAREffect,
+} from '@/services/deeparService';
 
 const { width: W, height: H } = Dimensions.get('window');
-
-// ── Lazy-load react-native-deepar ─────────────────────────────────────────────
-let DeepARView: any  = null;
-let CameraPositions: any = null;
-
-try {
-  // Skip native require entirely on web — requireNativeComponent is not available.
-  // app/deepar-test.web.tsx should handle the web route, but guard here as a
-  // fallback in case Metro platform resolution doesn't redirect to the .web file.
-  if (Platform.OS !== 'web') {
-    const m = require('react-native-deepar');
-    // Metro stubs return {} — validate it's a real renderable component (function/class)
-    const candidate = m.default ?? m.DeepARCamera ?? m.Camera ?? null;
-    DeepARView      = (typeof candidate === 'function') ? candidate : null;
-    CameraPositions = (m.CameraPositions && typeof m.CameraPositions === 'object') ? m.CameraPositions : null;
-    const keys = Object.keys(m ?? {});
-    console.log('[DeepARTest] SDK keys:', keys.join(', '));
-    console.log('[DeepARTest] DeepARView resolved:', typeof DeepARView);
-    if (!DeepARView) console.warn('[DeepARTest] SDK blocked by Metro (preview/web) — EAS Build required');
-  } else {
-    console.log('[DeepARTest] Web platform — native SDK skipped');
-  }
-} catch (e) {
-  console.error('[DeepARTest] SDK not found:', e);
-}
 
 // ── expo-camera for permissions (replaces DeepAR CameraModule) ────────────────
 // DeepAR's CameraModule calls NativeModules.RNTCameraModule which can be null
@@ -81,32 +65,10 @@ try {
   requestExpoMic    = async () => ({ granted: true });
 }
 
-// ── expo-file-system (lazy-loaded — avoids static import crash on web preview) ──
-// DeepAR iOS needs a raw POSIX path (no file:// prefix).
-// expo-file-system.downloadAsync() returns a file:// URI.
-// Strip it: uri.replace('file://', '') → /var/mobile/Containers/...
-let FileSystem: any = null;
-try {
-  FileSystem = require('expo-file-system');
-} catch (_) {}
-const hasFS = typeof FileSystem?.downloadAsync === 'function';
-console.log('[DeepARTest] expo-file-system available:', hasFS);
+// ── API Key — sourced from deeparService (EXPO_PUBLIC_DEEPAR_LICENSE_IOS/ANDROID) ──
+const API_KEY = DEEPAR_API_KEY;
 
-// ── API Key ───────────────────────────────────────────────────────────────────
-const API_KEY_IOS     = process.env.EXPO_PUBLIC_DEEPAR_API_KEY_IOS     ?? 'b5ed95b597e2d095a99d348245484f5ca0ea76dd4297a6e03d0a0b630cb2f2b4511186a4577ef72a';
-const API_KEY_ANDROID = process.env.EXPO_PUBLIC_DEEPAR_API_KEY_ANDROID ?? '26eb786956b608da971d30ec64fc5bcec72ce89cd1914b3cfc5ed32c3232f6da70a5923630b8696b';
-const API_KEY = Platform.select({ ios: API_KEY_IOS, android: API_KEY_ANDROID, default: API_KEY_ANDROID }) ?? '';
-
-/**
- * Remote filter CDN — primary + mirror fallback.
- * Primary: storage.deepar.ai (official)
- * Mirror:  betacoins.magix.net (react-native-deepar example Config.TEST)
- * Files have NO extension in both CDNs.
- */
-const REMOTE_CDN_PRIMARY = 'https://storage.deepar.ai/effects/';
-const REMOTE_CDN_MIRROR  = 'http://betacoins.magix.net/public/deepar-filters/';
-
-/** Known-working remote effects from DeepAR public CDNs */
+/** Known-working remote effects (matched against DEEPAR_FILTERS from deeparService) */
 const REMOTE_EFFECTS = [
   'flower_crown',
   'viking_helmet',
@@ -185,70 +147,24 @@ export default function DeepARTestScreen() {
 
   // ── Clear effect ───────────────────────────────────────────────────────────
   const clearEffect = useCallback(() => {
-    if (!deepARRef.current) return;
-    try {
-      deepARRef.current.switchEffect({ mask: '', slot: 'effect' });
-      setActiveEffect(null);
-      log('Effect cleared');
-    } catch (e: any) { log(`clearEffect ERROR: ${e?.message}`); }
+    clearDeepAREffect(deepARRef);
+    setActiveEffect(null);
+    log('Effect cleared');
   }, []);
 
-  // ── Download + apply remote effect via expo-file-system ──────────────────────
-  // expo-file-system.downloadAsync() returns a file:// URI.
-  // DeepAR iOS switchEffectWithPath() requires a raw POSIX path (no file:// prefix).
-  // Fix: strip with .replace('file://', '')
+  // ── Download + apply remote effect via deeparService (expo-file-system) ────────
   const applyRemoteEffect = useCallback(async (effectName: string) => {
-    if (!deepARRef.current) { log('ERROR: ref is null'); return; }
-    if (!hasFS) { log('ERROR: expo-file-system not available'); return; }
-
+    const filter = DEEPAR_FILTERS.find(f => f.id === effectName);
+    if (!filter) { log(`Unknown filter: ${effectName}`); return; }
     setDownloading(true);
-
-    const tryDownload = async (url: string, cacheKey: string): Promise<string | null> => {
-      log(`Trying: ${url}`);
-      try {
-        const cacheDir = ((FileSystem?.cacheDirectory) ?? 'file:///tmp/') + 'deepar-filters/';
-        await FileSystem?.makeDirectoryAsync(cacheDir, { intermediates: true }).catch(() => {});
-        const localUri = cacheDir + cacheKey;
-        const result   = await FileSystem?.downloadAsync(url, localUri);
-        if (!result?.uri) { log('No URI returned'); return null; }
-        const info  = await FileSystem?.getInfoAsync(result.uri, { size: true }).catch(() => null);
-        const bytes = (info as any)?.size ?? 0;
-        log(`Got ${bytes}b → ${result.uri}`);
-        if (!info?.exists || bytes < 64) {
-          log(`WARN: file too small (${bytes}b) — likely 404 HTML`);
-          await FileSystem?.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
-          return null;
-        }
-        // Strip file:// prefix — DeepAR iOS requires raw POSIX path
-        const rawPath = result.uri.replace('file://', '');
-        log(`Raw path: ${rawPath}`);
-        return rawPath;
-      } catch (e: any) { log(`Fetch error: ${e?.message ?? e}`); return null; }
-    };
-
-    // 1. Primary CDN
-    let localPath = await tryDownload(`${REMOTE_CDN_PRIMARY}${effectName}`, effectName);
-    // 2. Mirror fallback
-    if (!localPath) {
-      log('Primary failed — trying mirror...');
-      localPath = await tryDownload(`${REMOTE_CDN_MIRROR}${effectName}`, `${effectName}_mirror`);
-    }
-
-    if (!localPath) {
-      log(`❌ Both CDNs failed for '${effectName}'`);
-      setDownloading(false);
-      return;
-    }
-
-    if (!deepARRef.current) { log('ERROR: ref lost during download'); setDownloading(false); return; }
-
-    log(`switchEffectWithPath path="${localPath}" slot="effect"`);
-    try {
-      deepARRef.current.switchEffectWithPath({ path: localPath, slot: 'effect' });
+    log(`Downloading: ${effectName}`);
+    const result = await switchDeepAREffect(deepARRef, filter, (state, msg) => {
+      log(`${state}${msg ? ': ' + msg : ''}`);
+    });
+    if (result === 'ok') {
       setActiveEffect(effectName);
       log(`✅ Effect applied: ${effectName}`);
-    } catch (e: any) { log(`switchEffectWithPath ERROR: ${e?.message ?? e}`); }
-
+    }
     setDownloading(false);
   }, []);
 
@@ -297,7 +213,7 @@ export default function DeepARTestScreen() {
       {/* Status bar */}
       <View style={s.statusBar}>
         <Text style={s.statusText}>
-          SDK: {DeepARView ? '✅' : '❌'}  |  FS: {hasFS ? '✅' : '❌'}  |  Perm: {permStatus}  |  Init: {initialized ? '✅' : '⏳'}
+          SDK: {isDeepARAvailable() ? '✅' : '❌'}  |  FS: {getDeepARStatus().hasFileSystem ? '✅' : '❌'}  |  Perm: {permStatus}  |  Init: {initialized ? '✅' : '⏳'}
         </Text>
         {activeEffect ? <Text style={[s.statusText, { color: '#FF2D78' }]}>Effect: {activeEffect}</Text> : null}
       </View>
@@ -429,8 +345,8 @@ export default function DeepARTestScreen() {
           ))}
         </ScrollView>
 
-        {/* Row 2: Remote effects via rn-fetch-blob */}
-        <Text style={s.sectionLabel}>REMOTE (rn-fetch-blob download) {downloading ? '⏳' : ''}</Text>
+        {/* Row 2: Remote effects via expo-file-system (deeparService) */}
+        <Text style={s.sectionLabel}>REMOTE (expo-file-system download) {downloading ? '⏳' : ''}</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}
           contentContainerStyle={s.effectRow}>
           {REMOTE_EFFECTS.map(name => (
