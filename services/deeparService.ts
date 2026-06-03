@@ -44,6 +44,10 @@ export const DEEPAR_API_KEY: string =
 let _DeepAR: any       = null;
 let _DeepARCamera: any = null;
 
+const isRenderableComponent = (value: unknown): boolean =>
+  typeof value === 'function' ||
+  (typeof value === 'object' && value !== null);
+
 try {
   const sdk = require('react-native-deepar');
   const exportKeys: string[] = Object.keys(sdk ?? {});
@@ -69,15 +73,18 @@ try {
   // sdk.default is intentionally last: it can be a plain module object {}
   // which would pass an instanceof check but is NOT a React component.
   const candidates: Array<[string, unknown]> = [
+    ['sdk.Camera',               sdk?.Camera],
+    ['sdk.default.Camera',       sdk?.default?.Camera],
     ['sdk.DeepARCamera',          sdk?.DeepARCamera],
     ['sdk.default.DeepARCamera',  sdk?.default?.DeepARCamera],
-    // sdk.default ONLY if it looks like a component (function/class, not plain object)
-    ['sdk.default (fallback)',    typeof sdk?.default === 'function' ? sdk.default : null],
+    ['sdk.DeepARView',            sdk?.DeepARView],
+    ['sdk.default.DeepARView',    sdk?.default?.DeepARView],
+    ['sdk.default (fallback)',    sdk?.default],
   ];
 
   for (const [label, candidate] of candidates) {
     if (candidate === null || candidate === undefined) continue;
-    if (typeof candidate !== 'function') {
+    if (!isRenderableComponent(candidate)) {
       console.warn(`[DeepAR] ${label} is type "${typeof candidate}" — skipping (not a React component)`);
       continue;
     }
@@ -104,9 +111,9 @@ export const DeepAR          = _DeepAR;
 export const DeepARCamera    = _DeepARCamera;
 export const DeepARCameraKit = _DeepARCamera; // alias used in some older imports
 
-/** Returns true only when a valid React component function was resolved. */
+/** Returns true only when a valid React component was resolved. */
 export const isDeepARAvailable = (): boolean => {
-  const result = DEEPAR_ENABLED && _DeepARCamera !== null && typeof _DeepARCamera === 'function';
+  const result = DEEPAR_ENABLED && isRenderableComponent(_DeepARCamera);
   console.log('[DeepAR] isDeepARAvailable result:', result);
   return result;
 };
