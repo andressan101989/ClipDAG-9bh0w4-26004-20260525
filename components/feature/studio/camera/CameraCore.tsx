@@ -161,9 +161,23 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
   const rawDeepARComponent = isDeepARAvailable() && DeepARCameraComponent
     ? (DeepARCameraComponent as any).default ?? DeepARCameraComponent
     : null;
-  const DeepARCam = typeof rawDeepARComponent === 'function' ? rawDeepARComponent : null;
+  const DeepARCam =
+    typeof rawDeepARComponent === 'function' ||
+    (
+      rawDeepARComponent &&
+      typeof rawDeepARComponent === 'object' &&
+      typeof (rawDeepARComponent as any).render === 'function'
+    )
+      ? rawDeepARComponent
+      : null;
   const deepARComponentUnavailable = rawDeepARComponent !== null && DeepARCam === null;
   const deepARCompOk = DeepARCam !== null;
+  console.log('[DeepAR] CameraCore component check', {
+    deepARCompOk,
+    componentType: typeof DeepARCameraComponent,
+    hasRender: typeof (DeepARCameraComponent as any)?.render,
+    hasDollarType: Boolean((DeepARCameraComponent as any)?.$$typeof),
+  });
   const deepARFallbackLoggedRef = useRef(false);
 
   const [facing,        setFacing]        = useState<'front' | 'back'>('front');
