@@ -93,6 +93,15 @@ export function EffectsTab() {
   const shutterScale = useRef(new Animated.Value(1)).current;
   const [deepARCamReady, setDeepARCamReady] = useState(false);
 
+  useEffect(() => {
+    if (skiaEffectId === 'none') return;
+    console.log('[Skia] effect selected:', skiaEffectId, {
+      width: camSize.width,
+      height: camSize.height,
+      skiaLayerLoaded: SkiaEffectsLayer !== null,
+    });
+  }, [skiaEffectId]);
+
   // ── Deep AR filter apply ─────────────────────────────────────────────────────
   const handleDeepARFilter = useCallback(async (filter: DeepARFilter) => {
     const deepARRef = cameraRef.current?.deepARRef;
@@ -253,7 +262,7 @@ export function EffectsTab() {
       <CameraCore
         ref={cameraRef}
         height={camH}
-        overlay={null /* DEBUG: overlay disabled to isolate camera black screen */}
+        overlay={cameraOverlay}
         onDeepARReady={() => { setDeepARCamReady(true); log.deepar.info('Ready from CameraCore'); }}
         onScreenshot={uri => { setCapturedUri(uri); setMode('preview'); setIsCapturing(false); }}
         onVideoReady={uri  => { setCapturedUri(uri); setMode('preview'); setIsRecording(false); }}

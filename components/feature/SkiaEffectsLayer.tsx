@@ -80,6 +80,13 @@ const COLOR_MATRICES: Partial<Record<SkiaEffectId, number[]>> = {
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 export default function SkiaEffectsLayer({ effectId, width, height }: Props) {
+  useEffect(() => {
+    console.log('[Skia] layer mounted:', { effectId, width, height, SkiaAvailable });
+    return () => console.log('[Skia] layer unmounted:', effectId);
+  }, []);
+
+  console.log('[Skia] layer render:', { effectId, width, height, SkiaAvailable });
+
   if (effectId === 'none') return null;
 
   // Skia ColorMatrix path — only when fully compiled
