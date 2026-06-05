@@ -49,6 +49,7 @@
       "expo-web-browser",
       "./plugins/withDeepARAndroidFix",
       "./plugins/withDeepARiOS",
+      "./plugins/withDeepARFabricView",
       [
         "expo-camera",
         {
