@@ -43,10 +43,15 @@ export const DEEPAR_API_KEY: string =
 // web/preview, so the catch branch runs on those platforms — no crash.
 let _DeepAR: any       = null;
 let _DeepARCamera: any = null;
+let _DeepARCameraModule: any = null;
 
 const isRenderableComponent = (value: unknown): boolean =>
   typeof value === 'function' ||
-  (typeof value === 'object' && value !== null);
+  (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as any).render === 'function'
+  );
 
 try {
   const sdk = require('react-native-deepar');
@@ -58,6 +63,7 @@ try {
   console.log('[DeepAR] typeof sdk.DeepARCamera:', typeof sdk?.DeepARCamera);
   console.log('[DeepAR] typeof sdk.Camera:', typeof sdk?.Camera);
   console.log('[DeepAR] Empty stub detected:', exportKeys.length === 0);
+  _DeepARCameraModule = sdk?.Camera ?? null;
 
   // ── Resolve DeepAR imperative API (ref methods) ───────────────────────────
   const deepARCandidate: unknown = sdk?.DeepAR ?? sdk?.default?.DeepAR ?? null;
@@ -69,17 +75,14 @@ try {
   }
 
   // ── Resolve DeepARCamera React component ─────────────────────────────────
-  // Defensive priority order — most specific named export first.
-  // sdk.default is intentionally last: it can be a plain module object {}
-  // which would pass an instanceof check but is NOT a React component.
+  // react-native-deepar@0.11.0 exports the renderable view as the default
+  // export. sdk.Camera is only the native permission helper module.
   const candidates: Array<[string, unknown]> = [
-    ['sdk.Camera',               sdk?.Camera],
-    ['sdk.default.Camera',       sdk?.default?.Camera],
+    ['sdk.default',               sdk?.default],
     ['sdk.DeepARCamera',          sdk?.DeepARCamera],
     ['sdk.default.DeepARCamera',  sdk?.default?.DeepARCamera],
     ['sdk.DeepARView',            sdk?.DeepARView],
     ['sdk.default.DeepARView',    sdk?.default?.DeepARView],
-    ['sdk.default (fallback)',    sdk?.default],
   ];
 
   for (const [label, candidate] of candidates) {
@@ -90,6 +93,7 @@ try {
     }
     _DeepARCamera = candidate;
     console.log(`[DeepAR] DeepARCamera resolved via ${label} ✓`);
+    console.log(`[DeepAR] resolved component source: ${label}`);
     break;
   }
 
@@ -361,15 +365,15 @@ export function stopDeepARRecording(deepARRef: React.MutableRefObject<any>) {
 // PERMISSIONS
 // ─────────────────────────────────────────────────────────────────────────────
 /**
- * Request camera permissions via expo-camera.
- *
- * DeepAR's own CameraModule (NativeModules.RNTCameraModule) must NOT be
- * called before the React bridge has fully hydrated — it will be null and
- * throw at startup. expo-camera uses the same NSCameraUsageDescription
- * entitlement and is always safe to call after the app mounts.
+ * Request camera permissions through react-native-deepar's Camera helper when
+ * available. Fall back to expo-camera in preview/stub builds.
  */
 export async function requestDeepARPermissions(): Promise<boolean> {
   try {
+    if (typeof _DeepARCameraModule?.requestCameraPermission === 'function') {
+      const result = await _DeepARCameraModule.requestCameraPermission();
+      return result === 'authorized';
+    }
     const { requestCameraPermissionsAsync } = require('expo-camera');
     const { granted } = await requestCameraPermissionsAsync();
     return granted;
@@ -380,6 +384,9 @@ export async function requestDeepARPermissions(): Promise<boolean> {
 
 export async function getDeepARCameraPermission(): Promise<string> {
   try {
+    if (typeof _DeepARCameraModule?.getCameraPermissionStatus === 'function') {
+      return await _DeepARCameraModule.getCameraPermissionStatus();
+    }
     const { getCameraPermissionsAsync } = require('expo-camera');
     const { status } = await getCameraPermissionsAsync();
     return status;
