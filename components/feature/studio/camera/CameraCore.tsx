@@ -591,7 +591,7 @@ export { CameraCore };
 
 const c = StyleSheet.create({
   wrap:            { width: '100%', backgroundColor: '#000', position: 'relative', overflow: 'hidden' },
-  cameraFill:      { position: 'absolute', top: 0, left: 0 },
+  cameraFill:      StyleSheet.absoluteFillObject,
   noDeviceTitle:   { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.bold, textAlign: 'center' },
   noDeviceSub:     { color: Colors.textSubtle, fontSize: FontSize.sm, textAlign: 'center', lineHeight: 20 },
   permBtn:         { borderRadius: Radius.lg, overflow: 'hidden', marginTop: 8 },
