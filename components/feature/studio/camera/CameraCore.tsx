@@ -464,8 +464,21 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
   // ── AR suspended overlay ──────────────────────────────────────────────────
   const showSuspendedOverlay = arSuspended && deepARCompOk;
 
+  if (!deepARCompOk && CameraView) {
+    console.log('[Camera] rendering CameraView', {
+      hasPerm,
+      facing,
+      deepARCompOk,
+      cameraViewType: typeof CameraView,
+      cameraFill: c.cameraFill,
+    });
+  }
+
   return (
-    <View style={[c.wrap, { height: camHeight }]}>
+    <View
+      style={[c.wrap, { height: camHeight }]}
+      onLayout={e => console.log('[Camera] preview layout', e.nativeEvent.layout)}
+    >
       {/* Camera surface */}
       {deepARCompOk && DeepARCam ? (
         <DeepARCam
