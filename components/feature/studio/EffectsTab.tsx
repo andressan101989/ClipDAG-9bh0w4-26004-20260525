@@ -253,7 +253,7 @@ export function EffectsTab() {
       <CameraCore
         ref={cameraRef}
         height={camH}
-        overlay={cameraOverlay}
+        overlay={null /* DEBUG: overlay disabled to isolate camera black screen */}
         onDeepARReady={() => { setDeepARCamReady(true); log.deepar.info('Ready from CameraCore'); }}
         onScreenshot={uri => { setCapturedUri(uri); setMode('preview'); setIsCapturing(false); }}
         onVideoReady={uri  => { setCapturedUri(uri); setMode('preview'); setIsRecording(false); }}
