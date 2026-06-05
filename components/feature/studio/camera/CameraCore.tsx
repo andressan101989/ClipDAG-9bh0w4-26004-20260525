@@ -519,8 +519,10 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
           ref={expoCamRef}
           style={[c.cameraFill, { width: windowW, height: camHeight }]}
           facing={facing}
-          mode="video"
-          onCameraReady={() => log.deepar.info('expo-camera ready')}
+          onCameraReady={() => {
+            console.log('[Camera] onCameraReady fired');
+            log.deepar.info('expo-camera ready');
+          }}
         />
       ) : null}
 
