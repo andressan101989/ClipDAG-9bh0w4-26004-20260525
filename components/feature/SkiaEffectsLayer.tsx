@@ -90,8 +90,9 @@ export default function SkiaEffectsLayer({ effectId, width, height }: Props) {
   if (effectId === 'none') return null;
 
   // Skia ColorMatrix path — only when fully compiled
-  if (SkiaAvailable && SkiaCanvas && SkiaFill && SkiaColorMatrix && COLOR_MATRICES[effectId]) {
+  if (false && SkiaAvailable && SkiaCanvas && SkiaFill && SkiaColorMatrix && COLOR_MATRICES[effectId]) {
     const matrix = COLOR_MATRICES[effectId]!;
+    console.log('[Skia] using Canvas path:', { effectId, hasColorMatrix: true });
     return (
       <SkiaCanvas style={sty.absoluteFill} pointerEvents="none">
         <SkiaFill>
@@ -102,6 +103,7 @@ export default function SkiaEffectsLayer({ effectId, width, height }: Props) {
   }
 
   // Pure Reanimated fallback — always safe on iOS Hermes
+  console.log('[Skia] using ColorGradeOverlay path:', { effectId, SkiaAvailable });
   return <ReanimatedEffect effectId={effectId} width={Math.max(1, width)} height={Math.max(1, height)} />;
 }
 
@@ -128,6 +130,7 @@ function ReanimatedEffect({ effectId, width, height }: Props) {
 // COLOR GRADE OVERLAY (static — no useAnimatedStyle)
 // ─────────────────────────────────────────────────────────────────────────────
 function ColorGradeOverlay({ effectId, width, height }: { effectId: string; width: number; height: number }) {
+  console.log('[Skia] using ColorGradeOverlay path:', { effectId, width, height });
   const configs: Record<string, { color: string; vignette?: string }> = {
     vintage: { color: 'rgba(120,72,20,0.38)',  vignette: 'rgba(60,20,0,0.55)' },
     cine:    { color: 'rgba(5,10,30,0.30)',    vignette: 'rgba(0,0,0,0.65)' },
