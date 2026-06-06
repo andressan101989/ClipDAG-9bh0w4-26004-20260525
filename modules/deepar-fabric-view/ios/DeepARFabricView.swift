@@ -7,7 +7,7 @@ public final class DeepARFabricView: ExpoView {
   private var apiKey: String = ""
   private var cameraPosition: String = "front"
   private var deepAR: DeepAR?
-  private var arView: ARView?
+  private var renderView: UIView?
   private var cameraController: CameraController?
 
   public required init(appContext: AppContext? = nil) {
@@ -22,7 +22,7 @@ public final class DeepARFabricView: ExpoView {
 
   public override func layoutSubviews() {
     super.layoutSubviews()
-    arView?.frame = bounds
+    renderView?.frame = bounds
   }
 
   public func setApiKey(_ apiKey: String) {
@@ -67,16 +67,16 @@ public final class DeepARFabricView: ExpoView {
 
     let deepAR = DeepAR()
     deepAR.setLicenseKey(apiKey)
-    deepAR.initialize()
 
-    guard let arView = deepAR.createARView(withFrame: bounds) as? ARView else {
-      self.deepAR = deepAR
+    // createARView(withFrame:) initializes DeepAR in rendering mode internally.
+    // It returns UIView*, not ARView* — treat it as UIView directly.
+    guard let renderView = deepAR.createARView(withFrame: bounds) else {
       return
     }
 
-    arView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-    arView.frame = bounds
-    insertSubview(arView, at: 0)
+    renderView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    renderView.frame = bounds
+    insertSubview(renderView, at: 0)
 
     let cameraController = CameraController()
     cameraController.deepAR = deepAR
@@ -86,7 +86,7 @@ public final class DeepARFabricView: ExpoView {
     cameraController.startCamera()
 
     self.deepAR = deepAR
-    self.arView = arView
+    self.renderView = renderView
     self.cameraController = cameraController
 
     configureAudioSession()
