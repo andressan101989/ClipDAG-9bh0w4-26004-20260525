@@ -69,14 +69,5 @@ target 'onspaceapp' do
         config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] << 'FOLLY_CFG_NO_COROUTINES=1'
       end
     end
-
-    # withDeepARFabricView: DEFINES_MODULE for react-native-deepar
-    installer.pods_project.targets.each do |target|
-      if target.name == 'react-native-deepar'
-        target.build_configurations.each do |config|
-          config.build_settings['DEFINES_MODULE'] = 'YES'
-        end
-      end
-    end
   end
 end

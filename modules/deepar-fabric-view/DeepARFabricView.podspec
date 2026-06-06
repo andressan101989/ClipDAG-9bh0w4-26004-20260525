@@ -16,8 +16,8 @@ Pod::Spec.new do |s|
   s.swift_version  = '5.9'
 
   s.source_files = 'ios/**/*.{swift,h,m,mm}'
+  s.vendored_frameworks = '../../node_modules/react-native-deepar/ios/Frameworks/DeepAR.xcframework'
   s.frameworks = 'AVFoundation', 'UIKit'
 
   s.dependency 'ExpoModulesCore'
-  s.dependency 'react-native-deepar'
 end
