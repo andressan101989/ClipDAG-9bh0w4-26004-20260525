@@ -18,6 +18,10 @@ Pod::Spec.new do |s|
   s.source_files = 'ios/**/*.{swift,h,m,mm}'
   s.vendored_frameworks = '../../node_modules/react-native-deepar/ios/Frameworks/DeepAR.xcframework'
   s.frameworks = 'AVFoundation', 'UIKit'
+  s.pod_target_xcconfig = {
+    'FRAMEWORK_SEARCH_PATHS' => '$(inherited) "${PODS_TARGET_SRCROOT}/../../node_modules/react-native-deepar/ios/Frameworks"',
+    'SWIFT_INCLUDE_PATHS' => '$(inherited) "${PODS_TARGET_SRCROOT}/../../node_modules/react-native-deepar/ios/Frameworks/DeepAR.xcframework/ios-arm64/DeepAR.framework/Headers"'
+  }
 
   s.dependency 'ExpoModulesCore'
 end
