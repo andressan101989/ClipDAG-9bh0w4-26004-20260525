@@ -30,6 +30,8 @@
   }
 
   _deepAR = [[DeepAR alloc] init];
+  NSString *keyPrefix = apiKey.length >= 8 ? [apiKey substringToIndex:8] : apiKey;
+  NSLog(@"[DeepAR] bridge key prefix %@", keyPrefix);
   [_deepAR setLicenseKey:apiKey];
 
   _renderView = [_deepAR createARViewWithFrame:frame];

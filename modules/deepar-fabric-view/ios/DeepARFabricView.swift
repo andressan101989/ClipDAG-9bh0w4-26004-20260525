@@ -23,6 +23,8 @@ public final class DeepARFabricView: ExpoView {
   }
 
   public func setApiKey(_ apiKey: String) {
+    print("[DeepAR] apiKey prefix \(apiKey.prefix(8))")
+
     guard self.apiKey != apiKey else {
       return
     }
