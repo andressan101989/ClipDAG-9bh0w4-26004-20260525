@@ -1,6 +1,7 @@
 {
   "platforms": ["apple"],
   "apple": {
+    "podspecPath": "DeepARFabricView.podspec",
     "modules": ["DeepARFabricViewModule"]
   }
 }
