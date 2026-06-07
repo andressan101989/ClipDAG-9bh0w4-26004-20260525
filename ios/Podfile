@@ -43,6 +43,30 @@ target 'onspaceapp' do
   )
 
   post_install do |installer|
+    # ─── deepar-provider-patch ───
+    begin
+      provider = File.join(__dir__, 'onspaceapp', 'ExpoModulesProvider.swift')
+      if File.exist?(provider)
+        src = File.read(provider)
+        unless src.include?('DeepARFabricViewModule')
+          lines = src.lines
+          # Insert import after the last existing import statement
+          last_imp = lines.rindex { |l| l.start_with?('import ') }
+          lines.insert(last_imp + 1, "import DeepARFabricView\n") if last_imp
+          # Insert module registration before the first standalone ] (closes the array)
+          bracket_idx = lines.index { |l| l.strip == ']' }
+          lines.insert(bracket_idx, "      DeepARFabricView.DeepARFabricViewModule.self,\n") if bracket_idx
+          File.write(provider, lines.join)
+          puts '[deepar] Patched ExpoModulesProvider.swift: DeepARFabricViewModule registered'
+        end
+      else
+        warn '[deepar] ExpoModulesProvider.swift not found; module registration may be incomplete'
+      end
+    rescue => e
+      warn "[deepar] Provider patch failed: #{e}"
+    end
+    # ─────────────────────────────────────────────────────────────────────────
+
     react_native_post_install(
       installer,
       config[:reactNativePath],
