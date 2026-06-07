@@ -16,10 +16,12 @@ Pod::Spec.new do |s|
   s.swift_version  = '5.9'
 
   s.source_files = 'ios/**/*.{swift,h,m,mm}'
+  s.public_header_files = 'ios/**/*.h'
   s.vendored_frameworks = '../../node_modules/react-native-deepar/ios/Frameworks/DeepAR.xcframework'
   s.frameworks = 'AVFoundation', 'UIKit'
   s.pod_target_xcconfig = {
     'FRAMEWORK_SEARCH_PATHS' => '$(inherited) "${PODS_TARGET_SRCROOT}/../../node_modules/react-native-deepar/ios/Frameworks"',
+    'HEADER_SEARCH_PATHS' => '$(inherited) "${PODS_TARGET_SRCROOT}/../../node_modules/react-native-deepar/ios/Frameworks/DeepAR.xcframework/ios-arm64/DeepAR.framework/Headers"',
     'SWIFT_INCLUDE_PATHS' => '$(inherited) "${PODS_TARGET_SRCROOT}/../../node_modules/react-native-deepar/ios/Frameworks/DeepAR.xcframework/ios-arm64/DeepAR.framework/Headers"'
   }
 

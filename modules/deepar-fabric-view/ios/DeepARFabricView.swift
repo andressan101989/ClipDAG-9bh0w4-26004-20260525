@@ -1,14 +1,12 @@
 import AVFoundation
-import DeepAR
 import ExpoModulesCore
 import UIKit
 
 public final class DeepARFabricView: ExpoView {
   private var apiKey: String = ""
   private var cameraPosition: String = "front"
-  private var deepAR: DeepAR?
   private var renderView: UIView?
-  private var cameraController: CameraController?
+  private var bridge: DeepARBridge?
 
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -16,8 +14,7 @@ public final class DeepARFabricView: ExpoView {
   }
 
   deinit {
-    cameraController?.stopCamera()
-    deepAR?.shutdown()
+    bridge?.shutdown()
   }
 
   public override func layoutSubviews() {
@@ -37,14 +34,7 @@ public final class DeepARFabricView: ExpoView {
   public func setCameraPosition(_ cameraPosition: String) {
     let normalizedPosition = cameraPosition == "back" ? "back" : "front"
     self.cameraPosition = normalizedPosition
-
-    guard let cameraController else {
-      return
-    }
-
-    cameraController.position = normalizedPosition == "back"
-      ? AVCaptureDevice.Position.back
-      : AVCaptureDevice.Position.front
+    bridge?.setCameraPosition(normalizedPosition)
   }
 
   public func switchEffect(path: String) {
@@ -53,24 +43,24 @@ public final class DeepARFabricView: ExpoView {
       return
     }
 
-    deepAR?.switchEffect(withSlot: "mask", path: path)
+    bridge?.switchEffect(path)
   }
 
   public func clearEffect() {
-    deepAR?.switchEffect(withSlot: "mask", path: nil)
+    bridge?.clearEffect()
   }
 
   private func initializeDeepARIfNeeded() {
-    guard deepAR == nil, !apiKey.isEmpty else {
+    guard bridge == nil, !apiKey.isEmpty else {
       return
     }
 
-    let deepAR = DeepAR()
-    deepAR.setLicenseKey(apiKey)
-
-    // createARView(withFrame:) initializes DeepAR in rendering mode internally.
-    // It returns UIView*, not ARView* — treat it as UIView directly.
-    guard let renderView = deepAR.createARView(withFrame: bounds) else {
+    let bridge = DeepARBridge()
+    guard let renderView = bridge.createRenderView(
+      withApiKey: apiKey,
+      frame: bounds,
+      cameraPosition: cameraPosition
+    ) else {
       return
     }
 
@@ -78,16 +68,8 @@ public final class DeepARFabricView: ExpoView {
     renderView.frame = bounds
     insertSubview(renderView, at: 0)
 
-    let cameraController = CameraController()
-    cameraController.deepAR = deepAR
-    cameraController.position = cameraPosition == "back"
-      ? AVCaptureDevice.Position.back
-      : AVCaptureDevice.Position.front
-    cameraController.startCamera()
-
-    self.deepAR = deepAR
     self.renderView = renderView
-    self.cameraController = cameraController
+    self.bridge = bridge
 
     configureAudioSession()
   }
