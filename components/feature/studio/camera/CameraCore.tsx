@@ -493,6 +493,11 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
 
   // ── AR suspended overlay ──────────────────────────────────────────────────
   const showSuspendedOverlay = arSuspended && deepARCompOk;
+  const deepARApiKey = Platform.OS === 'ios'
+    ? DEEPAR_API_KEY_IOS
+    : DEEPAR_API_KEY_ANDROID;
+
+  console.log('[DeepAR] JS apiKey prefix', deepARApiKey?.slice(0, 8));
 
   if (!deepARCompOk && CameraView) {
     console.log('[Camera] rendering CameraView', {
@@ -514,7 +519,7 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
         <DeepARCam
           ref={deepARRef}
           style={[c.cameraFill, { width: windowW, height: camHeight }]}
-          apiKey={Platform.OS === 'ios' ? DEEPAR_API_KEY_IOS : DEEPAR_API_KEY_ANDROID}
+          apiKey={deepARApiKey}
           cameraPosition={facing}
           onInitialized={() => {
             logDeepARInitialized();
