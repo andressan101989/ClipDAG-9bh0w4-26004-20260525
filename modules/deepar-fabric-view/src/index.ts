@@ -19,8 +19,16 @@ type NativeDeepARFabricView = React.ComponentType<DeepARFabricViewProps> & {
   clearEffect?: () => Promise<void>;
 };
 
-const NativeDeepARFabricView =
-  requireNativeViewManager('DeepARFabricView') as NativeDeepARFabricView;
+let NativeDeepARFabricViewComponent: NativeDeepARFabricView | null = null;
+
+function getNativeDeepARFabricView(): NativeDeepARFabricView {
+  if (!NativeDeepARFabricViewComponent) {
+    NativeDeepARFabricViewComponent =
+      requireNativeViewManager('DeepARFabricView') as NativeDeepARFabricView;
+  }
+
+  return NativeDeepARFabricViewComponent;
+}
 
 const DeepARFabricView = React.forwardRef<DeepARFabricViewRef, DeepARFabricViewProps>(
   ({ cameraPosition = 'front', ...props }, ref) => {
@@ -36,7 +44,7 @@ const DeepARFabricView = React.forwardRef<DeepARFabricViewRef, DeepARFabricViewP
     }));
 
     return React.createElement(
-      NativeDeepARFabricView,
+      getNativeDeepARFabricView(),
       {
         ...props,
         ref: nativeRef,

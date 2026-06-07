@@ -284,7 +284,13 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
         // Clear current AR effect to free GPU memory
         if (deepARRef.current && currentEffect) {
           try {
-            deepARRef.current.switchEffectWithPath?.({ path: '', slot: 'effect' });
+            if (typeof deepARRef.current.switchEffectWithPath === 'function') {
+              deepARRef.current.switchEffectWithPath({ path: '', slot: 'effect' });
+            } else if (typeof deepARRef.current.clearEffect === 'function') {
+              deepARRef.current.clearEffect();
+            } else if (typeof deepARRef.current.switchEffect === 'function') {
+              deepARRef.current.switchEffect('');
+            }
             setCurrentEffect(null);
           } catch { /* ignore */ }
         }
@@ -346,7 +352,13 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
     if (!filter) {
       // Clear effect
       try {
-        deepARRef.current.switchEffectWithPath?.({ path: '', slot: 'effect' });
+        if (typeof deepARRef.current.switchEffectWithPath === 'function') {
+          deepARRef.current.switchEffectWithPath({ path: '', slot: 'effect' });
+        } else if (typeof deepARRef.current.clearEffect === 'function') {
+          deepARRef.current.clearEffect();
+        } else if (typeof deepARRef.current.switchEffect === 'function') {
+          deepARRef.current.switchEffect('');
+        }
         setCurrentEffect(null);
       } catch { /* ignore */ }
       return;
@@ -359,7 +371,11 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
         console.warn('[CameraCore] effect path unavailable:', filter.id);
         return;
       }
-      deepARRef.current.switchEffectWithPath?.({ path, slot: 'effect' });
+      if (typeof deepARRef.current.switchEffectWithPath === 'function') {
+        deepARRef.current.switchEffectWithPath({ path, slot: 'effect' });
+      } else if (typeof deepARRef.current.switchEffect === 'function') {
+        deepARRef.current.switchEffect(path);
+      }
       setCurrentEffect(filter.id);
     } catch (e: any) {
       console.warn('[CameraCore] applyEffect error:', e?.message);
@@ -499,6 +515,7 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
           ref={deepARRef}
           style={[c.cameraFill, { width: windowW, height: camHeight }]}
           apiKey={Platform.OS === 'ios' ? DEEPAR_API_KEY_IOS : DEEPAR_API_KEY_ANDROID}
+          cameraPosition={facing}
           onInitialized={() => {
             logDeepARInitialized();
             log.deepar.info('DeepAR initialized');

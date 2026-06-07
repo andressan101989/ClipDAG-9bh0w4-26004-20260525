@@ -18,6 +18,7 @@
  */
 
 import { Platform } from 'react-native';
+import { DeepARFabricView } from 'deepar-fabric-view';
 
 // ── Feature flag ──────────────────────────────────────────────────────────────
 export const DEEPAR_ENABLED = true;
@@ -54,7 +55,9 @@ const isRenderableComponent = (value: unknown): boolean =>
   );
 
 try {
-  const sdk = require('react-native-deepar');
+  const sdk = Platform.OS === 'ios'
+    ? { DeepARFabricView }
+    : require('react-native-deepar');
   const exportKeys: string[] = Object.keys(sdk ?? {});
   console.log('[DeepAR] SDK require succeeded. exports:', exportKeys.join(', '));
   console.log('[DeepAR] Platform:', Platform.OS);
@@ -63,7 +66,7 @@ try {
   console.log('[DeepAR] typeof sdk.DeepARCamera:', typeof sdk?.DeepARCamera);
   console.log('[DeepAR] typeof sdk.Camera:', typeof sdk?.Camera);
   console.log('[DeepAR] Empty stub detected:', exportKeys.length === 0);
-  _DeepARCameraModule = sdk?.Camera ?? null;
+  _DeepARCameraModule = Platform.OS === 'ios' ? null : sdk?.Camera ?? null;
 
   // ── Resolve DeepAR imperative API (ref methods) ───────────────────────────
   const deepARCandidate: unknown = sdk?.DeepAR ?? sdk?.default?.DeepAR ?? null;
@@ -75,15 +78,20 @@ try {
   }
 
   // ── Resolve DeepARCamera React component ─────────────────────────────────
-  // react-native-deepar@0.11.0 exports the renderable view as the default
-  // export. sdk.Camera is only the native permission helper module.
-  const candidates: Array<[string, unknown]> = [
-    ['sdk.default',               sdk?.default],
-    ['sdk.DeepARCamera',          sdk?.DeepARCamera],
-    ['sdk.default.DeepARCamera',  sdk?.default?.DeepARCamera],
-    ['sdk.DeepARView',            sdk?.DeepARView],
-    ['sdk.default.DeepARView',    sdk?.default?.DeepARView],
-  ];
+  // iOS uses the local Expo Fabric view. Android keeps react-native-deepar's
+  // existing runtime path, where sdk.Camera is only the permission helper.
+  const candidates: Array<[string, unknown]> = Platform.OS === 'ios'
+    ? [
+        ['deepar-fabric-view.DeepARFabricView', sdk?.DeepARFabricView],
+        ['deepar-fabric-view.default', sdk?.default],
+      ]
+    : [
+        ['sdk.default',               sdk?.default],
+        ['sdk.DeepARCamera',          sdk?.DeepARCamera],
+        ['sdk.default.DeepARCamera',  sdk?.default?.DeepARCamera],
+        ['sdk.DeepARView',            sdk?.DeepARView],
+        ['sdk.default.DeepARView',    sdk?.default?.DeepARView],
+      ];
 
   for (const [label, candidate] of candidates) {
     if (candidate === null || candidate === undefined) continue;
@@ -289,7 +297,7 @@ export async function switchDeepAREffect(
     if (typeof deepARRef.current.switchEffectWithPath === 'function') {
       deepARRef.current.switchEffectWithPath({ path: localPath, slot: 'effect' });
     } else if (typeof deepARRef.current.switchEffect === 'function') {
-      deepARRef.current.switchEffect({ mask: localPath });
+      deepARRef.current.switchEffect(localPath);
     }
     console.log('[DeepAR] effect applied:', filter.id);
     onProgress?.('ok');
@@ -307,6 +315,10 @@ export function clearDeepAREffect(deepARRef: React.MutableRefObject<any>) {
   try {
     if (typeof deepARRef.current.switchEffectWithPath === 'function') {
       deepARRef.current.switchEffectWithPath({ path: '', slot: 'effect' });
+    } else if (typeof deepARRef.current.clearEffect === 'function') {
+      deepARRef.current.clearEffect();
+    } else if (typeof deepARRef.current.switchEffect === 'function') {
+      deepARRef.current.switchEffect('');
     }
   } catch { /* ignore */ }
 }

@@ -79,7 +79,13 @@ export function EffectsTab() {
   const rawDeepARComponent = isDeepARAvailable() && DeepARCameraComponent
     ? (DeepARCameraComponent as any).default ?? DeepARCameraComponent
     : null;
-  const deepARActive = typeof rawDeepARComponent === 'function';
+  const deepARActive =
+    typeof rawDeepARComponent === 'function' ||
+    (
+      rawDeepARComponent &&
+      typeof rawDeepARComponent === 'object' &&
+      typeof (rawDeepARComponent as any).render === 'function'
+    );
 
   const [skiaEffectId,    setSkiaEffectId]    = useState<SkiaEffectId>('none');
   const [deepARFilterId,  setDeepARFilterId]  = useState<string | null>(null);
