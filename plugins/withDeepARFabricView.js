@@ -12,8 +12,13 @@ const PATCH_TAG = '# ─── deepar-provider-patch ───';
 const RUBY_PATCH = `
     ${PATCH_TAG}
     begin
-      provider = File.join(__dir__, 'onspaceapp', 'ExpoModulesProvider.swift')
-      if File.exist?(provider)
+      provider_candidates = [
+        File.join(__dir__, 'build', 'generated', 'ios', 'ExpoModulesProvider.swift'),
+        File.join(__dir__, 'onspaceapp', 'ExpoModulesProvider.swift'),
+      ] + Dir.glob(File.join(__dir__, '**', 'ExpoModulesProvider.swift'))
+
+      provider = provider_candidates.find { |candidate| File.exist?(candidate) }
+      if provider
         src = File.read(provider)
         unless src.include?('DeepARFabricViewModule')
           lines = src.lines
@@ -27,7 +32,7 @@ const RUBY_PATCH = `
           puts '[deepar] Patched ExpoModulesProvider.swift: DeepARFabricViewModule registered'
         end
       else
-        warn '[deepar] ExpoModulesProvider.swift not found; module registration may be incomplete'
+        warn '[deepar] ExpoModulesProvider.swift not found in generated provider paths; module registration may be incomplete'
       end
     rescue => e
       warn "[deepar] Provider patch failed: #{e}"
