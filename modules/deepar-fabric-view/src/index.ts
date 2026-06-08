@@ -1,6 +1,6 @@
 import { requireNativeViewManager } from 'expo-modules-core';
 import * as React from 'react';
-import type { ViewProps } from 'react-native';
+import { NativeModules, type ViewProps } from 'react-native';
 
 export type DeepARCameraPosition = 'front' | 'back';
 
@@ -23,6 +23,13 @@ let NativeDeepARFabricViewComponent: NativeDeepARFabricView | null = null;
 
 function getNativeDeepARFabricView(): NativeDeepARFabricView {
   if (!NativeDeepARFabricViewComponent) {
+    const proxy = NativeModules.NativeUnimoduleProxy;
+    console.log('[DeepARDiag] NativeUnimoduleProxy exists:', !!proxy);
+    console.log('[DeepARDiag] viewManagersMetadata keys:', Object.keys(proxy?.viewManagersMetadata ?? {}));
+    console.log('[DeepARDiag] DeepARFabricView metadata:', proxy?.viewManagersMetadata?.DeepARFabricView);
+    console.log('[DeepARDiag] modulesConstants keys:', Object.keys(proxy?.modulesConstants ?? {}));
+    console.log('[DeepARDiag] DeepARFabricView constants:', proxy?.modulesConstants?.DeepARFabricView);
+
     NativeDeepARFabricViewComponent =
       requireNativeViewManager('DeepARFabricView') as NativeDeepARFabricView;
   }
