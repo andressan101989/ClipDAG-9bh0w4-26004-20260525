@@ -1,0 +1,15 @@
+{
+  "name": "deepar-test-view",
+  "version": "0.1.0",
+  "description": "Minimal local Expo native view — registration smoke test.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false,
+  "private": true,
+  "peerDependencies": {
+    "expo": "*",
+    "expo-modules-core": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}
