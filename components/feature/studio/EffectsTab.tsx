@@ -133,7 +133,14 @@ export function EffectsTab() {
   const [deepARCamReady,  setDeepARCamReady]  = useState(false);
   const [activeTab,       setActiveTab]       = useState<'efectos' | 'deepar'>('efectos');
 
-  const shutterScale = useRef(new Animated.Value(1)).current;
+  const shutterScale       = useRef(new Animated.Value(1)).current;
+  // Safety: if DeepAR screenshot callback never fires, reset after 8 s
+  const captureTimeoutRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clean up pending timeout on unmount
+  useEffect(() => () => {
+    if (captureTimeoutRef.current) clearTimeout(captureTimeoutRef.current);
+  }, []);
 
   const handleContainerLayout = useCallback((e: any) => {
     const { width, height } = e.nativeEvent.layout;
@@ -183,11 +190,13 @@ export function EffectsTab() {
   }, [deepARFilterId]);
 
   // ── Photo capture ─────────────────────────────────────────────────────────────
-  // IMPORTANT: takePhoto() returns null for DeepAR — the URI arrives async via
-  // onScreenshotTaken → onScreenshot prop. Only treat null as failure for
-  // expo-camera (non-DeepAR) path where the URI should be synchronous.
+  // takePhoto() resolves null for DeepAR — the URI arrives later via the
+  // onScreenshotTaken → onScreenshot prop callback. We must not treat null as
+  // failure when isDeepAR is true. A safety timeout resets the shutter if the
+  // callback never arrives (e.g. SDK not fully initialised).
   const capturePhoto = useCallback(async () => {
     if (isCapturing || isRecording || !cameraRef.current) return;
+    console.log('[CreatorCapture] takePhoto pressed');
     setIsCapturing(true);
     Animated.sequence([
       Animated.spring(shutterScale, { toValue: 0.82, useNativeDriver: true }),
@@ -195,18 +204,24 @@ export function EffectsTab() {
     ]).start();
     try {
       const uri = await cameraRef.current.takePhoto();
+      console.log('[CreatorCapture] takePhoto returned:', uri ?? 'null');
       if (uri) {
-        // expo-camera path: URI returned synchronously
-        console.log('[CreatorCapture] photo captured:', uri);
+        // expo-camera path: URI is synchronous
         setCapturedUri(uri);
         setMode('preview');
         setIsCapturing(false);
+        console.log('[CreatorCapture] preview uri:', uri);
       } else if (cameraRef.current.isDeepAR) {
-        // DeepAR path: URI arrives via onScreenshot callback — isCapturing is
-        // reset there, so we leave it true here to keep the shutter spinner.
-        console.log('[CreatorCapture] photo triggered — awaiting DeepAR screenshot callback');
+        // DeepAR path: URI arrives via onScreenshot callback.
+        // Safety: reset shutter if callback never fires within 8 s.
+        captureTimeoutRef.current = setTimeout(() => {
+          captureTimeoutRef.current = null;
+          console.log('[CreatorCapture] photo error: screenshot callback timeout');
+          setIsCapturing(false);
+          showAlert('Error', 'No se pudo capturar la foto');
+        }, 8_000);
       } else {
-        console.log('[CreatorCapture] photo error: no URI returned from expo-camera');
+        console.log('[CreatorCapture] photo error: no URI from camera');
         showAlert('Error', 'No se pudo capturar la foto');
         setIsCapturing(false);
       }
@@ -218,23 +233,23 @@ export function EffectsTab() {
   }, [isCapturing, isRecording, showAlert]);
 
   // ── Video recording ───────────────────────────────────────────────────────────
-  // stopRecording() always resolves null. The actual URI arrives async via
+  // stopRecording() always resolves null — the actual URI arrives via the
   // onVideoRecordingFinished → onVideoReady prop callback below.
   const toggleRecord = useCallback(async () => {
     if (!cameraRef.current) return;
     if (isRecording) {
+      console.log('[CreatorCapture] stopRecording pressed');
       setIsRecording(false);
       try {
         await cameraRef.current.stopRecording();
-        console.log('[CreatorCapture] recording stopped — awaiting video callback');
       } catch (e: any) {
         console.log('[CreatorCapture] video error:', e?.message ?? String(e));
       }
     } else {
+      console.log('[CreatorCapture] startRecording pressed');
       try {
         setIsRecording(true);
         cameraRef.current.startRecording();
-        console.log('[CreatorCapture] recording started');
       } catch (e: any) {
         console.log('[CreatorCapture] video error:', e?.message ?? String(e));
         setIsRecording(false);
@@ -267,12 +282,17 @@ export function EffectsTab() {
     const activeFilter = deepARFilterId
       ? DEEPAR_FILTERS.find(f => f.id === deepARFilterId)
       : SKIA_EFFECTS.find(e => e.id === skiaEffectId);
+    const payload = {
+      videoUrl:     capturedUri,
+      thumbnailUrl: capturedUri,
+      caption:      `${activeFilter ? `${(activeFilter as any).emoji} ${activeFilter.name} ` : ''}#ClipDAG #CreatorStudio`,
+      music:        'Sin música',
+      username:     '',
+      userAvatar:   '',
+    };
+    console.log('[CreatorCapture] publish payload:', JSON.stringify(payload));
     try {
-      await addVideo({
-        videoUrl: capturedUri, thumbnailUrl: capturedUri,
-        caption: `${activeFilter ? `${(activeFilter as any).emoji} ${activeFilter.name} ` : ''}#ClipDAG #CreatorStudio`,
-        music: 'Sin música', username: '', userAvatar: '',
-      });
+      await addVideo(payload);
       showAlert('Publicado 🎉', 'Publicado al feed', [
         { text: 'Ver feed', onPress: () => router.replace('/(tabs)') },
       ]);
@@ -340,16 +360,23 @@ export function EffectsTab() {
           overlay={cameraOverlay}
           onDeepARReady={() => { setDeepARCamReady(true); log.deepar.info('Ready from CameraCore'); }}
           onScreenshot={uri => {
-            console.log('[CreatorCapture] photo captured:', uri);
+            // Clear the safety timeout — screenshot arrived successfully
+            if (captureTimeoutRef.current) {
+              clearTimeout(captureTimeoutRef.current);
+              captureTimeoutRef.current = null;
+            }
+            console.log('[CreatorCapture] screenshot uri:', uri);
             setCapturedUri(uri);
             setMode('preview');
             setIsCapturing(false);
+            console.log('[CreatorCapture] preview uri:', uri);
           }}
           onVideoReady={uri => {
             console.log('[CreatorCapture] recorded uri:', uri);
             setCapturedUri(uri);
             setMode('preview');
             setIsRecording(false);
+            console.log('[CreatorCapture] preview uri:', uri);
           }}
           onError={msg => {
             console.log('[CreatorCapture] camera error:', msg);

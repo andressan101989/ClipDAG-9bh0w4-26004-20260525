@@ -410,34 +410,49 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
     applyEffect,
 
     takePhoto: () => new Promise<string | null>(resolve => {
+      console.log('[CreatorCapture] CameraCore.takePhoto — deepAR:', deepARCompOk && !!deepARRef.current, 'expoCam:', !!expoCamRef.current);
       if (deepARCompOk && deepARRef.current) {
+        console.log('[CreatorCapture] triggering DeepAR screenshot');
         triggerDeepARScreenshot(deepARRef);
-        resolve(null);
+        resolve(null); // URI arrives via onScreenshotTaken callback
       } else if (expoCamRef.current) {
+        console.log('[CreatorCapture] taking expo-camera picture');
         expoCamRef.current.takePictureAsync({ quality: 0.9 })
-          .then((p: any) => resolve(p?.uri ?? null))
-          .catch(() => resolve(null));
+          .then((p: any) => {
+            console.log('[CreatorCapture] expo-camera picture uri:', p?.uri ?? 'null');
+            resolve(p?.uri ?? null);
+          })
+          .catch((e: any) => {
+            console.log('[CreatorCapture] expo-camera picture error:', e?.message);
+            resolve(null);
+          });
       } else {
+        console.log('[CreatorCapture] takePhoto: no camera ready');
         resolve(null);
       }
     }),
 
     startRecording: () => {
+      console.log('[CreatorCapture] CameraCore.startRecording — already recording:', isRecording);
       if (isRecording) return;
       setIsRecording(true);
       setRecSeconds(0);
       recTimerRef.current = setInterval(() => setRecSeconds(s => s + 1), 1000);
 
       if (deepARCompOk && deepARRef.current) {
+        console.log('[CreatorCapture] starting DeepAR video recording');
         startDeepARRecording(deepARRef);
       } else if (expoCamRef.current) {
+        console.log('[CreatorCapture] starting expo-camera recording');
         expoCamRef.current.recordAsync({ maxDuration: 60 })
           .then((v: any) => {
+            console.log('[CreatorCapture] expo-camera recorded uri:', v?.uri ?? 'null');
             if (recTimerRef.current) clearInterval(recTimerRef.current);
             setIsRecording(false); setRecSeconds(0);
             if (v?.uri) onVideoReady?.(v.uri);
           })
           .catch((e: any) => {
+            console.log('[CreatorCapture] expo-camera recording error:', e?.message);
             if (recTimerRef.current) clearInterval(recTimerRef.current);
             setIsRecording(false); setRecSeconds(0);
             if (e?.message && !e.message.includes('stopped')) onError?.(e.message);
@@ -446,6 +461,7 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
     },
 
     stopRecording: () => new Promise<string | null>(resolve => {
+      console.log('[CreatorCapture] CameraCore.stopRecording — isRecording:', isRecording);
       if (!isRecording) { resolve(null); return; }
       if (recTimerRef.current) clearInterval(recTimerRef.current);
       if (deepARCompOk && deepARRef.current) {
@@ -457,7 +473,7 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
         try { expoCamRef.current.stopRecording(); } catch { /* ignore */ }
       }
       setIsRecording(false); setRecSeconds(0);
-      resolve(null);
+      resolve(null); // actual URI arrives via onVideoRecordingFinished callback
     }),
 
     flipCamera: () => setFacing(f => f === 'front' ? 'back' : 'front'),
@@ -543,8 +559,12 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
               onError?.(`DeepAR: ${text}`);
             }
           }}
-          onScreenshotTaken={(uri: string) => onScreenshot?.(uri)}
+          onScreenshotTaken={(uri: string) => {
+            console.log('[CreatorCapture] DeepAR onScreenshotTaken uri:', uri);
+            onScreenshot?.(uri);
+          }}
           onVideoRecordingFinished={(uri: string) => {
+            console.log('[CreatorCapture] DeepAR onVideoRecordingFinished uri:', uri);
             if (recTimerRef.current) clearInterval(recTimerRef.current);
             setIsRecording(false); setRecSeconds(0);
             onVideoReady?.(uri);
