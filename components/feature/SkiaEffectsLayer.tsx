@@ -81,11 +81,15 @@ const COLOR_MATRICES: Partial<Record<SkiaEffectId, number[]>> = {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function SkiaEffectsLayer({ effectId, width, height }: Props) {
   useEffect(() => {
-    console.log('[Skia] layer mounted:', { effectId, width, height, SkiaAvailable });
-    return () => console.log('[Skia] layer unmounted:', effectId);
+    console.log('[SkiaEffects] mounted');
+    console.log('[SkiaEffects] effectId:', effectId);
+    console.log('[SkiaEffects] dimensions:', width, 'x', height);
+    return () => console.log('[SkiaEffects] unmounted:', effectId);
   }, []);
 
-  console.log('[Skia] layer render:', { effectId, width, height, SkiaAvailable });
+  console.log('[SkiaEffects] render');
+  console.log('[SkiaEffects] effectId:', effectId);
+  console.log('[SkiaEffects] dimensions:', width, 'x', height);
 
   if (effectId === 'none') return null;
 

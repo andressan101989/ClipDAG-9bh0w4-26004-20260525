@@ -552,11 +552,13 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
             logDeepARCameraReady(true);
           }}
           onError={(text: string, isFatal: boolean) => {
-            logDeepARCameraReady(false, text);
-            log.deepar.error('DeepAR error', { text, isFatal });
             if (isFatal) {
+              logDeepARCameraReady(false, text);
+              log.deepar.error('DeepAR error', { text, isFatal });
               setFatalErrors(prev => prev + 1);
               onError?.(`DeepAR: ${text}`);
+            } else {
+              console.warn('[DeepAR] non-fatal:', text);
             }
           }}
           onScreenshotTaken={(uri: string) => {

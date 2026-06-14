@@ -38,6 +38,7 @@ import { CameraCore, type CameraCoreHandle } from './camera/CameraCore';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 
 const { width: W } = Dimensions.get('window');
+const CAM_H = W * 1.05;
 
 interface EffectDef { id: SkiaEffectId; name: string; emoji: string; gradient: [string, string] }
 
@@ -78,7 +79,6 @@ export function EffectsTab() {
   const [skiaEffectId,    setSkiaEffectId]    = useState<SkiaEffectId>('none');
   const [deepARFilterId,  setDeepARFilterId]  = useState<string | null>(null);
   const [filterLoadState, setFilterLoadState] = useState<Record<string, string>>({});
-  const [camSize,         setCamSize]         = useState({ width: W, height: W * 1.22 });
   const [mode,            setMode]            = useState<'camera' | 'preview'>('camera');
   const [capturedUri,     setCapturedUri]     = useState<string | null>(null);
   const [isCapturing,     setIsCapturing]     = useState(false);
@@ -187,9 +187,9 @@ export function EffectsTab() {
 
   const cameraOverlay = useMemo(() => (
     <>
-      {skiaEffectId !== 'none' && (!deepARActive || !deepARCamReady) && SkiaEffectsLayer ? (
+      {skiaEffectId !== 'none' && SkiaEffectsLayer ? (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }} pointerEvents="none">
-          <SkiaEffectsLayer effectId={skiaEffectId} width={camSize.width} height={camSize.height} />
+          <SkiaEffectsLayer effectId={skiaEffectId} width={W} height={CAM_H} />
         </View>
       ) : null}
       {(deepARFilterId || skiaEffectId !== 'none') ? (
@@ -202,7 +202,7 @@ export function EffectsTab() {
         </View>
       ) : null}
     </>
-  ), [skiaEffectId, deepARFilterId, deepARActive, deepARCamReady, camSize]);
+  ), [skiaEffectId, deepARFilterId]);
 
   if (mode === 'preview' && capturedUri) {
     const activeFilter = deepARFilterId
@@ -240,14 +240,13 @@ export function EffectsTab() {
     );
   }
 
-  const camH     = W * 1.05;
   const isNormal = skiaEffectId === 'none' && !deepARFilterId;
 
   return (
     <View style={{ flex: 1 }}>
       <CameraCore
         ref={cameraRef}
-        height={camH}
+        height={CAM_H}
         overlay={cameraOverlay}
         onDeepARReady={() => { setDeepARCamReady(true); log.deepar.info('Ready from CameraCore'); }}
         onScreenshot={uri => { setCapturedUri(uri); setMode('preview'); setIsCapturing(false); }}
@@ -258,17 +257,15 @@ export function EffectsTab() {
       {/* ── Filter picker panel ─────────────────────────────────────────────── */}
       <View style={s.panel}>
 
-        {/* Segmented switch */}
+        {/* Segmented switch — glass/underline style */}
         <View style={s.segmented}>
-          <Pressable
-            style={[s.segBtn, activeTab === 'efectos' && s.segBtnActive]}
-            onPress={() => setActiveTab('efectos')}>
+          <Pressable style={s.segBtn} onPress={() => setActiveTab('efectos')}>
             <Text style={[s.segBtnText, activeTab === 'efectos' && s.segBtnTextActive]}>Efectos</Text>
+            <View style={activeTab === 'efectos' ? s.segIndicator : s.segIndicatorHidden} />
           </Pressable>
-          <Pressable
-            style={[s.segBtn, activeTab === 'ar' && s.segBtnActive]}
-            onPress={() => setActiveTab('ar')}>
+          <Pressable style={s.segBtn} onPress={() => setActiveTab('ar')}>
             <Text style={[s.segBtnText, activeTab === 'ar' && s.segBtnTextActive]}>Filtros AR</Text>
+            <View style={activeTab === 'ar' ? s.segIndicator : s.segIndicatorHidden} />
           </Pressable>
         </View>
 
@@ -365,12 +362,13 @@ const s = StyleSheet.create({
   // Filter picker panel
   panel:                { backgroundColor: Colors.bg, borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: 8, paddingBottom: 6 },
 
-  // Segmented switch
-  segmented:            { flexDirection: 'row', marginHorizontal: 12, marginBottom: 8, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: 2 },
-  segBtn:               { flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 8 },
-  segBtnActive:         { backgroundColor: 'rgba(255,255,255,0.13)' },
-  segBtnText:           { color: Colors.textSubtle, fontSize: 12, fontWeight: FontWeight.semibold },
-  segBtnTextActive:     { color: '#fff' },
+  // Segmented switch — glass/underline, no filled backgrounds
+  segmented:            { flexDirection: 'row', marginHorizontal: 12, marginBottom: 6, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' },
+  segBtn:               { flex: 1, paddingVertical: 7, alignItems: 'center', gap: 3 },
+  segBtnText:           { color: Colors.textSubtle, fontSize: 12, fontWeight: FontWeight.medium },
+  segBtnTextActive:     { color: '#fff', fontWeight: FontWeight.semibold },
+  segIndicator:         { width: 24, height: 2, borderRadius: 1, backgroundColor: Colors.secondary },
+  segIndicatorHidden:   { width: 24, height: 2 },
 
   // Circular carousel
   carouselRow:          { flexDirection: 'row', gap: 10, paddingHorizontal: 12, alignItems: 'flex-start', paddingBottom: 2 },
