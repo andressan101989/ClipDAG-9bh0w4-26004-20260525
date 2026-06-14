@@ -1,17 +1,13 @@
 /**
- * components/feature/studio/EffectsTab.tsx  — v2
+ * components/feature/studio/EffectsTab.tsx  — v3
  *
- * Creator Studio Tab 1: AR Camera + Skia Effects + DeepAR
+ * Instagram-style camera UI: full-screen camera, two circular carousels
+ * overlaid at the bottom, clean centered capture bar.
  *
- * Architecture v2:
+ * Architecture unchanged from v2:
  *   - Camera logic entirely delegated to <CameraCore>
- *   - This component only manages: effect selection, overlay rendering, publish
- *   - Zero camera lifecycle code here
- *
- * Module boundary:
+ *   - Effect selection, Skia overlay, DeepAR switching handled here
  *   - No imports from other studio tabs
- *   - DeepAR filter switching via deeparService (not inline)
- *   - Skia overlay applied via SkiaEffectsLayer
  */
 import React, {
   useState, useCallback, useRef, useEffect, useMemo,
@@ -39,8 +35,6 @@ import { log } from '@/services/logger';
 import type { SkiaEffectId } from '@/components/feature/SkiaEffectsLayer';
 
 // Lazy-load to keep react-native-reanimated out of the static module chain.
-// SkiaEffectsLayer imports reanimated for its particle/glitch/glow effects;
-// a static import would crash Expo Router's lazy route load for creator-studio.
 let SkiaEffectsLayer: any = null;
 try {
   SkiaEffectsLayer = require('@/components/feature/SkiaEffectsLayer').default ?? null;
@@ -50,6 +44,10 @@ import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 
 const { width: W } = Dimensions.get('window');
 
+// Circular item dimensions
+const CIRCLE = 60;
+const RING   = CIRCLE + 6; // 66 — ring adds 3px gradient border on each side
+
 // ── Skia effects catalog ───────────────────────────────────────────────────────
 interface EffectDef { id: SkiaEffectId; name: string; emoji: string; gradient: [string, string] }
 
@@ -58,7 +56,7 @@ const SKIA_EFFECTS: EffectDef[] = [
   { id: 'cine',      name: 'Cine',       emoji: '🎬', gradient: ['#1A1A2E', '#333355'] },
   { id: 'frio',      name: 'Frío',       emoji: '🧊', gradient: ['#2D9EFF', '#7CC4FF'] },
   { id: 'calido',    name: 'Cálido',     emoji: '🌅', gradient: ['#FF9D00', '#FF5A00'] },
-  { id: 'bn',        name: 'B&N',        emoji: '⬛', gradient: ['#555', '#999'] },
+  { id: 'bn',        name: 'B&N',        emoji: '⬛', gradient: ['#555',    '#999'    ] },
   { id: 'neon',      name: 'Neón',       emoji: '🌈', gradient: ['#FF2D78', '#7C5CFF'] },
   { id: 'chromatic', name: 'Cromático',  emoji: '🔴', gradient: ['#FF0044', '#00FFCC'] },
   { id: 'particles', name: 'Partículas', emoji: '✨', gradient: ['#FFD700', '#FF9D00'] },
@@ -68,7 +66,43 @@ const SKIA_EFFECTS: EffectDef[] = [
   { id: 'glow',      name: 'Glow',       emoji: '💜', gradient: ['#7C5CFF', '#A855F7'] },
 ];
 
-// ── EffectsTab ────────────────────────────────────────────────────────────────
+// ── CircleItem ─────────────────────────────────────────────────────────────────
+interface CircleItemProps {
+  emoji:      string;
+  name:       string;
+  isActive:   boolean;
+  isLoading?: boolean;
+  gradient?:  [string, string];
+  onPress:    () => void;
+}
+
+function CircleItem({ emoji, name, isActive, isLoading = false, gradient, onPress }: CircleItemProps) {
+  const ringColors: [string, string] = gradient ?? ['#FF2D78', '#7C5CFF'];
+  return (
+    <Pressable onPress={onPress} style={s.circleWrap}>
+      {isActive ? (
+        <LinearGradient colors={ringColors} style={s.ring}>
+          <View style={s.circleInner}>
+            {isLoading
+              ? <ActivityIndicator size="small" color="#FF2D78" />
+              : <Text style={s.circleEmoji}>{emoji}</Text>}
+          </View>
+        </LinearGradient>
+      ) : (
+        <View style={s.circleOuter}>
+          {isLoading
+            ? <ActivityIndicator size="small" color="#FF2D78" />
+            : <Text style={s.circleEmoji}>{emoji}</Text>}
+        </View>
+      )}
+      <Text style={[s.circleLabel, isActive && s.circleLabelOn]} numberOfLines={1}>
+        {name}
+      </Text>
+    </Pressable>
+  );
+}
+
+// ── EffectsTab ─────────────────────────────────────────────────────────────────
 export function EffectsTab() {
   const { addVideo }  = useFeed();
   const { showAlert } = useAlert();
@@ -82,7 +116,7 @@ export function EffectsTab() {
   const deepARActive =
     typeof rawDeepARComponent === 'function' ||
     (
-      rawDeepARComponent &&
+      rawDeepARComponent !== null &&
       typeof rawDeepARComponent === 'object' &&
       typeof (rawDeepARComponent as any).render === 'function'
     );
@@ -90,25 +124,29 @@ export function EffectsTab() {
   const [skiaEffectId,    setSkiaEffectId]    = useState<SkiaEffectId>('none');
   const [deepARFilterId,  setDeepARFilterId]  = useState<string | null>(null);
   const [filterLoadState, setFilterLoadState] = useState<Record<string, string>>({});
-  const [camSize,         setCamSize]         = useState({ width: W, height: W * 1.22 });
+  const [camSize,         setCamSize]         = useState({ width: W, height: W * 1.2 });
   const [mode,            setMode]            = useState<'camera' | 'preview'>('camera');
   const [capturedUri,     setCapturedUri]     = useState<string | null>(null);
   const [isCapturing,     setIsCapturing]     = useState(false);
   const [isRecording,     setIsRecording]     = useState(false);
+  const [deepARCamReady,  setDeepARCamReady]  = useState(false);
 
   const shutterScale = useRef(new Animated.Value(1)).current;
-  const [deepARCamReady, setDeepARCamReady] = useState(false);
+
+  const handleContainerLayout = useCallback((e: any) => {
+    const { width, height } = e.nativeEvent.layout;
+    setCamSize(prev =>
+      prev.width === width && prev.height === height ? prev : { width, height }
+    );
+  }, []);
 
   useEffect(() => {
-    if (skiaEffectId === 'none') return;
-    console.log('[Skia] effect selected:', skiaEffectId, {
-      width: camSize.width,
-      height: camSize.height,
-      skiaLayerLoaded: SkiaEffectsLayer !== null,
-    });
+    if (skiaEffectId !== 'none') {
+      console.log('[Skia] effect selected:', skiaEffectId);
+    }
   }, [skiaEffectId]);
 
-  // ── Deep AR filter apply ─────────────────────────────────────────────────────
+  // ── DeepAR filter apply ───────────────────────────────────────────────────────
   const handleDeepARFilter = useCallback(async (filter: DeepARFilter) => {
     const deepARRef = cameraRef.current?.deepARRef;
     if (!deepARActive) {
@@ -119,7 +157,6 @@ export function EffectsTab() {
       console.log('[DeepAR] filter skipped — deepARRef missing');
       return;
     }
-
     if (deepARFilterId === filter.id) {
       clearDeepAREffect(deepARRef);
       setDeepARFilterId(null);
@@ -143,7 +180,7 @@ export function EffectsTab() {
     if (deepARFilterId && deepARRef) { clearDeepAREffect(deepARRef); setDeepARFilterId(null); }
   }, [deepARFilterId]);
 
-  // ── Capture ──────────────────────────────────────────────────────────────────
+  // ── Capture ───────────────────────────────────────────────────────────────────
   const capturePhoto = useCallback(async () => {
     if (isCapturing || isRecording || !cameraRef.current) return;
     setIsCapturing(true);
@@ -207,27 +244,16 @@ export function EffectsTab() {
     } catch (e: any) { showAlert('Error', e?.message || 'No se pudo publicar'); }
   }, [capturedUri, deepARFilterId, skiaEffectId, addVideo, showAlert, router]);
 
-  // ── Camera overlay (Skia + effect badge — only UIKit views, no GPU overlap) ──
+  // Skia overlay — only renders when DeepAR is not active on Metal
   const cameraOverlay = useMemo(() => (
-    <>
-      {skiaEffectId !== 'none' && (!deepARActive || !deepARCamReady) && SkiaEffectsLayer ? (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }} pointerEvents="none">
-          <SkiaEffectsLayer effectId={skiaEffectId} width={camSize.width} height={camSize.height} />
-        </View>
-      ) : null}
-      {(deepARFilterId || skiaEffectId !== 'none') ? (
-        <View style={s.effectBadge} pointerEvents="none">
-          <Text style={s.effectBadgeText}>
-            {deepARFilterId
-              ? `${DEEPAR_FILTERS.find(f => f.id === deepARFilterId)?.emoji} ${DEEPAR_FILTERS.find(f => f.id === deepARFilterId)?.name}`
-              : `${SKIA_EFFECTS.find(e => e.id === skiaEffectId)?.emoji} ${SKIA_EFFECTS.find(e => e.id === skiaEffectId)?.name}`}
-          </Text>
-        </View>
-      ) : null}
-    </>
-  ), [skiaEffectId, deepARFilterId, deepARActive, deepARCamReady, camSize]);
+    skiaEffectId !== 'none' && (!deepARActive || !deepARCamReady) && SkiaEffectsLayer ? (
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <SkiaEffectsLayer effectId={skiaEffectId} width={camSize.width} height={camSize.height} />
+      </View>
+    ) : null
+  ), [skiaEffectId, deepARActive, deepARCamReady, camSize]);
 
-  // ── Preview mode ─────────────────────────────────────────────────────────────
+  // ── Preview mode ──────────────────────────────────────────────────────────────
   if (mode === 'preview' && capturedUri) {
     const activeFilter = deepARFilterId
       ? DEEPAR_FILTERS.find(f => f.id === deepARFilterId)
@@ -236,7 +262,8 @@ export function EffectsTab() {
       <ScrollView showsVerticalScrollIndicator={false}
         contentContainerStyle={{ padding: 16, paddingBottom: 120, gap: 16 }}>
         <View style={[s.previewWrap, { width: W - 32, height: (W - 32) * 1.2 }]}>
-          <Image source={{ uri: capturedUri }} style={StyleSheet.absoluteFillObject} contentFit="cover" transition={200} />
+          <Image source={{ uri: capturedUri }} style={StyleSheet.absoluteFillObject}
+            contentFit="cover" transition={200} />
           <LinearGradient colors={['transparent', 'rgba(0,0,0,0.5)']} style={s.previewGrad} />
           {activeFilter ? (
             <View style={s.previewBadge}>
@@ -264,105 +291,127 @@ export function EffectsTab() {
     );
   }
 
-  const camH = W * 1.05;
-
+  // ── Camera view ───────────────────────────────────────────────────────────────
   return (
-    <View style={{ flex: 1 }}>
-      {/* Isolated CameraCore — no camera logic above this line */}
-      <CameraCore
-        ref={cameraRef}
-        height={camH}
-        overlay={cameraOverlay}
-        onDeepARReady={() => { setDeepARCamReady(true); log.deepar.info('Ready from CameraCore'); }}
-        onScreenshot={uri => { setCapturedUri(uri); setMode('preview'); setIsCapturing(false); }}
-        onVideoReady={uri  => { setCapturedUri(uri); setMode('preview'); setIsRecording(false); }}
-        onError={msg => showAlert('Error de cámara', msg)}
-      />
+    <View style={s.root}>
 
-      {/* ── Effects panel ──────────────────────────────────────────────────── */}
-      <View style={s.effectsPanel}>
+      {/* Camera + carousel overlays ─────────────────────────────────────────── */}
+      <View style={s.cameraContainer} onLayout={handleContainerLayout}>
 
-        {/* Section 1 — Efectos (GPU / Skia) */}
-        <View style={s.section}>
-          <Text style={s.sectionTitle}>Efectos</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}
-            contentContainerStyle={s.pillRow}>
-            {/* Normal / clear */}
-            <Pressable
-              style={[s.pill, (skiaEffectId === 'none' && !deepARFilterId) && s.pillActive]}
-              onPress={clearAllEffects}>
-              <Text style={s.pillEmoji}>📷</Text>
-              <Text style={[s.pillName, (skiaEffectId === 'none' && !deepARFilterId) && s.pillNameActive]}>
-                Normal
-              </Text>
-            </Pressable>
-            {/* Skia effects */}
-            {SKIA_EFFECTS.map(e => {
-              const active = skiaEffectId === e.id;
-              return (
-                <Pressable key={e.id}
-                  style={[s.pill, active && s.pillActive]}
+        <CameraCore
+          ref={cameraRef}
+          height={camSize.height}
+          overlay={cameraOverlay}
+          onDeepARReady={() => { setDeepARCamReady(true); log.deepar.info('Ready from CameraCore'); }}
+          onScreenshot={uri => { setCapturedUri(uri); setMode('preview'); setIsCapturing(false); }}
+          onVideoReady={uri  => { setCapturedUri(uri); setMode('preview'); setIsRecording(false); }}
+          onError={msg => showAlert('Error de cámara', msg)}
+        />
+
+        {/* Dark gradient at the bottom for carousel readability */}
+        <LinearGradient
+          colors={['transparent', 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.92)']}
+          locations={[0.25, 0.65, 1]}
+          style={s.scrim}
+          pointerEvents="none"
+        />
+
+        {/* ── Two carousels stacked above capture bar ──────────────────────── */}
+        <View style={s.carousels}>
+
+          {/* Efectos (Skia GPU filters) */}
+          <View style={s.carouselBlock}>
+            <Text style={s.carouselLabel}>Efectos</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={s.carouselContent}
+            >
+              {/* "Normal" clears all effects */}
+              <CircleItem
+                emoji="📷"
+                name="Normal"
+                isActive={skiaEffectId === 'none' && !deepARFilterId}
+                onPress={clearAllEffects}
+              />
+              {SKIA_EFFECTS.map(e => (
+                <CircleItem
+                  key={e.id}
+                  emoji={e.emoji}
+                  name={e.name}
+                  isActive={skiaEffectId === e.id}
+                  gradient={e.gradient as [string, string]}
                   onPress={() => {
-                    const deepARRef = cameraRef.current?.deepARRef;
-                    if (deepARActive && deepARCamReady && deepARFilterId && deepARRef) {
-                      clearDeepAREffect(deepARRef); setDeepARFilterId(null);
+                    const ref = cameraRef.current?.deepARRef;
+                    if (deepARActive && deepARCamReady && deepARFilterId && ref) {
+                      clearDeepAREffect(ref);
+                      setDeepARFilterId(null);
                     }
                     setSkiaEffectId(e.id);
-                  }}>
-                  <Text style={s.pillEmoji}>{e.emoji}</Text>
-                  <Text style={[s.pillName, active && s.pillNameActive]}>{e.name}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        </View>
-
-        <View style={s.sectionDivider} />
-
-        {/* Section 2 — Filtros AR (DeepAR) — always rendered */}
-        <View style={s.section}>
-          <Text style={s.sectionTitle}>Filtros AR</Text>
-          {deepARActive ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}
-              contentContainerStyle={s.pillRow}>
-              {DEEPAR_FILTERS.map(f => {
-                const loadState = filterLoadState[f.id] ?? 'idle';
-                const isActive  = deepARFilterId === f.id;
-                const isLoading = loadState === 'downloading' || loadState === 'applying';
-                return (
-                  <Pressable key={f.id}
-                    style={[s.pill, s.pillAR, isActive && s.pillARActive]}
-                    onPress={() => handleDeepARFilter(f)}
-                    disabled={isLoading}>
-                    {isLoading
-                      ? <ActivityIndicator size="small" color="#FF2D78"
-                          style={{ width: 16, height: 16 }} />
-                      : <Text style={s.pillEmoji}>{f.emoji}</Text>}
-                    <Text style={[s.pillName, isActive && s.pillNameARActive]}>{f.name}</Text>
-                  </Pressable>
-                );
-              })}
+                  }}
+                />
+              ))}
             </ScrollView>
-          ) : (
-            <View style={s.arPlaceholderRow}>
-              <Text style={s.arPlaceholderText}>No disponible en este dispositivo</Text>
-            </View>
-          )}
+          </View>
+
+          {/* Filtros AR (DeepAR) */}
+          <View style={s.carouselBlock}>
+            <Text style={s.carouselLabel}>Filtros AR</Text>
+            {deepARActive ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={s.carouselContent}
+              >
+                {DEEPAR_FILTERS.map(f => {
+                  const st        = filterLoadState[f.id] ?? 'idle';
+                  const isActive  = deepARFilterId === f.id;
+                  const isLoading = st === 'downloading' || st === 'applying';
+                  return (
+                    <CircleItem
+                      key={f.id}
+                      emoji={f.emoji}
+                      name={f.name}
+                      isActive={isActive}
+                      isLoading={isLoading}
+                      onPress={() => { if (!isLoading) handleDeepARFilter(f); }}
+                    />
+                  );
+                })}
+              </ScrollView>
+            ) : (
+              <View style={s.carouselContent}>
+                <Text style={s.unavailableText}>No disponible en este dispositivo</Text>
+              </View>
+            )}
+          </View>
+
         </View>
       </View>
 
-      {/* ── Capture controls ────────────────────────────────────────────────── */}
-      <View style={s.captureRow}>
+      {/* ── Capture bar ─────────────────────────────────────────────────────── */}
+      <View style={s.captureBar}>
+
         {/* Record */}
-        <Pressable style={[s.sideBtn, isRecording && s.sideBtnActive]} onPress={toggleRecord}>
-          <LinearGradient colors={isRecording ? ['#FF3B3B', '#CC1A1A'] : ['#333', '#222']} style={s.sideBtnInner}>
-            <MaterialCommunityIcons name={isRecording ? 'stop' : 'video-outline'} size={22} color="#fff" />
+        <Pressable onPress={toggleRecord} style={s.sideBtn}>
+          <LinearGradient
+            colors={isRecording ? ['#FF3B3B', '#CC1A1A'] : ['#2a2a2a', '#1a1a1a']}
+            style={s.sideBtnInner}
+          >
+            <MaterialCommunityIcons
+              name={isRecording ? 'stop' : 'video-outline'}
+              size={22} color="#fff"
+            />
           </LinearGradient>
         </Pressable>
 
         {/* Shutter */}
         <Animated.View style={{ transform: [{ scale: shutterScale }] }}>
-          <Pressable style={s.shutterOuter} onPress={capturePhoto} disabled={isCapturing || isRecording}>
+          <Pressable
+            style={s.shutterOuter}
+            onPress={capturePhoto}
+            disabled={isCapturing || isRecording}
+          >
             <LinearGradient colors={['#FF2D78', '#7C5CFF']} style={s.shutterInner}>
               {isCapturing
                 ? <ActivityIndicator color="#fff" size="small" />
@@ -372,62 +421,112 @@ export function EffectsTab() {
         </Animated.View>
 
         {/* Gallery */}
-        <Pressable style={s.sideBtn} onPress={pickFromGallery}>
-          <LinearGradient colors={['#333', '#222']} style={s.sideBtnInner}>
+        <Pressable onPress={pickFromGallery} style={s.sideBtn}>
+          <LinearGradient colors={['#2a2a2a', '#1a1a1a']} style={s.sideBtnInner}>
             <MaterialCommunityIcons name="image-outline" size={22} color="#fff" />
           </LinearGradient>
         </Pressable>
+
       </View>
     </View>
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+// ── Styles ─────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  // Camera overlay badge
-  effectBadge:       { position: 'absolute', top: 14, left: 12, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5, zIndex: 10 },
-  effectBadgeText:   { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
 
-  // ── Effects panel ──────────────────────────────────────────────────────────
-  effectsPanel:      { backgroundColor: Colors.bg, borderTopWidth: 1, borderTopColor: Colors.border },
-  section:           { paddingHorizontal: 12, paddingTop: 7, paddingBottom: 5 },
-  sectionTitle:      { color: Colors.textSubtle, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 1.4, textTransform: 'uppercase', marginBottom: 6 },
-  sectionDivider:    { height: 1, backgroundColor: Colors.border },
-  pillRow:           { flexDirection: 'row', gap: 6, alignItems: 'center', paddingRight: 12 },
+  // ── Root layout ──────────────────────────────────────────────────────────────
+  root:            { flex: 1, backgroundColor: '#000' },
+  cameraContainer: { flex: 1, overflow: 'hidden', backgroundColor: '#000' },
 
-  // Pills — GPU/Skia
-  pill:              { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 20, borderWidth: 1.5, borderColor: Colors.border, backgroundColor: 'rgba(255,255,255,0.04)' },
-  pillActive:        { borderColor: Colors.secondary, backgroundColor: Colors.secondaryDim },
-  pillEmoji:         { fontSize: 14 },
-  pillName:          { color: Colors.textSubtle, fontSize: 10, fontWeight: FontWeight.medium },
-  pillNameActive:    { color: '#fff' },
+  // ── Gradient scrim (bottom 270px of camera) ───────────────────────────────
+  scrim:           { position: 'absolute', left: 0, right: 0, bottom: 0, height: 270 },
 
-  // Pills — AR filters
-  pillAR:            { borderColor: 'rgba(255,45,120,0.2)' },
-  pillARActive:      { borderColor: '#FF2D78', backgroundColor: 'rgba(255,45,120,0.13)' },
-  pillNameARActive:  { color: '#FF2D78' },
+  // ── Carousel overlays ────────────────────────────────────────────────────────
+  carousels:       { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  carouselBlock:   { paddingTop: 4, paddingBottom: 4 },
+  carouselLabel:   {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 9,
+    fontWeight: FontWeight.bold,
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+    paddingHorizontal: 16,
+    marginBottom: 6,
+  },
+  carouselContent: { paddingHorizontal: 10, paddingBottom: 6 },
+  unavailableText: {
+    color: 'rgba(255,255,255,0.35)',
+    fontSize: 11,
+    fontStyle: 'italic',
+    paddingVertical: 10,
+  },
 
-  // AR section placeholder row (loading / unavailable)
-  arPlaceholderRow:  { flexDirection: 'row', alignItems: 'center', gap: 8, height: 30, paddingLeft: 2 },
-  arPlaceholderText: { color: Colors.textSubtle, fontSize: 11, fontStyle: 'italic' },
+  // ── Circular items ────────────────────────────────────────────────────────────
+  circleWrap:      { alignItems: 'center', marginHorizontal: 5, width: RING + 4 },
+  ring:            {
+    width: RING, height: RING, borderRadius: RING / 2,
+    padding: 3, alignItems: 'center', justifyContent: 'center',
+  },
+  circleInner:     {
+    width: CIRCLE, height: CIRCLE, borderRadius: CIRCLE / 2,
+    backgroundColor: '#0d0d0d',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  circleOuter:     {
+    width: CIRCLE, height: CIRCLE, borderRadius: CIRCLE / 2,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  circleEmoji:     { fontSize: 22 },
+  circleLabel:     {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 10,
+    fontWeight: FontWeight.medium,
+    marginTop: 5,
+    textAlign: 'center',
+  },
+  circleLabelOn:   { color: '#fff', fontWeight: FontWeight.semibold },
 
-  // ── Capture controls ───────────────────────────────────────────────────────
-  captureRow:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 10, backgroundColor: Colors.bg, paddingHorizontal: 16 },
-  shutterOuter:      { width: 74, height: 74, borderRadius: 37, borderWidth: 3, borderColor: Colors.secondary + '66', alignItems: 'center', justifyContent: 'center' },
-  shutterInner:      { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
-  sideBtn:           { width: 54, height: 54, borderRadius: 27, overflow: 'hidden' },
-  sideBtnActive:     {},
-  sideBtnInner:      { width: 54, height: 54, alignItems: 'center', justifyContent: 'center' },
+  // ── Capture bar ───────────────────────────────────────────────────────────────
+  captureBar:      {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    backgroundColor: '#000',
+  },
+  shutterOuter:    {
+    width: 74, height: 74, borderRadius: 37,
+    borderWidth: 3, borderColor: 'rgba(255,45,120,0.4)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  shutterInner:    {
+    width: 64, height: 64, borderRadius: 32,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  sideBtn:         { width: 52, height: 52, borderRadius: 26, overflow: 'hidden' },
+  sideBtnInner:    { width: 52, height: 52, alignItems: 'center', justifyContent: 'center' },
 
-  // ── Preview mode ───────────────────────────────────────────────────────────
-  previewWrap:       { borderRadius: Radius.xl, overflow: 'hidden', position: 'relative', alignSelf: 'center' },
-  previewGrad:       { position: 'absolute', bottom: 0, left: 0, right: 0, height: 80 },
-  previewBadge:      { position: 'absolute', bottom: 12, left: 12, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5 },
-  previewBadgeText:  { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
-  actionRow:         { flexDirection: 'row', gap: 10 },
-  actionBtn:         { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: Radius.lg, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
-  actionBtnText:     { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
-  publishBtn:        { flex: 2, borderRadius: Radius.lg, overflow: 'hidden' },
-  publishBtnGrad:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
-  publishBtnText:    { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
+  // ── Preview mode ──────────────────────────────────────────────────────────────
+  previewWrap:     { borderRadius: Radius.xl, overflow: 'hidden', position: 'relative', alignSelf: 'center' },
+  previewGrad:     { position: 'absolute', bottom: 0, left: 0, right: 0, height: 80 },
+  previewBadge:    {
+    position: 'absolute', bottom: 12, left: 12,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5,
+  },
+  previewBadgeText:{ color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
+  actionRow:       { flexDirection: 'row', gap: 10 },
+  actionBtn:       {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, paddingVertical: 14, borderRadius: Radius.lg,
+    backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border,
+  },
+  actionBtnText:   { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
+  publishBtn:      { flex: 2, borderRadius: Radius.lg, overflow: 'hidden' },
+  publishBtnGrad:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
+  publishBtnText:  { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
 });
