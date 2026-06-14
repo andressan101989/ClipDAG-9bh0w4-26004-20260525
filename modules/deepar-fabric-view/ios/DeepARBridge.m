@@ -88,11 +88,9 @@
   int h = (int)MAX(_renderView.bounds.size.height, 1.0);
   if ([_deepAR respondsToSelector:@selector(startVideoRecordingWithOutputWidth:outputHeight:)]) {
     [_deepAR startVideoRecordingWithOutputWidth:w outputHeight:h];
-  } else if ([_deepAR respondsToSelector:@selector(startVideoRecording)]) {
-    [_deepAR startVideoRecording];
   } else {
-    NSLog(@"[DeepARNativeCapture] no startVideoRecording selector found");
-    if (self.onCaptureError) self.onCaptureError(@"startVideoRecording unavailable");
+    NSLog(@"[DeepARNativeCapture] startVideoRecordingWithOutputWidth unavailable");
+    if (self.onCaptureError) self.onCaptureError(@"DeepAR video recording is not supported by this SDK bridge");
   }
 }
 
@@ -155,6 +153,13 @@
 
 - (void)didStartVideoRecording {
   NSLog(@"[DeepARNativeCapture] didStartVideoRecording");
+}
+
+- (void)recordingFailedWithError:(NSError *)error {
+  NSLog(@"[DeepARNativeCapture] recordingFailedWithError %@", error.localizedDescription);
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (self.onCaptureError) self.onCaptureError(error.localizedDescription ?: @"DeepAR video recording failed");
+  });
 }
 
 - (void)didFinishVideoRecording:(NSString *)videoFilePath {
