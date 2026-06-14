@@ -336,7 +336,7 @@ export function EffectsTab() {
           <>
             <View style={s.divider} />
             <Text style={s.sectionLabel}>
-              {deepARActive ? 'DEEPAR — Iniciando...' : 'DeepAR no disponible'}
+              {deepARActive ? (deepARCamReady ? 'DEEPAR — ACTIVO' : 'DEEPAR — INICIANDO...') : 'EXPO-CAM'}
             </Text>
           </>
         )}
