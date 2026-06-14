@@ -33,6 +33,18 @@ export default function DeepARModuleTestScreen() {
 
   return (
     <ScrollView style={s.root} contentContainerStyle={s.content}>
+      <Text style={s.title}>DeepARFabricView mount test</Text>
+      <DeepARFabricView
+        apiKey="test"
+        style={{
+          width: 320,
+          height: 320,
+          backgroundColor: 'black',
+          borderWidth: 2,
+          borderColor: '#00ff88',
+        }}
+      />
+
       <Text style={s.title}>Expo Module Registration Probe</Text>
       <Text style={s.subtitle}>Check Metro logs for [DeepARTestView] entries on load</Text>
 
@@ -68,12 +80,6 @@ export default function DeepARModuleTestScreen() {
         Open Metro / Xcode console and search for "[DeepARTestView]" to see raw proxy dump.
       </Text>
 
-      <Text style={s.sectionTitle}>DeepARFabricView native instantiation</Text>
-      <Text style={s.subtitle}>Watch Xcode console for [DeepARNative] logs</Text>
-      <DeepARFabricView
-        apiKey="test"
-        style={{ flex: 1, width: '100%', height: 300 }}
-      />
     </ScrollView>
   );
 }
