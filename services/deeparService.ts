@@ -463,13 +463,31 @@ export function getDeepARStatus() {
 // CAPTURE / RECORDING
 // ─────────────────────────────────────────────────────────────────────────────
 export function triggerDeepARScreenshot(deepARRef: React.MutableRefObject<any>) {
-  try { deepARRef?.current?.takeScreenshot?.(); } catch { /* ignore */ }
+  try {
+    const fn = deepARRef?.current?.takeScreenshot;
+    console.log('[DeepARCapture] triggerDeepARScreenshot method:', typeof fn);
+    fn?.();
+  } catch (e: any) {
+    console.log('[DeepARCapture] triggerDeepARScreenshot error:', e?.message ?? String(e));
+  }
 }
 export function startDeepARRecording(deepARRef: React.MutableRefObject<any>) {
-  try { deepARRef?.current?.startVideoRecording?.(); } catch { /* ignore */ }
+  try {
+    const fn = deepARRef?.current?.startVideoRecording;
+    console.log('[DeepARCapture] startDeepARRecording method:', typeof fn);
+    fn?.();
+  } catch (e: any) {
+    console.log('[DeepARCapture] startDeepARRecording error:', e?.message ?? String(e));
+  }
 }
 export function stopDeepARRecording(deepARRef: React.MutableRefObject<any>) {
-  try { deepARRef?.current?.finishVideoRecording?.(); } catch { /* ignore */ }
+  try {
+    const fn = deepARRef?.current?.finishVideoRecording;
+    console.log('[DeepARCapture] stopDeepARRecording method:', typeof fn);
+    fn?.();
+  } catch (e: any) {
+    console.log('[DeepARCapture] stopDeepARRecording error:', e?.message ?? String(e));
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -8,6 +8,12 @@ public final class DeepARFabricView: ExpoView {
   private var renderView: UIView?
   private var bridge: DeepARBridge?
 
+  let onInitialized = EventDispatcher()
+  let onCameraReady = EventDispatcher()
+  let onScreenshotTaken = EventDispatcher()
+  let onVideoRecordingFinished = EventDispatcher()
+  let onError = EventDispatcher()
+
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
     print("[DeepARNative] init")
@@ -74,6 +80,36 @@ public final class DeepARFabricView: ExpoView {
     bridge?.clearEffect()
   }
 
+  public func takeScreenshot() {
+    print("[DeepARNativeCapture] view takeScreenshot")
+    guard let bridge else {
+      print("[DeepARNativeCapture] view takeScreenshot SKIP - bridge nil")
+      onError(["message": "DeepAR not initialized", "isFatal": false])
+      return
+    }
+    bridge.takeScreenshot()
+  }
+
+  public func startVideoRecording() {
+    print("[DeepARNativeCapture] view startVideoRecording")
+    guard let bridge else {
+      print("[DeepARNativeCapture] view startVideoRecording SKIP - bridge nil")
+      onError(["message": "DeepAR not initialized", "isFatal": false])
+      return
+    }
+    bridge.startVideoRecording()
+  }
+
+  public func finishVideoRecording() {
+    print("[DeepARNativeCapture] view finishVideoRecording")
+    guard let bridge else {
+      print("[DeepARNativeCapture] view finishVideoRecording SKIP - bridge nil")
+      onError(["message": "DeepAR not initialized", "isFatal": false])
+      return
+    }
+    bridge.finishVideoRecording()
+  }
+
   private func initializeDeepARIfNeeded() {
     guard bridge == nil else {
       print("[DeepARNative] initializeDeepARIfNeeded skipped — bridge already exists")
@@ -104,6 +140,7 @@ public final class DeepARFabricView: ExpoView {
 
     print("[DeepARNative] create DeepAR")
     let bridge = DeepARBridge()
+    wireBridgeCallbacks(bridge)
 
     print("[DeepARNative] set license key prefix=\(apiKey.prefix(8))")
     print("[DeepARNative] initialize renderer")
@@ -130,6 +167,33 @@ public final class DeepARFabricView: ExpoView {
     self.bridge = bridge
 
     configureAudioSession()
+  }
+
+  private func wireBridgeCallbacks(_ bridge: DeepARBridge) {
+    bridge.onInitialized = { [weak self] in
+      guard let self else { return }
+      print("[DeepARNativeCapture] emit onInitialized")
+      self.onInitialized([:])
+      self.onCameraReady([:])
+    }
+
+    bridge.onScreenshotTaken = { [weak self] uri in
+      guard let self else { return }
+      print("[DeepARNativeCapture] emit onScreenshotTaken uri=\(uri)")
+      self.onScreenshotTaken(["uri": uri])
+    }
+
+    bridge.onVideoRecordingFinished = { [weak self] uri in
+      guard let self else { return }
+      print("[DeepARNativeCapture] emit onVideoRecordingFinished uri=\(uri)")
+      self.onVideoRecordingFinished(["uri": uri])
+    }
+
+    bridge.onCaptureError = { [weak self] message in
+      guard let self else { return }
+      print("[DeepARNativeCapture] emit onError message=\(message)")
+      self.onError(["message": message, "isFatal": false])
+    }
   }
 
   private func configureAudioSession() {
