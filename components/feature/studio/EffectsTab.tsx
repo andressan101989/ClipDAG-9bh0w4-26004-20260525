@@ -111,8 +111,12 @@ export function EffectsTab() {
   // ── Deep AR filter apply ─────────────────────────────────────────────────────
   const handleDeepARFilter = useCallback(async (filter: DeepARFilter) => {
     const deepARRef = cameraRef.current?.deepARRef;
-    if (!deepARActive || !deepARCamReady || !deepARRef?.current) {
-      showAlert('DeepAR no disponible', 'Usando cámara básica. Los filtros AR están desactivados.');
+    if (!deepARActive) {
+      showAlert('DeepAR no disponible', 'Los filtros AR no están disponibles en este dispositivo.');
+      return;
+    }
+    if (!deepARRef?.current) {
+      console.log('[DeepAR] filter skipped — deepARRef missing');
       return;
     }
 
@@ -131,7 +135,7 @@ export function EffectsTab() {
         setDeepARFilterId(prev => prev === filter.id ? null : prev);
       }
     });
-  }, [deepARActive, deepARCamReady, deepARFilterId, showAlert]);
+  }, [deepARActive, deepARFilterId, showAlert]);
 
   const clearAllEffects = useCallback(() => {
     const deepARRef = cameraRef.current?.deepARRef;
