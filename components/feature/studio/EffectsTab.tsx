@@ -318,7 +318,7 @@ export function EffectsTab() {
         {/* Section 2 — Filtros AR (DeepAR) — always rendered */}
         <View style={s.section}>
           <Text style={s.sectionTitle}>Filtros AR</Text>
-          {deepARActive && deepARCamReady ? (
+          {deepARActive ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false}
               contentContainerStyle={s.pillRow}>
               {DEEPAR_FILTERS.map(f => {
@@ -341,14 +341,7 @@ export function EffectsTab() {
             </ScrollView>
           ) : (
             <View style={s.arPlaceholderRow}>
-              {deepARActive ? (
-                <>
-                  <ActivityIndicator size="small" color="#FF2D78" />
-                  <Text style={s.arPlaceholderText}>Cargando filtros AR...</Text>
-                </>
-              ) : (
-                <Text style={s.arPlaceholderText}>No disponible en este dispositivo</Text>
-              )}
+              <Text style={s.arPlaceholderText}>No disponible en este dispositivo</Text>
             </View>
           )}
         </View>
