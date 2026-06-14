@@ -15,7 +15,7 @@ import {
   NativeModules, Platform, Pressable, ScrollView,
   StyleSheet, Text, View,
 } from 'react-native';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 import { DeepARTestViewRegistered } from 'deepar-test-view';
 import { DeepARFabricView, type DeepARFabricViewRef } from 'deepar-fabric-view';
