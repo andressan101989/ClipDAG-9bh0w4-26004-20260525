@@ -12,6 +12,7 @@ import { NativeModules, Platform, ScrollView, StyleSheet, Text, View } from 'rea
 
 // Importing deepar-test-view fires the top-level console.log in its src/index.ts
 import { DeepARTestViewRegistered } from 'deepar-test-view';
+import { DeepARFabricView } from 'deepar-fabric-view';
 
 function DiagRow({ label, value }: { label: string; value: string }) {
   return (
@@ -66,6 +67,13 @@ export default function DeepARModuleTestScreen() {
       <Text style={s.hint}>
         Open Metro / Xcode console and search for "[DeepARTestView]" to see raw proxy dump.
       </Text>
+
+      <Text style={s.sectionTitle}>DeepARFabricView native instantiation</Text>
+      <Text style={s.subtitle}>Watch Xcode console for [DeepARNative] logs</Text>
+      <DeepARFabricView
+        apiKey="test"
+        style={{ flex: 1, width: '100%', height: 300 }}
+      />
     </ScrollView>
   );
 }
