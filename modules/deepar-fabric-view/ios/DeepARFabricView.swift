@@ -23,6 +23,9 @@ public final class DeepARFabricView: ExpoView {
     super.layoutSubviews()
     print("[DeepARNative] layoutSubviews bounds=\(bounds)")
     renderView?.frame = bounds
+    if bounds.width > 0 && bounds.height > 0 {
+      initializeDeepARIfNeeded()
+    }
   }
 
   public override func didMoveToWindow() {
@@ -44,7 +47,9 @@ public final class DeepARFabricView: ExpoView {
     }
 
     self.apiKey = apiKey
-    initializeDeepARIfNeeded()
+    if bounds.width > 0 && bounds.height > 0 {
+      initializeDeepARIfNeeded()
+    }
   }
 
   public func setCameraPosition(_ cameraPosition: String) {
@@ -76,6 +81,10 @@ public final class DeepARFabricView: ExpoView {
     }
     guard !apiKey.isEmpty else {
       print("[DeepARNative] initializeDeepARIfNeeded skipped — apiKey empty")
+      return
+    }
+    guard bounds.width > 0 && bounds.height > 0 else {
+      print("[DeepARNative] initialize skipped — zero bounds")
       return
     }
 
