@@ -140,6 +140,7 @@ const originalResolver = config.resolver?.resolveRequest;
 
 config.resolver = {
   ...config.resolver,
+  assetExts: [...(config.resolver?.assetExts ?? []), 'deepar'],
   resolveRequest: (context, moduleName, platform) => {
     // 1. CJS aliases — redirect ESM builds with import.meta to their CJS equivalents
     if (CJS_ALIASES[moduleName]) {

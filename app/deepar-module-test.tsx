@@ -1,13 +1,12 @@
 /**
  * app/deepar-module-test.tsx
  *
- * Smoke test: does DeepARTestView appear in NativeUnimoduleProxy?
+ * Smoke test: Expo module registration + native view lifecycle + effect loading.
  *
- * If YES  → the deepar-fabric-view module structure is broken; migrate into clean module.
- * If NO   → Expo iOS module integration is broken globally.
- *
- * Note: no local .deepar effect files exist in this project.
- * Effect buttons download burning_effect from storage.deepar.ai (same CDN as production).
+ * assets/deepar/flower_crown.deepar is a 1-byte placeholder.
+ * DeepAR will fire onErrorWithCode (expected) — proving the full path-resolution
+ * chain works. Replace with a real .deepar from developer.deepar.ai to test
+ * actual effect loading.
  */
 
 import React, { useRef, useState, useCallback } from 'react';
@@ -15,19 +14,16 @@ import {
   NativeModules, Platform, Pressable, ScrollView,
   StyleSheet, Text, View,
 } from 'react-native';
+import { Asset } from 'expo-asset';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { DeepARTestViewRegistered } from 'deepar-test-view';
 import { DeepARFabricView, type DeepARFabricViewRef } from 'deepar-fabric-view';
 
 const API_KEY = 'd01f969cc04481c9949b9d678ff7b95ed55c9a34231af88d6510c12b1d311ea07dd0aba19fafcee1';
-// Match deeparService.ts exactly: mirror CDN is reliable; primary times out on device.
-const DEEPAR_CDN_PRIMARY = 'https://storage.deepar.ai/effects/';
-const DEEPAR_CDN_MIRROR  = 'https://betacoins.magix.net/public/deepar-filters/';
-const DOWNLOAD_TIMEOUT_MS = 15_000;
 
-// 3 small face effects from the production catalog — tried sequentially.
-const PROBE_EFFECTS = ['flower_crown', 'aviators', 'beard'] as const;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const FLOWER_CROWN_MODULE = require('../assets/deepar/flower_crown.deepar');
 
 function DiagRow({ label, value }: { label: string; value: string }) {
   return (
@@ -47,87 +43,52 @@ export default function DeepARModuleTestScreen() {
 
   const proxy = NativeModules.NativeUnimoduleProxy;
   const vmKeys: string[] = Object.keys(proxy?.viewManagersMetadata ?? {});
-  const testViewMeta  = proxy?.viewManagersMetadata?.DeepARTestView  ?? null;
+  const testViewMeta   = proxy?.viewManagersMetadata?.DeepARTestView   ?? null;
   const fabricViewMeta = proxy?.viewManagersMetadata?.DeepARFabricView ?? null;
 
   const loadEffect = useCallback(async () => {
-    // Match deeparService.ts: subdirectory + no extension, same as production.
-    const dir = FileSystem.cacheDirectory + 'deepar_filters/';
-    console.log('[EffectProbe] cacheDirectory:', FileSystem.cacheDirectory);
-    console.log('[EffectProbe] effectsDir:', dir);
-
     try {
-      await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-    } catch { /* already exists */ }
+      setStatus('resolving bundled asset…');
 
-    const withTimeout = (promise: Promise<any>) =>
-      Promise.race([
-        promise,
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`timed out after ${DOWNLOAD_TIMEOUT_MS / 1000}s`)),
-            DOWNLOAD_TIMEOUT_MS,
-          )
-        ),
-      ]);
+      const asset = Asset.fromModule(FLOWER_CROWN_MODULE);
+      await asset.downloadAsync();
 
-    const tryUrl = async (url: string, dest: string): Promise<number | null> => {
-      console.log('[EffectProbe] trying URL:', url);
-      try {
-        const result = await withTimeout(FileSystem.downloadAsync(url, dest));
-        console.log('[EffectProbe] HTTP status:', result.status);
-        console.log('[EffectProbe] localUri:', result.uri);
-        return result.status;
-      } catch (e: any) {
-        console.warn('[EffectProbe] URL failed:', url, e?.message ?? e);
-        return null;
-      }
-    };
+      console.log('[EffectProbe] asset uri:', asset.localUri);
 
-    for (const effectId of PROBE_EFFECTS) {
-      const dest = dir + effectId;
-      setStatus(`trying ${effectId}…`);
-
-      const cached = await FileSystem.getInfoAsync(dest, { size: true });
-      let ready = cached.exists && (cached.size ?? 0) >= 1024;
-
-      if (!ready) {
-        // Try primary CDN, then mirror — same order as production.
-        for (const base of [DEEPAR_CDN_PRIMARY, DEEPAR_CDN_MIRROR]) {
-          const httpStatus = await tryUrl(base + effectId, dest);
-          if (httpStatus === 200) { ready = true; break; }
-        }
-      } else {
-        console.log('[EffectProbe] cache hit:', effectId, 'size:', cached.size);
+      if (!asset.localUri) {
+        setStatus('❌ asset localUri is null');
+        return;
       }
 
-      if (!ready) {
-        console.warn('[EffectProbe] skipping', effectId, '— download failed on all CDNs');
-        setStatus(`❌ ${effectId} download failed — trying next…`);
-        continue;
-      }
+      // Copy to writable cache dir — expo-asset URIs may be read-only on iOS.
+      const dir  = FileSystem.cacheDirectory + 'deepar_filters/';
+      const dest = dir + 'flower_crown.deepar';
+      await FileSystem.makeDirectoryAsync(dir, { intermediates: true }).catch(() => {});
+      await FileSystem.copyAsync({ from: asset.localUri, to: dest });
 
       const fileInfo = await FileSystem.getInfoAsync(dest, { size: true });
-      console.log('[EffectProbe] downloaded size:', fileInfo.size ?? 0, 'bytes');
+      console.log('[EffectProbe] copied path:', dest);
+      console.log('[EffectProbe] file exists:', fileInfo.exists);
+      console.log('[EffectProbe] file size:',  fileInfo.size ?? 0, 'bytes');
 
-      if (!fileInfo.exists || (fileInfo.size ?? 0) < 1024) {
-        console.warn('[EffectProbe]', effectId, 'file invalid — size:', fileInfo.size);
-        setStatus(`❌ ${effectId} file invalid (${fileInfo.size ?? 0} bytes)`);
-        continue;
+      if (!fileInfo.exists) {
+        setStatus('❌ copy failed — file missing after copyAsync');
+        return;
       }
 
-      // Strip file:// — DeepAR SDK requires raw POSIX path (same as deeparService.ts).
+      // Strip file:// — DeepAR SDK requires raw POSIX path.
       const localPath = dest.replace('file://', '');
       setEffectPath(localPath);
 
       console.log('[EffectProbe] calling switchEffect path:', localPath);
-      setStatus(`calling switchEffect (${effectId})…`);
+      setStatus('calling switchEffect…');
       await deepARRef.current?.switchEffect(localPath);
-      setStatus(`✅ switchEffect called — ${effectId} — ${fileInfo.size} bytes`);
-      return;
+      setStatus(`✅ switchEffect called — ${fileInfo.size ?? 0} bytes — watch [DeepARNative] for result`);
+    } catch (e: any) {
+      const msg = e?.message ?? String(e);
+      console.warn('[EffectProbe] loadEffect error:', msg);
+      setStatus(`❌ ${msg}`);
     }
-
-    setStatus('❌ all 3 effects failed to download');
   }, []);
 
   const clearEffect = useCallback(async () => {
@@ -138,7 +99,7 @@ export default function DeepARModuleTestScreen() {
     } catch (e: any) {
       const msg = e?.message ?? String(e);
       console.warn('[EffectProbe] clearEffect error:', msg);
-      setStatus(`❌ error: ${msg}`);
+      setStatus(`❌ ${msg}`);
     }
   }, []);
 
@@ -146,7 +107,7 @@ export default function DeepARModuleTestScreen() {
     const state = {
       status,
       effectPath,
-      refPresent: !!deepARRef.current,
+      refPresent:     !!deepARRef.current,
       switchEffectFn: typeof deepARRef.current?.switchEffect,
       clearEffectFn:  typeof deepARRef.current?.clearEffect,
     };
@@ -172,24 +133,25 @@ export default function DeepARModuleTestScreen() {
       <View style={s.buttons}>
         <Pressable style={s.btn} onPress={loadEffect}>
           <Text style={s.btnText}>Load effect 1</Text>
-          <Text style={s.btnSub}>burning_effect (CDN)</Text>
+          <Text style={s.btnSub}>flower_crown (bundled)</Text>
         </Pressable>
         <Pressable style={[s.btn, s.btnAlt]} onPress={clearEffect}>
           <Text style={s.btnText}>Clear effect</Text>
         </Pressable>
         <Pressable style={[s.btn, s.btnLog]} onPress={logState}>
-          <Text style={s.btnText}>Log current test state</Text>
+          <Text style={s.btnText}>Log test state</Text>
         </Pressable>
       </View>
 
       <View style={s.section}>
-        <DiagRow label="Status" value={status} />
+        <DiagRow label="Status"      value={status} />
         <DiagRow label="Effect path" value={effectPath ? `…${effectPath.slice(-28)}` : 'none'} />
         <DiagRow label="Ref present" value={deepARRef.current ? '✅ yes' : '⏳ pending'} />
       </View>
 
       <Text style={s.hint}>
-        No local .deepar files in project — effect downloads from storage.deepar.ai on first press.
+        Bundled asset is a 1-byte placeholder — DeepAR will fire onErrorWithCode (expected).{'\n'}
+        Replace assets/deepar/flower_crown.deepar with a real .deepar to test effect loading.
       </Text>
 
       <Text style={s.title}>Expo Module Registration Probe</Text>
@@ -218,7 +180,7 @@ export default function DeepARModuleTestScreen() {
       </View>
 
       <Text style={s.hint}>
-        Open Metro / Xcode console and search for [DeepARNative] / [EffectProbe] logs.
+        Open Metro / Xcode console — search [DeepARNative] / [EffectProbe].
       </Text>
     </ScrollView>
   );
