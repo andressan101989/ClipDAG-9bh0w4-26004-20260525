@@ -21,9 +21,13 @@ import { DeepARTestViewRegistered } from 'deepar-test-view';
 import { DeepARFabricView, type DeepARFabricViewRef } from 'deepar-fabric-view';
 
 const API_KEY = 'd01f969cc04481c9949b9d678ff7b95ed55c9a34231af88d6510c12b1d311ea07dd0aba19fafcee1';
-const EFFECT_CDN = 'https://storage.deepar.ai/effects/';
-const EFFECT_ID  = 'burning_effect';
+// Match deeparService.ts exactly: mirror CDN is reliable; primary times out on device.
+const DEEPAR_CDN_PRIMARY = 'https://storage.deepar.ai/effects/';
+const DEEPAR_CDN_MIRROR  = 'http://betacoins.magix.net/public/deepar-filters/';
 const DOWNLOAD_TIMEOUT_MS = 15_000;
+
+// 3 small face effects from the production catalog — tried sequentially.
+const PROBE_EFFECTS = ['flower_crown', 'aviators', 'beard'] as const;
 
 function DiagRow({ label, value }: { label: string; value: string }) {
   return (
@@ -47,68 +51,83 @@ export default function DeepARModuleTestScreen() {
   const fabricViewMeta = proxy?.viewManagersMetadata?.DeepARFabricView ?? null;
 
   const loadEffect = useCallback(async () => {
+    // Match deeparService.ts: subdirectory + no extension, same as production.
+    const dir = FileSystem.cacheDirectory + 'deepar_filters/';
+    console.log('[EffectProbe] cacheDirectory:', FileSystem.cacheDirectory);
+    console.log('[EffectProbe] effectsDir:', dir);
+
     try {
-      const url = EFFECT_CDN + EFFECT_ID;
-      const dest = FileSystem.cacheDirectory + EFFECT_ID + '.deepar';
+      await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+    } catch { /* already exists */ }
 
-      console.log('[EffectProbe] cacheDirectory:', FileSystem.cacheDirectory);
-      console.log('[EffectProbe] download URL:', url);
-      console.log('[EffectProbe] destination:', dest);
+    const withTimeout = (promise: Promise<any>) =>
+      Promise.race([
+        promise,
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`timed out after ${DOWNLOAD_TIMEOUT_MS / 1000}s`)),
+            DOWNLOAD_TIMEOUT_MS,
+          )
+        ),
+      ]);
 
-      setStatus('checking cache…');
+    const tryUrl = async (url: string, dest: string): Promise<number | null> => {
+      console.log('[EffectProbe] trying URL:', url);
+      try {
+        const result = await withTimeout(FileSystem.downloadAsync(url, dest));
+        console.log('[EffectProbe] HTTP status:', result.status);
+        console.log('[EffectProbe] localUri:', result.uri);
+        return result.status;
+      } catch (e: any) {
+        console.warn('[EffectProbe] URL failed:', url, e?.message ?? e);
+        return null;
+      }
+    };
+
+    for (const effectId of PROBE_EFFECTS) {
+      const dest = dir + effectId;
+      setStatus(`trying ${effectId}…`);
+
       const cached = await FileSystem.getInfoAsync(dest, { size: true });
-      console.log('[EffectProbe] cache check:', JSON.stringify(cached));
+      let ready = cached.exists && (cached.size ?? 0) >= 1024;
 
-      if (!cached.exists || (cached.size ?? 0) < 1024) {
-        setStatus('downloading…');
-        console.log('[EffectProbe] starting download…');
-
-        const downloadResult = await Promise.race([
-          FileSystem.downloadAsync(url, dest),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`download timed out after ${DOWNLOAD_TIMEOUT_MS / 1000}s`)), DOWNLOAD_TIMEOUT_MS)
-          ),
-        ]);
-
-        console.log('[EffectProbe] download httpStatus:', downloadResult.status);
-        console.log('[EffectProbe] download localUri:', downloadResult.uri);
-
-        if (downloadResult.status !== 200) {
-          setStatus(`❌ HTTP ${downloadResult.status} from CDN`);
-          return;
+      if (!ready) {
+        // Try primary CDN, then mirror — same order as production.
+        for (const base of [DEEPAR_CDN_PRIMARY, DEEPAR_CDN_MIRROR]) {
+          const httpStatus = await tryUrl(base + effectId, dest);
+          if (httpStatus === 200) { ready = true; break; }
         }
       } else {
-        console.log('[EffectProbe] using cached file size:', cached.size);
-        setStatus('cache hit…');
+        console.log('[EffectProbe] cache hit:', effectId, 'size:', cached.size);
+      }
+
+      if (!ready) {
+        console.warn('[EffectProbe] skipping', effectId, '— download failed on all CDNs');
+        setStatus(`❌ ${effectId} download failed — trying next…`);
+        continue;
       }
 
       const fileInfo = await FileSystem.getInfoAsync(dest, { size: true });
-      console.log('[EffectProbe] post-download fileInfo:', JSON.stringify(fileInfo));
+      console.log('[EffectProbe] downloaded size:', fileInfo.size ?? 0, 'bytes');
 
-      if (!fileInfo.exists) {
-        setStatus('❌ file missing after download');
-        return;
-      }
-      const size = fileInfo.size ?? 0;
-      if (size < 1024) {
-        setStatus(`❌ file too small (${size} bytes) — likely HTML error page`);
-        return;
+      if (!fileInfo.exists || (fileInfo.size ?? 0) < 1024) {
+        console.warn('[EffectProbe]', effectId, 'file invalid — size:', fileInfo.size);
+        setStatus(`❌ ${effectId} file invalid (${fileInfo.size ?? 0} bytes)`);
+        continue;
       }
 
-      // Strip file:// prefix — DeepAR SDK needs a raw POSIX path
+      // Strip file:// — DeepAR SDK requires raw POSIX path (same as deeparService.ts).
       const localPath = dest.replace('file://', '');
       setEffectPath(localPath);
 
-      console.log('[EffectProbe] switchEffect path:', localPath);
-      console.log('[EffectProbe] file size:', size, 'bytes');
-      setStatus('calling switchEffect…');
+      console.log('[EffectProbe] calling switchEffect path:', localPath);
+      setStatus(`calling switchEffect (${effectId})…`);
       await deepARRef.current?.switchEffect(localPath);
-      setStatus(`✅ switchEffect called — ${size} bytes — …${localPath.slice(-28)}`);
-    } catch (e: any) {
-      const msg = e?.message ?? String(e);
-      console.warn('[EffectProbe] loadEffect error:', msg);
-      setStatus(`❌ ${msg}`);
+      setStatus(`✅ switchEffect called — ${effectId} — ${fileInfo.size} bytes`);
+      return;
     }
+
+    setStatus('❌ all 3 effects failed to download');
   }, []);
 
   const clearEffect = useCallback(async () => {
