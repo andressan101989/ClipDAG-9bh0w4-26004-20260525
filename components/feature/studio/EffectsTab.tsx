@@ -1,13 +1,16 @@
 /**
- * components/feature/studio/EffectsTab.tsx  — v3
+ * components/feature/studio/EffectsTab.tsx  — v4
  *
- * Instagram-style camera UI: full-screen camera, two circular carousels
- * overlaid at the bottom, clean centered capture bar.
+ * Capture fix rationale:
+ *   - takePhoto() with DeepAR resolves null immediately; the actual URI
+ *     arrives via onScreenshotTaken → onScreenshot prop callback.
+ *     We must NOT treat null as failure when isDeepAR is true.
+ *   - stopRecording() always resolves null for both DeepAR and expo-camera;
+ *     the video URI arrives via onVideoRecordingFinished → onVideoReady prop.
  *
- * Architecture unchanged from v2:
- *   - Camera logic entirely delegated to <CameraCore>
- *   - Effect selection, Skia overlay, DeepAR switching handled here
- *   - No imports from other studio tabs
+ * UI change:
+ *   - Single carousel + small segmented switch [Efectos | Filtros AR]
+ *     replaces the previous stacked two-row layout.
  */
 import React, {
   useState, useCallback, useRef, useEffect, useMemo,
@@ -34,19 +37,17 @@ import {
 import { log } from '@/services/logger';
 import type { SkiaEffectId } from '@/components/feature/SkiaEffectsLayer';
 
-// Lazy-load to keep react-native-reanimated out of the static module chain.
 let SkiaEffectsLayer: any = null;
 try {
   SkiaEffectsLayer = require('@/components/feature/SkiaEffectsLayer').default ?? null;
-} catch { /* reanimated not ready — effects degrade gracefully */ }
+} catch { /* reanimated not ready */ }
 import { CameraCore, type CameraCoreHandle } from './camera/CameraCore';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 
 const { width: W } = Dimensions.get('window');
 
-// Circular item dimensions
 const CIRCLE = 50;
-const RING   = CIRCLE + 6; // 56 — ring adds 3px gradient border on each side
+const RING   = CIRCLE + 6; // 56 — 3px gradient border each side
 
 // ── Skia effects catalog ───────────────────────────────────────────────────────
 interface EffectDef { id: SkiaEffectId; name: string; emoji: string; gradient: [string, string] }
@@ -130,6 +131,7 @@ export function EffectsTab() {
   const [isCapturing,     setIsCapturing]     = useState(false);
   const [isRecording,     setIsRecording]     = useState(false);
   const [deepARCamReady,  setDeepARCamReady]  = useState(false);
+  const [activeTab,       setActiveTab]       = useState<'efectos' | 'deepar'>('efectos');
 
   const shutterScale = useRef(new Animated.Value(1)).current;
 
@@ -163,7 +165,7 @@ export function EffectsTab() {
       setFilterLoadState(s => ({ ...s, [filter.id]: 'idle' }));
       return;
     }
-    setSkiaEffectId('none'); // Metal surface conflict
+    setSkiaEffectId('none');
     setDeepARFilterId(filter.id);
     await switchDeepAREffect(deepARRef, filter, (state, msg) => {
       setFilterLoadState(s => ({ ...s, [filter.id]: state }));
@@ -180,7 +182,10 @@ export function EffectsTab() {
     if (deepARFilterId && deepARRef) { clearDeepAREffect(deepARRef); setDeepARFilterId(null); }
   }, [deepARFilterId]);
 
-  // ── Capture ───────────────────────────────────────────────────────────────────
+  // ── Photo capture ─────────────────────────────────────────────────────────────
+  // IMPORTANT: takePhoto() returns null for DeepAR — the URI arrives async via
+  // onScreenshotTaken → onScreenshot prop. Only treat null as failure for
+  // expo-camera (non-DeepAR) path where the URI should be synchronous.
   const capturePhoto = useCallback(async () => {
     if (isCapturing || isRecording || !cameraRef.current) return;
     setIsCapturing(true);
@@ -188,21 +193,52 @@ export function EffectsTab() {
       Animated.spring(shutterScale, { toValue: 0.82, useNativeDriver: true }),
       Animated.spring(shutterScale, { toValue: 1,    useNativeDriver: true }),
     ]).start();
-    const uri = await cameraRef.current.takePhoto();
-    if (uri) { setCapturedUri(uri); setMode('preview'); }
-    else { showAlert('Error', 'No se pudo capturar la foto'); }
-    setIsCapturing(false);
+    try {
+      const uri = await cameraRef.current.takePhoto();
+      if (uri) {
+        // expo-camera path: URI returned synchronously
+        console.log('[CreatorCapture] photo captured:', uri);
+        setCapturedUri(uri);
+        setMode('preview');
+        setIsCapturing(false);
+      } else if (cameraRef.current.isDeepAR) {
+        // DeepAR path: URI arrives via onScreenshot callback — isCapturing is
+        // reset there, so we leave it true here to keep the shutter spinner.
+        console.log('[CreatorCapture] photo triggered — awaiting DeepAR screenshot callback');
+      } else {
+        console.log('[CreatorCapture] photo error: no URI returned from expo-camera');
+        showAlert('Error', 'No se pudo capturar la foto');
+        setIsCapturing(false);
+      }
+    } catch (e: any) {
+      console.log('[CreatorCapture] photo error:', e?.message ?? String(e));
+      showAlert('Error', 'No se pudo capturar la foto');
+      setIsCapturing(false);
+    }
   }, [isCapturing, isRecording, showAlert]);
 
+  // ── Video recording ───────────────────────────────────────────────────────────
+  // stopRecording() always resolves null. The actual URI arrives async via
+  // onVideoRecordingFinished → onVideoReady prop callback below.
   const toggleRecord = useCallback(async () => {
     if (!cameraRef.current) return;
     if (isRecording) {
       setIsRecording(false);
-      const uri = await cameraRef.current.stopRecording();
-      if (uri) { setCapturedUri(uri); setMode('preview'); }
+      try {
+        await cameraRef.current.stopRecording();
+        console.log('[CreatorCapture] recording stopped — awaiting video callback');
+      } catch (e: any) {
+        console.log('[CreatorCapture] video error:', e?.message ?? String(e));
+      }
     } else {
-      setIsRecording(true);
-      cameraRef.current.startRecording();
+      try {
+        setIsRecording(true);
+        cameraRef.current.startRecording();
+        console.log('[CreatorCapture] recording started');
+      } catch (e: any) {
+        console.log('[CreatorCapture] video error:', e?.message ?? String(e));
+        setIsRecording(false);
+      }
     }
   }, [isRecording]);
 
@@ -295,7 +331,7 @@ export function EffectsTab() {
   return (
     <View style={s.root}>
 
-      {/* Camera + carousel overlays ─────────────────────────────────────────── */}
+      {/* ── Camera + filter overlay ──────────────────────────────────────────── */}
       <View style={s.cameraContainer} onLayout={handleContainerLayout}>
 
         <CameraCore
@@ -303,96 +339,113 @@ export function EffectsTab() {
           height={camSize.height}
           overlay={cameraOverlay}
           onDeepARReady={() => { setDeepARCamReady(true); log.deepar.info('Ready from CameraCore'); }}
-          onScreenshot={uri => { setCapturedUri(uri); setMode('preview'); setIsCapturing(false); }}
-          onVideoReady={uri  => { setCapturedUri(uri); setMode('preview'); setIsRecording(false); }}
-          onError={msg => showAlert('Error de cámara', msg)}
+          onScreenshot={uri => {
+            console.log('[CreatorCapture] photo captured:', uri);
+            setCapturedUri(uri);
+            setMode('preview');
+            setIsCapturing(false);
+          }}
+          onVideoReady={uri => {
+            console.log('[CreatorCapture] recorded uri:', uri);
+            setCapturedUri(uri);
+            setMode('preview');
+            setIsRecording(false);
+          }}
+          onError={msg => {
+            console.log('[CreatorCapture] camera error:', msg);
+            showAlert('Error de cámara', msg);
+          }}
         />
 
-        {/* Dark gradient at the bottom for carousel readability */}
+        {/* Gradient scrim */}
         <LinearGradient
           colors={['transparent', 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.92)']}
-          locations={[0.25, 0.65, 1]}
+          locations={[0.3, 0.65, 1]}
           style={s.scrim}
           pointerEvents="none"
         />
 
-        {/* ── Two carousels stacked above capture bar ──────────────────────── */}
-        <View style={s.carousels}>
+        {/* ── Segmented switch + single carousel ───────────────────────────── */}
+        <View style={s.filterPanel}>
 
-          {/* Efectos (Skia GPU filters) */}
-          <View style={s.carouselBlock}>
-            <Text style={s.carouselLabel}>Efectos</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={s.carouselContent}
+          {/* Segmented tab */}
+          <View style={s.segBar}>
+            <Pressable
+              style={[s.seg, activeTab === 'efectos' && s.segActive]}
+              onPress={() => setActiveTab('efectos')}
             >
-              {/* "Normal" clears all effects */}
-              <CircleItem
-                emoji="📷"
-                name="Normal"
-                isActive={skiaEffectId === 'none' && !deepARFilterId}
-                onPress={clearAllEffects}
-              />
-              {SKIA_EFFECTS.map(e => (
-                <CircleItem
-                  key={e.id}
-                  emoji={e.emoji}
-                  name={e.name}
-                  isActive={skiaEffectId === e.id}
-                  gradient={e.gradient as [string, string]}
-                  onPress={() => {
-                    const ref = cameraRef.current?.deepARRef;
-                    if (deepARActive && deepARCamReady && deepARFilterId && ref) {
-                      clearDeepAREffect(ref);
-                      setDeepARFilterId(null);
-                    }
-                    setSkiaEffectId(e.id);
-                  }}
-                />
-              ))}
-            </ScrollView>
+              <Text style={[s.segText, activeTab === 'efectos' && s.segTextActive]}>Efectos</Text>
+            </Pressable>
+            <Pressable
+              style={[s.seg, activeTab === 'deepar' && s.segActive]}
+              onPress={() => setActiveTab('deepar')}
+            >
+              <Text style={[s.segText, activeTab === 'deepar' && s.segTextActive]}>Filtros AR</Text>
+            </Pressable>
           </View>
 
-          {/* Filtros AR (DeepAR) */}
-          <View style={s.carouselBlock}>
-            <Text style={s.carouselLabel}>Filtros AR</Text>
-            {deepARActive ? (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={s.carouselContent}
-              >
-                {DEEPAR_FILTERS.map(f => {
-                  const st        = filterLoadState[f.id] ?? 'idle';
-                  const isActive  = deepARFilterId === f.id;
-                  const isLoading = st === 'downloading' || st === 'applying';
-                  return (
-                    <CircleItem
-                      key={f.id}
-                      emoji={f.emoji}
-                      name={f.name}
-                      isActive={isActive}
-                      isLoading={isLoading}
-                      onPress={() => { if (!isLoading) handleDeepARFilter(f); }}
-                    />
-                  );
-                })}
-              </ScrollView>
+          {/* Single carousel — content switches with activeTab */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={s.carouselContent}
+            key={activeTab}
+          >
+            {activeTab === 'efectos' ? (
+              <>
+                <CircleItem
+                  emoji="📷"
+                  name="Normal"
+                  isActive={skiaEffectId === 'none' && !deepARFilterId}
+                  onPress={clearAllEffects}
+                />
+                {SKIA_EFFECTS.map(e => (
+                  <CircleItem
+                    key={e.id}
+                    emoji={e.emoji}
+                    name={e.name}
+                    isActive={skiaEffectId === e.id}
+                    gradient={e.gradient as [string, string]}
+                    onPress={() => {
+                      const ref = cameraRef.current?.deepARRef;
+                      if (deepARActive && deepARCamReady && deepARFilterId && ref) {
+                        clearDeepAREffect(ref);
+                        setDeepARFilterId(null);
+                      }
+                      setSkiaEffectId(e.id);
+                    }}
+                  />
+                ))}
+              </>
+            ) : deepARActive ? (
+              DEEPAR_FILTERS.map(f => {
+                const st        = filterLoadState[f.id] ?? 'idle';
+                const isActive  = deepARFilterId === f.id;
+                const isLoading = st === 'downloading' || st === 'applying';
+                return (
+                  <CircleItem
+                    key={f.id}
+                    emoji={f.emoji}
+                    name={f.name}
+                    isActive={isActive}
+                    isLoading={isLoading}
+                    onPress={() => { if (!isLoading) handleDeepARFilter(f); }}
+                  />
+                );
+              })
             ) : (
-              <View style={s.carouselContent}>
+              <View style={s.unavailableWrap}>
                 <Text style={s.unavailableText}>No disponible en este dispositivo</Text>
               </View>
             )}
-          </View>
+          </ScrollView>
 
         </View>
       </View>
 
-      {/* ── Capture bar ─────────────────────────────────────────────────────── */}
+      {/* ── Capture bar ──────────────────────────────────────────────────────── */}
       <View style={s.captureBar}>
 
-        {/* Record */}
         <Pressable onPress={toggleRecord} style={s.sideBtn}>
           <LinearGradient
             colors={isRecording ? ['#FF3B3B', '#CC1A1A'] : ['#2a2a2a', '#1a1a1a']}
@@ -405,7 +458,6 @@ export function EffectsTab() {
           </LinearGradient>
         </Pressable>
 
-        {/* Shutter */}
         <Animated.View style={{ transform: [{ scale: shutterScale }] }}>
           <Pressable
             style={s.shutterOuter}
@@ -420,7 +472,6 @@ export function EffectsTab() {
           </Pressable>
         </Animated.View>
 
-        {/* Gallery */}
         <Pressable onPress={pickFromGallery} style={s.sideBtn}>
           <LinearGradient colors={['#2a2a2a', '#1a1a1a']} style={s.sideBtnInner}>
             <MaterialCommunityIcons name="image-outline" size={22} color="#fff" />
@@ -439,28 +490,37 @@ const s = StyleSheet.create({
   root:            { flex: 1, backgroundColor: '#000' },
   cameraContainer: { flex: 1, overflow: 'hidden', backgroundColor: '#000' },
 
-  // ── Gradient scrim (bottom 200px of camera) ───────────────────────────────
-  scrim:           { position: 'absolute', left: 0, right: 0, bottom: 0, height: 200 },
+  // ── Gradient scrim ────────────────────────────────────────────────────────────
+  scrim:           { position: 'absolute', left: 0, right: 0, bottom: 0, height: 160 },
 
-  // ── Carousel overlays ────────────────────────────────────────────────────────
-  carousels:       { position: 'absolute', left: 0, right: 0, bottom: 0 },
-  carouselBlock:   { paddingTop: 2, paddingBottom: 2 },
-  carouselLabel:   {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 9,
-    fontWeight: FontWeight.bold,
-    letterSpacing: 1.4,
-    textTransform: 'uppercase',
-    paddingHorizontal: 16,
-    marginBottom: 4,
+  // ── Filter panel (segmented switch + carousel) ────────────────────────────────
+  filterPanel:     { position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: 6 },
+
+  // Segmented tab
+  segBar:          {
+    flexDirection: 'row',
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    padding: 2,
+    marginBottom: 8,
   },
-  carouselContent: { paddingHorizontal: 10, paddingBottom: 4 },
-  unavailableText: {
-    color: 'rgba(255,255,255,0.35)',
+  seg:             { paddingHorizontal: 18, paddingVertical: 5, borderRadius: 18 },
+  segActive:       { backgroundColor: 'rgba(255,255,255,0.92)' },
+  segText:         {
     fontSize: 11,
-    fontStyle: 'italic',
-    paddingVertical: 10,
+    fontWeight: FontWeight.semibold,
+    color: 'rgba(255,255,255,0.55)',
+    letterSpacing: 0.2,
   },
+  segTextActive:   { color: '#111' },
+
+  // Carousel
+  carouselContent: { paddingHorizontal: 10, paddingVertical: 4 },
+  unavailableWrap: { paddingHorizontal: 16, paddingVertical: 10, justifyContent: 'center' },
+  unavailableText: { color: 'rgba(255,255,255,0.35)', fontSize: 11, fontStyle: 'italic' },
 
   // ── Circular items ────────────────────────────────────────────────────────────
   circleWrap:      { alignItems: 'center', marginHorizontal: 4, width: RING + 4 },
