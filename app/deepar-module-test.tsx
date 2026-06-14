@@ -23,6 +23,7 @@ import { DeepARFabricView, type DeepARFabricViewRef } from 'deepar-fabric-view';
 const API_KEY = 'd01f969cc04481c9949b9d678ff7b95ed55c9a34231af88d6510c12b1d311ea07dd0aba19fafcee1';
 const EFFECT_CDN = 'https://storage.deepar.ai/effects/';
 const EFFECT_ID  = 'burning_effect';
+const DOWNLOAD_TIMEOUT_MS = 15_000;
 
 function DiagRow({ label, value }: { label: string; value: string }) {
   return (
@@ -47,36 +48,66 @@ export default function DeepARModuleTestScreen() {
 
   const loadEffect = useCallback(async () => {
     try {
-      setStatus('downloading…');
-      const dest = FileSystem.cacheDirectory + EFFECT_ID;
-      const info = await FileSystem.getInfoAsync(dest);
-      let localPath = dest;
-      if (!info.exists) {
-        const { status: httpStatus } = await FileSystem.downloadAsync(
-          EFFECT_CDN + EFFECT_ID,
-          dest
-        );
-        if (httpStatus !== 200) {
-          setStatus(`❌ download failed HTTP ${httpStatus}`);
+      const url = EFFECT_CDN + EFFECT_ID;
+      const dest = FileSystem.cacheDirectory + EFFECT_ID + '.deepar';
+
+      console.log('[EffectProbe] cacheDirectory:', FileSystem.cacheDirectory);
+      console.log('[EffectProbe] download URL:', url);
+      console.log('[EffectProbe] destination:', dest);
+
+      setStatus('checking cache…');
+      const cached = await FileSystem.getInfoAsync(dest, { size: true });
+      console.log('[EffectProbe] cache check:', JSON.stringify(cached));
+
+      if (!cached.exists || (cached.size ?? 0) < 1024) {
+        setStatus('downloading…');
+        console.log('[EffectProbe] starting download…');
+
+        const downloadResult = await Promise.race([
+          FileSystem.downloadAsync(url, dest),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`download timed out after ${DOWNLOAD_TIMEOUT_MS / 1000}s`)), DOWNLOAD_TIMEOUT_MS)
+          ),
+        ]);
+
+        console.log('[EffectProbe] download httpStatus:', downloadResult.status);
+        console.log('[EffectProbe] download localUri:', downloadResult.uri);
+
+        if (downloadResult.status !== 200) {
+          setStatus(`❌ HTTP ${downloadResult.status} from CDN`);
           return;
         }
+      } else {
+        console.log('[EffectProbe] using cached file size:', cached.size);
+        setStatus('cache hit…');
       }
-      const fileInfo = await FileSystem.getInfoAsync(dest);
-      if (!fileInfo.exists || (fileInfo.size ?? 0) < 64) {
-        setStatus('❌ downloaded file invalid (too small or missing)');
+
+      const fileInfo = await FileSystem.getInfoAsync(dest, { size: true });
+      console.log('[EffectProbe] post-download fileInfo:', JSON.stringify(fileInfo));
+
+      if (!fileInfo.exists) {
+        setStatus('❌ file missing after download');
         return;
       }
-      // expo-file-system URIs start with file:// — strip for native path
-      localPath = dest.replace('file://', '');
+      const size = fileInfo.size ?? 0;
+      if (size < 1024) {
+        setStatus(`❌ file too small (${size} bytes) — likely HTML error page`);
+        return;
+      }
+
+      // Strip file:// prefix — DeepAR SDK needs a raw POSIX path
+      const localPath = dest.replace('file://', '');
       setEffectPath(localPath);
-      setStatus(`calling switchEffect…`);
+
       console.log('[EffectProbe] switchEffect path:', localPath);
+      console.log('[EffectProbe] file size:', size, 'bytes');
+      setStatus('calling switchEffect…');
       await deepARRef.current?.switchEffect(localPath);
-      setStatus(`✅ switchEffect called — path: …${localPath.slice(-24)}`);
+      setStatus(`✅ switchEffect called — ${size} bytes — …${localPath.slice(-28)}`);
     } catch (e: any) {
       const msg = e?.message ?? String(e);
       console.warn('[EffectProbe] loadEffect error:', msg);
-      setStatus(`❌ error: ${msg}`);
+      setStatus(`❌ ${msg}`);
     }
   }, []);
 
