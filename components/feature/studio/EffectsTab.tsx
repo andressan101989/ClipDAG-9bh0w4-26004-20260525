@@ -45,8 +45,8 @@ import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 const { width: W } = Dimensions.get('window');
 
 // Circular item dimensions
-const CIRCLE = 60;
-const RING   = CIRCLE + 6; // 66 — ring adds 3px gradient border on each side
+const CIRCLE = 50;
+const RING   = CIRCLE + 6; // 56 — ring adds 3px gradient border on each side
 
 // ── Skia effects catalog ───────────────────────────────────────────────────────
 interface EffectDef { id: SkiaEffectId; name: string; emoji: string; gradient: [string, string] }
@@ -439,12 +439,12 @@ const s = StyleSheet.create({
   root:            { flex: 1, backgroundColor: '#000' },
   cameraContainer: { flex: 1, overflow: 'hidden', backgroundColor: '#000' },
 
-  // ── Gradient scrim (bottom 270px of camera) ───────────────────────────────
-  scrim:           { position: 'absolute', left: 0, right: 0, bottom: 0, height: 270 },
+  // ── Gradient scrim (bottom 200px of camera) ───────────────────────────────
+  scrim:           { position: 'absolute', left: 0, right: 0, bottom: 0, height: 200 },
 
   // ── Carousel overlays ────────────────────────────────────────────────────────
   carousels:       { position: 'absolute', left: 0, right: 0, bottom: 0 },
-  carouselBlock:   { paddingTop: 4, paddingBottom: 4 },
+  carouselBlock:   { paddingTop: 2, paddingBottom: 2 },
   carouselLabel:   {
     color: 'rgba(255,255,255,0.5)',
     fontSize: 9,
@@ -452,9 +452,9 @@ const s = StyleSheet.create({
     letterSpacing: 1.4,
     textTransform: 'uppercase',
     paddingHorizontal: 16,
-    marginBottom: 6,
+    marginBottom: 4,
   },
-  carouselContent: { paddingHorizontal: 10, paddingBottom: 6 },
+  carouselContent: { paddingHorizontal: 10, paddingBottom: 4 },
   unavailableText: {
     color: 'rgba(255,255,255,0.35)',
     fontSize: 11,
@@ -463,7 +463,7 @@ const s = StyleSheet.create({
   },
 
   // ── Circular items ────────────────────────────────────────────────────────────
-  circleWrap:      { alignItems: 'center', marginHorizontal: 5, width: RING + 4 },
+  circleWrap:      { alignItems: 'center', marginHorizontal: 4, width: RING + 4 },
   ring:            {
     width: RING, height: RING, borderRadius: RING / 2,
     padding: 3, alignItems: 'center', justifyContent: 'center',
@@ -479,12 +479,12 @@ const s = StyleSheet.create({
     borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.18)',
     alignItems: 'center', justifyContent: 'center',
   },
-  circleEmoji:     { fontSize: 22 },
+  circleEmoji:     { fontSize: 20 },
   circleLabel:     {
     color: 'rgba(255,255,255,0.5)',
     fontSize: 10,
     fontWeight: FontWeight.medium,
-    marginTop: 5,
+    marginTop: 3,
     textAlign: 'center',
   },
   circleLabelOn:   { color: '#fff', fontWeight: FontWeight.semibold },
