@@ -1,20 +1,12 @@
 /**
- * components/feature/studio/EffectsTab.tsx  — v2
+ * components/feature/studio/EffectsTab.tsx — v3
  *
- * Creator Studio Tab 1: AR Camera + Skia Effects + DeepAR
+ * Creator Studio: AR Camera + filter picker
  *
- * Architecture v2:
- *   - Camera logic entirely delegated to <CameraCore>
- *   - This component only manages: effect selection, overlay rendering, publish
- *   - Zero camera lifecycle code here
- *
- * Module boundary:
- *   - No imports from other studio tabs
- *   - DeepAR filter switching via deeparService (not inline)
- *   - Skia overlay applied via SkiaEffectsLayer
+ * UI: segmented switch [Efectos | Filtros AR] + one circular carousel row
  */
 import React, {
-  useState, useCallback, useRef, useEffect, useMemo,
+  useState, useCallback, useRef, useMemo,
 } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView,
@@ -38,19 +30,15 @@ import {
 import { log } from '@/services/logger';
 import type { SkiaEffectId } from '@/components/feature/SkiaEffectsLayer';
 
-// Lazy-load to keep react-native-reanimated out of the static module chain.
-// SkiaEffectsLayer imports reanimated for its particle/glitch/glow effects;
-// a static import would crash Expo Router's lazy route load for creator-studio.
 let SkiaEffectsLayer: any = null;
 try {
   SkiaEffectsLayer = require('@/components/feature/SkiaEffectsLayer').default ?? null;
-} catch { /* reanimated not ready — effects degrade gracefully */ }
+} catch { /* reanimated not ready */ }
 import { CameraCore, type CameraCoreHandle } from './camera/CameraCore';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 
 const { width: W } = Dimensions.get('window');
 
-// ── Skia effects catalog ───────────────────────────────────────────────────────
 interface EffectDef { id: SkiaEffectId; name: string; emoji: string; gradient: [string, string] }
 
 const SKIA_EFFECTS: EffectDef[] = [
@@ -68,7 +56,6 @@ const SKIA_EFFECTS: EffectDef[] = [
   { id: 'glow',      name: 'Glow',       emoji: '💜', gradient: ['#7C5CFF', '#A855F7'] },
 ];
 
-// ── EffectsTab ────────────────────────────────────────────────────────────────
 export function EffectsTab() {
   const { addVideo }  = useFeed();
   const { showAlert } = useAlert();
@@ -82,11 +69,12 @@ export function EffectsTab() {
   const deepARActive =
     typeof rawDeepARComponent === 'function' ||
     (
-      rawDeepARComponent &&
+      rawDeepARComponent !== null &&
       typeof rawDeepARComponent === 'object' &&
       typeof (rawDeepARComponent as any).render === 'function'
     );
 
+  const [activeTab,       setActiveTab]       = useState<'efectos' | 'ar'>('efectos');
   const [skiaEffectId,    setSkiaEffectId]    = useState<SkiaEffectId>('none');
   const [deepARFilterId,  setDeepARFilterId]  = useState<string | null>(null);
   const [filterLoadState, setFilterLoadState] = useState<Record<string, string>>({});
@@ -95,21 +83,12 @@ export function EffectsTab() {
   const [capturedUri,     setCapturedUri]     = useState<string | null>(null);
   const [isCapturing,     setIsCapturing]     = useState(false);
   const [isRecording,     setIsRecording]     = useState(false);
+  const [deepARCamReady,  setDeepARCamReady]  = useState(false);
 
   const shutterScale = useRef(new Animated.Value(1)).current;
-  const [deepARCamReady, setDeepARCamReady] = useState(false);
 
-  useEffect(() => {
-    if (skiaEffectId === 'none') return;
-    console.log('[Skia] effect selected:', skiaEffectId, {
-      width: camSize.width,
-      height: camSize.height,
-      skiaLayerLoaded: SkiaEffectsLayer !== null,
-    });
-  }, [skiaEffectId]);
-
-  // ── Deep AR filter apply ─────────────────────────────────────────────────────
   const handleDeepARFilter = useCallback(async (filter: DeepARFilter) => {
+    console.log('[CreatorFilters] selected AR filter:', filter.id);
     const deepARRef = cameraRef.current?.deepARRef;
     if (!deepARActive) {
       showAlert('DeepAR no disponible', 'Los filtros AR no están disponibles en este dispositivo.');
@@ -119,18 +98,18 @@ export function EffectsTab() {
       console.log('[DeepAR] filter skipped — deepARRef missing');
       return;
     }
-
     if (deepARFilterId === filter.id) {
       clearDeepAREffect(deepARRef);
       setDeepARFilterId(null);
       setFilterLoadState(s => ({ ...s, [filter.id]: 'idle' }));
       return;
     }
-    setSkiaEffectId('none'); // Metal surface conflict
+    setSkiaEffectId('none');
     setDeepARFilterId(filter.id);
     await switchDeepAREffect(deepARRef, filter, (state, msg) => {
       setFilterLoadState(s => ({ ...s, [filter.id]: state }));
       if (state === 'error') {
+        console.log('[CreatorFilters] error:', msg);
         showAlert('Error de filtro', msg ?? 'No se pudo cargar el filtro');
         setDeepARFilterId(prev => prev === filter.id ? null : prev);
       }
@@ -143,7 +122,6 @@ export function EffectsTab() {
     if (deepARFilterId && deepARRef) { clearDeepAREffect(deepARRef); setDeepARFilterId(null); }
   }, [deepARFilterId]);
 
-  // ── Capture ──────────────────────────────────────────────────────────────────
   const capturePhoto = useCallback(async () => {
     if (isCapturing || isRecording || !cameraRef.current) return;
     setIsCapturing(true);
@@ -207,7 +185,6 @@ export function EffectsTab() {
     } catch (e: any) { showAlert('Error', e?.message || 'No se pudo publicar'); }
   }, [capturedUri, deepARFilterId, skiaEffectId, addVideo, showAlert, router]);
 
-  // ── Camera overlay (Skia + effect badge — only UIKit views, no GPU overlap) ──
   const cameraOverlay = useMemo(() => (
     <>
       {skiaEffectId !== 'none' && (!deepARActive || !deepARCamReady) && SkiaEffectsLayer ? (
@@ -227,7 +204,6 @@ export function EffectsTab() {
     </>
   ), [skiaEffectId, deepARFilterId, deepARActive, deepARCamReady, camSize]);
 
-  // ── Preview mode ─────────────────────────────────────────────────────────────
   if (mode === 'preview' && capturedUri) {
     const activeFilter = deepARFilterId
       ? DEEPAR_FILTERS.find(f => f.id === deepARFilterId)
@@ -264,11 +240,11 @@ export function EffectsTab() {
     );
   }
 
-  const camH = W * 1.05;
+  const camH     = W * 1.05;
+  const isNormal = skiaEffectId === 'none' && !deepARFilterId;
 
   return (
     <View style={{ flex: 1 }}>
-      {/* Isolated CameraCore — no camera logic above this line */}
       <CameraCore
         ref={cameraRef}
         height={camH}
@@ -279,88 +255,87 @@ export function EffectsTab() {
         onError={msg => showAlert('Error de cámara', msg)}
       />
 
-      {/* ── Effects panel ──────────────────────────────────────────────────── */}
-      <View style={s.effectsPanel}>
+      {/* ── Filter picker panel ─────────────────────────────────────────────── */}
+      <View style={s.panel}>
 
-        {/* Section 1 — Efectos (GPU / Skia) */}
-        <View style={s.section}>
-          <Text style={s.sectionTitle}>Efectos</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}
-            contentContainerStyle={s.pillRow}>
-            {/* Normal / clear */}
-            <Pressable
-              style={[s.pill, (skiaEffectId === 'none' && !deepARFilterId) && s.pillActive]}
-              onPress={clearAllEffects}>
-              <Text style={s.pillEmoji}>📷</Text>
-              <Text style={[s.pillName, (skiaEffectId === 'none' && !deepARFilterId) && s.pillNameActive]}>
-                Normal
-              </Text>
-            </Pressable>
-            {/* Skia effects */}
-            {SKIA_EFFECTS.map(e => {
-              const active = skiaEffectId === e.id;
-              return (
-                <Pressable key={e.id}
-                  style={[s.pill, active && s.pillActive]}
-                  onPress={() => {
-                    const deepARRef = cameraRef.current?.deepARRef;
-                    if (deepARActive && deepARCamReady && deepARFilterId && deepARRef) {
-                      clearDeepAREffect(deepARRef); setDeepARFilterId(null);
-                    }
-                    setSkiaEffectId(e.id);
-                  }}>
-                  <Text style={s.pillEmoji}>{e.emoji}</Text>
-                  <Text style={[s.pillName, active && s.pillNameActive]}>{e.name}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
+        {/* Segmented switch */}
+        <View style={s.segmented}>
+          <Pressable
+            style={[s.segBtn, activeTab === 'efectos' && s.segBtnActive]}
+            onPress={() => setActiveTab('efectos')}>
+            <Text style={[s.segBtnText, activeTab === 'efectos' && s.segBtnTextActive]}>Efectos</Text>
+          </Pressable>
+          <Pressable
+            style={[s.segBtn, activeTab === 'ar' && s.segBtnActive]}
+            onPress={() => setActiveTab('ar')}>
+            <Text style={[s.segBtnText, activeTab === 'ar' && s.segBtnTextActive]}>Filtros AR</Text>
+          </Pressable>
         </View>
 
-        <View style={s.sectionDivider} />
-
-        {/* Section 2 — Filtros AR (DeepAR) — always rendered */}
-        <View style={s.section}>
-          <Text style={s.sectionTitle}>Filtros AR</Text>
-          {deepARActive ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}
-              contentContainerStyle={s.pillRow}>
+        {/* Single circular carousel */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={s.carouselRow}>
+          {activeTab === 'efectos' ? (
+            <>
+              <Pressable style={s.circItem} onPress={clearAllEffects}>
+                <View style={[s.circIcon, isNormal && s.circIconSkiaActive]}>
+                  <Text style={s.circEmoji}>📷</Text>
+                </View>
+                <Text style={[s.circName, isNormal && s.circNameSkiaActive]}>Normal</Text>
+              </Pressable>
+              {SKIA_EFFECTS.map(e => {
+                const active = skiaEffectId === e.id;
+                return (
+                  <Pressable key={e.id} style={s.circItem}
+                    onPress={() => {
+                      const deepARRef = cameraRef.current?.deepARRef;
+                      if (deepARActive && deepARCamReady && deepARFilterId && deepARRef) {
+                        clearDeepAREffect(deepARRef); setDeepARFilterId(null);
+                      }
+                      setSkiaEffectId(e.id);
+                    }}>
+                    <View style={[s.circIcon, active && s.circIconSkiaActive]}>
+                      <Text style={s.circEmoji}>{e.emoji}</Text>
+                    </View>
+                    <Text style={[s.circName, active && s.circNameSkiaActive]}>{e.name}</Text>
+                  </Pressable>
+                );
+              })}
+            </>
+          ) : (
+            <>
               {DEEPAR_FILTERS.map(f => {
                 const loadState = filterLoadState[f.id] ?? 'idle';
                 const isActive  = deepARFilterId === f.id;
                 const isLoading = loadState === 'downloading' || loadState === 'applying';
                 return (
-                  <Pressable key={f.id}
-                    style={[s.pill, s.pillAR, isActive && s.pillARActive]}
+                  <Pressable key={f.id} style={s.circItem}
                     onPress={() => handleDeepARFilter(f)}
                     disabled={isLoading}>
-                    {isLoading
-                      ? <ActivityIndicator size="small" color="#FF2D78"
-                          style={{ width: 16, height: 16 }} />
-                      : <Text style={s.pillEmoji}>{f.emoji}</Text>}
-                    <Text style={[s.pillName, isActive && s.pillNameARActive]}>{f.name}</Text>
+                    <View style={[s.circIcon, isActive && s.circIconARActive]}>
+                      {isLoading
+                        ? <ActivityIndicator size="small" color="#FF2D78" />
+                        : <Text style={s.circEmoji}>{f.emoji}</Text>}
+                    </View>
+                    <Text style={[s.circName, isActive && s.circNameARActive]}>{f.name}</Text>
                   </Pressable>
                 );
               })}
-            </ScrollView>
-          ) : (
-            <View style={s.arPlaceholderRow}>
-              <Text style={s.arPlaceholderText}>No disponible en este dispositivo</Text>
-            </View>
+            </>
           )}
-        </View>
+        </ScrollView>
       </View>
 
       {/* ── Capture controls ────────────────────────────────────────────────── */}
       <View style={s.captureRow}>
-        {/* Record */}
         <Pressable style={[s.sideBtn, isRecording && s.sideBtnActive]} onPress={toggleRecord}>
           <LinearGradient colors={isRecording ? ['#FF3B3B', '#CC1A1A'] : ['#333', '#222']} style={s.sideBtnInner}>
             <MaterialCommunityIcons name={isRecording ? 'stop' : 'video-outline'} size={22} color="#fff" />
           </LinearGradient>
         </Pressable>
 
-        {/* Shutter */}
         <Animated.View style={{ transform: [{ scale: shutterScale }] }}>
           <Pressable style={s.shutterOuter} onPress={capturePhoto} disabled={isCapturing || isRecording}>
             <LinearGradient colors={['#FF2D78', '#7C5CFF']} style={s.shutterInner}>
@@ -371,7 +346,6 @@ export function EffectsTab() {
           </Pressable>
         </Animated.View>
 
-        {/* Gallery */}
         <Pressable style={s.sideBtn} onPress={pickFromGallery}>
           <LinearGradient colors={['#333', '#222']} style={s.sideBtnInner}>
             <MaterialCommunityIcons name="image-outline" size={22} color="#fff" />
@@ -385,49 +359,47 @@ export function EffectsTab() {
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   // Camera overlay badge
-  effectBadge:       { position: 'absolute', top: 14, left: 12, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5, zIndex: 10 },
-  effectBadgeText:   { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
+  effectBadge:          { position: 'absolute', top: 14, left: 12, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5, zIndex: 10 },
+  effectBadgeText:      { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
 
-  // ── Effects panel ──────────────────────────────────────────────────────────
-  effectsPanel:      { backgroundColor: Colors.bg, borderTopWidth: 1, borderTopColor: Colors.border },
-  section:           { paddingHorizontal: 12, paddingTop: 7, paddingBottom: 5 },
-  sectionTitle:      { color: Colors.textSubtle, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 1.4, textTransform: 'uppercase', marginBottom: 6 },
-  sectionDivider:    { height: 1, backgroundColor: Colors.border },
-  pillRow:           { flexDirection: 'row', gap: 6, alignItems: 'center', paddingRight: 12 },
+  // Filter picker panel
+  panel:                { backgroundColor: Colors.bg, borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: 8, paddingBottom: 6 },
 
-  // Pills — GPU/Skia
-  pill:              { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 20, borderWidth: 1.5, borderColor: Colors.border, backgroundColor: 'rgba(255,255,255,0.04)' },
-  pillActive:        { borderColor: Colors.secondary, backgroundColor: Colors.secondaryDim },
-  pillEmoji:         { fontSize: 14 },
-  pillName:          { color: Colors.textSubtle, fontSize: 10, fontWeight: FontWeight.medium },
-  pillNameActive:    { color: '#fff' },
+  // Segmented switch
+  segmented:            { flexDirection: 'row', marginHorizontal: 12, marginBottom: 8, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: 2 },
+  segBtn:               { flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 8 },
+  segBtnActive:         { backgroundColor: 'rgba(255,255,255,0.13)' },
+  segBtnText:           { color: Colors.textSubtle, fontSize: 12, fontWeight: FontWeight.semibold },
+  segBtnTextActive:     { color: '#fff' },
 
-  // Pills — AR filters
-  pillAR:            { borderColor: 'rgba(255,45,120,0.2)' },
-  pillARActive:      { borderColor: '#FF2D78', backgroundColor: 'rgba(255,45,120,0.13)' },
-  pillNameARActive:  { color: '#FF2D78' },
+  // Circular carousel
+  carouselRow:          { flexDirection: 'row', gap: 10, paddingHorizontal: 12, alignItems: 'flex-start', paddingBottom: 2 },
+  circItem:             { alignItems: 'center', gap: 4, width: 58 },
+  circIcon:             { width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'transparent' },
+  circIconSkiaActive:   { borderColor: Colors.secondary, backgroundColor: Colors.secondaryDim },
+  circIconARActive:     { borderColor: '#FF2D78', backgroundColor: 'rgba(255,45,120,0.13)' },
+  circEmoji:            { fontSize: 20 },
+  circName:             { color: Colors.textSubtle, fontSize: 9, textAlign: 'center', fontWeight: FontWeight.medium },
+  circNameSkiaActive:   { color: '#fff' },
+  circNameARActive:     { color: '#FF2D78' },
 
-  // AR section placeholder row (loading / unavailable)
-  arPlaceholderRow:  { flexDirection: 'row', alignItems: 'center', gap: 8, height: 30, paddingLeft: 2 },
-  arPlaceholderText: { color: Colors.textSubtle, fontSize: 11, fontStyle: 'italic' },
+  // Capture controls
+  captureRow:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 10, backgroundColor: Colors.bg, paddingHorizontal: 16 },
+  shutterOuter:         { width: 74, height: 74, borderRadius: 37, borderWidth: 3, borderColor: Colors.secondary + '66', alignItems: 'center', justifyContent: 'center' },
+  shutterInner:         { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
+  sideBtn:              { width: 54, height: 54, borderRadius: 27, overflow: 'hidden' },
+  sideBtnActive:        {},
+  sideBtnInner:         { width: 54, height: 54, alignItems: 'center', justifyContent: 'center' },
 
-  // ── Capture controls ───────────────────────────────────────────────────────
-  captureRow:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 10, backgroundColor: Colors.bg, paddingHorizontal: 16 },
-  shutterOuter:      { width: 74, height: 74, borderRadius: 37, borderWidth: 3, borderColor: Colors.secondary + '66', alignItems: 'center', justifyContent: 'center' },
-  shutterInner:      { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
-  sideBtn:           { width: 54, height: 54, borderRadius: 27, overflow: 'hidden' },
-  sideBtnActive:     {},
-  sideBtnInner:      { width: 54, height: 54, alignItems: 'center', justifyContent: 'center' },
-
-  // ── Preview mode ───────────────────────────────────────────────────────────
-  previewWrap:       { borderRadius: Radius.xl, overflow: 'hidden', position: 'relative', alignSelf: 'center' },
-  previewGrad:       { position: 'absolute', bottom: 0, left: 0, right: 0, height: 80 },
-  previewBadge:      { position: 'absolute', bottom: 12, left: 12, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5 },
-  previewBadgeText:  { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
-  actionRow:         { flexDirection: 'row', gap: 10 },
-  actionBtn:         { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: Radius.lg, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
-  actionBtnText:     { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
-  publishBtn:        { flex: 2, borderRadius: Radius.lg, overflow: 'hidden' },
-  publishBtnGrad:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
-  publishBtnText:    { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
+  // Preview mode
+  previewWrap:          { borderRadius: Radius.xl, overflow: 'hidden', position: 'relative', alignSelf: 'center' },
+  previewGrad:          { position: 'absolute', bottom: 0, left: 0, right: 0, height: 80 },
+  previewBadge:         { position: 'absolute', bottom: 12, left: 12, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5 },
+  previewBadgeText:     { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
+  actionRow:            { flexDirection: 'row', gap: 10 },
+  actionBtn:            { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: Radius.lg, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
+  actionBtnText:        { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
+  publishBtn:           { flex: 2, borderRadius: Radius.lg, overflow: 'hidden' },
+  publishBtnGrad:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
+  publishBtnText:       { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
 });
