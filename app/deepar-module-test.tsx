@@ -23,7 +23,7 @@ import { DeepARFabricView, type DeepARFabricViewRef } from 'deepar-fabric-view';
 const API_KEY = 'd01f969cc04481c9949b9d678ff7b95ed55c9a34231af88d6510c12b1d311ea07dd0aba19fafcee1';
 // Match deeparService.ts exactly: mirror CDN is reliable; primary times out on device.
 const DEEPAR_CDN_PRIMARY = 'https://storage.deepar.ai/effects/';
-const DEEPAR_CDN_MIRROR  = 'http://betacoins.magix.net/public/deepar-filters/';
+const DEEPAR_CDN_MIRROR  = 'https://betacoins.magix.net/public/deepar-filters/';
 const DOWNLOAD_TIMEOUT_MS = 15_000;
 
 // 3 small face effects from the production catalog — tried sequentially.
