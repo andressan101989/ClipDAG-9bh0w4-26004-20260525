@@ -35,7 +35,7 @@ export default function DeepARModuleTestScreen() {
     <ScrollView style={s.root} contentContainerStyle={s.content}>
       <Text style={s.title}>DeepARFabricView mount test</Text>
       <DeepARFabricView
-        apiKey="test"
+        apiKey="d01f969cc04481c9949b9d678ff7b95ed55c9a34231af88d6510c12b1d311ea07dd0aba19fafcee1"
         style={{
           width: 320,
           height: 320,
