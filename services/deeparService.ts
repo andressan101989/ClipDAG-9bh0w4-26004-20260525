@@ -134,7 +134,7 @@ export const isDeepARAvailable = (): boolean => {
 // Lazy-required to avoid native module crash during JS bundle evaluation
 // (same reason as the DeepAR require above).
 let _FileSystem: any = null;
-try { _FileSystem = require('expo-file-system'); } catch { /* not available on web */ }
+try { _FileSystem = require('expo-file-system/legacy'); } catch { /* not available on web */ }
 const hasFileSystem = typeof _FileSystem?.downloadAsync === 'function';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -246,19 +246,21 @@ export async function getLocalFilterPath(filter: DeepARFilter): Promise<string |
   downloadingIds.add(filter.id);
   try {
     // Try bundled asset first (no network required)
-    if (filter.localModule !== undefined && _FileSystem) {
+    if (filter.localModule !== undefined) {
       try {
         const { Asset } = require('expo-asset');
         const asset = Asset.fromModule(filter.localModule);
-        await asset.downloadAsync();
+        // In a native EAS build the asset is already embedded — localUri is populated
+        // without downloadAsync. Only call it in dev where the asset server is needed.
+        if (!asset.localUri) {
+          await asset.downloadAsync();
+        }
         if (asset.localUri) {
           const rawPath = (asset.localUri as string).replace(/^file:\/\//, '');
-          const info = await _FileSystem.getInfoAsync(asset.localUri, { size: true }).catch(() => null);
-          if (info?.exists && (info as any).size > 64) {
-            console.log(`[DeepAR] bundled asset resolved: ${filter.id} → ${rawPath}`);
-            pathCache[filter.id] = rawPath;
-            return rawPath;
-          }
+          console.log(`[DeepAR] bundled asset resolved: ${filter.id} → ${rawPath}`);
+          console.log(`[DeepAR] applying local filter path: ${rawPath}`);
+          pathCache[filter.id] = rawPath;
+          return rawPath;
         }
       } catch (e: any) {
         console.warn('[DeepAR] bundled asset load failed, falling back to remote:', e?.message);
