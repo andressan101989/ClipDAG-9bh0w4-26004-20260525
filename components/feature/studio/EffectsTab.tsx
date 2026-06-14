@@ -260,7 +260,7 @@ export function EffectsTab() {
     );
   }
 
-  const camH = W * 1.22;
+  const camH = W * 1.05;
 
   return (
     <View style={{ flex: 1 }}>
@@ -275,67 +275,86 @@ export function EffectsTab() {
         onError={msg => showAlert('Error de cámara', msg)}
       />
 
-      {/* Effects selector */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}
-        style={s.filterScrollWrap}
-        contentContainerStyle={s.filterStrip}>
+      {/* ── Effects panel ──────────────────────────────────────────────────── */}
+      <View style={s.effectsPanel}>
 
-        {/* None */}
-        <Pressable style={[s.chip, (skiaEffectId === 'none' && !deepARFilterId) && s.chipActive]}
-          onPress={clearAllEffects}>
-          <View style={[s.chipGrad, { backgroundColor: '#1A1A2E', borderRadius: 21 }]} />
-          <Text style={s.chipEmoji}>📷</Text>
-          <Text style={[s.chipName, (skiaEffectId === 'none' && !deepARFilterId) && { color: '#fff' }]}>Normal</Text>
-          {(skiaEffectId === 'none' && !deepARFilterId) ? <View style={s.chipDot} /> : null}
-        </Pressable>
-
-        {/* Skia effects */}
-        <Text style={s.sectionLabel}>GPU</Text>
-        {SKIA_EFFECTS.map(e => (
-          <Pressable key={e.id} style={[s.chip, skiaEffectId === e.id && s.chipActive]}
-            onPress={() => {
-              const deepARRef = cameraRef.current?.deepARRef;
-              if (deepARActive && deepARCamReady && deepARFilterId && deepARRef) {
-                clearDeepAREffect(deepARRef); setDeepARFilterId(null);
-              }
-              setSkiaEffectId(e.id);
-            }}>
-            <LinearGradient colors={e.gradient} style={s.chipGrad} />
-            <Text style={s.chipEmoji}>{e.emoji}</Text>
-            <Text style={[s.chipName, skiaEffectId === e.id && { color: '#fff' }]}>{e.name}</Text>
-            {skiaEffectId === e.id ? <View style={s.chipDot} /> : null}
-          </Pressable>
-        ))}
-
-        {/* DeepAR filters */}
-        {deepARActive && deepARCamReady ? (
-          <>
-            <View style={s.divider} />
-            <Text style={s.sectionLabel}>Filtros AR</Text>
-            {DEEPAR_FILTERS.map(f => {
-              const loadState = filterLoadState[f.id] ?? 'idle';
-              const isActive  = deepARFilterId === f.id;
-              const isLoading = loadState === 'downloading' || loadState === 'applying';
+        {/* Section 1 — Efectos (GPU / Skia) */}
+        <View style={s.section}>
+          <Text style={s.sectionTitle}>Efectos</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}
+            contentContainerStyle={s.pillRow}>
+            {/* Normal / clear */}
+            <Pressable
+              style={[s.pill, (skiaEffectId === 'none' && !deepARFilterId) && s.pillActive]}
+              onPress={clearAllEffects}>
+              <Text style={s.pillEmoji}>📷</Text>
+              <Text style={[s.pillName, (skiaEffectId === 'none' && !deepARFilterId) && s.pillNameActive]}>
+                Normal
+              </Text>
+            </Pressable>
+            {/* Skia effects */}
+            {SKIA_EFFECTS.map(e => {
+              const active = skiaEffectId === e.id;
               return (
-                <Pressable key={f.id}
-                  style={[s.chip, isActive && s.chipDeepARActive]}
-                  onPress={() => handleDeepARFilter(f)}
-                  disabled={isLoading}>
-                  <LinearGradient colors={['#FF2D7844', '#7C5CFF44']} style={s.chipGrad} />
-                  {isLoading
-                    ? <ActivityIndicator size="small" color="#FF2D78" style={{ position: 'absolute', top: 12 }} />
-                    : <Text style={s.chipEmoji}>{f.emoji}</Text>}
-                  <Text style={[s.chipName, isActive && { color: '#FF2D78' }]}>{f.name}</Text>
-                  {isLoading ? <Text style={[s.chipDownloadLabel, { color: '#FF2D78' }]}>↓</Text> : null}
-                  {isActive && !isLoading ? <View style={[s.chipDot, { backgroundColor: '#FF2D78' }]} /> : null}
+                <Pressable key={e.id}
+                  style={[s.pill, active && s.pillActive]}
+                  onPress={() => {
+                    const deepARRef = cameraRef.current?.deepARRef;
+                    if (deepARActive && deepARCamReady && deepARFilterId && deepARRef) {
+                      clearDeepAREffect(deepARRef); setDeepARFilterId(null);
+                    }
+                    setSkiaEffectId(e.id);
+                  }}>
+                  <Text style={s.pillEmoji}>{e.emoji}</Text>
+                  <Text style={[s.pillName, active && s.pillNameActive]}>{e.name}</Text>
                 </Pressable>
               );
             })}
-          </>
-        ) : null}
-      </ScrollView>
+          </ScrollView>
+        </View>
 
-      {/* Capture controls */}
+        <View style={s.sectionDivider} />
+
+        {/* Section 2 — Filtros AR (DeepAR) — always rendered */}
+        <View style={s.section}>
+          <Text style={s.sectionTitle}>Filtros AR</Text>
+          {deepARActive && deepARCamReady ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}
+              contentContainerStyle={s.pillRow}>
+              {DEEPAR_FILTERS.map(f => {
+                const loadState = filterLoadState[f.id] ?? 'idle';
+                const isActive  = deepARFilterId === f.id;
+                const isLoading = loadState === 'downloading' || loadState === 'applying';
+                return (
+                  <Pressable key={f.id}
+                    style={[s.pill, s.pillAR, isActive && s.pillARActive]}
+                    onPress={() => handleDeepARFilter(f)}
+                    disabled={isLoading}>
+                    {isLoading
+                      ? <ActivityIndicator size="small" color="#FF2D78"
+                          style={{ width: 16, height: 16 }} />
+                      : <Text style={s.pillEmoji}>{f.emoji}</Text>}
+                    <Text style={[s.pillName, isActive && s.pillNameARActive]}>{f.name}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          ) : (
+            <View style={s.arPlaceholderRow}>
+              {deepARActive ? (
+                <>
+                  <ActivityIndicator size="small" color="#FF2D78" />
+                  <Text style={s.arPlaceholderText}>Cargando filtros AR...</Text>
+                </>
+              ) : (
+                <Text style={s.arPlaceholderText}>No disponible en este dispositivo</Text>
+              )}
+            </View>
+          )}
+        </View>
+      </View>
+
+      {/* ── Capture controls ────────────────────────────────────────────────── */}
       <View style={s.captureRow}>
         {/* Record */}
         <Pressable style={[s.sideBtn, isRecording && s.sideBtnActive]} onPress={toggleRecord}>
@@ -368,34 +387,50 @@ export function EffectsTab() {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  effectBadge:      { position: 'absolute', top: 14, left: 12, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5, zIndex: 10 },
-  effectBadgeText:  { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
-  filterScrollWrap: { backgroundColor: Colors.bg, maxHeight: 88 },
-  filterStrip:      { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingVertical: 10, alignItems: 'center' },
-  sectionLabel:     { color: Colors.textSubtle, fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 1.2, textTransform: 'uppercase', alignSelf: 'center', paddingHorizontal: 4 },
-  divider:          { width: 1, height: 44, backgroundColor: Colors.border, marginHorizontal: 4, alignSelf: 'center' },
-  chip:             { alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 6, borderRadius: Radius.md, borderWidth: 1.5, borderColor: Colors.border, minWidth: 62, position: 'relative' },
-  chipActive:       { borderColor: Colors.secondary, backgroundColor: Colors.secondaryDim },
-  chipDeepARActive: { borderColor: '#FF2D78', backgroundColor: '#FF2D7822' },
-  chipGrad:         { width: 42, height: 42, borderRadius: 21 },
-  chipEmoji:        { position: 'absolute', top: 14, fontSize: 18 },
-  chipName:         { color: Colors.textSubtle, fontSize: 9, fontWeight: FontWeight.medium },
-  chipDot:          { width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.secondary, position: 'absolute', top: 4, right: 4 },
-  chipDownloadLabel:{ position: 'absolute', top: 3, right: 3, fontSize: 8, fontWeight: FontWeight.bold },
-  captureRow:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 10, backgroundColor: Colors.bg, paddingHorizontal: 16 },
-  shutterOuter:     { width: 74, height: 74, borderRadius: 37, borderWidth: 3, borderColor: Colors.secondary + '66', alignItems: 'center', justifyContent: 'center' },
-  shutterInner:     { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
-  sideBtn:          { width: 54, height: 54, borderRadius: 27, overflow: 'hidden' },
-  sideBtnActive:    {},
-  sideBtnInner:     { width: 54, height: 54, alignItems: 'center', justifyContent: 'center' },
-  previewWrap:      { borderRadius: Radius.xl, overflow: 'hidden', position: 'relative', alignSelf: 'center' },
-  previewGrad:      { position: 'absolute', bottom: 0, left: 0, right: 0, height: 80 },
-  previewBadge:     { position: 'absolute', bottom: 12, left: 12, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5 },
-  previewBadgeText: { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
-  actionRow:        { flexDirection: 'row', gap: 10 },
-  actionBtn:        { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: Radius.lg, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
-  actionBtnText:    { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
-  publishBtn:       { flex: 2, borderRadius: Radius.lg, overflow: 'hidden' },
-  publishBtnGrad:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
-  publishBtnText:   { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
+  // Camera overlay badge
+  effectBadge:       { position: 'absolute', top: 14, left: 12, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5, zIndex: 10 },
+  effectBadgeText:   { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
+
+  // ── Effects panel ──────────────────────────────────────────────────────────
+  effectsPanel:      { backgroundColor: Colors.bg, borderTopWidth: 1, borderTopColor: Colors.border },
+  section:           { paddingHorizontal: 12, paddingTop: 7, paddingBottom: 5 },
+  sectionTitle:      { color: Colors.textSubtle, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 1.4, textTransform: 'uppercase', marginBottom: 6 },
+  sectionDivider:    { height: 1, backgroundColor: Colors.border },
+  pillRow:           { flexDirection: 'row', gap: 6, alignItems: 'center', paddingRight: 12 },
+
+  // Pills — GPU/Skia
+  pill:              { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 20, borderWidth: 1.5, borderColor: Colors.border, backgroundColor: 'rgba(255,255,255,0.04)' },
+  pillActive:        { borderColor: Colors.secondary, backgroundColor: Colors.secondaryDim },
+  pillEmoji:         { fontSize: 14 },
+  pillName:          { color: Colors.textSubtle, fontSize: 10, fontWeight: FontWeight.medium },
+  pillNameActive:    { color: '#fff' },
+
+  // Pills — AR filters
+  pillAR:            { borderColor: 'rgba(255,45,120,0.2)' },
+  pillARActive:      { borderColor: '#FF2D78', backgroundColor: 'rgba(255,45,120,0.13)' },
+  pillNameARActive:  { color: '#FF2D78' },
+
+  // AR section placeholder row (loading / unavailable)
+  arPlaceholderRow:  { flexDirection: 'row', alignItems: 'center', gap: 8, height: 30, paddingLeft: 2 },
+  arPlaceholderText: { color: Colors.textSubtle, fontSize: 11, fontStyle: 'italic' },
+
+  // ── Capture controls ───────────────────────────────────────────────────────
+  captureRow:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 10, backgroundColor: Colors.bg, paddingHorizontal: 16 },
+  shutterOuter:      { width: 74, height: 74, borderRadius: 37, borderWidth: 3, borderColor: Colors.secondary + '66', alignItems: 'center', justifyContent: 'center' },
+  shutterInner:      { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
+  sideBtn:           { width: 54, height: 54, borderRadius: 27, overflow: 'hidden' },
+  sideBtnActive:     {},
+  sideBtnInner:      { width: 54, height: 54, alignItems: 'center', justifyContent: 'center' },
+
+  // ── Preview mode ───────────────────────────────────────────────────────────
+  previewWrap:       { borderRadius: Radius.xl, overflow: 'hidden', position: 'relative', alignSelf: 'center' },
+  previewGrad:       { position: 'absolute', bottom: 0, left: 0, right: 0, height: 80 },
+  previewBadge:      { position: 'absolute', bottom: 12, left: 12, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5 },
+  previewBadgeText:  { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
+  actionRow:         { flexDirection: 'row', gap: 10 },
+  actionBtn:         { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: Radius.lg, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
+  actionBtnText:     { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
+  publishBtn:        { flex: 2, borderRadius: Radius.lg, overflow: 'hidden' },
+  publishBtnGrad:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
+  publishBtnText:    { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
 });
