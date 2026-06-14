@@ -608,14 +608,6 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
         </View>
       ) : null}
 
-      {/* Camera mode badge */}
-      <View style={c.liveBadge} pointerEvents="none">
-        <View style={[c.liveBadgeInner, { backgroundColor: deepARCompOk ? 'rgba(255,45,120,0.25)' : 'rgba(44,44,80,0.85)' }]}>
-          <PulsingDot color={deepARCompOk ? '#FF2D78' : '#7C5CFF'} />
-          <Text style={c.liveBadgeText}>{deepARCompOk && !deepARInitFailed ? 'DeepAR' : 'expo-cam'}</Text>
-        </View>
-      </View>
-
       {/* Flip button */}
       <Pressable style={c.flipBtn} onPress={() => setFacing(f => f === 'front' ? 'back' : 'front')}>
         <MaterialCommunityIcons name="camera-flip-outline" size={22} color="#fff" />

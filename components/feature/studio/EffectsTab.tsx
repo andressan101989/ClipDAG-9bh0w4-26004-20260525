@@ -290,7 +290,7 @@ export function EffectsTab() {
         </Pressable>
 
         {/* Skia effects */}
-        <Text style={s.sectionLabel}>SKIA GPU{deepARActive && deepARCamReady ? ' (desactiva DeepAR)' : ''}</Text>
+        <Text style={s.sectionLabel}>GPU</Text>
         {SKIA_EFFECTS.map(e => (
           <Pressable key={e.id} style={[s.chip, skiaEffectId === e.id && s.chipActive]}
             onPress={() => {
@@ -311,7 +311,7 @@ export function EffectsTab() {
         {deepARActive && deepARCamReady ? (
           <>
             <View style={s.divider} />
-            <Text style={s.sectionLabel}>DEEPAR AR</Text>
+            <Text style={s.sectionLabel}>Filtros AR</Text>
             {DEEPAR_FILTERS.map(f => {
               const loadState = filterLoadState[f.id] ?? 'idle';
               const isActive  = deepARFilterId === f.id;
@@ -332,14 +332,7 @@ export function EffectsTab() {
               );
             })}
           </>
-        ) : (
-          <>
-            <View style={s.divider} />
-            <Text style={s.sectionLabel}>
-              {deepARActive ? (deepARCamReady ? 'DEEPAR — ACTIVO' : 'DEEPAR — INICIANDO...') : 'EXPO-CAM'}
-            </Text>
-          </>
-        )}
+        ) : null}
       </ScrollView>
 
       {/* Capture controls */}

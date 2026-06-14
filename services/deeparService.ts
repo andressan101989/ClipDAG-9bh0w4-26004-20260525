@@ -148,6 +148,8 @@ export interface DeepARFilter {
   /** Remote URL of the .deepar effect file. Downloaded and cached on first use. */
   remoteUrl:   string;
   description: string;
+  /** expo-asset module ID from require() for a bundled .deepar file. Loaded first; remote is fallback. */
+  localModule?: number;
 }
 
 const DEEPAR_CDN        = 'https://storage.deepar.ai/effects/';
@@ -155,41 +157,45 @@ const DEEPAR_CDN_MIRROR = 'http://betacoins.magix.net/public/deepar-filters/';
 
 export const DEEPAR_FILTERS: DeepARFilter[] = [
   // ── Face ────────────────────────────────────────────────────────────────
-  { id: 'flower_crown',  name: 'Corona',    emoji: '🌸', category: 'face',
+  { id: 'flower_crown',    name: 'Corazones',   emoji: '🌸', category: 'face',
+    localModule: require('../assets/deepar/flower_crown.deepar'),
     remoteUrl: `${DEEPAR_CDN}flower_crown`,    description: 'Corona de flores animada' },
-  { id: 'lion',          name: 'León',      emoji: '🦁', category: 'face',
-    remoteUrl: `${DEEPAR_CDN}lion`,            description: 'Máscara facial de león 3D' },
-  { id: 'viking_helmet', name: 'Viking',    emoji: '🪖', category: 'face',
-    remoteUrl: `${DEEPAR_CDN}viking_helmet`,   description: 'Casco vikingo animado' },
-  { id: 'aviators',      name: 'Aviador',   emoji: '😎', category: 'face',
-    remoteUrl: `${DEEPAR_CDN}aviators`,        description: 'Gafas de aviador vintage' },
-  { id: 'dalmatian',     name: 'Perrito',   emoji: '🐶', category: 'face',
-    remoteUrl: `${DEEPAR_CDN}dalmatian`,       description: 'Filtro dálmata con orejas' },
-  { id: 'pug',           name: 'Pug',       emoji: '🐾', category: 'face',
-    remoteUrl: `${DEEPAR_CDN}pug`,             description: 'Cara de pug animado' },
-  { id: 'beard',         name: 'Barba',     emoji: '🧔', category: 'face',
-    remoteUrl: `${DEEPAR_CDN}beard`,           description: 'Barba hipster animada' },
+  { id: 'neon_devil_horns',name: 'Cuernos',     emoji: '😈', category: 'face',
+    localModule: require('../assets/deepar/Neon_Devil_Horns.deepar'),
+    remoteUrl: `${DEEPAR_CDN}neon_devil_horns`, description: 'Cuernos de neón animados' },
+  { id: 'vendetta_mask',   name: 'Máscara',     emoji: '🎭', category: 'face',
+    localModule: require('../assets/deepar/Vendetta_Mask.deepar'),
+    remoteUrl: `${DEEPAR_CDN}vendetta_mask`,    description: 'Máscara Vendetta animada' },
+  { id: 'viking_helmet',   name: 'Viking',      emoji: '🪖', category: 'face',
+    localModule: require('../assets/deepar/viking_helmet.deepar'),
+    remoteUrl: `${DEEPAR_CDN}viking_helmet`,    description: 'Casco vikingo animado' },
+  { id: 'lion',            name: 'León',        emoji: '🦁', category: 'face',
+    remoteUrl: `${DEEPAR_CDN}lion`,             description: 'Máscara facial de león 3D' },
+  { id: 'aviators',        name: 'Aviador',     emoji: '😎', category: 'face',
+    remoteUrl: `${DEEPAR_CDN}aviators`,         description: 'Gafas de aviador vintage' },
+  { id: 'dalmatian',       name: 'Perrito',     emoji: '🐶', category: 'face',
+    remoteUrl: `${DEEPAR_CDN}dalmatian`,        description: 'Filtro dálmata con orejas' },
   // ── Beauty ──────────────────────────────────────────────────────────────
-  { id: 'beauty',        name: 'Beauty',    emoji: '✨', category: 'beauty',
-    remoteUrl: `${DEEPAR_CDN}beauty`,          description: 'Suavizado de piel + mejora facial' },
-  { id: 'makeup',        name: 'Maquillaje',emoji: '💄', category: 'beauty',
-    remoteUrl: `${DEEPAR_CDN}makeup`,          description: 'Maquillaje labios y ojos' },
-  { id: 'face_painting', name: 'Face Paint',emoji: '🎨', category: 'beauty',
-    remoteUrl: `${DEEPAR_CDN}face_painting`,   description: 'Pintura artística facial' },
+  { id: 'makeup',          name: 'Maquillaje',  emoji: '💄', category: 'beauty',
+    localModule: require('../assets/deepar/MakeupLook.deepar'),
+    remoteUrl: `${DEEPAR_CDN}makeup`,           description: 'Maquillaje labios y ojos' },
+  { id: 'beauty',          name: 'Beauty',      emoji: '✨', category: 'beauty',
+    remoteUrl: `${DEEPAR_CDN}beauty`,           description: 'Suavizado de piel + mejora facial' },
   // ── Background ──────────────────────────────────────────────────────────
   { id: 'galaxy_segmentation',     name: 'Galaxia',   emoji: '🌌', category: 'background',
     remoteUrl: `${DEEPAR_CDN}galaxy_segmentation`,     description: 'Fondo galaxia + remoción BG' },
   { id: 'background_segmentation', name: 'Sin fondo', emoji: '🫧', category: 'background',
     remoteUrl: `${DEEPAR_CDN}background_segmentation`, description: 'Remoción de fondo en tiempo real' },
   // ── Social ───────────────────────────────────────────────────────────────
-  { id: 'fire',          name: 'Fuego',     emoji: '🔥', category: 'social',
-    remoteUrl: `${DEEPAR_CDN}fire`,            description: 'Llamas animadas alrededor de la cara' },
-  { id: 'disco',         name: 'Disco',     emoji: '🪩', category: 'social',
-    remoteUrl: `${DEEPAR_CDN}disco`,           description: 'Luces de discoteca psicodélicas' },
-  { id: 'hope',          name: 'Hope',      emoji: '🦋', category: 'social',
-    remoteUrl: `${DEEPAR_CDN}hope`,            description: 'Mariposas y flores' },
-  { id: 'burning_effect',name: 'Burning',   emoji: '💀', category: 'social',
-    remoteUrl: `${DEEPAR_CDN}burning_effect`,  description: 'Cara en llamas' },
+  { id: 'fire',            name: 'Fuego',       emoji: '🔥', category: 'social',
+    localModule: require('../assets/deepar/Fire_Effect.deepar'),
+    remoteUrl: `${DEEPAR_CDN}fire`,             description: 'Llamas animadas alrededor de la cara' },
+  { id: 'hope',            name: 'Hope',        emoji: '🦋', category: 'social',
+    remoteUrl: `${DEEPAR_CDN}hope`,             description: 'Mariposas y flores' },
+  { id: 'burning_effect',  name: 'Burning',     emoji: '💀', category: 'social',
+    remoteUrl: `${DEEPAR_CDN}burning_effect`,   description: 'Cara en llamas' },
+  { id: 'disco',           name: 'Disco',       emoji: '🪩', category: 'social',
+    remoteUrl: `${DEEPAR_CDN}disco`,            description: 'Luces de discoteca psicodélicas' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -242,7 +248,26 @@ export async function getLocalFilterPath(filter: DeepARFilter): Promise<string |
   if (downloadingIds.has(filter.id)) return null;
   downloadingIds.add(filter.id);
   try {
-    // Try primary CDN first, then mirror
+    // Try bundled asset first (no network required)
+    if (filter.localModule !== undefined && _FileSystem) {
+      try {
+        const { Asset } = require('expo-asset');
+        const asset = Asset.fromModule(filter.localModule);
+        await asset.downloadAsync();
+        if (asset.localUri) {
+          const rawPath = (asset.localUri as string).replace(/^file:\/\//, '');
+          const info = await _FileSystem.getInfoAsync(asset.localUri, { size: true }).catch(() => null);
+          if (info?.exists && (info as any).size > 64) {
+            console.log(`[DeepAR] bundled asset resolved: ${filter.id} → ${rawPath}`);
+            pathCache[filter.id] = rawPath;
+            return rawPath;
+          }
+        }
+      } catch (e: any) {
+        console.warn('[DeepAR] bundled asset load failed, falling back to remote:', e?.message);
+      }
+    }
+    // Remote download fallback
     let path = await tryDownload(filter.remoteUrl, filter.id);
     if (!path) {
       const mirrorUrl = filter.remoteUrl.replace(DEEPAR_CDN, DEEPAR_CDN_MIRROR);

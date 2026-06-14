@@ -31,7 +31,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 
 
-import { getDeepARStatus, isDeepARAvailable } from '@/services/deeparService';
+import { isDeepARAvailable } from '@/services/deeparService';
 import { isFFmpegAvailable, RenderQueue, type RenderJob } from '@/services/ffmpegService';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 
@@ -135,7 +135,6 @@ export default function CreatorStudioScreen() {
     );
   }, [router]);
 
-  const deepARStatus    = getDeepARStatus();
   const deepARActive    = isDeepARAvailable();
   const activeRenderJob = renderJobs.find(j => j.status === 'running');
 
@@ -154,7 +153,11 @@ export default function CreatorStudioScreen() {
             <LinearGradient colors={['#FF2D78', '#7C5CFF']} style={root.deepARBadge}>
               <Text style={root.deepARBadgeText}>DeepAR</Text>
             </LinearGradient>
-          ) : null}
+          ) : (
+            <View style={[root.badge, { backgroundColor: '#2D9EFF22', borderColor: '#2D9EFF44' }]}>
+              <Text style={[root.badgeText, { color: '#2D9EFF' }]}>Expo Cam</Text>
+            </View>
+          )}
           <View style={[root.badge, { backgroundColor: '#00E5A022', borderColor: '#00E5A044' }]}>
             <Text style={[root.badgeText, { color: '#00E5A0' }]}>Skia</Text>
           </View>
@@ -173,27 +176,6 @@ export default function CreatorStudioScreen() {
         </View>
         <View style={{ width: 36 }} />
       </View>
-
-      {/* ── Status banner ───────────────────────────────────────────────── */}
-      {!deepARStatus.ready ? (
-        <View style={root.statusBar}>
-          <MaterialCommunityIcons name="information-outline" size={12} color={Colors.warning} />
-          <Text style={root.statusBarText}>Skia activo. DeepAR disponible en EAS Build.</Text>
-          <Pressable onPress={() => router.push('/deepar-test' as any)}>
-            <Text style={[root.statusBarText, { color: '#2D9EFF', textDecorationLine: 'underline' }]}>Test</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <View style={[root.statusBar, { backgroundColor: '#00E5A022', borderBottomColor: '#00E5A033' }]}>
-          <MaterialCommunityIcons name="check-circle-outline" size={12} color="#00E5A0" />
-          <Text style={[root.statusBarText, { color: '#00E5A0' }]}>
-            {`DeepAR listo. ${!deepARStatus.hasFileSystem ? 'Instala expo-file-system para filtros remotos.' : 'Filtros remotos activos.'}`}
-          </Text>
-          <Pressable onPress={() => router.push('/deepar-test' as any)}>
-            <Text style={[root.statusBarText, { color: '#2D9EFF', textDecorationLine: 'underline' }]}>Sandbox</Text>
-          </Pressable>
-        </View>
-      )}
 
       {/* Active render job progress banner */}
       {activeRenderJob ? (
