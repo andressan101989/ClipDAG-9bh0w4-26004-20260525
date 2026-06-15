@@ -125,6 +125,28 @@
     : AVCaptureDevicePositionFront;
 }
 
+- (void)takeScreenshot {
+  NSLog(@"[DeepARNative] takeScreenshot called _deepAR=%@", _deepAR ? @"set" : @"nil");
+  if (_deepAR == nil) return;
+  [_deepAR takeScreenshot];
+}
+
+- (void)startVideoRecording {
+  NSLog(@"[DeepARNative] startVideoRecording called _deepAR=%@", _deepAR ? @"set" : @"nil");
+  if (_deepAR == nil) return;
+  CGSize size = _renderView ? _renderView.bounds.size : CGSizeMake(720, 1280);
+  int w = (int)MAX(size.width, 1);
+  int h = (int)MAX(size.height, 1);
+  NSLog(@"[DeepARNative] startVideoRecordingWithOutputWidth=%d height=%d", w, h);
+  [_deepAR startVideoRecordingWithOutputWidth:w outputHeight:h];
+}
+
+- (void)finishVideoRecording {
+  NSLog(@"[DeepARNative] finishVideoRecording called _deepAR=%@", _deepAR ? @"set" : @"nil");
+  if (_deepAR == nil) return;
+  [_deepAR finishVideoRecording];
+}
+
 // MARK: - DeepARDelegate
 
 - (void)didInitialize {
@@ -138,6 +160,20 @@
 
 - (void)onErrorWithCode:(ARErrorType)code error:(NSString *)error {
   NSLog(@"[DeepARNative] delegate onError code=%ld error=%@", (long)code, error);
+}
+
+- (void)didTakeScreenshot:(UIImage *)screenshot {
+  NSLog(@"[DeepARNative] delegate didTakeScreenshot");
+  if (self.onScreenshotTaken) {
+    self.onScreenshotTaken(screenshot);
+  }
+}
+
+- (void)didFinishVideoRecording:(NSString *)videoFilePath {
+  NSLog(@"[DeepARNative] delegate didFinishVideoRecording path=%@", videoFilePath);
+  if (self.onVideoRecordingFinished) {
+    self.onVideoRecordingFinished(videoFilePath);
+  }
 }
 
 - (void)didFinishShutdown {

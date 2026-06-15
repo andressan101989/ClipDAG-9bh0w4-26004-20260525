@@ -5,6 +5,8 @@ public final class DeepARFabricViewModule: Module {
     Name("DeepARFabricView")
 
     View(DeepARFabricView.self) {
+      Events("onScreenshotTaken", "onVideoRecordingFinished")
+
       Prop("apiKey") { (view: DeepARFabricView, apiKey: String) in
         view.setApiKey(apiKey)
       }
@@ -19,6 +21,18 @@ public final class DeepARFabricViewModule: Module {
 
       AsyncFunction("clearEffect") { (view: DeepARFabricView) in
         view.clearEffect()
+      }
+
+      AsyncFunction("takeScreenshot") { (view: DeepARFabricView) in
+        view.takeScreenshot()
+      }
+
+      AsyncFunction("startVideoRecording") { (view: DeepARFabricView) in
+        view.startVideoRecording()
+      }
+
+      AsyncFunction("finishVideoRecording") { (view: DeepARFabricView) in
+        view.finishVideoRecording()
       }
     }
   }

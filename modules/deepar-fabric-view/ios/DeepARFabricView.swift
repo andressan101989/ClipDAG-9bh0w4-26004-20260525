@@ -8,6 +8,11 @@ public final class DeepARFabricView: ExpoView {
   private var renderView: UIView?
   private var bridge: DeepARBridge?
 
+  // Event dispatchers — ExpoModulesCore wires these up via property name reflection.
+  // Names must exactly match the strings passed to Events(...) in the module definition.
+  public let onScreenshotTaken = EventDispatcher("onScreenshotTaken")
+  public let onVideoRecordingFinished = EventDispatcher("onVideoRecordingFinished")
+
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
     print("[DeepARNative] init")
@@ -74,6 +79,21 @@ public final class DeepARFabricView: ExpoView {
     bridge?.clearEffect()
   }
 
+  public func takeScreenshot() {
+    print("[DeepARNative] takeScreenshot")
+    bridge?.takeScreenshot()
+  }
+
+  public func startVideoRecording() {
+    print("[DeepARNative] startVideoRecording")
+    bridge?.startVideoRecording()
+  }
+
+  public func finishVideoRecording() {
+    print("[DeepARNative] finishVideoRecording")
+    bridge?.finishVideoRecording()
+  }
+
   private func initializeDeepARIfNeeded() {
     guard bridge == nil else {
       print("[DeepARNative] initializeDeepARIfNeeded skipped — bridge already exists")
@@ -117,6 +137,22 @@ public final class DeepARFabricView: ExpoView {
     ) else {
       print("[DeepARNative] error — createRenderView returned nil (bounds=\(bounds), cameraPosition=\(cameraPosition))")
       return
+    }
+
+    bridge.onScreenshotTaken = { [weak self] image in
+      guard let self else { return }
+      let filename = "deepar_screenshot_\(Date().timeIntervalSince1970).jpg"
+      let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+      if let data = image.jpegData(compressionQuality: 0.9) {
+        try? data.write(to: url)
+      }
+      self.onScreenshotTaken(["uri": url.absoluteString])
+    }
+
+    bridge.onVideoRecordingFinished = { [weak self] path in
+      guard let self else { return }
+      let uri = URL(fileURLWithPath: path).absoluteString
+      self.onVideoRecordingFinished(["uri": uri])
     }
 
     print("[DeepARNative] AVCaptureSession started")
