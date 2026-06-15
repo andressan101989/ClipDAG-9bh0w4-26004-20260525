@@ -8,7 +8,7 @@
  *         No separate solid black panel between camera and controls.
  */
 import React, {
-  useState, useCallback, useRef, useMemo,
+  useState, useCallback, useRef, useMemo, useEffect,
 } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView,
@@ -38,6 +38,67 @@ try {
 } catch { /* reanimated not ready */ }
 import { CameraCore, type CameraCoreHandle } from './camera/CameraCore';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
+
+// ── expo-video — lazy-loaded (same pattern as VideoCard.native.tsx) ───────────
+let _useVideoPlayer: any = (_src: any, _setup?: any): any => null;
+let VideoView: any = null;
+try {
+  const ev = require('expo-video');
+  VideoView       = ev.VideoView      ?? null;
+  _useVideoPlayer = ev.useVideoPlayer ?? ((_src: any, _setup?: any): any => null);
+} catch { /* no native build */ }
+
+function isVideoUri(uri: string): boolean {
+  if (!uri) return false;
+  return /\.(mp4|mov|avi|mkv|webm|m4v)(\?|$)/i.test(uri);
+}
+
+// ── Video preview player (looping, muted by default, tap to unmute) ──────────
+function VideoPreview({ uri }: { uri: string }) {
+  const [isMuted, setIsMuted] = useState(true);
+
+  const player = _useVideoPlayer(uri || '', (p: any) => {
+    if (!p) return;
+    p.loop  = true;
+    p.muted = true;
+  });
+
+  useEffect(() => {
+    console.log('[VideoPreview] uri:', uri);
+    if (!player) return;
+    try { player.play(); } catch (e: any) {
+      console.log('[VideoPreview] error:', e?.message ?? String(e));
+    }
+  }, [uri]);  // player identity is stable for the same uri
+
+  useEffect(() => {
+    if (!player) return;
+    try { player.muted = isMuted; } catch { /* ignore */ }
+  }, [isMuted]);
+
+  if (!VideoView || !player) return null;
+
+  return (
+    <>
+      <VideoView
+        player={player}
+        style={StyleSheet.absoluteFillObject}
+        contentFit="cover"
+        nativeControls={false}
+        onError={(e: any) => console.log('[VideoPreview] error:', e?.message ?? JSON.stringify(e))}
+      />
+      <Pressable style={s.videoMuteBtn} onPress={() => setIsMuted(m => !m)}>
+        <View style={s.videoMuteBtnInner}>
+          <MaterialCommunityIcons
+            name={isMuted ? 'volume-off' : 'volume-high'}
+            size={18}
+            color="rgba(255,255,255,0.9)"
+          />
+        </View>
+      </Pressable>
+    </>
+  );
+}
 
 const { width: W } = Dimensions.get('window');
 // Default camera height — overridden by onLayout so the camera fills flex:1
@@ -119,6 +180,7 @@ export function EffectsTab() {
   const [filterLoadState, setFilterLoadState] = useState<Record<string, string>>({});
   const [mode,            setMode]            = useState<'camera' | 'preview'>('camera');
   const [capturedUri,     setCapturedUri]     = useState<string | null>(null);
+  const [capturedType,    setCapturedType]    = useState<'photo' | 'video' | null>(null);
   const [isCapturing,     setIsCapturing]     = useState(false);
   const [isRecording,     setIsRecording]     = useState(false);
   const [deepARCamReady,  setDeepARCamReady]  = useState(false);
@@ -170,7 +232,7 @@ export function EffectsTab() {
       Animated.spring(shutterScale, { toValue: 1,    useNativeDriver: true }),
     ]).start();
     const uri = await cameraRef.current.takePhoto();
-    if (uri) { setCapturedUri(uri); setMode('preview'); }
+    if (uri) { setCapturedUri(uri); setCapturedType('photo'); setMode('preview'); }
     else { showAlert('Error', 'No se pudo capturar la foto'); }
     setIsCapturing(false);
   }, [isCapturing, isRecording, showAlert]);
@@ -194,7 +256,12 @@ export function EffectsTab() {
       mediaTypes: ImagePicker.MediaTypeOptions.All,
       allowsEditing: true, aspect: [3, 4], quality: 0.9,
     });
-    if (!r.canceled && r.assets[0]) { setCapturedUri(r.assets[0].uri); setMode('preview'); }
+    if (!r.canceled && r.assets[0]) {
+      const asset = r.assets[0];
+      setCapturedUri(asset.uri);
+      setCapturedType(isVideoUri(asset.uri) || asset.type === 'video' ? 'video' : 'photo');
+      setMode('preview');
+    }
   }, []);
 
   const saveToGallery = useCallback(async (uri: string) => {
@@ -221,7 +288,7 @@ export function EffectsTab() {
       showAlert('Publicado 🎉', 'Publicado al feed', [
         { text: 'Ver feed', onPress: () => router.replace('/(tabs)') },
       ]);
-      setCapturedUri(null); setMode('camera');
+      setCapturedUri(null); setCapturedType(null); setMode('camera');
     } catch (e: any) { showAlert('Error', e?.message || 'No se pudo publicar'); }
   }, [capturedUri, deepARFilterId, skiaEffectId, addVideo, showAlert, router]);
 
@@ -243,7 +310,11 @@ export function EffectsTab() {
       <ScrollView showsVerticalScrollIndicator={false}
         contentContainerStyle={{ padding: 16, paddingBottom: 120, gap: 16 }}>
         <View style={[s.previewWrap, { width: W - 32, height: (W - 32) * 1.2 }]}>
-          <Image source={{ uri: capturedUri }} style={StyleSheet.absoluteFillObject} contentFit="cover" transition={200} />
+          {capturedType === 'video' ? (
+            <VideoPreview uri={capturedUri} />
+          ) : (
+            <Image source={{ uri: capturedUri }} style={StyleSheet.absoluteFillObject} contentFit="cover" transition={200} />
+          )}
           <LinearGradient colors={['transparent', 'rgba(0,0,0,0.5)']} style={s.previewGrad} />
           {activeFilter ? (
             <View style={s.previewBadge}>
@@ -252,7 +323,7 @@ export function EffectsTab() {
           ) : null}
         </View>
         <View style={s.actionRow}>
-          <Pressable style={s.actionBtn} onPress={() => { setCapturedUri(null); setMode('camera'); }}>
+          <Pressable style={s.actionBtn} onPress={() => { setCapturedUri(null); setCapturedType(null); setMode('camera'); }}>
             <MaterialCommunityIcons name="camera-retake" size={18} color={Colors.textSecondary} />
             <Text style={s.actionBtnText}>Volver</Text>
           </Pressable>
@@ -286,8 +357,11 @@ export function EffectsTab() {
           height={cameraAreaH}
           overlay={cameraOverlay}
           onDeepARReady={() => { setDeepARCamReady(true); log.deepar.info('Ready from CameraCore'); }}
-          onScreenshot={uri => { setCapturedUri(uri); setMode('preview'); setIsCapturing(false); }}
-          onVideoReady={uri  => { setCapturedUri(uri); setMode('preview'); setIsRecording(false); }}
+          onScreenshot={uri => { setCapturedUri(uri); setCapturedType('photo'); setMode('preview'); setIsCapturing(false); }}
+          onVideoReady={uri => {
+            console.log('[VideoPreview] uri:', uri);
+            setCapturedUri(uri); setCapturedType('video'); setMode('preview'); setIsRecording(false);
+          }}
           onError={msg => showAlert('Error de cámara', msg)}
         />
 
@@ -450,6 +524,8 @@ const s = StyleSheet.create({
   sideBtnInner:       { width: 54, height: 54, alignItems: 'center', justifyContent: 'center' },
 
   // Preview mode
+  videoMuteBtn:       { position: 'absolute', top: 10, right: 10, zIndex: 10 },
+  videoMuteBtnInner:  { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(10,10,15,0.6)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
   previewWrap:        { borderRadius: Radius.xl, overflow: 'hidden', position: 'relative', alignSelf: 'center' },
   previewGrad:        { position: 'absolute', bottom: 0, left: 0, right: 0, height: 80 },
   previewBadge:       { position: 'absolute', bottom: 12, left: 12, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5 },
