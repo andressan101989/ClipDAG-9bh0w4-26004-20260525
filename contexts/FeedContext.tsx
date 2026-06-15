@@ -68,6 +68,36 @@ interface FeedContextType {
 
 export const FeedContext = createContext<FeedContextType | undefined>(undefined);
 
+const PLAYABLE_URL_RE = /^(https?:\/\/|file:\/\/)/i;
+const VIDEO_PATH_RE = /(^|\/)(videos|gtv-videos-bucket)(\/|$)|\.(mp4|mov|avi|mkv|webm|m4v)(\?|$)/i;
+
+function stripStorageBucketPrefix(path: string, bucket: string): string {
+  const cleanPath = path.trim().replace(/^\/+/, '');
+  if (cleanPath.startsWith(`public/${bucket}/`)) return cleanPath.slice(`public/${bucket}/`.length);
+  if (cleanPath.startsWith(`${bucket}/`)) return cleanPath.slice(`${bucket}/`.length);
+  return cleanPath;
+}
+
+function normalizePlayableUrl(url: unknown, bucket: 'videos' | 'images'): string {
+  if (typeof url !== 'string') return '';
+  const rawUrl = url.trim();
+  if (!rawUrl) return '';
+  if (PLAYABLE_URL_RE.test(rawUrl)) return rawUrl;
+
+  try {
+    const storagePath = stripStorageBucketPrefix(rawUrl, bucket);
+    const { data: { publicUrl } } = getSupabaseClient().storage.from(bucket).getPublicUrl(storagePath);
+    return publicUrl || '';
+  } catch (e) {
+    console.warn(`[FeedContext] normalizePlayableUrl failed for ${bucket}:`, e);
+    return '';
+  }
+}
+
+function inferMediaBucket(url: unknown): 'videos' | 'images' {
+  return typeof url === 'string' && VIDEO_PATH_RE.test(url) ? 'videos' : 'images';
+}
+
 // ── Map DB row → VideoWithMeta ────────────────────────────────────────────────
 function mapVideo(row: Record<string, unknown>, username: string, avatar: string): VideoWithMeta {
   const mediaUrlsRaw = row.media_urls as string[] | null;
@@ -76,9 +106,13 @@ function mapVideo(row: Record<string, unknown>, username: string, avatar: string
     userId:       row.user_id as string,
     username:     username || 'user',
     userAvatar:   avatar || '',
-    videoUrl:     (row.video_url as string) || '',
-    thumbnailUrl: (row.thumbnail_url as string) || '',
-    mediaUrls:    Array.isArray(mediaUrlsRaw) && mediaUrlsRaw.length > 0 ? mediaUrlsRaw : undefined,
+    videoUrl:     normalizePlayableUrl(row.video_url, inferMediaBucket(row.video_url)),
+    thumbnailUrl: normalizePlayableUrl(row.thumbnail_url, 'images'),
+    mediaUrls:    Array.isArray(mediaUrlsRaw) && mediaUrlsRaw.length > 0
+      ? mediaUrlsRaw
+        .map(url => normalizePlayableUrl(url, inferMediaBucket(url)))
+        .filter(Boolean)
+      : undefined,
     caption:      (row.caption as string) || '',
     likes:        Number(row.likes_count) || 0,
     comments:     Number(row.comments_count) || 0,

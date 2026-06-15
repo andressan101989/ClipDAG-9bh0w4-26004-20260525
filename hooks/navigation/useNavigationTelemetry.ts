@@ -61,7 +61,7 @@ export function useNavigationTelemetry(screenName: string) {
       );
 
       // Trigger screen-level media cleanup on unmount
-      MediaCleanupManager.cleanup('screen');
+      MediaCleanupManager.cleanupScreen(screenName);
     };
   }, [screenName]);
 

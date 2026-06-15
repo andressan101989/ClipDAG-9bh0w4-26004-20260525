@@ -795,7 +795,7 @@ const VideoReelCard = memo(function VideoReelCard(props: VideoCardProps) {
       try { player.muted = true; } catch (_) {}
       try { player.pause(); } catch (_) {}
     }
-  }, [isActive, isPaused, hasValidVideo]);
+  }, [player, isActive, isPaused, hasValidVideo, isMuted]);
 
   // Sync mute
   useEffect(() => {
