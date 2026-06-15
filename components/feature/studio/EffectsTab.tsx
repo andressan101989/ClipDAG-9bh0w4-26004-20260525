@@ -1,9 +1,10 @@
 /**
- * components/feature/studio/EffectsTab.tsx — v3
+ * components/feature/studio/EffectsTab.tsx — v4
  *
- * Creator Studio: AR Camera + filter picker
+ * Creator Studio: AR Camera + glass filter picker
  *
  * UI: segmented switch [Efectos | Filtros AR] + one circular carousel row
+ *     Glass style — no heavy fills, gradient rings on active items
  */
 import React, {
   useState, useCallback, useRef, useMemo,
@@ -40,6 +41,9 @@ import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 const { width: W } = Dimensions.get('window');
 const CAM_H = W * 1.05;
 
+const AR_GRADIENT:     [string, string] = ['#FF2D78', '#7C5CFF'];
+const NORMAL_GRADIENT: [string, string] = ['rgba(255,255,255,0.55)', 'rgba(255,255,255,0.18)'];
+
 interface EffectDef { id: SkiaEffectId; name: string; emoji: string; gradient: [string, string] }
 
 const SKIA_EFFECTS: EffectDef[] = [
@@ -57,6 +61,38 @@ const SKIA_EFFECTS: EffectDef[] = [
   { id: 'glow',      name: 'Glow',       emoji: '💜', gradient: ['#7C5CFF', '#A855F7'] },
 ];
 
+// ── Circular item — gradient ring when active, hairline border when not ────────
+function CircItem({
+  emoji, name, active, loading, gradient, nameStyle, onPress, disabled,
+}: {
+  emoji:      string;
+  name:       string;
+  active:     boolean;
+  loading?:   boolean;
+  gradient?:  [string, string];
+  nameStyle?: any;
+  onPress:    () => void;
+  disabled?:  boolean;
+}) {
+  const inner = loading
+    ? <ActivityIndicator size="small" color="#FF2D78" />
+    : <Text style={s.circEmoji}>{emoji}</Text>;
+
+  return (
+    <Pressable style={s.circItem} onPress={onPress} disabled={disabled}>
+      {active && gradient ? (
+        <LinearGradient colors={gradient} style={s.circRing} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+          <View style={s.circIconInner}>{inner}</View>
+        </LinearGradient>
+      ) : (
+        <View style={s.circIcon}>{inner}</View>
+      )}
+      <Text style={[s.circName, nameStyle]}>{name}</Text>
+    </Pressable>
+  );
+}
+
+// ── EffectsTab ────────────────────────────────────────────────────────────────
 export function EffectsTab() {
   const { addVideo }  = useFeed();
   const { showAlert } = useAlert();
@@ -101,13 +137,13 @@ export function EffectsTab() {
     if (deepARFilterId === filter.id) {
       clearDeepAREffect(deepARRef);
       setDeepARFilterId(null);
-      setFilterLoadState(s => ({ ...s, [filter.id]: 'idle' }));
+      setFilterLoadState(prev => ({ ...prev, [filter.id]: 'idle' }));
       return;
     }
     setSkiaEffectId('none');
     setDeepARFilterId(filter.id);
     await switchDeepAREffect(deepARRef, filter, (state, msg) => {
-      setFilterLoadState(s => ({ ...s, [filter.id]: state }));
+      setFilterLoadState(prev => ({ ...prev, [filter.id]: state }));
       if (state === 'error') {
         console.log('[CreatorFilters] error:', msg);
         showAlert('Error de filtro', msg ?? 'No se pudo cargar el filtro');
@@ -185,25 +221,16 @@ export function EffectsTab() {
     } catch (e: any) { showAlert('Error', e?.message || 'No se pudo publicar'); }
   }, [capturedUri, deepARFilterId, skiaEffectId, addVideo, showAlert, router]);
 
+  // Skia overlay only — badge removed to keep camera area clean
   const cameraOverlay = useMemo(() => (
-    <>
-      {skiaEffectId !== 'none' && SkiaEffectsLayer ? (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }} pointerEvents="none">
-          <SkiaEffectsLayer effectId={skiaEffectId} width={W} height={CAM_H} />
-        </View>
-      ) : null}
-      {(deepARFilterId || skiaEffectId !== 'none') ? (
-        <View style={s.effectBadge} pointerEvents="none">
-          <Text style={s.effectBadgeText}>
-            {deepARFilterId
-              ? `${DEEPAR_FILTERS.find(f => f.id === deepARFilterId)?.emoji} ${DEEPAR_FILTERS.find(f => f.id === deepARFilterId)?.name}`
-              : `${SKIA_EFFECTS.find(e => e.id === skiaEffectId)?.emoji} ${SKIA_EFFECTS.find(e => e.id === skiaEffectId)?.name}`}
-          </Text>
-        </View>
-      ) : null}
-    </>
-  ), [skiaEffectId, deepARFilterId]);
+    skiaEffectId !== 'none' && SkiaEffectsLayer ? (
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }} pointerEvents="none">
+        <SkiaEffectsLayer effectId={skiaEffectId} width={W} height={CAM_H} />
+      </View>
+    ) : null
+  ), [skiaEffectId]);
 
+  // ── Preview ────────────────────────────────────────────────────────────────
   if (mode === 'preview' && capturedUri) {
     const activeFilter = deepARFilterId
       ? DEEPAR_FILTERS.find(f => f.id === deepARFilterId)
@@ -257,47 +284,48 @@ export function EffectsTab() {
       {/* ── Filter picker panel ─────────────────────────────────────────────── */}
       <View style={s.panel}>
 
-        {/* Segmented switch — glass/underline style */}
+        {/* Segmented switch — gradient underline indicator, no fill */}
         <View style={s.segmented}>
           <Pressable style={s.segBtn} onPress={() => setActiveTab('efectos')}>
             <Text style={[s.segBtnText, activeTab === 'efectos' && s.segBtnTextActive]}>Efectos</Text>
-            <View style={activeTab === 'efectos' ? s.segIndicator : s.segIndicatorHidden} />
+            {activeTab === 'efectos'
+              ? <LinearGradient colors={AR_GRADIENT} style={s.segIndicator} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} />
+              : <View style={s.segIndicatorHidden} />}
           </Pressable>
           <Pressable style={s.segBtn} onPress={() => setActiveTab('ar')}>
             <Text style={[s.segBtnText, activeTab === 'ar' && s.segBtnTextActive]}>Filtros AR</Text>
-            <View style={activeTab === 'ar' ? s.segIndicator : s.segIndicatorHidden} />
+            {activeTab === 'ar'
+              ? <LinearGradient colors={AR_GRADIENT} style={s.segIndicator} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} />
+              : <View style={s.segIndicatorHidden} />}
           </Pressable>
         </View>
 
         {/* Single circular carousel */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}
           contentContainerStyle={s.carouselRow}>
           {activeTab === 'efectos' ? (
             <>
-              <Pressable style={s.circItem} onPress={clearAllEffects}>
-                <View style={[s.circIcon, isNormal && s.circIconSkiaActive]}>
-                  <Text style={s.circEmoji}>📷</Text>
-                </View>
-                <Text style={[s.circName, isNormal && s.circNameSkiaActive]}>Normal</Text>
-              </Pressable>
+              <CircItem
+                emoji="📷" name="Normal"
+                active={isNormal} gradient={NORMAL_GRADIENT}
+                nameStyle={isNormal ? s.circNameActive : undefined}
+                onPress={clearAllEffects}
+              />
               {SKIA_EFFECTS.map(e => {
                 const active = skiaEffectId === e.id;
                 return (
-                  <Pressable key={e.id} style={s.circItem}
+                  <CircItem key={e.id}
+                    emoji={e.emoji} name={e.name}
+                    active={active} gradient={e.gradient}
+                    nameStyle={active ? s.circNameActive : undefined}
                     onPress={() => {
                       const deepARRef = cameraRef.current?.deepARRef;
                       if (deepARActive && deepARCamReady && deepARFilterId && deepARRef) {
                         clearDeepAREffect(deepARRef); setDeepARFilterId(null);
                       }
                       setSkiaEffectId(e.id);
-                    }}>
-                    <View style={[s.circIcon, active && s.circIconSkiaActive]}>
-                      <Text style={s.circEmoji}>{e.emoji}</Text>
-                    </View>
-                    <Text style={[s.circName, active && s.circNameSkiaActive]}>{e.name}</Text>
-                  </Pressable>
+                    }}
+                  />
                 );
               })}
             </>
@@ -308,16 +336,13 @@ export function EffectsTab() {
                 const isActive  = deepARFilterId === f.id;
                 const isLoading = loadState === 'downloading' || loadState === 'applying';
                 return (
-                  <Pressable key={f.id} style={s.circItem}
+                  <CircItem key={f.id}
+                    emoji={f.emoji} name={f.name}
+                    active={isActive} loading={isLoading} gradient={AR_GRADIENT}
+                    nameStyle={isActive ? s.circNameARActive : undefined}
                     onPress={() => handleDeepARFilter(f)}
-                    disabled={isLoading}>
-                    <View style={[s.circIcon, isActive && s.circIconARActive]}>
-                      {isLoading
-                        ? <ActivityIndicator size="small" color="#FF2D78" />
-                        : <Text style={s.circEmoji}>{f.emoji}</Text>}
-                    </View>
-                    <Text style={[s.circName, isActive && s.circNameARActive]}>{f.name}</Text>
-                  </Pressable>
+                    disabled={isLoading}
+                  />
                 );
               })}
             </>
@@ -355,49 +380,50 @@ export function EffectsTab() {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  // Camera overlay badge
-  effectBadge:          { position: 'absolute', top: 14, left: 12, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5, zIndex: 10 },
-  effectBadgeText:      { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
-
   // Filter picker panel
-  panel:                { backgroundColor: Colors.bg, borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: 8, paddingBottom: 6 },
+  panel:              { backgroundColor: Colors.bg, borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: 8, paddingBottom: 8 },
 
-  // Segmented switch — glass/underline, no filled backgrounds
-  segmented:            { flexDirection: 'row', marginHorizontal: 12, marginBottom: 6, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' },
-  segBtn:               { flex: 1, paddingVertical: 7, alignItems: 'center', gap: 3 },
-  segBtnText:           { color: Colors.textSubtle, fontSize: 12, fontWeight: FontWeight.medium },
-  segBtnTextActive:     { color: '#fff', fontWeight: FontWeight.semibold },
-  segIndicator:         { width: 24, height: 2, borderRadius: 1, backgroundColor: Colors.secondary },
-  segIndicatorHidden:   { width: 24, height: 2 },
+  // Segmented switch — no fill, gradient underline indicator only
+  segmented:          { flexDirection: 'row', marginHorizontal: 14, marginBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.08)' },
+  segBtn:             { flex: 1, paddingVertical: 6, alignItems: 'center', gap: 4 },
+  segBtnText:         { color: Colors.textSubtle, fontSize: 12, fontWeight: FontWeight.medium },
+  segBtnTextActive:   { color: '#fff', fontWeight: FontWeight.semibold },
+  segIndicator:       { width: 28, height: 2, borderRadius: 1 },
+  segIndicatorHidden: { width: 28, height: 2 },
 
   // Circular carousel
-  carouselRow:          { flexDirection: 'row', gap: 10, paddingHorizontal: 12, alignItems: 'flex-start', paddingBottom: 2 },
-  circItem:             { alignItems: 'center', gap: 4, width: 58 },
-  circIcon:             { width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'transparent' },
-  circIconSkiaActive:   { borderColor: Colors.secondary, backgroundColor: Colors.secondaryDim },
-  circIconARActive:     { borderColor: '#FF2D78', backgroundColor: 'rgba(255,45,120,0.13)' },
-  circEmoji:            { fontSize: 20 },
-  circName:             { color: Colors.textSubtle, fontSize: 9, textAlign: 'center', fontWeight: FontWeight.medium },
-  circNameSkiaActive:   { color: '#fff' },
-  circNameARActive:     { color: '#FF2D78' },
+  carouselRow:        { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 2, paddingBottom: 6, alignItems: 'flex-start' },
+  circItem:           { alignItems: 'center', gap: 5, width: 62 },
 
-  // Capture controls
-  captureRow:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 10, backgroundColor: Colors.bg, paddingHorizontal: 16 },
-  shutterOuter:         { width: 74, height: 74, borderRadius: 37, borderWidth: 3, borderColor: Colors.secondary + '66', alignItems: 'center', justifyContent: 'center' },
-  shutterInner:         { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
-  sideBtn:              { width: 54, height: 54, borderRadius: 27, overflow: 'hidden' },
-  sideBtnActive:        {},
-  sideBtnInner:         { width: 54, height: 54, alignItems: 'center', justifyContent: 'center' },
+  // Inactive: transparent + hairline border
+  circIcon:           { width: 54, height: 54, borderRadius: 27, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
+
+  // Active: LinearGradient ring (54px) wrapping dark inner circle (50px)
+  circRing:           { width: 54, height: 54, borderRadius: 27, padding: 2, alignItems: 'center', justifyContent: 'center' },
+  circIconInner:      { width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(0,0,0,0.3)', alignItems: 'center', justifyContent: 'center' },
+
+  circEmoji:          { fontSize: 20 },
+  circName:           { color: Colors.textSubtle, fontSize: 9, textAlign: 'center', fontWeight: FontWeight.medium },
+  circNameActive:     { color: '#fff' },
+  circNameARActive:   { color: '#FF2D78' },
+
+  // Capture controls — unchanged
+  captureRow:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 10, backgroundColor: Colors.bg, paddingHorizontal: 16 },
+  shutterOuter:       { width: 74, height: 74, borderRadius: 37, borderWidth: 3, borderColor: Colors.secondary + '66', alignItems: 'center', justifyContent: 'center' },
+  shutterInner:       { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
+  sideBtn:            { width: 54, height: 54, borderRadius: 27, overflow: 'hidden' },
+  sideBtnActive:      {},
+  sideBtnInner:       { width: 54, height: 54, alignItems: 'center', justifyContent: 'center' },
 
   // Preview mode
-  previewWrap:          { borderRadius: Radius.xl, overflow: 'hidden', position: 'relative', alignSelf: 'center' },
-  previewGrad:          { position: 'absolute', bottom: 0, left: 0, right: 0, height: 80 },
-  previewBadge:         { position: 'absolute', bottom: 12, left: 12, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5 },
-  previewBadgeText:     { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
-  actionRow:            { flexDirection: 'row', gap: 10 },
-  actionBtn:            { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: Radius.lg, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
-  actionBtnText:        { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
-  publishBtn:           { flex: 2, borderRadius: Radius.lg, overflow: 'hidden' },
-  publishBtnGrad:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
-  publishBtnText:       { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
+  previewWrap:        { borderRadius: Radius.xl, overflow: 'hidden', position: 'relative', alignSelf: 'center' },
+  previewGrad:        { position: 'absolute', bottom: 0, left: 0, right: 0, height: 80 },
+  previewBadge:       { position: 'absolute', bottom: 12, left: 12, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5 },
+  previewBadgeText:   { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
+  actionRow:          { flexDirection: 'row', gap: 10 },
+  actionBtn:          { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: Radius.lg, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
+  actionBtnText:      { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
+  publishBtn:         { flex: 2, borderRadius: Radius.lg, overflow: 'hidden' },
+  publishBtnGrad:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
+  publishBtnText:     { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
 });
