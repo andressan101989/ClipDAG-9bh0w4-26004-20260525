@@ -1,10 +1,11 @@
 /**
- * components/feature/studio/EffectsTab.tsx — v4
+ * components/feature/studio/EffectsTab.tsx — v5
  *
- * Creator Studio: AR Camera + glass filter picker
+ * Creator Studio: AR Camera + floating glass filter picker
  *
- * UI: segmented switch [Efectos | Filtros AR] + one circular carousel row
- *     Glass style — no heavy fills, gradient rings on active items
+ * Layout: camera fills flex:1 above capture row.
+ *         Picker floats as absolute overlay over the camera bottom.
+ *         No separate solid black panel between camera and controls.
  */
 import React, {
   useState, useCallback, useRef, useMemo,
@@ -39,7 +40,8 @@ import { CameraCore, type CameraCoreHandle } from './camera/CameraCore';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 
 const { width: W } = Dimensions.get('window');
-const CAM_H = W * 1.05;
+// Default camera height — overridden by onLayout so the camera fills flex:1
+const DEFAULT_CAM_H = W * 1.05;
 
 const AR_GRADIENT:     [string, string] = ['#FF2D78', '#7C5CFF'];
 const NORMAL_GRADIENT: [string, string] = ['rgba(255,255,255,0.55)', 'rgba(255,255,255,0.18)'];
@@ -61,7 +63,7 @@ const SKIA_EFFECTS: EffectDef[] = [
   { id: 'glow',      name: 'Glow',       emoji: '💜', gradient: ['#7C5CFF', '#A855F7'] },
 ];
 
-// ── Circular item — gradient ring when active, hairline border when not ────────
+// ── Circular item ─────────────────────────────────────────────────────────────
 function CircItem({
   emoji, name, active, loading, gradient, nameStyle, onPress, disabled,
 }: {
@@ -120,6 +122,8 @@ export function EffectsTab() {
   const [isCapturing,     setIsCapturing]     = useState(false);
   const [isRecording,     setIsRecording]     = useState(false);
   const [deepARCamReady,  setDeepARCamReady]  = useState(false);
+  // Tracks actual available height for the camera container (updated via onLayout)
+  const [cameraAreaH,     setCameraAreaH]     = useState(DEFAULT_CAM_H);
 
   const shutterScale = useRef(new Animated.Value(1)).current;
 
@@ -221,14 +225,14 @@ export function EffectsTab() {
     } catch (e: any) { showAlert('Error', e?.message || 'No se pudo publicar'); }
   }, [capturedUri, deepARFilterId, skiaEffectId, addVideo, showAlert, router]);
 
-  // Skia overlay only — badge removed to keep camera area clean
+  // Skia overlay passed into CameraCore — minimal, rarely changes
   const cameraOverlay = useMemo(() => (
     skiaEffectId !== 'none' && SkiaEffectsLayer ? (
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }} pointerEvents="none">
-        <SkiaEffectsLayer effectId={skiaEffectId} width={W} height={CAM_H} />
+        <SkiaEffectsLayer effectId={skiaEffectId} width={W} height={cameraAreaH} />
       </View>
     ) : null
-  ), [skiaEffectId]);
+  ), [skiaEffectId, cameraAreaH]);
 
   // ── Preview ────────────────────────────────────────────────────────────────
   if (mode === 'preview' && capturedUri) {
@@ -270,87 +274,111 @@ export function EffectsTab() {
   const isNormal = skiaEffectId === 'none' && !deepARFilterId;
 
   return (
-    <View style={{ flex: 1 }}>
-      <CameraCore
-        ref={cameraRef}
-        height={CAM_H}
-        overlay={cameraOverlay}
-        onDeepARReady={() => { setDeepARCamReady(true); log.deepar.info('Ready from CameraCore'); }}
-        onScreenshot={uri => { setCapturedUri(uri); setMode('preview'); setIsCapturing(false); }}
-        onVideoReady={uri  => { setCapturedUri(uri); setMode('preview'); setIsRecording(false); }}
-        onError={msg => showAlert('Error de cámara', msg)}
-      />
+    <View style={s.root}>
 
-      {/* ── Filter picker panel ─────────────────────────────────────────────── */}
-      <View style={s.panel}>
+      {/* ── Camera area — fills all space above capture row ─────────────────── */}
+      <View
+        style={s.cameraWrap}
+        onLayout={e => setCameraAreaH(e.nativeEvent.layout.height)}>
 
-        {/* Segmented switch — gradient underline indicator, no fill */}
-        <View style={s.segmented}>
-          <Pressable style={s.segBtn} onPress={() => setActiveTab('efectos')}>
-            <Text style={[s.segBtnText, activeTab === 'efectos' && s.segBtnTextActive]}>Efectos</Text>
-            {activeTab === 'efectos'
-              ? <LinearGradient colors={AR_GRADIENT} style={s.segIndicator} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} />
-              : <View style={s.segIndicatorHidden} />}
-          </Pressable>
-          <Pressable style={s.segBtn} onPress={() => setActiveTab('ar')}>
-            <Text style={[s.segBtnText, activeTab === 'ar' && s.segBtnTextActive]}>Filtros AR</Text>
-            {activeTab === 'ar'
-              ? <LinearGradient colors={AR_GRADIENT} style={s.segIndicator} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} />
-              : <View style={s.segIndicatorHidden} />}
-          </Pressable>
+        <CameraCore
+          ref={cameraRef}
+          height={cameraAreaH}
+          overlay={cameraOverlay}
+          onDeepARReady={() => { setDeepARCamReady(true); log.deepar.info('Ready from CameraCore'); }}
+          onScreenshot={uri => { setCapturedUri(uri); setMode('preview'); setIsCapturing(false); }}
+          onVideoReady={uri  => { setCapturedUri(uri); setMode('preview'); setIsRecording(false); }}
+          onError={msg => showAlert('Error de cámara', msg)}
+        />
+
+        {/* ── Floating picker — absolute over camera bottom ────────────────── */}
+        <View style={s.floatingPicker} pointerEvents="box-none">
+
+          {/* Readability scrim */}
+          <LinearGradient
+            colors={['transparent', 'rgba(0,0,0,0.82)']}
+            style={StyleSheet.absoluteFillObject}
+            pointerEvents="none"
+          />
+
+          <View style={s.pickerContent}>
+
+            {/* Compact pill segmented switch */}
+            <View style={s.segPillWrap}>
+              <View style={s.segPill}>
+                <Pressable
+                  style={[s.segPillBtn, activeTab === 'efectos' && s.segPillBtnActive]}
+                  onPress={() => setActiveTab('efectos')}>
+                  <Text style={[s.segPillText, activeTab === 'efectos' && s.segPillTextActive]}>
+                    Efectos
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[s.segPillBtn, activeTab === 'ar' && s.segPillBtnActive]}
+                  onPress={() => setActiveTab('ar')}>
+                  <Text style={[s.segPillText, activeTab === 'ar' && s.segPillTextActive]}>
+                    Filtros AR
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+
+            {/* Circular carousel */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={s.carouselRow}>
+              {activeTab === 'efectos' ? (
+                <>
+                  <CircItem
+                    emoji="📷" name="Normal"
+                    active={isNormal} gradient={NORMAL_GRADIENT}
+                    nameStyle={isNormal ? s.circNameActive : undefined}
+                    onPress={clearAllEffects}
+                  />
+                  {SKIA_EFFECTS.map(e => {
+                    const active = skiaEffectId === e.id;
+                    return (
+                      <CircItem key={e.id}
+                        emoji={e.emoji} name={e.name}
+                        active={active} gradient={e.gradient}
+                        nameStyle={active ? s.circNameActive : undefined}
+                        onPress={() => {
+                          const deepARRef = cameraRef.current?.deepARRef;
+                          if (deepARActive && deepARCamReady && deepARFilterId && deepARRef) {
+                            clearDeepAREffect(deepARRef); setDeepARFilterId(null);
+                          }
+                          setSkiaEffectId(e.id);
+                        }}
+                      />
+                    );
+                  })}
+                </>
+              ) : (
+                <>
+                  {DEEPAR_FILTERS.map(f => {
+                    const loadState = filterLoadState[f.id] ?? 'idle';
+                    const isActive  = deepARFilterId === f.id;
+                    const isLoading = loadState === 'downloading' || loadState === 'applying';
+                    return (
+                      <CircItem key={f.id}
+                        emoji={f.emoji} name={f.name}
+                        active={isActive} loading={isLoading} gradient={AR_GRADIENT}
+                        nameStyle={isActive ? s.circNameARActive : undefined}
+                        onPress={() => handleDeepARFilter(f)}
+                        disabled={isLoading}
+                      />
+                    );
+                  })}
+                </>
+              )}
+            </ScrollView>
+
+          </View>
         </View>
-
-        {/* Single circular carousel */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}
-          contentContainerStyle={s.carouselRow}>
-          {activeTab === 'efectos' ? (
-            <>
-              <CircItem
-                emoji="📷" name="Normal"
-                active={isNormal} gradient={NORMAL_GRADIENT}
-                nameStyle={isNormal ? s.circNameActive : undefined}
-                onPress={clearAllEffects}
-              />
-              {SKIA_EFFECTS.map(e => {
-                const active = skiaEffectId === e.id;
-                return (
-                  <CircItem key={e.id}
-                    emoji={e.emoji} name={e.name}
-                    active={active} gradient={e.gradient}
-                    nameStyle={active ? s.circNameActive : undefined}
-                    onPress={() => {
-                      const deepARRef = cameraRef.current?.deepARRef;
-                      if (deepARActive && deepARCamReady && deepARFilterId && deepARRef) {
-                        clearDeepAREffect(deepARRef); setDeepARFilterId(null);
-                      }
-                      setSkiaEffectId(e.id);
-                    }}
-                  />
-                );
-              })}
-            </>
-          ) : (
-            <>
-              {DEEPAR_FILTERS.map(f => {
-                const loadState = filterLoadState[f.id] ?? 'idle';
-                const isActive  = deepARFilterId === f.id;
-                const isLoading = loadState === 'downloading' || loadState === 'applying';
-                return (
-                  <CircItem key={f.id}
-                    emoji={f.emoji} name={f.name}
-                    active={isActive} loading={isLoading} gradient={AR_GRADIENT}
-                    nameStyle={isActive ? s.circNameARActive : undefined}
-                    onPress={() => handleDeepARFilter(f)}
-                    disabled={isLoading}
-                  />
-                );
-              })}
-            </>
-          )}
-        </ScrollView>
       </View>
 
-      {/* ── Capture controls ────────────────────────────────────────────────── */}
+      {/* ── Capture controls — black lower area ─────────────────────────────── */}
       <View style={s.captureRow}>
         <Pressable style={[s.sideBtn, isRecording && s.sideBtnActive]} onPress={toggleRecord}>
           <LinearGradient colors={isRecording ? ['#FF3B3B', '#CC1A1A'] : ['#333', '#222']} style={s.sideBtnInner}>
@@ -380,30 +408,36 @@ export function EffectsTab() {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  // Filter picker panel
-  panel:              { backgroundColor: Colors.bg, borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: 8, paddingBottom: 8 },
+  root:               { flex: 1, backgroundColor: Colors.bg },
 
-  // Segmented switch — no fill, gradient underline indicator only
-  segmented:          { flexDirection: 'row', marginHorizontal: 14, marginBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.08)' },
-  segBtn:             { flex: 1, paddingVertical: 6, alignItems: 'center', gap: 4 },
-  segBtnText:         { color: Colors.textSubtle, fontSize: 12, fontWeight: FontWeight.medium },
-  segBtnTextActive:   { color: '#fff', fontWeight: FontWeight.semibold },
-  segIndicator:       { width: 28, height: 2, borderRadius: 1 },
-  segIndicatorHidden: { width: 28, height: 2 },
+  // Camera container — fills all space above capture row
+  cameraWrap:         { flex: 1 },
+
+  // Floating picker — absolute over camera bottom
+  floatingPicker:     { position: 'absolute', left: 0, right: 0, bottom: 0, height: 152 },
+  pickerContent:      { paddingTop: 20 },
+
+  // Compact pill segmented switch
+  segPillWrap:        { alignItems: 'center', marginBottom: 10 },
+  segPill:            { flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.52)', borderRadius: 22, padding: 3, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.2)' },
+  segPillBtn:         { paddingHorizontal: 20, paddingVertical: 7, borderRadius: 19 },
+  segPillBtnActive:   { backgroundColor: '#fff' },
+  segPillText:        { color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: FontWeight.medium },
+  segPillTextActive:  { color: '#111', fontWeight: FontWeight.semibold },
 
   // Circular carousel
-  carouselRow:        { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 2, paddingBottom: 6, alignItems: 'flex-start' },
-  circItem:           { alignItems: 'center', gap: 5, width: 62 },
+  carouselRow:        { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingBottom: 6, alignItems: 'flex-start' },
+  circItem:           { alignItems: 'center', gap: 4, width: 60 },
 
-  // Inactive: transparent + hairline border
-  circIcon:           { width: 54, height: 54, borderRadius: 27, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
+  // Inactive: glass circle — slightly dark so readable over live camera
+  circIcon:           { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(0,0,0,0.35)', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.3)', alignItems: 'center', justifyContent: 'center' },
 
-  // Active: LinearGradient ring (54px) wrapping dark inner circle (50px)
-  circRing:           { width: 54, height: 54, borderRadius: 27, padding: 2, alignItems: 'center', justifyContent: 'center' },
-  circIconInner:      { width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(0,0,0,0.3)', alignItems: 'center', justifyContent: 'center' },
+  // Active: gradient ring wrapping dark inner circle
+  circRing:           { width: 52, height: 52, borderRadius: 26, padding: 2, alignItems: 'center', justifyContent: 'center' },
+  circIconInner:      { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
 
-  circEmoji:          { fontSize: 20 },
-  circName:           { color: Colors.textSubtle, fontSize: 9, textAlign: 'center', fontWeight: FontWeight.medium },
+  circEmoji:          { fontSize: 19 },
+  circName:           { color: 'rgba(255,255,255,0.7)', fontSize: 9, textAlign: 'center', fontWeight: FontWeight.medium },
   circNameActive:     { color: '#fff' },
   circNameARActive:   { color: '#FF2D78' },
 
