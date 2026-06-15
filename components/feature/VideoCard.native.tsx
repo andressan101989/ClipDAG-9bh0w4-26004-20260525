@@ -853,7 +853,10 @@ const VideoReelCard = memo(function VideoReelCard(props: VideoCardProps) {
 
   return (
     <View style={{ width: screenSize.width, height: cardHeight, backgroundColor: '#000' }}>
-      <Pressable style={StyleSheet.absoluteFillObject} onPress={handleTap}>
+      <Pressable
+        style={StyleSheet.absoluteFillObject}
+        onPress={handleTap}
+      >
         {hasValidThumb ? (
           <Image source={{ uri: video.thumbnailUrl }} style={[StyleSheet.absoluteFillObject, { zIndex: 0 }]} contentFit="cover" transition={200} onError={() => setThumbError(true)} />
         ) : null}

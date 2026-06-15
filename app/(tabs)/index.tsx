@@ -22,7 +22,8 @@ import { StoryViewer } from '@/components/feature/StoryViewer';
 import { Colors, FontWeight } from '@/constants/theme';
 import { PostCardSkeleton, FadeIn } from '@/components/ui/SkeletonLoader';
 import { base64ToUint8Array } from '@/contexts/FeedContext';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { Audio } from 'expo-av';
 import { useScrollToTop } from '@react-navigation/native';
 import type { StoryGroup } from '@/components/feature/StoriesBar';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
@@ -72,6 +73,18 @@ export default function FeedScreen() {
   const [viewingStoryGroup, setViewingStoryGroup] = useState<StoryGroup | null>(null);
   const [storyViewerVisible, setStoryViewerVisible] = useState(false);
   const [initialLoaded, setInitialLoaded] = useState(false);
+
+  // Ensure AVAudioSession is in playback mode whenever the feed is visible.
+  // DeepAR (Creator Studio) sets AVAudioSessionCategoryPlayAndRecord, which
+  // causes AVPlayer (expo-video) to fail with AVErrorNoPermissionToPlay.
+  // Resetting to playback mode on focus fixes this without touching native code.
+  useFocusEffect(useCallback(() => {
+    Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: false,
+    }).catch(() => {});
+  }, []));
 
   useEffect(() => {
     if (videos.length > 0 && !initialLoaded) {
