@@ -136,6 +136,12 @@ function fmtSec(s: number) {
   return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
 }
 
+const DEEPAR_STARTUP_FRAME_ERROR = 'Process frame called but DeepAR not initialized!';
+
+function isDeepARStartupFrameError(text: string): boolean {
+  return text.trim() === DEEPAR_STARTUP_FRAME_ERROR;
+}
+
 // ── CameraCore ────────────────────────────────────────────────────────────────
 const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function CameraCore(
   { height, overlay, onDeepARReady, onScreenshot, onVideoReady, onError, enableRTCView = false },
@@ -193,9 +199,28 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
   const recTimerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const gpuSlotRef    = useRef<string | null>(null);
   const arInitRef     = useRef(false);
+  const arCameraReadyRef = useRef(false);
+  const recordingStateRef = useRef(false);
 
   const [camPerm, requestCamPerm] = useSafeCameraPermissions();
   const hasPerm = camPerm?.granted ?? false;
+
+  useEffect(() => {
+    recordingStateRef.current = isRecording;
+  }, [isRecording]);
+
+  const markRecording = useCallback((next: boolean) => {
+    recordingStateRef.current = next;
+    setIsRecording(next);
+    if (!next) setRecSeconds(0);
+  }, []);
+
+  const clearRecordingTimer = useCallback(() => {
+    if (recTimerRef.current) {
+      clearInterval(recTimerRef.current);
+      recTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (!deepARComponentUnavailable || deepARFallbackLoggedRef.current) return;
@@ -433,51 +458,65 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
     }),
 
     startRecording: () => {
-      console.log('[CreatorCapture] CameraCore.startRecording — already recording:', isRecording);
-      if (isRecording) return;
-      setIsRecording(true);
+      console.log('[CreatorVideo] CameraCore.startRecording()', {
+        alreadyRecording: recordingStateRef.current,
+        isDeepAR: deepARCompOk && !!deepARRef.current,
+        hasExpoCamera: !!expoCamRef.current,
+      });
+      if (recordingStateRef.current) return;
+      markRecording(true);
       setRecSeconds(0);
+      clearRecordingTimer();
       recTimerRef.current = setInterval(() => setRecSeconds(s => s + 1), 1000);
 
       if (deepARCompOk && deepARRef.current) {
-        console.log('[CreatorCapture] starting DeepAR video recording');
+        console.log('[DeepARVideo] DeepARFabricView.startRecording()');
         startDeepARRecording(deepARRef);
       } else if (expoCamRef.current) {
-        console.log('[CreatorCapture] starting expo-camera recording');
+        console.log('[CreatorVideo] expo-camera recordAsync()');
         expoCamRef.current.recordAsync({ maxDuration: 60 })
           .then((v: any) => {
-            console.log('[CreatorCapture] expo-camera recorded uri:', v?.uri ?? 'null');
-            if (recTimerRef.current) clearInterval(recTimerRef.current);
-            setIsRecording(false); setRecSeconds(0);
+            console.log('[CreatorVideo] expo-camera recorded uri:', v?.uri ?? 'null');
+            clearRecordingTimer();
+            markRecording(false);
             if (v?.uri) onVideoReady?.(v.uri);
           })
           .catch((e: any) => {
-            console.log('[CreatorCapture] expo-camera recording error:', e?.message);
-            if (recTimerRef.current) clearInterval(recTimerRef.current);
-            setIsRecording(false); setRecSeconds(0);
+            console.log('[CreatorVideo] expo-camera recording error:', e?.message);
+            clearRecordingTimer();
+            markRecording(false);
             if (e?.message && !e.message.includes('stopped')) onError?.(e.message);
           });
+      } else {
+        console.log('[CreatorVideo] startRecording skipped: no camera ready');
+        clearRecordingTimer();
+        markRecording(false);
       }
     },
 
     stopRecording: () => new Promise<string | null>(resolve => {
-      console.log('[CreatorCapture] CameraCore.stopRecording — isRecording:', isRecording);
-      if (!isRecording) { resolve(null); return; }
-      if (recTimerRef.current) clearInterval(recTimerRef.current);
+      console.log('[CreatorVideo] CameraCore.stopRecording()', {
+        isRecording: recordingStateRef.current,
+        isDeepAR: deepARCompOk && !!deepARRef.current,
+        hasExpoCamera: !!expoCamRef.current,
+      });
+      if (!recordingStateRef.current) { resolve(null); return; }
+      clearRecordingTimer();
       if (deepARCompOk && deepARRef.current) {
         try {
           const { stopDeepARRecording } = require('@/services/deeparService');
+          console.log('[DeepARVideo] stopRecording() -> finishRecording()');
           stopDeepARRecording(deepARRef);
         } catch { /* ignore */ }
       } else if (expoCamRef.current) {
         try { expoCamRef.current.stopRecording(); } catch { /* ignore */ }
       }
-      setIsRecording(false); setRecSeconds(0);
+      markRecording(false);
       resolve(null); // actual URI arrives via onVideoRecordingFinished callback
     }),
 
     flipCamera: () => setFacing(f => f === 'front' ? 'back' : 'front'),
-  }), [deepARCompOk, deepARReady, hasPerm, isRecording, applyEffect, suspendAR, resumeAR]);
+  }), [deepARCompOk, deepARReady, hasPerm, applyEffect, suspendAR, resumeAR, clearRecordingTimer, markRecording, onVideoReady, onError]);
 
   if (deepARCompOk && DeepARCam) logDeepARMounted();
 
@@ -542,6 +581,7 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
             log.deepar.info('DeepAR initialized');
             setDeepARReady(true);
             arInitRef.current = true;
+            arCameraReadyRef.current = true;
             setFatalErrors(0);
             onDeepARReady?.();
             // Apply thermal quality on init
@@ -549,16 +589,20 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
             setARQuality(q);
           }}
           onCameraReady={() => {
+            arCameraReadyRef.current = true;
             logDeepARCameraReady(true);
           }}
           onError={(text: string, isFatal: boolean) => {
+            const deepARHasStarted = arInitRef.current || arCameraReadyRef.current;
+            if (!deepARHasStarted && !isFatal && isDeepARStartupFrameError(text)) {
+              console.warn('[DeepAR] startup frame warning ignored:', text);
+              return;
+            }
+            logDeepARCameraReady(false, text);
+            console.error('[DeepAR] error', { text, isFatal });
             if (isFatal) {
-              logDeepARCameraReady(false, text);
-              log.deepar.error('DeepAR error', { text, isFatal });
               setFatalErrors(prev => prev + 1);
               onError?.(`DeepAR: ${text}`);
-            } else {
-              console.warn('[DeepAR] non-fatal:', text);
             }
           }}
           onScreenshotTaken={(uri: string) => {
@@ -566,9 +610,9 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
             onScreenshot?.(uri);
           }}
           onVideoRecordingFinished={(uri: string) => {
-            console.log('[CreatorCapture] DeepAR onVideoRecordingFinished uri:', uri);
-            if (recTimerRef.current) clearInterval(recTimerRef.current);
-            setIsRecording(false); setRecSeconds(0);
+            console.log('[DeepARVideo] onVideoRecordingFinished() uri:', uri);
+            clearRecordingTimer();
+            markRecording(false);
             onVideoReady?.(uri);
           }}
         />
