@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
-  View, StyleSheet, FlatList, Dimensions, ViewToken, RefreshControl,
-  Text, Pressable, Animated, Platform,
+  View, StyleSheet, FlatList, ViewToken, RefreshControl,
+  Text, Pressable,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -28,28 +28,6 @@ import { useScrollToTop } from '@react-navigation/native';
 import type { StoryGroup } from '@/components/feature/StoriesBar';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
 
-function isVideoReel(video: VideoWithMeta): boolean {
-  const url = video.videoUrl || '';
-  if (!url) return false;
-  const clean = url.split('?')[0].toLowerCase();
-  if (
-    clean.includes('gtv-videos-bucket') ||
-    clean.includes('commondatastorage.googleapis.com') ||
-    clean.includes('/videos/')
-  ) return true;
-  const ext = clean.split('.').pop() || '';
-  return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'quicktime', 'm4v'].includes(ext);
-}
-
-function isCarousel(video: VideoWithMeta): boolean {
-  return Array.isArray((video as any).mediaUrls) && (video as any).mediaUrls.length > 1;
-}
-
-// Height of the fixed top header
-const { height: WINDOW_HEIGHT } = Dimensions.get('window');
-
-// Defined outside component — static reference prevents re-evaluation on every render.
-// React Native Web's VirtualizedList requires exactly one of these two keys.
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 75 };
 
 export default function FeedScreen() {
@@ -101,10 +79,6 @@ export default function FeedScreen() {
   // Stories bar sits directly below top bar
   const HEADER_TOTAL_HEIGHT = TOP_BAR_HEIGHT + STORIES_BAR_HEIGHT;
 
-  // Animated opacity: fades header + stories completely for video reels
-  const headerOpacity = useRef(new Animated.Value(1)).current;
-  const activeIsReel = useRef(false);
-
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
     const fullyVisible = viewableItems.find(t => t.isViewable && t.index !== null);
     if (fullyVisible && fullyVisible.index !== null) {
@@ -112,20 +86,6 @@ export default function FeedScreen() {
     }
   });
   const viewabilityConfig = useRef(VIEWABILITY_CONFIG);
-
-  // Fade header based on active item type
-  useEffect(() => {
-    const v = videos[activeIndex];
-    if (!v) return;
-    const isReel = isVideoReel(v) && !isCarousel(v);
-    if (isReel === activeIsReel.current) return;
-    activeIsReel.current = isReel;
-    Animated.timing(headerOpacity, {
-      toValue: isReel ? 0 : 1,
-      duration: 280,
-      useNativeDriver: true,
-    }).start();
-  }, [activeIndex, videos]);
 
   const handleLike = useCallback(async (videoId: string, creatorId: string) => {
     const wasLiked = isLiked(videoId);
@@ -203,23 +163,15 @@ export default function FeedScreen() {
 
   const currentComments = commentVideoId ? getComments(commentVideoId) : [];
 
-  // For image/carousel posts: add padding so first item clears the fixed header
-  // For video reels: no top padding (full screen behind header which fades out)
-  const getItemLayout = useCallback((_: any, index: number) => {
-    return { length: WINDOW_HEIGHT, offset: WINDOW_HEIGHT * index, index };
-  }, []);
-
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
 
-      {/* ── Feed ── fills the full screen; image posts get top padding via ListHeaderComponent */}
       <FlatList
         ref={feedListRef}
         data={videos}
         keyExtractor={item => item.id}
         style={styles.feedList}
-        // Spacer so the first non-reel item starts below the fixed header overlay
         ListHeaderComponent={<View style={styles.feedTopSpacer} />}
         contentContainerStyle={styles.feedContent}
         renderItem={({ item, index }) => (
@@ -268,11 +220,8 @@ export default function FeedScreen() {
         }
       />
 
-      {/* ── Fixed top overlay: header + stories (fades out during reel) ── */}
-      <Animated.View
-        style={[styles.topOverlay, { opacity: headerOpacity }]}
-        pointerEvents="box-none"
-      >
+      {/* ── Fixed top overlay: header + stories ── */}
+      <View style={styles.topOverlay} pointerEvents="box-none">
         {/* Gradient backing so header is readable over any content */}
         <LinearGradient
           colors={['rgba(10,10,15,0.92)', 'rgba(10,10,15,0.6)', 'transparent']}
@@ -326,7 +275,7 @@ export default function FeedScreen() {
           />
         </View>
         </FadeIn>
-      </Animated.View>
+      </View>
 
       <DAGRewardToast visible={toastVisible} amount={0.01} onHide={() => setToastVisible(false)} />
 
@@ -358,8 +307,7 @@ export default function FeedScreen() {
   );
 }
 
-// The spacer pushes the first list item (image/carousel posts) below the fixed header.
-// For video reels the header fades to 0 opacity so they appear fullscreen.
+// Spacer pushes first list item below the fixed header overlay.
 const FEED_TOP_SPACER = 160; // TOP_BAR_HEIGHT (~52+safeArea) + STORIES_BAR_HEIGHT (~100)
 
 const styles = StyleSheet.create({
