@@ -201,6 +201,9 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
   const arInitRef     = useRef(false);
   const arCameraReadyRef = useRef(false);
   const recordingStateRef = useRef(false);
+  // Pending DeepAR screenshot promise — resolve when onScreenshotTaken fires
+  const captureResolveRef = useRef<((uri: string | null) => void) | null>(null);
+  const captureTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [camPerm, requestCamPerm] = useSafeCameraPermissions();
   const hasPerm = camPerm?.granted ?? false;
@@ -438,8 +441,19 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
       console.log('[CreatorCapture] CameraCore.takePhoto — deepAR:', deepARCompOk && !!deepARRef.current, 'expoCam:', !!expoCamRef.current);
       if (deepARCompOk && deepARRef.current) {
         console.log('[CreatorCapture] triggering DeepAR screenshot');
+        // Cancel any previously pending capture
+        if (captureTimeoutRef.current) {
+          clearTimeout(captureTimeoutRef.current);
+          captureTimeoutRef.current = null;
+        }
+        captureResolveRef.current = resolve;
+        captureTimeoutRef.current = setTimeout(() => {
+          console.warn('[CreatorCapture] screenshot timeout — no URI after 8s');
+          captureResolveRef.current = null;
+          captureTimeoutRef.current = null;
+          resolve(null);
+        }, 8000);
         triggerDeepARScreenshot(deepARRef);
-        resolve(null); // URI arrives via onScreenshotTaken callback
       } else if (expoCamRef.current) {
         console.log('[CreatorCapture] taking expo-camera picture');
         expoCamRef.current.takePictureAsync({ quality: 0.9 })
@@ -607,6 +621,15 @@ const CameraCore = forwardRef<CameraCoreHandle, CameraCoreProps>(function Camera
           }}
           onScreenshotTaken={(uri: string) => {
             console.log('[CreatorCapture] DeepAR onScreenshotTaken uri:', uri);
+            // Clear timeout BEFORE resolving to prevent the error path from firing
+            if (captureTimeoutRef.current) {
+              clearTimeout(captureTimeoutRef.current);
+              captureTimeoutRef.current = null;
+            }
+            if (captureResolveRef.current) {
+              captureResolveRef.current(uri);
+              captureResolveRef.current = null;
+            }
             onScreenshot?.(uri);
           }}
           onVideoRecordingFinished={(uri: string) => {

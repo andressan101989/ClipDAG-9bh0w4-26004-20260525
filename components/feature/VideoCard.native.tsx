@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Dimensions, Animated, Share,
-  FlatList, NativeScrollEvent, NativeSyntheticEvent,
+  FlatList, NativeScrollEvent, NativeSyntheticEvent, Modal,
 } from 'react-native';
 // expo-video — lazy-loaded to prevent Hermes crash from dynamic import() syntax
 // in expo-video's internal JS when bundled for iOS.
@@ -750,8 +750,8 @@ const VideoReelCard = memo(function VideoReelCard(props: VideoCardProps) {
   } = props;
 
   const [screenSize, setScreenSize] = useState(Dimensions.get('window'));
-  // Full screen height — header fades out in feed when this reel is active
-  const cardHeight = screenSize.height;
+  // Instagram Reels-style: full width, 85% of screen height so next card peeks
+  const cardHeight = Math.round(screenSize.height * 0.85);
 
   useEffect(() => {
     const sub = Dimensions.addEventListener('change', ({ window }) => setScreenSize(window));
@@ -760,6 +760,7 @@ const VideoReelCard = memo(function VideoReelCard(props: VideoCardProps) {
 
   const [isMuted, setIsMuted] = useState(_sessionMuted);
   const [isPaused, setIsPaused] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [showDoubleTapHeart, setShowDoubleTapHeart] = useState(false);
   const [thumbError, setThumbError] = useState(false);
   const heartAnim = useRef(new Animated.Value(0)).current;
@@ -786,23 +787,25 @@ const VideoReelCard = memo(function VideoReelCard(props: VideoCardProps) {
       try { player.muted = true; } catch (_) {}
       try { player.pause(); } catch (_) {}
       setIsPaused(false);
+      setIsFullscreen(false);
     } else if (!isPaused) {
       acquirePlayerLock(player as unknown as ManagedPlayer);
-      try { player.muted = isMuted; } catch (_) {}
+      // Always unmute in fullscreen regardless of the session mute toggle
+      try { player.muted = isFullscreen ? false : isMuted; } catch (_) {}
       try { player.play(); } catch (_) {}
     } else {
       releasePlayerLock(player as unknown as ManagedPlayer);
       try { player.muted = true; } catch (_) {}
       try { player.pause(); } catch (_) {}
     }
-  }, [player, isActive, isPaused, hasValidVideo, isMuted]);
+  }, [player, isActive, isPaused, hasValidVideo, isMuted, isFullscreen]);
 
-  // Sync mute
+  // Sync mute — unmute when fullscreen opens, restore when it closes
   useEffect(() => {
     if (!hasValidVideo || !isActive || isPaused) return;
-    try { player.muted = isMuted; } catch (_) {}
-    _sessionMuted = isMuted;
-  }, [isMuted, hasValidVideo, isActive, isPaused]);
+    try { player.muted = isFullscreen ? false : isMuted; } catch (_) {}
+    if (!isFullscreen) _sessionMuted = isMuted;
+  }, [isMuted, isFullscreen, hasValidVideo, isActive, isPaused]);
 
   // View tracking
   useEffect(() => {
@@ -832,7 +835,7 @@ const VideoReelCard = memo(function VideoReelCard(props: VideoCardProps) {
       ]).start(() => setShowDoubleTapHeart(false));
       if (!isLiked) onLike();
     } else if (isActive) {
-      setIsPaused(p => !p);
+      setIsFullscreen(fs => !fs);
     }
     lastTap.current = now;
   }, [isLiked, onLike, heartAnim, isActive]);
@@ -894,6 +897,33 @@ const VideoReelCard = memo(function VideoReelCard(props: VideoCardProps) {
         onProfilePress={onProfilePress} onShare={handleShare} onGiftSend={onSendGift}
         extraControls={muteControl}
       />
+
+      {/* Fullscreen Modal — tap once to open, native controls for play/pause/seek */}
+      <Modal
+        visible={isFullscreen}
+        statusBarTranslucent
+        animationType="fade"
+        supportedOrientations={['portrait', 'landscape']}
+        onRequestClose={() => setIsFullscreen(false)}
+      >
+        <View style={styles.fullscreenModal}>
+          {hasValidVideo ? (
+            <VideoView
+              player={player}
+              style={StyleSheet.absoluteFillObject}
+              contentFit="contain"
+              nativeControls={true}
+            />
+          ) : null}
+          <Pressable
+            style={styles.fullscreenCloseBtn}
+            onPress={() => setIsFullscreen(false)}
+            hitSlop={10}
+          >
+            <MaterialCommunityIcons name="close" size={26} color="rgba(255,255,255,0.85)" />
+          </Pressable>
+        </View>
+      </Modal>
     </View>
   );
 });
@@ -925,6 +955,15 @@ export const VideoCard = memo(function VideoCard(props: VideoCardProps) {
 const styles = StyleSheet.create({
   mediaPlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surface, gap: 12 },
   mediaPlaceholderText: { color: Colors.textSubtle, fontSize: FontSize.sm },
+
+  fullscreenModal: { flex: 1, backgroundColor: '#000' },
+  fullscreenCloseBtn: {
+    position: 'absolute', top: 48, right: 16,
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(10,10,15,0.72)',
+    alignItems: 'center', justifyContent: 'center',
+    zIndex: 30,
+  },
 
   pauseOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', zIndex: 5 },
   pauseIcon: {
