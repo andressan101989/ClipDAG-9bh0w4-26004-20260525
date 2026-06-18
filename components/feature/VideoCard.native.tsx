@@ -345,7 +345,7 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
   } = props;
 
   const [screenSize, setScreenSize] = useState(Dimensions.get('window'));
-  const mediaHeight = Math.round(screenSize.height * 0.72);
+  const mediaHeight = Math.round(screenSize.height * 0.65);
   const { width: SCREEN_W } = screenSize;
 
   useEffect(() => {

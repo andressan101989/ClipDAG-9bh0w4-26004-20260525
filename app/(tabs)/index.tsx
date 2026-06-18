@@ -172,8 +172,7 @@ export default function FeedScreen() {
         data={videos}
         keyExtractor={item => item.id}
         style={styles.feedList}
-        ListHeaderComponent={<View style={styles.feedTopSpacer} />}
-        contentContainerStyle={styles.feedContent}
+        contentContainerStyle={{ paddingTop: HEADER_TOTAL_HEIGHT }}
         renderItem={({ item, index }) => (
           <VideoCard
             video={item}
@@ -212,10 +211,10 @@ export default function FeedScreen() {
         }
         ListEmptyComponent={
           isLoadingFeed && !initialLoaded ? (
-            <View style={{ paddingTop: FEED_TOP_SPACER }}>
+            <>
               <PostCardSkeleton />
               <PostCardSkeleton />
-            </View>
+            </>
           ) : null
         }
       />
@@ -307,17 +306,10 @@ export default function FeedScreen() {
   );
 }
 
-// Spacer pushes first list item below the fixed header overlay.
-const FEED_TOP_SPACER = 160; // TOP_BAR_HEIGHT (~52+safeArea) + STORIES_BAR_HEIGHT (~100)
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.bg },
 
   feedList: { flex: 1 },
-  feedContent: {},
-
-  // Pushes first item below fixed overlay — height matches HEADER_TOTAL_HEIGHT
-  feedTopSpacer: { height: FEED_TOP_SPACER },
 
   // Fixed top overlay — does NOT scroll with the list
   topOverlay: {
