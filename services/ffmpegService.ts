@@ -583,7 +583,11 @@ export async function exportFinal(params: ExportParams): Promise<{
         const trimOpts: Record<string, unknown> = {
           startTime:             startMs,
           endTime:               endMs,
-          enablePreciseTrimming: true,
+          // Precise trimming forces hardware re-encode. Only needed when there is an
+          // actual range cut (keyframe drift would be visible) or a speed change
+          // (which always re-encodes). For audio-strip-only passes, stream copy is
+          // lossless and avoids a generation-loss re-encode.
+          enablePreciseTrimming: hasRealTrim || hasSpeed,
         };
         if (hasSpeed)          trimOpts.speed       = speed;
         if (applyRemoveAudio)  trimOpts.removeAudio = true;
