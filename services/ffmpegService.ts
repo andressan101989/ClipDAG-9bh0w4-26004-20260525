@@ -547,9 +547,25 @@ export async function exportFinal(params: ExportParams): Promise<{
   }
 
   try {
+    // ── Mute strategy: react-native-video-trim has no per-stream volume control.
+    // removeAudio strips the audio stream entirely, which breaks merge() when mixed
+    // with clips that still have audio (concat filter requires matching stream counts).
+    // Three cases:
+    //   single clip + muted  → removeAudio: true on trim() directly — safe, no merge
+    //   all clips muted      → trim normally (keep streams), merge, then compress({ removeAudio: true })
+    //   mixed muted/unmuted  → skip removeAudio entirely; audio passes through on muted clips
+    const singleClip = clips.length === 1;
+    const mutedCount = clips.filter(c => c.muted).length;
+    const allMuted   = mutedCount === clips.length;
+    const mixedMute  = mutedCount > 0 && !allMuted && !singleClip;
+
+    if (mixedMute) {
+      console.warn('[ffmpegService] Mixed muted/unmuted clips not fully supported — audio may play through on muted clips');
+    }
+
     // ── Step 1: trim each clip (applies trim range + speed in one pass) ───
     onProgress?.('Preparando clips', 0);
-    const hasSpeed     = Math.abs(speed - 1.0) > 0.01;
+    const hasSpeed      = Math.abs(speed - 1.0) > 0.01;
     const processedUris: string[] = [];
 
     for (let i = 0; i < clips.length; i++) {
@@ -557,23 +573,25 @@ export async function exportFinal(params: ExportParams): Promise<{
       const startMs     = Math.round(c.trimStart * c.durationMs);
       const endMs       = Math.round(c.trimEnd   * c.durationMs);
       const hasRealTrim = c.trimStart > 0.01 || c.trimEnd < 0.99;
-      const hasMuted    = c.muted === true;
+      // Apply removeAudio only for single-clip-muted case. For all-muted we defer
+      // to compress() post-merge; for mixed we skip to avoid stream-count mismatch.
+      const applyRemoveAudio = c.muted === true && singleClip;
 
       onProgress?.('Preparando clips', Math.round(((i + 0.5) / clips.length) * 50));
 
-      if (hasRealTrim || hasSpeed || hasMuted) {
+      if (hasRealTrim || hasSpeed || applyRemoveAudio) {
         const trimOpts: Record<string, unknown> = {
           startTime:             startMs,
           endTime:               endMs,
           enablePreciseTrimming: true,
         };
-        if (hasSpeed)  trimOpts.speed       = speed;
-        if (hasMuted)  trimOpts.removeAudio = true;
+        if (hasSpeed)          trimOpts.speed       = speed;
+        if (applyRemoveAudio)  trimOpts.removeAudio = true;
 
         const result = await VideoTrimLib.trim(c.uri, trimOpts);
         processedUris.push(result.outputPath);
       } else {
-        // No trim, no speed change, not muted — use original URI directly.
+        // No trim, no speed change, no applicable mute — use original URI directly.
         processedUris.push(c.uri);
       }
     }
@@ -587,6 +605,21 @@ export async function exportFinal(params: ExportParams): Promise<{
     } else {
       const merged = await VideoTrimLib.merge(processedUris, { outputExt: 'mp4' });
       finalUri = merged.outputPath;
+    }
+
+    // ── Step 3: strip audio post-merge when ALL clips are muted ──────────
+    if (allMuted && !singleClip) {
+      onProgress?.('Silenciando', 90);
+      const compressed = await VideoTrimLib.compress(finalUri, {
+        removeAudio: true,
+        quality:     'high',
+        bitrate:     -1,
+        width:       -1,
+        height:      -1,
+        frameRate:   -1,
+        outputExt:   'mp4',
+      });
+      finalUri = compressed.outputPath;
     }
 
     onProgress?.('Listo', 100);
