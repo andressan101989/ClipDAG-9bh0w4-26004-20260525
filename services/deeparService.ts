@@ -277,10 +277,7 @@ export const DEEPAR_FILTERS: DeepARFilter[] = [
     usageHint: 'Mantén presionada la pantalla para activar este efecto' },
   { id: 'stallone',              name: 'Stallone',       emoji: '💪', category: 'social',
     localModule: require('../assets/deepar/Stallone.deepar'),
-    remoteUrl: `${DEEPAR_CDN}Stallone`,                 description: 'Filtro estilo Stallone',
-    sdkIncompat: true,
-    disabled: true,
-    usageHint: 'Este efecto requiere re-exportarse desde DeepAR Studio 6.0+' },
+    remoteUrl: `${DEEPAR_CDN}Stallone`,                 description: 'Filtro estilo Stallone' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
