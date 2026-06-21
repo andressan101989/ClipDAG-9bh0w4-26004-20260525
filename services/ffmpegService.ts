@@ -517,6 +517,7 @@ export interface ExportClip {
   trimStart:  number;    // fraction 0.0–1.0
   trimEnd:    number;
   durationMs: number;
+  muted?:     boolean;   // strip audio track on export
   transitionIn?: TransitionType;
 }
 
@@ -553,24 +554,26 @@ export async function exportFinal(params: ExportParams): Promise<{
 
     for (let i = 0; i < clips.length; i++) {
       const c = clips[i];
-      const startMs    = Math.round(c.trimStart * c.durationMs);
-      const endMs      = Math.round(c.trimEnd   * c.durationMs);
+      const startMs     = Math.round(c.trimStart * c.durationMs);
+      const endMs       = Math.round(c.trimEnd   * c.durationMs);
       const hasRealTrim = c.trimStart > 0.01 || c.trimEnd < 0.99;
+      const hasMuted    = c.muted === true;
 
       onProgress?.('Preparando clips', Math.round(((i + 0.5) / clips.length) * 50));
 
-      if (hasRealTrim || hasSpeed) {
+      if (hasRealTrim || hasSpeed || hasMuted) {
         const trimOpts: Record<string, unknown> = {
-          startTime:            startMs,
-          endTime:              endMs,
+          startTime:             startMs,
+          endTime:               endMs,
           enablePreciseTrimming: true,
         };
-        if (hasSpeed) trimOpts.speed = speed;
+        if (hasSpeed)  trimOpts.speed       = speed;
+        if (hasMuted)  trimOpts.removeAudio = true;
 
         const result = await VideoTrimLib.trim(c.uri, trimOpts);
         processedUris.push(result.outputPath);
       } else {
-        // No trim, no speed change — use original URI directly.
+        // No trim, no speed change, not muted — use original URI directly.
         processedUris.push(c.uri);
       }
     }

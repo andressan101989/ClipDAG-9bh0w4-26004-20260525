@@ -40,6 +40,7 @@ export interface VideoClip {
   thumbnails:      string[];   // keyframe thumbnail URIs
   trimStart:       number;     // fraction 0.0–1.0
   trimEnd:         number;     // fraction 0.0–1.0
+  muted:           boolean;    // strip audio track on export
 }
 
 export interface DeezerTrack {
@@ -184,7 +185,7 @@ export function useVideoEditor(maxClips = 5) {
       );
     }
 
-    const clip: VideoClip = { id: clipId, uri: clipUri, durationMs: durMs, thumbnails, trimStart: 0, trimEnd: 1 };
+    const clip: VideoClip = { id: clipId, uri: clipUri, durationMs: durMs, thumbnails, trimStart: 0, trimEnd: 1, muted: false };
 
     setClips(prev => {
       const next = [...prev, clip];
@@ -298,6 +299,10 @@ export function useVideoEditor(maxClips = 5) {
     setClips(prev => prev.map((c, i) => i === activeIdx ? { ...c, trimStart: v } : c));
   }, [trimEnd, activeIdx, clips]);
 
+  const toggleMute = useCallback((clipIdx: number) => {
+    setClips(prev => prev.map((c, i) => i === clipIdx ? { ...c, muted: !c.muted } : c));
+  }, []);
+
   const setTrimEnd = useCallback((v: number) => {
     const origMs = clips[activeIdx]?.durationMs ?? 0;
     if (origMs <= 0) return;
@@ -381,6 +386,7 @@ export function useVideoEditor(maxClips = 5) {
         trimStart:  c.trimStart,
         trimEnd:    c.trimEnd,
         durationMs: c.durationMs,
+        muted:      c.muted,
       })),
       speed,
       colorFilter,
@@ -393,12 +399,15 @@ export function useVideoEditor(maxClips = 5) {
     try {
       // ── FFmpeg availability guard ─────────────────────────────────────────
       const hasRealTrim = clips.some(c => c.trimStart > 0.01 || c.trimEnd < 0.99);
-      const needsFFmpeg = clips.length > 1 || hasRealTrim;
+      const hasMuted    = clips.some(c => c.muted);
+      const needsFFmpeg = clips.length > 1 || hasRealTrim || hasMuted;
 
       if (!isFFmpegAvailable()) {
         if (needsFFmpeg) {
           const err = clips.length > 1
             ? 'Para unir varios clips se requiere EAS Build con FFmpeg instalado.'
+            : hasMuted
+            ? 'Para silenciar clips se requiere EAS Build con FFmpeg instalado.'
             : 'Para recortar el video se requiere EAS Build con FFmpeg instalado.';
           setExportError(err);
           return { uri: '', ok: false, error: err };
@@ -506,6 +515,7 @@ export function useVideoEditor(maxClips = 5) {
     togglePlay,
     seekTo,
     setSpeed,
+    toggleMute,
     setTrimStart,
     setTrimEnd,
     setColorFilter,

@@ -383,6 +383,11 @@ export function VideosTab() {
               <Text style={v.clipThumbNum}>{i + 1}</Text>
               <Text style={v.clipThumbDur}>{Math.round(clip.durationMs / 1000)}s</Text>
               {editor.activeIdx === i ? <LinearGradient colors={['#7C5CFF44', 'transparent']} style={StyleSheet.absoluteFillObject} /> : null}
+              {clip.muted ? (
+                <View style={v.clipMutedBadge}>
+                  <MaterialCommunityIcons name="volume-off" size={10} color="#fff" />
+                </View>
+              ) : null}
               <Pressable style={v.clipRemove} onPress={() => editor.removeClip(clip.id)}>
                 <MaterialIcons name="close" size={12} color="#fff" />
               </Pressable>
@@ -426,6 +431,12 @@ export function VideosTab() {
               <Text style={v.speedBadgeText}>{editor.speed}×</Text>
             </View>
           ) : null}
+          {editor.activeClip?.muted ? (
+            <View style={[v.mutedBadge, { zIndex: 10 }]}>
+              <MaterialCommunityIcons name="volume-off" size={13} color="#fff" />
+              <Text style={v.mutedBadgeText}>Sin sonido</Text>
+            </View>
+          ) : null}
           {editor.selectedTrack ? (
             <View style={[v.musicBadge, { zIndex: 10 }]}>
               <MaterialCommunityIcons name="music-note" size={11} color="#fff" />
@@ -457,7 +468,21 @@ export function VideosTab() {
 
       {/* Trim */}
       <View style={v.section}>
-        <Text style={v.sectionTitle}>✂️ Recortar</Text>
+        <View style={v.sectionRow}>
+          <Text style={v.sectionTitle}>✂️ Recortar</Text>
+          <Pressable
+            style={[v.muteBtn, editor.activeClip?.muted && v.muteBtnActive]}
+            onPress={() => editor.toggleMute(editor.activeIdx)}>
+            <MaterialCommunityIcons
+              name={editor.activeClip?.muted ? 'volume-off' : 'volume-high'}
+              size={16}
+              color={editor.activeClip?.muted ? '#fff' : Colors.textSecondary}
+            />
+            <Text style={[v.muteBtnText, editor.activeClip?.muted && { color: '#fff' }]}>
+              {editor.activeClip?.muted ? 'Activar sonido' : 'Silenciar'}
+            </Text>
+          </Pressable>
+        </View>
         <View style={[v.track, { width: TRACK_W_FULL }]}>
           <LinearGradient colors={['#7C5CFF44', '#FF2D7844']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={StyleSheet.absoluteFillObject} />
           <View style={[v.trimDark, { left: 0, width: editor.trimStart * TRACK_W_FULL }]} />
@@ -622,8 +647,14 @@ const v = StyleSheet.create({
   pauseBtn:         { position: 'absolute', top: 12, right: 12, width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
   speedBadge:       { position: 'absolute', top: 10, left: 10, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 5 },
   speedBadgeText:   { color: '#fff', fontSize: 12, fontWeight: FontWeight.bold },
+  mutedBadge:       { position: 'absolute', top: 10, right: 10, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(220,50,50,0.8)', borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 5 },
+  mutedBadgeText:   { color: '#fff', fontSize: 11, fontWeight: FontWeight.semibold },
   musicBadge:       { position: 'absolute', bottom: 10, left: 10, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 5, maxWidth: W * 0.5 },
   musicBadgeText:   { color: '#fff', fontSize: 11 },
+  muteBtn:          { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.full, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
+  muteBtnActive:    { backgroundColor: 'rgba(220,50,50,0.85)', borderColor: 'rgba(220,50,50,0.85)' },
+  muteBtnText:      { color: Colors.textSecondary, fontSize: 12, fontWeight: FontWeight.semibold },
+  clipMutedBadge:   { position: 'absolute', bottom: 4, left: 4, width: 16, height: 16, borderRadius: 8, backgroundColor: 'rgba(220,50,50,0.85)', alignItems: 'center', justifyContent: 'center' },
   seekBar:          { height: 6, borderRadius: 3, backgroundColor: Colors.surface, overflow: 'hidden', position: 'relative', marginBottom: 4 },
   seekPlayhead:     { position: 'absolute', top: 0, bottom: 0, width: 3, backgroundColor: '#fff', borderRadius: 2 },
   timeRow:          { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 6 },
