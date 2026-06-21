@@ -101,7 +101,7 @@ function inferMediaBucket(url: unknown): 'videos' | 'images' {
 // ── Map DB row → VideoWithMeta ────────────────────────────────────────────────
 function mapVideo(row: Record<string, unknown>, username: string, avatar: string): VideoWithMeta {
   const mediaUrlsRaw = row.media_urls as string[] | null;
-  const result: VideoWithMeta = {
+  return {
     id:           row.id as string,
     userId:       row.user_id as string,
     username:     username || 'user',
@@ -124,7 +124,6 @@ function mapVideo(row: Record<string, unknown>, username: string, avatar: string
     viewsCount:   Number(row.views_count) || 0,
     savesCount:   Number(row.saves_count) || 0,
   };
-  return result;
 }
 
 // ── Safe base64 decode (Hermes-compatible) ────────────────────────────────────
