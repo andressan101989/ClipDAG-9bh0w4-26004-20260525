@@ -15,6 +15,16 @@ export interface User {
   totalLikes?: number;
 }
 
+export interface TextOverlay {
+  id:         string;
+  text:       string;
+  x:          number;              // 0–1 fraction of container width
+  y:          number;              // 0–1 fraction of container height
+  fontSize:   number;              // pt
+  color:      string;              // hex
+  fontWeight: 'normal' | 'bold';
+}
+
 export interface Video {
   id: string;
   userId: string;
@@ -24,6 +34,8 @@ export interface Video {
   thumbnailUrl: string;
   /** Carousel: multiple media URLs (images or videos) */
   mediaUrls?: string[];
+  /** Text overlays rendered on top of the video */
+  overlays?: TextOverlay[];
   caption: string;
   likes: number;
   comments: number;

@@ -44,6 +44,8 @@ import { fetchPurchasedContentIds, purchaseContent } from '@/services/economySer
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { SubscribeSheet } from '@/components/creator/SubscribeSheet';
 import { BoostProfileSheet } from '@/components/creator/BoostProfileSheet';
+import { ReportModal } from '@/components/feature/ReportModal';
+import { blockUser } from '@/services/reportService';
 
 const { width: W } = Dimensions.get('window');
 const THUMB = (W - Spacing.md * 2 - 4) / 3;
@@ -97,10 +99,11 @@ export default function CreatorProfileScreen() {
   const [purchasedIds,  setPurchasedIds]  = useState<Set<string>>(new Set());
 
   // UI state
-  const [profileTab,    setProfileTab]    = useState<ProfileTab>('videos');
-  const [subSheetVis,   setSubSheetVis]   = useState(false);
-  const [boostSheetVis, setBoostSheetVis] = useState(false);
-  const [followLoading, setFollowLoading] = useState(false);
+  const [profileTab,      setProfileTab]      = useState<ProfileTab>('videos');
+  const [subSheetVis,     setSubSheetVis]     = useState(false);
+  const [boostSheetVis,   setBoostSheetVis]   = useState(false);
+  const [followLoading,   setFollowLoading]   = useState(false);
+  const [reportModalVis,  setReportModalVis]  = useState(false);
 
   // ── Load all data ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -275,8 +278,38 @@ export default function CreatorProfileScreen() {
         <Pressable
           onPress={() => showAlert('Opciones', '', [
             { text: 'Compartir perfil', onPress: () => { /* share deep link */ } },
-            { text: 'Reportar', style: 'destructive', onPress: () => { /* report flow */ } },
-            { text: 'Cancelar', style: 'cancel' },
+            {
+              text: 'Reportar',
+              onPress: () => setReportModalVis(true),
+            },
+            {
+              text: 'Bloquear usuario',
+              style: 'destructive' as const,
+              onPress: () => {
+                if (!user || !creator) return;
+                showAlert(
+                  `Bloquear @${creator.username}`,
+                  'Este usuario ya no podrá ver tu perfil ni aparecerá en tu feed.',
+                  [
+                    { text: 'Cancelar', style: 'cancel' as const },
+                    {
+                      text: 'Bloquear',
+                      style: 'destructive' as const,
+                      onPress: async () => {
+                        const result = await blockUser(user.id, creator.id);
+                        if (result.success) {
+                          showAlert('Usuario bloqueado', `@${creator.username} ha sido bloqueado`);
+                          router.back();
+                        } else {
+                          showAlert('Error', result.error || 'No se pudo bloquear al usuario');
+                        }
+                      },
+                    },
+                  ],
+                );
+              },
+            },
+            { text: 'Cancelar', style: 'cancel' as const },
           ])}
           hitSlop={10} style={styles.topNavBtn}
         >
@@ -579,6 +612,17 @@ export default function CreatorProfileScreen() {
         onClose={() => setBoostSheetVis(false)}
         onBoost={handleBoostProfile}
       />
+
+      {/* Report modal */}
+      {user && !isOwnProfile ? (
+        <ReportModal
+          visible={reportModalVis}
+          onClose={() => setReportModalVis(false)}
+          reporterId={user.id}
+          contentId={creator.id}
+          contentType="user"
+        />
+      ) : null}
     </View>
   );
 }

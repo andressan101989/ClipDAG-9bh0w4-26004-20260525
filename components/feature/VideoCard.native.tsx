@@ -3,6 +3,11 @@ import {
   View, Text, Pressable, StyleSheet, Dimensions, Animated, Share,
   FlatList, NativeScrollEvent, NativeSyntheticEvent, Modal,
 } from 'react-native';
+import { useAlert } from '@/template';
+import { useAuth } from '@/hooks/useAuth';
+import { useFeed } from '@/hooks/useFeed';
+import { blockUser } from '@/services/reportService';
+import { ReportModal } from '@/components/feature/ReportModal';
 // expo-video — lazy-loaded to prevent Hermes crash from dynamic import() syntax
 // in expo-video's internal JS when bundled for iOS.
 let VideoView: any = null;
@@ -19,6 +24,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { GiftSheet } from '@/components/feature/GiftSheet';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 import { Video, formatNumber } from '@/services/mockData';
+import type { TextOverlay } from '@/services/mockData';
 
 // ── Height exports ────────────────────────────────────────────────────────────
 export const STORIES_BAR_HEIGHT = 100;
@@ -155,9 +161,10 @@ interface CardHeaderProps {
   isFollowing: boolean;
   onProfilePress: () => void;
   onFollow: () => void;
+  onMore?: () => void;
 }
 
-const CardHeader = memo(function CardHeader({ video, isFollowing, onProfilePress, onFollow }: CardHeaderProps) {
+const CardHeader = memo(function CardHeader({ video, isFollowing, onProfilePress, onFollow, onMore }: CardHeaderProps) {
   return (
     <View style={styles.cardHeader}>
       <Pressable style={styles.cardHeaderLeft} onPress={onProfilePress} hitSlop={4}>
@@ -173,18 +180,25 @@ const CardHeader = memo(function CardHeader({ video, isFollowing, onProfilePress
         </View>
       </Pressable>
 
-      {!isFollowing ? (
-        <Pressable onPress={onFollow} hitSlop={6}>
-          <LinearGradient colors={['#7C5CFF', '#FF2D78']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.followBtn}>
-            <Text style={styles.followBtnText}>Seguir</Text>
-          </LinearGradient>
-        </Pressable>
-      ) : (
-        <Pressable onPress={onFollow} style={styles.followingBtn} hitSlop={6}>
-          <MaterialIcons name="check" size={11} color={Colors.accent} />
-          <Text style={styles.followingBtnText}>Siguiendo</Text>
-        </Pressable>
-      )}
+      <View style={styles.cardHeaderRight}>
+        {!isFollowing ? (
+          <Pressable onPress={onFollow} hitSlop={6}>
+            <LinearGradient colors={['#7C5CFF', '#FF2D78']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.followBtn}>
+              <Text style={styles.followBtnText}>Seguir</Text>
+            </LinearGradient>
+          </Pressable>
+        ) : (
+          <Pressable onPress={onFollow} style={styles.followingBtn} hitSlop={6}>
+            <MaterialIcons name="check" size={11} color={Colors.accent} />
+            <Text style={styles.followingBtnText}>Siguiendo</Text>
+          </Pressable>
+        )}
+        {onMore ? (
+          <Pressable onPress={onMore} hitSlop={10} style={styles.moreBtn}>
+            <MaterialCommunityIcons name="dots-vertical" size={20} color="rgba(255,255,255,0.85)" />
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 });
@@ -353,6 +367,51 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
     return () => sub.remove();
   }, []);
 
+  // ── Report / Block ────────────────────────────────────────────────────────
+  const { showAlert } = useAlert();
+  const { user: currentUser } = useAuth();
+  const { addBlockedUser } = useFeed();
+  const [reportVisible, setReportVisible] = useState(false);
+
+  const isOwnVideo = !!currentUserId && currentUserId === video.userId;
+
+  const handleMore = useCallback(() => {
+    showAlert(`@${video.username}`, '', [
+      {
+        text: 'Reportar',
+        onPress: () => setReportVisible(true),
+      },
+      {
+        text: `Bloquear @${video.username}`,
+        style: 'destructive' as const,
+        onPress: () => {
+          showAlert(
+            `Bloquear @${video.username}`,
+            'Este usuario ya no podrá ver tu perfil ni aparecerá en tu feed.',
+            [
+              { text: 'Cancelar', style: 'cancel' as const },
+              {
+                text: 'Bloquear',
+                style: 'destructive' as const,
+                onPress: async () => {
+                  if (!currentUser?.id) return;
+                  const result = await blockUser(currentUser.id, video.userId);
+                  if (result.success) {
+                    addBlockedUser(video.userId);
+                    showAlert('Usuario bloqueado', `@${video.username} ha sido bloqueado`);
+                  } else {
+                    showAlert('Error', result.error || 'No se pudo bloquear al usuario');
+                  }
+                },
+              },
+            ],
+          );
+        },
+      },
+      { text: 'Cancelar', style: 'cancel' as const },
+    ]);
+  }, [video.username, video.userId, currentUser, showAlert, addBlockedUser]);
+
   // ── Media type detection ─────────────────────────────────────────────────
   const videoUrl   = video.videoUrl   || '';
   const thumbUrl   = video.thumbnailUrl || '';
@@ -481,7 +540,19 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
         isFollowing={isFollowing}
         onProfilePress={onProfilePress}
         onFollow={onFollow}
+        onMore={!isOwnVideo ? handleMore : undefined}
       />
+
+      {/* ── Report modal ── */}
+      {currentUser?.id && !isOwnVideo ? (
+        <ReportModal
+          visible={reportVisible}
+          onClose={() => setReportVisible(false)}
+          reporterId={currentUser.id}
+          contentId={video.id}
+          contentType="video"
+        />
+      ) : null}
 
       {/* ── Media area ── */}
       <View style={{ width: SCREEN_W, height: mediaHeight, backgroundColor: '#000' }}>
@@ -556,6 +627,30 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
             {heartOverlay}
           </Pressable>
         )}
+
+        {/* Text overlays — pointerEvents="none" so touches reach the video */}
+        {video.overlays && video.overlays.length > 0 ? (
+          <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+            {video.overlays.map((o: TextOverlay) => (
+              <Text
+                key={o.id}
+                style={{
+                  position:          'absolute',
+                  left:              o.x * SCREEN_W,
+                  top:               o.y * mediaHeight,
+                  fontSize:          o.fontSize,
+                  color:             o.color,
+                  fontWeight:        o.fontWeight,
+                  textShadowColor:   'rgba(0,0,0,0.85)',
+                  textShadowOffset:  { width: 1, height: 1 },
+                  textShadowRadius:  4,
+                }}
+              >
+                {o.text}
+              </Text>
+            ))}
+          </View>
+        ) : null}
 
         {/* Mute toggle — bottom-right corner, video only */}
         {isVideo && hasValidVideo ? (
@@ -668,6 +763,8 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
   },
   cardHeaderLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  cardHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  moreBtn: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
   cardAvatarRing: {
     borderRadius: 22, overflow: 'hidden',
     borderWidth: 2, borderColor: Colors.primary + '66',

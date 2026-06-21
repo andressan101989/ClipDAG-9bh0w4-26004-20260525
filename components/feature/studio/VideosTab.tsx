@@ -15,8 +15,9 @@
 import React, { useState, useCallback, useRef, useMemo, memo } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView, FlatList,
-  TextInput, ActivityIndicator, Dimensions, Modal,
+  TextInput, ActivityIndicator, Dimensions, Modal, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import type { TextOverlay } from '@/services/mockData';
 import { Image } from '@/components/ui/SafeImage';
 import { Audio } from 'expo-av';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
@@ -71,6 +72,19 @@ const DEEZER_CATS = [
   { id: 'lofi',       q: 'lofi chill beats',     label: 'Lo-Fi',       emoji: '☕' },
   { id: 'latin',      q: 'latin hits',           label: 'Latino',      emoji: '🌶️' },
   { id: 'viral',      q: 'trending viral 2025',  label: 'Viral',       emoji: '📈' },
+];
+
+const PREVIEW_H = W * 0.62;
+
+const TEXT_COLORS = [
+  '#FFFFFF', '#FFFF00', '#FF2D78', '#7C5CFF',
+  '#00E5A0', '#FF9D00', '#00B4FF', '#000000',
+];
+
+const TEXT_SIZES = [
+  { label: 'S', value: 18 },
+  { label: 'M', value: 26 },
+  { label: 'L', value: 38 },
 ];
 
 function fmtMs(ms: number) {
@@ -315,6 +329,48 @@ export function VideosTab() {
   const [caption,      setCaption]      = useState('');
   const [musicModal,   setMusicModal]   = useState(false);
 
+  // ── Text overlay state ─────────────────────────────────────────────────────
+  const [textModal,       setTextModal]       = useState(false);
+  const [editingId,       setEditingId]       = useState<string | null>(null);
+  const [draftText,       setDraftText]       = useState('');
+  const [draftSize,       setDraftSize]       = useState(26);
+  const [draftColor,      setDraftColor]      = useState('#FFFFFF');
+  const [draftBold,       setDraftBold]       = useState(false);
+  const [dragPositions,   setDragPositions]   = useState<Record<string, { x: number; y: number }>>({});
+  const dragRef = useRef<{ startX: number; startY: number; ox: number; oy: number; moved: boolean }>({
+    startX: 0, startY: 0, ox: 0, oy: 0, moved: false,
+  });
+
+  const openNewOverlay = useCallback(() => {
+    setEditingId(null);
+    setDraftText('');
+    setDraftSize(26);
+    setDraftColor('#FFFFFF');
+    setDraftBold(false);
+    setTextModal(true);
+  }, []);
+
+  const openEditOverlay = useCallback((o: TextOverlay) => {
+    setEditingId(o.id);
+    setDraftText(o.text);
+    setDraftSize(o.fontSize);
+    setDraftColor(o.color);
+    setDraftBold(o.fontWeight === 'bold');
+    setTextModal(true);
+  }, []);
+
+  const confirmOverlay = useCallback(() => {
+    const t = draftText.trim();
+    if (!t) { setTextModal(false); return; }
+    const fw: 'normal' | 'bold' = draftBold ? 'bold' : 'normal';
+    if (editingId) {
+      editor.updateOverlay(editingId, { text: t, fontSize: draftSize, color: draftColor, fontWeight: fw });
+    } else {
+      editor.addOverlay(t, draftSize, draftColor, fw);
+    }
+    setTextModal(false);
+  }, [draftText, draftSize, draftColor, draftBold, editingId, editor]);
+
   const TRACK_W_FULL = W - 32;
 
   const handleExportAndPublish = useCallback(async () => {
@@ -328,6 +384,7 @@ export function VideosTab() {
           ? `${editor.selectedTrack.title} — ${editor.selectedTrack.artist.name}`
           : 'Sin música',
         username: '', userAvatar: '',
+        overlays: editor.overlays.length > 0 ? editor.overlays : undefined,
       });
       showAlert('Publicado 🎉', isFFmpegAvailable() ? 'Video exportado y publicado' : 'Clip publicado', [
         { text: 'Ver feed', onPress: () => router.replace('/(tabs)') },
@@ -443,6 +500,64 @@ export function VideosTab() {
               <Text style={v.musicBadgeText} numberOfLines={1}>{editor.selectedTrack.title}</Text>
             </View>
           ) : null}
+
+          {/* ── Draggable text overlays ── */}
+          {editor.overlays.map(o => {
+            const pos = dragPositions[o.id] ?? { x: o.x, y: o.y };
+            return (
+              <View
+                key={o.id}
+                style={[ot.wrapper, { left: pos.x * W, top: pos.y * PREVIEW_H }]}
+                onStartShouldSetResponder={() => true}
+                onMoveShouldSetResponder={() => true}
+                onResponderGrant={e => {
+                  dragRef.current = {
+                    startX: e.nativeEvent.pageX,
+                    startY: e.nativeEvent.pageY,
+                    ox: o.x, oy: o.y, moved: false,
+                  };
+                }}
+                onResponderMove={e => {
+                  const dx = e.nativeEvent.pageX - dragRef.current.startX;
+                  const dy = e.nativeEvent.pageY - dragRef.current.startY;
+                  if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+                    dragRef.current.moved = true;
+                    setDragPositions(prev => ({
+                      ...prev,
+                      [o.id]: {
+                        x: Math.max(0, Math.min(0.85, dragRef.current.ox + dx / W)),
+                        y: Math.max(0, Math.min(0.85, dragRef.current.oy + dy / PREVIEW_H)),
+                      },
+                    }));
+                  }
+                }}
+                onResponderRelease={() => {
+                  if (!dragRef.current.moved) {
+                    openEditOverlay(o);
+                  } else {
+                    const finalPos = dragPositions[o.id];
+                    if (finalPos) {
+                      editor.updateOverlay(o.id, { x: finalPos.x, y: finalPos.y });
+                      setDragPositions(prev => { const n = { ...prev }; delete n[o.id]; return n; });
+                    }
+                  }
+                }}
+              >
+                <View style={ot.textWrap}>
+                  <Text style={[ot.text, { fontSize: o.fontSize, color: o.color, fontWeight: o.fontWeight }]}>
+                    {o.text}
+                  </Text>
+                </View>
+                <Pressable
+                  style={ot.deleteBtn}
+                  hitSlop={8}
+                  onPress={() => editor.removeOverlay(o.id)}
+                >
+                  <MaterialIcons name="close" size={10} color="#fff" />
+                </Pressable>
+              </View>
+            );
+          })}
         </View>
       ) : null}
 
@@ -534,6 +649,24 @@ export function VideosTab() {
         </ScrollView>
       </View>
 
+      {/* Text overlays tool */}
+      <View style={v.section}>
+        <View style={v.sectionRow}>
+          <Text style={v.sectionTitle}>📝 Texto</Text>
+          {editor.overlays.length > 0 ? (
+            <Text style={{ color: Colors.textSubtle, fontSize: FontSize.xs }}>
+              {editor.overlays.length} texto{editor.overlays.length > 1 ? 's' : ''}
+            </Text>
+          ) : null}
+        </View>
+        <Pressable style={v.addTextBtn} onPress={openNewOverlay}>
+          <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={v.addTextBtnInner}>
+            <MaterialCommunityIcons name="format-text" size={18} color="#fff" />
+            <Text style={v.addTextBtnText}>Añadir texto</Text>
+          </LinearGradient>
+        </Pressable>
+      </View>
+
       {/* Music */}
       <View style={v.section}>
         <View style={v.sectionRow}>
@@ -617,6 +750,85 @@ export function VideosTab() {
         selectedId={editor.selectedTrack?.id ?? null}
         soundRef={editor.soundRef}
       />
+
+      {/* Text overlay modal */}
+      <Modal visible={textModal} transparent animationType="slide" presentationStyle="overFullScreen"
+        onRequestClose={() => setTextModal(false)}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1, justifyContent: 'flex-end' }}
+        >
+          <Pressable style={cm.backdrop} onPress={() => setTextModal(false)} />
+          <View style={tm.sheet}>
+            <View style={cm.handle} />
+            <Text style={cm.title}>{editingId ? 'Editar texto' : 'Añadir texto'}</Text>
+
+            <TextInput
+              style={tm.input}
+              value={draftText}
+              onChangeText={setDraftText}
+              placeholder="Escribe aquí..."
+              placeholderTextColor={Colors.textSubtle}
+              autoFocus
+              maxLength={80}
+            />
+
+            <Text style={tm.label}>Color</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: 10, paddingVertical: 4 }}>
+              {TEXT_COLORS.map(c => (
+                <Pressable key={c} style={[tm.colorDot, { backgroundColor: c },
+                  draftColor === c && tm.colorDotSel]} onPress={() => setDraftColor(c)} />
+              ))}
+            </ScrollView>
+
+            <Text style={tm.label}>Tamaño</Text>
+            <View style={tm.sizeRow}>
+              {TEXT_SIZES.map(s => (
+                <Pressable key={s.value}
+                  style={[tm.sizeChip, draftSize === s.value && tm.sizeChipSel]}
+                  onPress={() => setDraftSize(s.value)}>
+                  <Text style={[tm.sizeLabel, draftSize === s.value && { color: '#fff' }]}>{s.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <Pressable style={[tm.boldBtn, draftBold && tm.boldBtnActive]}
+              onPress={() => setDraftBold(b => !b)}>
+              <Text style={[tm.boldBtnText, draftBold && { color: '#fff' }]}>B  Negrita</Text>
+            </Pressable>
+
+            {draftText.trim().length > 0 ? (
+              <View style={tm.preview}>
+                <Text style={{
+                  fontSize: draftSize, color: draftColor,
+                  fontWeight: draftBold ? 'bold' : 'normal',
+                  textShadowColor: 'rgba(0,0,0,0.85)',
+                  textShadowOffset: { width: 1, height: 1 },
+                  textShadowRadius: 4,
+                }}>
+                  {draftText}
+                </Text>
+              </View>
+            ) : null}
+
+            <Pressable style={[cm.pubBtn, !draftText.trim() && { opacity: 0.4 }]}
+              onPress={confirmOverlay} disabled={!draftText.trim()}>
+              <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={cm.pubBtnInner}>
+                <Text style={cm.pubBtnText}>{editingId ? 'Actualizar' : 'Añadir'}</Text>
+              </LinearGradient>
+            </Pressable>
+
+            {editingId ? (
+              <Pressable style={tm.deleteRow}
+                onPress={() => { editor.removeOverlay(editingId); setTextModal(false); }}>
+                <MaterialIcons name="delete-outline" size={16} color={Colors.error} />
+                <Text style={tm.deleteText}>Eliminar texto</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </ScrollView>
   );
 }
@@ -689,6 +901,9 @@ const v = StyleSheet.create({
   addMusicBtn:      { borderRadius: Radius.lg, overflow: 'hidden' },
   addMusicBtnInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
   addMusicBtnText:  { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
+  addTextBtn:       { borderRadius: Radius.lg, overflow: 'hidden' },
+  addTextBtnInner:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
+  addTextBtnText:   { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
   volRow:           { flexDirection: 'row', alignItems: 'center', gap: 10 },
   volLabel:         { color: Colors.textSubtle, fontSize: FontSize.xs, width: 52 },
   volTrack:         { height: 4, backgroundColor: Colors.border, borderRadius: 2, position: 'relative', overflow: 'visible' },
@@ -698,6 +913,29 @@ const v = StyleSheet.create({
   publishBtn:       { borderRadius: Radius.xl, overflow: 'hidden' },
   publishBtnInner:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 16 },
   publishBtnText:   { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
+});
+
+// ── Text overlay preview styles (inside playerWrap) ───────────────────────────
+const ot = StyleSheet.create({
+  wrapper:   {
+    position: 'absolute', flexDirection: 'row', alignItems: 'center', gap: 4, zIndex: 20,
+  },
+  textWrap:  {
+    paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
+    // dashed border not natively supported — plain border shows selection
+  },
+  text:      {
+    textShadowColor: 'rgba(0,0,0,0.85)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 4,
+  },
+  deleteBtn: {
+    width: 18, height: 18, borderRadius: 9,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    alignItems: 'center', justifyContent: 'center',
+  },
 });
 
 const cm = StyleSheet.create({
@@ -712,6 +950,53 @@ const cm = StyleSheet.create({
   pubBtn:       { borderRadius: Radius.lg, overflow: 'hidden' },
   pubBtnInner:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
   pubBtnText:   { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
+});
+
+// ── Text overlay bottom-sheet modal styles ────────────────────────────────────
+const tm = StyleSheet.create({
+  sheet:        {
+    backgroundColor: Colors.surfaceElevated,
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    padding: 24, gap: 12,
+    borderTopWidth: 1, borderColor: Colors.border,
+  },
+  input:        {
+    backgroundColor: Colors.surface,
+    borderWidth: 1, borderColor: Colors.border,
+    borderRadius: Radius.md,
+    paddingHorizontal: 14, paddingVertical: 12,
+    color: Colors.textPrimary, fontSize: FontSize.md,
+  },
+  label:        {
+    color: Colors.textSubtle, fontSize: FontSize.xs,
+    fontWeight: FontWeight.semibold,
+    textTransform: 'uppercase', letterSpacing: 0.5,
+  },
+  colorDot:     { width: 32, height: 32, borderRadius: 16, borderWidth: 2, borderColor: 'transparent' },
+  colorDotSel:  { borderColor: '#fff', transform: [{ scale: 1.25 }] },
+  sizeRow:      { flexDirection: 'row', gap: 8 },
+  sizeChip:     {
+    flex: 1, paddingVertical: 14, borderRadius: Radius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: 1.5, borderColor: Colors.border,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  sizeChipSel:  { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  sizeLabel:    { color: Colors.textSubtle, fontSize: FontSize.md, fontWeight: FontWeight.bold },
+  boldBtn:      {
+    paddingVertical: 12, borderRadius: Radius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: 1.5, borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  boldBtnActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  boldBtnText:  { color: Colors.textSubtle, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
+  preview:      {
+    backgroundColor: '#000', borderRadius: Radius.md,
+    padding: 16, alignItems: 'center', minHeight: 56,
+  },
+  deleteRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8 },
+  deleteText:   { color: Colors.error, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
 });
 
 const dm = StyleSheet.create({
