@@ -14,7 +14,7 @@ import { useStories } from '@/hooks/useStories';
 import { useNotifications } from '@/hooks/useNotifications';
 import { useAlert } from '@/template';
 import { getSupabaseClient } from '@/template';
-import { VideoCard, TAB_BAR_HEIGHT, STORIES_BAR_HEIGHT } from '@/components/feature/VideoCard';
+import { VideoCard, TAB_BAR_HEIGHT } from '@/components/feature/VideoCard';
 import { CommentSheet } from '@/components/feature/CommentSheet';
 import { DAGRewardToast } from '@/components/feature/DAGRewardToast';
 import { StoriesBar } from '@/components/feature/StoriesBar';
@@ -76,8 +76,6 @@ export default function FeedScreen() {
 
   // Top bar height: safe area + 52px content
   const TOP_BAR_HEIGHT = insets.top + 52;
-  // Stories bar sits directly below top bar
-  const HEADER_TOTAL_HEIGHT = TOP_BAR_HEIGHT + STORIES_BAR_HEIGHT;
 
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
     const fullyVisible = viewableItems.find(t => t.isViewable && t.index !== null);
@@ -163,6 +161,41 @@ export default function FeedScreen() {
 
   const currentComments = commentVideoId ? getComments(commentVideoId) : [];
 
+  const feedHeader = (
+    <View style={styles.feedHeader}>
+      <View style={[styles.topBar, { paddingTop: insets.top + 8, height: TOP_BAR_HEIGHT }]}>
+        <View style={styles.logoWrap}>
+          <LinearGradient
+            colors={['#7C5CFF', '#FF2D78']}
+            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+            style={styles.logoGrad}
+          >
+            <Text style={styles.logoClip}>Clip</Text>
+          </LinearGradient>
+          <Text style={styles.logoDAG}>DAG</Text>
+        </View>
+        <View style={styles.topBarRight}>
+          <Pressable style={styles.topBarBtn} onPress={() => router.push('/messages')} hitSlop={8}>
+            <MaterialCommunityIcons name="message-text-outline" size={22} color="rgba(255,255,255,0.85)" />
+          </Pressable>
+          <Pressable style={styles.topBarBtn} onPress={() => router.push('/settings')} hitSlop={8}>
+            <MaterialCommunityIcons name="cog-outline" size={22} color="rgba(255,255,255,0.85)" />
+          </Pressable>
+        </View>
+      </View>
+      <FadeIn delay={120} duration={280}>
+        <StoriesBar
+          currentUserId={user?.id || ''}
+          currentUserAvatar={user?.avatar}
+          currentUsername={user?.username}
+          storyGroups={storyGroups}
+          onAddStory={handleAddStory}
+          onViewStory={handleViewStory}
+        />
+      </FadeIn>
+    </View>
+  );
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
@@ -172,7 +205,7 @@ export default function FeedScreen() {
         data={videos}
         keyExtractor={item => item.id}
         style={styles.feedList}
-        contentContainerStyle={{ paddingTop: HEADER_TOTAL_HEIGHT }}
+        ListHeaderComponent={feedHeader}
         renderItem={({ item, index }) => (
           <VideoCard
             video={item}
@@ -206,7 +239,6 @@ export default function FeedScreen() {
             onRefresh={handleRefresh}
             tintColor={Colors.primary}
             colors={[Colors.primary]}
-            progressViewOffset={HEADER_TOTAL_HEIGHT}
           />
         }
         ListEmptyComponent={
@@ -218,63 +250,6 @@ export default function FeedScreen() {
           ) : null
         }
       />
-
-      {/* ── Fixed top overlay: header + stories ── */}
-      <View style={styles.topOverlay} pointerEvents="box-none">
-        {/* Gradient backing so header is readable over any content */}
-        <LinearGradient
-          colors={['rgba(10,10,15,0.92)', 'rgba(10,10,15,0.6)', 'transparent']}
-          style={[StyleSheet.absoluteFillObject]}
-          pointerEvents="none"
-        />
-
-        {/* Top bar */}
-        <View style={[styles.topBar, { paddingTop: insets.top + 8, height: TOP_BAR_HEIGHT }]}>
-          {/* ClipDAG Brand Logo */}
-          <View style={styles.logoWrap}>
-            <LinearGradient
-              colors={['#7C5CFF', '#FF2D78']}
-              start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-              style={styles.logoGrad}
-            >
-              <Text style={styles.logoClip}>Clip</Text>
-            </LinearGradient>
-            <Text style={styles.logoDAG}>DAG</Text>
-          </View>
-
-          {/* Right actions */}
-          <View style={styles.topBarRight}>
-            <Pressable
-              style={styles.topBarBtn}
-              onPress={() => router.push('/messages')}
-              hitSlop={8}
-            >
-              <MaterialCommunityIcons name="message-text-outline" size={22} color="rgba(255,255,255,0.85)" />
-            </Pressable>
-            <Pressable
-              style={styles.topBarBtn}
-              onPress={() => router.push('/settings')}
-              hitSlop={8}
-            >
-              <MaterialCommunityIcons name="cog-outline" size={22} color="rgba(255,255,255,0.85)" />
-            </Pressable>
-          </View>
-        </View>
-
-        {/* Stories bar — sits directly below top bar */}
-        <FadeIn delay={120} duration={280}>
-        <View pointerEvents="box-none">
-          <StoriesBar
-            currentUserId={user?.id || ''}
-            currentUserAvatar={user?.avatar}
-            currentUsername={user?.username}
-            storyGroups={storyGroups}
-            onAddStory={handleAddStory}
-            onViewStory={handleViewStory}
-          />
-        </View>
-        </FadeIn>
-      </View>
 
       <DAGRewardToast visible={toastVisible} amount={0.01} onHide={() => setToastVisible(false)} />
 
@@ -311,12 +286,8 @@ const styles = StyleSheet.create({
 
   feedList: { flex: 1 },
 
-  // Fixed top overlay — does NOT scroll with the list
-  topOverlay: {
-    position: 'absolute',
-    top: 0, left: 0, right: 0,
-    zIndex: 100,
-    elevation: 100,
+  feedHeader: {
+    backgroundColor: Colors.bg,
   },
 
   topBar: {
