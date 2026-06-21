@@ -16,6 +16,7 @@ import React, { useState, useCallback, useRef, useMemo, memo } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView, FlatList,
   TextInput, ActivityIndicator, Dimensions, Modal, KeyboardAvoidingView, Platform,
+  Animated,
 } from 'react-native';
 import type { TextOverlay } from '@/services/mockData';
 import { Image } from '@/components/ui/SafeImage';
@@ -330,16 +331,30 @@ export function VideosTab() {
   const [musicModal,   setMusicModal]   = useState(false);
 
   // ── Text overlay state ─────────────────────────────────────────────────────
-  const [textModal,       setTextModal]       = useState(false);
-  const [editingId,       setEditingId]       = useState<string | null>(null);
-  const [draftText,       setDraftText]       = useState('');
-  const [draftSize,       setDraftSize]       = useState(26);
-  const [draftColor,      setDraftColor]      = useState('#FFFFFF');
-  const [draftBold,       setDraftBold]       = useState(false);
-  const [dragPositions,   setDragPositions]   = useState<Record<string, { x: number; y: number }>>({});
-  const dragRef = useRef<{ startX: number; startY: number; ox: number; oy: number; moved: boolean }>({
-    startX: 0, startY: 0, ox: 0, oy: 0, moved: false,
-  });
+  const [textModal,  setTextModal]  = useState(false);
+  const [editingId,  setEditingId]  = useState<string | null>(null);
+  const [draftText,  setDraftText]  = useState('');
+  const [draftSize,  setDraftSize]  = useState(26);
+  const [draftColor, setDraftColor] = useState('#FFFFFF');
+  const [draftBold,  setDraftBold]  = useState(false);
+
+  // Animated values for drag — one per overlay ID, created on demand.
+  // Using Animated.ValueXY + transform avoids setState on every touch-move
+  // (which would re-render the entire ScrollView on each pixel of movement).
+  const dragAnims = useRef<Record<string, Animated.ValueXY>>({});
+  const getOrCreateAnim = useCallback((id: string) => {
+    if (!dragAnims.current[id]) {
+      dragAnims.current[id] = new Animated.ValueXY({ x: 0, y: 0 });
+    }
+    return dragAnims.current[id];
+  }, []);
+
+  const dragRef = useRef<{
+    startX: number; startY: number;
+    ox: number;     oy: number;
+    moved: boolean;
+    lastDx: number; lastDy: number;
+  }>({ startX: 0, startY: 0, ox: 0, oy: 0, moved: false, lastDx: 0, lastDy: 0 });
 
   const openNewOverlay = useCallback(() => {
     setEditingId(null);
@@ -503,43 +518,52 @@ export function VideosTab() {
 
           {/* ── Draggable text overlays ── */}
           {editor.overlays.map(o => {
-            const pos = dragPositions[o.id] ?? { x: o.x, y: o.y };
+            const anim = getOrCreateAnim(o.id);
             return (
-              <View
+              <Animated.View
                 key={o.id}
-                style={[ot.wrapper, { left: pos.x * W, top: pos.y * PREVIEW_H }]}
+                style={[
+                  ot.wrapper,
+                  {
+                    left: o.x * W,
+                    top:  o.y * PREVIEW_H,
+                    transform: anim.getTranslateTransform(),
+                  },
+                ]}
                 onStartShouldSetResponder={() => true}
                 onMoveShouldSetResponder={() => true}
                 onResponderGrant={e => {
+                  anim.setValue({ x: 0, y: 0 });
                   dragRef.current = {
                     startX: e.nativeEvent.pageX,
                     startY: e.nativeEvent.pageY,
-                    ox: o.x, oy: o.y, moved: false,
+                    ox: o.x, oy: o.y,
+                    moved: false,
+                    lastDx: 0, lastDy: 0,
                   };
                 }}
                 onResponderMove={e => {
                   const dx = e.nativeEvent.pageX - dragRef.current.startX;
                   const dy = e.nativeEvent.pageY - dragRef.current.startY;
-                  if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+                  if (!dragRef.current.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
                     dragRef.current.moved = true;
-                    setDragPositions(prev => ({
-                      ...prev,
-                      [o.id]: {
-                        x: Math.max(0, Math.min(0.85, dragRef.current.ox + dx / W)),
-                        y: Math.max(0, Math.min(0.85, dragRef.current.oy + dy / PREVIEW_H)),
-                      },
-                    }));
                   }
+                  // Store latest delta for use in onResponderRelease
+                  dragRef.current.lastDx = dx;
+                  dragRef.current.lastDy = dy;
+                  // Update Animated value directly — no setState, no React re-render
+                  anim.setValue({ x: dx, y: dy });
                 }}
                 onResponderRelease={() => {
                   if (!dragRef.current.moved) {
+                    anim.setValue({ x: 0, y: 0 });
                     openEditOverlay(o);
                   } else {
-                    const finalPos = dragPositions[o.id];
-                    if (finalPos) {
-                      editor.updateOverlay(o.id, { x: finalPos.x, y: finalPos.y });
-                      setDragPositions(prev => { const n = { ...prev }; delete n[o.id]; return n; });
-                    }
+                    const nx = Math.max(0, Math.min(0.85, dragRef.current.ox + dragRef.current.lastDx / W));
+                    const ny = Math.max(0, Math.min(0.85, dragRef.current.oy + dragRef.current.lastDy / PREVIEW_H));
+                    // Commit final position once — single re-render, then reset transform
+                    editor.updateOverlay(o.id, { x: nx, y: ny });
+                    anim.setValue({ x: 0, y: 0 });
                   }
                 }}
               >
@@ -555,7 +579,7 @@ export function VideosTab() {
                 >
                   <MaterialIcons name="close" size={10} color="#fff" />
                 </Pressable>
-              </View>
+              </Animated.View>
             );
           })}
         </View>
@@ -667,45 +691,7 @@ export function VideosTab() {
         </Pressable>
       </View>
 
-      {/* Music */}
-      <View style={v.section}>
-        <View style={v.sectionRow}>
-          <Text style={v.sectionTitle}>🎵 Música</Text>
-          {editor.selectedTrack ? (
-            <Pressable onPress={() => {
-              editor.soundRef.current?.stopAsync().catch(() => {});
-              editor.soundRef.current?.unloadAsync().catch(() => {});
-              editor.soundRef.current = null;
-              editor.setSelectedTrack(null);
-            }}>
-              <Text style={{ color: Colors.error, fontSize: FontSize.xs, fontWeight: FontWeight.semibold }}>Quitar</Text>
-            </Pressable>
-          ) : null}
-        </View>
-        {editor.selectedTrack ? (
-          <View style={v.trackRow}>
-            <Image source={{ uri: editor.selectedTrack.album.cover_medium }} style={v.trackCover} contentFit="cover" transition={150} />
-            <View style={{ flex: 1 }}>
-              <Text style={v.trackName} numberOfLines={1}>{editor.selectedTrack.title}</Text>
-              <Text style={v.trackArtist} numberOfLines={1}>{editor.selectedTrack.artist.name}</Text>
-            </View>
-          </View>
-        ) : null}
-        <Pressable style={v.addMusicBtn} onPress={() => setMusicModal(true)}>
-          <LinearGradient colors={['#FF9D00', '#FF5A00']} style={v.addMusicBtnInner}>
-            <MaterialCommunityIcons name="music-note-plus" size={18} color="#fff" />
-            <Text style={v.addMusicBtnText}>{editor.selectedTrack ? 'Cambiar música' : 'Añadir música Deezer'}</Text>
-          </LinearGradient>
-        </Pressable>
-      </View>
-
-      {editor.selectedTrack ? (
-        <View style={v.section}>
-          <Text style={v.sectionTitle}>🔊 Mezcla de audio</Text>
-          <VolumeSlider label="Video"  value={editor.videoVol} onChange={editor.setVideoVol} color={Colors.primary} />
-          <VolumeSlider label="Música" value={editor.musicVol} onChange={editor.setMusicVol} color={Colors.warning} />
-        </View>
-      ) : null}
+      {/* Music section hidden — Deezer integration deferred */}
 
       <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
         <Pressable style={v.publishBtn} onPress={() => setCaptionModal(true)} disabled={editor.isExporting}>
