@@ -71,15 +71,13 @@
   BOOL fileExists = [[NSFileManager defaultManager] fileExistsAtPath:path];
   NSLog(@"[DeepARNative] switchEffect fileExists=%d", fileExists);
 
-  unsigned long long fileSize = 0;
   if (fileExists) {
     NSError *attrError = nil;
     NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:&attrError];
     if (attrError) {
       NSLog(@"[DeepARNative] switchEffect fileAttributes error=%@", attrError.localizedDescription);
     } else {
-      fileSize = [attrs fileSize];
-      NSLog(@"[DeepARNative] switchEffect fileSize=%llu bytes", fileSize);
+      NSLog(@"[DeepARNative] switchEffect fileSize=%llu bytes", [attrs fileSize]);
     }
     // Check if the path is a directory (some effects ship as bundles)
     BOOL isDir = NO;
@@ -158,12 +156,10 @@
 
 - (void)didSwitchEffect:(NSString *)slot {
   NSLog(@"[DeepARNative] delegate didSwitchEffect slot=%@  ← effect loaded successfully", slot);
-  NSLog(@"[DeepARBridge] didSwitchEffect slot=%@ renderingInitialized=%d visionInitialized=%d — EFFECT IS NOW ACTIVE", slot, _deepAR.renderingInitialized, _deepAR.visionInitialized);
 }
 
 - (void)onErrorWithCode:(ARErrorType)code error:(NSString *)error {
   NSLog(@"[DeepARNative] delegate onError code=%ld error=%@", (long)code, error);
-  NSLog(@"[DeepARBridge] onError code=%ld error=%@ — EFFECT FAILED TO LOAD", (long)code, error);
 }
 
 - (void)didTakeScreenshot:(UIImage *)screenshot {

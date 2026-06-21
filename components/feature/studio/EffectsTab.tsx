@@ -122,8 +122,6 @@ const SKIA_EFFECTS: EffectDef[] = [
   { id: 'hearts',    name: 'Corazones',  emoji: '💕', gradient: ['#FF2D78', '#FF6BA8'] },
   { id: 'rain',      name: 'Lluvia',     emoji: '🌧️', gradient: ['#2D9EFF', '#0050AA'] },
   { id: 'glow',      name: 'Glow',       emoji: '💜', gradient: ['#7C5CFF', '#A855F7'] },
-  { id: 'starfield', name: 'Estrellas',  emoji: '⭐', gradient: ['#1A1A2E', '#7C5CFF'] },
-  { id: 'bokeh',     name: 'Bokeh',      emoji: '📸', gradient: ['#2C2C3A', '#555577'] },
 ];
 
 // ── Circular item ─────────────────────────────────────────────────────────────
@@ -192,7 +190,6 @@ export function EffectsTab() {
   const shutterScale = useRef(new Animated.Value(1)).current;
 
   const handleDeepARFilter = useCallback(async (filter: DeepARFilter) => {
-    if (filter.disabled) return;
     console.log('[CreatorFilters] selected AR filter:', filter.id);
     const deepARRef = cameraRef.current?.deepARRef;
     if (!deepARActive) {
@@ -434,17 +431,16 @@ export function EffectsTab() {
               ) : (
                 <>
                   {DEEPAR_FILTERS.map(f => {
-                    const loadState  = filterLoadState[f.id] ?? 'idle';
-                    const isActive   = deepARFilterId === f.id;
-                    const isLoading  = loadState === 'downloading' || loadState === 'applying';
-                    const isDisabled = isLoading || f.disabled === true;
+                    const loadState = filterLoadState[f.id] ?? 'idle';
+                    const isActive  = deepARFilterId === f.id;
+                    const isLoading = loadState === 'downloading' || loadState === 'applying';
                     return (
                       <CircItem key={f.id}
                         emoji={f.emoji} name={f.name}
                         active={isActive} loading={isLoading} gradient={AR_GRADIENT}
                         nameStyle={isActive ? s.circNameARActive : undefined}
                         onPress={() => handleDeepARFilter(f)}
-                        disabled={isDisabled}
+                        disabled={isLoading}
                       />
                     );
                   })}
