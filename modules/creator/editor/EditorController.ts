@@ -103,7 +103,14 @@ class EditorControllerImpl {
   // ── Session ────────────────────────────────────────────────────────────────
 
   async open(sourceUri: string, durationMs: number): Promise<void> {
-    this._release = await ResourceManager.acquire('render_compositor', 'editor');
+    try {
+      this._release = await ResourceManager.acquire('render_compositor', 'editor');
+    } catch (e: any) {
+      // creator-session or another high-priority holder may own render_compositor.
+      // The editor can still run without the lease — editing operations don't require it.
+      console.warn('[EditorController] render_compositor lease denied:', e?.message, '— running without resource guard');
+      this._release = null;
+    }
 
     this._state = this._defaultState(sourceUri, durationMs);
     this._history   = [];

@@ -29,24 +29,29 @@ try {
 // Convenience accessor — returns null if module unavailable
 const FS = () => _FS;
 
-// ── Lazy-load FFmpeg Kit ──────────────────────────────────────────────────────
-let FFmpegKit: any      = null;
-let ReturnCode: any     = null;
-let FFprobeKit: any     = null;
-let Statistics: any     = null;
-
+// ── react-native-video-trim (primary, installed) ──────────────────────────────
+let VideoTrimLib: any = null;
 try {
-  const kit    = require('ffmpeg-kit-react-native');
-  FFmpegKit    = kit.FFmpegKit   ?? null;
-  ReturnCode   = kit.ReturnCode  ?? null;
-  FFprobeKit   = kit.FFprobeKit  ?? null;
-  Statistics   = kit.Statistics  ?? null;
-  console.log('[FFmpeg] ffmpeg-kit-react-native loaded ✓');
+  VideoTrimLib = require('react-native-video-trim');
+  console.log('[VideoTrim] react-native-video-trim loaded ✓');
 } catch (e: any) {
-  console.log('[FFmpeg] ffmpeg-kit not available (expected on Expo Go):', e?.message);
+  console.log('[VideoTrim] react-native-video-trim not available (expected on Expo Go):', e?.message);
 }
 
-export const isFFmpegAvailable = (): boolean => !!FFmpegKit;
+// ── ffmpeg-kit-react-native (legacy, not installed — kept for dead-code compat) ─
+let FFmpegKit: any  = null;
+let ReturnCode: any = null;
+let FFprobeKit: any = null;
+let Statistics: any = null;
+try {
+  const kit = require('ffmpeg-kit-react-native');
+  FFmpegKit  = kit.FFmpegKit  ?? null;
+  ReturnCode = kit.ReturnCode ?? null;
+  FFprobeKit = kit.FFprobeKit ?? null;
+  Statistics = kit.Statistics ?? null;
+} catch { /* not installed — expected */ }
+
+export const isFFmpegAvailable = (): boolean => !!(VideoTrimLib?.trim);
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 // Computed lazily so cacheDirectory is only accessed after native init
@@ -435,13 +440,18 @@ export async function extractThumbnail(params: {
   atSec:    number;
   width?:   number;
 }): Promise<{ success: boolean; uri: string; error?: string }> {
-  const THUMBNAIL_DIR = getThumbnailDir();
-  await ensureDir(THUMBNAIL_DIR);
-  const out = `${THUMBNAIL_DIR}thumb_${Date.now()}.jpg`;
-  const w   = params.width ?? 360;
-  const cmd = `-ss ${params.atSec.toFixed(3)} -i "${params.inputUri}" -vframes 1 -vf "scale=${w}:-2" -y "${out}"`;
-  const res = await execSync(cmd);
-  return res.success ? { success: true, uri: out } : { success: false, uri: '', error: res.output.slice(-200) };
+  if (!VideoTrimLib?.getFrameAt) {
+    return { success: false, uri: '', error: 'VideoTrim not available' };
+  }
+  try {
+    const result = await VideoTrimLib.getFrameAt(
+      params.inputUri,
+      { atTime: Math.round(params.atSec * 1000) },
+    );
+    return { success: true, uri: result.outputPath };
+  } catch (e: any) {
+    return { success: false, uri: '', error: e?.message ?? 'Thumbnail extraction failed' };
+  }
 }
 
 // ── 7. Watermark overlay ──────────────────────────────────────────────────────
@@ -527,114 +537,61 @@ export async function exportFinal(params: ExportParams): Promise<{
   uri:     string;
   error?:  string;
 }> {
-  const {
-    clips, speed = 1.0, colorFilter = 'none',
-    musicUri, musicVol = 0.7, videoVol = 0.8,
-    textOverlays, outputUri, onProgress,
-  } = params;
+  const { clips, speed = 1.0, onProgress } = params;
 
   if (!clips.length) return { success: false, uri: '', error: 'No clips' };
 
-  // Fallback: no FFmpeg — return first clip
   if (!isFFmpegAvailable()) {
-    onProgress?.('Sin FFmpeg — clip original', 100);
-    return { success: true, uri: clips[0].uri, error: 'FFmpeg not available — original clip used' };
+    return { success: false, uri: '', error: 'VideoTrim not available — EAS Build required for trim and merge' };
   }
 
-  // Count pipeline steps
-  const steps: string[] = ['Preparando clips', 'Uniendo'];
-  if (speed !== 1.0)                  steps.push('Velocidad');
-  if (colorFilter !== 'none')         steps.push('Filtro');
-  if (musicUri)                       steps.push('Audio');
-  if (textOverlays && textOverlays.length > 0) steps.push('Textos');
-  steps.push('Finalizando');
-
-  let stepIdx = 0;
-  const prog = (label: string, pct: number) => {
-    onProgress?.(label, Math.round((stepIdx / steps.length) * 100 + pct / steps.length));
-  };
-
   try {
-    // ── Step 1: Trim clips ────────────────────────────────────────────────
-    stepIdx = 0;
-    const mergeInputs: MergeClipParams[] = [];
+    // ── Step 1: trim each clip (applies trim range + speed in one pass) ───
+    onProgress?.('Preparando clips', 0);
+    const hasSpeed     = Math.abs(speed - 1.0) > 0.01;
+    const processedUris: string[] = [];
+
     for (let i = 0; i < clips.length; i++) {
-      const c       = clips[i];
-      const durSec  = c.durationMs / 1000;
-      const startSec = c.trimStart * durSec;
-      const endSec   = c.trimEnd   * durSec;
-      mergeInputs.push({
-        uri:           c.uri,
-        trimStartSec:  Math.abs(startSec) < 0.05   ? undefined : startSec,
-        trimEndSec:    Math.abs(endSec - durSec) < 0.05 ? undefined : endSec,
-        durationSec:   durSec,
-        transitionIn:  c.transitionIn,
-        transitionSec: 0.5,
-      });
-      prog('Preparando clips', (i / clips.length) * 100);
+      const c = clips[i];
+      const startMs    = Math.round(c.trimStart * c.durationMs);
+      const endMs      = Math.round(c.trimEnd   * c.durationMs);
+      const hasRealTrim = c.trimStart > 0.01 || c.trimEnd < 0.99;
+
+      onProgress?.('Preparando clips', Math.round(((i + 0.5) / clips.length) * 50));
+
+      if (hasRealTrim || hasSpeed) {
+        const trimOpts: Record<string, unknown> = {
+          startTime:            startMs,
+          endTime:              endMs,
+          enablePreciseTrimming: true,
+        };
+        if (hasSpeed) trimOpts.speed = speed;
+
+        const result = await VideoTrimLib.trim(c.uri, trimOpts);
+        processedUris.push(result.outputPath);
+      } else {
+        // No trim, no speed change — use original URI directly.
+        processedUris.push(c.uri);
+      }
     }
 
-    // ── Step 2: Merge ─────────────────────────────────────────────────────
-    stepIdx = 1;
-    const merged = await mergeClips({ clips: mergeInputs, onProgress: p => prog('Uniendo', p) });
-    if (!merged.success) return { success: false, uri: '', error: `Merge: ${merged.error}` };
-    let current = merged.uri;
+    // ── Step 2: merge if multiple clips ───────────────────────────────────
+    onProgress?.('Uniendo', 55);
+    let finalUri: string;
 
-    // ── Step 3: Speed ─────────────────────────────────────────────────────
-    if (speed !== 1.0) {
-      stepIdx++;
-      const totalDur = clips.reduce((s, c) => s + (c.durationMs * (c.trimEnd - c.trimStart)), 0);
-      const sped = await changeSpeed({ inputUri: current, rate: speed, durationMs: totalDur, onProgress: p => prog('Velocidad', p) });
-      if (!sped.success) return { success: false, uri: '', error: `Speed: ${sped.error}` };
-      releaseTemp(current);
-      current = sped.uri;
+    if (processedUris.length === 1) {
+      finalUri = processedUris[0];
+    } else {
+      const merged = await VideoTrimLib.merge(processedUris, { outputExt: 'mp4' });
+      finalUri = merged.outputPath;
     }
-
-    // ── Step 4: Color filter ──────────────────────────────────────────────
-    if (colorFilter !== 'none') {
-      stepIdx++;
-      const filtered = await applyColorFilter({ inputUri: current, filter: colorFilter, onProgress: p => prog('Filtro', p) });
-      if (!filtered.success) return { success: false, uri: '', error: `Filter: ${filtered.error}` };
-      releaseTemp(current);
-      current = filtered.uri;
-    }
-
-    // ── Step 5: Audio mixing ──────────────────────────────────────────────
-    if (musicUri) {
-      stepIdx++;
-      const audio = await mixAudio({
-        videoUri: current,
-        tracks:   [{ uri: musicUri, volume: musicVol, loop: true }],
-        onProgress: p => prog('Audio', p),
-      });
-      if (!audio.success) return { success: false, uri: '', error: `Audio: ${audio.error}` };
-      releaseTemp(current);
-      current = audio.uri;
-    }
-
-    // ── Step 6: Text overlays ─────────────────────────────────────────────
-    if (textOverlays && textOverlays.length > 0) {
-      stepIdx++;
-      const texted = await bakeTextOverlays({ inputUri: current, overlays: textOverlays, onProgress: p => prog('Textos', p) });
-      if (!texted.success) return { success: false, uri: '', error: `Text: ${texted.error}` };
-      releaseTemp(current);
-      current = texted.uri;
-    }
-
-    // ── Step 7: Finalize ──────────────────────────────────────────────────
-    stepIdx++;
-    const finalOut = outputUri ?? tmpFile('final_export');
-    const fs = FS();
-    if (fs) await fs.moveAsync({ from: current, to: finalOut });
-    _tempRegistry.delete(current);
-    _tempRegistry.add(finalOut);
 
     onProgress?.('Listo', 100);
-    console.log('[FFmpeg] Export complete:', finalOut);
-    return { success: true, uri: finalOut };
+    console.log('[VideoTrim] Export complete:', finalUri);
+    return { success: true, uri: finalUri };
 
   } catch (e: any) {
-    console.error('[FFmpeg] exportFinal error:', e?.message);
+    console.error('[VideoTrim] exportFinal error:', e?.message);
     return { success: false, uri: '', error: e?.message ?? 'Export failed' };
   }
 }

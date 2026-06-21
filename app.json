@@ -50,6 +50,7 @@
       "./plugins/withDeepARAndroidFix",
       "./plugins/withDeepARiOS",
       "./plugins/withDeepARFabricView",
+      "./plugins/withVideoTrimAndroid",
       [
         "expo-camera",
         {

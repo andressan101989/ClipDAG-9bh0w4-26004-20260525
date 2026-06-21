@@ -38,6 +38,8 @@ export interface VideoClip {
   uri:             string;
   durationMs:      number;
   thumbnails:      string[];   // keyframe thumbnail URIs
+  trimStart:       number;     // fraction 0.0–1.0
+  trimEnd:         number;     // fraction 0.0–1.0
 }
 
 export interface DeezerTrack {
@@ -107,8 +109,9 @@ export function useVideoEditor(maxClips = 5) {
 
     const unsubTimeline = TimelineController.subscribe(state => {
       setTimelineState(state);
-      setDurationMs(state.durationMs);
-      setPositionMs(state.playheadMs);
+      // Do NOT call setDurationMs here: TimelineController.trimMainVideo() shrinks its
+      // internal durationMs to the trimmed end, which would corrupt trim calculations.
+      // durationMs stays = original clip duration (set in pickClip / setActiveIdx).
       setIsPlaying(state.isPlaying);
     });
 
@@ -148,6 +151,7 @@ export function useVideoEditor(maxClips = 5) {
       log.editor.warn('Max clips reached', { max: maxClips });
       return;
     }
+    try {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
       log.editor.warn('Gallery permission denied');
@@ -159,9 +163,12 @@ export function useVideoEditor(maxClips = 5) {
     });
     if (res.canceled || !res.assets[0]) return;
 
-    const asset    = res.assets[0];
-    const durMs    = (asset.duration ?? 30) * 1000;
-    const clipId   = `c_${Date.now()}`;
+    const asset       = res.assets[0];
+    // expo-image-picker returns duration in seconds (older SDK) or ms (newer SDK).
+    // Values above 3600 cannot be seconds (that would be > 1 h), so treat as ms already.
+    const rawDuration = asset.duration ?? 30;
+    const durMs       = rawDuration > 3600 ? Math.round(rawDuration) : Math.round(rawDuration * 1000);
+    const clipId      = `c_${Date.now()}`;
     const clipUri  = asset.uri;
 
     // Extract thumbnails in background
@@ -177,7 +184,7 @@ export function useVideoEditor(maxClips = 5) {
       );
     }
 
-    const clip: VideoClip = { id: clipId, uri: clipUri, durationMs: durMs, thumbnails };
+    const clip: VideoClip = { id: clipId, uri: clipUri, durationMs: durMs, thumbnails, trimStart: 0, trimEnd: 1 };
 
     setClips(prev => {
       const next = [...prev, clip];
@@ -196,6 +203,10 @@ export function useVideoEditor(maxClips = 5) {
     setPositionMs(0);
     exportAttempts.current = 0;
     log.editor.info('Clip added', { id: clipId, durationMs: durMs });
+    } catch (e: any) {
+      // PHPhotosErrorDomain 3164: limited/denied Photos access, or asset unavailable.
+      console.warn('[VideoEditor] pickClip failed:', e?.message);
+    }
   }, [clips.length, maxClips]);
 
   // ── Remove clip ───────────────────────────────────────────────────────────
@@ -219,24 +230,25 @@ export function useVideoEditor(maxClips = 5) {
     if (clip) {
       EditorController.open(clip.uri, clip.durationMs);
       TimelineController.initialize(clip.durationMs, clip.uri);
+      // Restore this clip's trim state instead of always resetting to 0/1.
+      setTrimStartSt(clip.trimStart);
+      setTrimEndSt(clip.trimEnd);
     }
-    setTrimStartSt(0);
-    setTrimEndSt(1);
-    setDurationMs(clips[i]?.durationMs ?? 0);
+    setDurationMs(clip?.durationMs ?? 0);
     setPositionMs(0);
   }, [clips]);
 
   // ── Playback ──────────────────────────────────────────────────────────────
   const togglePlay = useCallback(() => {
     TimelineController.togglePlay();
-    // Sync expo-video player
+    // isPlaying now reflects the NEW state after the toggle.
     try {
       const p = playerRef.current;
       if (!p) return;
       if (TimelineController.isPlaying) {
-        typeof p.pause === 'function' ? p.pause() : null;
-      } else {
         typeof p.play === 'function' ? p.play() : null;
+      } else {
+        typeof p.pause === 'function' ? p.pause() : null;
       }
     } catch { /* ignore */ }
   }, []);
@@ -244,15 +256,30 @@ export function useVideoEditor(maxClips = 5) {
   const seekTo = useCallback((fraction: number) => {
     if (durationMs <= 0) return;
     const ms = fraction * durationMs;
+    const wasPlaying = TimelineController.isPlaying;
+
+    // Pause player before seek to avoid position being overwritten mid-seek.
+    if (wasPlaying) TimelineController.pause();
+
     TimelineController.seek(ms);
-    // Sync video player
+    setPositionMs(ms);
+
     try {
       const p = playerRef.current;
-      if (!p) return;
-      const sec = ms / 1000;
-      if (typeof p.currentTime !== 'undefined') p.currentTime = sec;
-      else p._avRef?.setPositionAsync?.(ms);
+      if (p) {
+        if (wasPlaying && typeof p.pause === 'function') p.pause();
+        const sec = ms / 1000;
+        if (typeof p.currentTime !== 'undefined') {
+          p.currentTime = sec;
+        } else if (typeof p._avRef?.setPositionAsync === 'function') {
+          p._avRef.setPositionAsync(ms);
+        }
+        // Resume only if we were playing before.
+        if (wasPlaying && typeof p.play === 'function') p.play();
+      }
     } catch { /* ignore */ }
+
+    if (wasPlaying) TimelineController.play();
   }, [durationMs]);
 
   // ── Edit operations (wired to EditorController) ───────────────────────────
@@ -263,16 +290,22 @@ export function useVideoEditor(maxClips = 5) {
   }, []);
 
   const setTrimStart = useCallback((v: number) => {
+    const origMs = clips[activeIdx]?.durationMs ?? 0;
+    if (origMs <= 0) return;
     setTrimStartSt(v);
-    EditorController.trim(v * durationMs, trimEnd * durationMs);
-    TimelineController.trimMainVideo(v * durationMs, trimEnd * durationMs);
-  }, [durationMs, trimEnd]);
+    EditorController.trim(v * origMs, trimEnd * origMs);
+    TimelineController.trimMainVideo(v * origMs, trimEnd * origMs);
+    setClips(prev => prev.map((c, i) => i === activeIdx ? { ...c, trimStart: v } : c));
+  }, [trimEnd, activeIdx, clips]);
 
   const setTrimEnd = useCallback((v: number) => {
+    const origMs = clips[activeIdx]?.durationMs ?? 0;
+    if (origMs <= 0) return;
     setTrimEndSt(v);
-    EditorController.trim(trimStart * durationMs, v * durationMs);
-    TimelineController.trimMainVideo(trimStart * durationMs, v * durationMs);
-  }, [durationMs, trimStart]);
+    EditorController.trim(trimStart * origMs, v * origMs);
+    TimelineController.trimMainVideo(trimStart * origMs, v * origMs);
+    setClips(prev => prev.map((c, i) => i === activeIdx ? { ...c, trimEnd: v } : c));
+  }, [trimStart, activeIdx, clips]);
 
   const setColorFilter = useCallback((f: ColorFilter) => {
     setColorFilterSt(f);
@@ -345,8 +378,8 @@ export function useVideoEditor(maxClips = 5) {
     const exportParams = {
       clips: clips.map(c => ({
         uri:        c.uri,
-        trimStart:  c.id === active.id ? trimStart : 0,
-        trimEnd:    c.id === active.id ? trimEnd   : 1,
+        trimStart:  c.trimStart,
+        trimEnd:    c.trimEnd,
         durationMs: c.durationMs,
       })),
       speed,
@@ -358,12 +391,28 @@ export function useVideoEditor(maxClips = 5) {
     };
 
     try {
-      if (useBackground && isFFmpegAvailable()) {
+      // ── FFmpeg availability guard ─────────────────────────────────────────
+      const hasRealTrim = clips.some(c => c.trimStart > 0.01 || c.trimEnd < 0.99);
+      const needsFFmpeg = clips.length > 1 || hasRealTrim;
+
+      if (!isFFmpegAvailable()) {
+        if (needsFFmpeg) {
+          const err = clips.length > 1
+            ? 'Para unir varios clips se requiere EAS Build con FFmpeg instalado.'
+            : 'Para recortar el video se requiere EAS Build con FFmpeg instalado.';
+          setExportError(err);
+          return { uri: '', ok: false, error: err };
+        }
+        // Single clip, no trim — publish the original URI directly.
+        log.editor.warn('FFmpeg unavailable — publishing original clip without processing');
+        return { uri: active.uri, ok: true };
+      }
+
+      if (useBackground) {
         // Enqueue to background render queue
         const job = RenderQueue.enqueue(exportParams, 0);
         setRenderJobId(job.id);
         setExportProgress('En cola...');
-        // Don't wait — background process handles it
         log.editor.info('Export queued', { jobId: job.id });
         return { uri: '', ok: true };
       }
