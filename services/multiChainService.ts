@@ -101,11 +101,13 @@ export const TOKENS: TokenConfig[] = [
     networkKey: 'base', contract: '',
     isNative: true, color: '#0052FF', logoSymbol: 'ethereum',
   },
-  // USDT on Base (bridged)
+  // USDC on Base (Circle native) — kept as symbol:'USDT' so readAllBalances lookup works.
+  // No official Tether USDT on Base mainnet; 0x833... is the canonical stablecoin here.
+  // Source: https://developers.circle.com/stablecoins/docs/usdc-on-main-networks
   {
-    symbol: 'USDT', name: 'Tether USD (Base)', decimals: 6,
+    symbol: 'USDT', name: 'USD Coin (Base)', decimals: 6,
     networkKey: 'base',
-    contract: '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2',
+    contract: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
     color: '#26A17B', logoSymbol: 'currency-usd',
   },
   // BDAG on BlockDAG

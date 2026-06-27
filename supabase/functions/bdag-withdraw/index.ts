@@ -24,7 +24,11 @@ import { corsHeaders }  from '../_shared/cors.ts';
 
 const SUPABASE_URL     = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY      = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const MONITOR_SECRET   = Deno.env.get('RECONCILE_SECRET') ?? 'dev-secret';
+const MONITOR_SECRET: string = (() => {
+  const s = Deno.env.get('RECONCILE_SECRET');
+  if (!s) throw new Error('RECONCILE_SECRET env var is required — refusing to start bdag-withdraw');
+  return s;
+})();
 const TREASURY_KEY     = Deno.env.get('TREASURY_PRIVATE_KEY');
 const TREASURY_ADDRESS = (Deno.env.get('TREASURY_WALLET_ADDRESS') ?? '').toLowerCase();
 const ALCHEMY_KEY      = Deno.env.get('ALCHEMY_ETH_KEY') ?? '';
@@ -304,9 +308,28 @@ Deno.serve(async (req) => {
       .eq('account_type', 'user')
       .single();
     const currentBalance = Number(ledgerAcct?.balance ?? 0);
-    log('INFO', 'balance_check', { user_id: user.id, ledger_balance: currentBalance, requested: amt });
-    if (currentBalance < amt)
-      return fail(`insufficient BDAG balance. Available: ${currentBalance.toFixed(2)} BDAG`);
+
+    // Exclude provisional (unconfirmed mempool) deposit credits.
+    // bdag-monitor can reverse these if the tx is dropped; allowing withdrawal
+    // against them creates an unrecoverable insolvency when the reversal fires.
+    const { data: provisionalRows } = await admin
+      .from('deposit_confirmations')
+      .select('bdag_credited')
+      .eq('user_id', user.id)
+      .eq('status', 'provisional');
+    const pendingCredit = (provisionalRows ?? [])
+      .reduce((s: number, r: { bdag_credited: unknown }) => s + Number(r.bdag_credited ?? 0), 0);
+    const availableBalance = currentBalance - pendingCredit;
+
+    log('INFO', 'balance_check', {
+      user_id:             user.id,
+      ledger_balance:      currentBalance,
+      pending_provisional: pendingCredit,
+      available:           availableBalance,
+      requested:           amt,
+    });
+    if (availableBalance < amt)
+      return fail(`Saldo no confirmado todavía. Espera a que el depósito tenga confirmaciones on-chain. Saldo disponible confirmado: ${availableBalance.toFixed(2)} BDAG`);
 
     // ── Pre-flight: check treasury key is configured ────────────────────────
     if (!TREASURY_KEY) {
