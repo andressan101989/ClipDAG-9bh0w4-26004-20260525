@@ -40,8 +40,8 @@ export const TREASURY_ADDRESSES: Record<string, string> = {
 export const TREASURY_DEPOSIT_ADDRESS = TREASURY_ADDRESSES.ethereum;
 
 // ── Minimum withdrawal in platform BDAG credits (Layer B) ─────────────────────
-/** Min withdrawal in internal BDAG credits = $0.10 */
-export const MIN_WITHDRAWAL_AMOUNT = 10;
+/** Min withdrawal = 100 BDAG — must match validateWithdrawalPayload() in walletApi.ts */
+export const MIN_WITHDRAWAL_AMOUNT = 100;
 
 /** Legacy alias */
 export const MIN_WITHDRAWAL_BDAG = MIN_WITHDRAWAL_AMOUNT;

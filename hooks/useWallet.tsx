@@ -400,6 +400,16 @@ export function useWallet() {
     description: string,
     type: 'reward' | 'tip' | 'gift' = 'reward',
   ) => {
+    // Tips must go through transferBdag() which debits the sender and credits
+    // the recipient via the bdag-transfer edge function. addReward() only
+    // credits the currently logged-in user — calling it for a tip would
+    // increase the tipper's balance instead of the creator's.
+    if (type === 'tip') {
+      throw new Error(
+        'addReward(type="tip") is blocked — it credits the current user, not the recipient. ' +
+        'Use transferBdag(recipientUsername, amount) instead.',
+      );
+    }
     const uid = userIdRef.current;
     if (!uid || amount <= 0) return;
 

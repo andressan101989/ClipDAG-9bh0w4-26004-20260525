@@ -1,31 +1,25 @@
 /**
- * WalletConnectProvider.native.tsx — iOS + Android (REAL PROVIDER)
+ * WalletConnectProvider.native.tsx — iOS + Android
  *
- * Mounts WalletConnectModalProvider (the context provider, NOT the modal UI).
+ * In @walletconnect/modal-react-native v1.x there is no separate
+ * WalletConnectModalProvider export. WalletConnectModal itself initialises
+ * the universal-provider context AND renders the modal UI. Mount it once
+ * near the app root as a sibling to children; useWalletConnectModal() in
+ * useExternalWallet.native.ts will find the context it provides.
  *
- * EXPORT MAP for @walletconnect/modal-react-native:
- *   WalletConnectModalProvider — context provider (what we need here)
- *   WalletConnectModal         — modal UI component (NOT a provider)
- *
- * We ONLY accept WalletConnectModalProvider. If that specific export is absent
- * the SDK will render children without WC context rather than mounting the
- * wrong component and breaking all wallet hooks downstream.
- *
- * Metro blocks @walletconnect/* on web/preview — this file is only
- * evaluated on iOS/Android where the native SDK is compiled in.
+ * Metro blocks @walletconnect/* on web/preview — this .native.tsx file is
+ * only evaluated on iOS/Android.
  */
 
-// Must be the first import in this file — installs crypto, TextEncoder,
-// URL and Buffer polyfills that @walletconnect/modal-react-native requires.
+// Must be the first import — installs crypto, TextEncoder, URL and Buffer
+// polyfills that @walletconnect/modal-react-native requires.
 import '@walletconnect/react-native-compat';
 
 import React from 'react';
 
-// WalletConnect Project ID — loaded from env var, never hardcoded.
 export const WC_PROJECT_ID: string =
   process.env.EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID ?? '';
 
-// Metadata shown in wallet apps (MetaMask, Trust, Coinbase) during connection
 const PROVIDER_METADATA = {
   name:        'ClipDAG',
   description: 'Plataforma de video social con BDAG tokens',
@@ -37,42 +31,42 @@ const PROVIDER_METADATA = {
   },
 };
 
-// ── Resolve WalletConnectModalProvider (context provider) ────────────────────
-// STRICT: only WalletConnectModalProvider is accepted.
-// WalletConnectModal is the modal UI — mounting it as a root provider would
-// render visible modal UI at startup and NOT provide wallet context to hooks.
-let WCModalProvider: React.ComponentType<{
+// EVM session params covering Ethereum mainnet and Base.
+const SESSION_PARAMS = {
+  namespaces: {
+    eip155: {
+      methods: [
+        'eth_sendTransaction', 'eth_signTransaction',
+        'eth_sign', 'personal_sign', 'eth_signTypedData',
+      ],
+      chains: ['eip155:1', 'eip155:8453'],
+      events: ['chainChanged', 'accountsChanged'],
+    },
+  },
+};
+
+// Resolve WalletConnectModal via require() to preserve Metro stub chain.
+let WCModal: React.ComponentType<{
   projectId:        string;
   providerMetadata: typeof PROVIDER_METADATA;
-  children:         React.ReactNode;
+  sessionParams?:   typeof SESSION_PARAMS;
 }> | null = null;
 
 try {
-  const pkg = require('@walletconnect/modal-react-native');
+  const pkg  = require('@walletconnect/modal-react-native');
+  const keys: string[] = Object.keys(pkg ?? {});
+  console.log('[WC Provider] package exports:', keys.join(', '));
 
-  // Log all available exports so we can diagnose version differences
-  const exportKeys: string[] = Object.keys(pkg ?? {});
-  console.log('[WC Provider] package exports:', exportKeys.join(', '));
-
-  // ── Resolve WalletConnectModalProvider ONLY ──────────────────────────────
-  // Precedence: named export → default.WalletConnectModalProvider
-  // We do NOT fall back to WalletConnectModal — that is the modal UI, not
-  // the context provider, and mounting it here would silently break hooks.
   const candidate: unknown =
-    pkg?.WalletConnectModalProvider ??
-    pkg?.default?.WalletConnectModalProvider ??
+    pkg?.WalletConnectModal ??
+    pkg?.default?.WalletConnectModal ??
     null;
 
   if (candidate !== null && typeof candidate === 'function') {
-    WCModalProvider = candidate as typeof WCModalProvider;
-    console.log('[WC Provider] WalletConnectModalProvider resolved ✓');
+    WCModal = candidate as typeof WCModal;
+    console.log('[WC Provider] WalletConnectModal resolved ✓');
   } else {
-    // Log what was found so it is easy to add the correct key in a future fix
-    console.warn(
-      '[WC Provider] WalletConnectModalProvider NOT found in package exports.',
-      'Available keys:', exportKeys.join(', '),
-      '— WalletConnect context will be unavailable until the correct export is identified.',
-    );
+    console.warn('[WC Provider] WalletConnectModal not found. Available exports:', keys.join(', '));
   }
 } catch (e: any) {
   console.warn('[WC Provider] @walletconnect/modal-react-native require failed:', e?.message ?? e);
@@ -81,21 +75,27 @@ try {
 interface Props { children: React.ReactNode }
 
 export function WalletConnectProvider({ children }: Props) {
-  if (!WCModalProvider) {
-    // SDK not available or wrong export — children render without WC context.
-    // Wallet hooks will detect this and show a graceful "not available" UI.
-    console.log('[WC Provider] No provider mounted — rendering children without WalletConnect context');
+  if (!WCModal || !WC_PROJECT_ID) {
+    if (!WC_PROJECT_ID) {
+      console.warn('[WC Provider] EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID is not set — WalletConnect disabled');
+    }
     return <>{children}</>;
   }
 
-  const Provider = WCModalProvider;
+  const Modal = WCModal;
 
+  // WalletConnectModal renders as a sibling, not a wrapper — it initialises
+  // the provider context internally and renders the connection modal UI.
   return (
-    <Provider
-      projectId={WC_PROJECT_ID}
-      providerMetadata={PROVIDER_METADATA}
-    >
+    <>
       {children}
-    </Provider>
+      <Modal
+        projectId={WC_PROJECT_ID}
+        providerMetadata={PROVIDER_METADATA}
+        sessionParams={SESSION_PARAMS}
+      />
+    </>
   );
 }
+
+export default WalletConnectProvider;

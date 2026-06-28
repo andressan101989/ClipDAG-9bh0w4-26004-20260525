@@ -33,10 +33,15 @@ const CHAIN_ID_MAP: Record<string, string> = {
   sepolia:   '11155111',
   bsc:       '56',
   bsc_test:  '97',
+  blockdag:  '1404',
 };
 
 export function chainKeyToId(chainKey: string): string {
-  return CHAIN_ID_MAP[chainKey] ?? '1';
+  const id = CHAIN_ID_MAP[chainKey];
+  if (!id) throw new Error(
+    `Unknown chain key: "${chainKey}". Valid keys: ${Object.keys(CHAIN_ID_MAP).join(', ')}`,
+  );
+  return id;
 }
 
 // ── Asset type → token_type normalization ─────────────────────────────────
