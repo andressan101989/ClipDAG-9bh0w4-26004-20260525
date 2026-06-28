@@ -61,6 +61,17 @@ target 'onspaceapp' do
       end
     end
 
+    # Xcode 26 rejects pods with deployment targets below its supported minimum.
+    # Raise any pod target lower than 16.4 to match our app's deployment target.
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        current = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+        if current && current.to_f < 16.4
+          config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '16.4'
+        end
+      end
+    end
+
     # Disable folly C++20 coroutines — fixes 'folly/coro/Coroutine.h' not found
     # when building with Xcode 16.2 / LLVM clang on RN 0.81.
     # FMT_USE_CONSTEVAL=0 — Xcode 26 clang rejects fmt's consteval usage in
