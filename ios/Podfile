@@ -74,38 +74,34 @@ target 'onspaceapp' do
 
     # Disable folly C++20 coroutines — fixes 'folly/coro/Coroutine.h' not found
     # when building with Xcode 16.2 / LLVM clang on RN 0.81.
-    # FMT_USE_CONSTEVAL=0 kept here as belt-and-suspenders alongside the
-    # header patch below.
     installer.pods_project.targets.each do |target|
       target.build_configurations.each do |config|
         config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= ['$(inherited)']
         config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] << 'FOLLY_CFG_NO_COROUTINES=1'
-        config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] << 'FMT_USE_CONSTEVAL=0'
       end
     end
 
-    # Patch fmt headers directly so FMT_USE_CONSTEVAL=0 is baked into the
-    # source before Xcode touches it. Compiler flag injection is unreliable
-    # because Xcode 26 clang evaluates consteval support via __cpp_consteval
-    # (a built-in language feature macro) independently of any -D flag we set.
-    # Patching here at pod install time is the only guaranteed fix.
-    #
-    # We search RCT-Folly (primary), fmt, and folly pod dirs and patch every
-    # .h file under a /fmt/ path that still has FMT_USE_CONSTEVAL set to 1.
-    # Covers core.h, base.h, format.h, compile.h regardless of fmt version.
-    fmt_pod_dirs = [
-      installer.sandbox.pod_dir('RCT-Folly'),
-      installer.sandbox.pod_dir('fmt'),
-      installer.sandbox.pod_dir('folly'),
-    ]
-    fmt_pod_dirs.each do |pod_root|
-      next unless pod_root && Dir.exist?(pod_root.to_s)
-      Dir.glob(File.join(pod_root.to_s, '**', '*.h')).each do |header|
-        next unless header.include?('/fmt/')
-        content = File.read(header)
-        next unless content.include?('FMT_USE_CONSTEVAL')
-        patched = content.gsub(/#define FMT_USE_CONSTEVAL\s+1/, '#define FMT_USE_CONSTEVAL 0')
-        File.write(header, patched) if patched != content
+    # Fix fmt consteval error with Apple Clang 21 (Xcode 26).
+    # base.h unconditionally redefines FMT_USE_CONSTEVAL through its own
+    # #if/#elif chain, so any -D compiler flag is overwritten at parse time.
+    # The only reliable fix is to patch the source directly at pod install.
+    # We widen the existing Apple Clang guard (which only excluded versions
+    # below 14000029) to cover ALL Apple Clang, forcing FMT_USE_CONSTEVAL 0.
+    # See: https://github.com/fmtlib/fmt/issues/4740
+    ['fmt', 'RCT-Folly', 'folly'].each do |pod_name|
+      pod_dir = installer.sandbox.pod_dir(pod_name)
+      next unless pod_dir && Dir.exist?(pod_dir.to_s)
+      base_h = File.join(pod_dir.to_s, 'include', 'fmt', 'base.h')
+      base_h = Dir.glob(File.join(pod_dir.to_s, '**', 'base.h')).find { |f| f.include?('/fmt/') } unless File.exist?(base_h)
+      next unless base_h && File.exist?(base_h)
+      content = File.read(base_h)
+      patched = content.gsub(
+        /#elif defined\(__apple_build_version__\) && __apple_build_version__ < 14000029L/,
+        '#elif defined(__apple_build_version__)'
+      )
+      if patched != content
+        File.write(base_h, patched)
+        puts "✓ Patched fmt/base.h in #{pod_name}"
       end
     end
   end
