@@ -90,7 +90,7 @@ target 'onspaceapp' do
       target.build_configurations.each do |config|
         config.build_settings['GCC_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
         config.build_settings['SWIFT_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
-        config.build_settings['OTHER_CFLAGS'] = '$(inherited) -Wno-enum-conversion -Wno-error=enum-conversion -Wno-error=enum-redeclaration'
+        config.build_settings['OTHER_CFLAGS'] = '$(inherited) -Wno-enum-conversion -Wno-error=enum-conversion -Wno-gnu-redeclared-enum -Wno-error=gnu-redeclared-enum'
       end
     end
 
