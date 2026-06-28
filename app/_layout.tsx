@@ -73,6 +73,7 @@ function AppShell() {
                   <Stack.Screen name="login" />
                   <Stack.Screen name="privacy-policy" />
                   <Stack.Screen name="terms-of-service" />
+                  <Stack.Screen name="admin/index" />
                   <Stack.Screen name="(tabs)" />
                   <Stack.Screen
                     name="chat/[userId]"

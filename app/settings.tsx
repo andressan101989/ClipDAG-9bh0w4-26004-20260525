@@ -452,6 +452,20 @@ export default function SettingsScreen() {
           />
         </SettingsSection>
 
+        {/* Admin — only visible to admin users */}
+        {(user as any)?.isAdmin ? (
+          <SettingsSection title="Administración">
+            <SettingsRow
+              icon="shield-crown-outline"
+              iconColor={Colors.warning}
+              label="Panel de Moderación"
+              sublabel="Revisar reportes de contenido"
+              last
+              onPress={() => router.push('/admin')}
+            />
+          </SettingsSection>
+        ) : null}
+
         {/* Dev tools — only in __DEV__ builds */}
         {__DEV__ ? (
           <SettingsSection title="Herramientas de Desarrollo">
