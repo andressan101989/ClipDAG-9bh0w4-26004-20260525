@@ -8,7 +8,7 @@
       "developmentClient": true,
       "distribution": "internal",
       "ios": {
-        "image": "macos-sequoia-15.3-xcode-16.2"
+        "image": "latest"
       },
       "android": {
         "buildType": "apk",
@@ -22,7 +22,7 @@
     "preview": {
       "distribution": "internal",
       "ios": {
-        "image": "macos-sequoia-15.3-xcode-16.2"
+        "image": "latest"
       },
       "android": {
         "buildType": "apk"
@@ -44,7 +44,7 @@
     },
     "production": {
       "ios": {
-        "image": "macos-sequoia-15.3-xcode-16.2"
+        "image": "latest"
       },
       "android": {
         "buildType": "app-bundle"
