@@ -389,7 +389,7 @@ export function useExternalWallet() {
     amount:        number,
     decimals:      number,
     targetNetwork?: string,
-  ): Promise<{ success: boolean; txHash?: string; error?: string }> => {
+  ): Promise<{ success: boolean; txHash?: string; error?: string; cancelled?: boolean }> => {
     if (!isConnected || !wcProvider || !address)
       return { success: false, error: 'Wallet no conectada' };
 
@@ -436,6 +436,10 @@ export function useExternalWallet() {
       return { success: true, txHash };
     } catch (e: any) {
       const msg = e?.message ?? 'Transacción ERC-20 rechazada';
+      if (/cancelad|cancelled|rejected|user rejected|operación cancelada/i.test(msg)) {
+        console.log('[WC] sendErc20Transaction cancelled by user');
+        return { success: false, cancelled: true };
+      }
       console.warn('[WC] sendErc20Transaction error:', msg);
       return { success: false, error: msg };
     } finally {
@@ -500,7 +504,7 @@ export function useExternalWallet() {
     treasuryAddress: string,
     targetNetwork?:  string,
     depositAsset?:   'eth' | 'usdt' | string,
-  ): Promise<{ success: boolean; txHash?: string; error?: string }> => {
+  ): Promise<{ success: boolean; txHash?: string; error?: string; cancelled?: boolean }> => {
     const isUSDT = (depositAsset ?? '').toLowerCase() === 'usdt';
 
     if (isUSDT) {

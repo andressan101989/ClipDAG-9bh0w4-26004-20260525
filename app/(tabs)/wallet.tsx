@@ -328,6 +328,10 @@ function WalletScreenInner() {
     const sendResult = await sendToTreasury(amount, treasury, depositNetwork, depositAsset);
     if (!sendResult.success) {
       setDepositStep('input');
+      if ((sendResult as any).cancelled) {
+        Alert.alert('Depósito cancelado');
+        return;
+      }
       Alert.alert('Transacción rechazada', sendResult.error ?? 'No se pudo enviar la transacción');
       return;
     }
