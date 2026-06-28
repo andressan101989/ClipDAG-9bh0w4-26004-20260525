@@ -83,7 +83,6 @@ function extractAddressFromSession(provider: any): string | null {
       if (parts.length >= 3) {
         const addr = parts[parts.length - 1];
         if (/^0x[a-fA-F0-9]{40}$/.test(addr)) {
-          console.log('[WC] Address from session.namespaces:', addr);
           return addr;
         }
       }
@@ -94,7 +93,6 @@ function extractAddressFromSession(provider: any): string | null {
     if (provAccounts && provAccounts.length > 0) {
       const addr = provAccounts[0].split(':').pop() ?? provAccounts[0];
       if (/^0x[a-fA-F0-9]{40}$/.test(addr)) {
-        console.log('[WC] Address from provider.accounts:', addr);
         return addr;
       }
     }
@@ -104,7 +102,6 @@ function extractAddressFromSession(provider: any): string | null {
     if (signerAccounts && signerAccounts.length > 0) {
       const addr = signerAccounts[0];
       if (/^0x[a-fA-F0-9]{40}$/.test(addr)) {
-        console.log('[WC] Address from provider.signer.accounts:', addr);
         return addr;
       }
     }
@@ -125,7 +122,6 @@ function extractChainIdFromSession(provider: any): number | null {
       if (parts.length >= 3) {
         const id = parseInt(parts[1], 10);
         if (!isNaN(id)) {
-          console.log('[WC] ChainId from session.namespaces:', id);
           return id;
         }
       }

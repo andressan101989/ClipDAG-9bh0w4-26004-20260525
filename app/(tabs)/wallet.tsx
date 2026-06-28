@@ -34,10 +34,9 @@ import {
   REWARD_RATES,
 } from '@/services/walletConfig';
 import {
-  usdtToBdag, ethToBdag, bdagToUsd, bdagToWithdrawAsset,
-  applyWithdrawalFee, formatBdagWithUsd,
+  usdtToBdag, bdagToUsd, bdagToWithdrawAsset,
+  applyWithdrawalFee,
   WITHDRAWAL_FEE_PERCENT, USD_TO_BDAG_RATE, BDAG_TO_USD_RATE,
-  fetchAndCacheEthPrice, getEthPrice,
   type DepositAsset,
 } from '@/services/conversionEngine';
 
@@ -148,8 +147,8 @@ function WalletScreenInner() {
 
   // Deposit
   const [depositAmt, setDepositAmt]       = useState('');
-  const [depositNetwork, setDepositNetwork] = useState<string>('ethereum');
-  const [depositAsset, setDepositAsset]   = useState<DepositAsset>('usdt');
+  const [depositNetwork, setDepositNetwork] = useState<string>('base');
+  const depositAsset: DepositAsset = 'usdt';
   const [depositStep, setDepositStep]     = useState<'input' | 'awaiting_wallet' | 'verifying' | 'done'>('input');
   const [depositTxHash, setDepositTxHash] = useState('');
   const [depositBdagPreview, setDepositBdagPreview] = useState(0);
@@ -157,7 +156,7 @@ function WalletScreenInner() {
   // Withdraw
   const [withdrawAmt, setWithdrawAmt]     = useState('');
   const [withdrawAddr, setWithdrawAddr]   = useState('');
-  const [withdrawAsset, setWithdrawAsset] = useState<DepositAsset>('usdt');
+  const withdrawAsset: DepositAsset = 'usdt';
   const [withdrawOk, setWithdrawOk]       = useState(false);
 
   // Transfer
@@ -176,12 +175,6 @@ function WalletScreenInner() {
   const [txFilter, setTxFilter]       = useState<TxFilter>('all');
   const [addrCopied, setAddrCopied]   = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [ethPrice, setEthPrice]       = useState(getEthPrice());
-
-  useEffect(() => {
-    fetchAndCacheEthPrice().then(p => setEthPrice(p)).catch(() => {});
-  }, []);
-
   const closeModal = useCallback(() => {
     setModal('none');
     setWithdrawAmt(''); setWithdrawAddr('');
@@ -206,12 +199,11 @@ function WalletScreenInner() {
   useEffect(() => {
     const n = parseFloat(depositAmt);
     if (!isNaN(n) && n > 0) {
-      const bdag = depositAsset === 'usdt' ? usdtToBdag(n) : ethToBdag(n);
-      setDepositBdagPreview(Math.round(bdag * 100) / 100);
+      setDepositBdagPreview(Math.round(usdtToBdag(n) * 100) / 100);
     } else {
       setDepositBdagPreview(0);
     }
-  }, [depositAmt, depositAsset, ethPrice]);
+  }, [depositAmt]);
 
   const copyAddress = useCallback((addr: string) => {
     try { Clipboard.setStringAsync(addr).catch(() => {}); } catch { /* ok */ }
@@ -409,7 +401,7 @@ function WalletScreenInner() {
     const dest = (withdrawAddr.trim() || walletAddress || savedWallet || '').toLowerCase();
     if (!isValidEvmAddress(dest)) { Alert.alert('Error', 'Ingresa una dirección EVM válida (0x...)'); return; }
 
-    const assetLabel = withdrawAsset === 'usdt' ? 'USDT' : 'ETH';
+    const assetLabel = 'USDT';
     Alert.alert(
       'Confirmar retiro',
       `Monto bruto: ${safeFmt(amount)} BDAG\nComisión (${WITHDRAWAL_FEE_PERCENT}%): ${safeFmt(wFee)} BDAG\nRecibes: ${safeFmt(wNet)} BDAG\n≈ $${safeFmt(wUsd)}\nEnviado como: ${safeFmt(wAsset, 4)} ${assetLabel}\nDestino: ${shortAddress(dest)}`,
@@ -490,7 +482,7 @@ function WalletScreenInner() {
     input: 'Depositar', awaiting_wallet: 'Confirma en tu wallet...', verifying: 'Verificando...', done: 'Depósito acreditado',
   };
   const depositNetworkConfig = NETWORKS[depositNetwork];
-  const assetSymbol = depositAsset === 'usdt' ? 'USDT' : (depositNetworkConfig?.symbol ?? 'ETH');
+  const assetSymbol = 'USDT';
 
   // Transfer amt num
   const transferAmt = parseFloat(transferAmount) || 0;
@@ -508,7 +500,7 @@ function WalletScreenInner() {
           <Text style={sty.headerSub}>
             {isConnected
               ? `${currentNetwork?.shortName ?? 'EVM'} · ${shortAddress(walletAddress ?? '')}`
-              : 'Ethereum · Base · BDAG'}
+              : 'Ethereum · Base · USDT'}
           </Text>
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -553,7 +545,7 @@ function WalletScreenInner() {
               </View>
               <Text style={sty.connectTitle}>Conecta tu Wallet</Text>
               <Text style={sty.connectSub}>
-                Deposita ETH o USDT → recibe créditos BDAG instantáneamente.{'\n'}Soporta MetaMask, Trust Wallet y Coinbase Wallet.
+                Deposita USDT → recibe créditos BDAG instantáneamente.{'\n'}Soporta MetaMask, Trust Wallet y Coinbase Wallet.
               </Text>
 
               <View style={sty.ratePreviewBox}>
@@ -562,12 +554,6 @@ function WalletScreenInner() {
                   <Text style={sty.ratePreviewText}>1 USDT</Text>
                   <MaterialCommunityIcons name="arrow-right" size={14} color={C.textMuted} />
                   <Text style={[sty.ratePreviewVal, { color: C.primary }]}>{USD_TO_BDAG_RATE} BDAG</Text>
-                </View>
-                <View style={sty.ratePreviewRow}>
-                  <MaterialCommunityIcons name="ethereum" size={16} color={C.eth} />
-                  <Text style={sty.ratePreviewText}>1 ETH</Text>
-                  <MaterialCommunityIcons name="arrow-right" size={14} color={C.textMuted} />
-                  <Text style={[sty.ratePreviewVal, { color: C.primary }]}>{(ethPrice * USD_TO_BDAG_RATE).toLocaleString()} BDAG</Text>
                 </View>
                 <View style={sty.ratePreviewRow}>
                   <MaterialCommunityIcons name="cash" size={16} color={C.accent} />
@@ -692,16 +678,6 @@ function WalletScreenInner() {
                 {isFetchingBalance ? <ActivityIndicator size="small" color={C.textMuted} style={{ marginLeft: 6 }} /> : null}
               </View>
               <View style={sty.tokenRow}>
-                <View style={[sty.tokenIcon, { backgroundColor: (currentNetwork?.color ?? C.eth) + '22' }]}>
-                  <MaterialCommunityIcons name="ethereum" size={16} color={currentNetwork?.color ?? C.eth} />
-                </View>
-                <Text style={sty.tokenName}>{currentNetwork?.symbol ?? 'ETH'}</Text>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={sty.tokenBal}>{safeFmt(balances.native, 4)}</Text>
-                  <Text style={sty.tokenUsd}>≈ ${safeFmt(balances.native * ethPrice)}</Text>
-                </View>
-              </View>
-              <View style={sty.tokenRow}>
                 <View style={[sty.tokenIcon, { backgroundColor: C.usdt + '22' }]}>
                   <MaterialCommunityIcons name="currency-usd" size={16} color={C.usdt} />
                 </View>
@@ -748,14 +724,14 @@ function WalletScreenInner() {
               colors: ['rgba(45,158,255,0.18)', 'rgba(124,92,255,0.10)'] as [string, string],
               circleColors: ['#2D9EFF', '#7C5CFF'] as [string, string],
               icon: 'arrow-downward', isMaterial: true,
-              label: 'Depositar', sub: 'ETH / USDT → BDAG',
+              label: 'Depositar', sub: 'USDT → BDAG',
               onPress: () => isConnected ? setModal('deposit') : handleConnect(),
             },
             {
               colors: ['rgba(255,45,120,0.18)', 'rgba(180,79,255,0.10)'] as [string, string],
               circleColors: ['#FF2D78', '#B44FFF'] as [string, string],
               icon: 'arrow-upward', isMaterial: true,
-              label: 'Retirar', sub: 'BDAG → USDT / ETH',
+              label: 'Retirar', sub: 'BDAG → USDT',
               onPress: () => setModal('withdraw'),
             },
             {
@@ -894,28 +870,12 @@ function WalletScreenInner() {
                   ))}
                 </ScrollView>
 
-                <Text style={sty.inputLabel}>Token a depositar</Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  {(['usdt', 'eth'] as DepositAsset[]).map(asset => (
-                    <Pressable key={asset}
-                      style={[sty.assetChip, depositAsset === asset && { borderColor: asset === 'usdt' ? C.usdt : C.eth, backgroundColor: (asset === 'usdt' ? C.usdt : C.eth) + '22' }]}
-                      onPress={() => setDepositAsset(asset)}>
-                      <MaterialCommunityIcons
-                        name={asset === 'usdt' ? 'currency-usd' : 'ethereum'}
-                        size={18} color={depositAsset === asset ? (asset === 'usdt' ? C.usdt : C.eth) : C.textMuted} />
-                      <Text style={[sty.assetChipText, depositAsset === asset && { color: asset === 'usdt' ? C.usdt : C.eth, fontWeight: '700' }]}>
-                        {asset === 'usdt' ? 'USDT' : depositNetworkConfig?.symbol ?? 'ETH'}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-
-                <Text style={sty.inputLabel}>Monto ({assetSymbol})</Text>
+                <Text style={sty.inputLabel}>Monto (USDT)</Text>
                 <TextInput style={sty.input} value={depositAmt} onChangeText={setDepositAmt}
                   placeholder="Ej: 10" placeholderTextColor="#333"
                   keyboardType="decimal-pad" />
                 <View style={sty.quickRow}>
-                  {(depositAsset === 'usdt' ? ['1', '5', '10', '50'] : ['0.001', '0.005', '0.01', '0.05']).map(v => (
+                  {(['1', '5', '10', '50']).map(v => (
                     <Pressable key={v} style={sty.quickPill} onPress={() => setDepositAmt(v)}>
                       <Text style={sty.quickPillText}>{v}</Text>
                     </Pressable>
@@ -925,17 +885,13 @@ function WalletScreenInner() {
                 {depositBdagPreview > 0 ? (
                   <View style={sty.conversionBox}>
                     <View style={sty.conversionRow}>
-                      <MaterialCommunityIcons name={depositAsset === 'usdt' ? 'currency-usd' : 'ethereum'} size={16} color={depositAsset === 'usdt' ? C.usdt : C.eth} />
-                      <Text style={sty.conversionFrom}>{depositAmt} {assetSymbol}</Text>
+                      <MaterialCommunityIcons name="currency-usd" size={16} color={C.usdt} />
+                      <Text style={sty.conversionFrom}>{depositAmt} USDT</Text>
                       <MaterialCommunityIcons name="arrow-right" size={14} color={C.textMuted} />
                       <MaterialCommunityIcons name="hexagon-outline" size={16} color={C.primary} />
                       <Text style={sty.conversionTo}>~{safeFmt(depositBdagPreview)} BDAG</Text>
                     </View>
-                    <Text style={sty.conversionRate}>
-                      {depositAsset === 'usdt'
-                        ? `Estimado · 1 USDT = ${USD_TO_BDAG_RATE} BDAG`
-                        : `Estimado · ETH/USD ~$${ethPrice.toLocaleString()} · monto final calculado por el servidor`}
-                    </Text>
+                    <Text style={sty.conversionRate}>Estimado · 1 USDT = {USD_TO_BDAG_RATE} BDAG</Text>
                   </View>
                 ) : null}
 
@@ -984,22 +940,6 @@ function WalletScreenInner() {
               <Text style={sty.availUsd}>≈ ${safeFmt(bdagToUsd(balance))}</Text>
             </View>
 
-            <Text style={sty.inputLabel}>Recibir como</Text>
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              {(['usdt', 'eth'] as DepositAsset[]).map(asset => (
-                <Pressable key={asset}
-                  style={[sty.assetChip, { flex: 1 }, withdrawAsset === asset && { borderColor: asset === 'usdt' ? C.usdt : C.eth, backgroundColor: (asset === 'usdt' ? C.usdt : C.eth) + '22' }]}
-                  onPress={() => setWithdrawAsset(asset)}>
-                  <MaterialCommunityIcons
-                    name={asset === 'usdt' ? 'currency-usd' : 'ethereum'}
-                    size={18} color={withdrawAsset === asset ? (asset === 'usdt' ? C.usdt : C.eth) : C.textMuted} />
-                  <Text style={[sty.assetChipText, withdrawAsset === asset && { color: asset === 'usdt' ? C.usdt : C.eth, fontWeight: '700' }]}>
-                    {asset.toUpperCase()}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-
             <Text style={sty.inputLabel}>Monto a retirar (BDAG)</Text>
             <TextInput style={sty.input} value={withdrawAmt} onChangeText={setWithdrawAmt}
               placeholder={`Min. ${MIN_WITHDRAWAL_AMOUNT} BDAG`} placeholderTextColor="#333"
@@ -1045,8 +985,8 @@ function WalletScreenInner() {
                     <MaterialCommunityIcons name="hexagon-outline" size={16} color={C.primary} />
                     <Text style={sty.conversionFrom}>{safeFmt(wNet)} BDAG</Text>
                     <MaterialCommunityIcons name="arrow-right" size={14} color={C.textMuted} />
-                    <MaterialCommunityIcons name={withdrawAsset === 'usdt' ? 'currency-usd' : 'ethereum'} size={16} color={withdrawAsset === 'usdt' ? C.usdt : C.eth} />
-                    <Text style={sty.conversionTo}>{safeFmt(wAsset, 4)} {withdrawAsset.toUpperCase()}</Text>
+                    <MaterialCommunityIcons name="currency-usd" size={16} color={C.usdt} />
+                    <Text style={sty.conversionTo}>{safeFmt(wAsset, 4)} USDT</Text>
                   </View>
                   <Text style={sty.conversionRate}>≈ ${safeFmt(wUsd)} USD</Text>
                 </View>
@@ -1063,7 +1003,7 @@ function WalletScreenInner() {
                     ? <><ActivityIndicator color="#fff" size="small" /><Text style={sty.primaryBtnText}>Procesando...</Text></>
                     : <><MaterialIcons name="arrow-upward" size={18} color="#fff" />
                         <Text style={sty.primaryBtnText}>
-                          {wNum > 0 ? `Retirar → ${safeFmt(wAsset, 4)} ${withdrawAsset.toUpperCase()}` : 'Retirar BDAG'}
+                          {wNum > 0 ? `Retirar → ${safeFmt(wAsset, 4)} USDT` : 'Retirar BDAG'}
                         </Text></>}
               </LinearGradient>
             </Pressable>
@@ -1274,7 +1214,6 @@ function WalletScreenInner() {
             <Text style={sty.infoSectionTitle}>Tasas de conversión</Text>
             {[
               { from: '1 USDT', to: `${USD_TO_BDAG_RATE} BDAG`, note: 'USDT = USD (1:1)' },
-              { from: '1 ETH',  to: `${(ethPrice * USD_TO_BDAG_RATE).toLocaleString()} BDAG`, note: `Precio ETH: $${ethPrice.toLocaleString()}` },
               { from: '100 BDAG', to: '$1.00 USD', note: 'Tasa fija de retiro' },
             ].map(r => (
               <View key={r.from} style={sty.infoRow}>
