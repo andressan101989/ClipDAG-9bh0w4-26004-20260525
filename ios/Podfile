@@ -81,6 +81,19 @@ target 'onspaceapp' do
       end
     end
 
+    # Xcode 26 / Apple Clang 21 promotes several ObjC warnings to errors,
+    # including enum redeclarations where the same enum is declared with
+    # NSInteger in one header and NSUInteger in another (common in older pods).
+    # Disable treat-warnings-as-errors and suppress the specific enum flags so
+    # the build is not blocked by third-party pod issues we can't patch.
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        config.build_settings['GCC_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
+        config.build_settings['SWIFT_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
+        config.build_settings['OTHER_CFLAGS'] = '$(inherited) -Wno-enum-conversion -Wno-error=enum-conversion -Wno-error=enum-redeclaration'
+      end
+    end
+
     # Fix fmt consteval error with Apple Clang 21 (Xcode 26).
     # base.h unconditionally redefines FMT_USE_CONSTEVAL through its own
     # #if/#elif chain, so any -D compiler flag is overwritten at parse time.
