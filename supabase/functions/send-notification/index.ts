@@ -1,73 +1,57 @@
 /**
- * send-notification — Expo Push Notification dispatcher
- *
- * Looks up the target user's push_token from user_profiles
- * and sends a notification via the Expo Push API.
- *
- * Body: { to_user_id, title, body, data? }
- */
+  * Edge Function: send-notification
+  *
+  * Sends an Expo push notification to a target user.
+  * Called from the mobile client for events without a dedicated edge function
+  * (follow, comment, message, in-video gift).
+  *
+  * Payload:
+  *   to_user_id  — UUID of the recipient
+  *   title       — notification title
+  *   body        — notification body text
+  *   data?       — optional key/value object for client-side routing
+  *
+  * Auth: requires a valid user JWT (Bearer token).
+  * A user cannot notify themselves (silently skipped).
+  */
 
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders } from '../_shared/cors.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { corsHeaders }  from '../_shared/cors.ts';
+import { sendPushToUser } from '../_shared/pushNotify.ts';
 
-const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
-  try {
-    const { to_user_id, title, body, data } = await req.json()
+const respOk   = (d: object) =>
+  new Response(JSON.stringify(d), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+const respFail = (msg: string, status = 400) =>
+  new Response(JSON.stringify({ success: false, error: msg }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-    if (!to_user_id || !title || !body) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'to_user_id, title, body are required' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-      )
-    }
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
-    const admin = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    )
+  // ── Authenticate caller ────────────────────────────────────────────────────
+  const token = req.headers.get('Authorization')?.replace('Bearer ', '');
+  if (!token) return respFail('unauthorized', 401);
 
-    const { data: profile } = await admin
-      .from('user_profiles')
-      .select('push_token')
-      .eq('id', to_user_id)
-      .single()
+  const { data: { user }, error: authErr } = await admin.auth.getUser(token);
+  if (authErr || !user) return respFail('unauthorized', 401);
 
-    if (!profile?.push_token) {
-      return new Response(
-        JSON.stringify({ success: false, reason: 'no_token' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
-      )
-    }
+  // ── Parse body ─────────────────────────────────────────────────────────────
+  let body: { to_user_id?: string; title?: string; body?: string; data?: Record<string, string> };
+  try { body = await req.json(); }
+  catch { return respFail('invalid JSON body'); }
 
-    const response = await fetch(EXPO_PUSH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        to: profile.push_token,
-        title,
-        body,
-        data: data ?? {},
-        sound: 'default',
-      }),
-    })
+  const { to_user_id, title, body: bodyText, data } = body;
 
-    const result = await response.json()
-    return new Response(
-      JSON.stringify({ success: true, result }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
-    )
+  if (!to_user_id || !title || !bodyText)
+    return respFail('to_user_id, title, and body are required');
 
-  } catch (err) {
-    return new Response(
-      JSON.stringify({ success: false, error: String(err) }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-    )
-  }
-})
+  // Silently skip self-notifications
+  if (to_user_id === user.id) return respOk({ success: true, skipped: 'self' });
+
+  await sendPushToUser(admin, to_user_id, title, bodyText, data);
+  return respOk({ success: true });
+});

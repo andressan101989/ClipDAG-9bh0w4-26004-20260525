@@ -23,6 +23,7 @@ import { AuthContext }        from './AuthContext';
 import { SAMPLE_VIDEOS, MOCK_COMMENTS } from '@/services/mockData';
 import type { Video, Comment, TextOverlay } from '@/services/mockData';
 import { getBlockedUserIds } from '@/services/reportService';
+import { sendPushNotification } from '@/services/pushNotifications';
 
 export interface VideoWithMeta extends Video {
   editedAt?:   string;
@@ -592,6 +593,14 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       });
 
       authContext?.updateDAGBalance((user.dagBalance || 0) - dagValue);
+      // Notify recipient (fire and forget)
+      sendPushNotification(
+        supabase,
+        recipientId,
+        'Propina recibida',
+        `@${user.username} te envió ${dagValue.toFixed(2)} BDAG`,
+        { type: 'tip', from_user_id: user.id },
+      );
       return { success: true };
     } catch (e: any) {
       console.warn('[FeedContext] sendGift error:', e);
@@ -608,8 +617,20 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     if (!isMockId(videoId) && user && supabase && supabaseOk.current) {
       try {
         await supabase.from('comments').insert({ user_id: user.id, video_id: videoId, text: comment.text });
-        const { data: vid } = await supabase.from('videos').select('comments_count').eq('id', videoId).single();
-        if (vid) await supabase.from('videos').update({ comments_count: (vid.comments_count || 0) + 1 }).eq('id', videoId);
+        const { data: vid } = await supabase.from('videos').select('comments_count, user_id').eq('id', videoId).single();
+        if (vid) {
+          await supabase.from('videos').update({ comments_count: (vid.comments_count || 0) + 1 }).eq('id', videoId);
+          // Notify video owner (skip if commenter is the owner)
+          if (vid.user_id && vid.user_id !== user.id) {
+            sendPushNotification(
+              supabase,
+              vid.user_id,
+              'Nuevo comentario',
+              `@${user.username} comentó tu video: ${comment.text.slice(0, 60)}`,
+              { type: 'comment', video_id: videoId, from_user_id: user.id },
+            );
+          }
+        }
       } catch (e) {
         console.warn('[FeedContext] addComment error:', e);
       }

@@ -16,6 +16,11 @@ import React, {
 } from 'react';
 import { getSupabaseClient } from '@/template';
 import { PresenceManager }   from '@/modules/realtime/PresenceManager';
+import {
+  registerForPushNotifications,
+  savePushToken,
+  sendPushNotification,
+} from '@/services/pushNotifications';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -215,6 +220,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 if (profile) {
                   await loadFollows(session.user.id);
                   PresenceManager.initialize(session.user.id);
+                  // Register / refresh Expo Push Token on every login/launch
+                  registerForPushNotifications().then(token => {
+                    if (token && supabaseRef.current) {
+                      savePushToken(supabaseRef.current, session.user.id, token);
+                    }
+                  }).catch(() => {});
                 }
               } else {
                 setUser(null);
@@ -359,6 +370,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           p_follower_id: user.id,
           p_target_id:   targetUserId,
         }).throwOnError();
+        // Notify the followed user (fire and forget — must not throw)
+        sendPushNotification(
+          supabase,
+          targetUserId,
+          'Nuevo seguidor',
+          `@${user.username} te empezó a seguir`,
+          { type: 'follow', from_user_id: user.id },
+        );
       }
       // Re-sync follows list
       await loadFollows(user.id);

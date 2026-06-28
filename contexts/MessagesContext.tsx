@@ -4,6 +4,7 @@ import React, {
 import { getSupabaseClient } from '@/template';
 import { AuthContext } from './AuthContext';
 import { PollingManager } from '@/modules/realtime/PollingManager';
+import { sendPushNotification } from '@/services/pushNotifications';
 
 export interface Message {
   id: string;
@@ -219,6 +220,14 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
             m.id === optimistic.id ? mapMessage(data as Record<string, unknown>) : m
           ),
         }));
+        // Notify recipient (fire and forget)
+        sendPushNotification(
+          supabaseRef.current,
+          recipientId,
+          'Nuevo mensaje',
+          `@${user.username} te envió un mensaje`,
+          { type: 'message', from_user_id: user.id },
+        );
       }
     } catch (_) {}
   }, [user]);
