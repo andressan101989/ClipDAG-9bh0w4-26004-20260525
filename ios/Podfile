@@ -94,6 +94,19 @@ target 'onspaceapp' do
       end
     end
 
+    # Targeted fix for stripe-react-native: STPPaymentStatus enum is declared
+    # with NSInteger in one header and NSUInteger in another, which Xcode 26
+    # promotes to an error. The global loop above covers this, but name it
+    # explicitly so it survives any future narrowing of that loop.
+    installer.pods_project.targets.each do |target|
+      if target.name == 'stripe-react-native'
+        target.build_configurations.each do |config|
+          config.build_settings['OTHER_CFLAGS'] = '$(inherited) -Wno-gnu-redeclared-enum -Wno-error=gnu-redeclared-enum'
+          config.build_settings['GCC_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
+        end
+      end
+    end
+
     # Fix fmt consteval error with Apple Clang 21 (Xcode 26).
     # base.h unconditionally redefines FMT_USE_CONSTEVAL through its own
     # #if/#elif chain, so any -D compiler flag is overwritten at parse time.
