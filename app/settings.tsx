@@ -432,39 +432,10 @@ export default function SettingsScreen() {
 
         {/* About */}
         <SettingsSection title="Informacion">
-          <SettingsRow icon="information-outline" iconColor={Colors.blue} label="Acerca de ClipDAG" value="v1.0.0" last />
+          <SettingsRow icon="information-outline" iconColor={Colors.blue} label="Acerca de ClipDAG" value="v1.0.0" />
+          <SettingsRow icon="file-document-outline" iconColor={Colors.textSubtle} label="Terminos de servicio" onPress={() => {}} />
+          <SettingsRow icon="shield-check-outline" iconColor={Colors.textSubtle} label="Politica de privacidad" last onPress={() => {}} />
         </SettingsSection>
-
-        {/* Legal */}
-        <SettingsSection title="Legal">
-          <SettingsRow
-            icon="file-document-outline"
-            iconColor={Colors.primary}
-            label="Términos de Servicio"
-            onPress={() => router.push('/terms-of-service')}
-          />
-          <SettingsRow
-            icon="shield-check-outline"
-            iconColor={Colors.primary}
-            label="Política de Privacidad"
-            last
-            onPress={() => router.push('/privacy-policy')}
-          />
-        </SettingsSection>
-
-        {/* Admin — only visible to admin users */}
-        {(user as any)?.isAdmin ? (
-          <SettingsSection title="Administración">
-            <SettingsRow
-              icon="shield-crown-outline"
-              iconColor={Colors.warning}
-              label="Panel de Moderación"
-              sublabel="Revisar reportes de contenido"
-              last
-              onPress={() => router.push('/admin')}
-            />
-          </SettingsSection>
-        ) : null}
 
         {/* Dev tools — only in __DEV__ builds */}
         {__DEV__ ? (

@@ -8,7 +8,7 @@
       "developmentClient": true,
       "distribution": "internal",
       "ios": {
-        "image": "latest"
+        "image": "macos-sequoia-15.3-xcode-16.2"
       },
       "android": {
         "buildType": "apk",
@@ -22,7 +22,7 @@
     "preview": {
       "distribution": "internal",
       "ios": {
-        "image": "latest"
+        "image": "macos-sequoia-15.3-xcode-16.2"
       },
       "android": {
         "buildType": "apk"
@@ -44,15 +44,14 @@
     },
     "production": {
       "ios": {
-        "image": "latest"
+        "image": "macos-sequoia-15.3-xcode-16.2"
       },
       "android": {
         "buildType": "app-bundle"
       },
       "env": {
         "APP_VARIANT": "production",
-        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
-        "EAS_SKIP_AUTO_FINGERPRINT": "1"
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
       }
     },
     "production-clean": {

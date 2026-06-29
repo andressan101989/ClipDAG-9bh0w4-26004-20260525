@@ -22,7 +22,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Audio }             from 'expo-av';
 import * as ImagePicker      from 'expo-image-picker';
-import type { TextOverlay }  from '@/services/mockData';
 import { isFFmpegAvailable, exportFinal, extractThumbnail, RenderQueue } from '@/services/ffmpegService';
 import { EditorController, type EditorState } from '@/modules/creator/editor/EditorController';
 import { TimelineController, type TimelineState } from '@/modules/creator/timeline/TimelineController';
@@ -55,8 +54,6 @@ export interface DeezerTrack {
 
 export type ColorFilter = 'vintage' | 'cine' | 'frio' | 'calido' | 'bn' | 'neon' | 'none';
 
-export type { TextOverlay };
-
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useVideoEditor(maxClips = 5) {
@@ -83,9 +80,6 @@ export function useVideoEditor(maxClips = 5) {
   const [videoVol,      setVideoVol]    = useState(0.8);
   const [musicVol,      setMusicVol]    = useState(0.6);
   const [selectedTrack, setSelectedTrack] = useState<DeezerTrack | null>(null);
-
-  // ── Text overlays ─────────────────────────────────────────────────────────
-  const [overlays, setOverlays] = useState<TextOverlay[]>([]);
 
   // ── Editor state (from EditorController) ─────────────────────────────────
   const [editorState,  setEditorState]  = useState<EditorState | null>(null);
@@ -309,26 +303,6 @@ export function useVideoEditor(maxClips = 5) {
     setClips(prev => prev.map((c, i) => i === clipIdx ? { ...c, muted: !c.muted } : c));
   }, []);
 
-  // ── Overlay actions ───────────────────────────────────────────────────────
-  const addOverlay = useCallback((
-    text: string, fontSize: number, color: string, fontWeight: 'normal' | 'bold',
-  ) => {
-    const o: TextOverlay = {
-      id: `ov_${Date.now()}`,
-      text, fontSize, color, fontWeight,
-      x: 0.1, y: 0.4,   // default: upper-left third
-    };
-    setOverlays(prev => [...prev, o]);
-  }, []);
-
-  const updateOverlay = useCallback((id: string, changes: Partial<TextOverlay>) => {
-    setOverlays(prev => prev.map(o => o.id === id ? { ...o, ...changes } : o));
-  }, []);
-
-  const removeOverlay = useCallback((id: string) => {
-    setOverlays(prev => prev.filter(o => o.id !== id));
-  }, []);
-
   const setTrimEnd = useCallback((v: number) => {
     const origMs = clips[activeIdx]?.durationMs ?? 0;
     if (origMs <= 0) return;
@@ -497,7 +471,6 @@ export function useVideoEditor(maxClips = 5) {
     setEditorState(null);
     setTimelineState(null);
     setExportError(null);
-    setOverlays([]);
     exportAttempts.current = 0;
   }, []);
 
@@ -553,10 +526,6 @@ export function useVideoEditor(maxClips = 5) {
     setDurationMs,
     setPositionMs,
     setIsPlaying,
-    overlays,
-    addOverlay,
-    updateOverlay,
-    removeOverlay,
     undo,
     redo,
     exportAndPublish,

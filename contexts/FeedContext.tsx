@@ -16,14 +16,12 @@
 
 import React, {
   createContext, useState, useCallback, useEffect,
-  useContext, useRef, ReactNode, useMemo,
+  useContext, useRef, ReactNode,
 } from 'react';
 import { getSupabaseClient } from '@/template';
 import { AuthContext }        from './AuthContext';
 import { SAMPLE_VIDEOS, MOCK_COMMENTS } from '@/services/mockData';
-import type { Video, Comment, TextOverlay } from '@/services/mockData';
-import { getBlockedUserIds } from '@/services/reportService';
-import { sendPushNotification } from '@/services/pushNotifications';
+import type { Video, Comment }           from '@/services/mockData';
 
 export interface VideoWithMeta extends Video {
   editedAt?:   string;
@@ -31,7 +29,6 @@ export interface VideoWithMeta extends Video {
   savesCount?: number;
   /** Carousel posts: array of image/video URLs */
   mediaUrls?:  string[];
-  overlays?:   TextOverlay[];
 }
 
 export interface VideoAnalytics {
@@ -48,26 +45,25 @@ export interface VideoAnalytics {
 }
 
 interface FeedContextType {
-  videos:           VideoWithMeta[];
-  likedVideos:      Set<string>;
-  savedVideos:      Set<string>;
-  comments:         Record<string, Comment[]>;
-  isLoadingFeed:    boolean;
-  toggleLike:       (videoId: string, creatorId: string) => Promise<void>;
-  toggleSave:       (videoId: string) => Promise<void>;
-  isSaved:          (videoId: string) => boolean;
-  addComment:       (videoId: string, comment: Omit<Comment, 'id' | 'likes' | 'createdAt'>) => Promise<void>;
-  addVideo:         (video: Omit<Video, 'id' | 'likes' | 'comments' | 'shares' | 'isLiked' | 'createdAt'>) => Promise<void>;
-  updateVideo:      (videoId: string, updates: { caption?: string; music?: string }) => Promise<{ success: boolean; error?: string }>;
-  deleteVideo:      (videoId: string, videoUrl?: string, thumbnailUrl?: string) => Promise<{ success: boolean; error?: string }>;
-  trackView:        (videoId: string, watchDurationMs: number, completed: boolean) => Promise<void>;
-  getAnalytics:     (videoId: string) => Promise<VideoAnalytics>;
-  sendGift:         (recipientId: string, videoId: string | null, giftType: string, dagValue: number) => Promise<{ success: boolean; error?: string }>;
-  loadMoreVideos:   () => Promise<void>;
-  isLiked:          (videoId: string) => boolean;
-  getComments:      (videoId: string) => Comment[];
-  refreshFeed:      () => Promise<void>;
-  addBlockedUser:   (userId: string) => void;
+  videos:          VideoWithMeta[];
+  likedVideos:     Set<string>;
+  savedVideos:     Set<string>;
+  comments:        Record<string, Comment[]>;
+  isLoadingFeed:   boolean;
+  toggleLike:      (videoId: string, creatorId: string) => Promise<void>;
+  toggleSave:      (videoId: string) => Promise<void>;
+  isSaved:         (videoId: string) => boolean;
+  addComment:      (videoId: string, comment: Omit<Comment, 'id' | 'likes' | 'createdAt'>) => Promise<void>;
+  addVideo:        (video: Omit<Video, 'id' | 'likes' | 'comments' | 'shares' | 'isLiked' | 'createdAt'>) => Promise<void>;
+  updateVideo:     (videoId: string, updates: { caption?: string; music?: string }) => Promise<{ success: boolean; error?: string }>;
+  deleteVideo:     (videoId: string, videoUrl?: string, thumbnailUrl?: string) => Promise<{ success: boolean; error?: string }>;
+  trackView:       (videoId: string, watchDurationMs: number, completed: boolean) => Promise<void>;
+  getAnalytics:    (videoId: string) => Promise<VideoAnalytics>;
+  sendGift:        (recipientId: string, videoId: string | null, giftType: string, dagValue: number) => Promise<{ success: boolean; error?: string }>;
+  loadMoreVideos:  () => Promise<void>;
+  isLiked:         (videoId: string) => boolean;
+  getComments:     (videoId: string) => Comment[];
+  refreshFeed:     () => Promise<void>;
 }
 
 export const FeedContext = createContext<FeedContextType | undefined>(undefined);
@@ -127,9 +123,6 @@ function mapVideo(row: Record<string, unknown>, username: string, avatar: string
     editedAt:     (row.edited_at as string) || undefined,
     viewsCount:   Number(row.views_count) || 0,
     savesCount:   Number(row.saves_count) || 0,
-    overlays:     Array.isArray(row.overlays) && row.overlays.length > 0
-                    ? (row.overlays as TextOverlay[])
-                    : undefined,
   };
 }
 
@@ -271,15 +264,14 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const [videos,          setVideos]          = useState<VideoWithMeta[]>([]);
-  const [likedVideos,     setLikedVideos]     = useState<Set<string>>(new Set());
-  const [savedVideos,     setSavedVideos]     = useState<Set<string>>(new Set());
-  const [comments,        setComments]        = useState<Record<string, Comment[]>>(MOCK_COMMENTS);
-  const [isLoadingFeed,   setIsLoadingFeed]   = useState(false);
-  const [dbOffset,        setDbOffset]        = useState(0);
-  const [initialLoaded,   setInitialLoaded]   = useState(false);
-  const [hasMoreDb,       setHasMoreDb]       = useState(true);
-  const [blockedUserIds,  setBlockedUserIds]  = useState<Set<string>>(new Set());
+  const [videos,        setVideos]        = useState<VideoWithMeta[]>([]);
+  const [likedVideos,   setLikedVideos]   = useState<Set<string>>(new Set());
+  const [savedVideos,   setSavedVideos]   = useState<Set<string>>(new Set());
+  const [comments,      setComments]      = useState<Record<string, Comment[]>>(MOCK_COMMENTS);
+  const [isLoadingFeed, setIsLoadingFeed] = useState(false);
+  const [dbOffset,      setDbOffset]      = useState(0);
+  const [initialLoaded, setInitialLoaded] = useState(false);
+  const [hasMoreDb,     setHasMoreDb]     = useState(true);
 
   // ── Load videos ───────────────────────────────────────────────────────────
   const loadVideos = useCallback(async (offset = 0) => {
@@ -357,17 +349,6 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       setLikedVideos(new Set(SAMPLE_VIDEOS.filter(v => v.isLiked).map(v => v.id)));
     }
   }, []);
-
-  const addBlockedUser = useCallback((userId: string) => {
-    setBlockedUserIds(prev => { const n = new Set(prev); n.add(userId); return n; });
-  }, []);
-
-  useEffect(() => {
-    if (!user?.id || !supabaseOk.current) return;
-    getBlockedUserIds(user.id).then(ids => {
-      if (ids.length > 0) setBlockedUserIds(new Set(ids));
-    }).catch(() => {});
-  }, [user?.id]);
 
   useEffect(() => {
     if (!initialLoaded) {
@@ -593,14 +574,6 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       });
 
       authContext?.updateDAGBalance((user.dagBalance || 0) - dagValue);
-      // Notify recipient (fire and forget)
-      sendPushNotification(
-        supabase,
-        recipientId,
-        'Propina recibida',
-        `@${user.username} te envió ${dagValue.toFixed(2)} BDAG`,
-        { type: 'tip', from_user_id: user.id },
-      );
       return { success: true };
     } catch (e: any) {
       console.warn('[FeedContext] sendGift error:', e);
@@ -617,20 +590,8 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     if (!isMockId(videoId) && user && supabase && supabaseOk.current) {
       try {
         await supabase.from('comments').insert({ user_id: user.id, video_id: videoId, text: comment.text });
-        const { data: vid } = await supabase.from('videos').select('comments_count, user_id').eq('id', videoId).single();
-        if (vid) {
-          await supabase.from('videos').update({ comments_count: (vid.comments_count || 0) + 1 }).eq('id', videoId);
-          // Notify video owner (skip if commenter is the owner)
-          if (vid.user_id && vid.user_id !== user.id) {
-            sendPushNotification(
-              supabase,
-              vid.user_id,
-              'Nuevo comentario',
-              `@${user.username} comentó tu video: ${comment.text.slice(0, 60)}`,
-              { type: 'comment', video_id: videoId, from_user_id: user.id },
-            );
-          }
-        }
+        const { data: vid } = await supabase.from('videos').select('comments_count').eq('id', videoId).single();
+        if (vid) await supabase.from('videos').update({ comments_count: (vid.comments_count || 0) + 1 }).eq('id', videoId);
       } catch (e) {
         console.warn('[FeedContext] addComment error:', e);
       }
@@ -670,9 +631,6 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       };
       if ((video as any).mediaUrls?.length > 1) {
         insertPayload.media_urls = (video as any).mediaUrls;
-      }
-      if (video.overlays && video.overlays.length > 0) {
-        insertPayload.overlays = video.overlays;
       }
 
       const { data, error } = await supabase.from('videos').insert(insertPayload)
@@ -741,19 +699,13 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     if (!isLoadingRef.current && hasMoreDb) await loadVideos(dbOffset);
   }, [loadVideos, dbOffset, hasMoreDb]);
 
-  const visibleVideos = useMemo(
-    () => blockedUserIds.size > 0 ? videos.filter(v => !blockedUserIds.has(v.userId)) : videos,
-    [videos, blockedUserIds],
-  );
-
   return (
     <FeedContext.Provider value={{
-      videos: visibleVideos, likedVideos, savedVideos, comments, isLoadingFeed,
+      videos, likedVideos, savedVideos, comments, isLoadingFeed,
       toggleLike, toggleSave, isSaved,
       addComment, addVideo, updateVideo, deleteVideo,
       trackView, getAnalytics, sendGift,
       loadMoreVideos, isLiked, getComments, refreshFeed,
-      addBlockedUser,
     }}>
       {children}
     </FeedContext.Provider>

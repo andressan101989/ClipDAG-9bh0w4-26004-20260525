@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter, Link } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useAuth } from '@/hooks/useAuth';
 import { useAlert } from '@/template';
@@ -359,20 +359,6 @@ export default function LoginScreen() {
                   : 'Gana $DAG por cada like que reciben tus videos en ClipDAG'}
               </Text>
             </View>
-
-            {/* Legal disclaimer — shown only on register */}
-            {mode === 'register' ? (
-              <Text style={styles.legalNote}>
-                Al registrarte aceptas nuestros{' '}
-                <Link href="/terms-of-service" style={styles.legalLink}>
-                  Términos de Servicio
-                </Link>
-                {' '}y{' '}
-                <Link href="/privacy-policy" style={styles.legalLink}>
-                  Política de Privacidad
-                </Link>
-              </Text>
-            ) : null}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -458,17 +444,6 @@ const styles = StyleSheet.create({
     color: Colors.textSubtle,
     fontSize: FontSize.xs,
     lineHeight: 16,
-  },
-  legalNote: {
-    color: Colors.textSubtle,
-    fontSize: FontSize.xs,
-    textAlign: 'center',
-    lineHeight: 18,
-    marginTop: Spacing.xs,
-  },
-  legalLink: {
-    color: Colors.primary,
-    fontWeight: FontWeight.medium,
   },
   // ── OTP screen ───────────────────────────────
   otpScrollContent: {
