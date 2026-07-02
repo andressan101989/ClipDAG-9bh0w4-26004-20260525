@@ -26,7 +26,6 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
-import { sendPushToUser } from '../_shared/pushNotify.ts';
 
 const MIN_TRANSFER = 1; // minimum 1 BDAG
 
@@ -152,7 +151,6 @@ Deno.serve(async (req: Request) => {
       .single();
 
     const senderName = senderProfile?.display_name || senderProfile?.username || 'Someone';
-    const senderHandle = senderProfile?.username ?? 'alguien';
     await admin.from('notifications').insert({
       user_id:        recipientId,
       from_user_id:   senderId,
@@ -163,14 +161,6 @@ Deno.serve(async (req: Request) => {
       message:        `${senderName} sent you ${bdagAmount.toFixed(2)} BDAG${note ? ': ' + note : ''}`,
       reference_type: 'transfer',
     });
-    // Also send a push notification to the recipient
-    sendPushToUser(
-      admin,
-      recipientId,
-      'Propina recibida',
-      `@${senderHandle} te envió ${bdagAmount.toFixed(2)} BDAG`,
-      { type: 'tip', from_user_id: senderId },
-    );
   } catch (e: any) {
     console.warn('[bdag-transfer] notification insert failed (non-fatal):', e?.message);
   }

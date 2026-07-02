@@ -15,10 +15,8 @@
 import React, { useState, useCallback, useRef, useMemo, memo } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView, FlatList,
-  TextInput, ActivityIndicator, Dimensions, Modal, KeyboardAvoidingView, Platform,
-  Animated,
+  TextInput, ActivityIndicator, Dimensions, Modal,
 } from 'react-native';
-import type { TextOverlay } from '@/services/mockData';
 import { Image } from '@/components/ui/SafeImage';
 import { Audio } from 'expo-av';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
@@ -73,19 +71,6 @@ const DEEZER_CATS = [
   { id: 'lofi',       q: 'lofi chill beats',     label: 'Lo-Fi',       emoji: '☕' },
   { id: 'latin',      q: 'latin hits',           label: 'Latino',      emoji: '🌶️' },
   { id: 'viral',      q: 'trending viral 2025',  label: 'Viral',       emoji: '📈' },
-];
-
-const PREVIEW_H = W * 0.62;
-
-const TEXT_COLORS = [
-  '#FFFFFF', '#FFFF00', '#FF2D78', '#7C5CFF',
-  '#00E5A0', '#FF9D00', '#00B4FF', '#000000',
-];
-
-const TEXT_SIZES = [
-  { label: 'S', value: 18 },
-  { label: 'M', value: 26 },
-  { label: 'L', value: 38 },
 ];
 
 function fmtMs(ms: number) {
@@ -330,62 +315,6 @@ export function VideosTab() {
   const [caption,      setCaption]      = useState('');
   const [musicModal,   setMusicModal]   = useState(false);
 
-  // ── Text overlay state ─────────────────────────────────────────────────────
-  const [textModal,  setTextModal]  = useState(false);
-  const [editingId,  setEditingId]  = useState<string | null>(null);
-  const [draftText,  setDraftText]  = useState('');
-  const [draftSize,  setDraftSize]  = useState(26);
-  const [draftColor, setDraftColor] = useState('#FFFFFF');
-  const [draftBold,  setDraftBold]  = useState(false);
-
-  // Animated values for drag — one per overlay ID, created on demand.
-  // Using Animated.ValueXY + transform avoids setState on every touch-move
-  // (which would re-render the entire ScrollView on each pixel of movement).
-  const dragAnims = useRef<Record<string, Animated.ValueXY>>({});
-  const getOrCreateAnim = useCallback((id: string) => {
-    if (!dragAnims.current[id]) {
-      dragAnims.current[id] = new Animated.ValueXY({ x: 0, y: 0 });
-    }
-    return dragAnims.current[id];
-  }, []);
-
-  const dragRef = useRef<{
-    startX: number; startY: number;
-    ox: number;     oy: number;
-    moved: boolean;
-    lastDx: number; lastDy: number;
-  }>({ startX: 0, startY: 0, ox: 0, oy: 0, moved: false, lastDx: 0, lastDy: 0 });
-
-  const openNewOverlay = useCallback(() => {
-    setEditingId(null);
-    setDraftText('');
-    setDraftSize(26);
-    setDraftColor('#FFFFFF');
-    setDraftBold(false);
-    setTextModal(true);
-  }, []);
-
-  const openEditOverlay = useCallback((o: TextOverlay) => {
-    setEditingId(o.id);
-    setDraftText(o.text);
-    setDraftSize(o.fontSize);
-    setDraftColor(o.color);
-    setDraftBold(o.fontWeight === 'bold');
-    setTextModal(true);
-  }, []);
-
-  const confirmOverlay = useCallback(() => {
-    const t = draftText.trim();
-    if (!t) { setTextModal(false); return; }
-    const fw: 'normal' | 'bold' = draftBold ? 'bold' : 'normal';
-    if (editingId) {
-      editor.updateOverlay(editingId, { text: t, fontSize: draftSize, color: draftColor, fontWeight: fw });
-    } else {
-      editor.addOverlay(t, draftSize, draftColor, fw);
-    }
-    setTextModal(false);
-  }, [draftText, draftSize, draftColor, draftBold, editingId, editor]);
-
   const TRACK_W_FULL = W - 32;
 
   const handleExportAndPublish = useCallback(async () => {
@@ -399,7 +328,6 @@ export function VideosTab() {
           ? `${editor.selectedTrack.title} — ${editor.selectedTrack.artist.name}`
           : 'Sin música',
         username: '', userAvatar: '',
-        overlays: editor.overlays.length > 0 ? editor.overlays : undefined,
       });
       showAlert('Publicado 🎉', isFFmpegAvailable() ? 'Video exportado y publicado' : 'Clip publicado', [
         { text: 'Ver feed', onPress: () => router.replace('/(tabs)') },
@@ -515,73 +443,6 @@ export function VideosTab() {
               <Text style={v.musicBadgeText} numberOfLines={1}>{editor.selectedTrack.title}</Text>
             </View>
           ) : null}
-
-          {/* ── Draggable text overlays ── */}
-          {editor.overlays.map(o => {
-            const anim = getOrCreateAnim(o.id);
-            return (
-              <Animated.View
-                key={o.id}
-                style={[
-                  ot.wrapper,
-                  {
-                    left: o.x * W,
-                    top:  o.y * PREVIEW_H,
-                    transform: anim.getTranslateTransform(),
-                  },
-                ]}
-                onStartShouldSetResponder={() => true}
-                onMoveShouldSetResponder={() => true}
-                onResponderGrant={e => {
-                  anim.setValue({ x: 0, y: 0 });
-                  dragRef.current = {
-                    startX: e.nativeEvent.pageX,
-                    startY: e.nativeEvent.pageY,
-                    ox: o.x, oy: o.y,
-                    moved: false,
-                    lastDx: 0, lastDy: 0,
-                  };
-                }}
-                onResponderMove={e => {
-                  const dx = e.nativeEvent.pageX - dragRef.current.startX;
-                  const dy = e.nativeEvent.pageY - dragRef.current.startY;
-                  if (!dragRef.current.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
-                    dragRef.current.moved = true;
-                  }
-                  // Store latest delta for use in onResponderRelease
-                  dragRef.current.lastDx = dx;
-                  dragRef.current.lastDy = dy;
-                  // Update Animated value directly — no setState, no React re-render
-                  anim.setValue({ x: dx, y: dy });
-                }}
-                onResponderRelease={() => {
-                  if (!dragRef.current.moved) {
-                    anim.setValue({ x: 0, y: 0 });
-                    openEditOverlay(o);
-                  } else {
-                    const nx = Math.max(0, Math.min(0.85, dragRef.current.ox + dragRef.current.lastDx / W));
-                    const ny = Math.max(0, Math.min(0.85, dragRef.current.oy + dragRef.current.lastDy / PREVIEW_H));
-                    // Commit final position once — single re-render, then reset transform
-                    editor.updateOverlay(o.id, { x: nx, y: ny });
-                    anim.setValue({ x: 0, y: 0 });
-                  }
-                }}
-              >
-                <View style={ot.textWrap}>
-                  <Text style={[ot.text, { fontSize: o.fontSize, color: o.color, fontWeight: o.fontWeight }]}>
-                    {o.text}
-                  </Text>
-                </View>
-                <Pressable
-                  style={ot.deleteBtn}
-                  hitSlop={8}
-                  onPress={() => editor.removeOverlay(o.id)}
-                >
-                  <MaterialIcons name="close" size={10} color="#fff" />
-                </Pressable>
-              </Animated.View>
-            );
-          })}
         </View>
       ) : null}
 
@@ -673,25 +534,45 @@ export function VideosTab() {
         </ScrollView>
       </View>
 
-      {/* Text overlays tool */}
+      {/* Music */}
       <View style={v.section}>
         <View style={v.sectionRow}>
-          <Text style={v.sectionTitle}>📝 Texto</Text>
-          {editor.overlays.length > 0 ? (
-            <Text style={{ color: Colors.textSubtle, fontSize: FontSize.xs }}>
-              {editor.overlays.length} texto{editor.overlays.length > 1 ? 's' : ''}
-            </Text>
+          <Text style={v.sectionTitle}>🎵 Música</Text>
+          {editor.selectedTrack ? (
+            <Pressable onPress={() => {
+              editor.soundRef.current?.stopAsync().catch(() => {});
+              editor.soundRef.current?.unloadAsync().catch(() => {});
+              editor.soundRef.current = null;
+              editor.setSelectedTrack(null);
+            }}>
+              <Text style={{ color: Colors.error, fontSize: FontSize.xs, fontWeight: FontWeight.semibold }}>Quitar</Text>
+            </Pressable>
           ) : null}
         </View>
-        <Pressable style={v.addTextBtn} onPress={openNewOverlay}>
-          <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={v.addTextBtnInner}>
-            <MaterialCommunityIcons name="format-text" size={18} color="#fff" />
-            <Text style={v.addTextBtnText}>Añadir texto</Text>
+        {editor.selectedTrack ? (
+          <View style={v.trackRow}>
+            <Image source={{ uri: editor.selectedTrack.album.cover_medium }} style={v.trackCover} contentFit="cover" transition={150} />
+            <View style={{ flex: 1 }}>
+              <Text style={v.trackName} numberOfLines={1}>{editor.selectedTrack.title}</Text>
+              <Text style={v.trackArtist} numberOfLines={1}>{editor.selectedTrack.artist.name}</Text>
+            </View>
+          </View>
+        ) : null}
+        <Pressable style={v.addMusicBtn} onPress={() => setMusicModal(true)}>
+          <LinearGradient colors={['#FF9D00', '#FF5A00']} style={v.addMusicBtnInner}>
+            <MaterialCommunityIcons name="music-note-plus" size={18} color="#fff" />
+            <Text style={v.addMusicBtnText}>{editor.selectedTrack ? 'Cambiar música' : 'Añadir música Deezer'}</Text>
           </LinearGradient>
         </Pressable>
       </View>
 
-      {/* Music section hidden — Deezer integration deferred */}
+      {editor.selectedTrack ? (
+        <View style={v.section}>
+          <Text style={v.sectionTitle}>🔊 Mezcla de audio</Text>
+          <VolumeSlider label="Video"  value={editor.videoVol} onChange={editor.setVideoVol} color={Colors.primary} />
+          <VolumeSlider label="Música" value={editor.musicVol} onChange={editor.setMusicVol} color={Colors.warning} />
+        </View>
+      ) : null}
 
       <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
         <Pressable style={v.publishBtn} onPress={() => setCaptionModal(true)} disabled={editor.isExporting}>
@@ -736,85 +617,6 @@ export function VideosTab() {
         selectedId={editor.selectedTrack?.id ?? null}
         soundRef={editor.soundRef}
       />
-
-      {/* Text overlay modal */}
-      <Modal visible={textModal} transparent animationType="slide" presentationStyle="overFullScreen"
-        onRequestClose={() => setTextModal(false)}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ flex: 1, justifyContent: 'flex-end' }}
-        >
-          <Pressable style={cm.backdrop} onPress={() => setTextModal(false)} />
-          <View style={tm.sheet}>
-            <View style={cm.handle} />
-            <Text style={cm.title}>{editingId ? 'Editar texto' : 'Añadir texto'}</Text>
-
-            <TextInput
-              style={tm.input}
-              value={draftText}
-              onChangeText={setDraftText}
-              placeholder="Escribe aquí..."
-              placeholderTextColor={Colors.textSubtle}
-              autoFocus
-              maxLength={80}
-            />
-
-            <Text style={tm.label}>Color</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ gap: 10, paddingVertical: 4 }}>
-              {TEXT_COLORS.map(c => (
-                <Pressable key={c} style={[tm.colorDot, { backgroundColor: c },
-                  draftColor === c && tm.colorDotSel]} onPress={() => setDraftColor(c)} />
-              ))}
-            </ScrollView>
-
-            <Text style={tm.label}>Tamaño</Text>
-            <View style={tm.sizeRow}>
-              {TEXT_SIZES.map(s => (
-                <Pressable key={s.value}
-                  style={[tm.sizeChip, draftSize === s.value && tm.sizeChipSel]}
-                  onPress={() => setDraftSize(s.value)}>
-                  <Text style={[tm.sizeLabel, draftSize === s.value && { color: '#fff' }]}>{s.label}</Text>
-                </Pressable>
-              ))}
-            </View>
-
-            <Pressable style={[tm.boldBtn, draftBold && tm.boldBtnActive]}
-              onPress={() => setDraftBold(b => !b)}>
-              <Text style={[tm.boldBtnText, draftBold && { color: '#fff' }]}>B  Negrita</Text>
-            </Pressable>
-
-            {draftText.trim().length > 0 ? (
-              <View style={tm.preview}>
-                <Text style={{
-                  fontSize: draftSize, color: draftColor,
-                  fontWeight: draftBold ? 'bold' : 'normal',
-                  textShadowColor: 'rgba(0,0,0,0.85)',
-                  textShadowOffset: { width: 1, height: 1 },
-                  textShadowRadius: 4,
-                }}>
-                  {draftText}
-                </Text>
-              </View>
-            ) : null}
-
-            <Pressable style={[cm.pubBtn, !draftText.trim() && { opacity: 0.4 }]}
-              onPress={confirmOverlay} disabled={!draftText.trim()}>
-              <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={cm.pubBtnInner}>
-                <Text style={cm.pubBtnText}>{editingId ? 'Actualizar' : 'Añadir'}</Text>
-              </LinearGradient>
-            </Pressable>
-
-            {editingId ? (
-              <Pressable style={tm.deleteRow}
-                onPress={() => { editor.removeOverlay(editingId); setTextModal(false); }}>
-                <MaterialIcons name="delete-outline" size={16} color={Colors.error} />
-                <Text style={tm.deleteText}>Eliminar texto</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
     </ScrollView>
   );
 }
@@ -887,9 +689,6 @@ const v = StyleSheet.create({
   addMusicBtn:      { borderRadius: Radius.lg, overflow: 'hidden' },
   addMusicBtnInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
   addMusicBtnText:  { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
-  addTextBtn:       { borderRadius: Radius.lg, overflow: 'hidden' },
-  addTextBtnInner:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
-  addTextBtnText:   { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
   volRow:           { flexDirection: 'row', alignItems: 'center', gap: 10 },
   volLabel:         { color: Colors.textSubtle, fontSize: FontSize.xs, width: 52 },
   volTrack:         { height: 4, backgroundColor: Colors.border, borderRadius: 2, position: 'relative', overflow: 'visible' },
@@ -899,29 +698,6 @@ const v = StyleSheet.create({
   publishBtn:       { borderRadius: Radius.xl, overflow: 'hidden' },
   publishBtnInner:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 16 },
   publishBtnText:   { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
-});
-
-// ── Text overlay preview styles (inside playerWrap) ───────────────────────────
-const ot = StyleSheet.create({
-  wrapper:   {
-    position: 'absolute', flexDirection: 'row', alignItems: 'center', gap: 4, zIndex: 20,
-  },
-  textWrap:  {
-    paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4,
-    backgroundColor: 'rgba(0,0,0,0.25)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
-    // dashed border not natively supported — plain border shows selection
-  },
-  text:      {
-    textShadowColor: 'rgba(0,0,0,0.85)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 4,
-  },
-  deleteBtn: {
-    width: 18, height: 18, borderRadius: 9,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    alignItems: 'center', justifyContent: 'center',
-  },
 });
 
 const cm = StyleSheet.create({
@@ -936,53 +712,6 @@ const cm = StyleSheet.create({
   pubBtn:       { borderRadius: Radius.lg, overflow: 'hidden' },
   pubBtnInner:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
   pubBtnText:   { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
-});
-
-// ── Text overlay bottom-sheet modal styles ────────────────────────────────────
-const tm = StyleSheet.create({
-  sheet:        {
-    backgroundColor: Colors.surfaceElevated,
-    borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    padding: 24, gap: 12,
-    borderTopWidth: 1, borderColor: Colors.border,
-  },
-  input:        {
-    backgroundColor: Colors.surface,
-    borderWidth: 1, borderColor: Colors.border,
-    borderRadius: Radius.md,
-    paddingHorizontal: 14, paddingVertical: 12,
-    color: Colors.textPrimary, fontSize: FontSize.md,
-  },
-  label:        {
-    color: Colors.textSubtle, fontSize: FontSize.xs,
-    fontWeight: FontWeight.semibold,
-    textTransform: 'uppercase', letterSpacing: 0.5,
-  },
-  colorDot:     { width: 32, height: 32, borderRadius: 16, borderWidth: 2, borderColor: 'transparent' },
-  colorDotSel:  { borderColor: '#fff', transform: [{ scale: 1.25 }] },
-  sizeRow:      { flexDirection: 'row', gap: 8 },
-  sizeChip:     {
-    flex: 1, paddingVertical: 14, borderRadius: Radius.md,
-    backgroundColor: Colors.surface,
-    borderWidth: 1.5, borderColor: Colors.border,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  sizeChipSel:  { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  sizeLabel:    { color: Colors.textSubtle, fontSize: FontSize.md, fontWeight: FontWeight.bold },
-  boldBtn:      {
-    paddingVertical: 12, borderRadius: Radius.md,
-    backgroundColor: Colors.surface,
-    borderWidth: 1.5, borderColor: Colors.border,
-    alignItems: 'center',
-  },
-  boldBtnActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  boldBtnText:  { color: Colors.textSubtle, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
-  preview:      {
-    backgroundColor: '#000', borderRadius: Radius.md,
-    padding: 16, alignItems: 'center', minHeight: 56,
-  },
-  deleteRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8 },
-  deleteText:   { color: Colors.error, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
 });
 
 const dm = StyleSheet.create({
