@@ -34,6 +34,7 @@ export interface AppUser {
   dagBalance:    number;
   walletAddress: string | null;
   totalLikes:    number;
+  isAdmin:       boolean;
 }
 
 interface AuthContextType {
@@ -78,6 +79,7 @@ function mapProfile(data: Record<string, any>, fallbackEmail: string): AppUser {
     dagBalance:    Number(data.dag_balance || 0),
     walletAddress: data.wallet_address   || null,
     totalLikes:    0,
+    isAdmin:       Boolean(data.is_admin),
   };
 }
 

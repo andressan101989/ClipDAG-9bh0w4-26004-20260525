@@ -16,7 +16,7 @@
 
 import React, {
   createContext, useState, useCallback, useEffect,
-  useContext, useRef, ReactNode,
+  useContext, useRef, useMemo, ReactNode,
 } from 'react';
 import { getSupabaseClient } from '@/template';
 import { AuthContext }        from './AuthContext';
@@ -264,14 +264,15 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const [videos,        setVideos]        = useState<VideoWithMeta[]>([]);
-  const [likedVideos,   setLikedVideos]   = useState<Set<string>>(new Set());
-  const [savedVideos,   setSavedVideos]   = useState<Set<string>>(new Set());
-  const [comments,      setComments]      = useState<Record<string, Comment[]>>(MOCK_COMMENTS);
-  const [isLoadingFeed, setIsLoadingFeed] = useState(false);
-  const [dbOffset,      setDbOffset]      = useState(0);
-  const [initialLoaded, setInitialLoaded] = useState(false);
-  const [hasMoreDb,     setHasMoreDb]     = useState(true);
+  const [videos,          setVideos]          = useState<VideoWithMeta[]>([]);
+  const [likedVideos,     setLikedVideos]     = useState<Set<string>>(new Set());
+  const [savedVideos,     setSavedVideos]     = useState<Set<string>>(new Set());
+  const [comments,        setComments]        = useState<Record<string, Comment[]>>(MOCK_COMMENTS);
+  const [isLoadingFeed,   setIsLoadingFeed]   = useState(false);
+  const [dbOffset,        setDbOffset]        = useState(0);
+  const [initialLoaded,   setInitialLoaded]   = useState(false);
+  const [hasMoreDb,       setHasMoreDb]       = useState(true);
+  const [blockedUserIds,  setBlockedUserIds]  = useState<Set<string>>(new Set());
 
   // ── Load videos ───────────────────────────────────────────────────────────
   const loadVideos = useCallback(async (offset = 0) => {
@@ -323,6 +324,21 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     setInitialLoaded(true);
   }, []);
 
+  // ── Load blocked users ────────────────────────────────────────────────────
+  const loadBlockedUsers = useCallback(async (userId: string) => {
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return;
+    try {
+      const { data } = await supabase
+        .from('blocked_users')
+        .select('blocked_id')
+        .eq('blocker_id', userId);
+      if (data) setBlockedUserIds(new Set(data.map((r: { blocked_id: string }) => r.blocked_id)));
+    } catch (e) {
+      console.warn('[FeedContext] loadBlockedUsers error:', e);
+    }
+  }, []);
+
   // ── Load likes + saves ────────────────────────────────────────────────────
   const loadLikesAndSaves = useCallback(async (userId: string) => {
     const supabase = supabaseRef.current;
@@ -353,8 +369,12 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!initialLoaded) {
       loadVideos(0);
-      if (user) loadLikesAndSaves(user.id);
-      else setLikedVideos(new Set(SAMPLE_VIDEOS.filter(v => v.isLiked).map(v => v.id)));
+      if (user) {
+        loadLikesAndSaves(user.id);
+        loadBlockedUsers(user.id);
+      } else {
+        setLikedVideos(new Set(SAMPLE_VIDEOS.filter(v => v.isLiked).map(v => v.id)));
+      }
     }
   }, [user?.id, initialLoaded]);
 
@@ -363,9 +383,12 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     setDbOffset(0);
     setHasMoreDb(true);
     await loadVideos(0);
-    if (user) await loadLikesAndSaves(user.id);
+    if (user) {
+      await loadLikesAndSaves(user.id);
+      await loadBlockedUsers(user.id);
+    }
     setInitialLoaded(true);
-  }, [loadVideos, loadLikesAndSaves, user]);
+  }, [loadVideos, loadLikesAndSaves, loadBlockedUsers, user]);
 
   const isLiked     = useCallback((videoId: string) => likedVideos.has(videoId), [likedVideos]);
   const isSaved     = useCallback((videoId: string) => savedVideos.has(videoId), [savedVideos]);
@@ -699,9 +722,14 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     if (!isLoadingRef.current && hasMoreDb) await loadVideos(dbOffset);
   }, [loadVideos, dbOffset, hasMoreDb]);
 
+  const filteredVideos = useMemo(
+    () => blockedUserIds.size > 0 ? videos.filter(v => !blockedUserIds.has(v.userId)) : videos,
+    [videos, blockedUserIds],
+  );
+
   return (
     <FeedContext.Provider value={{
-      videos, likedVideos, savedVideos, comments, isLoadingFeed,
+      videos: filteredVideos, likedVideos, savedVideos, comments, isLoadingFeed,
       toggleLike, toggleSave, isSaved,
       addComment, addVideo, updateVideo, deleteVideo,
       trackView, getAnalytics, sendGift,

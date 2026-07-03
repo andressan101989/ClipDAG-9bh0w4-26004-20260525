@@ -33,6 +33,7 @@ const CHAIN_ID_MAP: Record<string, string> = {
   sepolia:   '11155111',
   bsc:       '56',
   bsc_test:  '97',
+  blockdag:  '1404',
 };
 
 export function chainKeyToId(chainKey: string): string {

@@ -21,7 +21,11 @@ import { callRPC, getLatestBlock } from '../_shared/rpc.ts';
 
 const SUPABASE_URL     = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY      = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const MONITOR_SECRET   = Deno.env.get('RECONCILE_SECRET') ?? 'dev-secret';
+const MONITOR_SECRET   = (() => {
+  const s = Deno.env.get('RECONCILE_SECRET');
+  if (!s) throw new Error('RECONCILE_SECRET env var is not set');
+  return s;
+})();
 const TREASURY_ADDRESS = (Deno.env.get('TREASURY_WALLET_ADDRESS') ?? '').toLowerCase();
 
 const MIN_CONFIRMATIONS     = 2;

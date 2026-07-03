@@ -433,8 +433,8 @@ export default function SettingsScreen() {
         {/* About */}
         <SettingsSection title="Informacion">
           <SettingsRow icon="information-outline" iconColor={Colors.blue} label="Acerca de ClipDAG" value="v1.0.0" />
-          <SettingsRow icon="file-document-outline" iconColor={Colors.textSubtle} label="Terminos de servicio" onPress={() => {}} />
-          <SettingsRow icon="shield-check-outline" iconColor={Colors.textSubtle} label="Politica de privacidad" last onPress={() => {}} />
+          <SettingsRow icon="file-document-outline" iconColor={Colors.textSubtle} label="Terminos de servicio" onPress={() => router.push('/terms-of-service')} />
+          <SettingsRow icon="shield-check-outline" iconColor={Colors.textSubtle} label="Politica de privacidad" last onPress={() => router.push('/privacy-policy')} />
         </SettingsSection>
 
         {/* Dev tools — only in __DEV__ builds */}
