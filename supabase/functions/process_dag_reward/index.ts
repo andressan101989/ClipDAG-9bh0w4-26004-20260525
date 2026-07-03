@@ -12,7 +12,6 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders }  from '../_shared/cors.ts';
-import { sendPushToUser } from '../_shared/pushNotify.ts';
 
 const SUPABASE_URL  = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY   = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -159,20 +158,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const newBalance = (creditResult as any)?.new_balance ?? null;
 
     console.log(`[process_dag_reward] liked video=${video_id} creator=${creator_id} reward=${DAG_REWARD_PER_LIKE} BDAG new_balance=${newBalance}`);
-
-    // Notify video creator about the like (fire and forget)
-    const { data: likerProfile } = await admin
-      .from('user_profiles')
-      .select('username')
-      .eq('id', user.id)
-      .maybeSingle();
-    sendPushToUser(
-      admin,
-      creator_id,
-      'Nuevo like',
-      `@${likerProfile?.username ?? 'alguien'} le dio like a tu video`,
-      { type: 'like', video_id, from_user_id: user.id },
-    );
 
     return ok({
       action:               'liked',

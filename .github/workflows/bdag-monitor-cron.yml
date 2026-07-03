@@ -1,0 +1,42 @@
+name: BDAG Monitor Cron
+
+on:
+  schedule:
+    # Every 5 minutes
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    # Allow manual trigger from GitHub Actions UI
+
+jobs:
+  run-monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+
+    steps:
+      - name: Invoke bdag-monitor
+        id: invoke
+        run: |
+          HTTP_STATUS=$(curl -s -o /tmp/response_body.txt -w "%{http_code}" \
+            -X POST \
+            -H "X-Monitor-Secret: ${{ secrets.RECONCILE_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            https://pliqfesyffhudzgxpliq.backend.onspace.ai/functions/v1/bdag-monitor)
+
+          BODY=$(cat /tmp/response_body.txt)
+          echo "status=$HTTP_STATUS" >> $GITHUB_OUTPUT
+          echo "Response body: $BODY"
+
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "::error::bdag-monitor returned HTTP $HTTP_STATUS"
+            echo "Response: $BODY"
+            exit 1
+          fi
+
+          echo "::notice::bdag-monitor completed successfully (HTTP $HTTP_STATUS)"
+
+      - name: Log result
+        if: always()
+        run: |
+          echo "Monitor run completed at $(date -u)"
+          echo "HTTP Status: ${{ steps.invoke.outputs.status }}"
