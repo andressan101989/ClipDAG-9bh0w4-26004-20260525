@@ -42,8 +42,6 @@ console.log('[BOOT] 8 - ShopProvider imported');
 import { WalletConnectProvider } from '@/components/feature/WalletConnectProvider';
 console.log('[BOOT] 8b - WalletConnectProvider imported');
 
-import { PushNotificationHandler } from '@/components/feature/PushNotificationHandler';
-
 console.log('[BOOT] 9 - all imports done');
 
 function AppShell() {
@@ -65,15 +63,11 @@ function AppShell() {
           <NotificationsProvider>
             <ShopProvider>
               <WalletConnectProvider>
-                <View style={{ flex: 1 }}>
                 <Stack screenOptions={{ headerShown: false }}>
                   <Stack.Screen name="index" />
                   <Stack.Screen name="boot-test" />
                   <Stack.Screen name="stress-test" />
                   <Stack.Screen name="login" />
-                  <Stack.Screen name="privacy-policy" />
-                  <Stack.Screen name="terms-of-service" />
-                  <Stack.Screen name="admin/index" />
                   <Stack.Screen name="(tabs)" />
                   <Stack.Screen
                     name="chat/[userId]"
@@ -96,8 +90,6 @@ function AppShell() {
                     options={{ presentation: 'fullScreenModal', headerShown: false }}
                   />
                 </Stack>
-                <PushNotificationHandler />
-                </View>
               </WalletConnectProvider>
             </ShopProvider>
           </NotificationsProvider>
