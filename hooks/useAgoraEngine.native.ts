@@ -1,13 +1,8 @@
 /**
- * hooks/useAgoraEngine.native.ts
+ * hooks/useAgoraEngine.native.ts  — iOS + Android only
  *
- * Shared Agora RTC engine lifecycle hook used by the 1:1 call, group call,
- * and live streaming screens. Handles: token fetch, engine init, join/leave,
- * remote user tracking, and local mute/camera/flip controls.
- *
- * iOS/Android only — Metro resolves this file over the plain useAgoraEngine.ts
- * on native platforms. The plain .ts file is a web-safe no-op stub, since
- * react-native-agora is not available on web.
+ * Full Agora RTC engine lifecycle hook. The .native.ts suffix keeps this
+ * file out of web bundles entirely.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -136,7 +131,6 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
     }
   }, [channelName, uid, role, profile, joining, joined, cleanupEngine]);
 
-  // Guaranteed cleanup on unmount
   useEffect(() => () => { cleanupEngine(); }, [cleanupEngine]);
 
   const toggleMute = useCallback(() => {
