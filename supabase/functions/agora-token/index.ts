@@ -1,42 +1,44 @@
 /**
- * agora-token — Generates short-lived Agora RTC AccessToken2 server-side.
+ * agora-token — Generates Agora RTC AccessToken (v1, "006" prefix) server-side.
  *
- * Body: { channelName: string, uid?: number, role?: 'publisher' | 'subscriber' }
+ * Implements the exact byte format from the official Agora Java/Go SDK:
+ *   github.com/AgoraIO/Tools/DynamicKey/AgoraDynamicKey
+ *
+ * Token format: "006" + appId(32) + base64( content )
+ * Content:      sig_len(2LE) + sig(32) + crc_channel(4LE) + crc_uid(4LE) + msg_len(2LE) + msg
+ * Message:      salt(4LE) + ts(4LE) + privilege_count(2LE) + [priv_id(2LE) + expire(4LE)]...
+ * Signature:    HMAC-SHA256( key=appCertificate, data=appId + channelName + uidStr + msg )
+ *
+ * Uses only Deno built-ins (SubtleCrypto, TextEncoder) — no npm deps.
+ *
+ * Body:    { channelName: string, uid?: number, role?: "publisher" | "subscriber" }
  * Returns: { token, appId, channel }
- *
- * Uses Deno's native SubtleCrypto (HMAC-SHA256) — does NOT rely on
- * agora-token npm package, which uses Node.js crypto.createHmac (unavailable
- * in the Deno Edge Functions runtime → "[unenv] crypto.createHmac not implemented").
- *
- * Implements Agora AccessToken2 wire format:
- *  Base64( version[3] + appId[32] + expire_timestamp[4_BE] + services_payload )
- *  where services_payload = compressed( RtcService privileges map )
  */
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 
-const AGORA_APP_ID          = Deno.env.get('AGORA_APP_ID') ?? '';
+const AGORA_APP_ID          = Deno.env.get('AGORA_APP_ID')          ?? '';
 const AGORA_APP_CERTIFICATE = Deno.env.get('AGORA_APP_CERTIFICATE') ?? '';
-const SUPABASE_URL          = Deno.env.get('SUPABASE_URL') ?? '';
-const SUPABASE_ANON_KEY     = Deno.env.get('SUPABASE_ANON_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const SUPABASE_URL          = Deno.env.get('SUPABASE_URL')          ?? '';
+const SUPABASE_ANON_KEY     =
+  Deno.env.get('SUPABASE_ANON_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
-const TOKEN_EXPIRE_SEC = 3600;    // token lifetime  (1 h)
-const PRIV_EXPIRE_SEC  = 3600;    // privilege lifetime inside token
+// Privilege IDs (AccessToken v1 spec)
+const PRIV_JOIN_CHANNEL    = 1;
+const PRIV_PUB_AUDIO       = 2;
+const PRIV_PUB_VIDEO       = 3;
+const PRIV_PUB_DATA        = 4;
 
-// ── Privilege values (Agora AccessToken2 spec) ────────────────────────────
-const PRIVILEGE_JOIN_CHANNEL         = 1;
-const PRIVILEGE_PUBLISH_AUDIO_STREAM = 2;
-const PRIVILEGE_PUBLISH_VIDEO_STREAM = 3;
-const PRIVILEGE_PUBLISH_DATA_STREAM  = 4;
+const TOKEN_EXPIRE_SEC     = 3600; // token + privilege lifetime (1 h)
 
-// ── Auth helper ────────────────────────────────────────────────────────────
+// ── Auth ─────────────────────────────────────────────────────────────────────
 async function getUserFromToken(authHeader: string | null): Promise<{ id: string } | null> {
   if (!authHeader || !SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
-  const token = authHeader.replace('Bearer ', '');
+  const jwt = authHeader.replace('Bearer ', '');
   try {
     const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      headers: { Authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY },
+      headers: { Authorization: `Bearer ${jwt}`, apikey: SUPABASE_ANON_KEY },
     });
     if (!res.ok) return null;
     const data = await res.json() as { id?: string };
@@ -46,160 +48,126 @@ async function getUserFromToken(authHeader: string | null): Promise<{ id: string
   }
 }
 
-// ── Encoding helpers ────────────────────────────────────────────────────────
-function encodeUint16LE(v: number): Uint8Array {
+// ── Binary helpers ────────────────────────────────────────────────────────────
+function u16LE(v: number): Uint8Array {
   return new Uint8Array([v & 0xff, (v >> 8) & 0xff]);
 }
-function encodeUint32LE(v: number): Uint8Array {
+function u32LE(v: number): Uint8Array {
   return new Uint8Array([v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff]);
 }
-function encodeUint32BE(v: number): Uint8Array {
-  return new Uint8Array([(v >> 24) & 0xff, (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff]);
-}
-function encodeString(s: string): Uint8Array {
-  const enc = new TextEncoder().encode(s);
-  return concat(encodeUint16LE(enc.length), enc);
-}
-function encodeBytesWithLen(b: Uint8Array): Uint8Array {
-  return concat(encodeUint16LE(b.length), b);
-}
-function concat(...arrays: Uint8Array[]): Uint8Array {
-  const total = arrays.reduce((s, a) => s + a.length, 0);
-  const out   = new Uint8Array(total);
-  let offset  = 0;
-  for (const a of arrays) { out.set(a, offset); offset += a.length; }
+function concat(...parts: Uint8Array[]): Uint8Array {
+  const len = parts.reduce((s, p) => s + p.length, 0);
+  const out = new Uint8Array(len);
+  let off = 0;
+  for (const p of parts) { out.set(p, off); off += p.length; }
   return out;
 }
-function toBase64(b: Uint8Array): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let result  = '';
-  for (let i = 0; i < b.length; i += 3) {
-    const n = (b[i] << 16) | ((b[i + 1] ?? 0) << 8) | (b[i + 2] ?? 0);
-    const rem = b.length - i;
-    result += chars[(n >> 18) & 63];
-    result += chars[(n >> 12) & 63];
-    result += rem > 1 ? chars[(n >> 6) & 63] : '=';
-    result += rem > 2 ? chars[n & 63]        : '=';
-  }
-  return result;
+
+// Standard Base64 (NOT URL-safe — Agora uses standard alphabet)
+function base64Encode(b: Uint8Array): string {
+  // Deno: btoa operates on binary strings
+  let s = '';
+  for (const byte of b) s += String.fromCharCode(byte);
+  return btoa(s);
 }
 
-// ── HMAC-SHA256 via WebCrypto ──────────────────────────────────────────────
-async function hmacSha256(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+// ── CRC-32 (ISO 3309 / IEEE 802.3 polynomial 0xEDB88320) ────────────────────
+const CRC32_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[i] = c;
+  }
+  return t;
+})();
+
+function crc32(data: Uint8Array): number {
+  let crc = 0xFFFF_FFFF;
+  for (const byte of data) crc = CRC32_TABLE[(crc ^ byte) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFF_FFFF) >>> 0; // unsigned
+}
+
+// ── HMAC-SHA256 ───────────────────────────────────────────────────────────────
+async function hmacSha256(keyBytes: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey(
+    'raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   );
-  const sig = await crypto.subtle.sign('HMAC', cryptoKey, data);
-  return new Uint8Array(sig);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', key, data));
 }
 
-// ── zlib compress (DeflateRaw) — required by AccessToken2 format ───────────
-async function zlibCompress(data: Uint8Array): Promise<Uint8Array> {
-  const cs     = new CompressionStream('deflate-raw');
-  const writer = cs.writable.getWriter();
-  const reader = cs.readable.getReader();
-  writer.write(data);
-  writer.close();
-  const chunks: Uint8Array[] = [];
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-  }
-  return concat(...chunks);
-}
-
-// ── AccessToken2 builder ────────────────────────────────────────────────────
-async function buildAgoraToken(params: {
+// ── AccessToken v1 builder ────────────────────────────────────────────────────
+// Mirrors the Java SDK exactly:
+//   https://github.com/AgoraIO/Tools/blob/master/DynamicKey/AgoraDynamicKey/java/...
+//   AccessToken.java  PrivilegeMessage.marshal → salt(4LE) + ts(4LE) + intMap
+//   AccessToken.java  generateSignature  → appId + channelName + uid + msgRaw
+//   AccessToken.java  PackContent.marshal → bytes(sig) + crcChannel(4LE) + crcUid(4LE) + bytes(msgRaw)
+//   AccessToken.java  build              → "006" + appId + base64(content)
+async function buildToken(params: {
   appId:       string;
   appCert:     string;
   channelName: string;
   uid:         number;
   isPublisher: boolean;
-  tokenExpire: number;   // seconds from now
-  privExpire:  number;   // seconds from now
+  expireSec:   number;
 }): Promise<string> {
-  const now          = Math.floor(Date.now() / 1000);
-  const tokenExpireTs = now + params.tokenExpire;
-  const privExpireTs  = now + params.privExpire;
+  const enc = new TextEncoder();
+  const now = Math.floor(Date.now() / 1000);
+  const ts   = now + params.expireSec;                   // privilege expire timestamp
+  const salt = (Math.random() * 0xFFFF_FFFF) >>> 0;     // random uint32
 
-  // ── Build privileges map ─────────────────────────────────────────────────
-  // Map: Map<uint16, uint32> — privilege_id → expire_ts
+  // ── Build privilege map: [priv_id, expire_ts] pairs ─────────────────────
   const privileges: [number, number][] = [
-    [PRIVILEGE_JOIN_CHANNEL, privExpireTs],
+    [PRIV_JOIN_CHANNEL, ts],
   ];
   if (params.isPublisher) {
     privileges.push(
-      [PRIVILEGE_PUBLISH_AUDIO_STREAM, privExpireTs],
-      [PRIVILEGE_PUBLISH_VIDEO_STREAM, privExpireTs],
-      [PRIVILEGE_PUBLISH_DATA_STREAM,  privExpireTs],
+      [PRIV_PUB_AUDIO, ts],
+      [PRIV_PUB_VIDEO, ts],
+      [PRIV_PUB_DATA,  ts],
     );
   }
 
-  // Encode privileges map: uint16(count) + N×(uint16 key + uint32 val)
-  const privParts: Uint8Array[] = [encodeUint16LE(privileges.length)];
-  for (const [k, v] of privileges) {
-    privParts.push(encodeUint16LE(k), encodeUint32LE(v));
-  }
-  const privilegesBytes = concat(...privParts);
+  // ── Pack PrivilegeMessage: salt(4LE) + ts(4LE) + count(2LE) + [id(2LE)+expire(4LE)]... ─
+  const msgParts: Uint8Array[] = [
+    u32LE(salt),
+    u32LE(ts),
+    u16LE(privileges.length),
+    ...privileges.flatMap(([k, v]) => [u16LE(k), u32LE(v)]),
+  ];
+  const msgRaw = concat(...msgParts);
 
-  // ── Build RTC service payload ────────────────────────────────────────────
-  // ServiceType=1 (RTC), channel (string), uid as string, privileges
-  const serviceType   = encodeUint16LE(1);
-  const channelBytes  = encodeString(params.channelName);
-  const uidBytes      = encodeString(params.uid === 0 ? '' : String(params.uid));
-  const serviceBody   = concat(serviceType, channelBytes, uidBytes, privilegesBytes);
+  // ── UID string: "0" → "" as per Agora spec ───────────────────────────────
+  const uidStr = params.uid === 0 ? '' : String(params.uid);
 
-  // Services section: uint16(1 service) + uint16(serviceType) + bytes(serviceBody)
-  const servicesSection = concat(
-    encodeUint16LE(1),
-    serviceType,
-    encodeBytesWithLen(serviceBody),
+  // ── Signature: HMAC-SHA256( cert, appId + channelName + uid + msgRaw ) ───
+  // Raw byte concatenation — NO length prefixes (confirmed from Java source)
+  const sigData = concat(
+    enc.encode(params.appId),
+    enc.encode(params.channelName),
+    enc.encode(uidStr),
+    msgRaw,
+  );
+  const sig = await hmacSha256(enc.encode(params.appCert), sigData);
+
+  // ── CRC32 of channelName and uidStr ──────────────────────────────────────
+  const crcChannel = crc32(enc.encode(params.channelName));
+  const crcUid     = crc32(enc.encode(uidStr));
+
+  // ── Pack content: bytes(sig) + crcChannel(4LE) + crcUid(4LE) + bytes(msgRaw) ─
+  // "bytes(x)" = u16LE(len) + x  (Agora ByteBuf.put(byte[]) convention)
+  const content = concat(
+    u16LE(sig.length),  sig,
+    u32LE(crcChannel),
+    u32LE(crcUid),
+    u16LE(msgRaw.length), msgRaw,
   );
 
-  // ── Build message to sign ────────────────────────────────────────────────
-  // message = appId(32 bytes) + issueTs(uint32LE) + expireTs(uint32LE) + salt(uint32LE) + services
-  const salt    = Math.floor(Math.random() * 0xFFFFFFFF);
-  const issueTs = now;
-  const msgBody = concat(
-    new TextEncoder().encode(params.appId),
-    encodeUint32LE(issueTs),
-    encodeUint32LE(tokenExpireTs),
-    encodeUint32LE(salt),
-    servicesSection,
-  );
-
-  // Compress message body
-  const compressedMsg = await zlibCompress(msgBody);
-
-  // ── HMAC-SHA256 signature ────────────────────────────────────────────────
-  // key = HMAC(appCert, appId + issueTs + salt + expireTs)
-  const signingContent = concat(
-    new TextEncoder().encode(params.appId),
-    encodeUint32LE(issueTs),
-    encodeUint32LE(salt),
-    encodeUint32LE(tokenExpireTs),
-  );
-  const appCertBytes = new TextEncoder().encode(params.appCert);
-  const sigKey       = await hmacSha256(appCertBytes, signingContent);
-  const signature    = await hmacSha256(sigKey, compressedMsg);
-
-  // ── Final token ──────────────────────────────────────────────────────────
-  // version(3) + appId(32) + expireTs_BE(4) + compressed(sig+msg)
-  const versionBytes  = new TextEncoder().encode('007');
-  const expireBeBytes = encodeUint32BE(tokenExpireTs);
-
-  // Pack: signature length (uint16LE) + signature + compressed message
-  const payload = concat(
-    encodeBytesWithLen(signature),
-    compressedMsg,
-  );
-
-  const token = concat(versionBytes, new TextEncoder().encode(params.appId), expireBeBytes, payload);
-  return toBase64(token);
+  // ── Final token: "006" + appId + base64(content) ─────────────────────────
+  return '006' + params.appId + base64Encode(content);
 }
 
-// ── Edge Function handler ──────────────────────────────────────────────────
+// ── Edge Function handler ─────────────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -227,25 +195,26 @@ serve(async (req) => {
       role?:        string;
     };
 
-    if (!channelName || typeof channelName !== 'string') {
+    if (!channelName || typeof channelName !== 'string' || channelName.trim() === '') {
       return new Response(
         JSON.stringify({ error: 'channelName is required' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 },
       );
     }
 
-    const numericUid  = Number.isFinite(uid) ? Number(uid) : 0;
+    const numericUid  = Number.isFinite(uid) && uid! > 0 ? Math.trunc(uid!) : 0;
     const isPublisher = role !== 'subscriber';
 
-    const token = await buildAgoraToken({
+    const token = await buildToken({
       appId:       AGORA_APP_ID,
       appCert:     AGORA_APP_CERTIFICATE,
-      channelName,
+      channelName: channelName.trim(),
       uid:         numericUid,
       isPublisher,
-      tokenExpire: TOKEN_EXPIRE_SEC,
-      privExpire:  PRIV_EXPIRE_SEC,
+      expireSec:   TOKEN_EXPIRE_SEC,
     });
+
+    console.log(`Token generated — channel="${channelName}" uid=${numericUid} publisher=${isPublisher} prefix=${token.slice(0, 35)}...`);
 
     return new Response(
       JSON.stringify({ token, appId: AGORA_APP_ID, channel: channelName }),

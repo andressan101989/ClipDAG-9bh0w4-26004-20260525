@@ -395,23 +395,28 @@ export function useWallet() {
   }, [dbBalance, loadTx]);
 
   // ── ADD REWARD (legacy) ───────────────────────────────────────────────
+  // ⚠️  SECURITY: Only valid for type='reward' (system rewards to current user).
+  //    Tips and gifts MUST use the atomic server-side RPC (transferBdag /
+  //    send_premium_dm) because addReward() always credits the SENDER, not
+  //    the recipient. This guard must NOT be removed.
   const addReward = useCallback(async (
     amount: number,
     description: string,
     type: 'reward' | 'tip' | 'gift' = 'reward',
   ) => {
-    // Tips must go through transferBdag() which debits the sender and credits
-    // the recipient via the bdag-transfer edge function. addReward() only
-    // credits the currently logged-in user — calling it for a tip would
-    // increase the tipper's balance instead of the creator's.
-    if (type === 'tip') {
-      throw new Error(
-        'addReward(type="tip") is blocked — it credits the current user, not the recipient. ' +
-        'Use transferBdag(recipientUsername, amount) instead.',
-      );
-    }
     const uid = userIdRef.current;
     if (!uid || amount <= 0) return;
+
+    // CRITICAL FINANCIAL GUARD: tips and gifts must route through the atomic
+    // server RPC (transfer_bdag_internal / send_premium_dm) which credits the
+    // RECIPIENT. Calling addReward() for tips would credit the caller instead.
+    if (type === 'tip' || type === 'gift') {
+      console.error(
+        '[useWallet] addReward() blocked for type=' + type +
+        '. Use transferBdag() or the premium DM RPC instead.'
+      );
+      return;
+    }
 
     let waited = 0;
     while (isBalWriting.current && waited < 500) {

@@ -84,22 +84,6 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
           if (!mountedRef.current) return;
           setJoined(true);
           setJoining(false);
-          // Fix: local video renders black on join unless the capture
-          // pipeline is explicitly kicked after the channel connection is
-          // established — enableVideo() called pre-join isn't always
-          // enough. The delay gives the engine time to settle into the
-          // joined state before starting the preview. Skipped for
-          // subscribers (live-streaming audience) — they don't publish
-          // video and shouldn't have their camera turned back on.
-          if (role === 'publisher') {
-            (async () => {
-              try {
-                await engine.enableVideo();
-                await new Promise(resolve => setTimeout(resolve, 300));
-                await engine.startPreview();
-              } catch { /* ignore */ }
-            })();
-          }
         },
         onUserJoined: (_conn: any, remoteUid: number) => {
           if (!mountedRef.current) return;

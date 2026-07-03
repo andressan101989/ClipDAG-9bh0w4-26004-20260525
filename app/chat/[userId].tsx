@@ -498,7 +498,7 @@ export default function ChatScreen() {
           <Pressable hitSlop={8} onPress={() => router.push(`/call/${partnerId}`)} style={styles.headerActionBtn}>
             <MaterialCommunityIcons name="phone-outline" size={20} color={Colors.primary} />
           </Pressable>
-          <Pressable hitSlop={8} onPress={() => router.push(`/video-call/${partnerId}`)} style={styles.headerActionBtn}>
+          <Pressable hitSlop={8} onPress={() => router.push(`/videocall/${partnerId}`)} style={styles.headerActionBtn}>
             <MaterialCommunityIcons name="video-outline" size={20} color={Colors.primary} />
           </Pressable>
         </View>

@@ -29,7 +29,7 @@ import { useWallet } from '@/hooks/useWallet';
 import { useAlert } from '@/template';
 import {
   fetchCreatorProfile, fetchCreatorVideos, fetchCreatorExclusiveContent,
-  fetchCreatorStats,
+  fetchCreatorStats, checkIsFollowing, followCreator, unfollowCreator,
   type CreatorProfile, type CreatorStats,
 } from '@/services/creatorService';
 import {
@@ -72,7 +72,7 @@ export default function CreatorProfileScreen() {
   const { id: creatorId } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const router  = useRouter();
-  const { user, toggleFollow, isFollowing: isFollowingCtx } = useAuth();
+  const { user } = useAuth();
   const walletData = useWallet();
   const balance = walletData?.balance ?? 0;
   const { showAlert } = useAlert();
@@ -89,6 +89,7 @@ export default function CreatorProfileScreen() {
   const [loading,     setLoading]     = useState(true);
 
   // User-specific state
+  const [isFollowing,   setIsFollowing]   = useState(false);
   const [subStatus,     setSubStatus]     = useState<{
     isSubscribed: boolean; freeDmsLeft: number; planName: string; expiresAt?: string;
   }>({ isSubscribed: false, freeDmsLeft: 0, planName: '' });
@@ -106,7 +107,7 @@ export default function CreatorProfileScreen() {
     if (!creatorId) return;
     const load = async () => {
       setLoading(true);
-      const [profile, creatorStats, vids, excl, subPlans, dm, purchased, boosted] =
+      const [profile, creatorStats, vids, excl, subPlans, dm, followStatus, purchased, boosted] =
         await Promise.all([
           fetchCreatorProfile(creatorId),
           fetchCreatorStats(creatorId),
@@ -114,6 +115,9 @@ export default function CreatorProfileScreen() {
           fetchCreatorExclusiveContent(creatorId),
           fetchCreatorSubscriptionPlans(creatorId),
           getPremiumDMConfig(creatorId),
+          user?.id && user.id !== creatorId
+            ? checkIsFollowing(user.id, creatorId)
+            : Promise.resolve(false),
           user?.id ? fetchPurchasedContentIds(user.id) : Promise.resolve(new Set<string>()),
           isProfileBoosted(creatorId),
         ]);
@@ -124,6 +128,7 @@ export default function CreatorProfileScreen() {
       setExclusive(excl);
       setPlans(subPlans);
       setDmConfig(dm);
+      setIsFollowing(followStatus);
       setPurchasedIds(purchased);
       setIsBoosted(boosted.boosted);
 
@@ -143,22 +148,20 @@ export default function CreatorProfileScreen() {
   }, [creatorId, user?.id]);
 
   // ── Follow / Unfollow ─────────────────────────────────────────────────────
-  // Uses AuthContext.toggleFollow (atomic follow_user/unfollow_user RPC) —
-  // creatorService's followCreator/unfollowCreator only insert/delete the
-  // `follows` row and never persist followers_count/following_count, so the
-  // stats shown here would silently drift from the DB on next reload.
-  const isFollowing = !!creatorId && isFollowingCtx(creatorId);
-
   const handleFollow = useCallback(async () => {
-    if (!user?.id || !creatorId || followLoading) return;
+    if (!user?.id || followLoading) return;
     setFollowLoading(true);
-    const wasFollowing = isFollowingCtx(creatorId);
-    await toggleFollow(creatorId);
-    setCreator(prev => prev
-      ? { ...prev, followers_count: Math.max(0, prev.followers_count + (wasFollowing ? -1 : 1)) }
-      : prev);
+    if (isFollowing) {
+      await unfollowCreator(user.id, creatorId!);
+      setIsFollowing(false);
+      setCreator(prev => prev ? { ...prev, followers_count: Math.max(0, prev.followers_count - 1) } : prev);
+    } else {
+      await followCreator(user.id, creatorId!);
+      setIsFollowing(true);
+      setCreator(prev => prev ? { ...prev, followers_count: prev.followers_count + 1 } : prev);
+    }
     setFollowLoading(false);
-  }, [user?.id, creatorId, toggleFollow, isFollowingCtx, followLoading]);
+  }, [user?.id, creatorId, isFollowing, followLoading]);
 
   // ── Subscribe ─────────────────────────────────────────────────────────────
   const handleSubscribe = useCallback(async (plan: SubscriptionPlan) => {
@@ -337,7 +340,6 @@ export default function CreatorProfileScreen() {
             {[
               { label: 'Videos',    val: fmtShort(stats?.total_videos ?? 0) },
               { label: 'Seguidores', val: fmtShort(creator.followers_count) },
-              { label: 'Siguiendo', val: fmtShort(creator.following_count) },
               { label: 'Likes',     val: fmtShort(stats?.total_likes ?? 0) },
               { label: 'Suscrip.',  val: fmtShort(stats?.active_subscribers ?? 0) },
             ].map((s, i) => (
