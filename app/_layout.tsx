@@ -45,6 +45,9 @@ console.log('[BOOT] 8b - WalletConnectProvider imported');
 import { AgoraCallProvider } from '@/contexts/AgoraCallContext';
 console.log('[BOOT] 8c - AgoraCallProvider imported');
 
+import { IncomingCallModal } from '@/components/feature/IncomingCallModal';
+console.log('[BOOT] 8d - IncomingCallModal imported');
+
 console.log('[BOOT] 9 - all imports done');
 
 function AppShell() {
@@ -110,6 +113,7 @@ function AppShell() {
                       options={{ presentation: 'fullScreenModal', headerShown: false }}
                     />
                   </Stack>
+                  <IncomingCallModal />
                 </AgoraCallProvider>
               </WalletConnectProvider>
             </ShopProvider>

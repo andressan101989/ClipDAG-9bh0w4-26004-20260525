@@ -36,7 +36,7 @@ export default function FeedScreen() {
   const { user, toggleFollow, isFollowing } = useAuth();
   const {
     videos, isLiked, isSaved, toggleLike, toggleSave,
-    getComments, addComment, loadMoreVideos, refreshFeed,
+    addComment, loadMoreVideos, refreshFeed,
     isLoadingFeed, trackView, sendGift,
   } = useFeed();
   const { storyGroups, addStory, markStoryViewed } = useStories();
@@ -159,8 +159,6 @@ export default function FeedScreen() {
     setStoryViewerVisible(true);
   }, []);
 
-  const currentComments = commentVideoId ? getComments(commentVideoId) : [];
-
   const feedHeader = (
     <View style={styles.feedHeader}>
       <View style={[styles.topBar, { paddingTop: insets.top + 8, height: TOP_BAR_HEIGHT }]}>
@@ -256,7 +254,7 @@ export default function FeedScreen() {
       <CommentSheet
         visible={commentVideoId !== null}
         onClose={() => setCommentVideoId(null)}
-        comments={currentComments}
+        videoId={commentVideoId}
         onSubmit={(text) => {
           if (commentVideoId && user) {
             addComment(commentVideoId, {
@@ -269,6 +267,7 @@ export default function FeedScreen() {
         }}
         userAvatar={user?.avatar}
         username={user?.username}
+        userId={user?.id}
       />
 
       <StoryViewer

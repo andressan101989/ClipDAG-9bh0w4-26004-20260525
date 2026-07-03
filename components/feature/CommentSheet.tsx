@@ -1,14 +1,28 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, Modal, FlatList, TextInput, Pressable,
   StyleSheet, KeyboardAvoidingView, Platform, ScrollView,
+  ActivityIndicator, Alert,
 } from 'react-native';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/ui/Avatar';
+import { getSupabaseClient } from '@/template';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
-import { Comment, timeAgo } from '@/services/mockData';
+import { timeAgo } from '@/services/mockData';
+
+// ── Loaded comment shape (from the real `comments` table, not the client-side
+// FeedContext cache) ──────────────────────────────────────────────────────────
+interface LoadedComment {
+  id: string;
+  userId: string;
+  username: string;
+  avatar: string;
+  text: string;
+  likes: number;
+  createdAt: string;
+}
 
 // ── Emoji picker data ─────────────────────────────────────────────────────────
 const EMOJI_GROUPS = [
@@ -107,22 +121,139 @@ const emojiStyles = StyleSheet.create({
 interface CommentSheetProps {
   visible: boolean;
   onClose: () => void;
-  comments: Comment[];
+  videoId: string | null;
   onSubmit: (text: string) => void;
   userAvatar?: string;
   username?: string;
+  userId?: string;
 }
 
-export function CommentSheet({ visible, onClose, comments, onSubmit, userAvatar, username }: CommentSheetProps) {
+export function CommentSheet({ visible, onClose, videoId, onSubmit, userAvatar, username, userId }: CommentSheetProps) {
   const [text, setText] = useState('');
+  const [comments, setComments] = useState<LoadedComment[]>([]);
+  const [loading, setLoading] = useState(false);
   const [likedComments, setLikedComments] = useState<Set<string>>(new Set());
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const insets = useSafeAreaInsets();
 
+  // ── Load comments (with commenter avatar/username) + my likes ─────────────
+  const loadComments = useCallback(async () => {
+    if (!videoId) return;
+    setLoading(true);
+    try {
+      const supabase = getSupabaseClient();
+      const { data: rows } = await supabase
+        .from('comments')
+        .select('id, user_id, text, created_at, likes_count')
+        .eq('video_id', videoId)
+        .order('created_at', { ascending: false });
+
+      if (!rows || rows.length === 0) {
+        setComments([]);
+        setLikedComments(new Set());
+        return;
+      }
+
+      const userIds = Array.from(new Set(rows.map((r: any) => r.user_id)));
+      const { data: profiles } = await supabase
+        .from('user_profiles')
+        .select('id, username, avatar_url')
+        .in('id', userIds);
+      const profileMap = new Map((profiles || []).map((p: any) => [p.id, p]));
+
+      let liked = new Set<string>();
+      if (userId) {
+        const { data: likeRows } = await supabase
+          .from('comment_likes')
+          .select('comment_id')
+          .eq('user_id', userId)
+          .in('comment_id', rows.map((r: any) => r.id));
+        liked = new Set((likeRows || []).map((l: any) => l.comment_id));
+      }
+
+      setComments(rows.map((r: any) => {
+        const p = profileMap.get(r.user_id) as any;
+        return {
+          id: r.id,
+          userId: r.user_id,
+          username: p?.username || 'Usuario',
+          avatar: p?.avatar_url || '',
+          text: r.text || '',
+          likes: Number(r.likes_count) || 0,
+          createdAt: r.created_at,
+        };
+      }));
+      setLikedComments(liked);
+    } catch (_) {
+      /* non-critical — sheet just shows whatever loaded so far */
+    } finally {
+      setLoading(false);
+    }
+  }, [videoId, userId]);
+
+  useEffect(() => {
+    if (visible && videoId) loadComments();
+  }, [visible, videoId, loadComments]);
+
+  // ── Realtime: new / deleted comments while the sheet is open ──────────────
+  useEffect(() => {
+    if (!visible || !videoId) return;
+    const supabase = getSupabaseClient();
+    const channel = supabase.channel(`comments:${videoId}`)
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'comments', filter: `video_id=eq.${videoId}`,
+      }, async (payload: any) => {
+        const row = payload.new;
+        let profile: any = null;
+        try {
+          const { data } = await supabase.from('user_profiles')
+            .select('username, avatar_url').eq('id', row.user_id).single();
+          profile = data;
+        } catch (_) { /* ignore */ }
+
+        setComments(prev => {
+          // Drop the optimistic temp entry this real row replaces, if present.
+          const withoutTemp = prev.filter(c =>
+            !(c.id.startsWith('temp_') && c.userId === row.user_id && c.text === row.text));
+          if (withoutTemp.some(c => c.id === row.id)) return withoutTemp;
+          return [{
+            id: row.id,
+            userId: row.user_id,
+            username: profile?.username || 'Usuario',
+            avatar: profile?.avatar_url || '',
+            text: row.text || '',
+            likes: Number(row.likes_count) || 0,
+            createdAt: row.created_at,
+          }, ...withoutTemp];
+        });
+      })
+      .on('postgres_changes', {
+        event: 'DELETE', schema: 'public', table: 'comments', filter: `video_id=eq.${videoId}`,
+      }, (payload: any) => {
+        setComments(prev => prev.filter(c => c.id !== payload.old?.id));
+      })
+      .subscribe();
+
+    return () => { channel.unsubscribe(); };
+  }, [visible, videoId]);
+
   const handleSubmit = () => {
     const trimmed = text.trim();
     if (!trimmed) return;
+    if (userId) {
+      // Optimistic local entry — the realtime INSERT above will reconcile it
+      // with the real row (and real id) once the write round-trips.
+      setComments(prev => [{
+        id: `temp_${Date.now()}`,
+        userId,
+        username: username || 'Tú',
+        avatar: userAvatar || '',
+        text: trimmed,
+        likes: 0,
+        createdAt: new Date().toISOString(),
+      }, ...prev]);
+    }
     onSubmit(trimmed);
     setText('');
     setShowEmojiPicker(false);
@@ -133,13 +264,65 @@ export function CommentSheet({ visible, onClose, comments, onSubmit, userAvatar,
     inputRef.current?.focus();
   }, []);
 
-  const toggleCommentLike = (commentId: string) => {
+  // ── Like / unlike a comment ─────────────────────────────────────────────
+  const toggleCommentLike = useCallback(async (commentId: string) => {
+    if (!userId || commentId.startsWith('temp_')) return;
+    const wasLiked = likedComments.has(commentId);
+
     setLikedComments(prev => {
       const next = new Set(prev);
-      next.has(commentId) ? next.delete(commentId) : next.add(commentId);
+      wasLiked ? next.delete(commentId) : next.add(commentId);
       return next;
     });
-  };
+    setComments(prev => prev.map(c =>
+      c.id === commentId ? { ...c, likes: Math.max(0, c.likes + (wasLiked ? -1 : 1)) } : c));
+
+    try {
+      const supabase = getSupabaseClient();
+      if (wasLiked) {
+        await supabase.from('comment_likes').delete().eq('comment_id', commentId).eq('user_id', userId);
+      } else {
+        await supabase.from('comment_likes').insert({ comment_id: commentId, user_id: userId });
+      }
+      const { data } = await supabase.from('comments').select('likes_count').eq('id', commentId).single();
+      if (data) {
+        await supabase.from('comments')
+          .update({ likes_count: Math.max(0, (data.likes_count || 0) + (wasLiked ? -1 : 1)) })
+          .eq('id', commentId);
+      }
+    } catch (_) {
+      // Non-critical — leave the optimistic state; next load will resync.
+    }
+  }, [likedComments, userId]);
+
+  // ── Delete own comment ───────────────────────────────────────────────────
+  const handleDeleteComment = useCallback((commentId: string) => {
+    Alert.alert('Eliminar comentario', '¿Seguro que quieres eliminar este comentario?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Eliminar', style: 'destructive',
+        onPress: async () => {
+          if (!userId) return;
+          const prevComments = comments;
+          setComments(prev => prev.filter(c => c.id !== commentId));
+          try {
+            const supabase = getSupabaseClient();
+            await supabase.from('comments').delete().eq('id', commentId).eq('user_id', userId);
+            if (videoId) {
+              const { data } = await supabase.from('videos').select('comments_count').eq('id', videoId).single();
+              if (data) {
+                await supabase.from('videos')
+                  .update({ comments_count: Math.max(0, (data.comments_count || 0) - 1) })
+                  .eq('id', videoId);
+              }
+            }
+          } catch (_) {
+            setComments(prevComments);
+          }
+        },
+      },
+    ]);
+  }, [comments, userId, videoId]);
 
   const handleClose = () => {
     setShowEmojiPicker(false);
@@ -176,61 +359,70 @@ export function CommentSheet({ visible, onClose, comments, onSubmit, userAvatar,
         </View>
 
         {/* Comments list */}
-        <FlatList
-          data={comments}
-          keyExtractor={item => item.id}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          ListEmptyComponent={() => (
-            <View style={styles.emptyState}>
-              <LinearGradient
-                colors={['#7C5CFF22', '#FF2D7811']}
-                style={styles.emptyIconWrap}
-              >
-                <Text style={styles.emptyIcon}>💬</Text>
-              </LinearGradient>
-              <Text style={styles.emptyText}>Se el primero en comentar</Text>
-              <Text style={styles.emptySubtext}>Comparte lo que piensas</Text>
-            </View>
-          )}
-          renderItem={({ item }) => {
-            const liked = likedComments.has(item.id);
-            return (
-              <View style={styles.commentItem}>
-                <Avatar uri={item.avatar} username={item.username} size={38} />
-                <View style={styles.commentContent}>
-                  <View style={styles.commentBubble}>
-                    <View style={styles.commentHeader}>
-                      <Text style={styles.commentUsername}>@{item.username}</Text>
-                      <Text style={styles.commentTime}>{timeAgo(item.createdAt)}</Text>
+        {loading && comments.length === 0 ? (
+          <View style={styles.loadingState}>
+            <ActivityIndicator color={Colors.primary} />
+          </View>
+        ) : (
+          <FlatList
+            data={comments}
+            keyExtractor={item => item.id}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={() => (
+              <View style={styles.emptyState}>
+                <LinearGradient
+                  colors={['#7C5CFF22', '#FF2D7811']}
+                  style={styles.emptyIconWrap}
+                >
+                  <Text style={styles.emptyIcon}>💬</Text>
+                </LinearGradient>
+                <Text style={styles.emptyText}>Se el primero en comentar</Text>
+                <Text style={styles.emptySubtext}>Comparte lo que piensas</Text>
+              </View>
+            )}
+            renderItem={({ item }) => {
+              const liked = likedComments.has(item.id);
+              const isOwn = !!userId && item.userId === userId;
+              return (
+                <View style={styles.commentItem}>
+                  <Avatar uri={item.avatar} username={item.username} size={38} />
+                  <View style={styles.commentContent}>
+                    <View style={styles.commentBubble}>
+                      <View style={styles.commentHeader}>
+                        <Text style={styles.commentUsername}>@{item.username}</Text>
+                        <Text style={styles.commentTime}>{timeAgo(item.createdAt)}</Text>
+                      </View>
+                      <Text style={styles.commentText}>{item.text}</Text>
                     </View>
-                    <Text style={styles.commentText}>{item.text}</Text>
-                  </View>
-                  <View style={styles.commentActions}>
-                    <Pressable
-                      onPress={() => toggleCommentLike(item.id)}
-                      style={styles.commentLikeBtn}
-                      hitSlop={10}
-                    >
-                      <MaterialIcons
-                        name={liked ? 'favorite' : 'favorite-border'}
-                        size={13}
-                        color={liked ? Colors.secondary : Colors.textSubtle}
-                      />
-                      <Text style={[styles.commentLikeCount, liked && { color: Colors.secondary }]}>
-                        {item.likes + (liked ? 1 : 0)}
-                      </Text>
-                    </Pressable>
-                    <Pressable hitSlop={10}>
-                      <Text style={styles.commentReply}>Responder</Text>
-                    </Pressable>
+                    <View style={styles.commentActions}>
+                      <Pressable
+                        onPress={() => toggleCommentLike(item.id)}
+                        style={styles.commentLikeBtn}
+                        hitSlop={10}
+                      >
+                        <MaterialIcons
+                          name={liked ? 'favorite' : 'favorite-border'}
+                          size={13}
+                          color={liked ? Colors.secondary : Colors.textSubtle}
+                        />
+                        <Text style={[styles.commentLikeCount, liked && { color: Colors.secondary }]}>
+                          {item.likes}
+                        </Text>
+                      </Pressable>
+                      {isOwn ? (
+                        <Pressable onPress={() => handleDeleteComment(item.id)} hitSlop={10}>
+                          <Text style={[styles.commentReply, { color: Colors.secondary }]}>Eliminar</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
                   </View>
                 </View>
-              </View>
-            );
-          }}
-        />
+              );
+            }}
+          />
+        )}
 
         {/* Emoji picker */}
         {showEmojiPicker ? (
@@ -332,6 +524,7 @@ const styles = StyleSheet.create({
 
   // Comments
   listContent: { padding: Spacing.md, paddingBottom: Spacing.xl, flexGrow: 1, gap: 4 },
+  loadingState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.xxl },
 
   commentItem: {
     flexDirection: 'row',

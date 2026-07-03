@@ -45,7 +45,7 @@ export default function VideoCallScreen() {
   const router   = useRouter();
   const { user } = useAuth();
   const supabase = getSupabaseClient();
-  const { broadcastIncomingCall, onCallRejected } = useAgoraCallSignaling();
+  const { broadcastIncomingCall, onCallRejected, markCallMissed } = useAgoraCallSignaling();
 
   const isCallee = mode === 'answer';
 
@@ -106,6 +106,7 @@ export default function VideoCallScreen() {
     });
 
     ringTimeoutRef.current = setTimeout(() => {
+      markCallMissed(newCallId);
       if (!mountedRef.current) return;
       setPhase(prev => (prev === 'ringing' ? 'ended' : prev));
     }, RING_TIMEOUT_MS);
