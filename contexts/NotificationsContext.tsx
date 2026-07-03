@@ -1,9 +1,11 @@
 import React, {
   createContext, useState, useCallback, useEffect, useContext, useRef, ReactNode,
 } from 'react';
+import { useRouter } from 'expo-router';
 import { getSupabaseClient } from '@/template';
 import { AuthContext } from './AuthContext';
 import { PollingManager } from '@/modules/realtime/PollingManager';
+import { NotificationToast } from '@/components/feature/NotificationToast';
 
 export type NotificationType =
   | 'like' | 'comment' | 'follow' | 'gift' | 'message' | 'sale' | 'order_update';
@@ -59,9 +61,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }
   const authCtx = useContext(AuthContext);
   const user = authCtx?.user;
+  const router = useRouter();
 
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [toast, setToast] = useState<AppNotification | null>(null);
   const fetchNotifications = useCallback(async () => {
     if (!user) return;
     const supabase = supabaseRef.current;
@@ -145,6 +149,34 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     };
   }, [user?.id]);
 
+  // ── Realtime: new notifications arrive instantly + trigger the toast ──────
+  // Kept alongside the poll above (not instead of it) — poll is a resync
+  // safety net if the realtime socket drops.
+  useEffect(() => {
+    const supabase = supabaseRef.current;
+    if (!user?.id || !supabase || !supabaseOk.current) return;
+
+    const channel = supabase.channel(`notifications-realtime:${user.id}`)
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}`,
+      }, (payload: any) => {
+        const notif = mapNotification(payload.new as Record<string, unknown>);
+        setNotifications(prev => prev.some(n => n.id === notif.id) ? prev : [notif, ...prev]);
+        setToast(notif);
+      })
+      .subscribe();
+
+    return () => { channel.unsubscribe(); };
+  }, [user?.id]);
+
+  const handleToastPress = useCallback(() => {
+    if (!toast) return;
+    if (toast.type === 'follow' && toast.fromUserId) router.push(`/creator/${toast.fromUserId}`);
+    else if (toast.type === 'message' && toast.fromUserId) router.push(`/chat/${toast.fromUserId}`);
+    else router.push('/notifications');
+    markRead(toast.id);
+  }, [toast, router, markRead]);
+
   const unreadCount = notifications.filter(n => !n.read).length;
 
   return (
@@ -153,6 +185,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       markAllRead, markRead, addNotification, refreshNotifications,
     }}>
       {children}
+      <NotificationToast
+        notification={toast}
+        onDismiss={() => setToast(null)}
+        onPress={handleToastPress}
+      />
     </NotificationsContext.Provider>
   );
 }
