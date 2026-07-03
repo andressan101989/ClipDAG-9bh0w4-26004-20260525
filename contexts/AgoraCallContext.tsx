@@ -1,25 +1,24 @@
 /**
  * contexts/AgoraCallContext.tsx
  *
- * Signaling for 1:1 Agora video calls. Agora RTC only transports media — it
- * has no concept of "ringing" or "reject", so this context pairs it with a
- * persisted `calls` table + Supabase Realtime postgres_changes to notify a
- * callee of an incoming call. Unlike the ephemeral broadcast approach this
- * replaces, a row in `calls` survives the callee's realtime channel not
- * being subscribed yet (cold start, reconnect) — postgres_changes replays
- * against the row once the subscription is live. A push notification is
- * also fired through the send-notification Edge Function so the callee is
- * reachable while backgrounded.
- *
- * "Accepted" is implicit: the callee joining the Agora channel is itself the
- * acceptance signal the caller's screen listens for.
+ * Lightweight, ephemeral signaling for 1:1 Agora video calls. Agora RTC only
+ * transports media — it has no concept of "ringing" or "reject", so this
+ * context pairs it with Supabase Realtime broadcast (no DB table needed,
+ * nothing persisted) to notify a callee of an incoming call and to let them
+ * accept (→ navigate into the shared Agora channel) or reject (→ notify the
+ * caller). "Accepted" is implicit: the callee joining the Agora channel is
+ * itself the acceptance signal the caller's screen listens for.
  */
 import React, {
   createContext, useContext, useCallback, useEffect, useRef, useState, ReactNode,
 } from 'react';
+import { View, Text, Pressable, StyleSheet, Modal } from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { getSupabaseClient } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
+import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 
 export interface IncomingCall {
   callId:       string;
@@ -33,10 +32,6 @@ interface AgoraCallContextType {
   broadcastIncomingCall: (targetUserId: string, call: IncomingCall) => Promise<void>;
   broadcastCallRejected: (targetUserId: string, callId: string) => Promise<void>;
   onCallRejected:        (callId: string, cb: () => void) => () => void;
-  markCallMissed:        (callId: string) => Promise<void>;
-  incomingCall:          IncomingCall | null;
-  acceptIncomingCall:    () => void;
-  rejectIncomingCall:    () => void;
 }
 
 const AgoraCallContext = createContext<AgoraCallContextType | undefined>(undefined);
@@ -44,19 +39,13 @@ const AgoraCallContext = createContext<AgoraCallContextType | undefined>(undefin
 const NOOP_CTX: AgoraCallContextType = {
   broadcastIncomingCall: async () => {},
   broadcastCallRejected: async () => {},
-  onCallRejected:        () => () => {},
-  markCallMissed:        async () => {},
-  incomingCall:          null,
-  acceptIncomingCall:    () => {},
-  rejectIncomingCall:    () => {},
+  onCallRejected: () => () => {},
 };
 
 export function useAgoraCallSignaling(): AgoraCallContextType {
   const ctx = useContext(AgoraCallContext);
   return ctx ?? NOOP_CTX;
 }
-
-const RING_TIMEOUT_MS = 30_000;
 
 export function AgoraCallProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -68,130 +57,66 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
   }
 
   const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
-  const rejectListenersRef  = useRef<Map<string, () => void>>(new Map());
-  const ringTimeoutRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rejectListenersRef = useRef<Map<string, () => void>>(new Map());
 
-  const clearRingTimeout = useCallback(() => {
-    if (ringTimeoutRef.current) { clearTimeout(ringTimeoutRef.current); ringTimeoutRef.current = null; }
-  }, []);
-
-  const updateCallStatus = useCallback(async (callId: string, status: string) => {
-    const supabase = supabaseRef.current;
-    if (!supabase) return;
-    // Guarded by status='ringing' so a caller-timeout and a callee-reject
-    // racing each other can't both "win" — only the first write applies.
-    await supabase.from('calls').update({ status }).eq('id', callId).eq('status', 'ringing');
-  }, []);
-
-  // ── Callee: subscribe to new/updated rows addressed to me ─────────────────
+  // ── Listen on my own personal call channel ─────────────────────────────────
   useEffect(() => {
     const supabase = supabaseRef.current;
     if (!user?.id || !supabase) return;
 
-    const channel = supabase.channel(`calls:callee:${user.id}`)
-      .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'calls', filter: `callee_id=eq.${user.id}`,
-      }, async (payload: any) => {
-        const row = payload.new as {
-          id: string; caller_id: string; channel_name: string; status: string;
-        };
-        if (row.status !== 'ringing') return;
+    const channel = supabase.channel(`agora-calls:${user.id}`, {
+      config: { broadcast: { self: false } },
+    });
 
-        const { data: caller } = await supabase
-          .from('user_profiles').select('username, avatar_url').eq('id', row.caller_id).single();
-
-        setIncomingCall({
-          callId:       row.id,
-          callerId:     row.caller_id,
-          callerName:   caller?.username || 'Usuario',
-          callerAvatar: caller?.avatar_url || '',
-          channelName:  row.channel_name,
-        });
-
-        clearRingTimeout();
-        ringTimeoutRef.current = setTimeout(() => {
-          updateCallStatus(row.id, 'missed');
-          setIncomingCall(prev => (prev?.callId === row.id ? null : prev));
-        }, RING_TIMEOUT_MS);
-      })
-      .on('postgres_changes', {
-        event: 'UPDATE', schema: 'public', table: 'calls', filter: `callee_id=eq.${user.id}`,
-      }, (payload: any) => {
-        const row = payload.new as { id: string; status: string };
-        // Caller cancelled before I answered — dismiss the modal.
-        if (row.status !== 'ringing') {
-          clearRingTimeout();
-          setIncomingCall(prev => (prev?.callId === row.id ? null : prev));
-        }
-      })
-      .subscribe();
-
-    return () => { clearRingTimeout(); channel.unsubscribe(); };
-  }, [user?.id, clearRingTimeout, updateCallStatus]);
-
-  // ── Caller: watch my own outgoing calls for a reject ──────────────────────
-  useEffect(() => {
-    const supabase = supabaseRef.current;
-    if (!user?.id || !supabase) return;
-
-    const channel = supabase.channel(`calls:caller:${user.id}`)
-      .on('postgres_changes', {
-        event: 'UPDATE', schema: 'public', table: 'calls', filter: `caller_id=eq.${user.id}`,
-      }, (payload: any) => {
-        const row = payload.new as { id: string; status: string };
-        if (row.status === 'rejected') {
-          const cb = rejectListenersRef.current.get(row.id);
-          if (cb) cb();
-        }
-      })
-      .subscribe();
+    channel.on('broadcast', { event: 'incoming_call' }, ({ payload }: any) => {
+      setIncomingCall(payload as IncomingCall);
+    });
+    channel.on('broadcast', { event: 'call_rejected' }, ({ payload }: any) => {
+      const cb = rejectListenersRef.current.get(payload?.callId);
+      if (cb) cb();
+    });
+    channel.subscribe();
 
     return () => { channel.unsubscribe(); };
   }, [user?.id]);
 
-  // ── Send helpers ──────────────────────────────────────────────────────────
-  const broadcastIncomingCall = useCallback(async (targetUserId: string, call: IncomingCall) => {
+  // ── Send helpers (ephemeral one-shot channels) ──────────────────────────────
+  const sendBroadcast = useCallback(async (
+    targetUserId: string, event: string, payload: Record<string, unknown>,
+  ) => {
     const supabase = supabaseRef.current;
     if (!supabase) return;
-
-    await supabase.from('calls').insert({
-      id:           call.callId,
-      caller_id:    call.callerId,
-      callee_id:    targetUserId,
-      channel_name: call.channelName,
-      status:       'ringing',
+    const channel = supabase.channel(`agora-calls:${targetUserId}`);
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      channel.subscribe((status: string) => {
+        if (status === 'SUBSCRIBED') {
+          channel.send({ type: 'broadcast', event, payload })
+            .finally(() => { setTimeout(() => channel.unsubscribe(), 500); finish(); });
+        }
+      });
+      setTimeout(finish, 2500);
     });
-
-    supabase.functions.invoke('send-notification', {
-      body: {
-        to_user_id: targetUserId,
-        title:      `${call.callerName} te está llamando`,
-        body:       'Videollamada entrante',
-        data:       { type: 'incoming_call', callId: call.callId, channelName: call.channelName },
-      },
-    }).catch(() => { /* best-effort — realtime is the primary channel */ });
   }, []);
 
+  const broadcastIncomingCall = useCallback(
+    (targetUserId: string, call: IncomingCall) => sendBroadcast(targetUserId, 'incoming_call', call as any),
+    [sendBroadcast],
+  );
   const broadcastCallRejected = useCallback(
-    (_targetUserId: string, callId: string) => updateCallStatus(callId, 'rejected'),
-    [updateCallStatus],
+    (targetUserId: string, callId: string) => sendBroadcast(targetUserId, 'call_rejected', { callId }),
+    [sendBroadcast],
   );
-
-  const markCallMissed = useCallback(
-    (callId: string) => updateCallStatus(callId, 'missed'),
-    [updateCallStatus],
-  );
-
   const onCallRejected = useCallback((callId: string, cb: () => void) => {
     rejectListenersRef.current.set(callId, cb);
     return () => { rejectListenersRef.current.delete(callId); };
   }, []);
 
-  // ── Accept / reject the incoming-call modal ───────────────────────────────
-  const acceptIncomingCall = useCallback(() => {
+  // ── Accept / reject the incoming-call modal ─────────────────────────────────
+  const handleAccept = useCallback(() => {
     if (!incomingCall) return;
     const call = incomingCall;
-    clearRingTimeout();
     setIncomingCall(null);
     const qs = new URLSearchParams({
       mode:         'answer',
@@ -201,22 +126,71 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
       callerAvatar: call.callerAvatar || '',
     }).toString();
     router.push(`/video-call/${call.callerId}?${qs}` as any);
-  }, [incomingCall, router, clearRingTimeout]);
+  }, [incomingCall, router]);
 
-  const rejectIncomingCall = useCallback(() => {
+  const handleReject = useCallback(() => {
     if (!incomingCall) return;
     const call = incomingCall;
-    clearRingTimeout();
     setIncomingCall(null);
-    updateCallStatus(call.callId, 'rejected');
-  }, [incomingCall, updateCallStatus, clearRingTimeout]);
+    broadcastCallRejected(call.callerId, call.callId);
+  }, [incomingCall, broadcastCallRejected]);
 
   return (
-    <AgoraCallContext.Provider value={{
-      broadcastIncomingCall, broadcastCallRejected, onCallRejected, markCallMissed,
-      incomingCall, acceptIncomingCall, rejectIncomingCall,
-    }}>
+    <AgoraCallContext.Provider value={{ broadcastIncomingCall, broadcastCallRejected, onCallRejected }}>
       {children}
+      <Modal visible={!!incomingCall} transparent animationType="fade" statusBarTranslucent>
+        {incomingCall ? (
+          <View style={styles.overlay}>
+            <LinearGradient colors={['#18181F', '#0A0A0F']} style={styles.card}>
+              <View style={styles.avatarRing}>
+                <Text style={styles.avatarInitial}>
+                  {(incomingCall.callerName || 'U').charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <Text style={styles.callerName}>@{incomingCall.callerName}</Text>
+              <Text style={styles.subtitle}>Videollamada entrante...</Text>
+              <View style={styles.actionsRow}>
+                <View style={styles.actionCol}>
+                  <Pressable style={[styles.actionBtn, styles.rejectBtn]} onPress={handleReject}>
+                    <MaterialIcons name="call-end" size={26} color="#fff" />
+                  </Pressable>
+                  <Text style={styles.actionLabel}>Rechazar</Text>
+                </View>
+                <View style={styles.actionCol}>
+                  <Pressable style={[styles.actionBtn, styles.acceptBtn]} onPress={handleAccept}>
+                    <MaterialIcons name="videocam" size={26} color="#fff" />
+                  </Pressable>
+                  <Text style={styles.actionLabel}>Aceptar</Text>
+                </View>
+              </View>
+            </LinearGradient>
+          </View>
+        ) : null}
+      </Modal>
     </AgoraCallContext.Provider>
   );
 }
+
+const styles = StyleSheet.create({
+  overlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.75)',
+    alignItems: 'center', justifyContent: 'center', padding: Spacing.xl,
+  },
+  card: {
+    width: '100%', maxWidth: 340, borderRadius: Radius.xl, padding: Spacing.xl,
+    alignItems: 'center', gap: Spacing.md, borderWidth: 1, borderColor: Colors.border,
+  },
+  avatarRing: {
+    width: 84, height: 84, borderRadius: 42, borderWidth: 2, borderColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceElevated,
+  },
+  avatarInitial: { color: Colors.primary, fontSize: 32, fontWeight: FontWeight.bold },
+  callerName:    { color: Colors.textPrimary, fontSize: FontSize.xl, fontWeight: FontWeight.bold },
+  subtitle:      { color: Colors.textSecondary, fontSize: FontSize.sm },
+  actionsRow:    { flexDirection: 'row', gap: Spacing.xxl, marginTop: Spacing.md },
+  actionCol:     { alignItems: 'center', gap: Spacing.xs },
+  actionBtn:     { width: 58, height: 58, borderRadius: 29, alignItems: 'center', justifyContent: 'center' },
+  rejectBtn:     { backgroundColor: Colors.secondary },
+  acceptBtn:     { backgroundColor: Colors.accent },
+  actionLabel:   { color: Colors.textSubtle, fontSize: FontSize.xs },
+});

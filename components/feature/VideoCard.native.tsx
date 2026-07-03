@@ -13,12 +13,10 @@ try {
   _useVideoPlayer = ev.useVideoPlayer ?? ((_src: any, _setup?: any) => null);
 } catch { /* web / preview — no native build */ }
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Clipboard from 'expo-clipboard';
 import { Image } from '@/components/ui/SafeImage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Avatar } from '@/components/ui/Avatar';
 import { GiftSheet } from '@/components/feature/GiftSheet';
-import { useAlert } from '@/template';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 import { Video, formatNumber } from '@/services/mockData';
 
@@ -346,8 +344,6 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
     onLike, onComment, onFollow, onSave = () => {}, onProfilePress, onSendGift, onViewTracked,
   } = props;
 
-  const { showAlert } = useAlert();
-
   const [screenSize, setScreenSize] = useState(Dimensions.get('window'));
   const mediaHeight = Math.round(screenSize.height * 0.65);
   const { width: SCREEN_W } = screenSize;
@@ -458,29 +454,9 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
   ), [SCREEN_W, mediaHeight, handleMediaTap]);
 
   // ── Share ─────────────────────────────────────────────────────────────────
-  const handleShare = useCallback(() => {
-    const deepLink = `onspaceapp://video/${video.id}`;
-    const message = `Mira este video en OnSpace: ${deepLink}`;
-
-    showAlert('Compartir video', '', [
-      {
-        text: 'Copiar enlace',
-        onPress: async () => {
-          try {
-            await Clipboard.setStringAsync(deepLink);
-            showAlert('Enlace copiado', '');
-          } catch (_) { /* ignore */ }
-        },
-      },
-      {
-        text: 'Compartir con...',
-        onPress: async () => {
-          try { await Share.share({ message }); } catch (_) { /* ignore */ }
-        },
-      },
-      { text: 'Cancelar', style: 'cancel' },
-    ]);
-  }, [video.id, showAlert]);
+  const handleShare = useCallback(async () => {
+    try { await Share.share({ message: `Mira esto de @${video.username} en ClipDAG - https://clipdag.io` }); } catch (_) {}
+  }, [video.username]);
 
   // ── Heart overlay (reused in both carousel + single) ─────────────────────
   const heartOverlay = showHeart ? (
