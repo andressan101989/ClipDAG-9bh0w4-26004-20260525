@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
@@ -70,6 +70,9 @@ export default function NotificationsScreen() {
 
   // DM summary: unread messages
   const unreadDMs = conversations.filter(c => c.unreadCount > 0).length;
+
+  // Mark everything read once the user actually opens this screen.
+  useEffect(() => { markAllRead(); }, []);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
