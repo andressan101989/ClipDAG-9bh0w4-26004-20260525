@@ -18,6 +18,7 @@ import { getSupabaseClient } from '@/template';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { timeAgo } from '@/services/mockData';
+import { generateUUID } from '@/services/agoraService';
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const PREMIUM_COLOR  = '#FF9D00';
@@ -288,6 +289,13 @@ export default function MessagesScreen() {
               <MaterialCommunityIcons name="bell-outline" size={22} color={Colors.textSecondary} />
             </Pressable>
           )}
+          <Pressable
+            onPress={() => router.push(`/group-call/${generateUUID()}` as any)}
+            hitSlop={8}
+            style={styles.salaBtn}
+          >
+            <MaterialCommunityIcons name="account-group-outline" size={20} color={Colors.textSecondary} />
+          </Pressable>
           <Pressable onPress={() => router.push('/new-message')} hitSlop={8} style={styles.newMsgBtn}>
             <LinearGradient colors={['#7C5CFF', '#FF2D78']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.newMsgBtnGrad}>
               <MaterialCommunityIcons name="pencil-outline" size={16} color="#fff" />
@@ -552,6 +560,10 @@ const styles = StyleSheet.create({
   notifBtn: { position: 'relative', padding: 2 },
   notifBadge: { position: 'absolute', top: -2, right: -2, backgroundColor: Colors.secondary, borderRadius: Radius.full, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2, borderWidth: 1, borderColor: Colors.bg },
   notifBadgeText: { color: '#fff', fontSize: 9, fontWeight: FontWeight.bold },
+  salaBtn: {
+    width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border,
+  },
   newMsgBtn: { borderRadius: Radius.full, overflow: 'hidden' },
   newMsgBtnGrad: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
 

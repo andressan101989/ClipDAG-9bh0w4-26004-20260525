@@ -42,6 +42,9 @@ console.log('[BOOT] 8 - ShopProvider imported');
 import { WalletConnectProvider } from '@/components/feature/WalletConnectProvider';
 console.log('[BOOT] 8b - WalletConnectProvider imported');
 
+import { AgoraCallProvider } from '@/contexts/AgoraCallContext';
+console.log('[BOOT] 8c - AgoraCallProvider imported');
+
 console.log('[BOOT] 9 - all imports done');
 
 function AppShell() {
@@ -63,33 +66,51 @@ function AppShell() {
           <NotificationsProvider>
             <ShopProvider>
               <WalletConnectProvider>
-                <Stack screenOptions={{ headerShown: false }}>
-                  <Stack.Screen name="index" />
-                  <Stack.Screen name="boot-test" />
-                  <Stack.Screen name="stress-test" />
-                  <Stack.Screen name="login" />
-                  <Stack.Screen name="(tabs)" />
-                  <Stack.Screen
-                    name="chat/[userId]"
-                    options={{ headerShown: true, title: '' }}
-                  />
-                  <Stack.Screen
-                    name="creator/[id]"
-                    options={{ headerShown: true, title: '' }}
-                  />
-                  <Stack.Screen
-                    name="product/[id]"
-                    options={{ headerShown: true, title: '' }}
-                  />
-                  <Stack.Screen
-                    name="live/[sessionId]"
-                    options={{ presentation: 'fullScreenModal', headerShown: false }}
-                  />
-                  <Stack.Screen
-                    name="battle/[roomId]"
-                    options={{ presentation: 'fullScreenModal', headerShown: false }}
-                  />
-                </Stack>
+                <AgoraCallProvider>
+                  <Stack screenOptions={{ headerShown: false }}>
+                    <Stack.Screen name="index" />
+                    <Stack.Screen name="boot-test" />
+                    <Stack.Screen name="stress-test" />
+                    <Stack.Screen name="login" />
+                    <Stack.Screen name="(tabs)" />
+                    <Stack.Screen
+                      name="chat/[userId]"
+                      options={{ headerShown: true, title: '' }}
+                    />
+                    <Stack.Screen
+                      name="creator/[id]"
+                      options={{ headerShown: true, title: '' }}
+                    />
+                    <Stack.Screen
+                      name="product/[id]"
+                      options={{ headerShown: true, title: '' }}
+                    />
+                    <Stack.Screen
+                      name="live/[sessionId]"
+                      options={{ presentation: 'fullScreenModal', headerShown: false }}
+                    />
+                    <Stack.Screen
+                      name="battle/[roomId]"
+                      options={{ presentation: 'fullScreenModal', headerShown: false }}
+                    />
+                    <Stack.Screen
+                      name="video-call/[userId]"
+                      options={{ presentation: 'fullScreenModal', headerShown: false }}
+                    />
+                    <Stack.Screen
+                      name="group-call/[roomId]"
+                      options={{ presentation: 'fullScreenModal', headerShown: false }}
+                    />
+                    <Stack.Screen
+                      name="live/broadcast/[streamId]"
+                      options={{ presentation: 'fullScreenModal', headerShown: false }}
+                    />
+                    <Stack.Screen
+                      name="live/watch/[streamId]"
+                      options={{ presentation: 'fullScreenModal', headerShown: false }}
+                    />
+                  </Stack>
+                </AgoraCallProvider>
               </WalletConnectProvider>
             </ShopProvider>
           </NotificationsProvider>

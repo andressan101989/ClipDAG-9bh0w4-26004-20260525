@@ -33,6 +33,7 @@ import { useRouter } from 'expo-router';
 
 import { isDeepARAvailable } from '@/services/deeparService';
 import { isFFmpegAvailable, RenderQueue, type RenderJob } from '@/services/ffmpegService';
+import { generateUUID } from '@/services/agoraService';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
 
 import {
@@ -174,7 +175,13 @@ export default function CreatorStudioScreen() {
             </Text>
           </View>
         </View>
-        <View style={{ width: 36 }} />
+        <Pressable
+          style={root.goLiveBtn}
+          onPress={() => router.push(`/live/broadcast/${generateUUID()}`)}
+          hitSlop={8}
+        >
+          <MaterialCommunityIcons name="access-point" size={18} color={Colors.secondary} />
+        </Pressable>
       </View>
 
       {/* Active render job progress banner */}
@@ -239,6 +246,7 @@ const root = StyleSheet.create({
   container:       { flex: 1, backgroundColor: Colors.bg },
   header:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border },
   backBtn:         { width: 36, height: 36, borderRadius: Radius.md, backgroundColor: Colors.surfaceElevated, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border },
+  goLiveBtn:       { width: 36, height: 36, borderRadius: Radius.md, backgroundColor: Colors.surfaceElevated, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,45,85,0.4)' },
   titleRow:        { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1, justifyContent: 'center' },
   title:           { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
   deepARBadge:     { borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 3 },

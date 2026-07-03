@@ -418,6 +418,15 @@ export default function CreatorProfileScreen() {
                     <MaterialCommunityIcons name="message-text-outline" size={18} color={Colors.textSecondary} />
                   )}
                 </Pressable>
+
+                {/* Llamar (video call) */}
+                <Pressable
+                  style={styles.iconBtn}
+                  onPress={() => router.push(`/video-call/${creatorId}` as any)}
+                  hitSlop={4}
+                >
+                  <MaterialIcons name="videocam" size={18} color={Colors.textSecondary} />
+                </Pressable>
               </View>
 
               {/* Boost/Sponsor row */}
