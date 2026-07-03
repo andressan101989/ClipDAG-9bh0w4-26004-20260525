@@ -84,6 +84,7 @@ function AppShell() {
                       name="creator/[id]"
                       options={{ headerShown: true, title: '' }}
                     />
+                    <Stack.Screen name="video/[id]" />
                     <Stack.Screen
                       name="product/[id]"
                       options={{ headerShown: true, title: '' }}

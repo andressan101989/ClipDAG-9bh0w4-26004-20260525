@@ -284,12 +284,13 @@ export function CommentSheet({ visible, onClose, videoId, onSubmit, userAvatar, 
       } else {
         await supabase.from('comment_likes').insert({ comment_id: commentId, user_id: userId });
       }
-      const { data } = await supabase.from('comments').select('likes_count').eq('id', commentId).single();
-      if (data) {
-        await supabase.from('comments')
-          .update({ likes_count: Math.max(0, (data.likes_count || 0) + (wasLiked ? -1 : 1)) })
-          .eq('id', commentId);
-      }
+      // Atomic increment via RPC instead of read-then-write — two concurrent
+      // likers both reading the same stale count and writing count+1 would
+      // otherwise silently lose one like.
+      await supabase.rpc('increment_comment_likes', {
+        p_comment_id: commentId,
+        p_delta: wasLiked ? -1 : 1,
+      });
     } catch (_) {
       // Non-critical — leave the optimistic state; next load will resync.
     }

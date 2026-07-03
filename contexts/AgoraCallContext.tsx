@@ -83,6 +83,33 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     await supabase.from('calls').update({ status }).eq('id', callId).eq('status', 'ringing');
   }, []);
 
+  // Shared by the realtime INSERT handler and the cold-start fetch below —
+  // both need to turn a `calls` row into the incomingCall modal state the
+  // same way.
+  const handleIncomingCallRow = useCallback(async (row: {
+    id: string; caller_id: string; channel_name: string; status: string;
+  }) => {
+    const supabase = supabaseRef.current;
+    if (!supabase || row.status !== 'ringing') return;
+
+    const { data: caller } = await supabase
+      .from('user_profiles').select('username, avatar_url').eq('id', row.caller_id).single();
+
+    setIncomingCall({
+      callId:       row.id,
+      callerId:     row.caller_id,
+      callerName:   caller?.username || 'Usuario',
+      callerAvatar: caller?.avatar_url || '',
+      channelName:  row.channel_name,
+    });
+
+    clearRingTimeout();
+    ringTimeoutRef.current = setTimeout(() => {
+      updateCallStatus(row.id, 'missed');
+      setIncomingCall(prev => (prev?.callId === row.id ? null : prev));
+    }, RING_TIMEOUT_MS);
+  }, [clearRingTimeout, updateCallStatus]);
+
   // ── Callee: subscribe to new/updated rows addressed to me ─────────────────
   useEffect(() => {
     const supabase = supabaseRef.current;
@@ -91,29 +118,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     const channel = supabase.channel(`calls:callee:${user.id}`)
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: 'calls', filter: `callee_id=eq.${user.id}`,
-      }, async (payload: any) => {
-        const row = payload.new as {
-          id: string; caller_id: string; channel_name: string; status: string;
-        };
-        if (row.status !== 'ringing') return;
-
-        const { data: caller } = await supabase
-          .from('user_profiles').select('username, avatar_url').eq('id', row.caller_id).single();
-
-        setIncomingCall({
-          callId:       row.id,
-          callerId:     row.caller_id,
-          callerName:   caller?.username || 'Usuario',
-          callerAvatar: caller?.avatar_url || '',
-          channelName:  row.channel_name,
-        });
-
-        clearRingTimeout();
-        ringTimeoutRef.current = setTimeout(() => {
-          updateCallStatus(row.id, 'missed');
-          setIncomingCall(prev => (prev?.callId === row.id ? null : prev));
-        }, RING_TIMEOUT_MS);
-      })
+      }, (payload: any) => { handleIncomingCallRow(payload.new); })
       .on('postgres_changes', {
         event: 'UPDATE', schema: 'public', table: 'calls', filter: `callee_id=eq.${user.id}`,
       }, (payload: any) => {
@@ -126,8 +131,30 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
       })
       .subscribe();
 
+    // Cold start: a call may have started ringing before this subscription
+    // went live (app launch, background→foreground reconnect, killed-and-
+    // relaunched app). postgres_changes only streams changes from the point
+    // `.subscribe()` resolves, so without this check a pending incoming call
+    // would never surface until the caller's next INSERT/UPDATE — which for
+    // a one-shot "ringing" row may never come. Bounded to the same ring
+    // window so a long-stale ringing row (crashed caller, never expired)
+    // doesn't pop up as if it were live.
+    (async () => {
+      const cutoff = new Date(Date.now() - RING_TIMEOUT_MS).toISOString();
+      const { data } = await supabase
+        .from('calls')
+        .select('id, caller_id, channel_name, status, created_at')
+        .eq('callee_id', user.id)
+        .eq('status', 'ringing')
+        .gte('created_at', cutoff)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (data) handleIncomingCallRow(data);
+    })();
+
     return () => { clearRingTimeout(); channel.unsubscribe(); };
-  }, [user?.id, clearRingTimeout, updateCallStatus]);
+  }, [user?.id, clearRingTimeout, updateCallStatus, handleIncomingCallRow]);
 
   // ── Caller: watch my own outgoing calls for a reject ──────────────────────
   useEffect(() => {

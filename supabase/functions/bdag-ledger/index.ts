@@ -27,6 +27,12 @@ const SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
 const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
+const RECONCILE_SECRET: string = (() => {
+  const s = Deno.env.get('RECONCILE_SECRET');
+  if (!s) throw new Error('RECONCILE_SECRET env var is required');
+  return s;
+})();
+
 // ── Velocity limits per operation ─────────────────────────────────────────
 const VELOCITY: Record<string, { maxOps: number; maxAmount: number; windowHours: number }> = {
   transfer:  { maxOps: 20,  maxAmount: 50_000,  windowHours: 1 },
@@ -233,7 +239,7 @@ Deno.serve(async (req) => {
     // ════════════════════════════════════════════════════════════════════
     if (action === 'reconcile') {
       const secret = req.headers.get('X-Reconcile-Secret');
-      if (secret !== Deno.env.get('RECONCILE_SECRET')) return fail('forbidden', 403);
+      if (secret !== RECONCILE_SECRET) return fail('forbidden', 403);
       const { data, error } = await admin.rpc('run_reconciliation_check');
       if (error) return fail(error.message);
       return ok(data);
@@ -244,7 +250,7 @@ Deno.serve(async (req) => {
     // ════════════════════════════════════════════════════════════════════
     if (action === 'refund_expired_dms') {
       const secret = req.headers.get('X-Reconcile-Secret');
-      if (secret !== Deno.env.get('RECONCILE_SECRET')) return fail('forbidden', 403);
+      if (secret !== RECONCILE_SECRET) return fail('forbidden', 403);
       const { data, error } = await admin.rpc('refund_expired_premium_dms');
       if (error) return fail(error.message);
       return ok(data);
