@@ -1,13 +1,32 @@
 /**
- * process_dag_reward — v2 Production
+ * process_dag_reward — v3 Production
+ *
+ * Fixes vs v2 (found in live database audit):
+ *   - '__increment_likes' RPC never existed, and was misused anyway — passed
+ *     as the VALUE of an .update() call, i.e. an unresolved Promise object
+ *     written to a numeric column, which would have been broken even if the
+ *     RPC existed. Replaced with the real increment_video_counter RPC.
+ *   - 'exec_sql' RPC (the unlike-path fallback) never existed either.
+ *     Replaced with the same increment_video_counter RPC (p_delta: -1).
+ *   - ledger_credit was called with parameter names that don't match its
+ *     actual signature (p_txn_id, p_account_id, p_amount, p_description,
+ *     p_metadata) — the call always failed silently (caught by the existing
+ *     non-fatal warning), meaning creators were never actually paid for
+ *     likes. Fixed to use the real signature, using the account id actually
+ *     returned by ensure_ledger_account (previously discarded).
+ *   - 'likes' table now exists (see supabase/migrations/20260704_*) — the
+ *     like/unlike logic itself was already correct, it just had no table to
+ *     operate on.
  *
  * Migrated from legacy implementation:
  *   - Deno.serve() (was: deprecated serve() from std@0.168.0)
  *   - Atomic like/unlike via DB UNIQUE constraint (race-safe)
- *   - likes_count updated with atomic SQL increment (no read-then-write race)
- *   - BDAG reward credited via bdag-ledger edge function (not user_profiles.dag_balance)
- *   - Idempotency: checks existing like before crediting to prevent double-credit
- *   - Records in financial_transactions (not legacy 'transactions' table)
+ *   - likes_count updated via atomic RPC (no read-then-write race)
+ *   - BDAG reward credited via ledger_credit RPC (not user_profiles.dag_balance)
+ *   - Idempotency: enforced by the `likes` unique(video_id, user_id)
+ *     constraint — a duplicate insert fails and returns early, before
+ *     ledger_credit is ever reached, so no separate idempotency key is
+ *     needed for the credit itself.
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -77,23 +96,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
         .eq('video_id', video_id);
 
       // Atomic decrement — no race condition
-      await admin.rpc('exec_sql' as any, {
-        query: `UPDATE videos SET likes_count = GREATEST(0, likes_count - 1) WHERE id = $1`,
-        params: [video_id],
-      }).catch(() => {
-        // Fallback if exec_sql RPC not available
-        admin.from('videos')
-          .select('likes_count')
-          .eq('id', video_id)
-          .single()
-          .then(({ data: v }) => {
-            if (v) {
-              admin.from('videos')
-                .update({ likes_count: Math.max(0, (v.likes_count ?? 1) - 1) })
-                .eq('id', video_id);
-            }
-          });
+      const { error: decErr } = await admin.rpc('increment_video_counter', {
+        p_video_id: video_id, p_field: 'likes_count', p_delta: -1,
       });
+      if (decErr) {
+        console.warn('[process_dag_reward] increment_video_counter (unlike) failed:', decErr.message);
+      }
 
       console.log(`[process_dag_reward] unliked video=${video_id} user=${user.id}`);
       return ok({ action: 'unliked' });
@@ -115,40 +123,30 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
 
     // ── Atomic likes_count increment ─────────────────────────────────────────
-    // UPDATE with arithmetic prevents the read-then-write race condition
-    await admin
-      .from('videos')
-      .update({ likes_count: admin.rpc('__increment_likes', { row_id: video_id }) as any })
-      .eq('id', video_id)
-      .catch(async () => {
-        // Fallback: safe arithmetic update via select + update (best-effort)
-        const { data: v } = await admin.from('videos').select('likes_count').eq('id', video_id).single();
-        if (v) {
-          await admin.from('videos').update({ likes_count: (v.likes_count ?? 0) + 1 }).eq('id', video_id);
-        }
-      });
-
-    // ── Credit BDAG reward via ledger (atomic, idempotent) ───────────────────
-    // Use ensure_ledger_account + ledger_credit RPC to stay consistent with
-    // the financial ledger. This replaces the old user_profiles.dag_balance update.
-    // Deterministic key — same like always maps to same key, preventing double-credit on client retries
-    const idempotencyKey = `like_reward:${video_id}:${user.id}`;
-
-    const { error: ensureErr } = await admin.rpc('ensure_ledger_account', {
-      p_user_id: creator_id,
+    const { error: countErr } = await admin.rpc('increment_video_counter', {
+      p_video_id: video_id, p_field: 'likes_count', p_delta: 1,
     });
-    if (ensureErr) {
-      console.warn('[process_dag_reward] ensure_ledger_account failed:', ensureErr.message);
-      // Non-fatal: reward not credited but like was recorded
+    if (countErr) {
+      console.warn('[process_dag_reward] increment_video_counter failed:', countErr.message);
+      // Non-fatal: like was recorded even if the displayed count lags.
     }
 
-    const { data: creditResult, error: creditErr } = await admin.rpc('ledger_credit', {
-      p_user_id:         creator_id,
-      p_amount:          DAG_REWARD_PER_LIKE,
-      p_operation_type:  'reward',
-      p_reference_type:  'like',
-      p_reference_id:    video_id,
-      p_idempotency_key: idempotencyKey,
+    // ── Credit BDAG reward via ledger (atomic) ───────────────────────────────
+    const { data: creatorAccountId, error: ensureErr } = await admin.rpc('ensure_ledger_account', {
+      p_user_id: creator_id,
+    });
+    if (ensureErr || !creatorAccountId) {
+      console.warn('[process_dag_reward] ensure_ledger_account failed:', ensureErr?.message ?? 'no account id returned');
+      // Non-fatal: reward not credited but like was recorded
+      return ok({ action: 'liked', reward: 0, creator_new_balance: null });
+    }
+
+    const { data: newBalance, error: creditErr } = await admin.rpc('ledger_credit', {
+      p_txn_id:      crypto.randomUUID(),
+      p_account_id:  creatorAccountId,
+      p_amount:      DAG_REWARD_PER_LIKE,
+      p_description: `Like reward: video ${video_id}`,
+      p_metadata:    { video_id, liker_id: user.id, type: 'like_reward' },
     });
 
     if (creditErr) {
@@ -156,9 +154,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       // Non-fatal: like was recorded, reward deferred
     }
 
-    const newBalance = (creditResult as any)?.new_balance ?? null;
-
-    console.log(`[process_dag_reward] liked video=${video_id} creator=${creator_id} reward=${DAG_REWARD_PER_LIKE} BDAG new_balance=${newBalance}`);
+    console.log(`[process_dag_reward] liked video=${video_id} creator=${creator_id} reward=${DAG_REWARD_PER_LIKE} BDAG new_balance=${newBalance ?? 'unknown'}`);
 
     // Notify video creator about the like (fire and forget)
     const { data: likerProfile } = await admin
@@ -176,8 +172,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     return ok({
       action:               'liked',
-      reward:               DAG_REWARD_PER_LIKE,
-      creator_new_balance:  newBalance,
+      reward:               creditErr ? 0 : DAG_REWARD_PER_LIKE,
+      creator_new_balance:  newBalance ?? null,
     });
 
   } catch (e: unknown) {

@@ -11,11 +11,15 @@
  *   8453  → Base mainnet
  *   97    → BSC testnet
  *   11155111 → Sepolia testnet
+ *   1404  → BlockDAG mainnet (see services/bdagService.ts BDAG_NETWORK)
  */
 
 // Primary + fallback RPC endpoints per chain (tried in order).
 // Having multiple endpoints reduces failure rate when a single public RPC is overloaded.
 const RPC_FALLBACKS: Record<string, string[]> = {
+  '1404': [
+    'https://rpc.bdagscan.com/',
+  ],
   '1': [
     'https://ethereum-rpc.publicnode.com',
     'https://cloudflare-eth.com',

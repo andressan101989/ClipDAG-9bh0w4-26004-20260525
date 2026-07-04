@@ -7,7 +7,11 @@
  */
 
 import { corsHeaders } from '../_shared/cors.ts';
-import { rpcCall } from '../_shared/rpc.ts';
+import { callRPC } from '../_shared/rpc.ts';
+
+// This proxy exclusively targets BlockDAG Mainnet (see services/bdagService.ts
+// BDAG_NETWORK) — the client never sends a chain_id, so it's fixed here.
+const BDAG_CHAIN_ID = '1404';
 
 // Read-only methods allowed via this proxy
 const ALLOWED_METHODS = new Set([
@@ -56,7 +60,7 @@ Deno.serve(async (req: Request) => {
   console.log(`[bdag-proxy] ${method}(${JSON.stringify(params).slice(0, 80)})`);
 
   try {
-    const result = await rpcCall(method, params as unknown[]);
+    const result = await callRPC(BDAG_CHAIN_ID, method, params as unknown[]);
     return new Response(JSON.stringify({ result }), {
       status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
