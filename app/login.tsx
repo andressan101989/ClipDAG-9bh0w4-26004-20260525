@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, Dimensions,
@@ -10,54 +10,22 @@ import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useAuth } from '@/hooks/useAuth';
 import { useAlert } from '@/template';
-import { getSupabaseClient } from '@/template';
 import { CyberButton } from '@/components/ui/CyberButton';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-type Step = 'form' | 'otp';
-
 export default function LoginScreen() {
   const { login, register } = useAuth();
   const { showAlert } = useAlert();
   const router = useRouter();
-  const supabase = getSupabaseClient();
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [step, setStep] = useState<Step>('form');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [username, setUsername] = useState('');
-  const [otp, setOtp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-
-  // OTP refs for 4-digit input
-  const otpRefs = [
-    useRef<TextInput>(null),
-    useRef<TextInput>(null),
-    useRef<TextInput>(null),
-    useRef<TextInput>(null),
-  ];
-  const [otpDigits, setOtpDigits] = useState(['', '', '', '']);
-
-  const handleOtpChange = (val: string, idx: number) => {
-    const cleaned = val.replace(/[^0-9]/g, '').slice(-1);
-    const next = [...otpDigits];
-    next[idx] = cleaned;
-    setOtpDigits(next);
-    setOtp(next.join(''));
-    if (cleaned && idx < 3) {
-      otpRefs[idx + 1].current?.focus();
-    }
-  };
-
-  const handleOtpKeyPress = (e: any, idx: number) => {
-    if (e.nativeEvent.key === 'Backspace' && !otpDigits[idx] && idx > 0) {
-      otpRefs[idx - 1].current?.focus();
-    }
-  };
 
   // ─── Login ────────────────────────────────────────────────────────────────
   const handleLogin = async () => {
@@ -75,7 +43,7 @@ export default function LoginScreen() {
     }
   };
 
-  // ─── Register step 1: send OTP ────────────────────────────────────────────
+  // ─── Register ─────────────────────────────────────────────────────────────
   const handleRegister = async () => {
     if (!email.trim() || !password || !username.trim()) {
       showAlert('Campos requeridos', 'Completa todos los campos');
@@ -91,158 +59,16 @@ export default function LoginScreen() {
     }
 
     setIsLoading(true);
-    // Send OTP via Supabase Auth directly
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim().toLowerCase(),
-    });
+    const result = await register(email.trim().toLowerCase(), password, username.trim());
     setIsLoading(false);
 
-    if (error) {
-      showAlert('Error', error.message);
+    if (!result.success) {
+      showAlert('Error', result.error ?? 'No se pudo crear la cuenta');
       return;
     }
 
-    setStep('otp');
-    setOtpDigits(['', '', '', '']);
-    setOtp('');
-    setTimeout(() => otpRefs[0].current?.focus(), 300);
+    router.replace('/(tabs)');
   };
-
-  // ─── Register step 2: verify OTP + create account ─────────────────────────
-  const handleVerifyOTP = async () => {
-    if (otp.length < 4) {
-      showAlert('Codigo incompleto', 'Ingresa el codigo de 4 digitos enviado a tu correo');
-      return;
-    }
-
-    setIsLoading(true);
-    // Verify OTP token
-    const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
-      email: email.trim().toLowerCase(),
-      token: otp,
-      type: 'email',
-    });
-    setIsLoading(false);
-
-    if (verifyError || !verifyData?.user) {
-      showAlert('Codigo incorrecto', verifyError?.message ?? 'Codigo invalido o expirado');
-      return;
-    }
-
-    const userId = verifyData.user.id;
-
-    // If registering: set password + username on the profile
-    if (mode === 'register') {
-      // Update password (user is now authenticated via OTP session)
-      const { error: pwErr } = await supabase.auth.updateUser({ password });
-      if (pwErr) {
-        console.warn('[login] password update error:', pwErr.message);
-      }
-
-      // Save username to profile
-      await supabase
-        .from('user_profiles')
-        .update({ username: username.trim(), dag_balance: 0 })
-        .eq('id', userId);
-    }
-
-    showAlert(
-      'Cuenta verificada!',
-      'Bienvenido a ClipDAG! Tu billetera $DAG fue creada automaticamente.',
-      [{ text: 'Empezar', onPress: () => router.replace('/(tabs)') }]
-    );
-  };
-
-  // ─── Resend OTP ───────────────────────────────────────────────────────────
-  const handleResendOTP = async () => {
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim().toLowerCase(),
-    });
-    if (error) {
-      showAlert('Error', error.message);
-    } else {
-      showAlert('Codigo reenviado', 'Revisa tu bandeja de entrada y spam');
-      setOtpDigits(['', '', '', '']);
-      setOtp('');
-      setTimeout(() => otpRefs[0].current?.focus(), 300);
-    }
-  };
-
-  // ─── OTP screen ───────────────────────────────────────────────────────────
-  if (step === 'otp') {
-    return (
-      <View style={styles.container}>
-        <StatusBar style="light" />
-        <Image
-          source={require('@/assets/images/onboarding-hero.png')}
-          style={styles.bgImage}
-          contentFit="cover"
-          transition={300}
-        />
-        <LinearGradient
-          colors={['rgba(0,0,0,0.4)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.97)']}
-          locations={[0, 0.4, 0.75]}
-          style={StyleSheet.absoluteFillObject}
-        />
-
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
-          <ScrollView contentContainerStyle={styles.otpScrollContent} keyboardShouldPersistTaps="handled">
-            <View style={styles.otpContainer}>
-              {/* Back */}
-              <Pressable onPress={() => setStep('form')} style={styles.backBtn} hitSlop={10}>
-                <Text style={styles.backBtnText}>← Volver</Text>
-              </Pressable>
-
-              {/* Icon */}
-              <View style={styles.otpIconWrap}>
-                <Text style={styles.otpIcon}>✉️</Text>
-              </View>
-
-              <Text style={styles.otpTitle}>Verifica tu correo</Text>
-              <Text style={styles.otpSubtitle}>
-                Enviamos un codigo de 4 digitos a{'\n'}
-                <Text style={styles.otpEmail}>{email}</Text>
-              </Text>
-
-              {/* 4-box OTP input */}
-              <View style={styles.otpBoxRow}>
-                {otpDigits.map((digit, idx) => (
-                  <TextInput
-                    key={idx}
-                    ref={otpRefs[idx]}
-                    style={[styles.otpBox, digit ? styles.otpBoxFilled : null]}
-                    value={digit}
-                    onChangeText={val => handleOtpChange(val, idx)}
-                    onKeyPress={e => handleOtpKeyPress(e, idx)}
-                    keyboardType="number-pad"
-                    maxLength={1}
-                    textAlign="center"
-                    selectionColor={Colors.primary}
-                  />
-                ))}
-              </View>
-
-              <CyberButton
-                label={isLoading ? 'Verificando...' : 'Verificar y Crear Cuenta'}
-                onPress={handleVerifyOTP}
-                loading={isLoading}
-                size="lg"
-                fullWidth
-              />
-
-              <Pressable onPress={handleResendOTP} hitSlop={10} style={styles.resendBtn}>
-                <Text style={styles.resendText}>No recibiste el codigo? <Text style={styles.resendLink}>Reenviar</Text></Text>
-              </Pressable>
-
-              <View style={styles.spamNote}>
-                <Text style={styles.spamNoteText}>Revisa tambien tu carpeta de spam</Text>
-              </View>
-            </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </View>
-    );
-  }
 
   // ─── Login / Register form ─────────────────────────────────────────────────
   return (
@@ -279,7 +105,7 @@ export default function LoginScreen() {
             <View style={styles.modeToggle}>
               <Pressable
                 style={[styles.modeTab, mode === 'login' ? styles.modeTabActive : null]}
-                onPress={() => { setMode('login'); setStep('form'); }}
+                onPress={() => setMode('login')}
               >
                 <Text style={[styles.modeTabText, mode === 'login' ? styles.modeTabTextActive : null]}>
                   Iniciar Sesión
@@ -287,7 +113,7 @@ export default function LoginScreen() {
               </Pressable>
               <Pressable
                 style={[styles.modeTab, mode === 'register' ? styles.modeTabActive : null]}
-                onPress={() => { setMode('register'); setStep('form'); }}
+                onPress={() => setMode('register')}
               >
                 <Text style={[styles.modeTabText, mode === 'register' ? styles.modeTabTextActive : null]}>
                   Registrarse
@@ -341,8 +167,8 @@ export default function LoginScreen() {
             <CyberButton
               label={
                 isLoading
-                  ? (mode === 'login' ? 'Entrando...' : 'Enviando código...')
-                  : (mode === 'login' ? 'Iniciar Sesión' : 'Siguiente → Verificar email')
+                  ? (mode === 'login' ? 'Entrando...' : 'Creando cuenta...')
+                  : (mode === 'login' ? 'Iniciar Sesión' : 'Registrarse')
               }
               onPress={mode === 'login' ? handleLogin : handleRegister}
               loading={isLoading}
@@ -445,69 +271,4 @@ const styles = StyleSheet.create({
     fontSize: FontSize.xs,
     lineHeight: 16,
   },
-  // ── OTP screen ───────────────────────────────
-  otpScrollContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    padding: Spacing.lg,
-  },
-  otpContainer: {
-    alignItems: 'center',
-    gap: Spacing.lg,
-  },
-  backBtn: { alignSelf: 'flex-start' },
-  backBtnText: { color: Colors.primary, fontSize: FontSize.md, fontWeight: FontWeight.medium },
-  otpIconWrap: {
-    width: 80, height: 80, borderRadius: 40,
-    backgroundColor: Colors.primaryDim,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: Colors.primary,
-  },
-  ottIcon: { fontSize: 38 },
-  otpIcon: { fontSize: 38 },
-  otpTitle: {
-    color: Colors.textPrimary,
-    fontSize: FontSize.xxl,
-    fontWeight: FontWeight.bold,
-    textAlign: 'center',
-  },
-  otpSubtitle: {
-    color: Colors.textSecondary,
-    fontSize: FontSize.md,
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-  otpEmail: { color: Colors.primary, fontWeight: FontWeight.semibold },
-  otpBoxRow: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    marginVertical: Spacing.md,
-  },
-  otpBox: {
-    width: 64,
-    height: 70,
-    borderRadius: Radius.md,
-    borderWidth: 2,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surfaceElevated,
-    color: Colors.textPrimary,
-    fontSize: 28,
-    fontWeight: FontWeight.bold,
-  },
-  otpBoxFilled: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primaryDim,
-  },
-  resendBtn: { marginTop: Spacing.sm },
-  resendText: { color: Colors.textSecondary, fontSize: FontSize.sm, textAlign: 'center' },
-  resendLink: { color: Colors.primary, fontWeight: FontWeight.semibold },
-  spamNote: {
-    backgroundColor: Colors.surfaceElevated,
-    borderRadius: Radius.md,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  spamNoteText: { color: Colors.textSubtle, fontSize: FontSize.xs, textAlign: 'center' },
 });
