@@ -310,12 +310,10 @@ export function CommentSheet({ visible, onClose, videoId, onSubmit, userAvatar, 
             const supabase = getSupabaseClient();
             await supabase.from('comments').delete().eq('id', commentId).eq('user_id', userId);
             if (videoId) {
-              const { data } = await supabase.from('videos').select('comments_count').eq('id', videoId).single();
-              if (data) {
-                await supabase.from('videos')
-                  .update({ comments_count: Math.max(0, (data.comments_count || 0) - 1) })
-                  .eq('id', videoId);
-              }
+              // Atomic RPC — delta is -1 since a comment was removed.
+              await supabase.rpc('increment_video_counter', {
+                p_video_id: videoId, p_field: 'comments_count', p_delta: -1,
+              });
             }
           } catch (_) {
             setComments(prevComments);
