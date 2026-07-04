@@ -1,5 +1,11 @@
 /**
- * process_dag_reward — v3 Production
+ * process_dag_reward — v4 Production
+ *
+ * Fix vs v3 (found in follow-up audit):
+ *   - creator_id was trusted directly from the request body — a caller
+ *     could pass any creator_id and redirect the BDAG reward to an account
+ *     that doesn't own the video. Now resolved server-side via
+ *     videos.user_id, looked up by video_id.
  *
  * Fixes vs v2 (found in live database audit):
  *   - '__increment_likes' RPC never existed, and was misused anyway — passed
@@ -72,11 +78,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (authErr || !user) return fail('Unauthorized', 401);
 
     // ── Parse ────────────────────────────────────────────────────────────────
-    let body: { video_id?: string; creator_id?: string };
+    let body: { video_id?: string };
     try { body = await req.json(); } catch { return fail('Invalid JSON body'); }
 
-    const { video_id, creator_id } = body;
-    if (!video_id || !creator_id) return fail('Missing video_id or creator_id');
+    const { video_id } = body;
+    if (!video_id) return fail('Missing video_id');
+
+    // Resolve the creator server-side — never trust a client-supplied
+    // creator_id for a call that credits real BDAG (a caller could redirect
+    // the reward to any account by lying about who owns the video).
+    const { data: video, error: videoErr } = await admin
+      .from('videos')
+      .select('user_id')
+      .eq('id', video_id)
+      .single();
+    if (videoErr || !video?.user_id) return fail('Video not found');
+    const creator_id = video.user_id;
     if (user.id === creator_id) return fail('Cannot like your own video');
 
     // ── Check existing like (idempotency guard) ──────────────────────────────
