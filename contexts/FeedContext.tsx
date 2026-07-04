@@ -458,21 +458,16 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     try {
       if (alreadySaved) {
         await supabase.from('video_saves').delete().eq('video_id', videoId).eq('user_id', user.id);
-        // Read latest count from current state, not a stale closure
-        setVideos(prev => {
-          const current = prev.find(v => v.id === videoId);
-          const newCount = Math.max(0, (current?.savesCount ?? 1) - 1);
-          supabase.from('videos').update({ saves_count: newCount }).eq('id', videoId).then(undefined, () => {});
-          return prev; // state already updated optimistically
-        });
+        // Atomic RPC — no need to read the current count first, so no
+        // stale-closure race is even possible.
+        supabase.rpc('increment_video_counter', {
+          p_video_id: videoId, p_field: 'saves_count', p_delta: -1,
+        }).then(undefined, () => {});
       } else {
         await supabase.from('video_saves').insert({ video_id: videoId, user_id: user.id });
-        setVideos(prev => {
-          const current = prev.find(v => v.id === videoId);
-          const newCount = (current?.savesCount ?? 0) + 1;
-          supabase.from('videos').update({ saves_count: newCount }).eq('id', videoId).then(undefined, () => {});
-          return prev;
-        });
+        supabase.rpc('increment_video_counter', {
+          p_video_id: videoId, p_field: 'saves_count', p_delta: 1,
+        }).then(undefined, () => {});
       }
     } catch (e) {
       console.warn('[FeedContext] toggleSave error:', e);
@@ -500,9 +495,13 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         const current = prev.find(v => v.id === videoId);
         if (!current) return prev;
         const newCount = (current.viewsCount || 0) + 1;
-        supabase.from('videos').update({ views_count: newCount }).eq('id', videoId).then(undefined, () => {});
         return prev.map(v => v.id === videoId ? { ...v, viewsCount: newCount } : v);
       });
+      // Atomic RPC persists the real count server-side — the local update
+      // above is just optimistic UI, not the source of truth.
+      supabase.rpc('increment_video_counter', {
+        p_video_id: videoId, p_field: 'views_count', p_delta: 1,
+      }).then(undefined, () => {});
     } catch (e) {
       console.warn('[FeedContext] trackView error:', e);
     }
@@ -613,8 +612,12 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     if (!isMockId(videoId) && user && supabase && supabaseOk.current) {
       try {
         await supabase.from('comments').insert({ user_id: user.id, video_id: videoId, text: comment.text });
-        const { data: vid } = await supabase.from('videos').select('comments_count').eq('id', videoId).single();
-        if (vid) await supabase.from('videos').update({ comments_count: (vid.comments_count || 0) + 1 }).eq('id', videoId);
+        // Atomic RPC replaces the previous read-then-write (select
+        // comments_count, then update with the computed value), which
+        // raced under concurrent commenters.
+        await supabase.rpc('increment_video_counter', {
+          p_video_id: videoId, p_field: 'comments_count', p_delta: 1,
+        });
       } catch (e) {
         console.warn('[FeedContext] addComment error:', e);
       }
