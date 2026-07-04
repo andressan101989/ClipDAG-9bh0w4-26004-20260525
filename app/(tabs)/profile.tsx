@@ -624,14 +624,19 @@ export default function ProfileScreen() {
               gradient={['#5A5A72', '#3D3D52']}
               onPress={() => router.push('/account-settings')}
             />
-            <View style={styles.settingsDivider} />
+            {/* Two-factor auth hidden: it's built on signInWithOtp/verifyOtp,
+                which no longer works now that email/password replaced OTP
+                auth (see app/login.tsx) — the confirmation email can't
+                reliably deliver a usable code on the free Supabase plan.
+                Re-enable once 2FA has its own working delivery mechanism. */}
+            {/* <View style={styles.settingsDivider} />
             <SettingsItem
               icon="shield-key-outline"
               label={t('profile.twoFactor')}
               sublabel={t('profile.twoFactorSub')}
               gradient={['#2D9EFF', '#00E5A0']}
               onPress={() => router.push('/two-factor')}
-            />
+            /> */}
             <View style={styles.settingsDivider} />
             <SettingsItem
               icon="file-document-outline"
