@@ -44,6 +44,7 @@ import { fetchPurchasedContentIds, purchaseContent } from '@/services/economySer
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { SubscribeSheet } from '@/components/creator/SubscribeSheet';
 import { BoostProfileSheet } from '@/components/creator/BoostProfileSheet';
+import { ReportModal } from '@/components/feature/ReportModal';
 
 const { width: W } = Dimensions.get('window');
 const THUMB = (W - Spacing.md * 2 - 4) / 3;
@@ -100,6 +101,7 @@ export default function CreatorProfileScreen() {
   const [subSheetVis,   setSubSheetVis]   = useState(false);
   const [boostSheetVis, setBoostSheetVis] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
+  const [reportModalVisible, setReportModalVisible] = useState(false);
 
   // ── Load all data ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -272,7 +274,7 @@ export default function CreatorProfileScreen() {
         <Pressable
           onPress={() => showAlert('Opciones', '', [
             { text: 'Compartir perfil', onPress: () => { /* share deep link */ } },
-            { text: 'Reportar', style: 'destructive', onPress: () => { /* report flow */ } },
+            { text: 'Reportar', style: 'destructive', onPress: () => setReportModalVisible(true) },
             { text: 'Cancelar', style: 'cancel' },
           ])}
           hitSlop={10} style={styles.topNavBtn}
@@ -585,6 +587,15 @@ export default function CreatorProfileScreen() {
         balance={balance}
         onClose={() => setBoostSheetVis(false)}
         onBoost={handleBoostProfile}
+      />
+
+      {/* Report modal */}
+      <ReportModal
+        visible={reportModalVisible}
+        onClose={() => setReportModalVisible(false)}
+        reporterId={user?.id ?? ''}
+        contentId={creatorId}
+        contentType="user"
       />
     </View>
   );

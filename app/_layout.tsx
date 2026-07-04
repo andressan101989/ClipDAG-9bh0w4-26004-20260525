@@ -48,6 +48,9 @@ console.log('[BOOT] 8c - AgoraCallProvider imported');
 import { IncomingCallModal } from '@/components/feature/IncomingCallModal';
 console.log('[BOOT] 8d - IncomingCallModal imported');
 
+import { PushNotificationHandler } from '@/components/feature/PushNotificationHandler';
+console.log('[BOOT] 8e - PushNotificationHandler imported');
+
 console.log('[BOOT] 9 - all imports done');
 
 function AppShell() {
@@ -115,6 +118,7 @@ function AppShell() {
                     />
                   </Stack>
                   <IncomingCallModal />
+                  <PushNotificationHandler />
                 </AgoraCallProvider>
               </WalletConnectProvider>
             </ShopProvider>
