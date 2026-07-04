@@ -18,7 +18,7 @@ import React, {
   createContext, useContext, useCallback, useEffect, useRef, useState, ReactNode,
 } from 'react';
 import { useRouter } from 'expo-router';
-import { getSupabaseClient } from '@/template';
+import { getSupabaseClient, useAlert } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
 
 export interface IncomingCall {
@@ -61,6 +61,7 @@ const RING_TIMEOUT_MS = 30_000;
 export function AgoraCallProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const router = useRouter();
+  const { showAlert } = useAlert();
 
   const supabaseRef = useRef<ReturnType<typeof getSupabaseClient> | null>(null);
   if (!supabaseRef.current) {
@@ -181,13 +182,19 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     const supabase = supabaseRef.current;
     if (!supabase) return;
 
-    await supabase.from('calls').insert({
+    const { error: insertError } = await supabase.from('calls').insert({
       id:           call.callId,
       caller_id:    call.callerId,
       callee_id:    targetUserId,
       channel_name: call.channelName,
       status:       'ringing',
     });
+
+    if (insertError) {
+      console.error('[Call] Failed to insert call record:', insertError);
+      showAlert('Error', 'No se pudo iniciar la llamada. Intenta de nuevo.');
+      return;
+    }
 
     supabase.functions.invoke('send-notification', {
       body: {
@@ -197,7 +204,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
         data:       { type: 'incoming_call', callId: call.callId, channelName: call.channelName },
       },
     }).catch(() => { /* best-effort — realtime is the primary channel */ });
-  }, []);
+  }, [showAlert]);
 
   const broadcastCallRejected = useCallback(
     (_targetUserId: string, callId: string) => updateCallStatus(callId, 'rejected'),

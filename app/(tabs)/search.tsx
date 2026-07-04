@@ -10,18 +10,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Avatar } from '@/components/ui/Avatar';
 import { useAuth } from '@/hooks/useAuth';
-import { useAlert, getSupabaseClient } from '@/template';
-import { useWallet } from '@/hooks/useWallet';
+import { getSupabaseClient } from '@/template';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
-import {
-  MOCK_LIVE_STREAMS, MOCK_CREATORS,
-  formatNumber, LiveStream, Creator,
-} from '@/services/mockData';
-import { LiveViewerSheet } from '@/components/feature/LiveViewerSheet';
+import { formatNumber } from '@/services/mockData';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 
-type Tab = 'discover' | 'live' | 'creators';
+// 'live' tab intentionally removed — it previously showed MOCK_LIVE_STREAMS.
+// There's no `live_sessions`/`live_messages` table on the current Supabase
+// project (aewwdlvbwpczqyvkwvvj) to back it with real data yet. Re-add once
+// that table is migrated — see app/live/broadcast/[streamId].tsx for the
+// existing live_sessions schema this would query.
+type Tab = 'discover' | 'creators';
 type SearchTab = 'users' | 'videos';
 
 const RECENT_KEY = 'recent_searches';
@@ -74,15 +74,11 @@ export default function SearchScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, isFollowing, toggleFollow } = useAuth();
-  const { transferBdag } = useWallet() ?? {};
-  const { showAlert } = useAlert();
 
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [searchTab, setSearchTab] = useState<SearchTab>('users');
   const [tab, setTab] = useState<Tab>('discover');
-  const [selectedStream, setSelectedStream] = useState<LiveStream | null>(null);
-  const [liveSheetVisible, setLiveSheetVisible] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [searchUsers, setSearchUsers] = useState<DbUser[]>([]);
@@ -217,28 +213,11 @@ export default function SearchScreen() {
 
   const displayTags = trendingTags.length > 0 ? trendingTags : FALLBACK_TAGS;
 
-  // ── Tip / live / follow handlers (DO NOT MODIFY) ─────────────────────────────
-  const handleJoinLive = (stream: LiveStream) => {
-    setSelectedStream(stream);
-    setLiveSheetVisible(true);
-  };
-
-  const handleSendTip = async (amount: number) => {
-    if (!selectedStream?.username) return;
-    const result = await transferBdag?.(selectedStream.username, amount);
-    if (result?.success) {
-      showAlert(
-        'Tip enviado!',
-        `Enviaste ${amount} $DAG a @${selectedStream.username}. El creador lo recibira en su billetera.`,
-      );
-    } else {
-      showAlert('Error al enviar tip', result?.error ?? 'No se pudo enviar el tip. Intenta de nuevo.');
-    }
-  };
-
-  const handleFollowCreator = (creator: Creator) => {
-    toggleFollow(creator.id);
-  };
+  // Top creators reuses the same real user_profiles query already fetched
+  // for "Creadores Sugeridos" (followers_count desc, limit 20) — just the
+  // unfiltered top 10, since a leaderboard should show top creators
+  // regardless of whether the viewer already follows them.
+  const topCreators = suggestedUsers.slice(0, 10);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -283,14 +262,14 @@ export default function SearchScreen() {
         </View>
       ) : (
         <View style={styles.tabBar}>
-          {(['discover', 'live', 'creators'] as Tab[]).map(t => (
+          {(['discover', 'creators'] as Tab[]).map(t => (
             <Pressable
               key={t}
               style={[styles.tabBtn, tab === t && styles.tabBtnActive]}
               onPress={() => setTab(t)}
             >
               <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
-                {t === 'discover' ? 'Populares' : t === 'live' ? '🔴 En Vivo' : 'Creadores'}
+                {t === 'discover' ? 'Populares' : 'Creadores'}
               </Text>
             </Pressable>
           ))}
@@ -496,93 +475,43 @@ export default function SearchScreen() {
               )}
             </View>
           </>
-        ) : tab === 'live' ? (
-          /* Live Streams */
-          <View style={styles.section}>
-            <View style={styles.sectionRow}>
-              <View style={styles.liveDot} />
-              <Text style={styles.sectionTitle}>Streams en Vivo</Text>
-            </View>
-            {MOCK_LIVE_STREAMS.map(stream => (
-              <Pressable
-                key={stream.id}
-                style={({ pressed }) => [styles.liveCard, pressed && { opacity: 0.85 }]}
-                onPress={() => handleJoinLive(stream)}
-              >
-                <View style={styles.liveThumbnailWrap}>
-                  <Image
-                    source={{ uri: stream.thumbnailUrl }}
-                    style={styles.liveThumbnail}
-                    contentFit="cover"
-                    transition={200}
-                  />
-                  <LinearGradient
-                    colors={['transparent', 'rgba(0,0,0,0.7)']}
-                    style={StyleSheet.absoluteFillObject}
-                  />
-                  <View style={styles.liveBadge}>
-                    <View style={styles.liveDotSmall} />
-                    <Text style={styles.liveBadgeText}>EN VIVO</Text>
-                  </View>
-                  <View style={styles.liveViewers}>
-                    <MaterialIcons name="visibility" size={12} color="#fff" />
-                    <Text style={styles.liveViewersText}>{formatNumber(stream.viewers)}</Text>
-                  </View>
-                  <View style={styles.joinOverlay}>
-                    <View style={styles.joinBtn}>
-                      <MaterialIcons name="play-arrow" size={16} color="#fff" />
-                      <Text style={styles.joinBtnText}>Unirse</Text>
-                    </View>
-                  </View>
-                </View>
-                <View style={styles.liveInfo}>
-                  <View style={styles.liveUser}>
-                    <Avatar uri={stream.userAvatar} username={stream.username} size={32} showBorder />
-                    <Text style={styles.liveUsername}>@{stream.username}</Text>
-                  </View>
-                  <Text style={styles.liveTitle} numberOfLines={2}>{stream.title}</Text>
-                  <View style={styles.liveDagRow}>
-                    <Text style={styles.liveDagIcon}>◈</Text>
-                    <Text style={styles.liveDagText}>{stream.dagEarned.toFixed(1)} $DAG ganados</Text>
-                  </View>
-                </View>
-              </Pressable>
-            ))}
-          </View>
         ) : (
-          /* Creators */
+          /* Creators — real top-followers leaderboard */
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Top Creadores $DAG</Text>
-            {MOCK_CREATORS.map((creator, idx) => (
-              <View key={creator.id} style={styles.creatorCard}>
+            <Text style={styles.sectionTitle}>Top Creadores</Text>
+            {discoverLoading ? (
+              <ActivityIndicator color={Colors.primary} style={styles.loadingInline} />
+            ) : topCreators.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyIcon}>👥</Text>
+                <Text style={styles.emptyText}>No hay creadores todavia</Text>
+              </View>
+            ) : topCreators.map((u, idx) => (
+              <View key={u.id} style={styles.creatorCard}>
                 <Text style={styles.creatorRank}>#{idx + 1}</Text>
-                <Avatar uri={creator.avatar} username={creator.username} size={52} showBorder />
+                <Avatar uri={u.avatar_url ?? undefined} username={u.username} size={52} showBorder />
                 <View style={styles.creatorInfo}>
-                  <Text style={styles.creatorName}>@{creator.username}</Text>
-                  <Text style={styles.creatorFollowers}>{formatNumber(creator.followers)} seguidores</Text>
-                  <View style={styles.creatorDagRow}>
-                    <Text style={styles.creatorDagIcon}>◈</Text>
-                    <Text style={styles.creatorDagText}>{formatNumber(creator.dagEarned)} $DAG</Text>
-                  </View>
+                  <Text style={styles.creatorName}>{u.display_name || u.username}</Text>
+                  <Text style={styles.creatorFollowers}>{formatNumber(u.followers_count ?? 0)} seguidores</Text>
                 </View>
                 <Pressable
                   style={({ pressed }) => [
                     styles.followBtn,
-                    isFollowing(creator.id) && styles.followBtnActive,
+                    isFollowing(u.id) && styles.followBtnActive,
                     pressed && { opacity: 0.75 },
                   ]}
-                  onPress={() => handleFollowCreator(creator)}
+                  onPress={() => toggleFollow(u.id)}
                 >
                   <MaterialIcons
-                    name={isFollowing(creator.id) ? 'check' : 'person-add'}
+                    name={isFollowing(u.id) ? 'check' : 'person-add'}
                     size={14}
-                    color={isFollowing(creator.id) ? Colors.textSecondary : '#fff'}
+                    color={isFollowing(u.id) ? Colors.textSecondary : '#fff'}
                   />
                   <Text style={[
                     styles.followBtnText,
-                    isFollowing(creator.id) && styles.followBtnTextActive,
+                    isFollowing(u.id) && styles.followBtnTextActive,
                   ]}>
-                    {isFollowing(creator.id) ? 'Siguiendo' : 'Seguir'}
+                    {isFollowing(u.id) ? 'Siguiendo' : 'Seguir'}
                   </Text>
                 </Pressable>
               </View>
@@ -590,13 +519,6 @@ export default function SearchScreen() {
           </View>
         )}
       </ScrollView>
-
-      <LiveViewerSheet
-        visible={liveSheetVisible}
-        stream={selectedStream}
-        onClose={() => setLiveSheetVisible(false)}
-        onSendTip={handleSendTip}
-      />
     </View>
   );
 }
@@ -624,7 +546,6 @@ const styles = StyleSheet.create({
   scrollContent: { padding: Spacing.md, gap: Spacing.xl },
   section: { gap: Spacing.md },
   sectionTitle: { fontSize: FontSize.lg, fontWeight: FontWeight.semibold, color: Colors.textPrimary },
-  sectionRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   sectionRowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   clearText: { color: Colors.primary, fontSize: FontSize.sm },
   tagsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
@@ -643,44 +564,6 @@ const styles = StyleSheet.create({
     padding: Spacing.xs, flexDirection: 'row', alignItems: 'center', gap: 2,
   },
   thumbLikes: { color: '#fff', fontSize: FontSize.xs },
-  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.error },
-  liveCard: {
-    backgroundColor: Colors.surfaceElevated, borderRadius: Radius.lg,
-    overflow: 'hidden', borderWidth: 1, borderColor: Colors.border,
-  },
-  liveThumbnailWrap: { height: 160, position: 'relative' },
-  liveThumbnail: { width: '100%', height: '100%' },
-  liveBadge: {
-    position: 'absolute', top: Spacing.sm, left: Spacing.sm,
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: Colors.error, borderRadius: Radius.full,
-    paddingHorizontal: Spacing.sm, paddingVertical: 3,
-  },
-  liveDotSmall: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
-  liveBadgeText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.bold },
-  liveViewers: {
-    position: 'absolute', top: Spacing.sm, right: Spacing.sm,
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: Radius.full,
-    paddingHorizontal: Spacing.sm, paddingVertical: 3,
-  },
-  liveViewersText: { color: '#fff', fontSize: 11 },
-  joinOverlay: {
-    position: 'absolute', bottom: Spacing.sm, right: Spacing.sm,
-  },
-  joinBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: Colors.primary, borderRadius: Radius.md,
-    paddingHorizontal: Spacing.sm, paddingVertical: 5,
-  },
-  joinBtnText: { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
-  liveInfo: { padding: Spacing.md, gap: Spacing.sm },
-  liveUser: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  liveUsername: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
-  liveTitle: { color: Colors.textSecondary, fontSize: FontSize.sm, lineHeight: 18 },
-  liveDagRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  liveDagIcon: { color: Colors.primary, fontSize: 13 },
-  liveDagText: { color: Colors.primary, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
   creatorCard: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
     backgroundColor: Colors.surfaceElevated, borderRadius: Radius.md,
@@ -693,9 +576,6 @@ const styles = StyleSheet.create({
   creatorInfo: { flex: 1 },
   creatorName: { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.semibold },
   creatorFollowers: { color: Colors.textSubtle, fontSize: FontSize.xs },
-  creatorDagRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
-  creatorDagIcon: { color: Colors.primary, fontSize: 12 },
-  creatorDagText: { color: Colors.primary, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
   followBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     backgroundColor: Colors.primary, borderRadius: Radius.md,
