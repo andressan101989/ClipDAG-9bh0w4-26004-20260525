@@ -278,6 +278,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (data.user) {
         await supabase.from('user_profiles')
           .update({ username, dag_balance: 0 }).eq('id', data.user.id);
+        // Every user needs a ledger_accounts row before any BDAG operation
+        // (deposit/withdraw/transfer) can touch their balance. Non-fatal:
+        // it's also lazily created by ensure_ledger_account() inside those
+        // RPCs on first use, so a failure here shouldn't block registration.
+        try {
+          await supabase.rpc('ensure_ledger_account', { p_user_id: data.user.id });
+        } catch (e) {
+          console.log('[AuthProvider] ensure_ledger_account on signup failed (non-fatal):', e);
+        }
       }
       return { success: true };
     } catch (e: any) {

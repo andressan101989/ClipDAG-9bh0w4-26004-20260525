@@ -300,6 +300,16 @@ Deno.serve(async (req) => {
       return fail(`withdrawal_cooldown: Next withdrawal available in ${timeStr}`, 429);
     }
 
+    // ── Ensure the user's own ledger account exists ────────────────────────
+    // New signups don't always have a ledger_accounts row yet (register()
+    // creates one, but older/pre-fix accounts or edge cases might not).
+    // ensure_ledger_account() is idempotent — safe to call unconditionally.
+    const { error: ensureErr } = await admin.rpc('ensure_ledger_account', { p_user_id: user.id });
+    if (ensureErr) {
+      log('ERROR', 'ensure_ledger_account_failed', { user_id: user.id, error: ensureErr.message });
+      return fail('Could not verify ledger account: ' + ensureErr.message, 503);
+    }
+
     // ── Balance check from authoritative ledger ────────────────────────────
     const { data: ledgerAcct } = await admin
       .from('ledger_accounts')

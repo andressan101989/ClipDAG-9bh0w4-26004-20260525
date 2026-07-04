@@ -146,20 +146,63 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     const supabase = supabaseRef.current;
     if (!supabase || !supabaseOk.current) return;
     try {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*')
-        .or(
-          `and(sender_id.eq.${user.id},recipient_id.eq.${partnerId}),and(sender_id.eq.${partnerId},recipient_id.eq.${user.id})`
-        )
-        .order('created_at', { ascending: true })
-        .limit(100);
+      const [messagesResult, profileResult] = await Promise.all([
+        supabase
+          .from('messages')
+          .select('*')
+          .or(
+            `and(sender_id.eq.${user.id},recipient_id.eq.${partnerId}),and(sender_id.eq.${partnerId},recipient_id.eq.${user.id})`
+          )
+          .order('created_at', { ascending: true })
+          .limit(100),
+        // fetchConversations() only derives entries from existing message
+        // rows, so a brand-new chat (no messages sent yet) has no
+        // `conversations` entry at all — partnerAvatar/partnerUsername would
+        // be blank until the first message. Fetch the partner's profile
+        // directly here so the chat screen always has it.
+        supabase
+          .from('user_profiles')
+          .select('username, avatar_url')
+          .eq('id', partnerId)
+          .maybeSingle(),
+      ]);
 
+      const { data, error } = messagesResult;
       if (!error && data) {
         setMessages(prev => ({
           ...prev,
           [partnerId]: data.map(r => mapMessage(r as Record<string, unknown>)),
         }));
+      }
+
+      const partnerProfile = profileResult.data;
+      if (partnerProfile) {
+        setConversations(prev => {
+          const idx = prev.findIndex(c => c.partnerId === partnerId);
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = {
+              ...next[idx],
+              partnerUsername: partnerProfile.username || next[idx].partnerUsername,
+              partnerAvatar:   partnerProfile.avatar_url || next[idx].partnerAvatar,
+            };
+            return next;
+          }
+          // No conversation row yet (zero messages so far) — seed one so
+          // the chat header/avatar show correctly before anyone has sent
+          // anything.
+          return [
+            ...prev,
+            {
+              partnerId,
+              partnerUsername: partnerProfile.username || 'Usuario',
+              partnerAvatar:   partnerProfile.avatar_url || '',
+              lastMessage:     '',
+              lastMessageAt:   new Date(0).toISOString(),
+              unreadCount:     0,
+            },
+          ];
+        });
       }
     } catch (_) {}
   }, [user]);

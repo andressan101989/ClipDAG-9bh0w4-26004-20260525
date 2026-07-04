@@ -13,7 +13,7 @@
  *  • Exclusive content grid with lock/unlock
  *  • Subscriber badge + perks when subscribed
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
   ActivityIndicator, Dimensions,
@@ -23,7 +23,7 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
 import { useWallet } from '@/hooks/useWallet';
 import { useAlert } from '@/template';
@@ -104,45 +104,55 @@ export default function CreatorProfileScreen() {
   const [reportModalVisible, setReportModalVisible] = useState(false);
 
   // ── Load all data ─────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!creatorId) return;
-    const load = async () => {
-      setLoading(true);
-      const [profile, creatorStats, vids, excl, subPlans, dm, purchased, boosted] =
-        await Promise.all([
-          fetchCreatorProfile(creatorId),
-          fetchCreatorStats(creatorId),
-          fetchCreatorVideos(creatorId, 24),
-          fetchCreatorExclusiveContent(creatorId),
-          fetchCreatorSubscriptionPlans(creatorId),
-          getPremiumDMConfig(creatorId),
-          user?.id ? fetchPurchasedContentIds(user.id) : Promise.resolve(new Set<string>()),
-          isProfileBoosted(creatorId),
-        ]);
+  // useFocusEffect (not plain useEffect) so re-visiting a profile — e.g. tab
+  // navigation keeps this screen mounted underneath — always re-fetches
+  // fetchCreatorProfile() instead of showing whatever avatar/bio was cached
+  // in state from the last time this screen was focused.
+  useFocusEffect(
+    useCallback(() => {
+      if (!creatorId) return;
+      let cancelled = false;
+      const load = async () => {
+        setLoading(true);
+        const [profile, creatorStats, vids, excl, subPlans, dm, purchased, boosted] =
+          await Promise.all([
+            fetchCreatorProfile(creatorId),
+            fetchCreatorStats(creatorId),
+            fetchCreatorVideos(creatorId, 24),
+            fetchCreatorExclusiveContent(creatorId),
+            fetchCreatorSubscriptionPlans(creatorId),
+            getPremiumDMConfig(creatorId),
+            user?.id ? fetchPurchasedContentIds(user.id) : Promise.resolve(new Set<string>()),
+            isProfileBoosted(creatorId),
+          ]);
+        if (cancelled) return;
 
-      setCreator(profile);
-      setStats(creatorStats);
-      setVideos(vids);
-      setExclusive(excl);
-      setPlans(subPlans);
-      setDmConfig(dm);
-      setPurchasedIds(purchased);
-      setIsBoosted(boosted.boosted);
+        setCreator(profile);
+        setStats(creatorStats);
+        setVideos(vids);
+        setExclusive(excl);
+        setPlans(subPlans);
+        setDmConfig(dm);
+        setPurchasedIds(purchased);
+        setIsBoosted(boosted.boosted);
 
-      // Subscription status
-      if (user?.id && user.id !== creatorId) {
-        const sub = await checkSubscription(user.id, creatorId);
-        setSubStatus({
-          isSubscribed: sub.isSubscribed,
-          freeDmsLeft: sub.freeDmsRemaining,
-          planName: sub.planName,
-        });
-      }
+        // Subscription status
+        if (user?.id && user.id !== creatorId) {
+          const sub = await checkSubscription(user.id, creatorId);
+          if (cancelled) return;
+          setSubStatus({
+            isSubscribed: sub.isSubscribed,
+            freeDmsLeft: sub.freeDmsRemaining,
+            planName: sub.planName,
+          });
+        }
 
-      setLoading(false);
-    };
-    load();
-  }, [creatorId, user?.id]);
+        setLoading(false);
+      };
+      load();
+      return () => { cancelled = true; };
+    }, [creatorId, user?.id]),
+  );
 
   // ── Follow / Unfollow ─────────────────────────────────────────────────────
   // Uses AuthContext.toggleFollow (atomic follow_user/unfollow_user RPC) —
