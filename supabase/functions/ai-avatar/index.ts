@@ -4,14 +4,22 @@
  * AI Avatar Generator Edge Function
  *
  * Actions:
- *   generate-image  → OnSpace AI image generation (styled avatar from photo + prompt)
- *   generate-video  → OnSpace AI video generation (Sora-2: talking avatar animation)
+ *   generate-image  → Google Gemini (gemini-2.0-flash-exp) image generation,
+ *                     called directly — styled avatar from photo + prompt
+ *   generate-video  → OnSpace AI video generation (Sora-2: talking avatar
+ *                     animation) — kept on OnSpace; Gemini has no equivalent
+ *                     video-generation endpoint
  *   check-video     → Poll video prediction status + download/store on completion
  */
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
 
+const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') ?? '';
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent';
+
+// Video generation (generate-video / check-video) still goes through OnSpace —
+// Gemini's generateContent endpoint doesn't do video/Sora-2-style predictions.
 const AI_BASE  = Deno.env.get('ONSPACE_AI_BASE_URL') ?? '';
 const AI_KEY   = Deno.env.get('ONSPACE_AI_API_KEY')  ?? '';
 const SB_URL   = Deno.env.get('SUPABASE_URL')         ?? '';
@@ -52,7 +60,7 @@ serve(async (req: Request) => {
 
     // ════════════════════════════════════════════════════════════════════════
     // ACTION: generate-image
-    // Generates a styled avatar image using OnSpace AI image generation
+    // Generates a styled avatar image using Google Gemini image generation
     // ════════════════════════════════════════════════════════════════════════
     if (action === 'generate-image') {
       const { photoUrl, style = 'cartoon', customPrompt } = body as {
@@ -66,45 +74,43 @@ serve(async (req: Request) => {
         ? `${customPrompt}. Style: ${styleDesc}. High quality, professional avatar, clean background.`
         : `Transform the person in this photo into a ${styleDesc}. Keep their facial features recognizable. Professional avatar for social media. Square format, clean background.`;
 
-      const messages: any[] = [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'image_url',
-              image_url: { url: photoUrl },
-            },
-            {
-              type: 'text',
-              text: prompt,
-            },
-          ],
-        },
-      ];
+      // Gemini's generateContent takes inline image bytes, not a URL — fetch
+      // the source photo and base64-encode it.
+      const photoResp = await fetch(photoUrl);
+      if (!photoResp.ok) throw new Error('Could not fetch source photo');
+      const photoMime  = photoResp.headers.get('content-type') || 'image/jpeg';
+      const photoBytes = new Uint8Array(await photoResp.arrayBuffer());
+      let photoBinary = '';
+      for (let i = 0; i < photoBytes.length; i++) photoBinary += String.fromCharCode(photoBytes[i]);
+      const photoB64 = btoa(photoBinary);
 
-      const aiResp = await fetch(`${AI_BASE}/chat/completions`, {
+      const aiResp = await fetch(GEMINI_URL, {
         method:  'POST',
-        headers: { 'Authorization': `Bearer ${AI_KEY}`, 'Content-Type': 'application/json' },
+        headers: { 'x-goog-api-key': GEMINI_API_KEY, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model:      'google/gemini-2.5-flash-image',
-          modalities: ['image', 'text'],
-          messages,
-          image_config: { aspect_ratio: '1:1', image_size: '1K' },
+          contents: [{
+            parts: [
+              { inline_data: { mime_type: photoMime, data: photoB64 } },
+              { text: prompt },
+            ],
+          }],
+          generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
         }),
       });
 
       if (!aiResp.ok) {
         const errText = await aiResp.text();
-        throw new Error(`OnSpace AI image error: ${errText}`);
+        throw new Error(`Gemini image error: ${errText}`);
       }
 
       const aiData = await aiResp.json();
-      const imageB64 = aiData?.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+      const parts: any[] = aiData?.candidates?.[0]?.content?.parts ?? [];
+      const imagePart = parts.find((p) => p.inlineData || p.inline_data);
+      const base64Data = imagePart?.inlineData?.data ?? imagePart?.inline_data?.data;
 
-      if (!imageB64) throw new Error('No image returned from AI model');
+      if (!base64Data) throw new Error('No image returned from AI model');
 
       // Decode base64 → binary
-      const base64Data = imageB64.replace(/^data:image\/\w+;base64,/, '');
       const binaryStr  = atob(base64Data);
       const bytes      = new Uint8Array(binaryStr.length);
       for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
