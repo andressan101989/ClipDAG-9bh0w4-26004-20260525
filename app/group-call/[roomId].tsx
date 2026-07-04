@@ -51,7 +51,7 @@ export default function GroupCallScreen() {
 
   const {
     joined, error, remoteUids,
-    isMuted, isCameraOff, join, leave, toggleMute, toggleCamera, switchCamera,
+    isMuted, isCameraOff, localVideoReady, join, leave, toggleMute, toggleCamera, switchCamera,
   } = useAgoraEngine({ channelName: roomId ?? null, uid: myUid, role: 'publisher', profile: 'communication' });
 
   // ── Presence: gate join at MAX_PARTICIPANTS, map uid → username/avatar ────
@@ -167,8 +167,8 @@ export default function GroupCallScreen() {
         <View style={styles.grid}>
           {/* Local tile */}
           <View style={[styles.tile, { width: tileWidth }]}>
-            {RtcSurfaceView && !isCameraOff ? (
-              <RtcSurfaceView canvas={{ uid: 0 }} style={{ flex: 1 }} />
+            {RtcSurfaceView && localVideoReady && !isCameraOff ? (
+              <RtcSurfaceView canvas={{ uid: 0 }} style={{ flex: 1 }} zOrderMediaOverlay />
             ) : (
               <View style={styles.tilePlaceholder}>
                 <Text style={styles.tileInitial}>
@@ -188,7 +188,7 @@ export default function GroupCallScreen() {
             return (
               <View key={uid} style={[styles.tile, { width: tileWidth }]}>
                 {RtcSurfaceView ? (
-                  <RtcSurfaceView canvas={{ uid }} style={{ flex: 1 }} />
+                  <RtcSurfaceView canvas={{ uid }} style={{ flex: 1 }} zOrderMediaOverlay />
                 ) : null}
                 <View style={styles.tileLabel}>
                   <Text style={styles.tileLabelText} numberOfLines={1}>

@@ -64,7 +64,7 @@ export default function VideoCallScreen() {
   const myUid = user?.id ? useridToAgoraUid(user.id) : 0;
 
   const {
-    engineReady, remoteUids, isMuted, isCameraOff, error,
+    engineReady, remoteUids, isMuted, isCameraOff, localVideoReady, error,
     join, leave, toggleMute, toggleCamera, switchCamera,
   } = useAgoraEngine({ channelName, uid: myUid, role: 'publisher', profile: 'communication' });
 
@@ -202,9 +202,9 @@ export default function VideoCallScreen() {
         </View>
       )}
 
-      {phase === 'active' && !isCameraOff && RtcSurfaceView ? (
+      {phase === 'active' && localVideoReady && !isCameraOff && RtcSurfaceView ? (
         <View style={styles.localPreview}>
-          <RtcSurfaceView canvas={{ uid: 0 }} style={{ flex: 1 }} />
+          <RtcSurfaceView canvas={{ uid: 0 }} style={{ flex: 1 }} zOrderMediaOverlay />
           <Text style={styles.localPreviewLabel}>Tú</Text>
         </View>
       ) : null}

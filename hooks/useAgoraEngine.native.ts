@@ -25,13 +25,14 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
   const handlersRef = useRef<any>(null);
   const mountedRef  = useRef(true);
 
-  const [joined,      setJoined]      = useState(false);
-  const [joining,     setJoining]     = useState(false);
-  const [error,       setError]       = useState<string | null>(null);
-  const [remoteUids,  setRemoteUids]  = useState<number[]>([]);
-  const [isMuted,     setIsMuted]     = useState(false);
-  const [isCameraOff, setIsCameraOff] = useState(role === 'subscriber');
-  const [isFront,     setIsFront]     = useState(true);
+  const [joined,          setJoined]          = useState(false);
+  const [joining,         setJoining]         = useState(false);
+  const [error,           setError]           = useState<string | null>(null);
+  const [remoteUids,      setRemoteUids]      = useState<number[]>([]);
+  const [isMuted,         setIsMuted]         = useState(false);
+  const [isCameraOff,     setIsCameraOff]     = useState(role === 'subscriber');
+  const [isFront,         setIsFront]         = useState(true);
+  const [localVideoReady, setLocalVideoReady] = useState(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -57,6 +58,7 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
       setJoined(false);
       setJoining(false);
       setRemoteUids([]);
+      setLocalVideoReady(false);
     }
   }, [cleanupEngine]);
 
@@ -79,26 +81,37 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
           : ChannelProfileType.ChannelProfileCommunication,
       });
 
+      // Fix: black local video on join. enableVideo() must run exactly once,
+      // before joinChannel() — calling it again after the channel is joined
+      // resets the video module instead of confirming it, which is what
+      // caused the intermittent black screen. enableLocalVideo(true) +
+      // startPreview() are safe to re-run (see onJoinChannelSuccess below)
+      // and are what actually (re)start frame capture.
+      if (role === 'publisher') {
+        try {
+          engine.enableVideo();
+          engine.enableLocalVideo(true);
+          engine.startPreview();
+          setLocalVideoReady(true);
+        } catch { /* non-fatal — onJoinChannelSuccess retries this */ }
+      }
+
       const handlers = {
         onJoinChannelSuccess: () => {
           if (!mountedRef.current) return;
           setJoined(true);
           setJoining(false);
-          // Fix: local video renders black on join unless the capture
-          // pipeline is explicitly kicked after the channel connection is
-          // established — enableVideo() called pre-join isn't always
-          // enough. The delay gives the engine time to settle into the
-          // joined state before starting the preview. Skipped for
-          // subscribers (live-streaming audience) — they don't publish
-          // video and shouldn't have their camera turned back on.
+          // Backup retry — deliberately does NOT call enableVideo() again
+          // (see comment above). enableLocalVideo/startPreview are cheap to
+          // repeat and cover devices where the pre-join call above was a
+          // no-op because the capture pipeline wasn't ready yet.
           if (role === 'publisher') {
-            (async () => {
-              try {
-                await engine.enableVideo();
-                await new Promise(resolve => setTimeout(resolve, 300));
-                await engine.startPreview();
-              } catch { /* ignore */ }
-            })();
+            try {
+              engine.enableLocalVideo(true);
+              engine.muteLocalVideoStream(false);
+              engine.startPreview();
+              if (mountedRef.current) setLocalVideoReady(true);
+            } catch { /* ignore */ }
           }
         },
         onUserJoined: (_conn: any, remoteUid: number) => {
@@ -118,7 +131,6 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
       handlersRef.current = handlers;
       engine.registerEventHandler(handlers);
 
-      engine.enableVideo();
       engine.enableAudio();
 
       if (profile === 'live-broadcasting') {
@@ -164,7 +176,16 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
     if (!engine) return;
     setIsCameraOff(prev => {
       const next = !prev;
-      try { engine.muteLocalVideoStream(next); } catch { /* ignore */ }
+      try {
+        engine.muteLocalVideoStream(next);
+        // Turning the camera back ON — muteLocalVideoStream(false) alone
+        // doesn't reliably resume frames once capture has been muted for a
+        // while; re-enable and restart the capture pipeline explicitly.
+        if (prev) {
+          engine.enableLocalVideo(true);
+          engine.startPreview();
+        }
+      } catch { /* ignore */ }
       return next;
     });
   }, []);
@@ -181,6 +202,7 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
     joined, joining, error,
     remoteUids,
     isMuted, isCameraOff, isFront,
+    localVideoReady,
     join, leave,
     toggleMute, toggleCamera, switchCamera,
   };

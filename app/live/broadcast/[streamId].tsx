@@ -53,7 +53,7 @@ export default function LiveBroadcasterScreen() {
 
   const {
     engineReady, joined, error,
-    isMuted, isCameraOff, join, leave, toggleMute, toggleCamera, switchCamera,
+    isMuted, isCameraOff, localVideoReady, join, leave, toggleMute, toggleCamera, switchCamera,
   } = useAgoraEngine({ channelName: live ? streamId ?? null : null, uid: myUid, role: 'publisher', profile: 'live-broadcasting' });
 
   const chatRef    = useRef<FlatList>(null);
@@ -188,7 +188,7 @@ export default function LiveBroadcasterScreen() {
     <View style={styles.container}>
       <StatusBar style="light" />
 
-      {RtcSurfaceView && !isCameraOff ? (
+      {RtcSurfaceView && localVideoReady && !isCameraOff ? (
         <RtcSurfaceView canvas={{ uid: 0 }} style={styles.videoStream} />
       ) : (
         <View style={styles.videoPlaceholder}>
