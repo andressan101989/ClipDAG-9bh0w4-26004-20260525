@@ -13,6 +13,14 @@ import {
 export type AgoraRole    = 'publisher' | 'subscriber';
 export type AgoraProfile = 'communication' | 'live-broadcasting';
 
+// console.error is used (not console.log) so these survive in release/
+// production builds regardless of log-level filtering when capturing
+// Xcode Console / adb logcat output — this is diagnostic-only logging for
+// the "stuck on Conectando..." investigation, not a permanent debug logger.
+function logAgora(event: string, data?: Record<string, unknown>) {
+  console.error(`[AGORA-DEBUG] ${event}`, data ? JSON.stringify(data) : '');
+}
+
 interface UseAgoraEngineParams {
   channelName: string | null;
   uid: number;
@@ -97,7 +105,14 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
       }
 
       const handlers = {
-        onJoinChannelSuccess: () => {
+        onJoinChannelSuccess: (connection: any) => {
+          let connState: unknown = 'n/a';
+          try { connState = engine.getConnectionState?.(); } catch { /* ignore */ }
+          logAgora('onJoinChannelSuccess', {
+            channelName, uid,
+            connChannelId: connection?.channelId, connLocalUid: connection?.localUid,
+            connectionState: connState,
+          });
           if (!mountedRef.current) return;
           setJoined(true);
           setJoining(false);
@@ -114,15 +129,25 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
             } catch { /* ignore */ }
           }
         },
+        onConnectionStateChanged: (connection: any, state: any, reason: any) => {
+          logAgora('onConnectionStateChanged', {
+            channelName, uid,
+            connChannelId: connection?.channelId,
+            state, reason,
+          });
+        },
         onUserJoined: (_conn: any, remoteUid: number) => {
+          logAgora('onUserJoined', { channelName, uid, remoteUid });
           if (!mountedRef.current) return;
           setRemoteUids(prev => prev.includes(remoteUid) ? prev : [...prev, remoteUid]);
         },
-        onUserOffline: (_conn: any, remoteUid: number) => {
+        onUserOffline: (_conn: any, remoteUid: number, reason: any) => {
+          logAgora('onUserOffline', { channelName, uid, remoteUid, reason });
           if (!mountedRef.current) return;
           setRemoteUids(prev => prev.filter(u => u !== remoteUid));
         },
         onError: (code: number, msg?: string) => {
+          console.error(`[AGORA-DEBUG] onError — FULL CODE: ${code} — message: ${msg ?? '(none)'} — channelName=${channelName} uid=${uid}`);
           if (!mountedRef.current) return;
           setError(`Error Agora (${code}): ${msg ?? ''}`);
           setJoining(false);
@@ -143,6 +168,9 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
         engine.enableLocalAudio(false);
       }
 
+      logAgora('pre-joinChannel', {
+        channelName, uid, tokenLength: token?.length ?? 0, appId: resolvedAppId,
+      });
       engine.joinChannel(token, channelName, uid, {
         clientRoleType: profile === 'live-broadcasting'
           ? (role === 'publisher' ? ClientRoleType.ClientRoleBroadcaster : ClientRoleType.ClientRoleAudience)
