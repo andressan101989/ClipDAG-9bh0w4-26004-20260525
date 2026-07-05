@@ -342,8 +342,8 @@ Deno.serve(async (req) => {
     if (!rpcData?.success) return fail(rpcData?.error ?? 'withdrawal request failed');
 
     const withdrawalId = rpcData.withdrawal_id;
-    const netBdag      = Number(rpcData.net_bdag ?? 0);
-    const feeBdag      = Number(rpcData.fee_bdag ?? 0);
+    const netBdag      = Number(rpcData.net_amount ?? 0);
+    const feeBdag      = Number(rpcData.fee ?? 0);
 
     log('INFO', 'withdrawal_queued', {
       withdrawal_id: withdrawalId, net_bdag: netBdag, fee_bdag: feeBdag,
@@ -390,10 +390,17 @@ Deno.serve(async (req) => {
     // ── Broadcast failed — refund escrow and mark failed ──────────────────
     if (!broadcastOk) {
       log('ERROR', 'broadcast_failed_refunding', { withdrawal_id: withdrawalId, error: broadcastErr });
-      await admin.rpc('refund_withdrawal_to_ledger', {
+      const { data: refundData, error: refundErr } = await admin.rpc('refund_withdrawal_to_ledger', {
         p_withdrawal_id:  withdrawalId,
         p_failure_reason: `broadcast_failed: ${broadcastErr}`,
       });
+      if (refundErr) {
+        log('ERROR', 'refund_rpc_failed_funds_may_be_stuck', {
+          withdrawal_id: withdrawalId, error: refundErr.message,
+        });
+      } else {
+        log('INFO', 'refund_completed', { withdrawal_id: withdrawalId, refundData });
+      }
       return fail(`broadcast failed: ${broadcastErr}`, 502);
     }
 
