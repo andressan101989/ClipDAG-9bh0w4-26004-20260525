@@ -156,7 +156,15 @@ export function useWallet() {
               amount:      Number(t.amount ?? 0),
               feeAmount:   Number(t.fee_amount ?? 0),
               type:        opTypeToTxType(t.operation_type),
-              status:      t.status === 'completed' ? 'completed' : t.status === 'reversed' ? 'failed' : 'pending',
+              // 'failed' must map to 'failed', not fall through to 'pending' —
+              // refund_withdrawal_to_ledger sets financial_transactions.status
+              // = 'failed' on a refunded/failed withdrawal (not 'reversed'),
+              // so a previous version of this ternary only checking for
+              // 'reversed' silently showed failed+refunded withdrawals as
+              // "Pendiente" in the wallet history.
+              status:      t.status === 'completed' ? 'completed'
+                         : (t.status === 'failed' || t.status === 'reversed') ? 'failed'
+                         : 'pending', // covers 'pending' and 'processing' (broadcasted/signing)
               description: buildDescription(t),
               txHash:      t.blockchain_txid ?? undefined,
               createdAt:   t.created_at,
