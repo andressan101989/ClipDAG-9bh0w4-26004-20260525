@@ -83,8 +83,12 @@ export default function VideoCallScreen() {
   useEffect(() => {
     if (isCallee || !user?.id || !partnerId) return;
 
-    const newChannel = `1v1_${[user.id, partnerId].sort().join('_')}`;
     const newCallId  = generateUUID();
+    const newChannel = `c_${newCallId.replace(/-/g, '')}`;
+    console.log('[AGORA-CALL] generated channelName length', {
+      channelName: newChannel,
+      length: newChannel.length,
+    });
     callIdRef.current = newCallId;
     setChannelName(newChannel);
     setPhase('ringing');

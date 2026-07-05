@@ -37,6 +37,7 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
   const engineRef   = useRef<any>(null);
   const handlersRef = useRef<any>(null);
   const mountedRef  = useRef(true);
+  const joinTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [joined,          setJoined]          = useState(false);
   const [joining,         setJoining]         = useState(false);
@@ -52,7 +53,15 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
     return () => { mountedRef.current = false; };
   }, []);
 
+  const clearJoinTimeout = useCallback(() => {
+    if (joinTimeoutRef.current) {
+      clearTimeout(joinTimeoutRef.current);
+      joinTimeoutRef.current = null;
+    }
+  }, []);
+
   const cleanupEngine = useCallback(() => {
+    clearJoinTimeout();
     const engine = engineRef.current;
     engineRef.current = null;
     if (engine) {
@@ -63,7 +72,7 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
       } catch { /* ignore */ }
     }
     handlersRef.current = null;
-  }, []);
+  }, [clearJoinTimeout]);
 
   const leave = useCallback(async () => {
     cleanupEngine();
@@ -111,6 +120,7 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
 
       const handlers = {
         onJoinChannelSuccess: (connection: any) => {
+          clearJoinTimeout();
           let connState: unknown = 'n/a';
           try { connState = engine.getConnectionState?.(); } catch { /* ignore */ }
           logAgora('onJoinChannelSuccess', {
@@ -152,9 +162,13 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
           setRemoteUids(prev => prev.filter(u => u !== remoteUid));
         },
         onError: (code: number, msg?: string) => {
-          console.error(`[AGORA-DEBUG] onError — FULL CODE: ${code} — message: ${msg ?? '(none)'} — channelName=${channelName} uid=${uid}`);
+          clearJoinTimeout();
+          logAgora('onError', {
+            channelName, uid, code, message: msg ?? '(none)',
+          });
           if (!mountedRef.current) return;
           setError(`Error Agora (${code}): ${msg ?? ''}`);
+          setJoined(false);
           setJoining(false);
         },
       };
@@ -179,21 +193,50 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
       logAgora('pre-joinChannel', {
         channelName, uid, tokenLength: token?.length ?? 0, appId: resolvedAppId,
       });
-      engine.joinChannel(token, channelName, uid, {
+
+      clearJoinTimeout();
+      joinTimeoutRef.current = setTimeout(() => {
+        logAgora('join timeout', {
+          channelName, uid, tokenLength: token?.length ?? 0,
+        });
+        if (!mountedRef.current) return;
+        setJoining(false);
+        setError('Agora join timeout');
+      }, 15_000);
+
+      const joinResult = engine.joinChannel(token, channelName, uid, {
         clientRoleType: profile === 'live-broadcasting'
           ? (role === 'publisher' ? ClientRoleType.ClientRoleBroadcaster : ClientRoleType.ClientRoleAudience)
           : undefined,
         autoSubscribeAudio: true,
         autoSubscribeVideo: true,
       });
+
+      logAgora('joinChannel return', {
+        joinResult, channelName, uid, tokenLength: token?.length ?? 0,
+      });
+
+      if (typeof joinResult === 'number' && joinResult < 0) {
+        clearJoinTimeout();
+        logAgora('joinChannel failed immediately', {
+          joinResult, channelName, uid, tokenLength: token?.length ?? 0,
+        });
+        if (mountedRef.current) {
+          setJoining(false);
+          setJoined(false);
+          setError(`Agora joinChannel failed (${joinResult})`);
+        }
+      }
     } catch (e: any) {
+      clearJoinTimeout();
       if (mountedRef.current) {
         setError(e?.message ?? 'No se pudo conectar la llamada');
+        setJoined(false);
         setJoining(false);
       }
       cleanupEngine();
     }
-  }, [channelName, uid, role, profile, enableVideo, joining, joined, cleanupEngine]);
+  }, [channelName, uid, role, profile, enableVideo, joining, joined, cleanupEngine, clearJoinTimeout]);
 
   useEffect(() => () => { cleanupEngine(); }, [cleanupEngine]);
 
