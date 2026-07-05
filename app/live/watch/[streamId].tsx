@@ -115,15 +115,14 @@ export default function LiveWatchScreen() {
   }, [session?.status, engineReady]);
 
   // ── Viewer count +1 / -1 ─────────────────────────────────────────────────
+  // Atomic RPC — the previous read-then-write (select viewer_count, then
+  // update with the computed value) lost updates whenever two viewers
+  // joined/left concurrently, since both would read the same stale count
+  // before either write landed.
   const bumpViewerCount = useCallback(async (delta: 1 | -1) => {
     if (!streamId) return;
     try {
-      const { data } = await supabase.from('live_sessions').select('viewer_count').eq('id', streamId).single();
-      if (data) {
-        await supabase.from('live_sessions')
-          .update({ viewer_count: Math.max(0, (data.viewer_count || 0) + delta) })
-          .eq('id', streamId);
-      }
+      await supabase.rpc('increment_live_viewer_count', { p_session_id: streamId, p_delta: delta });
     } catch (_) { /* ignore */ }
   }, [streamId, supabase]);
 
@@ -198,7 +197,7 @@ export default function LiveWatchScreen() {
       await supabase.from('live_messages').insert({
         session_id: streamId, user_id: user.id,
         username: user.username || user.email?.split('@')[0] || 'user',
-        avatar_url: user.avatar ?? '', message: text,
+        message: text,
       });
     } catch (_) { /* ignore */ }
     setSending(false);
@@ -215,7 +214,7 @@ export default function LiveWatchScreen() {
       });
       await supabase.from('live_messages').insert({
         session_id: streamId, user_id: user.id,
-        username: user.username || 'user', avatar_url: user.avatar ?? '',
+        username: user.username || 'user',
         message: `${gift.emoji} regalo ${gift.label} (${gift.cost} BDAG)`,
       });
     } catch (_) { /* ignore */ }

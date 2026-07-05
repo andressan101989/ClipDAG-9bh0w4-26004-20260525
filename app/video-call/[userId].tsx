@@ -45,7 +45,7 @@ export default function VideoCallScreen() {
   const router   = useRouter();
   const { user } = useAuth();
   const supabase = getSupabaseClient();
-  const { broadcastIncomingCall, onCallRejected, markCallMissed } = useAgoraCallSignaling();
+  const { broadcastIncomingCall, onCallRejected, onCallAccepted, markCallMissed } = useAgoraCallSignaling();
 
   const isCallee = mode === 'answer';
 
@@ -125,6 +125,21 @@ export default function VideoCallScreen() {
     if (isCallee || !callIdRef.current) return;
     const unsub = onCallRejected(callIdRef.current, () => {
       if (mountedRef.current) setPhase('rejected');
+    });
+    return unsub;
+  }, [isCallee, channelName]);
+
+  // ── Listen for acceptance (caller only) ──────────────────────────────────
+  // Agora itself has no "the callee tapped accept" event — the `calls` row
+  // flipping to 'accepted' (written by acceptIncomingCall before it
+  // navigates) is that signal. This just gives the caller earlier visual
+  // feedback ("Conectando..." instead of "Llamando...") between the callee
+  // accepting and the media actually connecting (remoteUids populating,
+  // which already independently drives phase → 'active').
+  useEffect(() => {
+    if (isCallee || !callIdRef.current) return;
+    const unsub = onCallAccepted(callIdRef.current, () => {
+      if (mountedRef.current) setPhase(prev => (prev === 'ringing' ? 'connecting' : prev));
     });
     return unsub;
   }, [isCallee, channelName]);

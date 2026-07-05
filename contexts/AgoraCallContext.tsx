@@ -36,9 +36,10 @@ interface AgoraCallContextType {
   broadcastIncomingCall: (targetUserId: string, call: IncomingCall) => Promise<void>;
   broadcastCallRejected: (targetUserId: string, callId: string) => Promise<void>;
   onCallRejected:        (callId: string, cb: () => void) => () => void;
+  onCallAccepted:        (callId: string, cb: () => void) => () => void;
   markCallMissed:        (callId: string) => Promise<void>;
   incomingCall:          IncomingCall | null;
-  acceptIncomingCall:    () => void;
+  acceptIncomingCall:    () => Promise<void>;
   rejectIncomingCall:    () => void;
 }
 
@@ -48,9 +49,10 @@ const NOOP_CTX: AgoraCallContextType = {
   broadcastIncomingCall: async () => {},
   broadcastCallRejected: async () => {},
   onCallRejected:        () => () => {},
+  onCallAccepted:        () => () => {},
   markCallMissed:        async () => {},
   incomingCall:          null,
-  acceptIncomingCall:    () => {},
+  acceptIncomingCall:    async () => {},
   rejectIncomingCall:    () => {},
 };
 
@@ -73,6 +75,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
 
   const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
   const rejectListenersRef  = useRef<Map<string, () => void>>(new Map());
+  const acceptListenersRef  = useRef<Map<string, () => void>>(new Map());
   const ringTimeoutRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearRingTimeout = useCallback(() => {
@@ -174,6 +177,9 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
         if (row.status === 'rejected') {
           const cb = rejectListenersRef.current.get(row.id);
           if (cb) cb();
+        } else if (row.status === 'accepted') {
+          const cb = acceptListenersRef.current.get(row.id);
+          if (cb) cb();
         }
       })
       .subscribe();
@@ -226,10 +232,36 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     return () => { rejectListenersRef.current.delete(callId); };
   }, []);
 
+  const onCallAccepted = useCallback((callId: string, cb: () => void) => {
+    acceptListenersRef.current.set(callId, cb);
+    return () => { acceptListenersRef.current.delete(callId); };
+  }, []);
+
   // ── Accept / reject the incoming-call modal ───────────────────────────────
-  const acceptIncomingCall = useCallback(() => {
+  const acceptIncomingCall = useCallback(async () => {
     if (!incomingCall) return;
     const call = incomingCall;
+    const supabase = supabaseRef.current;
+    if (!supabase) return;
+
+    // Flip the row to 'accepted' BEFORE navigating — this is what the
+    // caller's Realtime subscription (video-call/[userId].tsx) listens for
+    // to move from 'ringing' to 'connecting', since Agora itself has no
+    // "the callee tapped accept" signal of its own. Guarded by
+    // .eq('status','ringing') so a race with a caller-timeout/cancel can't
+    // resurrect an already-terminal row.
+    const { error: updateErr } = await supabase
+      .from('calls')
+      .update({ status: 'accepted' })
+      .eq('id', call.callId)
+      .eq('status', 'ringing');
+
+    if (updateErr) {
+      console.error('[Call] Failed to mark call accepted:', updateErr);
+      showAlert('Error', 'No se pudo aceptar la llamada. Intenta de nuevo.');
+      return; // keep the modal up so the user can retry
+    }
+
     clearRingTimeout();
     setIncomingCall(null);
     const qs = new URLSearchParams({
@@ -241,7 +273,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     }).toString();
     const screen = call.callType === 'audio' ? 'call' : 'video-call';
     router.push(`/${screen}/${call.callerId}?${qs}` as any);
-  }, [incomingCall, router, clearRingTimeout]);
+  }, [incomingCall, router, clearRingTimeout, showAlert]);
 
   const rejectIncomingCall = useCallback(() => {
     if (!incomingCall) return;
@@ -253,7 +285,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
 
   return (
     <AgoraCallContext.Provider value={{
-      broadcastIncomingCall, broadcastCallRejected, onCallRejected, markCallMissed,
+      broadcastIncomingCall, broadcastCallRejected, onCallRejected, onCallAccepted, markCallMissed,
       incomingCall, acceptIncomingCall, rejectIncomingCall,
     }}>
       {children}

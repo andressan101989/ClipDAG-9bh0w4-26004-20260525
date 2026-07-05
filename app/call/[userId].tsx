@@ -55,7 +55,7 @@ export default function AudioCallScreen() {
   const router   = useRouter();
   const { user } = useAuth();
   const supabase = getSupabaseClient();
-  const { broadcastIncomingCall, onCallRejected, markCallMissed } = useAgoraCallSignaling();
+  const { broadcastIncomingCall, onCallRejected, onCallAccepted, markCallMissed } = useAgoraCallSignaling();
 
   const isCallee = mode === 'answer';
 
@@ -138,6 +138,15 @@ export default function AudioCallScreen() {
     if (isCallee || !callIdRef.current) return;
     const unsub = onCallRejected(callIdRef.current, () => {
       if (mountedRef.current) setPhase('rejected');
+    });
+    return unsub;
+  }, [isCallee, channelName]);
+
+  // ── Listen for acceptance (caller only) ──────────────────────────────────
+  useEffect(() => {
+    if (isCallee || !callIdRef.current) return;
+    const unsub = onCallAccepted(callIdRef.current, () => {
+      if (mountedRef.current) setPhase(prev => (prev === 'ringing' ? 'connecting' : prev));
     });
     return unsub;
   }, [isCallee, channelName]);
