@@ -103,6 +103,7 @@ export default function VideoCallScreen() {
       callerName:   user.username || user.email?.split('@')[0] || 'Usuario',
       callerAvatar: user.avatar || '',
       channelName:  newChannel,
+      callType:     'video',
     });
 
     ringTimeoutRef.current = setTimeout(() => {

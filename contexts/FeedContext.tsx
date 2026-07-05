@@ -197,11 +197,11 @@ export async function uploadFileFromUri(
     const { error } = await supabase.storage
       .from(bucket)
       .upload(path, fileData, { contentType: mimeType, upsert: true });
-    if (error) { console.log('Storage upload error:', error.message); return null; }
+    if (error) { console.error('[uploadFileFromUri] Storage upload error:', error.message); return null; }
     const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(path);
     return publicUrl;
   } catch (e) {
-    console.log('uploadFileFromUri error:', e);
+    console.error('[uploadFileFromUri] error:', e);
     return null;
   }
 }

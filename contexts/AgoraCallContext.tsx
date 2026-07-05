@@ -21,12 +21,15 @@ import { useRouter } from 'expo-router';
 import { getSupabaseClient, useAlert } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
 
+export type CallType = 'audio' | 'video';
+
 export interface IncomingCall {
   callId:       string;
   callerId:     string;
   callerName:   string;
   callerAvatar: string;
   channelName:  string;
+  callType:     CallType;
 }
 
 interface AgoraCallContextType {
@@ -88,7 +91,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
   // both need to turn a `calls` row into the incomingCall modal state the
   // same way.
   const handleIncomingCallRow = useCallback(async (row: {
-    id: string; caller_id: string; channel_name: string; status: string;
+    id: string; caller_id: string; channel_name: string; status: string; call_type?: string;
   }) => {
     const supabase = supabaseRef.current;
     if (!supabase || row.status !== 'ringing') return;
@@ -102,6 +105,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
       callerName:   caller?.username || 'Usuario',
       callerAvatar: caller?.avatar_url || '',
       channelName:  row.channel_name,
+      callType:     row.call_type === 'audio' ? 'audio' : 'video',
     });
 
     clearRingTimeout();
@@ -144,7 +148,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
       const cutoff = new Date(Date.now() - RING_TIMEOUT_MS).toISOString();
       const { data } = await supabase
         .from('calls')
-        .select('id, caller_id, channel_name, status, created_at')
+        .select('id, caller_id, channel_name, status, call_type, created_at')
         .eq('callee_id', user.id)
         .eq('status', 'ringing')
         .gte('created_at', cutoff)
@@ -188,6 +192,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
       callee_id:    targetUserId,
       channel_name: call.channelName,
       status:       'ringing',
+      call_type:    call.callType,
     });
 
     if (insertError) {
@@ -200,8 +205,8 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
       body: {
         to_user_id: targetUserId,
         title:      `${call.callerName} te está llamando`,
-        body:       'Videollamada entrante',
-        data:       { type: 'incoming_call', callId: call.callId, channelName: call.channelName },
+        body:       call.callType === 'audio' ? 'Llamada de audio entrante' : 'Videollamada entrante',
+        data:       { type: 'incoming_call', callId: call.callId, channelName: call.channelName, callType: call.callType },
       },
     }).catch(() => { /* best-effort — realtime is the primary channel */ });
   }, [showAlert]);
@@ -234,7 +239,8 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
       callerName:   call.callerName,
       callerAvatar: call.callerAvatar || '',
     }).toString();
-    router.push(`/video-call/${call.callerId}?${qs}` as any);
+    const screen = call.callType === 'audio' ? 'call' : 'video-call';
+    router.push(`/${screen}/${call.callerId}?${qs}` as any);
   }, [incomingCall, router, clearRingTimeout]);
 
   const rejectIncomingCall = useCallback(() => {

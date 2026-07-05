@@ -291,6 +291,73 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     } catch (_) {}
   }, [user]);
 
+  // ── Realtime: deliver incoming messages instantly ─────────────────────────
+  // Previously this context had no Supabase Realtime subscription at all —
+  // new messages only ever appeared via the 3s/4s polling loops (usePolling
+  // in app/chat/[userId].tsx, PollingManager below), so a recipient with the
+  // chat open could wait up to ~3s to see a message that had already arrived
+  // in the database. This subscribes to INSERTs addressed to the current
+  // user and appends them to local state immediately — polling remains as a
+  // redundant fallback (its periodic full-refetch naturally reconciles/dedupes
+  // against whatever realtime already inserted).
+  useEffect(() => {
+    const supabase = supabaseRef.current;
+    if (!user?.id || !supabase || !supabaseOk.current) return;
+
+    const channel = supabase
+      .channel(`messages:recipient:${user.id}`)
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'messages', filter: `recipient_id=eq.${user.id}`,
+      }, (payload: any) => {
+        const msg = mapMessage(payload.new as Record<string, unknown>);
+        const partnerId = msg.senderId;
+
+        setMessages(prev => {
+          const existing = prev[partnerId] || [];
+          if (existing.some(m => m.id === msg.id)) return prev; // already delivered
+          return { ...prev, [partnerId]: [...existing, msg] };
+        });
+
+        setConversations(prev => {
+          const idx = prev.findIndex(c => c.partnerId === partnerId);
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = {
+              ...next[idx],
+              lastMessage:   msg.text,
+              lastMessageAt: msg.createdAt,
+              unreadCount:   next[idx].unreadCount + 1,
+            };
+            return next;
+          }
+          // First-ever message from this partner — no conversation row yet.
+          // Seed one now, then fill in username/avatar once fetched so the
+          // list doesn't show "Usuario" until the next full refresh.
+          supabase.from('user_profiles').select('username, avatar_url').eq('id', partnerId).maybeSingle()
+            .then(({ data }) => {
+              if (!data) return;
+              setConversations(p => p.map(c => c.partnerId === partnerId
+                ? { ...c, partnerUsername: data.username || c.partnerUsername, partnerAvatar: data.avatar_url || c.partnerAvatar }
+                : c));
+            });
+          return [
+            ...prev,
+            {
+              partnerId,
+              partnerUsername: 'Usuario',
+              partnerAvatar:   '',
+              lastMessage:     msg.text,
+              lastMessageAt:   msg.createdAt,
+              unreadCount:     1,
+            },
+          ];
+        });
+      })
+      .subscribe();
+
+    return () => { channel.unsubscribe(); };
+  }, [user?.id]);
+
   // ── Deferred polling — starts only after user auth, NOT on startup ────────
   // Uses PollingManager instead of raw setInterval:
   //   • Centralized scheduling (one master timer, not N independent intervals)

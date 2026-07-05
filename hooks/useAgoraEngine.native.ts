@@ -26,9 +26,14 @@ interface UseAgoraEngineParams {
   uid: number;
   role: AgoraRole;
   profile?: AgoraProfile;
+  // Set to false for audio-only calls (e.g. app/call/[userId].tsx) — skips
+  // enableVideo()/enableLocalVideo()/startPreview() entirely so the camera
+  // is never touched (no permission prompt, no capture pipeline). Defaults
+  // to true to preserve existing video-call behavior.
+  enableVideo?: boolean;
 }
 
-export function useAgoraEngine({ channelName, uid, role, profile = 'communication' }: UseAgoraEngineParams) {
+export function useAgoraEngine({ channelName, uid, role, profile = 'communication', enableVideo = true }: UseAgoraEngineParams) {
   const engineRef   = useRef<any>(null);
   const handlersRef = useRef<any>(null);
   const mountedRef  = useRef(true);
@@ -38,7 +43,7 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
   const [error,           setError]           = useState<string | null>(null);
   const [remoteUids,      setRemoteUids]      = useState<number[]>([]);
   const [isMuted,         setIsMuted]         = useState(false);
-  const [isCameraOff,     setIsCameraOff]     = useState(role === 'subscriber');
+  const [isCameraOff,     setIsCameraOff]     = useState(role === 'subscriber' || !enableVideo);
   const [isFront,         setIsFront]         = useState(true);
   const [localVideoReady, setLocalVideoReady] = useState(false);
 
@@ -95,7 +100,7 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
       // caused the intermittent black screen. enableLocalVideo(true) +
       // startPreview() are safe to re-run (see onJoinChannelSuccess below)
       // and are what actually (re)start frame capture.
-      if (role === 'publisher') {
+      if (role === 'publisher' && enableVideo) {
         try {
           engine.enableVideo();
           engine.enableLocalVideo(true);
@@ -120,7 +125,7 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
           // (see comment above). enableLocalVideo/startPreview are cheap to
           // repeat and cover devices where the pre-join call above was a
           // no-op because the capture pipeline wasn't ready yet.
-          if (role === 'publisher') {
+          if (role === 'publisher' && enableVideo) {
             try {
               engine.enableLocalVideo(true);
               engine.muteLocalVideoStream(false);
@@ -166,6 +171,9 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
       if (role === 'subscriber') {
         engine.enableLocalVideo(false);
         engine.enableLocalAudio(false);
+      } else if (!enableVideo) {
+        // Audio-only publisher (e.g. voice call) — never touch the camera.
+        try { engine.enableLocalVideo(false); } catch { /* ignore */ }
       }
 
       logAgora('pre-joinChannel', {
@@ -185,7 +193,7 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
       }
       cleanupEngine();
     }
-  }, [channelName, uid, role, profile, joining, joined, cleanupEngine]);
+  }, [channelName, uid, role, profile, enableVideo, joining, joined, cleanupEngine]);
 
   useEffect(() => () => { cleanupEngine(); }, [cleanupEngine]);
 

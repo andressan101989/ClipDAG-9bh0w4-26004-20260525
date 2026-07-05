@@ -185,9 +185,22 @@ export default function ProfileScreen() {
       const ext = mimeType.includes('png') ? 'png' : 'jpg';
       const fileName = `${user.id}/avatar_${Date.now()}.${ext}`;
       const publicUrl = await uploadFileFromUri(supabase, asset.uri, 'avatars', fileName, mimeType, asset.base64);
-      await updateProfile({ avatar: publicUrl || asset.uri } as any);
+
+      // Never persist a local device URI (file:///...) to avatar_url — if the
+      // Storage upload failed, publicUrl is null and the old fallback saved
+      // asset.uri instead, which is only readable on the uploading device and
+      // invisible to every other user viewing this profile.
+      if (!publicUrl || !publicUrl.startsWith('https://')) {
+        console.error('[profile.tsx] uploadAvatar: Storage upload failed, publicUrl =', publicUrl);
+        showAlert('Error', 'No se pudo subir la foto. Verifica tu conexión e intenta de nuevo.');
+        setIsUploadingAvatar(false);
+        return;
+      }
+
+      await updateProfile({ avatar: publicUrl } as any);
       showAlert('Foto actualizada', 'Tu foto de perfil fue actualizada');
-    } catch (_) {
+    } catch (e) {
+      console.error('[profile.tsx] uploadAvatar exception:', e);
       showAlert('Error', 'No se pudo subir la foto');
     }
     setIsUploadingAvatar(false);
