@@ -13,12 +13,10 @@ import {
 export type AgoraRole    = 'publisher' | 'subscriber';
 export type AgoraProfile = 'communication' | 'live-broadcasting';
 
-// console.error is used (not console.log) so these survive in release/
-// production builds regardless of log-level filtering when capturing
-// Xcode Console / adb logcat output — this is diagnostic-only logging for
-// the "stuck on Conectando..." investigation, not a permanent debug logger.
+// Diagnostic-only logging for the "stuck on Conectando..." investigation.
+// Keep normal lifecycle events out of Metro's error channel.
 function logAgora(event: string, data?: Record<string, unknown>) {
-  console.error(`[AGORA-DEBUG] ${event}`, data ? JSON.stringify(data) : '');
+  console.log(`[AGORA-DEBUG] ${event}`, data ? JSON.stringify(data) : '');
 }
 
 interface UseAgoraEngineParams {
@@ -166,9 +164,9 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
         },
         onError: (code: number, msg?: string) => {
           clearJoinTimeout();
-          logAgora('onError', {
+          console.error('[AGORA-DEBUG] onError', JSON.stringify({
             channelName, uid, code, message: msg ?? '(none)',
-          });
+          }));
           if (!mountedRef.current) return;
           setError(`Error Agora (${code}): ${msg ?? ''}`);
           setJoined(false);
