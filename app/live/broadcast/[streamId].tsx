@@ -26,7 +26,8 @@ import { useAgoraEngine } from '@/hooks/useAgoraEngine';
 import { RtcSurfaceView, useridToAgoraUid, isAgoraAvailable } from '@/services/agoraService';
 
 const POLL_INTERVAL_MS = 3000;
-const MAX_MESSAGES     = 100;
+const MAX_MESSAGES     = 50;
+const REQUEST_TO_JOIN_TEXT = 'quiere subir al streaming';
 
 interface ChatMessage {
   id: string;
@@ -34,6 +35,23 @@ interface ChatMessage {
   username: string;
   message: string;
   createdAt: string;
+}
+
+function parseJoinRequest(message: string): string | null {
+  const normalized = message.trim();
+  if (!normalized.endsWith(REQUEST_TO_JOIN_TEXT)) return null;
+  const username = normalized.slice(0, -REQUEST_TO_JOIN_TEXT.length).trim();
+  return username || null;
+}
+
+function parseAcceptedUsername(message: string): string | null {
+  if (!message.startsWith('\u2705 ') || !message.endsWith(' aceptado')) return null;
+  return message.slice(2, -' aceptado'.length).trim() || null;
+}
+
+function parseRejectedUsername(message: string): string | null {
+  if (!message.startsWith('\u274C ') || !message.endsWith(' rechazado')) return null;
+  return message.slice(2, -' rechazado'.length).trim() || null;
 }
 
 export default function LiveBroadcasterScreen() {
@@ -53,7 +71,7 @@ export default function LiveBroadcasterScreen() {
 
   const {
     engineReady, joined, error,
-    isMuted, isCameraOff, localVideoReady, join, leave, toggleMute, toggleCamera, switchCamera,
+    remoteUids, isMuted, isCameraOff, localVideoReady, join, leave, toggleMute, toggleCamera, switchCamera,
   } = useAgoraEngine({ channelName: live ? streamId ?? null : null, uid: myUid, role: 'publisher', profile: 'live-broadcasting' });
 
   const chatRef    = useRef<FlatList>(null);
@@ -107,7 +125,7 @@ export default function LiveBroadcasterScreen() {
         .select('id, user_id, username, message, created_at')
         .eq('session_id', streamId)
         .order('created_at', { ascending: true })
-        .limit(30);
+        .limit(MAX_MESSAGES);
       if (lastMsgRef.current) query = query.gt('created_at', lastMsgRef.current);
 
       const { data: mData } = await query;
@@ -157,6 +175,30 @@ export default function LiveBroadcasterScreen() {
     }
   }, [live, streamId, leave, supabase]);
 
+  const acceptJoinRequest = useCallback(async (username: string) => {
+    if (!user?.id || !streamId) return;
+    try {
+      await supabase.from('live_messages').insert({
+        session_id: streamId,
+        user_id: user.id,
+        username: user.username || user.email?.split('@')[0] || 'host',
+        message: `\u2705 ${username} aceptado`,
+      });
+    } catch { /* ignore */ }
+  }, [user, streamId, supabase]);
+
+  const rejectJoinRequest = useCallback(async (username: string) => {
+    if (!user?.id || !streamId) return;
+    try {
+      await supabase.from('live_messages').insert({
+        session_id: streamId,
+        user_id: user.id,
+        username: user.username || user.email?.split('@')[0] || 'host',
+        message: `\u274C ${username} rechazado`,
+      });
+    } catch { /* ignore */ }
+  }, [user, streamId, supabase]);
+
   // ── Pre-live: title prompt ───────────────────────────────────────────────
   if (!live) {
     return (
@@ -193,6 +235,12 @@ export default function LiveBroadcasterScreen() {
     );
   }
 
+  const closedRequestUsernames = new Set(
+    messages
+      .flatMap(m => [parseAcceptedUsername(m.message), parseRejectedUsername(m.message)])
+      .filter((username): username is string => !!username),
+  );
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
@@ -204,6 +252,14 @@ export default function LiveBroadcasterScreen() {
           <MaterialIcons name="videocam-off" size={40} color={Colors.textSubtle} />
         </View>
       )}
+
+      {RtcSurfaceView && remoteUids.length > 0 ? (
+        <View style={[styles.remoteStrip, { top: insets.top + 58 }]}>
+          {remoteUids.map(uid => (
+            <RtcSurfaceView key={uid} canvas={{ uid }} style={styles.remoteVideo} />
+          ))}
+        </View>
+      ) : null}
 
       {/* ── Header overlay ────────────────────────────────────────────────── */}
       <View style={[styles.header, { top: insets.top + Spacing.sm }]}>
@@ -232,12 +288,34 @@ export default function LiveBroadcasterScreen() {
           ref={chatRef}
           data={messages}
           keyExtractor={m => m.id}
-          renderItem={({ item }) => (
-            <View style={msgStyles.row}>
-              <Text style={msgStyles.name}>{item.username}</Text>
-              <Text style={msgStyles.text}> {item.message}</Text>
-            </View>
-          )}
+          onContentSizeChange={() => chatRef.current?.scrollToEnd({ animated: true })}
+          renderItem={({ item }) => {
+            const requestedUsername = parseJoinRequest(item.message);
+            return (
+              <View style={msgStyles.row}>
+                <Text style={msgStyles.name}>{item.username}</Text>
+                <Text style={msgStyles.text}> {item.message}</Text>
+                {requestedUsername !== null && !closedRequestUsernames.has(requestedUsername) ? (
+                  <View style={msgStyles.requestActions}>
+                    <Pressable
+                      style={msgStyles.acceptBtn}
+                      onPress={() => acceptJoinRequest(requestedUsername)}
+                      hitSlop={6}
+                    >
+                      <Text style={msgStyles.actionText}>Aceptar</Text>
+                    </Pressable>
+                    <Pressable
+                      style={msgStyles.rejectBtn}
+                      onPress={() => rejectJoinRequest(requestedUsername)}
+                      hitSlop={6}
+                    >
+                      <Text style={msgStyles.actionText}>Rechazar</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </View>
+            );
+          }}
           contentContainerStyle={{ gap: 4, paddingBottom: 8 }}
           showsVerticalScrollIndicator={false}
         />
@@ -266,6 +344,10 @@ const msgStyles = StyleSheet.create({
   row:  { flexDirection: 'row', flexWrap: 'wrap' },
   name: { color: Colors.primary, fontSize: 12, fontWeight: FontWeight.bold },
   text: { color: 'rgba(255,255,255,0.9)', fontSize: 12 },
+  requestActions: { flexDirection: 'row', gap: 6, marginLeft: 8 },
+  acceptBtn: { backgroundColor: Colors.primary, borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 3 },
+  rejectBtn: { backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 3 },
+  actionText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.bold },
 });
 
 const styles = StyleSheet.create({
@@ -289,6 +371,8 @@ const styles = StyleSheet.create({
 
   videoStream:      { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
   videoPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surface },
+  remoteStrip: { position: 'absolute', right: Spacing.md, gap: Spacing.sm, zIndex: 8 },
+  remoteVideo: { width: 96, height: 128, borderRadius: Radius.md, overflow: 'hidden', backgroundColor: '#000', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
 
   header: {
     position: 'absolute', left: Spacing.md, right: Spacing.md,
@@ -310,7 +394,17 @@ const styles = StyleSheet.create({
   errorBanner: { position: 'absolute', left: Spacing.md, right: Spacing.md, zIndex: 10, backgroundColor: 'rgba(255,45,85,0.15)', borderRadius: Radius.sm, padding: Spacing.xs },
   errorText: { color: Colors.secondary, fontSize: 11, textAlign: 'center' },
 
-  chatArea: { position: 'absolute', left: Spacing.md, right: 90, bottom: 100, maxHeight: 180 },
+  chatArea: {
+    position: 'absolute',
+    left: Spacing.md,
+    right: 90,
+    bottom: 100,
+    maxHeight: 180,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+  },
 
   controls: {
     position: 'absolute', bottom: 0, left: 0, right: 0,

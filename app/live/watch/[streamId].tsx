@@ -9,8 +9,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList, TextInput,
   KeyboardAvoidingView, Platform, ActivityIndicator,
+  Alert,
 } from 'react-native';
-import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -18,11 +19,12 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import { getSupabaseClient } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
 import { useAgoraEngine } from '@/hooks/useAgoraEngine';
-import { RtcSurfaceView, useridToAgoraUid, isAgoraAvailable } from '@/services/agoraService';
+import { RtcSurfaceView, useridToAgoraUid } from '@/services/agoraService';
 
 const POLL_INTERVAL_MS = 3000;
-const MAX_MESSAGES     = 100;
+const MAX_MESSAGES     = 50;
 const SPAM_THROTTLE_MS = 2500;
+const REQUEST_TO_JOIN_TEXT = 'quiere subir al streaming';
 
 interface StreamSession {
   id: string;
@@ -44,11 +46,15 @@ interface ChatMessage {
 interface GiftOption { id: string; emoji: string; label: string; cost: number; color: string; }
 
 const GIFTS: GiftOption[] = [
-  { id: 'heart',   emoji: '❤️', label: 'Corazón',  cost: 10,  color: '#FF2D78' },
-  { id: 'star',    emoji: '⭐', label: 'Estrella',  cost: 50,  color: '#FFB800' },
-  { id: 'rocket',  emoji: '🚀', label: 'Cohete',    cost: 100, color: '#7C5CFF' },
-  { id: 'diamond', emoji: '💎', label: 'Diamante',  cost: 500, color: '#00D4FF' },
+  { id: 'heart',   emoji: '\u2764\uFE0F', label: 'Corazon',  cost: 10,   color: '#FF2D78' },
+  { id: 'star',    emoji: '\u2B50',       label: 'Estrella', cost: 50,   color: '#FFB800' },
+  { id: 'diamond', emoji: '\uD83D\uDC8E', label: 'Diamante', cost: 1000, color: '#00D4FF' },
+  { id: 'crown',   emoji: '\uD83D\uDC51', label: 'Corona',   cost: 500,  color: '#FFD166' },
 ];
+
+function getDisplayUsername(user: any): string {
+  return user?.username || user?.email?.split('@')[0] || 'user';
+}
 
 export default function LiveWatchScreen() {
   const { streamId } = useLocalSearchParams<{ streamId: string }>();
@@ -65,11 +71,11 @@ export default function LiveWatchScreen() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [sending,   setSending]   = useState(false);
-  const [showGifts, setShowGifts] = useState(false);
-  const [sendingGift, setSendingGift] = useState<string | null>(null);
+  const [requestSent, setRequestSent] = useState(false);
+  const [promotedToPublisher, setPromotedToPublisher] = useState(false);
 
   const {
-    engineReady, remoteUids, error, join, leave,
+    engineReady, remoteUids, error, join, leave, promoteToPublisher,
   } = useAgoraEngine({ channelName: session?.status === 'live' ? streamId ?? null : null, uid: myUid, role: 'subscriber', profile: 'live-broadcasting' });
 
   const chatRef     = useRef<FlatList>(null);
@@ -79,6 +85,7 @@ export default function LiveWatchScreen() {
   const mountedRef  = useRef(true);
   const leftRef     = useRef(false);
   const viewerCountBumpedRef = useRef(false);
+  const promotingRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -148,7 +155,7 @@ export default function LiveWatchScreen() {
         .select('id, user_id, username, message, created_at')
         .eq('session_id', streamId)
         .order('created_at', { ascending: true })
-        .limit(30);
+        .limit(MAX_MESSAGES);
       if (lastMsgRef.current) query = query.gt('created_at', lastMsgRef.current);
 
       const { data: mData } = await query;
@@ -157,12 +164,20 @@ export default function LiveWatchScreen() {
           id: m.id, userId: m.user_id, username: m.username,
           message: m.message, createdAt: m.created_at,
         }));
+        const username = getDisplayUsername(user);
+        if (!promotedToPublisher && !promotingRef.current && newMsgs.some(m => m.message === `\u2705 ${username} aceptado`)) {
+          promotingRef.current = true;
+          promoteToPublisher().then(ok => {
+            if (ok && mountedRef.current) setPromotedToPublisher(true);
+            if (!ok) promotingRef.current = false;
+          });
+        }
         lastMsgRef.current = mData[mData.length - 1].created_at;
         setMessages(prev => [...prev, ...newMsgs].slice(-MAX_MESSAGES));
         setTimeout(() => chatRef.current?.scrollToEnd({ animated: true }), 80);
       }
     } catch (_) { /* ignore */ }
-  }, [streamId, ended, supabase]);
+  }, [streamId, ended, supabase, user, promotedToPublisher, promoteToPublisher]);
 
   useEffect(() => {
     if (!streamId) { router.back(); return; }
@@ -199,7 +214,7 @@ export default function LiveWatchScreen() {
       username: user.username || user.email?.split('@')[0] || 'user',
       message: text, createdAt: new Date().toISOString(),
     };
-    setMessages(prev => [...prev.slice(-MAX_MESSAGES), optimistic]);
+    setMessages(prev => [...prev, optimistic].slice(-MAX_MESSAGES));
     setTimeout(() => chatRef.current?.scrollToEnd({ animated: true }), 80);
 
     try {
@@ -212,24 +227,37 @@ export default function LiveWatchScreen() {
     setSending(false);
   }, [chatInput, user, streamId, sending, supabase]);
 
-  // ── Send gift ─────────────────────────────────────────────────────────────
-  const sendGift = useCallback(async (gift: GiftOption) => {
-    if (!user || !session || sendingGift) return;
-    setSendingGift(gift.id);
+  const requestToJoin = useCallback(async () => {
+    if (!user || !streamId || requestSent || promotedToPublisher) return;
+    const now = Date.now();
+    const username = getDisplayUsername(user);
+    const text = ` ${username} ${REQUEST_TO_JOIN_TEXT}`;
+
+    setRequestSent(true);
+    const optimistic: ChatMessage = {
+      id: `request_${now}`,
+      userId: user.id,
+      username,
+      message: text,
+      createdAt: new Date().toISOString(),
+    };
+    setMessages(prev => [...prev, optimistic].slice(-MAX_MESSAGES));
+    setTimeout(() => chatRef.current?.scrollToEnd({ animated: true }), 80);
+
     try {
-      await supabase.from('gifts').insert({
-        sender_id: user.id, recipient_id: session.hostId, session_id: streamId,
-        gift_type: gift.id, dag_value: gift.cost / 100, message: `${gift.emoji} ${gift.label}`,
+      const { error: insertError } = await supabase.from('live_messages').insert({
+        session_id: streamId,
+        user_id: user.id,
+        username,
+        message: text,
       });
-      await supabase.from('live_messages').insert({
-        session_id: streamId, user_id: user.id,
-        username: user.username || 'user',
-        message: `${gift.emoji} regalo ${gift.label} (${gift.cost} BDAG)`,
-      });
-    } catch (_) { /* ignore */ }
-    setSendingGift(null);
-    setShowGifts(false);
-  }, [user, session, streamId, sendingGift, supabase]);
+      if (insertError) throw insertError;
+    } catch (_) {
+      setRequestSent(false);
+      setMessages(prev => prev.filter(m => m.id !== optimistic.id));
+      Alert.alert('No se pudo enviar la solicitud');
+    }
+  }, [user, streamId, requestSent, promotedToPublisher, supabase]);
 
   if (loading) {
     return (
@@ -301,6 +329,7 @@ export default function LiveWatchScreen() {
           ref={chatRef}
           data={messages}
           keyExtractor={item => item.id}
+          onContentSizeChange={() => chatRef.current?.scrollToEnd({ animated: true })}
           renderItem={({ item }) => (
             <View style={msg.row}>
               <Text style={[msg.name, item.userId === session.hostId && msg.hostName]}>
@@ -314,38 +343,41 @@ export default function LiveWatchScreen() {
           showsVerticalScrollIndicator={false}
         />
 
-        {showGifts ? (
-          <View style={styles.giftPanel}>
-            <View style={styles.giftHeader}>
-              <Text style={styles.giftTitle}>Enviar regalo</Text>
-              <Pressable onPress={() => setShowGifts(false)} hitSlop={8}>
-                <MaterialIcons name="close" size={18} color={Colors.textSecondary} />
-              </Pressable>
-            </View>
-            <View style={styles.giftGrid}>
-              {GIFTS.map(g => (
-                <Pressable
-                  key={g.id}
-                  style={[styles.giftBtn, sendingGift === g.id && styles.giftBtnLoading]}
-                  onPress={() => sendGift(g)}
-                  disabled={!!sendingGift}
-                >
-                  <Text style={styles.giftEmoji}>{g.emoji}</Text>
-                  <Text style={styles.giftLabel}>{g.label}</Text>
-                  <Text style={[styles.giftCost, { color: g.color }]}>{g.cost} B</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        ) : null}
+        <View style={styles.giftBar}>
+          <Pressable
+            style={[
+              styles.requestBtn,
+              (requestSent || promotedToPublisher || !user) && styles.requestBtnDisabled,
+            ]}
+            onPress={requestToJoin}
+            disabled={requestSent || promotedToPublisher || !user}
+          >
+            <MaterialIcons
+              name={promotedToPublisher ? 'videocam' : 'pan-tool'}
+              size={18}
+              color={promotedToPublisher ? '#fff' : Colors.primary}
+            />
+            <Text style={styles.requestText}>
+              {promotedToPublisher ? 'En vivo' : requestSent ? 'Solicitud enviada' : 'Solicitar subir'}
+            </Text>
+          </Pressable>
+          {GIFTS.map(g => (
+            <Pressable
+              key={g.id}
+              style={[styles.giftBtn, styles.giftBtnDisabled]}
+              disabled
+            >
+              <Text style={styles.giftEmoji}>{g.emoji}</Text>
+              <Text style={styles.giftLabel}>{g.label}</Text>
+              <Text style={styles.giftComingSoon}>Próximamente</Text>
+            </Pressable>
+          ))}
+        </View>
 
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={[styles.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}
         >
-          <Pressable style={styles.iconBtn} onPress={() => setShowGifts(v => !v)} hitSlop={8}>
-            <MaterialCommunityIcons name="gift-outline" size={22} color={Colors.accent} />
-          </Pressable>
           <TextInput
             style={styles.input}
             value={chatInput}
@@ -408,21 +440,26 @@ const styles = StyleSheet.create({
   errorBanner: { marginHorizontal: Spacing.md, backgroundColor: 'rgba(255,45,85,0.15)', borderRadius: Radius.sm, padding: Spacing.xs },
   errorText: { color: Colors.secondary, fontSize: 11, textAlign: 'center' },
 
-  bottomSection: { marginTop: 'auto', maxHeight: 280 },
+  bottomSection: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: 320,
+  },
   chatList: { flex: 1 },
 
-  giftPanel: { backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.border, padding: Spacing.md, gap: Spacing.sm },
-  giftHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  giftTitle: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
-  giftGrid: { flexDirection: 'row', gap: Spacing.sm, flexWrap: 'wrap' },
-  giftBtn: { alignItems: 'center', gap: 3, backgroundColor: Colors.surfaceElevated, borderRadius: Radius.md, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: Colors.border },
-  giftBtnLoading: { opacity: 0.5 },
+  giftBar: { flexDirection: 'row', gap: 8, paddingHorizontal: Spacing.md, paddingVertical: 8, backgroundColor: 'rgba(10,10,20,0.92)', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' },
+  requestBtn: { flex: 1.2, minHeight: 64, alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: Radius.md, paddingVertical: 8, paddingHorizontal: 6, borderWidth: 1, borderColor: Colors.primary },
+  requestBtnDisabled: { opacity: 0.55 },
+  requestText: { color: Colors.textPrimary, fontSize: 10, fontWeight: FontWeight.semibold, textAlign: 'center' },
+  giftBtn: { flex: 1, alignItems: 'center', gap: 2, backgroundColor: Colors.surfaceElevated, borderRadius: Radius.md, paddingVertical: 8, paddingHorizontal: 4, borderWidth: 1, borderColor: Colors.border },
+  giftBtnDisabled: { opacity: 0.45 },
   giftEmoji: { fontSize: 22 },
   giftLabel: { color: Colors.textSecondary, fontSize: 10 },
-  giftCost: { fontSize: 10, fontWeight: FontWeight.bold },
+  giftComingSoon: { color: Colors.textSubtle, fontSize: 9, fontWeight: FontWeight.bold },
 
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: Spacing.md, paddingTop: 8, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)', backgroundColor: 'rgba(10,10,20,0.95)' },
-  iconBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center' },
   input: { flex: 1, backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: Radius.full, paddingHorizontal: 14, paddingVertical: 9, color: '#fff', fontSize: FontSize.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   sendBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { opacity: 0.4 },
