@@ -168,15 +168,21 @@ class PollingManagerImpl {
     state.isRunning = true;
     state.lastRunAt = Date.now();
 
-    state.config.fn()
-      .catch((e: any) => {
-        if (IS_DEV) {
-          console.warn(`[PollingManager] poll "${state.config.key}" error:`, e?.message ?? e);
-        }
-      })
-      .finally(() => {
-        state.isRunning = false;
-      });
+    const result = state.config.fn();
+    if (result && typeof result.catch === 'function') {
+      result
+        .catch((e: any) => {
+          if (IS_DEV) {
+            console.warn(`[PollingManager] poll "${state.config.key}" error:`, e?.message ?? e);
+          }
+        })
+        .finally(() => {
+          state.isRunning = false;
+        });
+      return;
+    }
+
+    state.isRunning = false;
   }
 }
 
