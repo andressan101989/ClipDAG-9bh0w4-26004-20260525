@@ -159,7 +159,7 @@ function LiveViewerScreenInner() {
       // New messages
       let query = supabase
         .from('live_messages')
-        .select('id, user_id, username, avatar_url, message, created_at')
+        .select('id, user_id, username, message, created_at')
         .eq('session_id', sessionId)
         .order('created_at', { ascending: true })
         .limit(30);
@@ -174,7 +174,7 @@ function LiveViewerScreenInner() {
           id:        m.id,
           userId:    m.user_id,
           username:  m.username,
-          avatarUrl: m.avatar_url ?? '',
+          avatarUrl: '',
           message:   m.message,
           createdAt: m.created_at,
         }));
@@ -286,7 +286,6 @@ function LiveViewerScreenInner() {
         session_id: sessionId,
         user_id:    user.id,
         username:   user.username || user.email?.split('@')[0] || 'user',
-        avatar_url: user.avatar ?? '',
         message:    text,
       });
     } catch (_) {}
@@ -318,7 +317,6 @@ function LiveViewerScreenInner() {
         session_id: sessionId,
         user_id:    user.id,
         username:   user.username || 'user',
-        avatar_url: user.avatar ?? '',
         message:    `${gift.emoji} regalo ${gift.label} (${gift.cost} BDAG)`,
       });
 

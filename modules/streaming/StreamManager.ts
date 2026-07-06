@@ -101,7 +101,7 @@ class StreamManagerImpl {
     try {
       const supabase = getSupabaseClient();
       // Optimistic increment
-      await supabase.rpc('increment_viewer_count' as any, { session_id: sessionId }).catch(() => {});
+      await supabase.rpc('increment_live_viewer_count' as any, { p_session_id: sessionId, p_delta: 1 }).catch(() => {});
     } catch { /* ignore */ }
     EventBus.emit('stream:viewer_joined', { sessionId, userId });
   }

@@ -136,7 +136,12 @@ export default function LiveBroadcasterScreen() {
     endedRef.current = true;
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     await leave();
-    try { await supabase.from('live_sessions').update({ status: 'ended' }).eq('id', streamId); } catch { /* ignore */ }
+    try {
+      await supabase
+        .from('live_sessions')
+        .update({ status: 'ended', ended_at: new Date().toISOString() })
+        .eq('id', streamId);
+    } catch { /* ignore */ }
     router.back();
   }, [streamId, leave, supabase, router]);
 
@@ -144,7 +149,11 @@ export default function LiveBroadcasterScreen() {
     if (!endedRef.current && live && streamId) {
       endedRef.current = true;
       leave();
-      supabase.from('live_sessions').update({ status: 'ended' }).eq('id', streamId).then(() => {});
+      supabase
+        .from('live_sessions')
+        .update({ status: 'ended', ended_at: new Date().toISOString() })
+        .eq('id', streamId)
+        .then(() => {});
     }
   }, [live, streamId, leave, supabase]);
 

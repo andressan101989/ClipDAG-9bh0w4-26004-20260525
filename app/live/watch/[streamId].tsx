@@ -78,6 +78,7 @@ export default function LiveWatchScreen() {
   const lastSentRef = useRef(0);
   const mountedRef  = useRef(true);
   const leftRef     = useRef(false);
+  const viewerCountBumpedRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -86,7 +87,7 @@ export default function LiveWatchScreen() {
 
   // ── Fetch session ─────────────────────────────────────────────────────────
   const fetchSession = useCallback(async () => {
-    if (!streamId) return;
+    if (!streamId) return false;
     try {
       const { data, error: err } = await supabase
         .from('live_sessions')
@@ -94,7 +95,7 @@ export default function LiveWatchScreen() {
         .eq('id', streamId)
         .single();
 
-      if (err || !data) { setEnded(true); setLoading(false); return; }
+      if (err || !data) { setEnded(true); setLoading(false); return false; }
 
       setSession({
         id:           data.id,
@@ -104,9 +105,10 @@ export default function LiveWatchScreen() {
         viewerCount:  data.viewer_count ?? 0,
         status:       data.status as 'live' | 'ended',
       });
-      if (data.status === 'ended') setEnded(true);
+      if (data.status !== 'live') setEnded(true);
       setLoading(false);
-    } catch (_) { setLoading(false); }
+      return data.status === 'live';
+    } catch (_) { setLoading(false); return false; }
   }, [streamId, supabase]);
 
   // ── Join Agora once session confirmed live ──────────────────────────────
@@ -164,14 +166,21 @@ export default function LiveWatchScreen() {
 
   useEffect(() => {
     if (!streamId) { router.back(); return; }
-    fetchSession();
-    bumpViewerCount(1);
+    viewerCountBumpedRef.current = false;
+    fetchSession().then(isLive => {
+      if (!isLive || leftRef.current) return;
+      viewerCountBumpedRef.current = true;
+      bumpViewerCount(1);
+    });
     pollRef.current = setInterval(poll, POLL_INTERVAL_MS);
 
     return () => {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
       if (!leftRef.current) { leftRef.current = true; leave(); }
-      bumpViewerCount(-1);
+      if (viewerCountBumpedRef.current) {
+        viewerCountBumpedRef.current = false;
+        bumpViewerCount(-1);
+      }
     };
   }, [streamId]);
 
