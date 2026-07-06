@@ -9,6 +9,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Avatar } from '@/components/ui/Avatar';
+import { LiveStreamsList } from '@/components/feature/LiveStreamsList';
 import { useAuth } from '@/hooks/useAuth';
 import { getSupabaseClient } from '@/template';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
@@ -16,11 +17,10 @@ import { formatNumber } from '@/services/mockData';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 
-// 'live' tab intentionally removed — it previously showed MOCK_LIVE_STREAMS.
-// There's no `live_sessions`/`live_messages` table on the current Supabase
-// project (aewwdlvbwpczqyvkwvvj) to back it with real data yet. Re-add once
-// that table is migrated — see app/live/broadcast/[streamId].tsx for the
-// existing live_sessions schema this would query.
+// The old 'live' tab (MOCK_LIVE_STREAMS) was removed when live_sessions
+// didn't exist yet — that table is real now (see app/live/broadcast/
+// [streamId].tsx), and real active streams are shown via LiveStreamsList
+// below, always visible rather than gated behind a tab.
 type Tab = 'discover' | 'creators';
 type SearchTab = 'users' | 'videos';
 
@@ -243,6 +243,10 @@ export default function SearchScreen() {
             <MaterialIcons name="close" size={18} color={Colors.textSubtle} />
           </Pressable>
         ) : null}
+      </View>
+
+      <View style={styles.liveSection}>
+        <LiveStreamsList />
       </View>
 
       {/* Tab bar */}
@@ -534,6 +538,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm, borderWidth: 1, borderColor: Colors.border, height: 48,
   },
   searchInput: { flex: 1, color: Colors.textPrimary, fontSize: FontSize.md },
+  liveSection: { paddingHorizontal: Spacing.md, marginBottom: Spacing.md },
   tabBar: {
     flexDirection: 'row', marginHorizontal: Spacing.md, marginBottom: Spacing.md,
     backgroundColor: Colors.surfaceElevated, borderRadius: Radius.md,
