@@ -64,8 +64,8 @@ export default function VideoCallScreen() {
   const myUid = user?.id ? useridToAgoraUid(user.id) : 0;
 
   const {
-    engineReady, remoteUids, isMuted, isCameraOff, localVideoReady, error,
-    join, leave, toggleMute, toggleCamera, switchCamera,
+    engineReady, remoteUids, isMuted, isCameraOff, localVideoReady, error, speakerOn,
+    join, leave, toggleMute, toggleCamera, switchCamera, toggleSpeaker,
   } = useAgoraEngine({ channelName, uid: myUid, role: 'publisher', profile: 'communication' });
 
   // ── Mount / unmount ──────────────────────────────────────────────────────
@@ -254,6 +254,10 @@ export default function VideoCallScreen() {
           <Pressable style={styles.controlBtnSm} onPress={switchCamera} hitSlop={8}>
             <MaterialIcons name="flip-camera-ios" size={20} color={Colors.textSecondary} />
             <Text style={styles.controlLabelSm}>Voltear</Text>
+          </Pressable>
+          <Pressable style={styles.controlBtnSm} onPress={toggleSpeaker} hitSlop={8}>
+            <MaterialIcons name={speakerOn ? 'volume-up' : 'volume-down'} size={20} color={speakerOn ? Colors.primary : Colors.textSecondary} />
+            <Text style={[styles.controlLabelSm, speakerOn && { color: Colors.primary }]}>Altavoz</Text>
           </Pressable>
         </View>
       </View>

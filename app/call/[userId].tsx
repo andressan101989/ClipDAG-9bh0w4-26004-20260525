@@ -74,8 +74,8 @@ export default function AudioCallScreen() {
   const myUid = user?.id ? useridToAgoraUid(user.id) : 0;
 
   const {
-    engineReady, remoteUids, isMuted, isCameraOff, localVideoReady, error,
-    join, leave, toggleMute, toggleCamera,
+    engineReady, remoteUids, isMuted, isCameraOff, localVideoReady, error, speakerOn,
+    join, leave, toggleMute, toggleCamera, toggleSpeaker,
   } = useAgoraEngine({ channelName, uid: myUid, role: 'publisher', profile: 'communication', enableVideo: false });
 
   // Once either side has enabled the camera, treat this as an upgraded video call.
@@ -259,6 +259,13 @@ export default function AudioCallScreen() {
             <Text style={styles.controlLabel}>{videoActive ? 'Video activo' : 'Activar cámara'}</Text>
           </View>
         </View>
+
+        <View style={styles.controlRow2}>
+          <Pressable style={styles.controlBtnSm} onPress={toggleSpeaker} hitSlop={8}>
+            <MaterialIcons name={speakerOn ? 'volume-up' : 'volume-down'} size={20} color={speakerOn ? Colors.primary : Colors.textSecondary} />
+            <Text style={[styles.controlLabelSm, speakerOn && { color: Colors.primary }]}>Altavoz</Text>
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -279,9 +286,12 @@ const styles = StyleSheet.create({
   localPreviewLabel:    { position: 'absolute', bottom: 4, left: 0, right: 0, textAlign: 'center', color: '#fff', fontSize: 10, backgroundColor: 'rgba(0,0,0,0.5)' },
   controls:             { paddingHorizontal: Spacing.xl, gap: Spacing.lg },
   controlRow:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  controlRow2:          { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
   controlGroup:         { alignItems: 'center', gap: Spacing.xs, width: 80 },
   controlBtn:           { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
+  controlBtnSm:         { alignItems: 'center', gap: 4, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md },
   controlBtnActive:     { backgroundColor: Colors.textPrimary },
   endCallBtn:           { width: 76, height: 76, borderRadius: 38, backgroundColor: Colors.secondary, alignItems: 'center', justifyContent: 'center' },
   controlLabel:         { color: Colors.textSubtle, fontSize: 11 },
+  controlLabelSm:       { color: Colors.textSubtle, fontSize: 11 },
 });

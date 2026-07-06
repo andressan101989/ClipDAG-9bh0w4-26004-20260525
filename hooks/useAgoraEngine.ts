@@ -14,6 +14,7 @@ interface UseAgoraEngineParams {
   uid: number;
   role: AgoraRole;
   profile?: AgoraProfile;
+  enableVideo?: boolean;
 }
 
 export function useAgoraEngine(_params: UseAgoraEngineParams) {
@@ -26,10 +27,14 @@ export function useAgoraEngine(_params: UseAgoraEngineParams) {
     isMuted:     false,
     isCameraOff: false,
     isFront:     true,
+    speakerOn:   false,
+    localVideoReady: false,
     join:        async () => {},
     leave:       async () => {},
     toggleMute:  () => {},
     toggleCamera: () => {},
     switchCamera: () => {},
+    toggleSpeaker: () => {},
+    promoteToPublisher: async () => false,
   };
 }

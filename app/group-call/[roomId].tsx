@@ -51,7 +51,8 @@ export default function GroupCallScreen() {
 
   const {
     joined, error, remoteUids,
-    isMuted, isCameraOff, localVideoReady, join, leave, toggleMute, toggleCamera, switchCamera,
+    isMuted, isCameraOff, localVideoReady, speakerOn,
+    join, leave, toggleMute, toggleCamera, switchCamera, toggleSpeaker,
   } = useAgoraEngine({ channelName: roomId ?? null, uid: myUid, role: 'publisher', profile: 'communication' });
 
   // ── Presence: gate join at MAX_PARTICIPANTS, map uid → username/avatar ────
@@ -213,6 +214,10 @@ export default function GroupCallScreen() {
           <Pressable style={styles.controlBtn} onPress={switchCamera} hitSlop={8}>
             <MaterialIcons name="flip-camera-ios" size={22} color="#fff" />
           </Pressable>
+          <Pressable style={styles.controlBtnSm} onPress={toggleSpeaker} hitSlop={8}>
+            <MaterialIcons name={speakerOn ? 'volume-up' : 'volume-down'} size={20} color={speakerOn ? Colors.primary : Colors.textSecondary} />
+            <Text style={[styles.controlLabelSm, speakerOn && { color: Colors.primary }]}>Altavoz</Text>
+          </Pressable>
           <Pressable style={styles.endCallBtn} onPress={handleEndCall} hitSlop={4}>
             <MaterialIcons name="call-end" size={26} color="#fff" />
           </Pressable>
@@ -286,7 +291,9 @@ const styles = StyleSheet.create({
     width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.12)',
     alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
   },
+  controlBtnSm: { alignItems: 'center', gap: 4, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md },
   controlBtnActive: { backgroundColor: Colors.textPrimary },
+  controlLabelSm: { color: Colors.textSubtle, fontSize: 11 },
   endCallBtn: { width: 60, height: 60, borderRadius: 30, backgroundColor: Colors.secondary, alignItems: 'center', justifyContent: 'center' },
 
   fullTitle: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },

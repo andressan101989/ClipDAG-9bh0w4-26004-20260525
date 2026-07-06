@@ -47,6 +47,9 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
   const [isCameraOff,     setIsCameraOff]     = useState(role === 'subscriber' || !enableVideo);
   const [isFront,         setIsFront]         = useState(true);
   const [localVideoReady, setLocalVideoReady] = useState(false);
+  // Video calls default to speaker on, audio calls default to earpiece
+  // (enableVideo doubles as the video/audio-call signal here).
+  const [speakerOn,       setSpeakerOn]        = useState(enableVideo);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -176,6 +179,7 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
       engine.registerEventHandler(handlers);
 
       engine.enableAudio();
+      try { engine.setEnableSpeakerphone(enableVideo); } catch { /* ignore */ }
 
       if (profile === 'live-broadcasting') {
         engine.setClientRole(
@@ -240,6 +244,46 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
 
   useEffect(() => () => { cleanupEngine(); }, [cleanupEngine]);
 
+  const toggleSpeaker = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    setSpeakerOn(prev => {
+      const next = !prev;
+      try { engine.setEnableSpeakerphone(next); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
+  const promoteToPublisher = useCallback(async () => {
+    const engine = engineRef.current;
+    if (!engine || profile !== 'live-broadcasting') return false;
+    try {
+      if (channelName) {
+        const { token } = await fetchAgoraToken(channelName, uid, 'publisher');
+        try { engine.renewToken(token); } catch { /* setClientRole may still work if the current token allows publishing */ }
+      }
+      engine.setClientRole(ClientRoleType.ClientRoleBroadcaster);
+      engine.enableAudio();
+      if (enableVideo) {
+        engine.enableVideo();
+        engine.enableLocalVideo(true);
+        engine.muteLocalVideoStream(false);
+        engine.startPreview();
+      }
+      engine.enableLocalAudio(true);
+      engine.muteLocalAudioStream(false);
+      if (mountedRef.current) {
+        setIsMuted(false);
+        setIsCameraOff(!enableVideo);
+        setLocalVideoReady(enableVideo);
+      }
+      return true;
+    } catch (e: any) {
+      if (mountedRef.current) setError(e?.message ?? 'No se pudo subir al streaming');
+      return false;
+    }
+  }, [channelName, uid, profile, enableVideo]);
+
   const toggleMute = useCallback(() => {
     const engine = engineRef.current;
     if (!engine) return;
@@ -280,9 +324,9 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
     engineReady: isAgoraAvailable(),
     joined, joining, error,
     remoteUids,
-    isMuted, isCameraOff, isFront,
+    isMuted, isCameraOff, isFront, speakerOn,
     localVideoReady,
     join, leave,
-    toggleMute, toggleCamera, switchCamera,
+    toggleMute, toggleCamera, switchCamera, toggleSpeaker, promoteToPublisher,
   };
 }
