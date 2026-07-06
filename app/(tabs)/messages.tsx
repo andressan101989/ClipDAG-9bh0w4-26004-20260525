@@ -290,7 +290,13 @@ export default function MessagesScreen() {
             </Pressable>
           )}
           <Pressable
-            onPress={() => router.push(`/group-call/${generateUUID()}` as any)}
+            onPress={() => {
+              if (!user?.id) return;
+              router.push({
+                pathname: '/group-call/[roomId]',
+                params: { roomId: generateUUID(), creatorId: user.id },
+              } as any);
+            }}
             hitSlop={8}
             style={styles.salaBtn}
           >

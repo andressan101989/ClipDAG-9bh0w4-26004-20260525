@@ -8,7 +8,7 @@
  * at MAX_PARTICIPANTS.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet, FlatList, Dimensions } from 'react-native';
+import { View, Text, Pressable, StyleSheet, FlatList, Dimensions, Alert, Share } from 'react-native';
 import { Image } from 'expo-image';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -31,13 +31,14 @@ interface Participant {
 }
 
 export default function GroupCallScreen() {
-  const { roomId } = useLocalSearchParams<{ roomId: string }>();
+  const { roomId, creatorId } = useLocalSearchParams<{ roomId: string; creatorId?: string }>();
   const insets   = useSafeAreaInsets();
   const router   = useRouter();
   const { user } = useAuth();
   const supabase = getSupabaseClient();
 
   const myUid = user?.id ? useridToAgoraUid(user.id) : 0;
+  const isCreator = !!user?.id && !!creatorId && user.id === creatorId;
 
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [showList, setShowList]         = useState(false);
@@ -101,6 +102,18 @@ export default function GroupCallScreen() {
     return () => { if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } };
   }, [joined]);
 
+  const handleAddParticipant = useCallback(async () => {
+    if (!roomId || !creatorId) return;
+    console.log('[GROUP-CALL] add participant pressed');
+    const invitePath = `/group-call/${roomId}?creatorId=${creatorId}`;
+    console.log('[GROUP-CALL] invite link generated', invitePath);
+    try {
+      await Share.share({ message: invitePath });
+    } catch {
+      Alert.alert('Invitar participante', invitePath);
+    }
+  }, [roomId, creatorId]);
+
   // ── Leave ─────────────────────────────────────────────────────────────────
   const handleEndCall = useCallback(async () => {
     if (endedRef.current) return;
@@ -150,10 +163,18 @@ export default function GroupCallScreen() {
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <View style={[styles.header, { paddingTop: insets.top + Spacing.sm }]}>
         <Text style={styles.headerTitle}>{joined ? fmt(duration) : 'Conectando...'}</Text>
-        <Pressable style={styles.participantsBtn} onPress={() => setShowList(true)} hitSlop={8}>
-          <MaterialIcons name="groups" size={16} color="#fff" />
-          <Text style={styles.participantsBtnText}>{totalTiles}/{MAX_PARTICIPANTS}</Text>
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {isCreator ? (
+            <Pressable style={styles.addParticipantBtn} onPress={handleAddParticipant} hitSlop={8}>
+              <MaterialIcons name="person-add" size={16} color="#fff" />
+              <Text style={styles.addParticipantText}>Agregar participante</Text>
+            </Pressable>
+          ) : null}
+          <Pressable style={styles.participantsBtn} onPress={() => setShowList(true)} hitSlop={8}>
+            <MaterialIcons name="groups" size={16} color="#fff" />
+            <Text style={styles.participantsBtnText}>{totalTiles}/{MAX_PARTICIPANTS}</Text>
+          </Pressable>
+        </View>
       </View>
 
       {!isAgoraAvailable() ? (
@@ -251,6 +272,7 @@ export default function GroupCallScreen() {
           </View>
         </View>
       ) : null}
+
     </View>
   );
 }
@@ -269,6 +291,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: Radius.full,
     paddingHorizontal: 10, paddingVertical: 5,
   },
+  addParticipantBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: Colors.primary, borderRadius: Radius.full,
+    paddingHorizontal: 10, paddingVertical: 5,
+  },
+  addParticipantText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.semibold },
   participantsBtnText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.semibold },
 
   errorText: { color: Colors.secondary, fontSize: FontSize.sm, textAlign: 'center' },

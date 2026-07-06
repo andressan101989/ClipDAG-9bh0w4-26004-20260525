@@ -36,6 +36,9 @@ function navigateToNotification(
     case 'message':
       if (data.from_user_id) router.push(`/chat/${data.from_user_id}` as any);
       break;
+    case 'group_call':
+      if (data.roomId) router.push(`/group-call/${data.roomId}` as any);
+      break;
     case 'like':
     case 'comment':
       router.push('/(tabs)' as any);
