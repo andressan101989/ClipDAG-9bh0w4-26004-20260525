@@ -12,7 +12,7 @@ import {
   Alert,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
@@ -261,31 +261,31 @@ export default function LiveWatchScreen() {
 
   if (loading) {
     return (
-      <View style={styles.loadingScreen}>
+      <SafeAreaView style={styles.loadingScreen}>
         <StatusBar style="light" />
         <ActivityIndicator size="large" color={Colors.primary} />
         <Text style={styles.loadingText}>Cargando live...</Text>
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (ended || !session) {
     return (
-      <View style={styles.endedScreen}>
+      <SafeAreaView style={styles.endedScreen}>
         <StatusBar style="light" />
         <MaterialIcons name="live-tv" size={52} color={Colors.secondary} />
         <Text style={styles.endedTitle}>Este live ha terminado</Text>
         <Pressable onPress={() => router.back()} style={styles.endedBtn}>
           <Text style={styles.endedBtnText}>Volver</Text>
         </Pressable>
-      </View>
+      </SafeAreaView>
     );
   }
 
   const remoteUid = remoteUids[0];
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="light" />
 
       {RtcSurfaceView && remoteUid !== undefined ? (
@@ -305,17 +305,14 @@ export default function LiveWatchScreen() {
         <View style={styles.hostInfo}>
           <Text style={styles.hostName}>@{session.hostUsername}</Text>
           <Text style={styles.hostTitle} numberOfLines={1}>{session.title}</Text>
+          <View style={styles.hostMetaRow}>
+            <MaterialIcons name="visibility" size={13} color="#fff" />
+            <Text style={styles.hostMetaText}>{session.viewerCount.toLocaleString()} viewers</Text>
+          </View>
         </View>
         <View style={styles.liveBadge}>
           <View style={styles.liveDot} />
           <Text style={styles.liveText}>EN VIVO</Text>
-        </View>
-      </View>
-
-      <View style={styles.statsRow}>
-        <View style={styles.statChip}>
-          <MaterialIcons name="visibility" size={13} color={Colors.textSecondary} />
-          <Text style={styles.statText}>{session.viewerCount.toLocaleString()}</Text>
         </View>
       </View>
 
@@ -400,7 +397,7 @@ export default function LiveWatchScreen() {
           </Pressable>
         </KeyboardAvoidingView>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -424,11 +421,27 @@ const styles = StyleSheet.create({
   videoPlaceholder: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, backgroundColor: Colors.surface },
   waitingText: { color: Colors.textSecondary, fontSize: FontSize.sm },
 
-  header: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
+  header: {
+    position: 'absolute',
+    top: Spacing.sm,
+    left: Spacing.md,
+    right: Spacing.md,
+    zIndex: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    padding: Spacing.sm,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
   hostInfo: { flex: 1 },
   hostName: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
-  hostTitle: { color: Colors.textSubtle, fontSize: FontSize.xs },
+  hostTitle: { color: Colors.textSecondary, fontSize: FontSize.xs },
+  hostMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
+  hostMetaText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.medium },
   liveBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.error, borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 4 },
   liveDot:  { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
   liveText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.bold },
@@ -445,22 +458,29 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    maxHeight: 320,
+    maxHeight: 300,
   },
-  chatList: { flex: 1 },
+  chatList: {
+    flex: 1,
+    maxHeight: 155,
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.sm,
+    borderRadius: Radius.md,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
 
-  giftBar: { flexDirection: 'row', gap: 8, paddingHorizontal: Spacing.md, paddingVertical: 8, backgroundColor: 'rgba(10,10,20,0.92)', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' },
-  requestBtn: { flex: 1.2, minHeight: 64, alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: Radius.md, paddingVertical: 8, paddingHorizontal: 6, borderWidth: 1, borderColor: Colors.primary },
-  requestBtnDisabled: { opacity: 0.55 },
-  requestText: { color: Colors.textPrimary, fontSize: 10, fontWeight: FontWeight.semibold, textAlign: 'center' },
-  giftBtn: { flex: 1, alignItems: 'center', gap: 2, backgroundColor: Colors.surfaceElevated, borderRadius: Radius.md, paddingVertical: 8, paddingHorizontal: 4, borderWidth: 1, borderColor: Colors.border },
+  giftBar: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: Spacing.md, paddingVertical: 6, backgroundColor: 'rgba(0,0,0,0.55)', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)' },
+  requestBtn: { flex: 1.4, height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(124,92,255,0.22)', borderRadius: Radius.full, paddingHorizontal: 10, borderWidth: 1.5, borderColor: Colors.primary },
+  requestBtnDisabled: { opacity: 0.65 },
+  requestText: { color: Colors.textPrimary, fontSize: 11, fontWeight: FontWeight.bold, textAlign: 'center' },
+  giftBtn: { width: 48, height: 44, alignItems: 'center', justifyContent: 'center', gap: 1, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: Radius.md, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   giftBtnDisabled: { opacity: 0.45 },
-  giftEmoji: { fontSize: 22 },
-  giftLabel: { color: Colors.textSecondary, fontSize: 10 },
-  giftComingSoon: { color: Colors.textSubtle, fontSize: 9, fontWeight: FontWeight.bold },
+  giftEmoji: { fontSize: 19 },
+  giftLabel: { display: 'none', color: Colors.textSecondary, fontSize: 10 },
+  giftComingSoon: { display: 'none', color: Colors.textSubtle, fontSize: 9, fontWeight: FontWeight.bold },
 
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: Spacing.md, paddingTop: 8, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)', backgroundColor: 'rgba(10,10,20,0.95)' },
-  input: { flex: 1, backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: Radius.full, paddingHorizontal: 14, paddingVertical: 9, color: '#fff', fontSize: FontSize.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: Spacing.md, paddingTop: 8, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)', backgroundColor: 'rgba(0,0,0,0.72)' },
+  input: { flex: 1, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: Radius.full, paddingHorizontal: 14, paddingVertical: 10, color: '#fff', fontSize: FontSize.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
   sendBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { opacity: 0.4 },
 });

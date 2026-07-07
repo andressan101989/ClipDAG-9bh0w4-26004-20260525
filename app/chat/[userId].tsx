@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, FlatList, Pressable, TextInput, StyleSheet,
   KeyboardAvoidingView, Platform, ActivityIndicator, Modal,
-  ScrollView,
+  ScrollView, NativeScrollEvent, NativeSyntheticEvent,
 } from 'react-native';
 import { Image } from '@/components/ui/SafeImage';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
@@ -25,6 +25,9 @@ import type { Message } from '@/contexts/MessagesContext';
 
 const PREMIUM_COLOR  = '#FF9D00';
 const PREMIUM_COLOR2 = '#FF5A00';
+const INPUT_MIN_HEIGHT = 42;
+const INPUT_MAX_HEIGHT = 120;
+const SCROLL_END_THRESHOLD = 48;
 
 // ── Premium DM Sheet ──────────────────────────────────────────────────────────
 interface PremiumDMSheetProps {
@@ -215,7 +218,11 @@ export default function ChatScreen() {
   const [text,         setText]         = useState('');
   const [isSending,    setIsSending]    = useState(false);
   const [isUploading,  setIsUploading]  = useState(false);
+  const [inputHeight,  setInputHeight]  = useState(INPUT_MIN_HEIGHT);
   const flatListRef = useRef<FlatList>(null);
+  const isAtEndRef = useRef(true);
+  const previousMessageCountRef = useRef(0);
+  const forceScrollToEndRef = useRef(false);
   const pollKey = `chat:${partnerId ?? 'unknown'}`;
 
   // Premium DM state
@@ -292,18 +299,48 @@ export default function ChatScreen() {
     markConversationRead(partnerId);
   }, [partnerId]);
 
+  const scrollToEnd = useCallback((animated: boolean) => {
+    requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
+  }, []);
+
+  const handleListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    isAtEndRef.current =
+      contentOffset.y + layoutMeasurement.height >= contentSize.height - SCROLL_END_THRESHOLD;
+  }, []);
+
+  const handleInputContentSizeChange = useCallback((event: NativeSyntheticEvent<any>) => {
+    const nextHeight = Math.min(
+      INPUT_MAX_HEIGHT,
+      Math.max(INPUT_MIN_HEIGHT, event.nativeEvent.contentSize.height)
+    );
+    setInputHeight(nextHeight);
+  }, []);
+
   useEffect(() => {
-    if (chatMessages.length > 0) {
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+    const previousCount = previousMessageCountRef.current;
+    previousMessageCountRef.current = chatMessages.length;
+    if (chatMessages.length === 0) return;
+
+    const shouldScroll =
+      previousCount === 0 ||
+      forceScrollToEndRef.current ||
+      isAtEndRef.current;
+
+    if (shouldScroll) {
+      scrollToEnd(previousCount !== 0);
+      forceScrollToEndRef.current = false;
     }
-  }, [chatMessages.length]);
+  }, [chatMessages.length, scrollToEnd]);
 
   // ── Send regular message ──────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     if (!text.trim() || !partnerId || isSending) return;
     setIsSending(true);
+    forceScrollToEndRef.current = true;
     await sendMessage(partnerId, text.trim());
     setText('');
+    setInputHeight(INPUT_MIN_HEIGHT);
     setIsSending(false);
 
     // If creator responds to held premium DM, auto-release if there's a pending payment
@@ -337,6 +374,7 @@ export default function ChatScreen() {
       return;
     }
     walletData?.fullSync?.();
+    forceScrollToEndRef.current = true;
     loadConversation(partnerId);
     // Update free DM quota if it was free
     if (data.is_free_dm && subStatus) {
@@ -578,7 +616,14 @@ export default function ChatScreen() {
             renderItem={renderMessage}
             contentContainerStyle={[styles.messagesList, { paddingBottom: insets.bottom + 8 }]}
             showsVerticalScrollIndicator={false}
-            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
+            onScroll={handleListScroll}
+            scrollEventThrottle={16}
+            onContentSizeChange={() => {
+              if (forceScrollToEndRef.current || isAtEndRef.current) {
+                scrollToEnd(false);
+                forceScrollToEndRef.current = false;
+              }
+            }}
           />
         )}
 
@@ -592,12 +637,14 @@ export default function ChatScreen() {
           </Pressable>
 
           <TextInput
-            style={styles.input}
+            style={[styles.input, { height: inputHeight }]}
             value={text}
             onChangeText={setText}
             placeholder="Escribe un mensaje..."
             placeholderTextColor={Colors.textSubtle}
             multiline
+            onContentSizeChange={handleInputContentSizeChange}
+            scrollEnabled={inputHeight >= INPUT_MAX_HEIGHT}
             maxLength={1000}
             returnKeyType="send"
             onSubmitEditing={handleSend}
@@ -737,6 +784,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md, paddingVertical: 11,
     color: Colors.textPrimary, fontSize: FontSize.sm,
     borderWidth: 1, borderColor: Colors.border,
+    textAlignVertical: 'top',
   },
   premiumBtn: { borderRadius: Radius.full, overflow: 'hidden' },
   premiumBtnGrad: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },

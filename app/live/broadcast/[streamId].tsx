@@ -13,10 +13,10 @@
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, Pressable, StyleSheet, FlatList, TextInput, ActivityIndicator,
+  View, Text, Pressable, StyleSheet, FlatList, TextInput, ActivityIndicator, Dimensions,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
@@ -28,6 +28,7 @@ import { RtcSurfaceView, useridToAgoraUid, isAgoraAvailable } from '@/services/a
 const POLL_INTERVAL_MS = 3000;
 const MAX_MESSAGES     = 50;
 const REQUEST_TO_JOIN_TEXT = 'quiere subir al streaming';
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface ChatMessage {
   id: string;
@@ -68,6 +69,7 @@ export default function LiveBroadcasterScreen() {
   const [starting, setStarting]     = useState(false);
   const [viewerCount, setViewerCount] = useState(0);
   const [messages, setMessages]     = useState<ChatMessage[]>([]);
+  const [liveSeconds, setLiveSeconds] = useState(0);
 
   const {
     engineReady, joined, error,
@@ -111,6 +113,12 @@ export default function LiveBroadcasterScreen() {
   useEffect(() => {
     if (joined) setStarting(false);
   }, [joined]);
+
+  useEffect(() => {
+    if (!live) return;
+    const timer = setInterval(() => setLiveSeconds(s => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, [live]);
 
   // ── Poll: viewer count + comments ────────────────────────────────────────
   const poll = useCallback(async () => {
@@ -199,10 +207,13 @@ export default function LiveBroadcasterScreen() {
     } catch { /* ignore */ }
   }, [user, streamId, supabase]);
 
+  const formatLiveDuration = (seconds: number) =>
+    `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
+
   // ── Pre-live: title prompt ───────────────────────────────────────────────
   if (!live) {
     return (
-      <View style={[styles.container, styles.centered, { paddingTop: insets.top }]}>
+      <SafeAreaView style={[styles.container, styles.centered]}>
         <StatusBar style="light" />
         <MaterialIcons name="live-tv" size={48} color={Colors.secondary} />
         <Text style={styles.setupTitle}>Ir en vivo</Text>
@@ -231,7 +242,7 @@ export default function LiveBroadcasterScreen() {
         <Pressable onPress={() => router.back()} style={{ marginTop: Spacing.md }}>
           <Text style={styles.cancelText}>Cancelar</Text>
         </Pressable>
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -242,7 +253,7 @@ export default function LiveBroadcasterScreen() {
   );
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="light" />
 
       {RtcSurfaceView && localVideoReady && !isCameraOff ? (
@@ -254,25 +265,31 @@ export default function LiveBroadcasterScreen() {
       )}
 
       {RtcSurfaceView && remoteUids.length > 0 ? (
-        <View style={[styles.remoteStrip, { top: insets.top + 58 }]}>
+        <View style={[styles.remoteStrip, { top: insets.top + 78 }]}>
           {remoteUids.map(uid => (
-            <RtcSurfaceView key={uid} canvas={{ uid }} style={styles.remoteVideo} />
+            <View key={uid} style={styles.remoteTile}>
+              <RtcSurfaceView canvas={{ uid }} style={styles.remoteVideo} />
+              <Text style={styles.remoteLabel}>Co-host</Text>
+            </View>
           ))}
         </View>
       ) : null}
 
       {/* ── Header overlay ────────────────────────────────────────────────── */}
       <View style={[styles.header, { top: insets.top + Spacing.sm }]}>
-        <Pressable onPress={endBroadcast} hitSlop={10} style={styles.backBtn}>
-          <MaterialIcons name="close" size={20} color="#fff" />
-        </Pressable>
-        <View style={styles.liveBadge}>
-          <View style={styles.liveDot} />
-          <Text style={styles.liveText}>EN VIVO</Text>
-        </View>
-        <View style={styles.viewerChip}>
-          <MaterialIcons name="visibility" size={13} color="#fff" />
-          <Text style={styles.viewerChipText}>{viewerCount.toLocaleString()}</Text>
+        <View style={styles.streamBadge}>
+          <View style={styles.streamTitleRow}>
+            <View style={styles.liveBadge}>
+              <View style={styles.liveDot} />
+              <Text style={styles.liveText}>EN VIVO</Text>
+            </View>
+            <Text style={styles.liveTimer}>{formatLiveDuration(liveSeconds)}</Text>
+          </View>
+          <Text style={styles.streamTitle} numberOfLines={1}>{title.trim()}</Text>
+          <View style={styles.streamMetaRow}>
+            <MaterialIcons name="visibility" size={13} color="#fff" />
+            <Text style={styles.viewerChipText}>{viewerCount.toLocaleString()} viewers</Text>
+          </View>
         </View>
       </View>
 
@@ -323,20 +340,23 @@ export default function LiveBroadcasterScreen() {
 
       {/* ── Controls ──────────────────────────────────────────────────────── */}
       <View style={[styles.controls, { paddingBottom: insets.bottom + Spacing.lg }]}>
-        <Pressable style={[styles.controlBtn, isMuted && styles.controlBtnActive]} onPress={toggleMute} hitSlop={8}>
-          <MaterialIcons name={isMuted ? 'mic-off' : 'mic'} size={20} color={isMuted ? '#000' : '#fff'} />
-        </Pressable>
-        <Pressable style={[styles.controlBtn, isCameraOff && styles.controlBtnActive]} onPress={toggleCamera} hitSlop={8}>
-          <MaterialIcons name={isCameraOff ? 'videocam-off' : 'videocam'} size={20} color={isCameraOff ? '#000' : '#fff'} />
-        </Pressable>
-        <Pressable style={styles.controlBtn} onPress={switchCamera} hitSlop={8}>
-          <MaterialIcons name="flip-camera-ios" size={20} color="#fff" />
-        </Pressable>
+        <View style={styles.controlGroup}>
+          <Pressable style={[styles.controlBtn, isMuted && styles.controlBtnActive]} onPress={toggleMute} hitSlop={8}>
+            <MaterialIcons name={isMuted ? 'mic-off' : 'mic'} size={20} color={isMuted ? '#000' : '#fff'} />
+          </Pressable>
+          <Text style={styles.controlLabel}>{isMuted ? 'Activar' : 'Silenciar'}</Text>
+        </View>
+        <View style={styles.controlGroup}>
+          <Pressable style={styles.controlBtn} onPress={switchCamera} hitSlop={8}>
+            <MaterialIcons name="flip-camera-ios" size={20} color="#fff" />
+          </Pressable>
+          <Text style={styles.controlLabel}>Voltear</Text>
+        </View>
         <Pressable style={styles.endBtn} onPress={endBroadcast} hitSlop={4}>
           <Text style={styles.endBtnText}>Finalizar</Text>
         </Pressable>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -372,23 +392,25 @@ const styles = StyleSheet.create({
   videoStream:      { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
   videoPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surface },
   remoteStrip: { position: 'absolute', right: Spacing.md, gap: Spacing.sm, zIndex: 8 },
-  remoteVideo: { width: 96, height: 128, borderRadius: Radius.md, overflow: 'hidden', backgroundColor: '#000', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
+  remoteTile: { width: 104, height: 140, borderRadius: 12, overflow: 'hidden', backgroundColor: '#000', borderWidth: 1, borderColor: 'rgba(255,255,255,0.45)' },
+  remoteVideo: { flex: 1 },
+  remoteLabel: { position: 'absolute', left: 6, right: 6, bottom: 6, color: '#fff', fontSize: 10, fontWeight: FontWeight.semibold, textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: Radius.full, paddingVertical: 2 },
 
   header: {
     position: 'absolute', left: Spacing.md, right: Spacing.md,
     flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, zIndex: 10,
   },
-  backBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
+  streamBadge: { maxWidth: '76%', backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: Radius.lg, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  streamTitleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   liveBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
     backgroundColor: Colors.error, borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 4,
   },
   liveDot:  { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
   liveText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.bold },
-  viewerChip: {
-    marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 4,
-  },
+  liveTimer: { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  streamTitle: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold, marginTop: 6 },
+  streamMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
   viewerChipText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.semibold },
 
   errorBanner: { position: 'absolute', left: Spacing.md, right: Spacing.md, zIndex: 10, backgroundColor: 'rgba(255,45,85,0.15)', borderRadius: Radius.sm, padding: Spacing.xs },
@@ -397,10 +419,10 @@ const styles = StyleSheet.create({
   chatArea: {
     position: 'absolute',
     left: Spacing.md,
-    right: 90,
+    width: '62%',
     bottom: 100,
-    maxHeight: 180,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    maxHeight: SCREEN_HEIGHT * 0.3,
+    backgroundColor: 'rgba(0,0,0,0.4)',
     borderRadius: Radius.md,
     paddingHorizontal: Spacing.sm,
     paddingVertical: Spacing.xs,
@@ -408,13 +430,19 @@ const styles = StyleSheet.create({
 
   controls: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.md,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.lg,
+    paddingTop: Spacing.sm,
+    backgroundColor: 'rgba(0,0,0,0.58)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.12)',
   },
+  controlGroup: { alignItems: 'center', gap: 4 },
   controlBtn: {
     width: 46, height: 46, borderRadius: 23, backgroundColor: 'rgba(255,255,255,0.15)',
     alignItems: 'center', justifyContent: 'center',
   },
   controlBtnActive: { backgroundColor: Colors.textPrimary },
-  endBtn: { backgroundColor: Colors.secondary, borderRadius: Radius.full, paddingHorizontal: 20, paddingVertical: 12 },
+  controlLabel: { color: Colors.textSecondary, fontSize: 11, fontWeight: FontWeight.medium },
+  endBtn: { backgroundColor: '#FF2D55', borderRadius: Radius.full, paddingHorizontal: 24, paddingVertical: 14 },
   endBtnText: { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.bold },
 });

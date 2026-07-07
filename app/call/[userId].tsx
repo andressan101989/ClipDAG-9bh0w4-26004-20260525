@@ -25,13 +25,13 @@
  * call screen.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
-import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, FontSize, FontWeight, Spacing } from '@/constants/theme';
+import { CallControlBar } from '@/components/feature/CallControlBar';
 import { getSupabaseClient } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
 import { useAgoraEngine } from '@/hooks/useAgoraEngine';
@@ -64,6 +64,7 @@ export default function AudioCallScreen() {
   const [phase, setPhase]                 = useState<CallPhase>(isCallee ? 'connecting' : 'starting');
   const [duration, setDuration]           = useState(0);
   const [channelName, setChannelName]     = useState<string | null>(isCallee ? (channel ?? null) : null);
+  const [callRecordId, setCallRecordId]   = useState<string>(paramCallId ?? '');
 
   const callIdRef      = useRef<string>(paramCallId ?? '');
   const timerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -75,7 +76,7 @@ export default function AudioCallScreen() {
 
   const {
     engineReady, remoteUids, isMuted, isCameraOff, localVideoReady, error, speakerOn,
-    join, leave, toggleMute, toggleCamera, toggleSpeaker,
+    join, leave, toggleMute, toggleSpeaker,
   } = useAgoraEngine({ channelName, uid: myUid, role: 'publisher', profile: 'communication', enableVideo: false });
 
   // Once either side has enabled the camera, treat this as an upgraded video call.
@@ -103,6 +104,7 @@ export default function AudioCallScreen() {
       length: newChannel.length,
     });
     callIdRef.current = newCallId;
+    setCallRecordId(newCallId);
     setChannelName(newChannel);
     setPhase('ringing');
 
@@ -146,6 +148,21 @@ export default function AudioCallScreen() {
     return unsub;
   }, [isCallee, channelName]);
 
+  // ── Any participant ended the call ───────────────────────────────────────
+  useEffect(() => {
+    if (!callRecordId) return;
+    const channel = supabase.channel(`calls:status:${callRecordId}`)
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'calls', filter: `id=eq.${callRecordId}`,
+      }, (payload: any) => {
+        const row = payload.new as { status?: string };
+        if (row.status === 'ended' && mountedRef.current) setPhase('ended');
+      })
+      .subscribe();
+
+    return () => { channel.unsubscribe(); };
+  }, [callRecordId, supabase]);
+
   // ── Listen for acceptance (caller only) ──────────────────────────────────
   useEffect(() => {
     if (isCallee || !callIdRef.current) return;
@@ -186,7 +203,12 @@ export default function AudioCallScreen() {
     }
   }, [phase]);
 
-  const handleEndCall = useCallback(() => setPhase('ended'), []);
+  const handleEndCall = useCallback(async () => {
+    if (callRecordId) {
+      await supabase.from('calls').update({ status: 'ended' }).eq('id', callRecordId);
+    }
+    setPhase('ended');
+  }, [callRecordId, supabase]);
 
   const fmt = (s: number) =>
     `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
@@ -194,7 +216,7 @@ export default function AudioCallScreen() {
   const statusText =
     phase === 'starting'   ? 'Iniciando...' :
     phase === 'ringing'    ? '🔔 Llamando...' :
-    phase === 'connecting' ? 'Conectando...' :
+    phase === 'connecting' ? 'Llamando...' :
     phase === 'active'     ? fmt(duration) :
     phase === 'rejected'   ? 'Llamada rechazada' :
     phase === 'failed'     ? 'Error de conexión' :
@@ -237,35 +259,15 @@ export default function AudioCallScreen() {
       ) : null}
 
       <View style={[styles.controls, { paddingBottom: insets.bottom + Spacing.xl }]}>
-        <View style={styles.controlRow}>
-          <View style={styles.controlGroup}>
-            <Pressable style={[styles.controlBtn, isMuted && styles.controlBtnActive]} onPress={toggleMute} hitSlop={8}>
-              <MaterialIcons name={isMuted ? 'mic-off' : 'mic'} size={26} color={isMuted ? '#000' : '#fff'} />
-            </Pressable>
-            <Text style={styles.controlLabel}>{isMuted ? 'Activar' : 'Silenciar'}</Text>
-          </View>
-
-          <View style={styles.controlGroup}>
-            <Pressable style={styles.endCallBtn} onPress={handleEndCall}>
-              <MaterialIcons name="call-end" size={32} color="#fff" />
-            </Pressable>
-            <Text style={styles.controlLabel}>Terminar</Text>
-          </View>
-
-          <View style={styles.controlGroup}>
-            <Pressable style={[styles.controlBtn, videoActive && styles.controlBtnActive]} onPress={toggleCamera} hitSlop={8}>
-              <MaterialIcons name={videoActive ? 'videocam' : 'videocam-off'} size={26} color={videoActive ? '#000' : '#fff'} />
-            </Pressable>
-            <Text style={styles.controlLabel}>{videoActive ? 'Video activo' : 'Activar cámara'}</Text>
-          </View>
-        </View>
-
-        <View style={styles.controlRow2}>
-          <Pressable style={styles.controlBtnSm} onPress={toggleSpeaker} hitSlop={8}>
-            <MaterialIcons name={speakerOn ? 'volume-up' : 'volume-down'} size={20} color={speakerOn ? Colors.primary : Colors.textSecondary} />
-            <Text style={[styles.controlLabelSm, speakerOn && { color: Colors.primary }]}>Altavoz</Text>
-          </Pressable>
-        </View>
+        <CallControlBar
+          isMuted={isMuted}
+          onToggleMute={toggleMute}
+          speakerOn={speakerOn}
+          onToggleSpeaker={toggleSpeaker}
+          onHangup={handleEndCall}
+          showCamera={false}
+          showSwitchCamera={false}
+        />
       </View>
     </View>
   );
@@ -284,14 +286,5 @@ const styles = StyleSheet.create({
   errorText:            { color: Colors.secondary, fontSize: FontSize.xs, textAlign: 'center', paddingHorizontal: Spacing.lg },
   localPreview:         { position: 'absolute', top: 180, right: Spacing.lg, width: 90, height: 120, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: Colors.border, zIndex: 10 },
   localPreviewLabel:    { position: 'absolute', bottom: 4, left: 0, right: 0, textAlign: 'center', color: '#fff', fontSize: 10, backgroundColor: 'rgba(0,0,0,0.5)' },
-  controls:             { paddingHorizontal: Spacing.xl, gap: Spacing.lg },
-  controlRow:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  controlRow2:          { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
-  controlGroup:         { alignItems: 'center', gap: Spacing.xs, width: 80 },
-  controlBtn:           { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
-  controlBtnSm:         { alignItems: 'center', gap: 4, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md },
-  controlBtnActive:     { backgroundColor: Colors.textPrimary },
-  endCallBtn:           { width: 76, height: 76, borderRadius: 38, backgroundColor: Colors.secondary, alignItems: 'center', justifyContent: 'center' },
-  controlLabel:         { color: Colors.textSubtle, fontSize: 11 },
-  controlLabelSm:       { color: Colors.textSubtle, fontSize: 11 },
+  controls:             { paddingHorizontal: Spacing.md },
 });

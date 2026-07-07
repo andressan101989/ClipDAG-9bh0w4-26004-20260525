@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
+import { CallControlBar } from '@/components/feature/CallControlBar';
 import { getSupabaseClient } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
 import { useAgoraEngine } from '@/hooks/useAgoraEngine';
@@ -55,6 +56,41 @@ export default function GroupCallScreen() {
     isMuted, isCameraOff, localVideoReady, speakerOn,
     join, leave, toggleMute, toggleCamera, switchCamera, toggleSpeaker,
   } = useAgoraEngine({ channelName: roomId ?? null, uid: myUid, role: 'publisher', profile: 'communication' });
+
+  const leaveRoom = useCallback(async () => {
+    if (endedRef.current) return;
+    endedRef.current = true;
+    await leave();
+    try {
+      await presenceRef.current?.untrack();
+      presenceRef.current?.unsubscribe();
+    } catch { /* ignore */ }
+    if (mountedRef.current) router.back();
+  }, [leave, router]);
+
+  useEffect(() => {
+    if (!roomId || !user?.id) return;
+
+    if (isCreator) {
+      supabase
+        .from('group_call_rooms')
+        .upsert({ id: roomId, host_id: user.id, status: 'active' })
+        .then(({ error }) => {
+          if (error) console.warn('[GROUP-CALL] room upsert failed', error);
+        });
+    }
+
+    const roomChannel = supabase.channel(`group-room:${roomId}`)
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'group_call_rooms', filter: `id=eq.${roomId}`,
+      }, (payload: any) => {
+        const row = payload.new as { status?: string };
+        if (row.status === 'ended') leaveRoom();
+      })
+      .subscribe();
+
+    return () => { roomChannel.unsubscribe(); };
+  }, [roomId, user?.id, isCreator, leaveRoom, supabase]);
 
   // ── Presence: gate join at MAX_PARTICIPANTS, map uid → username/avatar ────
   useEffect(() => {
@@ -116,15 +152,14 @@ export default function GroupCallScreen() {
 
   // ── Leave ─────────────────────────────────────────────────────────────────
   const handleEndCall = useCallback(async () => {
-    if (endedRef.current) return;
-    endedRef.current = true;
-    await leave();
-    try {
-      await presenceRef.current?.untrack();
-      presenceRef.current?.unsubscribe();
-    } catch { /* ignore */ }
-    router.back();
-  }, [leave, router]);
+    if (isCreator && roomId) {
+      await supabase
+        .from('group_call_rooms')
+        .update({ status: 'ended', ended_at: new Date().toISOString() })
+        .eq('id', roomId);
+    }
+    await leaveRoom();
+  }, [isCreator, roomId, leaveRoom, supabase]);
 
   useEffect(() => () => {
     if (!endedRef.current) {
@@ -225,24 +260,18 @@ export default function GroupCallScreen() {
 
       {/* ── Controls ──────────────────────────────────────────────────────── */}
       <View style={[styles.controls, { paddingBottom: insets.bottom + Spacing.xl }]}>
-        <View style={styles.controlRow}>
-          <Pressable style={[styles.controlBtn, isMuted && styles.controlBtnActive]} onPress={toggleMute} hitSlop={8}>
-            <MaterialIcons name={isMuted ? 'mic-off' : 'mic'} size={22} color={isMuted ? '#000' : '#fff'} />
-          </Pressable>
-          <Pressable style={[styles.controlBtn, isCameraOff && styles.controlBtnActive]} onPress={toggleCamera} hitSlop={8}>
-            <MaterialIcons name={isCameraOff ? 'videocam-off' : 'videocam'} size={22} color={isCameraOff ? '#000' : '#fff'} />
-          </Pressable>
-          <Pressable style={styles.controlBtn} onPress={switchCamera} hitSlop={8}>
-            <MaterialIcons name="flip-camera-ios" size={22} color="#fff" />
-          </Pressable>
-          <Pressable style={styles.controlBtnSm} onPress={toggleSpeaker} hitSlop={8}>
-            <MaterialIcons name={speakerOn ? 'volume-up' : 'volume-down'} size={20} color={speakerOn ? Colors.primary : Colors.textSecondary} />
-            <Text style={[styles.controlLabelSm, speakerOn && { color: Colors.primary }]}>Altavoz</Text>
-          </Pressable>
-          <Pressable style={styles.endCallBtn} onPress={handleEndCall} hitSlop={4}>
-            <MaterialIcons name="call-end" size={26} color="#fff" />
-          </Pressable>
-        </View>
+        <CallControlBar
+          isMuted={isMuted}
+          onToggleMute={toggleMute}
+          isCameraOff={isCameraOff}
+          onToggleCamera={toggleCamera}
+          speakerOn={speakerOn}
+          onToggleSpeaker={toggleSpeaker}
+          onHangup={handleEndCall}
+          onSwitchCamera={switchCamera}
+          showCamera
+          showSwitchCamera
+        />
       </View>
 
       {/* ── Participant list ─────────────────────────────────────────────── */}
@@ -313,16 +342,7 @@ const styles = StyleSheet.create({
   },
   tileLabelText: { color: '#fff', fontSize: 10, fontWeight: FontWeight.medium, flexShrink: 1 },
 
-  controls:   { paddingHorizontal: Spacing.xl, paddingTop: Spacing.md },
-  controlRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.lg },
-  controlBtn: {
-    width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.12)',
-    alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
-  },
-  controlBtnSm: { alignItems: 'center', gap: 4, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md },
-  controlBtnActive: { backgroundColor: Colors.textPrimary },
-  controlLabelSm: { color: Colors.textSubtle, fontSize: 11 },
-  endCallBtn: { width: 60, height: 60, borderRadius: 30, backgroundColor: Colors.secondary, alignItems: 'center', justifyContent: 'center' },
+  controls:   { paddingHorizontal: Spacing.md, paddingTop: Spacing.md },
 
   fullTitle: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
   fullSub:   { color: Colors.textSecondary, fontSize: FontSize.sm, textAlign: 'center' },
