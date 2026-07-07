@@ -16,6 +16,7 @@ import {
   View, Text, Pressable, StyleSheet, FlatList, TextInput, ActivityIndicator, Dimensions,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -28,7 +29,7 @@ import { RtcSurfaceView, useridToAgoraUid, isAgoraAvailable } from '@/services/a
 const POLL_INTERVAL_MS = 3000;
 const MAX_MESSAGES     = 50;
 const REQUEST_TO_JOIN_TEXT = 'quiere subir al streaming';
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface ChatMessage {
   id: string;
@@ -208,7 +209,7 @@ export default function LiveBroadcasterScreen() {
   }, [user, streamId, supabase]);
 
   const formatLiveDuration = (seconds: number) =>
-    `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
+    `${Math.floor(seconds / 3600).toString().padStart(2, '0')}:${Math.floor((seconds % 3600) / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
 
   // ── Pre-live: title prompt ───────────────────────────────────────────────
   if (!live) {
@@ -264,8 +265,11 @@ export default function LiveBroadcasterScreen() {
         </View>
       )}
 
+      <LinearGradient colors={['rgba(0,0,0,0.45)', 'transparent']} style={styles.topShade} pointerEvents="none" />
+      <LinearGradient colors={['transparent', 'rgba(0,0,0,0.6)']} style={styles.bottomShade} pointerEvents="none" />
+
       {RtcSurfaceView && remoteUids.length > 0 ? (
-        <View style={[styles.remoteStrip, { top: insets.top + 78 }]}>
+        <View style={styles.remoteStrip}>
           {remoteUids.map(uid => (
             <View key={uid} style={styles.remoteTile}>
               <RtcSurfaceView canvas={{ uid }} style={styles.remoteVideo} />
@@ -276,20 +280,32 @@ export default function LiveBroadcasterScreen() {
       ) : null}
 
       {/* ── Header overlay ────────────────────────────────────────────────── */}
-      <View style={[styles.header, { top: insets.top + Spacing.sm }]}>
-        <View style={styles.streamBadge}>
-          <View style={styles.streamTitleRow}>
-            <View style={styles.liveBadge}>
-              <View style={styles.liveDot} />
-              <Text style={styles.liveText}>EN VIVO</Text>
-            </View>
-            <Text style={styles.liveTimer}>{formatLiveDuration(liveSeconds)}</Text>
-          </View>
-          <Text style={styles.streamTitle} numberOfLines={1}>{title.trim()}</Text>
-          <View style={styles.streamMetaRow}>
-            <MaterialIcons name="visibility" size={13} color="#fff" />
-            <Text style={styles.viewerChipText}>{viewerCount.toLocaleString()} viewers</Text>
-          </View>
+      <View style={[styles.header, { top: insets.top + 8 }]}>
+        <View style={styles.avatar}><Text style={styles.avatarText}>{(user?.username || user?.email || 'H').charAt(0).toUpperCase()}</Text></View>
+        <View style={styles.hostInfo}>
+          <Text style={styles.hostName} numberOfLines={1}>{user?.username || user?.email?.split('@')[0] || 'Host'}</Text>
+          <Text style={styles.hostHandle} numberOfLines={1}>Anfitrión</Text>
+        </View>
+        <View style={styles.liveBadge}><View style={styles.liveDot} /><Text style={styles.liveText}>EN VIVO</Text></View>
+        <View style={styles.headerMetric}>
+          <MaterialIcons name="visibility" size={14} color="#fff" />
+          <Text style={styles.viewerChipText}>{viewerCount.toLocaleString()} viendo</Text>
+        </View>
+        <View style={styles.headerDivider} />
+        <View style={styles.headerMetric}>
+          <MaterialIcons name="schedule" size={14} color="#fff" />
+          <Text style={styles.liveTimer}>{formatLiveDuration(liveSeconds)}</Text>
+        </View>
+        <Pressable style={styles.headerEndBtn} onPress={endBroadcast} hitSlop={8}>
+          <MaterialIcons name="close" size={22} color="#fff" />
+        </Pressable>
+      </View>
+
+      <View style={[styles.titleBlock, { top: insets.top + 88 }]}>
+        <Text style={styles.streamTitle} numberOfLines={2}>{title.trim()}</Text>
+        <View style={styles.conversationChip}>
+          <MaterialIcons name="chat-bubble-outline" size={14} color="#fff" />
+          <Text style={styles.conversationText}>Conversación</Text>
         </View>
       </View>
 
@@ -391,58 +407,84 @@ const styles = StyleSheet.create({
 
   videoStream:      { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
   videoPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surface },
-  remoteStrip: { position: 'absolute', right: Spacing.md, gap: Spacing.sm, zIndex: 8 },
-  remoteTile: { width: 104, height: 140, borderRadius: 12, overflow: 'hidden', backgroundColor: '#000', borderWidth: 1, borderColor: 'rgba(255,255,255,0.45)' },
+  topShade: { position: 'absolute', top: 0, left: 0, right: 0, height: 170, zIndex: 2 },
+  bottomShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 320, zIndex: 2 },
+  remoteStrip: { position: 'absolute', right: 12, bottom: 116, width: 140, gap: 12, zIndex: 8 },
+  remoteTile: { width: 140, height: 108, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000', borderWidth: 1.5, borderColor: 'rgba(236,72,153,0.62)' },
   remoteVideo: { flex: 1 },
-  remoteLabel: { position: 'absolute', left: 6, right: 6, bottom: 6, color: '#fff', fontSize: 10, fontWeight: FontWeight.semibold, textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: Radius.full, paddingVertical: 2 },
+  remoteLabel: { position: 'absolute', left: 8, bottom: 7, color: '#fff', fontSize: 11, fontWeight: FontWeight.bold },
 
   header: {
-    position: 'absolute', left: Spacing.md, right: Spacing.md,
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, zIndex: 10,
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    height: 68,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    zIndex: 10,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(20,20,25,0.65)',
+    borderRadius: 32,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
   },
-  streamBadge: { maxWidth: '76%', backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: Radius.lg, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
-  streamTitleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(124,92,255,0.7)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+  avatarText: { color: '#fff', fontSize: 16, fontWeight: FontWeight.bold },
+  hostInfo: { flex: 1 },
+  hostName: { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.bold },
+  hostHandle: { color: 'rgba(255,255,255,0.65)', fontSize: 11 },
   liveBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
-    backgroundColor: Colors.error, borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 4,
+    backgroundColor: '#FF2D55', borderRadius: Radius.full, paddingHorizontal: 9, paddingVertical: 5,
   },
   liveDot:  { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
   liveText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.bold },
-  liveTimer: { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
-  streamTitle: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold, marginTop: 6 },
-  streamMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
-  viewerChipText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.semibold },
+  headerMetric: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  headerDivider: { width: 1, height: 24, backgroundColor: 'rgba(255,255,255,0.16)' },
+  liveTimer: { color: '#fff', fontSize: 11, fontWeight: FontWeight.semibold, maxWidth: SCREEN_WIDTH < 380 ? 58 : 74 },
+  viewerChipText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.semibold, maxWidth: SCREEN_WIDTH < 380 ? 58 : 82 },
+  headerEndBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,45,85,0.82)', alignItems: 'center', justifyContent: 'center' },
+  titleBlock: { position: 'absolute', left: 16, right: 90, zIndex: 9 },
+  streamTitle: { color: '#fff', fontSize: 24, fontWeight: FontWeight.bold },
+  conversationChip: { marginTop: 10, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 18, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  conversationText: { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
 
   errorBanner: { position: 'absolute', left: Spacing.md, right: Spacing.md, zIndex: 10, backgroundColor: 'rgba(255,45,85,0.15)', borderRadius: Radius.sm, padding: Spacing.xs },
   errorText: { color: Colors.secondary, fontSize: 11, textAlign: 'center' },
 
   chatArea: {
     position: 'absolute',
-    left: Spacing.md,
-    width: '62%',
-    bottom: 100,
-    maxHeight: SCREEN_HEIGHT * 0.3,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    borderRadius: Radius.md,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
+    left: 12,
+    width: SCREEN_WIDTH * 0.56,
+    bottom: 108,
+    maxHeight: SCREEN_HEIGHT * 0.32,
+    backgroundColor: 'rgba(0,0,0,0.42)',
+    borderRadius: 22,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    zIndex: 7,
   },
 
   controls: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
+    position: 'absolute', bottom: 0, left: 12, right: 12,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.lg,
-    paddingTop: Spacing.sm,
-    backgroundColor: 'rgba(0,0,0,0.58)',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.12)',
+    height: 82,
+    paddingTop: 10,
+    backgroundColor: 'rgba(20,20,30,0.55)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 28,
+    zIndex: 9,
   },
   controlGroup: { alignItems: 'center', gap: 4 },
   controlBtn: {
-    width: 46, height: 46, borderRadius: 23, backgroundColor: 'rgba(255,255,255,0.15)',
-    alignItems: 'center', justifyContent: 'center',
+    width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.14)',
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
   },
   controlBtnActive: { backgroundColor: Colors.textPrimary },
-  controlLabel: { color: Colors.textSecondary, fontSize: 11, fontWeight: FontWeight.medium },
-  endBtn: { backgroundColor: '#FF2D55', borderRadius: Radius.full, paddingHorizontal: 24, paddingVertical: 14 },
+  controlLabel: { color: '#fff', fontSize: 11, fontWeight: FontWeight.medium },
+  endBtn: { height: 58, backgroundColor: '#FF2D55', borderRadius: Radius.full, paddingHorizontal: 24, alignItems: 'center', justifyContent: 'center' },
   endBtnText: { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.bold },
 });

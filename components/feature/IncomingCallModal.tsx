@@ -16,6 +16,8 @@ import { useAgoraCallSignaling } from '@/contexts/AgoraCallContext';
 
 export function IncomingCallModal() {
   const { incomingCall, acceptIncomingCall, rejectIncomingCall } = useAgoraCallSignaling();
+  const incomingCallType = incomingCall?.callType ?? (incomingCall as any)?.call_type;
+  const isAudioCall = incomingCallType === 'audio';
 
   return (
     <Modal visible={!!incomingCall} transparent animationType="fade" statusBarTranslucent>
@@ -31,8 +33,11 @@ export function IncomingCallModal() {
                 </Text>
               )}
             </View>
+            <View style={styles.callTypeBadge}>
+              <MaterialIcons name={isAudioCall ? 'call' : 'videocam'} size={22} color="#fff" />
+            </View>
             <Text style={styles.callerName}>@{incomingCall.callerName}</Text>
-            <Text style={styles.subtitle}>Videollamada entrante...</Text>
+            <Text style={styles.subtitle}>{isAudioCall ? 'Llamada de audio entrante...' : 'Videollamada entrante...'}</Text>
             <View style={styles.actionsRow}>
               <View style={styles.actionCol}>
                 <Pressable style={[styles.actionBtn, styles.rejectBtn]} onPress={rejectIncomingCall}>
@@ -42,7 +47,7 @@ export function IncomingCallModal() {
               </View>
               <View style={styles.actionCol}>
                 <Pressable style={[styles.actionBtn, styles.acceptBtn]} onPress={acceptIncomingCall}>
-                  <MaterialIcons name="videocam" size={26} color="#fff" />
+                  <MaterialIcons name={isAudioCall ? 'call' : 'videocam'} size={26} color="#fff" />
                 </Pressable>
                 <Text style={styles.actionLabel}>Aceptar</Text>
               </View>
@@ -70,6 +75,11 @@ const styles = StyleSheet.create({
   },
   avatarImg:     { width: 84, height: 84, borderRadius: 42 },
   avatarInitial: { color: Colors.primary, fontSize: 32, fontWeight: FontWeight.bold },
+  callTypeBadge: {
+    width: 42, height: 42, borderRadius: 21, marginTop: -34,
+    backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: '#18181F',
+  },
   callerName:    { color: Colors.textPrimary, fontSize: FontSize.xl, fontWeight: FontWeight.bold },
   subtitle:      { color: Colors.textSecondary, fontSize: FontSize.sm },
   actionsRow:    { flexDirection: 'row', gap: Spacing.xxl, marginTop: Spacing.md },

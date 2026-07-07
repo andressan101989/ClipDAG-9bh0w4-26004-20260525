@@ -8,10 +8,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList, TextInput,
-  KeyboardAvoidingView, Platform, ActivityIndicator,
+  KeyboardAvoidingView, Platform, ActivityIndicator, Dimensions,
   Alert,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -25,6 +26,7 @@ const POLL_INTERVAL_MS = 3000;
 const MAX_MESSAGES     = 50;
 const SPAM_THROTTLE_MS = 2500;
 const REQUEST_TO_JOIN_TEXT = 'quiere subir al streaming';
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface StreamSession {
   id: string;
@@ -43,13 +45,11 @@ interface ChatMessage {
   createdAt: string;
 }
 
-interface GiftOption { id: string; emoji: string; label: string; cost: number; color: string; }
-
-const GIFTS: GiftOption[] = [
-  { id: 'heart',   emoji: '\u2764\uFE0F', label: 'Corazon',  cost: 10,   color: '#FF2D78' },
-  { id: 'star',    emoji: '\u2B50',       label: 'Estrella', cost: 50,   color: '#FFB800' },
-  { id: 'diamond', emoji: '\uD83D\uDC8E', label: 'Diamante', cost: 1000, color: '#00D4FF' },
-  { id: 'crown',   emoji: '\uD83D\uDC51', label: 'Corona',   cost: 500,  color: '#FFD166' },
+const LIVE_GIFT_BAR = [
+  { id: 'star', emoji: '\u2B50', label: 'Estrella', cost: 10 },
+  { id: 'crown', emoji: '\uD83D\uDC51', label: 'Corona', cost: 100 },
+  { id: 'diamond', emoji: '\uD83D\uDC8E', label: 'Diamante', cost: 500 },
+  { id: 'rose', emoji: '\uD83C\uDF39', label: 'Rosa', cost: 10 },
 ];
 
 function getDisplayUsername(user: any): string {
@@ -73,6 +73,7 @@ export default function LiveWatchScreen() {
   const [sending,   setSending]   = useState(false);
   const [requestSent, setRequestSent] = useState(false);
   const [promotedToPublisher, setPromotedToPublisher] = useState(false);
+  const [watchSeconds, setWatchSeconds] = useState(0);
 
   const {
     engineReady, remoteUids, error, join, leave, promoteToPublisher,
@@ -122,6 +123,12 @@ export default function LiveWatchScreen() {
   useEffect(() => {
     if (session?.status === 'live' && engineReady) join();
   }, [session?.status, engineReady]);
+
+  useEffect(() => {
+    if (session?.status !== 'live') return;
+    const timer = setInterval(() => setWatchSeconds(s => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, [session?.status]);
 
   // ── Viewer count +1 / -1 ─────────────────────────────────────────────────
   // Atomic RPC — the previous read-then-write (select viewer_count, then
@@ -259,6 +266,9 @@ export default function LiveWatchScreen() {
     }
   }, [user, streamId, requestSent, promotedToPublisher, supabase]);
 
+  const formatLiveDuration = (seconds: number) =>
+    `${Math.floor(seconds / 3600).toString().padStart(2, '0')}:${Math.floor((seconds % 3600) / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
+
   if (loading) {
     return (
       <SafeAreaView style={styles.loadingScreen}>
@@ -283,6 +293,7 @@ export default function LiveWatchScreen() {
   }
 
   const remoteUid = remoteUids[0];
+  const coHostUids = remoteUids.slice(1);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -298,21 +309,35 @@ export default function LiveWatchScreen() {
       )}
 
       {/* ── Header ────────────────────────────────────────────────────────── */}
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
-          <MaterialIcons name="arrow-back" size={22} color="#fff" />
-        </Pressable>
+      <LinearGradient colors={['rgba(0,0,0,0.45)', 'transparent']} style={styles.topShade} pointerEvents="none" />
+      <LinearGradient colors={['transparent', 'rgba(0,0,0,0.58)']} style={styles.bottomShade} pointerEvents="none" />
+
+      <View style={[styles.header, { top: insets.top + 8 }]}>
+        <View style={styles.avatar}><Text style={styles.avatarText}>{session.hostUsername.charAt(0).toUpperCase()}</Text></View>
         <View style={styles.hostInfo}>
-          <Text style={styles.hostName}>@{session.hostUsername}</Text>
-          <Text style={styles.hostTitle} numberOfLines={1}>{session.title}</Text>
-          <View style={styles.hostMetaRow}>
-            <MaterialIcons name="visibility" size={13} color="#fff" />
-            <Text style={styles.hostMetaText}>{session.viewerCount.toLocaleString()} viewers</Text>
-          </View>
+          <Text style={styles.hostName} numberOfLines={1}>{session.hostUsername}</Text>
+          <Text style={styles.hostTitle} numberOfLines={1}>@{session.hostUsername}</Text>
         </View>
-        <View style={styles.liveBadge}>
-          <View style={styles.liveDot} />
-          <Text style={styles.liveText}>EN VIVO</Text>
+        <View style={styles.liveBadge}><View style={styles.liveDot} /><Text style={styles.liveText}>EN VIVO</Text></View>
+        <View style={styles.headerMetric}>
+          <MaterialIcons name="visibility" size={14} color="#fff" />
+          <Text style={styles.headerMetricText}>{session.viewerCount.toLocaleString()} viendo</Text>
+        </View>
+        <View style={styles.headerDivider} />
+        <View style={styles.headerMetric}>
+          <MaterialIcons name="schedule" size={14} color="#fff" />
+          <Text style={styles.headerMetricText}>{formatLiveDuration(watchSeconds)}</Text>
+        </View>
+        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.closeBtn}>
+          <MaterialIcons name="close" size={22} color="#fff" />
+        </Pressable>
+      </View>
+
+      <View style={[styles.titleBlock, { top: insets.top + 88 }]}>
+        <Text style={styles.streamTitle} numberOfLines={2}>{session.title}</Text>
+        <View style={styles.conversationChip}>
+          <MaterialIcons name="chat-bubble-outline" size={14} color="#fff" />
+          <Text style={styles.conversationText}>Conversación</Text>
         </View>
       </View>
 
@@ -321,6 +346,33 @@ export default function LiveWatchScreen() {
       ) : null}
 
       {/* ── Chat + controls ──────────────────────────────────────────────── */}
+      <View style={styles.actionRail}>
+        <View style={styles.actionButton}>
+          <MaterialIcons name="favorite" size={25} color="#fff" />
+          <Text style={styles.actionCount}>Me gusta</Text>
+        </View>
+        <View style={styles.actionButton}>
+          <MaterialIcons name="ios-share" size={24} color="#fff" />
+          <Text style={styles.actionCount}>Compartir</Text>
+        </View>
+        <View style={styles.actionButton}>
+          <MaterialIcons name="card-giftcard" size={24} color="#fff" />
+          <Text style={styles.actionCount}>Regalos</Text>
+        </View>
+      </View>
+
+      {coHostUids.length > 0 && RtcSurfaceView ? (
+        <View style={styles.coHostStrip}>
+          {coHostUids.slice(0, 2).map(uid => (
+            <View key={uid} style={styles.coHostTile}>
+              <RtcSurfaceView canvas={{ uid }} style={styles.coHostVideo} />
+              <View style={styles.coHostMic}><MaterialIcons name="mic" size={13} color="#fff" /></View>
+              <Text style={styles.coHostName}>Invitado</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
       <View style={styles.bottomSection}>
         <FlatList
           ref={chatRef}
@@ -341,24 +393,7 @@ export default function LiveWatchScreen() {
         />
 
         <View style={styles.giftBar}>
-          <Pressable
-            style={[
-              styles.requestBtn,
-              (requestSent || promotedToPublisher || !user) && styles.requestBtnDisabled,
-            ]}
-            onPress={requestToJoin}
-            disabled={requestSent || promotedToPublisher || !user}
-          >
-            <MaterialIcons
-              name={promotedToPublisher ? 'videocam' : 'pan-tool'}
-              size={18}
-              color={promotedToPublisher ? '#fff' : Colors.primary}
-            />
-            <Text style={styles.requestText}>
-              {promotedToPublisher ? 'En vivo' : requestSent ? 'Solicitud enviada' : 'Solicitar subir'}
-            </Text>
-          </Pressable>
-          {GIFTS.map(g => (
+          {LIVE_GIFT_BAR.map(g => (
             <Pressable
               key={g.id}
               style={[styles.giftBtn, styles.giftBtnDisabled]}
@@ -366,9 +401,13 @@ export default function LiveWatchScreen() {
             >
               <Text style={styles.giftEmoji}>{g.emoji}</Text>
               <Text style={styles.giftLabel}>{g.label}</Text>
-              <Text style={styles.giftComingSoon}>Próximamente</Text>
+              <Text style={styles.giftCost}>{g.cost}</Text>
             </Pressable>
           ))}
+          <Pressable style={[styles.giftBtn, styles.giftBtnDisabled]} disabled>
+            <MaterialIcons name="add" size={21} color="#fff" />
+            <Text style={styles.giftLabel}>Más</Text>
+          </Pressable>
         </View>
 
         <KeyboardAvoidingView
@@ -379,8 +418,8 @@ export default function LiveWatchScreen() {
             style={styles.input}
             value={chatInput}
             onChangeText={setChatInput}
-            placeholder={user ? 'Escribe un mensaje...' : 'Inicia sesión para chatear'}
-            placeholderTextColor="rgba(255,255,255,0.35)"
+            placeholder="Escribe un mensaje..."
+            placeholderTextColor="rgba(255,255,255,0.55)"
             returnKeyType="send"
             onSubmitEditing={sendMessage}
             maxLength={200}
@@ -394,6 +433,18 @@ export default function LiveWatchScreen() {
             hitSlop={8}
           >
             {sending ? <ActivityIndicator size="small" color="#fff" /> : <MaterialIcons name="send" size={18} color="#fff" />}
+          </Pressable>
+          <Pressable
+            style={[styles.requestBtn, (requestSent || promotedToPublisher || !user) && styles.requestBtnDisabled]}
+            onPress={requestToJoin}
+            disabled={requestSent || promotedToPublisher || !user}
+          >
+            <LinearGradient colors={['#EC4899', '#7C3AED']} style={styles.requestGradient}>
+              <MaterialIcons name={promotedToPublisher ? 'videocam' : 'person-add-alt-1'} size={18} color="#fff" />
+              <Text style={styles.requestText}>
+                {promotedToPublisher ? 'En vivo' : requestSent ? 'Enviada' : 'Solicitar subir'}
+              </Text>
+            </LinearGradient>
           </Pressable>
         </KeyboardAvoidingView>
       </View>
@@ -421,30 +472,39 @@ const styles = StyleSheet.create({
   videoPlaceholder: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, backgroundColor: Colors.surface },
   waitingText: { color: Colors.textSecondary, fontSize: FontSize.sm },
 
+  topShade: { position: 'absolute', top: 0, left: 0, right: 0, height: 170, zIndex: 2 },
+  bottomShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 320, zIndex: 2 },
   header: {
     position: 'absolute',
-    top: Spacing.sm,
-    left: Spacing.md,
-    right: Spacing.md,
+    left: 12,
+    right: 12,
+    height: 68,
     zIndex: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.sm,
-    padding: Spacing.sm,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    borderRadius: Radius.lg,
+    gap: 8,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(20,20,25,0.65)',
+    borderRadius: 32,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.12)',
   },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
+  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(124,92,255,0.7)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+  avatarText: { color: '#fff', fontSize: 16, fontWeight: FontWeight.bold },
+  closeBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
   hostInfo: { flex: 1 },
   hostName: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
-  hostTitle: { color: Colors.textSecondary, fontSize: FontSize.xs },
-  hostMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
-  hostMetaText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.medium },
-  liveBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.error, borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 4 },
+  hostTitle: { color: 'rgba(255,255,255,0.65)', fontSize: 11 },
+  headerMetric: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  headerMetricText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.semibold, maxWidth: SCREEN_WIDTH < 380 ? 58 : 82 },
+  headerDivider: { width: 1, height: 24, backgroundColor: 'rgba(255,255,255,0.16)' },
+  liveBadge: { minWidth: 76, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: '#FF2D55', borderRadius: Radius.full, paddingHorizontal: 9, paddingVertical: 5, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
   liveDot:  { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
   liveText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.bold },
+  titleBlock: { position: 'absolute', left: 16, right: 90, zIndex: 9 },
+  streamTitle: { color: '#fff', fontSize: 24, fontWeight: FontWeight.bold },
+  conversationChip: { marginTop: 10, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 18, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  conversationText: { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
 
   statsRow: { flexDirection: 'row', gap: Spacing.sm, paddingHorizontal: Spacing.md, marginBottom: 4 },
   statChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 3 },
@@ -453,34 +513,48 @@ const styles = StyleSheet.create({
   errorBanner: { marginHorizontal: Spacing.md, backgroundColor: 'rgba(255,45,85,0.15)', borderRadius: Radius.sm, padding: Spacing.xs },
   errorText: { color: Colors.secondary, fontSize: 11, textAlign: 'center' },
 
+  actionRail: { position: 'absolute', right: 12, top: SCREEN_HEIGHT * 0.28, gap: 15, zIndex: 9 },
+  actionButton: { width: 60, minHeight: 60, borderRadius: 30, backgroundColor: 'rgba(255,255,255,0.14)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center', gap: 2, paddingVertical: 8 },
+  actionButtonDisabled: { opacity: 0.6 },
+  actionCount: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
+  coHostStrip: { position: 'absolute', right: 12, bottom: 202, width: 138, gap: 12, zIndex: 8 },
+  coHostTile: { width: 138, height: 104, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000', borderWidth: 1.5, borderColor: 'rgba(236,72,153,0.62)' },
+  coHostVideo: { flex: 1 },
+  coHostMic: { position: 'absolute', top: 7, right: 7, width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.48)', alignItems: 'center', justifyContent: 'center' },
+  coHostName: { position: 'absolute', left: 8, bottom: 7, color: '#fff', fontSize: 11, fontWeight: FontWeight.bold },
   bottomSection: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
-    maxHeight: 300,
+    maxHeight: 360,
+    zIndex: 7,
   },
   chatList: {
     flex: 1,
-    maxHeight: 155,
-    marginHorizontal: Spacing.md,
-    marginBottom: Spacing.sm,
-    borderRadius: Radius.md,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    maxHeight: SCREEN_HEIGHT * 0.34,
+    width: SCREEN_WIDTH * 0.56,
+    marginLeft: 12,
+    marginBottom: 116,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.42)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
   },
 
-  giftBar: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: Spacing.md, paddingVertical: 6, backgroundColor: 'rgba(0,0,0,0.55)', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)' },
-  requestBtn: { flex: 1.4, height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(124,92,255,0.22)', borderRadius: Radius.full, paddingHorizontal: 10, borderWidth: 1.5, borderColor: Colors.primary },
+  giftBar: { position: 'absolute', left: 12, right: 12, bottom: 82, height: 98, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, backgroundColor: 'rgba(0,0,0,0.48)', borderRadius: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  requestBtn: { width: SCREEN_WIDTH < 380 ? 128 : 148, height: 58, borderRadius: Radius.full, overflow: 'hidden' },
+  requestGradient: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 10 },
   requestBtnDisabled: { opacity: 0.65 },
-  requestText: { color: Colors.textPrimary, fontSize: 11, fontWeight: FontWeight.bold, textAlign: 'center' },
-  giftBtn: { width: 48, height: 44, alignItems: 'center', justifyContent: 'center', gap: 1, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: Radius.md, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  requestText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.bold, textAlign: 'center' },
+  giftBtn: { width: 52, height: 72, alignItems: 'center', justifyContent: 'center', gap: 2, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   giftBtnDisabled: { opacity: 0.45 },
-  giftEmoji: { fontSize: 19 },
-  giftLabel: { display: 'none', color: Colors.textSecondary, fontSize: 10 },
-  giftComingSoon: { display: 'none', color: Colors.textSubtle, fontSize: 9, fontWeight: FontWeight.bold },
+  giftEmoji: { fontSize: 21 },
+  giftLabel: { color: '#fff', fontSize: 9, fontWeight: FontWeight.semibold },
+  giftCost: { color: 'rgba(255,255,255,0.7)', fontSize: 9, fontWeight: FontWeight.bold },
 
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: Spacing.md, paddingTop: 8, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)', backgroundColor: 'rgba(0,0,0,0.72)' },
-  input: { flex: 1, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: Radius.full, paddingHorizontal: 14, paddingVertical: 10, color: '#fff', fontSize: FontSize.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
-  sendBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+  inputRow: { position: 'absolute', left: 12, right: 12, bottom: 10, height: 62, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  input: { flex: 1, height: 58, backgroundColor: 'rgba(255,255,255,0.10)', borderRadius: Radius.full, paddingHorizontal: 18, color: '#fff', fontSize: FontSize.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  sendBtn: { width: 46, height: 46, borderRadius: 23, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { opacity: 0.4 },
 });

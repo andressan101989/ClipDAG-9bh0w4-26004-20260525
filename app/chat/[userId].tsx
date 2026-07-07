@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, FlatList, Pressable, TextInput, StyleSheet,
-  KeyboardAvoidingView, Platform, ActivityIndicator, Modal,
-  ScrollView, NativeScrollEvent, NativeSyntheticEvent,
+  KeyboardAvoidingView, Keyboard, Platform, ActivityIndicator, Modal,
+  ScrollView, NativeSyntheticEvent,
 } from 'react-native';
 import { Image } from '@/components/ui/SafeImage';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
@@ -25,9 +25,8 @@ import type { Message } from '@/contexts/MessagesContext';
 
 const PREMIUM_COLOR  = '#FF9D00';
 const PREMIUM_COLOR2 = '#FF5A00';
-const INPUT_MIN_HEIGHT = 42;
+const INPUT_MIN_HEIGHT = 44;
 const INPUT_MAX_HEIGHT = 120;
-const SCROLL_END_THRESHOLD = 48;
 
 // ── Premium DM Sheet ──────────────────────────────────────────────────────────
 interface PremiumDMSheetProps {
@@ -219,10 +218,9 @@ export default function ChatScreen() {
   const [isSending,    setIsSending]    = useState(false);
   const [isUploading,  setIsUploading]  = useState(false);
   const [inputHeight,  setInputHeight]  = useState(INPUT_MIN_HEIGHT);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [composerHeight, setComposerHeight] = useState(72);
   const flatListRef = useRef<FlatList>(null);
-  const isAtEndRef = useRef(true);
-  const previousMessageCountRef = useRef(0);
-  const forceScrollToEndRef = useRef(false);
   const pollKey = `chat:${partnerId ?? 'unknown'}`;
 
   // Premium DM state
@@ -299,14 +297,14 @@ export default function ChatScreen() {
     markConversationRead(partnerId);
   }, [partnerId]);
 
-  const scrollToEnd = useCallback((animated: boolean) => {
-    requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
-  }, []);
+  const scrollToLatest = useCallback((animated = true) => {
+    requestAnimationFrame(() => {
+      flatListRef.current?.scrollToEnd({ animated });
+    });
 
-  const handleListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    isAtEndRef.current =
-      contentOffset.y + layoutMeasurement.height >= contentSize.height - SCROLL_END_THRESHOLD;
+    setTimeout(() => {
+      flatListRef.current?.scrollToEnd({ animated });
+    }, 80);
   }, []);
 
   const handleInputContentSizeChange = useCallback((event: NativeSyntheticEvent<any>) => {
@@ -318,30 +316,36 @@ export default function ChatScreen() {
   }, []);
 
   useEffect(() => {
-    const previousCount = previousMessageCountRef.current;
-    previousMessageCountRef.current = chatMessages.length;
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, event => {
+      setKeyboardHeight(event.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
     if (chatMessages.length === 0) return;
-
-    const shouldScroll =
-      previousCount === 0 ||
-      forceScrollToEndRef.current ||
-      isAtEndRef.current;
-
-    if (shouldScroll) {
-      scrollToEnd(previousCount !== 0);
-      forceScrollToEndRef.current = false;
-    }
-  }, [chatMessages.length, scrollToEnd]);
+    scrollToLatest(true);
+  }, [chatMessages.length, keyboardHeight, inputHeight, composerHeight, scrollToLatest]);
 
   // ── Send regular message ──────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     if (!text.trim() || !partnerId || isSending) return;
     setIsSending(true);
-    forceScrollToEndRef.current = true;
     await sendMessage(partnerId, text.trim());
     setText('');
     setInputHeight(INPUT_MIN_HEIGHT);
     setIsSending(false);
+    scrollToLatest(true);
 
     // If creator responds to held premium DM, auto-release if there's a pending payment
     if (pendingPayment && user?.id) {
@@ -358,7 +362,7 @@ export default function ChatScreen() {
         );
       }
     }
-  }, [text, partnerId, isSending, sendMessage, pendingPayment, user?.id, supabase, walletData, showAlert]);
+  }, [text, partnerId, isSending, sendMessage, pendingPayment, user?.id, supabase, walletData, showAlert, scrollToLatest]);
 
   // ── Send premium DM ───────────────────────────────────────────────────────
   const handleSendPremiumDM = useCallback(async (messageText: string, amount: number) => {
@@ -374,13 +378,13 @@ export default function ChatScreen() {
       return;
     }
     walletData?.fullSync?.();
-    forceScrollToEndRef.current = true;
     loadConversation(partnerId);
+    scrollToLatest(true);
     // Update free DM quota if it was free
     if (data.is_free_dm && subStatus) {
       setSubStatus(prev => prev ? { ...prev, freeDmsRemaining: Math.max(0, prev.freeDmsRemaining - 1) } : prev);
     }
-  }, [partnerId, user?.id, supabase, walletData, loadConversation, subStatus, showAlert]);
+  }, [partnerId, user?.id, supabase, walletData, loadConversation, subStatus, showAlert, scrollToLatest]);
 
   // ── Release premium payment (creator manually taps "Cobrar") ────────────
   const handleReleasePremiumPayment = useCallback(async () => {
@@ -491,6 +495,8 @@ export default function ChatScreen() {
   const partnerName   = conversation?.partnerUsername || 'Usuario';
   const partnerAvatar = conversation?.partnerAvatar;
   const premiumEnabled = premiumConfig?.enabled && partnerId !== user?.id;
+  const composerBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
+  const composerClearance = composerBottom + composerHeight + 16;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -583,11 +589,8 @@ export default function ChatScreen() {
       ) : null}
 
       {/* ── Chat area ────────────────────────────────────────────────────── */}
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={0}
-      >
+      <View style={styles.chatBody}>
+        <View style={[styles.messagePane, { marginBottom: composerClearance }]}>
         {chatMessages.length === 0 ? (
           <View style={styles.emptyChat}>
             <LinearGradient colors={['#7C5CFF22', '#FF2D7811']} style={styles.emptyChatIconWrap}>
@@ -614,21 +617,31 @@ export default function ChatScreen() {
             data={chatMessages}
             keyExtractor={item => item.id}
             renderItem={renderMessage}
-            contentContainerStyle={[styles.messagesList, { paddingBottom: insets.bottom + 8 }]}
+            contentContainerStyle={styles.messagesList}
+            ListFooterComponent={<View style={{ height: 12 }} />}
             showsVerticalScrollIndicator={false}
-            onScroll={handleListScroll}
-            scrollEventThrottle={16}
-            onContentSizeChange={() => {
-              if (forceScrollToEndRef.current || isAtEndRef.current) {
-                scrollToEnd(false);
-                forceScrollToEndRef.current = false;
-              }
-            }}
+            keyboardShouldPersistTaps="handled"
+            onContentSizeChange={() => scrollToLatest(false)}
+            onLayout={() => scrollToLatest(false)}
           />
         )}
+        </View>
 
         {/* ── Input bar ──────────────────────────────────────────────────── */}
-        <View style={[styles.inputBar, { paddingBottom: insets.bottom + 8 }]}>
+        <View style={[
+          styles.inputBar,
+          {
+            bottom: composerBottom,
+            paddingBottom: 8,
+          },
+        ]}
+          onLayout={event => {
+            const nextHeight = event.nativeEvent.layout.height;
+            setComposerHeight(currentHeight =>
+              Math.abs(currentHeight - nextHeight) < 1 ? currentHeight : nextHeight
+            );
+          }}
+        >
           {/* Image picker */}
           <Pressable onPress={handlePickImage} hitSlop={8} style={styles.inputAction} disabled={isUploading}>
             {isUploading
@@ -677,7 +690,7 @@ export default function ChatScreen() {
             </LinearGradient>
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </View>
 
       {/* Premium DM sheet */}
       <PremiumDMSheet
@@ -743,6 +756,8 @@ const styles = StyleSheet.create({
   cobrarBtnText: { color: '#fff', fontSize: FontSize.xs, fontWeight: FontWeight.bold },
 
   // Empty state
+  chatBody: { flex: 1 },
+  messagePane: { flex: 1 },
   emptyChat: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.md, paddingHorizontal: Spacing.xl },
   emptyChatIconWrap: { width: 96, height: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center' },
   emptyChatName: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
@@ -773,15 +788,18 @@ const styles = StyleSheet.create({
 
   // Input bar
   inputBar: {
+    position: 'absolute', left: 0, right: 0,
     flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.sm,
-    paddingHorizontal: Spacing.md, paddingTop: Spacing.sm,
+    paddingHorizontal: 16, paddingTop: 8,
     borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.bg,
+    zIndex: 100,
+    elevation: 24,
   },
   inputAction: { width: 38, height: 42, alignItems: 'center', justifyContent: 'center' },
   input: {
-    flex: 1, minHeight: 42, maxHeight: 120,
+    flex: 1, minHeight: 44, maxHeight: 120,
     backgroundColor: Colors.surfaceElevated, borderRadius: Radius.xl,
-    paddingHorizontal: Spacing.md, paddingVertical: 11,
+    paddingHorizontal: 16, paddingVertical: 12,
     color: Colors.textPrimary, fontSize: FontSize.sm,
     borderWidth: 1, borderColor: Colors.border,
     textAlignVertical: 'top',
