@@ -14,6 +14,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList, TextInput, ActivityIndicator, Dimensions,
+  Keyboard, Platform,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -28,6 +29,7 @@ import { RtcSurfaceView, useridToAgoraUid, isAgoraAvailable } from '@/services/a
 
 const POLL_INTERVAL_MS = 3000;
 const MAX_MESSAGES     = 50;
+const SPAM_THROTTLE_MS = 2500;
 const REQUEST_TO_JOIN_TEXT = 'quiere subir al streaming';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -71,6 +73,10 @@ export default function LiveBroadcasterScreen() {
   const [viewerCount, setViewerCount] = useState(0);
   const [messages, setMessages]     = useState<ChatMessage[]>([]);
   const [liveSeconds, setLiveSeconds] = useState(0);
+  const [chatInput, setChatInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [composerHeight, setComposerHeight] = useState(72);
 
   const {
     engineReady, joined, error,
@@ -80,6 +86,7 @@ export default function LiveBroadcasterScreen() {
   const chatRef    = useRef<FlatList>(null);
   const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastMsgRef = useRef<string | null>(null);
+  const lastSentRef = useRef(0);
   const endedRef   = useRef(false);
   const mountedRef = useRef(true);
 
@@ -87,6 +94,38 @@ export default function LiveBroadcasterScreen() {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
+
+  const scrollToLatest = useCallback((animated = true) => {
+    requestAnimationFrame(() => {
+      chatRef.current?.scrollToEnd({ animated });
+    });
+
+    setTimeout(() => {
+      chatRef.current?.scrollToEnd({ animated });
+    }, 80);
+  }, []);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, event => {
+      setKeyboardHeight(event.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (messages.length === 0) return;
+    scrollToLatest(true);
+  }, [messages.length, keyboardHeight, composerHeight, scrollToLatest]);
 
   // ── Start broadcast: create live_sessions row, then join Agora ──────────
   const handleGoLive = useCallback(async () => {
@@ -145,10 +184,10 @@ export default function LiveBroadcasterScreen() {
         }));
         lastMsgRef.current = mData[mData.length - 1].created_at;
         setMessages(prev => [...prev, ...newMsgs].slice(-MAX_MESSAGES));
-        setTimeout(() => chatRef.current?.scrollToEnd({ animated: true }), 80);
+        scrollToLatest(true);
       }
     } catch (_) { /* ignore */ }
-  }, [streamId, supabase]);
+  }, [streamId, supabase, scrollToLatest]);
 
   useEffect(() => {
     if (!live) return;
@@ -208,6 +247,37 @@ export default function LiveBroadcasterScreen() {
     } catch { /* ignore */ }
   }, [user, streamId, supabase]);
 
+  const sendMessage = useCallback(async () => {
+    const text = chatInput.trim();
+    if (!text || !user || !streamId || sending) return;
+    const now = Date.now();
+    if (now - lastSentRef.current < SPAM_THROTTLE_MS) return;
+    lastSentRef.current = now;
+    setSending(true);
+    setChatInput('');
+
+    const username = user.username || user.email?.split('@')[0] || 'host';
+    const optimistic: ChatMessage = {
+      id: `local_${now}`,
+      userId: user.id,
+      username,
+      message: text,
+      createdAt: new Date().toISOString(),
+    };
+    setMessages(prev => [...prev, optimistic].slice(-MAX_MESSAGES));
+    scrollToLatest(true);
+
+    try {
+      await supabase.from('live_messages').insert({
+        session_id: streamId,
+        user_id: user.id,
+        username,
+        message: text,
+      });
+    } catch { /* ignore */ }
+    setSending(false);
+  }, [chatInput, user, streamId, sending, supabase, scrollToLatest]);
+
   const formatLiveDuration = (seconds: number) =>
     `${Math.floor(seconds / 3600).toString().padStart(2, '0')}:${Math.floor((seconds % 3600) / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
 
@@ -252,6 +322,9 @@ export default function LiveBroadcasterScreen() {
       .flatMap(m => [parseAcceptedUsername(m.message), parseRejectedUsername(m.message)])
       .filter((username): username is string => !!username),
   );
+  const composerBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
+  const composerClearance = composerBottom + composerHeight + 16;
+  const controlsBottom = composerBottom + composerHeight + 14;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -269,11 +342,13 @@ export default function LiveBroadcasterScreen() {
       <LinearGradient colors={['transparent', 'rgba(0,0,0,0.6)']} style={styles.bottomShade} pointerEvents="none" />
 
       {RtcSurfaceView && remoteUids.length > 0 ? (
-        <View style={styles.remoteStrip}>
+        <View style={[styles.remoteStrip, { bottom: composerClearance + 150 }]}>
           {remoteUids.map(uid => (
             <View key={uid} style={styles.remoteTile}>
               <RtcSurfaceView canvas={{ uid }} style={styles.remoteVideo} />
-              <Text style={styles.remoteLabel}>Co-host</Text>
+              <View style={styles.remoteBadge}>
+                <MaterialIcons name="person" size={13} color="#fff" />
+              </View>
             </View>
           ))}
         </View>
@@ -316,12 +391,13 @@ export default function LiveBroadcasterScreen() {
       ) : null}
 
       {/* ── Chat overlay ──────────────────────────────────────────────────── */}
-      <View style={styles.chatArea}>
+      <View style={[styles.chatArea, { bottom: composerClearance + 150, maxHeight: Math.max(120, SCREEN_HEIGHT - composerClearance - 290) }]}>
         <FlatList
           ref={chatRef}
           data={messages}
           keyExtractor={m => m.id}
-          onContentSizeChange={() => chatRef.current?.scrollToEnd({ animated: true })}
+          onContentSizeChange={() => scrollToLatest(false)}
+          onLayout={() => scrollToLatest(false)}
           renderItem={({ item }) => {
             const requestedUsername = parseJoinRequest(item.message);
             return (
@@ -334,15 +410,17 @@ export default function LiveBroadcasterScreen() {
                       style={msgStyles.acceptBtn}
                       onPress={() => acceptJoinRequest(requestedUsername)}
                       hitSlop={6}
+                      accessibilityLabel={`Aceptar solicitud de ${requestedUsername}`}
                     >
-                      <Text style={msgStyles.actionText}>Aceptar</Text>
+                      <MaterialIcons name="check" size={15} color="#fff" />
                     </Pressable>
                     <Pressable
                       style={msgStyles.rejectBtn}
                       onPress={() => rejectJoinRequest(requestedUsername)}
                       hitSlop={6}
+                      accessibilityLabel={`Rechazar solicitud de ${requestedUsername}`}
                     >
-                      <Text style={msgStyles.actionText}>Rechazar</Text>
+                      <MaterialIcons name="close" size={15} color="#fff" />
                     </Pressable>
                   </View>
                 ) : null}
@@ -350,26 +428,83 @@ export default function LiveBroadcasterScreen() {
             );
           }}
           contentContainerStyle={{ gap: 4, paddingBottom: 8 }}
+          ListFooterComponent={<View style={{ height: 8 }} />}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         />
       </View>
 
       {/* ── Controls ──────────────────────────────────────────────────────── */}
-      <View style={[styles.controls, { paddingBottom: insets.bottom + Spacing.lg }]}>
+      <View style={[styles.controls, { bottom: controlsBottom }]}>
         <View style={styles.controlGroup}>
-          <Pressable style={[styles.controlBtn, isMuted && styles.controlBtnActive]} onPress={toggleMute} hitSlop={8}>
+          <Pressable
+            style={[styles.controlBtn, isMuted && styles.controlBtnActive]}
+            onPress={toggleMute}
+            hitSlop={8}
+            accessibilityLabel={isMuted ? 'Activar micrófono' : 'Silenciar micrófono'}
+          >
             <MaterialIcons name={isMuted ? 'mic-off' : 'mic'} size={20} color={isMuted ? '#000' : '#fff'} />
           </Pressable>
-          <Text style={styles.controlLabel}>{isMuted ? 'Activar' : 'Silenciar'}</Text>
         </View>
         <View style={styles.controlGroup}>
-          <Pressable style={styles.controlBtn} onPress={switchCamera} hitSlop={8}>
+          <Pressable
+            style={styles.controlBtn}
+            onPress={switchCamera}
+            hitSlop={8}
+            accessibilityLabel="Cambiar cámara"
+          >
             <MaterialIcons name="flip-camera-ios" size={20} color="#fff" />
           </Pressable>
-          <Text style={styles.controlLabel}>Voltear</Text>
         </View>
-        <Pressable style={styles.endBtn} onPress={endBroadcast} hitSlop={4}>
-          <Text style={styles.endBtnText}>Finalizar</Text>
+        <View style={styles.controlGroup}>
+          <Pressable
+            style={[styles.controlBtn, isCameraOff && styles.controlBtnActive]}
+            onPress={toggleCamera}
+            hitSlop={8}
+            accessibilityLabel={isCameraOff ? 'Activar cámara' : 'Apagar cámara'}
+          >
+            <MaterialIcons name={isCameraOff ? 'videocam-off' : 'videocam'} size={20} color={isCameraOff ? '#000' : '#fff'} />
+          </Pressable>
+        </View>
+        <Pressable
+          style={styles.endBtn}
+          onPress={endBroadcast}
+          hitSlop={4}
+          accessibilityLabel="Finalizar live"
+        >
+          <MaterialIcons name="call-end" size={22} color="#fff" />
+        </Pressable>
+      </View>
+
+      <View
+        style={[styles.inputRow, { bottom: composerBottom + 8 }]}
+        onLayout={event => {
+          const nextHeight = event.nativeEvent.layout.height;
+          setComposerHeight(current =>
+            Math.abs(current - nextHeight) < 1 ? current : nextHeight
+          );
+        }}
+      >
+        <TextInput
+          style={styles.input}
+          value={chatInput}
+          onChangeText={setChatInput}
+          placeholder="Mensaje..."
+          placeholderTextColor="rgba(255,255,255,0.55)"
+          returnKeyType="send"
+          onSubmitEditing={sendMessage}
+          maxLength={200}
+          blurOnSubmit={false}
+          editable={!!user}
+        />
+        <Pressable
+          style={[styles.sendBtn, (!chatInput.trim() || sending) && styles.sendBtnDisabled]}
+          onPress={sendMessage}
+          disabled={!chatInput.trim() || sending || !user}
+          hitSlop={8}
+          accessibilityLabel="Enviar mensaje"
+        >
+          {sending ? <ActivityIndicator size="small" color="#fff" /> : <MaterialIcons name="send" size={18} color="#fff" />}
         </Pressable>
       </View>
     </SafeAreaView>
@@ -383,7 +518,6 @@ const msgStyles = StyleSheet.create({
   requestActions: { flexDirection: 'row', gap: 6, marginLeft: 8 },
   acceptBtn: { backgroundColor: Colors.primary, borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 3 },
   rejectBtn: { backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 3 },
-  actionText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.bold },
 });
 
 const styles = StyleSheet.create({
@@ -409,10 +543,10 @@ const styles = StyleSheet.create({
   videoPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surface },
   topShade: { position: 'absolute', top: 0, left: 0, right: 0, height: 170, zIndex: 2 },
   bottomShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 320, zIndex: 2 },
-  remoteStrip: { position: 'absolute', right: 12, bottom: 116, width: 140, gap: 12, zIndex: 8 },
+  remoteStrip: { position: 'absolute', right: 12, width: 140, gap: 12, zIndex: 8 },
   remoteTile: { width: 140, height: 108, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000', borderWidth: 1.5, borderColor: 'rgba(236,72,153,0.62)' },
   remoteVideo: { flex: 1 },
-  remoteLabel: { position: 'absolute', left: 8, bottom: 7, color: '#fff', fontSize: 11, fontWeight: FontWeight.bold },
+  remoteBadge: { position: 'absolute', left: 8, bottom: 7, width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.48)', alignItems: 'center', justifyContent: 'center' },
 
   header: {
     position: 'absolute',
@@ -468,23 +602,25 @@ const styles = StyleSheet.create({
   },
 
   controls: {
-    position: 'absolute', bottom: 0, left: 12, right: 12,
+    position: 'absolute', left: 12, right: 12,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.lg,
-    height: 82,
-    paddingTop: 10,
+    height: 66,
+    paddingHorizontal: 12,
     backgroundColor: 'rgba(20,20,30,0.55)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.12)',
     borderRadius: 28,
     zIndex: 9,
   },
-  controlGroup: { alignItems: 'center', gap: 4 },
+  controlGroup: { alignItems: 'center' },
   controlBtn: {
-    width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.14)',
+    width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(255,255,255,0.14)',
     alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
   },
   controlBtnActive: { backgroundColor: Colors.textPrimary },
-  controlLabel: { color: '#fff', fontSize: 11, fontWeight: FontWeight.medium },
-  endBtn: { height: 58, backgroundColor: '#FF2D55', borderRadius: Radius.full, paddingHorizontal: 24, alignItems: 'center', justifyContent: 'center' },
-  endBtnText: { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.bold },
+  endBtn: { width: 54, height: 54, backgroundColor: '#FF2D55', borderRadius: 27, alignItems: 'center', justifyContent: 'center' },
+  inputRow: { position: 'absolute', left: 12, right: 12, minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 20, elevation: 20 },
+  input: { flex: 1, height: 58, backgroundColor: 'rgba(255,255,255,0.10)', borderRadius: Radius.full, paddingHorizontal: 18, color: '#fff', fontSize: FontSize.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  sendBtn: { width: 46, height: 46, borderRadius: 23, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+  sendBtnDisabled: { opacity: 0.4 },
 });

@@ -8,7 +8,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList, TextInput,
-  KeyboardAvoidingView, Platform, ActivityIndicator, Dimensions,
+  Keyboard, Platform, ActivityIndicator, Dimensions,
   Alert,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -74,6 +74,8 @@ export default function LiveWatchScreen() {
   const [requestSent, setRequestSent] = useState(false);
   const [promotedToPublisher, setPromotedToPublisher] = useState(false);
   const [watchSeconds, setWatchSeconds] = useState(0);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [composerHeight, setComposerHeight] = useState(72);
 
   const {
     engineReady, remoteUids, error, join, leave, promoteToPublisher,
@@ -92,6 +94,38 @@ export default function LiveWatchScreen() {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
+
+  const scrollToLatest = useCallback((animated = true) => {
+    requestAnimationFrame(() => {
+      chatRef.current?.scrollToEnd({ animated });
+    });
+
+    setTimeout(() => {
+      chatRef.current?.scrollToEnd({ animated });
+    }, 80);
+  }, []);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, event => {
+      setKeyboardHeight(event.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (messages.length === 0) return;
+    scrollToLatest(true);
+  }, [messages.length, keyboardHeight, composerHeight, scrollToLatest]);
 
   // ── Fetch session ─────────────────────────────────────────────────────────
   const fetchSession = useCallback(async () => {
@@ -181,10 +215,10 @@ export default function LiveWatchScreen() {
         }
         lastMsgRef.current = mData[mData.length - 1].created_at;
         setMessages(prev => [...prev, ...newMsgs].slice(-MAX_MESSAGES));
-        setTimeout(() => chatRef.current?.scrollToEnd({ animated: true }), 80);
+        scrollToLatest(true);
       }
     } catch (_) { /* ignore */ }
-  }, [streamId, ended, supabase, user, promotedToPublisher, promoteToPublisher]);
+  }, [streamId, ended, supabase, user, promotedToPublisher, promoteToPublisher, scrollToLatest]);
 
   useEffect(() => {
     if (!streamId) { router.back(); return; }
@@ -222,7 +256,7 @@ export default function LiveWatchScreen() {
       message: text, createdAt: new Date().toISOString(),
     };
     setMessages(prev => [...prev, optimistic].slice(-MAX_MESSAGES));
-    setTimeout(() => chatRef.current?.scrollToEnd({ animated: true }), 80);
+    scrollToLatest(true);
 
     try {
       await supabase.from('live_messages').insert({
@@ -232,7 +266,7 @@ export default function LiveWatchScreen() {
       });
     } catch (_) { /* ignore */ }
     setSending(false);
-  }, [chatInput, user, streamId, sending, supabase]);
+  }, [chatInput, user, streamId, sending, supabase, scrollToLatest]);
 
   const requestToJoin = useCallback(async () => {
     if (!user || !streamId || requestSent || promotedToPublisher) return;
@@ -249,7 +283,7 @@ export default function LiveWatchScreen() {
       createdAt: new Date().toISOString(),
     };
     setMessages(prev => [...prev, optimistic].slice(-MAX_MESSAGES));
-    setTimeout(() => chatRef.current?.scrollToEnd({ animated: true }), 80);
+    scrollToLatest(true);
 
     try {
       const { error: insertError } = await supabase.from('live_messages').insert({
@@ -264,7 +298,7 @@ export default function LiveWatchScreen() {
       setMessages(prev => prev.filter(m => m.id !== optimistic.id));
       Alert.alert('No se pudo enviar la solicitud');
     }
-  }, [user, streamId, requestSent, promotedToPublisher, supabase]);
+  }, [user, streamId, requestSent, promotedToPublisher, supabase, scrollToLatest]);
 
   const formatLiveDuration = (seconds: number) =>
     `${Math.floor(seconds / 3600).toString().padStart(2, '0')}:${Math.floor((seconds % 3600) / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
@@ -294,6 +328,9 @@ export default function LiveWatchScreen() {
 
   const remoteUid = remoteUids[0];
   const coHostUids = remoteUids.slice(1);
+  const composerBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
+  const composerClearance = composerBottom + composerHeight + 16;
+  const requestIcon = promotedToPublisher ? 'videocam' : requestSent ? 'hourglass-top' : 'person-add-alt-1';
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -347,18 +384,23 @@ export default function LiveWatchScreen() {
 
       {/* ── Chat + controls ──────────────────────────────────────────────── */}
       <View style={styles.actionRail}>
-        <View style={styles.actionButton}>
+        <View style={styles.actionButton} accessibilityLabel="Me gusta">
           <MaterialIcons name="favorite" size={25} color="#fff" />
-          <Text style={styles.actionCount}>Me gusta</Text>
         </View>
-        <View style={styles.actionButton}>
+        <View style={styles.actionButton} accessibilityLabel="Compartir live">
           <MaterialIcons name="ios-share" size={24} color="#fff" />
-          <Text style={styles.actionCount}>Compartir</Text>
         </View>
-        <View style={styles.actionButton}>
+        <View style={styles.actionButton} accessibilityLabel="Regalos">
           <MaterialIcons name="card-giftcard" size={24} color="#fff" />
-          <Text style={styles.actionCount}>Regalos</Text>
         </View>
+        <Pressable
+          style={[styles.actionButton, (requestSent || promotedToPublisher || !user) && styles.actionButtonDisabled]}
+          onPress={requestToJoin}
+          disabled={requestSent || promotedToPublisher || !user}
+          accessibilityLabel="Solicitar subir al live"
+        >
+          <MaterialIcons name={requestIcon} size={24} color="#fff" />
+        </Pressable>
       </View>
 
       {coHostUids.length > 0 && RtcSurfaceView ? (
@@ -373,12 +415,13 @@ export default function LiveWatchScreen() {
         </View>
       ) : null}
 
-      <View style={styles.bottomSection}>
+      <View style={[styles.bottomSection, { bottom: composerClearance + 86 }]}>
         <FlatList
           ref={chatRef}
           data={messages}
           keyExtractor={item => item.id}
-          onContentSizeChange={() => chatRef.current?.scrollToEnd({ animated: true })}
+          onContentSizeChange={() => scrollToLatest(false)}
+          onLayout={() => scrollToLatest(false)}
           renderItem={({ item }) => (
             <View style={msg.row}>
               <Text style={[msg.name, item.userId === session.hostId && msg.hostName]}>
@@ -389,64 +432,59 @@ export default function LiveWatchScreen() {
           )}
           style={styles.chatList}
           contentContainerStyle={{ gap: 6, paddingVertical: 8, paddingHorizontal: Spacing.md }}
+          ListFooterComponent={<View style={{ height: 8 }} />}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         />
 
-        <View style={styles.giftBar}>
-          {LIVE_GIFT_BAR.map(g => (
-            <Pressable
-              key={g.id}
-              style={[styles.giftBtn, styles.giftBtnDisabled]}
-              disabled
-            >
-              <Text style={styles.giftEmoji}>{g.emoji}</Text>
-              <Text style={styles.giftLabel}>{g.label}</Text>
-              <Text style={styles.giftCost}>{g.cost}</Text>
-            </Pressable>
-          ))}
-          <Pressable style={[styles.giftBtn, styles.giftBtnDisabled]} disabled>
-            <MaterialIcons name="add" size={21} color="#fff" />
-            <Text style={styles.giftLabel}>Más</Text>
-          </Pressable>
-        </View>
+      </View>
 
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={[styles.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}
+      <View style={[styles.giftBar, { bottom: composerBottom + composerHeight + 14 }]}>
+        {LIVE_GIFT_BAR.map(g => (
+          <Pressable
+            key={g.id}
+            style={[styles.giftBtn, styles.giftBtnDisabled]}
+            disabled
+          >
+            <Text style={styles.giftEmoji}>{g.emoji}</Text>
+            <Text style={styles.giftCost}>{g.cost}</Text>
+          </Pressable>
+        ))}
+        <Pressable style={[styles.giftBtn, styles.giftBtnDisabled]} disabled>
+          <MaterialIcons name="add" size={21} color="#fff" />
+        </Pressable>
+      </View>
+
+      <View
+        style={[styles.inputRow, { bottom: composerBottom + 8 }]}
+        onLayout={event => {
+          const nextHeight = event.nativeEvent.layout.height;
+          setComposerHeight(current =>
+            Math.abs(current - nextHeight) < 1 ? current : nextHeight
+          );
+        }}
+      >
+        <TextInput
+          style={styles.input}
+          value={chatInput}
+          onChangeText={setChatInput}
+          placeholder="Mensaje..."
+          placeholderTextColor="rgba(255,255,255,0.55)"
+          returnKeyType="send"
+          onSubmitEditing={sendMessage}
+          maxLength={200}
+          blurOnSubmit={false}
+          editable={!!user}
+        />
+        <Pressable
+          style={[styles.sendBtn, (!chatInput.trim() || sending) && styles.sendBtnDisabled]}
+          onPress={sendMessage}
+          disabled={!chatInput.trim() || sending || !user}
+          hitSlop={8}
+          accessibilityLabel="Enviar mensaje"
         >
-          <TextInput
-            style={styles.input}
-            value={chatInput}
-            onChangeText={setChatInput}
-            placeholder="Escribe un mensaje..."
-            placeholderTextColor="rgba(255,255,255,0.55)"
-            returnKeyType="send"
-            onSubmitEditing={sendMessage}
-            maxLength={200}
-            blurOnSubmit={false}
-            editable={!!user}
-          />
-          <Pressable
-            style={[styles.sendBtn, (!chatInput.trim() || sending) && styles.sendBtnDisabled]}
-            onPress={sendMessage}
-            disabled={!chatInput.trim() || sending || !user}
-            hitSlop={8}
-          >
-            {sending ? <ActivityIndicator size="small" color="#fff" /> : <MaterialIcons name="send" size={18} color="#fff" />}
-          </Pressable>
-          <Pressable
-            style={[styles.requestBtn, (requestSent || promotedToPublisher || !user) && styles.requestBtnDisabled]}
-            onPress={requestToJoin}
-            disabled={requestSent || promotedToPublisher || !user}
-          >
-            <LinearGradient colors={['#EC4899', '#7C3AED']} style={styles.requestGradient}>
-              <MaterialIcons name={promotedToPublisher ? 'videocam' : 'person-add-alt-1'} size={18} color="#fff" />
-              <Text style={styles.requestText}>
-                {promotedToPublisher ? 'En vivo' : requestSent ? 'Enviada' : 'Solicitar subir'}
-              </Text>
-            </LinearGradient>
-          </Pressable>
-        </KeyboardAvoidingView>
+          {sending ? <ActivityIndicator size="small" color="#fff" /> : <MaterialIcons name="send" size={18} color="#fff" />}
+        </Pressable>
       </View>
     </SafeAreaView>
   );
@@ -513,10 +551,9 @@ const styles = StyleSheet.create({
   errorBanner: { marginHorizontal: Spacing.md, backgroundColor: 'rgba(255,45,85,0.15)', borderRadius: Radius.sm, padding: Spacing.xs },
   errorText: { color: Colors.secondary, fontSize: 11, textAlign: 'center' },
 
-  actionRail: { position: 'absolute', right: 12, top: SCREEN_HEIGHT * 0.28, gap: 15, zIndex: 9 },
-  actionButton: { width: 60, minHeight: 60, borderRadius: 30, backgroundColor: 'rgba(255,255,255,0.14)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center', gap: 2, paddingVertical: 8 },
+  actionRail: { position: 'absolute', right: 12, top: SCREEN_HEIGHT * 0.28, gap: 12, zIndex: 9 },
+  actionButton: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.14)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
   actionButtonDisabled: { opacity: 0.6 },
-  actionCount: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
   coHostStrip: { position: 'absolute', right: 12, bottom: 202, width: 138, gap: 12, zIndex: 8 },
   coHostTile: { width: 138, height: 104, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000', borderWidth: 1.5, borderColor: 'rgba(236,72,153,0.62)' },
   coHostVideo: { flex: 1 },
@@ -526,7 +563,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: 0,
     maxHeight: 360,
     zIndex: 7,
   },
@@ -535,25 +571,19 @@ const styles = StyleSheet.create({
     maxHeight: SCREEN_HEIGHT * 0.34,
     width: SCREEN_WIDTH * 0.56,
     marginLeft: 12,
-    marginBottom: 116,
     borderRadius: 22,
     backgroundColor: 'rgba(0,0,0,0.42)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.12)',
   },
 
-  giftBar: { position: 'absolute', left: 12, right: 12, bottom: 82, height: 98, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, backgroundColor: 'rgba(0,0,0,0.48)', borderRadius: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
-  requestBtn: { width: SCREEN_WIDTH < 380 ? 128 : 148, height: 58, borderRadius: Radius.full, overflow: 'hidden' },
-  requestGradient: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 10 },
-  requestBtnDisabled: { opacity: 0.65 },
-  requestText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.bold, textAlign: 'center' },
-  giftBtn: { width: 52, height: 72, alignItems: 'center', justifyContent: 'center', gap: 2, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  giftBar: { position: 'absolute', left: 12, right: 12, height: 70, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, backgroundColor: 'rgba(0,0,0,0.48)', borderRadius: 22, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', zIndex: 12, elevation: 12 },
+  giftBtn: { width: 52, height: 50, alignItems: 'center', justifyContent: 'center', gap: 1, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   giftBtnDisabled: { opacity: 0.45 },
-  giftEmoji: { fontSize: 21 },
-  giftLabel: { color: '#fff', fontSize: 9, fontWeight: FontWeight.semibold },
+  giftEmoji: { fontSize: 20 },
   giftCost: { color: 'rgba(255,255,255,0.7)', fontSize: 9, fontWeight: FontWeight.bold },
 
-  inputRow: { position: 'absolute', left: 12, right: 12, bottom: 10, height: 62, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  inputRow: { position: 'absolute', left: 12, right: 12, minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 20, elevation: 20 },
   input: { flex: 1, height: 58, backgroundColor: 'rgba(255,255,255,0.10)', borderRadius: Radius.full, paddingHorizontal: 18, color: '#fff', fontSize: FontSize.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
   sendBtn: { width: 46, height: 46, borderRadius: 23, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { opacity: 0.4 },
