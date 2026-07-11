@@ -30,7 +30,6 @@ import { RtcSurfaceView, useridToAgoraUid, isAgoraAvailable } from '@/services/a
 const POLL_INTERVAL_MS = 3000;
 const MAX_MESSAGES     = 50;
 const SPAM_THROTTLE_MS = 2500;
-const REQUEST_TO_JOIN_TEXT = 'quiere subir al streaming';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface ChatMessage {
@@ -41,22 +40,23 @@ interface ChatMessage {
   createdAt: string;
 }
 
-function parseJoinRequest(message: string): string | null {
-  const normalized = message.trim();
-  if (!normalized.endsWith(REQUEST_TO_JOIN_TEXT)) return null;
-  const username = normalized.slice(0, -REQUEST_TO_JOIN_TEXT.length).trim();
-  return username || null;
-}
-
-function parseAcceptedUsername(message: string): string | null {
-  if (!message.startsWith('\u2705 ') || !message.endsWith(' aceptado')) return null;
-  return message.slice(2, -' aceptado'.length).trim() || null;
-}
-
-function parseRejectedUsername(message: string): string | null {
-  if (!message.startsWith('\u274C ') || !message.endsWith(' rechazado')) return null;
-  return message.slice(2, -' rechazado'.length).trim() || null;
-}
+type LiveParticipant = {
+  id: string;
+  session_id: string;
+  user_id: string;
+  agora_uid: number | null;
+  username: string | null;
+  role: 'audience' | 'requested' | 'cohost' | 'removed';
+  status: 'active' | 'inactive' | 'removed';
+  mic_muted: boolean;
+  mic_locked: boolean;
+  camera_enabled: boolean;
+  floor_granted: boolean;
+  floor_started_at: string | null;
+  floor_duration_seconds: number | null;
+  created_at: string;
+  updated_at: string;
+};
 
 export default function LiveBroadcasterScreen() {
   const { streamId } = useLocalSearchParams<{ streamId: string }>();
@@ -72,6 +72,7 @@ export default function LiveBroadcasterScreen() {
   const [starting, setStarting]     = useState(false);
   const [viewerCount, setViewerCount] = useState(0);
   const [messages, setMessages]     = useState<ChatMessage[]>([]);
+  const [participants, setParticipants] = useState<LiveParticipant[]>([]);
   const [liveSeconds, setLiveSeconds] = useState(0);
   const [chatInput, setChatInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -196,6 +197,47 @@ export default function LiveBroadcasterScreen() {
     return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
   }, [live, poll]);
 
+  const loadParticipants = useCallback(async () => {
+    if (!streamId || !live) return;
+    try {
+      const { data, error: participantsError } = await supabase
+        .from('live_participants')
+        .select('*')
+        .eq('session_id', streamId)
+        .eq('status', 'active')
+        .order('created_at', { ascending: true });
+
+      if (participantsError) {
+        console.warn('[LiveBroadcast] load participants failed', participantsError.message);
+        return;
+      }
+
+      if (mountedRef.current) setParticipants((data ?? []) as LiveParticipant[]);
+    } catch (err: any) {
+      console.warn('[LiveBroadcast] participants sync failed', err?.message ?? err);
+    }
+  }, [streamId, live, supabase]);
+
+  useEffect(() => {
+    if (!live || !streamId) return;
+    loadParticipants();
+
+    const channel = supabase
+      .channel(`live-participants:${streamId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'live_participants', filter: `session_id=eq.${streamId}` },
+        () => loadParticipants(),
+      )
+      .subscribe();
+
+    const fallback = setInterval(loadParticipants, POLL_INTERVAL_MS);
+    return () => {
+      clearInterval(fallback);
+      supabase.removeChannel(channel);
+    };
+  }, [live, streamId, supabase, loadParticipants]);
+
   // ── End broadcast ─────────────────────────────────────────────────────────
   const endBroadcast = useCallback(async () => {
     if (endedRef.current || !streamId) return;
@@ -223,29 +265,62 @@ export default function LiveBroadcasterScreen() {
     }
   }, [live, streamId, leave, supabase]);
 
-  const acceptJoinRequest = useCallback(async (username: string) => {
+  const acceptJoinRequest = useCallback(async (participant: LiveParticipant) => {
     if (!user?.id || !streamId) return;
+    const username = participant.username || 'Invitado';
     try {
-      await supabase.from('live_messages').insert({
-        session_id: streamId,
-        user_id: user.id,
-        username: user.username || user.email?.split('@')[0] || 'host',
-        message: `\u2705 ${username} aceptado`,
-      });
-    } catch { /* ignore */ }
-  }, [user, streamId, supabase]);
+      const { error: updateError } = await supabase
+        .from('live_participants')
+        .update({
+          role: 'cohost',
+          status: 'active',
+          floor_granted: true,
+          floor_started_at: new Date().toISOString(),
+          floor_duration_seconds: null,
+        })
+        .eq('id', participant.id);
+      if (updateError) throw updateError;
 
-  const rejectJoinRequest = useCallback(async (username: string) => {
-    if (!user?.id || !streamId) return;
-    try {
-      await supabase.from('live_messages').insert({
+      const { error: eventError } = await supabase.from('live_control_events').insert({
         session_id: streamId,
-        user_id: user.id,
-        username: user.username || user.email?.split('@')[0] || 'host',
-        message: `\u274C ${username} rechazado`,
+        target_user_id: participant.user_id,
+        actor_user_id: user.id,
+        event_type: 'approve_join',
+        payload: { username },
       });
-    } catch { /* ignore */ }
-  }, [user, streamId, supabase]);
+      if (eventError) console.warn('[LiveBroadcast] approve event failed', eventError.message);
+      loadParticipants();
+    } catch (err: any) {
+      console.warn('[LiveBroadcast] accept join failed', err?.message ?? err);
+    }
+  }, [user?.id, streamId, supabase, loadParticipants]);
+
+  const rejectJoinRequest = useCallback(async (participant: LiveParticipant) => {
+    if (!user?.id || !streamId) return;
+    const username = participant.username || 'Invitado';
+    try {
+      const { error: updateError } = await supabase
+        .from('live_participants')
+        .update({
+          role: 'removed',
+          status: 'removed',
+        })
+        .eq('id', participant.id);
+      if (updateError) throw updateError;
+
+      const { error: eventError } = await supabase.from('live_control_events').insert({
+        session_id: streamId,
+        target_user_id: participant.user_id,
+        actor_user_id: user.id,
+        event_type: 'reject_join',
+        payload: { username },
+      });
+      if (eventError) console.warn('[LiveBroadcast] reject event failed', eventError.message);
+      loadParticipants();
+    } catch (err: any) {
+      console.warn('[LiveBroadcast] reject join failed', err?.message ?? err);
+    }
+  }, [user?.id, streamId, supabase, loadParticipants]);
 
   const sendMessage = useCallback(async () => {
     const text = chatInput.trim();
@@ -317,11 +392,8 @@ export default function LiveBroadcasterScreen() {
     );
   }
 
-  const closedRequestUsernames = new Set(
-    messages
-      .flatMap(m => [parseAcceptedUsername(m.message), parseRejectedUsername(m.message)])
-      .filter((username): username is string => !!username),
-  );
+  const pendingRequests = participants.filter(p => p.role === 'requested' && p.status === 'active');
+  const structuredCohosts = participants.filter(p => p.role === 'cohost' && p.status === 'active');
   const composerBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
   const composerClearance = composerBottom + composerHeight + 16;
   const controlsBottom = composerBottom + composerHeight + 14;
@@ -390,6 +462,45 @@ export default function LiveBroadcasterScreen() {
         </View>
       ) : null}
 
+      {pendingRequests.length > 0 ? (
+        <View style={[styles.requestPanel, { top: insets.top + 154 }]}>
+          {pendingRequests.slice(0, 3).map(participant => (
+            <View key={participant.id} style={styles.requestRow}>
+              <Text style={styles.requestName} numberOfLines={1}>
+                @{participant.username || 'Invitado'}
+              </Text>
+              <View style={styles.requestActions}>
+                <Pressable
+                  style={[styles.requestActionBtn, styles.requestAcceptBtn]}
+                  onPress={() => acceptJoinRequest(participant)}
+                  hitSlop={6}
+                  accessibilityLabel={`Aceptar solicitud de ${participant.username || 'Invitado'}`}
+                >
+                  <MaterialIcons name="check" size={16} color="#fff" />
+                </Pressable>
+                <Pressable
+                  style={[styles.requestActionBtn, styles.requestRejectBtn]}
+                  onPress={() => rejectJoinRequest(participant)}
+                  hitSlop={6}
+                  accessibilityLabel={`Rechazar solicitud de ${participant.username || 'Invitado'}`}
+                >
+                  <MaterialIcons name="close" size={16} color="#fff" />
+                </Pressable>
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {structuredCohosts.length > 0 ? (
+        <View style={[styles.cohostPanel, { top: insets.top + 154 + (pendingRequests.length > 0 ? 54 : 0) }]}>
+          <MaterialIcons name="videocam" size={13} color="#fff" />
+          <Text style={styles.cohostText} numberOfLines={1}>
+            {structuredCohosts.map(p => p.username || 'Invitado').join(', ')}
+          </Text>
+        </View>
+      ) : null}
+
       {/* ── Chat overlay ──────────────────────────────────────────────────── */}
       <View style={[styles.chatArea, { bottom: composerClearance + 150, maxHeight: Math.max(120, SCREEN_HEIGHT - composerClearance - 290) }]}>
         <FlatList
@@ -398,35 +509,12 @@ export default function LiveBroadcasterScreen() {
           keyExtractor={m => m.id}
           onContentSizeChange={() => scrollToLatest(false)}
           onLayout={() => scrollToLatest(false)}
-          renderItem={({ item }) => {
-            const requestedUsername = parseJoinRequest(item.message);
-            return (
-              <View style={msgStyles.row}>
-                <Text style={msgStyles.name}>{item.username}</Text>
-                <Text style={msgStyles.text}> {item.message}</Text>
-                {requestedUsername !== null && !closedRequestUsernames.has(requestedUsername) ? (
-                  <View style={msgStyles.requestActions}>
-                    <Pressable
-                      style={msgStyles.acceptBtn}
-                      onPress={() => acceptJoinRequest(requestedUsername)}
-                      hitSlop={6}
-                      accessibilityLabel={`Aceptar solicitud de ${requestedUsername}`}
-                    >
-                      <MaterialIcons name="check" size={15} color="#fff" />
-                    </Pressable>
-                    <Pressable
-                      style={msgStyles.rejectBtn}
-                      onPress={() => rejectJoinRequest(requestedUsername)}
-                      hitSlop={6}
-                      accessibilityLabel={`Rechazar solicitud de ${requestedUsername}`}
-                    >
-                      <MaterialIcons name="close" size={15} color="#fff" />
-                    </Pressable>
-                  </View>
-                ) : null}
-              </View>
-            );
-          }}
+          renderItem={({ item }) => (
+            <View style={msgStyles.row}>
+              <Text style={msgStyles.name}>{item.username}</Text>
+              <Text style={msgStyles.text}> {item.message}</Text>
+            </View>
+          )}
           contentContainerStyle={{ gap: 4, paddingBottom: 8 }}
           ListFooterComponent={<View style={{ height: 8 }} />}
           keyboardShouldPersistTaps="handled"
@@ -515,9 +603,6 @@ const msgStyles = StyleSheet.create({
   row:  { flexDirection: 'row', flexWrap: 'wrap' },
   name: { color: Colors.primary, fontSize: 12, fontWeight: FontWeight.bold },
   text: { color: 'rgba(255,255,255,0.9)', fontSize: 12 },
-  requestActions: { flexDirection: 'row', gap: 6, marginLeft: 8 },
-  acceptBtn: { backgroundColor: Colors.primary, borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 3 },
-  rejectBtn: { backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 3 },
 });
 
 const styles = StyleSheet.create({
@@ -586,6 +671,48 @@ const styles = StyleSheet.create({
 
   errorBanner: { position: 'absolute', left: Spacing.md, right: Spacing.md, zIndex: 10, backgroundColor: 'rgba(255,45,85,0.15)', borderRadius: Radius.sm, padding: Spacing.xs },
   errorText: { color: Colors.secondary, fontSize: 11, textAlign: 'center' },
+
+  requestPanel: {
+    position: 'absolute',
+    left: 16,
+    right: 88,
+    gap: 7,
+    zIndex: 11,
+  },
+  requestRow: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingLeft: 14,
+    paddingRight: 6,
+    backgroundColor: 'rgba(0,0,0,0.48)',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  requestName: { flex: 1, color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
+  requestActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  requestActionBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  requestAcceptBtn: { backgroundColor: Colors.primary },
+  requestRejectBtn: { backgroundColor: 'rgba(255,255,255,0.16)' },
+  cohostPanel: {
+    position: 'absolute',
+    left: 16,
+    right: 88,
+    height: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(0,0,0,0.38)',
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    zIndex: 10,
+  },
+  cohostText: { flex: 1, color: 'rgba(255,255,255,0.86)', fontSize: 11, fontWeight: FontWeight.semibold },
 
   chatArea: {
     position: 'absolute',

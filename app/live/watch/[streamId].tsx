@@ -25,7 +25,6 @@ import { RtcSurfaceView, useridToAgoraUid } from '@/services/agoraService';
 const POLL_INTERVAL_MS = 3000;
 const MAX_MESSAGES     = 50;
 const SPAM_THROTTLE_MS = 2500;
-const REQUEST_TO_JOIN_TEXT = 'quiere subir al streaming';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface StreamSession {
@@ -44,6 +43,24 @@ interface ChatMessage {
   message: string;
   createdAt: string;
 }
+
+type LiveParticipant = {
+  id: string;
+  session_id: string;
+  user_id: string;
+  agora_uid: number | null;
+  username: string | null;
+  role: 'audience' | 'requested' | 'cohost' | 'removed';
+  status: 'active' | 'inactive' | 'removed';
+  mic_muted: boolean;
+  mic_locked: boolean;
+  camera_enabled: boolean;
+  floor_granted: boolean;
+  floor_started_at: string | null;
+  floor_duration_seconds: number | null;
+  created_at: string;
+  updated_at: string;
+};
 
 const LIVE_GIFT_BAR = [
   { id: 'star', emoji: '\u2B50', label: 'Estrella', cost: 10 },
@@ -71,7 +88,7 @@ export default function LiveWatchScreen() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [sending,   setSending]   = useState(false);
-  const [requestSent, setRequestSent] = useState(false);
+  const [participantRow, setParticipantRow] = useState<LiveParticipant | null>(null);
   const [promotedToPublisher, setPromotedToPublisher] = useState(false);
   const [watchSeconds, setWatchSeconds] = useState(0);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -80,6 +97,10 @@ export default function LiveWatchScreen() {
   const {
     engineReady, remoteUids, error, join, leave, promoteToPublisher,
   } = useAgoraEngine({ channelName: session?.status === 'live' ? streamId ?? null : null, uid: myUid, role: 'subscriber', profile: 'live-broadcasting' });
+
+  const requestSent = participantRow?.role === 'requested';
+  const isStructuredCohost = participantRow?.role === 'cohost' && participantRow?.status === 'active';
+  const wasRemoved = participantRow?.role === 'removed' || participantRow?.status === 'removed';
 
   const chatRef     = useRef<FlatList>(null);
   const pollRef     = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -176,6 +197,79 @@ export default function LiveWatchScreen() {
     } catch (_) { /* ignore */ }
   }, [streamId, supabase]);
 
+  const loadParticipant = useCallback(async () => {
+    if (!streamId || !user?.id) return;
+    const username = getDisplayUsername(user);
+
+    try {
+      const { data, error: selectError } = await supabase
+        .from('live_participants')
+        .select('*')
+        .eq('session_id', streamId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (selectError) {
+        console.warn('[LiveWatch] load participant failed', selectError.message);
+        return;
+      }
+
+      if (data) {
+        setParticipantRow(data as LiveParticipant);
+        return;
+      }
+
+      const { data: inserted, error: insertError } = await supabase
+        .from('live_participants')
+        .insert({
+          session_id: streamId,
+          user_id: user.id,
+          agora_uid: myUid || null,
+          username,
+          role: 'audience',
+          status: 'active',
+        })
+        .select('*')
+        .single();
+
+      if (insertError) {
+        console.warn('[LiveWatch] create participant failed', insertError.message);
+        return;
+      }
+
+      setParticipantRow(inserted as LiveParticipant);
+    } catch (err: any) {
+      console.warn('[LiveWatch] participant sync failed', err?.message ?? err);
+    }
+  }, [streamId, user, myUid, supabase]);
+
+  useEffect(() => {
+    if (session?.status !== 'live' || !user?.id) return;
+    loadParticipant();
+  }, [session?.status, user?.id, loadParticipant]);
+
+  useEffect(() => {
+    if (session?.status !== 'live' || !streamId || !user?.id) return;
+
+    const channel = supabase
+      .channel(`live-participant:${streamId}:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'live_participants', filter: `session_id=eq.${streamId}` },
+        payload => {
+          const row = (payload.new || payload.old) as LiveParticipant | null;
+          if (row?.user_id === user.id) setParticipantRow(row);
+        },
+      )
+      .subscribe();
+
+    const fallback = setInterval(loadParticipant, POLL_INTERVAL_MS);
+    return () => {
+      clearInterval(fallback);
+      supabase.removeChannel(channel);
+    };
+  }, [session?.status, streamId, user?.id, supabase, loadParticipant]);
+
   // ── Poll: session status + viewer count + messages ──────────────────────
   const poll = useCallback(async () => {
     if (!streamId || ended) return;
@@ -205,20 +299,21 @@ export default function LiveWatchScreen() {
           id: m.id, userId: m.user_id, username: m.username,
           message: m.message, createdAt: m.created_at,
         }));
-        const username = getDisplayUsername(user);
-        if (!promotedToPublisher && !promotingRef.current && newMsgs.some(m => m.message === `\u2705 ${username} aceptado`)) {
-          promotingRef.current = true;
-          promoteToPublisher().then(ok => {
-            if (ok && mountedRef.current) setPromotedToPublisher(true);
-            if (!ok) promotingRef.current = false;
-          });
-        }
         lastMsgRef.current = mData[mData.length - 1].created_at;
         setMessages(prev => [...prev, ...newMsgs].slice(-MAX_MESSAGES));
         scrollToLatest(true);
       }
     } catch (_) { /* ignore */ }
-  }, [streamId, ended, supabase, user, promotedToPublisher, promoteToPublisher, scrollToLatest]);
+  }, [streamId, ended, supabase, scrollToLatest]);
+
+  useEffect(() => {
+    if (!isStructuredCohost || promotedToPublisher || promotingRef.current || wasRemoved) return;
+    promotingRef.current = true;
+    promoteToPublisher().then(ok => {
+      if (ok && mountedRef.current) setPromotedToPublisher(true);
+      if (!ok) promotingRef.current = false;
+    });
+  }, [isStructuredCohost, promotedToPublisher, wasRemoved, promoteToPublisher]);
 
   useEffect(() => {
     if (!streamId) { router.back(); return; }
@@ -269,36 +364,82 @@ export default function LiveWatchScreen() {
   }, [chatInput, user, streamId, sending, supabase, scrollToLatest]);
 
   const requestToJoin = useCallback(async () => {
-    if (!user || !streamId || requestSent || promotedToPublisher) return;
-    const now = Date.now();
+    if (!user || !streamId || requestSent || promotedToPublisher || isStructuredCohost || wasRemoved) return;
     const username = getDisplayUsername(user);
-    const text = ` ${username} ${REQUEST_TO_JOIN_TEXT}`;
-
-    setRequestSent(true);
-    const optimistic: ChatMessage = {
-      id: `request_${now}`,
-      userId: user.id,
-      username,
-      message: text,
-      createdAt: new Date().toISOString(),
-    };
-    setMessages(prev => [...prev, optimistic].slice(-MAX_MESSAGES));
-    scrollToLatest(true);
 
     try {
-      const { error: insertError } = await supabase.from('live_messages').insert({
+      const { data: existing, error: selectError } = await supabase
+        .from('live_participants')
+        .select('*')
+        .eq('session_id', streamId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (selectError) throw selectError;
+      if (existing?.role === 'requested' && existing.status === 'active') {
+        setParticipantRow(existing as LiveParticipant);
+        return;
+      }
+      if (existing && (existing.role === 'cohost' || existing.role === 'removed' || existing.status === 'removed')) {
+        setParticipantRow(existing as LiveParticipant);
+        return;
+      }
+
+      const optimistic: LiveParticipant = {
+        ...((existing as LiveParticipant | null) ?? participantRow ?? {
+          id: `local_${user.id}`,
+          session_id: streamId,
+          user_id: user.id,
+          agora_uid: myUid || null,
+          mic_muted: false,
+          mic_locked: false,
+          camera_enabled: true,
+          floor_granted: false,
+          floor_started_at: null,
+          floor_duration_seconds: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }),
         session_id: streamId,
         user_id: user.id,
+        agora_uid: myUid || null,
         username,
-        message: text,
+        role: 'requested',
+        status: 'active',
+      };
+      setParticipantRow(optimistic);
+
+      const { data, error: upsertError } = await supabase
+        .from('live_participants')
+        .upsert({
+          session_id: streamId,
+          user_id: user.id,
+          agora_uid: myUid || null,
+          username,
+          role: 'requested',
+          status: 'active',
+        }, { onConflict: 'session_id,user_id' })
+        .select('*')
+        .single();
+
+      if (upsertError) throw upsertError;
+
+      const { error: eventError } = await supabase.from('live_control_events').insert({
+        session_id: streamId,
+        target_user_id: user.id,
+        actor_user_id: user.id,
+        event_type: 'request_join',
+        payload: { username },
       });
-      if (insertError) throw insertError;
-    } catch (_) {
-      setRequestSent(false);
-      setMessages(prev => prev.filter(m => m.id !== optimistic.id));
+      if (eventError) console.warn('[LiveWatch] request event failed', eventError.message);
+
+      if (data) setParticipantRow(data as LiveParticipant);
+    } catch (err: any) {
+      setParticipantRow(participantRow);
+      console.warn('[LiveWatch] request join failed', err?.message ?? err);
       Alert.alert('No se pudo enviar la solicitud');
     }
-  }, [user, streamId, requestSent, promotedToPublisher, supabase, scrollToLatest]);
+  }, [user, streamId, requestSent, promotedToPublisher, isStructuredCohost, wasRemoved, participantRow, myUid, supabase]);
 
   const formatLiveDuration = (seconds: number) =>
     `${Math.floor(seconds / 3600).toString().padStart(2, '0')}:${Math.floor((seconds % 3600) / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
@@ -330,7 +471,8 @@ export default function LiveWatchScreen() {
   const coHostUids = remoteUids.slice(1);
   const composerBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
   const composerClearance = composerBottom + composerHeight + 16;
-  const requestIcon = promotedToPublisher ? 'videocam' : requestSent ? 'hourglass-top' : 'person-add-alt-1';
+  const requestIcon = promotedToPublisher || isStructuredCohost ? 'videocam' : wasRemoved ? 'block' : requestSent ? 'hourglass-top' : 'person-add-alt-1';
+  const requestDisabled = requestSent || promotedToPublisher || isStructuredCohost || wasRemoved || !user;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -394,9 +536,9 @@ export default function LiveWatchScreen() {
           <MaterialIcons name="card-giftcard" size={24} color="#fff" />
         </View>
         <Pressable
-          style={[styles.actionButton, (requestSent || promotedToPublisher || !user) && styles.actionButtonDisabled]}
+          style={[styles.actionButton, requestDisabled && styles.actionButtonDisabled]}
           onPress={requestToJoin}
-          disabled={requestSent || promotedToPublisher || !user}
+          disabled={requestDisabled}
           accessibilityLabel="Solicitar subir al live"
         >
           <MaterialIcons name={requestIcon} size={24} color="#fff" />
