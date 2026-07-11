@@ -125,6 +125,7 @@ export default function LiveBroadcasterScreen() {
   const endedRef   = useRef(false);
   const mountedRef = useRef(true);
   const expiredTimerMutedRef = useRef<Set<string>>(new Set());
+  const processedAcceptedInviteIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     mountedRef.current = true;
@@ -311,7 +312,10 @@ export default function LiveBroadcasterScreen() {
     }
   }, [live, streamId, leave, supabase]);
 
-  const acceptJoinRequest = useCallback(async (participant: LiveParticipant) => {
+  const approveParticipantAsCohost = useCallback(async (
+    participant: LiveParticipant,
+    options?: { acceptedHostInvite?: boolean },
+  ) => {
     if (!user?.id || !streamId) return;
     const username = participant.username || 'Invitado';
     const floorStartedAt = new Date().toISOString();
@@ -336,7 +340,10 @@ export default function LiveBroadcasterScreen() {
         target_user_id: participant.user_id,
         actor_user_id: user.id,
         event_type: 'approve_join',
-        payload: { username },
+        payload: {
+          username,
+          ...(options?.acceptedHostInvite ? { accepted_host_invite: true } : {}),
+        },
       });
       if (eventError) console.warn('[LiveBroadcast] approve event failed', eventError.message);
       setParticipants(prev => prev.map(item => item.id === participant.id ? {
@@ -352,9 +359,70 @@ export default function LiveBroadcasterScreen() {
       } : item));
       loadParticipants();
     } catch (err: any) {
-      console.warn('[LiveBroadcast] accept join failed', err?.message ?? err);
+      console.warn('[LiveBroadcast] approve cohost failed', err?.message ?? err);
     }
   }, [user?.id, streamId, supabase, loadParticipants]);
+
+  const acceptJoinRequest = useCallback((participant: LiveParticipant) => {
+    approveParticipantAsCohost(participant);
+  }, [approveParticipantAsCohost]);
+
+  useEffect(() => {
+    if (!live || !streamId || !user?.id) return;
+
+    const approveAcceptedInvite = async (row: any) => {
+      if (!row?.id || processedAcceptedInviteIdsRef.current.has(row.id)) return;
+      if (row.event_type !== 'request_join') return;
+      if (row.payload?.accepted_host_invite !== true) return;
+
+      const acceptedUserId = row.actor_user_id || row.target_user_id;
+      if (!acceptedUserId) return;
+      processedAcceptedInviteIdsRef.current.add(row.id);
+
+      const existingParticipant = participants.find(participant =>
+        participant.user_id === row.target_user_id ||
+        participant.user_id === row.actor_user_id
+      );
+
+      if (existingParticipant) {
+        approveParticipantAsCohost(existingParticipant, { acceptedHostInvite: true });
+        return;
+      }
+
+      try {
+        const { data, error: participantError } = await supabase
+          .from('live_participants')
+          .select('*')
+          .eq('session_id', streamId)
+          .eq('user_id', acceptedUserId)
+          .single();
+
+        if (participantError || !data) {
+          console.warn('[LiveBroadcast] accepted invite participant not found', participantError?.message ?? acceptedUserId);
+          return;
+        }
+
+        approveParticipantAsCohost(data as LiveParticipant, { acceptedHostInvite: true });
+      } catch (err: any) {
+        console.warn('[LiveBroadcast] accepted invite lookup failed', err?.message ?? err);
+      }
+    };
+
+    const channel = supabase
+      .channel(`live-accepted-invites:${streamId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'live_control_events', filter: `session_id=eq.${streamId}` },
+        payload => {
+          approveAcceptedInvite(payload.new);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [live, streamId, user?.id, supabase, participants, approveParticipantAsCohost]);
 
   const rejectJoinRequest = useCallback(async (participant: LiveParticipant) => {
     if (!user?.id || !streamId) return;
