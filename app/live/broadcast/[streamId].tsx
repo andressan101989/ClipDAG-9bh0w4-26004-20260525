@@ -40,6 +40,14 @@ interface ChatMessage {
   createdAt: string;
 }
 
+function mergeMessages(prev: ChatMessage[], next: ChatMessage[]) {
+  const byId = new Map<string, ChatMessage>();
+  [...prev, ...next].forEach(message => byId.set(message.id, message));
+  return Array.from(byId.values())
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    .slice(-MAX_MESSAGES);
+}
+
 type LiveParticipant = {
   id: string;
   session_id: string;
@@ -85,9 +93,11 @@ export default function LiveBroadcasterScreen() {
   } = useAgoraEngine({ channelName: live ? streamId ?? null : null, uid: myUid, role: 'publisher', profile: 'live-broadcasting' });
 
   const chatRef    = useRef<FlatList>(null);
+  const inputRef   = useRef<TextInput | null>(null);
   const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastMsgRef = useRef<string | null>(null);
   const lastSentRef = useRef(0);
+  const sendingRef = useRef(false);
   const endedRef   = useRef(false);
   const mountedRef = useRef(true);
 
@@ -104,6 +114,11 @@ export default function LiveBroadcasterScreen() {
     setTimeout(() => {
       chatRef.current?.scrollToEnd({ animated });
     }, 80);
+  }, []);
+
+  const dismissKeyboard = useCallback(() => {
+    inputRef.current?.blur();
+    Keyboard.dismiss();
   }, []);
 
   useEffect(() => {
@@ -184,7 +199,7 @@ export default function LiveBroadcasterScreen() {
           message: m.message, createdAt: m.created_at,
         }));
         lastMsgRef.current = mData[mData.length - 1].created_at;
-        setMessages(prev => [...prev, ...newMsgs].slice(-MAX_MESSAGES));
+        setMessages(prev => mergeMessages(prev, newMsgs));
         scrollToLatest(true);
       }
     } catch (_) { /* ignore */ }
@@ -324,34 +339,43 @@ export default function LiveBroadcasterScreen() {
 
   const sendMessage = useCallback(async () => {
     const text = chatInput.trim();
-    if (!text || !user || !streamId || sending) return;
+    if (!text || !user || !streamId || sending || sendingRef.current) return;
     const now = Date.now();
     if (now - lastSentRef.current < SPAM_THROTTLE_MS) return;
     lastSentRef.current = now;
+    sendingRef.current = true;
     setSending(true);
     setChatInput('');
 
     const username = user.username || user.email?.split('@')[0] || 'host';
-    const optimistic: ChatMessage = {
-      id: `local_${now}`,
-      userId: user.id,
-      username,
-      message: text,
-      createdAt: new Date().toISOString(),
-    };
-    setMessages(prev => [...prev, optimistic].slice(-MAX_MESSAGES));
-    scrollToLatest(true);
 
     try {
-      await supabase.from('live_messages').insert({
+      const { data, error: insertError } = await supabase.from('live_messages').insert({
         session_id: streamId,
         user_id: user.id,
         username,
         message: text,
-      });
-    } catch { /* ignore */ }
-    setSending(false);
-  }, [chatInput, user, streamId, sending, supabase, scrollToLatest]);
+      }).select('id, user_id, username, message, created_at').single();
+
+      if (insertError) throw insertError;
+      if (data) {
+        setMessages(prev => mergeMessages(prev, [{
+          id: data.id,
+          userId: data.user_id,
+          username: data.username,
+          message: data.message,
+          createdAt: data.created_at,
+        }]));
+        scrollToLatest(true);
+      }
+      dismissKeyboard();
+    } catch (err: any) {
+      console.warn('[LiveBroadcast] send message failed', err?.message ?? err);
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  }, [chatInput, user, streamId, sending, supabase, scrollToLatest, dismissKeyboard]);
 
   const formatLiveDuration = (seconds: number) =>
     `${Math.floor(seconds / 3600).toString().padStart(2, '0')}:${Math.floor((seconds % 3600) / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
@@ -409,6 +433,12 @@ export default function LiveBroadcasterScreen() {
           <MaterialIcons name="videocam-off" size={40} color={Colors.textSubtle} />
         </View>
       )}
+
+      <Pressable
+        style={styles.keyboardDismissLayer}
+        onPress={dismissKeyboard}
+        accessibilityLabel="Cerrar teclado"
+      />
 
       <LinearGradient colors={['rgba(0,0,0,0.45)', 'transparent']} style={styles.topShade} pointerEvents="none" />
       <LinearGradient colors={['transparent', 'rgba(0,0,0,0.6)']} style={styles.bottomShade} pointerEvents="none" />
@@ -574,6 +604,7 @@ export default function LiveBroadcasterScreen() {
         }}
       >
         <TextInput
+          ref={inputRef}
           style={styles.input}
           value={chatInput}
           onChangeText={setChatInput}
@@ -626,6 +657,7 @@ const styles = StyleSheet.create({
 
   videoStream:      { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
   videoPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surface },
+  keyboardDismissLayer: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
   topShade: { position: 'absolute', top: 0, left: 0, right: 0, height: 170, zIndex: 2 },
   bottomShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 320, zIndex: 2 },
   remoteStrip: { position: 'absolute', right: 12, width: 140, gap: 12, zIndex: 8 },
