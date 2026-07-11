@@ -311,6 +311,28 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
     });
   }, []);
 
+  const demoteToAudience = useCallback(async () => {
+    const engine = engineRef.current;
+    if (!engine || profile !== 'live-broadcasting') return false;
+    try {
+      try { engine.muteLocalAudioStream(true); } catch { /* ignore */ }
+      try { engine.muteLocalVideoStream(true); } catch { /* ignore */ }
+      try { engine.enableLocalVideo(false); } catch { /* ignore */ }
+      try { engine.stopPreview?.(); } catch { /* ignore */ }
+      try { engine.setClientRole(ClientRoleType.ClientRoleAudience); } catch { /* ignore */ }
+
+      if (mountedRef.current) {
+        setIsMuted(true);
+        setIsCameraOff(true);
+        setLocalVideoReady(false);
+      }
+      return true;
+    } catch (e: any) {
+      if (mountedRef.current) setError(e?.message ?? 'No se pudo bajar del live');
+      return false;
+    }
+  }, [profile]);
+
   const switchCamera = useCallback(() => {
     const engine = engineRef.current;
     if (!engine) return;
@@ -325,6 +347,6 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
     isMuted, isCameraOff, isFront, speakerOn,
     localVideoReady,
     join, leave,
-    toggleMute, toggleCamera, switchCamera, toggleSpeaker, promoteToPublisher,
+    toggleMute, toggleCamera, switchCamera, toggleSpeaker, promoteToPublisher, demoteToAudience,
   };
 }

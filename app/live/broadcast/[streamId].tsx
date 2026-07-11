@@ -66,6 +66,29 @@ type LiveParticipant = {
   updated_at: string;
 };
 
+type LiveControlEventType =
+  | 'request_join'
+  | 'approve_join'
+  | 'mute'
+  | 'unmute'
+  | 'lock_mic'
+  | 'unlock_mic'
+  | 'grant_floor'
+  | 'revoke_floor'
+  | 'remove_cohost'
+  | 'timer_start'
+  | 'timer_stop';
+
+function getCohostTimerText(participant: LiveParticipant) {
+  if (!participant.floor_started_at) return null;
+  if (participant.floor_duration_seconds === null || participant.floor_duration_seconds === undefined) return null;
+  const startedAt = new Date(participant.floor_started_at).getTime();
+  if (Number.isNaN(startedAt)) return null;
+  const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+  const remaining = Math.max(0, participant.floor_duration_seconds - elapsed);
+  return `${Math.floor(remaining / 60)}:${(remaining % 60).toString().padStart(2, '0')}`;
+}
+
 export default function LiveBroadcasterScreen() {
   const { streamId } = useLocalSearchParams<{ streamId: string }>();
   const insets   = useSafeAreaInsets();
@@ -82,6 +105,7 @@ export default function LiveBroadcasterScreen() {
   const [messages, setMessages]     = useState<ChatMessage[]>([]);
   const [participants, setParticipants] = useState<LiveParticipant[]>([]);
   const [liveSeconds, setLiveSeconds] = useState(0);
+  const [cohostTimerTick, setCohostTimerTick] = useState(0);
   const [chatInput, setChatInput] = useState('');
   const [sending, setSending] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -100,6 +124,7 @@ export default function LiveBroadcasterScreen() {
   const sendingRef = useRef(false);
   const endedRef   = useRef(false);
   const mountedRef = useRef(true);
+  const expiredTimerMutedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     mountedRef.current = true;
@@ -175,6 +200,12 @@ export default function LiveBroadcasterScreen() {
     const timer = setInterval(() => setLiveSeconds(s => s + 1), 1000);
     return () => clearInterval(timer);
   }, [live]);
+
+  useEffect(() => {
+    if (!live || !participants.some(p => p.status === 'active' && p.floor_started_at && p.floor_duration_seconds !== null && p.floor_duration_seconds !== undefined)) return;
+    const timer = setInterval(() => setCohostTimerTick(t => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, [live, participants]);
 
   // ── Poll: viewer count + comments ────────────────────────────────────────
   const poll = useCallback(async () => {
@@ -283,14 +314,18 @@ export default function LiveBroadcasterScreen() {
   const acceptJoinRequest = useCallback(async (participant: LiveParticipant) => {
     if (!user?.id || !streamId) return;
     const username = participant.username || 'Invitado';
+    const floorStartedAt = new Date().toISOString();
     try {
       const { error: updateError } = await supabase
         .from('live_participants')
         .update({
           role: 'cohost',
           status: 'active',
+          mic_muted: false,
+          mic_locked: false,
+          camera_enabled: true,
           floor_granted: true,
-          floor_started_at: new Date().toISOString(),
+          floor_started_at: floorStartedAt,
           floor_duration_seconds: null,
         })
         .eq('id', participant.id);
@@ -304,6 +339,17 @@ export default function LiveBroadcasterScreen() {
         payload: { username },
       });
       if (eventError) console.warn('[LiveBroadcast] approve event failed', eventError.message);
+      setParticipants(prev => prev.map(item => item.id === participant.id ? {
+        ...item,
+        role: 'cohost',
+        status: 'active',
+        mic_muted: false,
+        mic_locked: false,
+        camera_enabled: true,
+        floor_granted: true,
+        floor_started_at: floorStartedAt,
+        floor_duration_seconds: null,
+      } : item));
       loadParticipants();
     } catch (err: any) {
       console.warn('[LiveBroadcast] accept join failed', err?.message ?? err);
@@ -336,6 +382,141 @@ export default function LiveBroadcasterScreen() {
       console.warn('[LiveBroadcast] reject join failed', err?.message ?? err);
     }
   }, [user?.id, streamId, supabase, loadParticipants]);
+
+  const insertLiveControlEvent = useCallback(async (
+    eventType: LiveControlEventType,
+    participant: LiveParticipant,
+    payload: Record<string, unknown> = {},
+  ) => {
+    if (!user?.id || !streamId) return;
+    const username = participant.username || 'Invitado';
+    const { error: eventError } = await supabase.from('live_control_events').insert({
+      session_id: streamId,
+      target_user_id: participant.user_id,
+      actor_user_id: user.id,
+      event_type: eventType,
+      payload: { username, ...payload },
+    });
+    if (eventError) console.warn(`[LiveBroadcast] ${eventType} event failed`, eventError.message);
+  }, [user?.id, streamId, supabase]);
+
+  const updateCohostControls = useCallback(async (
+    participant: LiveParticipant,
+    patch: Partial<Pick<LiveParticipant, 'mic_muted' | 'mic_locked' | 'camera_enabled' | 'floor_granted' | 'floor_started_at' | 'floor_duration_seconds' | 'role' | 'status'>>,
+    eventType: LiveControlEventType,
+    payload?: Record<string, unknown>,
+  ) => {
+    try {
+      const { error: updateError } = await supabase
+        .from('live_participants')
+        .update(patch)
+        .eq('id', participant.id);
+      if (updateError) throw updateError;
+      setParticipants(prev => prev
+        .map(item => item.id === participant.id ? { ...item, ...patch } : item)
+        .filter(item => item.status === 'active'));
+      await insertLiveControlEvent(eventType, participant, payload);
+      loadParticipants();
+    } catch (err: any) {
+      console.warn(`[LiveBroadcast] ${eventType} failed`, err?.message ?? err);
+    }
+  }, [supabase, insertLiveControlEvent, loadParticipants]);
+
+  const toggleCohostMute = useCallback((participant: LiveParticipant) => {
+    const nextMuted = !participant.mic_muted;
+    updateCohostControls(
+      participant,
+      { mic_muted: nextMuted },
+      nextMuted ? 'mute' : 'unmute',
+    );
+  }, [updateCohostControls]);
+
+  const toggleCohostMicLock = useCallback((participant: LiveParticipant) => {
+    const nextLocked = !participant.mic_locked;
+    updateCohostControls(
+      participant,
+      nextLocked ? { mic_locked: true, mic_muted: true } : { mic_locked: false },
+      nextLocked ? 'lock_mic' : 'unlock_mic',
+    );
+  }, [updateCohostControls]);
+
+  const toggleCohostFloor = useCallback((participant: LiveParticipant) => {
+    const nextGranted = !participant.floor_granted;
+    updateCohostControls(
+      participant,
+      nextGranted
+        ? { floor_granted: true, floor_started_at: new Date().toISOString(), floor_duration_seconds: null }
+        : { floor_granted: false, floor_started_at: null, floor_duration_seconds: null },
+      nextGranted ? 'grant_floor' : 'revoke_floor',
+    );
+  }, [updateCohostControls]);
+
+  const setCohostTimer = useCallback((participant: LiveParticipant, seconds: number | null) => {
+    updateCohostControls(
+      participant,
+      seconds === null
+        ? { floor_granted: true, floor_started_at: new Date().toISOString(), floor_duration_seconds: null }
+        : { floor_granted: true, floor_started_at: new Date().toISOString(), floor_duration_seconds: seconds },
+      seconds === null ? 'timer_stop' : 'timer_start',
+      seconds === null ? undefined : { seconds },
+    );
+  }, [updateCohostControls]);
+
+  const removeCohost = useCallback((participant: LiveParticipant) => {
+    updateCohostControls(
+      participant,
+      {
+        role: 'removed',
+        status: 'removed',
+        mic_muted: true,
+        mic_locked: true,
+        camera_enabled: false,
+        floor_granted: false,
+        floor_started_at: null,
+        floor_duration_seconds: null,
+      },
+      'remove_cohost',
+    );
+  }, [updateCohostControls]);
+
+  const sendHostInviteToAudience = useCallback((participant: LiveParticipant) => {
+    insertLiveControlEvent('request_join', participant, { invited_by_host: true });
+  }, [insertLiveControlEvent]);
+
+  useEffect(() => {
+    if (!live) return;
+
+    const enforceExpiredTimers = () => {
+      participants
+        .filter(participant =>
+          participant.role === 'cohost' &&
+          participant.status === 'active' &&
+          participant.floor_started_at &&
+          participant.floor_duration_seconds !== null &&
+          participant.floor_duration_seconds !== undefined
+        )
+        .forEach(participant => {
+          const startedAt = new Date(participant.floor_started_at as string).getTime();
+          if (Number.isNaN(startedAt)) return;
+          const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+          const remaining = participant.floor_duration_seconds! - elapsed;
+          const timerKey = `${participant.id}:${participant.floor_started_at}`;
+          if (remaining > 0 || participant.mic_muted || expiredTimerMutedRef.current.has(timerKey)) return;
+
+          expiredTimerMutedRef.current.add(timerKey);
+          updateCohostControls(
+            participant,
+            { mic_muted: true, floor_granted: false },
+            'mute',
+            { reason: 'timer_expired', seconds: participant.floor_duration_seconds },
+          );
+        });
+    };
+
+    enforceExpiredTimers();
+    const timer = setInterval(enforceExpiredTimers, 1000);
+    return () => clearInterval(timer);
+  }, [live, participants, updateCohostControls]);
 
   const sendMessage = useCallback(async () => {
     const text = chatInput.trim();
@@ -418,6 +599,13 @@ export default function LiveBroadcasterScreen() {
 
   const pendingRequests = participants.filter(p => p.role === 'requested' && p.status === 'active');
   const structuredCohosts = participants.filter(p => p.role === 'cohost' && p.status === 'active');
+  const activeAudiences = participants.filter(p =>
+    p.role === 'audience' &&
+    p.status === 'active' &&
+    p.user_id !== user?.id
+  );
+  const pendingPanelHeight = pendingRequests.length > 0 ? Math.min(pendingRequests.length, 3) * 51 : 0;
+  const cohostPanelHeight = structuredCohosts.length > 0 ? Math.min(structuredCohosts.length, 2) * 48 : 0;
   const composerBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
   const composerClearance = composerBottom + composerHeight + 16;
   const controlsBottom = composerBottom + composerHeight + 14;
@@ -523,15 +711,81 @@ export default function LiveBroadcasterScreen() {
       ) : null}
 
       {structuredCohosts.length > 0 ? (
-        <View style={[styles.cohostPanel, { top: insets.top + 154 + (pendingRequests.length > 0 ? 54 : 0) }]}>
-          <MaterialIcons name="videocam" size={13} color="#fff" />
-          <Text style={styles.cohostText} numberOfLines={1}>
-            {structuredCohosts.map(p => p.username || 'Invitado').join(', ')}
-          </Text>
+        <View style={[styles.cohostPanel, { top: insets.top + 154 + pendingPanelHeight }]}>
+          {structuredCohosts.slice(0, 2).map(participant => {
+            const timerText = cohostTimerTick >= 0 ? getCohostTimerText(participant) : null;
+            return (
+            <View key={participant.id} style={styles.cohostControlRow}>
+              <Text style={styles.cohostText} numberOfLines={1}>@{participant.username || 'Invitado'}</Text>
+              <View style={styles.cohostControlActions}>
+                <Pressable
+                  style={[styles.cohostIconBtn, participant.mic_muted && styles.cohostIconBtnActive]}
+                  onPress={() => toggleCohostMute(participant)}
+                  hitSlop={6}
+                  accessibilityLabel={participant.mic_muted ? 'Activar micrófono del cohost' : 'Silenciar cohost'}
+                >
+                  <MaterialIcons name={participant.mic_muted ? 'mic-off' : 'mic'} size={15} color="#fff" />
+                </Pressable>
+                <Pressable
+                  style={[styles.cohostIconBtn, participant.mic_locked && styles.cohostIconBtnActive]}
+                  onPress={() => toggleCohostMicLock(participant)}
+                  hitSlop={6}
+                  accessibilityLabel={participant.mic_locked ? 'Desbloquear micrófono del cohost' : 'Bloquear micrófono del cohost'}
+                >
+                  <MaterialIcons name={participant.mic_locked ? 'lock' : 'lock-open'} size={15} color="#fff" />
+                </Pressable>
+                <Pressable
+                  style={[styles.cohostIconBtn, participant.floor_granted && styles.cohostIconBtnActive]}
+                  onPress={() => toggleCohostFloor(participant)}
+                  hitSlop={6}
+                  accessibilityLabel={participant.floor_granted ? 'Quitar derecho de palabra' : 'Dar derecho de palabra'}
+                >
+                  <MaterialIcons name={participant.floor_granted ? 'record-voice-over' : 'voice-over-off'} size={15} color="#fff" />
+                </Pressable>
+                <Pressable style={styles.timerBtn} onPress={() => setCohostTimer(participant, 60)} hitSlop={6} accessibilityLabel="Timer de un minuto">
+                  <Text style={styles.timerBtnText}>1m</Text>
+                </Pressable>
+                <Pressable style={styles.timerBtn} onPress={() => setCohostTimer(participant, 120)} hitSlop={6} accessibilityLabel="Timer de dos minutos">
+                  <Text style={styles.timerBtnText}>2m</Text>
+                </Pressable>
+                <Pressable style={styles.timerBtn} onPress={() => setCohostTimer(participant, null)} hitSlop={6} accessibilityLabel="Timer libre">
+                  <Text style={styles.timerBtnText}>∞</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.cohostIconBtn, styles.cohostRemoveBtn]}
+                  onPress={() => removeCohost(participant)}
+                  hitSlop={6}
+                  accessibilityLabel="Bajar cohost del live"
+                >
+                  <MaterialIcons name="person-remove" size={15} color="#fff" />
+                </Pressable>
+              </View>
+              {timerText ? <Text style={styles.cohostTimerText}>{timerText}</Text> : null}
+            </View>
+          );})}
         </View>
       ) : null}
 
       {/* ── Chat overlay ──────────────────────────────────────────────────── */}
+      {activeAudiences.length > 0 ? (
+        <View style={[styles.audiencePanel, { top: insets.top + 154 + pendingPanelHeight + cohostPanelHeight }]}>
+          {activeAudiences.slice(0, 3).map(participant => (
+            <View key={participant.id} style={styles.audienceRow}>
+              <MaterialIcons name="people" size={13} color="rgba(255,255,255,0.78)" />
+              <Text style={styles.audienceName} numberOfLines={1}>@{participant.username || 'Invitado'}</Text>
+              <Pressable
+                style={styles.audienceInviteBtn}
+                onPress={() => sendHostInviteToAudience(participant)}
+                hitSlop={6}
+                accessibilityLabel={`Subir a ${participant.username || 'Invitado'} al live`}
+              >
+                <MaterialIcons name="person-add-alt-1" size={15} color="#fff" />
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
       <View style={[styles.chatArea, { bottom: composerClearance + 150, maxHeight: Math.max(120, SCREEN_HEIGHT - composerClearance - 290) }]}>
         <FlatList
           ref={chatRef}
@@ -732,19 +986,45 @@ const styles = StyleSheet.create({
   cohostPanel: {
     position: 'absolute',
     left: 16,
-    right: 88,
-    height: 34,
+    right: 12,
+    gap: 6,
+    zIndex: 10,
+  },
+  cohostControlRow: {
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingLeft: 12,
+    paddingRight: 6,
+    backgroundColor: 'rgba(0,0,0,0.42)',
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  cohostText: { width: SCREEN_WIDTH < 380 ? 54 : 78, color: 'rgba(255,255,255,0.88)', fontSize: 11, fontWeight: FontWeight.semibold },
+  cohostControlActions: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: SCREEN_WIDTH < 380 ? 3 : 5 },
+  cohostIconBtn: { width: SCREEN_WIDTH < 380 ? 27 : 30, height: SCREEN_WIDTH < 380 ? 27 : 30, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
+  cohostIconBtnActive: { backgroundColor: 'rgba(124,92,255,0.78)' },
+  cohostRemoveBtn: { backgroundColor: 'rgba(255,45,85,0.74)' },
+  timerBtn: { minWidth: SCREEN_WIDTH < 380 ? 24 : 29, height: SCREEN_WIDTH < 380 ? 26 : 28, borderRadius: 14, paddingHorizontal: SCREEN_WIDTH < 380 ? 5 : 7, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)' },
+  timerBtnText: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
+  cohostTimerText: { width: 34, color: '#fff', fontSize: 10, fontWeight: FontWeight.bold, textAlign: 'right' },
+  audiencePanel: { position: 'absolute', left: 16, right: 88, gap: 6, zIndex: 9 },
+  audienceRow: {
+    minHeight: 36,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
-    paddingHorizontal: 12,
-    backgroundColor: 'rgba(0,0,0,0.38)',
-    borderRadius: 17,
+    paddingLeft: 12,
+    paddingRight: 5,
+    backgroundColor: 'rgba(0,0,0,0.34)',
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
-    zIndex: 10,
   },
-  cohostText: { flex: 1, color: 'rgba(255,255,255,0.86)', fontSize: 11, fontWeight: FontWeight.semibold },
+  audienceName: { flex: 1, color: 'rgba(255,255,255,0.86)', fontSize: 11, fontWeight: FontWeight.semibold },
+  audienceInviteBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
 
   chatArea: {
     position: 'absolute',

@@ -52,6 +52,16 @@ function mergeMessages(prev: ChatMessage[], next: ChatMessage[]) {
     .slice(-MAX_MESSAGES);
 }
 
+function getFloorSecondsRemaining(participant: LiveParticipant | null) {
+  if (!participant?.floor_started_at) return null;
+  if (participant.floor_duration_seconds === null || participant.floor_duration_seconds === undefined) return null;
+
+  const startedAt = new Date(participant.floor_started_at).getTime();
+  if (Number.isNaN(startedAt)) return null;
+  const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+  return Math.max(0, participant.floor_duration_seconds - elapsed);
+}
+
 type LiveParticipant = {
   id: string;
   session_id: string;
@@ -68,6 +78,14 @@ type LiveParticipant = {
   floor_duration_seconds: number | null;
   created_at: string;
   updated_at: string;
+};
+
+type HostInviteEvent = {
+  id: string;
+  payload?: {
+    username?: string;
+    invited_by_host?: boolean;
+  } | null;
 };
 
 const LIVE_GIFT_BAR = [
@@ -101,10 +119,15 @@ export default function LiveWatchScreen() {
   const [watchSeconds, setWatchSeconds] = useState(0);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [composerHeight, setComposerHeight] = useState(72);
+  const [floorSecondsRemaining, setFloorSecondsRemaining] = useState<number | null>(null);
+  const [hostInvite, setHostInvite] = useState<HostInviteEvent | null>(null);
 
+  const agora = useAgoraEngine({ channelName: session?.status === 'live' ? streamId ?? null : null, uid: myUid, role: 'subscriber', profile: 'live-broadcasting' });
   const {
     engineReady, remoteUids, error, join, leave, promoteToPublisher,
-  } = useAgoraEngine({ channelName: session?.status === 'live' ? streamId ?? null : null, uid: myUid, role: 'subscriber', profile: 'live-broadcasting' });
+    isMuted, isCameraOff, toggleMute, toggleCamera,
+  } = agora;
+  const demoteToAudience = (agora as any).demoteToAudience as undefined | (() => Promise<boolean>);
 
   const requestSent = participantRow?.role === 'requested';
   const isStructuredCohost = participantRow?.role === 'cohost' && participantRow?.status === 'active';
@@ -120,11 +143,21 @@ export default function LiveWatchScreen() {
   const leftRef     = useRef(false);
   const viewerCountBumpedRef = useRef(false);
   const promotingRef = useRef(false);
+  const previousRemoteMicMutedRef = useRef<boolean | null>(null);
+  const removedHandledRef = useRef(false);
+  const timerExpiredHandledRef = useRef(false);
+  const participantRowRef = useRef<LiveParticipant | null>(null);
+  const lastPromotionKeyRef = useRef<string | null>(null);
+  const seenHostInviteIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
+
+  useEffect(() => {
+    participantRowRef.current = participantRow;
+  }, [participantRow]);
 
   const scrollToLatest = useCallback((animated = true) => {
     requestAnimationFrame(() => {
@@ -212,6 +245,23 @@ export default function LiveWatchScreen() {
     } catch (_) { /* ignore */ }
   }, [streamId, supabase]);
 
+  const markPassiveParticipantInactive = useCallback(async () => {
+    const row = participantRowRef.current;
+    if (!row || !streamId || !user?.id) return;
+    if (row.role !== 'audience' && row.role !== 'requested') return;
+    try {
+      const { error: inactiveError } = await supabase
+        .from('live_participants')
+        .update({ status: 'inactive' })
+        .eq('session_id', streamId)
+        .eq('user_id', user.id)
+        .in('role', ['audience', 'requested']);
+      if (inactiveError) console.warn('[LiveWatch] participant inactive failed', inactiveError.message);
+    } catch (err: any) {
+      console.warn('[LiveWatch] participant inactive failed', err?.message ?? err);
+    }
+  }, [streamId, user?.id, supabase]);
+
   const loadParticipant = useCallback(async () => {
     if (!streamId || !user?.id) return;
     const username = getDisplayUsername(user);
@@ -230,6 +280,21 @@ export default function LiveWatchScreen() {
       }
 
       if (data) {
+        if ((data.role === 'audience' || data.role === 'requested') && data.status !== 'active') {
+          const { data: activeRow, error: activeError } = await supabase
+            .from('live_participants')
+            .update({ status: 'active', username, agora_uid: myUid || null })
+            .eq('id', data.id)
+            .select('*')
+            .single();
+          if (activeError) {
+            console.warn('[LiveWatch] reactivate participant failed', activeError.message);
+            setParticipantRow(data as LiveParticipant);
+            return;
+          }
+          setParticipantRow(activeRow as LiveParticipant);
+          return;
+        }
         setParticipantRow(data as LiveParticipant);
         return;
       }
@@ -285,6 +350,32 @@ export default function LiveWatchScreen() {
     };
   }, [session?.status, streamId, user?.id, supabase, loadParticipant]);
 
+  useEffect(() => {
+    if (session?.status !== 'live' || !streamId || !user?.id) return;
+
+    const channel = supabase
+      .channel(`live-control-invite:${streamId}:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'live_control_events', filter: `session_id=eq.${streamId}` },
+        payload => {
+          const row = payload.new as any;
+          if (row?.target_user_id !== user.id) return;
+          if (row?.event_type !== 'request_join') return;
+          if (row?.payload?.invited_by_host !== true) return;
+          if (seenHostInviteIdsRef.current.has(row.id)) return;
+          seenHostInviteIdsRef.current.add(row.id);
+          if (isStructuredCohost || requestSent) return;
+          setHostInvite({ id: row.id, payload: row.payload });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.status, streamId, user?.id, supabase, isStructuredCohost, requestSent]);
+
   // ── Poll: session status + viewer count + messages ──────────────────────
   const poll = useCallback(async () => {
     if (!streamId || ended) return;
@@ -322,13 +413,94 @@ export default function LiveWatchScreen() {
   }, [streamId, ended, supabase, scrollToLatest]);
 
   useEffect(() => {
-    if (!isStructuredCohost || promotedToPublisher || promotingRef.current || wasRemoved) return;
+    if (participantRow?.role === 'cohost' && participantRow?.status === 'active') return;
+    setPromotedToPublisher(false);
+    promotingRef.current = false;
+    lastPromotionKeyRef.current = null;
+  }, [participantRow?.role, participantRow?.status]);
+
+  useEffect(() => {
+    const promotionKey = participantRow
+      ? `${participantRow.id}:${participantRow.updated_at}:${participantRow.role}:${participantRow.status}`
+      : null;
+
+    if (!isStructuredCohost || wasRemoved || promotingRef.current || !promotionKey) return;
+    if (lastPromotionKeyRef.current === promotionKey && promotedToPublisher) return;
+
     promotingRef.current = true;
     promoteToPublisher().then(ok => {
-      if (ok && mountedRef.current) setPromotedToPublisher(true);
-      if (!ok) promotingRef.current = false;
+      if (ok && mountedRef.current) {
+        setPromotedToPublisher(true);
+        lastPromotionKeyRef.current = promotionKey;
+      }
+      promotingRef.current = false;
     });
-  }, [isStructuredCohost, promotedToPublisher, wasRemoved, promoteToPublisher]);
+  }, [isStructuredCohost, promotedToPublisher, wasRemoved, participantRow?.id, participantRow?.updated_at, participantRow?.role, participantRow?.status, promoteToPublisher]);
+
+  useEffect(() => {
+    if (wasRemoved) return;
+    if (!isStructuredCohost) {
+      previousRemoteMicMutedRef.current = null;
+      return;
+    }
+    const remoteMicMuted = participantRow?.mic_muted === true;
+    const remoteMicLocked = participantRow?.mic_locked === true;
+    const previousRemoteMicMuted = previousRemoteMicMutedRef.current;
+
+    if ((remoteMicMuted || remoteMicLocked) && !isMuted) {
+      toggleMute();
+    } else if (!remoteMicMuted && !remoteMicLocked && previousRemoteMicMuted === true && isMuted) {
+      toggleMute();
+    }
+
+    previousRemoteMicMutedRef.current = remoteMicMuted;
+  }, [isStructuredCohost, wasRemoved, participantRow?.mic_muted, participantRow?.mic_locked, isMuted, toggleMute]);
+
+  useEffect(() => {
+    if (!wasRemoved) return;
+    if (removedHandledRef.current) return;
+    removedHandledRef.current = true;
+    setPromotedToPublisher(false);
+
+    if (demoteToAudience) {
+      demoteToAudience().then(ok => {
+        if (!ok) {
+          if (!isMuted) toggleMute();
+          if (!isCameraOff) toggleCamera();
+        }
+      });
+      return;
+    }
+
+    if (!isMuted) toggleMute();
+    if (!isCameraOff) toggleCamera();
+  }, [wasRemoved, isMuted, isCameraOff, toggleMute, toggleCamera, demoteToAudience]);
+
+  useEffect(() => {
+    if (!wasRemoved) removedHandledRef.current = false;
+  }, [wasRemoved]);
+
+  useEffect(() => {
+    timerExpiredHandledRef.current = false;
+    if (!participantRow?.floor_started_at || participantRow.floor_duration_seconds === null || participantRow.floor_duration_seconds === undefined) {
+      setFloorSecondsRemaining(null);
+      return;
+    }
+
+    const updateRemaining = () => {
+      setFloorSecondsRemaining(getFloorSecondsRemaining(participantRow));
+    };
+
+    updateRemaining();
+    const timer = setInterval(updateRemaining, 1000);
+    return () => clearInterval(timer);
+  }, [participantRow?.floor_started_at, participantRow?.floor_duration_seconds]);
+
+  useEffect(() => {
+    if (floorSecondsRemaining !== 0 || !isStructuredCohost || timerExpiredHandledRef.current) return;
+    timerExpiredHandledRef.current = true;
+    if (!isMuted) toggleMute();
+  }, [floorSecondsRemaining, isStructuredCohost, isMuted, toggleMute]);
 
   useEffect(() => {
     if (!streamId) { router.back(); return; }
@@ -343,12 +515,13 @@ export default function LiveWatchScreen() {
     return () => {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
       if (!leftRef.current) { leftRef.current = true; leave(); }
+      markPassiveParticipantInactive();
       if (viewerCountBumpedRef.current) {
         viewerCountBumpedRef.current = false;
         bumpViewerCount(-1);
       }
     };
-  }, [streamId]);
+  }, [streamId, markPassiveParticipantInactive]);
 
   // ── Send message ─────────────────────────────────────────────────────────
   const sendMessage = useCallback(async () => {
@@ -389,8 +562,8 @@ export default function LiveWatchScreen() {
     }
   }, [chatInput, user, streamId, sending, supabase, scrollToLatest, dismissKeyboard]);
 
-  const requestToJoin = useCallback(async () => {
-    if (!user || !streamId || requestSent || promotedToPublisher || isStructuredCohost || wasRemoved) return;
+  const requestToJoin = useCallback(async (options?: { acceptedHostInvite?: boolean }) => {
+    if (!user || !streamId || requestSent || promotedToPublisher || isStructuredCohost) return;
     const username = getDisplayUsername(user);
 
     try {
@@ -406,10 +579,11 @@ export default function LiveWatchScreen() {
         setParticipantRow(existing as LiveParticipant);
         return;
       }
-      if (existing && (existing.role === 'cohost' || existing.role === 'removed' || existing.status === 'removed')) {
+      if (existing?.role === 'cohost' && existing.status === 'active') {
         setParticipantRow(existing as LiveParticipant);
         return;
       }
+      const retry = existing?.role === 'removed' || existing?.status === 'removed';
 
       const optimistic: LiveParticipant = {
         ...((existing as LiveParticipant | null) ?? participantRow ?? {
@@ -432,8 +606,18 @@ export default function LiveWatchScreen() {
         username,
         role: 'requested',
         status: 'active',
+        mic_muted: false,
+        mic_locked: false,
+        camera_enabled: true,
+        floor_granted: false,
+        floor_started_at: null,
+        floor_duration_seconds: null,
       };
       setParticipantRow(optimistic);
+      setPromotedToPublisher(false);
+      promotingRef.current = false;
+      lastPromotionKeyRef.current = null;
+      removedHandledRef.current = false;
 
       const { data, error: upsertError } = await supabase
         .from('live_participants')
@@ -444,6 +628,12 @@ export default function LiveWatchScreen() {
           username,
           role: 'requested',
           status: 'active',
+          mic_muted: false,
+          mic_locked: false,
+          camera_enabled: true,
+          floor_granted: false,
+          floor_started_at: null,
+          floor_duration_seconds: null,
         }, { onConflict: 'session_id,user_id' })
         .select('*')
         .single();
@@ -455,7 +645,11 @@ export default function LiveWatchScreen() {
         target_user_id: user.id,
         actor_user_id: user.id,
         event_type: 'request_join',
-        payload: { username },
+        payload: {
+          username,
+          ...(retry ? { retry: true } : {}),
+          ...(options?.acceptedHostInvite ? { accepted_host_invite: true } : {}),
+        },
       });
       if (eventError) console.warn('[LiveWatch] request event failed', eventError.message);
 
@@ -465,7 +659,16 @@ export default function LiveWatchScreen() {
       console.warn('[LiveWatch] request join failed', err?.message ?? err);
       Alert.alert('No se pudo enviar la solicitud');
     }
-  }, [user, streamId, requestSent, promotedToPublisher, isStructuredCohost, wasRemoved, participantRow, myUid, supabase]);
+  }, [user, streamId, requestSent, promotedToPublisher, isStructuredCohost, participantRow, myUid, supabase]);
+
+  const acceptHostInvite = useCallback(() => {
+    setHostInvite(null);
+    requestToJoin({ acceptedHostInvite: true });
+  }, [requestToJoin]);
+
+  const rejectHostInvite = useCallback(() => {
+    setHostInvite(null);
+  }, []);
 
   const formatLiveDuration = (seconds: number) =>
     `${Math.floor(seconds / 3600).toString().padStart(2, '0')}:${Math.floor((seconds % 3600) / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
@@ -497,8 +700,11 @@ export default function LiveWatchScreen() {
   const coHostUids = remoteUids.slice(1);
   const composerBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
   const composerClearance = composerBottom + composerHeight + 16;
-  const requestIcon = promotedToPublisher || isStructuredCohost ? 'videocam' : wasRemoved ? 'block' : requestSent ? 'hourglass-top' : 'person-add-alt-1';
-  const requestDisabled = requestSent || promotedToPublisher || isStructuredCohost || wasRemoved || !user;
+  const requestIcon = promotedToPublisher || isStructuredCohost ? 'videocam' : requestSent ? 'hourglass-top' : 'person-add-alt-1';
+  const requestDisabled = requestSent || promotedToPublisher || isStructuredCohost || !user;
+  const floorTimerText = floorSecondsRemaining === null
+    ? null
+    : `${Math.floor(floorSecondsRemaining / 60)}:${(floorSecondsRemaining % 60).toString().padStart(2, '0')}`;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -556,7 +762,65 @@ export default function LiveWatchScreen() {
         <View style={styles.errorBanner}><Text style={styles.errorText}>{error}</Text></View>
       ) : null}
 
+      {hostInvite ? (
+        <View style={[styles.hostInvitePanel, { top: insets.top + 154 }]}>
+          <MaterialIcons name="person-add-alt-1" size={17} color="#fff" />
+          <Text style={styles.hostInviteText} numberOfLines={1}>El anfitrión quiere subirte</Text>
+          <Pressable
+            style={[styles.hostInviteBtn, styles.hostInviteRejectBtn]}
+            onPress={rejectHostInvite}
+            hitSlop={6}
+            accessibilityLabel="Rechazar invitación del anfitrión"
+          >
+            <MaterialIcons name="close" size={16} color="#fff" />
+          </Pressable>
+          <Pressable
+            style={[styles.hostInviteBtn, styles.hostInviteAcceptBtn]}
+            onPress={acceptHostInvite}
+            hitSlop={6}
+            accessibilityLabel="Aceptar invitación del anfitrión"
+          >
+            <MaterialIcons name="check" size={16} color="#fff" />
+          </Pressable>
+        </View>
+      ) : null}
+
       {/* ── Chat + controls ──────────────────────────────────────────────── */}
+      {(isStructuredCohost || wasRemoved) ? (
+        <View style={[styles.cohostStatusPanel, { top: insets.top + 154 }]}>
+          <Pressable
+            style={[styles.cohostSelfBtn, (isMuted || participantRow?.mic_locked) && styles.cohostSelfBtnActive, participantRow?.mic_locked && styles.cohostSelfBtnLocked]}
+            onPress={() => {
+              if (participantRow?.mic_locked) return;
+              toggleMute();
+            }}
+            disabled={!!participantRow?.mic_locked || wasRemoved}
+            hitSlop={6}
+            accessibilityLabel={participantRow?.mic_locked ? 'Micrófono bloqueado por el anfitrión' : isMuted ? 'Activar micrófono' : 'Silenciar micrófono'}
+          >
+            <MaterialIcons name={participantRow?.mic_locked ? 'lock' : isMuted ? 'mic-off' : 'mic'} size={15} color="#fff" />
+          </Pressable>
+          <Pressable
+            style={[styles.cohostSelfBtn, isCameraOff && styles.cohostSelfBtnActive]}
+            onPress={toggleCamera}
+            disabled={wasRemoved}
+            hitSlop={6}
+            accessibilityLabel={isCameraOff ? 'Activar cámara' : 'Apagar cámara'}
+          >
+            <MaterialIcons name={isCameraOff ? 'videocam-off' : 'videocam'} size={15} color="#fff" />
+          </Pressable>
+          <View style={[styles.floorBadge, !participantRow?.floor_granted && styles.floorBadgeMuted]}>
+            <MaterialIcons name={participantRow?.floor_granted ? 'record-voice-over' : 'voice-over-off'} size={13} color="#fff" />
+            {floorTimerText ? <Text style={styles.floorBadgeText}>{floorTimerText}</Text> : null}
+          </View>
+          {wasRemoved ? (
+            <View style={styles.floorBadgeMuted}>
+              <MaterialIcons name="block" size={14} color="#fff" />
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
       <View style={styles.actionRail}>
         <View style={styles.actionButton} accessibilityLabel="Me gusta">
           <MaterialIcons name="favorite" size={25} color="#fff" />
@@ -569,9 +833,9 @@ export default function LiveWatchScreen() {
         </View>
         <Pressable
           style={[styles.actionButton, requestDisabled && styles.actionButtonDisabled]}
-          onPress={requestToJoin}
+          onPress={() => requestToJoin()}
           disabled={requestDisabled}
-          accessibilityLabel="Solicitar subir al live"
+          accessibilityLabel={wasRemoved ? 'Volver a solicitar subir al live' : 'Solicitar subir al live'}
         >
           <MaterialIcons name={requestIcon} size={24} color="#fff" />
         </Pressable>
@@ -730,6 +994,33 @@ const styles = StyleSheet.create({
   actionRail: { position: 'absolute', right: 12, top: SCREEN_HEIGHT * 0.28, gap: 12, zIndex: 9 },
   actionButton: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.14)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
   actionButtonDisabled: { opacity: 0.6 },
+  hostInvitePanel: {
+    position: 'absolute',
+    left: 16,
+    right: 84,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingLeft: 13,
+    paddingRight: 6,
+    backgroundColor: 'rgba(0,0,0,0.56)',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    zIndex: 12,
+  },
+  hostInviteText: { flex: 1, color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
+  hostInviteBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  hostInviteRejectBtn: { backgroundColor: 'rgba(255,255,255,0.16)' },
+  hostInviteAcceptBtn: { backgroundColor: Colors.primary },
+  cohostStatusPanel: { position: 'absolute', left: 16, flexDirection: 'row', alignItems: 'center', gap: 7, zIndex: 10 },
+  cohostSelfBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.42)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
+  cohostSelfBtnActive: { backgroundColor: 'rgba(124,92,255,0.76)' },
+  cohostSelfBtnLocked: { backgroundColor: 'rgba(255,45,85,0.72)' },
+  floorBadge: { minWidth: 34, height: 34, borderRadius: 17, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: 'rgba(0,0,0,0.42)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  floorBadgeMuted: { minWidth: 34, height: 34, borderRadius: 17, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', opacity: 0.82 },
+  floorBadgeText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.bold },
   coHostStrip: { position: 'absolute', right: 12, bottom: 202, width: 138, gap: 12, zIndex: 8 },
   coHostTile: { width: 138, height: 104, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000', borderWidth: 1.5, borderColor: 'rgba(236,72,153,0.62)' },
   coHostVideo: { flex: 1 },
