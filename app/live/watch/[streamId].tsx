@@ -9,7 +9,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList, TextInput,
   Keyboard, Platform, ActivityIndicator, Dimensions,
-  Alert,
+  Alert, Animated, Share,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -88,6 +88,14 @@ type HostInviteEvent = {
   } | null;
 };
 
+type FloatingReaction = {
+  id: string;
+  emoji: string;
+  username?: string | null;
+  createdAt: number;
+  x: number;
+};
+
 const LIVE_GIFT_BAR = [
   { id: 'star', emoji: '\u2B50', label: 'Estrella', cost: 10 },
   { id: 'crown', emoji: '\uD83D\uDC51', label: 'Corona', cost: 100 },
@@ -97,6 +105,38 @@ const LIVE_GIFT_BAR = [
 
 function getDisplayUsername(user: any): string {
   return user?.username || user?.email?.split('@')[0] || 'user';
+}
+
+function FloatingReactionBubble({ reaction, bottom }: { reaction: FloatingReaction; bottom: number }) {
+  const progress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(progress, {
+      toValue: 1,
+      duration: 1900,
+      useNativeDriver: true,
+    }).start();
+  }, [progress]);
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.floatingReaction,
+        {
+          left: `${reaction.x * 100}%`,
+          bottom,
+          opacity: progress.interpolate({ inputRange: [0, 0.75, 1], outputRange: [0, 1, 0] }),
+          transform: [
+            { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [0, -150] }) },
+            { scale: progress.interpolate({ inputRange: [0, 0.18, 1], outputRange: [0.82, 1.08, 1] }) },
+          ],
+        },
+      ]}
+    >
+      <Text style={styles.floatingReactionEmoji}>{reaction.emoji}</Text>
+    </Animated.View>
+  );
 }
 
 export default function LiveWatchScreen() {
@@ -121,6 +161,7 @@ export default function LiveWatchScreen() {
   const [composerHeight, setComposerHeight] = useState(72);
   const [floorSecondsRemaining, setFloorSecondsRemaining] = useState<number | null>(null);
   const [hostInvite, setHostInvite] = useState<HostInviteEvent | null>(null);
+  const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
 
   const agora = useAgoraEngine({ channelName: session?.status === 'live' ? streamId ?? null : null, uid: myUid, role: 'subscriber', profile: 'live-broadcasting' });
   const {
@@ -149,6 +190,8 @@ export default function LiveWatchScreen() {
   const participantRowRef = useRef<LiveParticipant | null>(null);
   const lastPromotionKeyRef = useRef<string | null>(null);
   const seenHostInviteIdsRef = useRef<Set<string>>(new Set());
+  const seenReactionEventIdsRef = useRef<Set<string>>(new Set());
+  const lastReactionAtRef = useRef(0);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -172,6 +215,22 @@ export default function LiveWatchScreen() {
   const dismissKeyboard = useCallback(() => {
     inputRef.current?.blur();
     Keyboard.dismiss();
+  }, []);
+
+  const addFloatingReaction = useCallback((emoji: string, username?: string | null) => {
+    const reaction: FloatingReaction = {
+      id: `reaction_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      emoji,
+      username,
+      createdAt: Date.now(),
+      x: 0.15 + Math.random() * 0.7,
+    };
+
+    setFloatingReactions(prev => [...prev, reaction].slice(-12));
+    setTimeout(() => {
+      if (!mountedRef.current) return;
+      setFloatingReactions(prev => prev.filter(item => item.id !== reaction.id));
+    }, 2200);
   }, []);
 
   useEffect(() => {
@@ -375,6 +434,29 @@ export default function LiveWatchScreen() {
       supabase.removeChannel(channel);
     };
   }, [session?.status, streamId, user?.id, supabase, isStructuredCohost, requestSent]);
+
+  useEffect(() => {
+    if (session?.status !== 'live' || !streamId) return;
+
+    const channel = supabase
+      .channel(`live-reactions:${streamId}:watch`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'live_control_events', filter: `session_id=eq.${streamId}` },
+        payload => {
+          const row = payload.new as any;
+          if (row?.event_type !== 'reaction') return;
+          if (seenReactionEventIdsRef.current.has(row.id)) return;
+          seenReactionEventIdsRef.current.add(row.id);
+          addFloatingReaction(row?.payload?.emoji || '\u2764\uFE0F', row?.payload?.username);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.status, streamId, supabase, addFloatingReaction]);
 
   // ── Poll: session status + viewer count + messages ──────────────────────
   const poll = useCallback(async () => {
@@ -670,6 +752,46 @@ export default function LiveWatchScreen() {
     setHostInvite(null);
   }, []);
 
+  const sendReaction = useCallback(async (emoji: string, giftVisual = false) => {
+    if (!streamId || !user?.id) return;
+    const now = Date.now();
+    if (now - lastReactionAtRef.current < 600) return;
+    lastReactionAtRef.current = now;
+
+    const username = getDisplayUsername(user);
+    try {
+      const { data, error: reactionError } = await supabase
+        .from('live_control_events')
+        .insert({
+          session_id: streamId,
+          actor_user_id: user.id,
+          target_user_id: user.id,
+          event_type: 'reaction',
+          payload: giftVisual ? { emoji, username, gift_visual: true } : { emoji, username },
+        })
+        .select('id')
+        .single();
+
+      if (reactionError) throw reactionError;
+      if (data?.id) seenReactionEventIdsRef.current.add(data.id);
+      addFloatingReaction(emoji, username);
+    } catch (err: any) {
+      console.warn('[LiveWatch] reaction failed', err?.message ?? err);
+    }
+  }, [streamId, user, supabase, addFloatingReaction]);
+
+  const shareLive = useCallback(async () => {
+    try {
+      await Share.share({
+        message: session?.title
+          ? `Estoy viendo "${session.title}" en OnSpace. Únete al live.`
+          : 'Estoy viendo un live en OnSpace. Únete ahora.',
+      });
+    } catch (err: any) {
+      console.warn('[LiveWatch] share failed', err?.message ?? err);
+    }
+  }, [session?.title]);
+
   const formatLiveDuration = (seconds: number) =>
     `${Math.floor(seconds / 3600).toString().padStart(2, '0')}:${Math.floor((seconds % 3600) / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
 
@@ -762,6 +884,14 @@ export default function LiveWatchScreen() {
         <View style={styles.errorBanner}><Text style={styles.errorText}>{error}</Text></View>
       ) : null}
 
+      {floatingReactions.map(reaction => (
+        <FloatingReactionBubble
+          key={reaction.id}
+          reaction={reaction}
+          bottom={composerClearance + 126}
+        />
+      ))}
+
       {hostInvite ? (
         <View style={[styles.hostInvitePanel, { top: insets.top + 154 }]}>
           <MaterialIcons name="person-add-alt-1" size={17} color="#fff" />
@@ -822,12 +952,22 @@ export default function LiveWatchScreen() {
       ) : null}
 
       <View style={styles.actionRail}>
-        <View style={styles.actionButton} accessibilityLabel="Me gusta">
+        <Pressable
+          style={styles.actionButton}
+          onPress={() => sendReaction('\u2764\uFE0F')}
+          hitSlop={6}
+          accessibilityLabel="Enviar reacción"
+        >
           <MaterialIcons name="favorite" size={25} color="#fff" />
-        </View>
-        <View style={styles.actionButton} accessibilityLabel="Compartir live">
+        </Pressable>
+        <Pressable
+          style={styles.actionButton}
+          onPress={shareLive}
+          hitSlop={6}
+          accessibilityLabel="Compartir live"
+        >
           <MaterialIcons name="ios-share" size={24} color="#fff" />
-        </View>
+        </Pressable>
         <View style={styles.actionButton} accessibilityLabel="Regalos">
           <MaterialIcons name="card-giftcard" size={24} color="#fff" />
         </View>
@@ -881,14 +1021,21 @@ export default function LiveWatchScreen() {
         {LIVE_GIFT_BAR.map(g => (
           <Pressable
             key={g.id}
-            style={[styles.giftBtn, styles.giftBtnDisabled]}
-            disabled
+            style={styles.giftBtn}
+            onPress={() => sendReaction(g.emoji, true)}
+            hitSlop={6}
+            accessibilityLabel={`Enviar ${g.label}`}
           >
             <Text style={styles.giftEmoji}>{g.emoji}</Text>
             <Text style={styles.giftCost}>{g.cost}</Text>
           </Pressable>
         ))}
-        <Pressable style={[styles.giftBtn, styles.giftBtnDisabled]} disabled>
+        <Pressable
+          style={styles.giftBtn}
+          onPress={() => sendReaction('\u2728', true)}
+          hitSlop={6}
+          accessibilityLabel="Enviar regalo visual"
+        >
           <MaterialIcons name="add" size={21} color="#fff" />
         </Pressable>
       </View>
@@ -990,6 +1137,8 @@ const styles = StyleSheet.create({
 
   errorBanner: { marginHorizontal: Spacing.md, backgroundColor: 'rgba(255,45,85,0.15)', borderRadius: Radius.sm, padding: Spacing.xs },
   errorText: { color: Colors.secondary, fontSize: 11, textAlign: 'center' },
+  floatingReaction: { position: 'absolute', zIndex: 16, alignItems: 'center', marginLeft: -18 },
+  floatingReactionEmoji: { fontSize: 31, textShadowColor: 'rgba(0,0,0,0.45)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
 
   actionRail: { position: 'absolute', right: 12, top: SCREEN_HEIGHT * 0.28, gap: 12, zIndex: 9 },
   actionButton: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.14)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },

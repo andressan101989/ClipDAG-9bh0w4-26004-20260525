@@ -14,7 +14,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList, TextInput, ActivityIndicator, Dimensions,
-  Keyboard, Platform,
+  Keyboard, Platform, Animated,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -66,6 +66,14 @@ type LiveParticipant = {
   updated_at: string;
 };
 
+type FloatingReaction = {
+  id: string;
+  emoji: string;
+  username?: string | null;
+  createdAt: number;
+  x: number;
+};
+
 type LiveControlEventType =
   | 'request_join'
   | 'approve_join'
@@ -77,7 +85,8 @@ type LiveControlEventType =
   | 'revoke_floor'
   | 'remove_cohost'
   | 'timer_start'
-  | 'timer_stop';
+  | 'timer_stop'
+  | 'reaction';
 
 function getCohostTimerText(participant: LiveParticipant) {
   if (!participant.floor_started_at) return null;
@@ -87,6 +96,38 @@ function getCohostTimerText(participant: LiveParticipant) {
   const elapsed = Math.floor((Date.now() - startedAt) / 1000);
   const remaining = Math.max(0, participant.floor_duration_seconds - elapsed);
   return `${Math.floor(remaining / 60)}:${(remaining % 60).toString().padStart(2, '0')}`;
+}
+
+function FloatingReactionBubble({ reaction, bottom }: { reaction: FloatingReaction; bottom: number }) {
+  const progress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(progress, {
+      toValue: 1,
+      duration: 1900,
+      useNativeDriver: true,
+    }).start();
+  }, [progress]);
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.floatingReaction,
+        {
+          left: `${reaction.x * 100}%`,
+          bottom,
+          opacity: progress.interpolate({ inputRange: [0, 0.75, 1], outputRange: [0, 1, 0] }),
+          transform: [
+            { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [0, -150] }) },
+            { scale: progress.interpolate({ inputRange: [0, 0.18, 1], outputRange: [0.82, 1.08, 1] }) },
+          ],
+        },
+      ]}
+    >
+      <Text style={styles.floatingReactionEmoji}>{reaction.emoji}</Text>
+    </Animated.View>
+  );
 }
 
 export default function LiveBroadcasterScreen() {
@@ -110,6 +151,7 @@ export default function LiveBroadcasterScreen() {
   const [sending, setSending] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [composerHeight, setComposerHeight] = useState(72);
+  const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
 
   const {
     engineReady, joined, error,
@@ -126,6 +168,8 @@ export default function LiveBroadcasterScreen() {
   const mountedRef = useRef(true);
   const expiredTimerMutedRef = useRef<Set<string>>(new Set());
   const processedAcceptedInviteIdsRef = useRef<Set<string>>(new Set());
+  const seenReactionEventIdsRef = useRef<Set<string>>(new Set());
+  const lastReactionAtRef = useRef(0);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -145,6 +189,22 @@ export default function LiveBroadcasterScreen() {
   const dismissKeyboard = useCallback(() => {
     inputRef.current?.blur();
     Keyboard.dismiss();
+  }, []);
+
+  const addFloatingReaction = useCallback((emoji: string, username?: string | null) => {
+    const reaction: FloatingReaction = {
+      id: `reaction_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      emoji,
+      username,
+      createdAt: Date.now(),
+      x: 0.15 + Math.random() * 0.7,
+    };
+
+    setFloatingReactions(prev => [...prev, reaction].slice(-12));
+    setTimeout(() => {
+      if (!mountedRef.current) return;
+      setFloatingReactions(prev => prev.filter(item => item.id !== reaction.id));
+    }, 2200);
   }, []);
 
   useEffect(() => {
@@ -552,6 +612,29 @@ export default function LiveBroadcasterScreen() {
   }, [insertLiveControlEvent]);
 
   useEffect(() => {
+    if (!live || !streamId) return;
+
+    const channel = supabase
+      .channel(`live-reactions:${streamId}:broadcast`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'live_control_events', filter: `session_id=eq.${streamId}` },
+        payload => {
+          const row = payload.new as any;
+          if (row?.event_type !== 'reaction') return;
+          if (seenReactionEventIdsRef.current.has(row.id)) return;
+          seenReactionEventIdsRef.current.add(row.id);
+          addFloatingReaction(row?.payload?.emoji || '\u2764\uFE0F', row?.payload?.username);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [live, streamId, supabase, addFloatingReaction]);
+
+  useEffect(() => {
     if (!live) return;
 
     const enforceExpiredTimers = () => {
@@ -625,6 +708,34 @@ export default function LiveBroadcasterScreen() {
       setSending(false);
     }
   }, [chatInput, user, streamId, sending, supabase, scrollToLatest, dismissKeyboard]);
+
+  const sendReaction = useCallback(async (emoji: string) => {
+    if (!streamId || !user?.id) return;
+    const now = Date.now();
+    if (now - lastReactionAtRef.current < 600) return;
+    lastReactionAtRef.current = now;
+
+    const username = user.username || user.email?.split('@')[0] || 'host';
+    try {
+      const { data, error: reactionError } = await supabase
+        .from('live_control_events')
+        .insert({
+          session_id: streamId,
+          actor_user_id: user.id,
+          target_user_id: null,
+          event_type: 'reaction',
+          payload: { emoji, username },
+        })
+        .select('id')
+        .single();
+
+      if (reactionError) throw reactionError;
+      if (data?.id) seenReactionEventIdsRef.current.add(data.id);
+      addFloatingReaction(emoji, username);
+    } catch (err: any) {
+      console.warn('[LiveBroadcast] reaction failed', err?.message ?? err);
+    }
+  }, [streamId, user, supabase, addFloatingReaction]);
 
   const formatLiveDuration = (seconds: number) =>
     `${Math.floor(seconds / 3600).toString().padStart(2, '0')}:${Math.floor((seconds % 3600) / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
@@ -747,6 +858,14 @@ export default function LiveBroadcasterScreen() {
           <Text style={styles.errorText}>{error}</Text>
         </View>
       ) : null}
+
+      {floatingReactions.map(reaction => (
+        <FloatingReactionBubble
+          key={reaction.id}
+          reaction={reaction}
+          bottom={composerClearance + 128}
+        />
+      ))}
 
       {pendingRequests.length > 0 ? (
         <View style={[styles.requestPanel, { top: insets.top + 154 }]}>
@@ -876,6 +995,16 @@ export default function LiveBroadcasterScreen() {
 
       {/* ── Controls ──────────────────────────────────────────────────────── */}
       <View style={[styles.controls, { bottom: controlsBottom }]}>
+        <View style={styles.controlGroup}>
+          <Pressable
+            style={styles.controlBtn}
+            onPress={() => sendReaction('\u2764\uFE0F')}
+            hitSlop={8}
+            accessibilityLabel="Enviar reacción"
+          >
+            <MaterialIcons name="favorite" size={20} color="#fff" />
+          </Pressable>
+        </View>
         <View style={styles.controlGroup}>
           <Pressable
             style={[styles.controlBtn, isMuted && styles.controlBtnActive]}
@@ -1025,6 +1154,18 @@ const styles = StyleSheet.create({
 
   errorBanner: { position: 'absolute', left: Spacing.md, right: Spacing.md, zIndex: 10, backgroundColor: 'rgba(255,45,85,0.15)', borderRadius: Radius.sm, padding: Spacing.xs },
   errorText: { color: Colors.secondary, fontSize: 11, textAlign: 'center' },
+  floatingReaction: {
+    position: 'absolute',
+    zIndex: 16,
+    alignItems: 'center',
+    marginLeft: -18,
+  },
+  floatingReactionEmoji: {
+    fontSize: 31,
+    textShadowColor: 'rgba(0,0,0,0.45)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
 
   requestPanel: {
     position: 'absolute',
