@@ -5,11 +5,8 @@
  * forbids two different dynamic segment names in the same directory, and
  * app/live/[sessionId].tsx already occupies app/live/.
  *
- * Self-contained: creates its own row in the existing `live_sessions` /
- * `live_messages` tables (same schema already used by app/live/[sessionId].tsx)
- * so viewer count + chat work the same way, but drives the actual video with
- * Agora's LIVE_BROADCASTING profile instead of the placeholder video area.
- * Does not touch app/live/[sessionId].tsx, useLiveStream, or LiveCameraPreview.
+ * Creates the live_sessions row, drives Agora LIVE_BROADCASTING, receives
+ * canonical gift events, and renders the same gift animation overlay as viewers.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -26,6 +23,11 @@ import { getSupabaseClient } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
 import { useAgoraEngine } from '@/hooks/useAgoraEngine';
 import { RtcSurfaceView, useridToAgoraUid, isAgoraAvailable } from '@/services/agoraService';
+import { fetchSessionGiftTotal } from '@/services/liveGiftsService';
+import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
+import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
+import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
+import type { LiveGiftEvent } from '@/types/liveGifts';
 
 const POLL_INTERVAL_MS = 3000;
 const MAX_MESSAGES     = 50;
@@ -38,6 +40,7 @@ interface ChatMessage {
   username: string;
   message: string;
   createdAt: string;
+  avatarUrl?: string | null;
 }
 
 function mergeMessages(prev: ChatMessage[], next: ChatMessage[]) {
@@ -46,6 +49,24 @@ function mergeMessages(prev: ChatMessage[], next: ChatMessage[]) {
   return Array.from(byId.values())
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
     .slice(-MAX_MESSAGES);
+}
+
+async function attachMessageAvatars(supabase: ReturnType<typeof getSupabaseClient>, messages: ChatMessage[], fallbackUser?: any): Promise<ChatMessage[]> {
+  const userIds = Array.from(new Set(messages.map(message => message.userId).filter(Boolean)));
+  if (userIds.length === 0) return messages;
+
+  const { data } = await supabase
+    .from('user_profiles')
+    .select('id, avatar_url')
+    .in('id', userIds);
+
+  const avatarByUserId = new Map<string, string | null>();
+  (data ?? []).forEach((profile: any) => avatarByUserId.set(profile.id, profile.avatar_url ?? null));
+
+  return messages.map(message => ({
+    ...message,
+    avatarUrl: avatarByUserId.get(message.userId) ?? (message.userId === fallbackUser?.id ? fallbackUser?.avatar ?? null : null),
+  }));
 }
 
 type LiveParticipant = {
@@ -72,7 +93,34 @@ type FloatingReaction = {
   username?: string | null;
   createdAt: number;
   x: number;
+  big?: boolean;
 };
+
+function liveGiftEventFromPayload(row: any, streamId: string): LiveGiftEvent | null {
+  const payload = row?.payload ?? {};
+  if (row?.event_type !== 'reaction' || payload?.gift_real !== true) return null;
+  const transactionId = String(payload.transaction_id ?? row.id ?? '');
+  const giftId = String(payload.gift_id ?? '');
+  if (!transactionId || !giftId) return null;
+  return {
+    eventId: row.id ?? null,
+    transactionId,
+    sessionId: String(payload.session_id ?? row.session_id ?? streamId),
+    senderUserId: row.actor_user_id ?? payload.sender_user_id ?? null,
+    senderUsername: payload.username ?? payload.sender_username ?? null,
+    senderAvatarUrl: payload.avatar_url ?? payload.sender_avatar_url ?? null,
+    giftId,
+    giftName: String(payload.gift_name ?? payload.label ?? giftId),
+    icon: String(payload.icon ?? payload.emoji ?? '\uD83C\uDF81'),
+    amountBdag: Number(payload.amount_bdag ?? payload.amount_coins ?? 0),
+    category: payload.category ?? 'basic',
+    animationType: payload.animation_type ?? 'floating',
+    animationAsset: payload.animation_asset ?? null,
+    durationMs: Number(payload.duration_ms ?? 1800),
+    priority: Number(payload.priority ?? 0),
+    createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+  };
+}
 
 type LiveControlEventType =
   | 'request_join'
@@ -120,12 +168,12 @@ function FloatingReactionBubble({ reaction, bottom }: { reaction: FloatingReacti
           opacity: progress.interpolate({ inputRange: [0, 0.75, 1], outputRange: [0, 1, 0] }),
           transform: [
             { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [0, -150] }) },
-            { scale: progress.interpolate({ inputRange: [0, 0.18, 1], outputRange: [0.82, 1.08, 1] }) },
+            { scale: progress.interpolate({ inputRange: [0, 0.18, 1], outputRange: [reaction.big ? 1.1 : 0.82, reaction.big ? 1.4 : 1.08, reaction.big ? 1.3 : 1] }) },
           ],
         },
       ]}
     >
-      <Text style={styles.floatingReactionEmoji}>{reaction.emoji}</Text>
+      <Text style={[styles.floatingReactionEmoji, reaction.big && styles.floatingReactionEmojiBig]}>{reaction.emoji}</Text>
     </Animated.View>
   );
 }
@@ -152,6 +200,8 @@ export default function LiveBroadcasterScreen() {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [composerHeight, setComposerHeight] = useState(72);
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
+  const [giftTotal, setGiftTotal] = useState(0);
+  const { activeGift, floatingGifts, enqueueGift } = useLiveGiftAnimations(streamId);
 
   const {
     engineReady, joined, error,
@@ -191,13 +241,14 @@ export default function LiveBroadcasterScreen() {
     Keyboard.dismiss();
   }, []);
 
-  const addFloatingReaction = useCallback((emoji: string, username?: string | null) => {
+  const addFloatingReaction = useCallback((emoji: string, username?: string | null, big = false) => {
     const reaction: FloatingReaction = {
       id: `reaction_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       emoji,
       username,
       createdAt: Date.now(),
       x: 0.15 + Math.random() * 0.7,
+      big,
     };
 
     setFloatingReactions(prev => [...prev, reaction].slice(-12));
@@ -290,12 +341,13 @@ export default function LiveBroadcasterScreen() {
           id: m.id, userId: m.user_id, username: m.username,
           message: m.message, createdAt: m.created_at,
         }));
+        const messagesWithAvatars = await attachMessageAvatars(supabase, newMsgs, user);
         lastMsgRef.current = mData[mData.length - 1].created_at;
-        setMessages(prev => mergeMessages(prev, newMsgs));
+        setMessages(prev => mergeMessages(prev, messagesWithAvatars));
         scrollToLatest(true);
       }
     } catch (_) { /* ignore */ }
-  }, [streamId, supabase, scrollToLatest]);
+  }, [streamId, supabase, scrollToLatest, user]);
 
   useEffect(() => {
     if (!live) return;
@@ -624,6 +676,13 @@ export default function LiveBroadcasterScreen() {
           if (row?.event_type !== 'reaction') return;
           if (seenReactionEventIdsRef.current.has(row.id)) return;
           seenReactionEventIdsRef.current.add(row.id);
+          const giftEvent = liveGiftEventFromPayload(row, streamId);
+          if (giftEvent) {
+            enqueueGift(giftEvent);
+            const amount = Number(giftEvent.amountBdag ?? 0);
+            if (amount > 0) setGiftTotal(prev => prev + amount);
+            return;
+          }
           addFloatingReaction(row?.payload?.emoji || '\u2764\uFE0F', row?.payload?.username);
         },
       )
@@ -632,7 +691,18 @@ export default function LiveBroadcasterScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [live, streamId, supabase, addFloatingReaction]);
+  }, [live, streamId, supabase, addFloatingReaction, enqueueGift]);
+
+  useEffect(() => {
+    if (!live || !streamId) return;
+    let cancelled = false;
+
+    fetchSessionGiftTotal(streamId)
+      .then(total => { if (!cancelled) setGiftTotal(total); })
+      .catch(err => console.warn('[LiveBroadcast] fetch gift total failed', err?.message ?? err));
+
+    return () => { cancelled = true; };
+  }, [live, streamId]);
 
   useEffect(() => {
     if (!live) return;
@@ -697,6 +767,7 @@ export default function LiveBroadcasterScreen() {
           username: data.username,
           message: data.message,
           createdAt: data.created_at,
+          avatarUrl: user.avatar ?? null,
         }]));
         scrollToLatest(true);
       }
@@ -840,6 +911,10 @@ export default function LiveBroadcasterScreen() {
           <MaterialIcons name="schedule" size={14} color="#fff" />
           <Text style={styles.liveTimer}>{formatLiveDuration(liveSeconds)}</Text>
         </View>
+        <View style={styles.headerDivider} />
+        <View style={styles.headerMetric} accessibilityLabel="Total recibido en regalos (BDAG)">
+          <Text style={styles.viewerChipText}>{'🎁'} {giftTotal.toLocaleString()} BDAG</Text>
+        </View>
         <Pressable style={styles.headerEndBtn} onPress={endBroadcast} hitSlop={8}>
           <MaterialIcons name="close" size={22} color="#fff" />
         </Pressable>
@@ -866,6 +941,8 @@ export default function LiveBroadcasterScreen() {
           bottom={composerClearance + 128}
         />
       ))}
+
+      <LiveGiftOverlay activeGift={activeGift} floatingGifts={floatingGifts} />
 
       {pendingRequests.length > 0 ? (
         <View style={[styles.requestPanel, { top: insets.top + 154 }]}>
@@ -981,10 +1058,12 @@ export default function LiveBroadcasterScreen() {
           onContentSizeChange={() => scrollToLatest(false)}
           onLayout={() => scrollToLatest(false)}
           renderItem={({ item }) => (
-            <View style={msgStyles.row}>
-              <Text style={msgStyles.name}>{item.username}</Text>
-              <Text style={msgStyles.text}> {item.message}</Text>
-            </View>
+            <LiveChatMessageItem
+              username={item.username}
+              message={item.message}
+              avatarUrl={item.avatarUrl}
+              isHost={item.userId === user?.id}
+            />
           )}
           contentContainerStyle={{ gap: 4, paddingBottom: 8 }}
           ListFooterComponent={<View style={{ height: 8 }} />}
@@ -1081,12 +1160,6 @@ export default function LiveBroadcasterScreen() {
   );
 }
 
-const msgStyles = StyleSheet.create({
-  row:  { flexDirection: 'row', flexWrap: 'wrap' },
-  name: { color: Colors.primary, fontSize: 12, fontWeight: FontWeight.bold },
-  text: { color: 'rgba(255,255,255,0.9)', fontSize: 12 },
-});
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#050508' },
   centered:  { alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.xl },
@@ -1166,6 +1239,9 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
   },
+  floatingReactionEmojiBig: {
+    fontSize: 44,
+  },
 
   requestPanel: {
     position: 'absolute',
@@ -1241,11 +1317,6 @@ const styles = StyleSheet.create({
     width: SCREEN_WIDTH * 0.56,
     bottom: 108,
     maxHeight: SCREEN_HEIGHT * 0.32,
-    backgroundColor: 'rgba(0,0,0,0.42)',
-    borderRadius: 22,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
     zIndex: 7,
   },
 

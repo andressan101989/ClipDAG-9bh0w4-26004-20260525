@@ -1,9 +1,8 @@
 /**
  * app/live/watch/[streamId].tsx — Agora live stream viewer screen
  *
- * Reads/writes the same `live_sessions` / `live_messages` / `gifts` tables
- * as app/live/[sessionId].tsx (that file is untouched), but subscribes to
- * the broadcaster's actual Agora video instead of showing a placeholder.
+ * Reads/writes live_sessions / live_messages and routes paid gifts through
+ * send_live_gift() so BDAG moves only through the canonical ledger.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -21,6 +20,13 @@ import { getSupabaseClient } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
 import { useAgoraEngine } from '@/hooks/useAgoraEngine';
 import { RtcSurfaceView, useridToAgoraUid } from '@/services/agoraService';
+import { fetchGiftCatalog, fetchWalletBalance, sendLiveGift, type GiftCatalogItem } from '@/services/liveGiftsService';
+import { LiveGiftButton } from '@/components/live/gifts/LiveGiftButton';
+import { LiveGiftSheet } from '@/components/live/gifts/LiveGiftSheet';
+import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
+import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
+import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
+import type { LiveGiftEvent } from '@/types/liveGifts';
 
 const POLL_INTERVAL_MS = 3000;
 const MAX_MESSAGES     = 50;
@@ -42,6 +48,7 @@ interface ChatMessage {
   username: string;
   message: string;
   createdAt: string;
+  avatarUrl?: string | null;
 }
 
 function mergeMessages(prev: ChatMessage[], next: ChatMessage[]) {
@@ -96,15 +103,52 @@ type FloatingReaction = {
   x: number;
 };
 
-const LIVE_GIFT_BAR = [
-  { id: 'star', emoji: '\u2B50', label: 'Estrella', cost: 10 },
-  { id: 'crown', emoji: '\uD83D\uDC51', label: 'Corona', cost: 100 },
-  { id: 'diamond', emoji: '\uD83D\uDC8E', label: 'Diamante', cost: 500 },
-  { id: 'rose', emoji: '\uD83C\uDF39', label: 'Rosa', cost: 10 },
-];
-
 function getDisplayUsername(user: any): string {
   return user?.username || user?.email?.split('@')[0] || 'user';
+}
+
+async function attachMessageAvatars(supabase: ReturnType<typeof getSupabaseClient>, messages: ChatMessage[], fallbackUser?: any): Promise<ChatMessage[]> {
+  const userIds = Array.from(new Set(messages.map(message => message.userId).filter(Boolean)));
+  if (userIds.length === 0) return messages;
+
+  const { data } = await supabase
+    .from('user_profiles')
+    .select('id, avatar_url')
+    .in('id', userIds);
+
+  const avatarByUserId = new Map<string, string | null>();
+  (data ?? []).forEach((profile: any) => avatarByUserId.set(profile.id, profile.avatar_url ?? null));
+
+  return messages.map(message => ({
+    ...message,
+    avatarUrl: avatarByUserId.get(message.userId) ?? (message.userId === fallbackUser?.id ? fallbackUser?.avatar ?? null : null),
+  }));
+}
+
+function liveGiftEventFromPayload(row: any, streamId: string): LiveGiftEvent | null {
+  const payload = row?.payload ?? {};
+  if (row?.event_type !== 'reaction' || payload?.gift_real !== true) return null;
+  const transactionId = String(payload.transaction_id ?? row.id ?? '');
+  const giftId = String(payload.gift_id ?? '');
+  if (!transactionId || !giftId) return null;
+  return {
+    eventId: row.id ?? null,
+    transactionId,
+    sessionId: String(payload.session_id ?? row.session_id ?? streamId),
+    senderUserId: row.actor_user_id ?? payload.sender_user_id ?? null,
+    senderUsername: payload.username ?? payload.sender_username ?? null,
+    senderAvatarUrl: payload.avatar_url ?? payload.sender_avatar_url ?? null,
+    giftId,
+    giftName: String(payload.gift_name ?? payload.label ?? giftId),
+    icon: String(payload.icon ?? payload.emoji ?? '\uD83C\uDF81'),
+    amountBdag: Number(payload.amount_bdag ?? payload.amount_coins ?? 0),
+    category: payload.category ?? 'basic',
+    animationType: payload.animation_type ?? 'floating',
+    animationAsset: payload.animation_asset ?? null,
+    durationMs: Number(payload.duration_ms ?? 1800),
+    priority: Number(payload.priority ?? 0),
+    createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+  };
 }
 
 function FloatingReactionBubble({ reaction, bottom }: { reaction: FloatingReaction; bottom: number }) {
@@ -162,6 +206,15 @@ export default function LiveWatchScreen() {
   const [floorSecondsRemaining, setFloorSecondsRemaining] = useState<number | null>(null);
   const [hostInvite, setHostInvite] = useState<HostInviteEvent | null>(null);
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
+  const [giftCatalog, setGiftCatalog] = useState<GiftCatalogItem[]>([]);
+  const [giftsEnabled, setGiftsEnabled] = useState(false);
+  const [walletBalance, setWalletBalance] = useState<number | null>(null);
+  const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
+  const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
+  const [giftSheetVisible, setGiftSheetVisible] = useState(false);
+  const [sendingGiftId, setSendingGiftId] = useState<string | null>(null);
+  const [giftFeedback, setGiftFeedback] = useState<string | null>(null);
+  const { activeGift, floatingGifts, enqueueGift } = useLiveGiftAnimations(streamId);
 
   const agora = useAgoraEngine({ channelName: session?.status === 'live' ? streamId ?? null : null, uid: myUid, role: 'subscriber', profile: 'live-broadcasting' });
   const {
@@ -192,6 +245,8 @@ export default function LiveWatchScreen() {
   const seenHostInviteIdsRef = useRef<Set<string>>(new Set());
   const seenReactionEventIdsRef = useRef<Set<string>>(new Set());
   const lastReactionAtRef = useRef(0);
+  const sendingGiftRef = useRef(false);
+  const giftFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -201,6 +256,50 @@ export default function LiveWatchScreen() {
   useEffect(() => {
     participantRowRef.current = participantRow;
   }, [participantRow]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    console.log('[LiveWatch] auth user id', user.id);
+    let cancelled = false;
+
+    fetchGiftCatalog()
+      .then(items => {
+        if (cancelled) return;
+        setGiftCatalog(items);
+        setGiftsEnabled(items.length > 0);
+      })
+      .catch(err => {
+        console.warn('[LiveWatch] fetch gift catalog failed', err?.message ?? err);
+        if (!cancelled) setGiftsEnabled(false);
+      });
+
+    setWalletBalanceLoading(true);
+    setWalletBalanceError(null);
+    fetchWalletBalance()
+      .then(balance => {
+        if (!cancelled) setWalletBalance(balance);
+      })
+      .catch(err => {
+        console.warn('[LiveWatch] fetch wallet balance failed', err?.message ?? err);
+        if (!cancelled) {
+          setWalletBalance(null);
+          setWalletBalanceError('No se pudo cargar el saldo');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setWalletBalanceLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [user?.id]);
+
+  const showGiftFeedback = useCallback((text: string) => {
+    if (giftFeedbackTimeoutRef.current) clearTimeout(giftFeedbackTimeoutRef.current);
+    setGiftFeedback(text);
+    giftFeedbackTimeoutRef.current = setTimeout(() => {
+      if (mountedRef.current) setGiftFeedback(null);
+    }, 2500);
+  }, []);
 
   const scrollToLatest = useCallback((animated = true) => {
     requestAnimationFrame(() => {
@@ -448,6 +547,11 @@ export default function LiveWatchScreen() {
           if (row?.event_type !== 'reaction') return;
           if (seenReactionEventIdsRef.current.has(row.id)) return;
           seenReactionEventIdsRef.current.add(row.id);
+          const giftEvent = liveGiftEventFromPayload(row, streamId);
+          if (giftEvent) {
+            enqueueGift(giftEvent);
+            return;
+          }
           addFloatingReaction(row?.payload?.emoji || '\u2764\uFE0F', row?.payload?.username);
         },
       )
@@ -456,7 +560,7 @@ export default function LiveWatchScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session?.status, streamId, supabase, addFloatingReaction]);
+  }, [session?.status, streamId, supabase, addFloatingReaction, enqueueGift]);
 
   // ── Poll: session status + viewer count + messages ──────────────────────
   const poll = useCallback(async () => {
@@ -487,12 +591,13 @@ export default function LiveWatchScreen() {
           id: m.id, userId: m.user_id, username: m.username,
           message: m.message, createdAt: m.created_at,
         }));
+        const messagesWithAvatars = await attachMessageAvatars(supabase, newMsgs, user);
         lastMsgRef.current = mData[mData.length - 1].created_at;
-        setMessages(prev => mergeMessages(prev, newMsgs));
+        setMessages(prev => mergeMessages(prev, messagesWithAvatars));
         scrollToLatest(true);
       }
     } catch (_) { /* ignore */ }
-  }, [streamId, ended, supabase, scrollToLatest]);
+  }, [streamId, ended, supabase, scrollToLatest, user]);
 
   useEffect(() => {
     if (participantRow?.role === 'cohost' && participantRow?.status === 'active') return;
@@ -632,6 +737,7 @@ export default function LiveWatchScreen() {
           username: data.username,
           message: data.message,
           createdAt: data.created_at,
+          avatarUrl: user.avatar ?? null,
         }]));
         scrollToLatest(true);
       }
@@ -780,6 +886,39 @@ export default function LiveWatchScreen() {
     }
   }, [streamId, user, supabase, addFloatingReaction]);
 
+  const sendRealGift = useCallback(async (gift: GiftCatalogItem) => {
+    if (!streamId || !user?.id) return;
+    if (!giftsEnabled) { showGiftFeedback('Regalos no disponibles'); return; }
+    if (sendingGiftRef.current) return;
+    if (walletBalance === null) { showGiftFeedback('Saldo no disponible'); return; }
+    if (walletBalance < gift.priceBdag) { showGiftFeedback('Saldo insuficiente'); return; }
+
+    sendingGiftRef.current = true;
+    setSendingGiftId(gift.id);
+
+    const idempotencyKey = `${streamId}:${user.id}:${gift.id}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+
+    try {
+      const result = await sendLiveGift({ sessionId: streamId, giftId: gift.id, idempotencyKey });
+
+      if (!result.success) {
+        showGiftFeedback(/insufficient balance/i.test(result.error ?? '') ? 'Saldo insuficiente' : 'No se pudo enviar el regalo');
+        console.warn('[LiveWatch] send gift failed', result.error);
+        return;
+      }
+
+      if (typeof result.new_sender_balance === 'number') setWalletBalance(result.new_sender_balance);
+      setWalletBalanceError(null);
+      showGiftFeedback(`${gift.name} enviado`);
+    } catch (err: any) {
+      console.warn('[LiveWatch] send gift failed', err?.message ?? err);
+      showGiftFeedback('No se pudo enviar el regalo');
+    } finally {
+      sendingGiftRef.current = false;
+      setSendingGiftId(null);
+    }
+  }, [streamId, user, giftsEnabled, walletBalance, showGiftFeedback]);
+
   const shareLive = useCallback(async () => {
     try {
       await Share.share({
@@ -892,6 +1031,8 @@ export default function LiveWatchScreen() {
         />
       ))}
 
+      <LiveGiftOverlay activeGift={activeGift} floatingGifts={floatingGifts} />
+
       {hostInvite ? (
         <View style={[styles.hostInvitePanel, { top: insets.top + 154 }]}>
           <MaterialIcons name="person-add-alt-1" size={17} color="#fff" />
@@ -968,9 +1109,6 @@ export default function LiveWatchScreen() {
         >
           <MaterialIcons name="ios-share" size={24} color="#fff" />
         </Pressable>
-        <View style={styles.actionButton} accessibilityLabel="Regalos">
-          <MaterialIcons name="card-giftcard" size={24} color="#fff" />
-        </View>
         <Pressable
           style={[styles.actionButton, requestDisabled && styles.actionButtonDisabled]}
           onPress={() => requestToJoin()}
@@ -1001,12 +1139,12 @@ export default function LiveWatchScreen() {
           onContentSizeChange={() => scrollToLatest(false)}
           onLayout={() => scrollToLatest(false)}
           renderItem={({ item }) => (
-            <View style={msg.row}>
-              <Text style={[msg.name, item.userId === session.hostId && msg.hostName]}>
-                {item.userId === session.hostId ? '🎥 ' : ''}{item.username}
-              </Text>
-              <Text style={msg.text}> {item.message}</Text>
-            </View>
+            <LiveChatMessageItem
+              username={item.username}
+              message={item.message}
+              avatarUrl={item.avatarUrl}
+              isHost={item.userId === session.hostId}
+            />
           )}
           style={styles.chatList}
           contentContainerStyle={{ gap: 6, paddingVertical: 8, paddingHorizontal: Spacing.md }}
@@ -1017,28 +1155,18 @@ export default function LiveWatchScreen() {
 
       </View>
 
-      <View style={[styles.giftBar, { bottom: composerBottom + composerHeight + 14 }]}>
-        {LIVE_GIFT_BAR.map(g => (
-          <Pressable
-            key={g.id}
-            style={styles.giftBtn}
-            onPress={() => sendReaction(g.emoji, true)}
-            hitSlop={6}
-            accessibilityLabel={`Enviar ${g.label}`}
-          >
-            <Text style={styles.giftEmoji}>{g.emoji}</Text>
-            <Text style={styles.giftCost}>{g.cost}</Text>
-          </Pressable>
-        ))}
-        <Pressable
-          style={styles.giftBtn}
-          onPress={() => sendReaction('\u2728', true)}
-          hitSlop={6}
-          accessibilityLabel="Enviar regalo visual"
-        >
-          <MaterialIcons name="add" size={21} color="#fff" />
-        </Pressable>
-      </View>
+      <LiveGiftSheet
+        visible={giftSheetVisible}
+        balance={walletBalance}
+        catalog={giftCatalog}
+        sendingGiftId={sendingGiftId}
+        giftsEnabled={giftsEnabled && session.status === 'live'}
+        feedback={giftFeedback}
+        balanceLoading={walletBalanceLoading}
+        balanceError={walletBalanceError}
+        onSendGift={sendRealGift}
+        onClose={() => setGiftSheetVisible(false)}
+      />
 
       <View
         style={[styles.inputRow, { bottom: composerBottom + 8 }]}
@@ -1049,6 +1177,10 @@ export default function LiveWatchScreen() {
           );
         }}
       >
+        <LiveGiftButton
+          onPress={() => setGiftSheetVisible(true)}
+          disabled={!user || session.status !== 'live' || !giftsEnabled || walletBalanceLoading}
+        />
         <TextInput
           ref={inputRef}
           style={styles.input}
@@ -1075,13 +1207,6 @@ export default function LiveWatchScreen() {
     </SafeAreaView>
   );
 }
-
-const msg = StyleSheet.create({
-  row:      { flexDirection: 'row', flexWrap: 'wrap' },
-  name:     { color: Colors.primary, fontSize: 11, fontWeight: FontWeight.bold },
-  hostName: { color: Colors.secondary },
-  text:     { color: 'rgba(255,255,255,0.88)', fontSize: 12 },
-});
 
 const styles = StyleSheet.create({
   loadingScreen: { flex: 1, backgroundColor: Colors.bg, alignItems: 'center', justifyContent: 'center', gap: Spacing.md },
@@ -1187,17 +1312,7 @@ const styles = StyleSheet.create({
     maxHeight: SCREEN_HEIGHT * 0.34,
     width: SCREEN_WIDTH * 0.56,
     marginLeft: 12,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.42)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
   },
-
-  giftBar: { position: 'absolute', left: 12, right: 12, height: 70, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, backgroundColor: 'rgba(0,0,0,0.48)', borderRadius: 22, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', zIndex: 12, elevation: 12 },
-  giftBtn: { width: 52, height: 50, alignItems: 'center', justifyContent: 'center', gap: 1, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-  giftBtnDisabled: { opacity: 0.45 },
-  giftEmoji: { fontSize: 20 },
-  giftCost: { color: 'rgba(255,255,255,0.7)', fontSize: 9, fontWeight: FontWeight.bold },
 
   inputRow: { position: 'absolute', left: 12, right: 12, minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 20, elevation: 20 },
   input: { flex: 1, height: 58, backgroundColor: 'rgba(255,255,255,0.10)', borderRadius: Radius.full, paddingHorizontal: 18, color: '#fff', fontSize: FontSize.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
