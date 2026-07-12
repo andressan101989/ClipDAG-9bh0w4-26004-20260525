@@ -16,6 +16,12 @@ import React, {
 } from 'react';
 import { getSupabaseClient } from '@/template';
 import { PresenceManager }   from '@/modules/realtime/PresenceManager';
+import {
+  deactivateCurrentCallDevice,
+  startCallDeviceTokenListeners,
+  stopCallDeviceTokenListeners,
+  syncCurrentCallDevice,
+} from '@/services/callDeviceService';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -249,6 +255,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [loadProfile, loadFollows]);
 
+  useEffect(() => {
+    if (!isAuthReady || !user?.id) return;
+
+    startCallDeviceTokenListeners();
+    syncCurrentCallDevice().catch(() => {});
+
+    return () => {
+      stopCallDeviceTokenListeners();
+    };
+  }, [isAuthReady, user?.id]);
+
   // ── login / register / logout ───────────────────────────────────────────────
 
   const login = useCallback(async (email: string, password: string) => {
@@ -296,6 +313,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     const supabase = supabaseRef.current;
+    stopCallDeviceTokenListeners();
+    await deactivateCurrentCallDevice();
     await PresenceManager.destroy();
     try { await supabase?.auth.signOut(); } catch { /* ignore */ }
     setUser(null);

@@ -8,7 +8,7 @@
  * replaces, a row in `calls` survives the callee's realtime channel not
  * being subscribed yet (cold start, reconnect) — postgres_changes replays
  * against the row once the subscription is live. A push notification is
- * also fired through the send-notification Edge Function so the callee is
+ * also fired through the send-call-notification Edge Function so the callee is
  * reachable while backgrounded.
  *
  * "Accepted" is implicit: the callee joining the Agora channel is itself the
@@ -27,6 +27,11 @@ import {
   stopAllCallSounds,
   stopIncomingRingtone,
 } from '@/services/callRingtoneService';
+import {
+  dismissPresentedCallNotifications,
+  sendCallNotification,
+} from '@/services/callNotificationService';
+import { getCurrentCallDeviceId } from '@/services/callDeviceService';
 
 export type CallType = 'audio' | 'video';
 
@@ -46,6 +51,7 @@ interface AgoraCallContextType {
   onCallRejected:        (callId: string, cb: () => void) => () => void;
   onCallAccepted:        (callId: string, cb: () => void) => () => void;
   markCallMissed:        (callId: string) => Promise<void>;
+  presentIncomingCall:   (call: IncomingCall) => void;
   incomingCall:          IncomingCall | null;
   acceptIncomingCall:    () => Promise<void>;
   rejectIncomingCall:    () => void;
@@ -59,6 +65,7 @@ const NOOP_CTX: AgoraCallContextType = {
   onCallRejected:        () => () => {},
   onCallAccepted:        () => () => {},
   markCallMissed:        async () => {},
+  presentIncomingCall:   () => {},
   incomingCall:          null,
   acceptIncomingCall:    async () => {},
   rejectIncomingCall:    () => {},
@@ -96,6 +103,10 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     stopIncomingRingtone(callId).catch(() => {});
   }, []);
 
+  const presentIncomingCall = useCallback((call: IncomingCall) => {
+    setIncomingCall(prev => (prev?.callId === call.callId ? prev : call));
+  }, []);
+
   const updateCallStatus = useCallback(async (callId: string, status: string) => {
     if (status === 'rejected') {
       await rejectCall(callId, 'user_rejected');
@@ -123,7 +134,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     const { data: caller } = await supabase
       .from('user_profiles').select('username, avatar_url').eq('id', row.caller_id).single();
 
-    setIncomingCall({
+    presentIncomingCall({
       callId:       row.id,
       callerId:     row.caller_id,
       callerName:   caller?.username || 'Usuario',
@@ -138,7 +149,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
       updateCallStatus(row.id, 'missed').catch(() => {});
       setIncomingCall(prev => (prev?.callId === row.id ? null : prev));
     }, getRingTimeoutMs(row.expires_at));
-  }, [clearRingTimeout, getRingTimeoutMs, updateCallStatus]);
+  }, [clearRingTimeout, getRingTimeoutMs, presentIncomingCall, updateCallStatus]);
 
   // ── Callee: subscribe to new/updated rows addressed to me ─────────────────
   useEffect(() => {
@@ -156,6 +167,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
         // Caller cancelled before I answered — dismiss the modal.
         if (row.status !== 'ringing') {
           clearRingTimeout();
+          dismissPresentedCallNotifications(row.id).catch(() => {});
           setIncomingCall(prev => (prev?.callId === row.id ? null : prev));
         }
       })
@@ -197,11 +209,15 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
       }, (payload: any) => {
         const row = payload.new as { id: string; status: string };
         if (row.status === 'rejected') {
+          dismissPresentedCallNotifications(row.id).catch(() => {});
           const cb = rejectListenersRef.current.get(row.id);
           if (cb) cb();
         } else if (row.status === 'accepted') {
+          dismissPresentedCallNotifications(row.id).catch(() => {});
           const cb = acceptListenersRef.current.get(row.id);
           if (cb) cb();
+        } else if (['cancelled', 'expired', 'missed', 'ended'].includes(row.status)) {
+          dismissPresentedCallNotifications(row.id).catch(() => {});
         }
       })
       .subscribe();
@@ -257,6 +273,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
         calleeId: targetUserId,
         callType: call.callType,
         idempotencyKey: call.callId,
+        callerDeviceId: await getCurrentCallDeviceId(),
       });
       startedCall = {
         ...call,
@@ -271,19 +288,8 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
       return null;
     }
 
-    supabase.functions.invoke('send-notification', {
-      body: {
-        to_user_id: targetUserId,
-        title:      `${call.callerName} te está llamando`,
-        body:       startedCall.callType === 'audio' ? 'Llamada de audio entrante' : 'Videollamada entrante',
-        data:       {
-          type: 'incoming_call',
-          callId: startedCall.callId,
-          channelName: startedCall.channelName,
-          callType: startedCall.callType,
-        },
-      },
-    }).catch(() => { /* best-effort - realtime is the primary channel */ });
+    sendCallNotification(startedCall.callId, 'incoming_call')
+      .catch(() => { /* best-effort - realtime is the primary channel */ });
 
     return startedCall;
   }, [showAlert]);
@@ -324,6 +330,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     clearRingTimeout();
     await stopAllCallSounds();
     Vibration.cancel();
+    dismissPresentedCallNotifications(call.callId).catch(() => {});
     setIncomingCall(null);
     const qs = new URLSearchParams({
       mode:         'answer',
@@ -340,6 +347,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     const call = incomingCall;
     clearRingTimeout();
     stopIncomingAlerts(call.callId);
+    dismissPresentedCallNotifications(call.callId).catch(() => {});
     setIncomingCall(null);
     rejectCall(call.callId, 'user_rejected').catch(() => {});
   }, [incomingCall, clearRingTimeout, stopIncomingAlerts]);
@@ -347,6 +355,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
   return (
     <AgoraCallContext.Provider value={{
       broadcastIncomingCall, broadcastCallRejected, onCallRejected, onCallAccepted, markCallMissed,
+      presentIncomingCall,
       incomingCall, acceptIncomingCall, rejectIncomingCall,
     }}>
       {children}
