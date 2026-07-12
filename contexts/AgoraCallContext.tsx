@@ -17,9 +17,16 @@
 import React, {
   createContext, useContext, useCallback, useEffect, useRef, useState, ReactNode,
 } from 'react';
+import { AppState, Vibration } from 'react-native';
 import { useRouter } from 'expo-router';
 import { getSupabaseClient, useAlert } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
+import { acceptCall, rejectCall, startCall, timeoutCall } from '@/services/callSessionService';
+import {
+  startIncomingRingtone,
+  stopAllCallSounds,
+  stopIncomingRingtone,
+} from '@/services/callRingtoneService';
 
 export type CallType = 'audio' | 'video';
 
@@ -30,10 +37,11 @@ export interface IncomingCall {
   callerAvatar: string;
   channelName:  string;
   callType:     CallType;
+  expiresAt?:    string;
 }
 
 interface AgoraCallContextType {
-  broadcastIncomingCall: (targetUserId: string, call: IncomingCall) => Promise<void>;
+  broadcastIncomingCall: (targetUserId: string, call: IncomingCall) => Promise<IncomingCall | null>;
   broadcastCallRejected: (targetUserId: string, callId: string) => Promise<void>;
   onCallRejected:        (callId: string, cb: () => void) => () => void;
   onCallAccepted:        (callId: string, cb: () => void) => () => void;
@@ -46,7 +54,7 @@ interface AgoraCallContextType {
 const AgoraCallContext = createContext<AgoraCallContextType | undefined>(undefined);
 
 const NOOP_CTX: AgoraCallContextType = {
-  broadcastIncomingCall: async () => {},
+  broadcastIncomingCall: async () => null,
   broadcastCallRejected: async () => {},
   onCallRejected:        () => () => {},
   onCallAccepted:        () => () => {},
@@ -62,6 +70,7 @@ export function useAgoraCallSignaling(): AgoraCallContextType {
 }
 
 const RING_TIMEOUT_MS = 30_000;
+const TIMEOUT_GRACE_MS = 500;
 
 export function AgoraCallProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -82,19 +91,31 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     if (ringTimeoutRef.current) { clearTimeout(ringTimeoutRef.current); ringTimeoutRef.current = null; }
   }, []);
 
-  const updateCallStatus = useCallback(async (callId: string, status: string) => {
-    const supabase = supabaseRef.current;
-    if (!supabase) return;
-    // Guarded by status='ringing' so a caller-timeout and a callee-reject
-    // racing each other can't both "win" — only the first write applies.
-    await supabase.from('calls').update({ status }).eq('id', callId).eq('status', 'ringing');
+  const stopIncomingAlerts = useCallback((callId?: string) => {
+    Vibration.cancel();
+    stopIncomingRingtone(callId).catch(() => {});
   }, []);
 
+  const updateCallStatus = useCallback(async (callId: string, status: string) => {
+    if (status === 'rejected') {
+      await rejectCall(callId, 'user_rejected');
+      return;
+    }
+    if (status === 'missed') {
+      await timeoutCall(callId);
+    }
+  }, []);
+
+  const getRingTimeoutMs = useCallback((expiresAt?: string | null) => {
+    if (!expiresAt) return RING_TIMEOUT_MS;
+    const timeoutMs = new Date(expiresAt).getTime() - Date.now() + TIMEOUT_GRACE_MS;
+    return Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs) : RING_TIMEOUT_MS;
+  }, []);
   // Shared by the realtime INSERT handler and the cold-start fetch below —
   // both need to turn a `calls` row into the incomingCall modal state the
   // same way.
   const handleIncomingCallRow = useCallback(async (row: {
-    id: string; caller_id: string; channel_name: string; status: string; call_type?: string;
+    id: string; caller_id: string; channel_name: string; status: string; call_type?: string; expires_at?: string | null;
   }) => {
     const supabase = supabaseRef.current;
     if (!supabase || row.status !== 'ringing') return;
@@ -109,14 +130,15 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
       callerAvatar: caller?.avatar_url || '',
       channelName:  row.channel_name,
       callType:     row.call_type === 'audio' ? 'audio' : 'video',
+      expiresAt:    row.expires_at ?? undefined,
     });
 
     clearRingTimeout();
     ringTimeoutRef.current = setTimeout(() => {
-      updateCallStatus(row.id, 'missed');
+      updateCallStatus(row.id, 'missed').catch(() => {});
       setIncomingCall(prev => (prev?.callId === row.id ? null : prev));
-    }, RING_TIMEOUT_MS);
-  }, [clearRingTimeout, updateCallStatus]);
+    }, getRingTimeoutMs(row.expires_at));
+  }, [clearRingTimeout, getRingTimeoutMs, updateCallStatus]);
 
   // ── Callee: subscribe to new/updated rows addressed to me ─────────────────
   useEffect(() => {
@@ -151,7 +173,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
       const cutoff = new Date(Date.now() - RING_TIMEOUT_MS).toISOString();
       const { data } = await supabase
         .from('calls')
-        .select('id, caller_id, channel_name, status, call_type, created_at')
+        .select('id, caller_id, channel_name, status, call_type, created_at, expires_at')
         .eq('callee_id', user.id)
         .eq('status', 'ringing')
         .gte('created_at', cutoff)
@@ -187,36 +209,84 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     return () => { channel.unsubscribe(); };
   }, [user?.id]);
 
+  const incomingCallId = incomingCall?.callId;
+  const incomingCallExpiresAt = incomingCall?.expiresAt;
+
+  useEffect(() => {
+    if (!incomingCallId) {
+      stopIncomingAlerts();
+      return;
+    }
+
+    const isStillRinging = () => !incomingCallExpiresAt || new Date(incomingCallExpiresAt).getTime() > Date.now();
+    const startAlerts = () => {
+      if (!isStillRinging()) return;
+      startIncomingRingtone(incomingCallId).catch(() => {});
+      Vibration.vibrate([0, 700, 900], true);
+    };
+    const stopAlerts = () => stopIncomingAlerts(incomingCallId);
+
+    if (AppState.currentState === 'active') {
+      startAlerts();
+    } else {
+      stopAlerts();
+    }
+
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        startAlerts();
+      } else {
+        stopAlerts();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+      stopAlerts();
+    };
+  }, [incomingCallId, incomingCallExpiresAt, stopIncomingAlerts]);
+
   // ── Send helpers ──────────────────────────────────────────────────────────
   const broadcastIncomingCall = useCallback(async (targetUserId: string, call: IncomingCall) => {
     const supabase = supabaseRef.current;
-    if (!supabase) return;
+    if (!supabase) return null;
 
-    const { error: insertError } = await supabase.from('calls').insert({
-      id:           call.callId,
-      caller_id:    call.callerId,
-      callee_id:    targetUserId,
-      channel_name: call.channelName,
-      status:       'ringing',
-      call_type:    call.callType,
-    });
-
-    if (insertError) {
-      console.error('[Call] Failed to insert call record:', insertError);
+    let startedCall: IncomingCall;
+    try {
+      const started = await startCall({
+        calleeId: targetUserId,
+        callType: call.callType,
+        idempotencyKey: call.callId,
+      });
+      startedCall = {
+        ...call,
+        callId: started.callId,
+        channelName: started.channelName,
+        callType: started.callType,
+        expiresAt: started.expiresAt,
+      };
+    } catch (err: any) {
+      console.error('[Call] Failed to start call:', err?.message ?? err);
       showAlert('Error', 'No se pudo iniciar la llamada. Intenta de nuevo.');
-      return;
+      return null;
     }
 
     supabase.functions.invoke('send-notification', {
       body: {
         to_user_id: targetUserId,
         title:      `${call.callerName} te está llamando`,
-        body:       call.callType === 'audio' ? 'Llamada de audio entrante' : 'Videollamada entrante',
-        data:       { type: 'incoming_call', callId: call.callId, channelName: call.channelName, callType: call.callType },
+        body:       startedCall.callType === 'audio' ? 'Llamada de audio entrante' : 'Videollamada entrante',
+        data:       {
+          type: 'incoming_call',
+          callId: startedCall.callId,
+          channelName: startedCall.channelName,
+          callType: startedCall.callType,
+        },
       },
-    }).catch(() => { /* best-effort — realtime is the primary channel */ });
-  }, [showAlert]);
+    }).catch(() => { /* best-effort - realtime is the primary channel */ });
 
+    return startedCall;
+  }, [showAlert]);
   const broadcastCallRejected = useCallback(
     (_targetUserId: string, callId: string) => updateCallStatus(callId, 'rejected'),
     [updateCallStatus],
@@ -241,47 +311,38 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
   const acceptIncomingCall = useCallback(async () => {
     if (!incomingCall) return;
     const call = incomingCall;
-    const supabase = supabaseRef.current;
-    if (!supabase) return;
 
-    // Flip the row to 'accepted' BEFORE navigating — this is what the
-    // caller's Realtime subscription (video-call/[userId].tsx) listens for
-    // to move from 'ringing' to 'connecting', since Agora itself has no
-    // "the callee tapped accept" signal of its own. Guarded by
-    // .eq('status','ringing') so a race with a caller-timeout/cancel can't
-    // resurrect an already-terminal row.
-    const { error: updateErr } = await supabase
-      .from('calls')
-      .update({ status: 'accepted' })
-      .eq('id', call.callId)
-      .eq('status', 'ringing');
-
-    if (updateErr) {
-      console.error('[Call] Failed to mark call accepted:', updateErr);
+    let accepted;
+    try {
+      accepted = await acceptCall(call.callId);
+    } catch (err: any) {
+      console.error('[Call] Failed to mark call accepted:', err?.message ?? err);
       showAlert('Error', 'No se pudo aceptar la llamada. Intenta de nuevo.');
       return; // keep the modal up so the user can retry
     }
 
     clearRingTimeout();
+    await stopAllCallSounds();
+    Vibration.cancel();
     setIncomingCall(null);
     const qs = new URLSearchParams({
       mode:         'answer',
-      channel:      call.channelName,
-      callId:       call.callId,
+      channel:      accepted.channelName,
+      callId:       accepted.callId,
       callerName:   call.callerName,
       callerAvatar: call.callerAvatar || '',
     }).toString();
-    const screen = call.callType === 'audio' ? 'call' : 'video-call';
+    const screen = accepted.callType === 'audio' ? 'call' : 'video-call';
     router.push(`/${screen}/${call.callerId}?${qs}` as any);
   }, [incomingCall, router, clearRingTimeout, showAlert]);
-
   const rejectIncomingCall = useCallback(() => {
     if (!incomingCall) return;
     const call = incomingCall;
     clearRingTimeout();
+    stopIncomingAlerts(call.callId);
     setIncomingCall(null);
-    updateCallStatus(call.callId, 'rejected');
-  }, [incomingCall, updateCallStatus, clearRingTimeout]);
+    rejectCall(call.callId, 'user_rejected').catch(() => {});
+  }, [incomingCall, clearRingTimeout, stopIncomingAlerts]);
 
   return (
     <AgoraCallContext.Provider value={{

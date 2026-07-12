@@ -15,7 +15,7 @@
  * remoteUids, the call is live — no separate accept ack needed over Agora.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { LayoutAnimation, Pressable, View, Text, StyleSheet } from 'react-native';
+import { AppState, LayoutAnimation, Pressable, View, Text, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -27,8 +27,11 @@ import { useAuth } from '@/hooks/useAuth';
 import { useAgoraEngine } from '@/hooks/useAgoraEngine';
 import { useAgoraCallSignaling } from '@/contexts/AgoraCallContext';
 import { RtcSurfaceView, useridToAgoraUid, generateUUID, isAgoraAvailable } from '@/services/agoraService';
+import { cancelCall, endCall } from '@/services/callSessionService';
+import { startOutgoingRingback, stopAllCallSounds, stopOutgoingRingback } from '@/services/callRingtoneService';
 
 const RING_TIMEOUT_MS = 30_000;
+const TIMEOUT_GRACE_MS = 500;
 
 type CallPhase = 'starting' | 'ringing' | 'connecting' | 'active' | 'rejected' | 'ended' | 'failed';
 
@@ -62,6 +65,8 @@ export default function VideoCallScreen() {
   const ringTimeoutRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef      = useRef(true);
   const endedRef        = useRef(false);
+  const startInProgressRef = useRef(false);
+  const idempotencyKeyRef = useRef<string>(paramCallId || generateUUID());
 
   const myUid = user?.id ? useridToAgoraUid(user.id) : 0;
 
@@ -73,7 +78,10 @@ export default function VideoCallScreen() {
   // ── Mount / unmount ──────────────────────────────────────────────────────
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+      stopAllCallSounds().catch(() => {});
+    };
   }, []);
 
   // ── No session, bail ─────────────────────────────────────────────────────
@@ -84,17 +92,12 @@ export default function VideoCallScreen() {
   // ── Caller setup: generate channel, ring partner ────────────────────────
   useEffect(() => {
     if (isCallee || !user?.id || !partnerId) return;
+    if (startInProgressRef.current || callIdRef.current) return;
 
-    const newCallId  = generateUUID();
-    const newChannel = `c_${newCallId.replace(/-/g, '')}`;
-    console.log('[AGORA-CALL] generated channelName length', {
-      channelName: newChannel,
-      length: newChannel.length,
-    });
-    callIdRef.current = newCallId;
-    setCallRecordId(newCallId);
-    setChannelName(newChannel);
-    setPhase('ringing');
+    let cancelled = false;
+    const idempotencyKey = idempotencyKeyRef.current;
+    startInProgressRef.current = true;
+    setPhase('starting');
 
     supabase.from('user_profiles').select('username, avatar_url').eq('id', partnerId).single()
       .then(({ data }) => {
@@ -104,28 +107,82 @@ export default function VideoCallScreen() {
         }
       });
 
-    broadcastIncomingCall(partnerId, {
-      callId:       newCallId,
-      callerId:     user.id,
-      callerName:   user.username || user.email?.split('@')[0] || 'Usuario',
-      callerAvatar: user.avatar || '',
-      channelName:  newChannel,
-      callType:     'video',
-    });
+    (async () => {
+      const started = await broadcastIncomingCall(partnerId, {
+        callId:       idempotencyKey,
+        callerId:     user.id,
+        callerName:   user.username || user.email?.split('@')[0] || 'Usuario',
+        callerAvatar: user.avatar || '',
+        channelName:  '',
+        callType:     'video',
+      });
+      startInProgressRef.current = false;
+      if (cancelled || !mountedRef.current) return;
+      if (!started) {
+        setPhase('failed');
+        return;
+      }
+      console.log('[AGORA-CALL] backend channelName length', {
+        channelName: started.channelName,
+        length: started.channelName.length,
+      });
+      callIdRef.current = started.callId;
+      setCallRecordId(started.callId);
+      setChannelName(started.channelName);
+      setPhase('ringing');
 
-    ringTimeoutRef.current = setTimeout(() => {
-      markCallMissed(newCallId);
-      if (!mountedRef.current) return;
-      setPhase(prev => (prev === 'ringing' ? 'ended' : prev));
-    }, RING_TIMEOUT_MS);
+      const timeoutMs = Math.max(0, new Date(started.expiresAt ?? '').getTime() - Date.now() + TIMEOUT_GRACE_MS);
+      ringTimeoutRef.current = setTimeout(() => {
+        markCallMissed(started.callId).catch(() => {});
+        if (!mountedRef.current) return;
+        setPhase(prev => (prev === 'ringing' ? 'ended' : prev));
+      }, Number.isFinite(timeoutMs) ? timeoutMs : RING_TIMEOUT_MS);
+    })();
 
-    return () => { if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current); };
+    return () => {
+      cancelled = true;
+      startInProgressRef.current = false;
+      if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
+    };
   }, [isCallee, user?.id, partnerId]);
 
   // ── Join Agora as soon as the channel name is known ─────────────────────
   useEffect(() => {
-    if (channelName && engineReady) join();
+    if (channelName && engineReady) {
+      stopAllCallSounds().finally(() => { join(); });
+    }
   }, [channelName, engineReady]);
+
+  useEffect(() => {
+    if (isCallee || phase !== 'ringing' || !callRecordId) {
+      stopOutgoingRingback(callRecordId || undefined).catch(() => {});
+      return;
+    }
+
+    const startRingback = () => {
+      startOutgoingRingback(callRecordId).catch(() => {});
+    };
+    const stopRingback = () => {
+      stopOutgoingRingback(callRecordId).catch(() => {});
+    };
+
+    if (AppState.currentState === 'active') {
+      startRingback();
+    }
+
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        startRingback();
+      } else {
+        stopRingback();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+      stopRingback();
+    };
+  }, [isCallee, phase, callRecordId, engineReady]);
 
   // ── Listen for rejection (caller only) ───────────────────────────────────
   useEffect(() => {
@@ -169,6 +226,7 @@ export default function VideoCallScreen() {
   // ── Remote joined → active ───────────────────────────────────────────────
   useEffect(() => {
     if (remoteUids.length > 0) {
+      stopAllCallSounds().catch(() => {});
       setPhase(prev => (prev === 'active' ? prev : 'active'));
       if (ringTimeoutRef.current) { clearTimeout(ringTimeoutRef.current); ringTimeoutRef.current = null; }
     }
@@ -191,6 +249,7 @@ export default function VideoCallScreen() {
   useEffect(() => {
     if ((phase === 'ended' || phase === 'rejected' || phase === 'failed') && !endedRef.current) {
       endedRef.current = true;
+      stopAllCallSounds().catch(() => {});
       leave();
       const t = setTimeout(() => { if (mountedRef.current) router.back(); }, 900);
       return () => clearTimeout(t);
@@ -198,11 +257,16 @@ export default function VideoCallScreen() {
   }, [phase]);
 
   const handleEndCall = useCallback(async () => {
+    await stopAllCallSounds();
     if (callRecordId) {
-      await supabase.from('calls').update({ status: 'ended' }).eq('id', callRecordId);
+      if (phase === 'ringing' || phase === 'starting') {
+        await cancelCall(callRecordId).catch(() => {});
+      } else {
+        await endCall(callRecordId, 'user_ended').catch(() => {});
+      }
     }
     setPhase('ended');
-  }, [callRecordId, supabase]);
+  }, [callRecordId, phase]);
 
   const fmt = (s: number) =>
     `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
