@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple"],
+  "apple": {
+    "podspecPath": "OnSpaceCallKit.podspec",
+    "swiftModuleName": "OnSpaceCallKit",
+    "modules": ["OnSpaceCallKitModule"],
+    "appDelegateSubscribers": ["OnSpaceCallAppDelegateSubscriber"]
+  }
+}

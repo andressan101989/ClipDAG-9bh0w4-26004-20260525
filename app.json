@@ -15,7 +15,8 @@
       "deploymentTarget": "16.4",
       "bundleIdentifier": "com.clipdag.onspaceapp",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["fetch", "audio", "voip"]
       }
     },
     "android": {
