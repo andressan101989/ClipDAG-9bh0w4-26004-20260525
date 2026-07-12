@@ -40,6 +40,8 @@ interface StreamSession {
   title: string;
   viewerCount: number;
   status: 'live' | 'ended';
+  startedAt?: string | null;
+  lastHeartbeatAt?: string | null;
 }
 
 interface ChatMessage {
@@ -360,11 +362,14 @@ export default function LiveWatchScreen() {
     try {
       const { data, error: err } = await supabase
         .from('live_sessions')
-        .select(`id, host_id, title, status, viewer_count, user_profiles!live_sessions_host_id_fkey(username)`)
+        .select(`id, host_id, title, status, viewer_count, started_at, last_heartbeat_at, user_profiles!live_sessions_host_id_fkey(username)`)
         .eq('id', streamId)
         .single();
 
       if (err || !data) { setEnded(true); setLoading(false); return false; }
+
+      const lastLiveSignal = data.last_heartbeat_at ?? data.started_at;
+      const isStaleLive = data.status === 'live' && lastLiveSignal && Date.now() - new Date(lastLiveSignal).getTime() > 90_000;
 
       setSession({
         id:           data.id,
@@ -372,11 +377,13 @@ export default function LiveWatchScreen() {
         hostUsername: (data as any).user_profiles?.username ?? 'Creator',
         title:        data.title ?? '',
         viewerCount:  data.viewer_count ?? 0,
-        status:       data.status as 'live' | 'ended',
+        status:       isStaleLive ? 'ended' : data.status as 'live' | 'ended',
+        startedAt:    data.started_at ?? null,
+        lastHeartbeatAt: data.last_heartbeat_at ?? null,
       });
-      if (data.status !== 'live') setEnded(true);
+      if (data.status !== 'live' || isStaleLive) setEnded(true);
       setLoading(false);
-      return data.status === 'live';
+      return data.status === 'live' && !isStaleLive;
     } catch (_) { setLoading(false); return false; }
   }, [streamId, supabase]);
 
@@ -567,10 +574,12 @@ export default function LiveWatchScreen() {
     if (!streamId || ended) return;
     try {
       const { data: sData } = await supabase
-        .from('live_sessions').select('viewer_count, status').eq('id', streamId).single();
+        .from('live_sessions').select('viewer_count, status, started_at, last_heartbeat_at').eq('id', streamId).single();
       if (sData) {
         setSession(prev => prev ? { ...prev, viewerCount: sData.viewer_count ?? prev.viewerCount } : prev);
-        if (sData.status === 'ended') {
+        const lastLiveSignal = sData.last_heartbeat_at ?? sData.started_at;
+        const isStaleLive = sData.status === 'live' && lastLiveSignal && Date.now() - new Date(lastLiveSignal).getTime() > 90_000;
+        if (sData.status === 'ended' || isStaleLive) {
           setEnded(true);
           if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
           return;

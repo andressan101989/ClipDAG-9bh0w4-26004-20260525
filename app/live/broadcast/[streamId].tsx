@@ -11,7 +11,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList, TextInput, ActivityIndicator, Dimensions,
-  Keyboard, Platform, Animated,
+  Keyboard, Platform, Animated, AppState, AppStateStatus, BackHandler, Alert,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,12 +24,20 @@ import { useAuth } from '@/hooks/useAuth';
 import { useAgoraEngine } from '@/hooks/useAgoraEngine';
 import { RtcSurfaceView, useridToAgoraUid, isAgoraAvailable } from '@/services/agoraService';
 import { fetchSessionGiftTotal } from '@/services/liveGiftsService';
+import {
+  endLiveSession,
+  heartbeatLiveSession,
+  markLiveSessionDisconnected,
+  startLiveSession,
+  type LiveEndReason,
+} from '@/services/liveSessionService';
 import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
 import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
 import type { LiveGiftEvent } from '@/types/liveGifts';
 
 const POLL_INTERVAL_MS = 3000;
+const HEARTBEAT_INTERVAL_MS = 12_000;
 const MAX_MESSAGES     = 50;
 const SPAM_THROTTLE_MS = 2500;
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -190,6 +198,7 @@ export default function LiveBroadcasterScreen() {
   const [title, setTitle]           = useState('');
   const [live, setLive]             = useState(false);
   const [starting, setStarting]     = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
   const [viewerCount, setViewerCount] = useState(0);
   const [messages, setMessages]     = useState<ChatMessage[]>([]);
   const [participants, setParticipants] = useState<LiveParticipant[]>([]);
@@ -211,11 +220,16 @@ export default function LiveBroadcasterScreen() {
   const chatRef    = useRef<FlatList>(null);
   const inputRef   = useRef<TextInput | null>(null);
   const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastMsgRef = useRef<string | null>(null);
   const lastSentRef = useRef(0);
   const sendingRef = useRef(false);
   const endedRef   = useRef(false);
   const mountedRef = useRef(true);
+  const liveRef = useRef(false);
+  const joinedRef = useRef(false);
+  const heartbeatFailuresRef = useRef(0);
+  const finalizePromiseRef = useRef<Promise<void> | null>(null);
   const expiredTimerMutedRef = useRef<Set<string>>(new Set());
   const processedAcceptedInviteIdsRef = useRef<Set<string>>(new Set());
   const seenReactionEventIdsRef = useRef<Set<string>>(new Set());
@@ -225,6 +239,14 @@ export default function LiveBroadcasterScreen() {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
+
+  useEffect(() => {
+    liveRef.current = live;
+  }, [live]);
+
+  useEffect(() => {
+    joinedRef.current = joined;
+  }, [joined]);
 
   const scrollToLatest = useCallback((animated = true) => {
     requestAnimationFrame(() => {
@@ -258,6 +280,11 @@ export default function LiveBroadcasterScreen() {
     }, 2200);
   }, []);
 
+  const clearLiveTimers = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
+  }, []);
+
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
@@ -284,20 +311,19 @@ export default function LiveBroadcasterScreen() {
   const handleGoLive = useCallback(async () => {
     if (!user?.id || !streamId || !title.trim() || starting) return;
     setStarting(true);
+    setStartError(null);
     try {
-      await supabase.from('live_sessions').insert({
-        id:           streamId,
-        host_id:      user.id,
-        title:        title.trim(),
-        status:       'live',
-        viewer_count: 0,
-        started_at:   new Date().toISOString(),
-      });
+      await startLiveSession(streamId, title.trim());
+      heartbeatFailuresRef.current = 0;
+      endedRef.current = false;
       setLive(true);
-    } catch (_) {
+    } catch (err: any) {
+      if (__DEV__) console.warn('[LiveBroadcast] start live failed', err?.message ?? err);
+      setStartError('No se pudo iniciar la transmisión. Inténtalo nuevamente.');
+      Alert.alert('No se pudo iniciar la transmisión', 'Inténtalo nuevamente.');
       setStarting(false);
     }
-  }, [user?.id, streamId, title, starting, supabase]);
+  }, [user?.id, streamId, title, starting]);
 
   useEffect(() => {
     if (live && engineReady) join();
@@ -324,8 +350,13 @@ export default function LiveBroadcasterScreen() {
     if (!streamId) return;
     try {
       const { data: sData } = await supabase
-        .from('live_sessions').select('viewer_count').eq('id', streamId).single();
+        .from('live_sessions').select('viewer_count, status').eq('id', streamId).single();
       if (sData && mountedRef.current) setViewerCount(sData.viewer_count ?? 0);
+      if (sData?.status === 'ended') {
+        clearLiveTimers();
+        if (mountedRef.current) setLive(false);
+        return;
+      }
 
       let query = supabase
         .from('live_messages')
@@ -347,7 +378,7 @@ export default function LiveBroadcasterScreen() {
         scrollToLatest(true);
       }
     } catch (_) { /* ignore */ }
-  }, [streamId, supabase, scrollToLatest, user]);
+  }, [streamId, supabase, scrollToLatest, user, clearLiveTimers]);
 
   useEffect(() => {
     if (!live) return;
@@ -398,31 +429,95 @@ export default function LiveBroadcasterScreen() {
   }, [live, streamId, supabase, loadParticipants]);
 
   // ── End broadcast ─────────────────────────────────────────────────────────
-  const endBroadcast = useCallback(async () => {
-    if (endedRef.current || !streamId) return;
-    endedRef.current = true;
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    await leave();
+  const sendHeartbeat = useCallback(async () => {
+    if (!streamId || !liveRef.current || endedRef.current) return;
     try {
-      await supabase
-        .from('live_sessions')
-        .update({ status: 'ended', ended_at: new Date().toISOString() })
-        .eq('id', streamId);
-    } catch { /* ignore */ }
-    router.back();
-  }, [streamId, leave, supabase, router]);
+      const result = await heartbeatLiveSession(streamId);
+      heartbeatFailuresRef.current = result?.ok === false ? heartbeatFailuresRef.current + 1 : 0;
+    } catch (err: any) {
+      heartbeatFailuresRef.current += 1;
+      if (__DEV__ && heartbeatFailuresRef.current >= 2) {
+        console.warn('[LiveBroadcast] heartbeat failed', err?.message ?? err);
+      }
+    }
+  }, [streamId]);
+
+  const finalizeLiveSession = useCallback((reason: LiveEndReason = 'host_ended', navigateBack = true) => {
+    if (!streamId) return Promise.resolve();
+    if (finalizePromiseRef.current) return finalizePromiseRef.current;
+
+    endedRef.current = true;
+    liveRef.current = false;
+    clearLiveTimers();
+
+    finalizePromiseRef.current = (async () => {
+      try {
+        await leave();
+      } catch { /* best effort */ }
+
+      try {
+        await endLiveSession(streamId, reason);
+      } catch (err: any) {
+        console.warn('[LiveBroadcast] end live failed', err?.message ?? err);
+      }
+
+      if (mountedRef.current) setLive(false);
+      if (navigateBack) router.back();
+    })();
+
+    return finalizePromiseRef.current;
+  }, [streamId, leave, router, clearLiveTimers]);
+
+  const endBroadcast = useCallback(async () => {
+    await finalizeLiveSession('host_ended', true);
+  }, [finalizeLiveSession]);
+
+  useEffect(() => {
+    if (!live || !streamId) return;
+
+    sendHeartbeat();
+    heartbeatRef.current = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+
+    return () => {
+      if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
+    };
+  }, [live, streamId, sendHeartbeat]);
+
+  useEffect(() => {
+    if (!live || !streamId) return;
+
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (!liveRef.current || endedRef.current) return;
+
+      if (nextState === 'active') {
+        sendHeartbeat();
+        return;
+      }
+
+      markLiveSessionDisconnected(streamId).catch((err: any) => {
+        if (__DEV__) console.warn('[LiveBroadcast] mark disconnected failed', err?.message ?? err);
+      });
+    });
+
+    return () => subscription.remove();
+  }, [live, streamId, sendHeartbeat]);
+
+  useEffect(() => {
+    if (!live) return;
+
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      finalizeLiveSession('host_ended', true);
+      return true;
+    });
+
+    return () => subscription.remove();
+  }, [live, finalizeLiveSession]);
 
   useEffect(() => () => {
-    if (!endedRef.current && live && streamId) {
-      endedRef.current = true;
-      leave();
-      supabase
-        .from('live_sessions')
-        .update({ status: 'ended', ended_at: new Date().toISOString() })
-        .eq('id', streamId)
-        .then(() => {});
+    if (!endedRef.current && liveRef.current && streamId) {
+      finalizeLiveSession('host_disconnected', false);
     }
-  }, [live, streamId, leave, supabase]);
+  }, [streamId, finalizeLiveSession]);
 
   const approveParticipantAsCohost = useCallback(async (
     participant: LiveParticipant,
@@ -822,7 +917,10 @@ export default function LiveBroadcasterScreen() {
         <TextInput
           style={styles.titleInput}
           value={title}
-          onChangeText={setTitle}
+          onChangeText={value => {
+            setTitle(value);
+            if (startError) setStartError(null);
+          }}
           placeholder="¿De qué vas a hablar?"
           placeholderTextColor={Colors.textSubtle}
           maxLength={80}
@@ -830,6 +928,9 @@ export default function LiveBroadcasterScreen() {
         />
         {!isAgoraAvailable() ? (
           <Text style={styles.errorText}>El streaming en vivo no está disponible en este dispositivo</Text>
+        ) : null}
+        {startError ? (
+          <Text style={styles.errorText}>{startError}</Text>
         ) : null}
         <Pressable
           style={[styles.goLiveBtn, (!title.trim() || starting) && styles.goLiveBtnDisabled]}

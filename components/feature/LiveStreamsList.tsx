@@ -13,8 +13,10 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { getSupabaseClient } from '@/template';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
+import { closeStaleLiveSessions } from '@/services/liveSessionService';
 
 const POLL_INTERVAL_MS = 10_000;
+const STALE_VISIBLE_MS = 90_000;
 
 interface LiveStream {
   id: string;
@@ -35,10 +37,13 @@ export function LiveStreamsList() {
     const supabase = getSupabaseClient();
     if (!supabase) { if (mountedRef.current) setLoading(false); return; }
     try {
+      closeStaleLiveSessions().catch(() => {});
+      const heartbeatCutoff = new Date(Date.now() - STALE_VISIBLE_MS).toISOString();
       const { data, error } = await supabase
         .from('live_sessions')
-        .select('id, title, viewer_count, user_profiles!live_sessions_host_id_fkey(username, avatar_url)')
+        .select('id, title, viewer_count, started_at, last_heartbeat_at, user_profiles!live_sessions_host_id_fkey(username, avatar_url)')
         .eq('status', 'live')
+        .or(`last_heartbeat_at.gte.${heartbeatCutoff},and(last_heartbeat_at.is.null,started_at.gte.${heartbeatCutoff})`)
         .order('created_at', { ascending: false })
         .limit(20);
 
