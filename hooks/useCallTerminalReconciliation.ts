@@ -9,6 +9,11 @@ export type ActiveCallStatus = 'ringing' | 'accepted';
 const TERMINAL_STATUSES = new Set<TerminalCallStatus>([
   'ended', 'cancelled', 'rejected', 'expired', 'missed',
 ]);
+const FALLBACK_POLL_INTERVAL_MS = 2_000;
+
+function redactedCallId(callId: string): string {
+  return `${callId.slice(0, 8)}…`;
+}
 
 function asTerminalStatus(status: unknown): TerminalCallStatus | null {
   return typeof status === 'string' && TERMINAL_STATUSES.has(status as TerminalCallStatus)
@@ -33,7 +38,18 @@ export function useCallTerminalReconciliation(callId: string) {
     if (!callId) return;
 
     let disposed = false;
+    let fallbackPollTimer: ReturnType<typeof setInterval> | null = null;
     const supabase = getSupabaseClient();
+
+    const stopFallbackPoll = (status?: TerminalCallStatus) => {
+      if (!fallbackPollTimer) return;
+      clearInterval(fallbackPollTimer);
+      fallbackPollTimer = null;
+      console.log('[CallTerminalReconciliation] fallback_poll_stopped', {
+        callId: redactedCallId(callId),
+        status: status ?? 'disposed',
+      });
+    };
 
     const acceptStatus = (status: unknown) => {
       if (status === 'ringing' || status === 'accepted') {
@@ -44,9 +60,10 @@ export function useCallTerminalReconciliation(callId: string) {
       if (!terminal || disposed || terminalRef.current) return;
       terminalRef.current = terminal;
       setTerminalStatus(terminal);
+      stopFallbackPoll(terminal);
     };
 
-    const reconcile = () => {
+    const reconcile = (source: 'primary' | 'fallback_poll' = 'primary') => {
       if (disposed || terminalRef.current) return Promise.resolve();
       if (inFlightRef.current) return inFlightRef.current;
 
@@ -62,12 +79,26 @@ export function useCallTerminalReconciliation(callId: string) {
           if (!data) {
             terminalRef.current = 'invalid';
             setTerminalStatus('invalid');
+            if (source === 'fallback_poll') {
+              console.log('[CallTerminalReconciliation] fallback_poll_terminal', {
+                callId: redactedCallId(callId),
+                status: 'invalid',
+              });
+            }
+            stopFallbackPoll('invalid');
           } else if (data.status === 'ringing' || data.status === 'accepted') {
             setCallStatus(data.status);
           } else {
             const terminal = asTerminalStatus(data.status);
             terminalRef.current = terminal ?? 'invalid';
             setTerminalStatus(terminal ?? 'invalid');
+            if (source === 'fallback_poll') {
+              console.log('[CallTerminalReconciliation] fallback_poll_terminal', {
+                callId: redactedCallId(callId),
+                status: terminal ?? 'invalid',
+              });
+            }
+            stopFallbackPoll(terminal ?? 'invalid');
           }
           setCheckedCallId(callId);
         }
@@ -98,6 +129,13 @@ export function useCallTerminalReconciliation(callId: string) {
       });
 
     reconcile();
+    fallbackPollTimer = setInterval(() => {
+      void reconcile('fallback_poll');
+    }, FALLBACK_POLL_INTERVAL_MS);
+    console.log('[CallTerminalReconciliation] fallback_poll_started', {
+      callId: redactedCallId(callId),
+      status: 'pending',
+    });
     const appStateSub = AppState.addEventListener('change', state => {
       if (state === 'active') reconcile();
     });
@@ -107,6 +145,7 @@ export function useCallTerminalReconciliation(callId: string) {
 
     return () => {
       disposed = true;
+      stopFallbackPoll();
       appStateSub.remove();
       netInfoSub();
       channel.unsubscribe();
