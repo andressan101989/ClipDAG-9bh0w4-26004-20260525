@@ -1,6 +1,8 @@
 import { AppState, Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
+import * as Crypto from 'expo-crypto';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
@@ -15,11 +17,14 @@ import {
 } from '@/services/iosCallKitService';
 import { getSupabaseClient } from '@/template';
 
-const INSTALLATION_ID_KEY = 'onspace.call.installation_id';
-const LAST_SYNC_KEY = 'onspace.call_device.last_sync_at';
-const LAST_VOIP_SYNC_KEY = 'onspace.call_device.last_voip_sync_at';
+const LEGACY_INSTALLATION_ID_KEY = 'onspace.call.installation_id';
+const LEGACY_LAST_SYNC_KEY = 'onspace.call_device.last_sync_at';
+const LEGACY_LAST_VOIP_SYNC_KEY = 'onspace.call_device.last_voip_sync_at';
+const INSTALLATION_ID_V2_KEY = 'onspace.call.installation_id.v2';
+const LAST_SYNC_V2_KEY = 'onspace.call_device.last_sync_at.v2';
+const LAST_VOIP_SYNC_V2_KEY = 'onspace.call_device.last_voip_sync_at.v2';
+const IDENTITY_MIGRATION_PENDING_KEY = 'onspace.call_device.identity_migration_pending.v2';
 const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const VOIP_SYNC_COOLDOWN_MS = 60 * 1000;
 const CALLS_CHANNEL_ID = 'calls';
 export const IOS_TERMINAL_VOIP_VERSION = 1;
 export const IOS_FOREGROUND_PRESENTATION_MIN_BUILD = 13;
@@ -36,6 +41,14 @@ let pendingSyncOptions: CallDeviceSyncOptions | null = null;
 let pushTokenSubscription: { remove: () => void } | null = null;
 let appStateSubscription: { remove: () => void } | null = null;
 let foregroundCapabilityVersion: 0 | 1 | null = null;
+let installationIdentityPromise: Promise<InstallationIdentity> | null = null;
+let lastAuthenticatedUserId: string | null = null;
+
+type InstallationIdentity = {
+  installationId: string;
+  legacyInstallationId: string | null;
+  migrationPending: boolean;
+};
 
 export type ForegroundPresentationReadiness = {
   deviceId: string | null;
@@ -74,14 +87,6 @@ async function getStored(key: string): Promise<string | null> {
   }
 }
 
-async function setStored(key: string, value: string): Promise<void> {
-  try {
-    await SecureStore.setItemAsync(key, value);
-  } catch {
-    // Storage failure is non-fatal; the next launch can regenerate/sync.
-  }
-}
-
 async function deleteStored(key: string): Promise<void> {
   try {
     await SecureStore.deleteItemAsync(key);
@@ -90,13 +95,77 @@ async function deleteStored(key: string): Promise<void> {
   }
 }
 
-export async function getOrCreateInstallationId(): Promise<string> {
-  const existing = await getStored(INSTALLATION_ID_KEY);
-  if (existing) return existing;
+async function getAsyncStored(key: string): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+async function setAsyncStored(key: string, value: string): Promise<void> {
+  // Identity writes are part of the migration fence. If they fail, abort the
+  // registration instead of deactivating the still-usable legacy device.
+  await AsyncStorage.setItem(key, value);
+}
+
+async function deleteAsyncStored(key: string): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(key);
+  } catch {
+    // Non-fatal.
+  }
+}
+
+function shortId(value: string | null | undefined): string | null {
+  return value ? `${value.slice(0, 8)}…` : null;
+}
+
+async function tokenFingerprint(token: string): Promise<string> {
+  const digest = await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    token,
+  );
+  return `${digest.slice(0, 8)}…`;
+}
+
+async function loadInstallationIdentity(): Promise<InstallationIdentity> {
+  const existing = normalizeToken(await getAsyncStored(INSTALLATION_ID_V2_KEY));
+  const legacyInstallationId = normalizeToken(await getStored(LEGACY_INSTALLATION_ID_KEY));
+  const pending = (await getAsyncStored(IDENTITY_MIGRATION_PENDING_KEY)) === '1';
+  if (existing) {
+    return {
+      installationId: existing,
+      legacyInstallationId,
+      migrationPending: pending,
+    };
+  }
 
   const created = generateUUID();
-  await setStored(INSTALLATION_ID_KEY, created);
-  return created;
+  await setAsyncStored(INSTALLATION_ID_V2_KEY, created);
+  await setAsyncStored(IDENTITY_MIGRATION_PENDING_KEY, '1');
+  debug('[CallDevice] v2 installation created', {
+    installationId: shortId(created),
+    legacyInstallationPresent: Boolean(legacyInstallationId),
+  });
+  return {
+    installationId: created,
+    legacyInstallationId,
+    migrationPending: true,
+  };
+}
+
+async function getInstallationIdentity(): Promise<InstallationIdentity> {
+  if (!installationIdentityPromise) {
+    installationIdentityPromise = loadInstallationIdentity().finally(() => {
+      installationIdentityPromise = null;
+    });
+  }
+  return installationIdentityPromise;
+}
+
+export async function getOrCreateInstallationId(): Promise<string> {
+  return (await getInstallationIdentity()).installationId;
 }
 
 async function configureCallsChannel(): Promise<void> {
@@ -225,6 +294,53 @@ function registeredDeviceId(data: unknown): string | null {
     : null;
 }
 
+type RepairedDeviceRegistration = {
+  deviceId: string;
+  tokenBound: boolean;
+  legacyDeactivated: boolean;
+};
+
+function repairedDeviceRegistration(data: unknown): RepairedDeviceRegistration | null {
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row || typeof row !== 'object') return null;
+  const candidate = row as {
+    success?: unknown;
+    device_id?: unknown;
+    token_bound?: unknown;
+    legacy_deactivated?: unknown;
+  };
+  if (candidate.success !== true || typeof candidate.device_id !== 'string') return null;
+  return {
+    deviceId: candidate.device_id,
+    tokenBound: candidate.token_bound === true,
+    legacyDeactivated: candidate.legacy_deactivated === true,
+  };
+}
+
+async function repairIosDeviceRegistration(params: RegisterCurrentDeviceParams & {
+  legacyInstallationId: string | null;
+  foregroundPresentationVersion: 0 | 1;
+}): Promise<RepairedDeviceRegistration> {
+  if (!params.voipPushToken) throw new Error('VoIP token requerido para registrar iOS');
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('repair_call_device_registration', {
+    p_new_installation_id: params.installationId,
+    p_legacy_installation_id: params.legacyInstallationId,
+    p_platform: 'ios',
+    p_voip_push_token: params.voipPushToken,
+    p_expo_push_token: params.expoPushToken,
+    p_native_push_token: params.nativePushToken,
+    p_app_version: params.appVersion,
+    p_device_model: params.deviceModel,
+    p_foreground_presentation_version: params.foregroundPresentationVersion,
+    p_terminal_voip_version: params.terminalVoipVersion,
+  });
+  if (error) throw new Error(error.message || 'No se pudo reparar el registro iOS');
+  const result = repairedDeviceRegistration(data);
+  if (!result?.tokenBound) throw new Error('El backend no confirmó el vínculo del token VoIP');
+  return result;
+}
+
 async function registerCurrentDeviceWithCapability(params: RegisterCurrentDeviceParams): Promise<string> {
   const supabase = getSupabaseClient();
   const legacyPayload = {
@@ -263,15 +379,9 @@ async function registerCurrentDeviceWithCapability(params: RegisterCurrentDevice
 
 async function shouldThrottle(force: boolean): Promise<boolean> {
   if (force) return false;
-  const lastSyncRaw = await getStored(LAST_SYNC_KEY);
+  const lastSyncRaw = await getAsyncStored(LAST_SYNC_V2_KEY);
   const lastSync = lastSyncRaw ? Number(lastSyncRaw) : 0;
   return Number.isFinite(lastSync) && Date.now() - lastSync < SYNC_INTERVAL_MS;
-}
-
-async function shouldThrottleVoipSync(): Promise<boolean> {
-  const lastSyncRaw = await getStored(LAST_VOIP_SYNC_KEY);
-  const lastSync = lastSyncRaw ? Number(lastSyncRaw) : 0;
-  return Number.isFinite(lastSync) && Date.now() - lastSync < VOIP_SYNC_COOLDOWN_MS;
 }
 
 function mergeSyncOptions(
@@ -331,6 +441,17 @@ export async function syncCurrentCallDevice(options: CallDeviceSyncOptions = {})
   return startSyncDrain();
 }
 
+async function clearLegacyDeviceIdentity(userId: string): Promise<void> {
+  await Promise.all([
+    deleteStored(LEGACY_INSTALLATION_ID_KEY),
+    deleteStored(`onspace.call_device.${userId}.device_id`),
+    deleteStored(`onspace.call_device.${userId}.expo_push_token`),
+    deleteStored(`onspace.call_device.${userId}.native_push_token`),
+    deleteStored(LEGACY_LAST_SYNC_KEY),
+    deleteStored(LEGACY_LAST_VOIP_SYNC_KEY),
+  ]);
+}
+
 async function runSingleCallDeviceSync(options: CallDeviceSyncOptions = {}): Promise<string | null> {
     try {
       const voipOverride = normalizeToken(options.voipTokenOverride);
@@ -344,16 +465,25 @@ async function runSingleCallDeviceSync(options: CallDeviceSyncOptions = {}): Pro
       const supabase = getSupabaseClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return null;
-      if (await shouldThrottle(Boolean(options.force || options.nativeTokenOverride || hasVoipOverride))) {
+      const identity = await getInstallationIdentity();
+      const deviceKey = `onspace.call_device.${user.id}.device_id.v2`;
+      const storedDeviceId = await getAsyncStored(deviceKey);
+      const userChanged = lastAuthenticatedUserId !== null && lastAuthenticatedUserId !== user.id;
+      lastAuthenticatedUserId = user.id;
+      const migrationRequired = identity.migrationPending || !storedDeviceId || userChanged;
+      if (await shouldThrottle(Boolean(
+        options.force ||
+        options.nativeTokenOverride ||
+        hasVoipOverride ||
+        migrationRequired
+      ))) {
         debug('[CallDevice] sync throttled');
-        const storedDeviceId = await getStored(`onspace.call_device.${user.id}.device_id`);
         if (storedDeviceId) await syncForegroundPresentationCapability(storedDeviceId);
         return storedDeviceId;
       }
 
       await configureCallsChannel();
 
-      const installationId = await getOrCreateInstallationId();
       const hasPermission = hasVoipOverride ? false : await getNotificationPermission();
       const nativeToken = hasPermission
         ? options.nativeTokenOverride ?? await getNativePushToken()
@@ -367,16 +497,28 @@ async function runSingleCallDeviceSync(options: CallDeviceSyncOptions = {}): Pro
       const voipPushToken = Platform.OS === 'ios'
         ? voipOverride ?? await getIosVoipPushToken()
         : null;
+      if (Platform.OS === 'ios' && !voipPushToken) {
+        debug('[CallDevice] current voip token unavailable; migration retained', {
+          installationId: shortId(identity.installationId),
+          migrationPending: identity.migrationPending,
+        });
+        return storedDeviceId;
+      }
+      const fingerprint = voipPushToken ? await tokenFingerprint(voipPushToken) : null;
       debug('[CallDevice] register_call_device payload', {
         platform: Platform.OS,
         hasExpoPushToken: Boolean(expoPushToken),
         hasNativePushToken: Boolean(nativePushToken),
         hasVoipPushToken: Boolean(voipPushToken),
         voipTokenLength: voipPushToken?.length ?? 0,
+        tokenFingerprint: fingerprint,
+        installationId: shortId(identity.installationId),
+        legacyInstallationPresent: Boolean(identity.legacyInstallationId),
+        migrationPending: identity.migrationPending,
       });
 
-      const deviceId = await registerCurrentDeviceWithCapability({
-        installationId,
+      const registrationParams: RegisterCurrentDeviceParams = {
+        installationId: identity.installationId,
         platform: Platform.OS as 'ios' | 'android',
         expoPushToken,
         nativePushToken,
@@ -384,18 +526,55 @@ async function runSingleCallDeviceSync(options: CallDeviceSyncOptions = {}): Pro
         appVersion: getAppVersion(),
         deviceModel: getDeviceModel(),
         terminalVoipVersion: Platform.OS === 'ios' ? IOS_TERMINAL_VOIP_VERSION : 0,
-      });
+      };
+      let deviceId: string;
+      let legacyDeactivated = false;
+      if (Platform.OS === 'ios') {
+        debug('[CallDevice] v2 registration requested', {
+          installationId: shortId(identity.installationId),
+          tokenFingerprint: fingerprint,
+          migrationPending: identity.migrationPending,
+        });
+        const repaired = await repairIosDeviceRegistration({
+          ...registrationParams,
+          legacyInstallationId: identity.legacyInstallationId,
+          foregroundPresentationVersion: getLocalForegroundPresentationVersion(),
+        });
+        deviceId = repaired.deviceId;
+        legacyDeactivated = repaired.legacyDeactivated;
+        debug('[CallDevice] token binding confirmed', {
+          deviceId: shortId(deviceId),
+          tokenFingerprint: fingerprint,
+          tokenBound: repaired.tokenBound,
+        });
+      } else {
+        deviceId = await registerCurrentDeviceWithCapability(registrationParams);
+      }
 
       // Capability failure is deliberately non-fatal to token registration.
       // The foreground arbiter treats an unconfirmed v1 capability as CallKit.
       await syncForegroundPresentationCapability(deviceId);
 
-      await setStored(LAST_SYNC_KEY, String(Date.now()));
-      await setStored(`onspace.call_device.${user.id}.device_id`, deviceId);
-      if (expoPushToken) await setStored(`onspace.call_device.${user.id}.expo_push_token`, expoPushToken);
-      if (nativePushToken) await setStored(`onspace.call_device.${user.id}.native_push_token`, nativePushToken);
-      if (voipPushToken) await setStored(LAST_VOIP_SYNC_KEY, String(Date.now()));
-      debug('[CallDevice] sync success', { hasDeviceId: Boolean(deviceId) });
+      await setAsyncStored(LAST_SYNC_V2_KEY, String(Date.now()));
+      await setAsyncStored(deviceKey, deviceId);
+      if (voipPushToken) await setAsyncStored(LAST_VOIP_SYNC_V2_KEY, String(Date.now()));
+      if (Platform.OS === 'ios' && identity.migrationPending) {
+        if (!legacyDeactivated) throw new Error('La instalación legada no fue desactivada');
+        debug('[CallDevice] legacy device deactivated', {
+          legacyInstallationId: shortId(identity.legacyInstallationId),
+        });
+        await clearLegacyDeviceIdentity(user.id);
+        await deleteAsyncStored(IDENTITY_MIGRATION_PENDING_KEY);
+        debug('[CallDevice] identity migration completed', {
+          installationId: shortId(identity.installationId),
+          deviceId: shortId(deviceId),
+          tokenFingerprint: fingerprint,
+        });
+      }
+      debug('[CallDevice] sync success', {
+        hasDeviceId: Boolean(deviceId),
+        deviceId: shortId(deviceId),
+      });
       return deviceId;
     } catch (error) {
       warn('[CallDevice] sync failed', error);
@@ -416,6 +595,12 @@ export function startCallDeviceTokenListeners(): void {
     getIosVoipPushToken()
       .then(token => {
         if (token) {
+          tokenFingerprint(token).then(fingerprint => {
+            debug('[CallDevice] current voip token acquired', {
+              tokenFingerprint: fingerprint,
+              tokenLength: token.length,
+            });
+          }).catch(() => {});
           debug('[CallDevice] persisted voip token requested forced sync', {
             present: true,
             length: token.length,
@@ -439,15 +624,14 @@ export function startCallDeviceTokenListeners(): void {
         debug('[CallDevice] app active requested sync');
         if (Platform.OS === 'ios') {
           getIosVoipPushToken()
-            .then(async token => {
-              if (token && !(await shouldThrottleVoipSync())) {
-                syncCurrentCallDevice({ force: true, voipTokenOverride: token }).catch(() => {});
-                return;
-              }
-              syncCurrentCallDevice().catch(() => {});
+            .then(token => {
+              syncCurrentCallDevice({
+                force: true,
+                voipTokenOverride: token,
+              }).catch(() => {});
             })
             .catch(() => {
-              syncCurrentCallDevice().catch(() => {});
+              syncCurrentCallDevice({ force: true }).catch(() => {});
             });
           return;
         }
@@ -471,7 +655,7 @@ export async function getCurrentCallDeviceId(): Promise<string | null> {
     const supabase = getSupabaseClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user?.id) return null;
-    return await getStored(`onspace.call_device.${user.id}.device_id`);
+    return await getAsyncStored(`onspace.call_device.${user.id}.device_id.v2`);
   } catch {
     return null;
   }
@@ -489,7 +673,7 @@ export async function getForegroundPresentationReadiness(
     ]);
   }
   const deviceId = authenticatedUserId
-    ? await getStored(`onspace.call_device.${authenticatedUserId}.device_id`)
+    ? await getAsyncStored(`onspace.call_device.${authenticatedUserId}.device_id.v2`)
     : await getCurrentCallDeviceId();
   return {
     deviceId,
@@ -502,18 +686,19 @@ export async function deactivateCurrentCallDevice(): Promise<void> {
   try {
     const supabase = getSupabaseClient();
     const { data: { user } } = await supabase.auth.getUser();
-    const installationId = await getStored(INSTALLATION_ID_KEY);
+    const installationId = await getAsyncStored(INSTALLATION_ID_V2_KEY);
     if (!installationId) return;
 
     await deactivateCallDevice(installationId);
 
     if (user?.id) {
-      await deleteStored(`onspace.call_device.${user.id}.device_id`);
-      await deleteStored(`onspace.call_device.${user.id}.expo_push_token`);
-      await deleteStored(`onspace.call_device.${user.id}.native_push_token`);
+      await deleteAsyncStored(`onspace.call_device.${user.id}.device_id.v2`);
+      await clearLegacyDeviceIdentity(user.id);
     }
-    await deleteStored(LAST_SYNC_KEY);
+    await deleteAsyncStored(LAST_SYNC_V2_KEY);
+    await deleteAsyncStored(LAST_VOIP_SYNC_V2_KEY);
     foregroundCapabilityVersion = null;
+    lastAuthenticatedUserId = null;
   } catch (error) {
     warn('[CallDevice] deactivate failed', error);
   }
