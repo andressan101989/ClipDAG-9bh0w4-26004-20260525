@@ -1,6 +1,9 @@
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+import { Platform } from 'react-native';
+import { getNativeStateStrict } from '@/services/iosCallKitService';
 
 type CallSoundKind = 'incoming' | 'outgoing';
+type StopCallSoundsOptions = { preserveCallKitAudioSession?: boolean };
 
 type ActiveCallSound = {
   kind: CallSoundKind;
@@ -125,12 +128,33 @@ export async function stopOutgoingRingback(callId?: string) {
   await stopCallSound('outgoing', callId);
 }
 
-export async function stopAllCallSounds() {
+export async function stopAllCallSounds(options: StopCallSoundsOptions = {}) {
   const entry = activeSound;
   activeSound = null;
   generation += 1;
   if (entry) {
     await unloadSound(entry.sound);
   }
-  await resetAudioMode();
+  if (!options.preserveCallKitAudioSession) {
+    await resetAudioMode();
+  }
+}
+
+export async function stopAllCallSoundsForCall(callId?: string) {
+  if (Platform.OS !== 'ios' || !callId) {
+    await stopAllCallSounds();
+    return;
+  }
+
+  let preserveCallKitAudioSession = false;
+  try {
+    const nativeState = await getNativeStateStrict();
+    preserveCallKitAudioSession = nativeState.audioSessionActive
+      || (nativeState.hasReportedCall && nativeState.currentCallId === callId);
+  } catch {
+    // A transient bridge failure must not let expo-av overwrite a session
+    // that may already have been configured/activated by CallKit.
+    preserveCallKitAudioSession = true;
+  }
+  await stopAllCallSounds({ preserveCallKitAudioSession });
 }

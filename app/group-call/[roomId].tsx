@@ -8,20 +8,20 @@
  * at MAX_PARTICIPANTS.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet, FlatList, Dimensions, Alert, Share } from 'react-native';
+import { View, Text, Pressable, StyleSheet, FlatList, Alert, Share } from 'react-native';
 import { Image } from 'expo-image';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { CallControlBar } from '@/components/feature/CallControlBar';
 import { getSupabaseClient } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
 import { useAgoraEngine } from '@/hooks/useAgoraEngine';
 import { RtcSurfaceView, useridToAgoraUid, isAgoraAvailable } from '@/services/agoraService';
+import { useSafeCallScreenExit } from '@/hooks/useSafeCallScreenExit';
 
-const { width: W } = Dimensions.get('window');
 const MAX_PARTICIPANTS = 6;
 
 interface Participant {
@@ -34,7 +34,6 @@ interface Participant {
 export default function GroupCallScreen() {
   const { roomId, creatorId } = useLocalSearchParams<{ roomId: string; creatorId?: string }>();
   const insets   = useSafeAreaInsets();
-  const router   = useRouter();
   const { user } = useAuth();
   const supabase = getSupabaseClient();
 
@@ -50,6 +49,7 @@ export default function GroupCallScreen() {
   const mountedRef   = useRef(true);
   const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
   const endedRef       = useRef(false);
+  const { exitCallScreenSafely, terminalConfirmedRef } = useSafeCallScreenExit(roomId ?? '', 'group-call');
 
   const {
     joined, error, remoteUids,
@@ -65,8 +65,9 @@ export default function GroupCallScreen() {
       await presenceRef.current?.untrack();
       presenceRef.current?.unsubscribe();
     } catch { /* ignore */ }
-    if (mountedRef.current) router.back();
-  }, [leave, router]);
+    terminalConfirmedRef.current = true;
+    if (mountedRef.current) await exitCallScreenSafely('group_call_ended', true);
+  }, [exitCallScreenSafely, leave, terminalConfirmedRef]);
 
   useEffect(() => {
     if (!roomId || !user?.id) return;
@@ -130,7 +131,7 @@ export default function GroupCallScreen() {
       mountedRef.current = false;
       channel.unsubscribe();
     };
-  }, [roomId, user?.id]);
+  }, [join, myUid, roomId, supabase, user?.avatar, user?.email, user?.id, user?.username]);
 
   // ── Duration timer ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -180,7 +181,10 @@ export default function GroupCallScreen() {
         <MaterialIcons name="group-off" size={48} color={Colors.textSubtle} />
         <Text style={styles.fullTitle}>Sala llena</Text>
         <Text style={styles.fullSub}>Esta sala ya tiene {MAX_PARTICIPANTS} participantes</Text>
-        <Pressable style={styles.backBtnAlt} onPress={() => router.back()}>
+        <Pressable style={styles.backBtnAlt} onPress={() => {
+          terminalConfirmedRef.current = true;
+          void exitCallScreenSafely('group_call_full', true);
+        }}>
           <Text style={styles.backBtnAltText}>Volver</Text>
         </Pressable>
       </View>

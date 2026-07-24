@@ -15,6 +15,7 @@ interface UseAgoraEngineParams {
   role: AgoraRole;
   profile?: AgoraProfile;
   enableVideo?: boolean;
+  callId?: string;
 }
 
 export function useAgoraEngine(_params: UseAgoraEngineParams) {

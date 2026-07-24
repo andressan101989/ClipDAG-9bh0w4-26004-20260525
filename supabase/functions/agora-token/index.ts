@@ -1,3 +1,4 @@
+/* eslint-disable import/no-unresolved */
 /**
  * agora-token — Generates Agora RTC AccessToken (v1, "006" prefix) server-side.
  *
@@ -11,11 +12,12 @@
  *
  * Uses only Deno built-ins (SubtleCrypto, TextEncoder) — no npm deps.
  *
- * Body:    { channelName: string, uid?: number, role?: "publisher" | "subscriber" }
- * Returns: { token, appId, channel }
+ * Body:    { callId: string } | { groupRoomId: string } | { channelName: string, uid?: unknown, role?: unknown }
+ * Returns: { token, appId, channel, uid }
  */
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
 
 const AGORA_APP_ID          = Deno.env.get('AGORA_APP_ID')          ?? '';
@@ -23,6 +25,7 @@ const AGORA_APP_CERTIFICATE = Deno.env.get('AGORA_APP_CERTIFICATE') ?? '';
 const SUPABASE_URL          = Deno.env.get('SUPABASE_URL')          ?? '';
 const SUPABASE_ANON_KEY     =
   Deno.env.get('SUPABASE_ANON_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
 // Privilege IDs (AccessToken v1 spec)
 const PRIV_JOIN_CHANNEL    = 1;
@@ -46,6 +49,58 @@ async function getUserFromToken(authHeader: string | null): Promise<{ id: string
   } catch {
     return null;
   }
+}
+
+function userIdToAgoraUid(userId: string): number {
+  let hash = 0;
+  for (let index = 0; index < userId.length; index += 1) {
+    hash = (hash * 31 + userId.charCodeAt(index)) >>> 0;
+  }
+  return (hash % 2147483647) + 1;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+type AgoraTokenRequest = {
+  callId?: unknown;
+  groupRoomId?: unknown;
+  channelName?: unknown;
+  uid?: unknown;
+  role?: unknown;
+};
+
+type RequestContract =
+  | { kind: 'new_call'; callId: string }
+  | { kind: 'new_group'; groupRoomId: string }
+  | { kind: 'legacy_call'; channelName: string };
+
+type AuthorizedCall = {
+  caller_id: string;
+  callee_id: string;
+  channel_name: string;
+  status: string;
+  expires_at: string | null;
+};
+
+function parseRequestContract(body: AgoraTokenRequest): RequestContract | null {
+  const hasCallId = Object.prototype.hasOwnProperty.call(body, 'callId');
+  const hasGroupRoomId = Object.prototype.hasOwnProperty.call(body, 'groupRoomId');
+  const hasChannelName = Object.prototype.hasOwnProperty.call(body, 'channelName');
+  const suppliedResourceCount = Number(hasCallId) + Number(hasGroupRoomId) + Number(hasChannelName);
+
+  if (suppliedResourceCount !== 1) return null;
+  if (hasCallId && isNonEmptyString(body.callId)) {
+    return { kind: 'new_call', callId: body.callId.trim() };
+  }
+  if (hasGroupRoomId && isNonEmptyString(body.groupRoomId)) {
+    return { kind: 'new_group', groupRoomId: body.groupRoomId.trim() };
+  }
+  if (hasChannelName && isNonEmptyString(body.channelName)) {
+    return { kind: 'legacy_call', channelName: body.channelName.trim() };
+  }
+  return null;
 }
 
 // ── Binary helpers ────────────────────────────────────────────────────────────
@@ -173,7 +228,7 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
-  if (!AGORA_APP_ID || !AGORA_APP_CERTIFICATE) {
+  if (!AGORA_APP_ID || !AGORA_APP_CERTIFICATE || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     return new Response(
       JSON.stringify({ error: 'Agora not configured — AGORA_APP_ID or AGORA_APP_CERTIFICATE missing' }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 },
@@ -189,35 +244,142 @@ serve(async (req) => {
   }
 
   try {
-    const { channelName, uid, role } = await req.json() as {
-      channelName?: string;
-      uid?:         number;
-      role?:        string;
-    };
-
-    if (!channelName || typeof channelName !== 'string' || channelName.trim() === '') {
+    let rawBody: unknown;
+    try {
+      rawBody = await req.json();
+    } catch {
+      return new Response(JSON.stringify({ error: 'invalid request payload' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
+      });
+    }
+    if (typeof rawBody !== 'object' || rawBody === null || Array.isArray(rawBody)) {
+      return new Response(JSON.stringify({ error: 'invalid request payload' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
+      });
+    }
+    const body = rawBody as AgoraTokenRequest;
+    const contract = parseRequestContract(body);
+    if (!contract) {
       return new Response(
-        JSON.stringify({ error: 'channelName is required' }),
+        JSON.stringify({ error: 'exactly one authorized Agora resource is required' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 },
       );
     }
 
-    const numericUid  = Number.isFinite(uid) && uid! > 0 ? Math.trunc(uid!) : 0;
-    const isPublisher = role !== 'subscriber';
+    const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    let authorizedChannel: string | null = null;
+    let observedContract: RequestContract['kind'] | 'legacy_group' = contract.kind;
+    let observedParticipantKind: 'host' | 'guest' | undefined;
+
+    if (contract.kind === 'new_call' || contract.kind === 'legacy_call') {
+      // Legacy uid and role are intentionally never read. The legacy channel
+      // only resolves the authoritative call row; authorization, channel, UID
+      // and publisher privileges use the same server-side policy as new_call.
+      let callQuery = admin
+        .from('calls')
+        .select('caller_id, callee_id, channel_name, status, expires_at');
+      callQuery = contract.kind === 'new_call'
+        ? callQuery.eq('id', contract.callId)
+        : callQuery.eq('channel_name', contract.channelName);
+      const { data: call, error } = await callQuery.maybeSingle<AuthorizedCall>();
+      if (error) throw new Error('authorized call lookup failed');
+      if (!call) {
+        if (contract.kind === 'legacy_call') {
+          // Distributed group clients used channelName=roomId and joined every
+          // active link room as publisher. Preserve exactly that policy after
+          // an exact 1:1 miss; UID and publisher privileges remain server-side.
+          const { data: legacyGroup, error: legacyGroupError } = await admin
+            .from('group_call_rooms')
+            .select('id, host_id, status')
+            .eq('id', contract.channelName)
+            .maybeSingle<{ id: string; host_id: string; status: string }>();
+          if (legacyGroupError) throw new Error('legacy resource lookup failed');
+          if (!legacyGroup) {
+            return new Response(JSON.stringify({ error: 'call not found' }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404,
+            });
+          }
+          if (legacyGroup.status !== 'active') {
+            return new Response(JSON.stringify({ error: 'group room is not joinable' }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 409,
+            });
+          }
+          // host_id authoritatively distinguishes host from guest, but both
+          // roles were publishers in the distributed join-by-link client.
+          observedParticipantKind = legacyGroup.host_id === user.id ? 'host' : 'guest';
+          authorizedChannel = legacyGroup.id;
+          observedContract = 'legacy_group';
+        } else {
+          return new Response(JSON.stringify({ error: 'call not found' }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404,
+          });
+        }
+      } else {
+        const isCaller = call.caller_id === user.id;
+        const isCallee = call.callee_id === user.id;
+        if (!isCaller && !isCallee) {
+          // Do not disclose whether a legacy channel belongs to another call.
+          const status = contract.kind === 'legacy_call' ? 404 : 403;
+          const error = contract.kind === 'legacy_call' ? 'call not found' : 'forbidden';
+          return new Response(JSON.stringify({ error }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status,
+          });
+        }
+        const isExpired = call.expires_at !== null
+          && new Date(call.expires_at).getTime() <= Date.now();
+        const stateAllowed = !isExpired
+          && (call.status === 'accepted' || (isCaller && call.status === 'ringing'));
+        if (!stateAllowed) {
+          return new Response(JSON.stringify({ error: 'call is not joinable' }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 409,
+          });
+        }
+        if (!isNonEmptyString(call.channel_name)) throw new Error('authorized call channel missing');
+        authorizedChannel = call.channel_name.trim();
+      }
+    } else {
+      // Group calls intentionally allow any authenticated holder of an active
+      // room link. The channel is still read from the authoritative room row.
+      const { data: room, error } = await admin
+        .from('group_call_rooms')
+        .select('id, status')
+        .eq('id', contract.groupRoomId)
+        .maybeSingle<{ id: string; status: string }>();
+      if (error) throw new Error('authorized group room lookup failed');
+      if (!room) {
+        return new Response(JSON.stringify({ error: 'group room not found' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404,
+        });
+      }
+      if (room.status !== 'active') {
+        return new Response(JSON.stringify({ error: 'group room is not joinable' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 409,
+        });
+      }
+      authorizedChannel = room.id;
+    }
+
+    if (!authorizedChannel) throw new Error('authorized channel missing');
+    console.info('agora-token authorized', {
+      contract: observedContract,
+      participant: observedParticipantKind,
+    });
+
+    const numericUid = userIdToAgoraUid(user.id);
 
     const token = await buildToken({
       appId:       AGORA_APP_ID,
       appCert:     AGORA_APP_CERTIFICATE,
-      channelName: channelName.trim(),
+      channelName: authorizedChannel,
       uid:         numericUid,
-      isPublisher,
+      isPublisher: true,
       expireSec:   TOKEN_EXPIRE_SEC,
     });
 
-    console.log(`Token generated — channel="${channelName}" uid=${numericUid} publisher=${isPublisher} prefix=${token.slice(0, 35)}...`);
-
     return new Response(
-      JSON.stringify({ token, appId: AGORA_APP_ID, channel: channelName }),
+      JSON.stringify({ token, appId: AGORA_APP_ID, channel: authorizedChannel, uid: numericUid }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 },
     );
   } catch (err) {

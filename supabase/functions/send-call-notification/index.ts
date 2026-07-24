@@ -1,17 +1,17 @@
 /* eslint-disable import/no-unresolved */
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { SignJWT, importPKCS8 } from 'https://esm.sh/jose@5.9.6'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
+import {
+  getApnsConfig as getSharedApnsConfig,
+  sendApnsWithRetry as sendSharedApnsWithRetry,
+} from '../_shared/callApns.ts'
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
 const MAX_BATCH_SIZE = 100
 const DEVICE_MAX_AGE_DAYS = 90
-const APNS_JWT_MAX_AGE_MS = 45 * 60 * 1000
-const APNS_REQUEST_TIMEOUT_MS = 10_000
 
 type EventType = 'incoming_call' | 'call_cancelled' | 'call_ended'
-type ApnsEnvironment = 'sandbox' | 'production'
 
 type CallRow = {
   id: string
@@ -32,6 +32,7 @@ type ProfileRow = {
 type ExpoDeviceRow = {
   id: string
   expo_push_token: string
+  platform: string
 }
 
 type ApnsDeviceRow = {
@@ -48,28 +49,12 @@ type ChannelSummary = {
   sent: number
   skipped: number
   failed: number
+  authoritative?: number
+  retryable?: number
   error?: string
 }
 
-type ApnsConfig = {
-  keyId: string
-  teamId: string
-  privateKey: string
-  topic: string
-  environment: ApnsEnvironment
-}
-
-type ApnsSendResult = {
-  ok: boolean
-  apnsId: string | null
-  status: number
-  reason: string
-  message: string
-}
-
 type SupabaseAdminClient = ReturnType<typeof createClient>
-
-let cachedApnsJwt: { token: string; expiresAtMs: number } | null = null
 
 function json(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -215,168 +200,6 @@ async function clearExactVoipToken(
   }
 }
 
-function getApnsConfig(): { config: ApnsConfig | null; error: string | null } {
-  const keyId = Deno.env.get('APNS_KEY_ID')?.trim() ?? ''
-  const teamId = Deno.env.get('APNS_TEAM_ID')?.trim() ?? ''
-  const rawPrivateKey = Deno.env.get('APNS_PRIVATE_KEY') ?? ''
-  const topic = Deno.env.get('APNS_TOPIC')?.trim() ?? ''
-  const environmentValue = Deno.env.get('APNS_ENVIRONMENT')?.trim().toLowerCase() ?? ''
-
-  if (!keyId || !teamId || !rawPrivateKey || !topic || !environmentValue) {
-    return { config: null, error: 'missing APNs configuration' }
-  }
-
-  if (environmentValue !== 'sandbox' && environmentValue !== 'production') {
-    return { config: null, error: 'invalid APNs environment' }
-  }
-
-  return {
-    config: {
-      keyId,
-      teamId,
-      privateKey: rawPrivateKey.replace(/\\n/g, '\n').trim(),
-      topic,
-      environment: environmentValue,
-    },
-    error: null,
-  }
-}
-
-async function getApnsJwt(config: ApnsConfig): Promise<string> {
-  if (cachedApnsJwt && cachedApnsJwt.expiresAtMs > Date.now() + 30_000) {
-    return cachedApnsJwt.token
-  }
-
-  try {
-    const key = await importPKCS8(config.privateKey, 'ES256')
-    const issuedAt = Math.floor(Date.now() / 1000)
-    const token = await new SignJWT({})
-      .setProtectedHeader({ alg: 'ES256', kid: config.keyId })
-      .setIssuer(config.teamId)
-      .setIssuedAt(issuedAt)
-      .sign(key)
-
-    cachedApnsJwt = {
-      token,
-      expiresAtMs: Date.now() + APNS_JWT_MAX_AGE_MS,
-    }
-
-    return token
-  } catch (error) {
-    throw new Error(`APNS_JWT_FAILED: ${sanitizeErrorMessage(error)}`)
-  }
-}
-
-async function parseApnsError(response: Response): Promise<{ reason: string; message: string }> {
-  const fallback = `HTTP_${response.status}`
-  try {
-    const body = await response.json()
-    const reason = typeof body?.reason === 'string' && body.reason ? body.reason : fallback
-    return {
-      reason,
-      message: sanitizeErrorMessage(reason),
-    }
-  } catch {
-    return {
-      reason: fallback,
-      message: sanitizeErrorMessage(response.statusText || fallback),
-    }
-  }
-}
-
-async function sendApnsRequest(
-  config: ApnsConfig,
-  jwt: string,
-  deliveryId: string,
-  deviceToken: string,
-  call: CallRow,
-  callerName: string,
-): Promise<ApnsSendResult> {
-  const baseUrl = config.environment === 'sandbox'
-    ? 'https://api.sandbox.push.apple.com'
-    : 'https://api.push.apple.com'
-
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), APNS_REQUEST_TIMEOUT_MS)
-  let response: Response
-
-  try {
-    response = await fetch(`${baseUrl}/3/device/${deviceToken}`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        authorization: `bearer ${jwt}`,
-        'apns-push-type': 'voip',
-        'apns-topic': config.topic,
-        'apns-priority': '10',
-        'apns-expiration': getApnsExpiration(call.expires_at),
-        'apns-id': deliveryId,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        aps: {},
-        call_id: call.id,
-        caller_name: callerName,
-        call_type: call.call_type,
-        has_video: call.call_type === 'video',
-      }),
-    })
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      return {
-        ok: false,
-        apnsId: null,
-        status: 0,
-        reason: 'APNS_TIMEOUT',
-        message: 'APNs request timed out',
-      }
-    }
-    throw error
-  } finally {
-    clearTimeout(timeoutId)
-  }
-
-  const apnsId = response.headers.get('apns-id')
-
-  if (response.ok) {
-    return {
-      ok: true,
-      apnsId,
-      status: response.status,
-      reason: 'OK',
-      message: '',
-    }
-  }
-
-  const error = await parseApnsError(response)
-  return {
-    ok: false,
-    apnsId,
-    status: response.status,
-    reason: error.reason,
-    message: error.message,
-  }
-}
-
-async function sendApnsWithRetry(
-  config: ApnsConfig,
-  deliveryId: string,
-  deviceToken: string,
-  call: CallRow,
-  callerName: string,
-): Promise<ApnsSendResult> {
-  const firstJwt = await getApnsJwt(config)
-  const firstResult = await sendApnsRequest(config, firstJwt, deliveryId, deviceToken, call, callerName)
-
-  if (firstResult.reason !== 'ExpiredProviderToken') {
-    return firstResult
-  }
-
-  cachedApnsJwt = null
-  const retryJwt = await getApnsJwt(config)
-  return sendApnsRequest(config, retryJwt, deliveryId, deviceToken, call, callerName)
-}
-
 async function sendExpoNotifications(
   admin: SupabaseAdminClient,
   call: CallRow,
@@ -388,7 +211,7 @@ async function sendExpoNotifications(
   const since = new Date(Date.now() - DEVICE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString()
   const { data: devices, error: devicesError } = await admin
     .from('call_devices')
-    .select('id, expo_push_token')
+    .select('id, expo_push_token, platform')
     .eq('user_id', recipientId)
     .eq('active', true)
     .not('expo_push_token', 'is', null)
@@ -402,6 +225,9 @@ async function sendExpoNotifications(
   const expoDevices = (devices ?? [])
     .filter(device => typeof device.expo_push_token === 'string' && device.expo_push_token.startsWith('ExponentPushToken'))
     .filter(device => device.id !== call.caller_device_id)
+    // Incoming calls on iOS have a single presentation authority:
+    // D4D/PushKit. Expo remains the incoming transport for Android only.
+    .filter(device => eventType !== 'incoming_call' || device.platform !== 'ios')
 
   const toSend: { device: ExpoDeviceRow; deliveryId: string }[] = []
 
@@ -573,7 +399,7 @@ async function sendApnsVoipNotifications(
     return summary
   }
 
-  const { config, error: configError } = getApnsConfig()
+  const { config, error: configError } = getSharedApnsConfig()
   if (!config) {
     console.error('[send-call-notification] APNs disabled:', configError)
     summary.skipped += recipientDevices.length
@@ -586,6 +412,32 @@ async function sendApnsVoipNotifications(
   for (const device of recipientDevices) {
     if (stopApnsBatch) {
       summary.skipped += 1
+      continue
+    }
+
+    // D4D ownership is represented by the authoritative outbox row itself,
+    // independently of its current state. Fail closed if ownership cannot be
+    // determined so IOS-B can never race a D4D dispatcher send.
+    const { data: authoritativeDelivery, error: barrierError } = await admin
+      .from('call_push_deliveries')
+      .select('id')
+      .eq('call_id', call.id)
+      .eq('device_id', device.id)
+      .eq('event_type', 'incoming_call')
+      .eq('provider', 'apns_voip')
+      .gte('presentation_version', 1)
+      .limit(1)
+      .maybeSingle<{ id: string }>()
+
+    if (barrierError) {
+      summary.failed += 1
+      summary.retryable = (summary.retryable ?? 0) + 1
+      setSummaryError(summary, 'authoritative delivery lookup failed')
+      continue
+    }
+    if (authoritativeDelivery?.id) {
+      summary.skipped += 1
+      summary.authoritative = (summary.authoritative ?? 0) + 1
       continue
     }
 
@@ -624,7 +476,18 @@ async function sendApnsVoipNotifications(
     }
 
     try {
-      const result = await sendApnsWithRetry(config, claim.delivery_id, tokenSent, call, callerName)
+      const result = await sendSharedApnsWithRetry({
+        config,
+        deliveryId: claim.delivery_id,
+        deviceToken: tokenSent,
+        expiration: getApnsExpiration(call.expires_at),
+        payload: {
+          call_id: call.id,
+          caller_name: callerName,
+          call_type: call.call_type,
+          has_video: call.call_type === 'video',
+        },
+      })
 
       if (result.ok) {
         try {

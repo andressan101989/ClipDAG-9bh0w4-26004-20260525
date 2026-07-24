@@ -186,6 +186,9 @@ export function PushNotificationHandler() {
     handledResponsesRef.current.add(dedupeKey);
 
     if (data?.type === 'incoming_call') {
+      // Historical iOS Expo notifications must never bypass D4D ownership.
+      // Android continues to use the existing Expo incoming-call flow.
+      if (Platform.OS === 'ios') return;
       const callId = getIncomingCallId(data);
       if (callId && isAuthReady) await handleIncomingCallTap(callId);
       return;

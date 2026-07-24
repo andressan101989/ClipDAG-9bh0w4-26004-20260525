@@ -9,7 +9,7 @@
 console.log('[BOOT] 0 - _layout module start');
 
 import { useContext } from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Text } from 'react-native';
 import { Stack } from 'expo-router';
 console.log('[BOOT] 1 - expo-router imported');
 
@@ -51,6 +51,9 @@ console.log('[BOOT] 8d - IncomingCallModal imported');
 import { PushNotificationHandler } from '@/components/feature/PushNotificationHandler';
 console.log('[BOOT] 8e - PushNotificationHandler imported');
 
+import { IosCallKitActionHandler } from '@/components/feature/IosCallKitActionHandler';
+console.log('[BOOT] 8f - IosCallKitActionHandler imported');
+
 console.log('[BOOT] 9 - all imports done');
 
 function AppShell() {
@@ -60,6 +63,7 @@ function AppShell() {
   if (!isAuthReady) {
     return (
       <View style={{ flex: 1, backgroundColor: '#0A0A0F', alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ color: '#FFFFFF', fontSize: 34, fontWeight: '700', marginBottom: 20 }}>OnSpace</Text>
         <ActivityIndicator size="large" color="#7C5CFF" />
       </View>
     );
@@ -101,6 +105,10 @@ function AppShell() {
                       options={{ presentation: 'fullScreenModal', headerShown: false }}
                     />
                     <Stack.Screen
+                      name="call/[userId]"
+                      options={{ presentation: 'fullScreenModal', headerShown: false }}
+                    />
+                    <Stack.Screen
                       name="video-call/[userId]"
                       options={{ presentation: 'fullScreenModal', headerShown: false }}
                     />
@@ -119,6 +127,7 @@ function AppShell() {
                   </Stack>
                   <IncomingCallModal />
                   <PushNotificationHandler />
+                  <IosCallKitActionHandler />
                 </AgoraCallProvider>
               </WalletConnectProvider>
             </ShopProvider>

@@ -24,12 +24,12 @@
  * at that point local/remote RtcSurfaceView are shown, same as the video
  * call screen.
  */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AppState, View, Text, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { Colors, FontSize, FontWeight, Spacing } from '@/constants/theme';
 import { CallControlBar } from '@/components/feature/CallControlBar';
 import { getSupabaseClient } from '@/template';
@@ -37,25 +37,25 @@ import { useAuth } from '@/hooks/useAuth';
 import { useAgoraEngine } from '@/hooks/useAgoraEngine';
 import { useAgoraCallSignaling } from '@/contexts/AgoraCallContext';
 import { RtcSurfaceView, useridToAgoraUid, generateUUID, isAgoraAvailable } from '@/services/agoraService';
-import { cancelCall, endCall } from '@/services/callSessionService';
-import { startOutgoingRingback, stopAllCallSounds, stopOutgoingRingback } from '@/services/callRingtoneService';
+import { startOutgoingRingback, stopAllCallSoundsForCall, stopOutgoingRingback } from '@/services/callRingtoneService';
+import { useCallTerminalReconciliation } from '@/hooks/useCallTerminalReconciliation';
+import { useCallLifecycleController } from '@/hooks/useCallLifecycleController';
+import { useCallLiveness } from '@/hooks/useCallLiveness';
 
 const RING_TIMEOUT_MS = 30_000;
 const TIMEOUT_GRACE_MS = 500;
-
-type CallPhase = 'starting' | 'ringing' | 'connecting' | 'active' | 'rejected' | 'ended' | 'failed';
 
 export default function AudioCallScreen() {
   const {
     userId: partnerId, mode, channel,
     callId: paramCallId, callerName: paramCallerName, callerAvatar: paramCallerAvatar,
+    answerHandoff,
   } = useLocalSearchParams<{
     userId: string; mode?: string; channel?: string;
-    callId?: string; callerName?: string; callerAvatar?: string;
+    callId?: string; callerName?: string; callerAvatar?: string; answerHandoff?: string;
   }>();
 
   const insets   = useSafeAreaInsets();
-  const router   = useRouter();
   const { user } = useAuth();
   const supabase = getSupabaseClient();
   const { broadcastIncomingCall, onCallRejected, onCallAccepted, markCallMissed } = useAgoraCallSignaling();
@@ -64,42 +64,56 @@ export default function AudioCallScreen() {
 
   const [partnerName,   setPartnerName]   = useState(isCallee ? (paramCallerName || 'Usuario') : 'Usuario');
   const [partnerAvatar, setPartnerAvatar] = useState(isCallee ? (paramCallerAvatar || '') : '');
-  const [phase, setPhase]                 = useState<CallPhase>(isCallee ? 'connecting' : 'starting');
-  const [duration, setDuration]           = useState(0);
   const [channelName, setChannelName]     = useState<string | null>(isCallee ? (channel ?? null) : null);
   const [callRecordId, setCallRecordId]   = useState<string>(paramCallId ?? '');
 
-  const callIdRef      = useRef<string>(paramCallId ?? '');
-  const timerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
-  const ringTimeoutRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const mountedRef      = useRef(true);
-  const endedRef        = useRef(false);
   const startInProgressRef = useRef(false);
   const idempotencyKeyRef = useRef<string>(paramCallId || generateUUID());
 
   const myUid = user?.id ? useridToAgoraUid(user.id) : 0;
+  const agoraJoinKey = channelName ? `${channelName}:${myUid}` : null;
+  const { statusChecked, terminalStatus, callStatus } = useCallTerminalReconciliation(callRecordId);
+  const canJoinAgora = !isCallee || (answerHandoff === 'accepted' && callStatus === 'accepted');
 
   const {
-    engineReady, remoteUids, isMuted, isCameraOff, localVideoReady, error, speakerOn,
-    join, leave, toggleMute, toggleSpeaker,
-  } = useAgoraEngine({ channelName, uid: myUid, role: 'publisher', profile: 'communication', enableVideo: false });
+    engineReady, joined, remoteUids, isMuted, isCameraOff, localVideoReady, error, speakerOn,
+    join, toggleMute, toggleSpeaker,
+  } = useAgoraEngine({
+    channelName,
+    uid: myUid,
+    role: 'publisher',
+    profile: 'communication',
+    enableVideo: false,
+    callId: callRecordId || undefined,
+  });
+
+  const {
+    phase, transition, duration, callIdRef, mountedRef, ringTimeoutRef,
+    terminalRequestedRef, requestTerminal,
+  } = useCallLifecycleController({
+    callId: callRecordId, initialCallId: paramCallId, isCallee, screen: 'call',
+    terminalStatus, engineError: error,
+  });
+
+  useCallLiveness({
+    callId: callRecordId,
+    isCallee,
+    callStatus,
+    answerHandoff,
+    joined,
+    connected: remoteUids.length > 0,
+    terminal: Boolean(terminalStatus),
+  });
 
   // Once either side has enabled the camera, treat this as an upgraded video call.
   const videoActive = !isCameraOff;
 
-  // ── Mount / unmount ──────────────────────────────────────────────────────
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      stopAllCallSounds().catch(() => {});
-    };
-  }, []);
-
   // ── No session, bail ─────────────────────────────────────────────────────
   useEffect(() => {
-    if (!user?.id || !partnerId) router.back();
-  }, [user?.id, partnerId]);
+    if (!user?.id || !partnerId) {
+      void requestTerminal('user_ended');
+    }
+  }, [partnerId, requestTerminal, user?.id]);
 
   // ── Caller setup: generate channel, ring partner ────────────────────────
   useEffect(() => {
@@ -109,7 +123,7 @@ export default function AudioCallScreen() {
     let cancelled = false;
     const idempotencyKey = idempotencyKeyRef.current;
     startInProgressRef.current = true;
-    setPhase('starting');
+    transition('starting');
 
     supabase.from('user_profiles').select('username, avatar_url').eq('id', partnerId).single()
       .then(({ data }) => {
@@ -131,7 +145,7 @@ export default function AudioCallScreen() {
       startInProgressRef.current = false;
       if (cancelled || !mountedRef.current) return;
       if (!started) {
-        setPhase('failed');
+        transition('start_failed');
         return;
       }
       console.log('[AGORA-CALL] backend channelName length', {
@@ -141,13 +155,15 @@ export default function AudioCallScreen() {
       callIdRef.current = started.callId;
       setCallRecordId(started.callId);
       setChannelName(started.channelName);
-      setPhase('ringing');
+      transition('ringing');
 
       const timeoutMs = Math.max(0, new Date(started.expiresAt ?? '').getTime() - Date.now() + TIMEOUT_GRACE_MS);
       ringTimeoutRef.current = setTimeout(() => {
-        markCallMissed(started.callId).catch(() => {});
-        if (!mountedRef.current) return;
-        setPhase(prev => (prev === 'ringing' ? 'ended' : prev));
+        markCallMissed(started.callId)
+          .then(() => {
+            if (mountedRef.current) transition('timeout');
+          })
+          .catch(() => {});
       }, Number.isFinite(timeoutMs) ? timeoutMs : RING_TIMEOUT_MS);
     })();
 
@@ -156,14 +172,14 @@ export default function AudioCallScreen() {
       startInProgressRef.current = false;
       if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
     };
-  }, [isCallee, user?.id, partnerId]);
+  }, [broadcastIncomingCall, callIdRef, isCallee, markCallMissed, mountedRef, partnerId, ringTimeoutRef, supabase, transition, user?.avatar, user?.email, user?.id, user?.username]);
 
   // ── Join Agora as soon as the channel name is known ─────────────────────
   useEffect(() => {
-    if (channelName && engineReady) {
-      stopAllCallSounds().finally(() => { join(); });
-    }
-  }, [channelName, engineReady]);
+    if (!agoraJoinKey || !engineReady || !statusChecked || !canJoinAgora || terminalStatus || terminalRequestedRef.current) return;
+    console.log('[AGORA-DEBUG] autoJoin requested', { joinKey: `${channelName?.slice(-8)}:${myUid}` });
+    stopAllCallSoundsForCall(callRecordId).finally(() => { join(); });
+  }, [agoraJoinKey, callRecordId, canJoinAgora, channelName, engineReady, join, myUid, statusChecked, terminalRequestedRef, terminalStatus]);
 
   useEffect(() => {
     if (isCallee || phase !== 'ringing' || !callRecordId) {
@@ -200,79 +216,28 @@ export default function AudioCallScreen() {
   useEffect(() => {
     if (isCallee || !callIdRef.current) return;
     const unsub = onCallRejected(callIdRef.current, () => {
-      if (mountedRef.current) setPhase('rejected');
+      if (mountedRef.current) transition('rejected');
     });
     return unsub;
-  }, [isCallee, channelName]);
-
-  // ── Any participant ended the call ───────────────────────────────────────
-  useEffect(() => {
-    if (!callRecordId) return;
-    const channel = supabase.channel(`calls:status:${callRecordId}`)
-      .on('postgres_changes', {
-        event: 'UPDATE', schema: 'public', table: 'calls', filter: `id=eq.${callRecordId}`,
-      }, (payload: any) => {
-        const row = payload.new as { status?: string };
-        if (row.status === 'ended' && mountedRef.current) setPhase('ended');
-      })
-      .subscribe();
-
-    return () => { channel.unsubscribe(); };
-  }, [callRecordId, supabase]);
+  }, [callIdRef, channelName, isCallee, mountedRef, onCallRejected, transition]);
 
   // ── Listen for acceptance (caller only) ──────────────────────────────────
   useEffect(() => {
     if (isCallee || !callIdRef.current) return;
     const unsub = onCallAccepted(callIdRef.current, () => {
-      if (mountedRef.current) setPhase(prev => (prev === 'ringing' ? 'connecting' : prev));
+      if (mountedRef.current) transition('accepted');
     });
     return unsub;
-  }, [isCallee, channelName]);
+  }, [callIdRef, channelName, isCallee, mountedRef, onCallAccepted, transition]);
 
   // ── Remote joined → active ───────────────────────────────────────────────
   useEffect(() => {
     if (remoteUids.length > 0) {
-      stopAllCallSounds().catch(() => {});
-      setPhase(prev => (prev === 'active' ? prev : 'active'));
+      stopAllCallSoundsForCall(callRecordId).catch(() => {});
+      transition('connected');
       if (ringTimeoutRef.current) { clearTimeout(ringTimeoutRef.current); ringTimeoutRef.current = null; }
     }
-  }, [remoteUids.length]);
-
-  // ── Engine error → failed ────────────────────────────────────────────────
-  useEffect(() => {
-    if (error) setPhase(prev => (prev === 'active' ? prev : 'failed'));
-  }, [error]);
-
-  // ── Duration timer ───────────────────────────────────────────────────────
-  useEffect(() => {
-    if (phase === 'active') {
-      timerRef.current = setInterval(() => setDuration(d => d + 1), 1000);
-    }
-    return () => { if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } };
-  }, [phase]);
-
-  // ── Terminal phases → cleanup + navigate back ────────────────────────────
-  useEffect(() => {
-    if ((phase === 'ended' || phase === 'rejected' || phase === 'failed') && !endedRef.current) {
-      endedRef.current = true;
-      stopAllCallSounds().catch(() => {});
-      leave();
-      const t = setTimeout(() => { if (mountedRef.current) router.back(); }, 900);
-      return () => clearTimeout(t);
-    }
-  }, [phase]);
-
-  const handleEndCall = useCallback(async () => {
-    await stopAllCallSounds();
-    if (callRecordId) {
-      if (phase === 'ringing' || phase === 'starting') {
-        await cancelCall(callRecordId).catch(() => {});
-      } else {
-        await endCall(callRecordId, 'user_ended').catch(() => {});
-      }
-    }
-    setPhase('ended');
-  }, [callRecordId, phase]);
+  }, [callRecordId, remoteUids.length, ringTimeoutRef, transition]);
 
   const fmt = (s: number) =>
     `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
@@ -328,7 +293,7 @@ export default function AudioCallScreen() {
           onToggleMute={toggleMute}
           speakerOn={speakerOn}
           onToggleSpeaker={toggleSpeaker}
-          onHangup={handleEndCall}
+          onHangup={() => { void requestTerminal('user_ended'); }}
           showCamera={false}
           showSwitchCamera={false}
         />

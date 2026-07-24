@@ -55,8 +55,40 @@ public final class OnSpaceCallKitModule: Module {
       return OnSpaceCallCoordinator.shared.pendingEventDictionaries()
     }
 
-    Function("consumePendingEvents") { () -> [[String: Any]] in
-      return OnSpaceCallCoordinator.shared.consumePendingEventDictionaries()
+    Function("consumePendingEvent") { (eventId: String) -> Bool in
+      return OnSpaceCallCoordinator.shared.consumePendingEvent(eventId: eventId)
+    }
+
+    Function("markCallHandoffStarted") { (callId: String, eventId: String) -> Bool in
+      return OnSpaceCallCoordinator.shared.markCallHandoffStarted(callId: callId, eventId: eventId)
+    }
+
+    Function("markCallHandoffCompleted") { (callId: String, eventId: String) -> Bool in
+      return OnSpaceCallCoordinator.shared.markCallHandoffCompleted(callId: callId, eventId: eventId)
+    }
+
+    Function("reportCallConnected") { (callId: String) -> Bool in
+      return OnSpaceCallCoordinator.shared.reportCallConnected(callId: callId)
+    }
+
+    Function("reportCallEnded") { (callId: String, reason: String) -> Bool in
+      return OnSpaceCallCoordinator.shared.reportCallEnded(callId: callId, reason: reason)
+    }
+
+    AsyncFunction("setCallSpeakerEnabled") { (callId: String, enabled: Bool) async -> [String: Any] in
+      return await withCheckedContinuation { continuation in
+        OnSpaceCallCoordinator.shared.setCallSpeakerEnabled(callId: callId, enabled: enabled) { result in
+          continuation.resume(returning: result)
+        }
+      }
+    }
+
+    AsyncFunction("requestEndCall") { (callId: String) async -> [String: Any] in
+      return await withCheckedContinuation { continuation in
+        OnSpaceCallCoordinator.shared.requestEndCall(callId: callId) { result in
+          continuation.resume(returning: result)
+        }
+      }
     }
 
     Function("getNativeState") { () -> [String: Any] in

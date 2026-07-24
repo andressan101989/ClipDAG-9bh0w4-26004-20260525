@@ -18,6 +18,7 @@ export const ChannelProfileType: any                  = {};
 export const ClientRoleType: any                      = {};
 export const RenderModeType: any                      = {};
 export const VideoSourceType: any                     = {};
+export const AudioSessionOperationRestriction: any    = {};
 
 export function getAgoraAppId(): string {
   return process.env.EXPO_PUBLIC_AGORA_APP_ID ?? '';
@@ -43,18 +44,19 @@ export interface AgoraTokenResponse {
   token: string;
   appId: string;
   channel: string;
+  uid: number;
 }
 
 export async function fetchAgoraToken(
-  channelName: string,
-  uid: number,
-  role: 'publisher' | 'subscriber' = 'publisher',
+  resource: { callId: string } | { groupRoomId: string },
 ): Promise<AgoraTokenResponse> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.functions.invoke('agora-token', {
-    body: { channelName, uid, role },
+    body: resource,
   });
   if (error) throw new Error(error.message || 'No se pudo obtener el token de Agora');
-  if (!data?.token) throw new Error('Respuesta invalida del servidor de tokens');
+  if (!data?.token || !data?.channel || !Number.isInteger(data?.uid) || data.uid <= 0) {
+    throw new Error('Respuesta invalida del servidor de tokens');
+  }
   return data as AgoraTokenResponse;
 }

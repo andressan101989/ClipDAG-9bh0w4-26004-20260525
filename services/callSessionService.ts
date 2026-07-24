@@ -164,6 +164,29 @@ export async function endCall(callId: string, reason: CallEndReason = 'user_ende
   return mapTransition(row);
 }
 
+async function callLivenessRpc(name: string, callId: string): Promise<boolean> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc(name, { p_call_id: callId });
+  if (error) throw new Error(error.message || 'No se pudo actualizar la actividad de la llamada');
+  return data === true;
+}
+
+export function markCallHandoffCompleted(callId: string): Promise<boolean> {
+  return callLivenessRpc('mark_call_handoff_completed', callId);
+}
+
+export function markCallJoined(callId: string): Promise<boolean> {
+  return callLivenessRpc('mark_call_joined', callId);
+}
+
+export function markCallMediaConnected(callId: string): Promise<boolean> {
+  return callLivenessRpc('mark_call_media_connected', callId);
+}
+
+export function heartbeatCall(callId: string): Promise<boolean> {
+  return callLivenessRpc('heartbeat_call', callId);
+}
+
 export async function registerCallDevice(params: RegisterCallDeviceParams): Promise<string> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.rpc('register_call_device', {

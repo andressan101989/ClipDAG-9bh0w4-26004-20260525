@@ -13,10 +13,33 @@
  */
 import {
   getNativeModule,
+  type CallKitAnswerEvent,
+  type CallKitAudioSessionEvent,
+  type CallKitEndEvent,
+  type CallKitEndReason,
+  type IncomingCallEvent,
+  type CallKitMuteEvent,
+  type CallKitPendingEvent,
+  type CallKitProviderResetEvent,
+  type CallSpeakerRouteResult,
+  type NativeCallKitState,
   type OnSpaceCallKitEventMap,
-  type OnSpaceCallKitNativeState,
-  type OnSpaceCallKitPendingEvent,
+  type RequestEndCallResult,
 } from 'onspace-callkit';
+
+export type {
+  CallKitAnswerEvent,
+  CallKitAudioSessionEvent,
+  CallKitEndEvent,
+  CallKitEndReason,
+  IncomingCallEvent,
+  CallKitMuteEvent,
+  CallKitPendingEvent,
+  CallKitProviderResetEvent,
+  CallSpeakerRouteResult,
+  NativeCallKitState,
+  RequestEndCallResult,
+};
 
 function warn(message: string, error?: unknown) {
   if (__DEV__) console.warn(message, error);
@@ -71,7 +94,7 @@ export async function getIosVoipPushToken(): Promise<string | null> {
   }
 }
 
-export async function getIosCallKitNativeState(): Promise<OnSpaceCallKitNativeState | null> {
+export async function getNativeState(): Promise<NativeCallKitState | null> {
   const native = getNativeModule();
   if (!native?.getNativeState) return null;
   try {
@@ -79,12 +102,14 @@ export async function getIosCallKitNativeState(): Promise<OnSpaceCallKitNativeSt
     else native.ensureStarted();
     const state = await native.getNativeState();
     debug('[iosCallKitService] native state', {
-      started: state.started,
-      registryConfigured: state.registryConfigured,
-      hasVoipToken: state.hasVoipToken,
-      voipTokenLength: state.voipTokenLength,
+      currentCallId: state.currentCallId,
+      currentCallUuid: state.currentCallUuid,
+      hasReportedCall: state.hasReportedCall,
+      wasAnswered: state.wasAnswered,
+      audioSessionActive: state.audioSessionActive,
       pendingEventCount: state.pendingEventCount,
-      lastVoipTokenUpdatedAt: state.lastVoipTokenUpdatedAt,
+      nativeOrigin: state.nativeOrigin,
+      wasAppVisibleBeforeVoipPush: state.wasAppVisibleBeforeVoipPush,
     });
     return state;
   } catch (error) {
@@ -93,7 +118,18 @@ export async function getIosCallKitNativeState(): Promise<OnSpaceCallKitNativeSt
   }
 }
 
-export async function getIosCallKitPendingEvents(): Promise<OnSpaceCallKitPendingEvent[]> {
+export async function getNativeStateStrict(): Promise<NativeCallKitState> {
+  const native = getNativeModule();
+  if (!native) throw new Error('native_module_unavailable');
+  if (!native.getNativeState) throw new Error('get_native_state_unavailable');
+  if (native.start) native.start();
+  else native.ensureStarted();
+  return await native.getNativeState();
+}
+
+export const getIosCallKitNativeState = getNativeState;
+
+export async function getPendingEvents(): Promise<CallKitPendingEvent[]> {
   const native = getNativeModule();
   if (!native?.getPendingEvents) return [];
   try {
@@ -104,14 +140,128 @@ export async function getIosCallKitPendingEvents(): Promise<OnSpaceCallKitPendin
   }
 }
 
-export async function consumeIosCallKitPendingEvents(): Promise<OnSpaceCallKitPendingEvent[]> {
+export async function getPendingEventsStrict(): Promise<CallKitPendingEvent[]> {
   const native = getNativeModule();
-  if (!native?.consumePendingEvents) return [];
+  if (!native) throw new Error('native_module_unavailable');
+  if (!native.getPendingEvents) throw new Error('get_pending_events_unavailable');
+  return await native.getPendingEvents();
+}
+
+export const getIosCallKitPendingEvents = getPendingEvents;
+
+export async function consumePendingEvent(eventId: string): Promise<boolean> {
+  const native = getNativeModule();
+  if (!native?.consumePendingEvent) return false;
   try {
-    return await native.consumePendingEvents();
+    return await native.consumePendingEvent(eventId);
   } catch (error) {
-    warn('[iosCallKitService] consumePendingEvents failed', error);
-    return [];
+    warn('[iosCallKitService] consumePendingEvent failed', error);
+    return false;
+  }
+}
+
+export async function consumePendingEventStrict(eventId: string): Promise<boolean> {
+  const native = getNativeModule();
+  if (!native) throw new Error('native_module_unavailable');
+  if (!native.consumePendingEvent) throw new Error('consume_pending_event_unavailable');
+  return native.consumePendingEvent(eventId);
+}
+
+export async function markCallKitHandoffStarted(callId: string, eventId: string): Promise<boolean> {
+  const native = getNativeModule();
+  if (!native?.markCallHandoffStarted) return false;
+  return await native.markCallHandoffStarted(callId, eventId);
+}
+
+export async function markCallKitHandoffCompleted(callId: string, eventId: string): Promise<boolean> {
+  const native = getNativeModule();
+  if (!native?.markCallHandoffCompleted) return false;
+  return await native.markCallHandoffCompleted(callId, eventId);
+}
+
+export async function reportCallConnected(callId: string): Promise<boolean> {
+  const native = getNativeModule();
+  if (!native?.reportCallConnected) return false;
+  try {
+    return await native.reportCallConnected(callId);
+  } catch (error) {
+    warn('[iosCallKitService] reportCallConnected failed', error);
+    return false;
+  }
+}
+
+/**
+ * Backend/remote authoritative call end notification. Do not use this for a
+ * local hangup; call requestEndCall() so CallKit drives CXEndCallAction.
+ * Passing "localEnded" is accepted by the type for shared reason vocabulary,
+ * but native intentionally does not fake it as a remote CallKit end.
+ */
+export async function reportCallEnded(callId: string, reason: CallKitEndReason): Promise<void> {
+  try {
+    await reportCallEndedStrict(callId, reason);
+  } catch (error) {
+    warn('[iosCallKitService] reportCallEnded failed', error);
+  }
+}
+
+export async function reportCallEndedStrict(callId: string, reason: CallKitEndReason): Promise<boolean> {
+  const native = getNativeModule();
+  if (!native) throw new Error('native_module_unavailable');
+  if (!native.reportCallEnded) throw new Error('report_call_ended_unavailable');
+  return await native.reportCallEnded(callId, reason);
+}
+
+/**
+ * Local user initiated hangup. Native sends a CXEndCallAction through
+ * CXCallController; the provider delegate persists the resulting endCall
+ * event before fulfilling the action.
+ */
+export async function requestEndCall(callId: string): Promise<RequestEndCallResult> {
+  const native = getNativeModule();
+  if (!native?.requestEndCall) return { success: false, error: 'native_module_unavailable' };
+  try {
+    return await native.requestEndCall(callId);
+  } catch (error) {
+    warn('[iosCallKitService] requestEndCall failed', error);
+    return { success: false, error: error instanceof Error ? error.message : 'request_failed' };
+  }
+}
+
+export async function requestEndCallIfManagedByCallKit(callId: string): Promise<boolean> {
+  const state = await getNativeState();
+  if (!state?.hasReportedCall || state.currentCallId !== callId) return false;
+  const result = await requestEndCall(callId);
+  return result.success;
+}
+
+export async function setCallKitSpeakerEnabled(
+  callId: string,
+  enabled: boolean,
+): Promise<CallSpeakerRouteResult> {
+  const native = getNativeModule();
+  if (!native?.setCallSpeakerEnabled) {
+    return {
+      applied: false,
+      requestedSpeaker: enabled,
+      beforeOutputs: [],
+      afterOutputs: [],
+      callMatches: false,
+      audioSessionActive: false,
+      errorCode: 'native_method_unavailable',
+    };
+  }
+  try {
+    return await native.setCallSpeakerEnabled(callId, enabled);
+  } catch {
+    return {
+      applied: false,
+      requestedSpeaker: enabled,
+      beforeOutputs: [],
+      afterOutputs: [],
+      callMatches: true,
+      audioSessionActive: false,
+      errorCode: 'native_call_failed',
+    };
   }
 }
 
@@ -135,6 +285,34 @@ export function addOnSpaceCallKitListener<K extends keyof OnSpaceCallKitEventMap
     warn('[iosCallKitService] addListener failed', error);
     return { remove: () => {} };
   }
+}
+
+export function onAnswerCall(callback: (event: CallKitAnswerEvent) => void): { remove: () => void } {
+  return addOnSpaceCallKitListener('answerCall', callback);
+}
+
+export function onIncomingCall(callback: (event: IncomingCallEvent) => void): { remove: () => void } {
+  return addOnSpaceCallKitListener('incomingCall', callback);
+}
+
+export function onEndCall(callback: (event: CallKitEndEvent) => void): { remove: () => void } {
+  return addOnSpaceCallKitListener('endCall', callback);
+}
+
+export function onMuteCall(callback: (event: CallKitMuteEvent) => void): { remove: () => void } {
+  return addOnSpaceCallKitListener('muteCall', callback);
+}
+
+export function onAudioSessionActivated(callback: (event: CallKitAudioSessionEvent) => void): { remove: () => void } {
+  return addOnSpaceCallKitListener('audioSessionActivated', callback);
+}
+
+export function onAudioSessionDeactivated(callback: (event: CallKitAudioSessionEvent) => void): { remove: () => void } {
+  return addOnSpaceCallKitListener('audioSessionDeactivated', callback);
+}
+
+export function onProviderReset(callback: (event: CallKitProviderResetEvent) => void): { remove: () => void } {
+  return addOnSpaceCallKitListener('providerReset', callback);
 }
 
 let voipTokenSubscription: { remove: () => void } | null = null;
