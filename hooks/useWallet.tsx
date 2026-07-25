@@ -264,7 +264,7 @@ export function useWallet() {
 
     // Background poll every 30 seconds to stay current
     const pollInterval = setInterval(() => {
-      dbBalance().catch(() => {});
+      fullSync().catch(() => {});
     }, 30_000);
 
     return () => {

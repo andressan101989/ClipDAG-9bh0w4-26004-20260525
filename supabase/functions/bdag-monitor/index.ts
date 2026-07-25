@@ -23,9 +23,9 @@ const SUPABASE_URL     = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY      = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const MONITOR_SECRET   = (() => {
   const s = Deno.env.get('RECONCILE_SECRET');
-  if (!s) throw new Error('RECONCILE_SECRET env var is not set');
-  return s;
+  return s ?? '';
 })();
+const DISPATCH_SECRET = Deno.env.get('CALL_DISPATCH_SECRET') ?? '';
 const TREASURY_ADDRESS = (Deno.env.get('TREASURY_WALLET_ADDRESS') ?? '').toLowerCase();
 
 const MIN_CONFIRMATIONS     = 2;
@@ -141,9 +141,6 @@ async function confirmBroadcastedWithdrawal(wr: Record<string, unknown>): Promis
   const wId      = wr.id as string;
   const txHash   = wr.tx_hash as string;
   const chainId  = wr.chain_id as string;
-  const netBdag  = Number(wr.net_bdag ?? 0);
-  const toAddr   = (wr.to_address as string).toLowerCase();
-  const tokenType = ((wr.token_type as string) ?? 'ETH').toUpperCase();
 
   if (!txHash) {
     log('WARN', 'broadcasted_withdrawal_no_txhash', { withdrawal_id: wId });
@@ -197,63 +194,19 @@ async function confirmBroadcastedWithdrawal(wr: Record<string, unknown>): Promis
     return 'pending';
   }
 
-  // ── Confirmed — release escrow and mark completed ─────────────────────────
-  await admin.from('blockchain_settlements').upsert({
-    settlement_type: 'withdrawal',
-    reference_id:    wId,
-    chain_id:        chainId,
-    tx_hash:         txHash,
-    from_address:    TREASURY_ADDRESS,
-    to_address:      toAddr,
-    amount_wei:      '0',
-    block_number:    blockNum,
-    status:          'confirmed',
-    rpc_verified:    true,
-    verified_at:     new Date().toISOString(),
-    raw_receipt:     receipt,
-  }, { onConflict: 'tx_hash' });
-
-  // Release escrow
-  const { data: escrow } = await admin.from('ledger_accounts')
-    .select('id').eq('account_type', 'escrow').maybeSingle();
-  if (escrow?.id) {
-    const { error: escrowErr } = await admin.rpc('ledger_debit', {
-      p_txn_id:      crypto.randomUUID(),
-      p_account_id:  escrow.id,
-      p_amount:      netBdag,
-      p_description: `withdrawal_settled_${tokenType}: ${txHash}`,
-      p_metadata:    JSON.stringify({ tx_hash: txHash, token_type: tokenType }),
-    });
-    if (escrowErr) {
-      log('ERROR', 'escrow_debit_failed', { error: escrowErr.message, withdrawal_id: wId });
-    }
+  const { data: completion, error: completionError } = await admin.rpc(
+    'complete_withdrawal_settlement',
+    {
+      p_withdrawal_id: wId,
+      p_tx_hash: txHash,
+      p_confirmations: confs,
+      p_block_number: blockNum,
+      p_receipt: receipt,
+    },
+  );
+  if (completionError || !completion?.success) {
+    throw new Error(completionError?.message ?? completion?.error ?? 'atomic withdrawal completion failed');
   }
-
-  await admin.from('withdrawal_requests').update({
-    status: 'completed', tx_hash: txHash, confirmations: confs,
-  }).eq('id', wId);
-
-  // ── Also mark the financial_transaction as completed ──────────────────
-  // withdrawal_requests.fin_txn_id links to the financial_transactions record
-  // which starts as 'pending' — update it so the wallet history shows correctly
-  if (wr.fin_txn_id) {
-    const { error: ftErr } = await admin
-      .from('financial_transactions')
-      .update({ status: 'completed', blockchain_txid: txHash })
-      .eq('id', wr.fin_txn_id as string);
-    if (ftErr) {
-      log('WARN', 'fin_txn_status_update_failed', { fin_txn_id: wr.fin_txn_id, error: ftErr.message });
-    } else {
-      log('INFO', 'fin_txn_marked_completed', { fin_txn_id: wr.fin_txn_id, tx_hash: txHash });
-    }
-  }
-
-  await admin.from('audit_events').insert({
-    entity_type: 'withdrawal_request',
-    entity_id:   wId,
-    action:      'completed',
-    new_state:   { tx_hash: txHash, confirmations: confs, token_type: tokenType },
-  });
 
   log('INFO', 'withdrawal_completed', { withdrawal_id: wId, tx_hash: txHash, confs });
   return 'confirmed';
@@ -268,8 +221,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const secret     = req.headers.get('X-Monitor-Secret') ?? req.headers.get('Authorization');
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
   const isAuthorized =
-    secret === MONITOR_SECRET ||
-    secret === `Bearer ${MONITOR_SECRET}` ||
+    (MONITOR_SECRET && (secret === MONITOR_SECRET || secret === `Bearer ${MONITOR_SECRET}`)) ||
+    (DISPATCH_SECRET && (secret === DISPATCH_SECRET || secret === `Bearer ${DISPATCH_SECRET}`)) ||
     (serviceKey && secret === `Bearer ${serviceKey}`);
 
   if (!isAuthorized) {
@@ -309,8 +262,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const { data: broadcastedWithdrawals } = await admin
       .from('withdrawal_requests')
       .select('*')
-      .in('status', ['broadcasted', 'signing'])  // signing = may have been mid-broadcast when monitor was called
-      .gt('expires_at', new Date().toISOString())
+      .in('status', ['broadcasted', 'signing'])
       .order('created_at', { ascending: true })
       .limit(10);
 

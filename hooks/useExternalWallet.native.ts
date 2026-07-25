@@ -25,6 +25,8 @@ import {
   unitsToHex,
   utf8ToHex,
 } from '@/services/walletTransactionEncoding';
+import { getStablecoinConfig } from '@/services/stablecoinRegistry';
+import { markWalletExternalOperation } from '@/services/walletExternalOperation';
 
 type WalletResult = {
   success: boolean;
@@ -37,8 +39,6 @@ type WalletResult = {
 type Eip1193Provider = {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
 };
-
-const ETHEREUM_USDT = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
 
 function parseChainId(value: unknown): number | null {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
@@ -119,6 +119,7 @@ export function useExternalWallet() {
       return { success: false, error: WALLETCONNECT_INIT_ERROR ?? 'WalletConnect no disponible' };
     }
     try {
+      await markWalletExternalOperation();
       setInitError(null);
       await appKit.open({ view: 'Connect' });
       return {
@@ -152,6 +153,7 @@ export function useExternalWallet() {
     if (!target) return { success: false, error: `Red desconocida: ${networkKey}` };
     if (mountedRef.current) setIsSwitchingChain(true);
     try {
+      await markWalletExternalOperation();
       await appKit.switchNetwork(target);
       const reported = parseChainId(await provider.request({ method: 'eth_chainId', params: [] }));
       if (reported !== Number(target.id)) {
@@ -195,6 +197,7 @@ export function useExternalWallet() {
     if (!networkResult.success) return networkResult;
     if (mountedRef.current) setIsSendingTx(true);
     try {
+      await markWalletExternalOperation();
       const data = encodeErc20Transfer(toAddress, decimalToUnits(amount, decimals));
       const txHash = await provider.request({
         method: 'eth_sendTransaction',
@@ -244,26 +247,24 @@ export function useExternalWallet() {
     amount: string | number,
     treasuryAddress: string,
     targetNetwork?: string,
-    depositAsset?: 'eth' | 'usdt' | string,
+    depositAsset?: 'usdt' | 'usdc' | string,
   ): Promise<WalletResult> => {
-    if ((depositAsset ?? '').toLowerCase() === 'usdt') {
-      const targetChainId = NETWORKS[targetNetwork ?? '']?.chainId ?? chainId;
-      if (targetChainId !== 1) {
-        return {
-          success: false,
-          error: 'USDT no está habilitado actualmente en Base. Selecciona Ethereum.',
-        };
-      }
-      return sendErc20Transaction(ETHEREUM_USDT, treasuryAddress, amount, 6, targetNetwork);
-    }
-    return sendTransaction(treasuryAddress, amount, targetNetwork);
-  }, [chainId, sendErc20Transaction, sendTransaction]);
+    const networkKey = targetNetwork ?? getNetworkKey(chainId ?? 0);
+    const stablecoin = getStablecoinConfig(networkKey, depositAsset ?? '');
+    if (!stablecoin) return { success: false, error: `${String(depositAsset).toUpperCase()} no está habilitado en ${networkKey}.` };
+    const switched = await ensureNetwork(networkKey);
+    if (!switched.success) return switched;
+    const actualChainId = parseChainId(await provider?.request({ method: 'eth_chainId', params: [] }));
+    if (actualChainId !== stablecoin.chainId) return { success: false, error: 'La wallet no confirmó la red solicitada' };
+    return sendErc20Transaction(stablecoin.contractAddress, treasuryAddress, amount, stablecoin.decimals, networkKey);
+  }, [chainId, ensureNetwork, provider, sendErc20Transaction]);
 
   const signMessage = useCallback(async (message: string): Promise<WalletResult & { signature?: string }> => {
     if (!isConnected || !provider || !validAddress) {
       return { success: false, error: 'Wallet no conectada' };
     }
     try {
+      await markWalletExternalOperation();
       const signature = await provider.request({
         method: 'personal_sign',
         params: [utf8ToHex(message), validAddress],

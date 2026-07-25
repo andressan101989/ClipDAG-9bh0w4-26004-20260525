@@ -16,6 +16,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders }  from '../_shared/cors.ts';
 import { callRPC }      from '../_shared/rpc.ts';
+import { getStablecoinByContract, type StablecoinSymbol } from '../_shared/stablecoins.ts';
 
 const SUPABASE_URL     = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY      = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -176,7 +177,7 @@ async function fetchMempoolTx(
 interface ValidationResult {
   valid:       boolean;
   amountWei:   string;    // decimal string (no BigInt)
-  tokenType:   'ETH' | 'USDT';
+  tokenType:   StablecoinSymbol;
   bdagAmount:  number;    // final BDAG to credit
   usdValue:    number;    // USD equivalent
   ethPriceUsd: number;    // price used for conversion (stored for audit)
@@ -189,7 +190,7 @@ async function validateMempoolTx(
   expectedFrom: string,
 ): Promise<ValidationResult> {
   const INVALID = (error: string): ValidationResult =>
-    ({ valid: false, amountWei: '0', tokenType: 'ETH', bdagAmount: 0, usdValue: 0, ethPriceUsd: 0, error });
+    ({ valid: false, amountWei: '0', tokenType: 'USDT', bdagAmount: 0, usdValue: 0, ethPriceUsd: 0, error });
 
   const fromAddr  = ((tx['from'] as string | undefined) ?? '').toLowerCase();
   const expectedL = expectedFrom.toLowerCase();
@@ -201,10 +202,10 @@ async function validateMempoolTx(
 
   const toAddr    = ((tx['to'] as string | undefined) ?? '').toLowerCase();
   const inputData = ((tx['input'] as string | undefined) ?? '0x');
-  const usdtAddr  = (USDT_CONTRACTS[chainId] ?? '').toLowerCase();
+  const stablecoin = getStablecoinByContract(chainId, toAddr);
 
   // ── ERC-20 USDT path ───────────────────────────────────────────────────────
-  if (usdtAddr && toAddr === usdtAddr) {
+  if (stablecoin) {
     const decoded = decodeMempoolErc20Transfer(inputData);
     if (!decoded) return INVALID('invalid_erc20_input');
 
@@ -225,37 +226,14 @@ async function validateMempoolTx(
     return {
       valid: true,
       amountWei:   String(hexToNumber(decoded.amountHex)),
-      tokenType:   'USDT',
+      tokenType:   stablecoin.symbol,
       bdagAmount,
       usdValue,
       ethPriceUsd: 1, // USDT = 1 USD, not applicable
     };
   }
 
-  // ── Native ETH path ────────────────────────────────────────────────────────
-  if (toAddr === TREASURY_ADDRESS) {
-    const valueHex  = ((tx['value'] as string | undefined) ?? '0x0');
-    const valueWei  = hexToNumber(valueHex);
-    const ethAmount = weiToDecimal(valueWei, 18);
-
-    if (ethAmount <= 0) return INVALID('zero_amount');
-
-    // Fetch live ETH price — backend is the ONLY price authority
-    const ethPriceUsd = await fetchEthPriceUsd();
-    const usdValue    = Number((ethAmount * ethPriceUsd).toFixed(6));
-    const bdagAmount  = Number((usdValue * USD_TO_BDAG).toFixed(2));
-
-    console.log(`[bdag-deposit] ETH: ${ethAmount} ETH × $${ethPriceUsd}/ETH = $${usdValue} → ${bdagAmount} BDAG`);
-
-    return {
-      valid: true,
-      amountWei:   String(valueWei),
-      tokenType:   'ETH',
-      bdagAmount,
-      usdValue,
-      ethPriceUsd,
-    };
-  }
+  if (toAddr === TREASURY_ADDRESS) return INVALID('native_eth_not_supported');
 
   console.error(`[bdag-deposit] treasury not found. to=${toAddr}, treasury=${TREASURY_ADDRESS}`);
   return INVALID('treasury_not_recipient');

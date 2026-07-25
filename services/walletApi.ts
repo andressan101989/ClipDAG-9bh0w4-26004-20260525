@@ -41,8 +41,10 @@ export function chainKeyToId(chainKey: string): string {
 }
 
 // ── Asset type → token_type normalization ─────────────────────────────────
-export function assetToTokenType(asset: string): 'ETH' | 'USDT' {
-  return asset?.toLowerCase() === 'usdt' ? 'USDT' : 'ETH';
+export function assetToTokenType(asset: string): 'USDT' | 'USDC' {
+  if (asset?.toLowerCase() === 'usdt') return 'USDT';
+  if (asset?.toLowerCase() === 'usdc') return 'USDC';
+  throw new Error(`unsupported stablecoin asset: "${asset}"`);
 }
 
 // ── Error extractor ───────────────────────────────────────────────────────
@@ -112,7 +114,7 @@ export interface WithdrawalPayload {
   amount:           number;           // BDAG amount (>= 100)
   to_address:       string;           // destination EVM address
   chain_id:         string;           // EIP-155 chain ID
-  token_type:       'ETH' | 'USDT';  // withdrawal asset
+  token_type:       'USDT' | 'USDC';
   idempotency_key:  string;           // unique per request
   action:           'request';        // always 'request' for new withdrawal
 }
@@ -124,9 +126,11 @@ export function validateWithdrawalPayload(p: Partial<WithdrawalPayload>): string
   if (!/^0x[a-fA-F0-9]{40}$/i.test(p.to_address))
     return `invalid to_address format: "${p.to_address}"`;
   if (!p.chain_id)                     return 'chain_id is required';
-  if (!p.token_type)                   return 'token_type is required (ETH or USDT)';
-  if (!['ETH', 'USDT'].includes(p.token_type))
-    return `token_type must be ETH or USDT, got: "${p.token_type}"`;
+  if (!p.token_type)                   return 'token_type is required (USDT or USDC)';
+  if (!['USDT', 'USDC'].includes(p.token_type))
+    return `token_type must be USDT or USDC, got: "${p.token_type}"`;
+  if (!['1', '8453'].includes(p.chain_id)) return `unsupported chain_id: "${p.chain_id}"`;
+  if (p.chain_id === '8453' && p.token_type !== 'USDC') return 'Base only supports USDC';
   if (!p.idempotency_key)              return 'idempotency_key is required';
   return null;
 }
@@ -407,3 +411,5 @@ export async function getWithdrawalStatusFromBackend(withdrawalId: string): Prom
     failureReason: d.failure_reason,
   };
 }
+
+export const getWithdrawalStatus = getWithdrawalStatusFromBackend;

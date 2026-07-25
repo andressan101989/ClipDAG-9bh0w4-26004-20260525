@@ -20,6 +20,7 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { getStablecoin } from '../_shared/stablecoins.ts';
 import { corsHeaders }  from '../_shared/cors.ts';
 
 const SUPABASE_URL     = Deno.env.get('SUPABASE_URL')!;
@@ -172,15 +173,14 @@ async function broadcastETH(params: {
 }
 
 // ── USDT ERC-20 broadcast ──────────────────────────────────────────────────────
-async function broadcastUSDT(params: {
-  toAddress: string; netBdag: number; chainId: string;
+async function broadcastStablecoin(params: {
+  toAddress: string; netBdag: number; chainId: string; tokenType: 'USDT' | 'USDC';
 }): Promise<{ txHash: string; usdtAmount: number; usdtUnits: number } | { error: string }> {
   if (!TREASURY_KEY) return { error: 'TREASURY_PRIVATE_KEY not configured' };
 
-  const usdtContract = USDT_CONTRACTS[params.chainId];
-  if (!usdtContract) {
-    return { error: `USDT not supported on chain ${params.chainId}` };
-  }
+  const stablecoin = getStablecoin(params.chainId, params.tokenType);
+  if (!stablecoin) return { error: `${params.tokenType} not supported on chain ${params.chainId}` };
+  const usdtContract = stablecoin.contractAddress;
 
   try {
     const { ethers } = await import('https://esm.sh/ethers@6.13.1');
@@ -272,11 +272,12 @@ Deno.serve(async (req) => {
     if (isNaN(amt) || amt < MIN_WITHDRAWAL_BDAG) return fail(`minimum withdrawal: ${MIN_WITHDRAWAL_BDAG} BDAG`);
     if (amt > MAX_WITHDRAWAL_BDAG) return fail(`maximum withdrawal: ${MAX_WITHDRAWAL_BDAG} BDAG`);
     if (!isValidEVMAddress(to_address as string)) return fail('invalid EVM wallet address');
-    if (!['ETH', 'USDT'].includes(token_type as string)) return fail('token_type must be ETH or USDT');
+    if (!['USDT', 'USDC'].includes(token_type as string)) return fail('token_type must be USDT or USDC');
 
     const chainId  = String(chain_id);
     const toAddr   = (to_address as string).toLowerCase();
     const tokenTyp = (token_type as string).toUpperCase();
+    if (!getStablecoin(chainId, tokenTyp)) return fail(`${tokenTyp} not supported on chain ${chainId}`);
 
     // ── Cooldown check ─────────────────────────────────────────────────────
     const since = new Date(Date.now() - WITHDRAWAL_COOLDOWN_MS).toISOString();
@@ -360,8 +361,8 @@ Deno.serve(async (req) => {
     let broadcastErr = '';
     let ethPriceSnapshot: number | null = null;
 
-    if (tokenTyp === 'USDT') {
-      const result = await broadcastUSDT({ toAddress: toAddr, netBdag, chainId });
+    if (tokenTyp === 'USDT' || tokenTyp === 'USDC') {
+      const result = await broadcastStablecoin({ toAddress: toAddr, netBdag, chainId, tokenType: tokenTyp });
       if ('error' in result) {
         broadcastErr = result.error;
       } else {

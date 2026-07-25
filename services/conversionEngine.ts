@@ -18,7 +18,7 @@
 
 // ── Asset types (shared across wallet layers) ───────────────────────────────────
 /** The external on-chain asset used for deposit / withdrawal */
-export type DepositAsset = 'eth' | 'usdt';
+export type DepositAsset = 'usdt' | 'usdc';
 
 // ── Fixed internal rate ───────────────────────────────────────────────────────
 
@@ -122,10 +122,10 @@ export function depositToBdag(amount: number, assetType: 'usdt' | 'eth' | 'bdag'
 /**
  * Given internal BDAG credits to withdraw, return the amount of the target asset.
  */
-export function bdagToWithdrawAsset(bdag: number, assetType: 'usdt' | 'eth'): number {
+export function bdagToWithdrawAsset(bdag: number, assetType: DepositAsset): number {
   switch (assetType) {
     case 'usdt': return bdagToUsd(bdag);        // 1000 BDAG → 10 USDT
-    case 'eth':  return bdagToEth(bdag);         // depends on ETH price
+    case 'usdc': return bdagToUsd(bdag);
     default:     return 0;
   }
 }
@@ -136,9 +136,9 @@ export function bdagToWithdrawAsset(bdag: number, assetType: 'usdt' | 'eth'): nu
 export function getDepositAssetType(
   networkKey: string,
   useUsdt: boolean,
-): 'usdt' | 'eth' {
+): DepositAsset {
   if (useUsdt) return 'usdt';
-  return 'eth';
+  return 'usdc';
 }
 
 /**
