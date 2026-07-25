@@ -52,6 +52,7 @@ import { PushNotificationHandler } from '@/components/feature/PushNotificationHa
 console.log('[BOOT] 8e - PushNotificationHandler imported');
 
 import { IosCallKitActionHandler } from '@/components/feature/IosCallKitActionHandler';
+import { WalletConnectReturnHandler } from '@/components/feature/WalletConnectReturnHandler';
 console.log('[BOOT] 8f - IosCallKitActionHandler imported');
 
 console.log('[BOOT] 9 - all imports done');
@@ -127,6 +128,7 @@ function AppShell() {
                   </Stack>
                   <IncomingCallModal />
                   <PushNotificationHandler />
+                  <WalletConnectReturnHandler />
                   <IosCallKitActionHandler />
                 </AgoraCallProvider>
               </WalletConnectProvider>

@@ -83,7 +83,7 @@ export const walletConnectAppKit = createAppKit({
       'https://raw.githubusercontent.com/andressan101989/ClipDAG-9bh0w4-26004-20260525/main/assets/images/logo.png',
     ],
     redirect: {
-      native: 'onspaceapp://',
+      native: 'onspaceapp://wallet',
       universal: 'https://clipdag.io',
     },
   },

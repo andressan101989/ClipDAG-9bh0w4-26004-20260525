@@ -8,7 +8,7 @@ const info = fs.readFileSync('ios/onspaceapp/Info.plist', 'utf8');
 assert.equal(appJson.expo.scheme, 'onspaceapp');
 assert.equal(appJson.expo.ios.bundleIdentifier, 'com.clipdag.onspaceapp');
 assert.deepEqual(appJson.expo.ios.infoPlist.LSApplicationQueriesSchemes, ['metamask', 'trust', 'cbwallet']);
-assert.match(config, /native: 'onspaceapp:\/\/'/);
+assert.match(config, /native: 'onspaceapp:\/\/wallet'/);
 assert.match(info, /<string>onspaceapp<\/string>/);
 assert.match(info, /<string>com\.clipdag\.onspaceapp<\/string>/);
 for (const scheme of ['metamask', 'trust', 'cbwallet']) {
@@ -16,4 +16,3 @@ for (const scheme of ['metamask', 'trust', 'cbwallet']) {
 }
 
 console.log('walletConnectDeepLink: PASS');
-

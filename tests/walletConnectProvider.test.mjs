@@ -10,7 +10,7 @@ assert.equal(config.split(/\r?\n/, 1)[0], "import '@walletconnect/react-native-c
 assert.match(config, /WALLETCONNECT_PROJECT_ID_PRESENT/);
 assert.match(config, /createAppKit\(/);
 assert.match(config, /walletConnectAppKit = createAppKit/);
-assert.match(config, /native: 'onspaceapp:\/\/'/);
+assert.match(config, /native: 'onspaceapp:\/\/wallet'/);
 assert.match(config, /universal: 'https:\/\/clipdag\.io'/);
 assert.match(provider, /<AppKitProvider instance=\{walletConnectAppKit\}>/);
 assert.match(provider, /<AppKit \/>/);
@@ -20,4 +20,3 @@ assert.equal(pkg.dependencies['@reown/appkit-react-native'], '^2.0.6');
 assert.equal(pkg.dependencies['@reown/appkit-ethers-react-native'], '^2.0.6');
 
 console.log('walletConnectProvider: PASS');
-
