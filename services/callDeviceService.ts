@@ -188,7 +188,13 @@ async function getNotificationPermission(): Promise<boolean> {
   if (existing.status === 'granted') return true;
   if (existing.status === 'denied') return false;
 
-  const requested = await Notifications.requestPermissionsAsync();
+  const requested = await Notifications.requestPermissionsAsync({
+    ios: {
+      allowAlert: true,
+      allowSound: true,
+      allowBadge: true,
+    },
+  });
   return requested.status === 'granted';
 }
 

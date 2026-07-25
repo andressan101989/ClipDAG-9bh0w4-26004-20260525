@@ -114,6 +114,7 @@ serve(async (req) => {
           body,
           sound: 'default',
           priority: 'high',
+          interruptionLevel: 'active',
           badge: Math.max(0, Number(unreadCount ?? 0)),
           data: {
             type: 'message',

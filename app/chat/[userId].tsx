@@ -9,7 +9,7 @@ import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useMessages } from '@/hooks/useMessages';
 import { useAuth } from '@/hooks/useAuth';
@@ -22,6 +22,10 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import { timeAgo } from '@/services/mockData';
 import { uploadFileFromUri, detectMimeType } from '@/contexts/FeedContext';
 import type { Message } from '@/contexts/MessagesContext';
+import {
+  clearActiveMessageChat,
+  setActiveMessageChat,
+} from '@/services/messageNotificationPresentation';
 
 const PREMIUM_COLOR  = '#FF9D00';
 const PREMIUM_COLOR2 = '#FF5A00';
@@ -231,6 +235,14 @@ export default function ChatScreen() {
 
   const conversation = conversations.find(c => c.partnerId === partnerId);
   const chatMessages = messages[partnerId || ''] || [];
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!partnerId) return undefined;
+      setActiveMessageChat(partnerId);
+      return () => clearActiveMessageChat(partnerId);
+    }, [partnerId]),
+  );
 
   // ── Load partner's premium DM config + my subscription status ──────────────
   useEffect(() => {

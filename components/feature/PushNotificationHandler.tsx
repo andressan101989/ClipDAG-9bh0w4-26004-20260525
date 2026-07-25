@@ -7,8 +7,10 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, Animated, StyleSheet, Platform,
+  View, Text, Pressable, Animated, StyleSheet, Platform, AppState, Alert, Linking,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Application from 'expo-application';
 import * as Notifications from 'expo-notifications';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,12 +19,34 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import { useAgoraCallSignaling } from '@/contexts/AgoraCallContext';
 import { useAuth } from '@/hooks/useAuth';
 import { dismissPresentedCallNotifications } from '@/services/callNotificationService';
+import { ensureMessageNotificationPermissionState } from '@/services/messageNotificationPermissionService';
+import { syncCurrentCallDevice } from '@/services/callDeviceService';
+import {
+  isMessageChatCurrentlyVisible,
+  setMessageNotificationAppState,
+} from '@/services/messageNotificationPresentation';
 import { getSupabaseClient, useAlert } from '@/template';
+
+const NOTIFICATION_SETTINGS_PROMPT_PREFIX = 'onspace.message_notifications.settings_prompt';
 
 Notifications.setNotificationHandler({
   handleNotification: async notification => {
     const type = notification.request.content.data?.type;
     if (type === 'incoming_call') {
+      return {
+        shouldShowAlert: false,
+        shouldShowBanner: false,
+        shouldShowList: false,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      };
+    }
+
+    if (
+      type === 'message' &&
+      typeof notification.request.content.data?.from_user_id === 'string' &&
+      isMessageChatCurrentlyVisible(notification.request.content.data.from_user_id)
+    ) {
       return {
         shouldShowAlert: false,
         shouldShowBanner: false,
@@ -113,6 +137,7 @@ export function PushNotificationHandler() {
   const slideAnim = useRef(new Animated.Value(-120)).current;
   const dismissRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handledResponsesRef = useRef<Set<string>>(new Set());
+  const permissionPromptCheckedRef = useRef(false);
 
   const hideBanner = useCallback(() => {
     if (dismissRef.current) clearTimeout(dismissRef.current);
@@ -198,9 +223,19 @@ export function PushNotificationHandler() {
   }, [handleIncomingCallTap, isAuthReady, router]);
 
   useEffect(() => {
+    setMessageNotificationAppState(AppState.currentState);
+    const appStateSub = AppState.addEventListener('change', nextState => {
+      setMessageNotificationAppState(nextState);
+    });
+
     const receivedSub = Notifications.addNotificationReceivedListener(notification => {
       const receivedData = toStringRecord(notification.request.content.data);
       if (receivedData?.type === 'incoming_call') return;
+      if (
+        receivedData?.type === 'message' &&
+        receivedData.from_user_id &&
+        isMessageChatCurrentlyVisible(receivedData.from_user_id)
+      ) return;
 
       const { title, body, data } = notification.request.content;
       showBanner({
@@ -230,9 +265,44 @@ export function PushNotificationHandler() {
     return () => {
       receivedSub.remove();
       responseSub.remove();
+      appStateSub.remove();
       if (dismissRef.current) clearTimeout(dismissRef.current);
     };
   }, [handleNotificationData, showBanner]);
+
+  useEffect(() => {
+    if (!isAuthReady || !user?.id || permissionPromptCheckedRef.current) return;
+    permissionPromptCheckedRef.current = true;
+
+    const checkPermissions = async () => {
+      const permission = await ensureMessageNotificationPermissionState();
+      if (permission.canReceiveNotifications) {
+        syncCurrentCallDevice({ force: true }).catch(() => {});
+      }
+      if (!permission.requiresSettings && !permission.isProvisional) return;
+
+      const build = Application.nativeBuildVersion ?? 'unknown';
+      const promptKey = `${NOTIFICATION_SETTINGS_PROMPT_PREFIX}.${build}`;
+      if (await AsyncStorage.getItem(promptKey)) return;
+      await AsyncStorage.setItem(promptKey, new Date().toISOString());
+
+      Alert.alert(
+        'Activa las notificaciones',
+        permission.isProvisional
+          ? 'Las notificaciones provisionales pueden llegar silenciosamente. Activa Pantalla bloqueada, Banners y Sonidos en Configuración.'
+          : 'Para recibir mensajes cuando OnSpace esté cerrada o el iPhone esté bloqueado, activa Pantalla bloqueada, Banners y Sonidos en Configuración.',
+        [
+          { text: 'Ahora no', style: 'cancel' },
+          {
+            text: 'Abrir Configuración',
+            onPress: () => { Linking.openSettings().catch(() => {}); },
+          },
+        ],
+      );
+    };
+
+    checkPermissions().catch(() => {});
+  }, [isAuthReady, user?.id]);
 
   if (!banner) return null;
 

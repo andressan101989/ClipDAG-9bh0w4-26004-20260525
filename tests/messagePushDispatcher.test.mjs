@@ -28,6 +28,7 @@ test('payload contains string message navigation data and safe previews', () => 
   assert.match(dispatcher, /type: 'message'/);
   assert.match(dispatcher, /from_user_id: String\(message\.sender_id\)/);
   assert.match(dispatcher, /message_id: String\(message\.id\)/);
+  assert.match(dispatcher, /interruptionLevel: 'active'/);
   assert.match(dispatcher, /Te envió una imagen/);
   assert.match(dispatcher, /Te envió un video/);
   assert.match(dispatcher, /Te envió un DM Premium/);

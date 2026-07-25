@@ -4,6 +4,7 @@ import React, {
 import { getSupabaseClient } from '@/template';
 import { AuthContext } from './AuthContext';
 import { PollingManager } from '@/modules/realtime/PollingManager';
+import * as Notifications from 'expo-notifications';
 
 export interface Message {
   id: string;
@@ -385,6 +386,11 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
   }, [user?.id]);
 
   const unreadTotal = conversations.reduce((s, c) => s + c.unreadCount, 0);
+  const applicationBadgeCount = user?.id ? unreadTotal : 0;
+
+  useEffect(() => {
+    Notifications.setBadgeCountAsync(applicationBadgeCount).catch(() => {});
+  }, [applicationBadgeCount]);
 
   return (
     <MessagesContext.Provider value={{
