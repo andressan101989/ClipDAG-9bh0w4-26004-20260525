@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet, TextInput,
   KeyboardAvoidingView, Platform, Switch,
@@ -31,7 +31,7 @@ export default function CreateProductScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
-  const { createProduct } = useShop();
+  const { createProduct, deleteProduct } = useShop();
   const { showAlert } = useAlert();
 
   const [title, setTitle] = useState('');
@@ -45,11 +45,19 @@ export default function CreateProductScreen() {
   const [isPublishing, setIsPublishing] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [imageAssetIds, setImageAssetIds] = useState<string[]>([]);
+  const draftAssetIdsRef = useRef<string[]>([]);
+
+  useEffect(() => () => {
+    const abandoned = [...draftAssetIdsRef.current];
+    draftAssetIdsRef.current = [];
+    for (const assetId of abandoned) void deleteMediaAsset(assetId).catch(() => {});
+  }, []);
 
   const removeImage = useCallback((index: number) => {
     const assetId = imageAssetIds[index];
     setImages(prev => prev.filter((_, itemIndex) => itemIndex !== index));
     setImageAssetIds(prev => prev.filter((_, itemIndex) => itemIndex !== index));
+    draftAssetIdsRef.current = draftAssetIdsRef.current.filter(id => id !== assetId);
     if (assetId) void deleteMediaAsset(assetId).catch(() => {});
   }, [imageAssetIds]);
 
@@ -80,6 +88,7 @@ export default function CreateProductScreen() {
     if (uploaded?.url?.startsWith('https://')) {
       setImages(prev => [...prev, uploaded.url!]);
       setImageAssetIds(prev => [...prev, uploaded.assetId]);
+      draftAssetIdsRef.current = [...draftAssetIdsRef.current, uploaded.assetId];
     } else {
       showAlert('Error', 'No se pudo subir la imagen. Intenta de nuevo.');
     }
@@ -109,19 +118,42 @@ export default function CreateProductScreen() {
     setIsPublishing(false);
 
     if (result.success) {
+      if (!result.product) {
+        await Promise.all(imageAssetIds.map(assetId => deleteMediaAsset(assetId).catch(() => {})));
+        draftAssetIdsRef.current = [];
+        setImages([]);
+        setImageAssetIds([]);
+        showAlert('Error', 'El producto no devolvió una identidad válida.');
+        return;
+      }
       if (result.product) {
-        await Promise.all(imageAssetIds.map((assetId, position) =>
-          linkMediaAsset(assetId, 'shop_product', result.product!.id, 'image', position)
-        ));
+        try {
+          await Promise.all(imageAssetIds.map((assetId, position) =>
+            linkMediaAsset(assetId, 'shop_product', result.product!.id, 'image', position)
+          ));
+          draftAssetIdsRef.current = [];
+        } catch {
+          await deleteProduct(result.product.id);
+          await Promise.all(imageAssetIds.map(assetId => deleteMediaAsset(assetId).catch(() => {})));
+          draftAssetIdsRef.current = [];
+          setImages([]);
+          setImageAssetIds([]);
+          showAlert('Error', 'No se pudo vincular la imagen al producto. Intenta de nuevo.');
+          return;
+        }
       }
       showAlert('¡Producto publicado!', 'Tu producto ya está disponible en la tienda', [
         { text: 'Ver tienda', onPress: () => router.replace('/(tabs)/shop') },
         { text: 'OK', onPress: () => router.back() },
       ]);
     } else {
+      await Promise.all(imageAssetIds.map(assetId => deleteMediaAsset(assetId).catch(() => {})));
+      draftAssetIdsRef.current = [];
+      setImages([]);
+      setImageAssetIds([]);
       showAlert('Error', result.error || 'No se pudo publicar el producto');
     }
-  }, [user, title, description, price, category, stock, isUnlimitedStock, images, imageAssetIds, tags, createProduct, router, showAlert]);
+  }, [user, title, description, price, category, stock, isUnlimitedStock, images, imageAssetIds, tags, createProduct, deleteProduct, router, showAlert]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>

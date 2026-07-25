@@ -27,7 +27,7 @@ import { Audio } from 'expo-av';
 import { useScrollToTop } from '@react-navigation/native';
 import type { StoryGroup } from '@/components/feature/StoriesBar';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
-import { linkMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
+import { deleteMediaAsset, linkMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
 
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 75 };
 
@@ -114,6 +114,8 @@ export default function FeedScreen() {
     const bucket = isVideo ? 'videos' : 'images';
     const fileName = `${user.id}/story_${Date.now()}.${ext}`;
     const mimeType = asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg');
+    let uploadedAssetId: string | undefined;
+    let persistedStoryId: string | undefined;
 
     try {
       if (!isVideo) {
@@ -126,9 +128,11 @@ export default function FeedScreen() {
           visibility: 'public',
         });
         if (!uploaded.url?.startsWith('https://')) throw new Error('R2 did not return a public URL');
-        const storyId = await addStory(uploaded.url, 'photo');
-        if (!storyId) throw new Error('Story was not persisted');
-        await linkMediaAsset(uploaded.assetId, 'story', storyId, 'media');
+        uploadedAssetId = uploaded.assetId;
+        persistedStoryId = await addStory(uploaded.url, 'photo', false);
+        if (!persistedStoryId) throw new Error('Story was not persisted');
+        await linkMediaAsset(uploaded.assetId, 'story', persistedStoryId, 'media');
+        uploadedAssetId = undefined;
         showAlert('Historia publicada!', 'Tu historia estará visible por 24 horas');
         return;
       }
@@ -143,6 +147,10 @@ export default function FeedScreen() {
       }
       showAlert('Historia publicada!', 'Tu historia estará visible por 24 horas');
     } catch (_) {
+      if (persistedStoryId && uploadedAssetId) {
+        await supabase.from('stories').delete().eq('id', persistedStoryId).eq('user_id', user.id);
+      }
+      if (uploadedAssetId) await deleteMediaAsset(uploadedAssetId).catch(() => {});
       showAlert('Error', 'No se pudo publicar la historia');
     }
   }, [user, supabase, addStory, showAlert]);

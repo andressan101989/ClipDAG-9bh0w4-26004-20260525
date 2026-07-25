@@ -6,7 +6,7 @@ import type { StoryGroup, StoryItem } from '@/components/feature/StoriesBar';
 interface StoriesContextType {
   storyGroups: StoryGroup[];
   isLoadingStories: boolean;
-  addStory: (mediaUrl: string, mediaType: 'photo' | 'video') => Promise<string | undefined>;
+  addStory: (mediaUrl: string, mediaType: 'photo' | 'video', allowOptimistic?: boolean) => Promise<string | undefined>;
   markStoryViewed: (storyId: string) => Promise<void>;
   refreshStories: () => Promise<void>;
   viewedStoryIds: Set<string>;
@@ -126,7 +126,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     }
   }, [user?.id]);
 
-  const addStory = useCallback(async (mediaUrl: string, mediaType: 'photo' | 'video') => {
+  const addStory = useCallback(async (mediaUrl: string, mediaType: 'photo' | 'video', allowOptimistic = true) => {
     if (!user) return undefined;
     const supabase = supabaseRef.current;
     if (!supabase || !supabaseOk.current) return undefined;
@@ -145,6 +145,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
         return data.id as string;
       } else {
         console.log('Add story error:', error.message);
+        if (!allowOptimistic) return undefined;
         // Optimistic local add if DB fails
         const localStory: StoryItem = {
           id: `local_${Date.now()}`,

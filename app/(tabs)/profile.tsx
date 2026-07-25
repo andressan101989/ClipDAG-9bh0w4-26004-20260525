@@ -184,6 +184,8 @@ export default function ProfileScreen() {
   const uploadAvatar = useCallback(async (asset: ImagePicker.ImagePickerAsset) => {
     if (!user) return;
     setIsUploadingAvatar(true);
+    let uploadedAssetId: string | undefined;
+    let profileUpdated = false;
     try {
       const previousAssetIds = await getLinkedMediaAssetIds('user_profile', user.id, 'avatar');
       const mimeType = asset.mimeType || detectMimeType(asset.uri, 'image/jpeg');
@@ -195,6 +197,7 @@ export default function ProfileScreen() {
         sizeBytes: asset.fileSize,
         visibility: 'public',
       });
+      uploadedAssetId = uploaded.assetId;
       const publicUrl = uploaded.url;
 
       // Never persist a local device URI (file:///...) to avatar_url — if the
@@ -209,12 +212,18 @@ export default function ProfileScreen() {
       }
 
       await updateProfile({ avatar: publicUrl } as any);
+      profileUpdated = true;
       await linkMediaAsset(uploaded.assetId, 'user_profile', user.id, 'avatar');
+      uploadedAssetId = undefined;
       await Promise.all(previousAssetIds
         .filter(assetId => assetId !== uploaded.assetId)
         .map(assetId => deleteMediaAsset(assetId)));
       showAlert('Foto actualizada', 'Tu foto de perfil fue actualizada');
     } catch (e) {
+      if (profileUpdated) {
+        await updateProfile({ avatar: user.avatar || '' } as any).catch(() => {});
+      }
+      if (uploadedAssetId) await deleteMediaAsset(uploadedAssetId).catch(() => {});
       console.error('[profile.tsx] uploadAvatar exception:', e);
       showAlert('Error', 'No se pudo subir la foto');
     }

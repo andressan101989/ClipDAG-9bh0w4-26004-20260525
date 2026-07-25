@@ -36,7 +36,7 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import { uploadFileFromUri, detectMimeType } from '@/contexts/FeedContext';
 import { getTrackById, type MusicTrack } from '@/services/musicLibrary';
 import { createExclusiveContent } from '@/services/economyService';
-import { linkMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
+import { deleteMediaAsset, linkMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
 
 // ── Hashtag suggestions ────────────────────────────────────────────────────
 const HASHTAG_SUGGESTIONS = [
@@ -68,12 +68,18 @@ async function mapWithConcurrency<T, R>(
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
   let cursor = 0;
+  let firstError: unknown;
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (cursor < items.length) {
       const index = cursor++;
-      results[index] = await worker(items[index], index);
+      try {
+        results[index] = await worker(items[index], index);
+      } catch (error) {
+        firstError ??= error;
+      }
     }
   }));
+  if (firstError) throw firstError;
   return results;
 }
 
@@ -285,9 +291,12 @@ export default function UploadScreen() {
 
     setIsUploading(true);
     setUploadProgress('Subiendo media...');
+    let uploadedAssetId: string | undefined;
+    let postId: string | undefined;
     try {
       const uploaded = await uploadMediaToStorage(selectedMedia);
       if (!uploaded?.url) throw new Error('Upload failed');
+      uploadedAssetId = uploaded.assetId;
       const finalUrl = uploaded.url;
       setUploadProgress('Guardando en el feed...');
       const musicName = selectedMusic ? `${selectedMusic.title} - ${selectedMusic.artist}` : 'Sin musica';
@@ -303,7 +312,7 @@ export default function UploadScreen() {
         });
       }
 
-      const postId = await addVideo({
+      postId = await addVideo({
         userId: user.id,
         username: user.username || user.email?.split('@')[0] || 'user',
         userAvatar: user.avatar || '',
@@ -313,8 +322,10 @@ export default function UploadScreen() {
         music: musicName,
         ...(isExclusive ? { isExclusive: true, exclusivePrice: parseFloat(exclusivePrice), exclusiveContentId } : {}),
       } as any);
+      if (uploaded.assetId && !postId) throw new Error('entity_create_failed');
       if (postId && uploaded.assetId) {
         await linkMediaAsset(uploaded.assetId, 'video_post', postId, 'media', 0);
+        uploadedAssetId = undefined;
       }
 
       setCaption(''); setSelectedMedia(null); setSelectedMusic(null);
@@ -325,10 +336,14 @@ export default function UploadScreen() {
         [{ text: 'Ver Feed', onPress: () => router.push('/(tabs)') }, { text: 'Crear otro' }],
       );
     } catch (_) {
+      if (postId && uploadedAssetId) {
+        await supabase.from('videos').delete().eq('id', postId).eq('user_id', user.id);
+      }
+      if (uploadedAssetId) await deleteMediaAsset(uploadedAssetId).catch(() => {});
       showAlert('Error', 'No se pudo publicar. Intenta de nuevo.');
     }
     setIsUploading(false); setUploadProgress('');
-  }, [selectedMedia, caption, mode, selectedMusic, isExclusive, exclusivePrice, user, uploadMediaToStorage, addVideo, registerExclusiveContent, router, showAlert]);
+  }, [selectedMedia, caption, mode, selectedMusic, isExclusive, exclusivePrice, user, uploadMediaToStorage, addVideo, registerExclusiveContent, router, showAlert, supabase]);
 
   const handleUploadCarousel = useCallback(async () => {
     if (carouselMedias.length < 2) { showAlert('Carrusel requerido', 'Selecciona al menos 2 fotos'); return; }
@@ -341,8 +356,14 @@ export default function UploadScreen() {
 
     setIsUploading(true);
     setUploadProgress(`Subiendo ${carouselMedias.length} fotos...`);
+    const uploadedAssetIds: string[] = [];
+    let postId: string | undefined;
     try {
-      const uploads = await mapWithConcurrency(carouselMedias, 3, uploadMediaToStorage);
+      const uploads = await mapWithConcurrency(carouselMedias, 3, async (media, index) => {
+        const uploaded = await uploadMediaToStorage(media, index);
+        if (uploaded?.assetId) uploadedAssetIds.push(uploaded.assetId);
+        return uploaded;
+      });
       const validUploads = uploads.filter((item): item is UploadedMedia => Boolean(item?.url));
       const validUrls = validUploads.map(item => item.url);
       if (validUrls.length !== carouselMedias.length) throw new Error('No se pudieron subir todas las imágenes');
@@ -356,7 +377,7 @@ export default function UploadScreen() {
           priceBdag: parseFloat(exclusivePrice),
         });
       }
-      const postId = await (addVideo as any)({
+      postId = await (addVideo as any)({
         userId: user.id,
         username: user.username || user.email?.split('@')[0] || 'user',
         userAvatar: user.avatar || '',
@@ -365,10 +386,13 @@ export default function UploadScreen() {
         mediaUrls: validUrls,
         ...(isExclusive ? { isExclusive: true, exclusivePrice: parseFloat(exclusivePrice), exclusiveContentId } : {}),
       });
+      if (validUploads.some(item => item.assetId) && !postId) throw new Error('entity_create_failed');
       if (postId) {
+        const persistedPostId = postId;
         await Promise.all(validUploads.flatMap((item, position) =>
-          item.assetId ? [linkMediaAsset(item.assetId, 'video_post', postId, 'media', position)] : []
+          item.assetId ? [linkMediaAsset(item.assetId, 'video_post', persistedPostId, 'media', position)] : []
         ));
+        uploadedAssetIds.length = 0;
       }
       setCaption(''); setCarouselMedias([]); setSelectedMusic(null);
       setIsExclusive(false); setExclusivePrice('100');
@@ -377,9 +401,15 @@ export default function UploadScreen() {
         isExclusive ? `${validUrls.length} fotos · Precio: ${exclusivePrice} BDAG` : `${validUrls.length} fotos publicadas`,
         [{ text: 'Ver Feed', onPress: () => router.push('/(tabs)') }, { text: 'Crear otro' }],
       );
-    } catch (_) { showAlert('Error', 'No se pudo publicar el carrusel.'); }
+    } catch (_) {
+      if (postId && uploadedAssetIds.length) {
+        await supabase.from('videos').delete().eq('id', postId).eq('user_id', user.id);
+      }
+      await Promise.all(uploadedAssetIds.map(assetId => deleteMediaAsset(assetId).catch(() => {})));
+      showAlert('Error', 'No se pudo publicar el carrusel.');
+    }
     setIsUploading(false); setUploadProgress('');
-  }, [carouselMedias, caption, isExclusive, exclusivePrice, user, uploadMediaToStorage, addVideo, registerExclusiveContent, router, showAlert]);
+  }, [carouselMedias, caption, isExclusive, exclusivePrice, user, uploadMediaToStorage, addVideo, registerExclusiveContent, router, showAlert, supabase]);
 
   const MODES: { key: Mode; icon: string; label: string; color?: string }[] = [
     { key: 'video',    icon: 'videocam',      label: 'Video' },

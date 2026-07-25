@@ -7,7 +7,7 @@ const sql = fs.readFileSync('supabase/migrations/20260726090000_media_asset_foun
 test('provider-neutral asset and link tables have constrained lifecycle metadata', () => {
   assert.match(sql, /create table if not exists public\.media_assets/i);
   assert.match(sql, /'r2','cloudflare_stream','supabase_legacy'/);
-  assert.match(sql, /'pending','uploading','ready','failed','deleted'/);
+  assert.match(sql, /'pending','uploading','ready','failed','delete_pending','deleted'/);
   assert.match(sql, /unique\(bucket_name, object_key\)/i);
   assert.match(sql, /create table if not exists public\.media_asset_links/i);
 });
