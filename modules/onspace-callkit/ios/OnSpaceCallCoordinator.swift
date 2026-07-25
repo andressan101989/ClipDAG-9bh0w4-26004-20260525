@@ -15,7 +15,7 @@ import UIKit
 /// before JS exists.
 ///
 /// IOS-A SCOPE ONLY. This class must not:
-///   - talk to Supabase;
+  ///   - modify calls in Supabase (the scoped native watcher is read-only);
 ///   - accept/reject calls against any backend;
 ///   - connect to Agora;
 ///   - activate/deactivate AVAudioSession;
@@ -44,6 +44,19 @@ public final class OnSpaceCallCoordinator: NSObject {
     static let version = 1
     static let maxEntries = 100
     static let ttlMilliseconds: TimeInterval = 24 * 60 * 60 * 1000
+  }
+
+  private enum CallStatusWatchPolicy {
+    static let requestTimeout: TimeInterval = 20
+    static let minimumReconnectDelay: TimeInterval = 0.5
+    static let maximumReconnectDelay: TimeInterval = 5
+  }
+
+  private struct CallStatusWatchResponse: Decodable {
+    let call_id: String
+    let status: String
+    let reason: String?
+    let terminal: Bool
   }
 
   private enum TerminalVoipEvent: String, CaseIterable {
@@ -110,6 +123,14 @@ public final class OnSpaceCallCoordinator: NSObject {
   private var currentHandoffEventId: String?
   private var handoffStarted = false
   private var handoffCompleted = false
+  private var currentWatchToken: String?
+  private var currentWatchEndpoint: URL?
+  private var currentWatchDeviceId: String?
+  private var currentWatchExpiration: TimeInterval?
+  private var callWatchTask: URLSessionDataTask?
+  private var callWatchReconnectWorkItem: DispatchWorkItem?
+  private var callWatchGeneration = UUID()
+  private var callWatchRetryCount = 0
 
   private override init() {
     super.init()
@@ -166,6 +187,11 @@ public final class OnSpaceCallCoordinator: NSObject {
     let provider = CXProvider(configuration: configuration)
     provider.setDelegate(self, queue: nil)
     callProvider = provider
+    if let callId = currentCallId, let callUuid = currentCallUuid {
+      DispatchQueue.main.async { [weak self] in
+        self?.startCallStatusWatch(callId: callId, callUuid: callUuid)
+      }
+    }
   }
 
   public var currentVoipTokenHex: String? {
@@ -389,6 +415,10 @@ public final class OnSpaceCallCoordinator: NSObject {
       "handoffEventId": currentHandoffEventId ?? "",
       "handoffStarted": handoffStarted,
       "handoffCompleted": handoffCompleted,
+      "watchToken": currentWatchToken ?? "",
+      "watchEndpoint": currentWatchEndpoint?.absoluteString ?? "",
+      "watchDeviceId": currentWatchDeviceId ?? "",
+      "watchExpiration": currentWatchExpiration ?? 0,
       "updatedAt": Date().timeIntervalSince1970 * 1000,
     ], forKey: DefaultsKey.retainedCallState)
   }
@@ -413,6 +443,10 @@ public final class OnSpaceCallCoordinator: NSObject {
     currentHandoffEventId = (state["handoffEventId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
     handoffStarted = state["handoffStarted"] as? Bool ?? false
     handoffCompleted = state["handoffCompleted"] as? Bool ?? false
+    currentWatchToken = (state["watchToken"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    currentWatchEndpoint = (state["watchEndpoint"] as? String).flatMap { URL(string: $0) }
+    currentWatchDeviceId = (state["watchDeviceId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    currentWatchExpiration = (state["watchExpiration"] as? NSNumber)?.doubleValue
     logHandoff("state_retained", callId: callId, eventId: currentHandoffEventId)
   }
 
@@ -617,8 +651,251 @@ public final class OnSpaceCallCoordinator: NSObject {
     currentHandoffEventId = nil
     handoffStarted = false
     handoffCompleted = false
+    stopCallStatusWatchLocked(reason: "call_state_cleared")
     UserDefaults.standard.removeObject(forKey: DefaultsKey.retainedCallState)
     audioSessionActive = false
+  }
+
+  private func callWatchLog(_ event: String, callId: String, status: String? = nil) {
+    let safeCallId = String(callId.prefix(8))
+    let suffix = status.map { " status=\($0)" } ?? ""
+    print("[OnSpaceCallWatch] \(event) call=\(safeCallId)…\(suffix)")
+  }
+
+  private func stopCallStatusWatchLocked(reason: String) {
+    let stoppedCallId = currentCallId
+    callWatchGeneration = UUID()
+    callWatchTask?.cancel()
+    callWatchTask = nil
+    callWatchReconnectWorkItem?.cancel()
+    callWatchReconnectWorkItem = nil
+    callWatchRetryCount = 0
+    currentWatchToken = nil
+    currentWatchEndpoint = nil
+    currentWatchDeviceId = nil
+    currentWatchExpiration = nil
+    if let stoppedCallId {
+      callWatchLog("stopped", callId: stoppedCallId, status: reason)
+    }
+  }
+
+  private func startCallStatusWatch(callId: String, callUuid: UUID) {
+    let token: String
+    let endpoint: URL
+    let deviceId: String
+    let generation: UUID
+
+    stateLock.lock()
+    guard hasReportedCall,
+          currentCallId == callId,
+          currentCallUuid == callUuid,
+          callWatchTask == nil,
+          callWatchReconnectWorkItem == nil,
+          let retainedToken = currentWatchToken,
+          let retainedEndpoint = currentWatchEndpoint,
+          retainedEndpoint.scheme == "https",
+          let retainedDeviceId = currentWatchDeviceId,
+          let expiration = currentWatchExpiration,
+          expiration > Date().timeIntervalSince1970 else {
+      stateLock.unlock()
+      return
+    }
+    token = retainedToken
+    endpoint = retainedEndpoint
+    deviceId = retainedDeviceId
+    generation = callWatchGeneration
+    stateLock.unlock()
+
+    var request = URLRequest(url: endpoint)
+    request.httpMethod = "POST"
+    request.timeoutInterval = CallStatusWatchPolicy.requestTimeout
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try? JSONSerialization.data(withJSONObject: [
+      "call_id": callId,
+      "device_id": deviceId,
+      "watch_token": token,
+    ])
+
+    let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+      guard let self else { return }
+      self.stateLock.lock()
+      let stillCurrent = self.callWatchGeneration == generation
+        && self.hasReportedCall
+        && self.currentCallId == callId
+        && self.currentCallUuid == callUuid
+      if stillCurrent {
+        self.callWatchTask = nil
+      }
+      self.stateLock.unlock()
+      guard stillCurrent else { return }
+
+      if error == nil,
+         let httpResponse = response as? HTTPURLResponse,
+         httpResponse.statusCode == 200,
+         let data,
+         let watchResponse = try? JSONDecoder().decode(CallStatusWatchResponse.self, from: data),
+         watchResponse.call_id == callId {
+        if watchResponse.terminal {
+          self.handleCallStatusWatchTerminal(
+            callId: callId,
+            callUuid: callUuid,
+            status: watchResponse.status
+          )
+          return
+        }
+        self.stateLock.lock()
+        if self.callWatchGeneration == generation {
+          self.callWatchRetryCount = 0
+        }
+        self.stateLock.unlock()
+        self.callWatchLog("active", callId: callId, status: watchResponse.status)
+        self.scheduleCallStatusWatchReconnect(
+          callId: callId,
+          callUuid: callUuid,
+          generation: generation,
+          delay: CallStatusWatchPolicy.minimumReconnectDelay
+        )
+        return
+      }
+
+      if let httpResponse = response as? HTTPURLResponse,
+         [400, 401, 403].contains(httpResponse.statusCode) {
+        self.stateLock.lock()
+        if self.callWatchGeneration == generation,
+           self.currentCallId == callId,
+           self.currentCallUuid == callUuid {
+          self.callWatchGeneration = UUID()
+          self.currentWatchToken = nil
+          self.currentWatchEndpoint = nil
+          self.currentWatchDeviceId = nil
+          self.currentWatchExpiration = nil
+          self.persistRetainedCallStateLocked()
+        }
+        self.stateLock.unlock()
+        self.callWatchLog("stopped", callId: callId, status: "authorization_failed")
+        return
+      }
+
+      self.stateLock.lock()
+      let retryCount = self.callWatchRetryCount
+      self.callWatchRetryCount = min(retryCount + 1, 8)
+      self.stateLock.unlock()
+      let delay = min(
+        CallStatusWatchPolicy.maximumReconnectDelay,
+        CallStatusWatchPolicy.minimumReconnectDelay * pow(2, Double(min(retryCount, 4)))
+      )
+      self.scheduleCallStatusWatchReconnect(
+        callId: callId,
+        callUuid: callUuid,
+        generation: generation,
+        delay: delay
+      )
+    }
+
+    stateLock.lock()
+    guard callWatchGeneration == generation,
+          hasReportedCall,
+          currentCallId == callId,
+          currentCallUuid == callUuid,
+          callWatchTask == nil else {
+      stateLock.unlock()
+      task.cancel()
+      return
+    }
+    callWatchTask = task
+    stateLock.unlock()
+    callWatchLog("started", callId: callId)
+    task.resume()
+  }
+
+  private func scheduleCallStatusWatchReconnect(
+    callId: String,
+    callUuid: UUID,
+    generation: UUID,
+    delay: TimeInterval
+  ) {
+    let workItem = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      self.stateLock.lock()
+      guard self.callWatchGeneration == generation,
+            self.currentCallId == callId,
+            self.currentCallUuid == callUuid else {
+        self.stateLock.unlock()
+        return
+      }
+      self.callWatchReconnectWorkItem = nil
+      self.stateLock.unlock()
+      self.startCallStatusWatch(callId: callId, callUuid: callUuid)
+    }
+    stateLock.lock()
+    guard callWatchGeneration == generation,
+          hasReportedCall,
+          currentCallId == callId,
+          currentCallUuid == callUuid,
+          callWatchReconnectWorkItem == nil else {
+      stateLock.unlock()
+      return
+    }
+    callWatchReconnectWorkItem = workItem
+    stateLock.unlock()
+    callWatchLog("reconnect_scheduled", callId: callId)
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay, execute: workItem)
+  }
+
+  private func handleCallStatusWatchTerminal(callId: String, callUuid: UUID, status: String) {
+    guard let callKitReason = callKitReasonForWatchStatus(status),
+          let terminalEvent = terminalEventForWatchStatus(status) else {
+      return
+    }
+    callWatchLog("terminal_received", callId: callId, status: status)
+    _ = persistTerminalTombstone(callId: callId, eventType: terminalEvent)
+
+    let providerToUse: CXProvider?
+    stateLock.lock()
+    let matchesCurrentCall = hasReportedCall
+      && currentCallId == callId
+      && currentCallUuid == callUuid
+    providerToUse = matchesCurrentCall ? callProvider : nil
+    if matchesCurrentCall && providerToUse != nil {
+      clearCurrentCallStateLocked()
+    }
+    stateLock.unlock()
+
+    guard let providerToUse else { return }
+    providerToUse.reportCall(with: callUuid, endedAt: Date(), reason: callKitReason)
+    callWatchLog("callkit_closed", callId: callId, status: status)
+  }
+
+  private func callKitReasonForWatchStatus(_ status: String) -> CXCallEndedReason? {
+    switch status {
+    case "cancelled", "expired", "missed":
+      return .unanswered
+    case "rejected":
+      return .declinedElsewhere
+    case "ended":
+      return .remoteEnded
+    case "answered_elsewhere":
+      return .answeredElsewhere
+    default:
+      return nil
+    }
+  }
+
+  private func terminalEventForWatchStatus(_ status: String) -> TerminalVoipEvent? {
+    switch status {
+    case "cancelled":
+      return .cancelled
+    case "expired", "missed":
+      return .expired
+    case "rejected":
+      return .rejected
+    case "ended":
+      return .ended
+    case "answered_elsewhere":
+      return .answeredElsewhere
+    default:
+      return nil
+    }
   }
 
   private func outputNames(_ session: AVAudioSession) -> [String] {
@@ -947,6 +1224,12 @@ extension OnSpaceCallCoordinator: PKPushRegistryDelegate {
     let callerName = (dict["caller_name"] as? String) ?? "OnSpace"
     let callType = (dict["call_type"] as? String) ?? "audio"
     let hasVideo = (dict["has_video"] as? Bool) ?? (callType == "video")
+    let watchToken = (dict["watch_token"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    let watchEndpoint = (dict["watch_endpoint"] as? String)
+      .flatMap { URL(string: $0) }
+      .flatMap { $0.scheme == "https" ? $0 : nil }
+    let watchDeviceId = (dict["watch_device_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    let watchExpiration = (dict["watch_expires_at"] as? NSNumber)?.doubleValue
 
     // completion() must fire exactly once no matter what. Resolve the
     // provider into a non-optional local first: `callProvider` can only be
@@ -1015,9 +1298,10 @@ extension OnSpaceCallCoordinator: PKPushRegistryDelegate {
         finishOnce()
         return
       }
-      if error == nil {
-        stateLock.lock()
-        currentCallId = callIdRaw
+       if error == nil {
+         stateLock.lock()
+         stopCallStatusWatchLocked(reason: "incoming_replaced")
+         currentCallId = callIdRaw
         currentCallUuid = callUUID
         hasReportedCall = true
         wasAnswered = false
@@ -1028,9 +1312,16 @@ extension OnSpaceCallCoordinator: PKPushRegistryDelegate {
          currentHandoffEventId = nil
          handoffStarted = false
          handoffCompleted = false
-         persistRetainedCallStateLocked()
-         stateLock.unlock()
-      }
+          currentWatchToken = watchToken
+          currentWatchEndpoint = watchEndpoint
+          currentWatchDeviceId = watchDeviceId
+          currentWatchExpiration = watchExpiration
+          callWatchGeneration = UUID()
+          callWatchRetryCount = 0
+          persistRetainedCallStateLocked()
+          stateLock.unlock()
+          startCallStatusWatch(callId: callIdRaw, callUuid: callUUID)
+       }
       liveEmitCallKitEvent(.incomingCall, callId: callIdRaw, callUuid: callUUID, payload: [
         "callerName": callerName,
         "callType": callType,

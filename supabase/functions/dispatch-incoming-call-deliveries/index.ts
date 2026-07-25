@@ -9,6 +9,11 @@ import {
   sendApnsWithRetry,
   type ApnsSendResult,
 } from '../_shared/callApns.ts'
+import {
+  CALL_STATUS_WATCH_PURPOSE,
+  CALL_STATUS_WATCH_TTL_SECONDS,
+  createCallStatusWatchToken,
+} from '../_shared/callStatusWatch.ts'
 
 const BATCH_LIMIT = 25
 const CLOSE_LIMIT = 100
@@ -384,12 +389,26 @@ serve(async req => {
           delivery: redactId(delivery.delivery_id),
           attempt: delivery.attempt_count,
         })
+        const watchExpiration = Math.floor(Date.now() / 1000) + CALL_STATUS_WATCH_TTL_SECONDS
+        const watchToken = await createCallStatusWatchToken(dispatchSecret, {
+          c: delivery.call_id,
+          d: delivery.device_id,
+          e: watchExpiration,
+          p: CALL_STATUS_WATCH_PURPOSE,
+        })
+        const watchEndpoint = `${supabaseUrl.replace(/\/+$/u, '')}/functions/v1/watch-call-status`
         const result = await sendApnsWithRetry({
           config,
           deliveryId: delivery.delivery_id,
           deviceToken: token,
           expiration: apnsExpiration(delivery.payload),
-          payload: delivery.payload,
+          payload: {
+            ...delivery.payload,
+            watch_token: watchToken,
+            watch_endpoint: watchEndpoint,
+            watch_device_id: delivery.device_id,
+            watch_expires_at: watchExpiration,
+          },
         })
         if (result.ok) {
           const finalized = await finalize(admin, delivery, wake.lease_id, {
