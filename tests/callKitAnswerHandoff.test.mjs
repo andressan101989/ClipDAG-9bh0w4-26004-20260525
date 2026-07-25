@@ -54,12 +54,12 @@ assert.doesNotMatch(handler.slice(handler.indexOf("if (result.kind === 'accepted
 assert.match(handler, /completeAnswerHandoff\(launchGate\.callId, launchGate\.eventId\)/);
 assert.match(handler, /markCallKitHandoffCompleted\(callId, eventId\)/);
 
-// Both call screens require the authoritative accepted state and an accepted
-// handoff marker before a callee can auto-join. Caller behavior is unchanged.
+// Both call screens require the authoritative accepted state. A callee also
+// requires its accepted handoff marker before either side can auto-join.
 assert.match(navigation, /answerHandoff: 'accepted'/);
 assert.match(reconciliation, /callStatus/);
 for (const screen of [audioScreen, videoScreen]) {
-  assert.match(screen, /const canJoinAgora = !isCallee \|\| \(answerHandoff === 'accepted' && callStatus === 'accepted'\)/);
+  assert.match(screen, /callStatus === 'accepted' && \(!isCallee \|\| answerHandoff === 'accepted'\)/);
   assert.match(screen, /!canJoinAgora/);
 }
 

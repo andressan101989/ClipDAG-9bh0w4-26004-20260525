@@ -73,7 +73,8 @@ export default function AudioCallScreen() {
   const myUid = user?.id ? useridToAgoraUid(user.id) : 0;
   const agoraJoinKey = channelName ? `${channelName}:${myUid}` : null;
   const { statusChecked, terminalStatus, callStatus } = useCallTerminalReconciliation(callRecordId);
-  const canJoinAgora = !isCallee || (answerHandoff === 'accepted' && callStatus === 'accepted');
+  const canJoinAgora =
+    callStatus === 'accepted' && (!isCallee || answerHandoff === 'accepted');
 
   const {
     engineReady, joined, remoteUids, isMuted, isCameraOff, localVideoReady, error, speakerOn,
@@ -178,11 +179,30 @@ export default function AudioCallScreen() {
   useEffect(() => {
     if (!agoraJoinKey || !engineReady || !statusChecked || !canJoinAgora || terminalStatus || terminalRequestedRef.current) return;
     console.log('[AGORA-DEBUG] autoJoin requested', { joinKey: `${channelName?.slice(-8)}:${myUid}` });
-    stopAllCallSoundsForCall(callRecordId).finally(() => { join(); });
+    let cancelled = false;
+    const joinAfterRingbackStops = () => {
+      if (!cancelled && !terminalRequestedRef.current) join();
+    };
+    void stopAllCallSoundsForCall(callRecordId).then(
+      joinAfterRingbackStops,
+      joinAfterRingbackStops
+    );
+    return () => {
+      cancelled = true;
+    };
   }, [agoraJoinKey, callRecordId, canJoinAgora, channelName, engineReady, join, myUid, statusChecked, terminalRequestedRef, terminalStatus]);
 
   useEffect(() => {
-    if (isCallee || phase !== 'ringing' || !callRecordId) {
+    const shouldPlayRingback =
+      !isCallee &&
+      Boolean(callRecordId) &&
+      phase === 'ringing' &&
+      callStatus === 'ringing' &&
+      !terminalStatus &&
+      !terminalRequestedRef.current &&
+      remoteUids.length === 0;
+
+    if (!shouldPlayRingback) {
       stopOutgoingRingback(callRecordId || undefined).catch(() => {});
       return;
     }
@@ -210,7 +230,15 @@ export default function AudioCallScreen() {
       subscription.remove();
       stopRingback();
     };
-  }, [isCallee, phase, callRecordId, engineReady]);
+  }, [
+    isCallee,
+    phase,
+    callStatus,
+    terminalStatus,
+    terminalRequestedRef,
+    callRecordId,
+    remoteUids.length,
+  ]);
 
   // ── Listen for rejection (caller only) ───────────────────────────────────
   useEffect(() => {
