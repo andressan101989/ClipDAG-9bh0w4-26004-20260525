@@ -23,7 +23,6 @@ const TREASURY_ADDRESS = (Deno.env.get('TREASURY_WALLET_ADDRESS') ?? '').toLower
 
 const USDT_CONTRACTS: Record<string, string> = {
   '1':    '0xdac17f958d2ee523a2206206994597c13d831ec7',
-  '8453': '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
   '97':   '0x337610d27c682e347c9cd60bd4b3b107c9d34def',
 };
 

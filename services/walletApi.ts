@@ -280,6 +280,12 @@ export async function requestWithdrawalFromBackend(params: {
   chainKey:  string;
   asset:     string;
 }): Promise<WithdrawalResult> {
+  if (params.asset.toLowerCase() === 'usdt' && params.chainKey === 'base') {
+    return {
+      success: false,
+      error: 'USDT no está habilitado actualmente en Base. Selecciona Ethereum.',
+    };
+  }
   const idempotencyKey = generateIdempotencyKey('withdrawal');
 
   const payload: WithdrawalPayload = {

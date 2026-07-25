@@ -289,7 +289,7 @@ function WalletScreenInner() {
   const handleConnect = async () => {
     if (!wcAvailable) {
       Alert.alert('WalletConnect no disponible',
-        'Necesitas un development build de Expo (no Expo Go) para conectar wallets.\n\nDescarga el APK desde el menú superior.');
+        'WalletConnect no está disponible en esta versión. Actualiza OnSpace para conectar tu wallet.');
       return;
     }
     setIsConnecting(true);
@@ -318,6 +318,14 @@ function WalletScreenInner() {
     const amount = parseFloat(depositAmt);
     if (isNaN(amount) || amount <= 0) { Alert.alert('Monto inválido', 'Ingresa un monto mayor a 0'); return; }
 
+    if (depositAsset === 'usdt' && depositNetwork === 'base') {
+      Alert.alert(
+        'USDT no disponible en Base',
+        'USDT no está habilitado actualmente en Base. Selecciona Ethereum.',
+      );
+      return;
+    }
+
     setDepositStep('awaiting_wallet');
 
     // Switch network if needed
@@ -333,7 +341,7 @@ function WalletScreenInner() {
 
     // Send tx via WalletConnect
     const treasury   = getTreasuryAddress(depositNetwork);
-    const sendResult = await sendToTreasury(amount, treasury, depositNetwork, depositAsset);
+    const sendResult = await sendToTreasury(depositAmt.trim(), treasury, depositNetwork, depositAsset);
     if (!sendResult.success) {
       setDepositStep('input');
       Alert.alert('Transacción rechazada', sendResult.error ?? 'No se pudo enviar la transacción');
@@ -532,7 +540,7 @@ function WalletScreenInner() {
           <View style={[sty.banner, { borderColor: 'rgba(255,184,0,0.30)', backgroundColor: 'rgba(255,184,0,0.06)' }]}>
             <MaterialCommunityIcons name="alert-outline" size={14} color={C.warning} />
             <Text style={[sty.bannerText, { color: C.warning }]}>
-              WalletConnect requiere un development build de Expo. Descarga el APK para conectar tu wallet.
+              WalletConnect no está disponible en esta versión. Actualiza OnSpace para conectar tu wallet.
             </Text>
           </View>
         ) : wcInitError ? (

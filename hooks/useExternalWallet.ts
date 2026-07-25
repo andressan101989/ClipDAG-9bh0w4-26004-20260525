@@ -8,7 +8,7 @@ import { useCallback } from 'react';
 export function useExternalWallet() {
   const noop     = useCallback(async () => ({ success: false as const, error: 'Web: use native app' }), []);
   const noopVoid = useCallback(async () => {}, []);
-  const noopTx   = useCallback(async (_to: string, _amt: number) => ({
+  const noopTx   = useCallback(async (_to: string, _amt: string | number) => ({
     success: false as const, error: 'Web only', txHash: undefined as string | undefined,
   }), []);
   const noopSign = useCallback(async (_msg: string) => ({
@@ -33,7 +33,14 @@ export function useExternalWallet() {
     fetchBalance:      noopVoid,
     switchNetwork:     async (_key: string) => ({ success: false as const, error: 'Web only' }),
     sendTransaction:   noopTx,
-    sendToTreasury:    async (_amt: number, _addr: string, _net?: string, _asset?: string) => ({ success: false as const, error: 'Web only', txHash: undefined as string | undefined }),
+    sendErc20Transaction: async (
+      _token: string,
+      _to: string,
+      _amt: string | number,
+      _decimals: number,
+      _net?: string,
+    ) => ({ success: false as const, error: 'Web only', txHash: undefined as string | undefined }),
+    sendToTreasury:    async (_amt: string | number, _addr: string, _net?: string, _asset?: string) => ({ success: false as const, error: 'Web only', txHash: undefined as string | undefined }),
     signMessage:       noopSign,
   };
 }

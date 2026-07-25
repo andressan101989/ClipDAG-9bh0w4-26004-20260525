@@ -45,7 +45,7 @@ export const NETWORKS: Record<string, NetworkConfig> = {
     shortName:   'Base',
     symbol:      'ETH',
     decimals:    18,
-    rpcUrl:      'https://mainnet.base.org',
+    rpcUrl:      'https://base-rpc.publicnode.com',
     explorer:    'https://basescan.org',
     explorerTx:  'https://basescan.org/tx/',
     explorerAddr:'https://basescan.org/address/',
@@ -100,13 +100,6 @@ export const TOKENS: TokenConfig[] = [
     symbol: 'ETH', name: 'Ethereum (Base)', decimals: 18,
     networkKey: 'base', contract: '',
     isNative: true, color: '#0052FF', logoSymbol: 'ethereum',
-  },
-  // USDT on Base (bridged)
-  {
-    symbol: 'USDT', name: 'Tether USD (Base)', decimals: 6,
-    networkKey: 'base',
-    contract: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-    color: '#26A17B', logoSymbol: 'currency-usd',
   },
   // BDAG on BlockDAG
   {

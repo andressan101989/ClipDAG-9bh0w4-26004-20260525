@@ -42,7 +42,6 @@ const USDT_DECIMALS        = 6;
 // ── USDT contract addresses per EIP-155 chain ID ──────────────────────────────
 const USDT_CONTRACTS: Record<string, string> = {
   '1':        '0xdac17f958d2ee523a2206206994597c13d831ec7', // Ethereum mainnet
-  '8453':     '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // Base mainnet
   '97':       '0x337610d27c682e347c9cd60bd4b3b107c9d34def', // BSC testnet
   '11155111': '0x7169D38820dfd117C3FA1f22a697dBA58d90BA06', // Sepolia testnet
 };

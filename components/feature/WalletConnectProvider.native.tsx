@@ -1,27 +1,36 @@
+import '@walletconnect/react-native-compat';
+
 import React from 'react';
-import { WalletConnectModal, useWalletConnectModal } from '@walletconnect/modal-react-native';
+import {
+  AppKit,
+  AppKitProvider,
+  useAccount,
+  useAppKit,
+  useProvider,
+} from '@reown/appkit-react-native';
+import {
+  WALLETCONNECT_PROJECT_ID_PRESENT,
+  walletConnectAppKit,
+} from '@/services/walletConnectConfig.native';
 
-interface Props { children: React.ReactNode }
+interface Props {
+  children: React.ReactNode;
+}
 
-const projectId = process.env.EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID ?? '';
-export const WC_PROJECT_ID = projectId;
+export {
+  useAccount as useWalletConnectAccount,
+  useAppKit as useWalletConnectAppKit,
+  useProvider as useWalletConnectProvider,
+};
 
-export { useWalletConnectModal };
+export const WC_PROJECT_ID_PRESENT = WALLETCONNECT_PROJECT_ID_PRESENT;
 
 export function WalletConnectProvider({ children }: Props) {
   return (
-    <>
-      <WalletConnectModal
-        projectId={projectId}
-        providerMetadata={{
-          name: 'OnSpace',
-          description: 'OnSpace / ClipDAG',
-          url: 'https://clipdag.io',
-          icons: ['https://clipdag.io/icon.png'],
-        }}
-      />
+    <AppKitProvider instance={walletConnectAppKit}>
       {children}
-    </>
+      <AppKit />
+    </AppKitProvider>
   );
 }
 

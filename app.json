@@ -16,7 +16,8 @@
       "bundleIdentifier": "com.clipdag.onspaceapp",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "UIBackgroundModes": ["fetch", "audio", "voip"]
+        "UIBackgroundModes": ["fetch", "audio", "voip"],
+        "LSApplicationQueriesSchemes": ["metamask", "trust", "cbwallet"]
       }
     },
     "android": {
