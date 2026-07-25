@@ -12,10 +12,10 @@ import * as ImagePicker from 'expo-image-picker';
 import { useShop } from '@/hooks/useShop';
 import { useAuth } from '@/hooks/useAuth';
 import { useAlert } from '@/template';
-import { getSupabaseClient } from '@/template';
 import { CyberButton } from '@/components/ui/CyberButton';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
-import { uploadFileFromUri, detectMimeType } from '@/contexts/FeedContext';
+import { detectMimeType } from '@/contexts/FeedContext';
+import { deleteMediaAsset, linkMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
 import type { ProductCategory } from '@/contexts/ShopContext';
 
 const CATEGORIES: { key: ProductCategory; label: string; icon: string }[] = [
@@ -33,7 +33,6 @@ export default function CreateProductScreen() {
   const { user } = useAuth();
   const { createProduct } = useShop();
   const { showAlert } = useAlert();
-  const supabase = getSupabaseClient();
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -45,6 +44,14 @@ export default function CreateProductScreen() {
   const [isUnlimitedStock, setIsUnlimitedStock] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [imageAssetIds, setImageAssetIds] = useState<string[]>([]);
+
+  const removeImage = useCallback((index: number) => {
+    const assetId = imageAssetIds[index];
+    setImages(prev => prev.filter((_, itemIndex) => itemIndex !== index));
+    setImageAssetIds(prev => prev.filter((_, itemIndex) => itemIndex !== index));
+    if (assetId) void deleteMediaAsset(assetId).catch(() => {});
+  }, [imageAssetIds]);
 
   const handlePickImage = useCallback(async () => {
     if (images.length >= 4) { showAlert('Máximo 4 imágenes', 'Ya tienes el máximo de fotos'); return; }
@@ -60,19 +67,23 @@ export default function CreateProductScreen() {
     setIsUploadingImage(true);
     const asset = result.assets[0];
     const mimeType = asset.mimeType || detectMimeType(asset.uri, 'image/jpeg');
-    const ext = mimeType.includes('png') ? 'png' : 'jpg';
-    const fileName = `${user.id}/product_${Date.now()}_${images.length}.${ext}`;
-    const url = await uploadFileFromUri(supabase, asset.uri, 'images', fileName, mimeType, asset.base64);
+    const uploaded = await uploadMediaFromUri({
+      uri: asset.uri,
+      purpose: 'product_image',
+      mimeType,
+      fileName: asset.fileName || undefined,
+      sizeBytes: asset.fileSize,
+      visibility: 'public',
+    }).catch(() => null);
     setIsUploadingImage(false);
 
-    if (url) {
-      setImages(prev => [...prev, url]);
+    if (uploaded?.url?.startsWith('https://')) {
+      setImages(prev => [...prev, uploaded.url!]);
+      setImageAssetIds(prev => [...prev, uploaded.assetId]);
     } else {
-      // Fallback: use local URI
-      setImages(prev => [...prev, asset.uri]);
-      showAlert('Nota', 'La imagen se usará localmente. Conecta el backend para guardarla en la nube.');
+      showAlert('Error', 'No se pudo subir la imagen. Intenta de nuevo.');
     }
-  }, [images, user, supabase, showAlert]);
+  }, [images, user, showAlert]);
 
   const handlePublish = useCallback(async () => {
     if (!user) { showAlert('Inicia sesión', 'Necesitas una cuenta para vender'); return; }
@@ -98,6 +109,11 @@ export default function CreateProductScreen() {
     setIsPublishing(false);
 
     if (result.success) {
+      if (result.product) {
+        await Promise.all(imageAssetIds.map((assetId, position) =>
+          linkMediaAsset(assetId, 'shop_product', result.product!.id, 'image', position)
+        ));
+      }
       showAlert('¡Producto publicado!', 'Tu producto ya está disponible en la tienda', [
         { text: 'Ver tienda', onPress: () => router.replace('/(tabs)/shop') },
         { text: 'OK', onPress: () => router.back() },
@@ -105,7 +121,7 @@ export default function CreateProductScreen() {
     } else {
       showAlert('Error', result.error || 'No se pudo publicar el producto');
     }
-  }, [user, title, description, price, category, stock, isUnlimitedStock, images, tags, createProduct, router, showAlert]);
+  }, [user, title, description, price, category, stock, isUnlimitedStock, images, imageAssetIds, tags, createProduct, router, showAlert]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -135,7 +151,7 @@ export default function CreateProductScreen() {
                   ) : null}
                   <Pressable
                     style={styles.removeImgBtn}
-                    onPress={() => setImages(prev => prev.filter((_, idx) => idx !== i))}
+                    onPress={() => removeImage(i)}
                   >
                     <MaterialIcons name="close" size={12} color="#fff" />
                   </Pressable>

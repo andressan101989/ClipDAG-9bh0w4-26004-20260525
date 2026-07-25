@@ -36,6 +36,7 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import { uploadFileFromUri, detectMimeType } from '@/contexts/FeedContext';
 import { getTrackById, type MusicTrack } from '@/services/musicLibrary';
 import { createExclusiveContent } from '@/services/economyService';
+import { linkMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
 
 // ── Hashtag suggestions ────────────────────────────────────────────────────
 const HASHTAG_SUGGESTIONS = [
@@ -53,6 +54,27 @@ interface SelectedMedia {
   type: 'image' | 'video';
   mimeType?: string;
   filterId?: string;
+}
+
+interface UploadedMedia {
+  url: string;
+  assetId?: string;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await worker(items[index], index);
+    }
+  }));
+  return results;
 }
 
 
@@ -213,16 +235,27 @@ export default function UploadScreen() {
   }, []);
 
   // ── Upload ────────────────────────────────────────────────────────────────
-  const uploadMediaToStorage = useCallback(async (media: SelectedMedia, index?: number): Promise<string | null> => {
+  const uploadMediaToStorage = useCallback(async (media: SelectedMedia, index?: number): Promise<UploadedMedia | null> => {
     if (!user) return null;
     const isVideo = media.type === 'video';
-    const bucket = isVideo ? 'videos' : 'images';
-    const ext = isVideo ? 'mp4' : 'jpg';
-    const suffix = index !== undefined ? `_${index}` : '';
-    const fileName = `${user.id}/${Date.now()}${suffix}.${ext}`;
     const mimeType = media.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg');
-    return await uploadFileFromUri(supabase, media.uri, bucket, fileName, mimeType, media.base64);
-  }, [user, supabase]);
+    if (isVideo || isExclusive) {
+      const bucket = isVideo ? 'videos' : 'images';
+      const ext = isVideo ? 'mp4' : 'jpg';
+      const suffix = index !== undefined ? `_${index}` : '';
+      const fileName = `${user.id}/${Date.now()}${suffix}.${ext}`;
+      const legacyUrl = await uploadFileFromUri(supabase, media.uri, bucket, fileName, mimeType, media.base64);
+      return legacyUrl ? { url: legacyUrl } : null;
+    }
+    const uploaded = await uploadMediaFromUri({
+      uri: media.uri,
+      purpose: mode === 'carousel' ? 'carousel_image' : 'post_image',
+      mimeType,
+      visibility: 'public',
+    });
+    if (!uploaded.url?.startsWith('https://')) throw new Error('R2 did not return a public URL');
+    return { url: uploaded.url, assetId: uploaded.assetId };
+  }, [user, supabase, isExclusive, mode]);
 
   const registerExclusiveContent = useCallback(async (opts: {
     title: string; contentType: string;
@@ -253,8 +286,9 @@ export default function UploadScreen() {
     setIsUploading(true);
     setUploadProgress('Subiendo media...');
     try {
-      const url = await uploadMediaToStorage(selectedMedia);
-      const finalUrl = url || selectedMedia.uri;
+      const uploaded = await uploadMediaToStorage(selectedMedia);
+      if (!uploaded?.url) throw new Error('Upload failed');
+      const finalUrl = uploaded.url;
       setUploadProgress('Guardando en el feed...');
       const musicName = selectedMusic ? `${selectedMusic.title} - ${selectedMusic.artist}` : 'Sin musica';
 
@@ -269,7 +303,7 @@ export default function UploadScreen() {
         });
       }
 
-      await addVideo({
+      const postId = await addVideo({
         userId: user.id,
         username: user.username || user.email?.split('@')[0] || 'user',
         userAvatar: user.avatar || '',
@@ -279,6 +313,9 @@ export default function UploadScreen() {
         music: musicName,
         ...(isExclusive ? { isExclusive: true, exclusivePrice: parseFloat(exclusivePrice), exclusiveContentId } : {}),
       } as any);
+      if (postId && uploaded.assetId) {
+        await linkMediaAsset(uploaded.assetId, 'video_post', postId, 'media', 0);
+      }
 
       setCaption(''); setSelectedMedia(null); setSelectedMusic(null);
       setIsExclusive(false); setExclusivePrice('100'); setUploadProgress('');
@@ -305,9 +342,10 @@ export default function UploadScreen() {
     setIsUploading(true);
     setUploadProgress(`Subiendo ${carouselMedias.length} fotos...`);
     try {
-      const urls = await Promise.all(carouselMedias.map((m, i) => uploadMediaToStorage(m, i)));
-      const validUrls = urls.filter(Boolean) as string[];
-      if (validUrls.length === 0) throw new Error('No se pudieron subir las imágenes');
+      const uploads = await mapWithConcurrency(carouselMedias, 3, uploadMediaToStorage);
+      const validUploads = uploads.filter((item): item is UploadedMedia => Boolean(item?.url));
+      const validUrls = validUploads.map(item => item.url);
+      if (validUrls.length !== carouselMedias.length) throw new Error('No se pudieron subir todas las imágenes');
       setUploadProgress('Guardando carrusel...');
       let exclusiveContentId: string | undefined;
       if (isExclusive) {
@@ -318,7 +356,7 @@ export default function UploadScreen() {
           priceBdag: parseFloat(exclusivePrice),
         });
       }
-      await (addVideo as any)({
+      const postId = await (addVideo as any)({
         userId: user.id,
         username: user.username || user.email?.split('@')[0] || 'user',
         userAvatar: user.avatar || '',
@@ -327,6 +365,11 @@ export default function UploadScreen() {
         mediaUrls: validUrls,
         ...(isExclusive ? { isExclusive: true, exclusivePrice: parseFloat(exclusivePrice), exclusiveContentId } : {}),
       });
+      if (postId) {
+        await Promise.all(validUploads.flatMap((item, position) =>
+          item.assetId ? [linkMediaAsset(item.assetId, 'video_post', postId, 'media', position)] : []
+        ));
+      }
       setCaption(''); setCarouselMedias([]); setSelectedMusic(null);
       setIsExclusive(false); setExclusivePrice('100');
       showAlert(

@@ -22,6 +22,7 @@ import { getSupabaseClient } from '@/template';
 import { AuthContext }        from './AuthContext';
 import { SAMPLE_VIDEOS, MOCK_COMMENTS } from '@/services/mockData';
 import type { Video, Comment }           from '@/services/mockData';
+import { deleteMediaAsset } from '@/services/mediaService';
 
 export interface VideoWithMeta extends Video {
   editedAt?:   string;
@@ -54,7 +55,7 @@ interface FeedContextType {
   toggleSave:      (videoId: string) => Promise<void>;
   isSaved:         (videoId: string) => boolean;
   addComment:      (videoId: string, comment: Omit<Comment, 'id' | 'likes' | 'createdAt'>) => Promise<void>;
-  addVideo:        (video: Omit<Video, 'id' | 'likes' | 'comments' | 'shares' | 'isLiked' | 'createdAt'>) => Promise<void>;
+  addVideo:        (video: Omit<Video, 'id' | 'likes' | 'comments' | 'shares' | 'isLiked' | 'createdAt'>) => Promise<string | undefined>;
   updateVideo:     (videoId: string, updates: { caption?: string; music?: string }) => Promise<{ success: boolean; error?: string }>;
   deleteVideo:     (videoId: string, videoUrl?: string, thumbnailUrl?: string) => Promise<{ success: boolean; error?: string }>;
   trackView:       (videoId: string, watchDurationMs: number, completed: boolean) => Promise<void>;
@@ -397,7 +398,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   // ── Toggle Like ───────────────────────────────────────────────────────────
   const toggleLike = useCallback(async (videoId: string, creatorId: string) => {
     const supabase = supabaseRef.current;
-    if (!user) return;
+    if (!user) return undefined;
     const alreadyLiked = likedVideos.has(videoId);
 
     // Optimistic update
@@ -645,7 +646,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         mediaUrls:   (video as any).mediaUrls,
       };
       setVideos(prev => [localVideo, ...prev]);
-      return;
+      return localVideo.id;
     }
     try {
       const insertPayload: Record<string, unknown> = {
@@ -670,9 +671,12 @@ export function FeedProvider({ children }: { children: ReactNode }) {
           profile?.avatar_url || user.avatar || '',
         );
         setVideos(prev => [newVideo, ...prev]);
+        return newVideo.id;
       }
+      return undefined;
     } catch (e) {
       console.warn('[FeedContext] addVideo error:', e);
+      return undefined;
     }
   }, [user]);
 
@@ -707,14 +711,23 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     }
     if (!supabase || !supabaseOk.current) return { success: false, error: 'Backend no disponible' };
     try {
+      const { data: linkedAssets } = await supabase
+        .from('media_asset_links')
+        .select('asset_id')
+        .eq('entity_type', 'video_post')
+        .eq('entity_id', videoId);
       const { error } = await supabase.from('videos').delete().eq('id', videoId).eq('user_id', user.id);
       if (error) return { success: false, error: error.message };
       setVideos(prev => prev.filter(v => v.id !== videoId));
       setLikedVideos(prev => { const n = new Set(prev); n.delete(videoId); return n; });
       setSavedVideos(prev => { const n = new Set(prev); n.delete(videoId); return n; });
       setComments(prev => { const n = { ...prev }; delete n[videoId]; return n; });
-      if (videoUrl) await deleteStorageFile(supabase, videoUrl);
-      if (thumbnailUrl && thumbnailUrl !== videoUrl) await deleteStorageFile(supabase, thumbnailUrl);
+      if (linkedAssets?.length) {
+        await Promise.all(linkedAssets.map(({ asset_id }) => deleteMediaAsset(asset_id)));
+      } else {
+        if (videoUrl) await deleteStorageFile(supabase, videoUrl);
+        if (thumbnailUrl && thumbnailUrl !== videoUrl) await deleteStorageFile(supabase, thumbnailUrl);
+      }
       return { success: true };
     } catch (e: any) {
       return { success: false, error: e.message };

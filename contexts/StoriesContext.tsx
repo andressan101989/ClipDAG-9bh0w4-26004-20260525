@@ -2,12 +2,11 @@ import React, { createContext, useState, useCallback, useEffect, useContext, use
 import { getSupabaseClient } from '@/template';
 import { AuthContext } from './AuthContext';
 import type { StoryGroup, StoryItem } from '@/components/feature/StoriesBar';
-import { base64ToUint8Array } from './FeedContext';
 
 interface StoriesContextType {
   storyGroups: StoryGroup[];
   isLoadingStories: boolean;
-  addStory: (mediaUrl: string, mediaType: 'photo' | 'video') => Promise<void>;
+  addStory: (mediaUrl: string, mediaType: 'photo' | 'video') => Promise<string | undefined>;
   markStoryViewed: (storyId: string) => Promise<void>;
   refreshStories: () => Promise<void>;
   viewedStoryIds: Set<string>;
@@ -128,21 +127,22 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
   }, [user?.id]);
 
   const addStory = useCallback(async (mediaUrl: string, mediaType: 'photo' | 'video') => {
-    if (!user) return;
+    if (!user) return undefined;
     const supabase = supabaseRef.current;
-    if (!supabase || !supabaseOk.current) return;
+    if (!supabase || !supabaseOk.current) return undefined;
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
     try {
-      const { error } = await supabase.from('stories').insert({
+      const { data, error } = await supabase.from('stories').insert({
         user_id: user.id,
         media_url: mediaUrl,
         media_type: mediaType,
         expires_at: expiresAt,
-      });
+      }).select('id').single();
 
       if (!error) {
         await loadStories();
+        return data.id as string;
       } else {
         console.log('Add story error:', error.message);
         // Optimistic local add if DB fails
@@ -172,6 +172,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
         });
       }
     } catch (_) {}
+    return undefined;
   }, [user, loadStories]);
 
   const markStoryViewed = useCallback(async (storyId: string) => {

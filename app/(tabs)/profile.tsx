@@ -17,7 +17,6 @@ import { useNotifications } from '@/hooks/useNotifications';
 import { useMessages } from '@/hooks/useMessages';
 import { useWallet } from '@/hooks/useWallet';
 import { useAlert } from '@/template';
-import { getSupabaseClient } from '@/template';
 import { CyberButton } from '@/components/ui/CyberButton';
 import { FadeIn, SlideUp, ProfileGridSkeleton } from '@/components/ui/SkeletonLoader';
 import { AnimatedPressable } from '@/components/ui/AnimatedPressable';
@@ -26,7 +25,13 @@ import { AnalyticsSheet } from '@/components/feature/AnalyticsSheet';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { useI18n } from '@/contexts/I18nContext';
 import { MOCK_CREATORS, formatNumber } from '@/services/mockData';
-import { uploadFileFromUri, detectMimeType } from '@/contexts/FeedContext';
+import { detectMimeType } from '@/contexts/FeedContext';
+import {
+  deleteMediaAsset,
+  getLinkedMediaAssetIds,
+  linkMediaAsset,
+  uploadMediaFromUri,
+} from '@/services/mediaService';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -97,7 +102,6 @@ export default function ProfileScreen() {
   const { videos, deleteVideo, updateVideo, getAnalytics } = useFeed();
   const { showAlert } = useAlert();
   const router = useRouter();
-  const supabase = getSupabaseClient();
   const { unreadCount: notifCount } = useNotifications();
   const { unreadTotal: unreadDMs } = useMessages();
   const walletData = useWallet();
@@ -181,10 +185,17 @@ export default function ProfileScreen() {
     if (!user) return;
     setIsUploadingAvatar(true);
     try {
+      const previousAssetIds = await getLinkedMediaAssetIds('user_profile', user.id, 'avatar');
       const mimeType = asset.mimeType || detectMimeType(asset.uri, 'image/jpeg');
-      const ext = mimeType.includes('png') ? 'png' : 'jpg';
-      const fileName = `${user.id}/avatar_${Date.now()}.${ext}`;
-      const publicUrl = await uploadFileFromUri(supabase, asset.uri, 'avatars', fileName, mimeType, asset.base64);
+      const uploaded = await uploadMediaFromUri({
+        uri: asset.uri,
+        purpose: 'avatar',
+        mimeType,
+        fileName: asset.fileName || undefined,
+        sizeBytes: asset.fileSize,
+        visibility: 'public',
+      });
+      const publicUrl = uploaded.url;
 
       // Never persist a local device URI (file:///...) to avatar_url — if the
       // Storage upload failed, publicUrl is null and the old fallback saved
@@ -198,13 +209,17 @@ export default function ProfileScreen() {
       }
 
       await updateProfile({ avatar: publicUrl } as any);
+      await linkMediaAsset(uploaded.assetId, 'user_profile', user.id, 'avatar');
+      await Promise.all(previousAssetIds
+        .filter(assetId => assetId !== uploaded.assetId)
+        .map(assetId => deleteMediaAsset(assetId)));
       showAlert('Foto actualizada', 'Tu foto de perfil fue actualizada');
     } catch (e) {
       console.error('[profile.tsx] uploadAvatar exception:', e);
       showAlert('Error', 'No se pudo subir la foto');
     }
     setIsUploadingAvatar(false);
-  }, [user, supabase, updateProfile, showAlert]);
+  }, [user, updateProfile, showAlert]);
 
   const handleSaveProfile = useCallback(async () => {
     if (!displayName.trim()) { showAlert('Nombre requerido', 'Ingresa un nombre'); return; }

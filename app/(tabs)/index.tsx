@@ -27,6 +27,7 @@ import { Audio } from 'expo-av';
 import { useScrollToTop } from '@react-navigation/native';
 import type { StoryGroup } from '@/components/feature/StoriesBar';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
+import { linkMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
 
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 75 };
 
@@ -115,6 +116,22 @@ export default function FeedScreen() {
     const mimeType = asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg');
 
     try {
+      if (!isVideo) {
+        const uploaded = await uploadMediaFromUri({
+          uri: asset.uri,
+          purpose: 'post_image',
+          mimeType,
+          fileName: asset.fileName || undefined,
+          sizeBytes: asset.fileSize,
+          visibility: 'public',
+        });
+        if (!uploaded.url?.startsWith('https://')) throw new Error('R2 did not return a public URL');
+        const storyId = await addStory(uploaded.url, 'photo');
+        if (!storyId) throw new Error('Story was not persisted');
+        await linkMediaAsset(uploaded.assetId, 'story', storyId, 'media');
+        showAlert('Historia publicada!', 'Tu historia estará visible por 24 horas');
+        return;
+      }
       if (asset.base64) {
         const bytes = base64ToUint8Array(asset.base64);
         const { error } = await supabase.storage.from(bucket).upload(fileName, bytes, { contentType: mimeType, upsert: false });
