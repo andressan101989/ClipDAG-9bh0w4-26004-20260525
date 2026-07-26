@@ -78,33 +78,45 @@ export function fallbackPlaybackUrls(uid:string,customerCode:string) {
   return {hls:`${base}/manifest/video.m3u8`,dash:`${base}/manifest/video.mpd`,thumbnail:`${base}/thumbnails/thumbnail.jpg`};
 }
 
-export function reconcileStreamVideo(result:Record<string,unknown>,customerCode:string) {
+export function reconcileStreamVideo(
+  result:Record<string,unknown>,
+  customerCode:string,
+  expectedUid:string,
+  maxDurationSeconds=STREAM_MAX_DURATION_SECONDS,
+) {
   const status=(result.status&&typeof result.status==='object'?result.status:{}) as Record<string,unknown>;
   const state=String(status.state??result.state??'').toLowerCase().replace(/[\s_-]/g,'');
   const readyToStream=result.readyToStream===true;
+  const uid=typeof result.uid==='string'?result.uid.trim():'';
   let internalStatus:StreamAssetStatus;
   if(state==='error') internalStatus='failed';
   else if(state==='pendingupload') internalStatus='uploading';
   else if(state==='ready'&&readyToStream) internalStatus='ready';
   else internalStatus='processing';
-  const uid=String(result.uid??'');
   const fallback=uid?fallbackPlaybackUrls(uid,customerCode):{hls:null,dash:null,thumbnail:null};
   const playback=(result.playback&&typeof result.playback==='object'?result.playback:{}) as Record<string,unknown>;
   const thumbnail=httpsOrNull(result.thumbnail);
   const size=dimensions(result);
-  const ready=internalStatus==='ready';
+  const duration=numberOrNull(result.duration);
+  const hls=httpsOrNull(playback.hls)??fallback.hls;
+  const readyInvariantValid=
+    uid.length>0&&uid===expectedUid&&typeof hls==='string'&&hls.startsWith('https://')&&
+    duration!==null&&duration>0&&duration<=maxDurationSeconds;
+  if(internalStatus==='ready'&&!readyInvariantValid) internalStatus='failed';
+  const ready=internalStatus==='ready'&&readyInvariantValid;
+  const invariantFailure=state==='ready'&&readyToStream&&!readyInvariantValid;
   return {
     status:internalStatus,
     provider_status:state||'unknown',
     provider_progress:numberOrNull(status.pctComplete??result.percentComplete),
-    duration_seconds:numberOrNull(result.duration),
+    duration_seconds:duration,
     width:size.width,
     height:size.height,
-    hls_url:ready?(httpsOrNull(playback.hls)??fallback.hls):null,
+    hls_url:ready?hls:null,
     dash_url:ready?(httpsOrNull(playback.dash)??fallback.dash):null,
     thumbnail_url:ready?(thumbnail??fallback.thumbnail):null,
-    error_code:internalStatus==='failed'?'stream_processing_failed':null,
-    error_message:internalStatus==='failed'?'stream_processing_failed':null,
+    error_code:invariantFailure?'stream_ready_invariant_failed':internalStatus==='failed'?'stream_processing_failed':null,
+    error_message:invariantFailure?'stream_ready_invariant_failed':internalStatus==='failed'?'stream_processing_failed':null,
     ready_at:ready?new Date().toISOString():null,
     last_provider_check_at:new Date().toISOString(),
   };

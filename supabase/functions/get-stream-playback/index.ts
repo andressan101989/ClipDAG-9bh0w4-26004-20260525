@@ -26,7 +26,13 @@ Deno.serve(async(req)=>{
       const provider=await streamFetch(`/${encodeURIComponent(String(asset.cloudflare_uid))}`,{method:'GET'});
       const result=provider.result as Record<string,unknown>|undefined;
       if(!result) throw new Error('stream_provider_invalid_response');
-      const updates=reconcileStreamVideo(result,streamCustomerCode());
+      const providerUid=typeof result.uid==='string'?result.uid.trim():'';
+      if(!providerUid||providerUid!==asset.cloudflare_uid) {
+        return json({error:'stream_provider_uid_mismatch'},502);
+      }
+      const updates=reconcileStreamVideo(
+        result,streamCustomerCode(),String(asset.cloudflare_uid),Number(asset.max_duration_seconds??60),
+      );
       const {data:updated,error:updateError}=await db.from('video_assets').update(updates)
         .eq('id',asset.id).eq('owner_id',user.id).select('*').single();
       if(updateError) return json({error:'asset_state_failed'},503);

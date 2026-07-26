@@ -8,6 +8,7 @@ import {
 
 const migration=fs.readFileSync('supabase/migrations/20260726110000_create_cloudflare_stream_video_assets.sql','utf8');
 const hardeningMigration=fs.readFileSync('supabase/migrations/20260726111000_harden_cloudflare_stream_upload_reservation.sql','utf8');
+const invariantMigration=fs.readFileSync('supabase/migrations/20260726112000_enforce_cloudflare_stream_ready_invariants.sql','utf8');
 const shared=fs.readFileSync('supabase/functions/_shared/stream.ts','utf8');
 const create=fs.readFileSync('supabase/functions/create-stream-upload/index.ts','utf8');
 const playback=fs.readFileSync('supabase/functions/get-stream-playback/index.ts','utf8');
@@ -25,7 +26,10 @@ assert.equal(MAX_DURATION,60);
 assert.equal(mapVideo({status:{state:'pendingupload'}}).status,'uploading');
 assert.equal(mapVideo({status:{state:'inprogress'}}).status,'processing');
 assert.equal(mapVideo({status:{state:'ready'},readyToStream:false}).status,'processing');
-assert.equal(mapVideo({status:{state:'ready'},readyToStream:true}).status,'ready');
+assert.equal(mapVideo({uid:'uid',duration:30,status:{state:'ready'},readyToStream:true}).status,'ready');
+assert.equal(mapVideo({uid:'uid',duration:30,status:{state:'ready'},readyToStream:true},'demo','other').status,'failed');
+assert.equal(mapVideo({uid:'uid',duration:0,status:{state:'ready'},readyToStream:true}).status,'failed');
+assert.equal(mapVideo({uid:'uid',duration:61,status:{state:'ready'},readyToStream:true}).status,'failed');
 assert.equal(mapVideo({status:{state:'error'}}).status,'failed');
 assert.match(fallback('uid','abc').hls,/customer-abc/);
 assert.doesNotMatch(fallback('uid','customer-abc').hls,/customer-customer-/);
@@ -77,6 +81,34 @@ const readyPreserved=await webhookLifecycle({
   assetId:'asset',uid:'uid',existingReadyAt:'original-ready-at',
 });
 assert.equal(readyPreserved.updates.ready_at,'original-ready-at');
+const noUid=await webhookLifecycle({
+  lookup:async()=>{throw new Error('must not query');},update:async()=>true,assetId:'asset',uid:'',
+});
+assert.equal(noUid.status,202);
+const readyVsProcessing=await webhookLifecycle({
+  lookup:async()=>({data:{cloudflare_uid:'uid'}}),update:async()=>true,
+  assetId:'asset',uid:'uid',existingStatus:'ready',eventStatus:'processing',
+});
+assert.equal(readyVsProcessing.updated,false);
+const readyVsError=await webhookLifecycle({
+  lookup:async()=>({data:{cloudflare_uid:'uid'}}),update:async()=>true,
+  assetId:'asset',uid:'uid',existingStatus:'ready',eventStatus:'failed',
+});
+assert.equal(readyVsError.updated,false);
+const readyIncomplete=await webhookLifecycle({
+  lookup:async()=>({data:{cloudflare_uid:'uid'}}),update:async()=>true,
+  assetId:'asset',uid:'uid',existingStatus:'ready',eventStatus:'ready',
+  existingReadyAt:'original-ready-at',existingHls:'https://existing/hls.m3u8',incomingHls:null,
+});
+assert.equal(readyIncomplete.updates.ready_at,'original-ready-at');
+assert.equal(readyIncomplete.updates.hls_url,'https://existing/hls.m3u8');
+for(const protectedStatus of ['deleted','delete_pending']) {
+  const terminal=await webhookLifecycle({
+    lookup:async()=>({data:{cloudflare_uid:'uid'}}),update:async()=>true,
+    assetId:'asset',uid:'uid',existingStatus:protectedStatus,eventStatus:'ready',
+  });
+  assert.equal(terminal.updated,false);
+}
 
 let providerDeleteCalls=0;
 const transitionFailure=await deleteLifecycle({
@@ -108,7 +140,14 @@ assert.match(hardeningMigration,/rate_limited/);
 assert.match(hardeningMigration,/active_limit_reached/);
 assert.match(hardeningMigration,/revoke all on function public\.reserve_stream_upload_asset[\s\S]*from public, anon, authenticated/);
 assert.match(hardeningMigration,/grant execute on function public\.reserve_stream_upload_asset[\s\S]*to service_role/);
+assert.match(invariantMigration,/video_assets_ready_invariants_check/);
+assert.match(invariantMigration,/hls_url is not null/);
+assert.match(invariantMigration,/ready_at is not null/);
+assert.match(invariantMigration,/duration_seconds <= max_duration_seconds/);
+assert.match(invariantMigration,/mime_type in \('video\/mp4','video\/quicktime','video\/webm'\)/);
 assert.match(shared,/readyToStream===true/);
+assert.match(shared,/uid===expectedUid/);
+assert.match(shared,/stream_ready_invariant_failed/);
 assert.match(shared,/constantTimeEqualHex/);
 assert.match(shared,/\$\{parsed\.time\}\.\$\{rawBody\}/);
 assert.match(create,/\/direct_upload/);
@@ -126,6 +165,8 @@ assert.match(create,/recovery_state_persist_failed/);
 assert.match(create,/cloudflare_uid:uidToDelete/);
 assert.match(create,/if\(!uploadUrl\)[\s\S]*compensateUid\(uid,'stream_provider_invalid_response'\)/);
 assert.match(playback,/Date\.now\(\)-checkedAt>=5_000/);
+assert.match(playback,/stream_provider_uid_mismatch/);
+assert.match(playback,/providerUid!==asset\.cloudflare_uid/);
 assert.match(deletion,/stream_not_found/);
 assert.match(deletion,/if\(pendingError\) return json\(\{error:'asset_state_failed'\},503\)/);
 assert.match(deletion,/if\(deletedError\) return json\(\{error:'asset_state_failed'\},503\)/);
@@ -133,7 +174,12 @@ assert.match(webhook,/const rawBody=await req\.text\(\)/);
 assert.match(webhook,/stream_webhook_not_configured/);
 assert.match(webhook,/stream_webhook_lookup_failed/);
 assert.match(webhook,/stream_webhook_update_failed/);
-assert.match(webhook,/if\(asset\.ready_at\) updates\.ready_at=asset\.ready_at/);
+assert.match(webhook,/if\(!uid\) return json\(\{success:true\},202\)/);
+assert.match(webhook,/if\(!asset\.cloudflare_uid\|\|uid!==asset\.cloudflare_uid\)/);
+assert.match(webhook,/if\(asset\.status==='ready'\)/);
+assert.match(webhook,/if\(updates\.status!=='ready'\) return json\(\{success:true\}\)/);
+assert.match(webhook,/updates\.ready_at=asset\.ready_at/);
+assert.match(webhook,/updates\.hls_url=providerHls\?\.startsWith\('https:\/\/'\)\?updates\.hls_url:asset\.hls_url/);
 assert.match(config,/\[functions\.stream-webhook\]\s+verify_jwt = false/);
 for(const source of [shared,create,playback,deletion,webhook]) {
   assert.doesNotMatch(source,/CLOUDFLARE_STREAM_TOKEN\s*=/);

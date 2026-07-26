@@ -11,14 +11,22 @@ export const fallback=(uid,code)=>{
   const root=`https://customer-${normalized}.cloudflarestream.com/${uid}`;
   return {hls:`${root}/manifest/video.m3u8`,dash:`${root}/manifest/video.mpd`,thumbnail:`${root}/thumbnails/thumbnail.jpg`};
 };
-export function mapVideo(result,code='demo') {
+export function mapVideo(result,code='demo',expectedUid=result.uid,maxDuration=60) {
   const state=String(result.status?.state??result.state??'').toLowerCase().replace(/[\s_-]/g,'');
-  const status=state==='error'?'failed':state==='pendingupload'?'uploading':
+  let status=state==='error'?'failed':state==='pendingupload'?'uploading':
     state==='ready'&&result.readyToStream===true?'ready':'processing';
-  const urls=fallback(result.uid??'uid',code),ready=status==='ready';
+  const uid=typeof result.uid==='string'?result.uid.trim():'';
+  const duration=Number(result.duration);
+  const urls=fallback(uid||'invalid',code);
+  const hls=result.playback?.hls??urls.hls;
+  const invariantValid=uid&&uid===expectedUid&&typeof hls==='string'&&hls.startsWith('https://')&&
+    Number.isFinite(duration)&&duration>0&&duration<=maxDuration;
+  if(status==='ready'&&!invariantValid) status='failed';
+  const ready=status==='ready';
   return {status,hls_url:ready?(result.playback?.hls??urls.hls):null,
     dash_url:ready?(result.playback?.dash??urls.dash):null,
-    thumbnail_url:ready?(result.thumbnail??urls.thumbnail):null};
+    thumbnail_url:ready?(result.thumbnail??urls.thumbnail):null,
+    error_code:state==='ready'&&result.readyToStream===true&&!invariantValid?'stream_ready_invariant_failed':null};
 }
 export function parseSignature(value) {
   if(!value) return null;
@@ -72,13 +80,23 @@ export async function deleteLifecycle({transition,deleteProvider,finish,persistF
   }
 }
 
-export async function webhookLifecycle({lookup,update,assetId,uid,existingReadyAt}) {
+export async function webhookLifecycle({
+  lookup,update,assetId,uid,existingReadyAt,eventStatus='ready',
+  existingStatus='processing',existingHls='https://existing/hls.m3u8',incomingHls='https://new/hls.m3u8',
+}) {
+  if(typeof uid!=='string'||!uid.trim()) return {status:202,updated:false};
   const lookupResult=await lookup();
   if(lookupResult.error) return {status:503,error:'stream_webhook_lookup_failed',updated:false};
   const asset=lookupResult.data;
   if(!asset) return {status:202,updated:false};
-  if(assetId&&uid&&(!asset.cloudflare_uid||asset.cloudflare_uid!==uid)) return {status:202,updated:false};
-  const updates={ready_at:existingReadyAt??'new-ready-at'};
+  if(!asset.cloudflare_uid||asset.cloudflare_uid!==uid) return {status:202,updated:false};
+  if(['deleted','delete_pending'].includes(existingStatus)) return {status:200,updated:false};
+  if(existingStatus==='ready'&&eventStatus!=='ready') return {status:200,updated:false};
+  const updates={
+    status:existingStatus==='ready'?'ready':eventStatus,
+    ready_at:existingReadyAt??'new-ready-at',
+    hls_url:existingStatus==='ready'&&!incomingHls?.startsWith('https://')?existingHls:incomingHls,
+  };
   if(!await update(updates)) return {status:503,error:'stream_webhook_update_failed',updated:false};
   return {status:200,updated:true,updates};
 }
