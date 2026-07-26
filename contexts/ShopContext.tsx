@@ -3,6 +3,7 @@ import React, {
 } from 'react';
 import { getSupabaseClient } from '@/template';
 import { AuthContext } from './AuthContext';
+import { extractRpcUuid } from '@/services/mediaService';
 
 export type ProductCategory = 'digital' | 'physical' | 'art' | 'music' | 'clothing' | 'other';
 
@@ -171,9 +172,11 @@ export function ShopProvider({ children }: { children: ReactNode }) {
         p_tags: data.tags,
       });
       if (error) return { success: false, error: error.message };
-      if (typeof productId !== 'string') return { success: false, error: 'product_identity_missing' };
+      let normalizedProductId:string;
+      try { normalizedProductId=extractRpcUuid(productId,'create_product_with_media'); }
+      catch { return {success:false,error:'product_identity_missing'}; }
       const product: Product = {
-        id: productId,
+        id: normalizedProductId,
         sellerId: user.id,
         sellerUsername: user.username || user.email?.split('@')[0] || 'Vendedor',
         sellerAvatar: user.avatar || '',

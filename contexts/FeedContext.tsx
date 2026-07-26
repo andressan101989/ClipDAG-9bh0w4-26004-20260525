@@ -22,7 +22,14 @@ import { getSupabaseClient } from '@/template';
 import { AuthContext }        from './AuthContext';
 import { SAMPLE_VIDEOS, MOCK_COMMENTS } from '@/services/mockData';
 import type { Video, Comment }           from '@/services/mockData';
-import { deleteMediaAsset } from '@/services/mediaService';
+import {
+  createMediaOperationId,
+  deleteMediaAsset,
+  extractRpcUuid,
+  getSafeMediaError,
+  invokeRpcWithSingleAuthRefresh,
+  MediaEntityRpcError,
+} from '@/services/mediaService';
 
 export interface VideoWithMeta extends Video {
   editedAt?:   string;
@@ -661,29 +668,47 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     }
     try {
       if (video.mediaUrls && video.mediaUrls.length >= 2) {
-        const { data, error } = await supabase.rpc('create_carousel_post', {
-          p_caption: video.caption,
-          p_music: video.music || 'Sin musica',
-          p_asset_ids: video.mediaAssetIds ?? [],
-        });
-        if (error) {
-          console.warn('[FeedContext] media entity creation failed', {
-            stage: 'CAROUSEL_CREATE_POST',
-            code: error.code ?? 'unknown',
-          });
-          throw Object.assign(new Error('CAROUSEL_CREATE_POST_FAILED'), {
-            code: error.code ?? 'unknown',
-            stage: 'CAROUSEL_CREATE_POST',
+        const operationId=createMediaOperationId('carousel');
+        const {data:sessionData,error:sessionError}=await supabase.auth.getSession();
+        if(sessionError||!sessionData.session) {
+          throw new MediaEntityRpcError({
+            stage:'CAROUSEL_AUTH',code:'session_missing',message:'session_missing',
+            operationId,
           });
         }
-        if (typeof data !== 'string' || !/^[0-9a-f-]{36}$/i.test(data)) {
-          throw Object.assign(new Error('CAROUSEL_CREATE_POST_FAILED'), {
-            code: 'invalid_rpc_result',
-            stage: 'CAROUSEL_CREATE_POST',
+        const invokeCarousel=()=>supabase.rpc('create_carousel_post',{
+          p_caption:video.caption,
+          p_music:video.music||'Sin musica',
+          p_asset_ids:video.mediaAssetIds??[],
+        });
+        const {data,error}=await invokeRpcWithSingleAuthRefresh(
+          invokeCarousel,
+          ()=>supabase.auth.refreshSession().then(result=>({
+            error:result.error?new MediaEntityRpcError({
+              stage:'CAROUSEL_AUTH',code:result.error.code??'session_refresh_failed',
+              message:result.error.message,operationId,
+            }):null,
+          })),
+        );
+        if (error) {
+          const safe=getSafeMediaError(error,'CAROUSEL_CREATE_POST',{operationId});
+          console.warn('[FeedContext] carousel RPC failed', {
+            operationId:safe.operationId,stage:safe.stage,code:safe.code,
+            message:safe.message,details:safe.details,hint:safe.hint,status:safe.httpStatus,
           });
+          throw new MediaEntityRpcError({
+            stage:'CAROUSEL_CREATE_POST',code:safe.code,message:safe.message,
+            details:safe.details,hint:safe.hint,httpStatus:safe.httpStatus,operationId,
+          });
+        }
+        let postId:string;
+        try { postId=extractRpcUuid(data,'create_carousel_post'); }
+        catch(error) {
+          const safe=getSafeMediaError(error,'CAROUSEL_CLIENT_RESPONSE',{operationId});
+          throw new MediaEntityRpcError({...safe,operationId});
         }
         const newVideo: VideoWithMeta = {
-          id: data,
+          id: postId,
           userId: user.id,
           username: user.username || 'user',
           userAvatar: user.avatar || '',
@@ -699,7 +724,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
           createdAt: new Date().toISOString(),
         };
         setVideos(prev => [newVideo, ...prev]);
-        return data;
+        return postId;
       }
       if (video.mediaAssetIds?.length === 1) {
         const { data, error } = await supabase.rpc('create_photo_post_with_media', {
@@ -707,20 +732,21 @@ export function FeedProvider({ children }: { children: ReactNode }) {
           p_music: video.music || 'Sin musica',
           p_asset_id: video.mediaAssetIds[0],
         });
-        if (error || typeof data !== 'string') {
+        if (error) {
           throw Object.assign(new Error('PHOTO_CREATE_POST_FAILED'), {
-            code: error?.code ?? 'invalid_rpc_result',
+            code: error.code ?? 'unknown',
             stage: 'PHOTO_CREATE_POST',
           });
         }
+        const photoId=extractRpcUuid(data,'create_photo_post_with_media');
         const newVideo: VideoWithMeta = {
-          id: data,userId:user.id,username:user.username||'user',userAvatar:user.avatar||'',
+          id:photoId,userId:user.id,username:user.username||'user',userAvatar:user.avatar||'',
           videoUrl:video.videoUrl,thumbnailUrl:video.videoUrl,caption:video.caption,
           likes:0,comments:0,shares:0,music:video.music||'Sin musica',
           isLiked:false,createdAt:new Date().toISOString(),
         };
         setVideos(prev => [newVideo,...prev]);
-        return data;
+        return photoId;
       }
 
       const insertPayload: Record<string, unknown> = {
@@ -751,12 +777,12 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       }
       return undefined;
     } catch (e) {
-      const controlled = e as { message?: string; code?: string; stage?: string };
+      const controlled=getSafeMediaError(e,'CREATE_POST');
       console.warn('[FeedContext] addVideo failed', {
-        stage: controlled.stage ?? 'CREATE_POST',
-        code: controlled.code ?? 'unknown',
+        operationId:controlled.operationId,stage:controlled.stage,code:controlled.code,
+        message:controlled.message,details:controlled.details,hint:controlled.hint,
       });
-      if (controlled.stage === 'CAROUSEL_CREATE_POST' || controlled.stage === 'PHOTO_CREATE_POST') throw e;
+      if (controlled.stage.startsWith('CAROUSEL_') || controlled.stage === 'PHOTO_CREATE_POST') throw e;
       return undefined;
     }
   }, [user]);

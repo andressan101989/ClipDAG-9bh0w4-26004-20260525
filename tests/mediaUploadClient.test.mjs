@@ -9,7 +9,7 @@ test('client performs direct binary PUT, checks HTTP and finalizes', () => {
   assert.match(service, /method:'PUT'/);
   assert.match(service, /body:file/);
   assert.match(service, /if\(!response\.ok\)/);
-  assert.match(service, /finalizeMediaUpload\(contract\.assetId\)/);
+  assert.match(service, /finalizeMediaUpload\(contract\.assetId(?:,\s*operationId)?\)/);
   assert.match(service, /AbortController/);
   assert.doesNotMatch(service, /base64/i);
 });

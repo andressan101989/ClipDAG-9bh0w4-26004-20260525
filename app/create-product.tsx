@@ -15,7 +15,7 @@ import { useAlert } from '@/template';
 import { CyberButton } from '@/components/ui/CyberButton';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { detectMimeType } from '@/contexts/FeedContext';
-import { deleteMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
+import { deleteMediaAsset, getSafeMediaError, uploadMediaFromUri } from '@/services/mediaService';
 import type { ProductCategory } from '@/contexts/ShopContext';
 
 const CATEGORIES: { key: ProductCategory; label: string; icon: string }[] = [
@@ -69,29 +69,49 @@ export default function CreateProductScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       quality: 0.8,
-      base64: true,
     });
     if (result.canceled || !result.assets[0] || !user) return;
 
     setIsUploadingImage(true);
     const asset = result.assets[0];
     const mimeType = asset.mimeType || detectMimeType(asset.uri, 'image/jpeg');
-    const uploaded = await uploadMediaFromUri({
-      uri: asset.uri,
-      purpose: 'product_image',
-      mimeType,
-      fileName: asset.fileName || undefined,
-      sizeBytes: asset.fileSize,
-      visibility: 'public',
-    }).catch(() => null);
-    setIsUploadingImage(false);
-
-    if (uploaded?.url?.startsWith('https://')) {
+    try {
+      const uploaded = await uploadMediaFromUri({
+        uri: asset.uri,
+        purpose: 'product_image',
+        mimeType,
+        fileName: asset.fileName || undefined,
+        sizeBytes: asset.fileSize,
+        visibility: 'public',
+      });
+      if (!uploaded.url?.startsWith('https://')) throw new Error('invalid_ready_media_url');
       setImages(prev => [...prev, uploaded.url!]);
       setImageAssetIds(prev => [...prev, uploaded.assetId]);
       draftAssetIdsRef.current = [...draftAssetIdsRef.current, uploaded.assetId];
-    } else {
-      showAlert('Error', 'No se pudo subir la imagen. Intenta de nuevo.');
+    } catch (error) {
+      const safe = getSafeMediaError(error, 'MEDIA_UNKNOWN', { mimeType });
+      console.warn('[CreateProduct] product image upload failed', {
+        operationId: safe.operationId,
+        stage: safe.stage,
+        code: safe.code,
+        message: safe.message,
+        mimeType: safe.mimeType,
+      });
+      const normalizedCode = `${safe.code} ${safe.message}`.toLowerCase();
+      const message = safe.code === 'image_normalization_failed' || normalizedCode.includes('invalid_mime')
+        ? 'No se pudo procesar este formato de imagen.'
+        : normalizedCode.includes('invalid_size') || normalizedCode.includes('size')
+          ? 'La imagen supera el tamaño permitido.'
+          : normalizedCode.includes('unauthorized') || normalizedCode.includes('jwt') || safe.httpStatus === 401
+            ? 'Tu sesión expiró. Inicia sesión nuevamente.'
+            : safe.stage === 'MEDIA_R2_PUT'
+              ? 'No se pudo transferir la imagen.'
+              : safe.stage === 'MEDIA_FINALIZE'
+                ? 'La imagen subió, pero no pudo finalizarse.'
+                : 'No se pudo subir la imagen.';
+      showAlert('Error', `${message}\nCódigo: ${safe.stage}/${safe.code}`);
+    } finally {
+      setIsUploadingImage(false);
     }
   }, [images, user, showAlert]);
 

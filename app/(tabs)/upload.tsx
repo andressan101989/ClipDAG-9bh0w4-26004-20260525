@@ -35,7 +35,13 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import { uploadFileFromUri, detectMimeType } from '@/contexts/FeedContext';
 import { getTrackById, type MusicTrack } from '@/services/musicLibrary';
 import { createExclusiveContent } from '@/services/economyService';
-import { deleteMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
+import {
+  createMediaOperationId,
+  deleteMediaAsset,
+  findCommonLinkedEntityForAssets,
+  getSafeMediaError,
+  uploadMediaFromUri,
+} from '@/services/mediaService';
 
 // ── Hashtag suggestions ────────────────────────────────────────────────────
 const HASHTAG_SUGGESTIONS = [
@@ -59,6 +65,7 @@ interface UploadedMedia {
   url: string;
   assetId?: string;
 }
+const wait=(milliseconds:number)=>new Promise(resolve=>setTimeout(resolve,milliseconds));
 
 export async function registerExclusiveContent(opts: {
   title: string;
@@ -232,7 +239,6 @@ export default function UploadScreen() {
       allowsMultipleSelection: true,
       selectionLimit: 10,
       quality: 0.85,
-      base64: true,
     });
     if (!result.canceled && result.assets.length > 0) {
       const items: SelectedMedia[] = result.assets.map(a => ({
@@ -372,12 +378,42 @@ export default function UploadScreen() {
     } catch (error) {
       const uploadedAssetIds = completedUploads
         .flatMap(item => item?.assetId ? [item.assetId] : []);
+      const safe=getSafeMediaError(error,failureStage,{
+        operationId:createMediaOperationId('carousel'),
+      });
+      let reconciledPostId:string|null=null;
+      if(uploadedAssetIds.length===carouselMedias.length) {
+        for(const delayMs of [250,750,1500]) {
+          await wait(delayMs);
+          reconciledPostId=await findCommonLinkedEntityForAssets(uploadedAssetIds,'video_post').catch(()=>null);
+          if(reconciledPostId) break;
+        }
+      }
+      if(reconciledPostId) {
+        completedUploads.fill(undefined);
+        setCaption('');setCarouselMedias([]);setSelectedMusic(null);
+        console.warn('[Upload] carousel publish reconciled',{
+          operationId:safe.operationId,
+          stage:'CAROUSEL_RECONCILED_AFTER_AMBIGUOUS_RESPONSE',
+          code:safe.code,reconciled:true,
+          uploadedCount:uploadedAssetIds.length,selectedCount:carouselMedias.length,
+        });
+        showAlert(
+          'Carrusel publicado!',
+          `${carouselMedias.length} fotos publicadas`,
+          [{text:'Ver Feed',onPress:()=>router.push('/(tabs)')},{text:'Crear otro'}],
+        );
+        setIsUploading(false);setUploadProgress('');
+        return;
+      }
       console.warn('[Upload] carousel publish failed', {
-        stage: failureStage,
-        code: error instanceof Error ? error.message : 'unknown',
+        operationId:safe.operationId,stage:safe.stage,code:safe.code,
+        message:safe.message,details:safe.details,hint:safe.hint,
+        reconciled:false,uploadedCount:uploadedAssetIds.length,
+        selectedCount:carouselMedias.length,
       });
       await Promise.all(uploadedAssetIds.map(assetId => deleteMediaAsset(assetId).catch(() => {})));
-      showAlert('Error', 'No se pudo publicar el carrusel.');
+      showAlert('Error',`No se pudo publicar el carrusel.\nCódigo: ${safe.stage}/${safe.code}`);
     }
     setIsUploading(false); setUploadProgress('');
   }, [carouselMedias, caption, user, uploadMediaToStorage, addVideo, router, showAlert]);
