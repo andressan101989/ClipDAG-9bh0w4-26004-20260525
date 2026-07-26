@@ -29,8 +29,20 @@ export async function directPostOnce({fetcher,file,uploadUrl,signal}) {
   return {calls:1,formData};
 }
 
-const transient=error=>[408,425,429,500,502,503,504].includes(error?.status)||
-  error?.status===undefined&&/(network|fetch|timeout|connection)/i.test(error?.message??'');
+export function normalizeFunctionError(source,body={}) {
+  const normalized=source?.name==='FunctionsFetchError'?'functions_fetch_error'
+    :source?.name==='FunctionsRelayError'?'functions_relay_error':undefined;
+  return {code:body.error??body.code??normalized??source?.code,
+    message:body.error??body.code??source?.message??normalized,
+    status:source?.status};
+}
+export const transient=error=>{
+  if(['aborted','invalid_stream_playback_response','stream_ready_invariant_failed'].includes(error?.code)) return false;
+  if([400,401,403,404,409,410].includes(error?.status)) return false;
+  if(['functions_fetch_error','functions_relay_error'].includes(error?.code)) return true;
+  return [408,425,429,500,502,503,504].includes(error?.status)||
+    error?.status===undefined&&/(failed to send (?:a )?request to the edge function|network request failed|failed to fetch|connection reset|timeout|temporar)/i.test(error?.message??'');
+};
 export async function pollUntilReady({get,sleep,now=()=>Date.now(),timeoutMs=480_000,intervalMs=5_000,maxErrors=3}) {
   const deadline=now()+timeoutMs;
   let errors=0;

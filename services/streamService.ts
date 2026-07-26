@@ -92,7 +92,10 @@ async function functionError(error:unknown,dataError?:unknown):Promise<unknown> 
     responseBody=await readable?.json?.();
   } catch { /* Optional sanitized function response. */ }
   const body=responseBody&&typeof responseBody==='object'?responseBody as Record<string,unknown>:{};
-  return {name:source.name,message:body.error??body.code??source.message,code:body.error??body.code??source.code,
+  const normalizedName=source.name==='FunctionsFetchError'?'functions_fetch_error'
+    :source.name==='FunctionsRelayError'?'functions_relay_error':undefined;
+  const code=body.error??body.code??normalizedName??source.code;
+  return {name:source.name,message:body.error??body.code??source.message??code,code,
     status:source.context?.status??source.status};
 }
 
@@ -322,9 +325,11 @@ export function isTransientStreamError(error:unknown):boolean {
   if(safe.code==='aborted'||safe.code==='invalid_stream_playback_response'
     ||safe.code==='stream_ready_invariant_failed') return false;
   if([400,401,403,404,409,410].includes(safe.httpStatus??0)) return false;
+  if(safe.code==='functions_fetch_error'||safe.code==='functions_relay_error') return true;
   if([408,425,429].includes(safe.httpStatus??0)||(safe.httpStatus??0)>=500) return true;
   const text=`${safe.code} ${safe.message}`.toLowerCase();
-  return safe.httpStatus===undefined&&/(network|fetch|timeout|timed out|connection|temporar)/.test(text);
+  return safe.httpStatus===undefined
+    &&/(failed to send (?:a )?request to the edge function|network request failed|failed to fetch|connection reset|timeout|timed out|temporar)/.test(text);
 }
 function deterministicPublishError(error:unknown):boolean {
   return ['22023','42501','23505'].includes(getSafeStreamError(error,'STREAM_PUBLISH').code);

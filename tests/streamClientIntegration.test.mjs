@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
   MAX_DURATION_MS,MAX_SIZE,createThenPost,directPostOnce,isHls,isVideo,lookupPublished,pollUntilReady,
-  publishRecovery,reconcileThree,singleFlight,sourceFor,validDuration,validMime,validSize,
+  normalizeFunctionError,publishRecovery,reconcileThree,singleFlight,sourceFor,transient,
+  validDuration,validMime,validSize,
   validateContractWithCleanup,
 } from './helpers/streamClientHarness.mjs';
 
@@ -29,6 +30,23 @@ assert.equal(isVideo('https://legacy.test/videos/a.mp4'),true);
 assert.equal(isVideo('https://example.test/a.jpg'),false);
 assert.deepEqual(sourceFor('https://example.test/a.m3u8'),{uri:'https://example.test/a.m3u8',contentType:'hls'});
 assert.equal(sourceFor('https://example.test/a.mp4'),'https://example.test/a.mp4');
+assert.deepEqual(
+  normalizeFunctionError({name:'FunctionsFetchError',message:'Failed to send a request to the Edge Function'}),
+  {code:'functions_fetch_error',message:'Failed to send a request to the Edge Function',status:undefined},
+);
+assert.equal(normalizeFunctionError({name:'FunctionsRelayError'}).code,'functions_relay_error');
+assert.equal(normalizeFunctionError(
+  {name:'FunctionsFetchError',code:'fallback'},{error:'specific_backend_error'},
+).code,'specific_backend_error');
+assert.equal(transient({code:'functions_fetch_error'}),true);
+assert.equal(transient({code:'functions_relay_error'}),true);
+assert.equal(transient({message:'Failed to send a request to the Edge Function'}),true);
+assert.equal(transient({message:'Network request failed'}),true);
+assert.equal(transient({status:503}),true);
+assert.equal(transient({status:429}),true);
+for(const status of [401,403,404,410]) assert.equal(transient({status}),false);
+assert.equal(transient({code:'aborted'}),false);
+assert.equal(transient({code:'stream_ready_invariant_failed'}),false);
 
 let postCalls=0;
 const uploaded=await directPostOnce({
@@ -89,6 +107,28 @@ await pollUntilReady({
     :{status:'ready',hlsUrl:'https://stream.test/video.m3u8'},
 });
 assert.equal(transientCalls,2);
+let fetchErrorPolls=0,fetchErrorClock=0;
+await pollUntilReady({
+  now:()=>fetchErrorClock,sleep:async()=>{fetchErrorClock+=5_000;},
+  get:async()=>++fetchErrorPolls===1
+    ?Promise.reject({code:'functions_fetch_error',message:'Failed to send a request to the Edge Function'})
+    :{status:'ready',hlsUrl:'https://stream.test/video.m3u8'},
+});
+assert.equal(fetchErrorPolls,2);
+let boundedPolls=0,boundedClock=0;
+await pollUntilReady({
+  now:()=>boundedClock,sleep:async()=>{boundedClock+=5_000;},
+  get:async()=>++boundedPolls<=3
+    ?Promise.reject({code:'functions_fetch_error',message:'temporary'})
+    :{status:'ready',hlsUrl:'https://stream.test/video.m3u8'},
+});
+assert.equal(boundedPolls,4);
+let exceededPolls=0,exceededClock=0;
+await assert.rejects(()=>pollUntilReady({
+  now:()=>exceededClock,sleep:async()=>{exceededClock+=5_000;},
+  get:async()=>{exceededPolls++;throw {code:'functions_fetch_error',message:'temporary'};},
+}),error=>error.code==='functions_fetch_error');
+assert.equal(exceededPolls,4);
 
 const session=async()=>({userId:'owner',error:null});
 assert.deepEqual(await lookupPublished({
@@ -178,6 +218,8 @@ assert.match(service,/invokeRpcWithSingleAuthRefresh/);
 assert.match(service,/findPublishedStreamPost/);
 assert.match(service,/state:'unknown'/);
 assert.match(service,/stream_publish_confirmation_pending/);
+assert.match(service,/FunctionsFetchError'\?'functions_fetch_error'/);
+assert.match(service,/FunctionsRelayError'\?'functions_relay_error'/);
 assert.match(service,/throwIfStreamAborted/);
 assert.match(service,/expiresAt>=Date\.now\(\)-300_000/);
 assert.match(service,/if\(assetId\) await deleteStreamVideo\(assetId\)\.catch/);
