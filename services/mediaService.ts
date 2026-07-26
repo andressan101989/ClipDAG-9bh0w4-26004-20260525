@@ -15,7 +15,7 @@ type ErrorLike={name?:unknown;message?:unknown;code?:unknown;details?:unknown;hi
 type FunctionErrorLike=ErrorLike&{context?:{status?:number;clone?:()=>{json?:()=>Promise<unknown>};json?:()=>Promise<unknown>}};
 export interface SafeMediaError {
   name:string;stage:string;code:string;message:string;details?:string;hint?:string;
-  mimeType?:string;httpStatus?:number;operationId:string;
+  mimeType?:string;httpStatus?:number;operationId:string;attempts?:number;
 }
 export interface NormalizedUploadMedia {
   uri:string;mimeType:string;fileName?:string;sizeBytes?:number;
@@ -45,12 +45,13 @@ function numericStatus(value:unknown):number|undefined {
 }
 export class MediaClientError extends Error {
   stage:string;code:string;details?:string;hint?:string;mimeType?:string;
-  httpStatus?:number;operationId:string;
+  httpStatus?:number;operationId:string;attempts?:number;
   constructor(input:Omit<SafeMediaError,'name'>) {
     super(input.message);
     this.name='MediaClientError';
     this.stage=input.stage;this.code=input.code;this.details=input.details;this.hint=input.hint;
     this.mimeType=input.mimeType;this.httpStatus=input.httpStatus;this.operationId=input.operationId;
+    this.attempts=input.attempts;
   }
 }
 export class MediaEntityRpcError extends MediaClientError {
@@ -78,6 +79,7 @@ export function getSafeMediaError(
     mimeType:existing?.mimeType??context.mimeType,
     httpStatus:existing?.httpStatus??numericStatus(source.httpStatus)??numericStatus(source.status),
     operationId:existing?.operationId??context.operationId??createMediaOperationId(),
+    attempts:existing?.attempts,
   };
 }
 function asMediaClientError(error:unknown,stage:MediaClientStage,context:Partial<SafeMediaError>):MediaClientError {
@@ -179,6 +181,86 @@ export function validateCommonLinkedEntityRows(
   return positions.some((position,index)=>position!==index)?null:[...entityIds][0];
 }
 
+const R2_PUT_RETRY_DELAYS_MS=[500,1500] as const;
+const R2_RETRYABLE_HTTP_STATUSES=new Set([408,425,429,500,502,503,504]);
+type R2PutResponse=Awaited<ReturnType<typeof expoFetch>>;
+type R2PutFetcher=(
+  url:string,
+  init:{method:'PUT';headers:{'Content-Type':string};body:File;signal:AbortSignal},
+)=>Promise<R2PutResponse>;
+interface R2PutRetryInput {
+  file:File;uploadUrl:string;headers:{'Content-Type':string};signal:AbortSignal;
+  operationId:string;mimeType:string;fetcher?:R2PutFetcher;
+  sleep?:(milliseconds:number)=>Promise<void>;
+}
+function classifyTransientTransportError(error:unknown):string|null {
+  const source=(error&&typeof error==='object'?error:{}) as ErrorLike;
+  if(source.name==='AbortError') return null;
+  const text=`${safeText(source.code)??''} ${safeText(source.message)??''}`.toLowerCase();
+  if(text.includes('network connection was lost')) return 'network_connection_lost';
+  if(text.includes('network request failed')) return 'network_request_failed';
+  if(text.includes('fetch failed')) return 'fetch_failed';
+  if(text.includes('connection reset')||text.includes('econnreset')) return 'connection_reset';
+  if(text.includes('etimedout')) return 'network_timeout';
+  if(text.includes('temporarily unavailable')) return 'temporarily_unavailable';
+  return null;
+}
+export async function putFileToR2WithRetry(input:R2PutRetryInput):Promise<R2PutResponse> {
+  const fetcher=input.fetcher??(expoFetch as R2PutFetcher);
+  const sleep=input.sleep??(milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds)));
+  const maxAttempts=R2_PUT_RETRY_DELAYS_MS.length+1;
+  for(let attempt=1;attempt<=maxAttempts;attempt++) {
+    if(input.signal.aborted) {
+      throw new MediaClientError({
+        stage:'MEDIA_R2_PUT',code:'aborted',message:'upload_aborted',
+        mimeType:input.mimeType,operationId:input.operationId,attempts:attempt-1,
+      });
+    }
+    let response:R2PutResponse|undefined;
+    let transientCode:string|null=null;
+    try {
+      response=await fetcher(input.uploadUrl,{
+        method:'PUT',headers:input.headers,body:input.file,signal:input.signal,
+      });
+      if(response.ok) return response;
+      if(R2_RETRYABLE_HTTP_STATUSES.has(response.status)) {
+        transientCode=`media_upload_http_${response.status}`;
+      } else {
+        throw new MediaClientError({
+          stage:'MEDIA_R2_PUT',code:`media_upload_http_${response.status}`,
+          message:'media_upload_failed',mimeType:input.mimeType,httpStatus:response.status,
+          operationId:input.operationId,attempts:attempt,
+        });
+      }
+    } catch(error) {
+      if(error instanceof MediaClientError) throw error;
+      transientCode=classifyTransientTransportError(error);
+      if(!transientCode) {
+        throw asMediaClientError(error,'MEDIA_R2_PUT',{
+          mimeType:input.mimeType,operationId:input.operationId,
+        });
+      }
+    }
+    const retrying=attempt<maxAttempts&&!input.signal.aborted;
+    console.warn('[MediaService] R2 PUT transient failure',{
+      operationId:input.operationId,attempt,maxAttempts,stage:'MEDIA_R2_PUT',
+      code:transientCode,httpStatus:response?.status,retrying,
+    });
+    if(!retrying) {
+      throw new MediaClientError({
+        stage:'MEDIA_R2_PUT',code:transientCode??'media_operation_failed',
+        message:'r2_put_retries_exhausted',mimeType:input.mimeType,
+        httpStatus:response?.status,operationId:input.operationId,attempts:attempt,
+      });
+    }
+    await sleep(R2_PUT_RETRY_DELAYS_MS[attempt-1]);
+  }
+  throw new MediaClientError({
+    stage:'MEDIA_R2_PUT',code:'media_operation_failed',message:'r2_put_retries_exhausted',
+    mimeType:input.mimeType,operationId:input.operationId,attempts:3,
+  });
+}
+
 export async function createMediaUpload(input:UploadMediaInput,operationId=createMediaOperationId()) {
   try {
     const file=new File(input.uri);
@@ -217,15 +299,9 @@ export async function uploadMediaFromUri(input:UploadMediaInput):Promise<MediaAs
     const normalized=await normalizeImageForR2Upload(input);
     const normalizedInput={...input,...normalized};
     const {file,contract}=await createMediaUpload(normalizedInput,operationId);
-    let response:Response;
-    try {
-      response=await expoFetch(contract.uploadUrl,{method:'PUT',headers:contract.headers,body:file,signal:controller.signal});
-    } catch(error) {
-      throw asMediaClientError(error,'MEDIA_R2_PUT',{mimeType:normalized.mimeType,operationId});
-    }
-    if(!response.ok) throw new MediaClientError({
-      stage:'MEDIA_R2_PUT',code:`media_upload_http_${response.status}`,
-      message:'media_upload_failed',mimeType:normalized.mimeType,httpStatus:response.status,operationId,
+    await putFileToR2WithRetry({
+      file,uploadUrl:contract.uploadUrl,headers:contract.headers,signal:controller.signal,
+      operationId,mimeType:normalized.mimeType,
     });
     return await finalizeMediaUpload(contract.assetId,operationId);
   } finally {
