@@ -109,7 +109,7 @@ export default function CreateProductScreen() {
       title: title.trim(),
       description: description.trim(),
       price: parseFloat(price),
-      currency: 'USD',
+      currency: 'BDAG',
       category,
       images,
       stock: isUnlimitedStock ? 9999 : Math.max(1, parseInt(stock) || 1),
@@ -260,9 +260,9 @@ export default function CreateProductScreen() {
             <Text style={styles.sectionTitle}>Precio y stock</Text>
             <View style={styles.rowFields}>
               <View style={[styles.formField, { flex: 1 }]}>
-                <Text style={styles.fieldLabel}>Precio (USD) *</Text>
+                <Text style={styles.fieldLabel}>Precio (BDAG) *</Text>
                 <View style={styles.priceInput}>
-                  <Text style={styles.priceDollar}>$</Text>
+                  <Text style={styles.priceDollar}>BDAG</Text>
                   <TextInput
                     style={[styles.fieldInput, { flex: 1, borderWidth: 0, paddingHorizontal: 0 }]}
                     value={price}

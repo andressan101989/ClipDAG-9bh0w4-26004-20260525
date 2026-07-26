@@ -14,6 +14,24 @@ interface StoriesContextType {
 
 export const StoriesContext = createContext<StoriesContextType | undefined>(undefined);
 
+type StoryProfile = {
+  id: string;
+  username: string;
+  avatar_url: string | null;
+};
+
+function firstStoryProfile(value: unknown): StoryProfile | null {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  if (!candidate || typeof candidate !== 'object') return null;
+  const profile = candidate as Partial<StoryProfile>;
+  if (typeof profile.id !== 'string' || typeof profile.username !== 'string') return null;
+  return {
+    id: profile.id,
+    username: profile.username,
+    avatar_url: typeof profile.avatar_url === 'string' ? profile.avatar_url : null,
+  };
+}
+
 // Generate a fallback avatar based on username
 function generateAvatarUrl(username: string): string {
   return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(username)}`;
@@ -83,7 +101,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       // Group by user
       const groupMap = new Map<string, StoryGroup>();
       for (const row of storiesData) {
-        const profile = row.user_profiles as { id: string; username: string; avatar_url: string } | null;
+        const profile = firstStoryProfile(row.user_profiles);
         const username = profile?.username || 'user';
         const avatar = profile?.avatar_url || generateAvatarUrl(username);
 
@@ -140,12 +158,20 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
         expires_at: expiresAt,
       }).select('id').single();
 
-      if (!error) {
+      if (!error && data?.id) {
         await loadStories();
         return data.id as string;
       } else {
-        console.log('Add story error:', error.message);
-        if (!allowOptimistic) return undefined;
+        console.warn('[StoriesContext] story persistence failed', {
+          stage: 'STORY_INSERT',
+          code: error?.code ?? 'missing_story_id',
+        });
+        if (!allowOptimistic) {
+          throw Object.assign(new Error('STORY_INSERT_FAILED'), {
+            stage: 'STORY_INSERT',
+            code: error?.code ?? 'missing_story_id',
+          });
+        }
         // Optimistic local add if DB fails
         const localStory: StoryItem = {
           id: `local_${Date.now()}`,
@@ -172,7 +198,9 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
           }, ...prev];
         });
       }
-    } catch (_) {}
+    } catch (error) {
+      if (!allowOptimistic) throw error;
+    }
     return undefined;
   }, [user, loadStories]);
 

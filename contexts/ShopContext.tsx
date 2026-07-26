@@ -14,7 +14,7 @@ export interface Product {
   title: string;
   description: string;
   price: number;
-  currency: string;
+  currency: 'BDAG';
   category: ProductCategory;
   images: string[];
   stock: number;
@@ -68,30 +68,13 @@ function mapProduct(row: Record<string, unknown>): Product {
     title: (row.title as string) || '',
     description: (row.description as string) || '',
     price: Number(row.price) || 0,
-    currency: (row.currency as string) || 'USD',
+    currency: 'BDAG',
     category: ((row.category as string) || 'other') as ProductCategory,
     images: (row.images as string[]) || [],
     stock: Number(row.stock) || 0,
     status: ((row.status as string) || 'active') as Product['status'],
     tags: (row.tags as string[]) || [],
     totalSales: Number(row.total_sales) || 0,
-    createdAt: (row.created_at as string) || new Date().toISOString(),
-  };
-}
-
-function mapOrder(row: Record<string, unknown>): Order {
-  const product = row.products as Record<string, unknown> | null;
-  return {
-    id: row.id as string,
-    buyerId: row.buyer_id as string,
-    sellerId: row.seller_id as string,
-    productId: row.product_id as string,
-    productTitle: (product?.title as string) || '',
-    productImage: ((product?.images as string[]) || [])[0] || '',
-    quantity: Number(row.quantity) || 1,
-    totalPrice: Number(row.total_price) || 0,
-    status: ((row.status as string) || 'pending') as Order['status'],
-    shippingAddress: (row.shipping_address as string) || '',
     createdAt: (row.created_at as string) || new Date().toISOString(),
   };
 }
@@ -151,18 +134,8 @@ export function ShopProvider({ children }: { children: ReactNode }) {
 
   // ── Fetch my orders ───────────────────────────────────────────────────────
   const fetchMyOrders = useCallback(async () => {
-    if (!user) return;
-    const supabase = supabaseRef.current;
-    if (!supabase || !supabaseOk.current) return;
-    try {
-      const { data, error } = await supabase
-        .from('orders')
-        .select(`*, products(title, images)`)
-        .or(`buyer_id.eq.${user.id},seller_id.eq.${user.id}`)
-        .order('created_at', { ascending: false });
-      if (!error && data) setMyOrders(data.map(r => mapOrder(r as Record<string, unknown>)));
-    } catch (_) {}
-  }, [user]);
+    setMyOrders([]);
+  }, []);
 
   // ── Fetch saved products ──────────────────────────────────────────────────
   const fetchSaved = useCallback(async () => {
@@ -195,7 +168,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
           title: data.title,
           description: data.description,
           price: data.price,
-          currency: data.currency || 'USD',
+          currency: 'BDAG',
           category: data.category,
           images: data.images,
           stock: data.stock,
@@ -258,59 +231,17 @@ export function ShopProvider({ children }: { children: ReactNode }) {
 
   // ── Place order ───────────────────────────────────────────────────────────
   const placeOrder = useCallback(async (
-    productId: string, quantity: number, shippingAddress: string
+    _productId: string, _quantity: number, _shippingAddress: string
   ): Promise<{ success: boolean; error?: string; orderId?: string }> => {
-    if (!user) return { success: false, error: 'No autenticado' };
-    const supabase = supabaseRef.current;
-    if (!supabase || !supabaseOk.current) return { success: false, error: 'Backend no disponible' };
-    const product = products.find(p => p.id === productId);
-    if (!product) return { success: false, error: 'Producto no encontrado' };
-    if (product.stock < quantity) return { success: false, error: 'Stock insuficiente' };
-    const totalPrice = product.price * quantity;
-    try {
-      const { data, error } = await supabase
-        .from('orders')
-        .insert({
-          buyer_id: user.id,
-          seller_id: product.sellerId,
-          product_id: productId,
-          quantity,
-          total_price: totalPrice,
-          shipping_address: shippingAddress,
-          status: 'pending',
-        })
-        .select()
-        .single();
-      if (error) return { success: false, error: error.message };
-      // Decrement stock
-      await supabase.from('products').update({ stock: product.stock - quantity, total_sales: product.totalSales + quantity }).eq('id', productId);
-      setProducts(prev => prev.map(p => p.id === productId ? { ...p, stock: p.stock - quantity } : p));
-      await fetchMyOrders();
-      return { success: true, orderId: data.id };
-    } catch (e: any) {
-      return { success: false, error: e.message };
-    }
-  }, [user, products, fetchMyOrders]);
+    return { success: false, error: 'Checkout BDAG pendiente de implementación' };
+  }, []);
 
   // ── Update order status ───────────────────────────────────────────────────
   const updateOrderStatus = useCallback(async (
-    orderId: string, status: Order['status']
+    _orderId: string, _status: Order['status']
   ): Promise<{ success: boolean; error?: string }> => {
-    if (!user) return { success: false, error: 'No autenticado' };
-    const supabase = supabaseRef.current;
-    if (!supabase || !supabaseOk.current) return { success: false, error: 'Backend no disponible' };
-    try {
-      const { error } = await supabase
-        .from('orders')
-        .update({ status, updated_at: new Date().toISOString() })
-        .eq('id', orderId);
-      if (error) return { success: false, error: error.message };
-      setMyOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
-      return { success: true };
-    } catch (e: any) {
-      return { success: false, error: e.message };
-    }
-  }, [user]);
+    return { success: false, error: 'Checkout BDAG pendiente de implementación' };
+  }, []);
 
   // ── Toggle save product ───────────────────────────────────────────────────
   const toggleSaveProduct = useCallback(async (productId: string) => {

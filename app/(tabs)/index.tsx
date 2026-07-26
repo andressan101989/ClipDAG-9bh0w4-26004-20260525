@@ -21,7 +21,7 @@ import { StoriesBar } from '@/components/feature/StoriesBar';
 import { StoryViewer } from '@/components/feature/StoryViewer';
 import { Colors, FontWeight } from '@/constants/theme';
 import { PostCardSkeleton, FadeIn } from '@/components/ui/SkeletonLoader';
-import { base64ToUint8Array } from '@/contexts/FeedContext';
+import { uploadFileFromUri } from '@/contexts/FeedContext';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Audio } from 'expo-av';
 import { useScrollToTop } from '@react-navigation/native';
@@ -116,6 +116,7 @@ export default function FeedScreen() {
     const mimeType = asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg');
     let uploadedAssetId: string | undefined;
     let persistedStoryId: string | undefined;
+    let failureStage = 'STORY_UPLOAD';
 
     try {
       if (!isVideo) {
@@ -129,24 +130,33 @@ export default function FeedScreen() {
         });
         if (!uploaded.url?.startsWith('https://')) throw new Error('R2 did not return a public URL');
         uploadedAssetId = uploaded.assetId;
+        failureStage = 'STORY_INSERT';
         persistedStoryId = await addStory(uploaded.url, 'photo', false);
         if (!persistedStoryId) throw new Error('Story was not persisted');
+        failureStage = 'STORY_LINK';
         await linkMediaAsset(uploaded.assetId, 'story', persistedStoryId, 'media');
         uploadedAssetId = undefined;
         showAlert('Historia publicada!', 'Tu historia estará visible por 24 horas');
         return;
       }
-      if (asset.base64) {
-        const bytes = base64ToUint8Array(asset.base64);
-        const { error } = await supabase.storage.from(bucket).upload(fileName, bytes, { contentType: mimeType, upsert: false });
-        if (error) { showAlert('Error', 'No se pudo subir la historia'); return; }
-        const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(fileName);
-        await addStory(publicUrl, isVideo ? 'video' : 'photo');
-      } else {
-        await addStory(asset.uri, isVideo ? 'video' : 'photo');
-      }
+      const publicUrl = await uploadFileFromUri(
+        supabase,
+        asset.uri,
+        bucket,
+        fileName,
+        mimeType,
+        asset.base64,
+      );
+      if (!publicUrl?.startsWith('https://')) throw new Error('STORY_UPLOAD_FAILED');
+      failureStage = 'STORY_INSERT';
+      persistedStoryId = await addStory(publicUrl, 'video', false);
+      if (!persistedStoryId) throw new Error('STORY_INSERT_FAILED');
       showAlert('Historia publicada!', 'Tu historia estará visible por 24 horas');
-    } catch (_) {
+    } catch (error) {
+      console.warn('[Feed] story publish failed', {
+        stage: failureStage,
+        code: error instanceof Error ? error.message : 'unknown',
+      });
       if (persistedStoryId && uploadedAssetId) {
         await supabase.from('stories').delete().eq('id', persistedStoryId).eq('user_id', user.id);
       }

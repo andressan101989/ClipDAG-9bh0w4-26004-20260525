@@ -64,10 +64,10 @@ function QuickAction({
 
 // ── Settings row item ──────────────────────────────────────────────────────────
 function SettingsItem({
-  icon, label, sublabel, gradient, onPress, danger, rightText,
+  icon, label, sublabel, gradient, onPress, danger, rightText, badge,
 }: {
   icon: string; label: string; sublabel?: string; gradient: string[];
-  onPress: () => void; danger?: boolean; rightText?: string;
+  onPress: () => void; danger?: boolean; rightText?: string; badge?: number;
 }) {
   return (
     <Pressable
@@ -81,7 +81,9 @@ function SettingsItem({
         <Text style={[styles.settingsItemLabel, danger && styles.settingsItemDanger]}>{label}</Text>
         {sublabel ? <Text style={styles.settingsItemSub}>{sublabel}</Text> : null}
       </View>
-      {rightText ? (
+      {badge && badge > 0 ? (
+        <Text style={styles.settingsItemRight}>{badge > 99 ? '99+' : badge}</Text>
+      ) : rightText ? (
         <Text style={styles.settingsItemRight}>{rightText}</Text>
       ) : (
         <MaterialCommunityIcons name="chevron-right" size={18} color={danger ? Colors.error : Colors.textSubtle} />

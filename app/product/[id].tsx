@@ -137,8 +137,7 @@ export default function ProductScreen() {
           </View>
 
           <View style={styles.priceRow}>
-            <Text style={styles.price}>${product.price.toFixed(2)}</Text>
-            <Text style={styles.currency}>{product.currency}</Text>
+            <Text style={styles.price}>{product.price.toFixed(2)} BDAG</Text>
             {product.totalSales > 0 ? (
               <View style={styles.salesBadge}>
                 <MaterialIcons name="trending-up" size={12} color={Colors.accent} />
@@ -219,11 +218,11 @@ export default function ProductScreen() {
             style={styles.buyBtn}
             onPress={() => {
               if (!user) { showAlert('Inicia sesión', 'Necesitas una cuenta para comprar'); return; }
-              setOrderModalVisible(true);
+              showAlert('Checkout no disponible', 'Checkout BDAG pendiente de implementación');
             }}
           >
-            <Text style={styles.buyBtnPrice}>${totalPrice.toFixed(2)}</Text>
-            <Text style={styles.buyBtnText}>Comprar ahora</Text>
+            <Text style={styles.buyBtnPrice}>{totalPrice.toFixed(2)} BDAG</Text>
+            <Text style={styles.buyBtnText}>Checkout próximamente</Text>
           </Pressable>
         </View>
       ) : isOwner ? (
@@ -256,7 +255,7 @@ export default function ProductScreen() {
               <View style={{ flex: 1, gap: 4 }}>
                 <Text style={styles.orderProductTitle} numberOfLines={2}>{product.title}</Text>
                 <Text style={styles.orderQty}>Cantidad: {quantity}</Text>
-                <Text style={styles.orderTotal}>Total: ${totalPrice.toFixed(2)} {product.currency}</Text>
+                <Text style={styles.orderTotal}>Total: {totalPrice.toFixed(2)} BDAG</Text>
               </View>
             </View>
 
@@ -282,7 +281,7 @@ export default function ProductScreen() {
             )}
 
             <CyberButton
-              label={isLoading ? 'Procesando...' : `Confirmar pedido • $${totalPrice.toFixed(2)}`}
+              label={isLoading ? 'Procesando...' : `Confirmar pedido · ${totalPrice.toFixed(2)} BDAG`}
               onPress={handleOrder}
               loading={isLoading}
               size="lg"
