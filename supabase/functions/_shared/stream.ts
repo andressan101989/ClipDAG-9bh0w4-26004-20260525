@@ -61,16 +61,30 @@ export async function streamFetch(path:string,init:RequestInit={}):Promise<Recor
   return payload;
 }
 
-function numberOrNull(value:unknown):number|null {
+export function durationOrNull(value:unknown):number|null {
+  if(value===null||value===undefined||value==='') return null;
   const number=Number(value);
-  return Number.isFinite(number)?number:null;
+  return Number.isFinite(number)&&number>0?number:null;
+}
+export function positiveDimensionOrNull(value:unknown):number|null {
+  if(value===null||value===undefined||value==='') return null;
+  const number=Number(value);
+  return Number.isInteger(number)&&number>0?number:null;
+}
+export function progressOrNull(value:unknown):number|null {
+  if(value===null||value===undefined||value==='') return null;
+  const number=Number(value);
+  return Number.isFinite(number)&&number>=0&&number<=100?number:null;
 }
 function httpsOrNull(value:unknown):string|null {
   return typeof value==='string'&&value.startsWith('https://')?value:null;
 }
 function dimensions(result:Record<string,unknown>):{width:number|null;height:number|null} {
   const input=(result.input&&typeof result.input==='object'?result.input:{}) as Record<string,unknown>;
-  return {width:numberOrNull(result.width??input.width),height:numberOrNull(result.height??input.height)};
+  return {
+    width:positiveDimensionOrNull(result.width??input.width),
+    height:positiveDimensionOrNull(result.height??input.height),
+  };
 }
 export function fallbackPlaybackUrls(uid:string,customerCode:string) {
   const code=customerCode.replace(/^customer-/i,'');
@@ -97,7 +111,7 @@ export function reconcileStreamVideo(
   const playback=(result.playback&&typeof result.playback==='object'?result.playback:{}) as Record<string,unknown>;
   const thumbnail=httpsOrNull(result.thumbnail);
   const size=dimensions(result);
-  const duration=numberOrNull(result.duration);
+  const duration=durationOrNull(result.duration);
   const hls=httpsOrNull(playback.hls)??fallback.hls;
   const readyInvariantValid=
     uid.length>0&&uid===expectedUid&&typeof hls==='string'&&hls.startsWith('https://')&&
@@ -108,7 +122,7 @@ export function reconcileStreamVideo(
   return {
     status:internalStatus,
     provider_status:state||'unknown',
-    provider_progress:numberOrNull(status.pctComplete??result.percentComplete),
+    provider_progress:progressOrNull(status.pctComplete??result.percentComplete),
     duration_seconds:duration,
     width:size.width,
     height:size.height,

@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
   MAX_DURATION,MAX_SIZE,compensateCreatedUid,createDirectUploadOnce,deleteLifecycle,
-  deleteSucceeded,fallback,mapVideo,parseSignature,safeError,sign,timingSafeHex,
+  deleteSucceeded,durationOrNull,fallback,mapVideo,parseSignature,positiveDimensionOrNull,
+  progressOrNull,safeError,sign,timingSafeHex,
   validMime,validSize,verify,webhookLifecycle,webhookVideo,
 } from './helpers/streamBackendHarness.mjs';
 
@@ -23,12 +24,32 @@ assert.equal(validMime('video/avi'),false);
 assert.equal(validSize(MAX_SIZE),true);
 assert.equal(validSize(MAX_SIZE+1),false);
 assert.equal(MAX_DURATION,60);
+assert.equal(durationOrNull(-1),null);
+assert.equal(durationOrNull(0),null);
+assert.equal(durationOrNull(null),null);
+assert.equal(durationOrNull(30),30);
+assert.equal(positiveDimensionOrNull(-1),null);
+assert.equal(positiveDimensionOrNull(0),null);
+assert.equal(positiveDimensionOrNull(1080),1080);
+assert.equal(positiveDimensionOrNull(1920),1920);
+assert.equal(progressOrNull(0),0);
+assert.equal(progressOrNull('45'),45);
+assert.equal(progressOrNull(undefined),null);
 assert.equal(mapVideo({status:{state:'pendingupload'}}).status,'uploading');
 assert.equal(mapVideo({status:{state:'inprogress'}}).status,'processing');
+assert.deepEqual(
+  {
+    width:mapVideo({status:{state:'inprogress'},input:{width:-1,height:-1}}).width,
+    height:mapVideo({status:{state:'inprogress'},input:{width:-1,height:-1}}).height,
+  },
+  {width:null,height:null},
+);
+assert.equal(mapVideo({status:{state:'inprogress',pctComplete:0}}).provider_progress,0);
 assert.equal(mapVideo({status:{state:'ready'},readyToStream:false}).status,'processing');
 assert.equal(mapVideo({uid:'uid',duration:30,status:{state:'ready'},readyToStream:true}).status,'ready');
 assert.equal(mapVideo({uid:'uid',duration:30,status:{state:'ready'},readyToStream:true},'demo','other').status,'failed');
 assert.equal(mapVideo({uid:'uid',duration:0,status:{state:'ready'},readyToStream:true}).status,'failed');
+assert.equal(mapVideo({uid:'uid',duration:-1,status:{state:'ready'},readyToStream:true}).error_code,'stream_ready_invariant_failed');
 assert.equal(mapVideo({uid:'uid',duration:61,status:{state:'ready'},readyToStream:true}).status,'failed');
 assert.equal(mapVideo({status:{state:'error'}}).status,'failed');
 assert.match(fallback('uid','abc').hls,/customer-abc/);

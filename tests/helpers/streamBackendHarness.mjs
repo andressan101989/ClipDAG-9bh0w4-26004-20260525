@@ -6,6 +6,21 @@ export const MAX_DURATION=60;
 export const MIMES=new Set(['video/mp4','video/quicktime','video/webm']);
 export const validMime=value=>MIMES.has(String(value??'').trim().toLowerCase());
 export const validSize=value=>Number.isSafeInteger(Number(value))&&Number(value)>0&&Number(value)<=MAX_SIZE;
+export const durationOrNull=value=>{
+  if(value===null||value===undefined||value==='') return null;
+  const number=Number(value);
+  return Number.isFinite(number)&&number>0?number:null;
+};
+export const positiveDimensionOrNull=value=>{
+  if(value===null||value===undefined||value==='') return null;
+  const number=Number(value);
+  return Number.isInteger(number)&&number>0?number:null;
+};
+export const progressOrNull=value=>{
+  if(value===null||value===undefined||value==='') return null;
+  const number=Number(value);
+  return Number.isFinite(number)&&number>=0&&number<=100?number:null;
+};
 export const fallback=(uid,code)=>{
   const normalized=code.replace(/^customer-/i,'');
   const root=`https://customer-${normalized}.cloudflarestream.com/${uid}`;
@@ -16,14 +31,18 @@ export function mapVideo(result,code='demo',expectedUid=result.uid,maxDuration=6
   let status=state==='error'?'failed':state==='pendingupload'?'uploading':
     state==='ready'&&result.readyToStream===true?'ready':'processing';
   const uid=typeof result.uid==='string'?result.uid.trim():'';
-  const duration=Number(result.duration);
+  const duration=durationOrNull(result.duration);
+  const width=positiveDimensionOrNull(result.width??result.input?.width);
+  const height=positiveDimensionOrNull(result.height??result.input?.height);
+  const progress=progressOrNull(result.status?.pctComplete??result.percentComplete);
   const urls=fallback(uid||'invalid',code);
   const hls=result.playback?.hls??urls.hls;
   const invariantValid=uid&&uid===expectedUid&&typeof hls==='string'&&hls.startsWith('https://')&&
-    Number.isFinite(duration)&&duration>0&&duration<=maxDuration;
+    duration!==null&&duration<=maxDuration;
   if(status==='ready'&&!invariantValid) status='failed';
   const ready=status==='ready';
-  return {status,hls_url:ready?(result.playback?.hls??urls.hls):null,
+  return {status,duration_seconds:duration,width,height,provider_progress:progress,
+    hls_url:ready?(result.playback?.hls??urls.hls):null,
     dash_url:ready?(result.playback?.dash??urls.dash):null,
     thumbnail_url:ready?(result.thumbnail??urls.thumbnail):null,
     error_code:state==='ready'&&result.readyToStream===true&&!invariantValid?'stream_ready_invariant_failed':null};
