@@ -30,6 +30,11 @@ import {
   invokeRpcWithSingleAuthRefresh,
   MediaEntityRpcError,
 } from '@/services/mediaService';
+import {
+  deleteStreamVideo,
+  extractNullableStreamRpcUuid,
+  getSafeStreamError,
+} from '@/services/streamService';
 
 export interface VideoWithMeta extends Video {
   editedAt?:   string;
@@ -88,7 +93,7 @@ interface FeedContextType {
 export const FeedContext = createContext<FeedContextType | undefined>(undefined);
 
 const PLAYABLE_URL_RE = /^(https?:\/\/|file:\/\/)/i;
-const VIDEO_PATH_RE = /(^|\/)(videos|gtv-videos-bucket)(\/|$)|\.(mp4|mov|avi|mkv|webm|m4v)(\?|$)/i;
+const VIDEO_PATH_RE = /(^|\/)(videos|gtv-videos-bucket)(\/|$)|\.(mp4|mov|avi|mkv|webm|m4v|m3u8|mpd)(\?|$)|cloudflarestream\.com|videodelivery\.net/i;
 
 function stripStorageBucketPrefix(path: string, bucket: string): string {
   const cleanPath = path.trim().replace(/^\/+/, '');
@@ -818,6 +823,24 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     }
     if (!supabase || !supabaseOk.current) return { success: false, error: 'Backend no disponible' };
     try {
+      const {data:streamAsset,error:streamRpcError}=await supabase.rpc('delete_stream_video_post',{
+        p_video_id:videoId,
+      });
+      if(streamRpcError) return {success:false,error:streamRpcError.message};
+      const streamAssetId=extractNullableStreamRpcUuid(streamAsset,'delete_stream_video_post');
+      if(streamAssetId) {
+        setVideos(prev=>prev.filter(v=>v.id!==videoId));
+        setLikedVideos(prev=>{const n=new Set(prev);n.delete(videoId);return n;});
+        setSavedVideos(prev=>{const n=new Set(prev);n.delete(videoId);return n;});
+        setComments(prev=>{const n={...prev};delete n[videoId];return n;});
+        await deleteStreamVideo(streamAssetId).catch(error=>{
+          const safe=getSafeStreamError(error,'STREAM_DELETE');
+          console.warn('[FeedContext] Stream provider delete deferred',{
+            operationId:safe.operationId,stage:safe.stage,code:safe.code,
+          });
+        });
+        return {success:true};
+      }
       const { data: linkedAssets } = await supabase
         .from('media_asset_links')
         .select('asset_id')

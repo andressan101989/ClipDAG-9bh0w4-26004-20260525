@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Dimensions, Animated, Share,
   FlatList, NativeScrollEvent, NativeSyntheticEvent, Modal,
@@ -53,16 +53,31 @@ function releasePlayerLock(player: ManagedPlayer): void {
 }
 
 // ── Media type detection ──────────────────────────────────────────────────────
-function isVideoMedia(url: string): boolean {
+export function isHlsMedia(url: string): boolean {
+  if(!url) return false;
+  const clean=url.split('?')[0].toLowerCase();
+  return clean.endsWith('.m3u8')||clean.includes('/manifest/video.m3u8')
+    ||(clean.includes('cloudflarestream.com')&&clean.includes('m3u8'))
+    ||(clean.includes('videodelivery.net')&&clean.includes('m3u8'));
+}
+
+export function isVideoMedia(url: string): boolean {
   if (!url) return false;
   const clean = url.split('?')[0].toLowerCase();
   if (
     clean.includes('gtv-videos-bucket') ||
     clean.includes('commondatastorage.googleapis.com') ||
-    clean.includes('/videos/')
+    clean.includes('/videos/') ||
+    clean.includes('cloudflarestream.com') ||
+    clean.includes('videodelivery.net')
   ) return true;
   const ext = clean.split('.').pop() || '';
-  return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'quicktime', 'm4v'].includes(ext);
+  return ['mp4','mov','avi','mkv','webm','quicktime','m4v','m3u8','mpd'].includes(ext);
+}
+
+export function toExpoVideoSource(url:string):string|{uri:string;contentType:'hls'} {
+  if(!isValidUrl(url)) return '';
+  return isHlsMedia(url)?{uri:url,contentType:'hls'}:url;
 }
 
 function isValidUrl(url: string): boolean {
@@ -114,8 +129,9 @@ interface CarouselSlideProps {
 const CarouselSlide = memo(function CarouselSlide({ uri, width, height }: CarouselSlideProps) {
   const isVideo = isVideoMedia(uri);
   const [error, setError] = useState(false);
+  const videoSource=useMemo(()=>isVideo?toExpoVideoSource(uri):'',[isVideo,uri]);
 
-  const player = _useVideoPlayer(isVideo && isValidUrl(uri) ? uri : '', p => {
+  const player = _useVideoPlayer(videoSource, (p:any) => {
     p.loop = true;
     p.muted = true;
   });
@@ -368,9 +384,13 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
   const hasValidVideo = isVideo && isValidUrl(effectiveVideoUrl);
   const [thumbError, setThumbError] = useState(false);
   const hasValidThumb = isVideo && isValidUrl(thumbUrl) && !thumbError && thumbUrl !== effectiveVideoUrl;
+  const videoSource=useMemo(
+    ()=>hasValidVideo?toExpoVideoSource(effectiveVideoUrl):'',
+    [hasValidVideo,effectiveVideoUrl],
+  );
 
   // ── Video player ─────────────────────────────────────────────────────────
-  const player = _useVideoPlayer(hasValidVideo ? effectiveVideoUrl : '', p => {
+  const player = _useVideoPlayer(videoSource, (p:any) => {
     p.loop = true;
     p.muted = true;
   });
@@ -452,7 +472,7 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
   }, [SCREEN_W, mediaUrls?.length]);
 
   const renderSlide = useCallback(({ item }: { item: string }) => (
-    <Pressable onPress={handleMediaTap} activeOpacity={1}>
+    <Pressable onPress={handleMediaTap}>
       <CarouselSlide uri={item} width={SCREEN_W} height={mediaHeight} isActive={false} />
     </Pressable>
   ), [SCREEN_W, mediaHeight, handleMediaTap]);
@@ -536,7 +556,7 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
             {heartOverlay}
           </>
         ) : (
-          <Pressable style={StyleSheet.absoluteFillObject} onPress={handleMediaTap} activeOpacity={1}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={handleMediaTap}>
             {/* Poster frame for videos */}
             {hasValidThumb ? (
               <Image

@@ -9,7 +9,7 @@
  * by useLiveStream (SessionOrchestrator, ResourceManager, GPUManager, etc.).
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, Pressable, StyleSheet, TextInput,
   ScrollView, KeyboardAvoidingView, Platform,
@@ -42,6 +42,14 @@ import {
   getSafeMediaError,
   uploadMediaFromUri,
 } from '@/services/mediaService';
+import {
+  getSafeStreamError,
+  uploadAndPublishStreamVideo,
+  validateStreamVideoDuration,
+  validateStreamVideoMime,
+  validateStreamVideoSize,
+  type StreamUploadStage,
+} from '@/services/streamService';
 
 // ── Hashtag suggestions ────────────────────────────────────────────────────
 const HASHTAG_SUGGESTIONS = [
@@ -58,6 +66,11 @@ interface SelectedMedia {
   base64?: string | null;
   type: 'image' | 'video';
   mimeType?: string;
+  fileName?: string | null;
+  fileSize?: number | null;
+  durationMs?: number | null;
+  width?: number;
+  height?: number;
   filterId?: string;
 }
 
@@ -117,7 +130,7 @@ async function mapWithConcurrency<T, R>(
 export default function UploadScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { addVideo } = useFeed();
+  const { addVideo, refreshFeed } = useFeed();
   const { showAlert } = useAlert();
   const router = useRouter();
   const supabase = getSupabaseClient();
@@ -128,6 +141,7 @@ export default function UploadScreen() {
   const [musicPickerVisible, setMusicPickerVisible] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
+  const activeUploadControllerRef = useRef<AbortController | null>(null);
 
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
   const [carouselMedias, setCarouselMedias] = useState<SelectedMedia[]>([]);
@@ -171,12 +185,20 @@ export default function UploadScreen() {
   }, [isStreaming, endStream]);
 
   // ── Camera capture ────────────────────────────────────────────────────────
-  const handleCameraCapture = useCallback((uri: string, type: 'photo' | 'video', filterId: string) => {
+  useEffect(()=>()=>activeUploadControllerRef.current?.abort(),[]);
+
+  const handleCameraCapture = useCallback((
+    uri: string,
+    type: 'photo' | 'video',
+    filterId: string,
+    metadata:Partial<SelectedMedia>={},
+  ) => {
     const mimeType = type === 'video' ? 'video/mp4' : 'image/jpeg';
     if (mode === 'carousel' && type === 'photo') {
       setCarouselMedias(prev => [...prev, { uri, type: 'image', mimeType, filterId }]);
     } else {
-      setSelectedMedia({ uri, type: type === 'photo' ? 'image' : 'video', mimeType, filterId });
+      setSelectedMedia({ ...metadata, uri, type: type === 'photo' ? 'image' : 'video',
+        mimeType:metadata.mimeType||mimeType, filterId });
       if (type === 'video') setMode('video');
       else setMode('photo');
     }
@@ -195,11 +217,14 @@ export default function UploadScreen() {
       allowsEditing: captureMode === 'photo',
       quality: 0.85,
       videoMaxDuration: 60,
-      base64: true,
+      base64: captureMode === 'photo',
     });
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
-      handleCameraCapture(asset.uri, captureMode, 'normal');
+      handleCameraCapture(asset.uri, captureMode, 'normal',{
+        base64:captureMode==='photo'?asset.base64:null,fileName:asset.fileName,fileSize:asset.fileSize,
+        durationMs:asset.duration,width:asset.width,height:asset.height,mimeType:asset.mimeType||undefined,
+      });
     }
   }, [showAlert, handleCameraCapture]);
 
@@ -219,12 +244,15 @@ export default function UploadScreen() {
       allowsEditing: isPhoto,
       quality: 0.85,
       videoMaxDuration: 60,
-      base64: true,
+      base64: isPhoto,
     });
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
       const mimeType = asset.mimeType || detectMimeType(asset.uri, asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
-      setSelectedMedia({ uri: asset.uri, base64: asset.base64, type: asset.type === 'video' ? 'video' : 'image', mimeType });
+      setSelectedMedia({
+        uri:asset.uri,base64:isPhoto?asset.base64:null,type:asset.type==='video'?'video':'image',mimeType,
+        fileName:asset.fileName,fileSize:asset.fileSize,durationMs:asset.duration,width:asset.width,height:asset.height,
+      });
     }
   }, [mode, showAlert]);
 
@@ -287,15 +315,53 @@ export default function UploadScreen() {
   }, [user, supabase, mode]);
 
   const handleUploadSingle = useCallback(async () => {
+    if(isUploading) return;
     if (!selectedMedia) { showAlert('Sin contenido', `Selecciona ${mode === 'photo' ? 'una foto' : 'un video'}`); return; }
     if (!caption.trim()) { showAlert('Sin descripción', 'Agrega una descripción'); return; }
     if (!user) return;
 
     setIsUploading(true);
-    setUploadProgress('Subiendo media...');
+    setUploadProgress(selectedMedia.type==='video'?'Preparando video...':'Subiendo media...');
     let uploadedAssetId: string | undefined;
     let postId: string | undefined;
     try {
+      if(selectedMedia.type==='video') {
+        const mimeType=(selectedMedia.mimeType||detectMimeType(selectedMedia.uri,'video/mp4')).toLowerCase();
+        if(!validateStreamVideoMime(mimeType)) {
+          showAlert('Formato no compatible','Usa un video MP4, MOV o WebM.');
+          return;
+        }
+        if(selectedMedia.fileSize!=null&&!validateStreamVideoSize(selectedMedia.fileSize)) {
+          showAlert('Video demasiado grande','El video no puede superar 200 MB.');
+          return;
+        }
+        if(!validateStreamVideoDuration(selectedMedia.durationMs)) {
+          showAlert('Video demasiado largo','El video no puede superar 60 segundos.');
+          return;
+        }
+        const controller=new AbortController();
+        activeUploadControllerRef.current=controller;
+        const musicName=selectedMusic?`${selectedMusic.title} - ${selectedMusic.artist}`:'Sin musica';
+        const stageMessage=(stage:StreamUploadStage,progress?:number|null)=>{
+          if(stage==='STREAM_INPUT'||stage==='STREAM_CREATE_UPLOAD') setUploadProgress('Preparando video...');
+          else if(stage==='STREAM_DIRECT_POST') setUploadProgress('Subiendo video a Cloudflare...');
+          else if(stage==='STREAM_PROCESSING') setUploadProgress(
+            typeof progress==='number'?`Procesando video... ${Math.round(progress)}%`:'Procesando video...',
+          );
+          else if(stage==='STREAM_PUBLISH') setUploadProgress('Publicando en el feed...');
+        };
+        await uploadAndPublishStreamVideo({
+          uri:selectedMedia.uri,mimeType,fileName:selectedMedia.fileName||undefined,
+          sizeBytes:selectedMedia.fileSize??undefined,durationMs:selectedMedia.durationMs,
+          caption:caption.trim(),music:musicName,signal:controller.signal,onStage:stageMessage,
+        });
+        await refreshFeed();
+        setCaption('');setSelectedMedia(null);setSelectedMusic(null);setUploadProgress('');
+        showAlert('Video publicado','Tu video ya está disponible en el feed',[
+          {text:'Ver Feed',onPress:()=>router.push('/(tabs)')},{text:'Crear otro'},
+        ]);
+        return;
+      }
       const uploaded = await uploadMediaToStorage(selectedMedia);
       if (!uploaded?.url) throw new Error('Upload failed');
       uploadedAssetId = uploaded.assetId;
@@ -323,15 +389,25 @@ export default function UploadScreen() {
         'Tu contenido ya está en el feed',
         [{ text: 'Ver Feed', onPress: () => router.push('/(tabs)') }, { text: 'Crear otro' }],
       );
-    } catch (_) {
+    } catch (error) {
+      if(selectedMedia.type==='video') {
+        const safe=getSafeStreamError(error);
+        console.warn('[Upload] Stream video publish failed',{
+          operationId:safe.operationId,stage:safe.stage,code:safe.code,
+        });
+        showAlert('No se pudo publicar el video.',`Código: ${safe.stage}/${safe.code}`);
+        return;
+      }
       if (postId && uploadedAssetId) {
         await supabase.from('videos').delete().eq('id', postId).eq('user_id', user.id);
       }
       if (uploadedAssetId) await deleteMediaAsset(uploadedAssetId).catch(() => {});
       showAlert('Error', 'No se pudo publicar. Intenta de nuevo.');
+    } finally {
+      activeUploadControllerRef.current=null;
+      setIsUploading(false);setUploadProgress('');
     }
-    setIsUploading(false); setUploadProgress('');
-  }, [selectedMedia, caption, mode, selectedMusic, user, uploadMediaToStorage, addVideo, router, showAlert, supabase]);
+  }, [isUploading, selectedMedia, caption, mode, selectedMusic, user, uploadMediaToStorage, addVideo, refreshFeed, router, showAlert, supabase]);
 
   const handleUploadCarousel = useCallback(async () => {
     if (carouselMedias.length < 2) { showAlert('Carrusel requerido', 'Selecciona al menos 2 fotos'); return; }
@@ -480,6 +556,7 @@ export default function UploadScreen() {
               key={m.key}
               style={[styles.modeBtn, isActive && { backgroundColor: bgColor, borderColor: bgColor }]}
               onPress={() => {
+                if(isUploading) return;
                 if (m.key === 'camera') {
                   showAlert('Cámara con Filtros AR', '¿Qué quieres capturar?', [
                     { text: 'Abrir Creator Studio', onPress: () => router.push('/creator-studio') },
