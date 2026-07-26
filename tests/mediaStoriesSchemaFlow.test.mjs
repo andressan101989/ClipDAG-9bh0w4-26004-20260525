@@ -51,8 +51,9 @@ test('story flow returns remote ID, links position zero, and compensates failure
 
 test('physical story path is non-optimistic and never persists a local URI', () => {
   assert.match(context, /if \(!allowOptimistic\) \{\s*throw/s);
-  assert.match(feed, /addStory\(uploaded\.url, 'photo', false\)/);
+  assert.match(feed, /addStory\(uploaded\.url, 'photo', false, uploaded\.assetId\)/);
   assert.match(feed, /uploadFileFromUri\(/);
   assert.doesNotMatch(feed, /addStory\(asset\.uri/);
-  assert.match(feed, /linkMediaAsset\(uploaded\.assetId, 'story', persistedStoryId, 'media'\)/);
+  assert.doesNotMatch(feed, /linkMediaAsset\(uploaded\.assetId, 'story'/);
+  assert.match(context, /create_photo_story_with_media/);
 });
