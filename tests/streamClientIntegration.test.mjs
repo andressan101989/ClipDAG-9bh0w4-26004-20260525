@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
-  MAX_DURATION_MS,MAX_SIZE,directPostOnce,isHls,isVideo,pollUntilReady,reconcilePublish,
-  sourceFor,validDuration,validMime,validSize,
+  MAX_DURATION_MS,MAX_SIZE,createThenPost,directPostOnce,isHls,isVideo,lookupPublished,pollUntilReady,
+  publishRecovery,reconcileThree,singleFlight,sourceFor,validDuration,validMime,validSize,
+  validateContractWithCleanup,
 } from './helpers/streamClientHarness.mjs';
 
 const service=fs.readFileSync('services/streamService.ts','utf8');
@@ -43,6 +44,22 @@ await assert.rejects(()=>directPostOnce({
   fetcher:async()=>{failedCalls++;throw new Error('network');},
 }));
 assert.equal(failedCalls,1,'Direct Creator POST must not retry');
+const preAborted=new AbortController();preAborted.abort();
+let abortedFetches=0;
+await assert.rejects(()=>directPostOnce({
+  uploadUrl:'https://upload.invalid/temporary',file:{},signal:preAborted.signal,
+  fetcher:async()=>{abortedFetches++;return {ok:true};},
+}),/aborted/);
+assert.equal(abortedFetches,0);
+const abortDuringCreate=new AbortController();
+let postsAfterAbort=0,abortCleanups=0;
+await assert.rejects(()=>createThenPost({
+  signal:abortDuringCreate.signal,
+  create:async()=>{abortDuringCreate.abort();return {assetId:'asset'};},
+  post:async()=>{postsAfterAbort++;},cleanup:async()=>{abortCleanups++;},
+}),/aborted/);
+assert.equal(postsAfterAbort,0);
+assert.equal(abortCleanups,1);
 
 let clock=0,polls=0;
 const ready=await pollUntilReady({
@@ -61,8 +78,80 @@ await assert.rejects(()=>pollUntilReady({
   timeoutMs:1,now:()=>timeoutClock,sleep:async()=>{timeoutClock=2;},
   get:async()=>({status:'processing'}),
 }),/stream_processing_timeout/);
-assert.deepEqual(reconcilePublish({rpcError:true,linkedPost:'post'}),{published:true,cleanup:false});
-assert.deepEqual(reconcilePublish({rpcError:true,linkedPost:null}),{published:false,cleanup:true});
+await assert.rejects(()=>pollUntilReady({
+  now:()=>0,sleep:async()=>{},get:async()=>{throw Object.assign(new Error('gone'),{status:410});},
+}),/gone/);
+let transientCalls=0;
+await pollUntilReady({
+  now:()=>clock,sleep:async()=>{clock+=5_000;},
+  get:async()=>++transientCalls===1
+    ?Promise.reject(Object.assign(new Error('temporary'),{status:503}))
+    :{status:'ready',hlsUrl:'https://stream.test/video.m3u8'},
+});
+assert.equal(transientCalls,2);
+
+const session=async()=>({userId:'owner',error:null});
+assert.deepEqual(await lookupPublished({
+  session,links:async()=>({data:null,error:new Error('network')}),video:async()=>({data:null,error:null}),
+}),{state:'unknown',code:'links'});
+assert.deepEqual(await lookupPublished({
+  session,links:async()=>({data:[{entity_id:'post'}],error:null}),
+  video:async()=>({data:null,error:new Error('network')}),
+}),{state:'unknown',code:'video'});
+assert.deepEqual(await lookupPublished({
+  session,links:async()=>({data:[],error:null}),video:async()=>({data:null,error:null}),
+}),{state:'absent'});
+assert.deepEqual(await lookupPublished({
+  session,links:async()=>({data:[{entity_id:'post'}],error:null}),
+  video:async id=>({data:{id},error:null}),
+}),{state:'found',postId:'post'});
+assert.deepEqual(await reconcileThree({
+  sleep:async()=>{},lookup:async()=>({state:'absent'}),
+}),{state:'absent'});
+assert.deepEqual(await reconcileThree({
+  sleep:async()=>{},lookup:async()=>({state:'unknown',code:'network'}),
+}),{state:'unknown',code:'network'});
+
+const sameAssetIds=[];
+const foundRecovery=await publishRecovery({
+  assetId:'asset',publish:async id=>{sameAssetIds.push(id);throw new Error('ambiguous');},
+  reconcile:async()=>({state:'found',postId:'post'}),cleanup:async()=>{throw new Error('must not clean');},
+});
+assert.equal(foundRecovery.postId,'post');
+assert.equal(foundRecovery.cleanups,0);
+let unknownCleanups=0;
+await assert.rejects(()=>publishRecovery({
+  assetId:'asset',publish:async()=>{throw new Error('ambiguous');},
+  reconcile:async()=>({state:'unknown',code:'network'}),cleanup:async()=>{unknownCleanups++;},
+}),error=>error.code==='stream_publish_confirmation_pending');
+assert.equal(unknownCleanups,0);
+let absentLookups=0,absentCleanups=0;
+await assert.rejects(()=>publishRecovery({
+  assetId:'same-asset',publish:async id=>{sameAssetIds.push(id);throw new Error('ambiguous');},
+  reconcile:async()=>{absentLookups++;return {state:'absent'};},cleanup:async()=>{absentCleanups++;},
+}));
+assert.equal(absentLookups,2);
+assert.equal(absentCleanups,1);
+assert.deepEqual(sameAssetIds.slice(-2),['same-asset','same-asset']);
+
+const validAssetId='123e4567-e89b-42d3-a456-426614174000';
+let contractCleanups=0;
+await assert.rejects(()=>validateContractWithCleanup({
+  contract:{assetId:validAssetId,uploadUrl:'invalid',method:'POST',formField:'file',
+    maxDurationSeconds:60,maxSizeBytes:MAX_SIZE,expiresAt:new Date().toISOString()},
+  cleanup:async()=>{contractCleanups++;},
+}),/invalid_stream_upload_contract/);
+assert.equal(contractCleanups,1);
+await validateContractWithCleanup({
+  now:Date.now(),contract:{assetId:validAssetId,uploadUrl:'https://upload.invalid',method:'POST',formField:'file',
+    maxDurationSeconds:60,maxSizeBytes:MAX_SIZE,expiresAt:new Date(Date.now()-240_000).toISOString()},
+  cleanup:async()=>{throw new Error('must not clean');},
+});
+let operations=0,release;
+const locked=singleFlight(async()=>{operations++;await new Promise(resolve=>{release=resolve;});});
+const first=locked(),second=locked();
+assert.equal(await second,false);
+release();assert.equal(await first,true);assert.equal(operations,1);
 
 assert.match(migration,/create unique index video_asset_links_one_feed_post_per_asset_idx/);
 assert.match(migration,/where entity_type = 'video_post' and slot = 'video'/);
@@ -87,9 +176,18 @@ assert.doesNotMatch(service,/upload_url|persist.*uploadUrl/i);
 assert.match(service,/pollIntervalMs\?\?5_000/);
 assert.match(service,/invokeRpcWithSingleAuthRefresh/);
 assert.match(service,/findPublishedStreamPost/);
+assert.match(service,/state:'unknown'/);
+assert.match(service,/stream_publish_confirmation_pending/);
+assert.match(service,/throwIfStreamAborted/);
+assert.match(service,/expiresAt>=Date\.now\(\)-300_000/);
+assert.match(service,/if\(assetId\) await deleteStreamVideo\(assetId\)\.catch/);
+assert.doesNotMatch(service,/createStreamUpload[\s\S]*createStreamUpload[\s\S]*createStreamUpload/);
 assert.match(upload,/base64: captureMode === 'photo'/);
 assert.match(upload,/base64: isPhoto/);
 assert.match(upload,/uploadAndPublishStreamVideo/);
+assert.match(upload,/uploadInFlightRef\.current=true/);
+assert.match(upload,/uploadInFlightRef\.current=false/);
+assert.match(upload,/No pudimos confirmar el resultado de la publicación/);
 assert.match(upload,/if\(selectedMedia\.type==='video'\)/);
 assert.doesNotMatch(upload,/selectedMedia\.type==='video'[\s\S]{0,1600}uploadFileFromUri/);
 assert.match(upload,/const uploaded = await uploadMediaToStorage\(selectedMedia\)/,'photo flow remains R2-backed');

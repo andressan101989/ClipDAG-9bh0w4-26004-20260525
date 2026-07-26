@@ -142,6 +142,7 @@ export default function UploadScreen() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
   const activeUploadControllerRef = useRef<AbortController | null>(null);
+  const uploadInFlightRef = useRef(false);
 
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
   const [carouselMedias, setCarouselMedias] = useState<SelectedMedia[]>([]);
@@ -315,10 +316,11 @@ export default function UploadScreen() {
   }, [user, supabase, mode]);
 
   const handleUploadSingle = useCallback(async () => {
-    if(isUploading) return;
     if (!selectedMedia) { showAlert('Sin contenido', `Selecciona ${mode === 'photo' ? 'una foto' : 'un video'}`); return; }
     if (!caption.trim()) { showAlert('Sin descripción', 'Agrega una descripción'); return; }
     if (!user) return;
+    if(uploadInFlightRef.current) return;
+    uploadInFlightRef.current=true;
 
     setIsUploading(true);
     setUploadProgress(selectedMedia.type==='video'?'Preparando video...':'Subiendo media...');
@@ -395,6 +397,14 @@ export default function UploadScreen() {
         console.warn('[Upload] Stream video publish failed',{
           operationId:safe.operationId,stage:safe.stage,code:safe.code,
         });
+        if(safe.code==='stream_publish_confirmation_pending') {
+          await refreshFeed().catch(()=>{});
+          showAlert(
+            'Publicación pendiente de confirmación',
+            'No pudimos confirmar el resultado de la publicación.\nRevisa el feed antes de volver a publicar el video.',
+          );
+          return;
+        }
         showAlert('No se pudo publicar el video.',`Código: ${safe.stage}/${safe.code}`);
         return;
       }
@@ -405,9 +415,10 @@ export default function UploadScreen() {
       showAlert('Error', 'No se pudo publicar. Intenta de nuevo.');
     } finally {
       activeUploadControllerRef.current=null;
+      uploadInFlightRef.current=false;
       setIsUploading(false);setUploadProgress('');
     }
-  }, [isUploading, selectedMedia, caption, mode, selectedMusic, user, uploadMediaToStorage, addVideo, refreshFeed, router, showAlert, supabase]);
+  }, [selectedMedia, caption, mode, selectedMusic, user, uploadMediaToStorage, addVideo, refreshFeed, router, showAlert, supabase]);
 
   const handleUploadCarousel = useCallback(async () => {
     if (carouselMedias.length < 2) { showAlert('Carrusel requerido', 'Selecciona al menos 2 fotos'); return; }

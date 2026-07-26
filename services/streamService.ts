@@ -55,6 +55,13 @@ export class StreamClientError extends Error {
     this.httpStatus=input.httpStatus;this.operationId=input.operationId;
   }
 }
+export function throwIfStreamAborted(
+  signal:AbortSignal|undefined,
+  stage:StreamUploadStage,
+  operationId:string,
+):void {
+  if(signal?.aborted) throw new StreamClientError({stage,code:'aborted',message:'aborted',operationId});
+}
 export function getSafeStreamError(
   error:unknown,
   fallbackStage:StreamUploadStage='STREAM_UNKNOWN',
@@ -136,11 +143,16 @@ export async function createStreamUpload(input:{
     }});
     if(error||!data?.success||!data.data) throw await functionError(error,data?.error);
     const contract=data.data as Record<string,unknown>;
+    const assetId=typeof contract.assetId==='string'&&UUID_PATTERN.test(contract.assetId)?contract.assetId:null;
     const expiresAt=typeof contract.expiresAt==='string'?Date.parse(contract.expiresAt):NaN;
-    if(typeof contract.assetId!=='string'||!UUID_PATTERN.test(contract.assetId)
-      ||!isHttpsStreamUrl(contract.uploadUrl)||contract.method!=='POST'||contract.formField!=='file'
-      ||contract.maxDurationSeconds!==60||contract.maxSizeBytes!==STREAM_MAX_SIZE_BYTES
-      ||!Number.isFinite(expiresAt)||expiresAt<=Date.now()) throw new Error('invalid_stream_upload_contract');
+    const validContract=assetId!==null&&isHttpsStreamUrl(contract.uploadUrl)
+      &&contract.method==='POST'&&contract.formField==='file'
+      &&contract.maxDurationSeconds===60&&contract.maxSizeBytes===STREAM_MAX_SIZE_BYTES
+      &&Number.isFinite(expiresAt)&&expiresAt>=Date.now()-300_000;
+    if(!assetId||validContract!==true) {
+      if(assetId) await deleteStreamVideo(assetId).catch(()=>{});
+      throw new Error('invalid_stream_upload_contract');
+    }
     return contract as unknown as StreamUploadContract;
   } catch(error) { throw streamError(error,'STREAM_CREATE_UPLOAD',operationId); }
 }
@@ -150,14 +162,19 @@ export async function postVideoToStreamUploadUrl(input:{
   fetcher?:typeof expoFetch;timeoutMs?:number;
 }):Promise<void> {
   const operationId=input.operationId??createStreamOperationId();
+  throwIfStreamAborted(input.signal,'STREAM_DIRECT_POST',operationId);
   const controller=new AbortController();
   const abort=()=>controller.abort();
   input.signal?.addEventListener('abort',abort,{once:true});
+  if(input.signal?.aborted) controller.abort();
   const timer=setTimeout(()=>controller.abort(),input.timeoutMs??300_000);
   try {
+    throwIfStreamAborted(controller.signal,'STREAM_DIRECT_POST',operationId);
     const file=new File(input.uri);
+    throwIfStreamAborted(controller.signal,'STREAM_DIRECT_POST',operationId);
     const formData=new FormData();
     formData.append('file',file as unknown as Blob);
+    throwIfStreamAborted(controller.signal,'STREAM_DIRECT_POST',operationId);
     const response=await (input.fetcher??expoFetch)(input.uploadUrl,{
       method:'POST',body:formData,signal:controller.signal,
     });
@@ -211,6 +228,7 @@ export async function waitForStreamReady(
       descriptor=await getStreamPlayback(assetId,operationId);
       transientErrors=0;
     } catch(error) {
+      if(!isTransientStreamError(error)) throw streamError(error,'STREAM_PROCESSING',operationId);
       if(++transientErrors>(options.maxTransientErrors??3)) throw streamError(error,'STREAM_PROCESSING',operationId);
       await (options.sleep??delay)(options.pollIntervalMs??5_000,options.signal);
       continue;
@@ -238,15 +256,59 @@ export async function publishStreamVideoPost(input:{assetId:string;caption:strin
     return extractStreamRpcUuid(data,'publish_stream_video_post');
   } catch(error) { throw streamError(error,'STREAM_PUBLISH',operationId); }
 }
-export async function findPublishedStreamPost(assetId:string):Promise<string|null> {
-  const {data:{session}}=await supabase.auth.getSession();
-  if(!session?.user) return null;
-  const {data:links,error}=await supabase.from('video_asset_links').select('entity_id')
-    .eq('asset_id',assetId).eq('entity_type','video_post').eq('slot','video').eq('owner_id',session.user.id);
-  if(error||links?.length!==1||typeof links[0].entity_id!=='string') return null;
-  const {data:video,error:videoError}=await supabase.from('videos').select('id,user_id')
-    .eq('id',links[0].entity_id).eq('user_id',session.user.id).maybeSingle();
-  return videoError||!video?null:String(video.id);
+export type PublishedStreamPostLookup=
+  |{state:'found';postId:string}
+  |{state:'absent'}
+  |{state:'unknown';code:string};
+interface PublishedLookupOptions {
+  getSession?:()=>Promise<{data:{session:{user:{id:string}}|null};error:unknown}>;
+  getLinks?:(assetId:string,userId:string)=>Promise<{data:unknown;error:unknown}>;
+  getVideo?:(postId:string,userId:string)=>Promise<{data:unknown;error:unknown}>;
+}
+export async function findPublishedStreamPost(
+  assetId:string,
+  options:PublishedLookupOptions={},
+):Promise<PublishedStreamPostLookup> {
+  try {
+    const sessionResult=options.getSession?await options.getSession():await supabase.auth.getSession();
+    if(sessionResult.error||!sessionResult.data.session?.user) return {state:'unknown',code:'stream_session_lookup_failed'};
+    const userId=sessionResult.data.session.user.id;
+    const linkResult=options.getLinks?await options.getLinks(assetId,userId):
+      await supabase.from('video_asset_links').select('entity_id')
+        .eq('asset_id',assetId).eq('entity_type','video_post').eq('slot','video').eq('owner_id',userId);
+    if(linkResult.error) return {state:'unknown',code:'stream_link_lookup_failed'};
+    if(!Array.isArray(linkResult.data)) return {state:'unknown',code:'stream_link_response_invalid'};
+    if(linkResult.data.length===0) return {state:'absent'};
+    if(linkResult.data.length!==1) return {state:'unknown',code:'stream_link_response_invalid'};
+    const row=linkResult.data[0] as Record<string,unknown>;
+    if(typeof row.entity_id!=='string'||!UUID_PATTERN.test(row.entity_id)) {
+      return {state:'unknown',code:'stream_link_response_invalid'};
+    }
+    const videoResult=options.getVideo?await options.getVideo(row.entity_id,userId):
+      await supabase.from('videos').select('id,user_id').eq('id',row.entity_id).eq('user_id',userId).maybeSingle();
+    if(videoResult.error) return {state:'unknown',code:'stream_post_lookup_failed'};
+    if(!videoResult.data||typeof videoResult.data!=='object') return {state:'unknown',code:'stream_post_response_invalid'};
+    const video=videoResult.data as Record<string,unknown>;
+    if(video.id!==row.entity_id||video.user_id!==userId) return {state:'unknown',code:'stream_post_response_invalid'};
+    return {state:'found',postId:row.entity_id};
+  } catch { return {state:'unknown',code:'stream_reconciliation_failed'}; }
+}
+export async function reconcilePublishedStreamPost(
+  assetId:string,
+  options:PublishedLookupOptions&{
+    sleep?:(milliseconds:number)=>Promise<void>;
+    delays?:readonly number[];
+  }={},
+):Promise<PublishedStreamPostLookup> {
+  const waits=options.delays??[250,750,1500];
+  let allAbsent=true,lastUnknown:PublishedStreamPostLookup={state:'unknown',code:'stream_reconciliation_failed'};
+  for(const milliseconds of waits) {
+    await (options.sleep??(value=>delay(value)))(milliseconds);
+    const result=await findPublishedStreamPost(assetId,options);
+    if(result.state==='found') return result;
+    if(result.state==='unknown') {allAbsent=false;lastUnknown=result;}
+  }
+  return allAbsent?{state:'absent'}:lastUnknown;
 }
 export async function deleteStreamVideo(assetId:string):Promise<void> {
   const operationId=createStreamOperationId();
@@ -255,9 +317,50 @@ export async function deleteStreamVideo(assetId:string):Promise<void> {
     if(error||!data?.success) throw await functionError(error,data?.error);
   } catch(error) { throw streamError(error,'STREAM_DELETE',operationId); }
 }
-function ambiguousPublishError(error:unknown):boolean {
+export function isTransientStreamError(error:unknown):boolean {
   const safe=getSafeStreamError(error,'STREAM_PUBLISH');
-  return safe.httpStatus===undefined||safe.httpStatus>=500;
+  if(safe.code==='aborted'||safe.code==='invalid_stream_playback_response'
+    ||safe.code==='stream_ready_invariant_failed') return false;
+  if([400,401,403,404,409,410].includes(safe.httpStatus??0)) return false;
+  if([408,425,429].includes(safe.httpStatus??0)||(safe.httpStatus??0)>=500) return true;
+  const text=`${safe.code} ${safe.message}`.toLowerCase();
+  return safe.httpStatus===undefined&&/(network|fetch|timeout|timed out|connection|temporar)/.test(text);
+}
+function deterministicPublishError(error:unknown):boolean {
+  return ['22023','42501','23505'].includes(getSafeStreamError(error,'STREAM_PUBLISH').code);
+}
+function canRetryPublish(error:unknown):boolean {
+  if(deterministicPublishError(error)) return false;
+  const safe=getSafeStreamError(error,'STREAM_PUBLISH');
+  return safe.httpStatus===undefined||isTransientStreamError(error);
+}
+function confirmationPending(operationId:string):StreamClientError {
+  return new StreamClientError({stage:'STREAM_PUBLISH',code:'stream_publish_confirmation_pending',
+    message:'stream_publish_confirmation_pending',operationId});
+}
+async function publishWithRecovery(
+  input:{assetId:string;caption:string;music:string;operationId:string},
+  options:{
+    publish?:(value:typeof input)=>Promise<string>;
+    reconcile?:(assetId:string)=>Promise<PublishedStreamPostLookup>;
+  }={},
+):Promise<string> {
+  const publish=options.publish??publishStreamVideoPost;
+  const reconcile=options.reconcile??reconcilePublishedStreamPost;
+  try { return await publish(input); }
+  catch(firstError) {
+    const firstLookup=await reconcile(input.assetId);
+    if(firstLookup.state==='found') return firstLookup.postId;
+    if(firstLookup.state==='unknown') throw confirmationPending(input.operationId);
+    if(!canRetryPublish(firstError)) throw firstError;
+    try { return await publish(input); }
+    catch(secondError) {
+      const secondLookup=await reconcile(input.assetId);
+      if(secondLookup.state==='found') return secondLookup.postId;
+      if(secondLookup.state==='unknown') throw confirmationPending(input.operationId);
+      throw secondError;
+    }
+  }
 }
 
 export async function uploadAndPublishStreamVideo(input:{
@@ -269,42 +372,42 @@ export async function uploadAndPublishStreamVideo(input:{
   let assetId:string|undefined;
   let published=false;
   try {
+    throwIfStreamAborted(input.signal,'STREAM_INPUT',operationId);
     input.onStage?.('STREAM_INPUT');
     if(!input.uri) throw new Error('invalid_video_uri');
     if(!validateStreamVideoMime(input.mimeType)) throw new Error('invalid_video_mime');
     if(!validateStreamVideoDuration(input.durationMs)) throw new Error('invalid_video_duration');
+    throwIfStreamAborted(input.signal,'STREAM_INPUT',operationId);
     const file=new File(input.uri);
+    throwIfStreamAborted(input.signal,'STREAM_INPUT',operationId);
     if(!file.exists) throw new Error('video_file_not_found');
     const realSize=file.size;
     if(!validateStreamVideoSize(realSize)||input.sizeBytes!==undefined&&!validateStreamVideoSize(input.sizeBytes)) {
       throw new Error('invalid_video_size');
     }
     input.onStage?.('STREAM_CREATE_UPLOAD');
+    throwIfStreamAborted(input.signal,'STREAM_CREATE_UPLOAD',operationId);
     const contract=await createStreamUpload({
       mimeType:input.mimeType.trim().toLowerCase(),sizeBytes:realSize,
       fileName:input.fileName||file.name||'video',operationId,
     });
     assetId=contract.assetId;
+    throwIfStreamAborted(input.signal,'STREAM_DIRECT_POST',operationId);
     input.onStage?.('STREAM_DIRECT_POST');
     await postVideoToStreamUploadUrl({uri:input.uri,uploadUrl:contract.uploadUrl,signal:input.signal,operationId});
     input.onStage?.('STREAM_PROCESSING');
+    throwIfStreamAborted(input.signal,'STREAM_PROCESSING',operationId);
     const playback=await waitForStreamReady(assetId,{signal:input.signal,onProgress:value=>{
       input.onStage?.('STREAM_PROCESSING',value.progress);
     }});
     input.onStage?.('STREAM_PUBLISH');
-    let postId:string;
-    try {
-      postId=await publishStreamVideoPost({assetId,caption:input.caption,music:input.music,operationId});
-    } catch(error) {
-      if(!ambiguousPublishError(error)) throw error;
-      const reconciled=await findPublishedStreamPost(assetId);
-      if(!reconciled) throw error;
-      postId=reconciled;
-    }
+    throwIfStreamAborted(input.signal,'STREAM_PUBLISH',operationId);
+    const postId=await publishWithRecovery({assetId,caption:input.caption,music:input.music,operationId});
     published=true;
     return {postId,assetId,hlsUrl:playback.hlsUrl!,thumbnailUrl:playback.thumbnailUrl};
   } catch(error) {
-    if(assetId&&!published) await deleteStreamVideo(assetId).catch(()=>{});
+    const preserveAsset=error instanceof StreamClientError&&error.code==='stream_publish_confirmation_pending';
+    if(assetId&&!published&&!preserveAsset) await deleteStreamVideo(assetId).catch(()=>{});
     throw streamError(error,error instanceof StreamClientError?error.stage:'STREAM_INPUT',operationId);
   }
 }
