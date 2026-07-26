@@ -32,6 +32,16 @@ export interface VideoWithMeta extends Video {
   mediaUrls?:  string[];
 }
 
+export type AddVideoInput = Omit<
+  Video,
+  'id' | 'likes' | 'comments' | 'shares' | 'isLiked' | 'createdAt'
+> & {
+  mediaUrls?: string[];
+  isExclusive?: boolean;
+  exclusivePrice?: number;
+  exclusiveContentId?: string;
+};
+
 export interface VideoAnalytics {
   videoId:        string;
   views:          number;
@@ -55,7 +65,7 @@ interface FeedContextType {
   toggleSave:      (videoId: string) => Promise<void>;
   isSaved:         (videoId: string) => boolean;
   addComment:      (videoId: string, comment: Omit<Comment, 'id' | 'likes' | 'createdAt'>) => Promise<void>;
-  addVideo:        (video: Omit<Video, 'id' | 'likes' | 'comments' | 'shares' | 'isLiked' | 'createdAt'>) => Promise<string | undefined>;
+  addVideo:        (video: AddVideoInput) => Promise<string | undefined>;
   updateVideo:     (videoId: string, updates: { caption?: string; music?: string }) => Promise<{ success: boolean; error?: string }>;
   deleteVideo:     (videoId: string, videoUrl?: string, thumbnailUrl?: string) => Promise<{ success: boolean; error?: string }>;
   trackView:       (videoId: string, watchDurationMs: number, completed: boolean) => Promise<void>;
@@ -626,7 +636,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   // ── Add Video ─────────────────────────────────────────────────────────────
-  const addVideo = useCallback(async (video: Omit<Video, 'id' | 'likes' | 'comments' | 'shares' | 'isLiked' | 'createdAt'> & { mediaUrls?: string[] }) => {
+  const addVideo = useCallback(async (video: AddVideoInput) => {
     const supabase = supabaseRef.current;
     if (!user) return;
     if (!supabase || !supabaseOk.current) {
@@ -649,6 +659,50 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       return localVideo.id;
     }
     try {
+      if (video.mediaUrls && video.mediaUrls.length >= 2) {
+        const { data, error } = await supabase.rpc('create_carousel_post', {
+          p_video_url: video.videoUrl,
+          p_thumbnail_url: video.thumbnailUrl || video.videoUrl,
+          p_caption: video.caption,
+          p_music: video.music || 'Sin musica',
+          p_media_urls: video.mediaUrls,
+        });
+        if (error) {
+          console.warn('[FeedContext] media entity creation failed', {
+            stage: 'CAROUSEL_CREATE_POST',
+            code: error.code ?? 'unknown',
+          });
+          throw Object.assign(new Error('CAROUSEL_CREATE_POST_FAILED'), {
+            code: error.code ?? 'unknown',
+            stage: 'CAROUSEL_CREATE_POST',
+          });
+        }
+        if (typeof data !== 'string' || !/^[0-9a-f-]{36}$/i.test(data)) {
+          throw Object.assign(new Error('CAROUSEL_CREATE_POST_FAILED'), {
+            code: 'invalid_rpc_result',
+            stage: 'CAROUSEL_CREATE_POST',
+          });
+        }
+        const newVideo: VideoWithMeta = {
+          id: data,
+          userId: user.id,
+          username: user.username || 'user',
+          userAvatar: user.avatar || '',
+          videoUrl: video.videoUrl,
+          thumbnailUrl: video.thumbnailUrl || video.videoUrl,
+          mediaUrls: [...video.mediaUrls],
+          caption: video.caption,
+          likes: 0,
+          comments: 0,
+          shares: 0,
+          music: video.music || 'Sin musica',
+          isLiked: false,
+          createdAt: new Date().toISOString(),
+        };
+        setVideos(prev => [newVideo, ...prev]);
+        return data;
+      }
+
       const insertPayload: Record<string, unknown> = {
         user_id:       user.id,
         video_url:     video.videoUrl,
@@ -656,10 +710,6 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         caption:       video.caption,
         music:         video.music || 'Sin musica',
       };
-      if ((video as any).mediaUrls?.length > 1) {
-        insertPayload.media_urls = (video as any).mediaUrls;
-      }
-
       const { data, error } = await supabase.from('videos').insert(insertPayload)
         .select('*, user_profiles!videos_user_id_fkey(username, avatar_url)').single();
 
@@ -673,9 +723,20 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         setVideos(prev => [newVideo, ...prev]);
         return newVideo.id;
       }
+      if (error) {
+        console.warn('[FeedContext] media entity creation failed', {
+          stage: 'CREATE_POST',
+          code: error.code ?? 'unknown',
+        });
+      }
       return undefined;
     } catch (e) {
-      console.warn('[FeedContext] addVideo error:', e);
+      const controlled = e as { message?: string; code?: string; stage?: string };
+      console.warn('[FeedContext] addVideo failed', {
+        stage: controlled.stage ?? 'CREATE_POST',
+        code: controlled.code ?? 'unknown',
+      });
+      if (controlled.stage === 'CAROUSEL_CREATE_POST') throw e;
       return undefined;
     }
   }, [user]);

@@ -148,10 +148,10 @@ export default function UploadScreen() {
   // ── Camera capture ────────────────────────────────────────────────────────
   const handleCameraCapture = useCallback((uri: string, type: 'photo' | 'video', filterId: string) => {
     const mimeType = type === 'video' ? 'video/mp4' : 'image/jpeg';
-    if (mode === 'carousel' && type === 'image') {
+    if (mode === 'carousel' && type === 'photo') {
       setCarouselMedias(prev => [...prev, { uri, type: 'image', mimeType, filterId }]);
     } else {
-      setSelectedMedia({ uri, type, mimeType, filterId });
+      setSelectedMedia({ uri, type: type === 'photo' ? 'image' : 'video', mimeType, filterId });
       if (type === 'video') setMode('video');
       else setMode('photo');
     }
@@ -174,8 +174,7 @@ export default function UploadScreen() {
     });
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
-      const mimeType = asset.mimeType || detectMimeType(asset.uri, captureMode === 'photo' ? 'image/jpeg' : 'video/mp4');
-      handleCameraCapture(asset.uri, captureMode === 'video' ? 'video' : 'image', 'normal');
+      handleCameraCapture(asset.uri, captureMode, 'normal');
     }
   }, [showAlert, handleCameraCapture]);
 
@@ -321,7 +320,7 @@ export default function UploadScreen() {
         caption: caption.trim(),
         music: musicName,
         ...(isExclusive ? { isExclusive: true, exclusivePrice: parseFloat(exclusivePrice), exclusiveContentId } : {}),
-      } as any);
+      });
       if (uploaded.assetId && !postId) throw new Error('entity_create_failed');
       if (postId && uploaded.assetId) {
         await linkMediaAsset(uploaded.assetId, 'video_post', postId, 'media', 0);
@@ -356,16 +355,22 @@ export default function UploadScreen() {
 
     setIsUploading(true);
     setUploadProgress(`Subiendo ${carouselMedias.length} fotos...`);
-    const uploadedAssetIds: string[] = [];
+    const completedUploads: ((UploadedMedia & { index: number }) | undefined)[] =
+      new Array(carouselMedias.length);
     let postId: string | undefined;
+    let failureStage = 'CAROUSEL_UPLOAD_FAILED';
     try {
       const uploads = await mapWithConcurrency(carouselMedias, 3, async (media, index) => {
         const uploaded = await uploadMediaToStorage(media, index);
-        if (uploaded?.assetId) uploadedAssetIds.push(uploaded.assetId);
-        return uploaded;
+        if (!uploaded?.url || !uploaded.assetId) throw new Error('CAROUSEL_UPLOAD_FAILED');
+        const completed = { ...uploaded, index };
+        completedUploads[index] = completed;
+        return completed;
       });
-      const validUploads = uploads.filter((item): item is UploadedMedia => Boolean(item?.url));
-      const validUrls = validUploads.map(item => item.url);
+      const orderedUploads = uploads
+        .filter((item): item is UploadedMedia & { index: number } => Boolean(item?.url && item.assetId))
+        .sort((a, b) => a.index - b.index);
+      const validUrls = orderedUploads.map(item => item.url);
       if (validUrls.length !== carouselMedias.length) throw new Error('No se pudieron subir todas las imágenes');
       setUploadProgress('Guardando carrusel...');
       let exclusiveContentId: string | undefined;
@@ -377,7 +382,8 @@ export default function UploadScreen() {
           priceBdag: parseFloat(exclusivePrice),
         });
       }
-      postId = await (addVideo as any)({
+      failureStage = 'CAROUSEL_CREATE_POST_FAILED';
+      postId = await addVideo({
         userId: user.id,
         username: user.username || user.email?.split('@')[0] || 'user',
         userAvatar: user.avatar || '',
@@ -386,13 +392,14 @@ export default function UploadScreen() {
         mediaUrls: validUrls,
         ...(isExclusive ? { isExclusive: true, exclusivePrice: parseFloat(exclusivePrice), exclusiveContentId } : {}),
       });
-      if (validUploads.some(item => item.assetId) && !postId) throw new Error('entity_create_failed');
+      if (!postId) throw new Error('CAROUSEL_CREATE_POST_FAILED');
       if (postId) {
         const persistedPostId = postId;
-        await Promise.all(validUploads.flatMap((item, position) =>
-          item.assetId ? [linkMediaAsset(item.assetId, 'video_post', persistedPostId, 'media', position)] : []
+        failureStage = 'CAROUSEL_LINK_FAILED';
+        await Promise.all(orderedUploads.map((item, position) =>
+          linkMediaAsset(item.assetId!, 'video_post', persistedPostId, 'media', position)
         ));
-        uploadedAssetIds.length = 0;
+        completedUploads.fill(undefined);
       }
       setCaption(''); setCarouselMedias([]); setSelectedMusic(null);
       setIsExclusive(false); setExclusivePrice('100');
@@ -401,8 +408,14 @@ export default function UploadScreen() {
         isExclusive ? `${validUrls.length} fotos · Precio: ${exclusivePrice} BDAG` : `${validUrls.length} fotos publicadas`,
         [{ text: 'Ver Feed', onPress: () => router.push('/(tabs)') }, { text: 'Crear otro' }],
       );
-    } catch (_) {
-      if (postId && uploadedAssetIds.length) {
+    } catch (error) {
+      const uploadedAssetIds = completedUploads
+        .flatMap(item => item?.assetId ? [item.assetId] : []);
+      console.warn('[Upload] carousel publish failed', {
+        stage: failureStage,
+        code: error instanceof Error ? error.message : 'unknown',
+      });
+      if (postId) {
         await supabase.from('videos').delete().eq('id', postId).eq('user_id', user.id);
       }
       await Promise.all(uploadedAssetIds.map(assetId => deleteMediaAsset(assetId).catch(() => {})));
@@ -602,7 +615,7 @@ export default function UploadScreen() {
                       <Image source={{ uri: m.uri }} style={styles.carouselThumb} contentFit="cover" transition={150} />
                       {m.filterId && m.filterId !== 'normal' ? (
                         <View style={styles.filterIndicator}>
-                          <MaterialCommunityIcons name="auto-awesome" size={10} color="#fff" />
+                          <MaterialCommunityIcons name={'auto-awesome' as any} size={10} color="#fff" />
                         </View>
                       ) : null}
                       <Pressable onPress={() => removeCarouselItem(i)} style={styles.carouselRemoveBtn} hitSlop={4}>
@@ -668,7 +681,7 @@ export default function UploadScreen() {
                     </Pressable>
                     <Pressable onPress={() => openCamera(mode === 'photo' ? 'photo' : 'video')} style={({ pressed }) => [styles.pickerHalf, pressed && { opacity: 0.8 }]}>
                       <LinearGradient colors={['rgba(180,79,255,0.12)', 'rgba(180,79,255,0.06)']} style={styles.pickerHalfInner}>
-                        <MaterialCommunityIcons name="auto-awesome" size={36} color="#B44FFF" />
+                        <MaterialCommunityIcons name={'auto-awesome' as any} size={36} color="#B44FFF" />
                         <Text style={[styles.pickerHalfTitle, { color: '#B44FFF' }]}>Con Filtros</Text>
                         <Text style={styles.pickerHalfSub}>Cámara con efectos AR</Text>
                       </LinearGradient>
