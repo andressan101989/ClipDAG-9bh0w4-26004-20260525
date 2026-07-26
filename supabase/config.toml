@@ -1,0 +1,14 @@
+[functions.create-media-upload]
+verify_jwt = true
+
+[functions.finalize-media-upload]
+verify_jwt = true
+
+[functions.get-media-url]
+verify_jwt = true
+
+[functions.delete-media-asset]
+verify_jwt = true
+
+[functions.cleanup-stale-media-uploads]
+verify_jwt = false
