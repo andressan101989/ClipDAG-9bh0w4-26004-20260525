@@ -37,6 +37,7 @@ export type AddVideoInput = Omit<
   'id' | 'likes' | 'comments' | 'shares' | 'isLiked' | 'createdAt'
 > & {
   mediaUrls?: string[];
+  mediaAssetIds?: string[];
   isExclusive?: boolean;
   exclusivePrice?: number;
   exclusiveContentId?: string;
@@ -653,7 +654,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         music:       video.music || 'Sin musica',
         isLiked:     false,
         createdAt:   new Date().toISOString(),
-        mediaUrls:   (video as any).mediaUrls,
+        mediaUrls:   video.mediaUrls,
       };
       setVideos(prev => [localVideo, ...prev]);
       return localVideo.id;
@@ -666,6 +667,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
           p_caption: video.caption,
           p_music: video.music || 'Sin musica',
           p_media_urls: video.mediaUrls,
+          p_asset_ids: video.mediaAssetIds ?? [],
         });
         if (error) {
           console.warn('[FeedContext] media entity creation failed', {

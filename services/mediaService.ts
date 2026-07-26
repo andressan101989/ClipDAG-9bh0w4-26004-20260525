@@ -49,11 +49,13 @@ export async function deleteMediaAsset(assetId:string):Promise<void> {
   const {data,error}=await supabase.functions.invoke('delete-media-asset',{body:{asset_id:assetId}});
   if(error||!data?.success) throw new Error(data?.error??error?.message??'media_delete_failed');
 }
-export async function linkMediaAsset(assetId:string,entityType:'user_profile'|'video_post'|'story'|'shop_product'|'exclusive_content',entityId:string,slot:string,position=0):Promise<void> {
+export type LinkableMediaEntity = 'user_profile' | 'video_post' | 'story' | 'shop_product';
+
+export async function linkMediaAsset(assetId:string,entityType:LinkableMediaEntity,entityId:string,slot:string,position=0):Promise<void> {
   const {error}=await supabase.rpc('link_media_asset',{p_asset_id:assetId,p_entity_type:entityType,p_entity_id:entityId,p_slot:slot,p_position:position});
   if(error) throw new Error(error.message);
 }
-export async function getLinkedMediaAssetIds(entityType:'user_profile'|'video_post'|'story'|'shop_product'|'exclusive_content',entityId:string,slot?:string):Promise<string[]> {
+export async function getLinkedMediaAssetIds(entityType:LinkableMediaEntity,entityId:string,slot?:string):Promise<string[]> {
   let query=supabase.from('media_asset_links').select('asset_id').eq('entity_type',entityType).eq('entity_id',entityId);
   if(slot) query=query.eq('slot',slot);
   const {data,error}=await query;

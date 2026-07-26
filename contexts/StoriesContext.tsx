@@ -6,7 +6,7 @@ import type { StoryGroup, StoryItem } from '@/components/feature/StoriesBar';
 interface StoriesContextType {
   storyGroups: StoryGroup[];
   isLoadingStories: boolean;
-  addStory: (mediaUrl: string, mediaType: 'photo' | 'video', allowOptimistic?: boolean) => Promise<string | undefined>;
+  addStory: (mediaUrl: string, mediaType: 'photo' | 'video', allowOptimistic?: boolean, mediaAssetId?: string) => Promise<string | undefined>;
   markStoryViewed: (storyId: string) => Promise<void>;
   refreshStories: () => Promise<void>;
   viewedStoryIds: Set<string>;
@@ -144,19 +144,33 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     }
   }, [user?.id]);
 
-  const addStory = useCallback(async (mediaUrl: string, mediaType: 'photo' | 'video', allowOptimistic = true) => {
+  const addStory = useCallback(async (
+    mediaUrl: string,
+    mediaType: 'photo' | 'video',
+    allowOptimistic = true,
+    mediaAssetId?: string,
+  ) => {
     if (!user) return undefined;
     const supabase = supabaseRef.current;
     if (!supabase || !supabaseOk.current) return undefined;
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
     try {
-      const { data, error } = await supabase.from('stories').insert({
-        user_id: user.id,
-        media_url: mediaUrl,
-        media_type: mediaType,
-        expires_at: expiresAt,
-      }).select('id').single();
+      const result = mediaType === 'photo' && mediaAssetId
+        ? await supabase.rpc('create_photo_story_with_media', {
+          p_media_urls: [mediaUrl],
+          p_asset_ids: [mediaAssetId],
+        })
+        : await supabase.from('stories').insert({
+          user_id: user.id,
+          media_url: mediaUrl,
+          media_type: mediaType,
+          expires_at: expiresAt,
+        }).select('id').single();
+      const data = mediaType === 'photo' && mediaAssetId
+        ? { id: result.data as string | null }
+        : result.data as { id?: string } | null;
+      const error = result.error;
 
       if (!error && data?.id) {
         await loadStories();

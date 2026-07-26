@@ -27,7 +27,7 @@ import { Audio } from 'expo-av';
 import { useScrollToTop } from '@react-navigation/native';
 import type { StoryGroup } from '@/components/feature/StoriesBar';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
-import { deleteMediaAsset, linkMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
+import { deleteMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
 
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 75 };
 
@@ -131,10 +131,8 @@ export default function FeedScreen() {
         if (!uploaded.url?.startsWith('https://')) throw new Error('R2 did not return a public URL');
         uploadedAssetId = uploaded.assetId;
         failureStage = 'STORY_INSERT';
-        persistedStoryId = await addStory(uploaded.url, 'photo', false);
+        persistedStoryId = await addStory(uploaded.url, 'photo', false, uploaded.assetId);
         if (!persistedStoryId) throw new Error('Story was not persisted');
-        failureStage = 'STORY_LINK';
-        await linkMediaAsset(uploaded.assetId, 'story', persistedStoryId, 'media');
         uploadedAssetId = undefined;
         showAlert('Historia publicada!', 'Tu historia estará visible por 24 horas');
         return;

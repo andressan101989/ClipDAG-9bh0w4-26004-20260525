@@ -15,7 +15,7 @@ import { useAlert } from '@/template';
 import { CyberButton } from '@/components/ui/CyberButton';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { detectMimeType } from '@/contexts/FeedContext';
-import { deleteMediaAsset, linkMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
+import { deleteMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
 import type { ProductCategory } from '@/contexts/ShopContext';
 
 const CATEGORIES: { key: ProductCategory; label: string; icon: string }[] = [
@@ -31,7 +31,7 @@ export default function CreateProductScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
-  const { createProduct, deleteProduct } = useShop();
+  const { createProduct } = useShop();
   const { showAlert } = useAlert();
 
   const [title, setTitle] = useState('');
@@ -46,6 +46,7 @@ export default function CreateProductScreen() {
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [imageAssetIds, setImageAssetIds] = useState<string[]>([]);
   const draftAssetIdsRef = useRef<string[]>([]);
+  const publishLockRef = useRef(false);
 
   useEffect(() => () => {
     const abandoned = [...draftAssetIdsRef.current];
@@ -95,6 +96,7 @@ export default function CreateProductScreen() {
   }, [images, user, showAlert]);
 
   const handlePublish = useCallback(async () => {
+    if (publishLockRef.current || isPublishing) return;
     if (!user) { showAlert('Inicia sesión', 'Necesitas una cuenta para vender'); return; }
     if (!title.trim()) { showAlert('Título requerido', 'Ingresa un título para tu producto'); return; }
     if (!price || isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
@@ -103,57 +105,48 @@ export default function CreateProductScreen() {
     }
     if (!description.trim()) { showAlert('Descripción requerida', 'Describe tu producto'); return; }
 
+    publishLockRef.current = true;
     setIsPublishing(true);
-    const tagList = tags.split(',').map(t => t.trim()).filter(Boolean);
-    const result = await createProduct({
-      title: title.trim(),
-      description: description.trim(),
-      price: parseFloat(price),
-      currency: 'BDAG',
-      category,
-      images,
-      stock: isUnlimitedStock ? 9999 : Math.max(1, parseInt(stock) || 1),
-      tags: tagList,
-    });
-    setIsPublishing(false);
+    try {
+      const tagList = tags.split(',').map(t => t.trim()).filter(Boolean);
+      const result = await createProduct({
+        title: title.trim(),
+        description: description.trim(),
+        price: parseFloat(price),
+        currency: 'BDAG',
+        category,
+        images,
+        mediaAssetIds: imageAssetIds,
+        stock: isUnlimitedStock ? 9999 : Math.max(1, parseInt(stock) || 1),
+        tags: tagList,
+      });
 
-    if (result.success) {
-      if (!result.product) {
-        await Promise.all(imageAssetIds.map(assetId => deleteMediaAsset(assetId).catch(() => {})));
-        draftAssetIdsRef.current = [];
-        setImages([]);
-        setImageAssetIds([]);
-        showAlert('Error', 'El producto no devolvió una identidad válida.');
-        return;
-      }
-      if (result.product) {
-        try {
-          await Promise.all(imageAssetIds.map((assetId, position) =>
-            linkMediaAsset(assetId, 'shop_product', result.product!.id, 'image', position)
-          ));
-          draftAssetIdsRef.current = [];
-        } catch {
-          await deleteProduct(result.product.id);
+      if (result.success) {
+        if (!result.product) {
           await Promise.all(imageAssetIds.map(assetId => deleteMediaAsset(assetId).catch(() => {})));
           draftAssetIdsRef.current = [];
           setImages([]);
           setImageAssetIds([]);
-          showAlert('Error', 'No se pudo vincular la imagen al producto. Intenta de nuevo.');
+          showAlert('Error', 'El producto no devolvió una identidad válida.');
           return;
         }
+        draftAssetIdsRef.current = [];
+        showAlert('¡Producto publicado!', 'Tu producto ya está disponible en la tienda', [
+          { text: 'Ver tienda', onPress: () => router.replace('/(tabs)/shop') },
+          { text: 'OK', onPress: () => router.back() },
+        ]);
+      } else {
+        await Promise.all(imageAssetIds.map(assetId => deleteMediaAsset(assetId).catch(() => {})));
+        draftAssetIdsRef.current = [];
+        setImages([]);
+        setImageAssetIds([]);
+        showAlert('Error', result.error || 'No se pudo publicar el producto');
       }
-      showAlert('¡Producto publicado!', 'Tu producto ya está disponible en la tienda', [
-        { text: 'Ver tienda', onPress: () => router.replace('/(tabs)/shop') },
-        { text: 'OK', onPress: () => router.back() },
-      ]);
-    } else {
-      await Promise.all(imageAssetIds.map(assetId => deleteMediaAsset(assetId).catch(() => {})));
-      draftAssetIdsRef.current = [];
-      setImages([]);
-      setImageAssetIds([]);
-      showAlert('Error', result.error || 'No se pudo publicar el producto');
+    } finally {
+      publishLockRef.current = false;
+      setIsPublishing(false);
     }
-  }, [user, title, description, price, category, stock, isUnlimitedStock, images, imageAssetIds, tags, createProduct, deleteProduct, router, showAlert]);
+  }, [isPublishing, user, title, description, price, category, stock, isUnlimitedStock, images, imageAssetIds, tags, createProduct, router, showAlert]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>

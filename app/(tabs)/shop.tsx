@@ -26,7 +26,12 @@ import { useAuth } from '@/hooks/useAuth';
 import { useWallet } from '@/hooks/useWallet';
 import { fetchFeaturedCreators, searchCreators, type CreatorProfile } from '@/services/creatorService';
 import { fetchSubscriptionPlans, type SubscriptionPlan } from '@/services/subscriptionService';
-import { fetchProducts, PRODUCT_CATEGORIES, type Product } from '@/services/marketplaceService';
+import {
+  fetchProducts,
+  PRODUCT_CATEGORIES,
+  type MarketplaceCategory,
+  type Product,
+} from '@/services/marketplaceService';
 import { fetchExclusiveContent, type ExclusiveContent } from '@/services/economyService';
 import { isProfileBoosted } from '@/services/boostService';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
@@ -252,7 +257,7 @@ export default function ShopScreen() {
 
   // Market tab
   const [products,      setProducts]      = useState<Product[]>([]);
-  const [productCat,    setProductCat]    = useState('');
+  const [productCat, setProductCat] = useState<MarketplaceCategory | ''>('');
   const [marketLoading, setMarketLoading] = useState(false);
 
   // Exclusive tab

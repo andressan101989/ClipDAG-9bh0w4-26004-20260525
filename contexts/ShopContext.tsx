@@ -47,7 +47,7 @@ interface ShopContextType {
   fetchProducts: (category?: string, search?: string) => Promise<void>;
   fetchMyProducts: () => Promise<void>;
   fetchMyOrders: () => Promise<void>;
-  createProduct: (data: Omit<Product, 'id' | 'sellerId' | 'sellerUsername' | 'sellerAvatar' | 'totalSales' | 'createdAt' | 'status'>) => Promise<{ success: boolean; error?: string; product?: Product }>;
+  createProduct: (data: Omit<Product, 'id' | 'sellerId' | 'sellerUsername' | 'sellerAvatar' | 'totalSales' | 'createdAt' | 'status'> & { mediaAssetIds?: string[] }) => Promise<{ success: boolean; error?: string; product?: Product }>;
   updateProduct: (id: string, data: Partial<Pick<Product, 'title' | 'description' | 'price' | 'stock' | 'status'>>) => Promise<{ success: boolean; error?: string }>;
   deleteProduct: (id: string) => Promise<{ success: boolean; error?: string }>;
   placeOrder: (productId: string, quantity: number, shippingAddress: string) => Promise<{ success: boolean; error?: string; orderId?: string }>;
@@ -155,29 +155,41 @@ export function ShopProvider({ children }: { children: ReactNode }) {
 
   // ── Create product ────────────────────────────────────────────────────────
   const createProduct = useCallback(async (
-    data: Omit<Product, 'id' | 'sellerId' | 'sellerUsername' | 'sellerAvatar' | 'totalSales' | 'createdAt' | 'status'>
+    data: Omit<Product, 'id' | 'sellerId' | 'sellerUsername' | 'sellerAvatar' | 'totalSales' | 'createdAt' | 'status'> & { mediaAssetIds?: string[] }
   ): Promise<{ success: boolean; error?: string; product?: Product }> => {
     if (!user) return { success: false, error: 'No autenticado' };
     const supabase = supabaseRef.current;
     if (!supabase || !supabaseOk.current) return { success: false, error: 'Backend no disponible' };
     try {
-      const { data: row, error } = await supabase
-        .from('products')
-        .insert({
-          seller_id: user.id,
-          title: data.title,
-          description: data.description,
-          price: data.price,
-          currency: 'BDAG',
-          category: data.category,
-          images: data.images,
-          stock: data.stock,
-          tags: data.tags,
-        })
-        .select(`*, user_profiles!products_seller_id_fkey(username, avatar_url)`)
-        .single();
+      const { data: productId, error } = await supabase.rpc('create_product_with_media', {
+        p_title: data.title,
+        p_description: data.description,
+        p_price: data.price,
+        p_category: data.category,
+        p_media_urls: data.images,
+        p_asset_ids: data.mediaAssetIds ?? [],
+        p_stock: data.stock,
+        p_tags: data.tags,
+      });
       if (error) return { success: false, error: error.message };
-      const product = mapProduct(row as Record<string, unknown>);
+      if (typeof productId !== 'string') return { success: false, error: 'product_identity_missing' };
+      const product: Product = {
+        id: productId,
+        sellerId: user.id,
+        sellerUsername: user.username || user.email?.split('@')[0] || 'Vendedor',
+        sellerAvatar: user.avatar || '',
+        title: data.title,
+        description: data.description,
+        price: data.price,
+        currency: 'BDAG',
+        category: data.category,
+        images: data.images,
+        stock: data.stock,
+        status: 'active',
+        tags: data.tags,
+        totalSales: 0,
+        createdAt: new Date().toISOString(),
+      };
       setMyProducts(prev => [product, ...prev]);
       setProducts(prev => [product, ...prev]);
       return { success: true, product };
@@ -195,14 +207,20 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     const supabase = supabaseRef.current;
     if (!supabase || !supabaseOk.current) return { success: false, error: 'Backend no disponible' };
     try {
+      const mutableFields: Partial<Pick<Product, 'title' | 'description' | 'price' | 'stock' | 'status'>> = {};
+      if (data.title !== undefined) mutableFields.title = data.title;
+      if (data.description !== undefined) mutableFields.description = data.description;
+      if (data.price !== undefined) mutableFields.price = data.price;
+      if (data.stock !== undefined) mutableFields.stock = data.stock;
+      if (data.status !== undefined) mutableFields.status = data.status;
       const { error } = await supabase
         .from('products')
-        .update({ ...data, updated_at: new Date().toISOString() })
+        .update(mutableFields)
         .eq('id', id)
         .eq('seller_id', user.id);
       if (error) return { success: false, error: error.message };
-      setMyProducts(prev => prev.map(p => p.id === id ? { ...p, ...data } : p));
-      setProducts(prev => prev.map(p => p.id === id ? { ...p, ...data } : p));
+      setMyProducts(prev => prev.map(p => p.id === id ? { ...p, ...mutableFields } : p));
+      setProducts(prev => prev.map(p => p.id === id ? { ...p, ...mutableFields } : p));
       return { success: true };
     } catch (e: any) {
       return { success: false, error: e.message };

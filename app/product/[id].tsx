@@ -23,11 +23,11 @@ export default function ProductScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
-  const { products, placeOrder, toggleSaveProduct, isSavedProduct } = useShop();
+  const { products, toggleSaveProduct, isSavedProduct } = useShop();
   const { showAlert } = useAlert();
 
   const [product, setProduct] = useState<Product | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const isLoading = false;
   const [quantity, setQuantity] = useState(1);
   const [orderModalVisible, setOrderModalVisible] = useState(false);
   const [shippingAddress, setShippingAddress] = useState('');
@@ -47,19 +47,8 @@ export default function ProductScreen() {
       showAlert('Dirección requerida', 'Ingresa tu dirección de envío');
       return;
     }
-    setIsLoading(true);
-    const result = await placeOrder(product.id, quantity, shippingAddress.trim());
-    setIsLoading(false);
-
-    if (result.success) {
-      setOrderModalVisible(false);
-      showAlert('¡Pedido realizado!', `Tu pedido #${result.orderId?.substring(0, 8)} ha sido confirmado. El vendedor se pondrá en contacto pronto.`, [
-        { text: 'Ver mis pedidos', onPress: () => router.push('/my-orders') },
-        { text: 'OK' },
-      ]);
-    } else {
-      showAlert('Error', result.error || 'No se pudo procesar el pedido');
-    }
+    setOrderModalVisible(false);
+    showAlert('Checkout no disponible', 'Checkout BDAG pendiente de implementación');
   };
 
   if (!product) {

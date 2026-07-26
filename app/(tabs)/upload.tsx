@@ -35,7 +35,7 @@ import { CyberButton } from '@/components/ui/CyberButton';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { uploadFileFromUri, detectMimeType } from '@/contexts/FeedContext';
 import { getTrackById, type MusicTrack } from '@/services/musicLibrary';
-import { createExclusiveContent } from '@/services/economyService';
+import { cancelUnpublishedExclusiveContent, createExclusiveContent } from '@/services/economyService';
 import { deleteMediaAsset, linkMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
 
 // ── Hashtag suggestions ────────────────────────────────────────────────────
@@ -357,7 +357,7 @@ export default function UploadScreen() {
     setUploadProgress(`Subiendo ${carouselMedias.length} fotos...`);
     const completedUploads: ((UploadedMedia & { index: number }) | undefined)[] =
       new Array(carouselMedias.length);
-    let postId: string | undefined;
+    let exclusiveContentId: string | undefined;
     let failureStage = 'CAROUSEL_UPLOAD_FAILED';
     try {
       const uploads = await mapWithConcurrency(carouselMedias, 3, async (media, index) => {
@@ -373,7 +373,6 @@ export default function UploadScreen() {
       const validUrls = orderedUploads.map(item => item.url);
       if (validUrls.length !== carouselMedias.length) throw new Error('No se pudieron subir todas las imágenes');
       setUploadProgress('Guardando carrusel...');
-      let exclusiveContentId: string | undefined;
       if (isExclusive) {
         setUploadProgress('Registrando contenido exclusivo...');
         exclusiveContentId = await registerExclusiveContent({
@@ -383,24 +382,19 @@ export default function UploadScreen() {
         });
       }
       failureStage = 'CAROUSEL_CREATE_POST_FAILED';
-      postId = await addVideo({
+      const postId = await addVideo({
         userId: user.id,
         username: user.username || user.email?.split('@')[0] || 'user',
         userAvatar: user.avatar || '',
         videoUrl: validUrls[0], thumbnailUrl: validUrls[0],
         caption: caption.trim(), music: 'Sin musica',
         mediaUrls: validUrls,
+        mediaAssetIds: orderedUploads.map(item => item.assetId!),
         ...(isExclusive ? { isExclusive: true, exclusivePrice: parseFloat(exclusivePrice), exclusiveContentId } : {}),
       });
       if (!postId) throw new Error('CAROUSEL_CREATE_POST_FAILED');
-      if (postId) {
-        const persistedPostId = postId;
-        failureStage = 'CAROUSEL_LINK_FAILED';
-        await Promise.all(orderedUploads.map((item, position) =>
-          linkMediaAsset(item.assetId!, 'video_post', persistedPostId, 'media', position)
-        ));
-        completedUploads.fill(undefined);
-      }
+      completedUploads.fill(undefined);
+      exclusiveContentId = undefined;
       setCaption(''); setCarouselMedias([]); setSelectedMusic(null);
       setIsExclusive(false); setExclusivePrice('100');
       showAlert(
@@ -415,14 +409,14 @@ export default function UploadScreen() {
         stage: failureStage,
         code: error instanceof Error ? error.message : 'unknown',
       });
-      if (postId) {
-        await supabase.from('videos').delete().eq('id', postId).eq('user_id', user.id);
+      if (exclusiveContentId) {
+        await cancelUnpublishedExclusiveContent(exclusiveContentId).catch(() => {});
       }
       await Promise.all(uploadedAssetIds.map(assetId => deleteMediaAsset(assetId).catch(() => {})));
       showAlert('Error', 'No se pudo publicar el carrusel.');
     }
     setIsUploading(false); setUploadProgress('');
-  }, [carouselMedias, caption, isExclusive, exclusivePrice, user, uploadMediaToStorage, addVideo, registerExclusiveContent, router, showAlert, supabase]);
+  }, [carouselMedias, caption, isExclusive, exclusivePrice, user, uploadMediaToStorage, addVideo, registerExclusiveContent, router, showAlert]);
 
   const MODES: { key: Mode; icon: string; label: string; color?: string }[] = [
     { key: 'video',    icon: 'videocam',      label: 'Video' },

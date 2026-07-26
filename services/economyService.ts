@@ -205,6 +205,14 @@ export async function createExclusiveContent(opts: {
   return data;
 }
 
+/** Cancel a newly-created exclusive listing that was never attached to a post. */
+export async function cancelUnpublishedExclusiveContent(contentId: string): Promise<void> {
+  const { error } = await supabase().rpc('cancel_unpublished_exclusive_content', {
+    p_content_id: contentId,
+  });
+  if (error) throw error;
+}
+
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
 
 /** Fetch exclusive content marketplace */
