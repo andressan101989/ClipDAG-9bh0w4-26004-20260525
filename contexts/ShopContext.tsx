@@ -166,7 +166,6 @@ export function ShopProvider({ children }: { children: ReactNode }) {
         p_description: data.description,
         p_price: data.price,
         p_category: data.category,
-        p_media_urls: data.images,
         p_asset_ids: data.mediaAssetIds ?? [],
         p_stock: data.stock,
         p_tags: data.tags,

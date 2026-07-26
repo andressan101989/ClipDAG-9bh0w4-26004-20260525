@@ -7,19 +7,20 @@ Deno.serve(async(req)=>{
   const {data:a}=await db.from('media_assets').select('*').eq('id',asset_id).eq('owner_id',user.id).maybeSingle();
   if(!a) return json({error:'not_found'},404);
   if(a.status==='deleted') return json({success:true,alreadyDeleted:true});
-  const now=new Date().toISOString();
-  const {error:pendingError}=await db.from('media_assets').update({
-    status:'delete_pending',error_code:null,next_cleanup_attempt_at:now,updated_at:now,
-  }).eq('id',a.id).eq('owner_id',user.id);
-  if(pendingError) return json({error:'delete_schedule_failed'},503);
+  const {data:schedule,error:scheduleError}=await db.rpc('schedule_media_asset_deletion',{
+    p_asset_id:a.id,p_owner_id:user.id,
+  });
+  if(scheduleError) return json({error:'asset_usage_check_failed'},503);
+  if(schedule==='asset_in_use') return json({error:'asset_in_use'},409);
+  if(schedule==='not_found') return json({error:'not_found'},404);
+  if(schedule==='deleted') return json({success:true,alreadyDeleted:true});
+  if(schedule!=='scheduled') return json({error:'delete_schedule_failed'},503);
   try {
     await deleteObject(a.bucket_name,a.object_key);
-    const {error:deletedError}=await db.from('media_assets').update({
-      status:'deleted',deleted_at:new Date().toISOString(),error_code:null,
-      cleanup_attempts:Number(a.cleanup_attempts??0)+1,last_cleanup_attempt_at:new Date().toISOString(),
-      next_cleanup_attempt_at:null,updated_at:new Date().toISOString(),
-    }).eq('id',a.id).eq('status','delete_pending');
-    if(deletedError) return json({error:'delete_state_failed'},503);
+    const {data:finalized,error:deletedError}=await db.rpc('finalize_media_asset_deletion',{
+      p_asset_id:a.id,p_owner_id:user.id,
+    });
+    if(deletedError||finalized!==true) return json({error:'delete_state_failed'},503);
   } catch {
     await db.from('media_assets').update({
       status:'delete_pending',error_code:'delete_retry_required',

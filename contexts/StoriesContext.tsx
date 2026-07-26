@@ -158,8 +158,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     try {
       const result = mediaType === 'photo' && mediaAssetId
         ? await supabase.rpc('create_photo_story_with_media', {
-          p_media_urls: [mediaUrl],
-          p_asset_ids: [mediaAssetId],
+          p_asset_id: mediaAssetId,
         })
         : await supabase.from('stories').insert({
           user_id: user.id,

@@ -662,11 +662,8 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     try {
       if (video.mediaUrls && video.mediaUrls.length >= 2) {
         const { data, error } = await supabase.rpc('create_carousel_post', {
-          p_video_url: video.videoUrl,
-          p_thumbnail_url: video.thumbnailUrl || video.videoUrl,
           p_caption: video.caption,
           p_music: video.music || 'Sin musica',
-          p_media_urls: video.mediaUrls,
           p_asset_ids: video.mediaAssetIds ?? [],
         });
         if (error) {
@@ -704,6 +701,27 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         setVideos(prev => [newVideo, ...prev]);
         return data;
       }
+      if (video.mediaAssetIds?.length === 1) {
+        const { data, error } = await supabase.rpc('create_photo_post_with_media', {
+          p_caption: video.caption,
+          p_music: video.music || 'Sin musica',
+          p_asset_id: video.mediaAssetIds[0],
+        });
+        if (error || typeof data !== 'string') {
+          throw Object.assign(new Error('PHOTO_CREATE_POST_FAILED'), {
+            code: error?.code ?? 'invalid_rpc_result',
+            stage: 'PHOTO_CREATE_POST',
+          });
+        }
+        const newVideo: VideoWithMeta = {
+          id: data,userId:user.id,username:user.username||'user',userAvatar:user.avatar||'',
+          videoUrl:video.videoUrl,thumbnailUrl:video.videoUrl,caption:video.caption,
+          likes:0,comments:0,shares:0,music:video.music||'Sin musica',
+          isLiked:false,createdAt:new Date().toISOString(),
+        };
+        setVideos(prev => [newVideo,...prev]);
+        return data;
+      }
 
       const insertPayload: Record<string, unknown> = {
         user_id:       user.id,
@@ -738,7 +756,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         stage: controlled.stage ?? 'CREATE_POST',
         code: controlled.code ?? 'unknown',
       });
-      if (controlled.stage === 'CAROUSEL_CREATE_POST') throw e;
+      if (controlled.stage === 'CAROUSEL_CREATE_POST' || controlled.stage === 'PHOTO_CREATE_POST') throw e;
       return undefined;
     }
   }, [user]);

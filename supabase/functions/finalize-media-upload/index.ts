@@ -21,7 +21,10 @@ Deno.serve(async(req)=>{
   const {asset_id}=await req.json().catch(()=>({})); const db=admin();
   const {data:a}=await db.from('media_assets').select('*').eq('id',asset_id).eq('owner_id',user.id).maybeSingle();
   if(!a) return json({error:'not_found'},404);
-  if(a.status==='ready') return json({success:true,data:{assetId:a.id,provider:'r2',mediaKind:a.media_kind,purpose:a.purpose,visibility:a.visibility,status:'ready',...(a.visibility==='public'?{url:publicUrl(a.object_key)}:{})}});
+  if(a.status==='ready') {
+    if(a.visibility==='public'&&!a.public_url) return json({error:'public_url_missing'},409);
+    return json({success:true,data:{assetId:a.id,provider:'r2',mediaKind:a.media_kind,purpose:a.purpose,visibility:a.visibility,status:'ready',...(a.visibility==='public'?{url:a.public_url}:{})}});
+  }
   if(!['pending','uploading'].includes(a.status)) return json({error:'invalid_status'},409);
   try {
     const head=await headWithRetry(a.bucket_name,a.object_key);
@@ -42,8 +45,13 @@ Deno.serve(async(req)=>{
       }
       return json({error:'object_mismatch'},409);
     }
-    await db.from('media_assets').update({status:'ready',etag:String(head.ETag??'').replaceAll('\"',''),ready_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',a.id);
-    return json({success:true,data:{assetId:a.id,provider:'r2',mediaKind:a.media_kind,purpose:a.purpose,visibility:a.visibility,status:'ready',...(a.visibility==='public'?{url:publicUrl(a.object_key)}:{})}});
+    const resolvedPublicUrl=a.visibility==='public'?publicUrl(a.object_key):null;
+    const {error:readyError}=await db.from('media_assets').update({
+      status:'ready',etag:String(head.ETag??'').replaceAll('\"',''),
+      public_url:resolvedPublicUrl,ready_at:new Date().toISOString(),updated_at:new Date().toISOString(),
+    }).eq('id',a.id).in('status',['pending','uploading']);
+    if(readyError) return json({error:'finalize_state_failed'},503);
+    return json({success:true,data:{assetId:a.id,provider:'r2',mediaKind:a.media_kind,purpose:a.purpose,visibility:a.visibility,status:'ready',...(resolvedPublicUrl?{url:resolvedPublicUrl}:{})}});
   } catch(error) {
     if(isR2NotFound(error)) {
       await db.from('media_assets').update({status:'failed',error_code:'object_missing',updated_at:new Date().toISOString()}).eq('id',a.id);

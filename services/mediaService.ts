@@ -49,6 +49,13 @@ export async function deleteMediaAsset(assetId:string):Promise<void> {
   const {data,error}=await supabase.functions.invoke('delete-media-asset',{body:{asset_id:assetId}});
   if(error||!data?.success) throw new Error(data?.error??error?.message??'media_delete_failed');
 }
+export async function setProfileAvatarWithMedia(assetId:string):Promise<string> {
+  const {data,error}=await supabase.rpc('set_profile_avatar_with_media',{p_asset_id:assetId});
+  if(error||typeof data!=='string'||!data.startsWith('https://')) {
+    throw new Error(error?.message??'avatar_update_failed');
+  }
+  return data;
+}
 export type LinkableMediaEntity = 'user_profile' | 'video_post' | 'story' | 'shop_product';
 
 export async function linkMediaAsset(assetId:string,entityType:LinkableMediaEntity,entityId:string,slot:string,position=0):Promise<void> {

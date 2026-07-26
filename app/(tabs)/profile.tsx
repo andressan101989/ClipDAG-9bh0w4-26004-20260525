@@ -28,8 +28,7 @@ import { MOCK_CREATORS, formatNumber } from '@/services/mockData';
 import { detectMimeType } from '@/contexts/FeedContext';
 import {
   deleteMediaAsset,
-  getLinkedMediaAssetIds,
-  linkMediaAsset,
+  setProfileAvatarWithMedia,
   uploadMediaFromUri,
 } from '@/services/mediaService';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
@@ -187,9 +186,7 @@ export default function ProfileScreen() {
     if (!user) return;
     setIsUploadingAvatar(true);
     let uploadedAssetId: string | undefined;
-    let profileUpdated = false;
     try {
-      const previousAssetIds = await getLinkedMediaAssetIds('user_profile', user.id, 'avatar');
       const mimeType = asset.mimeType || detectMimeType(asset.uri, 'image/jpeg');
       const uploaded = await uploadMediaFromUri({
         uri: asset.uri,
@@ -200,37 +197,17 @@ export default function ProfileScreen() {
         visibility: 'public',
       });
       uploadedAssetId = uploaded.assetId;
-      const publicUrl = uploaded.url;
-
-      // Never persist a local device URI (file:///...) to avatar_url — if the
-      // Storage upload failed, publicUrl is null and the old fallback saved
-      // asset.uri instead, which is only readable on the uploading device and
-      // invisible to every other user viewing this profile.
-      if (!publicUrl || !publicUrl.startsWith('https://')) {
-        console.error('[profile.tsx] uploadAvatar: Storage upload failed, publicUrl =', publicUrl);
-        showAlert('Error', 'No se pudo subir la foto. Verifica tu conexión e intenta de nuevo.');
-        setIsUploadingAvatar(false);
-        return;
-      }
-
-      await updateProfile({ avatar: publicUrl } as any);
-      profileUpdated = true;
-      await linkMediaAsset(uploaded.assetId, 'user_profile', user.id, 'avatar');
+      await setProfileAvatarWithMedia(uploaded.assetId);
       uploadedAssetId = undefined;
-      await Promise.all(previousAssetIds
-        .filter(assetId => assetId !== uploaded.assetId)
-        .map(assetId => deleteMediaAsset(assetId)));
+      await refreshProfile();
       showAlert('Foto actualizada', 'Tu foto de perfil fue actualizada');
     } catch (e) {
-      if (profileUpdated) {
-        await updateProfile({ avatar: user.avatar || '' } as any).catch(() => {});
-      }
       if (uploadedAssetId) await deleteMediaAsset(uploadedAssetId).catch(() => {});
       console.error('[profile.tsx] uploadAvatar exception:', e);
       showAlert('Error', 'No se pudo subir la foto');
     }
     setIsUploadingAvatar(false);
-  }, [user, updateProfile, showAlert]);
+  }, [user, refreshProfile, showAlert]);
 
   const handleSaveProfile = useCallback(async () => {
     if (!displayName.trim()) { showAlert('Nombre requerido', 'Ingresa un nombre'); return; }

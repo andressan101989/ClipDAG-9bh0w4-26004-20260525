@@ -28,15 +28,14 @@ import { useLiveStream } from '@/hooks/streaming/useLiveStream';
 import { LiveCameraPreview } from '@/components/feature/LiveCameraPreview';
 import { MusicPicker } from '@/components/feature/MusicPicker';
 import { LiveTitleModal } from '@/components/upload/LiveTitleModal';
-import { ExclusiveToggle } from '@/components/upload/ExclusiveToggle';
 import { useAlert } from '@/template';
 import { getSupabaseClient } from '@/template';
 import { CyberButton } from '@/components/ui/CyberButton';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { uploadFileFromUri, detectMimeType } from '@/contexts/FeedContext';
 import { getTrackById, type MusicTrack } from '@/services/musicLibrary';
-import { cancelUnpublishedExclusiveContent, createExclusiveContent } from '@/services/economyService';
-import { deleteMediaAsset, linkMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
+import { createExclusiveContent } from '@/services/economyService';
+import { deleteMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
 
 // ── Hashtag suggestions ────────────────────────────────────────────────────
 const HASHTAG_SUGGESTIONS = [
@@ -59,6 +58,28 @@ interface SelectedMedia {
 interface UploadedMedia {
   url: string;
   assetId?: string;
+}
+
+export async function registerExclusiveContent(opts: {
+  title: string;
+  contentType: string;
+  previewUrl: string;
+  contentUrl: string;
+  priceBdag: number;
+}): Promise<string> {
+  const result = await createExclusiveContent({
+    title: opts.title,
+    description: opts.title,
+    contentType: opts.contentType,
+    previewText: opts.title.slice(0, 80),
+    previewUrl: opts.previewUrl,
+    contentUrl: opts.contentUrl,
+    priceBdag: opts.priceBdag,
+  });
+  if (result.success !== true || !result.content_id) {
+    throw new Error('EXCLUSIVE_CONTENT_REGISTRATION_FAILED');
+  }
+  return result.content_id;
 }
 
 async function mapWithConcurrency<T, R>(
@@ -103,9 +124,6 @@ export default function UploadScreen() {
 
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
   const [carouselMedias, setCarouselMedias] = useState<SelectedMedia[]>([]);
-
-  const [isExclusive, setIsExclusive] = useState(false);
-  const [exclusivePrice, setExclusivePrice] = useState('100');
 
   // ── Live ────────────────────────────────────────────────────────────────────
   const [showLiveTitleModal, setShowLiveTitleModal] = useState(false);
@@ -244,7 +262,7 @@ export default function UploadScreen() {
     if (!user) return null;
     const isVideo = media.type === 'video';
     const mimeType = media.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg');
-    if (isVideo || isExclusive) {
+    if (isVideo) {
       const bucket = isVideo ? 'videos' : 'images';
       const ext = isVideo ? 'mp4' : 'jpg';
       const suffix = index !== undefined ? `_${index}` : '';
@@ -260,32 +278,11 @@ export default function UploadScreen() {
     });
     if (!uploaded.url?.startsWith('https://')) throw new Error('R2 did not return a public URL');
     return { url: uploaded.url, assetId: uploaded.assetId };
-  }, [user, supabase, isExclusive, mode]);
-
-  const registerExclusiveContent = useCallback(async (opts: {
-    title: string; contentType: string;
-    previewUrl: string; contentUrl: string;
-    priceBdag: number;
-  }): Promise<string | undefined> => {
-    const result = await createExclusiveContent({
-      title: opts.title,
-      description: opts.title,
-      contentType: opts.contentType,
-      previewText: opts.title.slice(0, 80),
-      previewUrl: opts.previewUrl,
-      contentUrl: opts.contentUrl,
-      priceBdag: opts.priceBdag,
-    });
-    return result.content_id;
-  }, []);
+  }, [user, supabase, mode]);
 
   const handleUploadSingle = useCallback(async () => {
     if (!selectedMedia) { showAlert('Sin contenido', `Selecciona ${mode === 'photo' ? 'una foto' : 'un video'}`); return; }
     if (!caption.trim()) { showAlert('Sin descripción', 'Agrega una descripción'); return; }
-    if (isExclusive) {
-      const price = parseFloat(exclusivePrice);
-      if (isNaN(price) || price < 10) { showAlert('Precio inválido', 'El precio mínimo es 10 BDAG'); return; }
-    }
     if (!user) return;
 
     setIsUploading(true);
@@ -300,17 +297,6 @@ export default function UploadScreen() {
       setUploadProgress('Guardando en el feed...');
       const musicName = selectedMusic ? `${selectedMusic.title} - ${selectedMusic.artist}` : 'Sin musica';
 
-      let exclusiveContentId: string | undefined;
-      if (isExclusive) {
-        setUploadProgress('Registrando contenido exclusivo...');
-        exclusiveContentId = await registerExclusiveContent({
-          title: caption.trim().slice(0, 80),
-          contentType: selectedMedia.type === 'video' ? 'video' : 'image',
-          previewUrl: finalUrl, contentUrl: finalUrl,
-          priceBdag: parseFloat(exclusivePrice),
-        });
-      }
-
       postId = await addVideo({
         userId: user.id,
         username: user.username || user.email?.split('@')[0] || 'user',
@@ -319,19 +305,16 @@ export default function UploadScreen() {
         thumbnailUrl: selectedMedia.type === 'image' ? finalUrl : '',
         caption: caption.trim(),
         music: musicName,
-        ...(isExclusive ? { isExclusive: true, exclusivePrice: parseFloat(exclusivePrice), exclusiveContentId } : {}),
+        ...(uploaded.assetId ? { mediaAssetIds: [uploaded.assetId] } : {}),
       });
       if (uploaded.assetId && !postId) throw new Error('entity_create_failed');
-      if (postId && uploaded.assetId) {
-        await linkMediaAsset(uploaded.assetId, 'video_post', postId, 'media', 0);
-        uploadedAssetId = undefined;
-      }
+      if (postId && uploaded.assetId) uploadedAssetId = undefined;
 
       setCaption(''); setSelectedMedia(null); setSelectedMusic(null);
-      setIsExclusive(false); setExclusivePrice('100'); setUploadProgress('');
+      setUploadProgress('');
       showAlert(
-        isExclusive ? '¡Contenido exclusivo publicado!' : (mode === 'photo' ? 'Foto publicada!' : 'Video publicado!'),
-        isExclusive ? `Precio: ${exclusivePrice} BDAG · Tus suscriptores acceden gratis` : 'Tu contenido ya está en el feed',
+        mode === 'photo' ? 'Foto publicada!' : 'Video publicado!',
+        'Tu contenido ya está en el feed',
         [{ text: 'Ver Feed', onPress: () => router.push('/(tabs)') }, { text: 'Crear otro' }],
       );
     } catch (_) {
@@ -342,22 +325,17 @@ export default function UploadScreen() {
       showAlert('Error', 'No se pudo publicar. Intenta de nuevo.');
     }
     setIsUploading(false); setUploadProgress('');
-  }, [selectedMedia, caption, mode, selectedMusic, isExclusive, exclusivePrice, user, uploadMediaToStorage, addVideo, registerExclusiveContent, router, showAlert, supabase]);
+  }, [selectedMedia, caption, mode, selectedMusic, user, uploadMediaToStorage, addVideo, router, showAlert, supabase]);
 
   const handleUploadCarousel = useCallback(async () => {
     if (carouselMedias.length < 2) { showAlert('Carrusel requerido', 'Selecciona al menos 2 fotos'); return; }
     if (!caption.trim()) { showAlert('Sin descripción', 'Agrega una descripción'); return; }
-    if (isExclusive) {
-      const price = parseFloat(exclusivePrice);
-      if (isNaN(price) || price < 10) { showAlert('Precio inválido', 'El precio mínimo es 10 BDAG'); return; }
-    }
     if (!user) return;
 
     setIsUploading(true);
     setUploadProgress(`Subiendo ${carouselMedias.length} fotos...`);
     const completedUploads: ((UploadedMedia & { index: number }) | undefined)[] =
       new Array(carouselMedias.length);
-    let exclusiveContentId: string | undefined;
     let failureStage = 'CAROUSEL_UPLOAD_FAILED';
     try {
       const uploads = await mapWithConcurrency(carouselMedias, 3, async (media, index) => {
@@ -373,14 +351,6 @@ export default function UploadScreen() {
       const validUrls = orderedUploads.map(item => item.url);
       if (validUrls.length !== carouselMedias.length) throw new Error('No se pudieron subir todas las imágenes');
       setUploadProgress('Guardando carrusel...');
-      if (isExclusive) {
-        setUploadProgress('Registrando contenido exclusivo...');
-        exclusiveContentId = await registerExclusiveContent({
-          title: caption.trim().slice(0, 80), contentType: 'image',
-          previewUrl: validUrls[0], contentUrl: validUrls[0],
-          priceBdag: parseFloat(exclusivePrice),
-        });
-      }
       failureStage = 'CAROUSEL_CREATE_POST_FAILED';
       const postId = await addVideo({
         userId: user.id,
@@ -390,16 +360,13 @@ export default function UploadScreen() {
         caption: caption.trim(), music: 'Sin musica',
         mediaUrls: validUrls,
         mediaAssetIds: orderedUploads.map(item => item.assetId!),
-        ...(isExclusive ? { isExclusive: true, exclusivePrice: parseFloat(exclusivePrice), exclusiveContentId } : {}),
       });
       if (!postId) throw new Error('CAROUSEL_CREATE_POST_FAILED');
       completedUploads.fill(undefined);
-      exclusiveContentId = undefined;
       setCaption(''); setCarouselMedias([]); setSelectedMusic(null);
-      setIsExclusive(false); setExclusivePrice('100');
       showAlert(
-        isExclusive ? '¡Carrusel exclusivo publicado!' : 'Carrusel publicado!',
-        isExclusive ? `${validUrls.length} fotos · Precio: ${exclusivePrice} BDAG` : `${validUrls.length} fotos publicadas`,
+        'Carrusel publicado!',
+        `${validUrls.length} fotos publicadas`,
         [{ text: 'Ver Feed', onPress: () => router.push('/(tabs)') }, { text: 'Crear otro' }],
       );
     } catch (error) {
@@ -409,14 +376,11 @@ export default function UploadScreen() {
         stage: failureStage,
         code: error instanceof Error ? error.message : 'unknown',
       });
-      if (exclusiveContentId) {
-        await cancelUnpublishedExclusiveContent(exclusiveContentId).catch(() => {});
-      }
       await Promise.all(uploadedAssetIds.map(assetId => deleteMediaAsset(assetId).catch(() => {})));
       showAlert('Error', 'No se pudo publicar el carrusel.');
     }
     setIsUploading(false); setUploadProgress('');
-  }, [carouselMedias, caption, isExclusive, exclusivePrice, user, uploadMediaToStorage, addVideo, registerExclusiveContent, router, showAlert]);
+  }, [carouselMedias, caption, user, uploadMediaToStorage, addVideo, router, showAlert]);
 
   const MODES: { key: Mode; icon: string; label: string; color?: string }[] = [
     { key: 'video',    icon: 'videocam',      label: 'Video' },
@@ -492,7 +456,6 @@ export default function UploadScreen() {
                   setSelectedMedia(null);
                   setCarouselMedias([]);
                   setUploadProgress('');
-                  setIsExclusive(false);
                 }
               }}
             >
@@ -642,7 +605,10 @@ export default function UploadScreen() {
                 </ScrollView>
               </View>
 
-              <ExclusiveToggle enabled={isExclusive} price={exclusivePrice} onToggle={setIsExclusive} onPriceChange={setExclusivePrice} />
+              <View style={styles.infoCard}>
+                <MaterialIcons name="lock-clock" size={20} color={Colors.textSubtle} />
+                <Text style={styles.infoCardTitle}>Contenido exclusivo próximamente</Text>
+              </View>
 
               {isUploading && uploadProgress ? (
                 <View style={styles.progressRow}>
@@ -748,7 +714,10 @@ export default function UploadScreen() {
                 </LinearGradient>
               </Pressable>
 
-              <ExclusiveToggle enabled={isExclusive} price={exclusivePrice} onToggle={setIsExclusive} onPriceChange={setExclusivePrice} />
+              <View style={styles.infoCard}>
+                <MaterialIcons name="lock-clock" size={20} color={Colors.textSubtle} />
+                <Text style={styles.infoCardTitle}>Contenido exclusivo próximamente</Text>
+              </View>
 
               {isUploading && uploadProgress ? (
                 <View style={styles.progressRow}>
@@ -757,22 +726,18 @@ export default function UploadScreen() {
                 </View>
               ) : null}
 
-              {!isExclusive ? (
-                <LinearGradient colors={['rgba(0,212,255,0.08)', 'rgba(0,102,255,0.04)']} style={styles.infoCard}>
-                  <Text style={styles.dagInfoIcon}>◈</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.infoCardTitle}>Gana $DAG con este contenido</Text>
-                    <Text style={styles.infoCardText}>Cada like genera 0.01 $DAG automáticamente.</Text>
-                  </View>
-                </LinearGradient>
-              ) : null}
+              <LinearGradient colors={['rgba(0,212,255,0.08)', 'rgba(0,102,255,0.04)']} style={styles.infoCard}>
+                <Text style={styles.dagInfoIcon}>◈</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.infoCardTitle}>Gana $DAG con este contenido</Text>
+                  <Text style={styles.infoCardText}>Cada like genera 0.01 $DAG automáticamente.</Text>
+                </View>
+              </LinearGradient>
 
               <CyberButton
                 label={isUploading
                   ? (uploadProgress || 'Publicando...')
-                  : isExclusive
-                    ? `Publicar exclusivo · ${exclusivePrice} BDAG`
-                    : mode === 'photo' ? 'Publicar Foto' : 'Publicar Video'}
+                  : mode === 'photo' ? 'Publicar Foto' : 'Publicar Video'}
                 onPress={handleUploadSingle}
                 loading={isUploading}
                 size="lg"
