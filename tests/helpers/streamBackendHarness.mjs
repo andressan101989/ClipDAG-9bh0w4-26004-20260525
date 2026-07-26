@@ -47,3 +47,38 @@ export async function createDirectUploadOnce(fetcher) {
   return fetcher('/direct_upload',{method:'POST'});
 }
 export const deleteSucceeded=status=>status>=200&&status<300||status===404;
+
+export async function compensateCreatedUid({uid,deleteProvider,persist}) {
+  let deleted=false;
+  try { deleted=deleteSucceeded(await deleteProvider(uid)); } catch { deleted=false; }
+  const state=deleted
+    ? {status:'failed',cloudflare_uid:uid,next_cleanup_attempt_at:null}
+    : {status:'delete_pending',cloudflare_uid:uid,next_cleanup_attempt_at:'now'};
+  return {state,persisted:await persist(state)};
+}
+
+export async function deleteLifecycle({transition,deleteProvider,finish,persistFailure}) {
+  if(!await transition()) return {status:503,error:'asset_state_failed',providerCalls:0};
+  let providerCalls=0;
+  try {
+    providerCalls++;
+    const providerStatus=await deleteProvider();
+    if(!deleteSucceeded(providerStatus)) throw Object.assign(new Error('provider'),{status:providerStatus});
+    if(!await finish()) return {status:503,error:'asset_state_failed',providerCalls};
+    return {status:200,success:true,providerCalls};
+  } catch {
+    if(!await persistFailure()) return {status:503,error:'asset_state_failed',providerCalls};
+    return {status:503,error:'stream_provider_temporarily_unavailable',providerCalls};
+  }
+}
+
+export async function webhookLifecycle({lookup,update,assetId,uid,existingReadyAt}) {
+  const lookupResult=await lookup();
+  if(lookupResult.error) return {status:503,error:'stream_webhook_lookup_failed',updated:false};
+  const asset=lookupResult.data;
+  if(!asset) return {status:202,updated:false};
+  if(assetId&&uid&&(!asset.cloudflare_uid||asset.cloudflare_uid!==uid)) return {status:202,updated:false};
+  const updates={ready_at:existingReadyAt??'new-ready-at'};
+  if(!await update(updates)) return {status:503,error:'stream_webhook_update_failed',updated:false};
+  return {status:200,updated:true,updates};
+}

@@ -15,7 +15,9 @@ Deno.serve(async(req)=>{
   if(linkError) return json({error:'asset_link_check_failed'},503);
   if((count??0)>0) return json({error:'asset_in_use'},409);
   const attempts=Number(data.delete_attempts??0)+1;
-  await db.from('video_assets').update({status:'delete_pending',delete_attempts:attempts}).eq('id',data.id);
+  const {error:pendingError}=await db.from('video_assets')
+    .update({status:'delete_pending',delete_attempts:attempts}).eq('id',data.id).eq('owner_id',user.id);
+  if(pendingError) return json({error:'asset_state_failed'},503);
   try {
     if(data.cloudflare_uid) {
       try { await streamFetch(`/${encodeURIComponent(data.cloudflare_uid)}`,{method:'DELETE'}); }
@@ -24,17 +26,19 @@ Deno.serve(async(req)=>{
         else throw error;
       }
     }
-    await db.from('video_assets').update({
+    const {error:deletedError}=await db.from('video_assets').update({
       status:'deleted',deleted_at:new Date().toISOString(),hls_url:null,dash_url:null,thumbnail_url:null,
       error_code:null,error_message:null,next_cleanup_attempt_at:null,
-    }).eq('id',data.id);
+    }).eq('id',data.id).eq('owner_id',user.id);
+    if(deletedError) return json({error:'asset_state_failed'},503);
     return json({success:true,data:{assetId:data.id,status:'deleted'}});
   } catch(providerError) {
     const safe=sanitizeProviderError(providerError);
-    await db.from('video_assets').update({
+    const {error:failureStateError}=await db.from('video_assets').update({
       status:'delete_pending',error_code:safe.code,error_message:safe.message,
       next_cleanup_attempt_at:new Date(Date.now()+Math.min(3600,60*Math.max(1,attempts))*1000).toISOString(),
-    }).eq('id',data.id);
+    }).eq('id',data.id).eq('owner_id',user.id);
+    if(failureStateError) return json({error:'asset_state_failed'},503);
     return json({error:safe.code},503);
   }
 });

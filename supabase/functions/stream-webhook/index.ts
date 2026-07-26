@@ -23,11 +23,15 @@ Deno.serve(async(req)=>{
   const db=admin();
   let query=db.from('video_assets').select('*');
   query=assetId?query.eq('id',assetId):query.eq('cloudflare_uid',uid);
-  const {data:asset}=await query.maybeSingle();
+  const {data:asset,error:lookupError}=await query.maybeSingle();
+  if(lookupError) return json({error:'stream_webhook_lookup_failed'},503);
   if(!asset) return json({success:true},202);
-  if(uid&&asset.cloudflare_uid&&uid!==asset.cloudflare_uid) return json({success:true},202);
+  if(assetId&&uid&&(!asset.cloudflare_uid||uid!==asset.cloudflare_uid)) return json({success:true},202);
+  if(!assetId&&uid&&asset.cloudflare_uid!==uid) return json({success:true},202);
   if(['deleted','delete_pending'].includes(asset.status)) return json({success:true});
   const updates=reconcileStreamVideo(video,streamCustomerCode());
-  await db.from('video_assets').update(updates).eq('id',asset.id);
+  if(asset.ready_at) updates.ready_at=asset.ready_at;
+  const {error:updateError}=await db.from('video_assets').update(updates).eq('id',asset.id);
+  if(updateError) return json({error:'stream_webhook_update_failed'},503);
   return json({success:true});
 });
