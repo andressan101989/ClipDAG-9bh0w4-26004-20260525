@@ -111,8 +111,10 @@ test('atomic RPC validation rejects anonymous and foreign assets', () => {
   assert.match(migration, /revoke all on function public\.create_product_with_media[\s\S]*from public, anon/);
 });
 
-test('exclusive carousel compensation is authoritative and bounded', () => {
-  assert.match(upload, /cancelUnpublishedExclusiveContent\(exclusiveContentId\)/);
+test('exclusive feed publishing is disabled while legacy cancellation stays available', () => {
+  assert.match(upload, /Contenido exclusivo próximamente/);
+  assert.doesNotMatch(upload, /<ExclusiveToggle/);
+  assert.match(upload, /result\.success !== true \|\| !result\.content_id/);
   assert.match(migration, /cancel_unpublished_exclusive_content/);
   assert.match(migration, /creator_id = auth\.uid\(\)/);
   assert.match(migration, /created_at > now\(\) - interval '15 minutes'/);

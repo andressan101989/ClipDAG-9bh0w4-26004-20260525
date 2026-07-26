@@ -5,11 +5,15 @@ import test from 'node:test';
 const remove = fs.readFileSync('supabase/functions/delete-media-asset/index.ts', 'utf8');
 const cleanup = fs.readFileSync('supabase/functions/cleanup-stale-media-uploads/index.ts', 'utf8');
 const sql = fs.readFileSync('supabase/migrations/20260726090000_media_asset_foundation.sql', 'utf8');
+const safetySql = fs.readFileSync('supabase/migrations/20260726105000_media_public_urls_and_safe_links.sql', 'utf8');
 
 test('delete is owner-scoped, schedules before R2, and is idempotent', () => {
   assert.match(remove, /\.eq\('owner_id',user\.id\)/);
   assert.match(remove, /if\(a\.status==='deleted'\)/);
-  assert.ok(remove.indexOf("status:'delete_pending'") < remove.indexOf('deleteObject('));
+  assert.match(remove, /schedule_media_asset_deletion/);
+  assert.ok(remove.indexOf('schedule_media_asset_deletion') < remove.indexOf('deleteObject('));
+  assert.match(safetySql, /for update;/i);
+  assert.match(safetySql, /media_asset_has_valid_links\(p_asset_id\)/);
   assert.match(remove, /delete_retry_required/);
 });
 test('stale uploads and failed deletes have an idempotent cron backstop', () => {
