@@ -80,6 +80,35 @@ interface UploadedMedia {
 }
 const wait=(milliseconds:number)=>new Promise(resolve=>setTimeout(resolve,milliseconds));
 
+export type PickerFailureKind='icloud_asset_unavailable'|'permission_denied'|'picker_failed';
+type PickerOperation='video_library'|'photo_library'|'camera'|'carousel';
+
+function imagePickerErrorText(error:unknown):string {
+  if(!error||typeof error!=='object') return typeof error==='string'?error:'';
+  const source=error as Record<string,unknown>;
+  const fields=[source.name,source.code,source.domain,source.message,source.localizedDescription];
+  if(source.cause&&typeof source.cause==='object') {
+    const cause=source.cause as Record<string,unknown>;
+    fields.push(cause.name,cause.code,cause.domain,cause.message,cause.localizedDescription);
+  }
+  return fields.filter(value=>typeof value==='string'||typeof value==='number').join(' ');
+}
+
+export function classifyImagePickerError(error:unknown):PickerFailureKind {
+  const text=imagePickerErrorText(error).toLowerCase();
+  if(text.includes('phphotoserrordomain')||/\b3164\b/.test(text)
+    ||text.includes('photos could not complete')||text.includes('photos no pudo completar')) {
+    return 'icloud_asset_unavailable';
+  }
+  if(/permission|not authorized|denied|access.*photo|acceso.*foto/.test(text)) return 'permission_denied';
+  return 'picker_failed';
+}
+
+export function getSafeImagePickerErrorCode(error:unknown):string {
+  const kind=classifyImagePickerError(error);
+  return kind==='icloud_asset_unavailable'?'phphotos_3164':kind;
+}
+
 export async function registerExclusiveContent(opts: {
   title: string;
   contentType: string;
@@ -205,16 +234,36 @@ export default function UploadScreen() {
     }
   }, [mode]);
 
+  const handleImagePickerFailure=useCallback((
+    error:unknown,operation:PickerOperation,mediaKind:'photo'|'video',
+  )=>{
+    const kind=classifyImagePickerError(error);
+    console.warn('[Upload] Image picker failed',{operation,code:getSafeImagePickerErrorCode(error)});
+    if(kind==='icloud_asset_unavailable') {
+      showAlert(
+        mediaKind==='video'?'Video no disponible':'Foto no disponible',
+        mediaKind==='video'
+          ?'Este video no está descargado completamente en el iPhone.\nÁbrelo en Fotos, espera que termine de descargarse de iCloud y vuelve a intentarlo.'
+          :'Esta foto no está descargada completamente en el iPhone.\nÁbrela en Fotos, espera que termine de descargarse de iCloud y vuelve a intentarlo.',
+      );
+      return;
+    }
+    if(kind==='permission_denied') {
+      showAlert('Permiso requerido','Habilita el acceso en los ajustes del dispositivo.');
+      return;
+    }
+    showAlert('No se pudo abrir el contenido.','Intenta nuevamente.');
+  },[showAlert]);
+
   const openCamera = useCallback(async (captureMode: 'photo' | 'video') => {
+    try {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
       showAlert('Permiso requerido', 'Habilita la cámara en los ajustes del dispositivo');
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: captureMode === 'photo'
-        ? ImagePicker.MediaTypeOptions.Images
-        : ImagePicker.MediaTypeOptions.Videos,
+      mediaTypes: captureMode === 'photo' ? ['images'] : ['videos'],
       allowsEditing: captureMode === 'photo',
       quality: 0.85,
       videoMaxDuration: 60,
@@ -227,10 +276,15 @@ export default function UploadScreen() {
         durationMs:asset.duration,width:asset.width,height:asset.height,mimeType:asset.mimeType||undefined,
       });
     }
-  }, [showAlert, handleCameraCapture]);
+    } catch(error) {
+      handleImagePickerFailure(error,'camera',captureMode);
+    }
+  }, [showAlert, handleCameraCapture, handleImagePickerFailure]);
 
   const pickSingleMedia = useCallback(async (fromCamera: boolean) => {
     const isPhoto = mode === 'photo';
+    const operation:PickerOperation=fromCamera?'camera':isPhoto?'photo_library':'video_library';
+    try {
     const permFn = fromCamera
       ? ImagePicker.requestCameraPermissionsAsync
       : ImagePicker.requestMediaLibraryPermissionsAsync;
@@ -241,11 +295,14 @@ export default function UploadScreen() {
     }
     const launchFn = fromCamera ? ImagePicker.launchCameraAsync : ImagePicker.launchImageLibraryAsync;
     const result = await launchFn({
-      mediaTypes: isPhoto ? ImagePicker.MediaTypeOptions.Images : ImagePicker.MediaTypeOptions.Videos,
+      mediaTypes: isPhoto ? ['images'] : ['videos'],
       allowsEditing: isPhoto,
       quality: 0.85,
       videoMaxDuration: 60,
       base64: isPhoto,
+      ...(!fromCamera&&!isPhoto&&Platform.OS==='ios'
+        ?{preferredAssetRepresentationMode:ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible}
+        :{}),
     });
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
@@ -255,16 +312,20 @@ export default function UploadScreen() {
         fileName:asset.fileName,fileSize:asset.fileSize,durationMs:asset.duration,width:asset.width,height:asset.height,
       });
     }
-  }, [mode, showAlert]);
+    } catch(error) {
+      handleImagePickerFailure(error,operation,isPhoto?'photo':'video');
+    }
+  }, [mode, showAlert, handleImagePickerFailure]);
 
   const pickCarouselImages = useCallback(async () => {
+    try {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
       showAlert('Permiso requerido', 'Habilita el acceso a la galería en ajustes');
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsMultipleSelection: true,
       selectionLimit: 10,
       quality: 0.85,
@@ -278,7 +339,10 @@ export default function UploadScreen() {
       }));
       setCarouselMedias(items);
     }
-  }, [showAlert]);
+    } catch(error) {
+      handleImagePickerFailure(error,'carousel','photo');
+    }
+  }, [showAlert, handleImagePickerFailure]);
 
   const removeCarouselItem = useCallback((idx: number) => {
     setCarouselMedias(prev => prev.filter((_, i) => i !== idx));

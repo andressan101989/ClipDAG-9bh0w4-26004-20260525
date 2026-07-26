@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
-  MAX_DURATION_MS,MAX_SIZE,createThenPost,directPostOnce,isHls,isVideo,lookupPublished,pollUntilReady,
+  MAX_DURATION_MS,MAX_SIZE,classifyPickerError,createThenPost,directPostOnce,isHls,isVideo,lookupPublished,pollUntilReady,
   normalizeFunctionError,publishRecovery,reconcileThree,singleFlight,sourceFor,transient,
-  validDuration,validMime,validSize,
+  safePickerCode,validDuration,validMime,validSize,
   validateContractWithCleanup,
 } from './helpers/streamClientHarness.mjs';
 
@@ -47,6 +47,13 @@ assert.equal(transient({status:429}),true);
 for(const status of [401,403,404,410]) assert.equal(transient({status}),false);
 assert.equal(transient({code:'aborted'}),false);
 assert.equal(transient({code:'stream_ready_invariant_failed'}),false);
+assert.equal(classifyPickerError({domain:'PHPhotosErrorDomain',code:3164}),'icloud_asset_unavailable');
+assert.equal(classifyPickerError({
+  message:'The operation couldn’t be completed. (PHPhotosErrorDomain error 3164.)',
+}),'icloud_asset_unavailable');
+assert.equal(safePickerCode({domain:'PHPhotosErrorDomain',code:3164}),'phphotos_3164');
+assert.equal(classifyPickerError(new Error('unexpected picker failure')),'picker_failed');
+assert.equal(classifyPickerError({name:'PermissionDenied',message:'Photo access denied'}),'permission_denied');
 
 let postCalls=0;
 const uploaded=await directPostOnce({
@@ -223,6 +230,18 @@ assert.match(service,/FunctionsRelayError'\?'functions_relay_error'/);
 assert.match(service,/throwIfStreamAborted/);
 assert.match(service,/expiresAt>=Date\.now\(\)-300_000/);
 assert.match(service,/if\(assetId\) await deleteStreamVideo\(assetId\)\.catch/);
+assert.doesNotMatch(upload,/MediaTypeOptions/);
+assert.match(upload,/mediaTypes: captureMode === 'photo' \? \['images'\] : \['videos'\]/);
+assert.match(upload,/mediaTypes: isPhoto \? \['images'\] : \['videos'\]/);
+assert.match(upload,/mediaTypes: \['images'\]/);
+assert.match(upload,/UIImagePickerPreferredAssetRepresentationMode\.Compatible/);
+assert.match(upload,/const openCamera[\s\S]*?try \{[\s\S]*?launchCameraAsync[\s\S]*?catch\(error\)/);
+assert.match(upload,/const pickSingleMedia[\s\S]*?try \{[\s\S]*?launchImageLibraryAsync[\s\S]*?catch\(error\)/);
+assert.match(upload,/const pickCarouselImages[\s\S]*?try \{[\s\S]*?launchImageLibraryAsync[\s\S]*?catch\(error\)/);
+assert.match(upload,/console\.warn\('\[Upload\] Image picker failed',\{operation,code:getSafeImagePickerErrorCode\(error\)\}\)/);
+assert.doesNotMatch(upload,/console\.warn\('\[Upload\] Image picker failed'[^;]*error[,}]/);
+assert.match(upload,/base64: isPhoto/);
+assert.match(upload,/handleImagePickerFailure\(error,operation,isPhoto\?'photo':'video'\)/);
 assert.doesNotMatch(service,/createStreamUpload[\s\S]*createStreamUpload[\s\S]*createStreamUpload/);
 assert.match(upload,/base64: captureMode === 'photo'/);
 assert.match(upload,/base64: isPhoto/);

@@ -20,6 +20,26 @@ export const isVideo=value=>{
 };
 export const sourceFor=value=>!value?'':isHls(value)?{uri:value,contentType:'hls'}:value;
 
+const pickerErrorText=error=>{
+  if(!error||typeof error!=='object') return typeof error==='string'?error:'';
+  const fields=[error.name,error.code,error.domain,error.message,error.localizedDescription];
+  if(error.cause&&typeof error.cause==='object') {
+    fields.push(error.cause.name,error.cause.code,error.cause.domain,error.cause.message,error.cause.localizedDescription);
+  }
+  return fields.filter(value=>typeof value==='string'||typeof value==='number').join(' ');
+};
+export function classifyPickerError(error) {
+  const text=pickerErrorText(error).toLowerCase();
+  if(text.includes('phphotoserrordomain')||/\b3164\b/.test(text)
+    ||text.includes('photos could not complete')||text.includes('photos no pudo completar')) {
+    return 'icloud_asset_unavailable';
+  }
+  if(/permission|not authorized|denied|access.*photo|acceso.*foto/.test(text)) return 'permission_denied';
+  return 'picker_failed';
+}
+export const safePickerCode=error=>classifyPickerError(error)==='icloud_asset_unavailable'
+  ?'phphotos_3164':classifyPickerError(error);
+
 export async function directPostOnce({fetcher,file,uploadUrl,signal}) {
   if(signal?.aborted) throw Object.assign(new Error('aborted'),{code:'aborted'});
   const formData={entries:[],append(name,value){this.entries.push([name,value]);}};
