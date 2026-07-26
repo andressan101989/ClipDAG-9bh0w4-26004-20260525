@@ -12,3 +12,15 @@ verify_jwt = true
 
 [functions.cleanup-stale-media-uploads]
 verify_jwt = false
+
+[functions.create-stream-upload]
+verify_jwt = true
+
+[functions.get-stream-playback]
+verify_jwt = true
+
+[functions.delete-stream-video]
+verify_jwt = true
+
+[functions.stream-webhook]
+verify_jwt = false

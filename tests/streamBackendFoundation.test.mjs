@@ -1,0 +1,76 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {
+  MAX_DURATION,MAX_SIZE,createDirectUploadOnce,deleteSucceeded,fallback,mapVideo,
+  parseSignature,safeError,sign,timingSafeHex,validMime,validSize,verify,webhookVideo,
+} from './helpers/streamBackendHarness.mjs';
+
+const migration=fs.readFileSync('supabase/migrations/20260726110000_create_cloudflare_stream_video_assets.sql','utf8');
+const shared=fs.readFileSync('supabase/functions/_shared/stream.ts','utf8');
+const create=fs.readFileSync('supabase/functions/create-stream-upload/index.ts','utf8');
+const playback=fs.readFileSync('supabase/functions/get-stream-playback/index.ts','utf8');
+const deletion=fs.readFileSync('supabase/functions/delete-stream-video/index.ts','utf8');
+const webhook=fs.readFileSync('supabase/functions/stream-webhook/index.ts','utf8');
+const config=fs.readFileSync('supabase/config.toml','utf8');
+
+assert.equal(validMime('video/mp4'),true);
+assert.equal(validMime('video/quicktime'),true);
+assert.equal(validMime('video/webm'),true);
+assert.equal(validMime('video/avi'),false);
+assert.equal(validSize(MAX_SIZE),true);
+assert.equal(validSize(MAX_SIZE+1),false);
+assert.equal(MAX_DURATION,60);
+assert.equal(mapVideo({status:{state:'pendingupload'}}).status,'uploading');
+assert.equal(mapVideo({status:{state:'inprogress'}}).status,'processing');
+assert.equal(mapVideo({status:{state:'ready'},readyToStream:false}).status,'processing');
+assert.equal(mapVideo({status:{state:'ready'},readyToStream:true}).status,'ready');
+assert.equal(mapVideo({status:{state:'error'}}).status,'failed');
+assert.match(fallback('uid','abc').hls,/customer-abc/);
+assert.doesNotMatch(fallback('uid','customer-abc').hls,/customer-customer-/);
+
+const now=1_700_000_000,raw='{"uid":"managed"}',secret='test-only-secret';
+const signature=sign(secret,`${now}.${raw}`);
+assert.deepEqual(parseSignature(`time=${now},sig1=${signature}`),{time:now,signature});
+assert.equal(verify(raw,`time=${now},sig1=${signature}`,secret,now),true);
+assert.equal(verify(raw,`time=${now},sig1=${'0'.repeat(64)}`,secret,now),false);
+assert.equal(verify(raw,`time=${now-301},sig1=${sign(secret,`${now-301}.${raw}`)}`,secret,now),false);
+assert.equal(timingSafeHex(signature,signature),true);
+assert.equal(timingSafeHex(signature,'0'.repeat(64)),false);
+assert.equal(webhookVideo({uid:'direct'}).uid,'direct');
+assert.equal(webhookVideo({result:{uid:'nested'}}).uid,'nested');
+assert.deepEqual(safeError({status:503}),{code:'stream_provider_temporarily_unavailable',message:'stream_provider_temporarily_unavailable'});
+assert.equal(deleteSucceeded(404),true);
+
+let calls=0;
+await createDirectUploadOnce(async()=>{calls++; throw new Error('ambiguous');}).catch(()=>{});
+assert.equal(calls,1,'Direct Upload creation must not retry automatically');
+
+assert.match(migration,/create table public\.video_assets/);
+assert.match(migration,/create table public\.video_asset_links/);
+assert.match(migration,/enable row level security/g);
+assert.match(migration,/size_bytes > 0 and size_bytes <= 200000000/);
+assert.match(migration,/max_duration_seconds > 0 and max_duration_seconds <= 60/);
+assert.match(migration,/grant select on public\.video_assets to authenticated/);
+assert.doesNotMatch(migration,/for insert\s+to authenticated/i);
+assert.match(shared,/readyToStream===true/);
+assert.match(shared,/constantTimeEqualHex/);
+assert.match(shared,/\$\{parsed\.time\}\.\$\{rawBody\}/);
+assert.match(create,/\/direct_upload/);
+assert.match(create,/maxDurationSeconds:STREAM_MAX_DURATION_SECONDS/);
+assert.match(create,/requireSignedURLs:false/);
+assert.match(create,/allowedOrigins:\[\]/);
+assert.doesNotMatch(migration,/upload_url|uploadurl/i,'schema must not persist uploadURL');
+for(const match of create.matchAll(/\.update\(\{([\s\S]*?)\}\)/g)) {
+  assert.doesNotMatch(match[1],/uploadUrl|upload_url/i,'DB updates must not persist uploadURL');
+}
+assert.doesNotMatch(create,/console\.(?:log|warn|error)/);
+assert.match(playback,/Date\.now\(\)-checkedAt>=5_000/);
+assert.match(deletion,/stream_not_found/);
+assert.match(webhook,/const rawBody=await req\.text\(\)/);
+assert.match(webhook,/stream_webhook_not_configured/);
+assert.match(config,/\[functions\.stream-webhook\]\s+verify_jwt = false/);
+for(const source of [shared,create,playback,deletion,webhook]) {
+  assert.doesNotMatch(source,/CLOUDFLARE_STREAM_TOKEN\s*=/);
+  assert.doesNotMatch(source,/console\.log\([^)]*(?:token|uploadUrl)/i);
+}
+console.log('streamBackendFoundation: PASS');
