@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
-  MAX_DURATION_MS,MAX_SIZE,classifyPickerError,createThenPost,directPostOnce,isHls,isVideo,lookupPublished,pollUntilReady,
+  MAX_DURATION_MS,MAX_SIZE,classifyPickerError,createThenPost,directPostOnce,isHls,isVideo,lookupPublished,mapDocumentVideo,pollUntilReady,
   normalizeFunctionError,publishRecovery,reconcileThree,singleFlight,sourceFor,transient,
   safePickerCode,validDuration,validMime,validSize,
   validateContractWithCleanup,
@@ -54,6 +54,25 @@ assert.equal(classifyPickerError({
 assert.equal(safePickerCode({domain:'PHPhotosErrorDomain',code:3164}),'phphotos_3164');
 assert.equal(classifyPickerError(new Error('unexpected picker failure')),'picker_failed');
 assert.equal(classifyPickerError({name:'PermissionDenied',message:'Photo access denied'}),'permission_denied');
+const previousSelection={uri:'file:///previous.mp4',type:'video'};
+assert.deepEqual(mapDocumentVideo({canceled:true},()=>{throw new Error('not called');},previousSelection),{
+  state:'canceled',selectedMedia:previousSelection,
+});
+assert.deepEqual(mapDocumentVideo({
+  canceled:false,assets:[{uri:'file:///cached.mov',mimeType:'video/quicktime',name:'clip.mov'}],
+},()=>({exists:true,size:200_000_000,uri:'file:///cached.mov'}),previousSelection),{
+  state:'selected',
+  selectedMedia:{
+    uri:'file:///cached.mov',type:'video',mimeType:'video/quicktime',fileName:'clip.mov',
+    fileSize:200_000_000,durationMs:null,width:undefined,height:undefined,
+  },
+});
+assert.equal(mapDocumentVideo({
+  canceled:false,assets:[{uri:'file:///cached.avi',mimeType:'video/avi',name:'clip.avi'}],
+},()=>({exists:true,size:10,uri:'file:///cached.avi'}),previousSelection).code,'invalid_mime');
+assert.equal(mapDocumentVideo({
+  canceled:false,assets:[{uri:'file:///cached.mp4',mimeType:'video/mp4',name:'clip.mp4'}],
+},()=>({exists:true,size:200_000_001,uri:'file:///cached.mp4'}),previousSelection).code,'invalid_size');
 
 let postCalls=0;
 const uploaded=await directPostOnce({
@@ -234,14 +253,26 @@ assert.doesNotMatch(upload,/MediaTypeOptions/);
 assert.match(upload,/mediaTypes: captureMode === 'photo' \? \['images'\] : \['videos'\]/);
 assert.match(upload,/mediaTypes: isPhoto \? \['images'\] : \['videos'\]/);
 assert.match(upload,/mediaTypes: \['images'\]/);
-assert.match(upload,/UIImagePickerPreferredAssetRepresentationMode\.Compatible/);
+assert.match(upload,/UIImagePickerPreferredAssetRepresentationMode\.Current/);
+assert.doesNotMatch(upload,/UIImagePickerPreferredAssetRepresentationMode\.Compatible/);
+assert.match(upload,/videoExportPreset:ImagePicker\.VideoExportPreset\.Passthrough/);
+assert.doesNotMatch(upload,/shouldDownloadFromNetwork/);
+assert.match(upload,/DocumentPicker\.getDocumentAsync\(\{[\s\S]*?copyToCacheDirectory:true/);
+assert.match(upload,/DocumentPicker\.getDocumentAsync\(\{[\s\S]*?multiple:false/);
+assert.match(upload,/type:\['video\/mp4','video\/quicktime','video\/webm'\]/);
+assert.match(upload,/const file=new File\(asset\.uri\)/);
+assert.match(upload,/durationMs:null,width:undefined,height:undefined/);
+assert.match(upload,/Video no disponible en Fotos/);
+assert.match(upload,/Seleccionar desde Archivos/);
+assert.match(upload,/onRetry:\(\)=>\{void pickSingleMedia\(false\);\}/);
+assert.doesNotMatch(upload,/onRetry:\(\)=>pickSingleMedia\(false\)/);
 assert.match(upload,/const openCamera[\s\S]*?try \{[\s\S]*?launchCameraAsync[\s\S]*?catch\(error\)/);
 assert.match(upload,/const pickSingleMedia[\s\S]*?try \{[\s\S]*?launchImageLibraryAsync[\s\S]*?catch\(error\)/);
 assert.match(upload,/const pickCarouselImages[\s\S]*?try \{[\s\S]*?launchImageLibraryAsync[\s\S]*?catch\(error\)/);
 assert.match(upload,/console\.warn\('\[Upload\] Image picker failed',\{operation,code:getSafeImagePickerErrorCode\(error\)\}\)/);
 assert.doesNotMatch(upload,/console\.warn\('\[Upload\] Image picker failed'[^;]*error[,}]/);
 assert.match(upload,/base64: isPhoto/);
-assert.match(upload,/handleImagePickerFailure\(error,operation,isPhoto\?'photo':'video'\)/);
+assert.match(upload,/handleImagePickerFailure\([\s\S]*?error,operation,isPhoto\?'photo':'video'/);
 assert.doesNotMatch(service,/createStreamUpload[\s\S]*createStreamUpload[\s\S]*createStreamUpload/);
 assert.match(upload,/base64: captureMode === 'photo'/);
 assert.match(upload,/base64: isPhoto/);

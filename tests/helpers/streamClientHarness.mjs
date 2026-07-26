@@ -39,6 +39,24 @@ export function classifyPickerError(error) {
 }
 export const safePickerCode=error=>classifyPickerError(error)==='icloud_asset_unavailable'
   ?'phphotos_3164':classifyPickerError(error);
+export function mapDocumentVideo(result,fileFactory,current) {
+  if(result?.canceled) return {state:'canceled',selectedMedia:current};
+  if(!Array.isArray(result?.assets)||result.assets.length!==1) {
+    return {state:'error',selectedMedia:current,code:'invalid_document_picker_result'};
+  }
+  const asset=result.assets[0];
+  if(!asset.uri||!validMime(asset.mimeType)) {
+    return {state:'error',selectedMedia:current,code:'invalid_mime'};
+  }
+  const file=fileFactory(asset.uri);
+  if(!file.exists||!validSize(file.size)) {
+    return {state:'error',selectedMedia:current,code:file.size>MAX_SIZE?'invalid_size':'invalid_file'};
+  }
+  return {state:'selected',selectedMedia:{
+    uri:file.uri,type:'video',mimeType:asset.mimeType,fileName:asset.name,fileSize:file.size,
+    durationMs:null,width:undefined,height:undefined,
+  }};
+}
 
 export async function directPostOnce({fetcher,file,uploadUrl,signal}) {
   if(signal?.aborted) throw Object.assign(new Error('aborted'),{code:'aborted'});

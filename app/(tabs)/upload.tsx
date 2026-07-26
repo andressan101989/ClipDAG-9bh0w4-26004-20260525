@@ -17,6 +17,8 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import { File } from 'expo-file-system';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -236,10 +238,23 @@ export default function UploadScreen() {
 
   const handleImagePickerFailure=useCallback((
     error:unknown,operation:PickerOperation,mediaKind:'photo'|'video',
+    actions?:{onFiles?:()=>void;onRetry?:()=>void},
   )=>{
     const kind=classifyImagePickerError(error);
     console.warn('[Upload] Image picker failed',{operation,code:getSafeImagePickerErrorCode(error)});
     if(kind==='icloud_asset_unavailable') {
+      if(mediaKind==='video'&&operation==='video_library'&&actions?.onFiles&&actions.onRetry) {
+        showAlert(
+          'Video no disponible en Fotos',
+          'Fotos no pudo entregar este video.\nPuedes esperar que termine de descargarse desde iCloud o seleccionarlo desde Archivos.',
+          [
+            {text:'Seleccionar desde Archivos',onPress:actions?.onFiles},
+            {text:'Intentar nuevamente',onPress:actions?.onRetry},
+            {text:'Cancelar',style:'cancel'},
+          ],
+        );
+        return;
+      }
       showAlert(
         mediaKind==='video'?'Video no disponible':'Foto no disponible',
         mediaKind==='video'
@@ -281,7 +296,41 @@ export default function UploadScreen() {
     }
   }, [showAlert, handleCameraCapture, handleImagePickerFailure]);
 
-  const pickSingleMedia = useCallback(async (fromCamera: boolean) => {
+  const pickVideoFromFiles=useCallback(async ()=>{
+    try {
+      const result=await DocumentPicker.getDocumentAsync({
+        type:['video/mp4','video/quicktime','video/webm'],
+        multiple:false,
+        copyToCacheDirectory:true,
+      });
+      if(result.canceled) return;
+      if(result.assets.length!==1) throw new Error('invalid_document_picker_result');
+      const asset=result.assets[0];
+      if(!asset.uri?.trim()) throw new Error('invalid_document_picker_uri');
+      const mimeType=asset.mimeType?.trim().toLowerCase()??'';
+      if(!validateStreamVideoMime(mimeType)) {
+        showAlert('Formato no compatible','Selecciona un video MP4, MOV o WebM.');
+        return;
+      }
+      const file=new File(asset.uri);
+      if(!file.exists||!validateStreamVideoSize(file.size)) {
+        showAlert(
+          file.size>200_000_000?'Video demasiado grande':'No se pudo abrir el video',
+          file.size>200_000_000?'El video no puede superar 200 MB.':'Intenta nuevamente o selecciona otro archivo.',
+        );
+        return;
+      }
+      setSelectedMedia({
+        uri:file.uri,type:'video',mimeType,fileName:asset.name,fileSize:file.size,
+        durationMs:null,width:undefined,height:undefined,
+      });
+    } catch(error) {
+      console.warn('[Upload] Video file picker failed',{code:getSafeImagePickerErrorCode(error)});
+      showAlert('No se pudo abrir el video','Intenta nuevamente o selecciona otro archivo.');
+    }
+  },[showAlert]);
+
+  const pickSingleMedia: (fromCamera:boolean)=>Promise<void> = useCallback(async (fromCamera: boolean) => {
     const isPhoto = mode === 'photo';
     const operation:PickerOperation=fromCamera?'camera':isPhoto?'photo_library':'video_library';
     try {
@@ -301,7 +350,10 @@ export default function UploadScreen() {
       videoMaxDuration: 60,
       base64: isPhoto,
       ...(!fromCamera&&!isPhoto&&Platform.OS==='ios'
-        ?{preferredAssetRepresentationMode:ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible}
+        ?{
+          preferredAssetRepresentationMode:ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
+          videoExportPreset:ImagePicker.VideoExportPreset.Passthrough,
+        }
         :{}),
     });
     if (!result.canceled && result.assets[0]) {
@@ -313,9 +365,15 @@ export default function UploadScreen() {
       });
     }
     } catch(error) {
-      handleImagePickerFailure(error,operation,isPhoto?'photo':'video');
+      handleImagePickerFailure(
+        error,operation,isPhoto?'photo':'video',
+        !fromCamera&&!isPhoto?{
+          onFiles:()=>{void pickVideoFromFiles();},
+          onRetry:()=>{void pickSingleMedia(false);},
+        }:undefined,
+      );
     }
-  }, [mode, showAlert, handleImagePickerFailure]);
+  }, [mode, showAlert, handleImagePickerFailure, pickVideoFromFiles]);
 
   const pickCarouselImages = useCallback(async () => {
     try {
@@ -839,6 +897,12 @@ export default function UploadScreen() {
                     <MaterialIcons name={mode === 'photo' ? 'photo-camera' : 'videocam'} size={18} color={Colors.textSecondary} />
                     <Text style={styles.standardCameraBtnText}>Cámara estándar</Text>
                   </Pressable>
+                  {mode==='video'?(
+                    <Pressable onPress={()=>{void pickVideoFromFiles();}} style={styles.standardCameraBtn}>
+                      <MaterialIcons name="folder-open" size={18} color={Colors.textSecondary} />
+                      <Text style={styles.standardCameraBtnText}>Seleccionar desde Archivos</Text>
+                    </Pressable>
+                  ):null}
                   <Text style={styles.pickerHint}>{mode === 'photo' ? 'JPG, PNG, WEBP · Max 10MB' : 'MP4, MOV · Max 60 seg'}</Text>
                 </View>
               ) : (
