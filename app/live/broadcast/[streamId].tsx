@@ -215,7 +215,14 @@ export default function LiveBroadcasterScreen() {
   const {
     engineReady, joined, error,
     remoteUids, isMuted, isCameraOff, localVideoReady, join, leave, toggleMute, toggleCamera, switchCamera,
-  } = useAgoraEngine({ channelName: live ? streamId ?? null : null, uid: myUid, role: 'publisher', profile: 'live-broadcasting' });
+  } = useAgoraEngine({
+    channelName: live ? streamId ?? null : null,
+    uid: myUid,
+    role: 'publisher',
+    profile: 'live-broadcasting',
+    liveSessionId: live ? streamId : undefined,
+    liveRequestedRole: 'host',
+  });
 
   const chatRef    = useRef<FlatList>(null);
   const inputRef   = useRef<TextInput | null>(null);

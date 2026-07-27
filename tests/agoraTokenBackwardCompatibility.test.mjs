@@ -43,7 +43,8 @@ assert.doesNotMatch(source, /body\.role/);
 assert.match(source, /const numericUid = userIdToAgoraUid\(user\.id\)/);
 assert.match(source, /channelName: authorizedChannel/);
 assert.match(source, /uid:\s+numericUid/);
-assert.match(source, /isPublisher: true/);
+assert.match(source, /let isPublisher = true/);
+assert.match(source, /isPublisher,\s*\n\s*expireSec/);
 
 // Legacy unauthorized lookups do not disclose whether another user's channel
 // exists; the successful response remains byte-for-byte contract compatible.

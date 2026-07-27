@@ -218,9 +218,16 @@ export default function LiveWatchScreen() {
   const [giftFeedback, setGiftFeedback] = useState<string | null>(null);
   const { activeGift, floatingGifts, enqueueGift } = useLiveGiftAnimations(streamId);
 
-  const agora = useAgoraEngine({ channelName: session?.status === 'live' ? streamId ?? null : null, uid: myUid, role: 'subscriber', profile: 'live-broadcasting' });
+  const agora = useAgoraEngine({
+    channelName: session?.status === 'live' ? streamId ?? null : null,
+    uid: myUid,
+    role: 'subscriber',
+    profile: 'live-broadcasting',
+    liveSessionId: session?.status === 'live' ? streamId : undefined,
+    liveRequestedRole: 'viewer',
+  });
   const {
-    engineReady, remoteUids, error, join, leave, promoteToPublisher,
+    engineReady, joined, remoteUids, error, join, leave, promoteToPublisher,
     isMuted, isCameraOff, toggleMute, toggleCamera,
   } = agora;
   const demoteToAudience = (agora as any).demoteToAudience as undefined | (() => Promise<boolean>);
@@ -701,11 +708,7 @@ export default function LiveWatchScreen() {
   useEffect(() => {
     if (!streamId) { router.back(); return; }
     viewerCountBumpedRef.current = false;
-    fetchSession().then(isLive => {
-      if (!isLive || leftRef.current) return;
-      viewerCountBumpedRef.current = true;
-      bumpViewerCount(1);
-    });
+    fetchSession();
     pollRef.current = setInterval(poll, POLL_INTERVAL_MS);
 
     return () => {
@@ -718,6 +721,12 @@ export default function LiveWatchScreen() {
       }
     };
   }, [streamId, markPassiveParticipantInactive]);
+
+  useEffect(() => {
+    if (!joined || leftRef.current || viewerCountBumpedRef.current) return;
+    viewerCountBumpedRef.current = true;
+    bumpViewerCount(1);
+  }, [joined, bumpViewerCount]);
 
   // ── Send message ─────────────────────────────────────────────────────────
   const sendMessage = useCallback(async () => {

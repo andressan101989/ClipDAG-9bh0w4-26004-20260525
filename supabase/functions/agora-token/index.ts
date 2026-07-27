@@ -12,7 +12,9 @@
  *
  * Uses only Deno built-ins (SubtleCrypto, TextEncoder) — no npm deps.
  *
- * Body:    { callId: string } | { groupRoomId: string } | { channelName: string, uid?: unknown, role?: unknown }
+ * Body:    { callId: string } | { groupRoomId: string }
+ *        | { liveSessionId: string, requestedRole: 'host' | 'viewer' | 'cohost' }
+ *        | { channelName: string, uid?: unknown, role?: unknown } (legacy call/group)
  * Returns: { token, appId, channel, uid }
  */
 
@@ -66,6 +68,8 @@ function isNonEmptyString(value: unknown): value is string {
 type AgoraTokenRequest = {
   callId?: unknown;
   groupRoomId?: unknown;
+  liveSessionId?: unknown;
+  requestedRole?: unknown;
   channelName?: unknown;
   uid?: unknown;
   role?: unknown;
@@ -74,6 +78,11 @@ type AgoraTokenRequest = {
 type RequestContract =
   | { kind: 'new_call'; callId: string }
   | { kind: 'new_group'; groupRoomId: string }
+  | {
+      kind: 'live';
+      liveSessionId: string;
+      requestedRole: 'host' | 'viewer' | 'cohost';
+    }
   | { kind: 'legacy_call'; channelName: string };
 
 type AuthorizedCall = {
@@ -87,8 +96,12 @@ type AuthorizedCall = {
 function parseRequestContract(body: AgoraTokenRequest): RequestContract | null {
   const hasCallId = Object.prototype.hasOwnProperty.call(body, 'callId');
   const hasGroupRoomId = Object.prototype.hasOwnProperty.call(body, 'groupRoomId');
+  const hasLiveSessionId = Object.prototype.hasOwnProperty.call(body, 'liveSessionId');
   const hasChannelName = Object.prototype.hasOwnProperty.call(body, 'channelName');
-  const suppliedResourceCount = Number(hasCallId) + Number(hasGroupRoomId) + Number(hasChannelName);
+  const suppliedResourceCount = Number(hasCallId)
+    + Number(hasGroupRoomId)
+    + Number(hasLiveSessionId)
+    + Number(hasChannelName);
 
   if (suppliedResourceCount !== 1) return null;
   if (hasCallId && isNonEmptyString(body.callId)) {
@@ -97,10 +110,27 @@ function parseRequestContract(body: AgoraTokenRequest): RequestContract | null {
   if (hasGroupRoomId && isNonEmptyString(body.groupRoomId)) {
     return { kind: 'new_group', groupRoomId: body.groupRoomId.trim() };
   }
+  if (hasLiveSessionId && isNonEmptyString(body.liveSessionId)
+    && (body.requestedRole === 'host'
+      || body.requestedRole === 'viewer'
+      || body.requestedRole === 'cohost')) {
+    return {
+      kind: 'live',
+      liveSessionId: body.liveSessionId.trim(),
+      requestedRole: body.requestedRole,
+    };
+  }
   if (hasChannelName && isNonEmptyString(body.channelName)) {
     return { kind: 'legacy_call', channelName: body.channelName.trim() };
   }
   return null;
+}
+
+function jsonError(error: string, status: number): Response {
+  return new Response(JSON.stringify({ error }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status,
+  });
 }
 
 // ── Binary helpers ────────────────────────────────────────────────────────────
@@ -258,6 +288,12 @@ serve(async (req) => {
       });
     }
     const body = rawBody as AgoraTokenRequest;
+    if (Object.prototype.hasOwnProperty.call(body, 'liveSessionId')
+      && body.requestedRole !== 'host'
+      && body.requestedRole !== 'viewer'
+      && body.requestedRole !== 'cohost') {
+      return jsonError('invalid live requested role', 400);
+    }
     const contract = parseRequestContract(body);
     if (!contract) {
       return new Response(
@@ -270,8 +306,9 @@ serve(async (req) => {
       auth: { persistSession: false, autoRefreshToken: false },
     });
     let authorizedChannel: string | null = null;
+    let isPublisher = true;
     let observedContract: RequestContract['kind'] | 'legacy_group' = contract.kind;
-    let observedParticipantKind: 'host' | 'guest' | undefined;
+    let observedParticipantKind: 'host' | 'viewer' | 'cohost' | 'guest' | undefined;
 
     if (contract.kind === 'new_call' || contract.kind === 'legacy_call') {
       // Legacy uid and role are intentionally never read. The legacy channel
@@ -339,7 +376,7 @@ serve(async (req) => {
         if (!isNonEmptyString(call.channel_name)) throw new Error('authorized call channel missing');
         authorizedChannel = call.channel_name.trim();
       }
-    } else {
+    } else if (contract.kind === 'new_group') {
       // Group calls intentionally allow any authenticated holder of an active
       // room link. The channel is still read from the authoritative room row.
       const { data: room, error } = await admin
@@ -359,6 +396,48 @@ serve(async (req) => {
         });
       }
       authorizedChannel = room.id;
+    } else {
+      const { data: liveSession, error: liveSessionError } = await admin
+        .from('live_sessions')
+        .select('id, host_id, status, ended_at')
+        .eq('id', contract.liveSessionId)
+        .maybeSingle<{ id: string; host_id: string; status: string; ended_at: string | null }>();
+      if (liveSessionError) throw new Error('authorized live session lookup failed');
+      if (!liveSession) return jsonError('live session not found', 404);
+      if (liveSession.status !== 'live' || liveSession.ended_at !== null) {
+        return jsonError('live session is not joinable', 409);
+      }
+
+      authorizedChannel = liveSession.id;
+      if (contract.requestedRole === 'host') {
+        if (liveSession.host_id !== user.id) {
+          return jsonError('live host authorization failed', 403);
+        }
+        observedParticipantKind = 'host';
+        isPublisher = true;
+      } else if (contract.requestedRole === 'viewer') {
+        observedParticipantKind = 'viewer';
+        isPublisher = false;
+      } else {
+        const { data: participant, error: participantError } = await admin
+          .from('live_participants')
+          .select('role, status')
+          .eq('session_id', liveSession.id)
+          .eq('user_id', user.id)
+          .maybeSingle<{ role: string; status: string }>();
+        if (participantError) throw new Error('authorized live participant lookup failed');
+        if (!participant || participant.role !== 'cohost') {
+          return jsonError('cohost is not authorized', 403);
+        }
+        if (participant.status !== 'active') {
+          return jsonError('cohost is not active', 409);
+        }
+        // Host approval writes role=cohost/status=active. floor_granted is
+        // intentionally not a token gate: it controls speaking/mute after
+        // promotion and can be revoked while the participant remains cohost.
+        observedParticipantKind = 'cohost';
+        isPublisher = true;
+      }
     }
 
     if (!authorizedChannel) throw new Error('authorized channel missing');
@@ -374,7 +453,7 @@ serve(async (req) => {
       appCert:     AGORA_APP_CERTIFICATE,
       channelName: authorizedChannel,
       uid:         numericUid,
-      isPublisher: true,
+      isPublisher,
       expireSec:   TOKEN_EXPIRE_SEC,
     });
 
@@ -382,11 +461,8 @@ serve(async (req) => {
       JSON.stringify({ token, appId: AGORA_APP_ID, channel: authorizedChannel, uid: numericUid }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 },
     );
-  } catch (err) {
-    console.error('agora-token error:', err);
-    return new Response(
-      JSON.stringify({ error: String(err) }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 },
-    );
+  } catch {
+    console.error('agora-token internal error', { code: 'internal_error' });
+    return jsonError('internal error', 500);
   }
 });

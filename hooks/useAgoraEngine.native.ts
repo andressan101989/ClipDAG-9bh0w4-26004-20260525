@@ -10,6 +10,7 @@ import {
   createAgoraRtcEngine, ChannelProfileType, ClientRoleType,
   isAgoraAvailable, fetchAgoraToken, getAgoraAppId, AudioSessionOperationRestriction,
 } from '@/services/agoraService';
+import type { AgoraTokenResource, LiveRequestedRole } from '@/services/agoraService';
 import { applyPendingAgoraCallMute, registerActiveCallAudioController } from '@/services/callAudioControlService';
 import { getNativeStateStrict, onAudioSessionActivated, setCallKitSpeakerEnabled } from '@/services/iosCallKitService';
 
@@ -55,6 +56,8 @@ interface UseAgoraEngineParams {
   // to true to preserve existing video-call behavior.
   enableVideo?: boolean;
   callId?: string;
+  liveSessionId?: string;
+  liveRequestedRole?: LiveRequestedRole;
 }
 
 type CallKitAudioCoordination = {
@@ -123,7 +126,16 @@ async function waitForMatchingCallKitAudio(callId?: string): Promise<CallKitAudi
   });
 }
 
-export function useAgoraEngine({ channelName, uid, role, profile = 'communication', enableVideo = true, callId }: UseAgoraEngineParams) {
+export function useAgoraEngine({
+  channelName,
+  uid,
+  role,
+  profile = 'communication',
+  enableVideo = true,
+  callId,
+  liveSessionId,
+  liveRequestedRole,
+}: UseAgoraEngineParams) {
   const engineRef   = useRef<any>(null);
   const handlersRef = useRef<any>(null);
   const mountedRef  = useRef(true);
@@ -135,13 +147,18 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
   const joinFlightGenerationRef = useRef<number | null>(null);
   const joinGenerationRef = useRef(0);
   const configuredJoinKeyRef = useRef<string | null>(null);
-  const joinConfigRef = useRef({ channelName, uid, role, profile, enableVideo, callId });
-  joinConfigRef.current = { channelName, uid, role, profile, enableVideo, callId };
+  const joinConfigRef = useRef({
+    channelName, uid, role, profile, enableVideo, callId, liveSessionId, liveRequestedRole,
+  });
+  joinConfigRef.current = {
+    channelName, uid, role, profile, enableVideo, callId, liveSessionId, liveRequestedRole,
+  };
   const joinKey = channelName ? `${channelName}:${uid}` : null;
 
   const [joined,          setJoined]          = useState(false);
   const [joining,         setJoining]         = useState(false);
   const [error,           setError]           = useState<string | null>(null);
+  const [errorCode,       setErrorCode]       = useState<string | null>(null);
   const [remoteUids,      setRemoteUids]      = useState<number[]>([]);
   const [isMuted,         setIsMuted]         = useState(false);
   const [isCameraOff,     setIsCameraOff]     = useState(role === 'subscriber' || !enableVideo);
@@ -237,6 +254,7 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
     joinedKeyRef.current = null;
     setJoining(true);
     setError(null);
+    setErrorCode(null);
 
     let attemptEngine: any = null;
     let attemptHandlers: any = null;
@@ -257,7 +275,7 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
         && engineRef.current === attemptEngine
         && latestKey === currentJoinKey;
     };
-    const failCurrentAttempt = (message: string) => {
+    const failCurrentAttempt = (message: string, code?: string) => {
       if (!isCurrentAttempt()) {
         if (attemptEngine && engineRef.current !== attemptEngine) releaseEngine(attemptEngine, attemptHandlers);
         return;
@@ -275,14 +293,28 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
         setJoining(false);
         setJoined(false);
         setError(message);
+        setErrorCode(code ?? null);
       }
     };
 
     const flight = (async () => {
     try {
-      const resource = config.callId
-        ? { callId: config.callId }
-        : { groupRoomId: config.channelName! };
+      if (config.callId && config.liveSessionId) {
+        throw new Error('No pudimos conectar la llamada. Inténtalo nuevamente.');
+      }
+      let resource: AgoraTokenResource;
+      if (config.callId) {
+        resource = { callId: config.callId };
+      } else if (config.liveSessionId && config.liveRequestedRole) {
+        resource = {
+          liveSessionId: config.liveSessionId,
+          requestedRole: config.liveRequestedRole,
+        };
+      } else if (config.liveSessionId) {
+        throw new Error('No pudimos conectar el LIVE. Inténtalo nuevamente.');
+      } else {
+        resource = { groupRoomId: config.channelName! };
+      }
       const { token, appId, channel, uid: authorizedUid } = await fetchAgoraToken(resource);
       if (!isCurrentAttempt()) return;
       if (channel !== config.channelName || authorizedUid !== config.uid) {
@@ -466,7 +498,7 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
         failCurrentAttempt(`Agora joinChannel failed (${joinResult})`);
       }
     } catch (e: any) {
-      failCurrentAttempt(e?.message ?? 'No se pudo conectar la llamada');
+      failCurrentAttempt(e?.message ?? 'No se pudo conectar la llamada', e?.code);
     }
     })().finally(() => {
       if (joinFlightRef.current === flight && joinFlightGenerationRef.current === generation) {
@@ -528,7 +560,11 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
     if (!engine || profile !== 'live-broadcasting') return false;
     try {
       if (channelName) {
-        const resource = callId ? { callId } : { groupRoomId: channelName };
+        const resource: AgoraTokenResource = liveSessionId
+          ? { liveSessionId, requestedRole: 'cohost' }
+          : callId
+            ? { callId }
+            : { groupRoomId: channelName };
         const { token, channel, uid: authorizedUid } = await fetchAgoraToken(resource);
         if (channel !== channelName || authorizedUid !== uid) return false;
         try { engine.renewToken(token); } catch { /* setClientRole may still work if the current token allows publishing */ }
@@ -550,10 +586,13 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
       }
       return true;
     } catch (e: any) {
-      if (mountedRef.current) setError(e?.message ?? 'No se pudo subir al streaming');
+      if (mountedRef.current) {
+        setError(e?.message ?? 'No se pudo subir al streaming');
+        setErrorCode(e?.code ?? null);
+      }
       return false;
     }
-  }, [callId, channelName, uid, profile, enableVideo]);
+  }, [callId, channelName, uid, profile, enableVideo, liveSessionId]);
 
   const toggleMute = useCallback(() => {
     const engine = engineRef.current;
@@ -634,7 +673,7 @@ export function useAgoraEngine({ channelName, uid, role, profile = 'communicatio
 
   return {
     engineReady: isAgoraAvailable(),
-    joined, joining, error,
+    joined, joining, error, errorCode,
     remoteUids,
     isMuted, isCameraOff, isFront, speakerOn,
     localVideoReady,

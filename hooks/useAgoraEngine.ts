@@ -8,6 +8,7 @@
 
 export type AgoraRole    = 'publisher' | 'subscriber';
 export type AgoraProfile = 'communication' | 'live-broadcasting';
+export type LiveRequestedRole = 'host' | 'viewer' | 'cohost';
 
 interface UseAgoraEngineParams {
   channelName: string | null;
@@ -16,6 +17,8 @@ interface UseAgoraEngineParams {
   profile?: AgoraProfile;
   enableVideo?: boolean;
   callId?: string;
+  liveSessionId?: string;
+  liveRequestedRole?: LiveRequestedRole;
 }
 
 export function useAgoraEngine(_params: UseAgoraEngineParams) {
@@ -24,6 +27,7 @@ export function useAgoraEngine(_params: UseAgoraEngineParams) {
     joined:      false,
     joining:     false,
     error:       'Agora is not available on web',
+    errorCode:   null as string | null,
     remoteUids:  [] as number[],
     isMuted:     false,
     isCameraOff: false,

@@ -1,3 +1,6 @@
+[functions.agora-token]
+verify_jwt = true
+
 [functions.create-media-upload]
 verify_jwt = true
 
