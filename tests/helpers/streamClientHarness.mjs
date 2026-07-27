@@ -5,6 +5,34 @@ export const validMime=value=>typeof value==='string'&&MIMES.has(value.trim().to
 export const validSize=value=>Number.isSafeInteger(Number(value))&&Number(value)>0&&Number(value)<=MAX_SIZE;
 export const validDuration=value=>value===null||value===undefined||
   Number.isFinite(Number(value))&&Number(value)>0&&Number(value)<=MAX_DURATION_MS;
+export const mediaLibraryDurationToMs=seconds=>Math.round(seconds*1000);
+export const galleryMime=filename=>{
+  const extension=filename.trim().toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+  return extension==='mp4'?'video/mp4':extension==='mov'?'video/quicktime'
+    :extension==='webm'?'video/webm':null;
+};
+export const galleryQuery=after=>({
+  first:50,...(after?{after}:{}),mediaType:['video'],sortBy:[['creationTime',false]],
+});
+export const mergeGalleryAssets=(current,incoming)=>{
+  const ids=new Set(current.map(asset=>asset.id));
+  return [...current,...incoming.filter(asset=>!ids.has(asset.id)&&ids.add(asset.id))];
+};
+export const galleryPermissionAccepted=permission=>permission.status==='granted'
+  &&['all','limited'].includes(permission.accessPrivileges);
+export async function resolveGallerySelection({asset,getInfo,fileFactory,copy}) {
+  const info=await getInfo(asset.id,{shouldDownloadFromNetwork:true});
+  if(!info.localUri) throw Object.assign(new Error('file_unavailable'),{code:'file_unavailable'});
+  const mimeType=galleryMime(info.filename||asset.filename);
+  if(!mimeType) throw Object.assign(new Error('unsupported_format'),{code:'unsupported_format'});
+  const source=fileFactory(info.localUri);
+  if(!source.exists||source.size<=0) throw Object.assign(new Error('file_unavailable'),{code:'file_unavailable'});
+  if(source.size>MAX_SIZE) throw Object.assign(new Error('video_too_large'),{code:'video_too_large'});
+  const durationMs=mediaLibraryDurationToMs(info.duration??asset.duration);
+  if(durationMs>MAX_DURATION_MS) throw Object.assign(new Error('video_too_long'),{code:'video_too_long'});
+  const destination=copy(source,mimeType);
+  return {uri:destination.uri,type:'video',mimeType,fileSize:destination.size,durationMs};
+}
 export const isHls=value=>{
   if(typeof value!=='string') return false;
   const clean=value.toLowerCase().split('?')[0];

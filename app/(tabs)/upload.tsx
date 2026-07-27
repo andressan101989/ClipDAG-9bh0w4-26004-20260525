@@ -13,7 +13,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, Pressable, StyleSheet, TextInput,
   ScrollView, KeyboardAvoidingView, Platform,
-  ActivityIndicator, Dimensions, Switch, Modal,
+  ActivityIndicator, Dimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -29,13 +29,13 @@ import { useFeed } from '@/hooks/useFeed';
 import { useLiveStream } from '@/hooks/streaming/useLiveStream';
 import { LiveCameraPreview } from '@/components/feature/LiveCameraPreview';
 import { MusicPicker } from '@/components/feature/MusicPicker';
+import { IosVideoGalleryPicker } from '@/components/feature/IosVideoGalleryPicker';
 import { LiveTitleModal } from '@/components/upload/LiveTitleModal';
-import { useAlert } from '@/template';
-import { getSupabaseClient } from '@/template';
+import { getSupabaseClient, useAlert } from '@/template';
 import { CyberButton } from '@/components/ui/CyberButton';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { uploadFileFromUri, detectMimeType } from '@/contexts/FeedContext';
-import { getTrackById, type MusicTrack } from '@/services/musicLibrary';
+import { type MusicTrack } from '@/services/musicLibrary';
 import { createExclusiveContent } from '@/services/economyService';
 import {
   createMediaOperationId,
@@ -52,6 +52,11 @@ import {
   validateStreamVideoSize,
   type StreamUploadStage,
 } from '@/services/streamService';
+import {
+  deleteOwnedIosVideoCache,
+  type IosVideoResolutionCode,
+  type ResolvedIosVideo,
+} from '@/services/iosVideoGalleryService';
 
 // ── Hashtag suggestions ────────────────────────────────────────────────────
 const HASHTAG_SUGGESTIONS = [
@@ -74,6 +79,7 @@ interface SelectedMedia {
   width?: number;
   height?: number;
   filterId?: string;
+  ownedCacheUri?: string;
 }
 
 interface UploadedMedia {
@@ -176,6 +182,7 @@ export default function UploadScreen() {
   const uploadInFlightRef = useRef(false);
 
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
+  const [iosVideoGalleryVisible, setIosVideoGalleryVisible] = useState(false);
   const [carouselMedias, setCarouselMedias] = useState<SelectedMedia[]>([]);
 
   // ── Live ────────────────────────────────────────────────────────────────────
@@ -219,6 +226,15 @@ export default function UploadScreen() {
   // ── Camera capture ────────────────────────────────────────────────────────
   useEffect(()=>()=>activeUploadControllerRef.current?.abort(),[]);
 
+  const replaceSelectedMedia=useCallback((next:SelectedMedia|null)=>{
+    setSelectedMedia(previous=>{
+      if(previous?.ownedCacheUri&&previous.ownedCacheUri!==next?.ownedCacheUri&&!uploadInFlightRef.current) {
+        deleteOwnedIosVideoCache(previous.ownedCacheUri);
+      }
+      return next;
+    });
+  },[]);
+
   const handleCameraCapture = useCallback((
     uri: string,
     type: 'photo' | 'video',
@@ -229,12 +245,12 @@ export default function UploadScreen() {
     if (mode === 'carousel' && type === 'photo') {
       setCarouselMedias(prev => [...prev, { uri, type: 'image', mimeType, filterId }]);
     } else {
-      setSelectedMedia({ ...metadata, uri, type: type === 'photo' ? 'image' : 'video',
+      replaceSelectedMedia({ ...metadata, uri, type: type === 'photo' ? 'image' : 'video',
         mimeType:metadata.mimeType||mimeType, filterId });
       if (type === 'video') setMode('video');
       else setMode('photo');
     }
-  }, [mode]);
+  }, [mode, replaceSelectedMedia]);
 
   const handleImagePickerFailure=useCallback((
     error:unknown,operation:PickerOperation,mediaKind:'photo'|'video',
@@ -320,7 +336,7 @@ export default function UploadScreen() {
         );
         return;
       }
-      setSelectedMedia({
+      replaceSelectedMedia({
         uri:file.uri,type:'video',mimeType,fileName:asset.name,fileSize:file.size,
         durationMs:null,width:undefined,height:undefined,
       });
@@ -328,11 +344,67 @@ export default function UploadScreen() {
       console.warn('[Upload] Video file picker failed',{code:getSafeImagePickerErrorCode(error)});
       showAlert('No se pudo abrir el video','Intenta nuevamente o selecciona otro archivo.');
     }
-  },[showAlert]);
+  },[showAlert,replaceSelectedMedia]);
+
+  const handleIosVideoSelected=useCallback((video:ResolvedIosVideo)=>{
+    replaceSelectedMedia({
+      uri:video.uri,
+      type:'video',
+      mimeType:video.mimeType,
+      fileName:video.fileName,
+      fileSize:video.fileSize,
+      durationMs:video.durationMs,
+      width:video.width,
+      height:video.height,
+      ownedCacheUri:video.ownedCacheUri,
+    });
+    setIosVideoGalleryVisible(false);
+  },[replaceSelectedMedia]);
+
+  const handleIosVideoGalleryError=useCallback((code:IosVideoResolutionCode|'permission_denied'|'query_failed')=>{
+    if(code==='permission_denied') {
+      showAlert(
+        'Acceso a videos requerido',
+        'Permite el acceso a tus videos para seleccionarlos desde la galería.',
+      );
+      return;
+    }
+    if(code==='download_failed') {
+      showAlert(
+        'No se pudo descargar el video',
+        'Comprueba tu conexión y vuelve a intentarlo, o selecciona el video desde Archivos.',
+        [
+          {text:'Seleccionar desde Archivos',onPress:()=>{setIosVideoGalleryVisible(false);void pickVideoFromFiles();}},
+          {text:'Intentar nuevamente',onPress:()=>setIosVideoGalleryVisible(true)},
+          {text:'Cancelar',style:'cancel'},
+        ],
+      );
+      return;
+    }
+    if(code==='video_too_long') {
+      showAlert('Video demasiado largo','El video no puede superar 60 segundos.');
+      return;
+    }
+    if(code==='video_too_large') {
+      showAlert('Video demasiado grande','El video no puede superar 200 MB.');
+      return;
+    }
+    if(code==='unsupported_format') {
+      showAlert('Formato no compatible','Selecciona un video MP4, MOV o WebM.');
+      return;
+    }
+    if(code==='file_unavailable') {
+      showAlert('Video no disponible','Fotos no pudo preparar este video. Selecciona otro o usa Archivos.');
+    }
+  },[pickVideoFromFiles,showAlert]);
 
   const pickSingleMedia: (fromCamera:boolean)=>Promise<void> = useCallback(async (fromCamera: boolean) => {
     const isPhoto = mode === 'photo';
     const operation:PickerOperation=fromCamera?'camera':isPhoto?'photo_library':'video_library';
+    if(!fromCamera&&!isPhoto&&Platform.OS==='ios') {
+      setIosVideoGalleryVisible(true);
+      return;
+    }
     try {
     const permFn = fromCamera
       ? ImagePicker.requestCameraPermissionsAsync
@@ -349,17 +421,11 @@ export default function UploadScreen() {
       quality: 0.85,
       videoMaxDuration: 60,
       base64: isPhoto,
-      ...(!fromCamera&&!isPhoto&&Platform.OS==='ios'
-        ?{
-          preferredAssetRepresentationMode:ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
-          videoExportPreset:ImagePicker.VideoExportPreset.Passthrough,
-        }
-        :{}),
     });
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
       const mimeType = asset.mimeType || detectMimeType(asset.uri, asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
-      setSelectedMedia({
+      replaceSelectedMedia({
         uri:asset.uri,base64:isPhoto?asset.base64:null,type:asset.type==='video'?'video':'image',mimeType,
         fileName:asset.fileName,fileSize:asset.fileSize,durationMs:asset.duration,width:asset.width,height:asset.height,
       });
@@ -373,7 +439,7 @@ export default function UploadScreen() {
         }:undefined,
       );
     }
-  }, [mode, showAlert, handleImagePickerFailure, pickVideoFromFiles]);
+  }, [mode, showAlert, handleImagePickerFailure, pickVideoFromFiles, replaceSelectedMedia]);
 
   const pickCarouselImages = useCallback(async () => {
     try {
@@ -480,6 +546,7 @@ export default function UploadScreen() {
           caption:caption.trim(),music:musicName,signal:controller.signal,onStage:stageMessage,
         });
         await refreshFeed();
+        deleteOwnedIosVideoCache(selectedMedia.ownedCacheUri);
         setCaption('');setSelectedMedia(null);setSelectedMusic(null);setUploadProgress('');
         showAlert('Video publicado','Tu video ya está disponible en el feed',[
           {text:'Ver Feed',onPress:()=>router.push('/(tabs)')},{text:'Crear otro'},
@@ -662,6 +729,14 @@ export default function UploadScreen() {
         onSelect={handleMusicSelect}
       />
 
+      <IosVideoGalleryPicker
+        visible={iosVideoGalleryVisible}
+        onClose={()=>setIosVideoGalleryVisible(false)}
+        onFiles={()=>{setIosVideoGalleryVisible(false);void pickVideoFromFiles();}}
+        onSelected={handleIosVideoSelected}
+        onError={handleIosVideoGalleryError}
+      />
+
       <StatusBar style="light" />
 
       <View style={styles.header}>
@@ -699,7 +774,7 @@ export default function UploadScreen() {
                   ]);
                 } else {
                   setMode(m.key);
-                  setSelectedMedia(null);
+                  replaceSelectedMedia(null);
                   setCarouselMedias([]);
                   setUploadProgress('');
                 }
@@ -917,7 +992,7 @@ export default function UploadScreen() {
                           <Text style={styles.selectedFilter}>✨ Filtro: {selectedMedia.filterId}</Text>
                         ) : null}
                       </View>
-                      <Pressable onPress={() => setSelectedMedia(null)} hitSlop={8} style={styles.removeBtn}>
+                      <Pressable onPress={() => replaceSelectedMedia(null)} hitSlop={8} style={styles.removeBtn}>
                         <MaterialIcons name="close" size={18} color="#fff" />
                       </Pressable>
                     </View>

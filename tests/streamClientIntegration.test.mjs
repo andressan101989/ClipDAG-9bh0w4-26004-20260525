@@ -3,12 +3,15 @@ import fs from 'node:fs';
 import {
   MAX_DURATION_MS,MAX_SIZE,classifyPickerError,createThenPost,directPostOnce,isHls,isVideo,lookupPublished,mapDocumentVideo,pollUntilReady,
   normalizeFunctionError,publishRecovery,reconcileThree,singleFlight,sourceFor,transient,
-  safePickerCode,validDuration,validMime,validSize,
+  safePickerCode,validDuration,validMime,validSize,galleryMime,galleryPermissionAccepted,
+  galleryQuery,mediaLibraryDurationToMs,mergeGalleryAssets,resolveGallerySelection,
   validateContractWithCleanup,
 } from './helpers/streamClientHarness.mjs';
 
 const service=fs.readFileSync('services/streamService.ts','utf8');
 const upload=fs.readFileSync('app/(tabs)/upload.tsx','utf8');
+const gallery=fs.readFileSync('components/feature/IosVideoGalleryPicker.tsx','utf8');
+const galleryService=fs.readFileSync('services/iosVideoGalleryService.ts','utf8');
 const feed=fs.readFileSync('contexts/FeedContext.tsx','utf8');
 const card=fs.readFileSync('components/feature/VideoCard.native.tsx','utf8');
 const migration=fs.readFileSync('supabase/migrations/20260726113000_publish_cloudflare_stream_video_posts.sql','utf8');
@@ -253,9 +256,8 @@ assert.doesNotMatch(upload,/MediaTypeOptions/);
 assert.match(upload,/mediaTypes: captureMode === 'photo' \? \['images'\] : \['videos'\]/);
 assert.match(upload,/mediaTypes: isPhoto \? \['images'\] : \['videos'\]/);
 assert.match(upload,/mediaTypes: \['images'\]/);
-assert.match(upload,/UIImagePickerPreferredAssetRepresentationMode\.Current/);
-assert.doesNotMatch(upload,/UIImagePickerPreferredAssetRepresentationMode\.Compatible/);
-assert.match(upload,/videoExportPreset:ImagePicker\.VideoExportPreset\.Passthrough/);
+assert.doesNotMatch(upload,/UIImagePickerPreferredAssetRepresentationMode\.(?:Current|Compatible)/);
+assert.doesNotMatch(upload,/videoExportPreset:ImagePicker\.VideoExportPreset\.Passthrough/);
 assert.doesNotMatch(upload,/shouldDownloadFromNetwork/);
 assert.match(upload,/DocumentPicker\.getDocumentAsync\(\{[\s\S]*?copyToCacheDirectory:true/);
 assert.match(upload,/DocumentPicker\.getDocumentAsync\(\{[\s\S]*?multiple:false/);
@@ -264,8 +266,8 @@ assert.match(upload,/const file=new File\(asset\.uri\)/);
 assert.match(upload,/durationMs:null,width:undefined,height:undefined/);
 assert.match(upload,/Video no disponible en Fotos/);
 assert.match(upload,/Seleccionar desde Archivos/);
-assert.match(upload,/onRetry:\(\)=>\{void pickSingleMedia\(false\);\}/);
-assert.doesNotMatch(upload,/onRetry:\(\)=>pickSingleMedia\(false\)/);
+assert.match(upload,/if\(!fromCamera&&!isPhoto&&Platform\.OS==='ios'\)[\s\S]*?setIosVideoGalleryVisible\(true\)[\s\S]*?return/);
+assert.match(upload,/onPress:\(\)=>setIosVideoGalleryVisible\(true\)/);
 assert.match(upload,/const openCamera[\s\S]*?try \{[\s\S]*?launchCameraAsync[\s\S]*?catch\(error\)/);
 assert.match(upload,/const pickSingleMedia[\s\S]*?try \{[\s\S]*?launchImageLibraryAsync[\s\S]*?catch\(error\)/);
 assert.match(upload,/const pickCarouselImages[\s\S]*?try \{[\s\S]*?launchImageLibraryAsync[\s\S]*?catch\(error\)/);
@@ -286,6 +288,62 @@ assert.match(upload,/const uploaded = await uploadMediaToStorage\(selectedMedia\
 assert.match(feed,/delete_stream_video_post/);
 assert.match(feed,/deleteStorageFile/,'legacy deletion remains available');
 assert.match(card,/contentType:'hls'/);
+
+// iOS MediaLibrary gallery contract.
+assert.match(upload,/Platform\.OS==='ios'/);
+assert.match(upload,/const isPhoto = mode === 'photo'/);
+assert.match(upload,/launchImageLibraryAsync/,'iOS photos and Android videos retain ImagePicker');
+assert.match(galleryService,/mediaType: \[MediaLibrary\.MediaType\.video\]/);
+assert.match(galleryService,/sortBy: \[\[MediaLibrary\.SortBy\.creationTime, false\]\]/);
+assert.deepEqual(galleryQuery(),{first:50,mediaType:['video'],sortBy:[['creationTime',false]]});
+assert.equal(galleryQuery('cursor-safe').after,'cursor-safe');
+assert.deepEqual(mergeGalleryAssets([{id:'a'}],[{id:'a'},{id:'b'}]).map(x=>x.id),['a','b']);
+assert.equal(galleryPermissionAccepted({status:'granted',accessPrivileges:'limited'}),true);
+assert.equal(galleryPermissionAccepted({status:'denied',accessPrivileges:'none'}),false);
+assert.match(galleryService,/getAssetInfoAsync\(asset\.id, \{\s*shouldDownloadFromNetwork: true/);
+assert.doesNotMatch(gallery,/getAssetInfoAsync/,'opening the gallery does not resolve every asset');
+assert.match(gallery,/resolveIosVideoAsset\(asset/,'only a tapped asset is resolved');
+assert.equal(mediaLibraryDurationToMs(60),60_000);
+assert.equal(mediaLibraryDurationToMs(60.001),60_001);
+assert.equal(galleryMime('clip.MOV'),'video/quicktime');
+assert.equal(galleryMime('clip.mp4'),'video/mp4');
+assert.equal(galleryMime('clip.webm'),'video/webm');
+assert.equal(galleryMime('clip.avi'),null);
+assert.match(galleryService,/CACHE_PREFIX = 'clipdag-video-'/);
+assert.match(galleryService,/if \(!destination\.exists\) return destination/);
+assert.doesNotMatch(galleryService,/base64/i);
+assert.match(gallery,/selectionLockRef\.current = true/);
+assert.match(gallery,/if \(selectionLockRef\.current\) return/);
+assert.match(upload,/onFiles=\{\(\)=>\{setIosVideoGalleryVisible\(false\);void pickVideoFromFiles\(\);\}\}/);
+assert.match(upload,/deleteOwnedIosVideoCache\(selectedMedia\.ownedCacheUri\)/);
+assert.match(galleryService,/if \(!uri\.startsWith\(`\$\{cacheRoot\}\$\{CACHE_PREFIX\}`\)\) return/);
+let selectedInfoCalls=0;
+const selected=await resolveGallerySelection({
+  asset:{id:'private-id',filename:'video.mov',duration:60},
+  getInfo:async(_id,options)=>{selectedInfoCalls++;assert.deepEqual(options,{shouldDownloadFromNetwork:true});
+    return {localUri:'file:///local.mov',filename:'video.mov',duration:60};},
+  fileFactory:()=>({exists:true,size:MAX_SIZE}),
+  copy:()=>({uri:'file:///cache/safe.mov',size:MAX_SIZE}),
+});
+assert.equal(selectedInfoCalls,1);
+assert.equal(selected.fileSize,MAX_SIZE);
+assert.equal(selected.durationMs,MAX_DURATION_MS);
+await assert.rejects(()=>resolveGallerySelection({
+  asset:{id:'x',filename:'x.mp4',duration:1},getInfo:async()=>({filename:'x.mp4',duration:1}),
+  fileFactory:()=>({}),copy:()=>({}),
+}),error=>error.code==='file_unavailable');
+await assert.rejects(()=>resolveGallerySelection({
+  asset:{id:'x',filename:'x.mp4',duration:1},getInfo:async()=>({localUri:'file:///x',filename:'x.mp4',duration:1}),
+  fileFactory:()=>({exists:false,size:0}),copy:()=>({}),
+}),error=>error.code==='file_unavailable');
+await assert.rejects(()=>resolveGallerySelection({
+  asset:{id:'x',filename:'x.mp4',duration:1},getInfo:async()=>({localUri:'file:///x',filename:'x.mp4',duration:1}),
+  fileFactory:()=>({exists:true,size:MAX_SIZE+1}),copy:()=>({}),
+}),error=>error.code==='video_too_large');
+await assert.rejects(()=>resolveGallerySelection({
+  asset:{id:'x',filename:'x.mp4',duration:60.001},getInfo:async()=>({localUri:'file:///x',filename:'x.mp4',duration:60.001}),
+  fileFactory:()=>({exists:true,size:1}),copy:()=>({}),
+}),error=>error.code==='video_too_long');
 for(const source of [service,upload,feed,card,migration]) {
   assert.doesNotMatch(source,/CLOUDFLARE_STREAM_TOKEN\s*=/);
   assert.doesNotMatch(source,/Authorization\s*:/);
