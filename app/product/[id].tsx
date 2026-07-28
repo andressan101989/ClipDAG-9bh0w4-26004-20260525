@@ -16,7 +16,9 @@ import { CyberButton } from '@/components/ui/CyberButton';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import type { Product } from '@/contexts/ShopContext';
-import { fetchProduct } from '@/services/marketplaceService';
+import {
+  fetchMarketplaceProductDetail,type MarketplaceProductOption,type MarketplaceVariant,
+} from '@/services/marketplaceService';
 
 export default function ProductScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -27,6 +29,9 @@ export default function ProductScreen() {
   const { showAlert } = useAlert();
 
   const [product, setProduct] = useState<Product | null>(null);
+  const [options,setOptions]=useState<MarketplaceProductOption[]>([]);
+  const [variants,setVariants]=useState<MarketplaceVariant[]>([]);
+  const [selectedValues,setSelectedValues]=useState<Record<string,string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [quantity, setQuantity] = useState(1);
@@ -36,13 +41,23 @@ export default function ProductScreen() {
 
   useEffect(() => {
     let active=true;
-    const found=products.find(p=>p.id===id);
-    if(found){setProduct(found);setNotFound(false);setIsLoading(false);return()=>{active=false;};}
     if(!id){setNotFound(true);setIsLoading(false);return()=>{active=false;};}
     setIsLoading(true);
-    void fetchProduct(id).then(value=>{
+    void fetchMarketplaceProductDetail(id).then(value=>{
       if(!active)return;
-      setProduct(value);setNotFound(!value);
+      setProduct(value?.product??products.find(p=>p.id===id)??null);
+      setOptions(value?.options??[]);setVariants(value?.variants??[]);
+      const preferred=value?.variants.find(item=>item.is_default&&item.status==='active')
+        ??value?.variants.find(item=>item.status==='active');
+      if(preferred){
+        const next:Record<string,string>={};
+        for(const option of value?.options??[]){
+          const match=option.values.find(item=>preferred.option_value_ids.includes(item.id));
+          if(match) next[option.id]=match.id;
+        }
+        setSelectedValues(next);
+      }
+      setNotFound(!value);
     }).catch(()=>{if(active)setNotFound(true);}).finally(()=>{if(active)setIsLoading(false);});
     return()=>{active=false;};
   }, [id, products]);
@@ -80,7 +95,20 @@ export default function ProductScreen() {
 
   const isOwner = user?.id === product.seller_id;
   const isSaved = isSavedProduct(product.id);
-  const totalPrice = product.price * quantity;
+  const selectedVariant=variants.find(variant=>
+    variant.status==='active'&&options.every(option=>
+      selectedValues[option.id]&&variant.option_value_ids.includes(selectedValues[option.id])
+    )
+  )??(options.length===0?variants.find(item=>item.is_default&&item.status==='active'):undefined);
+  const effectivePrice=selectedVariant?.price??product.price;
+  const available=selectedVariant?.available_quantity??product.stock;
+  const totalPrice = effectivePrice * quantity;
+  const hasDifferentPrices=product.variant_price_max!=null&&product.variant_price_max>product.price;
+  const optionValueEnabled=(optionId:string,valueId:string)=>variants.some(variant=>{
+    if(variant.status!=='active'||!variant.option_value_ids.includes(valueId)) return false;
+    return options.every(option=>option.id===optionId||!selectedValues[option.id]
+      ||variant.option_value_ids.includes(selectedValues[option.id]));
+  });
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -107,7 +135,7 @@ export default function ProductScreen() {
           {product.images.length > 0 ? (
             <>
               <Image
-                source={{ uri: product.images[selectedImageIndex] }}
+                source={{ uri: selectedVariant?.image_url??product.images[selectedImageIndex] }}
                 style={styles.mainImage}
                 contentFit="cover"
                 transition={200}
@@ -144,7 +172,12 @@ export default function ProductScreen() {
           </View>
 
           <View style={styles.priceRow}>
-            <Text style={styles.price}>{product.price.toFixed(2)} BDAG</Text>
+            <Text style={styles.price}>
+              {options.length>0&&!selectedVariant&&hasDifferentPrices?'Desde ':''}
+              {effectivePrice.toFixed(2)} BDAG
+            </Text>
+            {selectedVariant?.compare_at_price!=null&&selectedVariant.compare_at_price>effectivePrice?
+              <Text style={styles.comparePrice}>{selectedVariant.compare_at_price.toFixed(2)} BDAG</Text>:null}
             {product.total_sales > 0 ? (
               <View style={styles.salesBadge}>
                 <MaterialIcons name="trending-up" size={12} color={Colors.accent} />
@@ -153,11 +186,29 @@ export default function ProductScreen() {
             ) : null}
           </View>
 
+          {options.map(option=><View key={option.id} style={styles.optionBlock}>
+            <Text style={styles.optionName}>{option.name}</Text>
+            <View style={styles.optionValues}>
+              {option.values.map(value=>{
+                const enabled=optionValueEnabled(option.id,value.id);
+                const selected=selectedValues[option.id]===value.id;
+                return <Pressable key={value.id} disabled={!enabled}
+                  style={[styles.optionChip,selected&&styles.optionChipSelected,!enabled&&styles.optionChipDisabled]}
+                  onPress={()=>{
+                    setSelectedValues(previous=>({...previous,[option.id]:value.id}));
+                    setQuantity(1);
+                  }}>
+                  <Text style={[styles.optionChipText,selected&&styles.optionChipTextSelected]}>{value.value}</Text>
+                </Pressable>;
+              })}
+            </View>
+          </View>)}
+
           {/* Stock */}
           <View style={styles.stockRow}>
-            <View style={[styles.stockDot, product.stock > 0 ? styles.stockDotAvail : styles.stockDotOut]} />
-            <Text style={[styles.stockText, product.stock === 0 && { color: Colors.secondary }]}>
-              {product.stock > 10 ? 'En stock' : product.stock > 0 ? `Solo ${product.stock} disponibles` : 'Agotado'}
+            <View style={[styles.stockDot, available > 0 ? styles.stockDotAvail : styles.stockDotOut]} />
+            <Text style={[styles.stockText, available === 0 && { color: Colors.secondary }]}>
+              {available > 10 ? 'En stock' : available > 0 ? `Solo ${available} disponibles` : 'Agotado'}
             </Text>
           </View>
 
@@ -200,7 +251,7 @@ export default function ProductScreen() {
       </ScrollView>
 
       {/* Buy bar */}
-      {!isOwner && product.stock > 0 ? (
+      {!isOwner && available > 0 && (options.length===0||selectedVariant) ? (
         <View style={[styles.buyBar, { paddingBottom: insets.bottom + Spacing.sm }]}>
           {/* Quantity */}
           <View style={styles.quantityControl}>
@@ -214,7 +265,7 @@ export default function ProductScreen() {
             <Text style={styles.quantityValue}>{quantity}</Text>
             <Pressable
               style={styles.quantityBtn}
-              onPress={() => setQuantity(q => Math.min(product.stock, q + 1))}
+              onPress={() => setQuantity(q => Math.min(available, q + 1))}
               hitSlop={8}
             >
               <MaterialIcons name="add" size={18} color={Colors.textPrimary} />
@@ -332,6 +383,15 @@ const styles = StyleSheet.create({
   },
   categoryBadgeText: { color: Colors.primary, fontSize: FontSize.xs, fontWeight: FontWeight.medium },
   priceRow: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.xs },
+  comparePrice:{color:Colors.textSubtle,textDecorationLine:'line-through',fontSize:FontSize.sm},
+  optionBlock:{gap:Spacing.sm,marginTop:Spacing.md},
+  optionName:{color:Colors.textPrimary,fontWeight:FontWeight.bold},
+  optionValues:{flexDirection:'row',flexWrap:'wrap',gap:Spacing.sm},
+  optionChip:{borderWidth:1,borderColor:Colors.border,borderRadius:Radius.md,paddingHorizontal:14,paddingVertical:9},
+  optionChipSelected:{borderColor:Colors.primary,backgroundColor:Colors.primary+'22'},
+  optionChipDisabled:{opacity:0.3},
+  optionChipText:{color:Colors.textSecondary},
+  optionChipTextSelected:{color:Colors.primary,fontWeight:FontWeight.bold},
   price: { color: Colors.primary, fontSize: FontSize.xxxl, fontWeight: FontWeight.extrabold },
   currency: { color: Colors.textSecondary, fontSize: FontSize.md },
   salesBadge: {

@@ -25,13 +25,42 @@ export interface Product {
   brand:string|null; compare_at_price:number|null; product_type:'physical';
   moderation_status:'pending'|'approved'|'rejected'|'suspended';
   published_at:string|null; deleted_at:string|null; created_at:string; updated_at:string;
+  variant_price_max:number|null; active_variant_count:number;
   seller?:{username:string;avatar_url:string|null;display_name:string|null};
+}
+
+export interface MarketplaceOptionValue {id:string;value:string;position:number}
+export interface MarketplaceProductOption {
+  id:string;name:string;position:number;values:MarketplaceOptionValue[];
+}
+export interface MarketplaceVariant {
+  id:string;product_id:string;sku:string|null;title:string|null;price:number;
+  compare_at_price:number|null;status:'active'|'inactive'|'archived';is_default:boolean;
+  image_asset_id:string|null;image_url:string|null;available_quantity:number;
+  option_value_ids:string[];
+}
+export interface MarketplaceProductDetail {
+  product:Product;options:MarketplaceProductOption[];variants:MarketplaceVariant[];
+}
+export interface MarketplaceInventoryLevel {
+  variant_id:string;on_hand:number;reserved:number;available_quantity:number;
+  low_stock_threshold:number;version:number;
+}
+export interface MarketplaceInventoryMovement {
+  id:string;variant_id:string;movement_type:'backfill'|'initial'|'seller_set'|'seller_adjust'|'correction';
+  delta:number;resulting_on_hand:number;reason:string|null;created_at:string;
+}
+export interface MarketplaceProductMediaAsset {id:string;url:string}
+export interface SellerProductInventory {
+  detail:MarketplaceProductDetail;inventory:MarketplaceInventoryLevel[];
+  movements:MarketplaceInventoryMovement[];mediaAssets:MarketplaceProductMediaAsset[];
 }
 
 const PRODUCT_COLUMNS = [
   'id','seller_id','store_id','category_id','title','description','price','currency',
   'category','images','stock','status','tags','total_sales','brand','compare_at_price',
   'product_type','moderation_status','published_at','deleted_at','created_at','updated_at',
+  'variant_price_max','active_variant_count',
 ].join(',');
 const PRODUCT_WITH_SELLER = `${PRODUCT_COLUMNS},seller:user_profiles!products_seller_id_fkey(username,avatar_url,display_name)`;
 const db=()=>getSupabaseClient();
@@ -41,6 +70,8 @@ function mapProduct(row:Record<string,unknown>):Product {
     ...(row as unknown as Product),
     price:Number(row.price), compare_at_price:row.compare_at_price==null?null:Number(row.compare_at_price),
     stock:Number(row.stock), total_sales:Number(row.total_sales),
+    variant_price_max:row.variant_price_max==null?null:Number(row.variant_price_max),
+    active_variant_count:Number(row.active_variant_count??1),
     images:Array.isArray(row.images)?row.images as string[]:[],
     tags:Array.isArray(row.tags)?row.tags as string[]:[],
     currency:'BDAG', product_type:'physical',
@@ -78,6 +109,117 @@ export async function fetchProduct(productId:string):Promise<Product|null> {
     .eq('id',productId).eq('currency','BDAG').maybeSingle();
   if(error) throw error;
   return data?mapProduct(data as unknown as Record<string,unknown>):null;
+}
+
+function mapVariant(row:Record<string,unknown>):MarketplaceVariant {
+  return {
+    ...(row as unknown as MarketplaceVariant),
+    price:Number(row.price),compare_at_price:row.compare_at_price==null?null:Number(row.compare_at_price),
+    available_quantity:Number(row.available_quantity??0),
+    option_value_ids:Array.isArray(row.option_value_ids)?row.option_value_ids as string[]:[],
+  };
+}
+
+export async function fetchMarketplaceProductDetail(productId:string):Promise<MarketplaceProductDetail|null> {
+  const [productResult,detailResult]=await Promise.all([
+    fetchProduct(productId),
+    db().rpc('fetch_marketplace_product_detail',{p_product_id:productId}),
+  ]);
+  if(detailResult.error) throw detailResult.error;
+  if(!productResult||!detailResult.data) return null;
+  const payload=detailResult.data as {options?:MarketplaceProductOption[];variants?:Record<string,unknown>[]};
+  return {
+    product:productResult,
+    options:Array.isArray(payload.options)?payload.options:[],
+    variants:Array.isArray(payload.variants)?payload.variants.map(mapVariant):[],
+  };
+}
+
+export async function fetchSellerProductVariants(productId:string):Promise<SellerProductInventory> {
+  const {data,error}=await db().rpc('fetch_seller_product_inventory',{p_product_id:productId});
+  if(error) throw error;
+  const payload=data as {
+    detail:{options?:MarketplaceProductOption[];variants?:Record<string,unknown>[]};
+    inventory?:MarketplaceInventoryLevel[];movements?:MarketplaceInventoryMovement[];
+  };
+  const [product,mediaResult]=await Promise.all([
+    fetchProduct(productId),
+    db().from('media_asset_links').select('asset_id,media_assets!inner(public_url)')
+      .eq('entity_type','shop_product').eq('entity_id',productId).eq('slot','image')
+      .order('position',{ascending:true}),
+  ]);
+  if(mediaResult.error) throw mediaResult.error;
+  if(!product) throw new Error('product_not_editable');
+  const mediaAssets=(mediaResult.data??[]).map(row=>{
+    const related=row.media_assets as unknown as {public_url?:string}|{public_url?:string}[];
+    const asset=Array.isArray(related)?related[0]:related;
+    return {id:row.asset_id,url:asset?.public_url??''};
+  }).filter(item=>item.url);
+  return {
+    detail:{product,options:payload.detail?.options??[],variants:(payload.detail?.variants??[]).map(mapVariant)},
+    inventory:payload.inventory??[],movements:payload.movements??[],mediaAssets,
+  };
+}
+
+export interface VariantConfigurationOption {name:string;values:string[]}
+export interface VariantConfiguration {
+  id?:string;sku:string;title?:string;price:string|number;compare_at_price?:string|number|null;
+  status:'active'|'inactive';is_default:boolean;image_asset_id?:string|null;barcode?:string|null;
+  option_values:string[];on_hand?:number;low_stock_threshold?:number;
+}
+export async function configureProductVariants(productId:string,options:VariantConfigurationOption[],
+  variants:VariantConfiguration[],idempotencyKey:string):Promise<void> {
+  const {error}=await db().rpc('configure_marketplace_product_variants',{
+    p_product_id:productId,p_options_json:options,p_variants_json:variants,
+    p_idempotency_key:idempotencyKey,
+  });
+  if(error) throw error;
+}
+export async function updateVariant(variantId:string,input:{
+  sku:string;price:string|number;compareAtPrice?:string|number|null;
+  status:'active'|'inactive';imageAssetId?:string|null;title?:string|null;barcode?:string|null;
+}):Promise<void> {
+  const {error}=await db().rpc('update_marketplace_product_variant',{
+    p_variant_id:variantId,p_sku:input.sku,p_price:input.price,
+    p_compare_at_price:input.compareAtPrice??null,p_status:input.status,
+    p_image_asset_id:input.imageAssetId??null,p_title:input.title??null,p_barcode:input.barcode??null,
+  });
+  if(error) throw error;
+}
+export async function setDefaultVariant(variantId:string):Promise<void> {
+  const {error}=await db().rpc('set_marketplace_default_variant',{p_variant_id:variantId});
+  if(error) throw error;
+}
+export async function archiveVariant(variantId:string,replacementDefaultId?:string|null):Promise<void> {
+  const {error}=await db().rpc('archive_marketplace_product_variant',{
+    p_variant_id:variantId,p_replacement_default_id:replacementDefaultId??null,
+  });
+  if(error) throw error;
+}
+export async function restoreVariant(variantId:string):Promise<void> {
+  const {error}=await db().rpc('restore_marketplace_product_variant',{p_variant_id:variantId});
+  if(error) throw error;
+}
+export async function setVariantInventory(variantId:string,newOnHand:number,reason:string,
+  idempotencyKey:string):Promise<void> {
+  const {error}=await db().rpc('set_marketplace_variant_inventory',{
+    p_variant_id:variantId,p_new_on_hand:newOnHand,p_reason:reason||null,
+    p_idempotency_key:idempotencyKey,
+  });
+  if(error) throw error;
+}
+export async function adjustVariantInventory(variantId:string,delta:number,reason:string,
+  idempotencyKey:string):Promise<void> {
+  const {error}=await db().rpc('adjust_marketplace_variant_inventory',{
+    p_variant_id:variantId,p_delta:delta,p_reason:reason||null,p_idempotency_key:idempotencyKey,
+  });
+  if(error) throw error;
+}
+export async function setVariantLowStockThreshold(variantId:string,threshold:number):Promise<void> {
+  const {error}=await db().rpc('set_marketplace_variant_low_stock_threshold',{
+    p_variant_id:variantId,p_threshold:threshold,
+  });
+  if(error) throw error;
 }
 
 export async function fetchMyProducts():Promise<Product[]> {

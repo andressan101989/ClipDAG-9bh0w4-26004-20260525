@@ -69,7 +69,7 @@ test('client contract: product mutations use RPCs and never direct product write
   assert.doesNotMatch(create,/create_product_with_media/);
 });
 test('client contract: deep link fetches by id and loading terminates',()=>{
-  assert.match(detail,/fetchProduct\(id\)/);
+  assert.match(detail,/fetchMarketplaceProductDetail\(id\)/);
   assert.match(detail,/finally\(\(\)=>\{if\(active\)setIsLoading\(false\)/);
   assert.match(detail,/Producto no disponible/);
 });

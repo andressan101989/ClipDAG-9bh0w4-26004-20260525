@@ -10,7 +10,7 @@ const upload = read('app/(tabs)/upload.tsx');
 const profile = read('app/(tabs)/profile.tsx');
 const feed = read('contexts/FeedContext.tsx');
 const stories = read('contexts/StoriesContext.tsx');
-const shop = read('contexts/ShopContext.tsx');
+const marketplace = read('services/marketplaceService.ts');
 
 test('exclusive feed publishing is disabled and cannot report false success', () => {
   assert.match(upload, /Contenido exclusivo próximamente/);
@@ -40,7 +40,8 @@ test('entity RPCs resolve URLs from media assets instead of client input', () =>
   assert.match(feed, /create_photo_post_with_media/);
   assert.match(feed, /create_carousel_post/);
   assert.match(stories, /create_photo_story_with_media/);
-  assert.match(shop, /create_product_with_media/);
+  assert.match(marketplace, /create_marketplace_product/);
+  assert.doesNotMatch(marketplace, /rpc\('create_product_with_media'/);
 });
 
 test('avatar update and link replacement are atomic', () => {

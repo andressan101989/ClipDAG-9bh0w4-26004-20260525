@@ -172,9 +172,13 @@ const ProductCard = memo(function ProductCard({
       <View style={pc.body}>
         <Text style={pc.title} numberOfLines={2}>{product.title}</Text>
         <View style={pc.footer}>
-          <Text style={pc.price}>{fmt(product.price, 2)} BDAG</Text>
+          <Text style={pc.price}>
+            {product.variant_price_max!=null&&product.variant_price_max>product.price?'Desde ':''}
+            {fmt(product.price, 2)} BDAG
+          </Text>
           <Text style={pc.sales}>{product.total_sales} ventas</Text>
         </View>
+        {product.stock===0?<Text style={pc.soldOut}>Agotado</Text>:null}
         {product.seller ? (
           <Text style={pc.seller} numberOfLines={1}>@{product.seller.username}</Text>
         ) : null}
@@ -192,6 +196,7 @@ const pc = StyleSheet.create({
   price:  { color: Colors.blue, fontSize: FontSize.md, fontWeight: FontWeight.extrabold },
   sales:  { color: Colors.textSubtle, fontSize: 9 },
   seller: { color: Colors.textSubtle, fontSize: 9 },
+  soldOut:{color:Colors.secondary,fontSize:FontSize.xs,fontWeight:FontWeight.bold},
 });
 
 // ── Exclusive content card ────────────────────────────────────────────────────
