@@ -17,15 +17,7 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import { detectMimeType } from '@/contexts/FeedContext';
 import { deleteMediaAsset, getSafeMediaError, uploadMediaFromUri } from '@/services/mediaService';
 import type { ProductCategory } from '@/contexts/ShopContext';
-
-const CATEGORIES: { key: ProductCategory; label: string; icon: string }[] = [
-  { key: 'digital', label: 'Digital', icon: 'cloud-download' },
-  { key: 'art', label: 'Arte NFT', icon: 'palette' },
-  { key: 'music', label: 'Música', icon: 'music-note' },
-  { key: 'clothing', label: 'Ropa', icon: 'checkroom' },
-  { key: 'physical', label: 'Físico', icon: 'inventory' },
-  { key: 'other', label: 'Otro', icon: 'category' },
-];
+import { fetchCategories, fetchSellerFoundation, type MarketplaceCategoryRecord, type MarketplaceStore } from '@/services/marketplaceService';
 
 export default function CreateProductScreen() {
   const insets = useSafeAreaInsets();
@@ -37,7 +29,10 @@ export default function CreateProductScreen() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
-  const [category, setCategory] = useState<ProductCategory>('digital');
+  const [category, setCategory] = useState<ProductCategory>('physical');
+  const [categories,setCategories]=useState<MarketplaceCategoryRecord[]>([]);
+  const [store,setStore]=useState<MarketplaceStore|null>(null);
+  const [accessReady,setAccessReady]=useState(false);
   const [stock, setStock] = useState('1');
   const [tags, setTags] = useState('');
   const [images, setImages] = useState<string[]>([]);
@@ -47,6 +42,18 @@ export default function CreateProductScreen() {
   const [imageAssetIds, setImageAssetIds] = useState<string[]>([]);
   const draftAssetIdsRef = useRef<string[]>([]);
   const publishLockRef = useRef(false);
+
+  useEffect(()=>{
+    let active=true;
+    void Promise.all([fetchSellerFoundation(),fetchCategories()]).then(([foundation,activeCategories])=>{
+      if(!active)return;
+      if(foundation.seller?.status!=='approved'||!foundation.store||foundation.store.status!=='active'){
+        router.replace('/seller' as never);return;
+      }
+      setStore(foundation.store);setCategories(activeCategories);setAccessReady(true);
+    }).catch(()=>{if(active)router.replace('/seller' as never);});
+    return()=>{active=false;};
+  },[router]);
 
   useEffect(() => () => {
     const abandoned = [...draftAssetIdsRef.current];
@@ -119,24 +126,28 @@ export default function CreateProductScreen() {
     if (publishLockRef.current || isPublishing) return;
     if (!user) { showAlert('Inicia sesión', 'Necesitas una cuenta para vender'); return; }
     if (!title.trim()) { showAlert('Título requerido', 'Ingresa un título para tu producto'); return; }
-    if (!price || isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
-      showAlert('Precio inválido', 'Ingresa un precio válido mayor a 0');
+    if (!/^\d{1,12}(?:\.\d{1,8})?$/.test(price.trim()) || Number(price) <= 0) {
+      showAlert('Precio inválido', 'Usa un precio BDAG positivo con un máximo de 8 decimales.');
       return;
     }
     if (!description.trim()) { showAlert('Descripción requerida', 'Describe tu producto'); return; }
+    const categoryRow=categories.find(item=>item.slug===category);
+    if(!store||!categoryRow||!accessReady){
+      showAlert('Vendedor no habilitado','Completa y activa tu tienda antes de publicar.');
+      return;
+    }
 
     publishLockRef.current = true;
     setIsPublishing(true);
     try {
       const tagList = tags.split(',').map(t => t.trim()).filter(Boolean);
       const result = await createProduct({
+        storeId:store.id,
+        categoryId:categoryRow.id,
         title: title.trim(),
         description: description.trim(),
-        price: parseFloat(price),
-        currency: 'BDAG',
-        category,
-        images,
-        mediaAssetIds: imageAssetIds,
+        price:price.trim(),
+        assetIds:imageAssetIds,
         stock: isUnlimitedStock ? 9999 : Math.max(1, parseInt(stock) || 1),
         tags: tagList,
       });
@@ -152,7 +163,7 @@ export default function CreateProductScreen() {
         }
         draftAssetIdsRef.current = [];
         showAlert('¡Producto publicado!', 'Tu producto ya está disponible en la tienda', [
-          { text: 'Ver tienda', onPress: () => router.replace('/(tabs)/shop') },
+          { text: 'Mis productos', onPress: () => router.replace('/seller/products' as never) },
           { text: 'OK', onPress: () => router.back() },
         ]);
       } else {
@@ -166,7 +177,7 @@ export default function CreateProductScreen() {
       publishLockRef.current = false;
       setIsPublishing(false);
     }
-  }, [isPublishing, user, title, description, price, category, stock, isUnlimitedStock, images, imageAssetIds, tags, createProduct, router, showAlert]);
+  }, [isPublishing,user,title,description,price,category,stock,isUnlimitedStock,imageAssetIds,tags,createProduct,router,showAlert,categories,store,accessReady]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -249,19 +260,19 @@ export default function CreateProductScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Categoría</Text>
             <View style={styles.categoryGrid}>
-              {CATEGORIES.map(cat => (
+              {categories.map(cat => (
                 <Pressable
-                  key={cat.key}
-                  style={[styles.catBtn, category === cat.key && styles.catBtnActive]}
-                  onPress={() => setCategory(cat.key)}
+                  key={cat.id}
+                  style={[styles.catBtn, category === cat.slug && styles.catBtnActive]}
+                  onPress={() => setCategory(cat.slug)}
                 >
                   <MaterialIcons
-                    name={cat.icon as any}
+                    name="category"
                     size={18}
-                    color={category === cat.key ? '#000' : Colors.textSecondary}
+                    color={category === cat.slug ? '#000' : Colors.textSecondary}
                   />
-                  <Text style={[styles.catBtnText, category === cat.key && styles.catBtnTextActive]}>
-                    {cat.label}
+                  <Text style={[styles.catBtnText, category === cat.slug && styles.catBtnTextActive]}>
+                    {cat.name}
                   </Text>
                 </Pressable>
               ))}

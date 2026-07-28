@@ -6,7 +6,7 @@ const source = fs.readFileSync('supabase/functions/_shared/mediaPurposes.ts', 'u
 
 test('all authorized non-video purposes have explicit limits and MIME allowlists', () => {
   for (const purpose of [
-    'avatar', 'post_image', 'carousel_image', 'thumbnail', 'product_image',
+    'avatar', 'post_image', 'carousel_image', 'thumbnail', 'product_image', 'store_logo', 'store_banner',
     'chat_image', 'chat_audio', 'voice_note', 'music_audio', 'document',
     'attachment', 'live_cover',
   ]) assert.match(source, new RegExp(`${purpose}:\\{`));

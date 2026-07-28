@@ -455,7 +455,7 @@ export default function ShopScreen() {
         {activeTab === 'market' && (
           <>
             {/* Sell CTA */}
-            <Pressable style={styles.sellCTA} onPress={() => router.push('/create-product')}>
+            <Pressable style={styles.sellCTA} onPress={() => router.push('/seller' as never)}>
               <LinearGradient colors={['rgba(45,158,255,0.18)', 'rgba(124,92,255,0.08)']} style={styles.sellCTAInner}>
                 <MaterialCommunityIcons name="storefront-outline" size={20} color={Colors.blue} />
                 <View style={{ flex: 1 }}>
@@ -489,7 +489,7 @@ export default function ShopScreen() {
                 <MaterialCommunityIcons name="storefront-outline" size={44} color={Colors.border} />
                 <Text style={styles.emptyTitle}>Sin productos en esta categoría</Text>
                 <Pressable style={[styles.emptyActionBtn, { borderColor: Colors.blue + '44', backgroundColor: Colors.blueDim }]}
-                  onPress={() => router.push('/create-product')}>
+                  onPress={() => router.push('/seller' as never)}>
                   <Text style={[styles.emptyActionText, { color: Colors.blue }]}>Vender ahora</Text>
                 </Pressable>
               </View>

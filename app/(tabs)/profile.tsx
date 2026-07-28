@@ -574,7 +574,7 @@ export default function ProfileScreen() {
               label={t('profile.myProducts')}
               sublabel={t('profile.myProductsSub')}
               gradient={['#00E5A0', '#2D9EFF']}
-              onPress={() => router.push('/(tabs)/shop')}
+              onPress={() => router.push('/seller' as never)}
             />
             <View style={styles.settingsDivider} />
             <SettingsItem

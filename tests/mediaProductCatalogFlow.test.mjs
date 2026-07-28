@@ -16,6 +16,11 @@ const hardening = await readFile(
   new URL('supabase/migrations/20260726103000_harden_media_entity_linking.sql', root),
   'utf8',
 );
+const mktA1 = await readFile(
+  new URL('supabase/migrations/20260727100000_marketplace_mkt_a1_seller_store_product_foundation.sql', root),
+  'utf8',
+);
+const marketplaceService = await readFile(new URL('services/marketplaceService.ts', root), 'utf8');
 
 test('product catalog is BDAG-only, seller-owned, and has no checkout tables', () => {
   assert.match(sql, /create table public\.products/i);
@@ -25,10 +30,10 @@ test('product catalog is BDAG-only, seller-owned, and has no checkout tables', (
   assert.match(sql, /create table public\.product_saves/i);
   assert.match(sql, /seller_id = auth\.uid\(\)/i);
   assert.doesNotMatch(sql, /create table public\.(orders|payments|checkout)/i);
-  assert.match(shop, /Checkout BDAG pendiente de implementación/);
-  assert.doesNotMatch(shop, /\.from\('orders'\)/);
+  assert.doesNotMatch(shop, /placeOrder|updateOrderStatus|\.from\('orders'\)/);
   assert.doesNotMatch(shop, /currency: 'USD'/);
-  assert.match(screen, /currency: 'BDAG'/);
+  assert.match(marketplaceService, /currency:'BDAG'/);
+  assert.match(marketplaceService, /rpc\('create_marketplace_product'/);
   assert.match(screen, /Precio \(BDAG\)/);
   assert.match(catalogScreen, /BDAG/);
   assert.match(productScreen, /Checkout BDAG pendiente de implementación/);
@@ -39,6 +44,8 @@ test('product catalog is BDAG-only, seller-owned, and has no checkout tables', (
     hardening,
     /grant update \([^)]*total_sales/is,
   );
+  assert.match(mktA1,/revoke insert,update,delete on public\.products from anon,authenticated/);
+  assert.doesNotMatch(marketplaceService,/from\('products'\)\.(insert|update|delete)/);
 });
 
 test('product images retain positions and compensate a failed link', async () => {

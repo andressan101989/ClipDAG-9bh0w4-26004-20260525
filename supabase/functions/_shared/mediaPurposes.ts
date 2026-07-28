@@ -1,6 +1,6 @@
 export type MediaPurpose =
   | 'avatar' | 'post_image' | 'carousel_image' | 'thumbnail'
-  | 'product_image' | 'chat_image' | 'chat_audio' | 'voice_note'
+  | 'product_image' | 'store_logo' | 'store_banner' | 'chat_image' | 'chat_audio' | 'voice_note'
   | 'music_audio' | 'document' | 'attachment' | 'live_cover';
 
 type Rule = { kind: 'image' | 'audio' | 'document'; maxBytes: number; mimeTypes: readonly string[]; defaultVisibility: 'public' | 'private' };
@@ -15,6 +15,8 @@ export const MEDIA_PURPOSES: Record<MediaPurpose, Rule> = {
   carousel_image:{kind:'image',maxBytes:25_000_000,mimeTypes:PUBLIC_IMAGES,defaultVisibility:'public'},
   thumbnail:{kind:'image',maxBytes:25_000_000,mimeTypes:PUBLIC_IMAGES,defaultVisibility:'public'},
   product_image:{kind:'image',maxBytes:25_000_000,mimeTypes:PUBLIC_IMAGES,defaultVisibility:'public'},
+  store_logo:{kind:'image',maxBytes:10_000_000,mimeTypes:IMAGES,defaultVisibility:'public'},
+  store_banner:{kind:'image',maxBytes:25_000_000,mimeTypes:PUBLIC_IMAGES,defaultVisibility:'public'},
   live_cover:{kind:'image',maxBytes:25_000_000,mimeTypes:PUBLIC_IMAGES,defaultVisibility:'public'},
   chat_image:{kind:'image',maxBytes:25_000_000,mimeTypes:PUBLIC_IMAGES,defaultVisibility:'private'},
   chat_audio:{kind:'audio',maxBytes:100_000_000,mimeTypes:AUDIO,defaultVisibility:'private'},

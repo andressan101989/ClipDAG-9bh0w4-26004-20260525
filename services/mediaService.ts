@@ -3,7 +3,7 @@ import { fetch as expoFetch } from 'expo/fetch';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { getSupabaseClient } from '@/template';
 
-export type MediaPurpose='avatar'|'post_image'|'carousel_image'|'thumbnail'|'product_image'|'chat_image'|'chat_audio'|'voice_note'|'music_audio'|'document'|'attachment'|'live_cover';
+export type MediaPurpose='avatar'|'post_image'|'carousel_image'|'thumbnail'|'product_image'|'store_logo'|'store_banner'|'chat_image'|'chat_audio'|'voice_note'|'music_audio'|'document'|'attachment'|'live_cover';
 export type MediaVisibility='public'|'private';
 export interface UploadMediaInput { uri:string; purpose:MediaPurpose; mimeType:string; fileName?:string; sizeBytes?:number; visibility:MediaVisibility; signal?:AbortSignal; timeoutMs?:number; }
 export interface MediaAssetDescriptor { assetId:string; provider:'r2'; mediaKind:'image'|'audio'|'document'; purpose:MediaPurpose; visibility:MediaVisibility; status:'ready'; url?:string; }
@@ -24,7 +24,7 @@ export interface NormalizedUploadMedia {
 const supabase=getSupabaseClient();
 const rejectLocalUrl=(value:string)=>/^(file|ph|content):\/\//i.test(value);
 const DIRECT_IMAGE_MIMES=new Set(['image/jpeg','image/png','image/webp','image/gif']);
-const IMAGE_PURPOSES=new Set<MediaPurpose>(['avatar','post_image','carousel_image','thumbnail','product_image','chat_image','live_cover']);
+const IMAGE_PURPOSES=new Set<MediaPurpose>(['avatar','post_image','carousel_image','thumbnail','product_image','store_logo','store_banner','chat_image','live_cover']);
 const UUID_PATTERN=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAFE_TEXT_LIMIT=240;
 

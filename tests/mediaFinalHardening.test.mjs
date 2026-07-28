@@ -12,15 +12,15 @@ const mediaService = read('services/mediaService.ts');
 const upload = read('app/(tabs)/upload.tsx');
 
 test('product edits expose only mutable catalog fields', () => {
-  const updateBlock = shopContext.slice(
-    shopContext.indexOf('const updateProduct'),
-    shopContext.indexOf('const deleteProduct'),
+  const updateBlock = marketplace.slice(
+    marketplace.indexOf('export async function updateProduct'),
+    marketplace.indexOf('export async function setProductPublished'),
   );
-  assert.match(updateBlock, /\.update\(mutableFields\)/);
+  assert.match(updateBlock, /rpc\('update_marketplace_product'/);
   for (const forbidden of ['updated_at', 'currency', 'total_sales']) {
     assert.doesNotMatch(updateBlock, new RegExp(forbidden));
   }
-  assert.match(updateBlock, /Partial<Pick<Product, 'title' \| 'description' \| 'price' \| 'stock' \| 'status'>>/);
+  assert.doesNotMatch(updateBlock,/\.from\('products'\)\.update/);
 });
 
 test('product publishing is locked through compensation', () => {
@@ -40,7 +40,7 @@ test('marketplace service is catalog-only and BDAG-only', () => {
   assert.doesNotMatch(marketplace, /from\(['"]orders['"]\)/);
   assert.doesNotMatch(marketplace, /export async function (fetchMyOrders|placeOrder|updateOrderStatus)/);
   assert.match(marketplace, /products_seller_id_fkey/);
-  assert.match(marketplace, /\.eq\('currency', 'BDAG'\)/);
+  assert.match(marketplace, /\.eq\('currency','BDAG'\)/);
   for (const category of ['digital', 'physical', 'art', 'music', 'clothing', 'other']) {
     assert.match(marketplace, new RegExp(`'${category}'`));
   }

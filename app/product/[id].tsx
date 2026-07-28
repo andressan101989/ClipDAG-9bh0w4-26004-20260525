@@ -6,7 +6,6 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { MaterialIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -17,6 +16,7 @@ import { CyberButton } from '@/components/ui/CyberButton';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import type { Product } from '@/contexts/ShopContext';
+import { fetchProduct } from '@/services/marketplaceService';
 
 export default function ProductScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -27,23 +27,30 @@ export default function ProductScreen() {
   const { showAlert } = useAlert();
 
   const [product, setProduct] = useState<Product | null>(null);
-  const isLoading = false;
+  const [isLoading, setIsLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [orderModalVisible, setOrderModalVisible] = useState(false);
   const [shippingAddress, setShippingAddress] = useState('');
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
 
   useEffect(() => {
-    if (id) {
-      const found = products.find(p => p.id === id);
-      if (found) setProduct(found);
-    }
+    let active=true;
+    const found=products.find(p=>p.id===id);
+    if(found){setProduct(found);setNotFound(false);setIsLoading(false);return()=>{active=false;};}
+    if(!id){setNotFound(true);setIsLoading(false);return()=>{active=false;};}
+    setIsLoading(true);
+    void fetchProduct(id).then(value=>{
+      if(!active)return;
+      setProduct(value);setNotFound(!value);
+    }).catch(()=>{if(active)setNotFound(true);}).finally(()=>{if(active)setIsLoading(false);});
+    return()=>{active=false;};
   }, [id, products]);
 
   const handleOrder = async () => {
     if (!user) { showAlert('Inicia sesión', 'Necesitas una cuenta para comprar'); return; }
     if (!product) return;
-    if (!shippingAddress.trim() && product.category === 'physical') {
+    if (!shippingAddress.trim()) {
       showAlert('Dirección requerida', 'Ingresa tu dirección de envío');
       return;
     }
@@ -51,7 +58,7 @@ export default function ProductScreen() {
     showAlert('Checkout no disponible', 'Checkout BDAG pendiente de implementación');
   };
 
-  if (!product) {
+  if (isLoading) {
     return (
       <View style={[styles.container, styles.centered, { paddingTop: insets.top }]}>
         <StatusBar style="light" />
@@ -59,8 +66,19 @@ export default function ProductScreen() {
       </View>
     );
   }
+  if (!product || notFound) {
+    return (
+      <View style={[styles.container,styles.centered,{paddingTop:insets.top,paddingHorizontal:Spacing.lg}]}>
+        <StatusBar style="light" />
+        <MaterialIcons name="inventory-2" size={48} color={Colors.textSubtle} />
+        <Text style={styles.sectionTitle}>Producto no disponible</Text>
+        <Text style={[styles.description,{textAlign:'center'}]}>Este producto no existe o ya no está disponible.</Text>
+        <CyberButton label="Volver" onPress={()=>router.back()} />
+      </View>
+    );
+  }
 
-  const isOwner = user?.id === product.sellerId;
+  const isOwner = user?.id === product.seller_id;
   const isSaved = isSavedProduct(product.id);
   const totalPrice = product.price * quantity;
 
@@ -127,10 +145,10 @@ export default function ProductScreen() {
 
           <View style={styles.priceRow}>
             <Text style={styles.price}>{product.price.toFixed(2)} BDAG</Text>
-            {product.totalSales > 0 ? (
+            {product.total_sales > 0 ? (
               <View style={styles.salesBadge}>
                 <MaterialIcons name="trending-up" size={12} color={Colors.accent} />
-                <Text style={styles.salesText}>{product.totalSales} vendidos</Text>
+                <Text style={styles.salesText}>{product.total_sales} vendidos</Text>
               </View>
             ) : null}
           </View>
@@ -146,16 +164,16 @@ export default function ProductScreen() {
           {/* Seller */}
           <Pressable
             style={styles.sellerCard}
-            onPress={() => router.push(`/chat/${product.sellerId}`)}
+            onPress={() => router.push(`/chat/${product.seller_id}`)}
           >
-            <Avatar uri={product.sellerAvatar} username={product.sellerUsername} size={42} showBorder />
+            <Avatar uri={product.seller?.avatar_url??''} username={product.seller?.username??'Vendedor'} size={42} showBorder />
             <View style={styles.sellerInfo}>
               <Text style={styles.sellerLabel}>Vendedor</Text>
-              <Text style={styles.sellerName}>@{product.sellerUsername}</Text>
+              <Text style={styles.sellerName}>@{product.seller?.username??'Vendedor'}</Text>
             </View>
             <Pressable
               style={styles.contactBtn}
-              onPress={() => router.push(`/chat/${product.sellerId}`)}
+              onPress={() => router.push(`/chat/${product.seller_id}`)}
             >
               <MaterialIcons name="chat" size={16} color={Colors.primary} />
               <Text style={styles.contactBtnText}>Contactar</Text>
@@ -248,7 +266,7 @@ export default function ProductScreen() {
               </View>
             </View>
 
-            {product.category === 'physical' ? (
+            {product.product_type === 'physical' ? (
               <View style={styles.formField}>
                 <Text style={styles.fieldLabel}>Dirección de envío</Text>
                 <TextInput
