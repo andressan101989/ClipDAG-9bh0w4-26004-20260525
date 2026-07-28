@@ -81,16 +81,26 @@ export async function fetchProduct(productId:string):Promise<Product|null> {
 }
 
 export async function fetchMyProducts():Promise<Product[]> {
-  const {data,error}=await db().from('products').select(PRODUCT_WITH_SELLER)
-    .neq('status','deleted').order('updated_at',{ascending:false});
+  const client=db();
+  const {data:{user},error:authError}=await client.auth.getUser();
+  if(authError||!user) return [];
+  const {data,error}=await client.from('products').select(PRODUCT_WITH_SELLER)
+    .eq('seller_id',user.id).neq('status','deleted').order('updated_at',{ascending:false});
   if(error) throw error;
   return (data??[]).map(row=>mapProduct(row as unknown as Record<string,unknown>));
 }
 
 export async function fetchSellerFoundation():Promise<{seller:MarketplaceSeller|null;store:MarketplaceStore|null}> {
+  const client=db();
+  const {data:{user},error:authError}=await client.auth.getUser();
+  if(authError||!user) return {seller:null,store:null};
   const [{data:seller,error:sellerError},{data:store,error:storeError}]=await Promise.all([
-    db().from('marketplace_sellers').select('user_id,status,display_name,application_note,created_at,updated_at').maybeSingle(),
-    db().from('marketplace_stores').select('id,seller_id,name,slug,description,logo_asset_id,banner_asset_id,status,created_at,updated_at').maybeSingle(),
+    client.from('marketplace_sellers')
+      .select('user_id,status,display_name,application_note,created_at,updated_at')
+      .eq('user_id',user.id).maybeSingle(),
+    client.from('marketplace_stores')
+      .select('id,seller_id,name,slug,description,logo_asset_id,banner_asset_id,status,created_at,updated_at')
+      .eq('seller_id',user.id).maybeSingle(),
   ]);
   if(sellerError) throw sellerError;
   if(storeError) throw storeError;
