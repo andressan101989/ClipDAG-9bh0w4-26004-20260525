@@ -18,13 +18,15 @@ import {
 type DraftOption={name:string;valuesText:string};
 type DraftVariant={
   id?:string;sku:string;price:string;compareAtPrice:string;active:boolean;isDefault:boolean;
-  optionValues:string[];onHand:string;threshold:string;adjustment:string;imageAssetId:string|null;
+  optionValues:string[];onHand:string;setOnHand:string;threshold:string;adjustment:string;imageAssetId:string|null;
 };
 
 const errorMessage=(error:unknown)=>{
   const message=error&&typeof error==='object'&&'message' in error?String((error as {message:unknown}).message):'';
   if(message.includes('marketplace_sku_exists')) return 'Ese SKU ya existe en tu tienda.';
   if(message.includes('marketplace_duplicate_combination')) return 'Hay una combinación duplicada.';
+  if(message.includes('marketplace_existing_inventory_requires_inventory_action'))
+    return 'El inventario de una variante existente debe cambiarse con Establecer o Ajustar.';
   if(message.includes('marketplace_invalid_inventory_quantity')) return 'El inventario no puede quedar negativo.';
   return 'Verifica los datos e inténtalo nuevamente.';
 };
@@ -56,6 +58,7 @@ export default function SellerVariantsScreen(){
       imageAssetId:item.image_asset_id,
       optionValues:item.option_value_ids.map(valueId=>labels.get(valueId)??''),
       onHand:String(inventory.get(item.id)?.on_hand??0),
+      setOnHand:String(inventory.get(item.id)?.on_hand??0),
       threshold:String(inventory.get(item.id)?.low_stock_threshold??0),adjustment:'',
     })));
     setDirty(false);
@@ -86,7 +89,7 @@ export default function SellerVariantsScreen(){
     const base=data?.detail.product.price??1;
     setVariants(combinations.map((values,index)=>({
       sku:`VAR-${index+1}`,price:String(base),compareAtPrice:'',active:true,
-      isDefault:index===0,optionValues:values,onHand:'0',threshold:'0',adjustment:'',imageAssetId:null,
+      isDefault:index===0,optionValues:values,onHand:'0',setOnHand:'0',threshold:'0',adjustment:'',imageAssetId:null,
     })));setDirty(true);
   };
   const saveConfiguration=async()=>{
@@ -103,7 +106,7 @@ export default function SellerVariantsScreen(){
         low_stock_threshold:Math.max(0,Number.parseInt(item.threshold,10)||0),
       }));
       await configureProductVariants(id,parsedOptions,payload,randomUUID());
-      showAlert('Variantes guardadas','Precio e inventario del producto fueron recalculados.');
+      showAlert('Variantes guardadas','Las variantes fueron guardadas y las proyecciones del producto se actualizaron.');
       await reload();
     }catch(error){showAlert('No se pudo guardar',errorMessage(error));}
     finally{setSaving(false);actionLock.current=false;}
@@ -124,7 +127,7 @@ export default function SellerVariantsScreen(){
     const key=randomUUID();
     try{
       if(adjust)await adjustVariantInventory(item.id,Number.parseInt(item.adjustment,10)||0,'Ajuste del vendedor',key);
-      else await setVariantInventory(item.id,Math.max(0,Number.parseInt(item.onHand,10)||0),'Conteo del vendedor',key);
+      else await setVariantInventory(item.id,Math.max(0,Number.parseInt(item.setOnHand,10)||0),'Conteo del vendedor',key);
       await reload();
     }catch(error){showAlert('Inventario no actualizado',errorMessage(error));}
     finally{actionLock.current=false;}
@@ -195,14 +198,19 @@ export default function SellerVariantsScreen(){
             <Text style={s.pillText}>Imagen {assetIndex+1}</Text>
           </Pressable>)}
         </View>:null}
-        <Text style={s.label}>Inventario actual</Text>
-        <View style={s.row}><TextInput style={[s.input,s.flex]} value={variant.onHand} keyboardType="number-pad"
-          onChangeText={onHand=>updateDraft(index,{onHand})}/><Pressable style={s.smallButton}
-          onPress={()=>void inventoryAction(index,false)}><Text style={s.buttonText}>Establecer</Text></Pressable></View>
-        <View style={s.row}><TextInput style={[s.input,s.flex]} value={variant.adjustment} keyboardType="numbers-and-punctuation"
-          placeholder="+5 o -2" placeholderTextColor={Colors.textSubtle}
-          onChangeText={adjustment=>updateDraft(index,{adjustment})}/><Pressable style={s.smallButton}
-          onPress={()=>void inventoryAction(index,true)}><Text style={s.buttonText}>Ajustar</Text></Pressable></View>
+        <Text style={s.label}>{variant.id?'Inventario actual (solo lectura)':'Inventario inicial'}</Text>
+        {variant.id?<><View style={s.readOnly}><Text style={s.readOnlyText}>{variant.onHand}</Text></View>
+          <View style={s.row}><TextInput style={[s.input,s.flex]} value={variant.setOnHand} keyboardType="number-pad"
+            onChangeText={setOnHand=>setVariants(current=>current.map((item,i)=>i===index?{...item,setOnHand}:item))}/>
+            <Pressable style={s.smallButton} onPress={()=>void inventoryAction(index,false)}>
+              <Text style={s.buttonText}>Establecer</Text></Pressable></View>
+          <View style={s.row}><TextInput style={[s.input,s.flex]} value={variant.adjustment} keyboardType="numbers-and-punctuation"
+            placeholder="+5 o -2" placeholderTextColor={Colors.textSubtle}
+            onChangeText={adjustment=>setVariants(current=>current.map((item,i)=>i===index?{...item,adjustment}:item))}/>
+            <Pressable style={s.smallButton} onPress={()=>void inventoryAction(index,true)}>
+              <Text style={s.buttonText}>Ajustar</Text></Pressable></View></>:
+          <TextInput style={s.input} value={variant.onHand} keyboardType="number-pad"
+            onChangeText={onHand=>updateDraft(index,{onHand,setOnHand:onHand})}/>}
         <TextInput style={s.input} value={variant.threshold} keyboardType="number-pad"
           placeholder="Umbral de stock bajo" placeholderTextColor={Colors.textSubtle}
           onChangeText={threshold=>updateDraft(index,{threshold})}/>
@@ -229,6 +237,8 @@ const s=StyleSheet.create({
   section:{color:Colors.textPrimary,fontSize:FontSize.lg,fontWeight:FontWeight.bold,marginTop:Spacing.sm},
   card:{backgroundColor:Colors.surfaceElevated,borderWidth:1,borderColor:Colors.border,borderRadius:Radius.lg,padding:Spacing.md,gap:Spacing.sm},
   input:{backgroundColor:Colors.surface,borderWidth:1,borderColor:Colors.border,borderRadius:Radius.md,padding:Spacing.md,color:Colors.textPrimary},
+  readOnly:{backgroundColor:Colors.surface,borderWidth:1,borderColor:Colors.border,borderRadius:Radius.md,padding:Spacing.md,opacity:.75},
+  readOnlyText:{color:Colors.textSecondary},
   row:{flexDirection:'row',gap:Spacing.sm,alignItems:'center'},flex:{flex:1},
   outline:{borderWidth:1,borderColor:Colors.primary,borderRadius:Radius.md,padding:Spacing.md,alignItems:'center',flex:1},
   outlineText:{color:Colors.primary,fontWeight:FontWeight.bold},
