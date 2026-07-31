@@ -68,7 +68,7 @@ test('unit: exactly one default variant is required',()=>{
     error=>error.code==='default_required');
 });
 
-test('unit: variant prices, stock, thresholds and compare-at prices are validated',()=>{
+test('unit: variant money and inventory values are validated',()=>{
   const variants=helper.generateCreationVariants(options,{price:'2.5',stock:'4',skuPrefix:'P-1234'});
   helper.validateCreationVariants(variants);
   assert.throws(()=>helper.validateCreationVariants(variants.map((item,index)=>index?item:{...item,onHand:'-1'})),
@@ -77,9 +77,11 @@ test('unit: variant prices, stock, thresholds and compare-at prices are validate
     error=>error.code==='invalid_compare_at_price');
 });
 
-test('static client integration: simple mode preserves the original createProduct path',()=>{
-  assert.match(createSource,/if\(hasVariants\)\{/);
-  assert.match(createSource,/const result = await createProduct\(productInput\)/);
+test('static client integration: simple mode remains authoritative and private until publication',()=>{
+  assert.match(createSource,/await createProductDraft/);
+  assert.match(createSource,/fetchSellerProductVariants\(productId\)/);
+  assert.match(createSource,/await updateVariant\(defaultVariant\.id/);
+  assert.match(createSource,/await setVariantLowStockThreshold/);
 });
 
 test('static client integration: variant mode creates a private draft before configuration and publication',()=>{
@@ -87,32 +89,32 @@ test('static client integration: variant mode creates a private draft before con
   const configure=createSource.indexOf('await configureProductVariants');
   const publish=createSource.indexOf('await setProductPublished');
   assert.ok(draft>0&&draft<configure&&configure<publish);
-  assert.match(createSource,/createProductDraft\(\{\.\.\.productInput,stock:0\}\)/);
+  assert.match(createSource,/stock: hasVariants \? 0/);
 });
 
 test('static client integration: exact retries reuse draft identity and configuration key',()=>{
-  assert.match(createSource,/let productId=activeDraftId/);
+  assert.match(createSource,/let productId = activeDraftId/);
   assert.match(createSource,/configurationKeyRef\.current/);
   assert.doesNotMatch(createSource,/setVariantInventory|adjustVariantInventory/);
 });
 
-test('static client integration: guided UI supports arbitrary options, bulk actions and images',()=>{
+test('static client integration: guided UI supports arbitrary chip options, bulk actions and images',()=>{
   assert.match(createSource,/Nombre de la opción/);
-  assert.match(createSource,/Capacidad, Modelo o Estilo/);
-  assert.match(createSource,/Precio para todas/);
-  assert.match(createSource,/Stock para todas/);
-  assert.match(createSource,/image_asset_id:item\.imageAssetId/);
-  assert.doesNotMatch(createSource,/name:'Color'/);
+  assert.match(createSource,/OPTION_SUGGESTIONS/);
+  assert.match(createSource,/addOptionValue/);
+  assert.match(createSource,/MarketplaceBulkEditSheet/);
+  assert.match(createSource,/image_asset_id: item\.imageAssetId/);
+  assert.doesNotMatch(createSource,/name:\s*'Color'/);
 });
 
-test('static client integration: failed variant creation remains private and recoverable',()=>{
-  assert.match(createSource,/El borrador sigue privado/);
-  assert.match(createSource,/Reintentar y publicar/);
+test('static client integration: failed creation remains private and recoverable',()=>{
+  assert.match(createSource,/Tu producto permanece privado/);
+  assert.match(createSource,/Reintentar publicación/);
   assert.match(createSource,/deleteIncompleteDraft/);
   assert.match(createSource,/softDeleteProduct/);
 });
 
-test('static client integration: edit conversion and regeneration warnings remain explicit',()=>{
+test('static client integration: existing inventory configuration remains read-only',()=>{
   assert.match(variantsSource,/Convertir en producto con variantes/);
   assert.match(variantsSource,/puede descartar cambios sin guardar/);
   assert.match(variantsSource,/Inventario actual \(solo lectura\)/);
