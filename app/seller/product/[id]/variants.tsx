@@ -14,6 +14,10 @@ import {
   setVariantLowStockThreshold,updateVariant,
   type SellerProductInventory,type VariantConfiguration,
 } from '@/services/marketplaceService';
+import {
+  cartesianVariantValues,estimateVariantCount,generateVariantSku,parseVariantOptions,
+  VariantDraftValidationError,
+} from '@/services/marketplaceVariantDraft';
 
 type DraftOption={name:string;valuesText:string};
 type DraftVariant={
@@ -30,10 +34,6 @@ const errorMessage=(error:unknown)=>{
   if(message.includes('marketplace_invalid_inventory_quantity')) return 'El inventario no puede quedar negativo.';
   return 'Verifica los datos e inténtalo nuevamente.';
 };
-const cartesian=(groups:string[][])=>groups.reduce<string[][]>(
-  (result,group)=>result.flatMap(prefix=>group.map(value=>[...prefix,value])),[[]],
-);
-
 export default function SellerVariantsScreen(){
   const {id}=useLocalSearchParams<{id:string}>();const router=useRouter();
   const insets=useSafeAreaInsets();const {showAlert}=useAlert();
@@ -81,16 +81,29 @@ export default function SellerVariantsScreen(){
     name:option.name.trim(),values:option.valuesText.split(',').map(value=>value.trim()).filter(Boolean),
   })),[options]);
   const generate=()=>{
-    if(parsedOptions.length<1||parsedOptions.length>3||parsedOptions.some(option=>!option.name||!option.values.length)){
-      showAlert('Opciones incompletas','Agrega entre una y tres opciones con valores.');return;
+    let validated;
+    try{validated=parseVariantOptions(options);}
+    catch(error){
+      showAlert('Opciones incompletas',error instanceof VariantDraftValidationError?error.message:
+        'Agrega entre una y tres opciones con valores.');return;
     }
-    const combinations=cartesian(parsedOptions.map(option=>option.values));
+    const combinations=cartesianVariantValues(validated.map(option=>option.values));
     if(combinations.length>100){showAlert('Demasiadas variantes','El máximo es 100 combinaciones.');return;}
-    const base=data?.detail.product.price??1;
-    setVariants(combinations.map((values,index)=>({
-      sku:`VAR-${index+1}`,price:String(base),compareAtPrice:'',active:true,
-      isDefault:index===0,optionValues:values,onHand:'0',setOnHand:'0',threshold:'0',adjustment:'',imageAssetId:null,
-    })));setDirty(true);
+    const perform=()=>{
+      const base=data?.detail.product.price??1;
+      const prefix=`${data?.detail.product.title??'PRODUCTO'}-${id.slice(0,8)}`;
+      setVariants(combinations.map((values,index)=>({
+        sku:generateVariantSku(prefix,values,index),price:String(base),compareAtPrice:'',active:true,
+        isDefault:index===0,optionValues:values,onHand:'0',setOnHand:'0',threshold:'0',adjustment:'',imageAssetId:null,
+      })));setDirty(true);
+    };
+    if(variants.some(item=>item.id)||dirty){
+      Alert.alert('Volver a generar variantes',
+        'Cambiar las opciones volverá a generar las variantes y puede descartar cambios sin guardar.',[
+          {text:'Cancelar',style:'cancel'},{text:'Continuar',style:'destructive',onPress:perform},
+        ]);return;
+    }
+    perform();
   };
   const saveConfiguration=async()=>{
     if(saving||actionLock.current)return;
@@ -153,7 +166,20 @@ export default function SellerVariantsScreen(){
   return <View style={[s.page,{paddingTop:insets.top}]}>
     <SellerScreenHeader title="Variantes e inventario" fallbackRoute={`/seller/product/${id}/edit` as never} onBack={leave}/>
     <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+      <View style={s.summary}>
+        <Text style={s.section}>{options.length?'Producto con variantes':'Producto simple'}</Text>
+        <Text style={s.muted}>{options.length
+          ?`${variants.filter(item=>item.active).length} variantes activas · ${options.length} opciones`
+          :'Una variante predeterminada con precio e inventario propios.'}</Text>
+      </View>
       <Text style={s.section}>Opciones</Text>
+      <Text style={s.muted}>Puedes usar cualquier nombre válido. Ejemplos: Color, Talla, Material, Capacidad, Modelo o Estilo.</Text>
+      {!options.length?<Pressable style={s.outline} onPress={()=>{
+        Alert.alert('Convertir en producto con variantes',
+          'Se generarán nuevas combinaciones. El producto, sus fotos y la propiedad del vendedor se conservarán.',[
+            {text:'Cancelar',style:'cancel'},{text:'Continuar',onPress:()=>{setOptions([{name:'',valuesText:''}]);setDirty(true);}},
+          ]);
+      }}><Text style={s.outlineText}>Convertir en producto con variantes</Text></Pressable>:null}
       {options.map((option,index)=><View key={index} style={s.card}>
         <TextInput style={s.input} value={option.name} placeholder="Color, Talla o Material"
           placeholderTextColor={Colors.textSubtle} maxLength={40}
@@ -168,9 +194,11 @@ export default function SellerVariantsScreen(){
       {options.length<3?<Pressable style={s.outline} onPress={()=>{
         setOptions(current=>[...current,{name:'',valuesText:''}]);setDirty(true);
       }}><Text style={s.outlineText}>Agregar opción</Text></Pressable>:null}
-      {options.length>0?<Pressable style={s.outline} onPress={generate}><Text style={s.outlineText}>Generar combinaciones</Text></Pressable>:null}
+      {options.length>0?<><Text style={s.muted}>Se crearán {estimateVariantCount(options)} variantes.</Text>
+        <Pressable style={s.outline} onPress={generate}><Text style={s.outlineText}>
+          {variants.some(item=>item.id)?'Regenerar variantes':'Generar variantes'}</Text></Pressable></>:null}
 
-      <Text style={s.section}>{options.length?'Variantes':'Producto simple'}</Text>
+      <Text style={s.section}>Configuración de variantes</Text>
       {variants.map((variant,index)=><View key={variant.id??`${index}-${variant.optionValues.join('-')}`} style={s.card}>
         {variant.optionValues.length?<Text style={s.variantTitle}>{variant.optionValues.join(' · ')}</Text>:<Text style={s.variantTitle}>Variante predeterminada</Text>}
         <TextInput style={s.input} value={variant.sku} placeholder="SKU" placeholderTextColor={Colors.textSubtle}
@@ -221,7 +249,7 @@ export default function SellerVariantsScreen(){
       <Pressable disabled={saving} style={[s.button,saving&&s.disabled]} onPress={()=>void saveConfiguration()}>
         <Text style={s.buttonText}>{saving?'Guardando…':'Guardar configuración'}</Text>
       </Pressable>
-      <Text style={s.section}>Historial reciente</Text>
+      <Text style={s.section}>Movimientos de inventario</Text>
       {data?.movements.map(movement=><View key={movement.id} style={s.history}>
         <Text style={s.historyTitle}>{movement.movement_type} · {movement.delta>=0?'+':''}{movement.delta}</Text>
         <Text style={s.muted}>{new Date(movement.created_at).toLocaleString()} · Resultado {movement.resulting_on_hand}</Text>
@@ -234,6 +262,8 @@ export default function SellerVariantsScreen(){
 const s=StyleSheet.create({
   page:{flex:1,backgroundColor:Colors.bg},center:{alignItems:'center',justifyContent:'center'},
   content:{padding:Spacing.lg,paddingBottom:80,gap:Spacing.md},
+  summary:{backgroundColor:Colors.primary+'12',borderWidth:1,borderColor:Colors.primary,
+    borderRadius:Radius.lg,padding:Spacing.md,gap:Spacing.xs},
   section:{color:Colors.textPrimary,fontSize:FontSize.lg,fontWeight:FontWeight.bold,marginTop:Spacing.sm},
   card:{backgroundColor:Colors.surfaceElevated,borderWidth:1,borderColor:Colors.border,borderRadius:Radius.lg,padding:Spacing.md,gap:Spacing.sm},
   input:{backgroundColor:Colors.surface,borderWidth:1,borderColor:Colors.border,borderRadius:Radius.md,padding:Spacing.md,color:Colors.textPrimary},

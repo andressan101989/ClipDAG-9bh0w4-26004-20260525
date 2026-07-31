@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, TextInput,
+  Alert, View, Text, ScrollView, Pressable, StyleSheet, TextInput,
   KeyboardAvoidingView, Platform, Switch,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { randomUUID } from 'expo-crypto';
 import { useShop } from '@/hooks/useShop';
 import { useAuth } from '@/hooks/useAuth';
 import { useAlert } from '@/template';
@@ -17,7 +18,16 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import { detectMimeType } from '@/contexts/FeedContext';
 import { deleteMediaAsset, getSafeMediaError, uploadMediaFromUri } from '@/services/mediaService';
 import type { ProductCategory } from '@/contexts/ShopContext';
-import { fetchCategories, fetchSellerFoundation, type MarketplaceCategoryRecord, type MarketplaceStore } from '@/services/marketplaceService';
+import {
+  configureProductVariants,createProductDraft,fetchCategories,fetchSellerFoundation,
+  setProductPublished,softDeleteProduct,type MarketplaceCategoryRecord,type MarketplaceStore,
+  type VariantConfiguration,
+} from '@/services/marketplaceService';
+import {
+  estimateVariantCount,generateCreationVariants,generateVariantSku,parseVariantOptions,
+  validateCreationVariants,VariantDraftValidationError,
+  type CreationVariantDraft,type VariantDraftOption,
+} from '@/services/marketplaceVariantDraft';
 
 export default function CreateProductScreen() {
   const insets = useSafeAreaInsets();
@@ -29,6 +39,8 @@ export default function CreateProductScreen() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
+  const [compareAtPrice,setCompareAtPrice]=useState('');
+  const [brand,setBrand]=useState('');
   const [category, setCategory] = useState<ProductCategory>('physical');
   const [categories,setCategories]=useState<MarketplaceCategoryRecord[]>([]);
   const [store,setStore]=useState<MarketplaceStore|null>(null);
@@ -40,6 +52,14 @@ export default function CreateProductScreen() {
   const [isPublishing, setIsPublishing] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [imageAssetIds, setImageAssetIds] = useState<string[]>([]);
+  const [hasVariants,setHasVariants]=useState(false);
+  const [variantOptions,setVariantOptions]=useState<VariantDraftOption[]>([]);
+  const [variantDrafts,setVariantDrafts]=useState<CreationVariantDraft[]>([]);
+  const [bulkPrice,setBulkPrice]=useState('');
+  const [bulkStock,setBulkStock]=useState('');
+  const [draftProductId,setDraftProductId]=useState<string|null>(null);
+  const configurationKeyRef=useRef(randomUUID());
+  const skuSeedRef=useRef(randomUUID().slice(0,8).toUpperCase());
   const draftAssetIdsRef = useRef<string[]>([]);
   const publishLockRef = useRef(false);
 
@@ -122,12 +142,70 @@ export default function CreateProductScreen() {
     }
   }, [images, user, showAlert]);
 
+  const combinationEstimate=estimateVariantCount(variantOptions);
+  const updateVariantDraft=(index:number,patch:Partial<CreationVariantDraft>)=>{
+    setVariantDrafts(current=>current.map((item,itemIndex)=>itemIndex===index?{...item,...patch}:item));
+  };
+  const regenerateVariants=useCallback(()=>{
+    const perform=()=>{
+      try{
+        setVariantDrafts(generateCreationVariants(variantOptions,{
+          price:price.trim(),stock:String(Math.max(0,Number.parseInt(stock,10)||0)),
+          skuPrefix:`${title}-${skuSeedRef.current}`,
+        }));
+      }catch(error){
+        const message=error instanceof VariantDraftValidationError?error.message:'Revisa los nombres y valores de las opciones.';
+        showAlert('No se pueden generar las variantes',message);
+      }
+    };
+    if(variantDrafts.length){
+      Alert.alert(
+        'Volver a generar variantes',
+        'Cambiar las opciones volverá a generar las variantes y puede descartar cambios sin guardar.',
+        [{text:'Cancelar',style:'cancel'},{text:'Continuar',style:'destructive',onPress:perform}],
+      );
+    }else perform();
+  },[price,showAlert,stock,title,variantDrafts.length,variantOptions]);
+  const deleteIncompleteDraft=useCallback(async(productId?:string|null)=>{
+    const targetId=productId??draftProductId;
+    if(!targetId||publishLockRef.current)return;
+    publishLockRef.current=true;setIsPublishing(true);
+    try{
+      await softDeleteProduct(targetId);
+      setDraftProductId(null);configurationKeyRef.current=randomUUID();
+      setVariantDrafts([]);
+      showAlert('Borrador eliminado','Puedes corregir la información y comenzar nuevamente.');
+    }catch{
+      showAlert('No se pudo eliminar','El borrador sigue privado. Inténtalo nuevamente desde Mis productos.');
+    }finally{publishLockRef.current=false;setIsPublishing(false);}
+  },[draftProductId,showAlert]);
+  const chooseVariantMode=(next:boolean)=>{
+    if(draftProductId){
+      showAlert('Borrador privado creado','Reintenta o elimina el borrador antes de cambiar el tipo de producto.');
+      return;
+    }
+    if(!next&&variantDrafts.length){
+      Alert.alert('Cambiar a producto simple','Se descartarán las variantes sin guardar.',[
+        {text:'Cancelar',style:'cancel'},
+        {text:'Cambiar',style:'destructive',onPress:()=>{setHasVariants(false);setVariantDrafts([]);setVariantOptions([]);}},
+      ]);
+      return;
+    }
+    setHasVariants(next);
+    if(next&&variantOptions.length===0)setVariantOptions([{name:'',valuesText:''}]);
+  };
+
   const handlePublish = useCallback(async () => {
     if (publishLockRef.current || isPublishing) return;
     if (!user) { showAlert('Inicia sesión', 'Necesitas una cuenta para vender'); return; }
     if (!title.trim()) { showAlert('Título requerido', 'Ingresa un título para tu producto'); return; }
     if (!/^\d{1,12}(?:\.\d{1,8})?$/.test(price.trim()) || Number(price) <= 0) {
       showAlert('Precio inválido', 'Usa un precio BDAG positivo con un máximo de 8 decimales.');
+      return;
+    }
+    if(compareAtPrice&&(!/^\d{1,12}(?:\.\d{1,8})?$/.test(compareAtPrice.trim())||
+      Number(compareAtPrice)<Number(price))){
+      showAlert('Precio anterior inválido','Debe ser igual o mayor al precio actual.');
       return;
     }
     if (!description.trim()) { showAlert('Descripción requerida', 'Describe tu producto'); return; }
@@ -137,20 +215,59 @@ export default function CreateProductScreen() {
       return;
     }
 
+    let parsedVariantOptions;
+    if(hasVariants){
+      try{
+        parsedVariantOptions=parseVariantOptions(variantOptions);
+        validateCreationVariants(variantDrafts);
+      }catch(error){
+        showAlert('Variantes incompletas',error instanceof VariantDraftValidationError?error.message:
+          'Genera y revisa todas las variantes antes de publicar.');
+        return;
+      }
+    }
+
     publishLockRef.current = true;
     setIsPublishing(true);
+    let activeDraftId=draftProductId;
     try {
       const tagList = tags.split(',').map(t => t.trim()).filter(Boolean);
-      const result = await createProduct({
+      const productInput={
         storeId:store.id,
         categoryId:categoryRow.id,
         title: title.trim(),
         description: description.trim(),
         price:price.trim(),
+        brand:brand.trim()||undefined,
+        compareAtPrice:compareAtPrice.trim()||null,
         assetIds:imageAssetIds,
         stock: isUnlimitedStock ? 9999 : Math.max(1, parseInt(stock) || 1),
         tags: tagList,
-      });
+      };
+      if(hasVariants){
+        let productId=activeDraftId;
+        if(!productId){
+          productId=await createProductDraft({...productInput,stock:0});
+          activeDraftId=productId;
+          setDraftProductId(productId);
+          draftAssetIdsRef.current=[];
+        }
+        const payload:VariantConfiguration[]=variantDrafts.map(item=>({
+          sku:item.sku,price:item.price,compare_at_price:item.compareAtPrice||null,
+          status:item.active?'active':'inactive',is_default:item.isDefault,
+          image_asset_id:item.imageAssetId,option_values:item.optionValues,
+          on_hand:Number.parseInt(item.onHand,10),low_stock_threshold:Number.parseInt(item.threshold,10)||0,
+        }));
+        await configureProductVariants(productId,parsedVariantOptions!,payload,configurationKeyRef.current);
+        await setProductPublished(productId,true);
+        setDraftProductId(null);draftAssetIdsRef.current=[];
+        showAlert('¡Producto con variantes publicado!','Las opciones, precios e inventario ya están disponibles.',[
+          {text:'Mis productos',onPress:()=>router.replace('/seller/products' as never)},
+          {text:'Ver variantes',onPress:()=>router.replace(`/seller/product/${productId}/variants` as never)},
+        ]);
+        return;
+      }
+      const result = await createProduct(productInput);
 
       if (result.success) {
         if (!result.product) {
@@ -173,18 +290,45 @@ export default function CreateProductScreen() {
         setImageAssetIds([]);
         showAlert('Error', result.error || 'No se pudo publicar el producto');
       }
+    }catch(error){
+      if(hasVariants&&activeDraftId){
+        showAlert('El borrador sigue privado','No se completó la configuración. Reintenta con los mismos datos o elimina el borrador.',[
+          {text:'Cerrar'},
+          {text:'Eliminar borrador',style:'destructive',onPress:()=>void deleteIncompleteDraft(activeDraftId)},
+        ]);
+      }else if(hasVariants){
+        const message=error instanceof Error&&error.message.includes('marketplace_sku_exists')
+          ?'Uno de los SKU ya existe en tu tienda. Corrígelo y reintenta.'
+          :'Conservamos tus datos. Reintenta para completar el producto.';
+        showAlert('No se pudo completar',message);
+      }else throw error;
     } finally {
       publishLockRef.current = false;
       setIsPublishing(false);
     }
-  }, [isPublishing,user,title,description,price,category,stock,isUnlimitedStock,imageAssetIds,tags,createProduct,router,showAlert,categories,store,accessReady]);
+  }, [isPublishing,user,title,description,price,compareAtPrice,category,stock,isUnlimitedStock,imageAssetIds,
+    tags,createProduct,router,showAlert,categories,store,accessReady,brand,hasVariants,variantOptions,
+    variantDrafts,draftProductId,deleteIncompleteDraft]);
+  const handleBack=()=>{
+    if(draftProductId){
+      Alert.alert('Borrador privado','El borrador seguirá en Mis productos para que puedas retomarlo o eliminarlo.',[
+        {text:'Seguir editando',style:'cancel'},{text:'Salir',onPress:()=>router.back()},
+      ]);return;
+    }
+    if(title||description||price||images.length||variantDrafts.length){
+      Alert.alert('Cambios sin guardar','¿Salir y descartar la información de este producto?',[
+        {text:'Cancelar',style:'cancel'},{text:'Salir',style:'destructive',onPress:()=>router.back()},
+      ]);return;
+    }
+    router.back();
+  };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar style="light" />
 
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
+        <Pressable onPress={handleBack} hitSlop={10} style={styles.backBtn}>
           <MaterialIcons name="arrow-back-ios" size={20} color={Colors.textPrimary} />
         </Pressable>
         <Text style={styles.headerTitle}>Crear Producto</Text>
@@ -254,6 +398,11 @@ export default function CreateProductScreen() {
               />
               <Text style={styles.charCount}>{description.length}/500</Text>
             </View>
+            <View style={styles.formField}>
+              <Text style={styles.fieldLabel}>Marca</Text>
+              <TextInput style={styles.fieldInput} value={brand} onChangeText={setBrand}
+                placeholder="Opcional" placeholderTextColor={Colors.textSubtle} maxLength={80}/>
+            </View>
           </View>
 
           {/* Category */}
@@ -320,7 +469,131 @@ export default function CreateProductScreen() {
                 thumbColor="#fff"
               />
             </View>
+            <View style={styles.formField}>
+              <Text style={styles.fieldLabel}>Precio anterior (BDAG)</Text>
+              <TextInput style={styles.fieldInput} value={compareAtPrice} onChangeText={setCompareAtPrice}
+                placeholder="Opcional" placeholderTextColor={Colors.textSubtle} keyboardType="decimal-pad"/>
+            </View>
           </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Tipo de producto</Text>
+            <Text style={styles.sectionSub}>¿Este producto tiene variantes?</Text>
+            <Text style={styles.helper}>Usa variantes cuando el mismo producto se vende en diferentes colores, tallas, materiales, capacidades u otras opciones.</Text>
+            <Pressable style={[styles.modeCard,!hasVariants&&styles.modeCardActive]} onPress={()=>chooseVariantMode(false)}>
+              <MaterialIcons name={!hasVariants?'radio-button-checked':'radio-button-unchecked'} size={20} color={Colors.primary}/>
+              <View style={styles.modeCopy}><Text style={styles.modeTitle}>No, es un producto simple</Text>
+                <Text style={styles.sectionSub}>Un precio y un inventario para todo el producto.</Text></View>
+            </Pressable>
+            <Pressable style={[styles.modeCard,hasVariants&&styles.modeCardActive]} onPress={()=>chooseVariantMode(true)}>
+              <MaterialIcons name={hasVariants?'radio-button-checked':'radio-button-unchecked'} size={20} color={Colors.primary}/>
+              <View style={styles.modeCopy}><Text style={styles.modeTitle}>Sí, tiene opciones como color, talla o material</Text>
+                <Text style={styles.sectionSub}>Cada combinación puede tener su propio SKU, precio e inventario.</Text></View>
+            </Pressable>
+          </View>
+
+          {hasVariants?<>
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Opciones</Text>
+              <Text style={styles.helper}>Sugerencias: Color, Talla, Material, Capacidad, Modelo o Estilo. También puedes escribir cualquier otro nombre válido.</Text>
+              {variantOptions.map((option,index)=><View key={index} style={styles.variantCard}>
+                <Text style={styles.fieldLabel}>Nombre de la opción {index+1}</Text>
+                <TextInput style={styles.fieldInput} value={option.name}
+                  placeholder="Ej. Capacidad" placeholderTextColor={Colors.textSubtle} maxLength={40}
+                  onChangeText={name=>setVariantOptions(current=>current.map((item,itemIndex)=>itemIndex===index?{...item,name}:item))}/>
+                <Text style={styles.fieldLabel}>Valores separados por comas</Text>
+                <TextInput style={styles.fieldInput} value={option.valuesText}
+                  placeholder="Ej. 64 GB, 128 GB, 256 GB" placeholderTextColor={Colors.textSubtle}
+                  onChangeText={valuesText=>setVariantOptions(current=>current.map((item,itemIndex)=>itemIndex===index?{...item,valuesText}:item))}/>
+                <Pressable onPress={()=>setVariantOptions(current=>current.filter((_,itemIndex)=>itemIndex!==index))}>
+                  <Text style={styles.dangerText}>Quitar opción</Text>
+                </Pressable>
+              </View>)}
+              {variantOptions.length<3?<Pressable style={styles.outlineButton}
+                onPress={()=>setVariantOptions(current=>[...current,{name:'',valuesText:''}])}>
+                <Text style={styles.outlineText}>Agregar otra opción</Text>
+              </Pressable>:null}
+              <Text style={styles.estimate}>Se crearán {combinationEstimate} variantes</Text>
+              <Pressable style={styles.outlineButton} onPress={regenerateVariants}>
+                <Text style={styles.outlineText}>{variantDrafts.length?'Regenerar variantes':'Generar variantes'}</Text>
+              </Pressable>
+            </View>
+
+            {variantDrafts.length?<View style={styles.section}>
+              <Text style={styles.sectionTitle}>Variantes</Text>
+              <Text style={styles.helper}>Configura cada combinación antes de publicar. El SKU es un código interno único para identificar esta variante.</Text>
+              <View style={styles.variantCard}>
+                <Text style={styles.modeTitle}>Acciones rápidas</Text>
+                <View style={styles.rowFields}><TextInput style={[styles.fieldInput,{flex:1}]} value={bulkPrice}
+                  onChangeText={setBulkPrice} placeholder="Precio para todas" placeholderTextColor={Colors.textSubtle}
+                  keyboardType="decimal-pad"/>
+                  <Pressable style={styles.smallAction} onPress={()=>setVariantDrafts(current=>current.map(item=>({...item,price:bulkPrice})))}>
+                    <Text style={styles.smallActionText}>Aplicar</Text></Pressable></View>
+                <View style={styles.rowFields}><TextInput style={[styles.fieldInput,{flex:1}]} value={bulkStock}
+                  onChangeText={setBulkStock} placeholder="Stock para todas" placeholderTextColor={Colors.textSubtle}
+                  keyboardType="number-pad"/>
+                  <Pressable style={styles.smallAction} onPress={()=>setVariantDrafts(current=>current.map(item=>({...item,onHand:bulkStock})))}>
+                    <Text style={styles.smallActionText}>Aplicar</Text></Pressable></View>
+                <View style={styles.bulkWrap}>
+                  <Pressable style={styles.miniPill} onPress={()=>setVariantDrafts(current=>current.map((item,index)=>({
+                    ...item,sku:generateVariantSku(`${title}-${skuSeedRef.current}`,item.optionValues,index),
+                  })))}><Text style={styles.miniPillText}>Generar SKU</Text></Pressable>
+                  <Pressable style={styles.miniPill} onPress={()=>setVariantDrafts(current=>current.map(item=>({...item,active:true})))}>
+                    <Text style={styles.miniPillText}>Activar todas</Text></Pressable>
+                  <Pressable style={styles.miniPill} onPress={()=>setVariantDrafts(current=>current.map(item=>({...item,compareAtPrice:''})))}>
+                    <Text style={styles.miniPillText}>Limpiar precios anteriores</Text></Pressable>
+                </View>
+              </View>
+              {variantDrafts.map((variant,index)=><View key={variant.key} style={styles.variantCard}>
+                <Text style={styles.variantHeading}>{variant.optionValues.join(' / ')}</Text>
+                <Text style={styles.fieldLabel}>SKU</Text>
+                <TextInput style={styles.fieldInput} value={variant.sku} autoCapitalize="characters"
+                  onChangeText={sku=>updateVariantDraft(index,{sku})}/>
+                <View style={styles.rowFields}>
+                  <View style={{flex:1}}><Text style={styles.fieldLabel}>Precio BDAG</Text><TextInput
+                    style={styles.fieldInput} value={variant.price} keyboardType="decimal-pad"
+                    onChangeText={value=>updateVariantDraft(index,{price:value})}/></View>
+                  <View style={{flex:1}}><Text style={styles.fieldLabel}>Precio anterior</Text><TextInput
+                    style={styles.fieldInput} value={variant.compareAtPrice} keyboardType="decimal-pad"
+                    onChangeText={value=>updateVariantDraft(index,{compareAtPrice:value})}/></View>
+                </View>
+                <View style={styles.rowFields}>
+                  <View style={{flex:1}}><Text style={styles.fieldLabel}>Inventario inicial</Text><TextInput
+                    style={styles.fieldInput} value={variant.onHand} keyboardType="number-pad"
+                    onChangeText={value=>updateVariantDraft(index,{onHand:value})}/></View>
+                  <View style={{flex:1}}><Text style={styles.fieldLabel}>Umbral bajo</Text><TextInput
+                    style={styles.fieldInput} value={variant.threshold} keyboardType="number-pad"
+                    onChangeText={value=>updateVariantDraft(index,{threshold:value})}/></View>
+                </View>
+                <Text style={styles.sectionSub}>Cantidad disponible al publicar el producto.</Text>
+                {imageAssetIds.length?<View style={styles.bulkWrap}>
+                  <Pressable style={[styles.miniPill,!variant.imageAssetId&&styles.miniPillActive]}
+                    onPress={()=>updateVariantDraft(index,{imageAssetId:null})}><Text style={styles.miniPillText}>Imagen general</Text></Pressable>
+                  {imageAssetIds.map((assetId,imageIndex)=><Pressable key={assetId}
+                    style={[styles.miniPill,variant.imageAssetId===assetId&&styles.miniPillActive]}
+                    onPress={()=>updateVariantDraft(index,{imageAssetId:assetId})}>
+                    <Text style={styles.miniPillText}>Foto {imageIndex+1}</Text></Pressable>)}
+                </View>:null}
+                <View style={styles.bulkWrap}>
+                  <Pressable style={[styles.miniPill,variant.active&&styles.miniPillActive]}
+                    onPress={()=>updateVariantDraft(index,{active:!variant.active})}>
+                    <Text style={styles.miniPillText}>{variant.active?'Activa':'Inactiva'}</Text></Pressable>
+                  <Pressable style={[styles.miniPill,variant.isDefault&&styles.miniPillActive]}
+                    onPress={()=>setVariantDrafts(current=>current.map((item,itemIndex)=>({...item,isDefault:itemIndex===index})))}>
+                    <Text style={styles.miniPillText}>Variante predeterminada</Text></Pressable>
+                </View>
+                <Text style={styles.sectionSub}>Se mostrará primero cuando el comprador abra el producto.</Text>
+              </View>)}
+            </View>:null}
+          </>:null}
+
+          {draftProductId?<View style={styles.draftBanner}>
+            <Text style={styles.modeTitle}>Borrador privado guardado</Text>
+            <Text style={styles.helper}>El producto no es público. Reintenta para completar sus variantes o elimínalo de forma segura.</Text>
+            <Pressable style={styles.outlineButton} onPress={()=>void deleteIncompleteDraft()}>
+              <Text style={styles.dangerText}>Eliminar borrador incompleto</Text>
+            </Pressable>
+          </View>:null}
 
           {/* Tags */}
           <View style={styles.section}>
@@ -335,7 +608,7 @@ export default function CreateProductScreen() {
           </View>
 
           <CyberButton
-            label={isPublishing ? 'Publicando...' : 'Publicar producto'}
+            label={isPublishing?'Procesando...':draftProductId?'Reintentar y publicar':hasVariants?'Revisar y publicar variantes':'Publicar producto'}
             onPress={handlePublish}
             loading={isPublishing}
             size="lg"
@@ -408,4 +681,24 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: Colors.border,
   },
   switchLabel: { color: Colors.textSecondary, fontSize: FontSize.sm },
+  helper:{color:Colors.textSecondary,fontSize:FontSize.sm,lineHeight:20},
+  modeCard:{flexDirection:'row',alignItems:'flex-start',gap:Spacing.sm,padding:Spacing.md,
+    borderWidth:1,borderColor:Colors.border,borderRadius:Radius.md,backgroundColor:Colors.surfaceElevated},
+  modeCardActive:{borderColor:Colors.primary,backgroundColor:Colors.primary+'12'},
+  modeCopy:{flex:1,gap:4},modeTitle:{color:Colors.textPrimary,fontWeight:FontWeight.semibold},
+  variantCard:{backgroundColor:Colors.surfaceElevated,borderWidth:1,borderColor:Colors.border,
+    borderRadius:Radius.lg,padding:Spacing.md,gap:Spacing.sm},
+  outlineButton:{borderWidth:1,borderColor:Colors.primary,borderRadius:Radius.md,padding:Spacing.md,alignItems:'center'},
+  outlineText:{color:Colors.primary,fontWeight:FontWeight.bold},
+  dangerText:{color:Colors.secondary,fontWeight:FontWeight.bold},
+  estimate:{color:Colors.textPrimary,fontWeight:FontWeight.semibold,textAlign:'center'},
+  variantHeading:{color:Colors.textPrimary,fontWeight:FontWeight.bold,fontSize:FontSize.md},
+  smallAction:{backgroundColor:Colors.primary,borderRadius:Radius.md,paddingHorizontal:Spacing.md,justifyContent:'center'},
+  smallActionText:{color:'#000',fontWeight:FontWeight.bold},
+  bulkWrap:{flexDirection:'row',flexWrap:'wrap',gap:Spacing.sm},
+  miniPill:{borderWidth:1,borderColor:Colors.border,borderRadius:Radius.full,paddingHorizontal:12,paddingVertical:9},
+  miniPillActive:{borderColor:Colors.primary,backgroundColor:Colors.primary+'22'},
+  miniPillText:{color:Colors.textPrimary,fontSize:FontSize.xs},
+  draftBanner:{gap:Spacing.sm,padding:Spacing.md,borderRadius:Radius.lg,borderWidth:1,
+    borderColor:Colors.primary,backgroundColor:Colors.primary+'12'},
 });

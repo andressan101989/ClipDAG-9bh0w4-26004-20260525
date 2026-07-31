@@ -287,6 +287,16 @@ export async function createProduct(input:ProductMutation):Promise<string> {
   if(error) throw error;
   return extractRpcUuid(data,'create_marketplace_product');
 }
+export async function createProductDraft(input:ProductMutation):Promise<string> {
+  const {data,error}=await db().rpc('create_marketplace_product_draft',{
+    p_store_id:input.storeId,p_category_id:input.categoryId,p_title:input.title,
+    p_description:input.description,p_price:input.price,p_brand:input.brand||null,
+    p_compare_at_price:input.compareAtPrice||null,p_asset_ids:input.assetIds,
+    p_stock:input.stock,p_tags:input.tags,
+  });
+  if(error) throw error;
+  return extractRpcUuid(data,'create_marketplace_product_draft');
+}
 export async function updateProduct(id:string,input:Omit<ProductMutation,'storeId'|'assetIds'>):Promise<void> {
   const {error}=await db().rpc('update_marketplace_product',{
     p_product_id:id,p_category_id:input.categoryId,p_title:input.title,
