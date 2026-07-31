@@ -22,11 +22,51 @@ test('static client contract: sticky navigation is safe-area and keyboard aware'
 });
 
 test('static client contract: photo UX retains authoritative uploads and duplicate-tap protection',()=>{
-  assert.match(creation,/Agrega hasta 4 fotos/);
+  assert.match(creation,/const MAX_PRODUCT_IMAGES = 5/);
+  assert.match(creation,/Agrega hasta 5 fotos/);
+  assert.match(creation,/\{images\.length\}\/\{MAX_PRODUCT_IMAGES\} fotos agregadas/);
+  assert.match(creation,/Máximo 5 fotos/);
   assert.match(creation,/La primera foto será la portada/);
-  assert.match(creation,/if \(isUploadingImage\) return/);
+  assert.match(creation,/if \(uploadBatchLockRef\.current \|\| isUploadingImage\) return/);
   assert.match(creation,/uploadMediaFromUri/);
   assert.match(creation,/draftAssetIdsRef/);
+});
+
+test('static client contract: gallery selection fills only the ordered remaining capacity',()=>{
+  assert.match(creation,/const remainingSlots = MAX_PRODUCT_IMAGES - images\.length/);
+  assert.match(creation,/allowsMultipleSelection: true/);
+  assert.match(creation,/selectionLimit: remainingSlots/);
+  assert.match(creation,/orderedSelection: true/);
+  assert.doesNotMatch(creation,/allowsEditing/);
+  assert.match(creation,/result\.assets\.slice\(0, remainingSlots\)/);
+  assert.match(creation,/for \(const \[selectedAssetIndex, asset\] of selectedAssets\.entries\(\)\)/);
+  assert.doesNotMatch(creation,/Promise\.all\(selectedAssets/);
+});
+
+test('static client contract: batch uploads preserve order, progress, and successful R2 ownership',()=>{
+  const upload=creation.indexOf('const uploaded = await uploadMediaFromUri');
+  const appendUrl=creation.indexOf('setImages(current => [...current, uploaded.url!])',upload);
+  const appendId=creation.indexOf('setImageAssetIds(current => [...current, uploaded.assetId])',upload);
+  const trackDraft=creation.indexOf('draftAssetIdsRef.current = [...draftAssetIdsRef.current, uploaded.assetId]',upload);
+  assert.ok(upload>0&&upload<appendUrl&&appendUrl<appendId&&appendId<trackDraft);
+  assert.match(creation,/uploaded\.url\?\.startsWith\('https:\/\/'\)/);
+  assert.match(creation,/setPhotoUploadProgress\(\{ current: selectedAssetIndex \+ 1, total: selectedAssets\.length \}\)/);
+  assert.match(creation,/Subiendo foto \$\{photoUploadProgress\.current\} de \$\{photoUploadProgress\.total\}…/);
+  assert.match(creation,/uploadBatchLockRef\.current = true/);
+  assert.match(creation,/uploadBatchLockRef\.current = false/);
+  assert.match(creation,/\{index === 0 \? <View style=\{styles\.coverBadge\}/);
+});
+
+test('static client contract: partial batch failure keeps successes and reports one safe summary',()=>{
+  assert.match(creation,/successfulUploads \+= 1/);
+  assert.match(creation,/const failedUploads = selectedAssets\.length - successfulUploads/);
+  assert.match(creation,/Una foto no pudo subirse/);
+  assert.match(creation,/Se agregaron \$\{successfulUploads\} de \$\{selectedAssets\.length\} fotos/);
+  assert.equal((creation.match(/showAlert\(\s*title,\s*`Se agregaron/g)||[]).length,1);
+  assert.match(creation,/httpStatus: safe\.httpStatus/);
+  assert.match(creation,/selectedAssetIndex/);
+  assert.doesNotMatch(creation,/setImages\([^)]*(?:asset\.uri|result\.assets)/);
+  assert.match(creation,/for \(const assetId of abandoned\) void deleteMediaAsset/);
 });
 
 test('static client contract: product types are large accessible choice cards',()=>{

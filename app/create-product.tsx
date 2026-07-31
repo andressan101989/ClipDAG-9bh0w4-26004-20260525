@@ -34,8 +34,10 @@ import {
 
 type OptionBuilder = { id: string; name: string; values: string[]; draftValue: string };
 type FieldErrors = Partial<Record<'title' | 'description' | 'category' | 'price' | 'stock' | 'sku' | 'options' | 'variants', string>>;
+type PhotoUploadProgress = { current: number; total: number } | null;
 const OPTION_SUGGESTIONS = ['Color', 'Talla', 'Material', 'Capacidad', 'Estilo'];
 const MONEY_PATTERN = /^\d{1,12}(?:\.\d{1,8})?$/;
+const MAX_PRODUCT_IMAGES = 5;
 
 export default function CreateProductScreen() {
   const insets = useSafeAreaInsets();
@@ -56,6 +58,7 @@ export default function CreateProductScreen() {
   const [images, setImages] = useState<string[]>([]);
   const [imageAssetIds, setImageAssetIds] = useState<string[]>([]);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [photoUploadProgress, setPhotoUploadProgress] = useState<PhotoUploadProgress>(null);
   const [hasVariants, setHasVariants] = useState(false);
   const [price, setPrice] = useState('');
   const [compareAtPrice, setCompareAtPrice] = useState('');
@@ -76,6 +79,7 @@ export default function CreateProductScreen() {
   const skuSeedRef = useRef(randomUUID().slice(0, 8).toUpperCase());
   const draftAssetIdsRef = useRef<string[]>([]);
   const publishLockRef = useRef(false);
+  const uploadBatchLockRef = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -137,41 +141,70 @@ export default function CreateProductScreen() {
   }, [imageAssetIds]);
 
   const handlePickImage = useCallback(async () => {
-    if (isUploadingImage) return;
-    if (images.length >= 4) {
-      showAlert('Máximo 4 fotos', 'Quita una foto antes de agregar otra.');
+    if (uploadBatchLockRef.current || isUploadingImage) return;
+    const remainingSlots = MAX_PRODUCT_IMAGES - images.length;
+    if (remainingSlots <= 0) {
+      showAlert('Máximo 5 fotos', 'Quita una foto antes de agregar otra.');
       return;
     }
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      showAlert('Permiso necesario', 'Habilita el acceso a tus fotos para continuar.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
-    });
-    if (result.canceled || !result.assets[0] || !user) return;
-    setIsUploadingImage(true);
-    const asset = result.assets[0];
-    const mimeType = asset.mimeType || detectMimeType(asset.uri, 'image/jpeg');
+    uploadBatchLockRef.current = true;
     try {
-      const uploaded = await uploadMediaFromUri({
-        uri: asset.uri, purpose: 'product_image', mimeType,
-        fileName: asset.fileName || undefined, sizeBytes: asset.fileSize, visibility: 'public',
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        showAlert('Permiso necesario', 'Habilita el acceso a tus fotos para continuar.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+        allowsMultipleSelection: true,
+        selectionLimit: remainingSlots,
+        orderedSelection: true,
       });
-      if (!uploaded.url?.startsWith('https://')) throw new Error('invalid_ready_media_url');
-      setImages(current => [...current, uploaded.url!]);
-      setImageAssetIds(current => [...current, uploaded.assetId]);
-      draftAssetIdsRef.current = [...draftAssetIdsRef.current, uploaded.assetId];
-    } catch (error) {
-      const safe = getSafeMediaError(error, 'MEDIA_UNKNOWN', { mimeType });
-      console.warn('[CreateProduct] product image upload failed', {
-        operationId: safe.operationId, stage: safe.stage, code: safe.code, mimeType: safe.mimeType,
-      });
-      showAlert('No se pudo subir la foto', 'Revisa tu conexión o el formato de la imagen e inténtalo nuevamente.');
+      if (result.canceled || !user) return;
+      const selectedAssets = result.assets.slice(0, remainingSlots);
+      if (!selectedAssets.length) return;
+
+      setIsUploadingImage(true);
+      let successfulUploads = 0;
+      for (const [selectedAssetIndex, asset] of selectedAssets.entries()) {
+        const mimeType = asset.mimeType || detectMimeType(asset.uri, 'image/jpeg');
+        setPhotoUploadProgress({ current: selectedAssetIndex + 1, total: selectedAssets.length });
+        try {
+          const uploaded = await uploadMediaFromUri({
+            uri: asset.uri, purpose: 'product_image', mimeType,
+            fileName: asset.fileName || undefined, sizeBytes: asset.fileSize, visibility: 'public',
+          });
+          if (!uploaded.url?.startsWith('https://')) throw new Error('invalid_ready_media_url');
+          setImages(current => [...current, uploaded.url!]);
+          setImageAssetIds(current => [...current, uploaded.assetId]);
+          draftAssetIdsRef.current = [...draftAssetIdsRef.current, uploaded.assetId];
+          successfulUploads += 1;
+        } catch (error) {
+          const safe = getSafeMediaError(error, 'MEDIA_UNKNOWN', { mimeType });
+          console.warn('[CreateProduct] product image upload failed', {
+            operationId: safe.operationId,
+            stage: safe.stage,
+            code: safe.code,
+            mimeType: safe.mimeType,
+            httpStatus: safe.httpStatus,
+            selectedAssetIndex,
+          });
+        }
+      }
+      const failedUploads = selectedAssets.length - successfulUploads;
+      if (failedUploads > 0) {
+        const title = failedUploads === 1 ? 'Una foto no pudo subirse' : `${failedUploads} fotos no pudieron subirse`;
+        const remainingLabel = failedUploads === 1 ? 'la foto restante' : 'las fotos restantes';
+        showAlert(
+          title,
+          `Se agregaron ${successfulUploads} de ${selectedAssets.length} fotos. Puedes intentar agregar ${remainingLabel} nuevamente.`,
+        );
+      }
     } finally {
       setIsUploadingImage(false);
+      setPhotoUploadProgress(null);
+      uploadBatchLockRef.current = false;
     }
   }, [images.length, isUploadingImage, showAlert, user]);
 
@@ -512,21 +545,25 @@ export default function CreateProductScreen() {
         <Text style={styles.heroTitle}>Fotos del producto</Text>
         <Text style={styles.heroSubtitle}>Una buena portada ayuda a que tu producto destaque.</Text>
       </View>
-      <MarketplaceSectionCard icon="photo-camera" title="Agrega hasta 4 fotos" subtitle="La primera foto será la portada del producto.">
+      <MarketplaceSectionCard icon="photo-camera" title="Agrega hasta 5 fotos" subtitle="La primera foto será la portada del producto.">
         <Pressable
           onPress={handlePickImage}
-          disabled={isUploadingImage || images.length >= 4}
+          disabled={isUploadingImage || images.length >= MAX_PRODUCT_IMAGES}
           accessibilityRole="button"
           accessibilityLabel="Agregar foto del producto"
           style={({ pressed }) => [
-            styles.uploadCard, (isUploadingImage || images.length >= 4) && styles.disabled, pressed && styles.pressed,
+            styles.uploadCard, (isUploadingImage || images.length >= MAX_PRODUCT_IMAGES) && styles.disabled, pressed && styles.pressed,
           ]}
         >
           <View style={styles.uploadIcon}>
             <MaterialIcons name={isUploadingImage ? 'cloud-upload' : 'add-photo-alternate'} size={32} color={Colors.primaryLight} />
           </View>
-          <Text style={styles.uploadTitle}>{isUploadingImage ? 'Subiendo foto…' : 'Seleccionar desde tu galería'}</Text>
-          <Text style={styles.uploadSubtitle}>{images.length}/4 fotos agregadas</Text>
+          <Text style={styles.uploadTitle}>
+            {photoUploadProgress
+              ? `Subiendo foto ${photoUploadProgress.current} de ${photoUploadProgress.total}…`
+              : 'Seleccionar desde tu galería'}
+          </Text>
+          <Text style={styles.uploadSubtitle}>{images.length}/{MAX_PRODUCT_IMAGES} fotos agregadas</Text>
           {isUploadingImage ? <View style={styles.uploadProgress}><View style={styles.uploadProgressBar} /></View> : null}
         </Pressable>
         {images.length ? (
