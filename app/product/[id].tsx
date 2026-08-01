@@ -1,8 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet,
-  TextInput, Modal, KeyboardAvoidingView, Platform,
-  ActivityIndicator,
+  View, Text, ScrollView, Pressable, StyleSheet, Alert, ActivityIndicator,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -11,6 +9,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useShop } from '@/hooks/useShop';
 import { useAuth } from '@/hooks/useAuth';
+import { useMarketplaceCart } from '@/hooks/useMarketplaceCart';
 import { useAlert } from '@/template';
 import { CyberButton } from '@/components/ui/CyberButton';
 import { Avatar } from '@/components/ui/Avatar';
@@ -22,6 +21,7 @@ import {
 import {
   isOptionValueSelectable, reconcileVariantSelection, resolveExactVariant, selectionForPreferredVariant,
 } from '@/services/marketplaceVariantSelection';
+import {isPublicMarketplaceImageUrl} from '@/services/marketplaceCart';
 
 export default function ProductScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -29,6 +29,7 @@ export default function ProductScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const { products, toggleSaveProduct, isSavedProduct } = useShop();
+  const {addItem,totalQuantity}=useMarketplaceCart();
   const { showAlert } = useAlert();
 
   const [product, setProduct] = useState<Product | null>(null);
@@ -38,9 +39,8 @@ export default function ProductScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [quantity, setQuantity] = useState(1);
-  const [orderModalVisible, setOrderModalVisible] = useState(false);
-  const [shippingAddress, setShippingAddress] = useState('');
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const addToCartLockRef=useRef(false);
 
   useEffect(() => {
     let active=true;
@@ -55,17 +55,6 @@ export default function ProductScreen() {
     }).catch(()=>{if(active)setNotFound(true);}).finally(()=>{if(active)setIsLoading(false);});
     return()=>{active=false;};
   }, [id, products]);
-
-  const handleOrder = async () => {
-    if (!user) { showAlert('Inicia sesión', 'Necesitas una cuenta para comprar'); return; }
-    if (!product) return;
-    if (!shippingAddress.trim()) {
-      showAlert('Dirección requerida', 'Ingresa tu dirección de envío');
-      return;
-    }
-    setOrderModalVisible(false);
-    showAlert('Checkout no disponible', 'Checkout BDAG pendiente de implementación');
-  };
 
   if (isLoading) {
     return (
@@ -99,6 +88,35 @@ export default function ProductScreen() {
   const hasDifferentPrices=product.variant_price_max!=null&&product.variant_price_max>product.price;
   const displayImage=selectedVariant?.image_url??product.images[selectedImageIndex];
   const selectionIncomplete=options.length>0&&!selectedVariant;
+  const handleAddToCart=()=>{
+    if(addToCartLockRef.current||isOwner||!selectedVariant||available<=0||!Number.isInteger(quantity)||quantity<1||quantity>available)return;
+    addToCartLockRef.current=true;
+    try{
+      const selectedOptions=options.flatMap(option=>{
+        const valueId=selectedValues[option.id];
+        const value=option.values.find(candidate=>candidate.id===valueId&&selectedVariant.option_value_ids.includes(candidate.id));
+        return value?[{optionId:option.id,optionName:option.name,valueId:value.id,value:value.value}]:[];
+      });
+      if(selectedOptions.length!==options.length)return;
+      const imageUrl=[selectedVariant.image_url,product.images[selectedImageIndex],product.images[0]]
+        .find(candidate=>candidate&&isPublicMarketplaceImageUrl(candidate))??null;
+      const result=addItem({productId:product.id,variantId:selectedVariant.id,sellerId:product.seller_id,
+        storeId:product.store_id,title:product.title,sellerUsername:product.seller?.username??null,
+        sku:selectedVariant.sku,imageUrl,options:selectedOptions,currency:'BDAG',unitPrice:selectedVariant.price,
+        compareAtPrice:selectedVariant.compare_at_price,quantity,availableQuantitySnapshot:selectedVariant.available_quantity,
+        productUpdatedAt:product.updated_at});
+      if(!result.ok){
+        showAlert('No se pudo agregar',result.code==='cart_limit_reached'?'Tu carrito alcanzó el máximo de productos.':'Revisa la variante y la cantidad.');
+        return;
+      }
+      const adjusted=result.status==='quantity_adjusted';
+      const optionText=selectedOptions.map(option=>option.value).join(' · ');
+      Alert.alert(adjusted?'Cantidad ajustada':'Agregado al carrito',
+        adjusted?`Solo hay ${result.applied} unidades disponibles para esta variante.`
+          :`${product.title}${optionText?` · ${optionText}`:''} · Cantidad ${result.item.quantity}`,
+        [{text:'Seguir comprando',style:'cancel'},{text:'Ver carrito',onPress:()=>router.push('/cart' as never)}]);
+    }finally{addToCartLockRef.current=false;}
+  };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -110,7 +128,12 @@ export default function ProductScreen() {
           <MaterialIcons name="arrow-back-ios" size={20} color={Colors.textPrimary} />
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>{product.title}</Text>
-        <Pressable onPress={() => toggleSaveProduct(product.id)} hitSlop={8}>
+        <Pressable style={styles.headerIcon} onPress={()=>router.push('/cart' as never)}
+          accessibilityRole="button" accessibilityLabel={`Carrito, ${totalQuantity} productos`}>
+          <MaterialIcons name="shopping-cart" size={24} color={Colors.textPrimary} />
+          {totalQuantity>0?<View style={styles.cartBadge}><Text style={styles.cartBadgeText}>{totalQuantity>99?'99+':totalQuantity}</Text></View>:null}
+        </Pressable>
+        <Pressable style={styles.headerIcon} onPress={() => toggleSaveProduct(product.id)} hitSlop={8}>
           <MaterialIcons
             name={isSaved ? 'bookmark' : 'bookmark-border'}
             size={24}
@@ -270,13 +293,13 @@ export default function ProductScreen() {
 
           <Pressable
             style={styles.buyBtn}
-            onPress={() => {
-              if (!user) { showAlert('Inicia sesión', 'Necesitas una cuenta para comprar'); return; }
-              showAlert('Checkout no disponible', 'Checkout BDAG pendiente de implementación');
-            }}
+            onPress={handleAddToCart}
+            accessibilityRole="button"
+            accessibilityLabel={`Agregar ${product.title} al carrito`}
           >
+            <MaterialIcons name="add-shopping-cart" size={18} color="#000" />
             <Text style={styles.buyBtnPrice}>{totalPrice.toFixed(2)} BDAG</Text>
-            <Text style={styles.buyBtnText}>Checkout próximamente</Text>
+            <Text style={styles.buyBtnText}>Agregar al carrito</Text>
           </Pressable>
         </View>
       ) : isOwner ? (
@@ -296,62 +319,6 @@ export default function ProductScreen() {
           <Text style={styles.soldOutNote}>Esta combinación está agotada</Text>
         </View>
       )}
-
-      {/* Order modal */}
-      <Modal visible={orderModalVisible} transparent animationType="slide" presentationStyle="overFullScreen">
-        <Pressable style={styles.modalBackdrop} onPress={() => setOrderModalVisible(false)} />
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <View style={[styles.modalSheet, { paddingBottom: insets.bottom + Spacing.lg }]}>
-            <View style={styles.modalHeader}>
-              <View style={styles.handleBar} />
-              <Text style={styles.modalTitle}>Confirmar pedido</Text>
-              <Pressable onPress={() => setOrderModalVisible(false)} hitSlop={8}>
-                <MaterialIcons name="close" size={22} color={Colors.textSecondary} />
-              </Pressable>
-            </View>
-
-            <View style={styles.orderSummary}>
-              {product.images[0] ? (
-                <Image source={{ uri: product.images[0] }} style={styles.orderThumb} contentFit="cover" />
-              ) : null}
-              <View style={{ flex: 1, gap: 4 }}>
-                <Text style={styles.orderProductTitle} numberOfLines={2}>{product.title}</Text>
-                <Text style={styles.orderQty}>Cantidad: {quantity}</Text>
-                <Text style={styles.orderTotal}>Total: {totalPrice.toFixed(2)} BDAG</Text>
-              </View>
-            </View>
-
-            {product.product_type === 'physical' ? (
-              <View style={styles.formField}>
-                <Text style={styles.fieldLabel}>Dirección de envío</Text>
-                <TextInput
-                  style={[styles.fieldInput, { height: 80, textAlignVertical: 'top' }]}
-                  value={shippingAddress}
-                  onChangeText={setShippingAddress}
-                  placeholder="Calle, número, ciudad, país..."
-                  placeholderTextColor={Colors.textSubtle}
-                  multiline
-                />
-              </View>
-            ) : (
-              <View style={styles.digitalNote}>
-                <MaterialIcons name="cloud-download" size={18} color={Colors.primary} />
-                <Text style={styles.digitalNoteText}>
-                  Producto digital — recibirás el enlace de descarga por mensaje
-                </Text>
-              </View>
-            )}
-
-            <CyberButton
-              label={isLoading ? 'Procesando...' : `Confirmar pedido · ${totalPrice.toFixed(2)} BDAG`}
-              onPress={handleOrder}
-              loading={isLoading}
-              size="lg"
-              fullWidth
-            />
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
     </View>
   );
 }
@@ -364,6 +331,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md, paddingBottom: Spacing.sm,
   },
   backBtn: { padding: 4 },
+  headerIcon:{width:44,height:44,alignItems:'center',justifyContent:'center'},
+  cartBadge:{position:'absolute',right:1,top:1,minWidth:18,height:18,paddingHorizontal:3,borderRadius:9,backgroundColor:Colors.secondary,alignItems:'center',justifyContent:'center'},
+  cartBadgeText:{color:'#fff',fontSize:9,fontWeight:FontWeight.bold},
   headerTitle: { flex: 1, color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.semibold },
   scroll: { gap: Spacing.md },
   imageSection: {},
@@ -458,37 +428,4 @@ const styles = StyleSheet.create({
   buyBtnText: { color: '#000', fontSize: FontSize.md, fontWeight: FontWeight.bold },
   ownerNote: { flex: 1, color: Colors.textSecondary, textAlign: 'center', fontSize: FontSize.sm },
   soldOutNote: { flex: 1, color: Colors.secondary, textAlign: 'center', fontSize: FontSize.md, fontWeight: FontWeight.semibold },
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' },
-  modalSheet: {
-    backgroundColor: Colors.surfaceElevated, borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    padding: Spacing.lg, gap: Spacing.md,
-  },
-  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.xs },
-  handleBar: {
-    position: 'absolute', top: -16, left: '50%', marginLeft: -20,
-    width: 40, height: 4, borderRadius: 2, backgroundColor: Colors.border,
-  },
-  modalTitle: { flex: 1, color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.semibold, textAlign: 'center' },
-  orderSummary: {
-    flexDirection: 'row', gap: Spacing.md,
-    backgroundColor: Colors.surface, borderRadius: Radius.md, padding: Spacing.md,
-    borderWidth: 1, borderColor: Colors.border,
-  },
-  orderThumb: { width: 70, height: 70, borderRadius: Radius.sm },
-  orderProductTitle: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
-  orderQty: { color: Colors.textSecondary, fontSize: FontSize.sm },
-  orderTotal: { color: Colors.primary, fontSize: FontSize.md, fontWeight: FontWeight.bold },
-  formField: { gap: Spacing.xs },
-  fieldLabel: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: FontWeight.medium },
-  fieldInput: {
-    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
-    borderRadius: Radius.md, paddingHorizontal: Spacing.md, paddingVertical: Spacing.md,
-    color: Colors.textPrimary, fontSize: FontSize.md,
-  },
-  digitalNote: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
-    backgroundColor: Colors.primaryDim, borderRadius: Radius.md, padding: Spacing.md,
-    borderWidth: 1, borderColor: Colors.primary + '33',
-  },
-  digitalNoteText: { flex: 1, color: Colors.primary, fontSize: FontSize.sm, lineHeight: 18 },
 });

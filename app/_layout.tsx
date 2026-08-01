@@ -37,6 +37,7 @@ import { NotificationsProvider } from '@/contexts/NotificationsContext';
 console.log('[BOOT] 7 - Messages+Notifications providers imported');
 
 import { ShopProvider } from '@/contexts/ShopContext';
+import { MarketplaceCartProvider } from '@/contexts/MarketplaceCartContext';
 console.log('[BOOT] 8 - ShopProvider imported');
 
 import { WalletConnectProvider } from '@/components/feature/WalletConnectProvider';
@@ -76,7 +77,8 @@ function AppShell() {
         <MessagesProvider>
           <NotificationsProvider>
             <ShopProvider>
-              <WalletConnectProvider>
+              <MarketplaceCartProvider>
+               <WalletConnectProvider>
                 <AgoraCallProvider>
                   <Stack screenOptions={{ headerShown: false }}>
                     <Stack.Screen name="index" />
@@ -84,6 +86,7 @@ function AppShell() {
                     <Stack.Screen name="stress-test" />
                     <Stack.Screen name="login" />
                     <Stack.Screen name="(tabs)" />
+                    <Stack.Screen name="cart" />
                     <Stack.Screen
                       name="chat/[userId]"
                       options={{ headerShown: true, title: '' }}
@@ -131,7 +134,8 @@ function AppShell() {
                   <WalletConnectReturnHandler />
                   <IosCallKitActionHandler />
                 </AgoraCallProvider>
-              </WalletConnectProvider>
+               </WalletConnectProvider>
+              </MarketplaceCartProvider>
             </ShopProvider>
           </NotificationsProvider>
         </MessagesProvider>

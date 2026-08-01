@@ -36,7 +36,8 @@ test('product catalog is BDAG-only, seller-owned, and has no checkout tables', (
   assert.match(marketplaceService, /rpc\('create_marketplace_product'/);
   assert.match(screen, /Precio \(BDAG\)/);
   assert.match(catalogScreen, /BDAG/);
-  assert.match(productScreen, /Checkout BDAG pendiente de implementación/);
+  assert.match(productScreen, /Agregar al carrito/);
+  assert.doesNotMatch(productScreen, /create_order|reserve_inventory|atomic_ledger_transfer/i);
   assert.doesNotMatch(productScreen, /setOrderModalVisible\(true\)/);
   assert.doesNotMatch(hardening, /from public\.exclusive_content/i);
   assert.match(hardening, /revoke insert, update on public\.products from authenticated/i);

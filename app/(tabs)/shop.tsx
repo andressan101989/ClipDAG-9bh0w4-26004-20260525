@@ -24,6 +24,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
 import { useWallet } from '@/hooks/useWallet';
+import { useMarketplaceCart } from '@/hooks/useMarketplaceCart';
 import { fetchFeaturedCreators, searchCreators, type CreatorProfile } from '@/services/creatorService';
 import { fetchSubscriptionPlans, type SubscriptionPlan } from '@/services/subscriptionService';
 import {
@@ -247,6 +248,7 @@ export default function ShopScreen() {
   const { user } = useAuth();
   const walletData = useWallet();
   const balance = walletData?.balance ?? 0;
+  const {totalQuantity}=useMarketplaceCart();
 
   const [activeTab,   setActiveTab]   = useState<ShopTab>('discover');
   const [refreshing,  setRefreshing]  = useState(false);
@@ -337,6 +339,11 @@ export default function ShopScreen() {
           <Pressable style={styles.walletPill} onPress={() => router.push('/(tabs)/wallet')}>
             <MaterialCommunityIcons name="hexagon-multiple" size={12} color="#FF9D00" />
             <Text style={styles.walletPillText}>{balance >= 1000 ? fmtShort(balance) : fmt(balance)} BDAG</Text>
+          </Pressable>
+          <Pressable style={styles.cartButton} onPress={()=>router.push('/cart' as never)}
+            accessibilityRole="button" accessibilityLabel={`Carrito, ${totalQuantity} productos`}>
+            <MaterialIcons name="shopping-cart" size={23} color={Colors.textPrimary} />
+            {totalQuantity>0?<View style={styles.cartBadge}><Text style={styles.cartBadgeText}>{totalQuantity>99?'99+':totalQuantity}</Text></View>:null}
           </Pressable>
         </View>
       </View>
@@ -571,9 +578,12 @@ const styles = StyleSheet.create({
   header:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.md, paddingBottom: Spacing.sm },
   headerTitle:  { fontSize: FontSize.xl, fontWeight: FontWeight.extrabold, color: Colors.textPrimary, letterSpacing: -0.5 },
   headerSub:    { fontSize: FontSize.xs, color: Colors.textSubtle, marginTop: 1 },
-  headerRight:  { alignItems: 'flex-end', gap: 6 },
+  headerRight:  { flexDirection:'row',alignItems: 'center', gap: 8 },
   walletPill:   { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,157,0,0.12)', borderRadius: Radius.md, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: 'rgba(255,157,0,0.25)' },
   walletPillText: { color: '#FF9D00', fontSize: FontSize.xs, fontWeight: FontWeight.bold },
+  cartButton:{width:44,height:44,borderRadius:Radius.md,alignItems:'center',justifyContent:'center',backgroundColor:Colors.surfaceElevated,borderWidth:1,borderColor:Colors.border},
+  cartBadge:{position:'absolute',right:1,top:1,minWidth:18,height:18,paddingHorizontal:3,borderRadius:9,backgroundColor:Colors.secondary,alignItems:'center',justifyContent:'center'},
+  cartBadgeText:{color:'#fff',fontSize:9,fontWeight:FontWeight.bold},
 
   // Tab bar
   tabBar:  { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: Colors.border },
