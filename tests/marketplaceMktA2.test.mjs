@@ -6,6 +6,7 @@ const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),'utf8');
 const sql=read('supabase/migrations/20260727120000_marketplace_mkt_a2_variants_inventory.sql');
 const service=read('services/marketplaceService.ts');
 const detail=read('app/product/[id].tsx');
+const selection=read('services/marketplaceVariantSelection.ts');
 const seller=read('app/seller/product/[id]/variants.tsx');
 const edit=read('app/seller/product/[id]/edit.tsx');
 const shop=read('app/(tabs)/shop.tsx');
@@ -71,10 +72,23 @@ test('static contract: seller isolation and public safety are enforced',()=>{
 });
 test('client contract: canonical detail resolves authoritative combinations',()=>{
   assert.match(service,/fetchMarketplaceProductDetail/);
-  assert.match(detail,/optionValueEnabled/);
-  assert.match(detail,/variant\.option_value_ids\.includes/);
+  assert.match(detail,/isOptionValueSelectable/);
+  assert.match(detail,/reconcileVariantSelection/);
+  assert.match(detail,/resolveExactVariant/);
+  assert.match(selection,/variant\.status === 'active'/);
+  assert.match(selection,/variant\.option_value_ids\.length === options\.length/);
   assert.match(detail,/selectedVariant\?\.price/);
-  assert.match(detail,/Agotado/);
+  assert.match(detail,/Completa tus opciones/);
+  assert.match(detail,/Esta combinación está agotada/);
+  assert.match(detail,/Producto agotado/);
+  assert.match(detail,/accessibilityRole="radio"/);
+  assert.match(detail,/accessibilityState=\{\{selected,disabled:!enabled\}\}/);
+  assert.match(detail,/accessibilityLabel=\{`\$\{option\.name\} \$\{value\.value\}`\}/);
+  assert.match(detail,/setQuantity\(1\)/);
+  assert.match(detail,/Math\.min\(available, q \+ 1\)/);
+  assert.match(detail,/selectedVariant\?\.image_url/);
+  assert.match(detail,/selectedVariant\?\.available_quantity/);
+  assert.match(detail,/selectedVariant\?\.compare_at_price/);
   assert.match(detail,/fetchMarketplaceProductDetail\(id\)/);
 });
 test('client contract: seller can configure and mutate inventory without duplicate submit',()=>{

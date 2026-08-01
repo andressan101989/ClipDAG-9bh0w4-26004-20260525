@@ -19,6 +19,9 @@ import type { Product } from '@/contexts/ShopContext';
 import {
   fetchMarketplaceProductDetail,type MarketplaceProductOption,type MarketplaceVariant,
 } from '@/services/marketplaceService';
+import {
+  isOptionValueSelectable, reconcileVariantSelection, resolveExactVariant, selectionForPreferredVariant,
+} from '@/services/marketplaceVariantSelection';
 
 export default function ProductScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -47,16 +50,7 @@ export default function ProductScreen() {
       if(!active)return;
       setProduct(value?.product??products.find(p=>p.id===id)??null);
       setOptions(value?.options??[]);setVariants(value?.variants??[]);
-      const preferred=value?.variants.find(item=>item.is_default&&item.status==='active')
-        ??value?.variants.find(item=>item.status==='active');
-      if(preferred){
-        const next:Record<string,string>={};
-        for(const option of value?.options??[]){
-          const match=option.values.find(item=>preferred.option_value_ids.includes(item.id));
-          if(match) next[option.id]=match.id;
-        }
-        setSelectedValues(next);
-      }
+      setSelectedValues(selectionForPreferredVariant(value?.options??[],value?.variants??[]));
       setNotFound(!value);
     }).catch(()=>{if(active)setNotFound(true);}).finally(()=>{if(active)setIsLoading(false);});
     return()=>{active=false;};
@@ -95,20 +89,16 @@ export default function ProductScreen() {
 
   const isOwner = user?.id === product.seller_id;
   const isSaved = isSavedProduct(product.id);
-  const selectedVariant=variants.find(variant=>
-    variant.status==='active'&&options.every(option=>
-      selectedValues[option.id]&&variant.option_value_ids.includes(selectedValues[option.id])
-    )
-  )??(options.length===0?variants.find(item=>item.is_default&&item.status==='active'):undefined);
+  const activeVariants=variants.filter(variant=>variant.status==='active');
+  const selectedVariant=options.length>0
+    ?resolveExactVariant(options,variants,selectedValues)
+    :activeVariants.find(item=>item.is_default)??activeVariants[0];
   const effectivePrice=selectedVariant?.price??product.price;
-  const available=selectedVariant?.available_quantity??product.stock;
+  const available=selectedVariant?.available_quantity??0;
   const totalPrice = effectivePrice * quantity;
   const hasDifferentPrices=product.variant_price_max!=null&&product.variant_price_max>product.price;
-  const optionValueEnabled=(optionId:string,valueId:string)=>variants.some(variant=>{
-    if(variant.status!=='active'||!variant.option_value_ids.includes(valueId)) return false;
-    return options.every(option=>option.id===optionId||!selectedValues[option.id]
-      ||variant.option_value_ids.includes(selectedValues[option.id]));
-  });
+  const displayImage=selectedVariant?.image_url??product.images[selectedImageIndex];
+  const selectionIncomplete=options.length>0&&!selectedVariant;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -132,10 +122,10 @@ export default function ProductScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={[styles.scroll, { paddingBottom: 140 + insets.bottom }]}>
         {/* Images */}
         <View style={styles.imageSection}>
-          {product.images.length > 0 ? (
+          {displayImage ? (
             <>
               <Image
-                source={{ uri: selectedVariant?.image_url??product.images[selectedImageIndex] }}
+                source={{ uri: displayImage }}
                 style={styles.mainImage}
                 contentFit="cover"
                 transition={200}
@@ -190,12 +180,17 @@ export default function ProductScreen() {
             <Text style={styles.optionName}>{option.name}</Text>
             <View style={styles.optionValues}>
               {option.values.map(value=>{
-                const enabled=optionValueEnabled(option.id,value.id);
+                const enabled=isOptionValueSelectable(variants,value.id);
                 const selected=selectedValues[option.id]===value.id;
                 return <Pressable key={value.id} disabled={!enabled}
                   style={[styles.optionChip,selected&&styles.optionChipSelected,!enabled&&styles.optionChipDisabled]}
+                  accessibilityRole="radio"
+                  accessibilityLabel={`${option.name} ${value.value}`}
+                  accessibilityState={{selected,disabled:!enabled}}
                   onPress={()=>{
-                    setSelectedValues(previous=>({...previous,[option.id]:value.id}));
+                    setSelectedValues(previous=>reconcileVariantSelection(
+                      options,variants,previous,option.id,value.id,
+                    ));
                     setQuantity(1);
                   }}>
                   <Text style={[styles.optionChipText,selected&&styles.optionChipTextSelected]}>{value.value}</Text>
@@ -208,7 +203,8 @@ export default function ProductScreen() {
           <View style={styles.stockRow}>
             <View style={[styles.stockDot, available > 0 ? styles.stockDotAvail : styles.stockDotOut]} />
             <Text style={[styles.stockText, available === 0 && { color: Colors.secondary }]}>
-              {available > 10 ? 'En stock' : available > 0 ? `Solo ${available} disponibles` : 'Agotado'}
+              {selectionIncomplete?'Completa tus opciones'
+                :available > 10 ? 'En stock' : available > 0 ? `Solo ${available} disponibles` : 'Agotado'}
             </Text>
           </View>
 
@@ -251,7 +247,7 @@ export default function ProductScreen() {
       </ScrollView>
 
       {/* Buy bar */}
-      {!isOwner && available > 0 && (options.length===0||selectedVariant) ? (
+      {!isOwner && selectedVariant && available > 0 ? (
         <View style={[styles.buyBar, { paddingBottom: insets.bottom + Spacing.sm }]}>
           {/* Quantity */}
           <View style={styles.quantityControl}>
@@ -287,9 +283,17 @@ export default function ProductScreen() {
         <View style={[styles.buyBar, { paddingBottom: insets.bottom + Spacing.sm }]}>
           <Text style={styles.ownerNote}>Este es tu producto</Text>
         </View>
-      ) : (
+      ) : activeVariants.length===0 ? (
         <View style={[styles.buyBar, { paddingBottom: insets.bottom + Spacing.sm }]}>
           <Text style={styles.soldOutNote}>Producto agotado</Text>
+        </View>
+      ) : selectionIncomplete ? (
+        <View style={[styles.buyBar, { paddingBottom: insets.bottom + Spacing.sm }]}>
+          <Text style={styles.soldOutNote}>Completa tus opciones</Text>
+        </View>
+      ) : (
+        <View style={[styles.buyBar, { paddingBottom: insets.bottom + Spacing.sm }]}>
+          <Text style={styles.soldOutNote}>Esta combinación está agotada</Text>
         </View>
       )}
 
@@ -387,7 +391,7 @@ const styles = StyleSheet.create({
   optionBlock:{gap:Spacing.sm,marginTop:Spacing.md},
   optionName:{color:Colors.textPrimary,fontWeight:FontWeight.bold},
   optionValues:{flexDirection:'row',flexWrap:'wrap',gap:Spacing.sm},
-  optionChip:{borderWidth:1,borderColor:Colors.border,borderRadius:Radius.md,paddingHorizontal:14,paddingVertical:9},
+  optionChip:{minHeight:44,justifyContent:'center',borderWidth:1,borderColor:Colors.border,borderRadius:Radius.md,paddingHorizontal:14,paddingVertical:9},
   optionChipSelected:{borderColor:Colors.primary,backgroundColor:Colors.primary+'22'},
   optionChipDisabled:{opacity:0.3},
   optionChipText:{color:Colors.textSecondary},
