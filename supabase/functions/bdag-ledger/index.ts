@@ -40,7 +40,9 @@ const VELOCITY: Record<string, { maxOps: number; maxAmount: number; windowHours:
   boost:     { maxOps: 5,   maxAmount: 500_000, windowHours: 1 },
   purchase:  { maxOps: 100, maxAmount: 0,       windowHours: 1 },
   subscribe: { maxOps: 20,  maxAmount: 0,       windowHours: 24 },
+  marketplace_checkout_pay: { maxOps: 20, maxAmount: 0, windowHours: 1 },
 };
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function ok(data: unknown, status = 200) {
   return new Response(JSON.stringify({ success: true, data }), {
@@ -193,6 +195,32 @@ Deno.serve(async (req) => {
     }
 
     // ════════════════════════════════════════════════════════════════════
+    // MARKETPLACE CHECKOUT PAYMENT — server-authoritative amount, fee and inventory.
+    if (action === 'marketplace_checkout_pay') {
+      const { checkout_id } = body;
+      if (typeof checkout_id !== 'string' || !UUID_RE.test(checkout_id) || typeof idempotency_key !== 'string' || !UUID_RE.test(idempotency_key)) {
+        return fail('marketplace_payment_invalid_input');
+      }
+      const limit = VELOCITY.marketplace_checkout_pay;
+      const { data: allowed, error: velocityError } = await admin.rpc('check_velocity_limit', {
+        p_user_id: user.id, p_operation: 'marketplace_checkout_pay', p_amount: 0,
+        p_max_ops: limit.maxOps, p_max_amount: limit.maxAmount, p_window_hours: limit.windowHours,
+      });
+      if (velocityError) log('WARN', 'marketplace_checkout_pay', { user_id: user.id, code: 'velocity_check_unavailable' });
+      if (allowed === false) return fail('marketplace_payment_rate_limited', 429);
+      const { data, error } = await admin.rpc('pay_marketplace_checkout_with_bdag', {
+        p_buyer_id: user.id, p_checkout_id: checkout_id, p_idempotency_key: idempotency_key,
+      });
+      if (error) {
+        const known = ['marketplace_checkout_not_found','marketplace_checkout_not_payable','marketplace_checkout_cancelled','marketplace_checkout_expired','marketplace_checkout_integrity_error','marketplace_insufficient_bdag_balance','marketplace_payment_idempotency_conflict'];
+        const code = known.find(value => error.message === value || error.message.includes(value)) ?? 'marketplace_payment_unknown';
+        log('ERROR', 'marketplace_checkout_pay', { user_id: user.id, checkout: `${checkout_id.slice(0, 8)}…`, code });
+        return fail(code, code === 'marketplace_insufficient_bdag_balance' ? 402 : 409);
+      }
+      if (data?.error_code) return fail(String(data.error_code), 409);
+      return ok(data);
+    }
+
     // BALANCE (authoritative read)
     // ════════════════════════════════════════════════════════════════════
     if (action === 'balance') {
