@@ -15,7 +15,7 @@ export const MARKETPLACE_ORDER_ERROR_CODES=[
   'marketplace_insufficient_inventory','marketplace_own_product_forbidden','marketplace_invalid_shipping_address',
   'marketplace_checkout_not_found','marketplace_checkout_not_cancellable',
 ] as const;
-export type MarketplaceOrderErrorCode=typeof MARKETPLACE_ORDER_ERROR_CODES[number]|'marketplace_order_unknown';
+export type MarketplaceOrderErrorCode=typeof MARKETPLACE_ORDER_ERROR_CODES[number]|'marketplace_order_transport'|'marketplace_order_unknown';
 export class MarketplaceOrderServiceError extends Error {constructor(public code:MarketplaceOrderErrorCode){super(code);this.name='MarketplaceOrderServiceError';}}
 const db=()=>getSupabaseClient();
 const numberValue=(value:unknown)=>{const n=Number(value);if(!Number.isFinite(n)||n<0)throw new MarketplaceOrderServiceError('marketplace_order_unknown');return n;};
@@ -23,7 +23,15 @@ const knownCode=(error:unknown):MarketplaceOrderErrorCode=>{
   const message=typeof error==='object'&&error&&'message'in error?String((error as {message:unknown}).message):'';
   return MARKETPLACE_ORDER_ERROR_CODES.find(code=>message===code||message.includes(code))??'marketplace_order_unknown';
 };
-const invokeError=(error:unknown):never=>{throw new MarketplaceOrderServiceError(knownCode(error));};
+type RpcErrorShape={code?:unknown;message?:unknown;details?:unknown;hint?:unknown};
+const safeDiagnosticValue=(value:unknown)=>typeof value==='string'?value.slice(0,300):null;
+const invokeError=(rpc:string,error:unknown):never=>{
+  const value=error&&typeof error==='object'?error as RpcErrorShape:{};
+  if(__DEV__)console.error('[MarketplaceOrder] RPC failed',{rpc,code:safeDiagnosticValue(value.code),message:safeDiagnosticValue(value.message),details:safeDiagnosticValue(value.details),hint:safeDiagnosticValue(value.hint)});
+  const message=safeDiagnosticValue(value.message)??'';
+  const transport=!safeDiagnosticValue(value.code)&&/network request failed|failed to fetch|fetch failed|networkerror/i.test(message);
+  throw new MarketplaceOrderServiceError(transport?'marketplace_order_transport':knownCode(error));
+};
 
 export function normalizeShippingAddress(input:ShippingAddressInput):ShippingAddressInput {
   return {recipientName:input.recipientName.trim(),line1:input.line1.trim(),line2:input.line2?.trim()||undefined,
@@ -53,9 +61,9 @@ function mapResponse(value:unknown):CreateCheckoutReservationResult {
 }
 export async function createCheckoutReservation(items:CheckoutReservationInputItem[],address:ShippingAddressInput,idempotencyKey:string){
   const {data,error}=await db().rpc('create_marketplace_checkout_reservation',{p_items:items.map(item=>({variant_id:item.variantId,quantity:item.quantity})),p_shipping_address:{recipient_name:address.recipientName,line1:address.line1,line2:address.line2??null,city:address.city,region:address.region,postal_code:address.postalCode,country:address.country,phone:address.phone??null},p_idempotency_key:idempotencyKey});
-  if(error)invokeError(error);return mapResponse(data);
+  if(error)invokeError('create_marketplace_checkout_reservation',error);return mapResponse(data);
 }
-export async function cancelCheckoutReservation(checkoutId:string){const {data,error}=await db().rpc('cancel_marketplace_checkout_reservation',{p_checkout_id:checkoutId});if(error)invokeError(error);return mapResponse(data);}
-export async function fetchMyCheckout(checkoutId:string){const {data,error}=await db().rpc('fetch_my_marketplace_checkout',{p_checkout_id:checkoutId});if(error)invokeError(error);return mapResponse(data);}
-export async function fetchMyActiveCheckout(){const {data,error}=await db().rpc('fetch_my_active_marketplace_checkout');if(error)invokeError(error);return data==null?null:mapResponse(data);}
-export async function expireMarketplaceCheckoutReservations(){const {data,error}=await db().rpc('expire_marketplace_checkout_reservations',{p_limit:100});if(error)invokeError(error);return Number(data??0);}
+export async function cancelCheckoutReservation(checkoutId:string){const rpc='cancel_marketplace_checkout_reservation';const {data,error}=await db().rpc(rpc,{p_checkout_id:checkoutId});if(error)invokeError(rpc,error);return mapResponse(data);}
+export async function fetchMyCheckout(checkoutId:string){const rpc='fetch_my_marketplace_checkout';const {data,error}=await db().rpc(rpc,{p_checkout_id:checkoutId});if(error)invokeError(rpc,error);return mapResponse(data);}
+export async function fetchMyActiveCheckout(){const rpc='fetch_my_active_marketplace_checkout';const {data,error}=await db().rpc(rpc);if(error)invokeError(rpc,error);return data==null?null:mapResponse(data);}
+export async function expireMarketplaceCheckoutReservations(){const rpc='expire_marketplace_checkout_reservations';const {data,error}=await db().rpc(rpc,{p_limit:100});if(error)invokeError(rpc,error);return Number(data??0);}

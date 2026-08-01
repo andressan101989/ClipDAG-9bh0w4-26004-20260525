@@ -50,7 +50,7 @@ export default function MarketplaceCheckoutScreen(){
       if(code==='marketplace_insufficient_inventory'){await cart.refreshCart();Alert.alert('Cambió el inventario','Uno o más productos ya no tienen la cantidad solicitada. Actualizamos tu carrito.');idempotencyRef.current=null;}
       else if(code==='marketplace_active_checkout_exists'){const active=await fetchMyActiveCheckout().catch(()=>null);Alert.alert('Ya tienes una reserva activa','Finaliza o cancela tu reserva antes de crear otra.',active?[{text:'Cerrar',style:'cancel'},{text:'Ver reserva',onPress:()=>router.replace({pathname:'/checkout/reservation/[id]',params:{id:active.checkout.id}} as never)}]:undefined);}
       else if(code==='marketplace_idempotency_conflict'){Alert.alert('No se pudo reutilizar esta solicitud','Actualiza el checkout e inténtalo nuevamente.');idempotencyRef.current=null;}
-      else {const active=await fetchMyActiveCheckout().catch(()=>null);if(active)router.replace({pathname:'/checkout/reservation/[id]',params:{id:active.checkout.id}} as never);else Alert.alert('No pudimos confirmar la reserva','Verifica tu conexión e inténtalo nuevamente con la misma solicitud.');}
+      else {const active=await fetchMyActiveCheckout().catch(()=>null);if(active)router.replace({pathname:'/checkout/reservation/[id]',params:{id:active.checkout.id}} as never);else if(code==='marketplace_order_transport')Alert.alert('No pudimos confirmar la reserva','Verifica tu conexión e inténtalo nuevamente con la misma solicitud.');else Alert.alert('No se pudo crear la reserva','Ocurrió un error al validar la reserva. Inténtalo nuevamente.');}
     }finally{submitLockRef.current=false;setSubmitting(false);}
   };
 
