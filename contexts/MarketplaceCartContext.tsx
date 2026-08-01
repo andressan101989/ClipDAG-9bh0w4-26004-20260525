@@ -27,6 +27,7 @@ export interface MarketplaceCartContextValue {
   incrementItem(key:string):CartMutationResult;
   decrementItem(key:string):CartMutationResult;
   removeItem(key:string):void;
+  removeItems(keys:string[]):void;
   clearCart():void;
   refreshCart():Promise<CartRefreshResult>;
   getItem(key:string):MarketplaceCartItem|undefined;
@@ -95,6 +96,7 @@ export function MarketplaceCartProvider({children}:{children:ReactNode}){
     return item?setQuantity(key,Math.max(1,item.quantity-1)):{ok:false,code:'not_found'};
   },[setQuantity]);
   const removeItem=useCallback((key:string)=>replaceItems(itemsRef.current.filter(item=>item.key!==key)),[replaceItems]);
+  const removeItems=useCallback((keys:string[])=>{const selected=new Set(keys);replaceItems(itemsRef.current.filter(item=>!selected.has(item.key)));},[replaceItems]);
   const clearCart=useCallback(()=>replaceItems([]),[replaceItems]);
   const getItem=useCallback((key:string)=>identityHydrated?itemsRef.current.find(item=>item.key===key):undefined,[identityHydrated]);
 
@@ -112,7 +114,7 @@ export function MarketplaceCartProvider({children}:{children:ReactNode}){
   const visibleItems=useMemo(()=>identityHydrated?items:[],[identityHydrated,items]);
   const totals=useMemo(()=>marketplaceCartTotals(visibleItems),[visibleItems]);
   const value=useMemo<MarketplaceCartContextValue>(()=>({items:visibleItems,isHydrated:identityHydrated,isRefreshing,...totals,
-    addItem,setQuantity,incrementItem,decrementItem,removeItem,clearCart,refreshCart,getItem}),
-  [visibleItems,identityHydrated,isRefreshing,totals,addItem,setQuantity,incrementItem,decrementItem,removeItem,clearCart,refreshCart,getItem]);
+    addItem,setQuantity,incrementItem,decrementItem,removeItem,removeItems,clearCart,refreshCart,getItem}),
+  [visibleItems,identityHydrated,isRefreshing,totals,addItem,setQuantity,incrementItem,decrementItem,removeItem,removeItems,clearCart,refreshCart,getItem]);
   return <MarketplaceCartContext.Provider value={value}>{children}</MarketplaceCartContext.Provider>;
 }

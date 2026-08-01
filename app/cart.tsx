@@ -39,13 +39,14 @@ export default function MarketplaceCartScreen(){
   },[cart.isHydrated,runRefresh]));
 
   const checkout=async()=>{
-    if(!user){Alert.alert('Inicia sesión','Inicia sesión para continuar con tu compra.');return;}
+    if(!user){Alert.alert('Inicia sesión','Inicia sesión para reservar los productos de tu carrito.',[
+      {text:'Cancelar',style:'cancel'},{text:'Iniciar sesión',onPress:()=>router.push('/login' as never)},
+    ]);return;}
     const result=await runRefresh();
     if(!result.complete){Alert.alert('No pudimos actualizar el carrito','Verifica tu conexión e inténtalo nuevamente.');return;}
     const hasAvailable=cart.items.length-result.unavailableItemCount>0;
     if(!hasAvailable){Alert.alert('Carrito no disponible','Revisa los productos agotados o eliminados antes de continuar.');return;}
-    // Display snapshots are never payment instructions; the future checkout RPC must recalculate totals server-side.
-    Alert.alert('Carrito listo','El checkout seguro con BDAG se implementará en la siguiente fase.');
+    router.push('/checkout' as never);
   };
 
   if(!cart.isHydrated)return <View style={[styles.root,styles.center,{paddingTop:insets.top}]}>

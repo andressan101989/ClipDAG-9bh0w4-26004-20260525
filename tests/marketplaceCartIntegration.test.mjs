@@ -24,7 +24,7 @@ test('cart screen covers hydration, empty, unavailable, clear, refresh and acces
   assert.match(screen,/Cargando tu carrito/);assert.match(screen,/Tu carrito está vacío/);assert.match(screen,/Producto no disponible/);
   assert.match(screen,/Vaciar carrito/);assert.match(screen,/useFocusEffect/);assert.match(screen,/RefreshControl/);
   assert.match(screen,/accessibilityState=\{\{disabled:/);assert.match(screen,/Eliminar \$\{item\.title\} del carrito/);
-  assert.match(screen,/Continuar al checkout/);assert.match(screen,/Carrito listo/);assert.match(screen,/siguiente fase/);
+  assert.match(screen,/Continuar al checkout/);assert.match(screen,/router\.push\('\/checkout'/);
 });
 
 test('persistence waits for hydration and identity changes clear memory before namespace load',()=>{

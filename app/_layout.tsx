@@ -87,6 +87,8 @@ function AppShell() {
                     <Stack.Screen name="login" />
                     <Stack.Screen name="(tabs)" />
                     <Stack.Screen name="cart" />
+                    <Stack.Screen name="checkout" />
+                    <Stack.Screen name="checkout/reservation/[id]" />
                     <Stack.Screen
                       name="chat/[userId]"
                       options={{ headerShown: true, title: '' }}
