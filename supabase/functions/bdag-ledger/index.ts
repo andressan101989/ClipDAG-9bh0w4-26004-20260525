@@ -1,3 +1,4 @@
+/* eslint-disable import/no-unresolved -- Deno resolves URL imports at bundle/deploy time. */
 /**
  * bdag-ledger — unified internal BDAG transaction gateway
  *
@@ -41,6 +42,7 @@ const VELOCITY: Record<string, { maxOps: number; maxAmount: number; windowHours:
   purchase:  { maxOps: 100, maxAmount: 0,       windowHours: 1 },
   subscribe: { maxOps: 20,  maxAmount: 0,       windowHours: 24 },
   marketplace_checkout_pay: { maxOps: 20, maxAmount: 0, windowHours: 1 },
+  marketplace_order_confirm_delivery: { maxOps: 20, maxAmount: 0, windowHours: 1 },
 };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -218,6 +220,31 @@ Deno.serve(async (req) => {
         return fail(code, code === 'marketplace_insufficient_bdag_balance' ? 402 : 409);
       }
       if (data?.error_code) return fail(String(data.error_code), 409);
+      return ok(data);
+    }
+
+    if (action === 'marketplace_order_confirm_delivery') {
+      const { order_id } = body;
+      if (typeof order_id !== 'string' || !UUID_RE.test(order_id) || typeof idempotency_key !== 'string' || !UUID_RE.test(idempotency_key)) {
+        return fail('marketplace_delivery_invalid_input', 400);
+      }
+      const limit = VELOCITY.marketplace_order_confirm_delivery;
+      const { data: allowed, error: velocityError } = await admin.rpc('check_velocity_limit', {
+        p_user_id: user.id, p_operation: 'marketplace_order_confirm_delivery', p_amount: 0,
+        p_max_ops: limit.maxOps, p_max_amount: limit.maxAmount, p_window_hours: limit.windowHours,
+      });
+      if (velocityError) log('WARN', 'marketplace_order_confirm_delivery', { user_id: user.id, code: 'velocity_check_unavailable' });
+      if (allowed === false) return fail('marketplace_settlement_rate_limited', 429);
+      const { data, error } = await admin.rpc('confirm_marketplace_order_delivery_and_release', {
+        p_buyer_id: user.id, p_order_id: order_id, p_idempotency_key: idempotency_key,
+      });
+      if (error) {
+        const known = ['marketplace_delivery_invalid_input','marketplace_order_not_found','marketplace_order_not_owned','marketplace_order_not_shipped','marketplace_shipment_not_shipped','marketplace_order_not_paid','marketplace_allocation_not_held','marketplace_settlement_integrity_error','marketplace_settlement_idempotency_conflict','marketplace_escrow_insufficient_balance'];
+        const code = known.find(value => error.message === value || error.message.includes(value)) ?? 'marketplace_settlement_unknown';
+        log('ERROR', 'marketplace_order_confirm_delivery', { user_id: user.id, order: `${order_id.slice(0, 8)}…`, code });
+        const status = code === 'marketplace_order_not_owned' ? 403 : code === 'marketplace_delivery_invalid_input' ? 400 : code === 'marketplace_settlement_unknown' ? 500 : 409;
+        return fail(code, status);
+      }
       return ok(data);
     }
 
