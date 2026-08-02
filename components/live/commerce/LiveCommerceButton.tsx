@@ -1,0 +1,5 @@
+import React from 'react';
+import{Pressable,StyleSheet,Text,View}from'react-native';
+import{MaterialIcons}from'@expo/vector-icons';
+export function LiveCommerceButton({count,onPress,disabled=false,label='Abrir productos del LIVE'}:{count:number;onPress:()=>void;disabled?:boolean;label?:string}){return <Pressable style={[s.button,disabled&&s.disabled]} onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={`${label}. ${count} productos`} accessibilityState={{disabled}}><MaterialIcons name="shopping-bag" size={24} color="#fff"/>{count>0?<View style={s.badge}><Text style={s.text}>{count}</Text></View>:null}</Pressable>}
+const s=StyleSheet.create({button:{width:52,height:52,borderRadius:26,backgroundColor:'rgba(255,255,255,0.14)',borderWidth:1,borderColor:'rgba(255,255,255,0.18)',alignItems:'center',justifyContent:'center'},badge:{position:'absolute',right:-2,top:-2,minWidth:20,height:20,paddingHorizontal:4,borderRadius:10,backgroundColor:'#7C5CFF',alignItems:'center',justifyContent:'center'},text:{color:'#fff',fontSize:11,fontWeight:'700'},disabled:{opacity:.5}});

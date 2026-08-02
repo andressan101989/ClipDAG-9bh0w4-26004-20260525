@@ -49,7 +49,7 @@ export function validateShippingAddress(input:ShippingAddressInput):Partial<Reco
   if((a.phone?.length??0)>40)errors.phone='Ingresa un teléfono válido.';
   return errors;
 }
-function mapResponse(value:unknown):CreateCheckoutReservationResult {
+export function parseMarketplaceCheckoutReservation(value:unknown):CreateCheckoutReservationResult {
   if(!value||typeof value!=='object')throw new MarketplaceOrderServiceError('marketplace_order_unknown');
   const root=value as Record<string,unknown>;const c=root.checkout as Record<string,unknown>;const a=root.shipping_address as Record<string,unknown>;
   if(!c||c.currency!=='BDAG'||!Array.isArray(root.orders))throw new MarketplaceOrderServiceError('marketplace_order_unknown');
@@ -62,9 +62,9 @@ function mapResponse(value:unknown):CreateCheckoutReservationResult {
 }
 export async function createCheckoutReservation(items:CheckoutReservationInputItem[],address:ShippingAddressInput,idempotencyKey:string){
   const {data,error}=await db().rpc('create_marketplace_checkout_reservation',{p_items:items.map(item=>({variant_id:item.variantId,quantity:item.quantity})),p_shipping_address:{recipient_name:address.recipientName,line1:address.line1,line2:address.line2??null,city:address.city,region:address.region,postal_code:address.postalCode,country:address.country,phone:address.phone??null},p_idempotency_key:idempotencyKey});
-  if(error)invokeError('create_marketplace_checkout_reservation',error);return mapResponse(data);
+  if(error)invokeError('create_marketplace_checkout_reservation',error);return parseMarketplaceCheckoutReservation(data);
 }
-export async function cancelCheckoutReservation(checkoutId:string){const rpc='cancel_marketplace_checkout_reservation';const {data,error}=await db().rpc(rpc,{p_checkout_id:checkoutId});if(error)invokeError(rpc,error);return mapResponse(data);}
-export async function fetchMyCheckout(checkoutId:string){const rpc='fetch_my_marketplace_checkout';const {data,error}=await db().rpc(rpc,{p_checkout_id:checkoutId});if(error)invokeError(rpc,error);return mapResponse(data);}
-export async function fetchMyActiveCheckout(){const rpc='fetch_my_active_marketplace_checkout';const {data,error}=await db().rpc(rpc);if(error)invokeError(rpc,error);return data==null?null:mapResponse(data);}
+export async function cancelCheckoutReservation(checkoutId:string){const rpc='cancel_marketplace_checkout_reservation';const {data,error}=await db().rpc(rpc,{p_checkout_id:checkoutId});if(error)invokeError(rpc,error);return parseMarketplaceCheckoutReservation(data);}
+export async function fetchMyCheckout(checkoutId:string){const rpc='fetch_my_marketplace_checkout';const {data,error}=await db().rpc(rpc,{p_checkout_id:checkoutId});if(error)invokeError(rpc,error);return parseMarketplaceCheckoutReservation(data);}
+export async function fetchMyActiveCheckout(){const rpc='fetch_my_active_marketplace_checkout';const {data,error}=await db().rpc(rpc);if(error)invokeError(rpc,error);return data==null?null:parseMarketplaceCheckoutReservation(data);}
 export async function expireMarketplaceCheckoutReservations(){const rpc='expire_marketplace_checkout_reservations';const {data,error}=await db().rpc(rpc,{p_limit:100});if(error)invokeError(rpc,error);return Number(data??0);}

@@ -27,6 +27,10 @@ import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
 import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
 import type { LiveGiftEvent } from '@/types/liveGifts';
+import { LiveCommerceButton } from '@/components/live/commerce/LiveCommerceButton';
+import { LiveFeaturedProductCard } from '@/components/live/commerce/LiveFeaturedProductCard';
+import { LiveViewerCommerce } from '@/components/live/commerce/LiveViewerCommerce';
+import { fetchLiveSessionProducts, type LiveSessionProduct } from '@/services/liveCommerceService';
 
 const POLL_INTERVAL_MS = 3000;
 const MAX_MESSAGES     = 50;
@@ -216,7 +220,21 @@ export default function LiveWatchScreen() {
   const [giftSheetVisible, setGiftSheetVisible] = useState(false);
   const [sendingGiftId, setSendingGiftId] = useState<string | null>(null);
   const [giftFeedback, setGiftFeedback] = useState<string | null>(null);
+  const [commerceVisible, setCommerceVisible] = useState(false);
+  const [liveProducts, setLiveProducts] = useState<LiveSessionProduct[]>([]);
   const { activeGift, floatingGifts, enqueueGift } = useLiveGiftAnimations(streamId);
+
+  const refreshLiveProducts = useCallback(async () => {
+    if (!streamId) return;
+    try { setLiveProducts(await fetchLiveSessionProducts(streamId)); } catch { /* polling retries safely */ }
+  }, [streamId]);
+  useEffect(() => {
+    if (!streamId || session?.status !== 'live') { setLiveProducts([]); return; }
+    void refreshLiveProducts();
+    const timer = setInterval(() => void refreshLiveProducts(), 5_000);
+    const channel = supabase.channel(`live-commerce:${streamId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'live_session_products', filter: `session_id=eq.${streamId}` }, () => void refreshLiveProducts()).subscribe();
+    return () => { clearInterval(timer); void supabase.removeChannel(channel); };
+  }, [refreshLiveProducts, session?.status, streamId, supabase]);
 
   const agora = useAgoraEngine({
     channelName: session?.status === 'live' ? streamId ?? null : null,
@@ -1111,6 +1129,7 @@ export default function LiveWatchScreen() {
       ) : null}
 
       <View style={styles.actionRail}>
+        <LiveCommerceButton count={liveProducts.length} onPress={() => { setGiftSheetVisible(false); Keyboard.dismiss(); setCommerceVisible(true); }} />
         <Pressable
           style={styles.actionButton}
           onPress={() => sendReaction('\u2764\uFE0F')}
@@ -1136,6 +1155,7 @@ export default function LiveWatchScreen() {
           <MaterialIcons name={requestIcon} size={24} color="#fff" />
         </Pressable>
       </View>
+      {liveProducts.find(product => product.isFeatured) ? <LiveFeaturedProductCard product={liveProducts.find(product => product.isFeatured)!} bottom={composerClearance + 86} onPress={() => { setGiftSheetVisible(false); setCommerceVisible(true); }} /> : null}
 
       {coHostUids.length > 0 && RtcSurfaceView ? (
         <View style={styles.coHostStrip}>
@@ -1186,6 +1206,8 @@ export default function LiveWatchScreen() {
         onClose={() => setGiftSheetVisible(false)}
       />
 
+      {streamId ? <LiveViewerCommerce visible={commerceVisible} sessionId={streamId} products={liveProducts} onClose={() => setCommerceVisible(false)} onRefresh={refreshLiveProducts} /> : null}
+
       <View
         style={[styles.inputRow, { bottom: composerBottom + 8 }]}
         onLayout={event => {
@@ -1196,7 +1218,7 @@ export default function LiveWatchScreen() {
         }}
       >
         <LiveGiftButton
-          onPress={() => setGiftSheetVisible(true)}
+          onPress={() => { setCommerceVisible(false); setGiftSheetVisible(true); }}
           disabled={!user || session.status !== 'live' || !giftsEnabled || walletBalanceLoading}
         />
         <TextInput

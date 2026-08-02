@@ -35,6 +35,9 @@ import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
 import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
 import type { LiveGiftEvent } from '@/types/liveGifts';
+import { LiveCommerceButton } from '@/components/live/commerce/LiveCommerceButton';
+import { LiveHostProductManager } from '@/components/live/commerce/LiveHostProductManager';
+import { fetchLiveSessionProducts, type LiveSessionProduct } from '@/services/liveCommerceService';
 
 const POLL_INTERVAL_MS = 3000;
 const HEARTBEAT_INTERVAL_MS = 12_000;
@@ -210,7 +213,21 @@ export default function LiveBroadcasterScreen() {
   const [composerHeight, setComposerHeight] = useState(72);
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
   const [giftTotal, setGiftTotal] = useState(0);
+  const [commerceVisible, setCommerceVisible] = useState(false);
+  const [liveProducts, setLiveProducts] = useState<LiveSessionProduct[]>([]);
   const { activeGift, floatingGifts, enqueueGift } = useLiveGiftAnimations(streamId);
+
+  const refreshLiveProducts = useCallback(async () => {
+    if (!streamId || !live) return;
+    try { setLiveProducts(await fetchLiveSessionProducts(streamId)); } catch { /* polling retries safely */ }
+  }, [live, streamId]);
+  useEffect(() => {
+    if (!streamId || !live) { setLiveProducts([]); return; }
+    void refreshLiveProducts();
+    const timer = setInterval(() => void refreshLiveProducts(), 5_000);
+    const channel = getSupabaseClient().channel(`live-commerce-host:${streamId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'live_session_products', filter: `session_id=eq.${streamId}` }, () => void refreshLiveProducts()).subscribe();
+    return () => { clearInterval(timer); void getSupabaseClient().removeChannel(channel); };
+  }, [live, refreshLiveProducts, streamId]);
 
   const {
     engineReady, joined, error,
@@ -1182,6 +1199,7 @@ export default function LiveBroadcasterScreen() {
 
       {/* ── Controls ──────────────────────────────────────────────────────── */}
       <View style={[styles.controls, { bottom: controlsBottom }]}>
+        <View style={styles.controlGroup}><LiveCommerceButton count={liveProducts.length} onPress={() => { Keyboard.dismiss(); setCommerceVisible(true); }} disabled={!live} label="Administrar productos del LIVE" /></View>
         <View style={styles.controlGroup}>
           <Pressable
             style={styles.controlBtn}
@@ -1231,6 +1249,7 @@ export default function LiveBroadcasterScreen() {
           <MaterialIcons name="call-end" size={22} color="#fff" />
         </Pressable>
       </View>
+      {streamId ? <LiveHostProductManager visible={commerceVisible} sessionId={streamId} onClose={() => setCommerceVisible(false)} onChanged={refreshLiveProducts} /> : null}
 
       <View
         style={[styles.inputRow, { bottom: composerBottom + 8 }]}
