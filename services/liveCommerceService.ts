@@ -45,6 +45,7 @@ export interface LiveProductCandidate {
   productId: string;
   storeId: string;
   storeName: string;
+  sellerName: string;
   title: string;
   imageUrl: string | null;
   minPrice: number;
@@ -56,6 +57,18 @@ export interface LiveProductCandidate {
   isFeatured: boolean;
   commerceMode: "own_product" | "affiliate_product";
   creatorCommissionBps: number;
+  candidateAvailability:
+    | "available"
+    | "out_of_stock"
+    | "product_unavailable"
+    | "affiliate_offer_unavailable"
+    | "affiliate_offer_replaced";
+  pinOfferValid: boolean;
+  pinnedCreatorCommissionBps: number | null;
+  currentOfferCommissionBps: number | null;
+  currentOfferId: string | null;
+  pinnedOfferId: string | null;
+  requiresRepin: boolean;
   updatedAt: string;
 }
 export interface LivePurchaseEvent {
@@ -128,6 +141,7 @@ export type LiveCommerceErrorCode =
   | "live_affiliate_invalid_offer"
   | "live_affiliate_offer_unavailable"
   | "live_affiliate_offer_idempotency_conflict"
+  | "live_affiliate_self_purchase_forbidden"
   | "live_commerce_invalid_input"
   | "live_commerce_invalid_cursor"
   | "live_commerce_idempotency_conflict"
@@ -152,6 +166,7 @@ const CODES: LiveCommerceErrorCode[] = [
   "live_affiliate_invalid_offer",
   "live_affiliate_offer_unavailable",
   "live_affiliate_offer_idempotency_conflict",
+  "live_affiliate_self_purchase_forbidden",
   "live_commerce_invalid_input",
   "live_commerce_invalid_cursor",
   "live_commerce_idempotency_conflict",
@@ -240,7 +255,7 @@ const product = (raw: unknown): LiveSessionProduct => {
     featuredVariantId: validUuid(r.featured_variant_id)
       ? String(r.featured_variant_id)
       : null,
-    isFeatured: r.is_featured === true,
+    isFeatured: r.is_featured === true && availability === "available",
     position: finite(r.position),
     soldCount: finite(r.sold_count ?? 0),
     commerceMode,
@@ -278,17 +293,49 @@ export async function fetchMyLiveProductCandidates(
     throw new LiveCommerceError("live_commerce_unknown");
   const items = data.items.map((raw: unknown) => {
     const r = raw as Record<string, unknown>,
-      commerceMode = r.commerce_mode;
+      commerceMode = r.commerce_mode,
+      candidateAvailability = r.candidate_availability,
+      nullableBps = (value: unknown) => {
+        if (value == null) return null;
+        const parsed = finite(value);
+        if (!Number.isInteger(parsed) || parsed > 3000)
+          throw new LiveCommerceError("live_commerce_unknown");
+        return parsed;
+      },
+      nullableUuid = (value: unknown) => {
+        if (value == null) return null;
+        if (!validUuid(value))
+          throw new LiveCommerceError("live_commerce_unknown");
+        return String(value);
+      };
     if (
       !validUuid(r.product_id) ||
+      !validUuid(r.store_id) ||
+      typeof r.store_name !== "string" ||
+      typeof r.seller_name !== "string" ||
+      typeof r.title !== "string" ||
       !Number.isFinite(Date.parse(String(r.updated_at))) ||
-      (commerceMode !== "own_product" && commerceMode !== "affiliate_product")
+      (commerceMode !== "own_product" &&
+        commerceMode !== "affiliate_product") ||
+      ![
+        "available",
+        "out_of_stock",
+        "product_unavailable",
+        "affiliate_offer_unavailable",
+        "affiliate_offer_replaced",
+      ].includes(String(candidateAvailability)) ||
+      typeof r.pin_offer_valid !== "boolean" ||
+      typeof r.requires_repin !== "boolean"
     )
+      throw new LiveCommerceError("live_commerce_unknown");
+    const creatorCommissionBps = finite(r.creator_commission_bps);
+    if (!Number.isInteger(creatorCommissionBps) || creatorCommissionBps > 3000)
       throw new LiveCommerceError("live_commerce_unknown");
     return {
       productId: String(r.product_id),
       storeId: String(r.store_id),
       storeName: String(r.store_name),
+      sellerName: String(r.seller_name),
       title: String(r.title),
       imageUrl: isSafeLiveCommerceImage(r.image_url) ? r.image_url : null,
       minPrice: finite(r.min_price),
@@ -299,7 +346,15 @@ export async function fetchMyLiveProductCandidates(
       isPinned: r.is_pinned === true,
       isFeatured: r.is_featured === true,
       commerceMode,
-      creatorCommissionBps: finite(r.creator_commission_bps),
+      creatorCommissionBps,
+      candidateAvailability:
+        candidateAvailability as LiveProductCandidate["candidateAvailability"],
+      pinOfferValid: r.pin_offer_valid,
+      pinnedCreatorCommissionBps: nullableBps(r.pinned_creator_commission_bps),
+      currentOfferCommissionBps: nullableBps(r.current_offer_commission_bps),
+      currentOfferId: nullableUuid(r.current_offer_id),
+      pinnedOfferId: nullableUuid(r.pinned_offer_id),
+      requiresRepin: r.requires_repin,
       updatedAt: String(r.updated_at),
     };
   });

@@ -327,6 +327,18 @@ export function LiveViewerCommerce({
       if (code === "marketplace_active_checkout_exists") {
         pendingCommand.current = null;
         await recoverActive();
+      } else if (code === "live_affiliate_offer_unavailable") {
+        pendingCommand.current = null;
+        setFeedback("La oferta de este creador ya no está disponible.");
+        await onRefresh();
+        setPin(null);
+        setDetail(null);
+        setStage("bag");
+      } else if (code === "live_affiliate_self_purchase_forbidden") {
+        pendingCommand.current = null;
+        setFeedback(
+          "No puedes generar una comisión comprando desde tu propio LIVE.",
+        );
       } else {
         if (code !== "live_commerce_transport") pendingCommand.current = null;
         setFeedback(

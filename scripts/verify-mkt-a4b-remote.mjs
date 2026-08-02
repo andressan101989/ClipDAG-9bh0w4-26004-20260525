@@ -60,6 +60,34 @@ const denied = async (work) => {
     return true;
   }
 };
+const deniedWithCode = async (work, expectedCode) => {
+  try {
+    await work();
+    return false;
+  } catch (error) {
+    return JSON.stringify(error?.data ?? "").includes(expectedCode);
+  }
+};
+async function fetchAllCandidates(sessionId, token) {
+  const pages = [];
+  let cursor = null;
+  do {
+    const page = await rpc(
+      "fetch_my_live_product_candidates",
+      {
+        p_session_id: sessionId,
+        p_limit: 20,
+        p_before_updated_at: cursor?.updated_at ?? null,
+        p_before_id: cursor?.id ?? null,
+      },
+      token,
+    );
+    assert("candidate_page_limit", page.items.length <= 20);
+    pages.push(page.items);
+    cursor = page.next_cursor;
+  } while (cursor !== null);
+  return { pages, items: pages.flat(), finalCursor: cursor };
+}
 async function user(role) {
   const email = `mkt-a4b-${role}-${stamp}@example.invalid`,
     created = await request("/auth/v1/admin/users", {
@@ -213,7 +241,10 @@ async function payReservation({ checkout, order, token }) {
     checkout_id: checkout,
     idempotency_key: key,
   });
-  assert("payment_retry_same", JSON.stringify(receipt) === JSON.stringify(retry));
+  assert(
+    "payment_retry_same",
+    JSON.stringify(receipt) === JSON.stringify(retry),
+  );
   return { checkout, order, receipt };
 }
 async function buyOnce({ pin, variant, token, session }) {
@@ -236,10 +267,12 @@ const sellerA = await user("seller-a"),
     productB: uuid(),
     productC: uuid(),
     productD: uuid(),
+    productE: uuid(),
     variantA: uuid(),
     variantB: uuid(),
     variantC: uuid(),
     variantD: uuid(),
+    variantE: uuid(),
     session: uuid(),
   };
 await request("/rest/v1/user_profiles?on_conflict=id", {
@@ -340,12 +373,29 @@ const products = [
     moderation_status: "approved",
     published_at: new Date().toISOString(),
   },
+  {
+    id: ids.productE,
+    seller_id: sellerA.id,
+    store_id: ids.storeA,
+    title: "Removed Affiliate Product",
+    description: "Dedicated removed-offer fixture",
+    price: 1,
+    currency: "BDAG",
+    category: "physical",
+    stock: 2,
+    status: "active",
+    category_id: "10000000-0000-4000-8000-000000000002",
+    product_type: "physical",
+    moderation_status: "approved",
+    published_at: new Date().toISOString(),
+  },
 ];
 await insert("products", products);
 const skuA = `A4B-A-${stamp}`.toUpperCase(),
   skuB = `A4B-B-${stamp}`.toUpperCase(),
   skuC = `A4B-C-${stamp}`.toUpperCase(),
-  skuD = `A4B-D-${stamp}`.toUpperCase();
+  skuD = `A4B-D-${stamp}`.toUpperCase(),
+  skuE = `A4B-E-${stamp}`.toUpperCase();
 await insert("marketplace_product_variants", [
   {
     id: ids.variantA,
@@ -399,13 +449,78 @@ await insert("marketplace_product_variants", [
     is_default: true,
     combination_key: "",
   },
+  {
+    id: ids.variantE,
+    product_id: ids.productE,
+    store_id: ids.storeA,
+    seller_id: sellerA.id,
+    sku: skuE,
+    sku_normalized: skuE,
+    title: "Default",
+    price: 1,
+    status: "active",
+    is_default: true,
+    combination_key: "",
+  },
 ]);
 await insert("marketplace_inventory_levels", [
   { variant_id: ids.variantA, on_hand: 5, reserved: 0 },
   { variant_id: ids.variantB, on_hand: 60, reserved: 0 },
   { variant_id: ids.variantC, on_hand: 2, reserved: 0 },
   { variant_id: ids.variantD, on_hand: 2, reserved: 0 },
+  { variant_id: ids.variantE, on_hand: 2, reserved: 0 },
 ]);
+const paginationProducts = Array.from({ length: 52 }, (_, index) => ({
+  id: uuid(),
+  variantId: uuid(),
+  index,
+}));
+await insert(
+  "products",
+  paginationProducts.map((fixture) => ({
+    id: fixture.id,
+    seller_id: hostB.id,
+    store_id: ids.storeB,
+    title: `Pagination Product ${String(fixture.index + 1).padStart(2, "0")}`,
+    description: "Dedicated cursor fixture",
+    price: 1,
+    currency: "BDAG",
+    category: "physical",
+    stock: 1,
+    status: "active",
+    category_id: "10000000-0000-4000-8000-000000000002",
+    product_type: "physical",
+    moderation_status: "approved",
+    published_at: new Date().toISOString(),
+  })),
+);
+await insert(
+  "marketplace_product_variants",
+  paginationProducts.map((fixture) => {
+    const sku = `A4B-P-${fixture.index}-${stamp}`.toUpperCase();
+    return {
+      id: fixture.variantId,
+      product_id: fixture.id,
+      store_id: ids.storeB,
+      seller_id: hostB.id,
+      sku,
+      sku_normalized: sku,
+      title: "Default",
+      price: 1,
+      status: "active",
+      is_default: true,
+      combination_key: "",
+    };
+  }),
+);
+await insert(
+  "marketplace_inventory_levels",
+  paginationProducts.map((fixture) => ({
+    variant_id: fixture.variantId,
+    on_hand: 1,
+    reserved: 0,
+  })),
+);
 await rpc(
   "start_live_session",
   { p_session_id: ids.session, p_title: "A4B Affiliate Proof" },
@@ -595,16 +710,75 @@ assert(
   pausedShelf.find((item) => item.id === affiliatePin.id)?.availability ===
     "affiliate_offer_unavailable",
 );
+const pausedCandidates = await fetchAllCandidates(ids.session, hostB.token);
+const pausedCandidate = pausedCandidates.items.find(
+  (item) => item.product_id === ids.productA,
+);
+assert(
+  "paused_pin_remains_host_visible",
+  pausedCandidate?.is_pinned === true &&
+    pausedCandidate?.pin_offer_valid === false &&
+    pausedCandidate?.pinned_creator_commission_bps === 500 &&
+    pausedCandidate?.candidate_availability === "affiliate_offer_unavailable",
+);
+assert(
+  "paused_pin_feature_denied",
+  await denied(() =>
+    rpc(
+      "feature_live_session_product",
+      {
+        p_session_id: ids.session,
+        p_live_session_product_id: affiliatePin.id,
+        p_idempotency_key: uuid(),
+      },
+      hostB.token,
+    ),
+  ),
+);
 assert(
   "paused_offer_new_reservation_denied",
-  await denied(() =>
-    reserve({
-      pin: affiliatePin.id,
-      variant: ids.variantA,
-      token: buyerC.token,
-      session: ids.session,
-    }),
+  await deniedWithCode(
+    () =>
+      reserve({
+        pin: affiliatePin.id,
+        variant: ids.variantA,
+        token: buyerC.token,
+        session: ids.session,
+      }),
+    "live_affiliate_offer_unavailable",
   ),
+);
+const activePinsBeforePausedUnpin = (
+  await select(
+    "live_session_products",
+    `select=id&session_id=eq.${ids.session}&status=eq.active`,
+  )
+).length;
+await rpc(
+  "unpin_live_session_product",
+  {
+    p_session_id: ids.session,
+    p_live_session_product_id: affiliatePin.id,
+    p_idempotency_key: uuid(),
+  },
+  hostB.token,
+);
+const pausedPinRow = (
+  await select(
+    "live_session_products",
+    `select=status&session_id=eq.${ids.session}&id=eq.${affiliatePin.id}`,
+  )
+)[0];
+const activePinsAfterPausedUnpin = (
+  await select(
+    "live_session_products",
+    `select=id&session_id=eq.${ids.session}&status=eq.active`,
+  )
+).length;
+assert(
+  "paused_pin_unpinned",
+  pausedPinRow.status === "removed" &&
+    activePinsAfterPausedUnpin === activePinsBeforePausedUnpin - 1,
 );
 const affiliate = await payReservation({
     ...pendingAffiliate,
@@ -706,7 +880,8 @@ for (const event of safeEvents)
     "account_id",
     "phone",
     "email",
-  ]) assert("safe_event_forbidden_fields", !(forbidden in event));
+  ])
+    assert("safe_event_forbidden_fields", !(forbidden in event));
 assert(
   "financial_source_security",
   security.directSourceRead &&
@@ -822,12 +997,12 @@ const revocationArgs = (productId, status, endsAt = null) => ({
   p_ends_at: endsAt,
   p_idempotency_key: uuid(),
 });
-await rpc(
+const oldOfferC = await rpc(
   "upsert_my_live_affiliate_offer",
   revocationArgs(ids.productC, "active"),
   sellerA.token,
 );
-const removedPin = await rpc(
+const replacedPin = await rpc(
   "pin_live_session_product",
   {
     p_session_id: ids.session,
@@ -837,21 +1012,33 @@ const removedPin = await rpc(
   },
   hostB.token,
 );
-await rpc(
+const currentOfferC = await rpc(
   "upsert_my_live_affiliate_offer",
-  revocationArgs(ids.productC, "removed"),
+  {
+    ...revocationArgs(ids.productC, "active"),
+    p_commission_bps: 1000,
+  },
   sellerA.token,
 );
-assert(
-  "removed_offer_new_reservation_denied",
-  await denied(() =>
-    reserve({
-      pin: removedPin.id,
-      variant: ids.variantC,
-      token: buyerC.token,
-      session: ids.session,
-    }),
-  ),
+await rpc(
+  "upsert_my_live_affiliate_offer",
+  revocationArgs(ids.productE, "active"),
+  sellerA.token,
+);
+const removedPin = await rpc(
+  "pin_live_session_product",
+  {
+    p_session_id: ids.session,
+    p_product_id: ids.productE,
+    p_featured_variant_id: ids.variantE,
+    p_idempotency_key: uuid(),
+  },
+  hostB.token,
+);
+await rpc(
+  "upsert_my_live_affiliate_offer",
+  revocationArgs(ids.productE, "removed"),
+  sellerA.token,
 );
 const expiresAt = new Date(Date.now() + 4_000).toISOString();
 await rpc(
@@ -870,17 +1057,6 @@ const expiredPin = await rpc(
   hostB.token,
 );
 await new Promise((resolve) => setTimeout(resolve, 4_500));
-assert(
-  "expired_offer_new_reservation_denied",
-  await denied(() =>
-    reserve({
-      pin: expiredPin.id,
-      variant: ids.variantD,
-      token: buyerC.token,
-      session: ids.session,
-    }),
-  ),
-);
 const revocationShelf = await rpc(
   "fetch_live_session_products",
   { p_session_id: ids.session },
@@ -894,6 +1070,187 @@ assert(
       "affiliate_offer_unavailable" &&
     revocationShelf.find((item) => item.id === ownPin.id)?.availability ===
       "available",
+);
+const candidateResult = await fetchAllCandidates(ids.session, hostB.token),
+  candidatePages = candidateResult.pages,
+  candidateCursor = candidateResult.finalCursor,
+  allCandidates = candidateResult.items;
+assert(
+  "candidate_cursor_pagination",
+  candidatePages.length >= 3 &&
+    new Set(allCandidates.map((item) => item.product_id)).size ===
+      allCandidates.length &&
+    candidateCursor === null,
+);
+const replacedCandidate = allCandidates.find(
+    (item) => item.product_id === ids.productC,
+  ),
+  removedCandidate = allCandidates.find(
+    (item) => item.product_id === ids.productE,
+  ),
+  expiredCandidate = allCandidates.find(
+    (item) => item.product_id === ids.productD,
+  );
+assert(
+  "replaced_offer_candidate",
+  replacedCandidate?.is_pinned === true &&
+    replacedCandidate?.candidate_availability === "affiliate_offer_replaced" &&
+    replacedCandidate?.pinned_offer_id === oldOfferC.id &&
+    replacedCandidate?.current_offer_id === currentOfferC.id &&
+    replacedCandidate?.pinned_creator_commission_bps === 500 &&
+    replacedCandidate?.current_offer_commission_bps === 1000 &&
+    replacedCandidate?.requires_repin === true,
+);
+assert(
+  "removed_and_expired_candidates_reachable",
+  removedCandidate?.is_pinned === true &&
+    removedCandidate?.pin_offer_valid === false &&
+    removedCandidate?.candidate_availability ===
+      "affiliate_offer_unavailable" &&
+    expiredCandidate?.is_pinned === true &&
+    expiredCandidate?.pin_offer_valid === false &&
+    expiredCandidate?.candidate_availability === "affiliate_offer_unavailable",
+);
+for (const [name, pin, variant] of [
+  ["replaced", replacedPin.id, ids.variantC],
+  ["removed", removedPin.id, ids.variantE],
+  ["expired", expiredPin.id, ids.variantD],
+]) {
+  assert(
+    `${name}_feature_denied`,
+    await denied(() =>
+      rpc(
+        "feature_live_session_product",
+        {
+          p_session_id: ids.session,
+          p_live_session_product_id: pin,
+          p_idempotency_key: uuid(),
+        },
+        hostB.token,
+      ),
+    ),
+  );
+  assert(
+    `${name}_reservation_denied`,
+    await deniedWithCode(
+      () =>
+        reserve({ pin, variant, token: buyerC.token, session: ids.session }),
+      "live_affiliate_offer_unavailable",
+    ),
+  );
+}
+const hostMutationBefore = {
+  checkouts: (
+    await select(
+      "marketplace_checkout_sessions",
+      `select=id&buyer_id=eq.${hostB.id}`,
+    )
+  ).length,
+  sources: (
+    await select(
+      "marketplace_live_order_sources",
+      `select=id&buyer_id=eq.${hostB.id}`,
+    )
+  ).length,
+  inventory: (
+    await select(
+      "marketplace_inventory_levels",
+      `select=on_hand,reserved&variant_id=eq.${ids.variantC}`,
+    )
+  )[0],
+};
+assert(
+  "affiliate_host_self_purchase_denied",
+  await deniedWithCode(
+    () =>
+      reserve({
+        pin: replacedPin.id,
+        variant: ids.variantC,
+        token: hostB.token,
+        session: ids.session,
+      }),
+    "live_affiliate_self_purchase_forbidden",
+  ),
+);
+const hostMutationAfter = {
+  checkouts: (
+    await select(
+      "marketplace_checkout_sessions",
+      `select=id&buyer_id=eq.${hostB.id}`,
+    )
+  ).length,
+  sources: (
+    await select(
+      "marketplace_live_order_sources",
+      `select=id&buyer_id=eq.${hostB.id}`,
+    )
+  ).length,
+  inventory: (
+    await select(
+      "marketplace_inventory_levels",
+      `select=on_hand,reserved&variant_id=eq.${ids.variantC}`,
+    )
+  )[0],
+};
+assert(
+  "affiliate_host_self_purchase_zero_mutation",
+  JSON.stringify(hostMutationBefore) === JSON.stringify(hostMutationAfter),
+);
+for (const pin of [replacedPin.id, removedPin.id, expiredPin.id]) {
+  await rpc(
+    "unpin_live_session_product",
+    {
+      p_session_id: ids.session,
+      p_live_session_product_id: pin,
+      p_idempotency_key: uuid(),
+    },
+    hostB.token,
+  );
+}
+const repinnedC = await rpc(
+  "pin_live_session_product",
+  {
+    p_session_id: ids.session,
+    p_product_id: ids.productC,
+    p_featured_variant_id: ids.variantC,
+    p_idempotency_key: uuid(),
+  },
+  hostB.token,
+);
+const repinnedCRow = (
+  await select(
+    "live_session_products",
+    `select=affiliate_offer_id,creator_commission_bps&id=eq.${repinnedC.id}`,
+  )
+)[0];
+assert(
+  "repin_snapshots_current_offer",
+  repinnedCRow.affiliate_offer_id === currentOfferC.id &&
+    repinnedCRow.creator_commission_bps === 1000,
+);
+const beforeRepinPurchase = await snapshot(accounts),
+  repinPurchase = await buy({
+    pin: repinnedC.id,
+    variant: ids.variantC,
+    token: buyerC.token,
+    session: ids.session,
+  }),
+  afterRepinPurchase = await snapshot(accounts),
+  repinAllocation = (
+    await select(
+      "marketplace_payment_allocations",
+      `select=*&order_id=eq.${repinPurchase.order}`,
+    )
+  )[0];
+assert(
+  "ordinary_viewer_repin_purchase",
+  eq(beforeRepinPurchase.buyer - afterRepinPurchase.buyer, 1) &&
+    eq(afterRepinPurchase.escrow - beforeRepinPurchase.escrow, 1) &&
+    eq(repinAllocation.gross_amount, 1) &&
+    eq(repinAllocation.seller_net_amount, 0.8) &&
+    eq(repinAllocation.creator_commission_amount, 0.1) &&
+    eq(repinAllocation.platform_fee_amount, 0.1) &&
+    repinAllocation.status === "held",
 );
 const statsBuyers = await Promise.all(
   Array.from({ length: 13 }, (_, index) => user(`stats-${index}`)),
@@ -909,7 +1266,7 @@ await request("/rest/v1/user_profiles?on_conflict=id", {
   headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
 });
 for (const buyer of statsBuyers) await fund(buyer.id, 4, buyer.id);
-for (let index = 0; index < 49; index += 1) {
+for (let index = 0; index < 48; index += 1) {
   const statsBuyer = statsBuyers[index % statsBuyers.length];
   await buyOnce({
     pin: ownPin.id,
@@ -934,9 +1291,29 @@ assert(
     statsBeyondPage.orders_count === 51 &&
     statsBeyondPage.units_sold === 51 &&
     eq(statsBeyondPage.gross_sales, 51) &&
-    eq(statsBeyondPage.creator_commission_held, 0) &&
+    eq(statsBeyondPage.creator_commission_held, 0.1) &&
     eq(statsBeyondPage.creator_commission_released, 0.05),
 );
+const finalPaymentReconciliation = await rpc("reconcile_marketplace_payments"),
+  finalSettlementReconciliation = await rpc(
+    "reconcile_marketplace_settlements",
+  ),
+  finalCommissionReconciliation = await rpc(
+    "reconcile_marketplace_live_commissions",
+  );
+assert(
+  "final_payment_reconciliation",
+  finalPaymentReconciliation.escrow_shortfall === 0 &&
+    finalPaymentReconciliation.confirmed_state_mismatches === 0,
+);
+assert(
+  "final_settlement_reconciliation",
+  finalSettlementReconciliation.escrow_difference === 0 &&
+    finalSettlementReconciliation.escrow_shortage === 0 &&
+    finalSettlementReconciliation.escrow_surplus === 0,
+);
+for (const [key, value] of Object.entries(finalCommissionReconciliation))
+  assert(`final_commission_reconciliation_${key}`, Number(value) === 0);
 console.log(
   JSON.stringify(
     {
@@ -975,10 +1352,22 @@ console.log(
         statsBeyondPage,
         notificationPageCount: notificationPage.length,
       },
+      lifecycle: {
+        paused: pausedCandidate,
+        replaced: replacedCandidate,
+        removed: removedCandidate,
+        expired: expiredCandidate,
+        candidatePageCounts: candidatePages.map((page) => page.length),
+        candidateUniqueCount: allCandidates.length,
+        repinAllocation,
+        selfPurchaseZeroMutation:
+          JSON.stringify(hostMutationBefore) ===
+          JSON.stringify(hostMutationAfter),
+      },
       reconciliation: {
-        paymentReconciliation,
-        settlementReconciliation,
-        commissionReconciliation,
+        paymentReconciliation: finalPaymentReconciliation,
+        settlementReconciliation: finalSettlementReconciliation,
+        commissionReconciliation: finalCommissionReconciliation,
       },
     },
     null,

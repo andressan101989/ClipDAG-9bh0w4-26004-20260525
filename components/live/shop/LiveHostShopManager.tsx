@@ -66,6 +66,18 @@ const HostProductRow = memo(function HostProductRow({
   busy: boolean;
   onAction: (kind: "pin" | "unpin" | "feature") => void;
 }) {
+  const isAffiliate = item.commerceMode === "affiliate_product";
+  const invalidPinnedOffer =
+    isAffiliate && item.isPinned && !item.pinOfferValid;
+  const offerReplaced = invalidPinnedOffer && item.requiresRepin;
+  const canAdd = !item.isPinned && item.candidateAvailability === "available";
+  const canFeature =
+    item.isPinned &&
+    !item.isFeatured &&
+    item.pinOfferValid &&
+    item.candidateAvailability === "available";
+  const pinnedCommission = item.pinnedCreatorCommissionBps ?? 0;
+  const currentCommission = item.currentOfferCommissionBps ?? 0;
   return (
     <View style={styles.row}>
       <ProductThumbnail uri={item.imageUrl} />
@@ -83,31 +95,58 @@ const HostProductRow = memo(function HostProductRow({
           ) : null}
         </View>
         <CommercePrice price={item.minPrice} />
+        <OnSpaceText variant="caption" color="textMuted" numberOfLines={1}>
+          {item.storeName} · {item.sellerName}
+        </OnSpaceText>
         <View style={styles.modeLine}>
           <StatusPill
-            label={
-              item.commerceMode === "affiliate_product"
-                ? "Producto afiliado"
-                : "Producto propio"
-            }
-            tone={
-              item.commerceMode === "affiliate_product" ? "warning" : "neutral"
-            }
+            label={isAffiliate ? "Producto afiliado" : "Producto propio"}
+            tone={isAffiliate ? "warning" : "neutral"}
           />
-          {item.commerceMode === "affiliate_product" ? (
+          {isAffiliate && !invalidPinnedOffer ? (
             <OnSpaceText variant="labelStrong" color="commerceSuccess">
               Comisión {(item.creatorCommissionBps / 100).toFixed(2)}%
             </OnSpaceText>
-          ) : (
+          ) : !isAffiliate ? (
             <OnSpaceText variant="caption" color="textMuted">
               Sin comisión de creador
             </OnSpaceText>
-          )}
+          ) : null}
         </View>
+        {invalidPinnedOffer ? (
+          <View style={styles.offerNotice}>
+            <StatusPill
+              label={
+                offerReplaced ? "Oferta actualizada" : "Oferta no disponible"
+              }
+              tone="warning"
+            />
+            {offerReplaced ? (
+              <>
+                <OnSpaceText variant="bodySmall">
+                  Comisión fijada: {(pinnedCommission / 100).toFixed(2)}% ·
+                  Oferta nueva: {(currentCommission / 100).toFixed(2)}%
+                </OnSpaceText>
+                <OnSpaceText variant="caption" color="textMuted">
+                  Quita y vuelve a agregar el producto para aceptar la nueva
+                  comisión.
+                </OnSpaceText>
+              </>
+            ) : (
+              <OnSpaceText variant="caption" color="textMuted">
+                El vendedor pausó o retiró esta oferta.
+              </OnSpaceText>
+            )}
+          </View>
+        ) : null}
         <View style={styles.meta}>
           <ProductAvailabilityBadge
             availability={
-              item.availableQuantity > 0 ? "available" : "out_of_stock"
+              item.candidateAvailability === "available"
+                ? "available"
+                : item.candidateAvailability === "out_of_stock"
+                  ? "out_of_stock"
+                  : "product_unavailable"
             }
           />
           <OnSpaceText variant="caption" color="textMuted">
@@ -120,9 +159,10 @@ const HostProductRow = memo(function HostProductRow({
             variant={item.isPinned ? "ghost" : "commerce"}
             size="small"
             loading={busy}
+            disabled={busy || (!item.isPinned && !canAdd)}
             onPress={() => onAction(item.isPinned ? "unpin" : "pin")}
           />
-          {item.isPinned && !item.isFeatured ? (
+          {canFeature ? (
             <OnSpaceButton
               label="Destacar"
               variant="secondary"
@@ -394,6 +434,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexWrap: "wrap",
     gap: spacing.sm,
+  },
+  offerNotice: {
+    gap: spacing.xs,
+    padding: spacing.sm,
+    borderRadius: radii.md,
+    backgroundColor: colors.backgroundSecondary,
   },
   actions: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs },
   loading: { gap: spacing.md },
