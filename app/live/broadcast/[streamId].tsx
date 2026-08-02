@@ -37,6 +37,8 @@ import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
 import type { LiveGiftEvent } from '@/types/liveGifts';
 import { LiveCommerceButton } from '@/components/live/commerce/LiveCommerceButton';
 import { LiveHostProductManager } from '@/components/live/commerce/LiveHostProductManager';
+import { LiveHostPurchaseFeed } from '@/components/live/commerce/LiveHostPurchaseFeed';
+import { LiveFeaturedProductCard } from '@/components/live/commerce/LiveFeaturedProductCard';
 import { fetchLiveSessionProducts, type LiveSessionProduct } from '@/services/liveCommerceService';
 
 const POLL_INTERVAL_MS = 3000;
@@ -1249,6 +1251,8 @@ export default function LiveBroadcasterScreen() {
           <MaterialIcons name="call-end" size={22} color="#fff" />
         </Pressable>
       </View>
+      {liveProducts.find(product => product.isFeatured) ? <LiveFeaturedProductCard product={liveProducts.find(product => product.isFeatured)!} onPress={() => setCommerceVisible(true)} bottom={controlsBottom + 62} /> : null}
+      {streamId ? <LiveHostPurchaseFeed sessionId={streamId} /> : null}
       {streamId ? <LiveHostProductManager visible={commerceVisible} sessionId={streamId} onClose={() => setCommerceVisible(false)} onChanged={refreshLiveProducts} /> : null}
 
       <View
