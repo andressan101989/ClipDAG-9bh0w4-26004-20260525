@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const read=path=>fs.readFileSync(new URL(`../${path}`,import.meta.url),'utf8');
 const migration=read('supabase/migrations/20260802150000_marketplace_mkt_a4a_live_commerce.sql');
+const hardening=read('supabase/migrations/20260802163000_fix_marketplace_mkt_a4a_live_commerce.sql');
 const service=read('services/liveCommerceService.ts');
 const viewer=read('components/live/commerce/LiveViewerCommerce.tsx');
 const host=read('components/live/commerce/LiveHostProductManager.tsx');
@@ -59,12 +60,21 @@ test('LIVE commerce stays mounted with realtime and five-second polling',()=>{
 
 test('viewer flow includes authoritative detail, shipping, reservation, payment and success',()=>{
   for(const value of ['fetchMarketplaceProductDetail','validateShippingAddress','createLiveCheckoutReservation','payMarketplaceCheckout','Compra confirmada','Continuar viendo el LIVE','Ver pedido'])assert.match(viewer,new RegExp(value));
-  assert.match(viewer,/paymentKey=useRef\(randomUUID\(\)\)/);
+  assert.match(viewer,/paymentKey=useRef<string\|null>\(null\)/);
   assert.match(viewer,/lock=useRef\(false\)/);
 });
 
 test('host manager supports pin unpin feature and duplicate-tap locking',()=>{
-  for(const value of ['pinLiveProduct','unpinLiveProduct','featureLiveProduct','new Set<string>'])assert.match(host,new RegExp(value.replace(/[<>]/g,'\\$&')));
+  for(const value of ['pinLiveProduct','unpinLiveProduct','featureLiveProduct','busyIds'])assert.match(host,new RegExp(value));
+});
+
+test('hardening adds private command idempotency and authoritative cursors',()=>{
+  assert.match(hardening,/create table public\.live_commerce_commands/);
+  assert.match(hardening,/unique\(actor_id,idempotency_key\)/);
+  assert.match(hardening,/live_commerce_idempotency_conflict/);
+  assert.match(hardening,/next_cursor/);
+  assert.match(hardening,/limit n\+1/);
+  assert.match(service,/next_cursor/);
 });
 
 test('new client files contain no mojibake markers',()=>{

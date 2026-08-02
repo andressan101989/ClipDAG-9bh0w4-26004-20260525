@@ -1,0 +1,5 @@
+import type{ShippingAddressInput}from'./marketplaceOrderService';
+export interface PendingReservationCommand{signature:string;idempotencyKey:string}
+export const liveReservationSignature=(sessionId:string,pinId:string,variantId:string,quantity:number,address:ShippingAddressInput)=>JSON.stringify([sessionId,pinId,variantId,quantity,address.recipientName.trim(),address.line1.trim(),address.line2?.trim()??'',address.city.trim(),address.region.trim(),address.postalCode.trim(),address.country.trim(),address.phone?.trim()??'']);
+export function reservationCommandFor(signature:string,pending:PendingReservationCommand|null,newUuid:()=>string):PendingReservationCommand{return pending?.signature===signature?pending:{signature,idempotencyKey:newUuid()};}
+export function mergeUniqueCandidates<T extends{id:string}>(current:T[],incoming:T[]){const map=new Map(current.map(item=>[item.id,item]));for(const item of incoming)map.set(item.id,item);return[...map.values()];}
