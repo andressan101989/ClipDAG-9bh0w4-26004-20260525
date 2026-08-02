@@ -53,6 +53,17 @@ test('compatible selections remain while incompatible selections clear',()=>{
   );
 });
 
+test('contextual availability disables impossible sparse combinations',()=>{
+  const variants=[
+    variant('small-red',['size-S','color-Rojo']),
+    variant('large-blue',['size-M','color-Azul']),
+  ];
+  const selected={size:'size-S',color:'color-Rojo'};
+  assert.equal(logic.isOptionValueSelectable(variants,'color-Rojo',selected,'color'),true);
+  assert.equal(logic.isOptionValueSelectable(variants,'color-Azul',selected,'color'),false);
+  assert.equal(logic.isOptionValueSelectable(variants,'size-M',selected,'size'),false);
+});
+
 test('arbitrary three-dimensional options preserve the largest valid previous subset',()=>{
   const finish=option('finish','Acabado',['Mate','Brillante']);
   const capacity=option('capacity','Capacidad',['64 GB','128 GB']);

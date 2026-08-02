@@ -12,8 +12,13 @@ export function variantMatchesSelection(
   );
 }
 
-export function isOptionValueSelectable(variants: MarketplaceVariant[], valueId: string): boolean {
-  return variants.some(variant => variant.status === 'active' && variant.option_value_ids.includes(valueId));
+export function isOptionValueSelectable(
+  variants: MarketplaceVariant[], valueId: string,
+  selectedValues: MarketplaceVariantSelection = {}, ignoredOptionId?: string,
+): boolean {
+  return variants.some(variant => variant.status === 'active'
+    && variant.option_value_ids.includes(valueId)
+    && variantMatchesSelection(variant, selectedValues, ignoredOptionId));
 }
 
 export function reconcileVariantSelection(
