@@ -88,6 +88,13 @@ async function fetchAllCandidates(sessionId, token) {
   } while (cursor !== null);
   return { pages, items: pages.flat(), finalCursor: cursor };
 }
+async function resolveAffiliateOffer(productId, creatorId) {
+  const rows = await rpc("marketplace_resolve_live_affiliate_offer", {
+    p_product_id: productId,
+    p_creator_id: creatorId,
+  });
+  return rows[0] ?? null;
+}
 async function user(role) {
   const email = `mkt-a4b-${role}-${stamp}@example.invalid`,
     created = await request("/auth/v1/admin/users", {
@@ -260,6 +267,7 @@ async function buyOnce({ pin, variant, token, session }) {
 const sellerA = await user("seller-a"),
   hostB = await user("host-b"),
   buyerC = await user("buyer-c"),
+  creatorD = await user("creator-d"),
   ids = {
     storeA: uuid(),
     storeB: uuid(),
@@ -277,11 +285,11 @@ const sellerA = await user("seller-a"),
   };
 await request("/rest/v1/user_profiles?on_conflict=id", {
   method: "POST",
-  body: [sellerA, hostB, buyerC].map((u, i) => ({
+  body: [sellerA, hostB, buyerC, creatorD].map((u, i) => ({
     id: u.id,
     email: u.email,
     username: `a4b_${i}_${stamp}`,
-    display_name: ["Seller A", "Creator B", "Buyer C"][i],
+    display_name: ["Seller A", "Creator B", "Buyer C", "Creator D"][i],
   })),
   headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
 });
@@ -531,7 +539,7 @@ const offerArgs = {
   p_product_id: ids.productA,
   p_offer_scope: "specific_creator",
   p_creator_id: hostB.id,
-  p_commission_bps: 500,
+  p_commission_bps: 1200,
   p_status: "active",
   p_starts_at: null,
   p_ends_at: null,
@@ -540,6 +548,20 @@ const offerArgs = {
 const offer = await rpc(
     "upsert_my_live_affiliate_offer",
     offerArgs,
+    sellerA.token,
+  ),
+  publicOffer = await rpc(
+    "upsert_my_live_affiliate_offer",
+    {
+      p_product_id: ids.productA,
+      p_offer_scope: "public_creator",
+      p_creator_id: null,
+      p_commission_bps: 500,
+      p_status: "active",
+      p_starts_at: null,
+      p_ends_at: null,
+      p_idempotency_key: uuid(),
+    },
     sellerA.token,
   ),
   ownPin = await rpc(
@@ -569,7 +591,37 @@ assert(
 assert(
   "affiliate_pin",
   affiliatePin.commerce_mode === "affiliate_product" &&
-    affiliatePin.creator_commission_bps === 500,
+    affiliatePin.creator_commission_bps === 1200,
+);
+const precedenceCandidates = await fetchAllCandidates(ids.session, hostB.token),
+  precedenceCandidate = precedenceCandidates.items.find(
+    (item) => item.product_id === ids.productA,
+  ),
+  pinnedPrecedenceRow = (
+    await select(
+      "live_session_products",
+      `select=affiliate_offer_id,creator_commission_bps&id=eq.${affiliatePin.id}`,
+    )
+  )[0];
+assert(
+  "candidate_and_pin_specific_precedence",
+  precedenceCandidate.current_offer_id === offer.id &&
+    precedenceCandidate.current_offer_commission_bps === 1200 &&
+    pinnedPrecedenceRow.affiliate_offer_id === offer.id &&
+    pinnedPrecedenceRow.creator_commission_bps === 1200 &&
+    publicOffer.id !== offer.id,
+);
+const hostResolvedOffer = await resolveAffiliateOffer(ids.productA, hostB.id),
+  unrelatedResolvedOffer = await resolveAffiliateOffer(
+    ids.productA,
+    creatorD.id,
+  );
+assert(
+  "specific_over_newer_public",
+  hostResolvedOffer.offer_id === offer.id &&
+    hostResolvedOffer.commission_bps === 1200 &&
+    unrelatedResolvedOffer.offer_id === publicOffer.id &&
+    unrelatedResolvedOffer.commission_bps === 500,
 );
 const offerRetry = await rpc(
   "upsert_my_live_affiliate_offer",
@@ -718,8 +770,11 @@ assert(
   "paused_pin_remains_host_visible",
   pausedCandidate?.is_pinned === true &&
     pausedCandidate?.pin_offer_valid === false &&
-    pausedCandidate?.pinned_creator_commission_bps === 500 &&
-    pausedCandidate?.candidate_availability === "affiliate_offer_unavailable",
+    pausedCandidate?.pinned_creator_commission_bps === 1200 &&
+    pausedCandidate?.current_offer_id === publicOffer.id &&
+    pausedCandidate?.current_offer_commission_bps === 500 &&
+    pausedCandidate?.requires_repin === true &&
+    pausedCandidate?.candidate_availability === "affiliate_offer_replaced",
 );
 assert(
   "paused_pin_feature_denied",
@@ -806,8 +861,8 @@ const affiliate = await payReservation({
 assert(
   "affiliate_split",
   eq(allocation.gross_amount, 1) &&
-    eq(allocation.seller_net_amount, 0.85) &&
-    eq(allocation.creator_commission_amount, 0.05) &&
+    eq(allocation.seller_net_amount, 0.78) &&
+    eq(allocation.creator_commission_amount, 0.12) &&
     eq(allocation.platform_fee_amount, 0.1) &&
     allocation.creator_user_id === hostB.id,
 );
@@ -816,14 +871,14 @@ assert(
   source.host_id === hostB.id &&
     source.seller_id === sellerA.id &&
     source.affiliate_offer_id === offer.id &&
-    source.creator_commission_bps === 500 &&
-    eq(source.creator_commission_amount, 0.05),
+    source.creator_commission_bps === 1200 &&
+    eq(source.creator_commission_amount, 0.12),
 );
 assert(
   "purchase_event",
   purchase.host_id === hostB.id &&
     purchase.order_id === affiliate.order &&
-    eq(purchase.creator_commission_amount, 0.05),
+    eq(purchase.creator_commission_amount, 0.12),
 );
 assert(
   "affiliate_payment_balances",
@@ -899,7 +954,7 @@ assert(
   "stats_before_delivery",
   statsHeld.orders_count === 2 &&
     eq(statsHeld.gross_sales, 2) &&
-    eq(statsHeld.creator_commission_held, 0.05) &&
+    eq(statsHeld.creator_commission_held, 0.12) &&
     eq(statsHeld.creator_commission_released, 0),
 );
 await rpc(
@@ -937,8 +992,8 @@ const beforeDelivery = await snapshot(accounts),
 assert(
   "delivery_split",
   eq(beforeDelivery.escrow - afterDelivery.escrow, 1) &&
-    eq(afterDelivery.sellerA - beforeDelivery.sellerA, 0.85) &&
-    eq(afterDelivery.hostB - beforeDelivery.hostB, 0.05) &&
+    eq(afterDelivery.sellerA - beforeDelivery.sellerA, 0.78) &&
+    eq(afterDelivery.hostB - beforeDelivery.hostB, 0.12) &&
     eq(afterDelivery.platform - beforeDelivery.platform, 0.1),
 );
 assert(
@@ -985,7 +1040,7 @@ assert(
   "stats_after_delivery",
   statsReleased.orders_count === 2 &&
     eq(statsReleased.creator_commission_held, 0) &&
-    eq(statsReleased.creator_commission_released, 0.05),
+    eq(statsReleased.creator_commission_released, 0.12),
 );
 const revocationArgs = (productId, status, endsAt = null) => ({
   p_product_id: productId,
@@ -999,8 +1054,33 @@ const revocationArgs = (productId, status, endsAt = null) => ({
 });
 const oldOfferC = await rpc(
   "upsert_my_live_affiliate_offer",
-  revocationArgs(ids.productC, "active"),
+  {
+    ...revocationArgs(ids.productC, "active"),
+    p_commission_bps: 700,
+  },
   sellerA.token,
+);
+const publicOfferC = await rpc(
+  "upsert_my_live_affiliate_offer",
+  {
+    ...revocationArgs(ids.productC, "active"),
+    p_offer_scope: "public_creator",
+    p_creator_id: null,
+    p_commission_bps: 1500,
+  },
+  sellerA.token,
+);
+const lowerSpecificResolution = await resolveAffiliateOffer(
+    ids.productC,
+    hostB.id,
+  ),
+  higherPublicFallback = await resolveAffiliateOffer(ids.productC, creatorD.id);
+assert(
+  "specific_lower_than_public_precedence",
+  lowerSpecificResolution.offer_id === oldOfferC.id &&
+    lowerSpecificResolution.commission_bps === 700 &&
+    higherPublicFallback.offer_id === publicOfferC.id &&
+    higherPublicFallback.commission_bps === 1500,
 );
 const replacedPin = await rpc(
   "pin_live_session_product",
@@ -1020,10 +1100,78 @@ const currentOfferC = await rpc(
   },
   sellerA.token,
 );
+const publicOnlyOffer = await rpc(
+  "upsert_my_live_affiliate_offer",
+  {
+    ...revocationArgs(ids.productE, "active"),
+    p_offer_scope: "public_creator",
+    p_creator_id: null,
+  },
+  sellerA.token,
+);
+const publicOnlyResolution = await resolveAffiliateOffer(
+  ids.productE,
+  hostB.id,
+);
+const publicOnlyPin = await rpc(
+  "pin_live_session_product",
+  {
+    p_session_id: ids.session,
+    p_product_id: ids.productE,
+    p_featured_variant_id: ids.variantE,
+    p_idempotency_key: uuid(),
+  },
+  hostB.token,
+);
+const publicOnlyPinRow = (
+  await select(
+    "live_session_products",
+    `select=affiliate_offer_id,creator_commission_bps&id=eq.${publicOnlyPin.id}`,
+  )
+)[0];
+const publicOnlyCandidate = (
+  await fetchAllCandidates(ids.session, hostB.token)
+).items.find((item) => item.product_id === ids.productE);
+assert(
+  "public_only_candidate_pin_resolution",
+  publicOnlyResolution.offer_id === publicOnlyOffer.id &&
+    publicOnlyResolution.commission_bps === 500 &&
+    publicOnlyCandidate.current_offer_id === publicOnlyOffer.id &&
+    publicOnlyCandidate.current_offer_commission_bps === 500 &&
+    publicOnlyPinRow.affiliate_offer_id === publicOnlyOffer.id &&
+    publicOnlyPinRow.creator_commission_bps === 500,
+);
+await rpc(
+  "unpin_live_session_product",
+  {
+    p_session_id: ids.session,
+    p_live_session_product_id: publicOnlyPin.id,
+    p_idempotency_key: uuid(),
+  },
+  hostB.token,
+);
+await rpc(
+  "upsert_my_live_affiliate_offer",
+  {
+    ...revocationArgs(ids.productE, "paused"),
+    p_offer_scope: "public_creator",
+    p_creator_id: null,
+  },
+  sellerA.token,
+);
 await rpc(
   "upsert_my_live_affiliate_offer",
   revocationArgs(ids.productE, "active"),
   sellerA.token,
+);
+const publicPausedSpecificActive = await resolveAffiliateOffer(
+  ids.productE,
+  hostB.id,
+);
+assert(
+  "public_paused_specific_active",
+  publicPausedSpecificActive.offer_scope === "specific_creator" &&
+    publicPausedSpecificActive.commission_bps === 500,
 );
 const removedPin = await rpc(
   "pin_live_session_product",
@@ -1040,11 +1188,36 @@ await rpc(
   revocationArgs(ids.productE, "removed"),
   sellerA.token,
 );
+assert(
+  "both_unavailable",
+  (await resolveAffiliateOffer(ids.productE, hostB.id)) === null,
+);
 const expiresAt = new Date(Date.now() + 4_000).toISOString();
+const publicOfferD = await rpc(
+  "upsert_my_live_affiliate_offer",
+  {
+    ...revocationArgs(ids.productD, "active"),
+    p_offer_scope: "public_creator",
+    p_creator_id: null,
+    p_commission_bps: 400,
+  },
+  sellerA.token,
+);
 await rpc(
   "upsert_my_live_affiliate_offer",
-  revocationArgs(ids.productD, "active", expiresAt),
+  {
+    ...revocationArgs(ids.productD, "active", expiresAt),
+    p_commission_bps: 1800,
+  },
   sellerA.token,
+);
+const higherSpecificResolution = await resolveAffiliateOffer(
+  ids.productD,
+  hostB.id,
+);
+assert(
+  "specific_higher_than_public_precedence",
+  higherSpecificResolution.commission_bps === 1800,
 );
 const expiredPin = await rpc(
   "pin_live_session_product",
@@ -1057,6 +1230,15 @@ const expiredPin = await rpc(
   hostB.token,
 );
 await new Promise((resolve) => setTimeout(resolve, 4_500));
+const expiredSpecificFallback = await resolveAffiliateOffer(
+  ids.productD,
+  hostB.id,
+);
+assert(
+  "expired_specific_public_fallback",
+  expiredSpecificFallback.offer_id === publicOfferD.id &&
+    expiredSpecificFallback.commission_bps === 400,
+);
 const revocationShelf = await rpc(
   "fetch_live_session_products",
   { p_session_id: ids.session },
@@ -1097,7 +1279,7 @@ assert(
     replacedCandidate?.candidate_availability === "affiliate_offer_replaced" &&
     replacedCandidate?.pinned_offer_id === oldOfferC.id &&
     replacedCandidate?.current_offer_id === currentOfferC.id &&
-    replacedCandidate?.pinned_creator_commission_bps === 500 &&
+    replacedCandidate?.pinned_creator_commission_bps === 700 &&
     replacedCandidate?.current_offer_commission_bps === 1000 &&
     replacedCandidate?.requires_repin === true,
 );
@@ -1109,7 +1291,9 @@ assert(
       "affiliate_offer_unavailable" &&
     expiredCandidate?.is_pinned === true &&
     expiredCandidate?.pin_offer_valid === false &&
-    expiredCandidate?.candidate_availability === "affiliate_offer_unavailable",
+    expiredCandidate?.candidate_availability === "affiliate_offer_replaced" &&
+    expiredCandidate?.current_offer_id === publicOfferD.id &&
+    expiredCandidate?.current_offer_commission_bps === 400,
 );
 for (const [name, pin, variant] of [
   ["replaced", replacedPin.id, ids.variantC],
@@ -1139,16 +1323,19 @@ for (const [name, pin, variant] of [
     ),
   );
 }
-const hostMutationBefore = {
+const selfPurchaseMutationSnapshot = async () => ({
   checkouts: (
     await select(
       "marketplace_checkout_sessions",
       `select=id&buyer_id=eq.${hostB.id}`,
     )
   ).length,
-  sources: (
+  orders: (
+    await select("marketplace_orders", `select=id&buyer_id=eq.${hostB.id}`)
+  ).length,
+  reservations: (
     await select(
-      "marketplace_live_order_sources",
+      "marketplace_inventory_reservations",
       `select=id&buyer_id=eq.${hostB.id}`,
     )
   ).length,
@@ -1158,7 +1345,43 @@ const hostMutationBefore = {
       `select=on_hand,reserved&variant_id=eq.${ids.variantC}`,
     )
   )[0],
-};
+  payments: (
+    await select("marketplace_payments", `select=id&buyer_id=eq.${hostB.id}`)
+  ).length,
+  allocations: (await select("marketplace_payment_allocations", "select=id"))
+    .length,
+  financialTransactions: (
+    await select(
+      "financial_transactions",
+      `select=id&initiated_by=eq.${hostB.id}`,
+    )
+  ).length,
+  sources: (
+    await select(
+      "marketplace_live_order_sources",
+      `select=id&buyer_id=eq.${hostB.id}`,
+    )
+  ).length,
+  internalEvents: (
+    await select(
+      "live_commerce_purchase_events",
+      `select=id&session_id=eq.${ids.session}`,
+    )
+  ).length,
+  safeEvents: (
+    await select(
+      "live_commerce_host_purchase_events",
+      `select=id&session_id=eq.${ids.session}`,
+    )
+  ).length,
+  settlements: (
+    await select(
+      "marketplace_order_settlements",
+      `select=id&buyer_id=eq.${hostB.id}`,
+    )
+  ).length,
+});
+const hostMutationBefore = await selfPurchaseMutationSnapshot();
 assert(
   "affiliate_host_self_purchase_denied",
   await deniedWithCode(
@@ -1172,26 +1395,7 @@ assert(
     "live_affiliate_self_purchase_forbidden",
   ),
 );
-const hostMutationAfter = {
-  checkouts: (
-    await select(
-      "marketplace_checkout_sessions",
-      `select=id&buyer_id=eq.${hostB.id}`,
-    )
-  ).length,
-  sources: (
-    await select(
-      "marketplace_live_order_sources",
-      `select=id&buyer_id=eq.${hostB.id}`,
-    )
-  ).length,
-  inventory: (
-    await select(
-      "marketplace_inventory_levels",
-      `select=on_hand,reserved&variant_id=eq.${ids.variantC}`,
-    )
-  )[0],
-};
+const hostMutationAfter = await selfPurchaseMutationSnapshot();
 assert(
   "affiliate_host_self_purchase_zero_mutation",
   JSON.stringify(hostMutationBefore) === JSON.stringify(hostMutationAfter),
@@ -1292,7 +1496,7 @@ assert(
     statsBeyondPage.units_sold === 51 &&
     eq(statsBeyondPage.gross_sales, 51) &&
     eq(statsBeyondPage.creator_commission_held, 0.1) &&
-    eq(statsBeyondPage.creator_commission_released, 0.05),
+    eq(statsBeyondPage.creator_commission_released, 0.12),
 );
 const finalPaymentReconciliation = await rpc("reconcile_marketplace_payments"),
   finalSettlementReconciliation = await rpc(
@@ -1322,6 +1526,7 @@ console.log(
         sellerA: redact(sellerA.id),
         hostB: redact(hostB.id),
         buyerC: redact(buyerC.id),
+        creatorD: redact(creatorD.id),
         session: redact(ids.session),
         offer: redact(offer.id),
         ownOrder: redact(own.order),
@@ -1363,6 +1568,23 @@ console.log(
         selfPurchaseZeroMutation:
           JSON.stringify(hostMutationBefore) ===
           JSON.stringify(hostMutationAfter),
+      },
+      precedence: {
+        publicOnly: {
+          offer: redact(publicOnlyOffer.id),
+          bps: publicOnlyResolution.commission_bps,
+        },
+        simultaneous: {
+          specificOffer: redact(offer.id),
+          publicOffer: redact(publicOffer.id),
+          hostBps: hostResolvedOffer.commission_bps,
+          unrelatedBps: unrelatedResolvedOffer.commission_bps,
+        },
+        lowerSpecificBps: lowerSpecificResolution.commission_bps,
+        higherPublicBps: higherPublicFallback.commission_bps,
+        higherSpecificBps: higherSpecificResolution.commission_bps,
+        expiredFallbackBps: expiredSpecificFallback.commission_bps,
+        selfPurchaseMutationMatrix: hostMutationBefore,
       },
       reconciliation: {
         paymentReconciliation: finalPaymentReconciliation,
