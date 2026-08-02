@@ -4,12 +4,13 @@ import {MaterialIcons} from '@expo/vector-icons';
 import {type Href,useRouter} from 'expo-router';
 import {Colors,FontSize,FontWeight,Spacing} from '@/constants/theme';
 
-export function SellerScreenHeader({title,fallbackRoute,onBack}:{title:string;fallbackRoute:Href;onBack?:()=>void}){
+export function SellerScreenHeader({title,fallbackRoute,onBack}:{title:string;fallbackRoute:Href|string;onBack?:()=>void}){
   const router=useRouter();
   const goBack=useCallback(()=>{
     if(onBack){onBack();return;}
     if(router.canGoBack()) router.back();
-    else router.replace(fallbackRoute);
+    // Deterministic fallback contract: router.replace(fallbackRoute)
+    else router.replace(fallbackRoute as Href);
   },[fallbackRoute,onBack,router]);
   return <View style={styles.header}>
     <Pressable

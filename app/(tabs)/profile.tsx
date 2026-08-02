@@ -578,6 +578,14 @@ export default function ProfileScreen() {
             />
             <View style={styles.settingsDivider} />
             <SettingsItem
+              icon="package-variant-closed"
+              label="Mis pedidos"
+              sublabel="Compras, envíos y seguimiento"
+              gradient={['#2D9EFF', '#7C5CFF']}
+              onPress={() => router.push('/orders' as never)}
+            />
+            <View style={styles.settingsDivider} />
+            <SettingsItem
               icon="star-outline"
               label={t('profile.mySubscriptions')}
               sublabel={t('profile.mySubscriptionsSub')}

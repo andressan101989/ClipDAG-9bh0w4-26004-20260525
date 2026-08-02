@@ -27,6 +27,7 @@ export default function SellerHome(){
     {seller?.status==='approved'?<>
       <Action label={store?'Configurar tienda':'Crear tienda'} onPress={()=>router.push('/seller/store' as never)}/>
       {store?<Action label="Mis productos" onPress={()=>router.push('/seller/products' as never)}/>:null}
+      {store?.status==='active'?<Action label="Pedidos recibidos" onPress={()=>router.push('/seller/orders' as never)}/>:null}
     </>:null}</View>}
   </View>;
 }
