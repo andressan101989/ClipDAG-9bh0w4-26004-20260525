@@ -6,8 +6,12 @@ const read=path=>fs.readFileSync(new URL(`../${path}`,import.meta.url),'utf8');
 const migration=read('supabase/migrations/20260802150000_marketplace_mkt_a4a_live_commerce.sql');
 const hardening=read('supabase/migrations/20260802163000_fix_marketplace_mkt_a4a_live_commerce.sql');
 const service=read('services/liveCommerceService.ts');
-const viewer=read('components/live/commerce/LiveViewerCommerce.tsx');
-const host=read('components/live/commerce/LiveHostProductManager.tsx');
+const viewer=[
+  read('components/live/commerce/LiveViewerCommerce.tsx'),
+  read('components/live/shop/LivePurchaseSuccess.tsx'),
+  read('components/live/shop/LiveShippingForm.tsx'),
+].join('\n');
+const host=read('components/live/shop/LiveHostShopManager.tsx');
 const watch=read('app/live/watch/[streamId].tsx');
 const broadcast=read('app/live/broadcast/[streamId].tsx');
 
@@ -59,9 +63,9 @@ test('LIVE commerce stays mounted with realtime and five-second polling',()=>{
 });
 
 test('viewer flow includes authoritative detail, shipping, reservation, payment and success',()=>{
-  for(const value of ['fetchMarketplaceProductDetail','validateShippingAddress','createLiveCheckoutReservation','payMarketplaceCheckout','Compra confirmada','Continuar viendo el LIVE','Ver pedido'])assert.match(viewer,new RegExp(value));
-  assert.match(viewer,/paymentKey=useRef<string\|null>\(null\)/);
-  assert.match(viewer,/lock=useRef\(false\)/);
+  for(const value of ['fetchMarketplaceProductDetail','validateShippingAddress','createLiveCheckoutReservation','payMarketplaceCheckout','Compra confirmada','Seguir viendo','Ver pedido'])assert.match(viewer,new RegExp(value));
+  assert.match(viewer,/paymentKey = useRef<string \| null>\(null\)/);
+  assert.match(viewer,/lock = useRef\(false\)/);
 });
 
 test('host manager supports pin unpin feature and duplicate-tap locking',()=>{
