@@ -1,3 +1,4 @@
+/* eslint-disable import/first */
 /**
  * app/_layout.tsx — Root layout with full provider chain restored
  *
@@ -16,10 +17,10 @@ console.log('[BOOT] 1 - expo-router imported');
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 console.log('[BOOT] 2 - safe-area imported');
 
-import { AlertProvider } from '@/template';
-import { AuthProvider as TemplateAuthProvider } from '@/template';
+import { AlertProvider, AuthProvider as TemplateAuthProvider } from '@/template';
 console.log('[BOOT] 3 - template providers imported');
 
 import { I18nProvider } from '@/contexts/I18nContext';
@@ -153,9 +154,10 @@ function AppShell() {
 export default function RootLayout() {
   console.log('[BOOT] 10 - RootLayout render');
   return (
-    <ErrorBoundary module="RootLayout" showReset>
-      <AlertProvider>
-        <SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ErrorBoundary module="RootLayout" showReset>
+        <AlertProvider>
+          <SafeAreaProvider>
           <TemplateAuthProvider>
             <I18nProvider>
               <AuthProvider>
@@ -163,8 +165,9 @@ export default function RootLayout() {
               </AuthProvider>
             </I18nProvider>
           </TemplateAuthProvider>
-        </SafeAreaProvider>
-      </AlertProvider>
-    </ErrorBoundary>
+          </SafeAreaProvider>
+        </AlertProvider>
+      </ErrorBoundary>
+    </GestureHandlerRootView>
   );
 }

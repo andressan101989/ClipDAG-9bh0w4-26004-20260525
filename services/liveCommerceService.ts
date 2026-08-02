@@ -20,6 +20,20 @@ export type LiveProductAvailability =
   | "product_unavailable"
   | "affiliate_offer_unavailable"
   | "live_ended";
+export type LiveProductReadinessReason =
+  | "ready"
+  | "seller_not_approved"
+  | "store_not_active"
+  | "product_not_active"
+  | "product_not_approved"
+  | "product_deleted"
+  | "unsupported_product_type"
+  | "unsupported_currency"
+  | "no_active_variant"
+  | "inventory_not_configured"
+  | "out_of_stock"
+  | "affiliate_offer_unavailable"
+  | "affiliate_offer_replaced";
 export interface LiveSessionProduct {
   id: string;
   productId: string;
@@ -63,6 +77,7 @@ export interface LiveProductCandidate {
     | "product_unavailable"
     | "affiliate_offer_unavailable"
     | "affiliate_offer_replaced";
+  readinessReasonCode: LiveProductReadinessReason;
   pinOfferValid: boolean;
   pinnedCreatorCommissionBps: number | null;
   currentOfferCommissionBps: number | null;
@@ -295,6 +310,7 @@ export async function fetchMyLiveProductCandidates(
     const r = raw as Record<string, unknown>,
       commerceMode = r.commerce_mode,
       candidateAvailability = r.candidate_availability,
+      readinessReasonCode = String(r.readiness_reason_code),
       nullableBps = (value: unknown) => {
         if (value == null) return null;
         const parsed = finite(value);
@@ -324,6 +340,21 @@ export async function fetchMyLiveProductCandidates(
         "affiliate_offer_unavailable",
         "affiliate_offer_replaced",
       ].includes(String(candidateAvailability)) ||
+      ![
+        "ready",
+        "seller_not_approved",
+        "store_not_active",
+        "product_not_active",
+        "product_not_approved",
+        "product_deleted",
+        "unsupported_product_type",
+        "unsupported_currency",
+        "no_active_variant",
+        "inventory_not_configured",
+        "out_of_stock",
+        "affiliate_offer_unavailable",
+        "affiliate_offer_replaced",
+      ].includes(readinessReasonCode) ||
       typeof r.pin_offer_valid !== "boolean" ||
       typeof r.requires_repin !== "boolean"
     )
@@ -349,6 +380,8 @@ export async function fetchMyLiveProductCandidates(
       creatorCommissionBps,
       candidateAvailability:
         candidateAvailability as LiveProductCandidate["candidateAvailability"],
+      readinessReasonCode:
+        readinessReasonCode as LiveProductReadinessReason,
       pinOfferValid: r.pin_offer_valid,
       pinnedCreatorCommissionBps: nullableBps(r.pinned_creator_commission_bps),
       currentOfferCommissionBps: nullableBps(r.current_offer_commission_bps),

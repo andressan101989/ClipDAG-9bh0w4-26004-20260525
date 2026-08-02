@@ -93,9 +93,17 @@ export async function fetchCategories():Promise<MarketplaceCategoryRecord[]> {
 }
 
 export async function fetchProducts(opts?:{category?:MarketplaceCategory|'';sellerId?:string;limit?:number;search?:string}):Promise<Product[]> {
+  const limit=opts?.limit??30;
+  const ready=await db().rpc('fetch_marketplace_ready_product_ids',{
+    p_category:opts?.category||null,p_seller_id:opts?.sellerId??null,
+    p_search:opts?.search??null,p_limit:limit,
+  });
+  if(ready.error) throw ready.error;
+  const ids=Array.isArray(ready.data)?ready.data.filter((id):id is string=>typeof id==='string'):[];
+  if(ids.length===0) return [];
   let query=db().from('products').select(PRODUCT_WITH_SELLER)
-    .eq('status','active').eq('currency','BDAG').order('created_at',{ascending:false})
-    .limit(opts?.limit??30);
+    .eq('status','active').eq('currency','BDAG').in('id',ids)
+    .order('created_at',{ascending:false}).limit(limit);
   if(opts?.category) query=query.eq('category',opts.category);
   if(opts?.sellerId) query=query.eq('seller_id',opts.sellerId);
   if(opts?.search) query=query.ilike('title',`%${opts.search}%`);

@@ -36,6 +36,20 @@ import {
 } from "@/services/liveCommerceService";
 
 const PAGE_SIZE = 20;
+const readinessMessage: Partial<
+  Record<LiveProductCandidate["readinessReasonCode"], string>
+> = {
+  seller_not_approved: "Tu cuenta de vendedor todavía no está aprobada.",
+  store_not_active: "Activa tu tienda para vender este producto.",
+  product_not_active: "Publica este producto antes de agregarlo al LIVE.",
+  product_not_approved: "Este producto todavía está en revisión.",
+  product_deleted: "Este producto fue eliminado.",
+  unsupported_product_type: "Solo los productos físicos pueden venderse en LIVE.",
+  unsupported_currency: "Este producto debe venderse en BDAG.",
+  no_active_variant: "Configura al menos una variante activa.",
+  inventory_not_configured: "Completa el inventario de este producto.",
+  out_of_stock: "Este producto no tiene inventario disponible.",
+};
 const errorMessage = (error: unknown) => {
   const code =
     error instanceof LiveCommerceError ? error.code : "live_commerce_unknown";
@@ -137,6 +151,14 @@ const HostProductRow = memo(function HostProductRow({
                 El vendedor pausó o retiró esta oferta.
               </OnSpaceText>
             )}
+          </View>
+        ) : item.readinessReasonCode !== "ready" ? (
+          <View style={styles.offerNotice}>
+            <StatusPill label="Requiere atención" tone="warning" />
+            <OnSpaceText variant="caption" color="textMuted">
+              {readinessMessage[item.readinessReasonCode] ??
+                "Este producto no está disponible para LIVE."}
+            </OnSpaceText>
           </View>
         ) : null}
         <View style={styles.meta}>

@@ -8,7 +8,11 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import {
+  Gesture,
+  GestureDetector,
+  GestureHandlerRootView,
+} from "react-native-gesture-handler";
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -149,7 +153,8 @@ export function LiveProductBagSheet({
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <View style={styles.scrim}>
+      <GestureHandlerRootView style={styles.gestureRoot}>
+        <View style={styles.scrim}>
         <Pressable
           accessibilityLabel="Cerrar bolsa"
           style={StyleSheet.absoluteFill}
@@ -226,12 +231,14 @@ export function LiveProductBagSheet({
             </BottomSheetSurface>
           </Animated.View>
         </GestureDetector>
-      </View>
+        </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  gestureRoot: { flex: 1 },
   scrim: { flex: 1, justifyContent: "flex-end", backgroundColor: colors.scrim },
   sheet: { maxHeight: "82%", minHeight: "54%" },
   header: {
