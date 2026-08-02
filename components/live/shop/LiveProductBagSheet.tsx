@@ -77,6 +77,11 @@ const ProductRow = memo(function ProductRow({
           compareAtPrice={item.compareAtPrice}
         />
         <ProductAvailabilityBadge availability={item.availability} />
+        {item.availability === "affiliate_offer_unavailable" ? (
+          <OnSpaceText variant="caption" color="textWarning">
+            La oferta de este creador ya no está disponible.
+          </OnSpaceText>
+        ) : null}
       </View>
     </Pressable>
   );

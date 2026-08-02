@@ -24,6 +24,7 @@ interface LiveProductRailProps {
   productCount: number;
   bottom: number;
   keyboardVisible?: boolean;
+  mode?: "viewer" | "host";
   onBuy: () => void;
   onOpenBag: () => void;
 }
@@ -32,6 +33,7 @@ export const LiveProductRail = memo(function LiveProductRail({
   productCount,
   bottom,
   keyboardVisible = false,
+  mode = "viewer",
   onBuy,
   onOpenBag,
 }: LiveProductRailProps) {
@@ -45,6 +47,7 @@ export const LiveProductRail = memo(function LiveProductRail({
   }));
   if (keyboardVisible) return null;
   const unavailable = product.availability !== "available";
+  const actionDisabled = mode === "viewer" && unavailable;
   return (
     <Animated.View
       accessibilityLabel="Producto destacado del LIVE"
@@ -76,6 +79,11 @@ export const LiveProductRail = memo(function LiveProductRail({
             price={product.minPrice}
             compareAtPrice={product.compareAtPrice}
           />
+          {product.soldCount > 0 ? (
+            <OnSpaceText variant="caption" color="textMuted">
+              {product.soldCount} vendidos
+            </OnSpaceText>
+          ) : null}
           {unavailable ? (
             <ProductAvailabilityBadge availability={product.availability} />
           ) : null}
@@ -83,10 +91,14 @@ export const LiveProductRail = memo(function LiveProductRail({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
-            unavailable ? "Producto no disponible" : `Comprar ${product.title}`
+            unavailable
+              ? "Producto no disponible"
+              : mode === "host"
+                ? `Administrar ${product.title}`
+                : `Comprar ${product.title}`
           }
-          accessibilityState={{ disabled: unavailable }}
-          disabled={unavailable}
+          accessibilityState={{ disabled: actionDisabled }}
+          disabled={actionDisabled}
           onPress={onBuy}
           style={({ pressed }) => [
             styles.buy,
@@ -95,7 +107,7 @@ export const LiveProductRail = memo(function LiveProductRail({
           ]}
         >
           <OnSpaceText variant="labelStrong" color="textInverse">
-            Comprar
+            {mode === "host" ? "Administrar" : "Comprar"}
           </OnSpaceText>
         </Pressable>
       </Animated.View>

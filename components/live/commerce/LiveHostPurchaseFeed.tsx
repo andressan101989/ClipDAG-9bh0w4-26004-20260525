@@ -1,14 +1,143 @@
-import React,{useCallback,useEffect,useMemo,useRef,useState}from'react';
-import{StyleSheet,Text,View}from'react-native';
-import{getSupabaseClient}from'@/template';
-import{fetchMyLivePurchaseEvents,type LivePurchaseEvent}from'@/services/liveCommerceService';
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { AppState, StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-export function LiveHostPurchaseFeed({sessionId}:{sessionId:string}){
- const[events,setEvents]=useState<LivePurchaseEvent[]>([]),[toast,setToast]=useState<LivePurchaseEvent|null>(null);const seen=useRef(new Set<string>()),ready=useRef(false),queue=useRef<LivePurchaseEvent[]>([]),timer=useRef<ReturnType<typeof setTimeout>|null>(null);
- const showNext=useCallback(()=>{if(timer.current||queue.current.length===0)return;const next=queue.current.shift()!;setToast(next);timer.current=setTimeout(()=>{timer.current=null;setToast(null);showNext()},3500)},[]);
- const refresh=useCallback(async()=>{try{const next=await fetchMyLivePurchaseEvents(sessionId);setEvents(next);if(ready.current){next.slice().reverse().forEach(event=>{if(!seen.current.has(event.id)){seen.current.add(event.id);queue.current.push(event)}});showNext()}else{next.forEach(event=>seen.current.add(event.id));ready.current=true}}catch{/* polling retries without exposing purchase data */}},[sessionId,showNext]);
- useEffect(()=>{void refresh();const poll=setInterval(()=>void refresh(),5000);const db=getSupabaseClient(),channel=db.channel(`live-purchases:${sessionId}`).on('postgres_changes',{event:'INSERT',schema:'public',table:'live_commerce_purchase_events',filter:`session_id=eq.${sessionId}`},()=>void refresh()).subscribe();return()=>{clearInterval(poll);if(timer.current)clearTimeout(timer.current);void db.removeChannel(channel)}},[refresh,sessionId]);
- const stats=useMemo(()=>({orders:events.length,gross:events.reduce((n,e)=>n+e.grossAmount,0),held:events.filter(e=>e.creatorCommissionStatus==='held').reduce((n,e)=>n+e.creatorCommissionAmount,0),released:events.filter(e=>e.creatorCommissionStatus==='released').reduce((n,e)=>n+e.creatorCommissionAmount,0)}),[events]);
- return <><View pointerEvents="none" style={s.stats}><Text style={s.statsText}>{stats.orders} pedidos · {stats.gross.toFixed(2)} BDAG</Text>{stats.held+stats.released>0?<Text style={s.commission}>Comisión {stats.held.toFixed(2)} retenida · {stats.released.toFixed(2)} liberada</Text>:null}</View>{toast?<View pointerEvents="none" style={s.toast} accessibilityLiveRegion="polite"><Text style={s.title}>{toast.buyerDisplayName} compró</Text><Text style={s.body}>{toast.quantity} × {toast.productTitle} · {toast.grossAmount.toFixed(2)} BDAG</Text>{toast.creatorCommissionAmount>0?<Text style={s.commission}>Tu comisión: {toast.creatorCommissionAmount.toFixed(2)} BDAG</Text>:null}</View>:null}</>;
+import { GlassSurface, OnSpaceText } from "@/components/design";
+import {
+  LiveCommissionMetric,
+  LivePurchaseToastQueue,
+  LiveSalesMetric,
+  LiveShopStatsPill,
+  type LivePurchaseToastData,
+} from "@/components/live/shop/LiveShopHud";
+import { spacing } from "@/design";
+import {
+  fetchMyLivePurchaseEvents,
+  fetchMyLiveShopStats,
+  type LivePurchaseEvent,
+  type LiveShopStats,
+} from "@/services/liveCommerceService";
+import { getSupabaseClient } from "@/template";
+
+const POLL_INTERVAL_MS = 5_000;
+const EMPTY_STATS: LiveShopStats = {
+  ordersCount: 0,
+  grossSales: 0,
+  creatorCommissionHeld: 0,
+  creatorCommissionReleased: 0,
+  unitsSold: 0,
+};
+
+function toastData(event: LivePurchaseEvent): LivePurchaseToastData {
+  return {
+    id: event.id,
+    buyerDisplayName: event.buyerDisplayName,
+    productTitle: event.productTitle,
+    quantity: event.quantity,
+    grossAmount: event.grossAmount,
+    creatorCommission: event.creatorCommissionAmount,
+    commerceMode:
+      event.creatorCommissionAmount > 0 ? "affiliate_product" : "own_product",
+  };
 }
-const s=StyleSheet.create({stats:{position:'absolute',top:92,right:12,zIndex:12,paddingHorizontal:10,paddingVertical:7,borderRadius:12,backgroundColor:'rgba(12,12,18,.72)'},statsText:{color:'#fff',fontSize:11,fontWeight:'700'},commission:{color:'#B8A8FF',fontSize:11,fontWeight:'700',marginTop:2},toast:{position:'absolute',top:150,left:24,right:24,zIndex:14,padding:14,borderRadius:16,backgroundColor:'rgba(18,18,27,.94)',borderWidth:1,borderColor:'rgba(184,168,255,.5)'},title:{color:'#fff',fontSize:14,fontWeight:'800'},body:{color:'#eee',fontSize:12,marginTop:3}});
+
+export function LiveHostPurchaseFeed({ sessionId }: { sessionId: string }) {
+  const insets = useSafeAreaInsets();
+  const [purchases, setPurchases] = useState<LivePurchaseToastData[]>([]);
+  const [stats, setStats] = useState<LiveShopStats>(EMPTY_STATS);
+  const seen = useRef(new Set<string>());
+  const hydrated = useRef(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const [nextEvents, nextStats] = await Promise.all([
+        fetchMyLivePurchaseEvents(sessionId),
+        fetchMyLiveShopStats(sessionId),
+      ]);
+      if (hydrated.current) {
+        const fresh = nextEvents
+          .filter((event) => !seen.current.has(event.id))
+          .reverse();
+        fresh.forEach((event) => seen.current.add(event.id));
+        if (fresh.length) {
+          setPurchases((current) =>
+            [...current, ...fresh.map(toastData)].slice(-12),
+          );
+        }
+      } else {
+        nextEvents.forEach((event) => seen.current.add(event.id));
+        hydrated.current = true;
+      }
+      setStats(nextStats);
+    } catch {
+      // Controlled polling retries without exposing purchase or financial data.
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    void refresh();
+    const poll = setInterval(() => void refresh(), POLL_INTERVAL_MS);
+    const appState = AppState.addEventListener("change", (state) => {
+      if (state === "active") void refresh();
+    });
+    const database = getSupabaseClient();
+    const channel = database
+      .channel(`live-host-purchases:${sessionId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "live_commerce_host_purchase_events",
+          filter: `session_id=eq.${sessionId}`,
+        },
+        () => void refresh(),
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") void refresh();
+      });
+
+    return () => {
+      clearInterval(poll);
+      appState.remove();
+      void database.removeChannel(channel);
+    };
+  }, [refresh, sessionId]);
+
+  return (
+    <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+      <GlassSurface style={[styles.stats, { top: insets.top + 66 }]}>
+        <LiveShopStatsPill
+          orders={stats.ordersCount}
+          gross={stats.grossSales}
+        />
+        <OnSpaceText variant="caption" color="textMuted">
+          {stats.unitsSold} unidades vendidas
+        </OnSpaceText>
+        <View style={styles.metrics}>
+          <LiveCommissionMetric value={stats.creatorCommissionHeld} />
+          <LiveSalesMetric
+            label="Comisión liberada"
+            value={stats.creatorCommissionReleased}
+          />
+        </View>
+      </GlassSurface>
+      <LivePurchaseToastQueue purchases={purchases} />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  stats: {
+    position: "absolute",
+    right: spacing.md,
+    zIndex: 12,
+    padding: spacing.sm,
+    gap: spacing.xs,
+    maxWidth: 230,
+  },
+  metrics: {
+    flexDirection: "row",
+    gap: spacing.xs,
+  },
+});

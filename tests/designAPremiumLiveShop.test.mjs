@@ -96,7 +96,7 @@ test("featured rail is compact animated accessible and sold-out safe", () => {
   ]) {
     assert.match(rail, new RegExp(marker.replace(/[{}]/g, "\\$&")));
   }
-  assert.match(rail, /disabled={unavailable}/);
+  assert.match(rail, /disabled={actionDisabled}/);
   assert.match(rail, /Comprar/);
 });
 
@@ -249,7 +249,7 @@ test("commerce overlay does not unmount or navigate away from the LIVE session",
   assert.doesNotMatch(watch, /commerceVisible[^\n]*leaveChannel/);
 });
 
-test("new premium surfaces contain no mojibake and no affiliate implementation", () => {
+test("new premium surfaces contain no mojibake or influencer implementation", () => {
   const source = [
     designFiles,
     button,
@@ -268,6 +268,6 @@ test("new premium surfaces contain no mojibake and no affiliate implementation",
   assert.doesNotMatch(source, /Ã|Â|â€|�/);
   assert.doesNotMatch(
     source,
-    /affiliate_offer|creator_commission_bps|influencer_commission/i,
+    /influencer_commission/i,
   );
 });

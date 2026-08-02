@@ -38,7 +38,7 @@ import type { LiveGiftEvent } from '@/types/liveGifts';
 import { LiveCommerceButton } from '@/components/live/commerce/LiveCommerceButton';
 import { LiveHostProductManager } from '@/components/live/commerce/LiveHostProductManager';
 import { LiveHostPurchaseFeed } from '@/components/live/commerce/LiveHostPurchaseFeed';
-import { LiveFeaturedProductCard } from '@/components/live/commerce/LiveFeaturedProductCard';
+import { LiveProductRail } from '@/components/live/shop/LiveProductRail';
 import { fetchLiveSessionProducts, type LiveSessionProduct } from '@/services/liveCommerceService';
 
 const POLL_INTERVAL_MS = 3000;
@@ -353,7 +353,7 @@ export default function LiveBroadcasterScreen() {
 
   useEffect(() => {
     if (live && engineReady) join();
-  }, [live, engineReady]);
+  }, [live, engineReady, join]);
 
   useEffect(() => {
     if (joined) setStarting(false);
@@ -403,7 +403,7 @@ export default function LiveBroadcasterScreen() {
         setMessages(prev => mergeMessages(prev, messagesWithAvatars));
         scrollToLatest(true);
       }
-    } catch (_) { /* ignore */ }
+    } catch { /* Controlled polling retries on the next interval. */ }
   }, [streamId, supabase, scrollToLatest, user, clearLiveTimers]);
 
   useEffect(() => {
@@ -986,6 +986,7 @@ export default function LiveBroadcasterScreen() {
   const composerBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
   const composerClearance = composerBottom + composerHeight + 16;
   const controlsBottom = composerBottom + composerHeight + 14;
+  const featuredLiveProduct = liveProducts.find(product => product.isFeatured) ?? null;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -1251,7 +1252,17 @@ export default function LiveBroadcasterScreen() {
           <MaterialIcons name="call-end" size={22} color="#fff" />
         </Pressable>
       </View>
-      {liveProducts.find(product => product.isFeatured) ? <LiveFeaturedProductCard product={liveProducts.find(product => product.isFeatured)!} onPress={() => setCommerceVisible(true)} bottom={controlsBottom + 62} /> : null}
+      {featuredLiveProduct ? (
+        <LiveProductRail
+          product={featuredLiveProduct}
+          productCount={liveProducts.length}
+          bottom={controlsBottom + 62}
+          keyboardVisible={keyboardHeight > 0}
+          mode="host"
+          onBuy={() => setCommerceVisible(true)}
+          onOpenBag={() => setCommerceVisible(true)}
+        />
+      ) : null}
       {streamId ? <LiveHostPurchaseFeed sessionId={streamId} /> : null}
       {streamId ? <LiveHostProductManager visible={commerceVisible} sessionId={streamId} onClose={() => setCommerceVisible(false)} onChanged={refreshLiveProducts} /> : null}
 

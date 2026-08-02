@@ -33,12 +33,20 @@ export function LiveShopStatsPill({
     </View>
   );
 }
-export const LiveCommissionMetric = ({ value }: { value: number }) => (
-  <MetricCard label="Comisión estimada" value={`${value.toFixed(2)} BDAG`} />
-);
-export const LiveSalesMetric = ({ value }: { value: number }) => (
-  <MetricCard label="Ventas" value={`${value.toFixed(2)} BDAG`} />
-);
+export const LiveCommissionMetric = ({
+  value,
+  label = "Comisión retenida",
+}: {
+  value: number;
+  label?: string;
+}) => <MetricCard label={label} value={`${value.toFixed(2)} BDAG`} />;
+export const LiveSalesMetric = ({
+  value,
+  label = "Ventas",
+}: {
+  value: number;
+  label?: string;
+}) => <MetricCard label={label} value={`${value.toFixed(2)} BDAG`} />;
 export function LivePurchaseToast({
   purchase,
 }: {

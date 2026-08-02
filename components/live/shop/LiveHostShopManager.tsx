@@ -44,6 +44,11 @@ const errorMessage = (error: unknown) => {
   if (code === "live_commerce_pin_limit")
     return "Llegaste al límite de 20 productos en este LIVE.";
   if (
+    code === "live_affiliate_not_authorized" ||
+    code === "live_affiliate_offer_unavailable"
+  )
+    return "El vendedor pausó o retiró esta oferta.";
+  if (
     code === "live_commerce_product_unavailable" ||
     code === "live_commerce_out_of_stock"
   )
@@ -78,6 +83,27 @@ const HostProductRow = memo(function HostProductRow({
           ) : null}
         </View>
         <CommercePrice price={item.minPrice} />
+        <View style={styles.modeLine}>
+          <StatusPill
+            label={
+              item.commerceMode === "affiliate_product"
+                ? "Producto afiliado"
+                : "Producto propio"
+            }
+            tone={
+              item.commerceMode === "affiliate_product" ? "warning" : "neutral"
+            }
+          />
+          {item.commerceMode === "affiliate_product" ? (
+            <OnSpaceText variant="labelStrong" color="commerceSuccess">
+              Comisión {(item.creatorCommissionBps / 100).toFixed(2)}%
+            </OnSpaceText>
+          ) : (
+            <OnSpaceText variant="caption" color="textMuted">
+              Sin comisión de creador
+            </OnSpaceText>
+          )}
+        </View>
         <View style={styles.meta}>
           <ProductAvailabilityBadge
             availability={
@@ -363,6 +389,12 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
   },
   meta: { flexDirection: "row", gap: spacing.sm, alignItems: "center" },
+  modeLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
   actions: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs },
   loading: { gap: spacing.md },
   skeleton: { height: 96 },

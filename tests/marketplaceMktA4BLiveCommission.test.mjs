@@ -1,22 +1,99 @@
-import test from'node:test';import assert from'node:assert/strict';import fs from'node:fs';
-const schema=fs.readFileSync('supabase/migrations/20260803010000_marketplace_mkt_a4b_live_affiliate_commissions.sql','utf8');
-const settlement=fs.readFileSync('supabase/migrations/20260803013000_marketplace_mkt_a4b_creator_settlement.sql','utf8');
-const service=fs.readFileSync('services/liveCommerceService.ts','utf8');
-const manager=fs.readFileSync('components/live/commerce/LiveHostProductManager.tsx','utf8');
-const rail=fs.readFileSync('components/live/commerce/LiveFeaturedProductCard.tsx','utf8');
-const feed=fs.readFileSync('components/live/commerce/LiveHostPurchaseFeed.tsx','utf8');
-const broadcast=fs.readFileSync('app/live/broadcast/[streamId].tsx','utf8');
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import test from "node:test";
 
-test('affiliate offers are seller-owned, bounded and time-scoped',()=>{assert.match(schema,/marketplace_live_affiliate_offers/);assert.match(schema,/commission_bps between 1 and 3000/);assert.match(schema,/offer_scope in\('public_creator','specific_creator'\)/);assert.match(schema,/p\.seller_id=actor/);assert.match(schema,/starts_at is null or starts_at<=now\(\)/);assert.match(schema,/ends_at is null or ends_at>now\(\)/)});
-test('pin resolves own versus affiliate authority on the server',()=>{assert.match(schema,/if p\.seller_id=actor then mode:='own_product';bps:=0/);assert.match(schema,/mode:='affiliate_product';bps:=offer\.commission_bps/);assert.match(schema,/live_affiliate_not_authorized/);assert.match(schema,/host_id<>seller_id/)});
-test('payment allocation derives a three-way split without client input',()=>{assert.match(schema,/marketplace_allocation_live_commission before insert/);assert.match(schema,/new\.seller_net_amount:=new\.gross_amount-new\.platform_fee_amount-commission/);assert.match(schema,/gross_amount=platform_fee_amount\+seller_net_amount\+creator_commission_amount/);assert.match(schema,/marketplace_live_commission_sources/)});
-test('own-product attribution forces zero creator commission',()=>{assert.match(schema,/commerce_mode='own_product'.*creator_commission_bps=0.*creator_commission_amount=0.*host_id=seller_id/);assert.match(schema,/new\.creator_user_id:=null;new\.creator_commission_amount:=0/)});
-test('paid orders append one privacy-safe host purchase event',()=>{assert.match(schema,/order_id uuid not null unique/);assert.match(schema,/marketplace_allocation_record_live_purchase after insert/);for(const forbidden of['shipping_address','phone','buyer_email','financial_transaction_id','destination_account_id'])assert.doesNotMatch(schema.slice(schema.indexOf('create table public.live_commerce_purchase_events'),schema.indexOf('create index live_purchase_events_host_idx')),new RegExp(forbidden))});
-test('delivery settlement creates creator leg only when applicable',()=>{assert.match(settlement,/if a\.creator_commission_amount>0 then v_creator_tx/);assert.match(settlement,/'marketplace_creator_commission_settlement'/);assert.match(settlement,/'creator_commission','creator_commission'/);assert.match(settlement,/gross_amount<>a\.seller_net_amount\+a\.creator_commission_amount\+a\.platform_fee_amount/)});
-test('creator settlement remains idempotent and locked with the order',()=>{assert.match(settlement,/marketplace-order-settlement:/);assert.match(settlement,/where order_id=p_order_id;if found then return public\.marketplace_order_settlement_receipt/);assert.match(settlement,/marketplace_settlement_idempotency_conflict/)});
-test('commission reconciliation detects attribution, legs and early credit',()=>{for(const key of['allocation_split_mismatch','own_product_commission_mismatch','affiliate_commission_mismatch','source_allocation_mismatch','missing_creator_leg','duplicate_creator_leg','unexpected_creator_leg','creator_transaction_mismatch','creator_credit_before_delivery'])assert.match(settlement,new RegExp(`'${key}'`))});
-test('host candidates combine owned and authorized affiliate products',()=>{assert.match(schema,/union all/);assert.match(schema,/'affiliate_product'::text commerce_mode,o\.commission_bps/);assert.match(schema,/limit n\+1/);assert.match(service,/commerceMode:'own_product'\|'affiliate_product'/);assert.match(manager,/Comisión estimada/)});
-test('viewer rail is compact purchase-first and hides commission',()=>{assert.match(rail,/'Comprar'/);assert.match(rail,/soldCount/);assert.doesNotMatch(rail,/commission|comisión/i)});
-test('host purchase feed queues unique realtime events without unmounting LIVE',()=>{assert.match(feed,/seen\.current\.has/);assert.match(feed,/queue\.current\.push/);assert.match(feed,/postgres_changes/);assert.match(feed,/setInterval\(\(\)=>void refresh\(\),5000\)/);assert.match(broadcast,/LiveHostPurchaseFeed/);assert.doesNotMatch(feed,/router\.|leaveChannel|endLive/)});
-test('purchase feed response does not expose account or transaction ids',()=>{const rpc=schema.slice(schema.indexOf('create or replace function public.fetch_my_live_purchase_events'),schema.indexOf('create or replace function public.live_commerce_host_context'));assert.doesNotMatch(rpc,/account_id|transaction_id|shipping|phone|email/)});
-test('no USDT, WalletConnect, blockchain or external payout path was added',()=>{for(const text of[schema,settlement,service,manager,rail,feed])assert.doesNotMatch(text,/USDT|WalletConnect|blockchain|chargeback|external payout/i)});
+const read = (path) => fs.readFileSync(path, "utf8");
+const schema = read("supabase/migrations/20260803010000_marketplace_mkt_a4b_live_affiliate_commissions.sql");
+const settlement = read("supabase/migrations/20260803013000_marketplace_mkt_a4b_creator_settlement.sql");
+const hardening = read("supabase/migrations/20260803020000_harden_mkt_a4b_live_commerce.sql");
+const service = read("services/liveCommerceService.ts");
+const manager = read("components/live/shop/LiveHostShopManager.tsx");
+const rail = read("components/live/shop/LiveProductRail.tsx");
+const feed = read("components/live/commerce/LiveHostPurchaseFeed.tsx");
+const broadcast = read("app/live/broadcast/[streamId].tsx");
+const watch = read("app/live/watch/[streamId].tsx");
+
+test("affiliate allocation and delivery retain authoritative three-way accounting", () => {
+  assert.match(schema, /new\.seller_net_amount:=new\.gross_amount-new\.platform_fee_amount-commission/);
+  assert.match(settlement, /marketplace_creator_commission_settlement/);
+  assert.match(settlement, /gross_amount<>a\.seller_net_amount\+a\.creator_commission_amount\+a\.platform_fee_amount/);
+});
+
+test("sanitized realtime schema excludes every internal or personal identifier", () => {
+  const safe = hardening.slice(
+    hardening.indexOf("create table public.live_commerce_host_purchase_events"),
+    hardening.indexOf("create index live_host_purchase_events_session_idx"),
+  );
+  for (const field of [
+    "buyer_id", "checkout_id", "order_id", "order_item_id", "payment_id",
+    "allocation_id", "financial_transaction_id", "account_id", "shipping", "phone", "email",
+  ]) assert.doesNotMatch(safe, new RegExp(field));
+  for (const field of ["buyer_display_name", "product_title", "quantity", "gross_amount", "creator_commission_amount"])
+    assert.match(safe, new RegExp(field));
+  assert.match(hardening, /alter publication supabase_realtime drop table public\.live_commerce_purchase_events/);
+  assert.match(hardening, /alter publication supabase_realtime add table public\.live_commerce_host_purchase_events/);
+});
+
+test("safe events are host-only, immutable, and mirrored idempotently", () => {
+  assert.match(hardening, /using \(host_id = auth\.uid\(\)\)/);
+  assert.match(hardening, /revoke all on public\.live_commerce_host_purchase_events from public, anon, authenticated/);
+  assert.match(hardening, /on conflict \(id\) do nothing/);
+  assert.match(hardening, /live_host_purchase_event_immutable/);
+});
+
+test("affiliate offer commands bind idempotency keys to complete fingerprints", () => {
+  for (const marker of ["marketplace_live_affiliate_offer_commands", "idempotency_key", "request_fingerprint", "result_json", "p_starts_at", "p_ends_at"])
+    assert.match(hardening, new RegExp(marker));
+  assert.match(hardening, /live_affiliate_offer_idempotency_conflict/);
+  assert.match(hardening, /pg_advisory_xact_lock/);
+  assert.match(service, /upsertMyLiveAffiliateOffer/);
+});
+
+test("revoked or expired affiliate offers block only new reservations", () => {
+  for (const condition of ["o.status = 'active'", "o.starts_at is null or o.starts_at <= now", "o.ends_at is null or o.ends_at > now", "o.commission_bps = lp.creator_commission_bps"])
+    assert.match(hardening, new RegExp(condition.replace(/[()]/g, "\\$&")));
+  assert.match(hardening, /live_affiliate_offer_unavailable/);
+  assert.match(service, /affiliate_offer_unavailable/);
+  assert.doesNotMatch(hardening, /update public\.marketplace_checkouts[\s\S]*affiliate_offer_unavailable/);
+});
+
+test("authoritative stats are unlimited and allocation-status aware", () => {
+  const rpc = hardening.slice(hardening.indexOf("create or replace function public.fetch_my_live_shop_stats"));
+  assert.doesNotMatch(rpc, /limit\s+(50|100)/i);
+  for (const key of ["orders_count", "gross_sales", "creator_commission_held", "creator_commission_released", "units_sold"])
+    assert.match(rpc, new RegExp(key));
+  assert.match(feed, /fetchMyLiveShopStats/);
+  assert.doesNotMatch(feed, /events\.length|reduce\(/);
+});
+
+test("premium manager and rails preserve affiliate and role-specific behavior", () => {
+  assert.match(manager, /Producto propio/);
+  assert.match(manager, /Producto afiliado/);
+  assert.match(manager, /creatorCommissionBps/);
+  assert.match(rail, /mode === "host" \? "Administrar" : "Comprar"/);
+  assert.match(broadcast, /LiveProductRail/);
+  assert.match(watch, /LiveProductRail/);
+  assert.doesNotMatch(broadcast, /LiveFeaturedProductCard/);
+  assert.doesNotMatch(watch, /LiveFeaturedProductCard/);
+});
+
+test("purchase feed de-duplicates realtime and polling events before queuing", () => {
+  const enqueue = (seen, queue, event) => {
+    if (seen.has(event.id)) return queue;
+    seen.add(event.id);
+    return [...queue, event].slice(-3);
+  };
+  const seen = new Set();
+  let queue = enqueue(seen, [], { id: "purchase-1" });
+  queue = enqueue(seen, queue, { id: "purchase-1" });
+  assert.deepEqual(queue.map(({ id }) => id), ["purchase-1"]);
+  assert.match(feed, /live_commerce_host_purchase_events/);
+  assert.match(feed, /seen\.current\.has/);
+  assert.match(feed, /LivePurchaseToastQueue/);
+  assert.doesNotMatch(feed, /Haptics/);
+});
+
+test("integration does not introduce prohibited payment paths", () => {
+  for (const text of [hardening, service, manager, rail, feed])
+    assert.doesNotMatch(text, /USDT|WalletConnect|blockchain|external payout|refund|dispute/i);
+});

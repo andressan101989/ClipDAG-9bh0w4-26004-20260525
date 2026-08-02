@@ -85,6 +85,7 @@ export function ProductAvailabilityBadge({
     | "available"
     | "out_of_stock"
     | "product_unavailable"
+    | "affiliate_offer_unavailable"
     | "live_ended";
 }) {
   const value =
@@ -92,9 +93,11 @@ export function ProductAvailabilityBadge({
       ? ["Disponible", "success"]
       : availability === "out_of_stock"
         ? ["Agotado", "neutral"]
-        : availability === "live_ended"
-          ? ["LIVE finalizado", "warning"]
-          : ["No disponible", "danger"];
+        : availability === "affiliate_offer_unavailable"
+          ? ["Oferta no disponible", "warning"]
+          : availability === "live_ended"
+            ? ["LIVE finalizado", "warning"]
+            : ["No disponible", "danger"];
   return (
     <Badge
       label={value[0]}
