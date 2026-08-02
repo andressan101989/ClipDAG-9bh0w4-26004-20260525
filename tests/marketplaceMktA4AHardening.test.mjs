@@ -6,8 +6,13 @@ const read=path=>fs.readFileSync(new URL(`../${path}`,import.meta.url),'utf8');
 const migration=read('supabase/migrations/20260802163000_fix_marketplace_mkt_a4a_live_commerce.sql');
 const service=read('services/liveCommerceService.ts');
 const state=read('services/liveCommerceState.ts');
-const host=read('components/live/commerce/LiveHostProductManager.tsx');
-const viewer=read('components/live/commerce/LiveViewerCommerce.tsx');
+const host=read('components/live/shop/LiveHostShopManager.tsx');
+const viewer=[
+  read('components/live/commerce/LiveViewerCommerce.tsx'),
+  read('components/live/shop/LiveVariantSelector.tsx'),
+  read('components/live/shop/LiveProductQuickView.tsx'),
+  read('components/live/shop/LiveReservationSummary.tsx'),
+].join('\n');
 
 test('command fingerprints bind key to complete command',()=>{
   for(const token of ["'pin'","'unpin'","'feature'",'request_fingerprint','result_json'])assert.ok(migration.includes(token));
@@ -31,7 +36,7 @@ test('signed marketplace images and stale featured variants are sanitized',()=>{
 });
 
 test('host manager loads every cursor page without duplicate products',()=>{
-  for(const marker of ['PAGE_SIZE=20','onEndReached','cursor','new Map','more'])assert.match(host,new RegExp(marker));
+  for(const marker of ['PAGE_SIZE = 20','onEndReached','cursor','new Map','more'])assert.match(host,new RegExp(marker));
 });
 
 test('viewer variant matrix and quantity rules are authoritative',()=>{

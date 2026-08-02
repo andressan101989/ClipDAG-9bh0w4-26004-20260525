@@ -28,7 +28,7 @@ import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
 import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
 import type { LiveGiftEvent } from '@/types/liveGifts';
 import { LiveCommerceButton } from '@/components/live/commerce/LiveCommerceButton';
-import { LiveFeaturedProductCard } from '@/components/live/commerce/LiveFeaturedProductCard';
+import { LiveProductRail } from '@/components/live/shop/LiveProductRail';
 import { LiveViewerCommerce } from '@/components/live/commerce/LiveViewerCommerce';
 import { fetchLiveSessionProducts, type LiveSessionProduct } from '@/services/liveCommerceService';
 
@@ -221,6 +221,7 @@ export default function LiveWatchScreen() {
   const [sendingGiftId, setSendingGiftId] = useState<string | null>(null);
   const [giftFeedback, setGiftFeedback] = useState<string | null>(null);
   const [commerceVisible, setCommerceVisible] = useState(false);
+  const [commerceProductId, setCommerceProductId] = useState<string | null>(null);
   const [liveProducts, setLiveProducts] = useState<LiveSessionProduct[]>([]);
   const { activeGift, floatingGifts, enqueueGift } = useLiveGiftAnimations(streamId);
 
@@ -997,6 +998,7 @@ export default function LiveWatchScreen() {
   const coHostUids = remoteUids.slice(1);
   const composerBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
   const composerClearance = composerBottom + composerHeight + 16;
+  const featuredLiveProduct = liveProducts.find(product => product.isFeatured) ?? null;
   const requestIcon = promotedToPublisher || isStructuredCohost ? 'videocam' : requestSent ? 'hourglass-top' : 'person-add-alt-1';
   const requestDisabled = requestSent || promotedToPublisher || isStructuredCohost || !user;
   const floorTimerText = floorSecondsRemaining === null
@@ -1129,7 +1131,15 @@ export default function LiveWatchScreen() {
       ) : null}
 
       <View style={styles.actionRail}>
-        <LiveCommerceButton count={liveProducts.length} onPress={() => { setGiftSheetVisible(false); Keyboard.dismiss(); setCommerceVisible(true); }} />
+        <LiveCommerceButton
+          count={liveProducts.length}
+          onPress={() => {
+            setGiftSheetVisible(false);
+            setCommerceProductId(null);
+            Keyboard.dismiss();
+            setCommerceVisible(true);
+          }}
+        />
         <Pressable
           style={styles.actionButton}
           onPress={() => sendReaction('\u2764\uFE0F')}
@@ -1155,7 +1165,24 @@ export default function LiveWatchScreen() {
           <MaterialIcons name={requestIcon} size={24} color="#fff" />
         </Pressable>
       </View>
-      {liveProducts.find(product => product.isFeatured) ? <LiveFeaturedProductCard product={liveProducts.find(product => product.isFeatured)!} bottom={composerClearance + 86} onPress={() => { setGiftSheetVisible(false); setCommerceVisible(true); }} /> : null}
+      {featuredLiveProduct ? (
+        <LiveProductRail
+          product={featuredLiveProduct}
+          productCount={liveProducts.length}
+          bottom={composerClearance + 10}
+          keyboardVisible={keyboardHeight > 0}
+          onBuy={() => {
+            setGiftSheetVisible(false);
+            setCommerceProductId(featuredLiveProduct.id);
+            setCommerceVisible(true);
+          }}
+          onOpenBag={() => {
+            setGiftSheetVisible(false);
+            setCommerceProductId(null);
+            setCommerceVisible(true);
+          }}
+        />
+      ) : null}
 
       {coHostUids.length > 0 && RtcSurfaceView ? (
         <View style={styles.coHostStrip}>
@@ -1206,7 +1233,16 @@ export default function LiveWatchScreen() {
         onClose={() => setGiftSheetVisible(false)}
       />
 
-      {streamId ? <LiveViewerCommerce visible={commerceVisible} sessionId={streamId} products={liveProducts} onClose={() => setCommerceVisible(false)} onRefresh={refreshLiveProducts} /> : null}
+      {streamId ? (
+        <LiveViewerCommerce
+          visible={commerceVisible}
+          sessionId={streamId}
+          products={liveProducts}
+          initialProductId={commerceProductId}
+          onClose={() => setCommerceVisible(false)}
+          onRefresh={refreshLiveProducts}
+        />
+      ) : null}
 
       <View
         style={[styles.inputRow, { bottom: composerBottom + 8 }]}
