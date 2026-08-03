@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import {requireFixtureCleanup} from "./marketplace-fixture-lifecycle.mjs";
+import {requireFixtureFinalization} from "./marketplace-fixture-lifecycle.mjs";
 if (process.env.ALLOW_REMOTE_MARKETPLACE_FIXTURES !== "true")
   throw new Error("remote_marketplace_fixtures_not_allowed");
 const PROJECT = "aewwdlvbwpczqyvkwvvj",
@@ -1606,6 +1606,6 @@ console.log(
   ),
 );
 } finally {
-  const cleanup=await requireFixtureCleanup(()=>rpc("marketplace_fixture_lifecycle",{p_fixture_suite:"mkt-a4b",p_fixture_run_id:stamp,p_phase:"cleanup",p_project_ref:PROJECT}));
-  console.error(`[fixture-cleanup] ${JSON.stringify(cleanup)}`);
+  const cleanup=await requireFixtureFinalization(()=>rpc("finalize_marketplace_fixture_run",{p_fixture_suite:"mkt-a4b",p_fixture_run_id:stamp,p_project_ref:PROJECT}));
+  console.error(`[fixture-finalization] ${JSON.stringify(cleanup)}`);
 }

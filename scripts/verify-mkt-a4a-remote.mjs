@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import {requireFixtureCleanup} from './marketplace-fixture-lifecycle.mjs';
+import {requireFixtureFinalization} from './marketplace-fixture-lifecycle.mjs';
 if(process.env.ALLOW_REMOTE_MARKETPLACE_FIXTURES!=='true')throw new Error('remote_marketplace_fixtures_not_allowed');
 
 const PROJECT='aewwdlvbwpczqyvkwvvj',url=`https://${PROJECT}.supabase.co`;
@@ -78,6 +78,6 @@ const paymentReconciliation=await rpc('reconcile_marketplace_payments',{}),settl
 
 console.log(JSON.stringify({project:PROJECT,ids:{host:redact(host.id),buyer:redact(buyer.id),other:redact(other.id),session:redact(ids.session),store:redact(ids.store),pin:redact(pinA.id),checkout:redact(ids.checkout),order:redact(ids.order)},candidatePages:pages.map(page=>page.length),candidateUnique:new Set(candidateIds).size,commandTests:{pinRetry:true,pinConflict:true,parallelPin:true,featureRetry:true,featureConflict:true,unpinRetry:true,unpinConflict:true,pinLimit:true},reservationTests:{sameKey:true,parallel:true,changedQuantity:true,changedAddress:true,changedPin:true,differentKey:true},paymentTests:{parallel:true,retries:true},before,after,allocation,security,liveEnd:{shelfEmpty:true,newReservationDenied:true,paidPersisted:true,pendingPersisted:true,pendingCancelled:true},paymentReconciliation,settlementReconciliation},null,2));
 } finally {
-  const cleanup=await requireFixtureCleanup(()=>rpc('marketplace_fixture_lifecycle',{p_fixture_suite:'mkt-a4a',p_fixture_run_id:stamp,p_phase:'cleanup',p_project_ref:PROJECT}));
-  console.error(`[fixture-cleanup] ${JSON.stringify(cleanup)}`);
+  const cleanup=await requireFixtureFinalization(()=>rpc('finalize_marketplace_fixture_run',{p_fixture_suite:'mkt-a4a',p_fixture_run_id:stamp,p_project_ref:PROJECT}));
+  console.error(`[fixture-finalization] ${JSON.stringify(cleanup)}`);
 }

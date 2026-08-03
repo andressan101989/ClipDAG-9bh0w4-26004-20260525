@@ -3,7 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 import {
   executeFixtureRun,
-  requireFixtureCleanup,
+  requireFixtureFinalization,
 } from "../scripts/marketplace-fixture-lifecycle.mjs";
 
 const read = (path) => fs.readFileSync(path, "utf8");
@@ -47,10 +47,10 @@ test("thrown verifier failure always reaches cleanup", async () => {
   assert.deepEqual(calls, ["begin", "register", "test", "cleanup"]);
 });
 
-test("cleanup failure is not swallowed and produces a failing process contract", async () => {
+test("finalization failure is not swallowed and produces a failing process contract", async () => {
   await assert.rejects(
-    requireFixtureCleanup(async () => ({ quarantined: false })),
-    /remote_fixture_cleanup_not_confirmed/,
+    requireFixtureFinalization(async () => ({ quarantined: false })),
+    /remote_fixture_quarantine_not_confirmed/,
   );
   await assert.rejects(
     executeFixtureRun({

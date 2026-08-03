@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import pg from 'pg';
-import {requireFixtureCleanup} from './marketplace-fixture-lifecycle.mjs';
+import {requireFixtureFinalization} from './marketplace-fixture-lifecycle.mjs';
 
 if(process.env.ALLOW_REMOTE_MARKETPLACE_FIXTURES!=='true')throw new Error('remote_marketplace_fixtures_not_allowed');
 
@@ -61,4 +61,4 @@ try{
  const reconciliation=(await db.query('select public.reconcile_marketplace_settlements() value')).rows[0].value;
  const safeSnapshot=value=>({...value,payment:value.payment?{...value.payment,id:undefined}:null,allocation:value.allocation?{...value.allocation,id:undefined}:null});
  console.log(JSON.stringify({project:PROJECT,ids:Object.fromEntries(Object.entries({...ids,buyer:buyer.id,seller:seller.id,settlement:settlementId,conflictOrder:order2}).map(([k,v])=>[k,redact(v)])),http:{parallel:parallel.map(x=>x.status),same:same.status,different:different.status,conflict:conflict.status,unrelated:unrelated.status,anonymous:anonymous.status,malformed:malformed.status,unshipped:unshipped.status,directRpc:directRpc.status,settlementRead,legRead},before:safeSnapshot(before),after:safeSnapshot(after),retriesStable:true,reconciliation},null,2));
-}finally{try{await db.query('rollback').catch(()=>{});console.error(`[fixture-cleanup] ${JSON.stringify(await requireFixtureCleanup(()=>lifecycle('cleanup')))}`)}finally{await db.end();}}
+}finally{try{await db.query('rollback').catch(()=>{});console.error(`[fixture-finalization] ${JSON.stringify(await requireFixtureFinalization(async()=>{await db.query("select set_config('request.jwt.claim.role','service_role',false)");return(await db.query('select public.finalize_marketplace_fixture_run($1,$2,$3)v',['mkt-a3d2-settlement',stamp,PROJECT])).rows[0].v}))}`)}finally{await db.end();}}
