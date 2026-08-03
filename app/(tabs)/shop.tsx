@@ -29,6 +29,7 @@ import { fetchFeaturedCreators, searchCreators, type CreatorProfile } from '@/se
 import { fetchSubscriptionPlans, type SubscriptionPlan } from '@/services/subscriptionService';
 import {
   fetchProducts,
+  MarketplaceReadError,
   PRODUCT_CATEGORIES,
   type MarketplaceCategory,
   type Product,
@@ -50,6 +51,7 @@ function fmtShort(n: number): string {
 }
 
 type ShopTab = 'discover' | 'market' | 'exclusive';
+type MarketLoadError = 'network' | 'permission' | 'request' | null;
 
 const SHOP_TABS: { key: ShopTab; icon: string; label: string; color: string }[] = [
   { key: 'discover',  icon: 'compass-outline',          label: 'Descubrir', color: '#7C5CFF' },
@@ -266,6 +268,7 @@ export default function ShopScreen() {
   const [products,      setProducts]      = useState<Product[]>([]);
   const [productCat, setProductCat] = useState<MarketplaceCategory | ''>('');
   const [marketLoading, setMarketLoading] = useState(false);
+  const [marketError, setMarketError] = useState<MarketLoadError>(null);
 
   // Exclusive tab
   const [exclusiveContent, setExclusiveContent] = useState<ExclusiveContent[]>([]);
@@ -275,42 +278,41 @@ export default function ShopScreen() {
   // ── Loaders ───────────────────────────────────────────────────────────────
   const loadDiscover = useCallback(async () => {
     setDiscoverLoading(true);
-    const [creators, subPlans] = await Promise.all([
-      fetchFeaturedCreators(16),
-      fetchSubscriptionPlans({ limit: 10 }),
-    ]);
-    // Check which are boosted
-    const boostChecks = await Promise.all(
-      creators.map(c => isProfileBoosted(c.id).then(r => r.boosted ? c.id : null))
-    );
-    setBoostedIds(new Set(boostChecks.filter(Boolean) as string[]));
-    setFeatured(creators.filter(c => c.id !== user?.id));
-    setPlans(subPlans.filter(p => p.creator_id !== user?.id));
-    setDiscoverLoading(false);
+    try {
+      const [creators, subPlans] = await Promise.all([fetchFeaturedCreators(16),fetchSubscriptionPlans({ limit: 10 })]);
+      const boostChecks = await Promise.all(creators.map(c => isProfileBoosted(c.id).then(r => r.boosted ? c.id : null)));
+      setBoostedIds(new Set(boostChecks.filter(Boolean) as string[]));setFeatured(creators.filter(c => c.id !== user?.id));setPlans(subPlans.filter(p => p.creator_id !== user?.id));
+    } catch { /* Preserve the last successful discovery state. */ }
+    finally { setDiscoverLoading(false); }
   }, [user?.id]);
 
   const loadProducts = useCallback(async () => {
     setMarketLoading(true);
-    const prods = await fetchProducts({ category: productCat || undefined, limit: 30 });
-    setProducts(prods.filter(p => p.seller_id !== user?.id));
-    setMarketLoading(false);
+    try {
+      const prods = await fetchProducts({ category: productCat || undefined, limit: 30 });
+      setProducts(prods.filter(p => p.seller_id !== user?.id));setMarketError(null);
+    } catch(error) {
+      const category:Exclude<MarketLoadError,null>=error instanceof MarketplaceReadError&&error.code==='marketplace_read_transport'?'network':error instanceof MarketplaceReadError&&error.code==='marketplace_read_permission'?'permission':'request';
+      setMarketError(category);
+      if(__DEV__)console.warn('[MarketplaceScreen]',{operation:'loadProducts',category,postgresCode:error instanceof MarketplaceReadError?error.postgresCode:null});
+    } finally { setMarketLoading(false); }
   }, [productCat, user?.id]);
 
   const loadExclusive = useCallback(async () => {
     setExcLoading(true);
-    const items = await fetchExclusiveContent({ contentType: excFilter || undefined, limit: 30 });
-    setExclusiveContent(items.filter(i => i.creator_id !== user?.id));
-    setExcLoading(false);
+    try {const items = await fetchExclusiveContent({ contentType: excFilter || undefined, limit: 30 });setExclusiveContent(items.filter(i => i.creator_id !== user?.id));}
+    catch { /* Preserve the last successful exclusive-content state. */ }
+    finally { setExcLoading(false); }
   }, [excFilter, user?.id]);
 
-  useEffect(() => { loadDiscover(); }, [loadDiscover]);
-  useEffect(() => { if (activeTab === 'market') loadProducts(); }, [activeTab, loadProducts]);
-  useEffect(() => { if (activeTab === 'exclusive') loadExclusive(); }, [activeTab, loadExclusive]);
+  useEffect(() => { void loadDiscover(); }, [loadDiscover]);
+  useEffect(() => { if (activeTab === 'market') void loadProducts(); }, [activeTab, loadProducts]);
+  useEffect(() => { if (activeTab === 'exclusive') void loadExclusive(); }, [activeTab, loadExclusive]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([loadDiscover(), loadProducts(), loadExclusive()]);
-    setRefreshing(false);
+    try {await Promise.allSettled([loadDiscover(), loadProducts(), loadExclusive()]);}
+    finally {setRefreshing(false);}
   }, [loadDiscover, loadProducts, loadExclusive]);
 
   // ── Search creators ───────────────────────────────────────────────────────
@@ -324,6 +326,7 @@ export default function ShopScreen() {
   }, [user?.id]);
 
   const displayCreators = search.trim() ? searchResults : featured;
+  const marketErrorMessage=marketError==='network'?'No pudimos conectar con la tienda. Revisa tu conexión.':marketError==='permission'?'La tienda necesita una actualización de acceso. Inténtalo nuevamente.':'No pudimos cargar los productos.';
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -494,9 +497,19 @@ export default function ShopScreen() {
               ))}
             </ScrollView>
 
-            {marketLoading ? (
+            {marketError ? (
+              <View style={styles.emptyState}>
+                <MaterialCommunityIcons name="alert-circle-outline" size={36} color={Colors.secondary} />
+                <Text style={styles.emptyTitle}>{marketErrorMessage}</Text>
+                <Pressable style={[styles.emptyActionBtn,{borderColor:Colors.blue+'44',backgroundColor:Colors.blueDim}]} onPress={()=>void loadProducts()} accessibilityRole="button" accessibilityLabel="Reintentar cargar productos">
+                  <Text style={[styles.emptyActionText,{color:Colors.blue}]}>Reintentar</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {marketLoading&&products.length===0 ? (
               <View style={styles.centered}><ActivityIndicator color={Colors.blue} /></View>
-            ) : products.length === 0 ? (
+            ) : !marketError&&products.length === 0 ? (
               <View style={styles.emptyState}>
                 <MaterialCommunityIcons name="storefront-outline" size={44} color={Colors.border} />
                 <Text style={styles.emptyTitle}>Sin productos en esta categoría</Text>

@@ -28,6 +28,10 @@ const proof = await readFile(
   new URL("../scripts/prove-marketplace-client-runtime.mjs", import.meta.url),
   "utf8",
 );
+const marketScreen = await readFile(
+  new URL("../app/(tabs)/shop.tsx", import.meta.url),
+  "utf8",
+);
 
 test("RLS helper gets only the required execution capability", () => {
   assert.match(
@@ -64,4 +68,27 @@ test("client reads preserve typed permission and transport failures", () => {
   assert.doesNotMatch(shop, /catch\s*\{\s*setProducts\(\[\]\)/);
   assert.match(viewer, /error instanceof MarketplaceReadError/);
   assert.match(viewer, /No se creó ninguna reserva/);
+});
+
+test("Marketplace screen loaders are failure-safe and distinguish error from empty", () => {
+  const loader = marketScreen.slice(
+    marketScreen.indexOf("const loadProducts"),
+    marketScreen.indexOf("const loadExclusive"),
+  );
+  assert.match(loader, /try\s*\{/);
+  assert.match(loader, /catch\s*\(error\)/);
+  assert.match(loader, /finally\s*\{\s*setMarketLoading\(false\)/);
+  assert.doesNotMatch(loader, /catch[\s\S]*setProducts\(\[\]\)/);
+  assert.match(loader, /marketplace_read_transport/);
+  assert.match(loader, /marketplace_read_permission/);
+  assert.match(marketScreen, /No pudimos conectar con la tienda\. Revisa tu conexión\./);
+  assert.match(marketScreen, /La tienda necesita una actualización de acceso\. Inténtalo nuevamente\./);
+  assert.match(marketScreen, /No pudimos cargar los productos\./);
+  assert.match(marketScreen, /!marketError&&products\.length === 0/);
+  assert.match(marketScreen, /Reintentar cargar productos/);
+  assert.match(marketScreen, /Promise\.allSettled/);
+  assert.match(marketScreen, /finally \{setRefreshing\(false\);\}/);
+  assert.match(marketScreen, /void loadDiscover\(\)/);
+  assert.match(marketScreen, /void loadProducts\(\)/);
+  assert.match(marketScreen, /void loadExclusive\(\)/);
 });
