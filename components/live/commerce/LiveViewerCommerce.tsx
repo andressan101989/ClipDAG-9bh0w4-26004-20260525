@@ -28,6 +28,7 @@ import {
 import { colors, spacing } from "@/design";
 import {
   fetchMarketplaceProductDetail,
+  MarketplaceReadError,
   type MarketplaceProductDetail,
 } from "@/services/marketplaceService";
 import {
@@ -180,8 +181,8 @@ export function LiveViewerCommerce({
         pendingCommand.current = null;
         setStage("product");
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      } catch {
-        setFeedback("Este producto ya no puede comprarse desde el LIVE.");
+      } catch (error) {
+        setFeedback(error instanceof MarketplaceReadError&&error.code==='marketplace_read_permission'?"No pudimos consultar la tienda por una configuración de acceso. Inténtalo nuevamente.":error instanceof MarketplaceReadError&&error.code==='marketplace_read_transport'?"No pudimos conectar con la tienda. Revisa tu conexión.":"Este producto ya no puede comprarse desde el LIVE.");
         setStage("bag");
       } finally {
         lock.current = false;
@@ -320,10 +321,7 @@ export function LiveViewerCommerce({
       setStage("reservation");
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch (error) {
-      const code =
-        error instanceof LiveCommerceError
-          ? error.code
-          : "live_commerce_unknown";
+      const code=error instanceof LiveCommerceError?error.code:error instanceof MarketplaceReadError?error.code:"live_commerce_unknown";
       if (code === "marketplace_active_checkout_exists") {
         pendingCommand.current = null;
         await recoverActive();
@@ -339,6 +337,10 @@ export function LiveViewerCommerce({
         setFeedback(
           "No puedes generar una comisión comprando desde tu propio LIVE.",
         );
+      } else if(code==='marketplace_read_permission'){
+        pendingCommand.current=null;setFeedback('No pudimos verificar el producto por una configuración de acceso. No se creó ninguna reserva.');
+      } else if(code==='marketplace_read_transport'){
+        setFeedback('No pudimos conectar con la tienda. No se creó ninguna reserva.');
       } else {
         if (code !== "live_commerce_transport") pendingCommand.current = null;
         setFeedback(

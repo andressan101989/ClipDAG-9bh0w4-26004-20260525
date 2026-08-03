@@ -65,6 +65,20 @@ const PRODUCT_COLUMNS = [
 const PRODUCT_WITH_SELLER = `${PRODUCT_COLUMNS},seller:user_profiles!products_seller_id_fkey(username,avatar_url,display_name)`;
 const db=()=>getSupabaseClient();
 
+export type MarketplaceReadErrorCode='marketplace_read_transport'|'marketplace_read_permission'|'marketplace_product_not_found'|'marketplace_product_unavailable';
+export class MarketplaceReadError extends Error {
+  readonly code:MarketplaceReadErrorCode;readonly postgresCode:string|null;
+  constructor(code:MarketplaceReadErrorCode,postgresCode:string|null=null){super(code);this.name='MarketplaceReadError';this.code=code;this.postgresCode=postgresCode;}
+}
+function throwReadError(error:unknown):never {
+  const value=error&&typeof error==='object'?error as {code?:unknown;message?:unknown}:{};
+  const postgresCode=typeof value.code==='string'?value.code:null;
+  if(postgresCode==='42501')throw new MarketplaceReadError('marketplace_read_permission',postgresCode);
+  const message=typeof value.message==='string'?value.message.toLowerCase():'';
+  if(!postgresCode&&(message.includes('network')||message.includes('fetch')||message.includes('timeout')))throw new MarketplaceReadError('marketplace_read_transport');
+  throw new MarketplaceReadError('marketplace_product_unavailable',postgresCode);
+}
+
 function mapProduct(row:Record<string,unknown>):Product {
   return {
     ...(row as unknown as Product),
@@ -98,7 +112,7 @@ export async function fetchProducts(opts?:{category?:MarketplaceCategory|'';sell
     p_category:opts?.category||null,p_seller_id:opts?.sellerId??null,
     p_search:opts?.search??null,p_limit:limit,
   });
-  if(ready.error) throw ready.error;
+  if(ready.error) throwReadError(ready.error);
   const ids=Array.isArray(ready.data)?ready.data.filter((id):id is string=>typeof id==='string'):[];
   if(ids.length===0) return [];
   let query=db().from('products').select(PRODUCT_WITH_SELLER)
@@ -108,14 +122,14 @@ export async function fetchProducts(opts?:{category?:MarketplaceCategory|'';sell
   if(opts?.sellerId) query=query.eq('seller_id',opts.sellerId);
   if(opts?.search) query=query.ilike('title',`%${opts.search}%`);
   const {data,error}=await query;
-  if(error) throw error;
+  if(error) throwReadError(error);
   return (data??[]).map(row=>mapProduct(row as unknown as Record<string,unknown>));
 }
 
 export async function fetchProduct(productId:string):Promise<Product|null> {
   const {data,error}=await db().from('products').select(PRODUCT_WITH_SELLER)
     .eq('id',productId).eq('currency','BDAG').maybeSingle();
-  if(error) throw error;
+  if(error) throwReadError(error);
   return data?mapProduct(data as unknown as Record<string,unknown>):null;
 }
 
@@ -133,7 +147,7 @@ export async function fetchMarketplaceProductDetail(productId:string):Promise<Ma
     fetchProduct(productId),
     db().rpc('fetch_marketplace_product_detail',{p_product_id:productId}),
   ]);
-  if(detailResult.error) throw detailResult.error;
+  if(detailResult.error) throwReadError(detailResult.error);
   if(!productResult||!detailResult.data) return null;
   const payload=detailResult.data as {options?:MarketplaceProductOption[];variants?:Record<string,unknown>[]};
   return {

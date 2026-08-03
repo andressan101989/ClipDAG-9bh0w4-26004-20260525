@@ -11,7 +11,7 @@ export type ProductCategory=MarketplaceCategory;
 export type { Product };
 
 interface ShopContextType {
-  products:Product[];myProducts:Product[];savedProductIds:Set<string>;isLoading:boolean;
+  products:Product[];myProducts:Product[];savedProductIds:Set<string>;isLoading:boolean;catalogError:'network'|'permission'|'request'|null;
   fetchProducts:(category?:string,search?:string)=>Promise<void>;
   fetchMyProducts:()=>Promise<void>;
   createProduct:(data:ProductMutation)=>Promise<{success:boolean;error?:string;product?:Product}>;
@@ -33,15 +33,16 @@ export function ShopProvider({children}:{children:ReactNode}) {
   const [myProducts,setMyProducts]=useState<Product[]>([]);
   const [savedProductIds,setSavedProductIds]=useState<Set<string>>(new Set());
   const [isLoading,setIsLoading]=useState(false);
+  const [catalogError,setCatalogError]=useState<'network'|'permission'|'request'|null>(null);
 
   const fetchProducts=useCallback(async(category?:string,search?:string)=>{
     setIsLoading(true);
     try {
-      setProducts(await loadProducts({
+      const next=await loadProducts({
         category:category&&category!=='all'?category as MarketplaceCategory:'',
         search,
-      }));
-    } catch { setProducts([]); }
+      });setProducts(next);setCatalogError(null);
+    } catch(error) {const code=error&&typeof error==='object'&&'code' in error?(error as {code?:unknown}).code:null;const category=code==='marketplace_read_permission'?'permission':code==='marketplace_read_transport'?'network':'request';setCatalogError(category);if(__DEV__)console.warn('[MarketplaceRead]',{operation:'fetchProducts',postgresCode:error&&typeof error==='object'&&'postgresCode' in error?(error as {postgresCode?:unknown}).postgresCode:null,category});}
     finally { setIsLoading(false); }
   },[]);
   const fetchMyProducts=useCallback(async()=>{
@@ -79,9 +80,9 @@ export function ShopProvider({children}:{children:ReactNode}) {
     void persistSave(user.id,id,!saved).then(ok=>{if(!ok)setSavedProductIds(previous=>{const next=new Set(previous);if(saved)next.add(id);else next.delete(id);return next;});});
   },[user,savedProductIds]);
   const value=useMemo(()=>({
-    products,myProducts,savedProductIds,isLoading,fetchProducts,fetchMyProducts,
+    products,myProducts,savedProductIds,isLoading,catalogError,fetchProducts,fetchMyProducts,
     createProduct,setPublished,deleteProduct,toggleSaveProduct,
     isSavedProduct:(id:string)=>savedProductIds.has(id),
-  }),[products,myProducts,savedProductIds,isLoading,fetchProducts,fetchMyProducts,createProduct,setPublished,deleteProduct,toggleSaveProduct]);
+  }),[products,myProducts,savedProductIds,isLoading,catalogError,fetchProducts,fetchMyProducts,createProduct,setPublished,deleteProduct,toggleSaveProduct]);
   return <ShopContext.Provider value={value}>{children}</ShopContext.Provider>;
 }

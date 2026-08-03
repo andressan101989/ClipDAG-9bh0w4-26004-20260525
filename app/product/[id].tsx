@@ -16,7 +16,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import type { Product } from '@/contexts/ShopContext';
 import {
-  fetchMarketplaceProductDetail,type MarketplaceProductOption,type MarketplaceVariant,
+  fetchMarketplaceProductDetail,MarketplaceReadError,type MarketplaceProductOption,type MarketplaceVariant,
 } from '@/services/marketplaceService';
 import {
   isOptionValueSelectable, reconcileVariantSelection, resolveExactVariant, selectionForPreferredVariant,
@@ -38,6 +38,7 @@ export default function ProductScreen() {
   const [selectedValues,setSelectedValues]=useState<Record<string,string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [readError,setReadError]=useState<'permission'|'transport'|null>(null);
   const [quantity, setQuantity] = useState(1);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const addToCartLockRef=useRef(false);
@@ -51,8 +52,8 @@ export default function ProductScreen() {
       setProduct(value?.product??products.find(p=>p.id===id)??null);
       setOptions(value?.options??[]);setVariants(value?.variants??[]);
       setSelectedValues(selectionForPreferredVariant(value?.options??[],value?.variants??[]));
-      setNotFound(!value);
-    }).catch(()=>{if(active)setNotFound(true);}).finally(()=>{if(active)setIsLoading(false);});
+      setNotFound(!value);setReadError(null);
+    }).catch(error=>{if(active){if(error instanceof MarketplaceReadError&&error.code==='marketplace_read_permission')setReadError('permission');else if(error instanceof MarketplaceReadError&&error.code==='marketplace_read_transport')setReadError('transport');else setNotFound(true);}}).finally(()=>{if(active)setIsLoading(false);});
     return()=>{active=false;};
   }, [id, products]);
 
@@ -69,8 +70,8 @@ export default function ProductScreen() {
       <View style={[styles.container,styles.centered,{paddingTop:insets.top,paddingHorizontal:Spacing.lg}]}>
         <StatusBar style="light" />
         <MaterialIcons name="inventory-2" size={48} color={Colors.textSubtle} />
-        <Text style={styles.sectionTitle}>Producto no disponible</Text>
-        <Text style={[styles.description,{textAlign:'center'}]}>Este producto no existe o ya no está disponible.</Text>
+        <Text style={styles.sectionTitle}>{readError?'No pudimos cargar el producto':'Producto no disponible'}</Text>
+        <Text style={[styles.description,{textAlign:'center'}]}>{readError==='permission'?'La tienda necesita una actualización de configuración. Inténtalo nuevamente.':readError==='transport'?'Revisa tu conexión e inténtalo nuevamente.':'Este producto no existe o ya no está disponible.'}</Text>
         <CyberButton label="Volver" onPress={()=>router.back()} />
       </View>
     );
