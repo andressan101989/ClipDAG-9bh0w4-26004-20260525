@@ -18,7 +18,7 @@ import type { ProductCategory } from '@/contexts/ShopContext';
 import { deleteMediaAsset, getSafeMediaError, uploadMediaFromUri } from '@/services/mediaService';
 import {
   configureProductVariants, createProductDraft, fetchCategories, fetchSellerFoundation,
-  fetchSellerProductVariants, setProductPublished, setVariantLowStockThreshold,
+  fetchSellerProductVariants, marketplacePublicationMessage, setProductPublished, setVariantLowStockThreshold,
   softDeleteProduct, updateVariant, type MarketplaceCategoryRecord, type MarketplaceStore,
   type VariantConfiguration,
 } from '@/services/marketplaceService';
@@ -445,9 +445,10 @@ export default function CreateProductScreen() {
           : []),
       ]);
     } catch (error) {
+      const readinessMessage = marketplacePublicationMessage(error);
       const message = error instanceof Error && error.message.includes('marketplace_sku_exists')
         ? 'Ese SKU ya existe en tu tienda. Corrígelo y reintenta.'
-        : 'Tu producto permanece privado. Conservamos los datos para que puedas reintentar.';
+        : readinessMessage ?? 'Tu producto permanece privado. Conservamos los datos para que puedas reintentar.';
       showAlert('No se pudo publicar', message);
     } finally {
       publishLockRef.current = false;

@@ -1,10 +1,16 @@
 import crypto from "node:crypto";
+import {requireFixtureCleanup} from "./marketplace-fixture-lifecycle.mjs";
+if (process.env.ALLOW_REMOTE_MARKETPLACE_FIXTURES !== "true")
+  throw new Error("remote_marketplace_fixtures_not_allowed");
 const PROJECT = "aewwdlvbwpczqyvkwvvj",
   url = `https://${PROJECT}.supabase.co`,
   service = process.env.MKT_A4A_SERVICE_KEY,
   anon = process.env.MKT_A4A_ANON_KEY;
 if (process.env.SUPABASE_PROJECT_REF !== PROJECT || !service || !anon)
   throw new Error("linked_project_credentials_required");
+if (process.env.SUPABASE_ENVIRONMENT === "production")
+  throw new Error("remote_marketplace_fixtures_forbidden_in_production");
+console.error(`[fixture-safety] linked project: ${PROJECT}`);
 const uuid = () => crypto.randomUUID(),
   stamp = Date.now().toString(36),
   password = `A4b-${uuid()}!aA1`,
@@ -264,6 +270,8 @@ async function buyOnce({ pin, variant, token, session }) {
   return pending;
 }
 
+await rpc("marketplace_fixture_lifecycle",{p_fixture_suite:"mkt-a4b",p_fixture_run_id:stamp,p_phase:"begin",p_project_ref:PROJECT});
+try {
 const sellerA = await user("seller-a"),
   hostB = await user("host-b"),
   buyerC = await user("buyer-c"),
@@ -529,6 +537,7 @@ await insert(
     reserved: 0,
   })),
 );
+await rpc("marketplace_fixture_lifecycle",{p_fixture_suite:"mkt-a4b",p_fixture_run_id:stamp,p_phase:"register",p_project_ref:PROJECT});
 await rpc(
   "start_live_session",
   { p_session_id: ids.session, p_title: "A4B Affiliate Proof" },
@@ -1596,3 +1605,7 @@ console.log(
     2,
   ),
 );
+} finally {
+  const cleanup=await requireFixtureCleanup(()=>rpc("marketplace_fixture_lifecycle",{p_fixture_suite:"mkt-a4b",p_fixture_run_id:stamp,p_phase:"cleanup",p_project_ref:PROJECT}));
+  console.error(`[fixture-cleanup] ${JSON.stringify(cleanup)}`);
+}

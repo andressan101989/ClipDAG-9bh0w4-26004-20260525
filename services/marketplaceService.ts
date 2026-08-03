@@ -315,8 +315,21 @@ export async function updateProduct(id:string,input:Omit<ProductMutation,'storeI
 }
 export async function setProductPublished(id:string,published:boolean):Promise<void> {
   const {error}=await db().rpc(published?'publish_marketplace_product':'pause_marketplace_product',{p_product_id:id});
-  if(error) throw error;
+  if(error) {
+    const message=typeof error.message==='string'?error.message:'marketplace_request_failed';
+    const readiness=message.match(/marketplace_product_not_ready(?:_([a-z_]+))?/);
+    if(readiness) throw new MarketplacePublicationError((readiness[1]??'not_ready') as MarketplacePublicationReadinessReason);
+    throw error;
+  }
 }
+export type MarketplacePublicationReadinessReason='seller_not_approved'|'store_not_active'|'product_not_active'|'product_not_approved'|'product_deleted'|'unsupported_product_type'|'unsupported_currency'|'no_active_variant'|'inventory_not_configured'|'out_of_stock'|'not_ready';
+export class MarketplacePublicationError extends Error {
+  constructor(public reason:MarketplacePublicationReadinessReason){super(`marketplace_product_not_ready_${reason}`);this.name='MarketplacePublicationError';}
+}
+export const marketplacePublicationMessage=(error:unknown):string|null=>{
+  if(!(error instanceof MarketplacePublicationError))return null;
+  return ({seller_not_approved:'Tu cuenta de vendedor todavía no está aprobada.',store_not_active:'Activa tu tienda antes de publicar.',product_not_active:'El producto no está activo.',product_not_approved:'El producto todavía está en revisión.',product_deleted:'Este producto fue eliminado.',unsupported_product_type:'Revisa el tipo de producto.',unsupported_currency:'El producto debe usar BDAG.',no_active_variant:'Configura al menos una variante activa.',inventory_not_configured:'Completa el inventario antes de publicar.',out_of_stock:'Agrega inventario disponible antes de publicar.',not_ready:'Completa la configuración requerida antes de publicar.'} satisfies Record<MarketplacePublicationReadinessReason,string>)[error.reason];
+};
 export async function softDeleteProduct(id:string):Promise<void> {
   const {error}=await db().rpc('soft_delete_marketplace_product',{p_product_id:id});
   if(error) throw error;

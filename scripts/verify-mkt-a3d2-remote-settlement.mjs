@@ -1,15 +1,22 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import pg from 'pg';
+import {requireFixtureCleanup} from './marketplace-fixture-lifecycle.mjs';
+
+if(process.env.ALLOW_REMOTE_MARKETPLACE_FIXTURES!=='true')throw new Error('remote_marketplace_fixtures_not_allowed');
 
 const PROJECT='aewwdlvbwpczqyvkwvvj';
 if(process.env.SUPABASE_PROJECT_REF!==PROJECT)throw new Error('unexpected_project_ref');
+if(process.env.SUPABASE_ENVIRONMENT==='production')throw new Error('remote_marketplace_fixtures_forbidden_in_production');
+console.error(`[fixture-safety] linked project: ${PROJECT}`);
 const env=Object.fromEntries(fs.readFileSync('.env','utf8').split(/\r?\n/).filter(x=>x&&!x.startsWith('#')).map(x=>{const i=x.indexOf('=');return [x.slice(0,i),x.slice(i+1).replace(/^['"]|['"]$/g,'')]}));
 const url=env.EXPO_PUBLIC_SUPABASE_URL,anon=env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 if(!url?.includes(PROJECT)||!anon)throw new Error('linked_project_env_missing');
 const {Client}=pg;const db=new Client({ssl:{rejectUnauthorized:false}});await db.connect();await db.query('set role postgres');
 const uid=()=>crypto.randomUUID(),redact=x=>`${x.slice(0,8)}…`;
 const stamp=Date.now().toString(36),password=`MktA3D2-${uid()}!`;
+const lifecycle=async phase=>{await db.query("select set_config('request.jwt.claim.role','service_role',false)");return(await db.query('select public.marketplace_fixture_lifecycle($1,$2,$3,$4)v',['mkt-a3d2-settlement',stamp,phase,PROJECT])).rows[0].v};
+await lifecycle('begin');
 async function signup(role){const email=`mkt-a3d2-${role}-${stamp}@example.invalid`;const r=await fetch(`${url}/auth/v1/signup`,{method:'POST',headers:{apikey:anon,'Content-Type':'application/json'},body:JSON.stringify({email,password})});const j=await r.json();if(!r.ok||!j.access_token)throw new Error(`signup_${role}_${r.status}`);return{id:j.user.id,token:j.access_token};}
 async function call(path,token,body){const r=await fetch(`${url}${path}`,{method:'POST',headers:{apikey:anon,Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json().catch(()=>null);return{status:r.status,body:j};}
 const buyer=await signup('buyer'),seller=await signup('seller');
@@ -27,7 +34,7 @@ try{
  if(!platform)throw new Error('platform_account_missing');
  await db.query(`insert into public.financial_transactions(id,from_account_id,to_account_id,operation_type,amount,fee_amount,currency,status,reference_type,reference_id,idempotency_key,initiated_by) values($1,$2,$3,'marketplace_test_funding',2,0,'BDAG','completed','marketplace_test_fixture',$4,$5,$6)`,[ids.fundTx,platform.id,buyerAccount,ids.product,`a3d2-fund-${ids.fundTx}`,buyer.id]);
  await db.query(`select public.ledger_debit($1,$2,2,'Dedicated MKT-A3D2 test funding',jsonb_build_object('fin_txn_id',$1::uuid)),public.ledger_credit($1,$3,2,'Dedicated MKT-A3D2 test funding',jsonb_build_object('fin_txn_id',$1::uuid))`,[ids.fundTx,platform.id,buyerAccount]);
- await db.query('commit');
+ await db.query('commit');await lifecycle('register');
 
  const reserve=await call('/rest/v1/rpc/create_marketplace_checkout_reservation',buyer.token,{p_items:[{variant_id:ids.variant,quantity:1}],p_shipping_address:{recipient_name:'Test Buyer',line1:'Dedicated fixture address',line2:null,city:'Test City',region:'Test Region',postal_code:'00000',country:'US',phone:null},p_idempotency_key:uid()});
  if(reserve.status!==200)throw new Error(`reservation_${reserve.status}_${JSON.stringify(reserve.body)}`);
@@ -54,4 +61,4 @@ try{
  const reconciliation=(await db.query('select public.reconcile_marketplace_settlements() value')).rows[0].value;
  const safeSnapshot=value=>({...value,payment:value.payment?{...value.payment,id:undefined}:null,allocation:value.allocation?{...value.allocation,id:undefined}:null});
  console.log(JSON.stringify({project:PROJECT,ids:Object.fromEntries(Object.entries({...ids,buyer:buyer.id,seller:seller.id,settlement:settlementId,conflictOrder:order2}).map(([k,v])=>[k,redact(v)])),http:{parallel:parallel.map(x=>x.status),same:same.status,different:different.status,conflict:conflict.status,unrelated:unrelated.status,anonymous:anonymous.status,malformed:malformed.status,unshipped:unshipped.status,directRpc:directRpc.status,settlementRead,legRead},before:safeSnapshot(before),after:safeSnapshot(after),retriesStable:true,reconciliation},null,2));
-}finally{await db.end();}
+}finally{try{await db.query('rollback').catch(()=>{});console.error(`[fixture-cleanup] ${JSON.stringify(await requireFixtureCleanup(()=>lifecycle('cleanup')))}`)}finally{await db.end();}}

@@ -30,6 +30,7 @@ import {
   featureLiveProduct,
   LiveCommerceError,
   pinLiveProduct,
+  readinessReasonFromErrorCode,
   unpinLiveProduct,
   type LiveCandidateCursor,
   type LiveProductCandidate,
@@ -53,6 +54,9 @@ const readinessMessage: Partial<
 const errorMessage = (error: unknown) => {
   const code =
     error instanceof LiveCommerceError ? error.code : "live_commerce_unknown";
+  const readinessReason = readinessReasonFromErrorCode(code);
+  if (readinessReason)
+    return readinessMessage[readinessReason] ?? "Este producto ya no cumple los requisitos para LIVE.";
   if (code === "live_commerce_host_not_eligible")
     return "Activa tu tienda y completa la aprobación de vendedor para administrar productos.";
   if (code === "live_commerce_pin_limit")

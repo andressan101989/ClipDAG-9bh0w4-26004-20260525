@@ -165,8 +165,17 @@ export type LiveCommerceErrorCode =
   | "marketplace_own_product_forbidden"
   | "marketplace_insufficient_inventory"
   | "marketplace_invalid_shipping_address"
+  | `live_product_readiness_${LiveProductReadinessReason}`
+  | `marketplace_product_not_ready_${LiveProductReadinessReason}`
+  | "marketplace_product_not_ready"
   | "live_commerce_transport"
   | "live_commerce_unknown";
+const READINESS_REASONS: LiveProductReadinessReason[] = [
+  "ready", "seller_not_approved", "store_not_active", "product_not_active",
+  "product_not_approved", "product_deleted", "unsupported_product_type",
+  "unsupported_currency", "no_active_variant", "inventory_not_configured",
+  "out_of_stock", "affiliate_offer_unavailable", "affiliate_offer_replaced",
+];
 const CODES: LiveCommerceErrorCode[] = [
   "live_commerce_auth_required",
   "live_commerce_host_not_eligible",
@@ -190,7 +199,24 @@ const CODES: LiveCommerceErrorCode[] = [
   "marketplace_own_product_forbidden",
   "marketplace_insufficient_inventory",
   "marketplace_invalid_shipping_address",
+  "marketplace_product_not_ready",
+  ...READINESS_REASONS.flatMap((reason) => [
+    `live_product_readiness_${reason}` as LiveCommerceErrorCode,
+    `marketplace_product_not_ready_${reason}` as LiveCommerceErrorCode,
+  ]),
 ];
+export const readinessReasonFromErrorCode = (
+  code: LiveCommerceErrorCode,
+): LiveProductReadinessReason | null => {
+  const prefix = code.startsWith("live_product_readiness_")
+    ? "live_product_readiness_"
+    : code.startsWith("marketplace_product_not_ready_")
+      ? "marketplace_product_not_ready_"
+      : null;
+  if (!prefix) return null;
+  const reason = code.slice(prefix.length) as LiveProductReadinessReason;
+  return READINESS_REASONS.includes(reason) ? reason : null;
+};
 export class LiveCommerceError extends Error {
   constructor(public code: LiveCommerceErrorCode) {
     super(code);
@@ -340,21 +366,9 @@ export async function fetchMyLiveProductCandidates(
         "affiliate_offer_unavailable",
         "affiliate_offer_replaced",
       ].includes(String(candidateAvailability)) ||
-      ![
-        "ready",
-        "seller_not_approved",
-        "store_not_active",
-        "product_not_active",
-        "product_not_approved",
-        "product_deleted",
-        "unsupported_product_type",
-        "unsupported_currency",
-        "no_active_variant",
-        "inventory_not_configured",
-        "out_of_stock",
-        "affiliate_offer_unavailable",
-        "affiliate_offer_replaced",
-      ].includes(readinessReasonCode) ||
+      !READINESS_REASONS.includes(
+        readinessReasonCode as LiveProductReadinessReason,
+      ) ||
       typeof r.pin_offer_valid !== "boolean" ||
       typeof r.requires_repin !== "boolean"
     )

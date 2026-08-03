@@ -1,8 +1,12 @@
 import crypto from 'node:crypto';
+import {requireFixtureCleanup} from './marketplace-fixture-lifecycle.mjs';
+if(process.env.ALLOW_REMOTE_MARKETPLACE_FIXTURES!=='true')throw new Error('remote_marketplace_fixtures_not_allowed');
 
 const PROJECT='aewwdlvbwpczqyvkwvvj',url=`https://${PROJECT}.supabase.co`;
 const service=process.env.MKT_A4A_SERVICE_KEY,anon=process.env.MKT_A4A_ANON_KEY;
 if(process.env.SUPABASE_PROJECT_REF!==PROJECT||!service||!anon)throw new Error('linked_project_credentials_required');
+if(process.env.SUPABASE_ENVIRONMENT==='production')throw new Error('remote_marketplace_fixtures_forbidden_in_production');
+console.error(`[fixture-safety] linked project: ${PROJECT}`);
 const uuid=()=>crypto.randomUUID(),stamp=Date.now().toString(36),password=`A4a-${uuid()}!aA1`;
 const redact=value=>typeof value==='string'&&value.length>12?`${value.slice(0,8)}…`:value;
 const assert=(name,condition)=>{if(!condition)throw new Error(`assertion_failed:${name}`)};
@@ -19,6 +23,8 @@ const select=(table,query)=>request(`/rest/v1/${table}?${query}`);
 const denied=async work=>{try{await work();return false}catch{return true}};
 async function user(role){const email=`mkt-a4a-${role}-${stamp}@example.invalid`;const created=await request('/auth/v1/admin/users',{method:'POST',body:{email,password,email_confirm:true}});const login=await request('/auth/v1/token?grant_type=password',{method:'POST',token:anon,body:{email,password}});return{id:created.id,email,token:login.access_token}}
 
+await rpc('marketplace_fixture_lifecycle',{p_fixture_suite:'mkt-a4a',p_fixture_run_id:stamp,p_phase:'begin',p_project_ref:PROJECT});
+try {
 const host=await user('host'),buyer=await user('buyer'),other=await user('other');
 const ids={store:uuid(),session:uuid()},products=[],variants=[];
 await request('/rest/v1/user_profiles?on_conflict=id',{method:'POST',body:[host,buyer,other].map((u,i)=>({id:u.id,email:u.email,username:`a4a_${i}_${stamp}`,display_name:`A4A ${i}`})),headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
@@ -26,6 +32,7 @@ await insert('marketplace_sellers',{user_id:host.id,status:'approved',display_na
 await insert('marketplace_stores',{id:ids.store,seller_id:host.id,name:'A4A Remote Store',slug:`a4a-${stamp}`,status:'active'});
 for(let i=0;i<55;i++){products.push({id:uuid(),seller_id:host.id,title:`A4A Product ${String(i).padStart(2,'0')}`,description:'Dedicated LIVE commerce fixture',price:1,currency:'BDAG',category:'physical',stock:3,status:'active',store_id:ids.store,category_id:'10000000-0000-4000-8000-000000000002',product_type:'physical',moderation_status:'approved',published_at:new Date(Date.now()-i*1000).toISOString(),updated_at:new Date(Date.now()-i*1000).toISOString()});variants.push({id:uuid(),product_id:products[i].id,store_id:ids.store,seller_id:host.id,sku:`A4A-${stamp.toUpperCase()}-${i}`,sku_normalized:`A4A-${stamp.toUpperCase()}-${i}`,title:'Default',price:1,status:'active',is_default:true,combination_key:''})}
 await insert('products',products);await insert('marketplace_product_variants',variants);await insert('marketplace_inventory_levels',variants.map(v=>({variant_id:v.id,on_hand:3,reserved:0})));
+await rpc('marketplace_fixture_lifecycle',{p_fixture_suite:'mkt-a4a',p_fixture_run_id:stamp,p_phase:'register',p_project_ref:PROJECT});
 await rpc('start_live_session',{p_session_id:ids.session,p_title:'A4A Final Proof'},host.token);
 
 const pages=[];let cursor=null;do{const page=await rpc('fetch_my_live_product_candidates',{p_session_id:ids.session,p_limit:20,p_before_updated_at:cursor?.updated_at??null,p_before_id:cursor?.id??null},host.token);pages.push(page.items);cursor=page.next_cursor}while(cursor);
@@ -70,3 +77,7 @@ await rpc('cancel_marketplace_checkout_reservation',{p_checkout_id:pending.check
 const paymentReconciliation=await rpc('reconcile_marketplace_payments',{}),settlementReconciliation=await rpc('reconcile_marketplace_settlements',{});assert('payment_reconciliation',paymentReconciliation.confirmed_state_mismatches===0&&paymentReconciliation.escrow_shortfall===0);assert('settlement_reconciliation',settlementReconciliation.escrow_difference===0&&settlementReconciliation.escrow_shortage===0&&settlementReconciliation.escrow_surplus===0);
 
 console.log(JSON.stringify({project:PROJECT,ids:{host:redact(host.id),buyer:redact(buyer.id),other:redact(other.id),session:redact(ids.session),store:redact(ids.store),pin:redact(pinA.id),checkout:redact(ids.checkout),order:redact(ids.order)},candidatePages:pages.map(page=>page.length),candidateUnique:new Set(candidateIds).size,commandTests:{pinRetry:true,pinConflict:true,parallelPin:true,featureRetry:true,featureConflict:true,unpinRetry:true,unpinConflict:true,pinLimit:true},reservationTests:{sameKey:true,parallel:true,changedQuantity:true,changedAddress:true,changedPin:true,differentKey:true},paymentTests:{parallel:true,retries:true},before,after,allocation,security,liveEnd:{shelfEmpty:true,newReservationDenied:true,paidPersisted:true,pendingPersisted:true,pendingCancelled:true},paymentReconciliation,settlementReconciliation},null,2));
+} finally {
+  const cleanup=await requireFixtureCleanup(()=>rpc('marketplace_fixture_lifecycle',{p_fixture_suite:'mkt-a4a',p_fixture_run_id:stamp,p_phase:'cleanup',p_project_ref:PROJECT}));
+  console.error(`[fixture-cleanup] ${JSON.stringify(cleanup)}`);
+}

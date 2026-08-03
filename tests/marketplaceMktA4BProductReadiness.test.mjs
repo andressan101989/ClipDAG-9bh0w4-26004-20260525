@@ -61,6 +61,15 @@ test("host candidate parser and UI preserve precise readiness reasons", () => {
   assert.match(manager, /Tu cuenta de vendedor todavía no está aprobada/);
   assert.match(manager, /Configura al menos una variante activa/);
   assert.match(manager, /Completa el inventario de este producto/);
+  assert.match(service, /live_product_readiness_/);
+  assert.match(service, /marketplace_product_not_ready_/);
+  assert.match(service, /readinessReasonFromErrorCode/);
+});
+
+test("publication and pin races keep actionable typed business errors", () => {
+  assert.match(marketplace, /MarketplacePublicationError/);
+  assert.match(marketplace, /marketplacePublicationMessage/);
+  assert.doesNotMatch(manager, /live_product_readiness_[^\n]+live_commerce_unknown/);
 });
 
 test("public Shop uses the authoritative readiness RPC", () => {
