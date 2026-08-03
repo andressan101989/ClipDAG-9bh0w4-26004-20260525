@@ -18,12 +18,18 @@ export async function executeFixtureRun({ begin, register, test, cleanup }) {
   }
 }
 
-export async function requireFixtureFinalization(finalize) {
+export async function requireFixtureFinalization(finalize, expected = {}) {
   const result = await finalize();
   if (!result || result.quarantined !== true)
     throw new Error("remote_fixture_quarantine_not_confirmed");
   if (result.financial_neutralized !== true)
     throw new Error("remote_fixture_financial_neutralization_not_confirmed");
+  if (result.status !== "quarantined" || result.failure_code != null)
+    throw new Error("remote_fixture_run_not_quarantined");
+  if (expected.fixtureSuite && result.fixture_suite !== expected.fixtureSuite)
+    throw new Error("remote_fixture_suite_mismatch");
+  if (expected.fixtureRunId && result.fixture_run_id !== expected.fixtureRunId)
+    throw new Error("remote_fixture_run_id_mismatch");
   for (const field of [
     "products_active",
     "stores_active",

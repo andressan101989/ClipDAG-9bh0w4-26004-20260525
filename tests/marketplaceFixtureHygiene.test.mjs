@@ -23,8 +23,8 @@ test('every remote verifier is fail-closed behind the explicit fixture gate',()=
 test('every remote verifier registers fixtures and atomically finalizes from finally',()=>{
   for(const file of verifiers){
     const source=read(file);
-    assert.match(source,/(p_phase:\s*["']begin["']|lifecycle\('begin'\))/);
-    assert.match(source,/(p_phase:\s*["']register["']|lifecycle\('register'\))/);
+    assert.match(source,/(p_phase:\s*["']begin["']|lifecycle\(["']begin["']\))/);
+    assert.match(source,/(p_phase:\s*["']register["']|lifecycle\(["']register["']\))/);
     assert.match(source,/finally\s*\{/);
     assert.match(source,/finalize_marketplace_fixture_run/);
   }

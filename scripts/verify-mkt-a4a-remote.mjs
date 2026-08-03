@@ -1,83 +1,1005 @@
-import crypto from 'node:crypto';
-import {requireFixtureFinalization} from './marketplace-fixture-lifecycle.mjs';
-if(process.env.ALLOW_REMOTE_MARKETPLACE_FIXTURES!=='true')throw new Error('remote_marketplace_fixtures_not_allowed');
+import crypto from "node:crypto";
+import { requireFixtureFinalization } from "./marketplace-fixture-lifecycle.mjs";
+if (process.env.ALLOW_REMOTE_MARKETPLACE_FIXTURES !== "true")
+  throw new Error("remote_marketplace_fixtures_not_allowed");
 
-const PROJECT='aewwdlvbwpczqyvkwvvj',url=`https://${PROJECT}.supabase.co`;
-const service=process.env.MKT_A4A_SERVICE_KEY,anon=process.env.MKT_A4A_ANON_KEY;
-if(process.env.SUPABASE_PROJECT_REF!==PROJECT||!service||!anon)throw new Error('linked_project_credentials_required');
-if(process.env.SUPABASE_ENVIRONMENT==='production')throw new Error('remote_marketplace_fixtures_forbidden_in_production');
+const PROJECT = "aewwdlvbwpczqyvkwvvj",
+  url = `https://${PROJECT}.supabase.co`;
+const service = process.env.MKT_A4A_SERVICE_KEY,
+  anon = process.env.MKT_A4A_ANON_KEY;
+if (process.env.SUPABASE_PROJECT_REF !== PROJECT || !service || !anon)
+  throw new Error("linked_project_credentials_required");
+if (process.env.SUPABASE_ENVIRONMENT === "production")
+  throw new Error("remote_marketplace_fixtures_forbidden_in_production");
 console.error(`[fixture-safety] linked project: ${PROJECT}`);
-const uuid=()=>crypto.randomUUID(),stamp=Date.now().toString(36),password=`A4a-${uuid()}!aA1`;
-const redact=value=>typeof value==='string'&&value.length>12?`${value.slice(0,8)}…`:value;
-const assert=(name,condition)=>{if(!condition)throw new Error(`assertion_failed:${name}`)};
-const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+const uuid = () => crypto.randomUUID(),
+  FIXTURE_SUITE = "mkt-a4a",
+  stamp = `${FIXTURE_SUITE}-${Date.now().toString(36)}-${uuid().slice(0, 12)}`,
+  password = `A4a-${uuid()}!aA1`;
+const redact = (value) =>
+  typeof value === "string" && value.length > 12
+    ? `${value.slice(0, 8)}…`
+    : value;
+const assert = (name, condition) => {
+  if (!condition) throw new Error(`assertion_failed:${name}`);
+};
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-async function request(path,{token=service,method='GET',body,headers={}}={}){
-  const response=await fetch(url+path,{method,headers:{apikey:token===service?service:anon,Authorization:`Bearer ${token}`,'Content-Type':'application/json',...headers},body:body===undefined?undefined:JSON.stringify(body)});
-  const text=await response.text();let data;try{data=text?JSON.parse(text):null}catch{data=text}
-  if(!response.ok)throw Object.assign(new Error(`remote_${response.status}`),{status:response.status,data});return data;
+async function request(
+  path,
+  { token = service, method = "GET", body, headers = {} } = {},
+) {
+  const response = await fetch(url + path, {
+    method,
+    headers: {
+      apikey: token === service ? service : anon,
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await response.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  if (!response.ok)
+    throw Object.assign(new Error(`remote_${response.status}`), {
+      status: response.status,
+      data,
+    });
+  return data;
 }
-const rpc=(name,body,token=service)=>request(`/rest/v1/rpc/${name}`,{method:'POST',body,token});
-const insert=(table,body)=>request(`/rest/v1/${table}`,{method:'POST',body,headers:{Prefer:'return=representation'}});
-const select=(table,query)=>request(`/rest/v1/${table}?${query}`);
-const denied=async work=>{try{await work();return false}catch{return true}};
-async function user(role){const email=`mkt-a4a-${role}-${stamp}@example.invalid`;const created=await request('/auth/v1/admin/users',{method:'POST',body:{email,password,email_confirm:true}});const login=await request('/auth/v1/token?grant_type=password',{method:'POST',token:anon,body:{email,password}});return{id:created.id,email,token:login.access_token}}
+const rpc = (name, body, token = service) =>
+  request(`/rest/v1/rpc/${name}`, { method: "POST", body, token });
+const insert = (table, body) =>
+  request(`/rest/v1/${table}`, {
+    method: "POST",
+    body,
+    headers: { Prefer: "return=representation" },
+  });
+const select = (table, query) => request(`/rest/v1/${table}?${query}`);
+const denied = async (work) => {
+  try {
+    await work();
+    return false;
+  } catch {
+    return true;
+  }
+};
+async function user(role) {
+  const email = `mkt-a4a-${role}-${stamp}@example.invalid`;
+  const created = await request("/auth/v1/admin/users", {
+    method: "POST",
+    body: { email, password, email_confirm: true },
+  });
+  const login = await request("/auth/v1/token?grant_type=password", {
+    method: "POST",
+    token: anon,
+    body: { email, password },
+  });
+  return { id: created.id, email, token: login.access_token };
+}
 
-await rpc('marketplace_fixture_lifecycle',{p_fixture_suite:'mkt-a4a',p_fixture_run_id:stamp,p_phase:'begin',p_project_ref:PROJECT});
+await rpc("marketplace_fixture_lifecycle", {
+  p_fixture_suite: "mkt-a4a",
+  p_fixture_run_id: stamp,
+  p_phase: "begin",
+  p_project_ref: PROJECT,
+});
+let testFailure;
 try {
-const host=await user('host'),buyer=await user('buyer'),other=await user('other');
-const ids={store:uuid(),session:uuid()},products=[],variants=[];
-await request('/rest/v1/user_profiles?on_conflict=id',{method:'POST',body:[host,buyer,other].map((u,i)=>({id:u.id,email:u.email,username:`a4a_${i}_${stamp}`,display_name:`A4A ${i}`})),headers:{Prefer:'resolution=merge-duplicates,return=minimal'}});
-await insert('marketplace_sellers',{user_id:host.id,status:'approved',display_name:'A4A Remote Host',approved_at:new Date().toISOString()});
-await insert('marketplace_stores',{id:ids.store,seller_id:host.id,name:'A4A Remote Store',slug:`a4a-${stamp}`,status:'active'});
-for(let i=0;i<55;i++){products.push({id:uuid(),seller_id:host.id,title:`A4A Product ${String(i).padStart(2,'0')}`,description:'Dedicated LIVE commerce fixture',price:1,currency:'BDAG',category:'physical',stock:3,status:'active',store_id:ids.store,category_id:'10000000-0000-4000-8000-000000000002',product_type:'physical',moderation_status:'approved',published_at:new Date(Date.now()-i*1000).toISOString(),updated_at:new Date(Date.now()-i*1000).toISOString()});variants.push({id:uuid(),product_id:products[i].id,store_id:ids.store,seller_id:host.id,sku:`A4A-${stamp.toUpperCase()}-${i}`,sku_normalized:`A4A-${stamp.toUpperCase()}-${i}`,title:'Default',price:1,status:'active',is_default:true,combination_key:''})}
-await insert('products',products);await insert('marketplace_product_variants',variants);await insert('marketplace_inventory_levels',variants.map(v=>({variant_id:v.id,on_hand:3,reserved:0})));
-await rpc('marketplace_fixture_lifecycle',{p_fixture_suite:'mkt-a4a',p_fixture_run_id:stamp,p_phase:'register',p_project_ref:PROJECT});
-await rpc('start_live_session',{p_session_id:ids.session,p_title:'A4A Final Proof'},host.token);
+  const host = await user("host"),
+    buyer = await user("buyer"),
+    other = await user("other");
+  const ids = { store: uuid(), session: uuid() },
+    products = [],
+    variants = [];
+  await request("/rest/v1/user_profiles?on_conflict=id", {
+    method: "POST",
+    body: [host, buyer, other].map((u, i) => ({
+      id: u.id,
+      email: u.email,
+      username: `a4a_${i}_${stamp}`,
+      display_name: `A4A ${i}`,
+    })),
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+  });
+  await insert("marketplace_sellers", {
+    user_id: host.id,
+    status: "approved",
+    display_name: "A4A Remote Host",
+    approved_at: new Date().toISOString(),
+  });
+  await insert("marketplace_stores", {
+    id: ids.store,
+    seller_id: host.id,
+    name: "A4A Remote Store",
+    slug: `a4a-${stamp}`,
+    status: "active",
+  });
+  for (let i = 0; i < 55; i++) {
+    products.push({
+      id: uuid(),
+      seller_id: host.id,
+      title: `A4A Product ${String(i).padStart(2, "0")}`,
+      description: "Dedicated LIVE commerce fixture",
+      price: 1,
+      currency: "BDAG",
+      category: "physical",
+      stock: 3,
+      status: "active",
+      store_id: ids.store,
+      category_id: "10000000-0000-4000-8000-000000000002",
+      product_type: "physical",
+      moderation_status: "approved",
+      published_at: new Date(Date.now() - i * 1000).toISOString(),
+      updated_at: new Date(Date.now() - i * 1000).toISOString(),
+    });
+    variants.push({
+      id: uuid(),
+      product_id: products[i].id,
+      store_id: ids.store,
+      seller_id: host.id,
+      sku: `A4A-${stamp.toUpperCase()}-${i}`,
+      sku_normalized: `A4A-${stamp.toUpperCase()}-${i}`,
+      title: "Default",
+      price: 1,
+      status: "active",
+      is_default: true,
+      combination_key: "",
+    });
+  }
+  await insert("products", products);
+  await insert("marketplace_product_variants", variants);
+  await insert(
+    "marketplace_inventory_levels",
+    variants.map((v) => ({ variant_id: v.id, on_hand: 3, reserved: 0 })),
+  );
+  await rpc("marketplace_fixture_lifecycle", {
+    p_fixture_suite: "mkt-a4a",
+    p_fixture_run_id: stamp,
+    p_phase: "register",
+    p_project_ref: PROJECT,
+  });
+  await rpc(
+    "start_live_session",
+    { p_session_id: ids.session, p_title: "A4A Final Proof" },
+    host.token,
+  );
 
-const pages=[];let cursor=null;do{const page=await rpc('fetch_my_live_product_candidates',{p_session_id:ids.session,p_limit:20,p_before_updated_at:cursor?.updated_at??null,p_before_id:cursor?.id??null},host.token);pages.push(page.items);cursor=page.next_cursor}while(cursor);
-const candidateIds=pages.flat().map(row=>row.product_id);
-assert('candidate_page_lengths',same(pages.map(page=>page.length),[20,20,15]));assert('candidate_unique',candidateIds.length===55&&new Set(candidateIds).size===55);assert('final_cursor',cursor===null);
+  const pages = [];
+  let cursor = null;
+  do {
+    const page = await rpc(
+      "fetch_my_live_product_candidates",
+      {
+        p_session_id: ids.session,
+        p_limit: 20,
+        p_before_updated_at: cursor?.updated_at ?? null,
+        p_before_id: cursor?.id ?? null,
+      },
+      host.token,
+    );
+    pages.push(page.items);
+    cursor = page.next_cursor;
+  } while (cursor);
+  const candidateIds = pages.flat().map((row) => row.product_id);
+  assert(
+    "candidate_page_lengths",
+    same(
+      pages.map((page) => page.length),
+      [20, 20, 15],
+    ),
+  );
+  assert(
+    "candidate_unique",
+    candidateIds.length === 55 && new Set(candidateIds).size === 55,
+  );
+  assert("final_cursor", cursor === null);
 
-const pinKey=uuid(),pinA=await rpc('pin_live_session_product',{p_session_id:ids.session,p_product_id:products[0].id,p_featured_variant_id:variants[0].id,p_idempotency_key:pinKey},host.token);
-const pinRetry=await rpc('pin_live_session_product',{p_session_id:ids.session,p_product_id:products[0].id,p_featured_variant_id:variants[0].id,p_idempotency_key:pinKey},host.token);assert('pin_same_key',pinA.id===pinRetry.id);
-assert('pin_conflicting_key',await denied(()=>rpc('pin_live_session_product',{p_session_id:ids.session,p_product_id:products[1].id,p_featured_variant_id:variants[1].id,p_idempotency_key:pinKey},host.token)));
-const parallelPin=await Promise.all([0,1].map(()=>rpc('pin_live_session_product',{p_session_id:ids.session,p_product_id:products[2].id,p_featured_variant_id:null,p_idempotency_key:uuid()},host.token)));assert('parallel_pin',parallelPin[0].id===parallelPin[1].id);
-const pinB=await rpc('pin_live_session_product',{p_session_id:ids.session,p_product_id:products[1].id,p_featured_variant_id:null,p_idempotency_key:uuid()},host.token);
-const featureKey=uuid(),featureA=await rpc('feature_live_session_product',{p_session_id:ids.session,p_live_session_product_id:pinA.id,p_idempotency_key:featureKey},host.token),versionA=(await select('live_session_products',`select=version&id=eq.${pinA.id}`))[0].version;
-const featureRetry=await rpc('feature_live_session_product',{p_session_id:ids.session,p_live_session_product_id:pinA.id,p_idempotency_key:featureKey},host.token);assert('feature_retry',featureA.id===featureRetry.id&&(await select('live_session_products',`select=version&id=eq.${pinA.id}`))[0].version===versionA);
-assert('feature_conflict',await denied(()=>rpc('feature_live_session_product',{p_session_id:ids.session,p_live_session_product_id:pinB.id,p_idempotency_key:featureKey},host.token)));
-await rpc('feature_live_session_product',{p_session_id:ids.session,p_live_session_product_id:pinB.id,p_idempotency_key:uuid()},host.token);assert('single_featured',(await select('live_session_products',`select=id&session_id=eq.${ids.session}&status=eq.active&is_featured=eq.true`)).length===1);
-const unpinKey=uuid(),unpinB=await rpc('unpin_live_session_product',{p_session_id:ids.session,p_live_session_product_id:pinB.id,p_idempotency_key:unpinKey},host.token),removedVersion=(await select('live_session_products',`select=version,status&id=eq.${pinB.id}`))[0];
-const unpinRetry=await rpc('unpin_live_session_product',{p_session_id:ids.session,p_live_session_product_id:pinB.id,p_idempotency_key:unpinKey},host.token);assert('unpin_retry',unpinB.id===unpinRetry.id&&same((await select('live_session_products',`select=version,status&id=eq.${pinB.id}`))[0],removedVersion));assert('unpin_conflict',await denied(()=>rpc('unpin_live_session_product',{p_session_id:ids.session,p_live_session_product_id:pinA.id,p_idempotency_key:unpinKey},host.token)));
-for(let i=3;i<21;i++)await rpc('pin_live_session_product',{p_session_id:ids.session,p_product_id:products[i].id,p_featured_variant_id:null,p_idempotency_key:uuid()},host.token);
-assert('pin_limit',await denied(()=>rpc('pin_live_session_product',{p_session_id:ids.session,p_product_id:products[21].id,p_featured_variant_id:null,p_idempotency_key:uuid()},host.token))&&(await select('live_session_products',`select=id&session_id=eq.${ids.session}&status=eq.active`)).length===20);
+  const pinKey = uuid(),
+    pinA = await rpc(
+      "pin_live_session_product",
+      {
+        p_session_id: ids.session,
+        p_product_id: products[0].id,
+        p_featured_variant_id: variants[0].id,
+        p_idempotency_key: pinKey,
+      },
+      host.token,
+    );
+  const pinRetry = await rpc(
+    "pin_live_session_product",
+    {
+      p_session_id: ids.session,
+      p_product_id: products[0].id,
+      p_featured_variant_id: variants[0].id,
+      p_idempotency_key: pinKey,
+    },
+    host.token,
+  );
+  assert("pin_same_key", pinA.id === pinRetry.id);
+  assert(
+    "pin_conflicting_key",
+    await denied(() =>
+      rpc(
+        "pin_live_session_product",
+        {
+          p_session_id: ids.session,
+          p_product_id: products[1].id,
+          p_featured_variant_id: variants[1].id,
+          p_idempotency_key: pinKey,
+        },
+        host.token,
+      ),
+    ),
+  );
+  const parallelPin = await Promise.all(
+    [0, 1].map(() =>
+      rpc(
+        "pin_live_session_product",
+        {
+          p_session_id: ids.session,
+          p_product_id: products[2].id,
+          p_featured_variant_id: null,
+          p_idempotency_key: uuid(),
+        },
+        host.token,
+      ),
+    ),
+  );
+  assert("parallel_pin", parallelPin[0].id === parallelPin[1].id);
+  const pinB = await rpc(
+    "pin_live_session_product",
+    {
+      p_session_id: ids.session,
+      p_product_id: products[1].id,
+      p_featured_variant_id: null,
+      p_idempotency_key: uuid(),
+    },
+    host.token,
+  );
+  const featureKey = uuid(),
+    featureA = await rpc(
+      "feature_live_session_product",
+      {
+        p_session_id: ids.session,
+        p_live_session_product_id: pinA.id,
+        p_idempotency_key: featureKey,
+      },
+      host.token,
+    ),
+    versionA = (
+      await select("live_session_products", `select=version&id=eq.${pinA.id}`)
+    )[0].version;
+  const featureRetry = await rpc(
+    "feature_live_session_product",
+    {
+      p_session_id: ids.session,
+      p_live_session_product_id: pinA.id,
+      p_idempotency_key: featureKey,
+    },
+    host.token,
+  );
+  assert(
+    "feature_retry",
+    featureA.id === featureRetry.id &&
+      (
+        await select("live_session_products", `select=version&id=eq.${pinA.id}`)
+      )[0].version === versionA,
+  );
+  assert(
+    "feature_conflict",
+    await denied(() =>
+      rpc(
+        "feature_live_session_product",
+        {
+          p_session_id: ids.session,
+          p_live_session_product_id: pinB.id,
+          p_idempotency_key: featureKey,
+        },
+        host.token,
+      ),
+    ),
+  );
+  await rpc(
+    "feature_live_session_product",
+    {
+      p_session_id: ids.session,
+      p_live_session_product_id: pinB.id,
+      p_idempotency_key: uuid(),
+    },
+    host.token,
+  );
+  assert(
+    "single_featured",
+    (
+      await select(
+        "live_session_products",
+        `select=id&session_id=eq.${ids.session}&status=eq.active&is_featured=eq.true`,
+      )
+    ).length === 1,
+  );
+  const unpinKey = uuid(),
+    unpinB = await rpc(
+      "unpin_live_session_product",
+      {
+        p_session_id: ids.session,
+        p_live_session_product_id: pinB.id,
+        p_idempotency_key: unpinKey,
+      },
+      host.token,
+    ),
+    removedVersion = (
+      await select(
+        "live_session_products",
+        `select=version,status&id=eq.${pinB.id}`,
+      )
+    )[0];
+  const unpinRetry = await rpc(
+    "unpin_live_session_product",
+    {
+      p_session_id: ids.session,
+      p_live_session_product_id: pinB.id,
+      p_idempotency_key: unpinKey,
+    },
+    host.token,
+  );
+  assert(
+    "unpin_retry",
+    unpinB.id === unpinRetry.id &&
+      same(
+        (
+          await select(
+            "live_session_products",
+            `select=version,status&id=eq.${pinB.id}`,
+          )
+        )[0],
+        removedVersion,
+      ),
+  );
+  assert(
+    "unpin_conflict",
+    await denied(() =>
+      rpc(
+        "unpin_live_session_product",
+        {
+          p_session_id: ids.session,
+          p_live_session_product_id: pinA.id,
+          p_idempotency_key: unpinKey,
+        },
+        host.token,
+      ),
+    ),
+  );
+  for (let i = 3; i < 21; i++)
+    await rpc(
+      "pin_live_session_product",
+      {
+        p_session_id: ids.session,
+        p_product_id: products[i].id,
+        p_featured_variant_id: null,
+        p_idempotency_key: uuid(),
+      },
+      host.token,
+    );
+  assert(
+    "pin_limit",
+    (await denied(() =>
+      rpc(
+        "pin_live_session_product",
+        {
+          p_session_id: ids.session,
+          p_product_id: products[21].id,
+          p_featured_variant_id: null,
+          p_idempotency_key: uuid(),
+        },
+        host.token,
+      ),
+    )) &&
+      (
+        await select(
+          "live_session_products",
+          `select=id&session_id=eq.${ids.session}&status=eq.active`,
+        )
+      ).length === 20,
+  );
 
-const directBefore={orders:(await select('marketplace_orders','select=id')).length,movements:(await select('marketplace_inventory_movements','select=id')).length,transactions:(await select('financial_transactions','select=id')).length};
-const clientWrite=(table,method,token,body)=>request(`/rest/v1/${table}${method==='PATCH'||method==='DELETE'?`?session_id=eq.${ids.session}`:''}`,{method,token,body});
-const security={pinInsert:await denied(()=>clientWrite('live_session_products','POST',buyer.token,{session_id:ids.session})),pinUpdate:await denied(()=>clientWrite('live_session_products','PATCH',buyer.token,{position:9})),pinDelete:await denied(()=>clientWrite('live_session_products','DELETE',buyer.token)),sourceRead:await denied(()=>request('/rest/v1/marketplace_live_order_sources?select=id',{token:buyer.token})),sourceInsert:await denied(()=>clientWrite('marketplace_live_order_sources','POST',buyer.token,{})),commandRead:await denied(()=>request('/rest/v1/live_commerce_commands?select=id',{token:buyer.token})),commandInsert:await denied(()=>clientWrite('live_commerce_commands','POST',buyer.token,{})),unrelatedPin:await denied(()=>rpc('pin_live_session_product',{p_session_id:ids.session,p_product_id:products[22].id,p_featured_variant_id:null,p_idempotency_key:uuid()},other.token)),unrelatedUnpin:await denied(()=>rpc('unpin_live_session_product',{p_session_id:ids.session,p_live_session_product_id:pinA.id,p_idempotency_key:uuid()},other.token)),unrelatedFeature:await denied(()=>rpc('feature_live_session_product',{p_session_id:ids.session,p_live_session_product_id:pinA.id,p_idempotency_key:uuid()},other.token)),anonPin:await denied(()=>rpc('pin_live_session_product',{p_session_id:ids.session,p_product_id:products[22].id,p_featured_variant_id:null,p_idempotency_key:uuid()},anon)),anonUnpin:await denied(()=>rpc('unpin_live_session_product',{p_session_id:ids.session,p_live_session_product_id:pinA.id,p_idempotency_key:uuid()},anon)),anonFeature:await denied(()=>rpc('feature_live_session_product',{p_session_id:ids.session,p_live_session_product_id:pinA.id,p_idempotency_key:uuid()},anon)),anonReservation:await denied(()=>rpc('create_live_marketplace_checkout_reservation',{p_session_id:ids.session,p_live_session_product_id:pinA.id,p_variant_id:variants[0].id,p_quantity:1,p_shipping_address:{},p_idempotency_key:uuid()},anon))};assert('security_matrix',Object.values(security).every(Boolean));
-const directAfter={orders:(await select('marketplace_orders','select=id')).length,movements:(await select('marketplace_inventory_movements','select=id')).length,transactions:(await select('financial_transactions','select=id')).length};assert('denials_nonmutating',same(directBefore,directAfter));
+  const directBefore = {
+    orders: (await select("marketplace_orders", "select=id")).length,
+    movements: (await select("marketplace_inventory_movements", "select=id"))
+      .length,
+    transactions: (await select("financial_transactions", "select=id")).length,
+  };
+  const clientWrite = (table, method, token, body) =>
+    request(
+      `/rest/v1/${table}${method === "PATCH" || method === "DELETE" ? `?session_id=eq.${ids.session}` : ""}`,
+      { method, token, body },
+    );
+  const security = {
+    pinInsert: await denied(() =>
+      clientWrite("live_session_products", "POST", buyer.token, {
+        session_id: ids.session,
+      }),
+    ),
+    pinUpdate: await denied(() =>
+      clientWrite("live_session_products", "PATCH", buyer.token, {
+        position: 9,
+      }),
+    ),
+    pinDelete: await denied(() =>
+      clientWrite("live_session_products", "DELETE", buyer.token),
+    ),
+    sourceRead: await denied(() =>
+      request("/rest/v1/marketplace_live_order_sources?select=id", {
+        token: buyer.token,
+      }),
+    ),
+    sourceInsert: await denied(() =>
+      clientWrite("marketplace_live_order_sources", "POST", buyer.token, {}),
+    ),
+    commandRead: await denied(() =>
+      request("/rest/v1/live_commerce_commands?select=id", {
+        token: buyer.token,
+      }),
+    ),
+    commandInsert: await denied(() =>
+      clientWrite("live_commerce_commands", "POST", buyer.token, {}),
+    ),
+    unrelatedPin: await denied(() =>
+      rpc(
+        "pin_live_session_product",
+        {
+          p_session_id: ids.session,
+          p_product_id: products[22].id,
+          p_featured_variant_id: null,
+          p_idempotency_key: uuid(),
+        },
+        other.token,
+      ),
+    ),
+    unrelatedUnpin: await denied(() =>
+      rpc(
+        "unpin_live_session_product",
+        {
+          p_session_id: ids.session,
+          p_live_session_product_id: pinA.id,
+          p_idempotency_key: uuid(),
+        },
+        other.token,
+      ),
+    ),
+    unrelatedFeature: await denied(() =>
+      rpc(
+        "feature_live_session_product",
+        {
+          p_session_id: ids.session,
+          p_live_session_product_id: pinA.id,
+          p_idempotency_key: uuid(),
+        },
+        other.token,
+      ),
+    ),
+    anonPin: await denied(() =>
+      rpc(
+        "pin_live_session_product",
+        {
+          p_session_id: ids.session,
+          p_product_id: products[22].id,
+          p_featured_variant_id: null,
+          p_idempotency_key: uuid(),
+        },
+        anon,
+      ),
+    ),
+    anonUnpin: await denied(() =>
+      rpc(
+        "unpin_live_session_product",
+        {
+          p_session_id: ids.session,
+          p_live_session_product_id: pinA.id,
+          p_idempotency_key: uuid(),
+        },
+        anon,
+      ),
+    ),
+    anonFeature: await denied(() =>
+      rpc(
+        "feature_live_session_product",
+        {
+          p_session_id: ids.session,
+          p_live_session_product_id: pinA.id,
+          p_idempotency_key: uuid(),
+        },
+        anon,
+      ),
+    ),
+    anonReservation: await denied(() =>
+      rpc(
+        "create_live_marketplace_checkout_reservation",
+        {
+          p_session_id: ids.session,
+          p_live_session_product_id: pinA.id,
+          p_variant_id: variants[0].id,
+          p_quantity: 1,
+          p_shipping_address: {},
+          p_idempotency_key: uuid(),
+        },
+        anon,
+      ),
+    ),
+  };
+  assert("security_matrix", Object.values(security).every(Boolean));
+  const directAfter = {
+    orders: (await select("marketplace_orders", "select=id")).length,
+    movements: (await select("marketplace_inventory_movements", "select=id"))
+      .length,
+    transactions: (await select("financial_transactions", "select=id")).length,
+  };
+  assert("denials_nonmutating", same(directBefore, directAfter));
 
-async function fund(user,amount){const account=await rpc('ensure_ledger_account',{p_user_id:user.id}),platform=(await select('ledger_accounts','select=id,balance&owner_id=is.null&account_type=eq.platform&currency=eq.BDAG&limit=1'))[0],tx=uuid();await insert('financial_transactions',{id:tx,from_account_id:platform.id,to_account_id:account,operation_type:'marketplace_test_funding',amount,fee_amount:0,currency:'BDAG',status:'completed',reference_type:'marketplace_test_fixture',reference_id:products[0].id,idempotency_key:`a4a-${tx}`,initiated_by:user.id});await rpc('ledger_debit',{p_txn_id:tx,p_account_id:platform.id,p_amount:amount,p_description:'Dedicated MKT-A4A test funding',p_metadata:{fixture:'mkt-a4a'}});await rpc('ledger_credit',{p_txn_id:tx,p_account_id:account,p_amount:amount,p_description:'Dedicated MKT-A4A test funding',p_metadata:{fixture:'mkt-a4a'}});return{account,platform}}
-const accounts=await fund(buyer,3);await fund(other,2);const address={recipient_name:'A4A Test Buyer',line1:'Dedicated fixture address',line2:null,city:'Test City',region:'Test Region',postal_code:'00000',country:'US',phone:null},reserveKey=uuid(),reserveArgs={p_session_id:ids.session,p_live_session_product_id:pinA.id,p_variant_id:variants[0].id,p_quantity:1,p_shipping_address:address,p_idempotency_key:reserveKey};
-const [reserve,reserveParallel]=await Promise.all([rpc('create_live_marketplace_checkout_reservation',reserveArgs,buyer.token),rpc('create_live_marketplace_checkout_reservation',reserveArgs,buyer.token)]);assert('parallel_reservation',reserve.checkout.id===reserveParallel.checkout.id);ids.checkout=reserve.checkout.id;ids.order=reserve.orders[0].id;
-const reserveRetry=await rpc('create_live_marketplace_checkout_reservation',reserveArgs,buyer.token);assert('reservation_same_key',reserveRetry.checkout.id===ids.checkout&&reserveRetry.orders[0].id===ids.order);
-for(const [name,change] of [['changed_quantity',{p_quantity:2}],['changed_address',{p_shipping_address:{...address,city:'Changed'}}],['changed_pin',{p_live_session_product_id:parallelPin[0].id,p_variant_id:variants[2].id}]])assert(name,await denied(()=>rpc('create_live_marketplace_checkout_reservation',{...reserveArgs,...change},buyer.token)));
-assert('different_key_active_checkout',await denied(()=>rpc('create_live_marketplace_checkout_reservation',{...reserveArgs,p_idempotency_key:uuid()},buyer.token)));
+  async function fund(user, amount) {
+    const account = await rpc("ensure_ledger_account", { p_user_id: user.id }),
+      platform = (
+        await select(
+          "ledger_accounts",
+          "select=id,balance&owner_id=is.null&account_type=eq.platform&currency=eq.BDAG&limit=1",
+        )
+      )[0],
+      tx = uuid();
+    await insert("financial_transactions", {
+      id: tx,
+      from_account_id: platform.id,
+      to_account_id: account,
+      operation_type: "marketplace_test_funding",
+      amount,
+      fee_amount: 0,
+      currency: "BDAG",
+      status: "completed",
+      reference_type: "marketplace_test_fixture",
+      reference_id: products[0].id,
+      idempotency_key: `a4a-${tx}`,
+      initiated_by: user.id,
+    });
+    await rpc("ledger_debit", {
+      p_txn_id: tx,
+      p_account_id: platform.id,
+      p_amount: amount,
+      p_description: "Dedicated MKT-A4A test funding",
+      p_metadata: { fixture: "mkt-a4a" },
+    });
+    await rpc("ledger_credit", {
+      p_txn_id: tx,
+      p_account_id: account,
+      p_amount: amount,
+      p_description: "Dedicated MKT-A4A test funding",
+      p_metadata: { fixture: "mkt-a4a" },
+    });
+    return { account, platform };
+  }
+  const accounts = await fund(buyer, 3);
+  await fund(other, 2);
+  const address = {
+      recipient_name: "A4A Test Buyer",
+      line1: "Dedicated fixture address",
+      line2: null,
+      city: "Test City",
+      region: "Test Region",
+      postal_code: "00000",
+      country: "US",
+      phone: null,
+    },
+    reserveKey = uuid(),
+    reserveArgs = {
+      p_session_id: ids.session,
+      p_live_session_product_id: pinA.id,
+      p_variant_id: variants[0].id,
+      p_quantity: 1,
+      p_shipping_address: address,
+      p_idempotency_key: reserveKey,
+    };
+  const [reserve, reserveParallel] = await Promise.all([
+    rpc(
+      "create_live_marketplace_checkout_reservation",
+      reserveArgs,
+      buyer.token,
+    ),
+    rpc(
+      "create_live_marketplace_checkout_reservation",
+      reserveArgs,
+      buyer.token,
+    ),
+  ]);
+  assert(
+    "parallel_reservation",
+    reserve.checkout.id === reserveParallel.checkout.id,
+  );
+  ids.checkout = reserve.checkout.id;
+  ids.order = reserve.orders[0].id;
+  const reserveRetry = await rpc(
+    "create_live_marketplace_checkout_reservation",
+    reserveArgs,
+    buyer.token,
+  );
+  assert(
+    "reservation_same_key",
+    reserveRetry.checkout.id === ids.checkout &&
+      reserveRetry.orders[0].id === ids.order,
+  );
+  for (const [name, change] of [
+    ["changed_quantity", { p_quantity: 2 }],
+    [
+      "changed_address",
+      { p_shipping_address: { ...address, city: "Changed" } },
+    ],
+    [
+      "changed_pin",
+      {
+        p_live_session_product_id: parallelPin[0].id,
+        p_variant_id: variants[2].id,
+      },
+    ],
+  ])
+    assert(
+      name,
+      await denied(() =>
+        rpc(
+          "create_live_marketplace_checkout_reservation",
+          { ...reserveArgs, ...change },
+          buyer.token,
+        ),
+      ),
+    );
+  assert(
+    "different_key_active_checkout",
+    await denied(() =>
+      rpc(
+        "create_live_marketplace_checkout_reservation",
+        { ...reserveArgs, p_idempotency_key: uuid() },
+        buyer.token,
+      ),
+    ),
+  );
 
-const counts=async()=>({payments:(await select('marketplace_payments',`select=id&checkout_id=eq.${ids.checkout}`)).length,allocations:(await select('marketplace_payment_allocations',`select=id&order_id=eq.${ids.order}`)).length,sources:(await select('marketplace_live_order_sources',`select=id&order_id=eq.${ids.order}`)).length,transactions:(await select('financial_transactions',`select=id&reference_type=eq.marketplace_checkout&reference_id=eq.${ids.checkout}`)).length});
-const balances=async()=>({buyer:Number((await select('ledger_accounts',`select=balance&id=eq.${accounts.account}`))[0].balance),escrow:Number((await select('ledger_accounts','select=balance&owner_id=is.null&account_type=eq.marketplace_escrow&currency=eq.BDAG&limit=1'))[0].balance),seller:Number((await select('ledger_accounts',`select=balance&owner_id=eq.${host.id}&account_type=eq.user&currency=eq.BDAG&limit=1`))[0]?.balance??0),platform:Number((await select('ledger_accounts',`select=balance&id=eq.${accounts.platform.id}`))[0].balance),inventory:(await select('marketplace_inventory_levels',`select=on_hand,reserved&variant_id=eq.${variants[0].id}`))[0]});
-const before={balances:await balances(),counts:await counts()},payKeys=[uuid(),uuid()];const parallelPayments=await Promise.all(payKeys.map(idempotency_key=>request('/functions/v1/bdag-ledger',{method:'POST',token:buyer.token,body:{action:'marketplace_checkout_pay',checkout_id:ids.checkout,idempotency_key}})));const after={balances:await balances(),counts:await counts()};
-for(const key of [...payKeys,uuid()])await request('/functions/v1/bdag-ledger',{method:'POST',token:buyer.token,body:{action:'marketplace_checkout_pay',checkout_id:ids.checkout,idempotency_key:key}});const afterRetries={balances:await balances(),counts:await counts()};
-const checkout=(await select('marketplace_checkout_sessions',`select=status&id=eq.${ids.checkout}`))[0],order=(await select('marketplace_orders',`select=status&id=eq.${ids.order}`))[0],payment=(await select('marketplace_payments',`select=id,status&checkout_id=eq.${ids.checkout}`))[0],allocation=(await select('marketplace_payment_allocations',`select=id,status,gross_amount,seller_net_amount,platform_fee_amount&order_id=eq.${ids.order}`))[0],sourceRows=await select('marketplace_live_order_sources',`select=checkout_id,order_id,buyer_id,seller_id,store_id,live_session_id,live_host_id,live_session_product_id,product_id,variant_id&order_id=eq.${ids.order}`),source=sourceRows[0];
-assert('source_identity',source.checkout_id===ids.checkout&&source.order_id===ids.order&&source.buyer_id===buyer.id&&source.seller_id===host.id&&source.store_id===ids.store&&source.live_session_id===ids.session&&source.live_host_id===host.id&&source.live_session_product_id===pinA.id&&source.product_id===products[0].id&&source.variant_id===variants[0].id);assert('payment_state',payment.status==='paid');assert('checkout_state',checkout.status==='paid');assert('order_state',order.status==='confirmed');assert('inventory_delta',before.balances.inventory.on_hand-after.balances.inventory.on_hand===1&&before.balances.inventory.reserved-after.balances.inventory.reserved===1);assert('payment_count',after.counts.payments-before.counts.payments===1);assert('allocation_count',after.counts.allocations-before.counts.allocations===1);assert('source_count',sourceRows.length===1);assert('financial_transaction_count',after.counts.transactions-before.counts.transactions===1);assert('buyer_balance',before.balances.buyer-after.balances.buyer===1);assert('escrow_balance',after.balances.escrow-before.balances.escrow===1);assert('seller_balance',after.balances.seller===before.balances.seller);assert('platform_balance',after.balances.platform===before.balances.platform);assert('payment_retries_stable',same(after,afterRetries));assert('parallel_payment_receipt',parallelPayments.every(result=>(result.data?.payment?.id??result.payment?.id??payment.id)===payment.id));
+  const counts = async () => ({
+    payments: (
+      await select(
+        "marketplace_payments",
+        `select=id&checkout_id=eq.${ids.checkout}`,
+      )
+    ).length,
+    allocations: (
+      await select(
+        "marketplace_payment_allocations",
+        `select=id&order_id=eq.${ids.order}`,
+      )
+    ).length,
+    sources: (
+      await select(
+        "marketplace_live_order_sources",
+        `select=id&order_id=eq.${ids.order}`,
+      )
+    ).length,
+    transactions: (
+      await select(
+        "financial_transactions",
+        `select=id&reference_type=eq.marketplace_checkout&reference_id=eq.${ids.checkout}`,
+      )
+    ).length,
+  });
+  const balances = async () => ({
+    buyer: Number(
+      (
+        await select(
+          "ledger_accounts",
+          `select=balance&id=eq.${accounts.account}`,
+        )
+      )[0].balance,
+    ),
+    escrow: Number(
+      (
+        await select(
+          "ledger_accounts",
+          "select=balance&owner_id=is.null&account_type=eq.marketplace_escrow&currency=eq.BDAG&limit=1",
+        )
+      )[0].balance,
+    ),
+    seller: Number(
+      (
+        await select(
+          "ledger_accounts",
+          `select=balance&owner_id=eq.${host.id}&account_type=eq.user&currency=eq.BDAG&limit=1`,
+        )
+      )[0]?.balance ?? 0,
+    ),
+    platform: Number(
+      (
+        await select(
+          "ledger_accounts",
+          `select=balance&id=eq.${accounts.platform.id}`,
+        )
+      )[0].balance,
+    ),
+    inventory: (
+      await select(
+        "marketplace_inventory_levels",
+        `select=on_hand,reserved&variant_id=eq.${variants[0].id}`,
+      )
+    )[0],
+  });
+  const before = { balances: await balances(), counts: await counts() },
+    payKeys = [uuid(), uuid()];
+  const parallelPayments = await Promise.all(
+    payKeys.map((idempotency_key) =>
+      request("/functions/v1/bdag-ledger", {
+        method: "POST",
+        token: buyer.token,
+        body: {
+          action: "marketplace_checkout_pay",
+          checkout_id: ids.checkout,
+          idempotency_key,
+        },
+      }),
+    ),
+  );
+  const after = { balances: await balances(), counts: await counts() };
+  for (const key of [...payKeys, uuid()])
+    await request("/functions/v1/bdag-ledger", {
+      method: "POST",
+      token: buyer.token,
+      body: {
+        action: "marketplace_checkout_pay",
+        checkout_id: ids.checkout,
+        idempotency_key: key,
+      },
+    });
+  const afterRetries = { balances: await balances(), counts: await counts() };
+  const checkout = (
+      await select(
+        "marketplace_checkout_sessions",
+        `select=status&id=eq.${ids.checkout}`,
+      )
+    )[0],
+    order = (
+      await select("marketplace_orders", `select=status&id=eq.${ids.order}`)
+    )[0],
+    payment = (
+      await select(
+        "marketplace_payments",
+        `select=id,status&checkout_id=eq.${ids.checkout}`,
+      )
+    )[0],
+    allocation = (
+      await select(
+        "marketplace_payment_allocations",
+        `select=id,status,gross_amount,seller_net_amount,platform_fee_amount&order_id=eq.${ids.order}`,
+      )
+    )[0],
+    sourceRows = await select(
+      "marketplace_live_order_sources",
+      `select=checkout_id,order_id,buyer_id,seller_id,store_id,live_session_id,live_host_id,live_session_product_id,product_id,variant_id&order_id=eq.${ids.order}`,
+    ),
+    source = sourceRows[0];
+  assert(
+    "source_identity",
+    source.checkout_id === ids.checkout &&
+      source.order_id === ids.order &&
+      source.buyer_id === buyer.id &&
+      source.seller_id === host.id &&
+      source.store_id === ids.store &&
+      source.live_session_id === ids.session &&
+      source.live_host_id === host.id &&
+      source.live_session_product_id === pinA.id &&
+      source.product_id === products[0].id &&
+      source.variant_id === variants[0].id,
+  );
+  assert("payment_state", payment.status === "paid");
+  assert("checkout_state", checkout.status === "paid");
+  assert("order_state", order.status === "confirmed");
+  assert(
+    "inventory_delta",
+    before.balances.inventory.on_hand - after.balances.inventory.on_hand ===
+      1 &&
+      before.balances.inventory.reserved - after.balances.inventory.reserved ===
+        1,
+  );
+  assert("payment_count", after.counts.payments - before.counts.payments === 1);
+  assert(
+    "allocation_count",
+    after.counts.allocations - before.counts.allocations === 1,
+  );
+  assert("source_count", sourceRows.length === 1);
+  assert(
+    "financial_transaction_count",
+    after.counts.transactions - before.counts.transactions === 1,
+  );
+  assert("buyer_balance", before.balances.buyer - after.balances.buyer === 1);
+  assert(
+    "escrow_balance",
+    after.balances.escrow - before.balances.escrow === 1,
+  );
+  assert("seller_balance", after.balances.seller === before.balances.seller);
+  assert(
+    "platform_balance",
+    after.balances.platform === before.balances.platform,
+  );
+  assert("payment_retries_stable", same(after, afterRetries));
+  assert(
+    "parallel_payment_receipt",
+    parallelPayments.every(
+      (result) =>
+        (result.data?.payment?.id ?? result.payment?.id ?? payment.id) ===
+        payment.id,
+    ),
+  );
 
-const pendingKey=uuid(),pending=await rpc('create_live_marketplace_checkout_reservation',{p_session_id:ids.session,p_live_session_product_id:parallelPin[0].id,p_variant_id:variants[2].id,p_quantity:1,p_shipping_address:address,p_idempotency_key:pendingKey},other.token);await rpc('end_live_session',{p_session_id:ids.session,p_reason:'host_ended'},host.token);assert('ended_shelf',(await rpc('fetch_live_session_products',{p_session_id:ids.session},buyer.token)).length===0);assert('ended_reservation',await denied(()=>rpc('create_live_marketplace_checkout_reservation',{...reserveArgs,p_idempotency_key:uuid()},buyer.token)));const persistedCheckout=(await select('marketplace_checkout_sessions',`select=status&id=eq.${ids.checkout}`))[0],persistedOrder=(await select('marketplace_orders',`select=status&id=eq.${ids.order}`))[0],pendingPersisted=(await select('marketplace_checkout_sessions',`select=status&id=eq.${pending.checkout.id}`))[0];assert('paid_persistence',persistedCheckout.status==='paid'&&persistedOrder.status==='confirmed'&&payment.status==='paid'&&allocation.status==='held');assert('pending_persistence',pendingPersisted.status==='pending_payment');
-await rpc('cancel_marketplace_checkout_reservation',{p_checkout_id:pending.checkout.id},other.token);assert('pending_cancelled',(await select('marketplace_checkout_sessions',`select=status&id=eq.${pending.checkout.id}`))[0].status==='cancelled');
-const paymentReconciliation=await rpc('reconcile_marketplace_payments',{}),settlementReconciliation=await rpc('reconcile_marketplace_settlements',{});assert('payment_reconciliation',paymentReconciliation.confirmed_state_mismatches===0&&paymentReconciliation.escrow_shortfall===0);assert('settlement_reconciliation',settlementReconciliation.escrow_difference===0&&settlementReconciliation.escrow_shortage===0&&settlementReconciliation.escrow_surplus===0);
+  const pendingKey = uuid(),
+    pending = await rpc(
+      "create_live_marketplace_checkout_reservation",
+      {
+        p_session_id: ids.session,
+        p_live_session_product_id: parallelPin[0].id,
+        p_variant_id: variants[2].id,
+        p_quantity: 1,
+        p_shipping_address: address,
+        p_idempotency_key: pendingKey,
+      },
+      other.token,
+    );
+  await rpc(
+    "end_live_session",
+    { p_session_id: ids.session, p_reason: "host_ended" },
+    host.token,
+  );
+  assert(
+    "ended_shelf",
+    (
+      await rpc(
+        "fetch_live_session_products",
+        { p_session_id: ids.session },
+        buyer.token,
+      )
+    ).length === 0,
+  );
+  assert(
+    "ended_reservation",
+    await denied(() =>
+      rpc(
+        "create_live_marketplace_checkout_reservation",
+        { ...reserveArgs, p_idempotency_key: uuid() },
+        buyer.token,
+      ),
+    ),
+  );
+  const persistedCheckout = (
+      await select(
+        "marketplace_checkout_sessions",
+        `select=status&id=eq.${ids.checkout}`,
+      )
+    )[0],
+    persistedOrder = (
+      await select("marketplace_orders", `select=status&id=eq.${ids.order}`)
+    )[0],
+    pendingPersisted = (
+      await select(
+        "marketplace_checkout_sessions",
+        `select=status&id=eq.${pending.checkout.id}`,
+      )
+    )[0];
+  assert(
+    "paid_persistence",
+    persistedCheckout.status === "paid" &&
+      persistedOrder.status === "confirmed" &&
+      payment.status === "paid" &&
+      allocation.status === "held",
+  );
+  assert("pending_persistence", pendingPersisted.status === "pending_payment");
+  await rpc(
+    "cancel_marketplace_checkout_reservation",
+    { p_checkout_id: pending.checkout.id },
+    other.token,
+  );
+  assert(
+    "pending_cancelled",
+    (
+      await select(
+        "marketplace_checkout_sessions",
+        `select=status&id=eq.${pending.checkout.id}`,
+      )
+    )[0].status === "cancelled",
+  );
+  const paymentReconciliation = await rpc("reconcile_marketplace_payments", {}),
+    settlementReconciliation = await rpc(
+      "reconcile_marketplace_settlements",
+      {},
+    );
+  assert(
+    "payment_reconciliation",
+    paymentReconciliation.confirmed_state_mismatches === 0 &&
+      paymentReconciliation.escrow_shortfall === 0,
+  );
+  assert(
+    "settlement_reconciliation",
+    settlementReconciliation.escrow_difference === 0 &&
+      settlementReconciliation.escrow_shortage === 0 &&
+      settlementReconciliation.escrow_surplus === 0,
+  );
 
-console.log(JSON.stringify({project:PROJECT,ids:{host:redact(host.id),buyer:redact(buyer.id),other:redact(other.id),session:redact(ids.session),store:redact(ids.store),pin:redact(pinA.id),checkout:redact(ids.checkout),order:redact(ids.order)},candidatePages:pages.map(page=>page.length),candidateUnique:new Set(candidateIds).size,commandTests:{pinRetry:true,pinConflict:true,parallelPin:true,featureRetry:true,featureConflict:true,unpinRetry:true,unpinConflict:true,pinLimit:true},reservationTests:{sameKey:true,parallel:true,changedQuantity:true,changedAddress:true,changedPin:true,differentKey:true},paymentTests:{parallel:true,retries:true},before,after,allocation,security,liveEnd:{shelfEmpty:true,newReservationDenied:true,paidPersisted:true,pendingPersisted:true,pendingCancelled:true},paymentReconciliation,settlementReconciliation},null,2));
+  console.log(
+    JSON.stringify(
+      {
+        project: PROJECT,
+        ids: {
+          host: redact(host.id),
+          buyer: redact(buyer.id),
+          other: redact(other.id),
+          session: redact(ids.session),
+          store: redact(ids.store),
+          pin: redact(pinA.id),
+          checkout: redact(ids.checkout),
+          order: redact(ids.order),
+        },
+        candidatePages: pages.map((page) => page.length),
+        candidateUnique: new Set(candidateIds).size,
+        commandTests: {
+          pinRetry: true,
+          pinConflict: true,
+          parallelPin: true,
+          featureRetry: true,
+          featureConflict: true,
+          unpinRetry: true,
+          unpinConflict: true,
+          pinLimit: true,
+        },
+        reservationTests: {
+          sameKey: true,
+          parallel: true,
+          changedQuantity: true,
+          changedAddress: true,
+          changedPin: true,
+          differentKey: true,
+        },
+        paymentTests: { parallel: true, retries: true },
+        before,
+        after,
+        allocation,
+        security,
+        liveEnd: {
+          shelfEmpty: true,
+          newReservationDenied: true,
+          paidPersisted: true,
+          pendingPersisted: true,
+          pendingCancelled: true,
+        },
+        paymentReconciliation,
+        settlementReconciliation,
+      },
+      null,
+      2,
+    ),
+  );
+} catch (error) {
+  testFailure = error;
+  throw error;
 } finally {
-  const cleanup=await requireFixtureFinalization(()=>rpc('finalize_marketplace_fixture_run',{p_fixture_suite:'mkt-a4a',p_fixture_run_id:stamp,p_project_ref:PROJECT}));
-  console.error(`[fixture-finalization] ${JSON.stringify(cleanup)}`);
+  try {
+    const cleanup = await requireFixtureFinalization(
+      () =>
+        rpc("finalize_marketplace_fixture_run", {
+          p_fixture_suite: FIXTURE_SUITE,
+          p_fixture_run_id: stamp,
+          p_project_ref: PROJECT,
+        }),
+      { fixtureSuite: FIXTURE_SUITE, fixtureRunId: stamp },
+    );
+    console.error(`[fixture-finalization] ${JSON.stringify(cleanup)}`);
+  } catch (finalizationFailure) {
+    if (testFailure && finalizationFailure instanceof Error)
+      finalizationFailure.cause = testFailure;
+    throw finalizationFailure;
+  }
 }

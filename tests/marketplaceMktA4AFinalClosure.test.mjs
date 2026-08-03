@@ -31,5 +31,5 @@ test('payment reconciliation accepts legitimate fulfillment states only',()=>{
 });
 
 test('remote verifier fails closed on every reported invariant',()=>{
-  for(const marker of ['candidate_page_lengths','source_identity','payment_state','checkout_state','order_state','inventory_delta','payment_count','allocation_count','source_count','financial_transaction_count','buyer_balance','escrow_balance','seller_balance','platform_balance'])assert.match(verifier,new RegExp(`assert\\('${marker}'`));
+  for(const marker of ['candidate_page_lengths','source_identity','payment_state','checkout_state','order_state','inventory_delta','payment_count','allocation_count','source_count','financial_transaction_count','buyer_balance','escrow_balance','seller_balance','platform_balance'])assert.match(verifier,new RegExp(`assert\\(\\s*["']${marker}["']`));
 });
