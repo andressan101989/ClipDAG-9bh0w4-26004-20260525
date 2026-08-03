@@ -39,12 +39,58 @@ test("historical neutralization migration remains represented", () => {
 
 test("quarantine-only and financial-only results are rejected", async () => {
   await assert.rejects(
-    requireFixtureFinalization(async () => ({ quarantined: true })),
+    requireFixtureFinalization(async () => ({
+      ...zero,
+      financial_neutralized: false,
+    })),
     /financial_neutralization/,
   );
   await assert.rejects(
     requireFixtureFinalization(async () => ({ ...zero, quarantined: false })),
     /quarantine/,
+  );
+});
+
+test("validation order distinguishes missing identity status quarantine and finance", async () => {
+  await assert.rejects(
+    requireFixtureFinalization(async () => null),
+    /quarantine_not_confirmed/,
+  );
+  await assert.rejects(
+    requireFixtureFinalization(async () => zero, { fixtureSuite: "mkt-a4a" }),
+    /suite_mismatch/,
+  );
+  await assert.rejects(
+    requireFixtureFinalization(async () => zero, {
+      fixtureRunId: "another-run",
+    }),
+    /run_id_mismatch/,
+  );
+  const cleanupFailedResult = {
+    quarantined: false,
+    financial_neutralized: false,
+    status: "cleanup_failed",
+    fixture_suite: "mkt-a4b",
+    fixture_run_id: "mkt-a4b-proof-run",
+    failure_code: "fixture_cleanup_mixed_checkout_forbidden",
+  };
+  await assert.rejects(
+    requireFixtureFinalization(async () => cleanupFailedResult, {
+      fixtureSuite: "mkt-a4b",
+      fixtureRunId: "mkt-a4b-proof-run",
+    }),
+    /remote_fixture_run_not_quarantined/,
+  );
+  await assert.rejects(
+    requireFixtureFinalization(async () => ({ ...zero, quarantined: false })),
+    /remote_fixture_quarantine_not_confirmed/,
+  );
+  await assert.rejects(
+    requireFixtureFinalization(async () => ({
+      ...zero,
+      financial_neutralized: false,
+    })),
+    /remote_fixture_financial_neutralization_not_confirmed/,
   );
 });
 

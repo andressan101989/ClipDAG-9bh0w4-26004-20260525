@@ -49,7 +49,12 @@ test("thrown verifier failure always reaches cleanup", async () => {
 
 test("finalization failure is not swallowed and produces a failing process contract", async () => {
   await assert.rejects(
-    requireFixtureFinalization(async () => ({ quarantined: false })),
+    requireFixtureFinalization(async () => ({
+      status: "quarantined",
+      failure_code: null,
+      quarantined: false,
+      financial_neutralized: true,
+    })),
     /remote_fixture_quarantine_not_confirmed/,
   );
   await assert.rejects(
