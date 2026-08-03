@@ -4,6 +4,7 @@
  * Reads/writes live_sessions / live_messages and routes paid gifts through
  * send_live_gift() so BDAG moves only through the canonical ledger.
  */
+/* eslint-disable react-hooks/exhaustive-deps -- existing LIVE lifecycle effects intentionally use stable refs */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList, TextInput,
@@ -25,6 +26,7 @@ import { LiveGiftButton } from '@/components/live/gifts/LiveGiftButton';
 import { LiveGiftSheet } from '@/components/live/gifts/LiveGiftSheet';
 import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
+import { LiveSessionHeader } from '@/components/live/LiveSessionHeader';
 import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
 import type { LiveGiftEvent } from '@/types/liveGifts';
 import { LiveCommerceButton } from '@/components/live/commerce/LiveCommerceButton';
@@ -410,7 +412,7 @@ export default function LiveWatchScreen() {
       if (data.status !== 'live' || isStaleLive) setEnded(true);
       setLoading(false);
       return data.status === 'live' && !isStaleLive;
-    } catch (_) { setLoading(false); return false; }
+    } catch { setLoading(false); return false; }
   }, [streamId, supabase]);
 
   // ── Join Agora once session confirmed live ──────────────────────────────
@@ -433,7 +435,7 @@ export default function LiveWatchScreen() {
     if (!streamId) return;
     try {
       await supabase.rpc('increment_live_viewer_count', { p_session_id: streamId, p_delta: delta });
-    } catch (_) { /* ignore */ }
+    } catch { /* ignore */ }
   }, [streamId, supabase]);
 
   const markPassiveParticipantInactive = useCallback(async () => {
@@ -631,7 +633,7 @@ export default function LiveWatchScreen() {
         setMessages(prev => mergeMessages(prev, messagesWithAvatars));
         scrollToLatest(true);
       }
-    } catch (_) { /* ignore */ }
+    } catch { /* ignore */ }
   }, [streamId, ended, supabase, scrollToLatest, user]);
 
   useEffect(() => {
@@ -1028,26 +1030,7 @@ export default function LiveWatchScreen() {
       <LinearGradient colors={['rgba(0,0,0,0.45)', 'transparent']} style={styles.topShade} pointerEvents="none" />
       <LinearGradient colors={['transparent', 'rgba(0,0,0,0.58)']} style={styles.bottomShade} pointerEvents="none" />
 
-      <View style={[styles.header, { top: insets.top + 8 }]}>
-        <View style={styles.avatar}><Text style={styles.avatarText}>{session.hostUsername.charAt(0).toUpperCase()}</Text></View>
-        <View style={styles.hostInfo}>
-          <Text style={styles.hostName} numberOfLines={1}>{session.hostUsername}</Text>
-          <Text style={styles.hostTitle} numberOfLines={1}>@{session.hostUsername}</Text>
-        </View>
-        <View style={styles.liveBadge}><View style={styles.liveDot} /><Text style={styles.liveText}>EN VIVO</Text></View>
-        <View style={styles.headerMetric}>
-          <MaterialIcons name="visibility" size={14} color="#fff" />
-          <Text style={styles.headerMetricText}>{session.viewerCount.toLocaleString()} viendo</Text>
-        </View>
-        <View style={styles.headerDivider} />
-        <View style={styles.headerMetric}>
-          <MaterialIcons name="schedule" size={14} color="#fff" />
-          <Text style={styles.headerMetricText}>{formatLiveDuration(watchSeconds)}</Text>
-        </View>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.closeBtn}>
-          <MaterialIcons name="close" size={22} color="#fff" />
-        </Pressable>
-      </View>
+      <View style={[styles.header,{top:insets.top+8,height:undefined,paddingHorizontal:0,backgroundColor:'transparent',borderWidth:0}]}><LiveSessionHeader hostName={session.hostUsername} viewerCount={session.viewerCount} elapsed={formatLiveDuration(watchSeconds)} onClose={()=>router.back()}/></View>
 
       <View style={[styles.titleBlock, { top: insets.top + 88 }]}>
         <Text style={styles.streamTitle} numberOfLines={2}>{session.title}</Text>
@@ -1131,7 +1114,7 @@ export default function LiveWatchScreen() {
       ) : null}
 
       <View style={styles.actionRail}>
-        <LiveCommerceButton
+        {!featuredLiveProduct?<LiveCommerceButton
           count={liveProducts.length}
           onPress={() => {
             setGiftSheetVisible(false);
@@ -1139,7 +1122,7 @@ export default function LiveWatchScreen() {
             Keyboard.dismiss();
             setCommerceVisible(true);
           }}
-        />
+        />:null}
         <Pressable
           style={styles.actionButton}
           onPress={() => sendReaction('\u2764\uFE0F')}

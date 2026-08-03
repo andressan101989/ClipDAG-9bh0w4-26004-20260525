@@ -2,14 +2,11 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { GlassSurface, OnSpaceText } from "@/components/design";
 import {
-  LiveCommissionMetric,
   LivePurchaseToastQueue,
-  LiveSalesMetric,
-  LiveShopStatsPill,
   type LivePurchaseToastData,
 } from "@/components/live/shop/LiveShopHud";
+import { LiveHostSalesSummary } from "@/components/live/commerce/LiveHostSalesSummary";
 import { spacing } from "@/design";
 import {
   fetchMyLivePurchaseEvents,
@@ -45,6 +42,7 @@ export function LiveHostPurchaseFeed({ sessionId }: { sessionId: string }) {
   const insets = useSafeAreaInsets();
   const [purchases, setPurchases] = useState<LivePurchaseToastData[]>([]);
   const [stats, setStats] = useState<LiveShopStats>(EMPTY_STATS);
+  const [statsError, setStatsError] = useState(false);
   const seen = useRef(new Set<string>());
   const hydrated = useRef(false);
 
@@ -69,7 +67,9 @@ export function LiveHostPurchaseFeed({ sessionId }: { sessionId: string }) {
         hydrated.current = true;
       }
       setStats(nextStats);
+      setStatsError(false);
     } catch {
+      setStatsError(true);
       // Controlled polling retries without exposing purchase or financial data.
     }
   }, [sessionId]);
@@ -106,38 +106,19 @@ export function LiveHostPurchaseFeed({ sessionId }: { sessionId: string }) {
 
   return (
     <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-      <GlassSurface style={[styles.stats, { top: insets.top + 66 }]}>
-        <LiveShopStatsPill
-          orders={stats.ordersCount}
-          gross={stats.grossSales}
-        />
-        <OnSpaceText variant="caption" color="textMuted">
-          {stats.unitsSold} unidades vendidas
-        </OnSpaceText>
-        <View style={styles.metrics}>
-          <LiveCommissionMetric value={stats.creatorCommissionHeld} />
-          <LiveSalesMetric
-            label="Comisión liberada"
-            value={stats.creatorCommissionReleased}
-          />
-        </View>
-      </GlassSurface>
+      <View style={[styles.summary, { top: insets.top + 70 }]}>
+        <LiveHostSalesSummary stats={stats} error={statsError} />
+      </View>
       <LivePurchaseToastQueue purchases={purchases} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  stats: {
+  summary: {
     position: "absolute",
     right: spacing.md,
     zIndex: 12,
-    padding: spacing.sm,
-    gap: spacing.xs,
-    maxWidth: 230,
-  },
-  metrics: {
-    flexDirection: "row",
-    gap: spacing.xs,
+    minWidth: 190,
   },
 });

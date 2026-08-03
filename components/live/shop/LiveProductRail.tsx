@@ -4,20 +4,15 @@ import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import Animated, {
   FadeIn,
-  FadeOut,
   useReducedMotion,
   useSharedValue,
   useAnimatedStyle,
   withSpring,
 } from "react-native-reanimated";
-import {
-  CommercePrice,
-  ProductAvailabilityBadge,
-  ProductThumbnail,
-} from "@/components/design";
 import { OnSpaceText } from "@/components/design/OnSpaceText";
 import { colors, layout, motion, radii, shadows, spacing } from "@/design";
 import type { LiveSessionProduct } from "@/services/liveCommerceService";
+import { LiveFeaturedProductCard } from "@/components/live/commerce/LiveFeaturedProductCard";
 
 interface LiveProductRailProps {
   product: LiveSessionProduct;
@@ -46,71 +41,13 @@ export const LiveProductRail = memo(function LiveProductRail({
     transform: [{ scale: scale.value }],
   }));
   if (keyboardVisible) return null;
-  const unavailable = product.availability !== "available";
-  const actionDisabled = mode === "viewer" && unavailable;
   return (
     <Animated.View
       accessibilityLabel="Producto destacado del LIVE"
       entering={reduced ? undefined : FadeIn.duration(motion.duration.fast)}
       style={[styles.container, { bottom }, animated]}
     >
-      <Animated.View
-        key={product.id}
-        entering={
-          reduced ? undefined : FadeIn.duration(motion.duration.standard)
-        }
-        exiting={reduced ? undefined : FadeOut.duration(motion.duration.fast)}
-        style={styles.product}
-      >
-        <ProductThumbnail uri={product.imageUrl} size="small" />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Ver ${product.title}`}
-          onPress={() => {
-            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            onBuy();
-          }}
-          style={styles.details}
-        >
-          <OnSpaceText variant="labelStrong" numberOfLines={1}>
-            {product.title}
-          </OnSpaceText>
-          <CommercePrice
-            price={product.minPrice}
-            compareAtPrice={product.compareAtPrice}
-          />
-          {product.soldCount > 0 ? (
-            <OnSpaceText variant="caption" color="textMuted">
-              {product.soldCount} vendidos
-            </OnSpaceText>
-          ) : null}
-          {unavailable ? (
-            <ProductAvailabilityBadge availability={product.availability} />
-          ) : null}
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            unavailable
-              ? "Producto no disponible"
-              : mode === "host"
-                ? `Administrar ${product.title}`
-                : `Comprar ${product.title}`
-          }
-          accessibilityState={{ disabled: actionDisabled }}
-          disabled={actionDisabled}
-          onPress={onBuy}
-          style={({ pressed }) => [
-            styles.buy,
-            unavailable && styles.disabled,
-            pressed && styles.pressed,
-          ]}
-        >
-          <OnSpaceText variant="labelStrong" color="textInverse">
-            {mode === "host" ? "Administrar" : "Comprar"}
-          </OnSpaceText>
-        </Pressable>
-      </Animated.View>
+      <LiveFeaturedProductCard product={product} mode={mode} onAction={onBuy} />
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Abrir bolsa con ${productCount} productos`}

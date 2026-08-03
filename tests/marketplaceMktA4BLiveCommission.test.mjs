@@ -8,7 +8,7 @@ const settlement = read("supabase/migrations/20260803013000_marketplace_mkt_a4b_
 const hardening = read("supabase/migrations/20260803020000_harden_mkt_a4b_live_commerce.sql");
 const service = read("services/liveCommerceService.ts");
 const manager = read("components/live/shop/LiveHostShopManager.tsx");
-const rail = read("components/live/shop/LiveProductRail.tsx");
+const rail = read("components/live/shop/LiveProductRail.tsx")+read("components/live/commerce/LiveFeaturedProductCard.tsx");
 const feed = read("components/live/commerce/LiveHostPurchaseFeed.tsx");
 const broadcast = read("app/live/broadcast/[streamId].tsx");
 const watch = read("app/live/watch/[streamId].tsx");
@@ -70,7 +70,7 @@ test("premium manager and rails preserve affiliate and role-specific behavior", 
   assert.match(manager, /Producto propio/);
   assert.match(manager, /Producto afiliado/);
   assert.match(manager, /creatorCommissionBps/);
-  assert.match(rail, /mode === "host" \? "Administrar" : "Comprar"/);
+  assert.match(rail, /mode === "host" \? "Gestionar" : "Comprar"/);
   assert.match(broadcast, /LiveProductRail/);
   assert.match(watch, /LiveProductRail/);
   assert.doesNotMatch(broadcast, /LiveFeaturedProductCard/);

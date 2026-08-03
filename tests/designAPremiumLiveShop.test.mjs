@@ -19,7 +19,7 @@ const designFiles = [
 const button = read("components/design/OnSpaceButton.tsx");
 const feedback = read("components/design/Feedback.tsx");
 const commerce = read("components/design/Commerce.tsx");
-const rail = read("components/live/shop/LiveProductRail.tsx");
+const rail = read("components/live/shop/LiveProductRail.tsx")+read("components/live/commerce/LiveFeaturedProductCard.tsx");
 const bag = read("components/live/shop/LiveProductBagSheet.tsx");
 const variant = read("components/live/shop/LiveVariantSelector.tsx");
 const shipping = read("components/live/shop/LiveShippingForm.tsx");
@@ -88,7 +88,7 @@ test("feedback primitives cover loading empty error toast and metrics", () => {
 test("featured rail is compact animated accessible and sold-out safe", () => {
   for (const marker of [
     "productRailHeight",
-    "numberOfLines={1}",
+    "numberOfLines={2}",
     "withSpring",
     "useReducedMotion",
     "ProductAvailabilityBadge",
@@ -96,7 +96,7 @@ test("featured rail is compact animated accessible and sold-out safe", () => {
   ]) {
     assert.match(rail, new RegExp(marker.replace(/[{}]/g, "\\$&")));
   }
-  assert.match(rail, /disabled={actionDisabled}/);
+  assert.match(rail, /accessibilityState={{ disabled }}/);
   assert.match(rail, /Comprar/);
 });
 

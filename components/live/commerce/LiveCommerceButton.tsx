@@ -11,11 +11,13 @@ export function LiveCommerceButton({
   onPress,
   disabled = false,
   label = "Abrir productos del LIVE",
+  textLabel,
 }: {
   count: number;
   onPress: () => void;
   disabled?: boolean;
   label?: string;
+  textLabel?: string;
 }) {
   const handlePress = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -37,6 +39,11 @@ export function LiveCommerceButton({
       hitSlop={6}
     >
       <MaterialIcons name="shopping-bag" size={23} color={colors.textInverse} />
+      {textLabel ? (
+        <OnSpaceText variant="caption" color="textInverse">
+          {textLabel}
+        </OnSpaceText>
+      ) : null}
       {count > 0 ? (
         <View style={styles.badge}>
           <OnSpaceText
@@ -54,7 +61,8 @@ export function LiveCommerceButton({
 
 const styles = StyleSheet.create({
   button: {
-    width: layout.minimumTouchTarget + 8,
+    minWidth: layout.minimumTouchTarget + 8,
+    paddingHorizontal: 10,
     height: layout.minimumTouchTarget + 8,
     borderRadius: radii.pill,
     backgroundColor: colors.backgroundGlass,
@@ -62,6 +70,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderElevated,
     alignItems: "center",
     justifyContent: "center",
+    gap: 2,
     ...shadows.floating,
   },
   pressed: {

@@ -23,7 +23,6 @@ import { getSupabaseClient } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
 import { useAgoraEngine } from '@/hooks/useAgoraEngine';
 import { RtcSurfaceView, useridToAgoraUid, isAgoraAvailable } from '@/services/agoraService';
-import { fetchSessionGiftTotal } from '@/services/liveGiftsService';
 import {
   endLiveSession,
   heartbeatLiveSession,
@@ -33,6 +32,7 @@ import {
 } from '@/services/liveSessionService';
 import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
+import { LiveSessionHeader } from '@/components/live/LiveSessionHeader';
 import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
 import type { LiveGiftEvent } from '@/types/liveGifts';
 import { LiveCommerceButton } from '@/components/live/commerce/LiveCommerceButton';
@@ -214,8 +214,8 @@ export default function LiveBroadcasterScreen() {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [composerHeight, setComposerHeight] = useState(72);
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
-  const [giftTotal, setGiftTotal] = useState(0);
   const [commerceVisible, setCommerceVisible] = useState(false);
+  const [moreControlsVisible,setMoreControlsVisible]=useState(false);
   const [liveProducts, setLiveProducts] = useState<LiveSessionProduct[]>([]);
   const { activeGift, floatingGifts, enqueueGift } = useLiveGiftAnimations(streamId);
 
@@ -800,8 +800,6 @@ export default function LiveBroadcasterScreen() {
           const giftEvent = liveGiftEventFromPayload(row, streamId);
           if (giftEvent) {
             enqueueGift(giftEvent);
-            const amount = Number(giftEvent.amountBdag ?? 0);
-            if (amount > 0) setGiftTotal(prev => prev + amount);
             return;
           }
           addFloatingReaction(row?.payload?.emoji || '\u2764\uFE0F', row?.payload?.username);
@@ -813,17 +811,6 @@ export default function LiveBroadcasterScreen() {
       supabase.removeChannel(channel);
     };
   }, [live, streamId, supabase, addFloatingReaction, enqueueGift]);
-
-  useEffect(() => {
-    if (!live || !streamId) return;
-    let cancelled = false;
-
-    fetchSessionGiftTotal(streamId)
-      .then(total => { if (!cancelled) setGiftTotal(total); })
-      .catch(err => console.warn('[LiveBroadcast] fetch gift total failed', err?.message ?? err));
-
-    return () => { cancelled = true; };
-  }, [live, streamId]);
 
   useEffect(() => {
     if (!live) return;
@@ -1023,30 +1010,7 @@ export default function LiveBroadcasterScreen() {
       ) : null}
 
       {/* ── Header overlay ────────────────────────────────────────────────── */}
-      <View style={[styles.header, { top: insets.top + 8 }]}>
-        <View style={styles.avatar}><Text style={styles.avatarText}>{(user?.username || user?.email || 'H').charAt(0).toUpperCase()}</Text></View>
-        <View style={styles.hostInfo}>
-          <Text style={styles.hostName} numberOfLines={1}>{user?.username || user?.email?.split('@')[0] || 'Host'}</Text>
-          <Text style={styles.hostHandle} numberOfLines={1}>Anfitrión</Text>
-        </View>
-        <View style={styles.liveBadge}><View style={styles.liveDot} /><Text style={styles.liveText}>EN VIVO</Text></View>
-        <View style={styles.headerMetric}>
-          <MaterialIcons name="visibility" size={14} color="#fff" />
-          <Text style={styles.viewerChipText}>{viewerCount.toLocaleString()} viendo</Text>
-        </View>
-        <View style={styles.headerDivider} />
-        <View style={styles.headerMetric}>
-          <MaterialIcons name="schedule" size={14} color="#fff" />
-          <Text style={styles.liveTimer}>{formatLiveDuration(liveSeconds)}</Text>
-        </View>
-        <View style={styles.headerDivider} />
-        <View style={styles.headerMetric} accessibilityLabel="Total recibido en regalos (BDAG)">
-          <Text style={styles.viewerChipText}>{'🎁'} {giftTotal.toLocaleString()} BDAG</Text>
-        </View>
-        <Pressable style={styles.headerEndBtn} onPress={endBroadcast} hitSlop={8}>
-          <MaterialIcons name="close" size={22} color="#fff" />
-        </Pressable>
-      </View>
+      <View style={[styles.header,{top:insets.top+8,height:undefined,paddingHorizontal:0,backgroundColor:'transparent',borderWidth:0}]}><LiveSessionHeader hostName={user?.username||user?.email?.split('@')[0]||'Host'} viewerCount={viewerCount} elapsed={formatLiveDuration(liveSeconds)} onClose={endBroadcast}/></View>
 
       <View style={[styles.titleBlock, { top: insets.top + 88 }]}>
         <Text style={styles.streamTitle} numberOfLines={2}>{title.trim()}</Text>
@@ -1202,15 +1166,15 @@ export default function LiveBroadcasterScreen() {
 
       {/* ── Controls ──────────────────────────────────────────────────────── */}
       <View style={[styles.controls, { bottom: controlsBottom }]}>
-        <View style={styles.controlGroup}><LiveCommerceButton count={liveProducts.length} onPress={() => { Keyboard.dismiss(); setCommerceVisible(true); }} disabled={!live} label="Administrar productos del LIVE" /></View>
+        <View style={styles.controlGroup}><LiveCommerceButton count={liveProducts.length} onPress={() => { Keyboard.dismiss(); setCommerceVisible(true); }} disabled={!live} label="Administrar productos del LIVE" textLabel="Productos" /></View>
         <View style={styles.controlGroup}>
           <Pressable
             style={styles.controlBtn}
-            onPress={() => sendReaction('\u2764\uFE0F')}
+            onPress={() => setMoreControlsVisible(value=>!value)}
             hitSlop={8}
-            accessibilityLabel="Enviar reacción"
+            accessibilityLabel="Más controles"
           >
-            <MaterialIcons name="favorite" size={20} color="#fff" />
+            <MaterialIcons name="more-horiz" size={22} color="#fff" />
           </Pressable>
         </View>
         <View style={styles.controlGroup}>
@@ -1252,6 +1216,7 @@ export default function LiveBroadcasterScreen() {
           <MaterialIcons name="call-end" size={22} color="#fff" />
         </Pressable>
       </View>
+      {moreControlsVisible?<View style={[styles.moreControls,{bottom:controlsBottom+72}]}><Pressable style={styles.secondaryControl} onPress={()=>sendReaction('\u2764\uFE0F')} accessibilityRole="button" accessibilityLabel="Enviar reacción"><MaterialIcons name="favorite" size={20} color="#fff"/><Text style={styles.secondaryControlText}>Reacción</Text></Pressable></View>:null}
       {featuredLiveProduct ? (
         <LiveProductRail
           product={featuredLiveProduct}
@@ -1262,6 +1227,8 @@ export default function LiveBroadcasterScreen() {
           onBuy={() => setCommerceVisible(true)}
           onOpenBag={() => setCommerceVisible(true)}
         />
+      ) : live ? (
+        <Pressable style={[styles.addProductCta,{bottom:controlsBottom+72}]} onPress={()=>setCommerceVisible(true)} accessibilityRole="button" accessibilityLabel="Agregar producto al LIVE"><MaterialIcons name="add-shopping-cart" size={18} color="#fff"/><Text style={styles.addProductText}>Agregar producto</Text></Pressable>
       ) : null}
       {streamId ? <LiveHostPurchaseFeed sessionId={streamId} /> : null}
       {streamId ? <LiveHostProductManager visible={commerceVisible} sessionId={streamId} onClose={() => setCommerceVisible(false)} onChanged={refreshLiveProducts} /> : null}
@@ -1480,6 +1447,11 @@ const styles = StyleSheet.create({
   },
   controlBtnActive: { backgroundColor: Colors.textPrimary },
   endBtn: { width: 54, height: 54, backgroundColor: '#FF2D55', borderRadius: 27, alignItems: 'center', justifyContent: 'center' },
+  moreControls:{position:'absolute',right:18,zIndex:13,padding:6,borderRadius:18,backgroundColor:'rgba(15,15,22,.9)',borderWidth:1,borderColor:'rgba(255,255,255,.14)'},
+  secondaryControl:{minHeight:44,flexDirection:'row',alignItems:'center',gap:8,paddingHorizontal:12},
+  secondaryControlText:{color:'#fff',fontSize:12,fontWeight:FontWeight.semibold},
+  addProductCta:{position:'absolute',left:16,zIndex:12,minHeight:44,flexDirection:'row',alignItems:'center',gap:8,paddingHorizontal:14,borderRadius:22,backgroundColor:'rgba(15,15,22,.86)',borderWidth:1,borderColor:'rgba(255,255,255,.16)'},
+  addProductText:{color:'#fff',fontSize:12,fontWeight:FontWeight.bold},
   inputRow: { position: 'absolute', left: 12, right: 12, minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 20, elevation: 20 },
   input: { flex: 1, height: 58, backgroundColor: 'rgba(255,255,255,0.10)', borderRadius: Radius.full, paddingHorizontal: 18, color: '#fff', fontSize: FontSize.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
   sendBtn: { width: 46, height: 46, borderRadius: 23, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
