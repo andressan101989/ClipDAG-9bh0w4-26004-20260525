@@ -28,7 +28,8 @@ test("normal LIVE checkout presents review and payment rather than a reservation
 });
 
 test("payment processing is single-flight and retains one logical payment key", () => {
-  assert.match(viewer, /if \(lock\.current \|\| !reservation\) return/);
+  assert.match(viewer, /livePaymentGuard/);
+  assert.match(viewer, /payment_guard_blocked/);
   assert.match(viewer, /paymentKey\.current \?\? \(paymentKey\.current = randomUUID\(\)\)/);
   assert.match(payment, /marketplace_payment_idempotency_conflict/);
   assert.match(viewer, /fetchMyCheckout\(reservation\.id\)/);

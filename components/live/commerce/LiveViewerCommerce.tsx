@@ -46,6 +46,7 @@ import {
 } from "@/services/liveCommerceService";
 import {
   liveReservationSignature,
+  livePaymentGuard,
   reservationCommandFor,
   stageAfterVisibilityChange,
   type PendingReservationCommand,
@@ -74,6 +75,7 @@ export type LiveCheckoutStep =
   | "product"
   | "shipping"
   | "review"
+  | "confirm_payment"
   | "processing"
   | "success"
   | "recoverable_error";
@@ -100,6 +102,7 @@ const stageTitle: Record<Stage, string> = {
   product: "Vista rápida",
   shipping: "Entrega",
   review: "Revisar pedido",
+  confirm_payment: "Confirmar pago",
   processing: "Procesando pago",
   success: "Compra realizada",
   recoverable_error: "Compra pendiente",
@@ -138,8 +141,7 @@ export function LiveViewerCommerce({
     [successOrderId, setSuccessOrderId] = useState<string | null>(null),
     [busy, setBusy] = useState(false),
     [remaining, setRemaining] = useState(0),
-    [feedback, setFeedback] = useState<string | null>(null),
-    [paymentConfirmVisible, setPaymentConfirmVisible] = useState(false);
+    [feedback, setFeedback] = useState<string | null>(null);
   const pendingCommand = useRef<PendingReservationCommand | null>(null),
     paymentKey = useRef<string | null>(null),
     lock = useRef(false),
@@ -379,14 +381,64 @@ export function LiveViewerCommerce({
     return false;
   };
   const pay = async () => {
-    if (lock.current || !reservation) return;
-    setPaymentConfirmVisible(false);
+    const guardCode = livePaymentGuard({
+      locked: lock.current,
+      checkoutStatus: reservation?.status ?? null,
+      remaining,
+    });
+    if (__DEV__)
+      console.log("[LiveCheckout] payment_confirm_pressed", {
+        locked: lock.current,
+        checkoutPresent: Boolean(reservation),
+        checkoutStatus: reservation?.status ?? null,
+      });
+    if (guardCode === "locked" || guardCode === "missing_checkout" || !reservation) {
+      if (__DEV__)
+        console.warn("[LiveCheckout] payment_guard_blocked", {
+          locked: lock.current,
+          reservationPresent: Boolean(reservation),
+          checkoutStatus: reservation?.status ?? null,
+          remaining,
+          busy,
+        });
+      setFeedback(
+        !reservation
+          ? "No encontramos la compra pendiente. Vuelve a revisar el producto."
+          : "El pago ya se está procesando.",
+      );
+      return;
+    }
+    if (guardCode) {
+      if (__DEV__)
+        console.warn("[LiveCheckout] payment_guard_blocked", {
+          locked: false,
+          reservationPresent: true,
+          checkoutStatus: reservation.status,
+          remaining,
+          busy,
+        });
+      await reconcilePayment();
+      setFeedback(
+        reservation.status === "expired" || remaining <= 0
+          ? "Esta compra expiró. El inventario fue liberado."
+          : reservation.status === "cancelled"
+            ? "Esta compra fue cancelada."
+            : "Esta compra ya no admite otro pago.",
+      );
+      setStage((current) => (current === "success" ? current : "review"));
+      return;
+    }
     lock.current = true;
     setBusy(true);
     setFeedback(null);
     setStage("processing");
     try {
       await refreshBalance();
+      if (__DEV__)
+        console.log("[LiveCheckout] payment_rpc_start", {
+          checkoutFingerprint: reservation.id.slice(0, 8),
+          idempotencyKeyPresent: Boolean(paymentKey.current),
+        });
       const paid = await payMarketplaceCheckout(
         reservation.id,
         paymentKey.current ?? (paymentKey.current = randomUUID()),
@@ -395,22 +447,50 @@ export function LiveViewerCommerce({
       setReservation({ ...reservation, status: "paid" });
       setStage("success");
       await refreshBalance();
+      await onRefresh();
+      if (__DEV__)
+        console.log("[LiveCheckout] payment_rpc_success", {
+          orderPresent: Boolean(paid.orders?.[0]?.id),
+          checkoutStatus: "paid",
+        });
     } catch (error) {
       const code =
         error instanceof MarketplacePaymentError
           ? error.code
           : "marketplace_payment_unknown";
+      if (__DEV__)
+        console.warn("[LiveCheckout] payment_rpc_failed", {
+          code,
+          stage: "payMarketplaceCheckout",
+        });
       if (
         code === "marketplace_payment_transport" ||
         code === "marketplace_payment_already_processed"
       ) {
         const completed = await reconcilePayment();
+        if (__DEV__)
+          console.log("[LiveCheckout] payment_reconciliation", {
+            recovered: completed,
+          });
         if (!completed)
           setFeedback(
             "El pago está por confirmar. Puedes reintentar con la misma clave de forma segura.",
           );
       } else if (code === "marketplace_insufficient_bdag_balance")
         setFeedback("Saldo BDAG insuficiente para completar esta compra.");
+      else if (code === "marketplace_payment_idempotency_conflict")
+        setFeedback("Esta solicitud de pago cambió. Revisa el pedido antes de reintentar.");
+      else if (code === "marketplace_checkout_integrity_error")
+        setFeedback("El producto o inventario cambió. Revisa el pedido nuevamente.");
+      else if (code === "marketplace_auth_required")
+        setFeedback("Inicia sesión nuevamente para completar el pago.");
+      else if (code === "marketplace_permission_denied")
+        setFeedback("No tienes permiso para pagar esta compra.");
+      else if (
+        code === "marketplace_insufficient_inventory" ||
+        code === "marketplace_product_unavailable"
+      )
+        setFeedback("El producto o la cantidad seleccionada ya no está disponible.");
       else if (
         code === "marketplace_checkout_expired" ||
         code === "marketplace_checkout_cancelled" ||
@@ -569,10 +649,27 @@ export function LiveViewerCommerce({
                     remaining > 0 && reservation.status === "pending_payment"
                   }
                   onPay={() => {
+                    if (__DEV__)
+                      console.log("[LiveCheckout] pay_review_pressed", {
+                        checkoutPresent: Boolean(reservation),
+                        checkoutStatus: reservation?.status ?? null,
+                        remaining,
+                      });
                     void refreshBalance();
-                    setPaymentConfirmVisible(true);
+                    setStage("confirm_payment");
+                    if (__DEV__)
+                      console.log("[LiveCheckout] payment_confirmation_opened", {
+                        checkoutPresent: Boolean(reservation),
+                      });
                   }}
                   onCancel={cancel}
+                />
+              ) : stage === "confirm_payment" && reservation ? (
+                <LivePaymentConfirmation
+                  total={reservation.total}
+                  busy={busy}
+                  onCancel={() => setStage("review")}
+                  onConfirm={() => void pay()}
                 />
               ) : stage === "processing" ? (
                 <View style={styles.center} accessibilityLiveRegion="polite">
@@ -637,14 +734,6 @@ export function LiveViewerCommerce({
           </BottomSheetSurface>
         </KeyboardAvoidingView>
       </Modal>
-      {reservation ? (
-        <LivePaymentConfirmation
-          visible={paymentConfirmVisible}
-          total={reservation.total}
-          onCancel={() => setPaymentConfirmVisible(false)}
-          onConfirm={() => void pay()}
-        />
-      ) : null}
     </>
   );
 }
