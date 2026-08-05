@@ -27,13 +27,13 @@ export function LivePaymentConfirmation({
       <View style={styles.scrim}>
         <BottomSheetSurface>
           <View style={styles.content}>
-            <OnSpaceText variant="headingMedium">Confirmar pago</OnSpaceText>
+            <OnSpaceText variant="headingMedium">Pagar ahora</OnSpaceText>
             <OnSpaceText variant="body" color="textSecondary">
               Pagarás {total.toFixed(2)} BDAG. El pago quedará protegido en el
               escrow del Marketplace.
             </OnSpaceText>
             <OnSpaceButton
-              label="Confirmar pago"
+              label="Pagar ahora"
               variant="commerce"
               size="large"
               haptic="impact"

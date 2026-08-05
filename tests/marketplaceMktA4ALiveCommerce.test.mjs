@@ -63,7 +63,7 @@ test('LIVE commerce stays mounted with realtime and five-second polling',()=>{
 });
 
 test('viewer flow includes authoritative detail, shipping, reservation, payment and success',()=>{
-  for(const value of ['fetchMarketplaceProductDetail','validateShippingAddress','createLiveCheckoutReservation','payMarketplaceCheckout','Compra confirmada','Seguir viendo','Ver pedido'])assert.match(viewer,new RegExp(value));
+  for(const value of ['fetchMarketplaceProductDetail','validateShippingAddress','createLiveCheckoutReservation','payMarketplaceCheckout','Compra realizada','Continuar viendo el LIVE','Ver pedido'])assert.match(viewer,new RegExp(value));
   assert.match(viewer,/paymentKey = useRef<string \| null>\(null\)/);
   assert.match(viewer,/lock = useRef\(false\)/);
 });

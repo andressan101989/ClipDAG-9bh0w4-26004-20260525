@@ -70,13 +70,14 @@ import { LiveReservationSummary } from "@/components/live/shop/LiveReservationSu
 import { LivePaymentConfirmation } from "@/components/live/shop/LivePaymentConfirmation";
 import { LivePurchaseSuccess } from "@/components/live/shop/LivePurchaseSuccess";
 
-type Stage =
-  | "bag"
+export type LiveCheckoutStep =
   | "product"
   | "shipping"
-  | "reservation"
-  | "active_other"
-  | "success";
+  | "review"
+  | "processing"
+  | "success"
+  | "recoverable_error";
+type Stage = "bag" | LiveCheckoutStep;
 type Reservation = {
   id: string;
   reference: string;
@@ -98,9 +99,10 @@ const stageTitle: Record<Stage, string> = {
   bag: "Productos del LIVE",
   product: "Vista rápida",
   shipping: "Entrega",
-  reservation: "Reserva",
-  active_other: "Reserva activa",
-  success: "Compra confirmada",
+  review: "Revisar pedido",
+  processing: "Procesando pago",
+  success: "Compra realizada",
+  recoverable_error: "Compra pendiente",
 };
 
 export interface LiveViewerCommerceProps {
@@ -254,12 +256,12 @@ export function LiveViewerCommerce({
       });
       paymentKey.current = randomUUID();
       await refreshBalance();
-      setStage("reservation");
+      setStage((current) => (current === "success" ? current : "review"));
       return;
     }
     const other = await fetchMyActiveCheckout().catch(() => null);
     setOtherCheckoutId(other?.checkout.id ?? null);
-    setStage("active_other");
+    setStage("recoverable_error");
   };
   const reserve = async () => {
     if (lock.current || !pin || !variant || variant.available_quantity < 1)
@@ -318,7 +320,7 @@ export function LiveViewerCommerce({
         orderId: result.orders[0]?.id ?? null,
       });
       await refreshBalance();
-      setStage("reservation");
+      setStage("review");
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch (error) {
       const code=error instanceof LiveCommerceError?error.code:error instanceof MarketplaceReadError?error.code:"live_commerce_unknown";
@@ -382,6 +384,7 @@ export function LiveViewerCommerce({
     lock.current = true;
     setBusy(true);
     setFeedback(null);
+    setStage("processing");
     try {
       await refreshBalance();
       const paid = await payMarketplaceCheckout(
@@ -418,6 +421,7 @@ export function LiveViewerCommerce({
       } else
         setFeedback("No se realizó un segundo cobro. Inténtalo nuevamente.");
       await refreshBalance();
+      setStage((current) => (current === "success" ? current : "review"));
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       lock.current = false;
@@ -553,7 +557,7 @@ export function LiveViewerCommerce({
                   }}
                   onSubmit={() => void reserve()}
                 />
-              ) : stage === "reservation" && reservation ? (
+              ) : stage === "review" && reservation ? (
                 <LiveReservationSummary
                   reference={reservation.reference}
                   total={reservation.total}
@@ -569,16 +573,24 @@ export function LiveViewerCommerce({
                     setPaymentConfirmVisible(true);
                   }}
                   onCancel={cancel}
-                  onOpenReservation={() =>
-                    router.push(
-                      `/checkout/reservation/${reservation.id}` as never,
-                    )
-                  }
                 />
-              ) : stage === "active_other" ? (
+              ) : stage === "processing" ? (
+                <View style={styles.center} accessibilityLiveRegion="polite">
+                  <OnSpaceText variant="headingMedium">
+                    Procesando pago
+                  </OnSpaceText>
+                  <OnSpaceText
+                    variant="body"
+                    color="textSecondary"
+                    style={styles.centerText}
+                  >
+                    Estamos confirmando tu pago BDAG. No cierres esta pantalla.
+                  </OnSpaceText>
+                </View>
+              ) : stage === "recoverable_error" ? (
                 <View style={styles.center}>
                   <OnSpaceText variant="headingMedium">
-                    Ya tienes una reserva activa
+                    Tienes una compra pendiente
                   </OnSpaceText>
                   <OnSpaceText
                     variant="body"
@@ -595,7 +607,7 @@ export function LiveViewerCommerce({
                   />
                   {otherCheckoutId ? (
                     <OnSpaceButton
-                      label="Ver reserva"
+                      label="Continuar pago"
                       variant="secondary"
                       onPress={() =>
                         router.push(

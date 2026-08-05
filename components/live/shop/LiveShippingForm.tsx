@@ -58,7 +58,7 @@ export function LiveShippingForm({
         </View>
       ))}
       <LoadingButton
-        label="Reservar por 15 minutos"
+        label="Revisar pedido"
         variant="commerce"
         size="large"
         loading={busy}

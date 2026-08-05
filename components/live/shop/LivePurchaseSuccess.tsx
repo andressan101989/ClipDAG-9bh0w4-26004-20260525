@@ -27,7 +27,7 @@ export function LivePurchaseSuccess({
         <MaterialIcons name="check" size={42} color={colors.textInverse} />
       </View>
       <OnSpaceText variant="headingLarge" style={styles.center}>
-        Compra confirmada
+        Compra realizada
       </OnSpaceText>
       <OnSpaceText variant="body" color="textSecondary" style={styles.center}>
         Tu pago quedó protegido y el vendedor preparará el pedido.
@@ -38,7 +38,7 @@ export function LivePurchaseSuccess({
         </OnSpaceText>
       ) : null}
       <OnSpaceButton
-        label="Seguir viendo"
+        label="Continuar viendo el LIVE"
         variant="commerce"
         size="large"
         onPress={onContinue}

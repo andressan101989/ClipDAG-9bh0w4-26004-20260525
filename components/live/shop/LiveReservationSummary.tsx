@@ -20,7 +20,6 @@ export function LiveReservationSummary({
   payable,
   onPay,
   onCancel,
-  onOpenReservation,
 }: {
   reference: string;
   total: number;
@@ -31,15 +30,14 @@ export function LiveReservationSummary({
   payable: boolean;
   onPay: () => void;
   onCancel: () => void;
-  onOpenReservation: () => void;
 }) {
   const minutes = Math.floor(remaining / 60),
     seconds = String(remaining % 60).padStart(2, "0");
   return (
     <View style={styles.content}>
       <View style={styles.top}>
-        <StatusPill label="Reserva protegida" tone="success" />
-        <OnSpaceText variant="headingMedium">Todo listo para pagar</OnSpaceText>
+        <StatusPill label="Inventario asegurado" tone="success" />
+        <OnSpaceText variant="headingMedium">Revisa y paga tu pedido</OnSpaceText>
         <OnSpaceText variant="bodySmall" color="textMuted">
           Referencia {reference}
         </OnSpaceText>
@@ -53,7 +51,7 @@ export function LiveReservationSummary({
       </View>
       <View style={styles.total}>
         <OnSpaceText variant="label" color="textSecondary">
-          Total protegido
+          Total del pedido
         </OnSpaceText>
         <CommercePrice price={total} size="large" />
       </View>
@@ -71,7 +69,7 @@ export function LiveReservationSummary({
         </OnSpaceText>
       ) : null}
       <LoadingButton
-        label="Pagar con BDAG"
+        label="Pagar ahora"
         variant="commerce"
         size="large"
         loading={busy}
@@ -81,17 +79,11 @@ export function LiveReservationSummary({
       />
       <View style={styles.actions}>
         <OnSpaceButton
-          label="Cancelar reserva"
+          label="Cancelar compra pendiente"
           variant="ghost"
           size="small"
           disabled={busy || !payable}
           onPress={onCancel}
-        />
-        <OnSpaceButton
-          label="Ver reserva"
-          variant="secondary"
-          size="small"
-          onPress={onOpenReservation}
         />
       </View>
     </View>
