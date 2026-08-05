@@ -27,6 +27,7 @@ import {
   validateCreationVariants, VariantDraftValidationError, type CreationVariantDraft,
   type VariantDraftOption,
 } from '@/services/marketplaceVariantDraft';
+import { upsertMyLiveAffiliateOffer } from '@/services/liveCommerceService';
 import {
   MarketplaceBulkEditSheet, MarketplaceChoiceCard, MarketplaceCreationProgress,
   MarketplaceSectionCard, MarketplaceStickyFooter, MarketplaceVariantListItem,
@@ -75,7 +76,10 @@ export default function CreateProductScreen() {
   const [draftProductId, setDraftProductId] = useState<string | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [submissionStage, setSubmissionStage] = useState('');
+  const [affiliateEnabled, setAffiliateEnabled] = useState(false);
+  const [affiliatePercent, setAffiliatePercent] = useState('10');
   const configurationKeyRef = useRef(randomUUID());
+  const affiliateKeyRef = useRef(randomUUID());
   const skuSeedRef = useRef(randomUUID().slice(0, 8).toUpperCase());
   const draftAssetIdsRef = useRef<string[]>([]);
   const publishLockRef = useRef(false);
@@ -385,9 +389,19 @@ export default function CreateProductScreen() {
   const handlePublish = async () => {
     if (publishLockRef.current || isPublishing) return;
     if (!user || !validateInformation() || !validateOptionsStep() || !validateVariantsStep()) return;
+    if (!images.length || !imageAssetIds.length) {
+      showAlert('Foto requerida', 'Agrega al menos una foto antes de publicar el producto.');
+      setStep(1);
+      return;
+    }
     const categoryRow = categories.find(item => item.slug === category);
     if (!store || !categoryRow || !accessReady) {
       showAlert('Vendedor no habilitado', 'Completa y activa tu tienda antes de publicar.');
+      return;
+    }
+    const creatorCommissionPercent = Number(affiliatePercent);
+    if (affiliateEnabled && (!Number.isFinite(creatorCommissionPercent) || creatorCommissionPercent <= 0 || creatorCommissionPercent > 30)) {
+      showAlert('ComisiÃ³n invÃ¡lida', 'Ingresa un porcentaje mayor que 0 y de hasta 30%.');
       return;
     }
     let parsedVariantOptions;
@@ -436,6 +450,26 @@ export default function CreateProductScreen() {
       }
       setSubmissionStage('Publicando producto…');
       await setProductPublished(productId, true);
+      if (affiliateEnabled) {
+        setSubmissionStage('Configurando oferta para creadores...');
+        try {
+          await upsertMyLiveAffiliateOffer({
+            productId,
+            offerScope: 'public_creator',
+            creatorId: null,
+            commissionBps: Math.round(creatorCommissionPercent * 100),
+            status: 'active',
+            startsAt: null,
+            endsAt: null,
+            idempotencyKey: affiliateKeyRef.current,
+          });
+        } catch {
+          showAlert(
+            'Producto publicado',
+            'El producto estÃ¡ disponible, pero la oferta para creadores no pudo activarse. Puedes configurarla nuevamente sin republicar.',
+          );
+        }
+      }
       setDraftProductId(null);
       draftAssetIdsRef.current = [];
       showAlert('¡Producto publicado!', 'Tu producto ya está disponible en Shop.', [
@@ -920,6 +954,39 @@ export default function CreateProductScreen() {
             ? `${activeVariantCount} activas · ${totalInventory} unidades`
             : `${price} BDAG · ${stock} unidades`, 3)}
         </MarketplaceSectionCard>
+        <MarketplaceSectionCard icon="groups" title="Creadores afiliados">
+          <Pressable
+            style={styles.affiliateToggle}
+            onPress={() => setAffiliateEnabled(current => !current)}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: affiliateEnabled }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={styles.settingTitle}>Permitir que otros creadores vendan este producto</Text>
+              <Text style={styles.helper}>La comisiÃ³n se congela al crear el pedido y no cambia ventas anteriores.</Text>
+            </View>
+            <MaterialIcons
+              name={affiliateEnabled ? 'toggle-on' : 'toggle-off'}
+              size={42}
+              color={affiliateEnabled ? Colors.primaryLight : Colors.textSubtle}
+            />
+          </Pressable>
+          {affiliateEnabled ? (
+            <View style={styles.field}>
+              <Text style={styles.settingTitle}>ComisiÃ³n del creador (%)</Text>
+              <TextInput
+                style={styles.input}
+                value={affiliatePercent}
+                onChangeText={setAffiliatePercent}
+                keyboardType="decimal-pad"
+                accessibilityLabel="Porcentaje de comisiÃ³n para creadores"
+              />
+              <Text style={styles.helper}>
+                Entre 0.01% y 30%. El vendedor recibe el total menos la tarifa de plataforma y esta comisiÃ³n.
+              </Text>
+            </View>
+          ) : null}
+        </MarketplaceSectionCard>
         {draftProductId ? (
           <View style={styles.recoveryCard}>
             <View style={styles.recoveryIcon}><MaterialIcons name="lock" size={24} color={Colors.warning} /></View>
@@ -1129,6 +1196,7 @@ const styles = StyleSheet.create({
   reviewValue: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
   editButton: { minWidth: 54, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   editText: { color: Colors.primaryLight, fontWeight: FontWeight.semibold, fontSize: FontSize.sm },
+  affiliateToggle: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   recoveryCard: { padding: Spacing.lg, borderRadius: Radius.xl, backgroundColor: Colors.warningDim, borderWidth: 1, borderColor: Colors.warning, gap: Spacing.sm },
   recoveryIcon: { width: 46, height: 46, borderRadius: 23, backgroundColor: Colors.warningDim, alignItems: 'center', justifyContent: 'center' },
   recoveryCopy: { gap: 3 },

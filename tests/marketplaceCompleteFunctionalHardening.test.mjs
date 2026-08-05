@@ -9,6 +9,7 @@ const review = read("components/live/shop/LiveReservationSummary.tsx");
 const success = read("components/live/shop/LivePurchaseSuccess.tsx");
 const payment = read("services/marketplacePaymentService.ts");
 const liveService = read("services/liveCommerceService.ts");
+const creation = read("app/create-product.tsx");
 
 test("LIVE checkout exposes the complete in-session purchase state machine", () => {
   for (const step of ["product", "shipping", "review", "processing", "success", "recoverable_error"])
@@ -49,3 +50,11 @@ test("recoverable checkout remains available without becoming the normal path", 
   assert.match(viewer, /cancelCheckoutReservation/);
 });
 
+test("publication requires media and safely converts creator percent to basis points", () => {
+  assert.match(creation, /if \(!images\.length \|\| !imageAssetIds\.length\)/);
+  assert.match(creation, /Foto requerida/);
+  assert.match(creation, /creatorCommissionPercent > 30/);
+  assert.match(creation, /commissionBps: Math\.round\(creatorCommissionPercent \* 100\)/);
+  assert.match(creation, /offerScope: 'public_creator'/);
+  assert.match(creation, /Permitir que otros creadores vendan este producto/);
+});
