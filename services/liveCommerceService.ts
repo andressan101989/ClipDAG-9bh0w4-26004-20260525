@@ -113,6 +113,15 @@ export interface LiveAffiliateOfferInput {
   endsAt: string | null;
   idempotencyKey: string;
 }
+export interface LiveAffiliateOffer {
+  productId: string;
+  offerScope: "public_creator";
+  commissionBps: number;
+  status: "active" | "paused" | "removed";
+  startsAt: string | null;
+  endsAt: string | null;
+  updatedAt: string;
+}
 export interface LiveCandidateCursor {
   updatedAt: string;
   id: string;
@@ -489,6 +498,29 @@ export async function upsertMyLiveAffiliateOffer(
     p_ends_at: input.endsAt,
     p_idempotency_key: uuid(input.idempotencyKey),
   });
+}
+export async function fetchMyLiveAffiliateOffer(
+  productId: string,
+): Promise<LiveAffiliateOffer | null> {
+  const rpc = "fetch_my_live_affiliate_offer";
+  const { data, error } = await db().rpc(rpc, { p_product_id: uuid(productId) });
+  if (error) rpcError(rpc, error);
+  if (data == null) return null;
+  if (typeof data !== "object") throw new LiveCommerceError("live_commerce_unknown");
+  const row = data as Record<string, unknown>;
+  const status = String(row.status);
+  if (!(["active", "paused", "removed"] as string[]).includes(status)) {
+    throw new LiveCommerceError("live_commerce_unknown");
+  }
+  return {
+    productId: uuid(String(row.product_id)),
+    offerScope: "public_creator",
+    commissionBps: finite(row.commission_bps),
+    status: status as LiveAffiliateOffer["status"],
+    startsAt: row.starts_at == null ? null : String(row.starts_at),
+    endsAt: row.ends_at == null ? null : String(row.ends_at),
+    updatedAt: String(row.updated_at),
+  };
 }
 async function command(rpc: string, args: Record<string, unknown>) {
   const { data, error } = await db().rpc(rpc, args);

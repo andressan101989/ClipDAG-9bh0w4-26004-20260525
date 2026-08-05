@@ -27,7 +27,10 @@ import {
   validateCreationVariants, VariantDraftValidationError, type CreationVariantDraft,
   type VariantDraftOption,
 } from '@/services/marketplaceVariantDraft';
-import { upsertMyLiveAffiliateOffer } from '@/services/liveCommerceService';
+import {
+  upsertMyLiveAffiliateOffer,
+} from '@/services/liveCommerceService';
+import { creatorCommissionPercentToBps } from '@/services/affiliateCommissionState';
 import {
   MarketplaceBulkEditSheet, MarketplaceChoiceCard, MarketplaceCreationProgress,
   MarketplaceSectionCard, MarketplaceStickyFooter, MarketplaceVariantListItem,
@@ -399,10 +402,14 @@ export default function CreateProductScreen() {
       showAlert('Vendedor no habilitado', 'Completa y activa tu tienda antes de publicar.');
       return;
     }
-    const creatorCommissionPercent = Number(affiliatePercent);
-    if (affiliateEnabled && (!Number.isFinite(creatorCommissionPercent) || creatorCommissionPercent <= 0 || creatorCommissionPercent > 30)) {
-      showAlert('ComisiÃ³n invÃ¡lida', 'Ingresa un porcentaje mayor que 0 y de hasta 30%.');
-      return;
+    let creatorCommissionBps = 0;
+    if (affiliateEnabled) {
+      try {
+        creatorCommissionBps = creatorCommissionPercentToBps(affiliatePercent);
+      } catch {
+        showAlert('Comisión inválida', 'Ingresa un porcentaje entre 0.01% y 30%, con hasta dos decimales.');
+        return;
+      }
     }
     let parsedVariantOptions;
     if (hasVariants) parsedVariantOptions = parseVariantOptions(variantOptions);
@@ -457,17 +464,43 @@ export default function CreateProductScreen() {
             productId,
             offerScope: 'public_creator',
             creatorId: null,
-            commissionBps: Math.round(creatorCommissionPercent * 100),
+            commissionBps: creatorCommissionBps,
             status: 'active',
             startsAt: null,
             endsAt: null,
             idempotencyKey: affiliateKeyRef.current,
           });
         } catch {
+          setDraftProductId(null);
+          draftAssetIdsRef.current = [];
           showAlert(
-            'Producto publicado',
-            'El producto estÃ¡ disponible, pero la oferta para creadores no pudo activarse. Puedes configurarla nuevamente sin republicar.',
+            'Producto publicado, afiliados pendientes',
+            'El producto está disponible. Puedes reintentar la oferta sin publicar ni duplicar el producto.',
+            [
+              {
+                text: 'Reintentar activar afiliados',
+                onPress: () => {
+                  void upsertMyLiveAffiliateOffer({
+                    productId,
+                    offerScope: 'public_creator',
+                    creatorId: null,
+                    commissionBps: creatorCommissionBps,
+                    status: 'active',
+                    startsAt: null,
+                    endsAt: null,
+                    idempotencyKey: affiliateKeyRef.current,
+                  }).then(() => {
+                    affiliateKeyRef.current = randomUUID();
+                    showAlert('Afiliados activados', 'La oferta ya está disponible para futuras ventas.');
+                  }).catch(() => {
+                    showAlert('Afiliados pendientes', 'Configura la oferta desde Mis productos. El producto no se duplicó.');
+                  });
+                },
+              },
+              { text: 'Mis productos', onPress: () => router.replace('/seller/products' as never) },
+            ],
           );
+          return;
         }
       }
       setDraftProductId(null);
@@ -963,7 +996,7 @@ export default function CreateProductScreen() {
           >
             <View style={{ flex: 1 }}>
               <Text style={styles.settingTitle}>Permitir que otros creadores vendan este producto</Text>
-              <Text style={styles.helper}>La comisiÃ³n se congela al crear el pedido y no cambia ventas anteriores.</Text>
+              <Text style={styles.helper}>La comisión se congela al crear el pedido y no cambia ventas anteriores.</Text>
             </View>
             <MaterialIcons
               name={affiliateEnabled ? 'toggle-on' : 'toggle-off'}
@@ -973,16 +1006,16 @@ export default function CreateProductScreen() {
           </Pressable>
           {affiliateEnabled ? (
             <View style={styles.field}>
-              <Text style={styles.settingTitle}>ComisiÃ³n del creador (%)</Text>
+              <Text style={styles.settingTitle}>Comisión del creador (%)</Text>
               <TextInput
                 style={styles.input}
                 value={affiliatePercent}
                 onChangeText={setAffiliatePercent}
                 keyboardType="decimal-pad"
-                accessibilityLabel="Porcentaje de comisiÃ³n para creadores"
+                accessibilityLabel="Porcentaje de comisión para creadores"
               />
               <Text style={styles.helper}>
-                Entre 0.01% y 30%. El vendedor recibe el total menos la tarifa de plataforma y esta comisiÃ³n.
+                Entre 0.01% y 30%. El vendedor recibe el total menos la tarifa de plataforma y esta comisión.
               </Text>
             </View>
           ) : null}

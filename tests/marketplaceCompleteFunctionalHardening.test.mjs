@@ -54,8 +54,8 @@ test("recoverable checkout remains available without becoming the normal path", 
 test("publication requires media and safely converts creator percent to basis points", () => {
   assert.match(creation, /if \(!images\.length \|\| !imageAssetIds\.length\)/);
   assert.match(creation, /Foto requerida/);
-  assert.match(creation, /creatorCommissionPercent > 30/);
-  assert.match(creation, /commissionBps: Math\.round\(creatorCommissionPercent \* 100\)/);
+  assert.match(creation, /creatorCommissionPercentToBps\(affiliatePercent\)/);
+  assert.match(creation, /commissionBps: creatorCommissionBps/);
   assert.match(creation, /offerScope: 'public_creator'/);
   assert.match(creation, /Permitir que otros creadores vendan este producto/);
 });

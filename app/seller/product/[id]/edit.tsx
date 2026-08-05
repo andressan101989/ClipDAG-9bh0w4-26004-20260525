@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 import { MaterialIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { randomUUID } from 'expo-crypto';
 import { useAlert } from '@/template';
 import {
   fetchCategories, fetchSellerProductVariants, updateProduct,
@@ -10,6 +11,15 @@ import {
 } from '@/services/marketplaceService';
 import { Colors, FontSize, FontWeight, Radius, Shadow, Spacing } from '@/constants/theme';
 import { SellerScreenHeader } from '@/components/marketplace/SellerScreenHeader';
+import {
+  fetchMyLiveAffiliateOffer,
+  upsertMyLiveAffiliateOffer,
+  type LiveAffiliateOffer,
+} from '@/services/liveCommerceService';
+import {
+  creatorCommissionBpsToPercent,
+  creatorCommissionPercentToBps,
+} from '@/services/affiliateCommissionState';
 
 export default function EditProduct() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -17,6 +27,8 @@ export default function EditProduct() {
   const insets = useSafeAreaInsets();
   const { showAlert } = useAlert();
   const lock = useRef(false);
+  const affiliateLock = useRef(false);
+  const affiliateKey = useRef(randomUUID());
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
@@ -30,10 +42,17 @@ export default function EditProduct() {
   const [activeVariantCount, setActiveVariantCount] = useState(1);
   const [totalInventory, setTotalInventory] = useState(0);
   const [priceRange, setPriceRange] = useState('');
+  const [affiliateOffer, setAffiliateOffer] = useState<LiveAffiliateOffer | null>(null);
+  const [affiliatePercent, setAffiliatePercent] = useState('10');
+  const [affiliateBusy, setAffiliateBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
-    void Promise.all([fetchSellerProductVariants(id), fetchCategories()]).then(([inventory, values]) => {
+    void Promise.all([
+      fetchSellerProductVariants(id),
+      fetchCategories(),
+      fetchMyLiveAffiliateOffer(id),
+    ]).then(([inventory, values, offer]) => {
       if (!active) return;
       const product = inventory.detail.product;
       const variants = inventory.detail.variants.filter(item => item.status !== 'archived');
@@ -54,6 +73,8 @@ export default function EditProduct() {
       setPriceRange(prices.length
         ? `${Math.min(...prices).toFixed(2)}${Math.min(...prices) === Math.max(...prices) ? '' : ` – ${Math.max(...prices).toFixed(2)}`} BDAG`
         : 'Sin precio activo');
+      setAffiliateOffer(offer);
+      if (offer) setAffiliatePercent(creatorCommissionBpsToPercent(offer.commissionBps));
     }).catch(() => {
       if (!active) return;
       showAlert('Producto no disponible', 'No puedes editar este producto.');
@@ -80,6 +101,45 @@ export default function EditProduct() {
       showAlert('No se pudo guardar', 'Verifica los datos e inténtalo nuevamente.');
     } finally {
       lock.current = false;
+    }
+  };
+
+  const saveAffiliateOffer = async (status: 'active' | 'paused') => {
+    if (affiliateLock.current) return;
+    let commissionBps: number;
+    try {
+      commissionBps = creatorCommissionPercentToBps(affiliatePercent);
+    } catch {
+      showAlert('Comisión inválida', 'Ingresa un porcentaje entre 0.01% y 30%, con hasta dos decimales.');
+      return;
+    }
+    affiliateLock.current = true;
+    setAffiliateBusy(true);
+    try {
+      await upsertMyLiveAffiliateOffer({
+        productId: id,
+        offerScope: 'public_creator',
+        creatorId: null,
+        commissionBps,
+        status,
+        startsAt: affiliateOffer?.startsAt ?? null,
+        endsAt: affiliateOffer?.endsAt ?? null,
+        idempotencyKey: affiliateKey.current,
+      });
+      const next = await fetchMyLiveAffiliateOffer(id);
+      setAffiliateOffer(next);
+      affiliateKey.current = randomUUID();
+      showAlert(
+        status === 'active' ? 'Afiliados activados' : 'Afiliados desactivados',
+        status === 'active'
+          ? 'La nueva comisión se aplicará únicamente a futuras ventas elegibles.'
+          : 'No se aceptarán nuevas compras afiliadas. Las ventas anteriores no cambian.',
+      );
+    } catch {
+      showAlert('No se pudo actualizar', 'La configuración anterior se conserva. Inténtalo nuevamente.');
+    } finally {
+      affiliateLock.current = false;
+      setAffiliateBusy(false);
     }
   };
 
@@ -159,6 +219,59 @@ export default function EditProduct() {
             ))}
           </View>
         </View>
+        <View style={styles.card}>
+          <View style={styles.affiliateHeading}>
+            <View style={styles.setupCopy}>
+              <Text style={styles.cardTitle}>Afiliados y comisiones</Text>
+              <Text style={styles.help}>Permite que otros creadores vendan este producto en sus LIVE.</Text>
+            </View>
+            <Text style={[styles.status, affiliateOffer?.status === 'active' && styles.statusActive]}>
+              {affiliateOffer?.status === 'active' ? 'Activa' : 'Desactivada'}
+            </Text>
+          </View>
+          <Text style={styles.label}>Comisión del creador (%)</Text>
+          <TextInput
+            style={styles.input}
+            value={affiliatePercent}
+            onChangeText={value => { setAffiliatePercent(value); affiliateKey.current = randomUUID(); }}
+            keyboardType="decimal-pad"
+            editable={!affiliateBusy}
+            accessibilityLabel="Porcentaje de comisión para creadores"
+          />
+          <Text style={styles.help}>Entre 0.01% y 30%. Los pedidos existentes conservan la comisión congelada al comprar.</Text>
+          <View style={styles.estimate}>
+            <Text style={styles.estimateTitle}>Neto estimado del vendedor</Text>
+            <Text style={styles.help}>Precio − tarifa de plataforma − comisión del creador.</Text>
+            <Text style={styles.help}>La tarifa de plataforma se calcula al pagar y no puede editarse aquí.</Text>
+          </View>
+          {affiliateOffer?.startsAt || affiliateOffer?.endsAt ? (
+            <Text style={styles.help}>
+              Vigencia: {affiliateOffer.startsAt ?? 'ahora'} — {affiliateOffer.endsAt ?? 'sin fecha de fin'}
+            </Text>
+          ) : null}
+          <View style={styles.affiliateActions}>
+            <Pressable
+              style={[styles.variantButton, styles.affiliatePrimary, affiliateBusy && styles.disabled]}
+              onPress={() => void saveAffiliateOffer('active')}
+              disabled={affiliateBusy}
+              accessibilityRole="button"
+              accessibilityLabel={affiliateOffer?.status === 'active' ? 'Editar comisión' : 'Activar afiliados'}
+            >
+              <Text style={styles.variantText}>{affiliateOffer?.status === 'active' ? 'Editar comisión' : 'Activar afiliados'}</Text>
+            </Pressable>
+            {affiliateOffer?.status === 'active' ? (
+              <Pressable
+                style={[styles.secondaryButton, affiliateBusy && styles.disabled]}
+                onPress={() => void saveAffiliateOffer('paused')}
+                disabled={affiliateBusy}
+                accessibilityRole="button"
+                accessibilityLabel="Desactivar afiliados"
+              >
+                <Text style={styles.secondaryText}>Desactivar afiliados</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
         <Pressable style={styles.button} onPress={save}><Text style={styles.buttonText}>Guardar cambios</Text></Pressable>
       </ScrollView>
     </View>
@@ -200,4 +313,14 @@ const styles = StyleSheet.create({
   activeText: { color: Colors.textOnBrand, fontWeight: FontWeight.bold },
   button: { minHeight: 54, backgroundColor: Colors.primary, padding: Spacing.md, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', ...Shadow.brand },
   buttonText: { color: Colors.textOnBrand, fontWeight: FontWeight.bold },
+  affiliateHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
+  status: { color: Colors.textSecondary, backgroundColor: Colors.surfaceElevated, borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 6, fontSize: FontSize.xs, fontWeight: FontWeight.bold },
+  statusActive: { color: Colors.success, borderWidth: 1, borderColor: Colors.success },
+  estimate: { padding: Spacing.md, borderRadius: Radius.md, backgroundColor: Colors.surfaceElevated, gap: 4 },
+  estimateTitle: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
+  affiliateActions: { gap: Spacing.sm },
+  affiliatePrimary: { width: '100%' },
+  secondaryButton: { minHeight: 48, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
+  secondaryText: { color: Colors.textPrimary, fontWeight: FontWeight.semibold },
+  disabled: { opacity: 0.55 },
 });
