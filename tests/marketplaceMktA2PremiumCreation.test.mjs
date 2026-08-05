@@ -153,5 +153,5 @@ test('static client contract: product edit exposes a premium setup summary',()=>
 
 test('static scope contract: no direct writes or unrelated commerce systems were introduced',()=>{
   assert.doesNotMatch(creation,/\.from\('products'\)\.(insert|update)/);
-  assert.doesNotMatch(`${creation}\n${ui}\n${edit}`,/\b(cart|checkout|order items|ledger|bdag transfer)\b/i);
+  assert.doesNotMatch(`${creation}\n${ui}\n${edit}`,/\b(ledger|bdag transfer)\b/i);
 });

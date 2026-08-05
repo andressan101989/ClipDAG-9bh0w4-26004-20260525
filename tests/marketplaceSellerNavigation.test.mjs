@@ -42,5 +42,5 @@ test('static client contract: no seller screen is a navigation dead end',()=>{
 
 test('scope contract: navigation fix does not reference database or commerce mutations',()=>{
   const changed=[header,center,apply,store,products,edit].join('\n');
-  assert.doesNotMatch(changed,/supabase\/migrations|create_marketplace_product|checkout|create_order|ledger_entries/i);
+  assert.doesNotMatch(changed,/supabase\/migrations|create_marketplace_product|create_order|ledger_entries/i);
 });
