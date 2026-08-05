@@ -26,6 +26,7 @@ export interface Product {
   moderation_status:'pending'|'approved'|'rejected'|'suspended';
   published_at:string|null; deleted_at:string|null; created_at:string; updated_at:string;
   variant_price_max:number|null; active_variant_count:number;
+  shipping_profile_id:string|null;
   seller?:{username:string;avatar_url:string|null;display_name:string|null};
 }
 
@@ -60,7 +61,7 @@ const PRODUCT_COLUMNS = [
   'id','seller_id','store_id','category_id','title','description','price','currency',
   'category','images','stock','status','tags','total_sales','brand','compare_at_price',
   'product_type','moderation_status','published_at','deleted_at','created_at','updated_at',
-  'variant_price_max','active_variant_count',
+  'variant_price_max','active_variant_count','shipping_profile_id',
 ].join(',');
 const PRODUCT_WITH_SELLER = `${PRODUCT_COLUMNS},seller:user_profiles!products_seller_id_fkey(username,avatar_url,display_name)`;
 const db=()=>getSupabaseClient();
@@ -336,13 +337,13 @@ export async function setProductPublished(id:string,published:boolean):Promise<v
     throw error;
   }
 }
-export type MarketplacePublicationReadinessReason='seller_not_approved'|'store_not_active'|'product_not_active'|'product_not_approved'|'product_deleted'|'unsupported_product_type'|'unsupported_currency'|'no_active_variant'|'inventory_not_configured'|'out_of_stock'|'not_ready';
+export type MarketplacePublicationReadinessReason='seller_not_approved'|'store_not_active'|'product_not_active'|'product_not_approved'|'product_deleted'|'unsupported_product_type'|'unsupported_currency'|'no_active_variant'|'inventory_not_configured'|'out_of_stock'|'shipping_incomplete'|'not_ready';
 export class MarketplacePublicationError extends Error {
   constructor(public reason:MarketplacePublicationReadinessReason){super(`marketplace_product_not_ready_${reason}`);this.name='MarketplacePublicationError';}
 }
 export const marketplacePublicationMessage=(error:unknown):string|null=>{
   if(!(error instanceof MarketplacePublicationError))return null;
-  return ({seller_not_approved:'Tu cuenta de vendedor todavía no está aprobada.',store_not_active:'Activa tu tienda antes de publicar.',product_not_active:'El producto no está activo.',product_not_approved:'El producto todavía está en revisión.',product_deleted:'Este producto fue eliminado.',unsupported_product_type:'Revisa el tipo de producto.',unsupported_currency:'El producto debe usar BDAG.',no_active_variant:'Configura al menos una variante activa.',inventory_not_configured:'Completa el inventario antes de publicar.',out_of_stock:'Agrega inventario disponible antes de publicar.',not_ready:'Completa la configuración requerida antes de publicar.'} satisfies Record<MarketplacePublicationReadinessReason,string>)[error.reason];
+  return ({seller_not_approved:'Tu cuenta de vendedor todavía no está aprobada.',store_not_active:'Activa tu tienda antes de publicar.',product_not_active:'El producto no está activo.',product_not_approved:'El producto todavía está en revisión.',product_deleted:'Este producto fue eliminado.',unsupported_product_type:'Revisa el tipo de producto.',unsupported_currency:'El producto debe usar BDAG.',no_active_variant:'Configura al menos una variante activa.',inventory_not_configured:'Completa el inventario antes de publicar.',out_of_stock:'Agrega inventario disponible antes de publicar.',shipping_incomplete:'Configura un perfil de envío válido antes de publicar.',not_ready:'Completa la configuración requerida antes de publicar.'} satisfies Record<MarketplacePublicationReadinessReason,string>)[error.reason];
 };
 export async function softDeleteProduct(id:string):Promise<void> {
   const {error}=await db().rpc('soft_delete_marketplace_product',{p_product_id:id});

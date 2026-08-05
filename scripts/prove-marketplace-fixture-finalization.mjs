@@ -108,6 +108,8 @@ function identifiers() {
       "realSeller",
       "fixtureStore",
       "realStore",
+      "fixtureProfile",
+      "realProfile",
       "fixtureProduct",
       "realProduct",
       "fixtureVariant",
@@ -170,9 +172,15 @@ async function createFixture(db, runId, mixed) {
     ],
   );
   await db.query(
-    `insert into public.products(id,seller_id,title,description,price,currency,category,stock,status,store_id,category_id,product_type,moderation_status,published_at) values
-    ($1,$2,'Fixture Proof','Rollback fixture',1,'BDAG','physical',2,'active',$3,'10000000-0000-4000-8000-000000000002','physical','approved',now()),
-    ($4,$5,'Protected Proof','Rollback protected',1,'BDAG','physical',2,'active',$6,'10000000-0000-4000-8000-000000000002','physical','approved',now())`,
+    `insert into public.marketplace_shipping_profiles(id,seller_id,store_id,name,processing_days_min,processing_days_max,ships_from_country,return_policy_summary,legacy_unrestricted)
+     values($1,$2,$3,'Fixture proof shipping',0,1,'US','Rollback-only proof returns.',true),
+           ($4,$5,$6,'Protected proof shipping',0,1,'US','Rollback-only protected returns.',true)`,
+    [id.fixtureProfile,id.fixtureSeller,id.fixtureStore,id.realProfile,id.realSeller,id.realStore],
+  );
+  await db.query(
+    `insert into public.products(id,seller_id,title,description,price,currency,category,stock,status,store_id,category_id,product_type,moderation_status,published_at,shipping_profile_id) values
+    ($1,$2,'Fixture Proof','Rollback fixture',1,'BDAG','physical',2,'active',$3,'10000000-0000-4000-8000-000000000002','physical','approved',now(),$7),
+    ($4,$5,'Protected Proof','Rollback protected',1,'BDAG','physical',2,'active',$6,'10000000-0000-4000-8000-000000000002','physical','approved',now(),$8)`,
     [
       id.fixtureProduct,
       id.fixtureSeller,
@@ -180,6 +188,8 @@ async function createFixture(db, runId, mixed) {
       id.realProduct,
       id.realSeller,
       id.realStore,
+      id.fixtureProfile,
+      id.realProfile,
     ],
   );
   const fixtureSku = `PROOF-F-${randomUUID().toUpperCase()}`;
@@ -215,6 +225,11 @@ async function createFixture(db, runId, mixed) {
       randomUUID(),
       randomUUID(),
     ],
+  );
+  await db.query(
+    `insert into public.marketplace_checkout_shipping_addresses(checkout_id,recipient_name,line1,city,region,postal_code,country)
+     values($1,'Proof Buyer','Rollback Street','Proof City','NY','10001','US')`,
+    [id.checkout],
   );
   const addOrder = (orderId, sellerId, storeId) =>
     db.query(

@@ -32,6 +32,12 @@ import {
 } from '@/services/liveCommerceService';
 import { creatorCommissionPercentToBps } from '@/services/affiliateCommissionState';
 import {
+  fetchMyMarketplaceShippingProfiles,
+  setMyMarketplaceProductShippingProfile,
+  upsertMyMarketplaceShippingProfile,
+  type MarketplaceShippingProfile,
+} from '@/services/marketplaceShippingService';
+import {
   MarketplaceBulkEditSheet, MarketplaceChoiceCard, MarketplaceCreationProgress,
   MarketplaceSectionCard, MarketplaceStickyFooter, MarketplaceVariantListItem,
 } from '@/components/marketplace/MarketplaceCreationUI';
@@ -81,6 +87,11 @@ export default function CreateProductScreen() {
   const [submissionStage, setSubmissionStage] = useState('');
   const [affiliateEnabled, setAffiliateEnabled] = useState(false);
   const [affiliatePercent, setAffiliatePercent] = useState('10');
+  const [shippingProfiles, setShippingProfiles] = useState<MarketplaceShippingProfile[]>([]);
+  const [shippingProfileId, setShippingProfileId] = useState('');
+  const [shippingCountry, setShippingCountry] = useState('US');
+  const [shippingPrice, setShippingPrice] = useState('0');
+  const [returnPolicy, setReturnPolicy] = useState('Devoluciones aceptadas dentro de 14 días.');
   const configurationKeyRef = useRef(randomUUID());
   const affiliateKeyRef = useRef(randomUUID());
   const skuSeedRef = useRef(randomUUID().slice(0, 8).toUpperCase());
@@ -97,6 +108,11 @@ export default function CreateProductScreen() {
         return;
       }
       setStore(foundation.store);
+      void fetchMyMarketplaceShippingProfiles(foundation.store.id).then(profiles => {
+        if (!active) return;
+        setShippingProfiles(profiles);
+        setShippingProfileId(profiles.find(profile => profile.status === 'active')?.id ?? '');
+      }).catch(() => { if (active) setShippingProfiles([]); });
       setCategories(activeCategories);
       setCategory(current => activeCategories.some(item => item.slug === current)
         ? current
@@ -402,6 +418,10 @@ export default function CreateProductScreen() {
       showAlert('Vendedor no habilitado', 'Completa y activa tu tienda antes de publicar.');
       return;
     }
+    if (!shippingProfileId) {
+      showAlert('Envío incompleto', 'Configura un perfil de envío activo antes de publicar.');
+      return;
+    }
     let creatorCommissionBps = 0;
     if (affiliateEnabled) {
       try {
@@ -455,6 +475,7 @@ export default function CreateProductScreen() {
         });
         await setVariantLowStockThreshold(defaultVariant.id, Math.max(0, Number.parseInt(simpleThreshold, 10) || 0));
       }
+      await setMyMarketplaceProductShippingProfile(productId, shippingProfileId);
       setSubmissionStage('Publicando producto…');
       await setProductPublished(productId, true);
       if (affiliateEnabled) {
@@ -540,6 +561,29 @@ export default function CreateProductScreen() {
         : '¿Quieres salir? La información que escribiste en este formulario se perderá.',
       [{ text: 'Seguir editando', style: 'cancel' }, { text: 'Salir', style: 'destructive', onPress: () => router.back() }],
     );
+  };
+
+  const createShippingProfile = async () => {
+    if (!store) return;
+    const amount = Number(shippingPrice);
+    if (!/^[A-Za-z]{2}$/.test(shippingCountry) || !Number.isFinite(amount) || amount < 0 || returnPolicy.trim().length < 2) {
+      showAlert('Envío inválido', 'Revisa el país, el precio y la política de devolución.');
+      return;
+    }
+    try {
+      const profileId = await upsertMyMarketplaceShippingProfile({
+        storeId: store.id, name: `Envío ${shippingCountry.toUpperCase()}`,
+        processingDaysMin: 1, processingDaysMax: 3, shipsFromCountry: shippingCountry,
+        returnPolicySummary: returnPolicy.trim(),
+        regions: [{ countryCode: shippingCountry, regionCode: null, shippingPrice: amount,
+          freeShippingThreshold: null, transitDaysMin: 2, transitDaysMax: 7 }],
+      });
+      const profiles = await fetchMyMarketplaceShippingProfiles(store.id);
+      setShippingProfiles(profiles);
+      setShippingProfileId(profileId);
+    } catch {
+      showAlert('No se pudo guardar el envío', 'Revisa la configuración e inténtalo nuevamente.');
+    }
   };
 
   const field = (
@@ -1019,6 +1063,35 @@ export default function CreateProductScreen() {
               </Text>
             </View>
           ) : null}
+        </MarketplaceSectionCard>
+        <MarketplaceSectionCard icon="local-shipping" title="Envío">
+          <Text style={styles.settingTitle}>Perfil de envío</Text>
+          {shippingProfiles.length ? shippingProfiles.map(profile => (
+            <Pressable
+              key={profile.id}
+              style={[styles.affiliateToggle, shippingProfileId === profile.id && { borderColor: Colors.primaryLight }]}
+              onPress={() => setShippingProfileId(profile.id)}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: shippingProfileId === profile.id }}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.settingTitle}>{profile.name}</Text>
+                <Text style={styles.helper}>{profile.processingDaysMin}–{profile.processingDaysMax} días de preparación · {profile.regions.length ? `${profile.regions.length} destinos` : 'configuración heredada'}</Text>
+                <Text style={styles.helper}>{profile.returnPolicySummary}</Text>
+              </View>
+              <MaterialIcons name={shippingProfileId === profile.id ? 'radio-button-checked' : 'radio-button-unchecked'} size={24} color={Colors.primaryLight} />
+            </Pressable>
+          )) : (
+            <View style={styles.field}>
+              <TextInput style={styles.input} value={shippingCountry} onChangeText={setShippingCountry} autoCapitalize="characters" maxLength={2} placeholder="País (US)" placeholderTextColor={Colors.textSubtle} />
+              <TextInput style={styles.input} value={shippingPrice} onChangeText={setShippingPrice} keyboardType="decimal-pad" placeholder="Precio de envío BDAG" placeholderTextColor={Colors.textSubtle} />
+              <TextInput style={[styles.input, { minHeight: 76 }]} value={returnPolicy} onChangeText={setReturnPolicy} multiline placeholder="Política de devolución" placeholderTextColor={Colors.textSubtle} />
+              <Text style={styles.helper}>Preparación: 1–3 días · tránsito estimado: 2–7 días.</Text>
+              <Pressable style={styles.recoveryRetry} onPress={() => void createShippingProfile()} accessibilityRole="button">
+                <Text style={styles.recoveryRetryText}>Guardar perfil de envío</Text>
+              </Pressable>
+            </View>
+          )}
         </MarketplaceSectionCard>
         {draftProductId ? (
           <View style={styles.recoveryCard}>

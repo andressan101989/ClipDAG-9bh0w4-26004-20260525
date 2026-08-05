@@ -20,6 +20,12 @@ import {
   creatorCommissionBpsToPercent,
   creatorCommissionPercentToBps,
 } from '@/services/affiliateCommissionState';
+import {
+  fetchMyMarketplaceShippingProfiles,
+  setMyMarketplaceProductShippingProfile,
+  upsertMyMarketplaceShippingProfile,
+  type MarketplaceShippingProfile,
+} from '@/services/marketplaceShippingService';
 
 export default function EditProduct() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -45,6 +51,13 @@ export default function EditProduct() {
   const [affiliateOffer, setAffiliateOffer] = useState<LiveAffiliateOffer | null>(null);
   const [affiliatePercent, setAffiliatePercent] = useState('10');
   const [affiliateBusy, setAffiliateBusy] = useState(false);
+  const [storeId, setStoreId] = useState('');
+  const [shippingProfiles, setShippingProfiles] = useState<MarketplaceShippingProfile[]>([]);
+  const [shippingProfileId, setShippingProfileId] = useState('');
+  const [shippingCountry, setShippingCountry] = useState('US');
+  const [shippingPrice, setShippingPrice] = useState('0');
+  const [returnPolicy, setReturnPolicy] = useState('Devoluciones aceptadas dentro de 14 días.');
+  const [shippingBusy, setShippingBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -59,6 +72,7 @@ export default function EditProduct() {
       const activeVariants = variants.filter(item => item.status === 'active');
       const prices = activeVariants.map(item => Number(item.price));
       setTitle(product.title);
+      setStoreId(product.store_id);
       setDescription(product.description);
       setPrice(String(product.price));
       setStock(String(product.stock));
@@ -75,6 +89,17 @@ export default function EditProduct() {
         : 'Sin precio activo');
       setAffiliateOffer(offer);
       if (offer) setAffiliatePercent(creatorCommissionBpsToPercent(offer.commissionBps));
+      void fetchMyMarketplaceShippingProfiles(product.store_id).then(profiles => {
+        if (!active) return;
+        setShippingProfiles(profiles);
+        const selected = profiles.find(profile => profile.id === product.shipping_profile_id) ?? profiles[0];
+        if (selected) {
+          setShippingProfileId(selected.id);
+          setShippingCountry(selected.regions[0]?.countryCode ?? selected.shipsFromCountry);
+          setShippingPrice(String(selected.regions[0]?.shippingPrice ?? 0));
+          setReturnPolicy(selected.returnPolicySummary);
+        }
+      });
     }).catch(() => {
       if (!active) return;
       showAlert('Producto no disponible', 'No puedes editar este producto.');
@@ -141,6 +166,31 @@ export default function EditProduct() {
       affiliateLock.current = false;
       setAffiliateBusy(false);
     }
+  };
+
+  const saveShipping = async () => {
+    if (shippingBusy || !storeId) return;
+    const amount = Number(shippingPrice);
+    if (!/^[A-Za-z]{2}$/.test(shippingCountry) || !Number.isFinite(amount) || amount < 0 || returnPolicy.trim().length < 2) {
+      showAlert('Envío inválido', 'Revisa el país, el precio y la política de devolución.');
+      return;
+    }
+    setShippingBusy(true);
+    try {
+      const existing = shippingProfiles.find(profile => profile.id === shippingProfileId && !profile.legacyUnrestricted);
+      const profileId = await upsertMyMarketplaceShippingProfile({
+        profileId: existing?.id, storeId, name: `Envío ${shippingCountry.toUpperCase()}`,
+        processingDaysMin: 1, processingDaysMax: 3, shipsFromCountry: shippingCountry,
+        returnPolicySummary: returnPolicy.trim(), regions: [{ countryCode: shippingCountry, regionCode: null,
+          shippingPrice: amount, freeShippingThreshold: null, transitDaysMin: 2, transitDaysMax: 7 }],
+      });
+      await setMyMarketplaceProductShippingProfile(id, profileId);
+      const profiles = await fetchMyMarketplaceShippingProfiles(storeId);
+      setShippingProfiles(profiles); setShippingProfileId(profileId);
+      showAlert('Envío actualizado', 'Los próximos checkouts congelarán este precio y estimado.');
+    } catch {
+      showAlert('No se pudo guardar el envío', 'La configuración anterior se conserva.');
+    } finally { setShippingBusy(false); }
   };
 
   return (
@@ -271,6 +321,20 @@ export default function EditProduct() {
               </Pressable>
             ) : null}
           </View>
+        </View>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Envío</Text>
+          <Text style={styles.help}>Configuración autoritativa para destinos, precio y entrega estimada.</Text>
+          <Text style={styles.label}>País admitido (código de dos letras)</Text>
+          <TextInput style={styles.input} value={shippingCountry} onChangeText={setShippingCountry} autoCapitalize="characters" maxLength={2} />
+          <Text style={styles.label}>Precio de envío (BDAG)</Text>
+          <TextInput style={styles.input} value={shippingPrice} onChangeText={setShippingPrice} keyboardType="decimal-pad" />
+          <Text style={styles.label}>Política de devolución</Text>
+          <TextInput style={[styles.input, styles.note]} value={returnPolicy} onChangeText={setReturnPolicy} multiline maxLength={1000} />
+          <Text style={styles.help}>Preparación: 1–3 días · tránsito estimado: 2–7 días. El checkout conserva estos valores aunque el perfil cambie después.</Text>
+          <Pressable style={[styles.variantButton, shippingBusy && styles.disabled]} disabled={shippingBusy} onPress={() => void saveShipping()} accessibilityRole="button">
+            <Text style={styles.variantText}>Guardar envío</Text>
+          </Pressable>
         </View>
         <Pressable style={styles.button} onPress={save}><Text style={styles.buttonText}>Guardar cambios</Text></Pressable>
       </ScrollView>
