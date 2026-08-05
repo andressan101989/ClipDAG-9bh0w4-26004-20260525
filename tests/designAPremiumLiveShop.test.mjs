@@ -140,12 +140,12 @@ test("quick-buy stages provide inline delivery reservation and success presentat
     "Tiempo restante",
     "Saldo disponible",
     "Protección Marketplace",
-    "Cancelar reserva",
+    "Cancelar compra pendiente",
   ])
     assert.match(reservation, new RegExp(marker));
   for (const marker of [
-    "Compra confirmada",
-    "Seguir viendo",
+    "Compra realizada",
+    "Continuar viendo el LIVE",
     "Ver pedido",
     "NotificationFeedbackType.Success",
   ])
