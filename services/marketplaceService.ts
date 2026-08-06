@@ -71,6 +71,9 @@ export class MarketplaceReadError extends Error {
   readonly code:MarketplaceReadErrorCode;readonly postgresCode:string|null;
   constructor(code:MarketplaceReadErrorCode,postgresCode:string|null=null){super(code);this.name='MarketplaceReadError';this.code=code;this.postgresCode=postgresCode;}
 }
+export type MarketplaceSellerConfigurationErrorCode='marketplace_product_not_owned'|'marketplace_authentication_required'|'marketplace_private_product_read_denied'|'marketplace_permission_denied'|'marketplace_configuration_transport';
+export class MarketplaceSellerConfigurationError extends Error{constructor(public code:MarketplaceSellerConfigurationErrorCode,public postgresCode:string|null=null){super(code);this.name='MarketplaceSellerConfigurationError';}}
+export const marketplaceSellerConfigurationMessage=(error:unknown):string|null=>error instanceof MarketplaceSellerConfigurationError?({marketplace_product_not_owned:'Este producto no pertenece a tu tienda.',marketplace_authentication_required:'Tu sesión expiró. Inicia sesión nuevamente.',marketplace_private_product_read_denied:'No pudimos recuperar el borrador privado.',marketplace_permission_denied:'No tienes permiso para modificar este producto.',marketplace_configuration_transport:'No pudimos conectar con Marketplace. El borrador permanece guardado.'} satisfies Record<MarketplaceSellerConfigurationErrorCode,string>)[error.code]:null;
 function throwReadError(error:unknown):never {
   const value=error&&typeof error==='object'?error as {code?:unknown;message?:unknown}:{};
   const postgresCode=typeof value.code==='string'?value.code:null;
@@ -159,25 +162,19 @@ export async function fetchMarketplaceProductDetail(productId:string):Promise<Ma
 }
 
 export async function fetchSellerProductVariants(productId:string):Promise<SellerProductInventory> {
+  const session=await db().auth.getSession();
+  if(session.error||!session.data.session?.user?.id)throw new MarketplaceSellerConfigurationError('marketplace_authentication_required');
   const {data,error}=await db().rpc('fetch_seller_product_inventory',{p_product_id:productId});
-  if(error) throw error;
+  if(error){const text=`${error.message??''} ${error.details??''}`;const code=text.includes('marketplace_product_not_owned')?'marketplace_product_not_owned':text.includes('marketplace_authentication_required')?'marketplace_authentication_required':error.code==='42501'?'marketplace_private_product_read_denied':!error.code&&/network|fetch|timeout/i.test(text)?'marketplace_configuration_transport':'marketplace_permission_denied';throw new MarketplaceSellerConfigurationError(code,error.code??null);}
   const payload=data as {
+    product?:Record<string,unknown>;
     detail:{options?:MarketplaceProductOption[];variants?:Record<string,unknown>[]};
     inventory?:MarketplaceInventoryLevel[];movements?:MarketplaceInventoryMovement[];
+    media_assets?:MarketplaceProductMediaAsset[];
   };
-  const [product,mediaResult]=await Promise.all([
-    fetchProduct(productId),
-    db().from('media_asset_links').select('asset_id,media_assets!inner(public_url)')
-      .eq('entity_type','shop_product').eq('entity_id',productId).eq('slot','image')
-      .order('position',{ascending:true}),
-  ]);
-  if(mediaResult.error) throw mediaResult.error;
-  if(!product) throw new Error('product_not_editable');
-  const mediaAssets=(mediaResult.data??[]).map(row=>{
-    const related=row.media_assets as unknown as {public_url?:string}|{public_url?:string}[];
-    const asset=Array.isArray(related)?related[0]:related;
-    return {id:row.asset_id,url:asset?.public_url??''};
-  }).filter(item=>item.url);
+  if(!payload.product)throw new MarketplaceSellerConfigurationError('marketplace_private_product_read_denied');
+  const product=mapProduct(payload.product);
+  const mediaAssets=(payload.media_assets??[]).filter(item=>item.url);
   return {
     detail:{product,options:payload.detail?.options??[],variants:(payload.detail?.variants??[]).map(mapVariant)},
     inventory:payload.inventory??[],movements:payload.movements??[],mediaAssets,

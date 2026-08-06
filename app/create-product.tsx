@@ -18,7 +18,7 @@ import type { ProductCategory } from '@/contexts/ShopContext';
 import { deleteMediaAsset, getSafeMediaError, uploadMediaFromUri } from '@/services/mediaService';
 import {
   configureProductVariants, createProductDraft, fetchCategories, fetchSellerFoundation,
-  evaluateMarketplaceProductPublication, fetchSellerProductVariants, marketplacePublicationMessage, MarketplacePublicationError, setProductPublished, setVariantLowStockThreshold,
+  evaluateMarketplaceProductPublication, fetchSellerProductVariants, marketplacePublicationMessage, marketplaceSellerConfigurationMessage, MarketplacePublicationError, MarketplaceSellerConfigurationError, setProductPublished, setVariantLowStockThreshold,
   softDeleteProduct, updateVariant, type MarketplaceCategoryRecord, type MarketplaceStore,
   type VariantConfiguration,
 } from '@/services/marketplaceService';
@@ -453,6 +453,7 @@ export default function CreateProductScreen() {
     log('publish_started',{productFingerprint:activeDraftId?.slice(0,8)??null,shippingProfilePresent:Boolean(shippingProfileId),variantMode:hasVariants,imageCount:imageAssetIds.length});
     try {
       let productId = activeDraftId;
+      let recoveredInventory:Awaited<ReturnType<typeof fetchSellerProductVariants>>|null=null;
       if (!productId) {
         publicationStage='draft_create';log('draft_create_start');
         setSubmissionStage('Creando borrador privado…');
@@ -467,6 +468,7 @@ export default function CreateProductScreen() {
         draftAssetIdsRef.current = [];
         log('draft_create_success',{productFingerprint:productId.slice(0,8)});
       }
+      if(activeDraftId){log('seller_product_read_start',{operation:'fetch_seller_product_inventory',productFingerprint:productId.slice(0,8),draftPresent:true});try{recoveredInventory=await fetchSellerProductVariants(productId);log('seller_product_read_success',{operation:'fetch_seller_product_inventory',productFingerprint:productId.slice(0,8),draftPresent:true});}catch(error){if(__DEV__)console.warn('[CreateProduct] seller_product_read_failed',{operation:'fetch_seller_product_inventory',code:error instanceof MarketplaceSellerConfigurationError?error.code:'marketplace_private_product_read_denied',postgresCode:error instanceof MarketplaceSellerConfigurationError?error.postgresCode:null,productFingerprint:productId.slice(0,8),draftPresent:true});throw error;}}
       publicationStage='variant_configuration';log('variant_configuration_start',{variantMode:hasVariants});
       setSubmissionStage('Vinculando fotos…');
       if (hasVariants) {
@@ -480,7 +482,7 @@ export default function CreateProductScreen() {
         await configureProductVariants(productId, parsedVariantOptions!, payload, configurationKeyRef.current);
       } else {
         setSubmissionStage('Configurando producto…');
-        const inventory = await fetchSellerProductVariants(productId);
+        const inventory = recoveredInventory??await fetchSellerProductVariants(productId);
         const defaultVariant = inventory.detail.variants.find(item => item.is_default && item.status !== 'archived');
         if (!defaultVariant) throw new Error('marketplace_default_variant_missing');
         await updateVariant(defaultVariant.id, {
@@ -555,7 +557,7 @@ export default function CreateProductScreen() {
           : []),
       ]);
     } catch (error) {
-      const readinessMessage = marketplacePublicationMessage(error);
+      const readinessMessage = marketplacePublicationMessage(error)??marketplaceSellerConfigurationMessage(error);
       const code=error instanceof MarketplacePublicationError?error.safeCode:error instanceof Error&&/^[a-z0-9_]+$/i.test(error.message)?error.message:'marketplace_publication_failed';
       if(__DEV__)console.warn('[CreateProduct] publication_failed',{stage:publicationStage,code,postgresCode:error instanceof MarketplacePublicationError?error.postgresCode:null,productFingerprint:activeDraftId?.slice(0,8)??null,shippingProfilePresent:Boolean(shippingProfileId),variantMode:hasVariants,imageCount:imageAssetIds.length});
       const message=readinessMessage??(code==='marketplace_sku_exists'?'Ese SKU ya existe en tu tienda.':code==='marketplace_publication_failed'?'No pudimos conectar con Marketplace. El borrador permanece guardado.':`No pudimos publicar el producto. Código: ${code}.`);
