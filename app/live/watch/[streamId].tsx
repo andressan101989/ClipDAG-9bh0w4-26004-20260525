@@ -1222,6 +1222,8 @@ export default function LiveWatchScreen() {
           sessionId={streamId}
           products={liveProducts}
           initialProductId={commerceProductId}
+          viewerId={user?.id ?? null}
+          liveStatus={session?.status ?? null}
           onClose={() => setCommerceVisible(false)}
           onRefresh={refreshLiveProducts}
         />

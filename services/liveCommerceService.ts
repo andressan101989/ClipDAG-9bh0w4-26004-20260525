@@ -174,6 +174,8 @@ export type LiveCommerceErrorCode =
   | "marketplace_own_product_forbidden"
   | "marketplace_insufficient_inventory"
   | "marketplace_invalid_shipping_address"
+  | "marketplace_shipping_destination_unsupported"
+  | "marketplace_product_not_ready_shipping_incomplete"
   | `live_product_readiness_${LiveProductReadinessReason}`
   | `marketplace_product_not_ready_${LiveProductReadinessReason}`
   | "marketplace_product_not_ready"
@@ -208,6 +210,8 @@ const CODES: LiveCommerceErrorCode[] = [
   "marketplace_own_product_forbidden",
   "marketplace_insufficient_inventory",
   "marketplace_invalid_shipping_address",
+  "marketplace_shipping_destination_unsupported",
+  "marketplace_product_not_ready_shipping_incomplete",
   "marketplace_product_not_ready",
   ...READINESS_REASONS.flatMap((reason) => [
     `live_product_readiness_${reason}` as LiveCommerceErrorCode,
@@ -227,9 +231,58 @@ export const readinessReasonFromErrorCode = (
   return READINESS_REASONS.includes(reason) ? reason : null;
 };
 export class LiveCommerceError extends Error {
-  constructor(public code: LiveCommerceErrorCode) {
+  constructor(
+    public code: LiveCommerceErrorCode,
+    public postgresCode: string | null = null,
+  ) {
     super(code);
     this.name = "LiveCommerceError";
+  }
+}
+export type LiveCheckoutReservationErrorCode =
+  | "own_product"
+  | "live_not_active"
+  | "product_not_featured"
+  | "product_unavailable"
+  | "variant_invalid"
+  | "out_of_stock"
+  | "quantity_invalid"
+  | "shipping_unsupported"
+  | "shipping_configuration"
+  | "active_checkout_exists"
+  | "authentication_required"
+  | "permission"
+  | "network"
+  | "request";
+const RESERVATION_CODES: Partial<
+  Record<LiveCommerceErrorCode, LiveCheckoutReservationErrorCode>
+> = {
+  marketplace_own_product_forbidden: "own_product",
+  live_affiliate_self_purchase_forbidden: "own_product",
+  live_commerce_live_ended: "live_not_active",
+  live_commerce_pin_unavailable: "product_not_featured",
+  live_affiliate_offer_unavailable: "product_unavailable",
+  live_commerce_product_unavailable: "product_unavailable",
+  marketplace_product_not_ready: "product_unavailable",
+  live_commerce_invalid_variant: "variant_invalid",
+  marketplace_insufficient_inventory: "out_of_stock",
+  live_commerce_out_of_stock: "out_of_stock",
+  live_commerce_invalid_input: "quantity_invalid",
+  marketplace_invalid_shipping_address: "shipping_unsupported",
+  marketplace_shipping_destination_unsupported: "shipping_unsupported",
+  marketplace_product_not_ready_shipping_incomplete: "shipping_configuration",
+  marketplace_active_checkout_exists: "active_checkout_exists",
+  live_commerce_auth_required: "authentication_required",
+  live_commerce_transport: "network",
+};
+export class LiveCheckoutReservationError extends LiveCommerceError {
+  constructor(
+    code: LiveCommerceErrorCode,
+    public reservationCode: LiveCheckoutReservationErrorCode,
+    postgresCode: string | null = null,
+  ) {
+    super(code, postgresCode);
+    this.name = "LiveCheckoutReservationError";
   }
 }
 const db = () => getSupabaseClient();
@@ -246,9 +299,20 @@ const uuid = (value: string) => {
     throw new LiveCommerceError("live_commerce_invalid_input");
   return value;
 };
+const safeErrorText = (error: unknown) => {
+  if (!error || typeof error !== "object") return "";
+  const e = error as Record<string, unknown>;
+  return [e.message, e.details, e.hint, e.context, e.body]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+};
+export const extractLiveCommerceBusinessCode = (error: unknown) => {
+  const message = safeErrorText(error);
+  return CODES.find((code) => message === code || message.includes(code)) ?? null;
+};
 const rpcError = (rpc: string, error: unknown): never => {
-  const e = error as { code?: unknown; message?: unknown };
-  const message = typeof e?.message === "string" ? e.message : "";
+  const e = error as { code?: unknown };
+  const message = safeErrorText(error);
   const business = CODES.find(
     (code) => message === code || message.includes(code),
   );
@@ -257,16 +321,19 @@ const rpcError = (rpc: string, error: unknown): never => {
     /network request failed|failed to fetch|fetch failed|networkerror|timeout|connection/i.test(
       message,
     );
-  if (__DEV__)
-    console.error("[LiveCommerce] request failed", {
+  const postgresCode = typeof e?.code === "string" ? e.code.slice(0, 40) : null;
+  if (__DEV__) {
+    const log = business ? console.warn : console.error;
+    log("[LiveCommerce] request failed", {
       rpc,
-      code: typeof e?.code === "string" ? e.code.slice(0, 40) : null,
+      postgresCode,
+      businessCode: business,
       kind: business ? "business" : transport ? "transport" : "unknown",
     });
-  throw new LiveCommerceError(
-    business ??
-      (transport ? "live_commerce_transport" : "live_commerce_unknown"),
-  );
+  }
+  const code = business ??
+    (transport ? "live_commerce_transport" : "live_commerce_unknown");
+  throw new LiveCommerceError(code, postgresCode);
 };
 const product = (raw: unknown): LiveSessionProduct => {
   const r = raw as Record<string, unknown>,
@@ -570,8 +637,8 @@ export async function createLiveCheckoutReservation(
   if (!Number.isInteger(quantity) || quantity < 1)
     throw new LiveCommerceError("live_commerce_invalid_input");
   const a = normalizeShippingAddress(address),
-    rpc = "create_live_marketplace_checkout_reservation",
-    { data, error } = await db().rpc(rpc, {
+    rpc = "create_live_marketplace_checkout_reservation";
+  const { data, error } = await db().rpc(rpc, {
       p_session_id: uuid(sessionId),
       p_live_session_product_id: uuid(pinId),
       p_variant_id: uuid(variantId),
@@ -588,7 +655,21 @@ export async function createLiveCheckoutReservation(
       },
       p_idempotency_key: uuid(idempotencyKey),
     });
-  if (error) rpcError(rpc, error);
+  if (error) {
+    try {
+      rpcError(rpc, error);
+    } catch (caught) {
+      if (caught instanceof LiveCommerceError) {
+        throw new LiveCheckoutReservationError(
+          caught.code,
+          RESERVATION_CODES[caught.code] ??
+            (caught.postgresCode === "42501" ? "permission" : "request"),
+          caught.postgresCode,
+        );
+      }
+      throw caught;
+    }
+  }
   return parseMarketplaceCheckoutReservation(data);
 }
 export async function fetchMyActiveLiveCheckout(

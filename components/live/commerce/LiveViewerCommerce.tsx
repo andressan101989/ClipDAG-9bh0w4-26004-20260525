@@ -41,6 +41,7 @@ import {
   createLiveCheckoutReservation,
   fetchLiveSessionProducts,
   fetchMyActiveLiveCheckout,
+  LiveCheckoutReservationError,
   LiveCommerceError,
   type LiveSessionProduct,
 } from "@/services/liveCommerceService";
@@ -113,6 +114,8 @@ export interface LiveViewerCommerceProps {
   sessionId: string;
   products: LiveSessionProduct[];
   initialProductId?: string | null;
+  viewerId?: string | null;
+  liveStatus?: string | null;
   onClose: () => void;
   onRefresh: () => Promise<void>;
 }
@@ -121,6 +124,8 @@ export function LiveViewerCommerce({
   sessionId,
   products,
   initialProductId,
+  viewerId,
+  liveStatus,
   onClose,
   onRefresh,
 }: LiveViewerCommerceProps) {
@@ -147,6 +152,8 @@ export function LiveViewerCommerce({
     lock = useRef(false),
     previousVisible = useRef(false),
     openedProduct = useRef<string | null>(null);
+  const fingerprint = (value: string | null | undefined) =>
+    value ? value.replace(/-/g, "").slice(0, 8) : null;
   const variant = useMemo(
     () =>
       detail
@@ -246,7 +253,21 @@ export function LiveViewerCommerce({
   };
   const recoverActive = async () => {
     if (!pin) return;
-    const active = await fetchMyActiveLiveCheckout(sessionId).catch(() => null);
+    let active;
+    try {
+      active = await fetchMyActiveLiveCheckout(sessionId);
+    } catch (error) {
+      const code = error instanceof LiveCommerceError ? error.code : null;
+      setFeedback(
+        code === "live_commerce_transport"
+          ? "No pudimos recuperar tu compra pendiente. Revisa tu conexión."
+          : code === "live_commerce_auth_required"
+            ? "Tu sesión expiró. Inicia sesión nuevamente."
+            : "No pudimos verificar tu compra pendiente. Inténtalo nuevamente.",
+      );
+      setStage("recoverable_error");
+      return;
+    }
     if (active && active.pinId === pin.id) {
       setReservation({
         id: active.checkoutId,
@@ -261,8 +282,20 @@ export function LiveViewerCommerce({
       setStage((current) => (current === "success" ? current : "review"));
       return;
     }
-    const other = await fetchMyActiveCheckout().catch(() => null);
-    setOtherCheckoutId(other?.checkout.id ?? null);
+    try {
+      const other = await fetchMyActiveCheckout();
+      setOtherCheckoutId(other?.checkout.id ?? null);
+      setFeedback(
+        other
+          ? "Ya tienes una compra pendiente. Continuaremos desde donde quedaste."
+          : "No encontramos una compra pendiente para recuperar.",
+      );
+    } catch {
+      setOtherCheckoutId(null);
+      setFeedback(
+        "No pudimos verificar tus compras pendientes. Inténtalo nuevamente.",
+      );
+    }
     setStage("recoverable_error");
   };
   const reserve = async () => {
@@ -279,7 +312,36 @@ export function LiveViewerCommerce({
     lock.current = true;
     setBusy(true);
     setFeedback(null);
+    if (__DEV__)
+      console.log("[LiveCheckout] reservation_start", {
+        sessionFingerprint: fingerprint(sessionId),
+        productFingerprint: fingerprint(pin.productId),
+        variantFingerprint: fingerprint(variant.id),
+        quantity,
+        countryCode: address.country.trim().toUpperCase().slice(0, 3),
+        hasAddress: Boolean(address.line1.trim()),
+      });
     try {
+      if (__DEV__)
+        console.log("[LiveCheckout] validation_start", {
+          sessionFingerprint: fingerprint(sessionId),
+          productFingerprint: fingerprint(pin.productId),
+          variantFingerprint: fingerprint(variant.id),
+          quantity,
+        });
+      if (liveStatus !== "live")
+        throw new LiveCheckoutReservationError(
+          "live_commerce_live_ended",
+          "live_not_active",
+        );
+      const authoritativePin = (await fetchLiveSessionProducts(sessionId)).find(
+          (item) => item.id === pin.id && item.availability === "available",
+        );
+      if (!authoritativePin)
+        throw new LiveCheckoutReservationError(
+          "live_commerce_pin_unavailable",
+          "product_not_featured",
+        );
       const fresh = await fetchMarketplaceProductDetail(pin.productId),
         freshVariant = fresh?.variants.find(
           (value) =>
@@ -289,6 +351,11 @@ export function LiveViewerCommerce({
         );
       if (!fresh || !freshVariant)
         throw new LiveCommerceError("live_commerce_product_unavailable");
+      if (viewerId && fresh.product.seller_id === viewerId)
+        throw new LiveCheckoutReservationError(
+          "marketplace_own_product_forbidden",
+          "own_product",
+        );
       const normalized = normalizeShippingAddress(address),
         signature = liveReservationSignature(
           sessionId,
@@ -303,6 +370,17 @@ export function LiveViewerCommerce({
           randomUUID,
         );
       pendingCommand.current = command;
+      if (__DEV__)
+        console.log("[LiveCheckout] rpc_start", {
+          sessionFingerprint: fingerprint(sessionId),
+          productFingerprint: fingerprint(pin.productId),
+          variantFingerprint: fingerprint(freshVariant.id),
+          quantity,
+          countryCode: normalized.country.toUpperCase().slice(0, 3),
+          hasAddress: Boolean(normalized.line1),
+          idempotencyFingerprint: fingerprint(command.idempotencyKey),
+          operation: "create_live_marketplace_checkout_reservation",
+        });
       const result = await createLiveCheckoutReservation(
         sessionId,
         pin.id,
@@ -311,6 +389,12 @@ export function LiveViewerCommerce({
         normalized,
         command.idempotencyKey,
       );
+      if (__DEV__)
+        console.log("[LiveCheckout] rpc_success", {
+          checkoutPresent: Boolean(result.checkout.id),
+          checkoutStatus: result.checkout.status,
+          operation: "create_live_marketplace_checkout_reservation",
+        });
       pendingCommand.current = null;
       paymentKey.current = randomUUID();
       setReservation({
@@ -326,6 +410,16 @@ export function LiveViewerCommerce({
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch (error) {
       const code=error instanceof LiveCommerceError?error.code:error instanceof MarketplaceReadError?error.code:"live_commerce_unknown";
+      const reservationCode = error instanceof LiveCheckoutReservationError
+        ? error.reservationCode
+        : null;
+      if (__DEV__)
+        console.warn("[LiveCheckout] rpc_failed", {
+          code,
+          businessCode: reservationCode,
+          postgresCode: error instanceof LiveCommerceError ? error.postgresCode : null,
+          operation: "create_live_marketplace_checkout_reservation",
+        });
       if (code === "marketplace_active_checkout_exists") {
         pendingCommand.current = null;
         await recoverActive();
@@ -341,6 +435,30 @@ export function LiveViewerCommerce({
         setFeedback(
           "No puedes generar una comisión comprando desde tu propio LIVE.",
         );
+      } else if (reservationCode === "own_product") {
+        pendingCommand.current = null;
+        setFeedback("No puedes comprar tu propio producto.");
+      } else if (reservationCode === "live_not_active") {
+        pendingCommand.current = null;
+        setFeedback("Este LIVE ya terminó. No se creó ninguna reserva.");
+        await onRefresh();
+      } else if (reservationCode === "product_not_featured") {
+        pendingCommand.current = null;
+        setFeedback("Este producto ya no está disponible en el LIVE.");
+        await onRefresh();
+      } else if (reservationCode === "variant_invalid") {
+        pendingCommand.current = null;
+        setFeedback("La variante seleccionada ya no está disponible.");
+      } else if (reservationCode === "out_of_stock") {
+        pendingCommand.current = null;
+        setFeedback("Este producto se quedó sin inventario disponible.");
+        await onRefresh();
+      } else if (reservationCode === "shipping_unsupported") {
+        pendingCommand.current = null;
+        setFeedback("Este producto no se envía a la dirección seleccionada.");
+      } else if (reservationCode === "shipping_configuration") {
+        pendingCommand.current = null;
+        setFeedback("El vendedor debe actualizar la configuración de envío.");
       } else if(code==='marketplace_read_permission'){
         pendingCommand.current=null;setFeedback('No pudimos verificar el producto por una configuración de acceso. No se creó ninguna reserva.');
       } else if(code==='marketplace_read_transport'){
