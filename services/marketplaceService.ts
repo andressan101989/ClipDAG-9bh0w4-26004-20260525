@@ -57,19 +57,16 @@ export interface SellerProductInventory {
   movements:MarketplaceInventoryMovement[];mediaAssets:MarketplaceProductMediaAsset[];
 }
 
-const PRODUCT_COLUMNS = [
-  'id','seller_id','store_id','category_id','title','description','price','currency',
-  'category','images','stock','status','tags','total_sales','brand','compare_at_price',
-  'product_type','moderation_status','published_at','deleted_at','created_at','updated_at',
-  'variant_price_max','active_variant_count','shipping_profile_id',
-].join(',');
-const PRODUCT_WITH_SELLER = `${PRODUCT_COLUMNS},seller:user_profiles!products_seller_id_fkey(username,avatar_url,display_name)`;
 const db=()=>getSupabaseClient();
 
 export type MarketplaceReadErrorCode='marketplace_read_transport'|'marketplace_read_permission'|'marketplace_product_not_found'|'marketplace_product_unavailable';
 export class MarketplaceReadError extends Error {
   readonly code:MarketplaceReadErrorCode;readonly postgresCode:string|null;
   constructor(code:MarketplaceReadErrorCode,postgresCode:string|null=null){super(code);this.name='MarketplaceReadError';this.code=code;this.postgresCode=postgresCode;}
+}
+export type MarketplaceSellerProductsErrorCode='marketplace_authentication_required'|'marketplace_seller_products_permission'|'marketplace_seller_products_transport'|'marketplace_seller_products_request';
+export class MarketplaceSellerProductsError extends Error {
+  constructor(public code:MarketplaceSellerProductsErrorCode,public postgresCode:string|null=null){super(code);this.name='MarketplaceSellerProductsError';}
 }
 export type MarketplaceSellerConfigurationErrorCode='marketplace_product_not_owned'|'marketplace_authentication_required'|'marketplace_private_product_read_denied'|'marketplace_permission_denied'|'marketplace_configuration_transport';
 export class MarketplaceSellerConfigurationError extends Error{constructor(public code:MarketplaceSellerConfigurationErrorCode,public postgresCode:string|null=null){super(code);this.name='MarketplaceSellerConfigurationError';}}
@@ -112,29 +109,22 @@ export async function fetchCategories():Promise<MarketplaceCategoryRecord[]> {
 
 export async function fetchProducts(opts?:{category?:MarketplaceCategory|'';sellerId?:string;limit?:number;search?:string}):Promise<Product[]> {
   const limit=opts?.limit??30;
-  const ready=await db().rpc('fetch_marketplace_ready_product_ids',{
-    p_category:opts?.category||null,p_seller_id:opts?.sellerId??null,
-    p_search:opts?.search??null,p_limit:limit,
+  const {data,error}=await db().rpc('fetch_public_marketplace_products',{
+    p_category:opts?.category||null,p_seller_id:opts?.sellerId??null,p_search:opts?.search??null,
+    p_limit:limit,p_product_id:null,
   });
-  if(ready.error) throwReadError(ready.error);
-  const ids=Array.isArray(ready.data)?ready.data.filter((id):id is string=>typeof id==='string'):[];
-  if(ids.length===0) return [];
-  let query=db().from('products').select(PRODUCT_WITH_SELLER)
-    .eq('status','active').eq('currency','BDAG').in('id',ids)
-    .order('created_at',{ascending:false}).limit(limit);
-  if(opts?.category) query=query.eq('category',opts.category);
-  if(opts?.sellerId) query=query.eq('seller_id',opts.sellerId);
-  if(opts?.search) query=query.ilike('title',`%${opts.search}%`);
-  const {data,error}=await query;
   if(error) throwReadError(error);
-  return (data??[]).map(row=>mapProduct(row as unknown as Record<string,unknown>));
+  if(!Array.isArray(data))throw new MarketplaceReadError('marketplace_product_unavailable');
+  return data.map((row:unknown)=>mapProduct(row as Record<string,unknown>));
 }
 
 export async function fetchProduct(productId:string):Promise<Product|null> {
-  const {data,error}=await db().from('products').select(PRODUCT_WITH_SELLER)
-    .eq('id',productId).eq('currency','BDAG').maybeSingle();
+  const {data,error}=await db().rpc('fetch_public_marketplace_products',{
+    p_category:null,p_seller_id:null,p_search:null,p_limit:1,p_product_id:productId,
+  });
   if(error) throwReadError(error);
-  return data?mapProduct(data as unknown as Record<string,unknown>):null;
+  const row=Array.isArray(data)?data[0]:null;
+  return row?mapProduct(row as Record<string,unknown>):null;
 }
 
 function mapVariant(row:Record<string,unknown>):MarketplaceVariant {
@@ -244,12 +234,20 @@ export async function setVariantLowStockThreshold(variantId:string,threshold:num
 
 export async function fetchMyProducts():Promise<Product[]> {
   const client=db();
-  const {data:{user},error:authError}=await client.auth.getUser();
-  if(authError||!user) return [];
-  const {data,error}=await client.from('products').select(PRODUCT_WITH_SELLER)
-    .eq('seller_id',user.id).neq('status','deleted').order('updated_at',{ascending:false});
-  if(error) throw error;
-  return (data??[]).map(row=>mapProduct(row as unknown as Record<string,unknown>));
+  if(__DEV__)console.log('[SellerProducts] fetch_start',{operation:'fetch_my_marketplace_products'});
+  const {data:{session},error:authError}=await client.auth.getSession();
+  if(authError||!session?.user?.id)throw new MarketplaceSellerProductsError('marketplace_authentication_required');
+  const {data,error}=await client.rpc('fetch_my_marketplace_products');
+  if(error){
+    const text=`${error.message??''} ${error.details??''}`;
+    const code:MarketplaceSellerProductsErrorCode=/marketplace_authentication_required/i.test(text)?'marketplace_authentication_required':error.code==='42501'?'marketplace_seller_products_permission':!error.code&&/network|fetch|timeout/i.test(text)?'marketplace_seller_products_transport':'marketplace_seller_products_request';
+    if(__DEV__)console.warn('[SellerProducts] fetch_failed',{code,postgresCode:error.code??null,operation:'fetch_my_marketplace_products'});
+    throw new MarketplaceSellerProductsError(code,error.code??null);
+  }
+  if(!Array.isArray(data))throw new MarketplaceSellerProductsError('marketplace_seller_products_request');
+  const products=data.map(row=>mapProduct(row as Record<string,unknown>));
+  if(__DEV__)console.log('[SellerProducts] fetch_success',{count:products.length,activeCount:products.filter(item=>item.status==='active').length,pausedCount:products.filter(item=>item.status==='paused').length});
+  return products;
 }
 
 export async function fetchSellerFoundation():Promise<{seller:MarketplaceSeller|null;store:MarketplaceStore|null}> {

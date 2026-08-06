@@ -5,7 +5,6 @@ import test from 'node:test';
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
 const migration = read('supabase/migrations/20260726104000_atomic_media_entities_and_cleanup.sql');
-const shopContext = read('contexts/ShopContext.tsx');
 const createProduct = read('app/create-product.tsx');
 const marketplace = read('services/marketplaceService.ts');
 const mediaService = read('services/mediaService.ts');
@@ -39,8 +38,8 @@ test('product publishing is locked through compensation', () => {
 test('marketplace service is catalog-only and BDAG-only', () => {
   assert.doesNotMatch(marketplace, /from\(['"]orders['"]\)/);
   assert.doesNotMatch(marketplace, /export async function (fetchMyOrders|placeOrder|updateOrderStatus)/);
-  assert.match(marketplace, /products_seller_id_fkey/);
-  assert.match(marketplace, /\.eq\('currency','BDAG'\)/);
+  assert.match(marketplace, /fetch_public_marketplace_products/);
+  assert.match(marketplace, /currency:'BDAG'/);
   for (const category of ['digital', 'physical', 'art', 'music', 'clothing', 'other']) {
     assert.match(marketplace, new RegExp(`'${category}'`));
   }

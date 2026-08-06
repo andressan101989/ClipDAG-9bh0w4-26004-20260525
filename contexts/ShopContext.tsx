@@ -4,14 +4,16 @@ import {
   fetchProducts as loadProducts,fetchMyProducts as loadMyProducts,
   fetchSavedProductIds,toggleProductSave as persistSave,
   createProduct as createMarketplaceProduct,setProductPublished,softDeleteProduct,
-  type MarketplaceCategory,type Product,type ProductMutation,
+  MarketplaceSellerProductsError,type MarketplaceCategory,type Product,type ProductMutation,
 } from '@/services/marketplaceService';
 
 export type ProductCategory=MarketplaceCategory;
 export type { Product };
+export type SellerProductsState='idle'|'loading'|'loaded'|'empty'|'error';
 
 interface ShopContextType {
   products:Product[];myProducts:Product[];savedProductIds:Set<string>;isLoading:boolean;catalogError:'network'|'permission'|'request'|null;
+  sellerProductsState:SellerProductsState;sellerProductsError:'session'|'permission'|'network'|'request'|null;
   fetchProducts:(category?:string,search?:string)=>Promise<void>;
   fetchMyProducts:()=>Promise<void>;
   createProduct:(data:ProductMutation)=>Promise<{success:boolean;error?:string;product?:Product}>;
@@ -34,6 +36,8 @@ export function ShopProvider({children}:{children:ReactNode}) {
   const [savedProductIds,setSavedProductIds]=useState<Set<string>>(new Set());
   const [isLoading,setIsLoading]=useState(false);
   const [catalogError,setCatalogError]=useState<'network'|'permission'|'request'|null>(null);
+  const [sellerProductsState,setSellerProductsState]=useState<SellerProductsState>('idle');
+  const [sellerProductsError,setSellerProductsError]=useState<'session'|'permission'|'network'|'request'|null>(null);
 
   const fetchProducts=useCallback(async(category?:string,search?:string)=>{
     setIsLoading(true);
@@ -46,13 +50,21 @@ export function ShopProvider({children}:{children:ReactNode}) {
     finally { setIsLoading(false); }
   },[]);
   const fetchMyProducts=useCallback(async()=>{
-    if(!user){setMyProducts([]);return;}
-    try { setMyProducts(await loadMyProducts()); } catch { setMyProducts([]); }
+    if(!user){setMyProducts([]);setSellerProductsState('idle');setSellerProductsError(null);return;}
+    setSellerProductsState(previous=>previous==='loaded'?previous:'loading');
+    try {
+      const next=await loadMyProducts();setMyProducts(next);setSellerProductsError(null);
+      setSellerProductsState(next.length===0?'empty':'loaded');
+    } catch(error) {
+      const code=error instanceof MarketplaceSellerProductsError?error.code:null;
+      const category=code==='marketplace_authentication_required'?'session':code==='marketplace_seller_products_permission'?'permission':code==='marketplace_seller_products_transport'?'network':'request';
+      setSellerProductsError(category);setSellerProductsState('error');
+    }
   },[user]);
 
   useEffect(()=>{void fetchProducts();},[fetchProducts]);
   useEffect(()=>{
-    if(!user){setSavedProductIds(new Set());setMyProducts([]);return;}
+    if(!user){setSavedProductIds(new Set());setMyProducts([]);setSellerProductsState('idle');setSellerProductsError(null);return;}
     void fetchMyProducts();
     void fetchSavedProductIds(user.id).then(setSavedProductIds);
   },[user,fetchMyProducts]);
@@ -80,9 +92,9 @@ export function ShopProvider({children}:{children:ReactNode}) {
     void persistSave(user.id,id,!saved).then(ok=>{if(!ok)setSavedProductIds(previous=>{const next=new Set(previous);if(saved)next.add(id);else next.delete(id);return next;});});
   },[user,savedProductIds]);
   const value=useMemo(()=>({
-    products,myProducts,savedProductIds,isLoading,catalogError,fetchProducts,fetchMyProducts,
+    products,myProducts,savedProductIds,isLoading,catalogError,sellerProductsState,sellerProductsError,fetchProducts,fetchMyProducts,
     createProduct,setPublished,deleteProduct,toggleSaveProduct,
     isSavedProduct:(id:string)=>savedProductIds.has(id),
-  }),[products,myProducts,savedProductIds,isLoading,catalogError,fetchProducts,fetchMyProducts,createProduct,setPublished,deleteProduct,toggleSaveProduct]);
+  }),[products,myProducts,savedProductIds,isLoading,catalogError,sellerProductsState,sellerProductsError,fetchProducts,fetchMyProducts,createProduct,setPublished,deleteProduct,toggleSaveProduct]);
   return <ShopContext.Provider value={value}>{children}</ShopContext.Provider>;
 }

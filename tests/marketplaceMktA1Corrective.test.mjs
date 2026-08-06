@@ -6,6 +6,7 @@ const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),'utf8');
 const service=read('services/marketplaceService.ts');
 const migration=read('supabase/migrations/20260727110000_fix_marketplace_seller_restore.sql');
 const original=read('supabase/migrations/20260727100000_marketplace_mkt_a1_seller_store_product_foundation.sql');
+const sellerList=read('supabase/migrations/20260805102000_restore_seller_product_list.sql');
 
 function ownedRows(rows,userId,key){return rows.filter(row=>row[key]===userId);}
 
@@ -31,8 +32,9 @@ test('unit model: seller dashboard excludes another seller public products',()=>
   const start=service.indexOf('export async function fetchMyProducts');
   const end=service.indexOf('export async function fetchSellerFoundation');
   const block=service.slice(start,end);
-  assert.match(block,/auth\.getUser\(\)/);
-  assert.match(block,/\.eq\('seller_id',user\.id\)\.neq\('status','deleted'\)/);
+  assert.match(block,/rpc\('fetch_my_marketplace_products'\)/);
+  assert.match(sellerList,/p\.seller_id=actor/);
+  assert.match(sellerList,/p\.status<>'deleted'/);
   assert.doesNotMatch(block,/sellerId\s*:/);
 });
 
@@ -40,9 +42,11 @@ test('static client contract: public discovery remains cross-seller and unchange
   const start=service.indexOf('export async function fetchProducts');
   const end=service.indexOf('export async function fetchProduct(productId');
   const block=service.slice(start,end);
-  assert.match(block,/\.eq\('status','active'\)\.eq\('currency','BDAG'\)/);
+  assert.match(block,/rpc\('fetch_public_marketplace_products'/);
   assert.doesNotMatch(block,/auth\.getUser\(\)/);
-  assert.match(block,/if\(opts\?\.sellerId\)/);
+  assert.match(block,/p_seller_id:opts\?\.sellerId/);
+  assert.match(sellerList,/p\.status='active'/);
+  assert.match(sellerList,/p\.currency='BDAG'/);
 });
 
 test('static database contract: suspension preserves the store lifecycle state',()=>{

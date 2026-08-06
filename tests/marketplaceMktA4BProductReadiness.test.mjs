@@ -73,6 +73,6 @@ test("publication and pin races keep actionable typed business errors", () => {
 });
 
 test("public Shop uses the authoritative readiness RPC", () => {
-  assert.match(marketplace, /fetch_marketplace_ready_product_ids/);
+  assert.match(marketplace, /fetch_public_marketplace_products/);
   assert.match(migration, /r\.reason_code='ready'/);
 });
