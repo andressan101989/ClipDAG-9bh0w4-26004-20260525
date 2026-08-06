@@ -18,7 +18,7 @@ import type { ProductCategory } from '@/contexts/ShopContext';
 import { deleteMediaAsset, getSafeMediaError, uploadMediaFromUri } from '@/services/mediaService';
 import {
   configureProductVariants, createProductDraft, fetchCategories, fetchSellerFoundation,
-  fetchSellerProductVariants, marketplacePublicationMessage, setProductPublished, setVariantLowStockThreshold,
+  evaluateMarketplaceProductPublication, fetchSellerProductVariants, marketplacePublicationMessage, MarketplacePublicationError, setProductPublished, setVariantLowStockThreshold,
   softDeleteProduct, updateVariant, type MarketplaceCategoryRecord, type MarketplaceStore,
   type VariantConfiguration,
 } from '@/services/marketplaceService';
@@ -42,6 +42,8 @@ import {
   MarketplaceSectionCard, MarketplaceStickyFooter, MarketplaceVariantListItem,
 } from '@/components/marketplace/MarketplaceCreationUI';
 
+type PublicationStage = 'validation'|'draft_create'|'variant_configuration'|'shipping_assignment'|'publication'|'affiliate_configuration';
+type ShippingState = 'loading'|'ready'|'empty'|'error';
 type OptionBuilder = { id: string; name: string; values: string[]; draftValue: string };
 type FieldErrors = Partial<Record<'title' | 'description' | 'category' | 'price' | 'stock' | 'sku' | 'options' | 'variants', string>>;
 type PhotoUploadProgress = { current: number; total: number } | null;
@@ -89,6 +91,7 @@ export default function CreateProductScreen() {
   const [affiliatePercent, setAffiliatePercent] = useState('10');
   const [shippingProfiles, setShippingProfiles] = useState<MarketplaceShippingProfile[]>([]);
   const [shippingProfileId, setShippingProfileId] = useState('');
+  const [shippingState, setShippingState] = useState<ShippingState>('loading');
   const [shippingCountry, setShippingCountry] = useState('US');
   const [shippingPrice, setShippingPrice] = useState('0');
   const [returnPolicy, setReturnPolicy] = useState('Devoluciones aceptadas dentro de 14 días.');
@@ -112,7 +115,8 @@ export default function CreateProductScreen() {
         if (!active) return;
         setShippingProfiles(profiles);
         setShippingProfileId(profiles.find(profile => profile.status === 'active')?.id ?? '');
-      }).catch(() => { if (active) setShippingProfiles([]); });
+        setShippingState(profiles.some(profile=>profile.status==='active')?'ready':'empty');
+      }).catch(() => { if (active) {setShippingProfiles([]);setShippingState('error');} });
       setCategories(activeCategories);
       setCategory(current => activeCategories.some(item => item.slug === current)
         ? current
@@ -418,6 +422,10 @@ export default function CreateProductScreen() {
       showAlert('Vendedor no habilitado', 'Completa y activa tu tienda antes de publicar.');
       return;
     }
+    if (shippingState === 'loading' || shippingState === 'error') {
+      showAlert('Envío no disponible', shippingState === 'loading' ? 'Espera mientras cargamos tus perfiles de envío.' : 'No pudimos cargar tus perfiles de envío. Inténtalo nuevamente.');
+      return;
+    }
     if (!shippingProfileId) {
       showAlert('Envío incompleto', 'Configura un perfil de envío activo antes de publicar.');
       return;
@@ -440,9 +448,13 @@ export default function CreateProductScreen() {
     publishLockRef.current = true;
     setIsPublishing(true);
     let activeDraftId = draftProductId;
+    let publicationStage:PublicationStage='validation';
+    const log=(event:string,extra:Record<string,unknown>={})=>{if(__DEV__)console.log(`[CreateProduct] ${event}`,extra);};
+    log('publish_started',{productFingerprint:activeDraftId?.slice(0,8)??null,shippingProfilePresent:Boolean(shippingProfileId),variantMode:hasVariants,imageCount:imageAssetIds.length});
     try {
       let productId = activeDraftId;
       if (!productId) {
+        publicationStage='draft_create';log('draft_create_start');
         setSubmissionStage('Creando borrador privado…');
         productId = await createProductDraft({
           storeId: store.id, categoryId: categoryRow.id, title: title.trim(),
@@ -453,7 +465,9 @@ export default function CreateProductScreen() {
         activeDraftId = productId;
         setDraftProductId(productId);
         draftAssetIdsRef.current = [];
+        log('draft_create_success',{productFingerprint:productId.slice(0,8)});
       }
+      publicationStage='variant_configuration';log('variant_configuration_start',{variantMode:hasVariants});
       setSubmissionStage('Vinculando fotos…');
       if (hasVariants) {
         setSubmissionStage('Configurando variantes…');
@@ -475,10 +489,17 @@ export default function CreateProductScreen() {
         });
         await setVariantLowStockThreshold(defaultVariant.id, Math.max(0, Number.parseInt(simpleThreshold, 10) || 0));
       }
+      log('variant_configuration_success');publicationStage='shipping_assignment';log('shipping_assignment_start',{shippingProfilePresent:true});
       await setMyMarketplaceProductShippingProfile(productId, shippingProfileId);
+      log('shipping_assignment_success');publicationStage='publication';
+      const readiness=await evaluateMarketplaceProductPublication(productId);
+      if(!readiness.ready)throw new MarketplacePublicationError('not_ready',readiness.reasonCode??'marketplace_publication_failed');
       setSubmissionStage('Publicando producto…');
+      log('publication_rpc_start');
       await setProductPublished(productId, true);
+      log('publication_rpc_success');
       if (affiliateEnabled) {
+        publicationStage='affiliate_configuration';log('affiliate_configuration_start');
         setSubmissionStage('Configurando oferta para creadores...');
         try {
           await upsertMyLiveAffiliateOffer({
@@ -491,6 +512,7 @@ export default function CreateProductScreen() {
             endsAt: null,
             idempotencyKey: affiliateKeyRef.current,
           });
+          log('affiliate_configuration_success');
         } catch {
           setDraftProductId(null);
           draftAssetIdsRef.current = [];
@@ -534,9 +556,9 @@ export default function CreateProductScreen() {
       ]);
     } catch (error) {
       const readinessMessage = marketplacePublicationMessage(error);
-      const message = error instanceof Error && error.message.includes('marketplace_sku_exists')
-        ? 'Ese SKU ya existe en tu tienda. Corrígelo y reintenta.'
-        : readinessMessage ?? 'Tu producto permanece privado. Conservamos los datos para que puedas reintentar.';
+      const code=error instanceof MarketplacePublicationError?error.safeCode:error instanceof Error&&/^[a-z0-9_]+$/i.test(error.message)?error.message:'marketplace_publication_failed';
+      if(__DEV__)console.warn('[CreateProduct] publication_failed',{stage:publicationStage,code,postgresCode:error instanceof MarketplacePublicationError?error.postgresCode:null,productFingerprint:activeDraftId?.slice(0,8)??null,shippingProfilePresent:Boolean(shippingProfileId),variantMode:hasVariants,imageCount:imageAssetIds.length});
+      const message=readinessMessage??(code==='marketplace_sku_exists'?'Ese SKU ya existe en tu tienda.':code==='marketplace_publication_failed'?'No pudimos conectar con Marketplace. El borrador permanece guardado.':`No pudimos publicar el producto. Código: ${code}.`);
       showAlert('No se pudo publicar', message);
     } finally {
       publishLockRef.current = false;
@@ -581,6 +603,7 @@ export default function CreateProductScreen() {
       const profiles = await fetchMyMarketplaceShippingProfiles(store.id);
       setShippingProfiles(profiles);
       setShippingProfileId(profileId);
+      setShippingState('ready');
     } catch {
       showAlert('No se pudo guardar el envío', 'Revisa la configuración e inténtalo nuevamente.');
     }
@@ -1066,7 +1089,7 @@ export default function CreateProductScreen() {
         </MarketplaceSectionCard>
         <MarketplaceSectionCard icon="local-shipping" title="Envío">
           <Text style={styles.settingTitle}>Perfil de envío</Text>
-          {shippingProfiles.length ? shippingProfiles.map(profile => (
+          {shippingState==='loading'?<Text style={styles.helper}>Cargando perfiles de envío…</Text>:shippingState==='error'?<Text style={styles.errorText}>No pudimos cargar tus perfiles de envío.</Text>:shippingProfiles.length ? shippingProfiles.map(profile => (
             <Pressable
               key={profile.id}
               style={[styles.affiliateToggle, shippingProfileId === profile.id && { borderColor: Colors.primaryLight }]}
@@ -1088,7 +1111,7 @@ export default function CreateProductScreen() {
               <TextInput style={[styles.input, { minHeight: 76 }]} value={returnPolicy} onChangeText={setReturnPolicy} multiline placeholder="Política de devolución" placeholderTextColor={Colors.textSubtle} />
               <Text style={styles.helper}>Preparación: 1–3 días · tránsito estimado: 2–7 días.</Text>
               <Pressable style={styles.recoveryRetry} onPress={() => void createShippingProfile()} accessibilityRole="button">
-                <Text style={styles.recoveryRetryText}>Guardar perfil de envío</Text>
+                <Text style={styles.recoveryRetryText}>Crear perfil de envío</Text>
               </Pressable>
             </View>
           )}

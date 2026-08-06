@@ -61,7 +61,7 @@ test('static contract: legacy products are backfilled without replacing product 
 test('client contract: product mutations use RPCs and never direct product writes',()=>{
   assert.match(service,/rpc\('create_marketplace_product'/);
   assert.match(service,/rpc\('update_marketplace_product'/);
-  assert.match(service,/rpc\(published\?'publish_marketplace_product':'pause_marketplace_product'/);
+  assert.match(service,/rpc\(published\?'publish_my_marketplace_product_checked':'pause_marketplace_product'/);
   assert.match(service,/rpc\('soft_delete_marketplace_product'/);
   assert.doesNotMatch(service,/from\('products'\)\.insert/);
   assert.doesNotMatch(service,/from\('products'\)\.update/);

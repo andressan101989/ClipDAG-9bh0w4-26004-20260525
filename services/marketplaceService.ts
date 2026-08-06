@@ -329,20 +329,28 @@ export async function updateProduct(id:string,input:Omit<ProductMutation,'storeI
   if(error) throw error;
 }
 export async function setProductPublished(id:string,published:boolean):Promise<void> {
-  const {error}=await db().rpc(published?'publish_marketplace_product':'pause_marketplace_product',{p_product_id:id});
+  const {data,error}=await db().rpc(published?'publish_my_marketplace_product_checked':'pause_marketplace_product',{p_product_id:id});
   if(error) {
-    const message=typeof error.message==='string'?error.message:'marketplace_request_failed';
-    const readiness=message.match(/marketplace_product_not_ready(?:_([a-z_]+))?/);
-    if(readiness) throw new MarketplacePublicationError((readiness[1]??'not_ready') as MarketplacePublicationReadinessReason);
-    throw error;
+    throw normalizeMarketplacePublicationError(error);
   }
+  if(published&&(!(data as {published?:unknown}|null)?.published))throw new MarketplacePublicationError('not_ready','marketplace_publication_result_invalid');
 }
 export type MarketplacePublicationReadinessReason='seller_not_approved'|'store_not_active'|'product_not_active'|'product_not_approved'|'product_deleted'|'unsupported_product_type'|'unsupported_currency'|'no_active_variant'|'inventory_not_configured'|'out_of_stock'|'shipping_incomplete'|'not_ready';
 export class MarketplacePublicationError extends Error {
-  constructor(public reason:MarketplacePublicationReadinessReason){super(`marketplace_product_not_ready_${reason}`);this.name='MarketplacePublicationError';}
+  constructor(public reason:MarketplacePublicationReadinessReason,public safeCode=`marketplace_product_not_ready_${reason}`,public postgresCode:string|null=null){super(safeCode);this.name='MarketplacePublicationError';}
 }
+const publicationTokens=['marketplace_product_not_ready_shipping_incomplete','marketplace_product_not_ready_no_active_variant','marketplace_product_not_ready_inventory_not_configured','marketplace_product_not_ready_out_of_stock','marketplace_product_not_ready_product_not_approved','marketplace_product_media_required','marketplace_shipping_profile_not_owned','marketplace_store_inactive','marketplace_seller_not_approved','marketplace_sku_exists','marketplace_permission_denied'] as const;
+export function normalizeMarketplacePublicationError(error:unknown):MarketplacePublicationError{
+ const row=error&&typeof error==='object'?error as Record<string,unknown>:{};const text=[row.message,row.details,row.hint,JSON.stringify(row)].filter(value=>typeof value==='string').join(' ');
+ const token=publicationTokens.find(value=>text.includes(value))??(String(row.code)==='42501'?'marketplace_permission_denied':'marketplace_publication_failed');
+ const reason=(token.match(/^marketplace_product_not_ready_(.+)$/)?.[1]??({marketplace_store_inactive:'store_not_active',marketplace_seller_not_approved:'seller_not_approved'} as Record<string,string>)[token]??'not_ready') as MarketplacePublicationReadinessReason;
+ return new MarketplacePublicationError(reason,token,typeof row.code==='string'?row.code:null);
+}
+export async function evaluateMarketplaceProductPublication(id:string):Promise<{ready:boolean;reasonCode:string|null}>{const{data,error}=await db().rpc('evaluate_my_marketplace_product_publication',{p_product_id:id});if(error)throw normalizeMarketplacePublicationError(error);const row=data as Record<string,unknown>|null;return{ready:row?.ready===true,reasonCode:row?.reason_code==null?null:String(row.reason_code)};}
 export const marketplacePublicationMessage=(error:unknown):string|null=>{
   if(!(error instanceof MarketplacePublicationError))return null;
+  const exact:Record<string,string>={marketplace_product_media_required:'Agrega al menos una imagen válida.',marketplace_shipping_profile_not_owned:'El perfil de envío no pertenece a esta tienda.',marketplace_permission_denied:'No tienes permiso para publicar este producto.',marketplace_sku_exists:'Ese SKU ya existe en tu tienda.'};
+  if(exact[error.safeCode])return exact[error.safeCode];
   return ({seller_not_approved:'Tu cuenta de vendedor todavía no está aprobada.',store_not_active:'Activa tu tienda antes de publicar.',product_not_active:'El producto no está activo.',product_not_approved:'El producto todavía está en revisión.',product_deleted:'Este producto fue eliminado.',unsupported_product_type:'Revisa el tipo de producto.',unsupported_currency:'El producto debe usar BDAG.',no_active_variant:'Configura al menos una variante activa.',inventory_not_configured:'Completa el inventario antes de publicar.',out_of_stock:'Agrega inventario disponible antes de publicar.',shipping_incomplete:'Configura un perfil de envío válido antes de publicar.',not_ready:'Completa la configuración requerida antes de publicar.'} satisfies Record<MarketplacePublicationReadinessReason,string>)[error.reason];
 };
 export async function softDeleteProduct(id:string):Promise<void> {
