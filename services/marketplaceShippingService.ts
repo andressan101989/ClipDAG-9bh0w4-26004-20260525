@@ -22,7 +22,7 @@ export interface MarketplaceShippingProfile {
   productsUsing: number;
   regions: MarketplaceShippingRegion[];
 }
-export type MarketplaceShippingErrorCode = 'marketplace_shipping_profile_missing'|'marketplace_shipping_profile_inactive'|'marketplace_shipping_configuration_required'|'marketplace_shipping_destination_unsupported'|'marketplace_shipping_country_invalid'|'marketplace_shipping_region_invalid'|'marketplace_shipping_rule_ambiguous'|'marketplace_shipping_price_invalid'|'marketplace_shipping_product_not_physical'|'marketplace_shipping_quote_stale'|'marketplace_shipping_unknown';
+export type MarketplaceShippingErrorCode = 'marketplace_shipping_product_invalid'|'marketplace_shipping_quantity_invalid'|'marketplace_shipping_profile_missing'|'marketplace_shipping_profile_inactive'|'marketplace_shipping_configuration_required'|'marketplace_shipping_destination_unsupported'|'marketplace_shipping_country_invalid'|'marketplace_shipping_region_invalid'|'marketplace_shipping_rule_ambiguous'|'marketplace_shipping_price_invalid'|'marketplace_shipping_product_not_physical'|'marketplace_shipping_quote_stale'|'marketplace_shipping_unknown';
 export interface MarketplaceShippingQuote {eligible:true;code:string;shippingProfileId:string|null;matchedRuleId:string|null;countryCode:string|null;regionCode:string|null;shippingAmount:number;currency:'BDAG';processingDaysMin:number;processingDaysMax:number;transitDaysMin:number;transitDaysMax:number;estimatedDeliveryDaysMin:number;estimatedDeliveryDaysMax:number;quoteTimestamp:string;quoteFingerprint:string;quantityPolicy:'per_order_profile'}
 export class MarketplaceShippingError extends Error {constructor(public code:MarketplaceShippingErrorCode,public postgresCode:string|null=null){super(code);this.name='MarketplaceShippingError';}}
 export interface MarketplaceShippingProfileInput {
@@ -44,28 +44,27 @@ const number = (value: unknown) => {
 };
 const quoteNumber=(value:unknown)=>{const parsed=Number(value);if(!Number.isFinite(parsed)||parsed<0)throw new MarketplaceShippingError('marketplace_shipping_unknown');return parsed;};
 const integer=(value:unknown)=>{const parsed=quoteNumber(value);if(!Number.isInteger(parsed))throw new MarketplaceShippingError('marketplace_shipping_unknown');return parsed;};
-const parse = (value: unknown): MarketplaceShippingProfile[] => {
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const requiredText=(value:unknown)=>{if(typeof value!=='string'||!value.trim()||value==='undefined'||value==='null')throw new Error('marketplace_invalid_shipping_profile');return value;};
+export const parseMarketplaceShippingProfiles = (value: unknown): MarketplaceShippingProfile[] => {
   if (!Array.isArray(value)) throw new Error('marketplace_invalid_shipping_profile');
   return value.map(raw => {
     const row = raw as Record<string, unknown>;
-    const regions = Array.isArray(row.regions) ? row.regions : [];
+    const regions=Array.isArray(row.regions)?row.regions:[],id=requiredText(row.id),name=requiredText(row.name),status=requiredText(row.status),configurationStatus=requiredText(row.configuration_status),country=requiredText(row.ships_from_country),processingDaysMin=number(row.processing_days_min),processingDaysMax=number(row.processing_days_max),productsUsing=number(row.products_using??0);
+    if(!UUID.test(id)||!['active','paused'].includes(status)||!['explicit_ready','configuration_required','invalid_data'].includes(configurationStatus)||!/^[A-Z]{2}$/.test(country)||!Number.isInteger(processingDaysMin)||!Number.isInteger(processingDaysMax)||processingDaysMin>processingDaysMax||!Number.isInteger(productsUsing))throw new Error('marketplace_invalid_shipping_profile');
     return {
-      id: String(row.id), name: String(row.name), status: String(row.status) as MarketplaceShippingProfile['status'],
-      processingDaysMin: number(row.processing_days_min), processingDaysMax: number(row.processing_days_max),
-      shipsFromCountry: String(row.ships_from_country), returnPolicySummary: String(row.return_policy_summary),
+      id,name,status:status as MarketplaceShippingProfile['status'],processingDaysMin,processingDaysMax,
+      shipsFromCountry:country,returnPolicySummary:requiredText(row.return_policy_summary),
       legacyUnrestricted: row.legacy_unrestricted === true,
-      configurationStatus: String(row.configuration_status) as MarketplaceShippingProfile['configurationStatus'],
-      productsUsing: number(row.products_using ?? 0),
+      configurationStatus:configurationStatus as MarketplaceShippingProfile['configurationStatus'],productsUsing,
       regions: regions.map(rawRegion => {
-        const region = rawRegion as Record<string, unknown>;
-        return { countryCode: String(region.country_code), regionCode: region.region_code == null ? null : String(region.region_code),
-          shippingPrice: number(region.shipping_price), freeShippingThreshold: region.free_shipping_threshold == null ? null : number(region.free_shipping_threshold),
-          transitDaysMin: number(region.transit_days_min), transitDaysMax: number(region.transit_days_max), status: String(region.status) as 'active' | 'paused' };
+        const region=rawRegion as Record<string,unknown>,regionCountry=requiredText(region.country_code),regionCode=region.region_code==null?null:requiredText(region.region_code),transitDaysMin=number(region.transit_days_min),transitDaysMax=number(region.transit_days_max),regionStatus=requiredText(region.status);
+        if(!/^[A-Z]{2}$/.test(regionCountry)||(regionCode!==null&&!/^[A-Z0-9-]{1,10}$/.test(regionCode))||!Number.isInteger(transitDaysMin)||!Number.isInteger(transitDaysMax)||transitDaysMin>transitDaysMax||!['active','paused'].includes(regionStatus))throw new Error('marketplace_invalid_shipping_profile');
+        return{countryCode:regionCountry,regionCode,shippingPrice:number(region.shipping_price),freeShippingThreshold:region.free_shipping_threshold==null?null:number(region.free_shipping_threshold),transitDaysMin,transitDaysMax,status:regionStatus as'active'|'paused'};
       }),
     };
   });
 };
-const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const shippingCodes:MarketplaceShippingErrorCode[]=['marketplace_shipping_profile_missing','marketplace_shipping_profile_inactive','marketplace_shipping_configuration_required','marketplace_shipping_destination_unsupported','marketplace_shipping_country_invalid','marketplace_shipping_region_invalid','marketplace_shipping_rule_ambiguous','marketplace_shipping_price_invalid','marketplace_shipping_product_not_physical','marketplace_shipping_quote_stale'];
 const shippingCode=(error:unknown)=>{const x=error&&typeof error==='object'?error as Record<string,unknown>:{};const text=[x.message,x.details,x.hint,(x.context as Record<string,unknown>|undefined)?.body].filter(v=>typeof v==='string').join(' ');return shippingCodes.find(code=>text.includes(code))??'marketplace_shipping_unknown';};
 export const normalizeMarketplaceCountry=(value:string)=>value.trim().toUpperCase();
@@ -79,13 +78,18 @@ export function parseMarketplaceShippingQuote(data:unknown):MarketplaceShippingQ
  return{eligible:true,code:typeof x.code==='string'?x.code:'marketplace_shipping_eligible',shippingProfileId:profile,matchedRuleId:rule,countryCode:country,regionCode:region,shippingAmount:quoteNumber(x.shipping_amount),currency:'BDAG',processingDaysMin,processingDaysMax,transitDaysMin,transitDaysMax,estimatedDeliveryDaysMin,estimatedDeliveryDaysMax,quoteTimestamp:x.quote_timestamp as string,quoteFingerprint:x.quote_fingerprint,quantityPolicy:'per_order_profile'};
 }
 export function marketplaceShippingMessage(code:MarketplaceShippingErrorCode){
+ if(code==='marketplace_shipping_product_invalid')return 'No pudimos cargar la información de envío de este producto.';
+ if(code==='marketplace_shipping_quantity_invalid')return 'Selecciona una cantidad válida.';
+ if(code==='marketplace_shipping_country_invalid')return 'Selecciona un país válido.';
  if(code==='marketplace_shipping_destination_unsupported')return 'Este producto no se envía a la dirección seleccionada.';
  if(code==='marketplace_shipping_configuration_required')return 'El vendedor debe completar la configuración de envío de este producto.';
  if(code==='marketplace_shipping_profile_missing'||code==='marketplace_shipping_profile_inactive')return 'Este producto todavía no tiene un método de envío disponible.';
  return 'No pudimos verificar el envío. Inténtalo nuevamente.';
 }
 export async function quoteMarketplaceShipping(productId:string,countryCode:string,regionCode:string|null,quantity=1):Promise<MarketplaceShippingQuote>{
- if(!UUID.test(productId)||!/^[A-Z]{2}$/.test(normalizeMarketplaceCountry(countryCode))||!Number.isInteger(quantity)||quantity<1)throw new MarketplaceShippingError('marketplace_shipping_country_invalid');
+ if(!UUID.test(productId))throw new MarketplaceShippingError('marketplace_shipping_product_invalid');
+ if(!/^[A-Z]{2}$/.test(normalizeMarketplaceCountry(countryCode)))throw new MarketplaceShippingError('marketplace_shipping_country_invalid');
+ if(!Number.isInteger(quantity)||quantity<1)throw new MarketplaceShippingError('marketplace_shipping_quantity_invalid');
  const{data,error}=await db().rpc('quote_marketplace_shipping',{p_product_id:productId,p_country_code:normalizeMarketplaceCountry(countryCode),p_region_code:normalizeMarketplaceRegion(regionCode),p_quantity:quantity});if(error)throw new MarketplaceShippingError(shippingCode(error),typeof error.code==='string'?error.code:null);
  return parseMarketplaceShippingQuote(data);
 }
@@ -93,7 +97,7 @@ export async function quoteMarketplaceShipping(productId:string,countryCode:stri
 export async function fetchMyMarketplaceShippingProfiles(storeId: string): Promise<MarketplaceShippingProfile[]> {
   const { data, error } = await db().rpc('fetch_my_marketplace_shipping_profiles', { p_store_id: storeId });
   if (error) throw error;
-  return parse(data);
+  return parseMarketplaceShippingProfiles(data);
 }
 export async function upsertMyMarketplaceShippingProfile(input: MarketplaceShippingProfileInput): Promise<string> {
   const { data, error } = await db().rpc('upsert_my_marketplace_shipping_profile', {

@@ -258,7 +258,7 @@ export default function ProductScreen() {
             <Text style={styles.description}>{product.description || 'Sin descripción disponible.'}</Text>
           </View>
 
-          <MarketplaceShippingQuoteCard productId={product.id} quantity={quantity}/>
+          <MarketplaceShippingQuoteCard productId={product.id} quantity={quantity} onRequestAddress={()=>router.push(user?'/checkout' as never:'/login' as never)}/>
 
           {/* Tags */}
           {product.tags.length > 0 ? (
