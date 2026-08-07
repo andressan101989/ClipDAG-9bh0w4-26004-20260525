@@ -3,7 +3,7 @@ import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-nativ
 import { randomUUID } from 'expo-crypto';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import { MarketplaceSettlementError, reportMarketplaceOrderProblem } from '@/services/marketplaceSettlementService';
-import type { MarketplaceDisputeStatus } from '@/services/marketplaceFulfillmentService';
+import type { MarketplaceDisputeOutcome, MarketplaceDisputeStatus } from '@/services/marketplaceFulfillmentService';
 
 type Reason = 'not_received' | 'damaged' | 'incorrect_item' | 'missing_items' | 'other';
 const reasons: { code: Reason; label: string }[] = [
@@ -16,10 +16,14 @@ const reasons: { code: Reason; label: string }[] = [
 const statusLabels: Record<MarketplaceDisputeStatus, string> = {
   open: 'Abierta', under_review: 'En revisión', resolved: 'Resuelta', rejected: 'Rechazada', cancelled: 'Cancelada',
 };
+const outcomeLabels: Record<MarketplaceDisputeOutcome, string> = {
+  refund_buyer: 'Reembolso completado', release_seller: 'Fondos liberados al vendedor',
+  reject_claim: 'Reclamo rechazado', manual_review: 'Revisión manual',
+};
 
 export function MarketplaceDisputePanel({ orderId, current, onSubmitted }: {
   orderId: string;
-  current: { status: MarketplaceDisputeStatus; reasonCode: string } | null;
+  current: { status: MarketplaceDisputeStatus; reasonCode: string; outcome?: MarketplaceDisputeOutcome | null } | null;
   onSubmitted: () => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -53,7 +57,7 @@ export function MarketplaceDisputePanel({ orderId, current, onSubmitted }: {
       } },
     ]);
   };
-  if (current) return <View style={styles.card}><Text style={styles.title}>Problema reportado · {statusLabels[current.status]}</Text><Text style={styles.help}>La liquidación permanece pausada mientras el caso esté abierto o en revisión.</Text></View>;
+  if (current) return <View style={styles.card}><Text style={styles.title}>Problema reportado · {current.outcome ? outcomeLabels[current.outcome] : statusLabels[current.status]}</Text><Text style={styles.help}>{current.status === 'open' || current.status === 'under_review' ? 'La liquidación permanece pausada mientras el caso esté abierto o en revisión.' : 'Soporte completó la revisión del caso.'}</Text></View>;
   if (!expanded) return <Pressable style={styles.outline} onPress={() => setExpanded(true)} accessibilityRole="button"><Text style={styles.buttonText}>Reportar problema</Text></Pressable>;
   return <View style={styles.card}>
     <Text style={styles.title}>Reportar problema</Text>

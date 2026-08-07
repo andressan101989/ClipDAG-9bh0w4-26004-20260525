@@ -248,6 +248,48 @@ Deno.serve(async (req) => {
       return ok(data);
     }
 
+    if (action === 'marketplace_dispute_fetch' || action === 'marketplace_dispute_resolve') {
+      const { dispute_id, outcome, reason_code, note } = body;
+      if (typeof dispute_id !== 'string' || !UUID_RE.test(dispute_id) ||
+          typeof idempotency_key !== 'string' || !UUID_RE.test(idempotency_key)) {
+        return fail('marketplace_dispute_resolution_invalid_input', 400);
+      }
+      const { data: profile, error: profileError } = await admin
+        .from('user_profiles').select('is_admin').eq('id', user.id).maybeSingle();
+      if (profileError || profile?.is_admin !== true) {
+        log('WARN', String(action), { actor: `${user.id.slice(0, 8)}…`, code: 'marketplace_dispute_resolution_forbidden' });
+        return fail('marketplace_dispute_resolution_forbidden', 403);
+      }
+      const rpc = action === 'marketplace_dispute_fetch'
+        ? 'fetch_support_marketplace_dispute'
+        : 'resolve_marketplace_dispute';
+      const params = action === 'marketplace_dispute_fetch'
+        ? { p_resolver_id: user.id, p_dispute_id: dispute_id }
+        : {
+            p_resolver_id: user.id, p_dispute_id: dispute_id, p_outcome: outcome,
+            p_reason_code: reason_code, p_note: note ?? null,
+            p_idempotency_key: idempotency_key, p_partial_amount: null,
+          };
+      const { data, error } = await admin.rpc(rpc, params);
+      if (error) {
+        const codes = [
+          'marketplace_dispute_not_found','marketplace_dispute_not_open','marketplace_dispute_already_resolved',
+          'marketplace_dispute_conflicting_decision','marketplace_refund_allocation_not_held',
+          'marketplace_refund_requires_manual_review','marketplace_partial_refund_unsupported',
+          'marketplace_refund_reconciliation_failed','marketplace_dispute_resolution_forbidden',
+          'marketplace_dispute_resolution_auth_required','marketplace_refund_payment_not_paid',
+          'marketplace_refund_order_state_invalid','marketplace_refund_already_completed',
+          'marketplace_dispute_resolution_invalid_input',
+        ];
+        const code = codes.find(value => error.message.includes(value)) ?? 'marketplace_dispute_resolution_unknown';
+        log(code === 'marketplace_dispute_resolution_unknown' ? 'ERROR' : 'WARN', String(action), {
+          dispute: `${dispute_id.slice(0, 8)}…`, code,
+        });
+        return fail(code, code.endsWith('_forbidden') || code.endsWith('_auth_required') ? 403 : 409);
+      }
+      return ok(data);
+    }
+
     // BALANCE (authoritative read)
     // ════════════════════════════════════════════════════════════════════
     if (action === 'balance') {

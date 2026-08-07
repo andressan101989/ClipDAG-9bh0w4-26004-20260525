@@ -10,6 +10,7 @@
     "web": "expo start --web",
     "prove:marketplace-fixtures": "node scripts/prove-marketplace-fixture-finalization.mjs",
     "prove:marketplace-order-lifecycle": "node scripts/prove-marketplace-order-lifecycle.mjs",
+    "prove:marketplace-dispute-refund": "node scripts/prove-marketplace-held-dispute-refund.mjs",
     "prove:marketplace-publication": "node scripts/audit-marketplace-publication.mjs",
     "prove:marketplace-runtime": "node scripts/prove-marketplace-client-runtime.mjs",
     "lint": "expo lint"
