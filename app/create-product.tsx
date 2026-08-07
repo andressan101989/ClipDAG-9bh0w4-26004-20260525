@@ -6,7 +6,7 @@ import {
 import { Image } from 'expo-image';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { randomUUID } from 'expo-crypto';
@@ -92,6 +92,7 @@ export default function CreateProductScreen() {
   const [shippingProfiles, setShippingProfiles] = useState<MarketplaceShippingProfile[]>([]);
   const [shippingProfileId, setShippingProfileId] = useState('');
   const [shippingState, setShippingState] = useState<ShippingState>('loading');
+  useFocusEffect(useCallback(()=>{if(!store?.id)return;let active=true;void fetchMyMarketplaceShippingProfiles(store.id).then(profiles=>{if(!active)return;setShippingProfiles(profiles);const selected=profiles.find(profile=>profile.id===shippingProfileId&&profile.configurationStatus==='explicit_ready')??profiles.find(profile=>profile.configurationStatus==='explicit_ready');if(selected)setShippingProfileId(selected.id);setShippingState(selected?'ready':'empty');}).catch(()=>{if(active)setShippingState('error');});return()=>{active=false;};},[shippingProfileId,store?.id]));
   const [shippingCountry, setShippingCountry] = useState('US');
   const [shippingPrice, setShippingPrice] = useState('0');
   const [returnPolicy, setReturnPolicy] = useState('Devoluciones aceptadas dentro de 14 días.');
@@ -1103,7 +1104,7 @@ export default function CreateProductScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.settingTitle}>{profile.name}</Text>
                 <Text style={styles.helper}>{profile.processingDaysMin}–{profile.processingDaysMax} días de preparación · {profile.regions.length ? `${profile.regions.length} destinos` : 'configuración heredada'}</Text>
-                {profile.configurationStatus !== 'explicit_ready' ? <Text style={styles.errorText}>Configura al menos un destino de envío para volver a aceptar compras.</Text> : null}
+                {profile.configurationStatus !== 'explicit_ready' ? <><Text style={styles.errorText}>Configura al menos un destino de envío para volver a aceptar compras.</Text><Pressable style={styles.recoveryRetry} onPress={()=>router.push({pathname:'/seller/shipping-profile',params:{storeId:store?.id??'',profileId:profile.id}} as never)}><Text style={styles.recoveryRetryText}>Configurar destinos</Text></Pressable></> : null}
                 <Text style={styles.helper}>{profile.returnPolicySummary}</Text>
               </View>
               <MaterialIcons name={shippingProfileId === profile.id ? 'radio-button-checked' : 'radio-button-unchecked'} size={24} color={Colors.primaryLight} />

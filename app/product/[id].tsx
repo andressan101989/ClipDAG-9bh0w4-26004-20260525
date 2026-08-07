@@ -22,6 +22,7 @@ import {
   isOptionValueSelectable, reconcileVariantSelection, resolveExactVariant, selectionForPreferredVariant,
 } from '@/services/marketplaceVariantSelection';
 import {isPublicMarketplaceImageUrl} from '@/services/marketplaceCart';
+import {MarketplaceShippingQuoteCard} from '@/components/marketplace/MarketplaceShippingQuoteCard';
 
 export default function ProductScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -256,6 +257,8 @@ export default function ProductScreen() {
             <Text style={styles.sectionTitle}>Descripción</Text>
             <Text style={styles.description}>{product.description || 'Sin descripción disponible.'}</Text>
           </View>
+
+          <MarketplaceShippingQuoteCard productId={product.id} quantity={quantity}/>
 
           {/* Tags */}
           {product.tags.length > 0 ? (

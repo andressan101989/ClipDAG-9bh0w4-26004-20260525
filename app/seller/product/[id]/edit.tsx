@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { randomUUID } from 'expo-crypto';
 import { useAlert } from '@/template';
@@ -58,6 +58,7 @@ export default function EditProduct() {
   const [shippingPrice, setShippingPrice] = useState('0');
   const [returnPolicy, setReturnPolicy] = useState('Devoluciones aceptadas dentro de 14 días.');
   const [shippingBusy, setShippingBusy] = useState(false);
+  useFocusEffect(React.useCallback(()=>{if(!storeId)return;let active=true;void fetchMyMarketplaceShippingProfiles(storeId).then(profiles=>{if(active)setShippingProfiles(profiles);});return()=>{active=false;};},[storeId]));
 
   useEffect(() => {
     let active = true;
@@ -325,6 +326,7 @@ export default function EditProduct() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Envío</Text>
           <Text style={styles.help}>Configuración autoritativa para destinos, precio y entrega estimada.</Text>
+          {shippingProfiles.filter(profile=>profile.configurationStatus!=='explicit_ready').map(profile=><View key={profile.id} style={styles.setupCard}><Text style={styles.setupTitle}>Configuración requerida</Text><Text style={styles.help}>{profile.productsUsing} productos vinculados no pueden aceptar compras hasta completar la configuración.</Text><Pressable style={styles.variantButton} onPress={()=>router.push({pathname:'/seller/shipping-profile',params:{storeId,profileId:profile.id}} as never)}><Text style={styles.variantText}>Configurar destinos</Text></Pressable></View>)}
           <Text style={styles.label}>País admitido (código de dos letras)</Text>
           <TextInput style={styles.input} value={shippingCountry} onChangeText={setShippingCountry} autoCapitalize="characters" maxLength={2} />
           <Text style={styles.label}>Precio de envío (BDAG)</Text>

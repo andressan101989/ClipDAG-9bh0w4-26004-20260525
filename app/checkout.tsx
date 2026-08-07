@@ -9,6 +9,7 @@ import {useAuth} from '@/hooks/useAuth';
 import {useMarketplaceCart} from '@/hooks/useMarketplaceCart';
 import {Colors,FontSize,FontWeight,Radius,Spacing} from '@/constants/theme';
 import {createCheckoutReservation,expireMarketplaceCheckoutReservations,fetchMyActiveCheckout,MarketplaceOrderServiceError,normalizeShippingAddress,validateShippingAddress,type ShippingAddressInput} from '@/services/marketplaceOrderService';
+import {MarketplaceShippingQuoteCard,type MarketplaceShippingQuoteState} from '@/components/marketplace/MarketplaceShippingQuoteCard';
 
 const emptyAddress:ShippingAddressInput={recipientName:'',line1:'',line2:'',city:'',region:'',postalCode:'',country:'',phone:''};
 const fields:{key:keyof ShippingAddressInput;label:string;optional?:boolean}[]=[
@@ -23,6 +24,7 @@ export default function MarketplaceCheckoutScreen(){
   const {refreshCart}=cart;
   const [address,setAddress]=useState<ShippingAddressInput>(emptyAddress);const [errors,setErrors]=useState<Partial<Record<keyof ShippingAddressInput,string>>>({});
   const [ready,setReady]=useState(false);const [submitting,setSubmitting]=useState(false);const submitLockRef=useRef(false);
+  const [quoteStates,setQuoteStates]=useState<Record<string,MarketplaceShippingQuoteState>>({});
   const idempotencyRef=useRef<{signature:string;key:string}|null>(null);
   const availableItems=useMemo(()=>cart.items.filter(item=>item.availability==='available'),[cart.items]);
   const availableGroups=useMemo(()=>Array.from(availableItems.reduce((groups,item)=>{
@@ -37,6 +39,7 @@ export default function MarketplaceCheckoutScreen(){
   const submit=async()=>{
     if(submitLockRef.current||!user)return;const normalized=normalizeShippingAddress(address);const nextErrors=validateShippingAddress(normalized);
     setErrors(nextErrors);if(Object.keys(nextErrors).length||!availableItems.length)return;
+    if(availableItems.some(item=>quoteStates[item.key]?.status!=='ready')){Alert.alert('Envío pendiente','Verifica que todos los productos se envíen a la dirección seleccionada.');return;}
     const requestItems=availableItems.map(item=>({variantId:item.variantId,quantity:item.quantity}));
     const signature=JSON.stringify({items:requestItems,address:normalized});
     if(!idempotencyRef.current||idempotencyRef.current.signature!==signature)idempotencyRef.current={signature,key:randomUUID()};
@@ -62,7 +65,9 @@ export default function MarketplaceCheckoutScreen(){
       {!availableItems.length?<View style={styles.card}><Text style={styles.title}>No hay productos disponibles</Text><Text style={styles.muted}>Vuelve al carrito para revisar productos agotados o eliminados.</Text></View>:<>
         <View style={styles.card}><Text style={styles.sectionTitle}>Resumen de reserva</Text>{availableGroups.map(([storeId,items],groupIndex)=><View key={storeId}><Text style={styles.storeLabel}>{items[0]?.sellerUsername?`@${items[0].sellerUsername}`:`Tienda ${groupIndex+1}`}</Text>{items.map(item=><View key={item.key} style={styles.line}><View style={{flex:1}}><Text style={styles.itemTitle}>{item.title}</Text><Text style={styles.options}>{item.options.map(option=>option.value).join(' · ')}</Text><Text style={styles.muted}>Cantidad {item.quantity} · {item.unitPrice.toFixed(2)} BDAG</Text></View><Text style={styles.linePrice}>{(item.unitPrice*item.quantity).toFixed(2)} BDAG</Text></View>)}</View>)}<View style={styles.totalRow}><Text style={styles.sectionTitle}>Subtotal</Text><Text style={styles.total}>{subtotal.toFixed(2)} BDAG</Text></View><Text style={styles.notice}>El precio y el inventario se verificarán nuevamente en el servidor.</Text></View>
         <View style={styles.card}><Text style={styles.sectionTitle}>Dirección de envío</Text>{fields.map(field=><View key={field.key} style={styles.field}><Text style={styles.label}>{field.label}{field.optional?' · Opcional':''}</Text><TextInput value={address[field.key]??''} onChangeText={value=>{setAddress(current=>({...current,[field.key]:value}));setErrors(current=>({...current,[field.key]:undefined}));}} style={[styles.input,errors[field.key]&&styles.inputError]} placeholderTextColor={Colors.textSubtle} accessibilityLabel={field.label}/>{errors[field.key]?<Text style={styles.error}>{errors[field.key]}</Text>:null}</View>)}</View>
-        <Pressable style={[styles.primary,submitting&&styles.disabled]} onPress={()=>void submit()} disabled={submitting} accessibilityRole="button" accessibilityLabel="Reservar productos por 15 minutos" accessibilityState={{disabled:submitting}}>{submitting?<ActivityIndicator color="#fff"/>:<Text style={styles.primaryText}>Reservar por 15 minutos · {subtotal.toFixed(2)} BDAG</Text>}</Pressable><Text style={styles.helper}>No se descontará BDAG en esta etapa.</Text>
+        {availableItems.map(item=><MarketplaceShippingQuoteCard key={item.key} productId={item.productId} quantity={item.quantity} countryCode={address.country} regionCode={address.region} onChange={state=>setQuoteStates(current=>({...current,[item.key]:state}))}/>)}
+        <Text style={styles.notice}>El servidor agrupa el envío una vez por pedido/perfil. La reserva mostrará el total final congelado.</Text>
+        <Pressable style={[styles.primary,(submitting||availableItems.some(item=>quoteStates[item.key]?.status!=='ready'))&&styles.disabled]} onPress={()=>void submit()} disabled={submitting||availableItems.some(item=>quoteStates[item.key]?.status!=='ready')} accessibilityRole="button" accessibilityLabel="Reservar productos por 15 minutos" accessibilityState={{disabled:submitting}}>{submitting?<ActivityIndicator color="#fff"/>:<Text style={styles.primaryText}>Reservar por 15 minutos · {subtotal.toFixed(2)} BDAG + envío</Text>}</Pressable><Text style={styles.helper}>No se descontará BDAG en esta etapa.</Text>
       </>}
     </ScrollView>
   </KeyboardAvoidingView>;

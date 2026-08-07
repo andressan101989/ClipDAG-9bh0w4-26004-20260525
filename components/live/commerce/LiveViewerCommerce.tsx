@@ -68,6 +68,7 @@ import {
 import { LiveProductBagSheet } from "@/components/live/shop/LiveProductBagSheet";
 import { LiveProductQuickView } from "@/components/live/shop/LiveProductQuickView";
 import { LiveShippingForm } from "@/components/live/shop/LiveShippingForm";
+import { MarketplaceShippingQuoteCard,type MarketplaceShippingQuoteState } from "@/components/marketplace/MarketplaceShippingQuoteCard";
 import { LiveReservationSummary } from "@/components/live/shop/LiveReservationSummary";
 import { LivePaymentConfirmation } from "@/components/live/shop/LivePaymentConfirmation";
 import { LivePurchaseSuccess } from "@/components/live/shop/LivePurchaseSuccess";
@@ -139,7 +140,7 @@ export function LiveViewerCommerce({
     [address, setAddress] = useState<ShippingAddressInput>(EMPTY_ADDRESS),
     [addressErrors, setAddressErrors] = useState<
       Partial<Record<keyof ShippingAddressInput, string>>
-    >({}),
+    >({}),[shippingQuote,setShippingQuote]=useState<MarketplaceShippingQuoteState>({status:'idle',quote:null,message:null}),
     [reservation, setReservation] = useState<Reservation | null>(null),
     [otherCheckoutId, setOtherCheckoutId] = useState<string | null>(null),
     [balance, setBalance] = useState<number | null>(null),
@@ -301,6 +302,7 @@ export function LiveViewerCommerce({
   const reserve = async () => {
     if (lock.current || !pin || !variant || variant.available_quantity < 1)
       return;
+    if(shippingQuote.status!=='ready'){setFeedback('Verifica la disponibilidad de envío antes de continuar.');return;}
     const errors = validateShippingAddress(address) as Partial<
       Record<keyof ShippingAddressInput, string>
     >;
@@ -744,17 +746,17 @@ export function LiveViewerCommerce({
                   onContinue={() => setStage("shipping")}
                 />
               ) : stage === "shipping" ? (
-                <LiveShippingForm
+                <><LiveShippingForm
                   value={address}
                   errors={addressErrors}
-                  busy={busy}
+                  busy={busy||shippingQuote.status!=='ready'}
                   onChange={(value) => {
                     setAddress(value);
                     setAddressErrors({});
                     pendingCommand.current = null;
                   }}
                   onSubmit={() => void reserve()}
-                />
+                /><MarketplaceShippingQuoteCard productId={pin?.productId??''} quantity={quantity} countryCode={address.country} regionCode={address.region} onChange={setShippingQuote}/></>
               ) : stage === "review" && reservation ? (
                 <LiveReservationSummary
                   reference={reservation.reference}
