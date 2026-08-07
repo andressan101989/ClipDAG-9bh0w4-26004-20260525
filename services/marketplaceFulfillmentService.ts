@@ -2,7 +2,7 @@ import {getSupabaseClient} from '@/template';
 
 export type MarketplaceOrderStatus='confirmed'|'processing'|'shipped'|'delivered'|'cancelled'|'refunded'|'partially_refunded';
 export type MarketplaceDisputeStatus='open'|'under_review'|'resolved'|'rejected'|'cancelled';
-export type MarketplaceDisputeOutcome='refund_buyer'|'release_seller'|'reject_claim'|'manual_review';
+export type MarketplaceDisputeOutcome='refund_buyer'|'release_seller'|'reject_claim';
 export interface MarketplaceOrderEvent{id:string;eventType:string;fromStatus:string|null;toStatus:string|null;actorRole:string;createdAt:string}
 export interface MarketplaceShipment{id:string|null;status:string;carrierName:string;serviceLevel:string|null;trackingNumber:string;trackingUrl:string|null;sellerNote:string|null;shippedAt:string;deliveredAt:string|null;estimatedDeliveryAt:string|null}
 export interface MarketplaceHeldAllocation{grossAmount:number;platformFeeAmount:number;sellerNetAmount:number;status:'held'|'released'|'refunded'|'partially_refunded';releasedAt:string|null}

@@ -18,7 +18,7 @@ const statusLabels: Record<MarketplaceDisputeStatus, string> = {
 };
 const outcomeLabels: Record<MarketplaceDisputeOutcome, string> = {
   refund_buyer: 'Reembolso completado', release_seller: 'Fondos liberados al vendedor',
-  reject_claim: 'Reclamo rechazado', manual_review: 'Revisión manual',
+  reject_claim: 'Reclamo rechazado',
 };
 
 export function MarketplaceDisputePanel({ orderId, current, onSubmitted }: {
@@ -57,7 +57,7 @@ export function MarketplaceDisputePanel({ orderId, current, onSubmitted }: {
       } },
     ]);
   };
-  if (current) return <View style={styles.card}><Text style={styles.title}>Problema reportado · {current.outcome ? outcomeLabels[current.outcome] : statusLabels[current.status]}</Text><Text style={styles.help}>{current.status === 'open' || current.status === 'under_review' ? 'La liquidación permanece pausada mientras el caso esté abierto o en revisión.' : 'Soporte completó la revisión del caso.'}</Text></View>;
+  if (current) return <View style={styles.card}><Text style={styles.title}>Problema reportado · {current.outcome ? outcomeLabels[current.outcome] : statusLabels[current.status]}</Text><Text style={styles.help}>{current.status === 'open' || current.status === 'under_review' ? 'Los fondos permanecen pausados mientras soporte revisa el caso.' : current.outcome === 'release_seller' ? 'Soporte resolvió el caso y liberó los fondos al vendedor.' : 'Soporte completó la revisión del caso.'}</Text></View>;
   if (!expanded) return <Pressable style={styles.outline} onPress={() => setExpanded(true)} accessibilityRole="button"><Text style={styles.buttonText}>Reportar problema</Text></Pressable>;
   return <View style={styles.card}>
     <Text style={styles.title}>Reportar problema</Text>
