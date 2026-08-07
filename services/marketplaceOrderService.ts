@@ -14,6 +14,9 @@ export const MARKETPLACE_ORDER_ERROR_CODES=[
   'marketplace_duplicate_variant','marketplace_product_unavailable','marketplace_variant_unavailable',
   'marketplace_insufficient_inventory','marketplace_own_product_forbidden','marketplace_invalid_shipping_address',
   'marketplace_checkout_not_found','marketplace_checkout_not_cancellable',
+  'marketplace_shipping_profile_missing','marketplace_shipping_profile_inactive','marketplace_shipping_configuration_required',
+  'marketplace_shipping_destination_unsupported','marketplace_shipping_country_invalid','marketplace_shipping_region_invalid',
+  'marketplace_shipping_rule_ambiguous','marketplace_shipping_price_invalid','marketplace_shipping_quote_stale',
 ] as const;
 export type MarketplaceOrderErrorCode=typeof MARKETPLACE_ORDER_ERROR_CODES[number]|'marketplace_order_transport'|'marketplace_order_unknown';
 export class MarketplaceOrderServiceError extends Error {constructor(public code:MarketplaceOrderErrorCode){super(code);this.name='MarketplaceOrderServiceError';}}

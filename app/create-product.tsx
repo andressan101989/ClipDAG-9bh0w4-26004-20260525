@@ -114,8 +114,8 @@ export default function CreateProductScreen() {
       void fetchMyMarketplaceShippingProfiles(foundation.store.id).then(profiles => {
         if (!active) return;
         setShippingProfiles(profiles);
-        setShippingProfileId(profiles.find(profile => profile.status === 'active')?.id ?? '');
-        setShippingState(profiles.some(profile=>profile.status==='active')?'ready':'empty');
+        setShippingProfileId(profiles.find(profile => profile.status === 'active' && profile.configurationStatus === 'explicit_ready')?.id ?? '');
+        setShippingState(profiles.some(profile=>profile.status==='active'&&profile.configurationStatus==='explicit_ready')?'ready':'empty');
       }).catch(() => { if (active) {setShippingProfiles([]);setShippingState('error');} });
       setCategories(activeCategories);
       setCategory(current => activeCategories.some(item => item.slug === current)
@@ -1096,12 +1096,14 @@ export default function CreateProductScreen() {
               key={profile.id}
               style={[styles.affiliateToggle, shippingProfileId === profile.id && { borderColor: Colors.primaryLight }]}
               onPress={() => setShippingProfileId(profile.id)}
+              disabled={profile.configurationStatus !== 'explicit_ready'}
               accessibilityRole="radio"
               accessibilityState={{ checked: shippingProfileId === profile.id }}
             >
               <View style={{ flex: 1 }}>
                 <Text style={styles.settingTitle}>{profile.name}</Text>
                 <Text style={styles.helper}>{profile.processingDaysMin}–{profile.processingDaysMax} días de preparación · {profile.regions.length ? `${profile.regions.length} destinos` : 'configuración heredada'}</Text>
+                {profile.configurationStatus !== 'explicit_ready' ? <Text style={styles.errorText}>Configura al menos un destino de envío para volver a aceptar compras.</Text> : null}
                 <Text style={styles.helper}>{profile.returnPolicySummary}</Text>
               </View>
               <MaterialIcons name={shippingProfileId === profile.id ? 'radio-button-checked' : 'radio-button-unchecked'} size={24} color={Colors.primaryLight} />

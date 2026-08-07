@@ -177,7 +177,7 @@ export default function EditProduct() {
     }
     setShippingBusy(true);
     try {
-      const existing = shippingProfiles.find(profile => profile.id === shippingProfileId && !profile.legacyUnrestricted);
+      const existing = shippingProfiles.find(profile => profile.id === shippingProfileId && profile.configurationStatus === 'explicit_ready');
       const profileId = await upsertMyMarketplaceShippingProfile({
         profileId: existing?.id, storeId, name: `Envío ${shippingCountry.toUpperCase()}`,
         processingDaysMin: 1, processingDaysMax: 3, shipsFromCountry: shippingCountry,

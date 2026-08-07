@@ -175,6 +175,14 @@ export type LiveCommerceErrorCode =
   | "marketplace_insufficient_inventory"
   | "marketplace_invalid_shipping_address"
   | "marketplace_shipping_destination_unsupported"
+  | "marketplace_shipping_profile_missing"
+  | "marketplace_shipping_profile_inactive"
+  | "marketplace_shipping_configuration_required"
+  | "marketplace_shipping_country_invalid"
+  | "marketplace_shipping_region_invalid"
+  | "marketplace_shipping_rule_ambiguous"
+  | "marketplace_shipping_price_invalid"
+  | "marketplace_shipping_quote_stale"
   | "marketplace_product_not_ready_shipping_incomplete"
   | `live_product_readiness_${LiveProductReadinessReason}`
   | `marketplace_product_not_ready_${LiveProductReadinessReason}`
@@ -211,6 +219,14 @@ const CODES: LiveCommerceErrorCode[] = [
   "marketplace_insufficient_inventory",
   "marketplace_invalid_shipping_address",
   "marketplace_shipping_destination_unsupported",
+  "marketplace_shipping_profile_missing",
+  "marketplace_shipping_profile_inactive",
+  "marketplace_shipping_configuration_required",
+  "marketplace_shipping_country_invalid",
+  "marketplace_shipping_region_invalid",
+  "marketplace_shipping_rule_ambiguous",
+  "marketplace_shipping_price_invalid",
+  "marketplace_shipping_quote_stale",
   "marketplace_product_not_ready_shipping_incomplete",
   "marketplace_product_not_ready",
   ...READINESS_REASONS.flatMap((reason) => [
@@ -270,6 +286,14 @@ const RESERVATION_CODES: Partial<
   live_commerce_invalid_input: "quantity_invalid",
   marketplace_invalid_shipping_address: "shipping_unsupported",
   marketplace_shipping_destination_unsupported: "shipping_unsupported",
+  marketplace_shipping_profile_missing: "shipping_configuration",
+  marketplace_shipping_profile_inactive: "shipping_configuration",
+  marketplace_shipping_configuration_required: "shipping_configuration",
+  marketplace_shipping_country_invalid: "shipping_unsupported",
+  marketplace_shipping_region_invalid: "shipping_unsupported",
+  marketplace_shipping_rule_ambiguous: "shipping_configuration",
+  marketplace_shipping_price_invalid: "shipping_configuration",
+  marketplace_shipping_quote_stale: "request",
   marketplace_product_not_ready_shipping_incomplete: "shipping_configuration",
   marketplace_active_checkout_exists: "active_checkout_exists",
   live_commerce_auth_required: "authentication_required",

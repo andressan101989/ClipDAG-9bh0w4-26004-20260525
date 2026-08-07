@@ -173,9 +173,14 @@ async function createFixture(db, runId, mixed) {
   );
   await db.query(
     `insert into public.marketplace_shipping_profiles(id,seller_id,store_id,name,processing_days_min,processing_days_max,ships_from_country,return_policy_summary,legacy_unrestricted)
-     values($1,$2,$3,'Fixture proof shipping',0,1,'US','Rollback-only proof returns.',true),
-           ($4,$5,$6,'Protected proof shipping',0,1,'US','Rollback-only protected returns.',true)`,
+     values($1,$2,$3,'Fixture proof shipping',0,1,'US','Rollback-only proof returns.',false),
+           ($4,$5,$6,'Protected proof shipping',0,1,'US','Rollback-only protected returns.',false)`,
     [id.fixtureProfile,id.fixtureSeller,id.fixtureStore,id.realProfile,id.realSeller,id.realStore],
+  );
+  await db.query(
+    `insert into public.marketplace_shipping_profile_regions(profile_id,country_code,shipping_price,transit_days_min,transit_days_max)
+     values($1,'US',0,1,2),($2,'US',0,1,2)`,
+    [id.fixtureProfile,id.realProfile],
   );
   await db.query(
     `insert into public.products(id,seller_id,title,description,price,currency,category,stock,status,store_id,category_id,product_type,moderation_status,published_at,shipping_profile_id) values

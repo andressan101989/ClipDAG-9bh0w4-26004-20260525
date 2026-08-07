@@ -18,8 +18,13 @@ export interface MarketplaceShippingProfile {
   shipsFromCountry: string;
   returnPolicySummary: string;
   legacyUnrestricted: boolean;
+  configurationStatus: 'explicit_ready' | 'configuration_required' | 'invalid_data';
+  productsUsing: number;
   regions: MarketplaceShippingRegion[];
 }
+export type MarketplaceShippingErrorCode = 'marketplace_shipping_profile_missing'|'marketplace_shipping_profile_inactive'|'marketplace_shipping_configuration_required'|'marketplace_shipping_destination_unsupported'|'marketplace_shipping_country_invalid'|'marketplace_shipping_region_invalid'|'marketplace_shipping_rule_ambiguous'|'marketplace_shipping_price_invalid'|'marketplace_shipping_product_not_physical'|'marketplace_shipping_quote_stale'|'marketplace_shipping_unknown';
+export interface MarketplaceShippingQuote {eligible:true;code:string;shippingProfileId:string|null;matchedRuleId:string|null;countryCode:string|null;regionCode:string|null;shippingAmount:number;currency:'BDAG';processingDaysMin:number;processingDaysMax:number;transitDaysMin:number;transitDaysMax:number;estimatedDeliveryDaysMin:number;estimatedDeliveryDaysMax:number;quoteTimestamp:string;quoteFingerprint:string;quantityPolicy:'per_order_profile'}
+export class MarketplaceShippingError extends Error {constructor(public code:MarketplaceShippingErrorCode,public postgresCode:string|null=null){super(code);this.name='MarketplaceShippingError';}}
 export interface MarketplaceShippingProfileInput {
   profileId?: string | null;
   storeId: string;
@@ -47,6 +52,8 @@ const parse = (value: unknown): MarketplaceShippingProfile[] => {
       processingDaysMin: number(row.processing_days_min), processingDaysMax: number(row.processing_days_max),
       shipsFromCountry: String(row.ships_from_country), returnPolicySummary: String(row.return_policy_summary),
       legacyUnrestricted: row.legacy_unrestricted === true,
+      configurationStatus: String(row.configuration_status) as MarketplaceShippingProfile['configurationStatus'],
+      productsUsing: number(row.products_using ?? 0),
       regions: regions.map(rawRegion => {
         const region = rawRegion as Record<string, unknown>;
         return { countryCode: String(region.country_code), regionCode: region.region_code == null ? null : String(region.region_code),
@@ -56,6 +63,18 @@ const parse = (value: unknown): MarketplaceShippingProfile[] => {
     };
   });
 };
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const shippingCodes:MarketplaceShippingErrorCode[]=['marketplace_shipping_profile_missing','marketplace_shipping_profile_inactive','marketplace_shipping_configuration_required','marketplace_shipping_destination_unsupported','marketplace_shipping_country_invalid','marketplace_shipping_region_invalid','marketplace_shipping_rule_ambiguous','marketplace_shipping_price_invalid','marketplace_shipping_product_not_physical','marketplace_shipping_quote_stale'];
+const shippingCode=(error:unknown)=>{const x=error&&typeof error==='object'?error as Record<string,unknown>:{};const text=[x.message,x.details,x.hint,(x.context as Record<string,unknown>|undefined)?.body].filter(v=>typeof v==='string').join(' ');return shippingCodes.find(code=>text.includes(code))??'marketplace_shipping_unknown';};
+export const normalizeMarketplaceCountry=(value:string)=>value.trim().toUpperCase();
+export const normalizeMarketplaceRegion=(value:string|null|undefined)=>value?.trim().toUpperCase()||null;
+export async function quoteMarketplaceShipping(productId:string,countryCode:string,regionCode:string|null,quantity=1):Promise<MarketplaceShippingQuote>{
+ if(!UUID.test(productId)||!/^[A-Z]{2}$/.test(normalizeMarketplaceCountry(countryCode))||!Number.isInteger(quantity)||quantity<1)throw new MarketplaceShippingError('marketplace_shipping_country_invalid');
+ const{data,error}=await db().rpc('quote_marketplace_shipping',{p_product_id:productId,p_country_code:normalizeMarketplaceCountry(countryCode),p_region_code:normalizeMarketplaceRegion(regionCode),p_quantity:quantity});if(error)throw new MarketplaceShippingError(shippingCode(error),typeof error.code==='string'?error.code:null);
+ const x=data as Record<string,unknown>;if(!x||x.eligible!==true||x.currency!=='BDAG'||!Number.isFinite(Date.parse(`${x.quote_timestamp??''}`))||typeof x.quote_fingerprint!=='string'||!x.quote_fingerprint||!['per_order_profile'].includes(`${x.quantity_policy??''}`))throw new MarketplaceShippingError('marketplace_shipping_unknown');
+ const profile=x.shipping_profile_id==null?null:`${x.shipping_profile_id}`,rule=x.matched_rule_id==null?null:`${x.matched_rule_id}`;if((profile&&!UUID.test(profile))||(rule&&!UUID.test(rule)))throw new MarketplaceShippingError('marketplace_shipping_unknown');
+ return{eligible:true,code:`${x.code}`,shippingProfileId:profile,matchedRuleId:rule,countryCode:x.country_code==null?null:`${x.country_code}`,regionCode:x.region_code==null?null:`${x.region_code}`,shippingAmount:number(x.shipping_amount),currency:'BDAG',processingDaysMin:number(x.processing_days_min),processingDaysMax:number(x.processing_days_max),transitDaysMin:number(x.transit_days_min),transitDaysMax:number(x.transit_days_max),estimatedDeliveryDaysMin:number(x.estimated_delivery_days_min),estimatedDeliveryDaysMax:number(x.estimated_delivery_days_max),quoteTimestamp:`${x.quote_timestamp}`,quoteFingerprint:`${x.quote_fingerprint}`,quantityPolicy:'per_order_profile'};
+}
 
 export async function fetchMyMarketplaceShippingProfiles(storeId: string): Promise<MarketplaceShippingProfile[]> {
   const { data, error } = await db().rpc('fetch_my_marketplace_shipping_profiles', { p_store_id: storeId });
