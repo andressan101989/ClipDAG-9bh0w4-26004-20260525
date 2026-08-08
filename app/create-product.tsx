@@ -600,7 +600,7 @@ export default function CreateProductScreen() {
         storeId: store.id, name: `Envío ${shippingCountry.toUpperCase()}`,
         processingDaysMin: 1, processingDaysMax: 3, shipsFromCountry: shippingCountry,
         returnPolicySummary: returnPolicy.trim(),
-        regions: [{ countryCode: shippingCountry, regionCode: null, shippingPrice: amount,
+        regions: [{ id: null, status: 'active', countryCode: shippingCountry, regionCode: null, shippingPrice: amount,
           freeShippingThreshold: null, transitDaysMin: 2, transitDaysMax: 7 }],
       });
       const profiles = await fetchMyMarketplaceShippingProfiles(store.id);

@@ -1,6 +1,7 @@
 import { getSupabaseClient } from '@/template';
 
 export interface MarketplaceShippingRegion {
+  id: string | null;
   countryCode: string;
   regionCode: string | null;
   shippingPrice: number;
@@ -33,7 +34,7 @@ export interface MarketplaceShippingProfileInput {
   processingDaysMax: number;
   shipsFromCountry: string;
   returnPolicySummary: string;
-  regions: Omit<MarketplaceShippingRegion, 'status'>[];
+  regions: MarketplaceShippingRegion[];
 }
 
 const db = () => getSupabaseClient();
@@ -58,9 +59,9 @@ export const parseMarketplaceShippingProfiles = (value: unknown): MarketplaceShi
       legacyUnrestricted: row.legacy_unrestricted === true,
       configurationStatus:configurationStatus as MarketplaceShippingProfile['configurationStatus'],productsUsing,
       regions: regions.map(rawRegion => {
-        const region=rawRegion as Record<string,unknown>,regionCountry=requiredText(region.country_code),regionCode=region.region_code==null?null:requiredText(region.region_code),transitDaysMin=number(region.transit_days_min),transitDaysMax=number(region.transit_days_max),regionStatus=requiredText(region.status);
-        if(!/^[A-Z]{2}$/.test(regionCountry)||(regionCode!==null&&!/^[A-Z0-9-]{1,10}$/.test(regionCode))||!Number.isInteger(transitDaysMin)||!Number.isInteger(transitDaysMax)||transitDaysMin>transitDaysMax||!['active','paused'].includes(regionStatus))throw new Error('marketplace_invalid_shipping_profile');
-        return{countryCode:regionCountry,regionCode,shippingPrice:number(region.shipping_price),freeShippingThreshold:region.free_shipping_threshold==null?null:number(region.free_shipping_threshold),transitDaysMin,transitDaysMax,status:regionStatus as'active'|'paused'};
+        const region=rawRegion as Record<string,unknown>,regionId=requiredText(region.id),regionCountry=requiredText(region.country_code),regionCode=region.region_code==null?null:requiredText(region.region_code),transitDaysMin=number(region.transit_days_min),transitDaysMax=number(region.transit_days_max),regionStatus=requiredText(region.status);
+        if(!UUID.test(regionId)||!/^[A-Z]{2}$/.test(regionCountry)||(regionCode!==null&&!/^[A-Z0-9-]{1,10}$/.test(regionCode))||!Number.isInteger(transitDaysMin)||!Number.isInteger(transitDaysMax)||transitDaysMin>transitDaysMax||!['active','paused'].includes(regionStatus))throw new Error('marketplace_invalid_shipping_profile');
+        return{id:regionId,countryCode:regionCountry,regionCode,shippingPrice:number(region.shipping_price),freeShippingThreshold:region.free_shipping_threshold==null?null:number(region.free_shipping_threshold),transitDaysMin,transitDaysMax,status:regionStatus as'active'|'paused'};
       }),
     };
   });
@@ -104,7 +105,7 @@ export async function upsertMyMarketplaceShippingProfile(input: MarketplaceShipp
     p_profile_id: input.profileId ?? null, p_store_id: input.storeId, p_name: input.name,
     p_processing_days_min: input.processingDaysMin, p_processing_days_max: input.processingDaysMax,
     p_ships_from_country: input.shipsFromCountry.toUpperCase(), p_return_policy_summary: input.returnPolicySummary,
-    p_regions: input.regions.map(region => ({ country_code: region.countryCode.toUpperCase(), region_code: region.regionCode?.toUpperCase() ?? null,
+    p_regions: input.regions.map(region => ({ id:region.id,status:region.status,country_code: region.countryCode.toUpperCase(), region_code: region.regionCode?.toUpperCase() ?? null,
       shipping_price: region.shippingPrice, free_shipping_threshold: region.freeShippingThreshold,
       transit_days_min: region.transitDaysMin, transit_days_max: region.transitDaysMax })),
   });
