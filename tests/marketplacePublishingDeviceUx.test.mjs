@@ -15,12 +15,23 @@ import {
   validateCreationVariants,
 } from "../services/marketplaceVariantDraft.ts";
 
-const editor = readFileSync("app/seller/product-editor/[productId].tsx", "utf8");
+const editor = readFileSync(
+  "app/seller/product-editor/[productId].tsx",
+  "utf8",
+);
 const shipping = readFileSync("app/seller/shipping-profile.tsx", "utf8");
 const variants = readFileSync("app/seller/product/[id]/variants.tsx", "utf8");
+const pickerService = readFileSync(
+  "services/marketplaceMediaPickerService.ts",
+  "utf8",
+);
 
 test("friendly shipping choices preserve authoritative country and region codes", () => {
-  assert.equal(MARKETPLACE_SHIPPING_COUNTRIES.find((x) => x.label === "Estados Unidos")?.code, "US");
+  assert.equal(
+    MARKETPLACE_SHIPPING_COUNTRIES.find((x) => x.label === "Estados Unidos")
+      ?.code,
+    "US",
+  );
   assert.equal(US_STATES.find((x) => x[1] === "Florida")?.[0], "FL");
   assert.equal(CA_PROVINCES.find((x) => x[1] === "Ontario")?.[0], "ON");
   assert.equal(shippingRegionsForCountry("GB").length, 0);
@@ -43,8 +54,17 @@ test("shipping validation names every visible blocker", () => {
 });
 
 test("shipping RPC tokens become safe seller messages and safe DEV logs", () => {
-  assert.match(shippingSetupError({ message: "marketplace_shipping_region_invalid", code: "22023" }).message, /estado o provincia/);
-  assert.match(shippingSetupError({ message: "marketplace_store_inactive" }).message, /Activa tu tienda/);
+  assert.match(
+    shippingSetupError({
+      message: "marketplace_shipping_region_invalid",
+      code: "22023",
+    }).message,
+    /estado o provincia/,
+  );
+  assert.match(
+    shippingSetupError({ message: "marketplace_store_inactive" }).message,
+    /Activa tu tienda/,
+  );
   assert.match(shipping, /\[MarketplaceShippingSetup\]/);
 });
 
@@ -69,7 +89,10 @@ test("guided variants produce six unique combinations and one automatic default"
   assert.equal(generated.filter((x) => x.isDefault).length, 1);
   assert.equal(new Set(generated.map((x) => x.sku)).size, 6);
   assert.ok(generated.every((x) => x.price === "25" && x.onHand === "10"));
-  assert.match(generateVariantSku("Runner", ["Negro", "M"], 0), /^RUNNER-NEGRO-M-/);
+  assert.match(
+    generateVariantSku("Runner", ["Negro", "M"], 0),
+    /^RUNNER-NEGRO-M-/,
+  );
 });
 
 test("variant UX is simple first while advanced authority remains available", () => {
@@ -89,6 +112,10 @@ test("Product Publishing picker handles PhotoKit rejection and uses current medi
   assert.match(editor, /\[ProductMediaPicker\]/);
   assert.match(editor, /No pudimos abrir esta foto/);
   assert.match(editor, /No pudimos abrir este video/);
-  assert.match(editor, /try \{[\s\S]*requestMediaLibraryPermissionsAsync[\s\S]*launchImageLibraryAsync/);
+  assert.match(
+    editor,
+    /try \{[\s\S]*requireMediaAccess[\s\S]*launchImageLibraryAsync/,
+  );
+  assert.match(pickerService, /requestMediaLibraryPermissionsAsync/);
   assert.match(editor, /state: "failed"/);
 });

@@ -20,7 +20,7 @@ test('publication requires shipping and existing products receive explicit legac
   assert.match(migration, /marketplace_product_not_ready_shipping_incomplete/);
   assert.match(migration, /legacy_unrestricted/);
   assert.match(creation, /Configuracion de envio requerida/);
-  assert.match(editing, /Configurar envio/);
+  assert.match(editing, /Configurar env[ií]o/);
 });
 test('checkout rejects unsupported destinations and freezes shipping values', () => {
   assert.match(migration, /marketplace_shipping_destination_unsupported/);

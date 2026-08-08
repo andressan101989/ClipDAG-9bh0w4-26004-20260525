@@ -26,6 +26,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors, Radius, Spacing } from "@/constants/theme";
 import { getSafeMediaError, uploadMediaFromUri } from "@/services/mediaService";
 import {
+  expandMarketplacePhotosAccess,
+  formatProductVideoDuration,
+  requestMarketplacePhotosAccess,
+  validateProductVideoDuration,
+} from "@/services/marketplaceMediaPickerService";
+import { shippingCountryLabel } from "@/services/marketplaceShippingSetup";
+import {
   createOrResumeMarketplaceProductDraft,
   fetchMarketplaceProductDraft,
   persistMarketplaceProductMedia,
@@ -67,6 +74,7 @@ import {
   EditorCard,
   EditorField,
 } from "@/components/marketplace/product-editor/ProductEditorFields";
+import { SearchableSelectField } from "@/components/marketplace/SearchableSelectField";
 
 const EMPTY = {
   title: "Producto sin titulo",
@@ -274,11 +282,11 @@ export default function ProductEditorScreen() {
       );
       const selected = currentReady
         ? shippingProfileId
-        : profiles.find(
+        : (profiles.find(
             (profile) =>
               profile.status === "active" &&
               profile.configurationStatus === "explicit_ready",
-          )?.id ?? null;
+          )?.id ?? null);
       if (selected && selected !== shippingProfileId) {
         setShippingProfileId(selected);
         saveQueue.current.edit();
@@ -486,13 +494,49 @@ export default function ProductEditorScreen() {
     mediaQueue.current = operation.catch(() => undefined);
     return operation;
   };
+  const requireMediaAccess = async (kind: "photo" | "video") => {
+    const { access } = await requestMarketplacePhotosAccess();
+    if (access === "none") {
+      Alert.alert(
+        "Permiso de Fotos requerido",
+        `Permite acceso a Fotos para seleccionar ${kind === "video" ? "tus videos" : "tus fotos"}.`,
+      );
+      return false;
+    }
+    if (access === "limited") {
+      return await new Promise<boolean>((resolve) =>
+        Alert.alert(
+          "Acceso limitado a Fotos",
+          `OnSpace solo puede ver algunos ${kind === "video" ? "videos" : "archivos"}.`,
+          [
+            {
+              text: "Cancelar",
+              style: "cancel",
+              onPress: () => resolve(false),
+            },
+            {
+              text: "Continuar con acceso actual",
+              onPress: () => resolve(true),
+            },
+            {
+              text: `Elegir más ${kind === "video" ? "videos" : "fotos"}`,
+              onPress: () => {
+                void expandMarketplacePhotosAccess()
+                  .then(() => resolve(true))
+                  .catch(() => resolve(false));
+              },
+            },
+          ],
+        ),
+      );
+    }
+    return true;
+  };
   const addPhotos = async () => {
     if (images.length >= 5) return;
     let result: ImagePicker.ImagePickerResult;
     try {
-      const permission =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) return;
+      if (!(await requireMediaAccess("photo"))) return;
       result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsMultipleSelection: true,
@@ -595,9 +639,7 @@ export default function ProductEditorScreen() {
     if (pendingVideoRef.current?.state === "uploading") return;
     let result: ImagePicker.ImagePickerResult;
     try {
-      const permission =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) return;
+      if (!(await requireMediaAccess("video"))) return;
       result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["videos"],
         allowsEditing: false,
@@ -624,21 +666,28 @@ export default function ProductEditorScreen() {
     }
     if (result.canceled) return;
     const asset = result.assets[0],
-      duration = asset.duration ?? 0;
-    if (duration <= 0) {
+      durationResult = validateProductVideoDuration(asset.duration);
+    if (__DEV__)
+      console.info("[ProductVideo]", {
+        pickerDurationRaw: asset.duration ?? null,
+        normalizedDurationMs: durationResult.durationMs,
+        durationValid: durationResult.valid,
+      });
+    if (durationResult.durationMs === null) {
       Alert.alert(
         "Video no valido",
         "No pudimos procesar este video. Selecciona otro archivo.",
       );
       return;
     }
-    if (duration > 60000) {
+    if (durationResult.tooLong) {
       Alert.alert(
         "Video demasiado largo",
-        "El video debe durar 60 segundos o menos.",
+        `Este video dura ${formatProductVideoDuration(durationResult.durationMs)}. El video del producto debe durar 60 segundos o menos.`,
       );
       return;
     }
+    const duration = durationResult.durationMs;
     const mime =
       asset.mimeType ??
       (asset.fileName?.toLowerCase().endsWith(".mov")
@@ -1144,14 +1193,23 @@ export default function ProductEditorScreen() {
           <EditorCard title="Variantes">
             {variantSummary.options === 0 ? (
               <>
-                <Text style={styles.body}>Este producto no tiene opciones.</Text>
-                <Text style={styles.muted}>Precio: {price} BDAG · Stock: {stock}</Text>
+                <Text style={styles.body}>
+                  Este producto no tiene opciones.
+                </Text>
+                <Text style={styles.muted}>
+                  Precio: {price} BDAG · Stock: {stock}
+                </Text>
               </>
             ) : (
-              <Text style={styles.body}>{variantSummary.options} opciones · {variantSummary.variants} combinaciones</Text>
+              <Text style={styles.body}>
+                {variantSummary.options} opciones · {variantSummary.variants}{" "}
+                combinaciones
+              </Text>
             )}
             <Text style={variantsReady ? styles.videoReady : styles.warning}>
-              {variantsReady ? "✓ Variantes listas" : "⚠ Completa precios y stock"}
+              {variantsReady
+                ? "✓ Variantes listas"
+                : "⚠ Completa precios y stock"}
             </Text>
             {productId ? (
               <Pressable
@@ -1160,43 +1218,88 @@ export default function ProductEditorScreen() {
                   router.push(`/seller/product/${productId}/variants`)
                 }
               >
-                <Text style={styles.secondaryText}>{variantSummary.options ? "Administrar variantes" : "Agregar color, talla u otra opción"}</Text>
+                <Text style={styles.secondaryText}>
+                  {variantSummary.options
+                    ? "Administrar variantes"
+                    : "Agregar color, talla u otra opción"}
+                </Text>
               </Pressable>
             ) : null}
           </EditorCard>
         ) : null}
         {step === 4 ? (
           <EditorCard title="Envio">
-            <View style={styles.choices}>
-              {productType === "physical" ? (
-                shippingProfiles.map((p) => (
-                  <Choice
-                    key={p.id}
-                    label={`${p.name}${p.configurationStatus === "explicit_ready" ? "" : " · Configuracion requerida"}`}
-                    selected={shippingProfileId === p.id}
-                    disabled={
-                      p.status !== "active" ||
-                      p.configurationStatus !== "explicit_ready"
-                    }
-                    onPress={() => {
-                      setShippingProfileId(p.id);
-                      saveQueue.current.edit();
-                      setDirty(true);
-                      setMessage("Envío configurado");
-                      if (__DEV__)
-                        console.info("[MarketplaceProductEditor]", {
-                          operation: "shipping_profile_selected",
-                          profileIdPresent: true,
-                        });
-                    }}
-                  />
-                ))
-              ) : (
-                <Text style={styles.body}>
-                  Los productos digitales no tienen cargo de envio.
-                </Text>
-              )}
-            </View>
+            {productType === "physical" ? (
+              (() => {
+                const readyProfiles = shippingProfiles.filter(
+                  (p) =>
+                    p.status === "active" &&
+                    p.configurationStatus === "explicit_ready",
+                );
+                const selected = readyProfiles.find(
+                  (p) => p.id === shippingProfileId,
+                );
+                const activeRule = selected?.regions.find(
+                  (r) => r.status === "active",
+                );
+                const needsConfiguration = shippingProfiles.filter(
+                  (p) => p.configurationStatus !== "explicit_ready",
+                ).length;
+                return (
+                  <>
+                    {readyProfiles.length ? (
+                      <SearchableSelectField
+                        label="Método de envío"
+                        value={shippingProfileId ?? ""}
+                        options={readyProfiles.map((p) => ({
+                          value: p.id,
+                          label: p.name,
+                        }))}
+                        onChange={(id) => {
+                          setShippingProfileId(id);
+                          saveQueue.current.edit();
+                          setDirty(true);
+                          setMessage("Envío configurado");
+                          if (__DEV__)
+                            console.info("[MarketplaceProductEditor]", {
+                              operation: "shipping_profile_selected",
+                              profileIdPresent: true,
+                            });
+                        }}
+                        searchLabel="Buscar método"
+                      />
+                    ) : null}
+                    {selected && activeRule ? (
+                      <View style={styles.shippingSummary}>
+                        <Text style={styles.videoReady}>
+                          ✓ Envío configurado
+                        </Text>
+                        <Text style={styles.body}>{selected.name}</Text>
+                        <Text style={styles.muted}>
+                          {shippingCountryLabel(activeRule.countryCode)} ·{" "}
+                          {activeRule.shippingPrice} BDAG ·{" "}
+                          {activeRule.transitDaysMin}–
+                          {activeRule.transitDaysMax} días
+                        </Text>
+                      </View>
+                    ) : null}
+                    {needsConfiguration ? (
+                      <Text style={styles.muted}>
+                        {needsConfiguration}{" "}
+                        {needsConfiguration === 1
+                          ? "método necesita"
+                          : "métodos necesitan"}{" "}
+                        configuración.
+                      </Text>
+                    ) : null}
+                  </>
+                );
+              })()
+            ) : (
+              <Text style={styles.body}>
+                Los productos digitales no tienen cargo de envio.
+              </Text>
+            )}
             {productType === "physical" && !shippingReady ? (
               <>
                 <Text style={styles.warning}>
@@ -1215,9 +1318,25 @@ export default function ProductEditorScreen() {
                     })
                   }
                 >
-                  <Text style={styles.secondaryText}>Configurar envio</Text>
+                  <Text style={styles.secondaryText}>Configurar envío</Text>
                 </Pressable>
               </>
+            ) : productType === "physical" ? (
+              <Pressable
+                style={styles.secondary}
+                onPress={() =>
+                  router.push({
+                    pathname: "/seller/shipping-profile",
+                    params: {
+                      storeId,
+                      profileId: shippingProfileId ?? "",
+                      productId: productId ?? "new",
+                    },
+                  })
+                }
+              >
+                <Text style={styles.secondaryText}>Editar envío</Text>
+              </Pressable>
             ) : null}
           </EditorCard>
         ) : null}
@@ -1313,4 +1432,10 @@ const styles = StyleSheet.create({
   price: { fontSize: 21, fontWeight: "900", color: Colors.primaryLight },
   previewBadge: { color: Colors.textSubtle, fontSize: 12 },
   videoReady: { color: Colors.success, fontWeight: "700" },
+  shippingSummary: {
+    padding: Spacing.md,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.success + "14",
+    gap: 5,
+  },
 });
