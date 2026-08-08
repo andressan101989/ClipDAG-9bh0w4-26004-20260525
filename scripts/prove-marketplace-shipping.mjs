@@ -360,6 +360,183 @@ try {
       snap.quote_fingerprint,
     "snapshot_failed",
   );
+  stage = "historical_rule_archival";
+  await db.query("savepoint historical_rule_archival");
+  const historicalBefore = (
+    await db.query(
+      "select to_jsonb(s) snapshot from marketplace_order_shipping_snapshots s where checkout_id=$1",
+      [checkout.checkout.id],
+    )
+  ).rows[0].snapshot;
+  const ruleCountBeforeRemoval = (
+    await db.query(
+      "select count(*)::int n from marketplace_shipping_profile_regions where profile_id=$1",
+      [id.profile],
+    )
+  ).rows[0].n;
+  const saveArchiveRules = (rules) =>
+    db.query(
+      "select upsert_my_marketplace_shipping_profile($1,$2,'Explicit',1,2,'US','Returns',$3::jsonb)",
+      [id.profile, id.store, JSON.stringify(rules)],
+    );
+  await claims("authenticated", id.seller);
+  await saveArchiveRules([]);
+  const archivedRule = (
+    await db.query(
+      "select id,status,archived_at from marketplace_shipping_profile_regions where id=$1",
+      [snap.matched_rule_id],
+    )
+  ).rows[0];
+  assert(
+    archivedRule.id === snap.matched_rule_id &&
+      archivedRule.status === "paused" &&
+      archivedRule.archived_at,
+    "historical_rule_not_archived",
+  );
+  assert(
+    (
+      await db.query(
+        "select count(*)::int n from marketplace_shipping_profile_regions where profile_id=$1",
+        [id.profile],
+      )
+    ).rows[0].n === ruleCountBeforeRemoval - 1,
+    "unused_rule_not_deleted",
+  );
+  const historicalAfterRemoval = (
+    await db.query(
+      "select to_jsonb(s) snapshot from marketplace_order_shipping_snapshots s where checkout_id=$1",
+      [checkout.checkout.id],
+    )
+  ).rows[0].snapshot;
+  assert(
+    JSON.stringify(historicalBefore) === JSON.stringify(historicalAfterRemoval),
+    "historical_snapshot_changed",
+  );
+  assert(
+    (
+      await db.query(
+        "select configuration_status from marketplace_shipping_profiles where id=$1",
+        [id.profile],
+      )
+    ).rows[0].configuration_status === "configuration_required",
+    "archived_only_not_configuration_required",
+  );
+  await claims("service_role");
+  assert(
+    (
+      await db.query(
+        "select validate_marketplace_checkout_shipping_snapshot($1) q",
+        [checkout.checkout.id],
+      )
+    ).rows[0].q.valid,
+    "frozen_reservation_changed_after_archive",
+  );
+  await claims("authenticated", id.host);
+  const checkoutCountBeforeUnsupported = (
+    await db.query(
+      "select count(*)::int n from marketplace_checkout_sessions where buyer_id=$1",
+      [id.host],
+    )
+  ).rows[0].n;
+  await code(
+    () =>
+      db.query(
+        "select create_marketplace_checkout_reservation(jsonb_build_array(jsonb_build_object('variant_id',$1::uuid,'quantity',1))," +
+          address +
+          ",$2)",
+        [id.variant, randomUUID()],
+      ),
+    "marketplace_shipping_configuration_required",
+  );
+  assert(
+    (
+      await db.query(
+        "select count(*)::int n from marketplace_checkout_sessions where buyer_id=$1",
+        [id.host],
+      )
+    ).rows[0].n === checkoutCountBeforeUnsupported,
+    "removed_rule_created_checkout",
+  );
+  await claims("authenticated", id.seller);
+  await saveArchiveRules([
+    { id: null, country_code: "US", region_code: "TX", shipping_price: 0.5, transit_days_min: 2, transit_days_max: 4 },
+  ]);
+  const txRule = (
+    await db.query(
+      "select id from marketplace_shipping_profile_regions where profile_id=$1 and country_code='US'and region_code='TX'and status='active'",
+      [id.profile],
+    )
+  ).rows[0].id;
+  assert(
+    (
+      await db.query(
+        "select configuration_status from marketplace_shipping_profiles where id=$1",
+        [id.profile],
+      )
+    ).rows[0].configuration_status === "explicit_ready",
+    "other_active_rule_not_ready",
+  );
+  await code(
+    () => db.query("select quote_marketplace_shipping($1,'US','FL',1)", [id.product]),
+    "marketplace_shipping_destination_unsupported",
+  );
+  assert(
+    (await db.query("select quote_marketplace_shipping($1,'US','TX',1)q", [id.product])).rows[0].q.eligible,
+    "other_active_rule_quote_failed",
+  );
+  await saveArchiveRules([
+    { id: txRule, status: "active", country_code: "US", region_code: "TX", shipping_price: 0.5, transit_days_min: 2, transit_days_max: 4 },
+    { id: null, status: "active", country_code: "US", region_code: "FL", shipping_price: 1.25, transit_days_min: 3, transit_days_max: 6 },
+  ]);
+  const readdedRules = (
+    await db.query(
+      "select id,status,archived_at from marketplace_shipping_profile_regions where profile_id=$1 and country_code='US'and region_code='FL'",
+      [id.profile],
+    )
+  ).rows;
+  assert(
+    readdedRules.length === 1 &&
+      readdedRules[0].id === snap.matched_rule_id &&
+      readdedRules[0].status === "active" &&
+      readdedRules[0].archived_at === null,
+    "historical_rule_not_reactivated",
+  );
+  const readdedQuote = (
+    await db.query("select quote_marketplace_shipping($1,'US','FL',1)q", [id.product])
+  ).rows[0].q;
+  assert(
+    readdedQuote.matched_rule_id === snap.matched_rule_id &&
+      Number(readdedQuote.shipping_amount) === 1.25,
+    "readded_quote_ambiguous",
+  );
+  await claims("authenticated", id.host);
+  const readdedCheckout = (
+    await db.query(
+      "select create_marketplace_checkout_reservation(jsonb_build_array(jsonb_build_object('variant_id',$1::uuid,'quantity',1))," +
+        address +
+        ",$2)q",
+      [id.variant, randomUUID()],
+    )
+  ).rows[0].q;
+  assert(
+    Number(readdedCheckout.checkout.shipping_amount) === 1.25,
+    "new_reservation_not_readded_price",
+  );
+  await db.query("select cancel_marketplace_checkout_reservation($1)", [readdedCheckout.checkout.id]);
+  const historicalAfterReadd = (
+    await db.query(
+      "select to_jsonb(s) snapshot from marketplace_order_shipping_snapshots s where checkout_id=$1",
+      [checkout.checkout.id],
+    )
+  ).rows[0].snapshot;
+  assert(
+    JSON.stringify(historicalBefore) === JSON.stringify(historicalAfterReadd),
+    "historical_snapshot_changed_after_readd",
+  );
+  await db.query("rollback to savepoint historical_rule_archival");
+  await db.query("release savepoint historical_rule_archival");
+  await claims("authenticated", id.buyer);
+  stage = "checkout";
   await db.query(
     "update marketplace_shipping_profile_regions set shipping_price=1 where profile_id=$1 and region_code='FL'",
     [id.profile],
@@ -554,7 +731,7 @@ try {
   );
   const realShippingStatuses = (
     await db.query(
-      "select(select count(*)::int from marketplace_shipping_profiles where status='active')active_profiles,(select count(*)::int from marketplace_shipping_profiles where status='paused')paused_profiles,(select count(*)::int from marketplace_shipping_profile_regions where status='active')active_rules,(select count(*)::int from marketplace_shipping_profile_regions where status='paused')paused_rules",
+      "select(select count(*)::int from marketplace_shipping_profiles where status='active')active_profiles,(select count(*)::int from marketplace_shipping_profiles where status='paused')paused_profiles,(select count(*)::int from marketplace_shipping_profile_regions)total_rules,(select count(*)::int from marketplace_shipping_profile_regions where status='active')active_rules,(select count(*)::int from marketplace_shipping_profile_regions where status='paused')paused_rules,(select count(*)::int from marketplace_order_shipping_snapshots where matched_rule_id is not null)historical_snapshots,(select count(distinct matched_rule_id)::int from marketplace_order_shipping_snapshots where matched_rule_id is not null)historical_rule_ids,(select count(*)::int from marketplace_order_shipping_snapshots s left join marketplace_shipping_profile_regions r on r.id=s.matched_rule_id where s.matched_rule_id is not null and r.id is null)orphaned_matched_rule_ids",
     )
   ).rows[0];
   console.log(
@@ -576,6 +753,21 @@ try {
           country_validation: true,
           us_ca_normalization: true,
           country_wide_rule: true,
+        },
+        historical_archival: {
+          unused_rule_deleted: true,
+          referenced_rule_paused: true,
+          stable_uuid: true,
+          snapshot_immutable: true,
+          archived_rule_excluded: true,
+          archived_only_configuration_required: true,
+          other_active_rule_ready: true,
+          same_destination_reactivated: true,
+          exactly_one_active_rule: true,
+          no_quote_ambiguity: true,
+          frozen_reservation_unchanged: true,
+          new_reservation_blocked_after_removal: true,
+          new_reservation_uses_readded_price: true,
         },
         real_shipping_statuses: realShippingStatuses,
         blocked: { country: true, region: true, configuration: true },
