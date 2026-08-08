@@ -41,7 +41,7 @@ export default function SellerVariantsScreen(){
   const [options,setOptions]=useState<DraftOption[]>([]);
   const [variants,setVariants]=useState<DraftVariant[]>([]);
   const [loading,setLoading]=useState(true);const [dirty,setDirty]=useState(false);
-  const [saving,setSaving]=useState(false);const actionLock=useRef(false);
+  const [saving,setSaving]=useState(false);const [showAdvanced,setShowAdvanced]=useState(false);const actionLock=useRef(false);
 
   const hydrate=useCallback((payload:SellerProductInventory)=>{
     const labels=new Map<string,string>();
@@ -80,7 +80,11 @@ export default function SellerVariantsScreen(){
   const parsedOptions=useMemo(()=>options.map(option=>({
     name:option.name.trim(),values:option.valuesText.split(',').map(value=>value.trim()).filter(Boolean),
   })),[options]);
+  const isPublished=Boolean((data?.detail.product as unknown as {published_at?:string|null})?.published_at);
   const generate=()=>{
+    if(isPublished&&variants.some(item=>item.id)){
+      showAlert('Protegemos tus variantes','Para un producto publicado, edita precio y stock por combinación o archiva variantes desde Opciones avanzadas. No reemplazaremos combinaciones con historial.');return;
+    }
     let validated;
     try{validated=parseVariantOptions(options);}
     catch(error){
@@ -90,6 +94,7 @@ export default function SellerVariantsScreen(){
     const combinations=cartesianVariantValues(validated.map(option=>option.values));
     if(combinations.length>100){showAlert('Demasiadas variantes','El máximo es 100 combinaciones.');return;}
     const perform=()=>{
+      if(__DEV__)console.info('[ProductVariants]',{operation:'generate',optionCount:validated.length,combinationCount:combinations.length});
       const base=data?.detail.product.price??1;
       const prefix=`${data?.detail.product.title??'PRODUCTO'}-${id.slice(0,8)}`;
       setVariants(combinations.map((values,index)=>({
@@ -119,9 +124,10 @@ export default function SellerVariantsScreen(){
         low_stock_threshold:Math.max(0,Number.parseInt(item.threshold,10)||0),
       }));
       await configureProductVariants(id,parsedOptions,payload,randomUUID());
+      if(__DEV__)console.info('[ProductVariants]',{operation:'save_success',variantCount:payload.length});
       showAlert('Variantes guardadas','Las variantes fueron guardadas y las proyecciones del producto se actualizaron.');
       await reload();
-    }catch(error){showAlert('No se pudo guardar',errorMessage(error));}
+    }catch(error){if(__DEV__)console.info('[ProductVariants]',{operation:'save_failed',code:error instanceof Error?error.message:null});showAlert('No se pudo guardar',errorMessage(error));}
     finally{setSaving(false);actionLock.current=false;}
   };
   const saveVariant=async(index:number)=>{
@@ -131,6 +137,7 @@ export default function SellerVariantsScreen(){
         compareAtPrice:item.compareAtPrice||null,status:item.active?'active':'inactive',
         imageAssetId:item.imageAssetId});
       await setVariantLowStockThreshold(item.id,Math.max(0,Number.parseInt(item.threshold,10)||0));
+      if(item.setOnHand!==item.onHand)await setVariantInventory(item.id,Math.max(0,Number.parseInt(item.setOnHand,10)||0),'Conteo del vendedor',randomUUID());
       showAlert('Variante actualizada','Los cambios fueron guardados.');await reload();
     }catch(error){showAlert('No se pudo actualizar',errorMessage(error));}
     finally{actionLock.current=false;}
@@ -169,17 +176,21 @@ export default function SellerVariantsScreen(){
       <View style={s.summary}>
         <Text style={s.section}>{options.length?'Producto con variantes':'Producto simple'}</Text>
         <Text style={s.muted}>{options.length
-          ?`${variants.filter(item=>item.active).length} variantes activas · ${options.length} opciones`
-          :'Una variante predeterminada con precio e inventario propios.'}</Text>
+          ?`${variants.filter(item=>item.active).length} combinaciones · ${options.length} opciones`
+          :'Este producto no tiene opciones. Solo configura precio y stock.'}</Text>
       </View>
-      <Text style={s.section}>Opciones</Text>
-      <Text style={s.muted}>Puedes usar cualquier nombre válido. Ejemplos: Color, Talla, Material, Capacidad, Modelo o Estilo.</Text>
-      {!options.length?<Pressable style={s.outline} onPress={()=>{
+      <Text style={s.section}>¿Tu producto tiene opciones como talla o color?</Text>
+      <View style={s.row}>
+        <Pressable style={[s.pill,!options.length&&s.pillActive]} onPress={()=>{if(options.length&&variants.some(item=>item.id)){showAlert('Conservamos tus variantes','Archiva las combinaciones existentes desde Opciones avanzadas antes de convertir el producto.');return;}if(__DEV__)console.info('[ProductVariants]',{operation:'mode_changed',mode:'simple'});setOptions([]);setDirty(true);}}><Text style={s.pillText}>No</Text></Pressable>
+        <Pressable style={[s.pill,options.length>0&&s.pillActive]} onPress={()=>{
+          if(options.length)return;if(__DEV__)console.info('[ProductVariants]',{operation:'mode_changed',mode:'variants'});
         Alert.alert('Convertir en producto con variantes',
           'Se generarán nuevas combinaciones. El producto, sus fotos y la propiedad del vendedor se conservarán.',[
-            {text:'Cancelar',style:'cancel'},{text:'Continuar',onPress:()=>{setOptions([{name:'',valuesText:''}]);setDirty(true);}},
+            {text:'Cancelar',style:'cancel'},{text:'Continuar',onPress:()=>{setOptions([{name:'Color',valuesText:''}]);setDirty(true);}},
           ]);
-      }}><Text style={s.outlineText}>Convertir en producto con variantes</Text></Pressable>:null}
+        }}><Text style={s.pillText}>Sí</Text></Pressable>
+      </View>
+      {options.length?<><Text style={s.section}>1. ¿Qué varía?</Text><View style={s.imageChoices}>{['Color','Talla','Material','Capacidad','Estilo'].map(template=><Pressable key={template} style={s.pill} onPress={()=>{setOptions(current=>current.map((item,index)=>index===0?{...item,name:template}:item));setDirty(true);}}><Text style={s.pillText}>{template}</Text></Pressable>)}</View><Text style={s.muted}>Escribe los valores separados por comas. Ejemplo: Negro, Blanco, Azul.</Text></>:null}
       {options.map((option,index)=><View key={index} style={s.card}>
         <TextInput style={s.input} value={option.name} placeholder="Color, Talla o Material"
           placeholderTextColor={Colors.textSubtle} maxLength={40}
@@ -196,25 +207,26 @@ export default function SellerVariantsScreen(){
       }}><Text style={s.outlineText}>Agregar opción</Text></Pressable>:null}
       {options.length>0?<><Text style={s.muted}>Se crearán {estimateVariantCount(options)} variantes.</Text>
         <Pressable style={s.outline} onPress={generate}><Text style={s.outlineText}>
-          {variants.some(item=>item.id)?'Regenerar variantes':'Generar variantes'}</Text></Pressable></>:null}
+          {variants.some(item=>item.id)?'Actualizar combinaciones':'Generar variantes'}</Text></Pressable><Text style={s.muted}>Cambiar las opciones puede reemplazar combinaciones que todavía no hayas guardado.</Text></>:null}
 
-      <Text style={s.section}>Configuración de variantes</Text>
+      <Text style={s.section}>{options.length?'2. Precio y stock por combinación':'Precio y stock'}</Text>
+      <Pressable style={s.outline} onPress={()=>setShowAdvanced(value=>!value)}><Text style={s.outlineText}>{showAdvanced?'Ocultar opciones avanzadas':'Opciones avanzadas'}</Text></Pressable>
       {variants.map((variant,index)=><View key={variant.id??`${index}-${variant.optionValues.join('-')}`} style={s.card}>
-        {variant.optionValues.length?<Text style={s.variantTitle}>{variant.optionValues.join(' · ')}</Text>:<Text style={s.variantTitle}>Variante predeterminada</Text>}
-        <TextInput style={s.input} value={variant.sku} placeholder="SKU" placeholderTextColor={Colors.textSubtle}
-          autoCapitalize="characters" onChangeText={sku=>updateDraft(index,{sku})}/>
-        <View style={s.row}><TextInput style={[s.input,s.flex]} value={variant.price} placeholder="Precio BDAG"
+        {variant.optionValues.length?<Text style={s.variantTitle}>{variant.optionValues.join(' / ')}</Text>:<Text style={s.variantTitle}>Producto simple</Text>}
+        <Text style={s.label}>Precio (BDAG)</Text><TextInput style={s.input} value={variant.price} placeholder="Precio BDAG"
           placeholderTextColor={Colors.textSubtle} keyboardType="decimal-pad" onChangeText={price=>updateDraft(index,{price})}/>
-          <TextInput style={[s.input,s.flex]} value={variant.compareAtPrice} placeholder="Precio anterior"
+        {showAdvanced?<><Text style={s.label}>SKU (código interno)</Text><Text style={s.muted}>Puedes dejar el código generado automáticamente.</Text><TextInput style={s.input} value={variant.sku} placeholder="SKU generado automáticamente" placeholderTextColor={Colors.textSubtle}
+          autoCapitalize="characters" onChangeText={sku=>updateDraft(index,{sku})}/>
+        <TextInput style={s.input} value={variant.compareAtPrice} placeholder="Precio anterior"
             placeholderTextColor={Colors.textSubtle} keyboardType="decimal-pad"
-            onChangeText={compareAtPrice=>updateDraft(index,{compareAtPrice})}/></View>
+            onChangeText={compareAtPrice=>updateDraft(index,{compareAtPrice})}/>
         <View style={s.row}>
           <Pressable style={[s.pill,variant.active&&s.pillActive]} onPress={()=>updateDraft(index,{active:!variant.active})}>
             <Text style={s.pillText}>{variant.active?'Activa':'Inactiva'}</Text>
           </Pressable>
           <Pressable style={[s.pill,variant.isDefault&&s.pillActive]} onPress={()=>variant.id?void makeDefault(index):
             setVariants(current=>current.map((item,i)=>({...item,isDefault:i===index})))}>
-            <Text style={s.pillText}>Predeterminada</Text>
+            <Text style={s.pillText}>Variante principal</Text>
           </Pressable>
         </View>
         {data?.mediaAssets.length?<View style={s.imageChoices}>
@@ -225,26 +237,23 @@ export default function SellerVariantsScreen(){
             onPress={()=>updateDraft(index,{imageAssetId:asset.id})}>
             <Text style={s.pillText}>Imagen {assetIndex+1}</Text>
           </Pressable>)}
-        </View>:null}
-        <Text style={s.label}>{variant.id?'Inventario actual (solo lectura)':'Inventario inicial'}</Text>
-        {variant.id?<><View style={s.readOnly}><Text style={s.readOnlyText}>{variant.onHand}</Text></View>
-          <View style={s.row}><TextInput style={[s.input,s.flex]} value={variant.setOnHand} keyboardType="number-pad"
+        </View>:null}</>:null}
+        <Text style={s.label}>Stock</Text>
+        {variant.id?<><TextInput style={s.input} value={variant.setOnHand} keyboardType="number-pad"
             onChangeText={setOnHand=>setVariants(current=>current.map((item,i)=>i===index?{...item,setOnHand}:item))}/>
-            <Pressable style={s.smallButton} onPress={()=>void inventoryAction(index,false)}>
-              <Text style={s.buttonText}>Establecer</Text></Pressable></View>
+          {showAdvanced?<><Text style={s.label}>Corrección rápida</Text><Text style={s.muted}>Úsalo para registrar entradas, daños o correcciones.</Text>
           <View style={s.row}><TextInput style={[s.input,s.flex]} value={variant.adjustment} keyboardType="numbers-and-punctuation"
             placeholder="+5 o -2" placeholderTextColor={Colors.textSubtle}
             onChangeText={adjustment=>setVariants(current=>current.map((item,i)=>i===index?{...item,adjustment}:item))}/>
             <Pressable style={s.smallButton} onPress={()=>void inventoryAction(index,true)}>
-              <Text style={s.buttonText}>Ajustar</Text></Pressable></View></>:
+              <Text style={s.buttonText}>Aplicar</Text></Pressable></View></>:null}</>:
           <TextInput style={s.input} value={variant.onHand} keyboardType="number-pad"
             onChangeText={onHand=>updateDraft(index,{onHand,setOnHand:onHand})}/>}
-        <TextInput style={s.input} value={variant.threshold} keyboardType="number-pad"
+        {showAdvanced?<><TextInput style={s.input} value={variant.threshold} keyboardType="number-pad"
           placeholder="Umbral de stock bajo" placeholderTextColor={Colors.textSubtle}
           onChangeText={threshold=>updateDraft(index,{threshold})}/>
-        {variant.id?<View style={s.row}><Pressable style={s.outline} onPress={()=>void saveVariant(index)}>
-          <Text style={s.outlineText}>Guardar variante</Text></Pressable>
-          <Pressable style={s.outline} onPress={()=>confirmArchive(index)}><Text style={s.danger}>Archivar</Text></Pressable></View>:null}
+        {variant.id?<Pressable style={s.outline} onPress={()=>confirmArchive(index)}><Text style={s.danger}>Archivar variante</Text></Pressable>:null}</>:null}
+        {variant.id?<Pressable style={s.outline} onPress={()=>void saveVariant(index)}><Text style={s.outlineText}>Guardar precio y stock</Text></Pressable>:null}
       </View>)}
       <Pressable disabled={saving} style={[s.button,saving&&s.disabled]} onPress={()=>void saveConfiguration()}>
         <Text style={s.buttonText}>{saving?'Guardando…':'Guardar configuración'}</Text>

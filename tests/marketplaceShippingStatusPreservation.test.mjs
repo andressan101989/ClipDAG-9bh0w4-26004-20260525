@@ -24,7 +24,7 @@ test('client carries rule identity and status without exposing a status toggle',
   assert.match(service, /id: string \| null/);
   assert.match(service, /id:region\.id,status:region\.status/);
   assert.doesNotMatch(screen, /status:_/);
-  assert.match(screen, /id:null,status:'active'/);
+  assert.match(screen, /id: null, status: "active"/);
 });
 
 test('linked proof exercises status, validation, security and rollback', () => {

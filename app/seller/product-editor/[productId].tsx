@@ -24,7 +24,7 @@ import { randomUUID } from "expo-crypto";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors, Radius, Spacing } from "@/constants/theme";
-import { uploadMediaFromUri } from "@/services/mediaService";
+import { getSafeMediaError, uploadMediaFromUri } from "@/services/mediaService";
 import {
   createOrResumeMarketplaceProductDraft,
   fetchMarketplaceProductDraft,
@@ -126,6 +126,7 @@ export default function ProductEditorScreen() {
     ),
     [pendingVideo, setPendingVideo] = useState<ProductEditorMedia | null>(null),
     [variantsReady, setVariantsReady] = useState(false),
+    [variantSummary, setVariantSummary] = useState({ options: 0, variants: 1 }),
     [titleConfigured, setTitleConfigured] = useState(false),
     [priceConfigured, setPriceConfigured] = useState(false),
     [categoryConfigured, setCategoryConfigured] = useState(false),
@@ -229,9 +230,14 @@ export default function ProductEditorScreen() {
         router.replace(`/seller/product-editor/${id}` as never);
       }
       hydrate(await fetchMarketplaceProductDraft(id));
-      setVariantsReady(
-        deriveMarketplaceVariantsReady(await fetchSellerProductVariants(id)),
-      );
+      const variantData = await fetchSellerProductVariants(id);
+      setVariantsReady(deriveMarketplaceVariantsReady(variantData));
+      setVariantSummary({
+        options: variantData.detail.options.length,
+        variants: variantData.detail.variants.filter(
+          (variant) => variant.status === "active",
+        ).length,
+      });
       const affiliate = await fetchMyLiveAffiliateOffer(id).catch(() => null);
       setAffiliateEnabled(affiliate?.status === "active");
       if (affiliate) setAffiliatePercent(String(affiliate.commissionBps / 100));
@@ -250,6 +256,84 @@ export default function ProductEditorScreen() {
   useEffect(() => {
     void load();
   }, [load]);
+  const refreshShippingProfiles = useCallback(async () => {
+    if (!storeId) return;
+    if (__DEV__)
+      console.info("[MarketplaceProductEditor]", {
+        operation: "shipping_refresh_start",
+        storeIdPresent: true,
+      });
+    try {
+      const profiles = await fetchMyMarketplaceShippingProfiles(storeId);
+      setShippingProfiles(profiles);
+      const currentReady = profiles.some(
+        (profile) =>
+          profile.id === shippingProfileId &&
+          profile.status === "active" &&
+          profile.configurationStatus === "explicit_ready",
+      );
+      const selected = currentReady
+        ? shippingProfileId
+        : profiles.find(
+            (profile) =>
+              profile.status === "active" &&
+              profile.configurationStatus === "explicit_ready",
+          )?.id ?? null;
+      if (selected && selected !== shippingProfileId) {
+        setShippingProfileId(selected);
+        saveQueue.current.edit();
+        setDirty(true);
+        setMessage("Envío configurado");
+        if (__DEV__)
+          console.info("[MarketplaceProductEditor]", {
+            operation: "shipping_profile_selected",
+            profileIdPresent: true,
+          });
+      }
+      if (__DEV__)
+        console.info("[MarketplaceProductEditor]", {
+          operation: "shipping_refresh_success",
+          profileCount: profiles.length,
+          selectedProfilePresent: Boolean(selected),
+        });
+    } catch (error) {
+      if (__DEV__)
+        console.info("[MarketplaceProductEditor]", {
+          operation: "shipping_refresh_failed",
+          code:
+            error && typeof error === "object" && "code" in error
+              ? String(error.code)
+              : null,
+        });
+    }
+  }, [shippingProfileId, storeId]);
+  const refreshVariantSummary = useCallback(async () => {
+    if (!productId) return;
+    try {
+      const variantData = await fetchSellerProductVariants(productId);
+      setVariantsReady(deriveMarketplaceVariantsReady(variantData));
+      setVariantSummary({
+        options: variantData.detail.options.length,
+        variants: variantData.detail.variants.filter(
+          (variant) => variant.status === "active",
+        ).length,
+      });
+    } catch {
+      setVariantsReady(false);
+    }
+  }, [productId]);
+  useFocusEffect(
+    useCallback(() => {
+      if (storeId) {
+        if (__DEV__)
+          console.info("[MarketplaceProductEditor]", {
+            operation: "shipping_setup_return",
+          });
+        void refreshShippingProfiles();
+        void refreshVariantSummary();
+      }
+    }, [refreshShippingProfiles, refreshVariantSummary, storeId]),
+  );
   const snapshot = useCallback((): SaveSnapshot | null => {
     const numericPrice = Number(price),
       numericStock = Number(stock);
@@ -404,14 +488,37 @@ export default function ProductEditorScreen() {
   };
   const addPhotos = async () => {
     if (images.length >= 5) return;
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsMultipleSelection: true,
-      selectionLimit: 5 - images.length,
-      quality: 1,
-    });
+    let result: ImagePicker.ImagePickerResult;
+    try {
+      const permission =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) return;
+      result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsMultipleSelection: true,
+        selectionLimit: 5 - images.length,
+        quality: 1,
+      });
+    } catch (error) {
+      if (__DEV__)
+        console.info("[ProductMediaPicker]", {
+          operation: "picker_failed",
+          platform: Platform.OS,
+          code:
+            error && typeof error === "object" && "code" in error
+              ? String(error.code)
+              : null,
+          domain:
+            error && typeof error === "object" && "domain" in error
+              ? String(error.domain)
+              : null,
+        });
+      Alert.alert(
+        "No pudimos abrir esta foto",
+        "Intenta descargarla completamente en Fotos o selecciona otra.",
+      );
+      return;
+    }
     if (result.canceled) return;
     const selected = result.assets.slice(0, 5 - imagesRef.current.length);
     const localItems: ProductEditorMedia[] = selected.map((asset, offset) => {
@@ -456,7 +563,16 @@ export default function ProductEditorScreen() {
         );
         updateImages(next);
         await queueMediaPersistence(next, persistedVideoRef.current);
-      } catch {
+      } catch (error) {
+        const safe = getSafeMediaError(error);
+        if (__DEV__)
+          console.info("[ProductMediaPicker]", {
+            operation: "upload_failed",
+            platform: Platform.OS,
+            stage: safe.stage,
+            code: safe.code,
+            attempts: safe.attempts,
+          });
         updateImages(
           imagesRef.current.map((item) =>
             item.clientKey === local.clientKey
@@ -464,17 +580,48 @@ export default function ProductEditorScreen() {
               : item,
           ),
         );
+        if (
+          safe.stage === "MEDIA_NORMALIZE_IMAGE" ||
+          safe.code.includes("file")
+        )
+          Alert.alert(
+            "No pudimos leer este archivo desde Fotos",
+            "Descárgalo completamente o selecciona otra foto.",
+          );
       }
     }
   };
   const addVideo = async () => {
     if (pendingVideoRef.current?.state === "uploading") return;
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-      allowsEditing: false,
-    });
+    let result: ImagePicker.ImagePickerResult;
+    try {
+      const permission =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) return;
+      result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["videos"],
+        allowsEditing: false,
+      });
+    } catch (error) {
+      if (__DEV__)
+        console.info("[ProductMediaPicker]", {
+          operation: "picker_failed",
+          platform: Platform.OS,
+          code:
+            error && typeof error === "object" && "code" in error
+              ? String(error.code)
+              : null,
+          domain:
+            error && typeof error === "object" && "domain" in error
+              ? String(error.domain)
+              : null,
+        });
+      Alert.alert(
+        "No pudimos abrir este video",
+        "Intenta descargarlo completamente en Fotos o selecciona otro.",
+      );
+      return;
+    }
     if (result.canceled) return;
     const asset = result.assets[0],
       duration = asset.duration ?? 0;
@@ -538,7 +685,16 @@ export default function ProductEditorScreen() {
       await queueMediaPersistence(imagesRef.current, ready);
       updatePersistedVideo(ready);
       updatePendingVideo(null);
-    } catch {
+    } catch (error) {
+      const safe = getSafeMediaError(error);
+      if (__DEV__)
+        console.info("[ProductMediaPicker]", {
+          operation: "upload_failed",
+          platform: Platform.OS,
+          stage: safe.stage,
+          code: safe.code,
+          attempts: safe.attempts,
+        });
       updatePendingVideo({ ...local, state: "failed" });
     }
   };
@@ -583,7 +739,16 @@ export default function ProductEditorScreen() {
         updateImages(next);
         await queueMediaPersistence(next, persistedVideoRef.current);
       }
-    } catch {
+    } catch (error) {
+      const safe = getSafeMediaError(error);
+      if (__DEV__)
+        console.info("[ProductMediaPicker]", {
+          operation: "retry_failed",
+          platform: Platform.OS,
+          stage: safe.stage,
+          code: safe.code,
+          attempts: safe.attempts,
+        });
       if (item.kind === "video")
         updatePendingVideo({ ...item, state: "failed" });
       else
@@ -977,10 +1142,16 @@ export default function ProductEditorScreen() {
         ) : null}
         {step === 3 ? (
           <EditorCard title="Variantes">
-            <Text style={styles.body}>
-              Cada producto conserva una variante predeterminada. Puedes
-              configurar Color, Talla, SKU y existencias por variante en el
-              editor especializado.
+            {variantSummary.options === 0 ? (
+              <>
+                <Text style={styles.body}>Este producto no tiene opciones.</Text>
+                <Text style={styles.muted}>Precio: {price} BDAG · Stock: {stock}</Text>
+              </>
+            ) : (
+              <Text style={styles.body}>{variantSummary.options} opciones · {variantSummary.variants} combinaciones</Text>
+            )}
+            <Text style={variantsReady ? styles.videoReady : styles.warning}>
+              {variantsReady ? "✓ Variantes listas" : "⚠ Completa precios y stock"}
             </Text>
             {productId ? (
               <Pressable
@@ -989,7 +1160,7 @@ export default function ProductEditorScreen() {
                   router.push(`/seller/product/${productId}/variants`)
                 }
               >
-                <Text style={styles.secondaryText}>Configurar variantes</Text>
+                <Text style={styles.secondaryText}>{variantSummary.options ? "Administrar variantes" : "Agregar color, talla u otra opción"}</Text>
               </Pressable>
             ) : null}
           </EditorCard>
@@ -1011,6 +1182,12 @@ export default function ProductEditorScreen() {
                       setShippingProfileId(p.id);
                       saveQueue.current.edit();
                       setDirty(true);
+                      setMessage("Envío configurado");
+                      if (__DEV__)
+                        console.info("[MarketplaceProductEditor]", {
+                          operation: "shipping_profile_selected",
+                          profileIdPresent: true,
+                        });
                     }}
                   />
                 ))
@@ -1030,7 +1207,11 @@ export default function ProductEditorScreen() {
                   onPress={() =>
                     router.push({
                       pathname: "/seller/shipping-profile",
-                      params: { storeId, profileId: shippingProfileId ?? "" },
+                      params: {
+                        storeId,
+                        profileId: shippingProfileId ?? "",
+                        productId: productId ?? "new",
+                      },
                     })
                   }
                 >

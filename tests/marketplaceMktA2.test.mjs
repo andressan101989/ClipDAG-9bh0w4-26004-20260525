@@ -98,7 +98,7 @@ test('client contract: seller can configure and mutate inventory without duplica
   assert.match(seller,/actionLock\.current/);
   assert.match(seller,/randomUUID\(\)/);
   assert.match(seller,/Cambios sin guardar/);
-  assert.match(edit,/Configurar variantes/);
+  assert.match(edit,/Administrar variantes|Agregar color, talla u otra opción/);
 });
 test('client contract: cards use projections without N+1 variant reads',()=>{
   assert.match(shop,/variant_price_max/);

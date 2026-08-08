@@ -63,19 +63,19 @@ test('static SQL contract: set/adjust inventory remain movement-backed and idemp
   assert.match(base,/perform public\.refresh_marketplace_product_projection/);
 });
 
-test('client contract: existing inventory is read-only and uses explicit actions',()=>{
-  assert.match(seller,/Inventario actual \(solo lectura\)/);
-  assert.match(seller,/>Establecer</);
-  assert.match(seller,/>Ajustar</);
-  assert.match(seller,/variant\.id\?<><View style=\{s\.readOnly\}/);
-  assert.match(seller,/variant\.id\?['"]Inventario actual \(solo lectura\)['"]:['"]Inventario inicial['"]/);
+test('client contract: existing inventory uses authoritative set and adjustment actions',()=>{
+  assert.match(seller,/>Stock</);
+  assert.match(seller,/Guardar precio y stock/);
+  assert.match(seller,/Corrección rápida/);
+  assert.match(seller,/setVariantInventory/);
+  assert.match(seller,/adjustVariantInventory/);
   assert.match(seller,/marketplace_existing_inventory_requires_inventory_action/);
 });
 
 test('client contract: configuration message is accurate and new variants accept initial inventory',()=>{
   assert.match(seller,/Las variantes fueron guardadas y las proyecciones del producto se actualizaron/);
   assert.doesNotMatch(seller,/Precio e inventario del producto fueron recalculados/);
-  assert.match(seller,/Inventario inicial/);
+  assert.match(seller,/>Stock</);
   assert.match(seller,/value=\{variant\.onHand\} keyboardType="number-pad"[\s\S]*updateDraft\(index,\{onHand,setOnHand:onHand\}\)/);
   assert.match(seller,/on_hand:Math\.max\(0,Number\.parseInt\(item\.onHand/);
 });
