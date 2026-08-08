@@ -8,7 +8,7 @@ const service=read('services/marketplaceService.ts');
 const detail=read('app/product/[id].tsx');
 const selection=read('services/marketplaceVariantSelection.ts');
 const seller=read('app/seller/product/[id]/variants.tsx');
-const edit=read('app/seller/product/[id]/edit.tsx');
+const edit=read('app/seller/product-editor/[productId].tsx');
 const shop=read('app/(tabs)/shop.tsx');
 
 test('static contract: options and values are bounded and server-only',()=>{
@@ -98,7 +98,7 @@ test('client contract: seller can configure and mutate inventory without duplica
   assert.match(seller,/actionLock\.current/);
   assert.match(seller,/randomUUID\(\)/);
   assert.match(seller,/Cambios sin guardar/);
-  assert.match(edit,/Variantes e inventario/);
+  assert.match(edit,/Configurar variantes/);
 });
 test('client contract: cards use projections without N+1 variant reads',()=>{
   assert.match(shop,/variant_price_max/);

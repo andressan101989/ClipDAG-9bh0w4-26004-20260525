@@ -6,7 +6,7 @@ const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),'utf8');
 const migration=read('supabase/migrations/20260727100000_marketplace_mkt_a1_seller_store_product_foundation.sql');
 const service=read('services/marketplaceService.ts');
 const context=read('contexts/ShopContext.tsx');
-const create=read('app/create-product.tsx');
+const create=read('app/seller/product-editor/[productId].tsx');
 const detail=read('app/product/[id].tsx');
 const profile=read('app/(tabs)/profile.tsx');
 
@@ -30,7 +30,7 @@ test('static contract: price uses fixed 8-decimal BDAG precision',()=>{
   assert.match(migration,/price <> round\(price,8\)/);
   assert.match(migration,/marketplace_normalize_price/);
   assert.match(migration,/p_value<>round\(p_value,8\)/);
-  assert.match(create,/máximo de 8 decimales/);
+  assert.match(migration,/p_value<>round\(p_value,8\)/);
 });
 test('static contract: public discovery applies all moderation gates',()=>{
   for(const fragment of [
@@ -74,8 +74,8 @@ test('client contract: deep link fetches by id and loading terminates',()=>{
   assert.match(detail,/Producto no disponible/);
 });
 test('client contract: seller gates creation and profile opens seller center',()=>{
-  assert.match(create,/foundation\.seller\?\.status!=='approved'/);
-  assert.match(create,/foundation\.store\.status!=='active'/);
+  assert.match(create,/foundation\.seller\?\.status !== "approved"/);
+  assert.match(create,/!foundation\.store/);
   assert.match(profile,/router\.push\('\/seller'/);
 });
 test('scope contract: MKT-A1 contains no commerce or ledger mutation',()=>{

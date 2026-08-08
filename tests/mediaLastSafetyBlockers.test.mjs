@@ -21,8 +21,8 @@ test('exclusive feed publishing is disabled and cannot report false success', ()
 
 test('finalize persists and returns the authoritative public URL', () => {
   assert.match(migration, /add column if not exists public_url text/i);
-  assert.match(finalize, /public_url:resolvedPublicUrl/);
-  assert.match(finalize, /url:resolvedPublicUrl/);
+  assert.match(finalize, /public_url:\s*resolvedPublicUrl/);
+  assert.match(finalize, /url:\s*resolvedPublicUrl/);
   assert.match(finalize, /public_url_missing/);
 });
 

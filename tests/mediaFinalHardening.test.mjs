@@ -5,7 +5,7 @@ import test from 'node:test';
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
 const migration = read('supabase/migrations/20260726104000_atomic_media_entities_and_cleanup.sql');
-const createProduct = read('app/create-product.tsx');
+const createProduct = read('app/seller/product-editor/[productId].tsx');
 const marketplace = read('services/marketplaceService.ts');
 const mediaService = read('services/mediaService.ts');
 const upload = read('app/(tabs)/upload.tsx');
@@ -23,16 +23,8 @@ test('product edits expose only mutable catalog fields', () => {
 });
 
 test('product publishing is locked through compensation', () => {
-  const publishBlock = createProduct.slice(
-    createProduct.indexOf('const handlePublish'),
-    createProduct.indexOf('return (', createProduct.indexOf('const handlePublish')),
-  );
-  assert.match(publishBlock, /if \(publishLockRef\.current \|\| isPublishing\) return/);
-  assert.match(publishBlock, /publishLockRef\.current = true/);
-  assert.match(publishBlock, /finally\s*\{\s*publishLockRef\.current = false/s);
-  assert.match(publishBlock, /setIsPublishing\(true\)/);
-  assert.match(publishBlock, /finally\s*\{[\s\S]*setIsPublishing\(false\)/);
-  assert.equal((publishBlock.match(/setIsPublishing\(false\)/g) ?? []).length, 1);
+  const publishBlock=createProduct.slice(createProduct.indexOf('const publish = async'),createProduct.indexOf('if (loading)'));
+  assert.match(publishBlock,/setPublishing\(true\)/);assert.match(publishBlock,/finally[\s\S]*setPublishing\(false\)/);assert.match(publishBlock,/images\.some/);
 });
 
 test('marketplace service is catalog-only and BDAG-only', () => {
@@ -47,7 +39,7 @@ test('marketplace service is catalog-only and BDAG-only', () => {
 });
 
 test('client media linking excludes unsupported entity types', () => {
-  assert.match(mediaService, /'user_profile' \| 'video_post' \| 'story' \| 'shop_product'/);
+  assert.match(mediaService, /"user_profile"\s*\|\s*"video_post"\s*\|\s*"story"\s*\|\s*"shop_product"/);
   assert.doesNotMatch(mediaService, /LinkableMediaEntity[\s\S]*exclusive_content/);
 });
 

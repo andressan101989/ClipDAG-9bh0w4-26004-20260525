@@ -7,8 +7,8 @@ const migration = await read('supabase/migrations/20260804120000_marketplace_shi
 const buyer = await read('app/orders/[id].tsx');
 const seller = await read('app/seller/orders/[id].tsx');
 const dispute = await read('components/marketplace/MarketplaceDisputePanel.tsx');
-const creation = await read('app/create-product.tsx');
-const editing = await read('app/seller/product/[id]/edit.tsx');
+const creation = await read('app/seller/product-editor/[productId].tsx');
+const editing = creation;
 
 test('shipping profiles are seller-owned private configuration', () => {
   assert.match(migration, /create table public\.marketplace_shipping_profiles/);
@@ -19,8 +19,8 @@ test('shipping profiles are seller-owned private configuration', () => {
 test('publication requires shipping and existing products receive explicit legacy compatibility', () => {
   assert.match(migration, /marketplace_product_not_ready_shipping_incomplete/);
   assert.match(migration, /legacy_unrestricted/);
-  assert.match(creation, /Perfil de envío/);
-  assert.match(editing, /Guardar envío/);
+  assert.match(creation, /Configuracion de envio requerida/);
+  assert.match(editing, /Configurar envio/);
 });
 test('checkout rejects unsupported destinations and freezes shipping values', () => {
   assert.match(migration, /marketplace_shipping_destination_unsupported/);

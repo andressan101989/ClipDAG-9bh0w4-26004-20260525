@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const profile = fs.readFileSync('app/(tabs)/profile.tsx', 'utf8');
 const upload = fs.readFileSync('app/(tabs)/upload.tsx', 'utf8');
-const product = fs.readFileSync('app/create-product.tsx', 'utf8');
+const product = fs.readFileSync('app/seller/product-editor/[productId].tsx', 'utf8');
 const story = fs.readFileSync('app/(tabs)/index.tsx', 'utf8');
 const protectedSources = [
   'modules/onspace-callkit/ios/OnSpaceCallCoordinator.swift',
@@ -15,7 +15,7 @@ test('new public image uploaders use mediaService and never persist local fallba
   assert.match(profile, /purpose: 'avatar'/);
   assert.match(upload, /'post_image'/);
   assert.match(upload, /'carousel_image'/);
-  assert.match(product, /purpose: 'product_image'/);
+  assert.match(product, /purpose: "product_image"/);
   assert.match(story, /purpose: 'post_image'/);
   assert.doesNotMatch(product, /setImages\(prev => \[\.\.\.prev, asset\.uri\]\)/);
   assert.doesNotMatch(upload, /const finalUrl = url \|\| selectedMedia\.uri/);

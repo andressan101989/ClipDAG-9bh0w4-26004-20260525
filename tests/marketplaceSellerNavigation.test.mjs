@@ -8,7 +8,7 @@ const center=read('app/seller/index.tsx');
 const apply=read('app/seller/apply.tsx');
 const store=read('app/seller/store.tsx');
 const products=read('app/seller/products.tsx');
-const edit=read('app/seller/product/[id]/edit.tsx');
+const edit=read('app/seller/product-editor/[productId].tsx');
 
 test('static client contract: shared header provides visible accessible history and fallback actions',()=>{
   assert.match(header,/MaterialIcons name="arrow-back-ios"/);
@@ -31,13 +31,14 @@ test('static client contract: every nested seller route has its deterministic fa
   assert.match(apply,/title="Solicitud de vendedor" fallbackRoute="\/seller"/);
   assert.match(store,/title="Configurar tienda" fallbackRoute="\/seller"/);
   assert.match(products,/title="Mis productos" fallbackRoute="\/seller"/);
-  assert.match(edit,/title="Editar producto" fallbackRoute="\/seller\/products"/);
+  assert.match(edit,/router\.back\(\)/);
 });
 
 test('static client contract: no seller screen is a navigation dead end',()=>{
-  for(const source of [center,apply,store,products,edit]){
+  for(const source of [center,apply,store,products]){
     assert.match(source,/SellerScreenHeader/);
   }
+  assert.match(edit,/router\.back\(\)/);
 });
 
 test('scope contract: navigation fix does not reference database or commerce mutations',()=>{

@@ -9,7 +9,7 @@ const sql = await readFile(
   'utf8',
 );
 const shop = await readFile(new URL('contexts/ShopContext.tsx', root), 'utf8');
-const screen = await readFile(new URL('app/create-product.tsx', root), 'utf8');
+const screen = await readFile(new URL('app/seller/product-editor/[productId].tsx', root), 'utf8');
 const catalogScreen = await readFile(new URL('app/(tabs)/shop.tsx', root), 'utf8');
 const productScreen = await readFile(new URL('app/product/[id].tsx', root), 'utf8');
 const hardening = await readFile(
@@ -34,7 +34,7 @@ test('product catalog is BDAG-only, seller-owned, and has no checkout tables', (
   assert.doesNotMatch(shop, /currency: 'USD'/);
   assert.match(marketplaceService, /currency:'BDAG'/);
   assert.match(marketplaceService, /rpc\('create_marketplace_product'/);
-  assert.match(screen, /Precio \(BDAG\)/);
+  assert.match(screen, /Precio/);assert.match(screen,/BDAG/);
   assert.match(catalogScreen, /BDAG/);
   assert.match(productScreen, /Agregar al carrito/);
   assert.doesNotMatch(productScreen, /create_order|reserve_inventory|atomic_ledger_transfer/i);

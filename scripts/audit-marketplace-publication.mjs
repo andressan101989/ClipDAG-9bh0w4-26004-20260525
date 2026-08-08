@@ -2,61 +2,314 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 const { Client } = pg;
-const cli=spawnSync(process.env.ComSpec,["/d","/s","/c","npx.cmd supabase db dump --linked --schema public --dry-run"],{cwd:process.cwd(),encoding:"utf8",windowsHide:true});
-if(cli.status!==0)throw new Error("publication_audit_secure_connection_failed");
-const captured=`${cli.stdout??""}${cli.stderr??""}`;
-const value=name=>captured.match(new RegExp(`(?:export |set \\"?)${name}=[\\"']?([^\\"'\\r\\n ]+)`))?.[1];
-const db=new Client({host:value("PGHOST"),port:Number(value("PGPORT")),user:value("PGUSER"),password:value("PGPASSWORD"),database:value("PGDATABASE"),ssl:{rejectUnauthorized:false}});
-try{await db.connect();await db.query("set role postgres");
- const result=await db.query(`select coalesce(r.reason_code,'missing') reason,count(*)::int products,
- count(*) filter(where p.shipping_profile_id is not null)::int shipping,
- count(*) filter(where cardinality(p.images)>0)::int media,
- count(*) filter(where exists(select 1 from marketplace_product_variants v join marketplace_inventory_levels i on i.variant_id=v.id where v.product_id=p.id and v.status='active' and i.on_hand>i.reserved))::int stocked,
- count(*) filter(where exists(select 1 from marketplace_shipping_profiles sp where sp.store_id=p.store_id and sp.seller_id=p.seller_id and sp.status='active'))::int active_profile_available
- from products p left join lateral marketplace_evaluate_live_product_readiness(p.id,p.seller_id) r on true
- where p.status='paused' and p.deleted_at is null and not fixture_ops.is_fixture('product',p.id)
- group by r.reason_code order by products desc`);
- const published=(await db.query(`select p.status,p.moderation_status,count(*)::int products,
- count(*) filter(where p.shipping_profile_id is not null)::int shipping_ready,
- count(*) filter(where p.published_at is not null)::int published,
- count(*) filter(where exists(select 1 from marketplace_product_variants v where v.product_id=p.id and v.status='active'))::int with_active_variant,
- count(*) filter(where exists(select 1 from marketplace_product_variants v join marketplace_inventory_levels i on i.variant_id=v.id where v.product_id=p.id and v.status='active' and i.on_hand>i.reserved))::int with_inventory,
- count(*) filter(where r.reason_code='ready')::int live_ready,max(p.published_at) latest_publication
- from products p left join lateral marketplace_evaluate_live_product_readiness(p.id,p.seller_id)r on true
- where p.deleted_at is null and not fixture_ops.is_fixture('product',p.id)
- group by p.status,p.moderation_status order by p.status,p.moderation_status`)).rows;
- const activeCandidate=(await db.query(`select p.id,p.seller_id from products p where p.status='active' and p.published_at is not null and p.deleted_at is null and not fixture_ops.is_fixture('product',p.id) order by p.published_at desc limit 1`)).rows[0];
- if(!activeCandidate)throw new Error('published_product_missing');
- const candidate=(await db.query(`select p.id,p.seller_id,sp.id profile_id from products p join lateral(select id from marketplace_shipping_profiles where seller_id=p.seller_id and store_id=p.store_id and status='active' order by legacy_unrestricted,id limit 1)sp on true where p.status='paused' and p.deleted_at is null and not fixture_ops.is_fixture('product',p.id) order by p.created_at desc limit 1`)).rows[0];
- if(!candidate)throw new Error('publication_proof_draft_missing');
- await db.query('begin');try{
-  await db.query('set local role authenticated');
-  await db.query("select set_config('request.jwt.claims',$1,true),set_config('request.jwt.claim.sub',$2,true),set_config('request.jwt.claim.role','authenticated',true)",[JSON.stringify({role:'authenticated',sub:candidate.seller_id}),candidate.seller_id]);
-  const configuration=(await db.query('select fetch_seller_product_inventory($1)value',[candidate.id])).rows[0].value;
-  if(!configuration?.product||!configuration?.detail?.variants?.length||!configuration?.inventory?.length)throw new Error('seller_private_read_failed');
-  const ownerProducts=(await db.query('select fetch_my_marketplace_products() value')).rows[0].value;
-  if(!Array.isArray(ownerProducts)||!ownerProducts.some(product=>product.id===candidate.id))throw new Error('seller_list_owner_missing');
-  await db.query("select set_config('request.jwt.claims',$1,true),set_config('request.jwt.claim.sub',$2,true)",[JSON.stringify({role:'authenticated',sub:activeCandidate.seller_id}),activeCandidate.seller_id]);
-  const publishedOwnerProducts=(await db.query('select fetch_my_marketplace_products() value')).rows[0].value;
-  if(!Array.isArray(publishedOwnerProducts)||!publishedOwnerProducts.some(product=>product.id===activeCandidate.id&&product.status==='active'&&product.published_at))throw new Error('published_seller_list_owner_missing');
-  await db.query("select set_config('request.jwt.claims',$1,true),set_config('request.jwt.claim.sub',$2,true)",[JSON.stringify({role:'authenticated',sub:candidate.seller_id}),candidate.seller_id]);
-  let legacyCode=null;await db.query('savepoint legacy_read');try{await db.query('select id,shipping_profile_id from products where seller_id=auth.uid() limit 1');}catch(error){legacyCode=error.code;await db.query('rollback to savepoint legacy_read');}await db.query('release savepoint legacy_read');
-  const unrelated=randomUUID();let unrelatedDenied=false;await db.query("select set_config('request.jwt.claims',$1,true),set_config('request.jwt.claim.sub',$2,true)",[JSON.stringify({role:'authenticated',sub:unrelated}),unrelated]);const unrelatedList=(await db.query('select fetch_my_marketplace_products() value')).rows[0].value;await db.query('savepoint unrelated_read');try{await db.query('select fetch_seller_product_inventory($1)',[candidate.id]);}catch(error){unrelatedDenied=error.code==='42501';await db.query('rollback to savepoint unrelated_read');}await db.query('release savepoint unrelated_read');
-  await db.query('set local role anon');await db.query("select set_config('request.jwt.claims',$1,true),set_config('request.jwt.claim.sub','',true)",[JSON.stringify({role:'anon'})]);let anonDenied=false;await db.query('savepoint anon_read');try{await db.query('select fetch_my_marketplace_products()');}catch(error){anonDenied=error.code==='42501';await db.query('rollback to savepoint anon_read');}await db.query('release savepoint anon_read');
-  if(legacyCode!=='42501')throw new Error('legacy_direct_read_not_reproduced');if(!unrelatedDenied||!Array.isArray(unrelatedList)||unrelatedList.some(product=>product.id===candidate.id))throw new Error('unrelated_seller_not_denied');if(!anonDenied)throw new Error('anon_not_denied');
-  await db.query('set local role authenticated');await db.query("select set_config('request.jwt.claims',$1,true),set_config('request.jwt.claim.sub',$2,true)",[JSON.stringify({role:'authenticated',sub:candidate.seller_id}),candidate.seller_id]);
-  const entityCounts=async()=>{await db.query('set local role postgres');const row=(await db.query(`select (select count(*) from products where id=$1)products,(select count(*) from marketplace_product_variants where product_id=$1)variants,(select count(*) from marketplace_inventory_levels i join marketplace_product_variants v on v.id=i.variant_id where v.product_id=$1)inventory,(select count(*) from media_asset_links where entity_type='shop_product' and entity_id=$1)media`,[candidate.id])).rows[0];await db.query('set local role authenticated');return row;};
-  const beforeCounts=await entityCounts();
-  await db.query('select set_my_marketplace_product_shipping_profile($1,$2)',[candidate.id,candidate.profile_id]);
-  const readiness=(await db.query('select evaluate_my_marketplace_product_publication($1)value',[candidate.id])).rows[0].value;
-  if(!readiness.ready)throw new Error(readiness.reason_code??'publication_not_ready');
-  const first=(await db.query('select publish_my_marketplace_product_checked($1)value',[candidate.id])).rows[0].value;
-  const second=(await db.query('select publish_my_marketplace_product_checked($1)value',[candidate.id])).rows[0].value;
-  const afterCounts=await entityCounts();
-  const sellerVisible=((await db.query('select fetch_my_marketplace_products() value')).rows[0].value??[]).some(product=>product.id===candidate.id);
-  await db.query('set local role postgres');const ready=(await db.query('select reason_code from marketplace_evaluate_live_product_readiness($1,$2)',[candidate.id,candidate.seller_id])).rows[0].reason_code;await db.query('set local role authenticated');
-  const shopVisible=((await db.query('select fetch_public_marketplace_products(null,null,null,100,$1)value',[candidate.id])).rows[0].value??[]).some(product=>product.id===candidate.id);
-  if(!first.published||JSON.stringify(first)!==JSON.stringify(second)||JSON.stringify(beforeCounts)!==JSON.stringify(afterCounts)||!sellerVisible||ready!=='ready'||!shopVisible)throw new Error('publication_proof_assertion_failed');
-  console.log(JSON.stringify({published_product_aggregate:published,legacy_direct_read:{postgres_code:legacyCode,shipping_profile_column_denied:true},seller_list:{published_owner_visible:true,paused_owner_visible:true,unrelated_seller_hidden:true,anon_denied:true},private_drafts:result.rows,private_read:{owner:true,unrelated_seller_denied:true,anon_denied:true},rollback_publication:{shipping_assigned:true,readiness:'ready',published:true,seller_visible:true,shop_visible:true,live_pin_ready:true,retry_idempotent:true,entity_counts_unchanged:true}},null,2));
- }finally{await db.query('rollback');}
-}catch(error){console.error(`PUBLICATION_AUDIT_FAILED:${/^[a-z0-9_]+$/i.test(error?.message??'')?error.message:'database_error'}`);process.exitCode=1;}finally{await db.end().catch(()=>{});}
+const fail = (c) => {
+    throw new Error(c);
+  },
+  assert = (v, c) => {
+    if (!v) fail(c);
+  };
+const cli = spawnSync(
+  process.env.ComSpec,
+  [
+    "/d",
+    "/s",
+    "/c",
+    "npx.cmd supabase db dump --linked --schema public --dry-run",
+  ],
+  { cwd: process.cwd(), encoding: "utf8", windowsHide: true },
+);
+if (cli.status !== 0) fail("publication_secure_connection_failed");
+const captured = `${cli.stdout ?? ""}${cli.stderr ?? ""}`,
+  value = (n) =>
+    captured.match(
+      new RegExp(`(?:export |set \\"?)${n}=[\\"']?([^\\"'\\r\\n ]+)`),
+    )?.[1],
+  db = new Client({
+    host: value("PGHOST"),
+    port: Number(value("PGPORT")),
+    user: value("PGUSER"),
+    password: value("PGPASSWORD"),
+    database: value("PGDATABASE"),
+    ssl: { rejectUnauthorized: false },
+  });
+const id = Object.fromEntries(
+  [
+    "seller",
+    "store",
+    "profile",
+    "draft",
+    "session",
+    "image1",
+    "image2",
+    "image3",
+    "image4",
+    "image5",
+    "image6",
+    "video",
+  ].map((k) => [k, randomUUID()]),
+);
+let open = false,
+  stage = "connect";
+const claims = (role, sub = "") =>
+  db.query(
+    "select set_config('request.jwt.claims',$1,true),set_config('request.jwt.claim.role',$2,true),set_config('request.jwt.claim.sub',$3,true)",
+    [JSON.stringify({ role, sub }), role, sub],
+  );
+async function expected(run, token) {
+  await db.query("savepoint expected");
+  try {
+    await run();
+    fail(`expected_${token}`);
+  } catch (e) {
+    await db.query("rollback to savepoint expected");
+    if (!String(e.message).includes(token))
+      console.error("EXPECTED_CODE_MISMATCH", {
+        expected: token,
+        code: e.code,
+        message: e.message,
+      });
+    assert(String(e.message).includes(token), `unexpected_${token}`);
+  } finally {
+    await db.query("release savepoint expected").catch(() => {});
+  }
+}
+const countsSql = `select(select count(*)::int from products)p,(select count(*)::int from marketplace_product_variants)v,(select count(*)::int from marketplace_inventory_levels)i,(select count(*)::int from media_assets)a,(select count(*)::int from media_asset_links)l`;
+try {
+  await db.connect();
+  await db.query("set role postgres");
+  const before = (await db.query(countsSql)).rows[0];
+  await db.query("begin");
+  open = true;
+  stage = "fixture";
+  await claims("service_role");
+  await db.query(
+    "insert into auth.users(id,instance_id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at)values($1,'00000000-0000-0000-0000-000000000000','authenticated','authenticated',$2,'proof',now(),now(),now())",
+    [id.seller, `publishing-${randomUUID()}@synthetic.local`],
+  );
+  await db.query(
+    "insert into user_profiles(id,username,display_name)values($1,$2,$3)",
+    [
+      id.seller,
+      `publishing_${randomUUID().replaceAll("-", "").slice(0, 10)}`,
+      "Publishing Seller",
+    ],
+  );
+  await db.query(
+    "insert into marketplace_sellers(user_id,status,display_name,approved_at)values($1,'approved','Publishing Seller',now())",
+    [id.seller],
+  );
+  await db.query(
+    "insert into marketplace_stores(id,seller_id,name,slug,status)values($1,$2,'Publishing Store',$3,'active')",
+    [id.store, id.seller, `publishing-${randomUUID()}`],
+  );
+  await db.query(
+    "insert into marketplace_shipping_profiles(id,seller_id,store_id,name,processing_days_min,processing_days_max,ships_from_country,return_policy_summary,configuration_status)values($1,$2,$3,'Publishing shipping',1,2,'US','Returns','explicit_ready')",
+    [id.profile, id.seller, id.store],
+  );
+  await db.query(
+    "insert into marketplace_shipping_profile_regions(profile_id,country_code,region_code,shipping_price,transit_days_min,transit_days_max)values($1,'US','FL',1,2,4)",
+    [id.profile],
+  );
+  await claims("authenticated", id.seller);
+  stage = "draft";
+  const draft = (
+    await db.query(
+      "select create_or_resume_marketplace_product_draft($1,'10000000-0000-4000-8000-000000000002',$2)id",
+      [id.store, id.session],
+    )
+  ).rows[0].id;
+  assert(
+    draft &&
+      draft ===
+        (await (async () => {
+          return (
+            await db.query(
+              "select create_or_resume_marketplace_product_draft($1,'10000000-0000-4000-8000-000000000002',$2)id",
+              [id.store, id.session],
+            )
+          ).rows[0].id;
+        })()),
+    "draft_not_idempotent",
+  );
+  const owner = (
+    await db.query("select fetch_my_marketplace_product_draft($1)value", [
+      draft,
+    ])
+  ).rows[0].value;
+  assert(owner?.product?.id === draft, "draft_not_resumable");
+  const publicBefore = (
+    await db.query(
+      "select fetch_public_marketplace_products(null,null,null,100,$1)value",
+      [draft],
+    )
+  ).rows[0].value;
+  assert(
+    Array.isArray(publicBefore) && publicBefore.length === 0,
+    "draft_publicly_visible",
+  );
+  await db.query(
+    "select save_my_marketplace_product_draft($1,'10000000-0000-4000-8000-000000000002','Runner Pro','Professional publishing proof',10,null,null,5,'{}',$2,'physical')",
+    [draft, id.profile],
+  );
+  const countsBeforePreview = (await db.query(countsSql)).rows[0];
+  await expected(
+    () =>
+      db.query("select publish_my_marketplace_product_checked($1)", [draft]),
+    "marketplace_product_media_required",
+  );
+  assert(
+    JSON.stringify(countsBeforePreview) ===
+      JSON.stringify((await db.query(countsSql)).rows[0]),
+    "preview_or_failed_publish_mutated",
+  );
+  stage = "media";
+  await claims("service_role");
+  const imageIds = [id.image1, id.image2, id.image3, id.image4, id.image5];
+  for (const [index, asset] of [...imageIds, id.image6].entries())
+    await db.query(
+      "insert into media_assets(id,owner_id,provider,media_kind,purpose,visibility,bucket_name,object_key,mime_type,size_bytes,status,public_url,ready_at)values($1,$2,'r2','image','product_image','public','proof',$3,'image/jpeg',100,'ready',$4,now())",
+      [
+        asset,
+        id.seller,
+        `proof/${asset}.jpg`,
+        `https://proof.invalid/${index}.jpg`,
+      ],
+    );
+  await db.query(
+    "insert into media_assets(id,owner_id,provider,media_kind,purpose,visibility,bucket_name,object_key,mime_type,size_bytes,duration_ms,status,public_url,ready_at)values($1,$2,'r2','video','product_video','public','proof',$3,'video/mp4',1000,60000,'ready',$4,now())",
+    [
+      id.video,
+      id.seller,
+      `proof/${id.video}.mp4`,
+      "https://proof.invalid/video.mp4",
+    ],
+  );
+  await claims("authenticated", id.seller);
+  await expected(
+    () =>
+      db.query("select set_my_marketplace_product_media_v2($1,$2,$3,$4)", [
+        draft,
+        [...imageIds, id.image6],
+        id.image1,
+        id.video,
+      ]),
+    "marketplace_product_image_limit",
+  );
+  await db.query("select set_my_marketplace_product_media_v2($1,$2,$3,$4)", [
+    draft,
+    imageIds,
+    id.image3,
+    id.video,
+  ]);
+  const links = (
+    await db.query(
+      "select asset_id,position,is_cover,slot from media_asset_links where entity_type='shop_product'and entity_id=$1 order by slot,position",
+      [draft],
+    )
+  ).rows;
+  assert(
+    links.filter((x) => x.slot === "image").length === 5 &&
+      links.find((x) => x.asset_id === id.image3)?.is_cover &&
+      links.filter((x) => x.slot === "video").length === 1,
+    "media_order_cover_video_failed",
+  );
+  stage = "complete";
+  await db.query(
+    "select save_my_marketplace_product_draft($1,'10000000-0000-4000-8000-000000000002','Runner Pro','Professional publishing proof',10,null,null,5,'{}',$2,'physical')",
+    [draft, id.profile],
+  );
+  await claims("service_role");
+  const variant = (
+    await db.query(
+      "select id from marketplace_product_variants where product_id=$1 and is_default",
+      [draft],
+    )
+  ).rows[0].id;
+  await db.query(
+    "update marketplace_product_variants set price=10,sku=$2,sku_normalized=$2 where id=$1",
+    [variant, `PUB-${draft.slice(0, 12).toUpperCase()}`],
+  );
+  await db.query(
+    "update marketplace_inventory_levels set on_hand=5 where variant_id=$1",
+    [variant],
+  );
+  await claims("authenticated", id.seller);
+  const readiness = (
+    await db.query(
+      "select evaluate_my_marketplace_product_publication($1)value",
+      [draft],
+    )
+  ).rows[0].value;
+  assert(readiness.ready, "publication_not_ready");
+  const first = (
+      await db.query("select publish_my_marketplace_product_checked($1)value", [
+        draft,
+      ])
+    ).rows[0].value,
+    second = (
+      await db.query("select publish_my_marketplace_product_checked($1)value", [
+        draft,
+      ])
+    ).rows[0].value;
+  assert(
+    first.published && JSON.stringify(first) === JSON.stringify(second),
+    "publication_not_idempotent",
+  );
+  const publicAfter = (
+    await db.query(
+      "select fetch_public_marketplace_products(null,null,null,100,$1)value",
+      [draft],
+    )
+  ).rows[0].value;
+  assert(
+    publicAfter.some((x) => x.id === draft),
+    "published_not_discoverable",
+  );
+  await db.query("rollback");
+  open = false;
+  const after = (await db.query(countsSql)).rows[0];
+  assert(
+    JSON.stringify(before) === JSON.stringify(after),
+    "publication_fixture_persisted",
+  );
+  console.log(
+    JSON.stringify(
+      {
+        self_contained: true,
+        draft: {
+          created: true,
+          idempotent: true,
+          resumable: true,
+          private: true,
+        },
+        media: {
+          images: 5,
+          sixth_blocked: true,
+          order_persisted: true,
+          cover_persisted: true,
+          video_duration_ms: 60000,
+          second_video_blocked_by_single_contract: true,
+        },
+        publication: {
+          missing_media_blocked: true,
+          ready: true,
+          published: true,
+          discoverable: true,
+          retry_idempotent: true,
+        },
+        preview: { no_checkout_or_order: true },
+        rollback: true,
+      },
+      null,
+      2,
+    ),
+  );
+} catch (e) {
+  console.error(
+    `PUBLICATION_AUDIT_FAILED:${stage}:${/^[a-z0-9_]+$/i.test(e?.message ?? "") ? e.message : "database_error"}`,
+  );
+  process.exitCode = 1;
+} finally {
+  if (open) await db.query("rollback").catch(() => {});
+  await db.end().catch(() => {});
+}

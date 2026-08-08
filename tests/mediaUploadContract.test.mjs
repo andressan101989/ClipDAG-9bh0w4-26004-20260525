@@ -18,8 +18,8 @@ test('create returns a short-lived content-type-bound direct PUT contract', () =
 test('finalize uses HEAD and changes only verified objects to ready', () => {
   assert.match(finalize, /headObject\(/);
   assert.match(finalize, /ContentLength/);
-  assert.match(finalize, /ContentType!==a\.mime_type/);
-  assert.match(finalize, /status:'ready'/);
-  assert.match(finalize, /status:'failed',error_code:'object_missing'/);
-  assert.match(finalize, /if\(a\.status==='ready'\)/);
+  assert.match(finalize, /ContentType\s*!==\s*a\.mime_type/);
+  assert.match(finalize, /status:\s*"ready"/);
+  assert.match(finalize, /status:\s*"failed"[\s\S]*error_code:\s*"object_missing"/);
+  assert.match(finalize, /if\s*\(a\.status === "ready"\)/);
 });

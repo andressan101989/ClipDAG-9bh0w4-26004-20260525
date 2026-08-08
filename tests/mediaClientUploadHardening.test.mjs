@@ -109,10 +109,10 @@ assert.equal(policy.validateCommonLinkedEntityRows(assets,[
   {asset_id:'b',entity_id:'post',position:2,slot:'media'},
 ]),null);
 
-const productSource=fs.readFileSync(path.join(root,'app/create-product.tsx'),'utf8');
+const productSource=fs.readFileSync(path.join(root,'app/seller/product-editor/[productId].tsx'),'utf8')+fs.readFileSync(path.join(root,'components/marketplace/product-editor/ProductMediaTile.tsx'),'utf8');
 assert.doesNotMatch(productSource,/uploadMediaFromUri\([\\s\\S]{0,400}\)\.catch\(\(\)\s*=>\s*null\)/);
-assert.match(productSource,/finally\s*\{\s*setIsUploadingImage\(false\)/);
-assert.match(productSource,/\[CreateProduct\] product image upload failed/);
+assert.match(productSource,/state: "failed"/);
+assert.match(productSource,/No pudimos subir este archivo/);
 
 const feedSource=fs.readFileSync(path.join(root,'contexts/FeedContext.tsx'),'utf8');
 for(const field of ['message','details','hint','operationId']) assert.match(feedSource,new RegExp(field));

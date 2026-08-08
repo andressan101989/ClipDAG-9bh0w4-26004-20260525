@@ -36,14 +36,14 @@ test('public projection excludes seller-private shipping configuration',()=>{
 });
 
 test('seller list distinguishes loading empty and read failure while retaining cached rows',()=>{
- assert.match(context,/SellerProductsState='idle'\|'loading'\|'loaded'\|'empty'\|'error'/);
- assert.match(context,/setSellerProductsState\(next\.length===0\?'empty':'loaded'\)/);
+ assert.match(context,/SellerProductsState\s*=\s*'idle'\s*\|\s*'loading'\s*\|\s*'loaded'\s*\|\s*'empty'\s*\|\s*'error'/);
+ assert.match(context,/setSellerProductsState\(next\.length\s*===\s*0\s*\?\s*'empty'\s*:\s*'loaded'\)/);
  const catchBody=context.slice(context.indexOf('const fetchMyProducts=useCallback'),context.indexOf('useEffect(()=>{void fetchProducts'));
  assert.doesNotMatch(catchBody,/catch[^}]*setMyProducts\(\[\]\)/s);
  assert.match(screen,/No pudimos cargar tus productos\./);
  assert.match(screen,/Tu sesión expiró\. Inicia sesión nuevamente\./);
  assert.match(screen,/Reintentar/);
- assert.match(screen,/sellerProductsState==='empty'/);
+ assert.match(screen,/sellerProductsState\s*===\s*"empty"/);
 });
 
 test('seller products refreshes on focus and never exposes raw database errors',()=>{
