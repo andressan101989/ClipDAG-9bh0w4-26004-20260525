@@ -16,6 +16,7 @@ export function ProductMediaTile({
   onMoveLeft,
   onMoveRight,
   onRetry,
+  removeLabel = "Eliminar",
 }: {
   item: ProductEditorMedia;
   onCover?: () => void;
@@ -23,6 +24,7 @@ export function ProductMediaTile({
   onMoveLeft?: () => void;
   onMoveRight?: () => void;
   onRetry?: () => void;
+  removeLabel?: string;
 }) {
   return (
     <View style={s.tile}>
@@ -44,7 +46,11 @@ export function ProductMediaTile({
       ) : null}
       {item.state === "failed" ? (
         <View style={s.overlay}>
-          <Text style={s.white}>No pudimos subir este archivo.</Text>
+          <Text style={s.white}>
+            {item.kind === "video" && item.pendingReplacement
+              ? "No pudimos subir el nuevo video."
+              : "No pudimos subir este archivo."}
+          </Text>
         </View>
       ) : null}
       {item.isCover ? <Text style={s.cover}>Portada</Text> : null}
@@ -70,7 +76,7 @@ export function ProductMediaTile({
           </Pressable>
         ) : null}
         <Pressable onPress={onRemove}>
-          <Text style={[s.action, s.remove]}>Eliminar</Text>
+          <Text style={[s.action, s.remove]}>{removeLabel}</Text>
         </Pressable>
       </View>
     </View>

@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
+  BackHandler,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -20,7 +21,7 @@ import {
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { randomUUID } from "expo-crypto";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors, Radius, Spacing } from "@/constants/theme";
 import { uploadMediaFromUri } from "@/services/mediaService";
@@ -33,6 +34,12 @@ import {
   type ProductEditorMedia,
 } from "@/services/marketplaceProductDraftService";
 import { calculateMarketplaceProductQuality } from "@/services/marketplaceProductQuality";
+import {
+  deriveMarketplaceVariantsReady,
+  LatestSaveQueue,
+  readyProductImages,
+  replaceEditorMedia,
+} from "@/services/marketplaceProductEditorState";
 import {
   evaluateMarketplaceProductPublication,
   fetchCategories,
@@ -70,6 +77,20 @@ const EMPTY = {
   productType: "physical" as const,
   tags: [] as string[],
 };
+interface SaveSnapshot {
+  productId: string;
+  storeId: string;
+  categoryId: string;
+  title: string;
+  description: string;
+  price: number;
+  brand: string;
+  stock: number;
+  shippingProfileId: string | null;
+  productType: "physical" | "digital";
+  images: ProductEditorMedia[];
+  persistedVideo: ProductEditorMedia | null;
+}
 export default function ProductEditorScreen() {
   const params = useLocalSearchParams<{ productId: string }>(),
     router = useRouter(),
@@ -97,12 +118,24 @@ export default function ProductEditorScreen() {
       "physical",
     ),
     [images, setImages] = useState<ProductEditorMedia[]>([]),
-    [video, setVideo] = useState<ProductEditorMedia | null>(null),
+    [persistedVideo, setPersistedVideo] = useState<ProductEditorMedia | null>(
+      null,
+    ),
+    [pendingVideo, setPendingVideo] = useState<ProductEditorMedia | null>(null),
+    [variantsReady, setVariantsReady] = useState(false),
+    [titleConfigured, setTitleConfigured] = useState(false),
+    [priceConfigured, setPriceConfigured] = useState(false),
+    [categoryConfigured, setCategoryConfigured] = useState(false),
     [dirty, setDirty] = useState(false),
     [message, setMessage] = useState(""),
     [affiliateEnabled, setAffiliateEnabled] = useState(false),
     [affiliatePercent, setAffiliatePercent] = useState("10"),
-    saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
+    saveQueue = useRef(new LatestSaveQueue<SaveSnapshot>()),
+    mediaQueue = useRef<Promise<void>>(Promise.resolve()),
+    imagesRef = useRef<ProductEditorMedia[]>([]),
+    persistedVideoRef = useRef<ProductEditorMedia | null>(null),
+    pendingVideoRef = useRef<ProductEditorMedia | null>(null);
   const shippingReady =
     productType === "digital" ||
     shippingProfiles.some(
@@ -115,17 +148,18 @@ export default function ProductEditorScreen() {
     () =>
       calculateMarketplaceProductQuality({
         title,
+        titleConfigured,
         description,
         categoryId: categoryId || null,
+        categoryConfigured,
         imageCount: images.filter((x) => x.state === "ready").length,
         hasValidVideo: Boolean(
-          video?.durationMs &&
-            video.durationMs <= 60000 &&
-            video.state === "ready",
+          persistedVideo?.durationMs && persistedVideo.durationMs <= 60000,
         ),
         price: Number(price),
+        priceConfigured,
         inventory: Number(stock),
-        variantsReady: true,
+        variantsReady,
         shippingReady,
         productType,
       }),
@@ -134,11 +168,15 @@ export default function ProductEditorScreen() {
       description,
       categoryId,
       images,
-      video,
+      persistedVideo,
       price,
+      priceConfigured,
       stock,
+      variantsReady,
       shippingReady,
       productType,
+      titleConfigured,
+      categoryConfigured,
     ],
   );
   const hydrate = (d: MarketplaceProductDraft) => {
@@ -152,8 +190,18 @@ export default function ProductEditorScreen() {
     setStock(String(d.stock));
     setShippingProfileId(d.shippingProfileId);
     setProductType(d.productType);
-    setImages(d.media.filter((x) => x.kind === "image"));
-    setVideo(d.media.find((x) => x.kind === "video") ?? null);
+    const nextImages = d.media.filter((x) => x.kind === "image");
+    const nextVideo = d.media.find((x) => x.kind === "video") ?? null;
+    imagesRef.current = nextImages;
+    persistedVideoRef.current = nextVideo;
+    pendingVideoRef.current = null;
+    setImages(nextImages);
+    setPersistedVideo(nextVideo);
+    setPendingVideo(null);
+    const isBootstrap = d.title === EMPTY.title && d.price === 1 && !d.savedAt;
+    setTitleConfigured(!isBootstrap && d.title !== EMPTY.title);
+    setPriceConfigured(!isBootstrap);
+    setCategoryConfigured(!isBootstrap);
   };
   const load = useCallback(async () => {
     setLoading(true);
@@ -179,6 +227,9 @@ export default function ProductEditorScreen() {
         router.replace(`/seller/product-editor/${id}` as never);
       }
       hydrate(await fetchMarketplaceProductDraft(id));
+      setVariantsReady(
+        deriveMarketplaceVariantsReady(await fetchSellerProductVariants(id)),
+      );
       const affiliate = await fetchMyLiveAffiliateOffer(id).catch(() => null);
       setAffiliateEnabled(affiliate?.status === "active");
       if (affiliate) setAffiliatePercent(String(affiliate.commissionBps / 100));
@@ -197,51 +248,88 @@ export default function ProductEditorScreen() {
   useEffect(() => {
     void load();
   }, [load]);
-  const save = useCallback(
-    async (silent = false) => {
-      if (!productId || !categoryId) return;
-      const numericPrice = Number(price),
-        numericStock = Number(stock);
-      if (
-        !title.trim() ||
-        !Number.isFinite(numericPrice) ||
-        numericPrice <= 0 ||
-        !Number.isInteger(numericStock) ||
-        numericStock < 0
-      ) {
+  const snapshot = useCallback((): SaveSnapshot | null => {
+    const numericPrice = Number(price),
+      numericStock = Number(stock);
+    if (
+      !productId ||
+      !categoryId ||
+      !title.trim() ||
+      !Number.isFinite(numericPrice) ||
+      numericPrice <= 0 ||
+      !Number.isInteger(numericStock) ||
+      numericStock < 0
+    )
+      return null;
+    return {
+      productId,
+      storeId,
+      categoryId,
+      title: title.trim(),
+      description,
+      price: numericPrice,
+      brand,
+      stock: numericStock,
+      shippingProfileId,
+      productType,
+      images: imagesRef.current,
+      persistedVideo: persistedVideoRef.current,
+    };
+  }, [
+    price,
+    stock,
+    productId,
+    categoryId,
+    title,
+    storeId,
+    description,
+    brand,
+    shippingProfileId,
+    productType,
+  ]);
+  const flushDraftSave = useCallback(
+    async (silent = false): Promise<boolean> => {
+      const current = snapshot();
+      if (!current) {
         if (!silent)
           Alert.alert(
             "Revisa el producto",
             "Completa nombre, precio e inventario con valores validos.",
           );
-        return;
+        return false;
       }
       setSaving(true);
       try {
-        await saveMarketplaceProductDraft({
-          id: productId,
-          storeId,
-          categoryId,
-          title: title.trim(),
-          description,
-          price: numericPrice,
-          brand,
-          compareAtPrice: null,
-          stock: numericStock,
-          tags: [],
-          shippingProfileId,
-          productType,
-        });
-        await persistMarketplaceProductMedia(
-          productId,
-          images.filter((x) => x.state === "ready"),
-          images.find((x) => x.isCover)?.assetId ?? images[0]?.assetId ?? null,
-          video?.state === "ready" ? video : null,
+        const result = await saveQueue.current.enqueue(
+          current,
+          async (value) => {
+            await saveMarketplaceProductDraft({
+              id: value.productId,
+              storeId: value.storeId,
+              categoryId: value.categoryId,
+              title: value.title,
+              description: value.description,
+              price: value.price,
+              brand: value.brand,
+              compareAtPrice: null,
+              stock: value.stock,
+              tags: [],
+              shippingProfileId: value.shippingProfileId,
+              productType: value.productType,
+            });
+            await mediaQueue.current;
+          },
         );
-        setDirty(false);
-        setMessage("Borrador guardado");
-        if (!silent)
-          Alert.alert("Borrador guardado", "Puedes continuar cuando quieras.");
+        if (result.current) {
+          setDirty(false);
+          setMessage("Borrador guardado");
+          if (!silent)
+            Alert.alert(
+              "Borrador guardado",
+              "Puedes continuar cuando quieras.",
+            );
+        }
+        return result.succeeded;
       } catch {
         setMessage("No pudimos guardar. Reintenta.");
         if (!silent)
@@ -249,60 +337,59 @@ export default function ProductEditorScreen() {
             "No pudimos guardar",
             "El borrador anterior permanece seguro.",
           );
+        return false;
       } finally {
         setSaving(false);
       }
     },
-    [
-      productId,
-      categoryId,
-      price,
-      stock,
-      title,
-      storeId,
-      description,
-      brand,
-      shippingProfileId,
-      productType,
-      images,
-      video,
-    ],
+    [snapshot],
   );
   useEffect(() => {
     if (!dirty || loading) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => void save(true), 1200);
+    saveTimer.current = setTimeout(() => void flushDraftSave(true), 1200);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [dirty, loading, save]);
+  }, [dirty, loading, flushDraftSave]);
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
-      if (state !== "active" && dirty) void save(true);
+      if (state !== "active" && dirty) void flushDraftSave(true);
     });
     return () => sub.remove();
-  }, [dirty, save]);
+  }, [dirty, flushDraftSave]);
   const change =
     <T,>(setter: React.Dispatch<React.SetStateAction<T>>) =>
     (value: T) => {
       setter(value);
+      saveQueue.current.edit();
       setDirty(true);
     };
-  const persistMedia = async (
+  const updateImages = (next: ProductEditorMedia[]) => {
+    imagesRef.current = next;
+    setImages(next);
+  };
+  const updatePersistedVideo = (next: ProductEditorMedia | null) => {
+    persistedVideoRef.current = next;
+    setPersistedVideo(next);
+  };
+  const updatePendingVideo = (next: ProductEditorMedia | null) => {
+    pendingVideoRef.current = next;
+    setPendingVideo(next);
+  };
+  const queueMediaPersistence = (
     nextImages: ProductEditorMedia[],
     nextVideo: ProductEditorMedia | null,
   ) => {
-    if (!productId) return;
-    setImages(nextImages);
-    setVideo(nextVideo);
-    await persistMarketplaceProductMedia(
-      productId,
-      nextImages.filter((x) => x.state === "ready"),
-      nextImages.find((x) => x.isCover)?.assetId ??
-        nextImages[0]?.assetId ??
-        null,
-      nextVideo?.state === "ready" ? nextVideo : null,
+    if (!productId) return Promise.resolve();
+    const ready = readyProductImages(nextImages);
+    const cover =
+      ready.find((item) => item.isCover)?.assetId ?? ready[0]?.assetId ?? null;
+    const operation = mediaQueue.current.then(() =>
+      persistMarketplaceProductMedia(productId, ready, cover, nextVideo),
     );
+    mediaQueue.current = operation.catch(() => undefined);
+    return operation;
   };
   const addPhotos = async () => {
     if (images.length >= 5) return;
@@ -315,19 +402,27 @@ export default function ProductEditorScreen() {
       quality: 1,
     });
     if (result.canceled) return;
-    let uploadedImages = images.filter((x) => x.state === "ready");
-    for (const asset of result.assets.slice(0, 5 - images.length)) {
-      const local: ProductEditorMedia = {
-        assetId: randomUUID(),
+    const selected = result.assets.slice(0, 5 - imagesRef.current.length);
+    const localItems: ProductEditorMedia[] = selected.map((asset, offset) => {
+      const clientKey = randomUUID();
+      return {
+        clientKey,
+        assetId: clientKey,
         url: asset.uri,
         kind: "image",
         mimeType: asset.mimeType ?? "image/jpeg",
+        fileName: asset.fileName ?? undefined,
+        sizeBytes: asset.fileSize,
         durationMs: null,
-        position: uploadedImages.length,
-        isCover: uploadedImages.length === 0,
+        position: imagesRef.current.length + offset,
+        isCover: imagesRef.current.length === 0 && offset === 0,
         state: "uploading",
       };
-      setImages((current) => [...current, local]);
+    });
+    updateImages([...imagesRef.current, ...localItems]);
+    for (let index = 0; index < localItems.length; index += 1) {
+      const local = localItems[index],
+        asset = selected[index];
       try {
         const uploaded = await uploadMediaFromUri({
           uri: asset.uri,
@@ -337,29 +432,32 @@ export default function ProductEditorScreen() {
           sizeBytes: asset.fileSize,
           visibility: "public",
         });
-        const ready = {
+        const ready: ProductEditorMedia = {
           ...local,
           assetId: uploaded.assetId,
           url: uploaded.url!,
           state: "ready" as const,
         };
-        const next = [...uploadedImages, ready].slice(0, 5).map((x, i) => ({
-          ...x,
-          position: i,
-          isCover: uploadedImages.length === 0 ? i === 0 : x.isCover,
-        }));
-        uploadedImages = next;
-        await persistMedia(next, video);
+        const next = replaceEditorMedia(
+          imagesRef.current,
+          local.clientKey,
+          ready,
+        );
+        updateImages(next);
+        await queueMediaPersistence(next, persistedVideoRef.current);
       } catch {
-        setImages((current) =>
-          current.map((x) =>
-            x.assetId === local.assetId ? { ...x, state: "failed" } : x,
+        updateImages(
+          imagesRef.current.map((item) =>
+            item.clientKey === local.clientKey
+              ? { ...item, state: "failed" }
+              : item,
           ),
         );
       }
     }
   };
   const addVideo = async () => {
+    if (pendingVideoRef.current?.state === "uploading") return;
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) return;
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -392,17 +490,22 @@ export default function ProductEditorScreen() {
       Alert.alert("Formato no compatible", "Selecciona un video MP4 o MOV.");
       return;
     }
+    const clientKey = randomUUID();
     const local: ProductEditorMedia = {
-      assetId: randomUUID(),
+      clientKey,
+      assetId: clientKey,
       url: asset.uri,
       kind: "video",
       mimeType: mime,
+      fileName: asset.fileName ?? undefined,
+      sizeBytes: asset.fileSize,
       durationMs: duration,
       position: 0,
       isCover: false,
       state: "uploading",
+      pendingReplacement: Boolean(persistedVideoRef.current),
     };
-    setVideo(local);
+    updatePendingVideo(local);
     try {
       const uploaded = await uploadMediaFromUri({
         uri: asset.uri,
@@ -414,23 +517,37 @@ export default function ProductEditorScreen() {
         visibility: "public",
         timeoutMs: 300000,
       });
-      await persistMedia(images, {
+      const ready: ProductEditorMedia = {
         ...local,
         assetId: uploaded.assetId,
         url: uploaded.url!,
         state: "ready",
-      });
+        pendingReplacement: false,
+      };
+      await queueMediaPersistence(imagesRef.current, ready);
+      updatePersistedVideo(ready);
+      updatePendingVideo(null);
     } catch {
-      setVideo({ ...local, state: "failed" });
+      updatePendingVideo({ ...local, state: "failed" });
     }
   };
   const retryMedia = async (item: ProductEditorMedia) => {
     try {
+      if (item.kind === "video")
+        updatePendingVideo({ ...item, state: "uploading" });
+      else
+        updateImages(
+          imagesRef.current.map((x) =>
+            x.clientKey === item.clientKey ? { ...x, state: "uploading" } : x,
+          ),
+        );
       const uploaded = await uploadMediaFromUri({
         uri: item.url,
         purpose: item.kind === "video" ? "product_video" : "product_image",
         mimeType:
           item.mimeType ?? (item.kind === "video" ? "video/mp4" : "image/jpeg"),
+        fileName: item.fileName,
+        sizeBytes: item.sizeBytes,
         durationMs: item.durationMs ?? undefined,
         visibility: "public",
         timeoutMs: item.kind === "video" ? 300000 : 120000,
@@ -440,14 +557,30 @@ export default function ProductEditorScreen() {
         assetId: uploaded.assetId,
         url: uploaded.url!,
         state: "ready" as const,
+        pendingReplacement: false,
       };
-      if (item.kind === "video") await persistMedia(images, ready);
-      else
-        await persistMedia(
-          images.map((x) => (x.assetId === item.assetId ? ready : x)),
-          video,
+      if (item.kind === "video") {
+        await queueMediaPersistence(imagesRef.current, ready);
+        updatePersistedVideo(ready);
+        updatePendingVideo(null);
+      } else {
+        const next = replaceEditorMedia(
+          imagesRef.current,
+          item.clientKey,
+          ready,
         );
+        updateImages(next);
+        await queueMediaPersistence(next, persistedVideoRef.current);
+      }
     } catch {
+      if (item.kind === "video")
+        updatePendingVideo({ ...item, state: "failed" });
+      else
+        updateImages(
+          imagesRef.current.map((x) =>
+            x.clientKey === item.clientKey ? { ...x, state: "failed" } : x,
+          ),
+        );
       Alert.alert(
         "No pudimos subir este archivo",
         "Revisa tu conexion e intentalo nuevamente.",
@@ -459,19 +592,60 @@ export default function ProductEditorScreen() {
     if (target < 0 || target >= images.length) return;
     const next = [...images];
     [next[index], next[target]] = [next[target], next[index]];
-    void persistMedia(
-      next.map((x, i) => ({ ...x, position: i })),
-      video,
-    );
+    const positioned = next.map((x, i) => ({ ...x, position: i }));
+    updateImages(positioned);
+    void queueMediaPersistence(positioned, persistedVideoRef.current);
   };
-  const removeImage = (assetId: string) => {
+  const removeImage = (clientKey: string) => {
     const remaining = images
-      .filter((x) => x.assetId !== assetId)
+      .filter((x) => x.clientKey !== clientKey)
       .map((x, i) => ({ ...x, position: i }));
     if (remaining.length && !remaining.some((x) => x.isCover))
       remaining[0] = { ...remaining[0], isCover: true };
-    void persistMedia(remaining, video);
+    updateImages(remaining);
+    void queueMediaPersistence(remaining, persistedVideoRef.current);
   };
+  const removeOfficialVideo = async () => {
+    await queueMediaPersistence(imagesRef.current, null);
+    updatePersistedVideo(null);
+  };
+  const leaveEditor = useCallback(async () => {
+    if (!dirty || (await flushDraftSave(true))) {
+      router.back();
+      return;
+    }
+    Alert.alert(
+      "No pudimos guardar los ultimos cambios.",
+      "El borrador guardado anteriormente permanece seguro.",
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Salir de todos modos",
+          style: "destructive",
+          onPress: () => router.back(),
+        },
+        { text: "Reintentar", onPress: () => void leaveEditor() },
+      ],
+    );
+  }, [dirty, flushDraftSave, router]);
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener(
+        "hardwareBackPress",
+        () => {
+          void leaveEditor();
+          return true;
+        },
+      );
+      if (productId)
+        void fetchSellerProductVariants(productId)
+          .then((value) =>
+            setVariantsReady(deriveMarketplaceVariantsReady(value)),
+          )
+          .catch(() => setVariantsReady(false));
+      return () => subscription.remove();
+    }, [leaveEditor, productId]),
+  );
   const publish = async () => {
     if (!productId) return;
     const numericPrice = Number(price);
@@ -499,7 +673,9 @@ export default function ProductEditorScreen() {
     }
     setPublishing(true);
     try {
-      await save(true);
+      if (!(await flushDraftSave(true))) throw new Error("draft_save_failed");
+      await saveQueue.current.wait();
+      await mediaQueue.current;
       if (images.some((x) => x.state !== "ready") || !images.length)
         throw new Error("media");
       const inventory = await fetchSellerProductVariants(productId),
@@ -507,6 +683,7 @@ export default function ProductEditorScreen() {
           (x) => x.status !== "archived",
         ),
         defaultVariant = configurableVariants.find((x) => x.is_default);
+      setVariantsReady(deriveMarketplaceVariantsReady(inventory));
       if (!defaultVariant) throw new Error("variant");
       if (
         configurableVariants.length === 1 &&
@@ -627,12 +804,7 @@ export default function ProductEditorScreen() {
         }}
       >
         <View style={styles.header}>
-          <Pressable
-            onPress={() => {
-              if (dirty) void save(true);
-              router.back();
-            }}
-          >
+          <Pressable onPress={() => void leaveEditor()}>
             <Text style={styles.back}>‹</Text>
           </Pressable>
           <View>
@@ -643,7 +815,7 @@ export default function ProductEditorScreen() {
             </Text>
             <Text style={styles.muted}>{message || "Borrador privado"}</Text>
           </View>
-          <Pressable disabled={saving} onPress={() => void save()}>
+          <Pressable disabled={saving} onPress={() => void flushDraftSave()}>
             <Text style={styles.save}>Guardar borrador</Text>
           </Pressable>
         </View>
@@ -655,7 +827,10 @@ export default function ProductEditorScreen() {
               label="Nombre del producto"
               hint={`${title.length}/80`}
               value={title}
-              onChange={change(setTitle)}
+              onChange={(value) => {
+                setTitleConfigured(true);
+                change(setTitle)(value);
+              }}
             />
             <EditorField
               label="Descripcion"
@@ -678,6 +853,8 @@ export default function ProductEditorScreen() {
                   selected={categoryId === c.id}
                   onPress={() => {
                     setCategoryId(c.id);
+                    setCategoryConfigured(true);
+                    saveQueue.current.edit();
                     setDirty(true);
                   }}
                 />
@@ -693,18 +870,17 @@ export default function ProductEditorScreen() {
             <View style={styles.grid}>
               {images.map((item, index) => (
                 <ProductMediaTile
-                  key={item.assetId}
+                  key={item.clientKey}
                   item={item}
-                  onCover={() =>
-                    void persistMedia(
-                      images.map((x) => ({
-                        ...x,
-                        isCover: x.assetId === item.assetId,
-                      })),
-                      video,
-                    )
-                  }
-                  onRemove={() => removeImage(item.assetId)}
+                  onCover={() => {
+                    const next = imagesRef.current.map((x) => ({
+                      ...x,
+                      isCover: x.clientKey === item.clientKey,
+                    }));
+                    updateImages(next);
+                    void queueMediaPersistence(next, persistedVideoRef.current);
+                  }}
+                  onRemove={() => removeImage(item.clientKey)}
                   onRetry={() => void retryMedia(item)}
                   onMoveLeft={index ? () => move(index, -1) : undefined}
                   onMoveRight={
@@ -723,12 +899,25 @@ export default function ProductEditorScreen() {
             <Text style={styles.label}>
               Video del producto · Opcional · Maximo 60 segundos
             </Text>
-            {video ? (
-              <ProductMediaTile
-                item={video}
-                onRetry={() => void retryMedia(video)}
-                onRemove={() => void persistMedia(images, null)}
-              />
+            {persistedVideo ? (
+              <>
+                <Text style={styles.muted}>Video actual</Text>
+                <ProductMediaTile
+                  item={persistedVideo}
+                  onRemove={() => void removeOfficialVideo()}
+                />
+              </>
+            ) : null}
+            {pendingVideo ? (
+              <>
+                <Text style={styles.muted}>Nuevo video</Text>
+                <ProductMediaTile
+                  item={pendingVideo}
+                  onRetry={() => void retryMedia(pendingVideo)}
+                  onRemove={() => updatePendingVideo(null)}
+                  removeLabel="Cancelar reemplazo"
+                />
+              </>
             ) : null}
             <Text style={styles.label}>
               Permitir que otros creadores vendan este producto
@@ -750,7 +939,7 @@ export default function ProductEditorScreen() {
             ) : null}
             <Pressable style={styles.secondary} onPress={() => void addVideo()}>
               <Text style={styles.secondaryText}>
-                {video ? "Cambiar video" : "Agregar video"}
+                {persistedVideo ? "Cambiar video" : "Agregar video"}
               </Text>
             </Pressable>
           </EditorCard>
@@ -760,7 +949,10 @@ export default function ProductEditorScreen() {
             <EditorField
               label="Precio"
               value={price}
-              onChange={change(setPrice)}
+              onChange={(value) => {
+                setPriceConfigured(true);
+                change(setPrice)(value);
+              }}
               keyboardType="decimal-pad"
             />
             <Text style={styles.currency}>BDAG</Text>
@@ -806,6 +998,7 @@ export default function ProductEditorScreen() {
                     }
                     onPress={() => {
                       setShippingProfileId(p.id);
+                      saveQueue.current.edit();
                       setDirty(true);
                     }}
                   />
@@ -857,9 +1050,10 @@ export default function ProductEditorScreen() {
               {stock} disponibles ·{" "}
               {shippingReady ? "Envio configurado" : "Envio pendiente"}
             </Text>
-            {video ? (
+            {persistedVideo ? (
               <Text style={styles.videoReady}>
-                Video listo · {Math.ceil((video.durationMs ?? 0) / 1000)}s
+                Video listo ·{" "}
+                {Math.ceil((persistedVideo.durationMs ?? 0) / 1000)}s
               </Text>
             ) : null}
             <Text style={styles.previewBadge}>

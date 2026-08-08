@@ -27,6 +27,7 @@ export interface Product {
   published_at:string|null; deleted_at:string|null; created_at:string; updated_at:string;
   variant_price_max:number|null; active_variant_count:number;
   shipping_profile_id:string|null;
+  available_quantity:number;publication_readiness_reason:string|null;
   seller?:{username:string;avatar_url:string|null;display_name:string|null};
 }
 
@@ -87,6 +88,8 @@ function mapProduct(row:Record<string,unknown>):Product {
     stock:Number(row.stock), total_sales:Number(row.total_sales),
     variant_price_max:row.variant_price_max==null?null:Number(row.variant_price_max),
     active_variant_count:Number(row.active_variant_count??1),
+    available_quantity:Number(row.available_quantity??row.stock??0),
+    publication_readiness_reason:typeof row.publication_readiness_reason==='string'?row.publication_readiness_reason:null,
     images:Array.isArray(row.images)?row.images as string[]:[],
     tags:Array.isArray(row.tags)?row.tags as string[]:[],
     currency:'BDAG', product_type:'physical',

@@ -16,11 +16,14 @@ const editor = readFileSync(
 );
 const base = {
   title: "Runner Pro",
+  titleConfigured: true,
   description: "Una descripcion profesional ".repeat(8),
   categoryId: "category",
+  categoryConfigured: true,
   imageCount: 1,
   hasValidVideo: false,
   price: 10,
+  priceConfigured: true,
   inventory: 5,
   variantsReady: true,
   shippingReady: true,

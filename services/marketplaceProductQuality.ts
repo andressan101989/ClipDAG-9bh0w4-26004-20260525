@@ -1,11 +1,14 @@
 import { calculateMarketplaceProductQualityCore } from "./marketplaceProductQualityCore.mjs";
 export interface MarketplaceProductQualityInput {
   title: string;
+  titleConfigured: boolean;
   description: string;
   categoryId: string | null;
+  categoryConfigured: boolean;
   imageCount: number;
   hasValidVideo: boolean;
   price: number;
+  priceConfigured: boolean;
   inventory: number;
   variantsReady: boolean;
   shippingReady: boolean;

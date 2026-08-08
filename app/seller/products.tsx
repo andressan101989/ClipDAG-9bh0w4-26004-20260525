@@ -18,6 +18,15 @@ import {
   Spacing,
 } from "@/constants/theme";
 import { SellerScreenHeader } from "@/components/marketplace/SellerScreenHeader";
+import { classifySellerProductStatusCore } from "@/services/marketplaceSellerProductStatusCore.mjs";
+
+const PRODUCT_STATUS_LABEL = {
+  draft: "Borrador",
+  published: "Publicado",
+  sold_out: "Agotado",
+  configuration_required: "Configuración requerida",
+  paused: "Pausado",
+} as const;
 
 export default function SellerProducts() {
   const router = useRouter();
@@ -85,13 +94,7 @@ export default function SellerProducts() {
                 <Text style={s.meta}>
                   {item.price.toFixed(8).replace(/0+$/, "").replace(/\.$/, "")}{" "}
                   BDAG ·{" "}
-                  {item.status === "active"
-                    ? "Publicado"
-                    : item.status === "sold_out"
-                      ? "Agotado"
-                      : item.published_at
-                        ? "Pausado"
-                        : "Borrador"}
+                  {PRODUCT_STATUS_LABEL[classifySellerProductStatusCore(item)]}
                 </Text>
               </View>
               <Pressable

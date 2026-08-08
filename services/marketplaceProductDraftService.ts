@@ -10,6 +10,7 @@ export type ProductEditorMediaState =
   | "ready"
   | "failed";
 export interface ProductEditorMedia {
+  clientKey: string;
   assetId: string;
   url: string;
   kind: "image" | "video";
@@ -18,6 +19,9 @@ export interface ProductEditorMedia {
   position: number;
   isCover: boolean;
   state: ProductEditorMediaState;
+  fileName?: string;
+  sizeBytes?: number;
+  pendingReplacement?: boolean;
 }
 export interface MarketplaceProductDraft {
   id: string;
@@ -109,6 +113,7 @@ export function parseMarketplaceProductDraft(
         )
           throw new Error("marketplace_product_video_invalid");
         return {
+          clientKey: uuid(m.asset_id, "media"),
           assetId: uuid(m.asset_id, "media"),
           url: text(m.url, "media_url"),
           kind,

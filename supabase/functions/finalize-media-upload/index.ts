@@ -29,6 +29,9 @@ Deno.serve(async (req) => {
   const { asset_id, duration_ms } = await req.json().catch(() => ({}));
   const db = admin();
   const durationMs = duration_ms == null ? null : Number(duration_ms);
+  // MKT-B1 validates duration metadata supplied by the official picker/upload
+  // flow. This function does not decode or probe the video bitstream. Physical
+  // duration inspection belongs to a future media probing/transcoding phase.
   const { data: a } = await db
     .from("media_assets")
     .select("*")
