@@ -137,6 +137,12 @@ try {
     ])
   ).rows[0].value;
   assert(owner?.product?.id === draft, "draft_not_resumable");
+  assert(
+    owner.product.editor_state?.title_configured === false &&
+      owner.product.editor_state?.price_configured === false &&
+      owner.product.editor_state?.category_configured === false,
+    "fresh_draft_editor_state_not_false",
+  );
   const publicBefore = (
     await db.query(
       "select fetch_public_marketplace_products(null,null,null,100,$1)value",
@@ -147,10 +153,56 @@ try {
     Array.isArray(publicBefore) && publicBefore.length === 0,
     "draft_publicly_visible",
   );
-  await db.query(
-    "select save_my_marketplace_product_draft($1,'10000000-0000-4000-8000-000000000002','Runner Pro','Professional publishing proof',10,null,null,5,'{}',$2,'physical')",
-    [draft, id.profile],
+  const saveEditorState = (
+    title,
+    price,
+    titleConfigured,
+    priceConfigured,
+    categoryConfigured,
+  ) =>
+    db.query(
+      "select save_my_marketplace_product_draft($1,'10000000-0000-4000-8000-000000000002',$3,'Professional publishing proof',$4,null,null,5,'{}',$2,'physical',$5,$6,$7)",
+      [
+        draft,
+        id.profile,
+        title,
+        price,
+        titleConfigured,
+        priceConfigured,
+        categoryConfigured,
+      ],
+    );
+  await saveEditorState("Runner Pro", 1, true, false, false);
+  let reopened = (
+    await db.query("select fetch_my_marketplace_product_draft($1)value", [draft])
+  ).rows[0].value.product.editor_state;
+  assert(
+    reopened.title_configured &&
+      !reopened.price_configured &&
+      !reopened.category_configured,
+    "title_editor_state_not_persisted",
   );
+  await saveEditorState("Runner Pro", 1, true, false, true);
+  reopened = (
+    await db.query("select fetch_my_marketplace_product_draft($1)value", [draft])
+  ).rows[0].value.product.editor_state;
+  assert(
+    reopened.title_configured &&
+      !reopened.price_configured &&
+      reopened.category_configured,
+    "category_editor_state_not_persisted",
+  );
+  await saveEditorState("Runner Pro", 1, true, true, true);
+  reopened = (
+    await db.query("select fetch_my_marketplace_product_draft($1)value", [draft])
+  ).rows[0].value.product.editor_state;
+  assert(
+    reopened.title_configured &&
+      reopened.price_configured &&
+      reopened.category_configured,
+    "one_bdag_editor_state_not_persisted",
+  );
+  await saveEditorState("Runner Pro", 10, true, true, true);
   const countsBeforePreview = (await db.query(countsSql)).rows[0];
   await expected(
     () =>
@@ -214,10 +266,7 @@ try {
     "media_order_cover_video_failed",
   );
   stage = "complete";
-  await db.query(
-    "select save_my_marketplace_product_draft($1,'10000000-0000-4000-8000-000000000002','Runner Pro','Professional publishing proof',10,null,null,5,'{}',$2,'physical')",
-    [draft, id.profile],
-  );
+  await saveEditorState("Runner Pro", 10, true, true, true);
   await claims("service_role");
   const variant = (
     await db.query(

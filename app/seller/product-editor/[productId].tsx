@@ -90,6 +90,9 @@ interface SaveSnapshot {
   productType: "physical" | "digital";
   images: ProductEditorMedia[];
   persistedVideo: ProductEditorMedia | null;
+  titleConfigured: boolean;
+  priceConfigured: boolean;
+  categoryConfigured: boolean;
 }
 export default function ProductEditorScreen() {
   const params = useLocalSearchParams<{ productId: string }>(),
@@ -198,10 +201,9 @@ export default function ProductEditorScreen() {
     setImages(nextImages);
     setPersistedVideo(nextVideo);
     setPendingVideo(null);
-    const isBootstrap = d.title === EMPTY.title && d.price === 1 && !d.savedAt;
-    setTitleConfigured(!isBootstrap && d.title !== EMPTY.title);
-    setPriceConfigured(!isBootstrap);
-    setCategoryConfigured(!isBootstrap);
+    setTitleConfigured(d.titleConfigured);
+    setPriceConfigured(d.priceConfigured);
+    setCategoryConfigured(d.categoryConfigured);
   };
   const load = useCallback(async () => {
     setLoading(true);
@@ -274,6 +276,9 @@ export default function ProductEditorScreen() {
       productType,
       images: imagesRef.current,
       persistedVideo: persistedVideoRef.current,
+      titleConfigured,
+      priceConfigured,
+      categoryConfigured,
     };
   }, [
     price,
@@ -286,6 +291,9 @@ export default function ProductEditorScreen() {
     brand,
     shippingProfileId,
     productType,
+    titleConfigured,
+    priceConfigured,
+    categoryConfigured,
   ]);
   const flushDraftSave = useCallback(
     async (silent = false): Promise<boolean> => {
@@ -316,6 +324,9 @@ export default function ProductEditorScreen() {
               tags: [],
               shippingProfileId: value.shippingProfileId,
               productType: value.productType,
+              titleConfigured: value.titleConfigured,
+              priceConfigured: value.priceConfigured,
+              categoryConfigured: value.categoryConfigured,
             });
             await mediaQueue.current;
           },

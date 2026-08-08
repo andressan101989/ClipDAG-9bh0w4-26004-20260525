@@ -1,4 +1,5 @@
 import { getSupabaseClient } from "@/template";
+import { parseMarketplaceProductEditorFlags } from "./marketplaceProductEditorFlagsCore.mjs";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -38,6 +39,9 @@ export interface MarketplaceProductDraft {
   productType: ProductType;
   status: string;
   savedAt: string | null;
+  titleConfigured: boolean;
+  priceConfigured: boolean;
+  categoryConfigured: boolean;
   media: ProductEditorMedia[];
 }
 export interface SaveMarketplaceProductDraftInput
@@ -71,7 +75,11 @@ export function parseMarketplaceProductDraft(
   const root = object(payload),
     p = object(root.product),
     media = Array.isArray(root.media) ? root.media : [];
-  const price = Number(p.price),
+  const configured = parseMarketplaceProductEditorFlags(
+      p.editor_state,
+      p.published_at,
+    ),
+    price = Number(p.price),
     stock = Number(p.stock);
   if (
     !Number.isFinite(price) ||
@@ -101,6 +109,7 @@ export function parseMarketplaceProductDraft(
     productType: p.product_type === "digital" ? "digital" : "physical",
     status: text(p.status, "status"),
     savedAt: typeof p.editor_saved_at === "string" ? p.editor_saved_at : null,
+    ...configured,
     media: media
       .map((entry, index): ProductEditorMedia => {
         const m = object(entry),
@@ -167,6 +176,9 @@ export async function saveMarketplaceProductDraft(
     p_tags: input.tags,
     p_shipping_profile_id: input.shippingProfileId,
     p_product_type: input.productType,
+    p_title_configured: input.titleConfigured,
+    p_price_configured: input.priceConfigured,
+    p_category_configured: input.categoryConfigured,
   });
   if (error) throw error;
   const row = object(data);

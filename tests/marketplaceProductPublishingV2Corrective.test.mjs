@@ -8,6 +8,7 @@ import {
   replaceEditorMedia,
 } from "../services/marketplaceProductEditorState.ts";
 import { calculateMarketplaceProductQualityCore as quality } from "../services/marketplaceProductQualityCore.mjs";
+import { parseMarketplaceProductEditorFlags } from "../services/marketplaceProductEditorFlagsCore.mjs";
 import { classifySellerProductStatusCore as status } from "../services/marketplaceSellerProductStatusCore.mjs";
 
 const editor = readFileSync("app/seller/product-editor/[productId].tsx", "utf8");
@@ -109,6 +110,58 @@ test("technical bootstrap defaults earn no title, category, price, or inventory 
   assert.equal(quality({ ...draftInput(), titleConfigured: true }).score, 15);
   assert.equal(quality({ ...draftInput(), priceConfigured: true }).score, 10);
   assert.equal(quality({ ...draftInput(), inventory: 1, variantsReady: true }).score, 5);
+});
+
+test("persisted editor intent survives reopen and explicit one-BDAG pricing earns credit", () => {
+  assert.deepEqual(parseMarketplaceProductEditorFlags({}, null), {
+    titleConfigured: false,
+    priceConfigured: false,
+    categoryConfigured: false,
+  });
+  const titleOnly = parseMarketplaceProductEditorFlags(
+    {
+      title_configured: true,
+      price_configured: false,
+      category_configured: false,
+    },
+    null,
+  );
+  assert.deepEqual(titleOnly, {
+    titleConfigured: true,
+    priceConfigured: false,
+    categoryConfigured: false,
+  });
+  const configured = parseMarketplaceProductEditorFlags(
+    {
+      title_configured: true,
+      price_configured: true,
+      category_configured: true,
+    },
+    null,
+  );
+  const configuredInput = {
+    ...draftInput(),
+    categoryId: "seller-selected-category",
+    ...configured,
+  };
+  assert.equal(quality({ ...configuredInput, price: 1 }).score, 35);
+  assert.equal(quality({ ...configuredInput, price: 10 }).score, 35);
+});
+
+test("legacy published products infer configured fields but malformed booleans are rejected", () => {
+  assert.deepEqual(parseMarketplaceProductEditorFlags({}, "2026-08-08T12:00:00Z"), {
+    titleConfigured: true,
+    priceConfigured: true,
+    categoryConfigured: true,
+  });
+  assert.throws(
+    () =>
+      parseMarketplaceProductEditorFlags(
+        { title_configured: "true" },
+        null,
+      ),
+    /marketplace_draft_editor_state_invalid/,
+  );
 });
 
 function draftInput() {
