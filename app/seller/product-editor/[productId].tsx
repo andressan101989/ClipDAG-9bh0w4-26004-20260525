@@ -20,6 +20,7 @@ import {
   View,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
 import { randomUUID } from "expo-crypto";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -30,6 +31,8 @@ import {
   formatProductVideoDuration,
   requestMarketplacePhotosAccess,
   validateProductVideoDuration,
+  inspectLocalVideoDurationMs,
+  materializeMarketplacePhotoAsset,
 } from "@/services/marketplaceMediaPickerService";
 import { shippingCountryLabel } from "@/services/marketplaceShippingSetup";
 import {
@@ -635,15 +638,49 @@ export default function ProductEditorScreen() {
       }
     }
   };
-  const addVideo = async () => {
+  const addVideo = async (source?: "photos" | "files") => {
     if (pendingVideoRef.current?.state === "uploading") return;
+    if (!source) {
+      Alert.alert("Seleccionar video", "Elige dónde buscar el video.", [
+        { text: "Fotos", onPress: () => void addVideo("photos") },
+        { text: "Archivos", onPress: () => void addVideo("files") },
+        { text: "Cancelar", style: "cancel" },
+      ]);
+      return;
+    }
     let result: ImagePicker.ImagePickerResult;
     try {
-      if (!(await requireMediaAccess("video"))) return;
-      result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["videos"],
-        allowsEditing: false,
-      });
+      if (source === "files") {
+        const document = await DocumentPicker.getDocumentAsync({
+          type: ["video/mp4", "video/quicktime"],
+          copyToCacheDirectory: true,
+          multiple: false,
+        });
+        if (document.canceled) return;
+        const picked = document.assets[0],
+          duration = await inspectLocalVideoDurationMs(picked.uri);
+        result = {
+          canceled: false,
+          assets: [
+            {
+              uri: picked.uri,
+              width: 0,
+              height: 0,
+              type: "video",
+              fileName: picked.name,
+              fileSize: picked.size,
+              mimeType: picked.mimeType ?? undefined,
+              duration,
+            },
+          ],
+        };
+      } else {
+        if (!(await requireMediaAccess("video"))) return;
+        result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ["videos"],
+          allowsEditing: false,
+        });
+      }
     } catch (error) {
       if (__DEV__)
         console.info("[ProductMediaPicker]", {
@@ -665,8 +702,36 @@ export default function ProductEditorScreen() {
       return;
     }
     if (result.canceled) return;
-    const asset = result.assets[0],
-      durationResult = validateProductVideoDuration(asset.duration);
+    let asset = result.assets[0];
+    if (source === "photos" && asset.assetId) {
+      setMessage("Preparando video…");
+      try {
+        asset = {
+          ...asset,
+          uri: await materializeMarketplacePhotoAsset(asset.assetId, asset.uri),
+        };
+      } catch {
+        Alert.alert(
+          "Video en iCloud",
+          "Este video todavía no está disponible en el teléfono.",
+          [
+            {
+              text: "Intentar de nuevo",
+              onPress: () => void addVideo("photos"),
+            },
+            {
+              text: "Elegir desde Archivos",
+              onPress: () => void addVideo("files"),
+            },
+            { text: "Cancelar", style: "cancel" },
+          ],
+        );
+        return;
+      } finally {
+        setMessage("");
+      }
+    }
+    const durationResult = validateProductVideoDuration(asset.duration);
     if (__DEV__)
       console.info("[ProductVideo]", {
         pickerDurationRaw: asset.duration ?? null,

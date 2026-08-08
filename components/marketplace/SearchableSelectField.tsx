@@ -48,9 +48,11 @@ export function SearchableSelectField({
         style={styles.field}
         onPress={() => setOpen(true)}
       >
-        <View>
+        <View style={styles.selectedContent}>
           <Text style={styles.label}>{label}</Text>
-          <Text style={styles.value}>{selected?.label ?? "Seleccionar"}</Text>
+          <Text style={styles.value} numberOfLines={2}>
+            {selected?.label ?? "Seleccionar"}
+          </Text>
         </View>
         <Text style={styles.chevron}>›</Text>
       </Pressable>
@@ -119,6 +121,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   value: { color: Colors.textPrimary, fontSize: 16, fontWeight: "600" },
+  selectedContent: { flex: 1, paddingRight: Spacing.sm },
   chevron: { color: Colors.textSecondary, fontSize: 30 },
   modal: { flex: 1, backgroundColor: Colors.bg, padding: Spacing.md },
   header: {
@@ -147,6 +150,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  optionText: { color: Colors.textPrimary, fontSize: 16 },
+  optionText: {
+    flex: 1,
+    color: Colors.textPrimary,
+    fontSize: 16,
+    lineHeight: 22,
+    paddingVertical: 4,
+  },
   check: { color: Colors.primaryLight, fontSize: 18, fontWeight: "800" },
 });

@@ -76,8 +76,8 @@ test('client contract: configuration message is accurate and new variants accept
   assert.match(seller,/Las variantes fueron guardadas y las proyecciones del producto se actualizaron/);
   assert.doesNotMatch(seller,/Precio e inventario del producto fueron recalculados/);
   assert.match(seller,/>Stock</);
-  assert.match(seller,/value=\{variant\.onHand\} keyboardType="number-pad"[\s\S]*updateDraft\(index,\{onHand,setOnHand:onHand\}\)/);
-  assert.match(seller,/on_hand:Math\.max\(0,Number\.parseInt\(item\.onHand/);
+  assert.match(seller,/value=\{variant\.onHand\}[\s\S]*keyboardType="number-pad"[\s\S]*updateDraft\(index,\s*\{\s*onHand,\s*setOnHand:\s*onHand\s*\}\)/);
+  assert.match(seller,/on_hand:\s*Math\.max\(\s*0,\s*Number\.parseInt\(item\.onHand/);
 });
 
 test('scope contract: correction introduces no commerce or financial behavior',()=>{

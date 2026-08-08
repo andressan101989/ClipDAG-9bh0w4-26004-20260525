@@ -7,15 +7,15 @@ const detail=read('app/product/[id].tsx');const shop=read('app/(tabs)/shop.tsx')
 const context=read('contexts/MarketplaceCartContext.tsx');const domain=read('services/marketplaceCart.ts');const storage=read('services/marketplaceCartStorage.ts');const layout=read('app/_layout.tsx');
 
 test('product integration uses the exact selected variant with lock, options and cart navigation',()=>{
-  assert.match(detail,/variantId:selectedVariant\.id/);assert.match(detail,/selectedVariant\.option_value_ids/);
-  assert.match(detail,/addToCartLockRef\.current/);assert.match(detail,/finally\{addToCartLockRef\.current=false/);
-  assert.match(detail,/!selectedVariant\|\|available<=0/);assert.match(detail,/isOwner/);
+  assert.match(detail,/variantId:\s*selectedVariant\.id/);assert.match(detail,/selectedVariant\.option_value_ids/);
+  assert.match(detail,/addToCartLockRef\.current/);assert.match(detail,/finally\s*\{\s*addToCartLockRef\.current\s*=\s*false/);
+  assert.match(detail,/!selectedVariant\s*\|\|\s*available\s*<=\s*0/);assert.match(detail,/isOwner/);
   assert.match(detail,/Agregado al carrito/);assert.match(detail,/Ver carrito/);assert.match(detail,/Agregar al carrito/);
   assert.doesNotMatch(detail,/shippingAddress|orderModalVisible|Confirmar pedido/);
 });
 
 test('cart badges are immediate, capped, accessible and preserve shop wallet/bookmark entry points',()=>{
-  for(const source of [detail,shop]){assert.match(source,/shopping-cart/);assert.match(source,/totalQuantity>99\?'99\+'/);assert.match(source,/Carrito, \$\{totalQuantity\} productos/);}
+  for(const source of [detail,shop]){assert.match(source,/shopping-cart/);assert.match(source,/totalQuantity\s*>\s*99\s*\?\s*["']99\+["']/);assert.match(source,/Carrito, \$\{totalQuantity\} productos/);}
   assert.match(shop,/walletPill/);assert.match(detail,/bookmark/);
 });
 

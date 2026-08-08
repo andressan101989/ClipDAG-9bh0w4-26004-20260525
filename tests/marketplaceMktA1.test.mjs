@@ -70,7 +70,7 @@ test('client contract: product mutations use RPCs and never direct product write
 });
 test('client contract: deep link fetches by id and loading terminates',()=>{
   assert.match(detail,/fetchMarketplaceProductDetail\(id\)/);
-  assert.match(detail,/finally\(\(\)=>\{if\(active\)setIsLoading\(false\)/);
+  assert.match(detail,/\.finally\(\(\)\s*=>\s*\{\s*if\s*\(active\)\s*setIsLoading\(false\)/);
   assert.match(detail,/Producto no disponible/);
 });
 test('client contract: seller gates creation and profile opens seller center',()=>{

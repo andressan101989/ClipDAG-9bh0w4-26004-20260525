@@ -43,6 +43,11 @@ export interface MarketplaceVariant {
 }
 export interface MarketplaceProductDetail {
   product:Product;options:MarketplaceProductOption[];variants:MarketplaceVariant[];
+  media:MarketplaceProductGalleryItem[];
+}
+export interface MarketplaceProductGalleryItem {
+  kind:'image'|'video';url:string;durationMs:number|null;mimeType:string|null;
+  position:number;isCover:boolean;
 }
 export interface MarketplaceInventoryLevel {
   variant_id:string;on_hand:number;reserved:number;available_quantity:number;
@@ -140,17 +145,25 @@ function mapVariant(row:Record<string,unknown>):MarketplaceVariant {
 }
 
 export async function fetchMarketplaceProductDetail(productId:string):Promise<MarketplaceProductDetail|null> {
-  const [productResult,detailResult]=await Promise.all([
+  const [productResult,detailResult,mediaResult]=await Promise.all([
     fetchProduct(productId),
     db().rpc('fetch_marketplace_product_detail',{p_product_id:productId}),
+    db().rpc('fetch_marketplace_product_media',{p_product_id:productId}),
   ]);
   if(detailResult.error) throwReadError(detailResult.error);
+  if(mediaResult.error) throwReadError(mediaResult.error);
   if(!productResult||!detailResult.data) return null;
   const payload=detailResult.data as {options?:MarketplaceProductOption[];variants?:Record<string,unknown>[]};
+  const media=(Array.isArray(mediaResult.data)?mediaResult.data:[]).map((row:Record<string,unknown>)=>({
+    kind:row.kind==='video'?'video' as const:'image' as const,url:String(row.url),
+    durationMs:row.duration_ms==null?null:Number(row.duration_ms),mimeType:typeof row.mime_type==='string'?row.mime_type:null,
+    position:Number(row.position??0),isCover:row.is_cover===true,
+  }));
   return {
     product:productResult,
     options:Array.isArray(payload.options)?payload.options:[],
     variants:Array.isArray(payload.variants)?payload.variants.map(mapVariant):[],
+    media,
   };
 }
 
@@ -169,7 +182,7 @@ export async function fetchSellerProductVariants(productId:string):Promise<Selle
   const product=mapProduct(payload.product);
   const mediaAssets=(payload.media_assets??[]).filter(item=>item.url);
   return {
-    detail:{product,options:payload.detail?.options??[],variants:(payload.detail?.variants??[]).map(mapVariant)},
+    detail:{product,options:payload.detail?.options??[],variants:(payload.detail?.variants??[]).map(mapVariant),media:[]},
     inventory:payload.inventory??[],movements:payload.movements??[],mediaAssets,
   };
 }
