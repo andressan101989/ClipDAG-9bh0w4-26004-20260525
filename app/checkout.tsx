@@ -50,8 +50,10 @@ export default function MarketplaceCheckoutScreen(){
     submitLockRef.current=true;setSubmitting(true);
     try{
       const result=await createCheckoutReservation(requestItems,normalized,idempotencyRef.current.key);
-      cart.removeItems(availableItems.map(item=>item.key));idempotencyRef.current=null;
-      router.replace({pathname:'/checkout/reservation/[id]',params:{id:result.checkout.id}} as never);
+      const authoritative=new Map(result.orders.flatMap(order=>order.items).map(item=>[item.variantId,item.unitPrice]));
+      const priceChanged=availableItems.some(item=>authoritative.has(item.variantId)&&authoritative.get(item.variantId)!==item.unitPrice);
+      const continueToReservation=()=>{cart.removeItems(availableItems.map(item=>item.key));idempotencyRef.current=null;router.replace({pathname:'/checkout/reservation/[id]',params:{id:result.checkout.id}} as never)};
+      if(priceChanged)Alert.alert('El precio de este producto cambió','Revisa el total final actualizado antes de pagar.',[{text:'Revisar total',onPress:continueToReservation}]);else continueToReservation();
     }catch(error){
       const code=error instanceof MarketplaceOrderServiceError?error.code:'marketplace_order_unknown';
       if(code==='marketplace_insufficient_inventory'){await cart.refreshCart();Alert.alert('Cambió el inventario','Uno o más productos ya no tienen la cantidad solicitada. Actualizamos tu carrito.');idempotencyRef.current=null;}

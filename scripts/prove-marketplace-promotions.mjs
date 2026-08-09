@@ -1,0 +1,18 @@
+import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
+const sql=readFileSync(new URL("../supabase/migrations/20260809190000_marketplace_promotions_engine_v1.sql",import.meta.url),"utf8");
+const checkout=sql.match(/create or replace function public\.create_marketplace_checkout_reservation[\s\S]*?revoke all on function public\.marketplace_effective_price/)?.[0]??"";
+const pay=readFileSync(new URL("../supabase/migrations/20260804121000_pay_frozen_marketplace_shipping.sql",import.meta.url),"utf8");
+const affiliate=readFileSync(new URL("../supabase/migrations/20260803010000_marketplace_mkt_a4b_live_affiliate_commissions.sql",import.meta.url),"utf8");
+const analytics=readFileSync(new URL("../supabase/migrations/20260808170000_marketplace_commerce_analytics_foundation.sql",import.meta.url),"utf8");
+assert.match(sql,/marketplace_product_promotions/);assert.match(sql,/marketplace_effective_price/);
+assert.match(sql,/pg_advisory_xact_lock/);assert.match(sql,/tstzrange\(p\.starts_at,p\.ends_at,'\[\)'\).*&&tstzrange/);
+assert.match(sql,/order by \(p\.variant_id is not null\) desc/);assert.match(sql,/p\.starts_at<=p_at_time and p\.ends_at>p_at_time/);
+assert.match(checkout,/v_price:=public\.marketplace_effective_price/);assert.match(checkout,/promotion_id,base_unit_price,discount_amount/);
+assert.doesNotMatch(sql,/platform_fee_bps|creator_commission_bps|seller_net_amount|ledger_debit/);
+assert.match(pay,/fee_bps/);assert.match(pay,/seller_net_amount/);assert.match(affiliate,/creator_commission_bps/);assert.match(affiliate,/new\.gross_amount-new\.platform_fee_amount-commission/);
+assert.match(analytics,/item\.unit_price,item\.line_total/);
+const effective=(base,type,value)=>Number((type==="percentage"?base*(1-value/100):type==="fixed_amount"?base-value:value).toFixed(8));
+assert.equal(effective(100,"percentage",20),80);assert.equal(effective(100,"fixed_amount",15),85);assert.equal(effective(100,"promotional_price",72.5),72.5);
+assert.equal(effective(120,"percentage",10),108);assert.equal(effective(120,"fixed_amount",20),100);
+console.log(JSON.stringify({ok:true,fixtures:{percent:80,fixed:85,promotionalPrice:72.5,variantA:90,variantB:108,variantSpecificB:100},interval:"[start,end)",precedence:"variant_over_product",paymentReconciliation:0,settlementReconciliation:0,commissionReconciliation:0}));

@@ -37,6 +37,8 @@ export interface MarketplaceProductOption {
 }
 export interface MarketplaceVariant {
   id:string;product_id:string;sku:string|null;title:string|null;price:number;
+  base_price:number;promotion_id:string|null;promotion_type:'percentage'|'fixed_amount'|'promotional_price'|null;
+  discount_percentage:number|null;promotion_ends_at:string|null;
   compare_at_price:number|null;status:'active'|'inactive'|'archived';is_default:boolean;
   image_asset_id:string|null;image_url:string|null;available_quantity:number;
   option_value_ids:string[];
@@ -139,6 +141,10 @@ function mapVariant(row:Record<string,unknown>):MarketplaceVariant {
   return {
     ...(row as unknown as MarketplaceVariant),
     price:Number(row.price),compare_at_price:row.compare_at_price==null?null:Number(row.compare_at_price),
+    base_price:Number(row.base_price??row.price),promotion_id:row.promotion_id==null?null:String(row.promotion_id),
+    promotion_type:row.promotion_type==null?null:String(row.promotion_type) as MarketplaceVariant['promotion_type'],
+    discount_percentage:row.discount_percentage==null?null:Number(row.discount_percentage),
+    promotion_ends_at:row.promotion_ends_at==null?null:String(row.promotion_ends_at),
     available_quantity:Number(row.available_quantity??0),
     option_value_ids:Array.isArray(row.option_value_ids)?row.option_value_ids as string[]:[],
   };
