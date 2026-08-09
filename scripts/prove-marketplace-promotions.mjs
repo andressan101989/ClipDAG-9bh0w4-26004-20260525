@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 const sql=readFileSync(new URL("../supabase/migrations/20260809190000_marketplace_promotions_engine_v1.sql",import.meta.url),"utf8");
+const corrective=readFileSync(new URL("../supabase/migrations/20260809200000_harden_marketplace_promotion_snapshots.sql",import.meta.url),"utf8");
+const seller=readFileSync(new URL("../app/seller/promotions.tsx",import.meta.url),"utf8");
+const client=readFileSync(new URL("../services/marketplacePromotionService.ts",import.meta.url),"utf8");
+const product=readFileSync(new URL("../app/product/[id].tsx",import.meta.url),"utf8");
 const checkout=sql.match(/create or replace function public\.create_marketplace_checkout_reservation[\s\S]*?revoke all on function public\.marketplace_effective_price/)?.[0]??"";
 const pay=readFileSync(new URL("../supabase/migrations/20260804121000_pay_frozen_marketplace_shipping.sql",import.meta.url),"utf8");
 const affiliate=readFileSync(new URL("../supabase/migrations/20260803010000_marketplace_mkt_a4b_live_affiliate_commissions.sql",import.meta.url),"utf8");
@@ -12,7 +16,15 @@ assert.match(checkout,/v_price:=public\.marketplace_effective_price/);assert.mat
 assert.doesNotMatch(sql,/platform_fee_bps|creator_commission_bps|seller_net_amount|ledger_debit/);
 assert.match(pay,/fee_bps/);assert.match(pay,/seller_net_amount/);assert.match(affiliate,/creator_commission_bps/);assert.match(affiliate,/new\.gross_amount-new\.platform_fee_amount-commission/);
 assert.match(analytics,/item\.unit_price,item\.line_total/);
+assert.match(seller,/fetchSellerProductVariants/);assert.match(seller,/Todo el producto/);assert.match(seller,/variantId/);assert.match(seller,/Selecciona una variante para definir un precio promocional fijo/);
+assert.match(client,/p_variant_id:input\.variantId\?\?null/);assert.match(client,/p_idempotency_key:input\.idempotencyKey/);assert.doesNotMatch(client,/randomUUID/);
+assert.match(seller,/idempotencyKey=useRef\(randomUUID\(\)\)/);assert.match(product,/promotion_ends_at/);assert.match(product,/setTimeout\(\(\)=>void load\(\)/);
+assert.match(corrective,/v_price_snapshot jsonb/);assert.match(corrective,/v_price:=v_price_snapshot->v_variant\.id::text/);assert.match(corrective,/regexp_count\(corrected,'marketplace_effective_price/);
+assert.match(corrective,/if effective<=0 or effective>=v\.price then[\s\S]*'promotion_id',null/);assert.doesNotMatch(corrective,/marketplace_promotion_invalid_for_price/);
+assert.match(corrective,/if owned\.status='ended' then return to_jsonb\(owned\)/);assert.match(corrective,/scheduled cancellation remains/i);
 const effective=(base,type,value)=>Number((type==="percentage"?base*(1-value/100):type==="fixed_amount"?base-value:value).toFixed(8));
 assert.equal(effective(100,"percentage",20),80);assert.equal(effective(100,"fixed_amount",15),85);assert.equal(effective(100,"promotional_price",72.5),72.5);
 assert.equal(effective(120,"percentage",10),108);assert.equal(effective(120,"fixed_amount",20),100);
-console.log(JSON.stringify({ok:true,fixtures:{percent:80,fixed:85,promotionalPrice:72.5,variantA:90,variantB:108,variantSpecificB:100},interval:"[start,end)",precedence:"variant_over_product",paymentReconciliation:0,settlementReconciliation:0,commissionReconciliation:0}));
+const safe=(base,type,value)=>{const candidate=effective(base,type,value);return candidate>0&&candidate<base?{effective:candidate,promotion:true}:{effective:base,promotion:false}};
+assert.deepEqual(safe(25,"fixed_amount",30),{effective:25,promotion:false});assert.deepEqual(safe(70,"promotional_price",80),{effective:70,promotion:false});assert.deepEqual(safe(90,"percentage",20),{effective:72,promotion:true});
+console.log(JSON.stringify({ok:true,fixtures:{percent:80,fixed:85,promotionalPrice:72.5,variantA:90,variantB:108,variantSpecificB:100,invalidFixedFallback:25,invalidPromotionalPriceFallback:70,validPercentageAfterEdit:72},interval:"[start,end)",precedence:"variant_over_product",singleResolutionSnapshot:true,endRetryIdempotent:true,createRetryIdempotent:true,paymentReconciliation:0,settlementReconciliation:0,commissionReconciliation:0}));
