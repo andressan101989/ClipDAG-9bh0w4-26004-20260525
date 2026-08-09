@@ -10,7 +10,7 @@ test('product integration uses the exact selected variant with lock, options and
   assert.match(detail,/variantId:\s*selectedVariant\.id/);assert.match(detail,/selectedVariant\.option_value_ids/);
   assert.match(detail,/addToCartLockRef\.current/);assert.match(detail,/finally\s*\{\s*addToCartLockRef\.current\s*=\s*false/);
   assert.match(detail,/!selectedVariant\s*\|\|\s*available\s*<=\s*0/);assert.match(detail,/isOwner/);
-  assert.match(detail,/Agregado al carrito/);assert.match(detail,/Ver carrito/);assert.match(detail,/Agregar al carrito/);
+  assert.match(detail,/marketplaceCartToastFeedback/);assert.match(detail,/Ver carrito/);assert.match(detail,/Agregar al carrito/);
   assert.doesNotMatch(detail,/shippingAddress|orderModalVisible|Confirmar pedido/);
 });
 

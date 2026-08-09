@@ -6,14 +6,14 @@ import { VideoView, useVideoPlayer } from "expo-video";
 import { Colors, FontWeight, Radius, Spacing } from "@/constants/theme";
 import type { MarketplaceProductGalleryItem } from "@/services/marketplaceService";
 
-type Props = { items: MarketplaceProductGalleryItem[]; selectedIndex: number; onSelect: (index: number) => void; variantImageUrl?: string | null };
+type Props = { items: MarketplaceProductGalleryItem[]; selectedIndex: number; onSelect: (index: number) => void };
 
-export function ProductMediaGallery({ items, selectedIndex, onSelect, variantImageUrl }: Props) {
+export function ProductMediaGallery({ items, selectedIndex, onSelect }: Props) {
   const selected = items[selectedIndex] ?? null;
   const player = useVideoPlayer(selected?.kind === "video" ? selected.url : null, instance => { instance.muted = true; });
   useEffect(() => () => { player.pause(); }, [player]);
   useEffect(() => { if (selected?.kind !== "video") player.pause(); }, [player, selected?.kind]);
-  const imageUrl = variantImageUrl ?? (selected?.kind === "image" ? selected.url : items.find(item => item.kind === "image")?.url);
+  const imageUrl = selected?.kind === "image" ? selected.url : items.find(item => item.kind === "image")?.url;
   return <View style={styles.wrap}>
     <View style={styles.stage}>
       {selected?.kind === "video" ? <VideoView player={player} style={styles.media} nativeControls contentFit="contain" accessibilityLabel="Video del producto" />
