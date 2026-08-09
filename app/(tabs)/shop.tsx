@@ -522,7 +522,7 @@ export default function ShopScreen() {
               <View style={styles.cardGrid}>
                 {products.map(p => (
                   <ProductCard key={p.id} product={p}
-                    onPress={() => router.push({ pathname: '/product/[id]', params: { id: p.id } })} />
+                    onPress={() => router.push({ pathname: '/product/[id]', params: { id: p.id, source: 'shop' } })} />
                 ))}
               </View>
             )}

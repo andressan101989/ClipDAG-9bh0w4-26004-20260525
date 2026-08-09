@@ -1,4 +1,4 @@
-import React,{useCallback,useMemo,useRef,useState} from 'react';
+import React,{useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {ActivityIndicator,Alert,KeyboardAvoidingView,Platform,Pressable,ScrollView,StyleSheet,Text,TextInput,View} from 'react-native';
 import {MaterialIcons} from '@expo/vector-icons';
 import {randomUUID} from 'expo-crypto';
@@ -12,6 +12,7 @@ import {createCheckoutReservation,expireMarketplaceCheckoutReservations,fetchMyA
 import {MarketplaceShippingQuoteCard,type MarketplaceShippingQuoteState} from '@/components/marketplace/MarketplaceShippingQuoteCard';
 import {SearchableSelectField} from '@/components/marketplace/SearchableSelectField';
 import {MARKETPLACE_SHIPPING_COUNTRIES,shippingRegionsForCountry} from '@/services/marketplaceShippingSetup';
+import{marketplaceCheckoutAnalyticsTargets,marketplaceCommerceEventKey,recordCheckoutStarted}from'@/services/marketplaceAnalyticsService';
 
 const emptyAddress:ShippingAddressInput={recipientName:'',line1:'',line2:'',city:'',region:'',postalCode:'',country:'US',phone:''};
 const fields:{key:keyof ShippingAddressInput;label:string;optional?:boolean}[]=[
@@ -27,11 +28,13 @@ export default function MarketplaceCheckoutScreen(){
   const [ready,setReady]=useState(false);const [submitting,setSubmitting]=useState(false);const submitLockRef=useRef(false);
   const [quoteStates,setQuoteStates]=useState<Record<string,MarketplaceShippingQuoteState>>({});
   const idempotencyRef=useRef<{signature:string;key:string}|null>(null);
+  const analyticsInstanceRef=useRef(marketplaceCommerceEventKey('checkout')),analyticsRecordedRef=useRef(false);
   const availableItems=useMemo(()=>cart.items.filter(item=>item.availability==='available'),[cart.items]);
   const availableGroups=useMemo(()=>Array.from(availableItems.reduce((groups,item)=>{
     const current=groups.get(item.storeId)??[];current.push(item);groups.set(item.storeId,current);return groups;
   },new Map<string,typeof availableItems>()).entries()),[availableItems]);
   const subtotal=useMemo(()=>availableItems.reduce((sum,item)=>sum+item.unitPrice*item.quantity,0),[availableItems]);
+  useEffect(()=>{if(!ready||!user||!availableItems.length||analyticsRecordedRef.current)return;analyticsRecordedRef.current=true;const targets=marketplaceCheckoutAnalyticsTargets(availableItems),metadata={item_count:availableItems.length,store_count:targets.length};for(const target of targets)void recordCheckoutStarted({productId:target.productId,metadata,idempotencyKey:`${analyticsInstanceRef.current}:${target.sellerId}`});},[ready,user,availableItems]);
 
   useFocusEffect(useCallback(()=>{let active=true;(async()=>{
     if(!user){setReady(true);return;}await expireMarketplaceCheckoutReservations().catch(()=>{});await refreshCart();if(active)setReady(true);
