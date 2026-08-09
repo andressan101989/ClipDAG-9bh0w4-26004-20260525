@@ -4,7 +4,7 @@ import{marketplaceAnalyticsAppliedQuantity,marketplaceCheckoutAnalyticsTargets,p
 
 export type MarketplaceAnalyticsSourceType='direct'|'shop'|'search'|'feed'|'clip'|'live'|'creator'|'affiliate'|'unknown';
 export interface MarketplaceCommerceSource{type:MarketplaceAnalyticsSourceType;entityId:string|null;creatorId:string|null;liveSessionId:string|null}
-export interface MarketplaceSellerAnalytics{date_from:string;date_to:string;timezone:'UTC';summary:{product_views:number;unique_viewer_sessions:number;add_to_cart_events:number;checkout_started:number;purchases:number;units_sold:number;gross_merchandise_bdag:number;conversion_view_to_cart:number;conversion_view_to_purchase:number};products:unknown[];daily:unknown[];sources:unknown[]}
+export interface MarketplaceSellerAnalytics{date_from:string;date_to:string;timezone:'UTC';summary:{product_views:number;unique_viewer_sessions:number;add_to_cart_events:number;checkout_started:number;orders:number;purchase_items:number;units_sold:number;gross_merchandise_bdag:number;view_to_cart_event_rate:number;view_to_purchase_event_rate:number};products:unknown[];daily:unknown[];sources:unknown[]}
 type RecordInput={eventName:'product_view'|'product_media_view'|'variant_selected'|'add_to_cart'|'checkout_started';productId:string;variantId?:string|null;quantity?:number|null;source?:MarketplaceCommerceSource;metadata?:Record<string,number|string|boolean>;idempotencyKey?:string};
 const clientSessionId=randomUUID();
 const db=()=>getSupabaseClient();

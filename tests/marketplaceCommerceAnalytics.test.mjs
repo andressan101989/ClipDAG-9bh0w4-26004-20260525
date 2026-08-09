@@ -6,6 +6,7 @@ import{marketplaceAnalyticsAppliedQuantity,marketplaceCheckoutAnalyticsTargets,p
 const migration=readFileSync('supabase/migrations/20260808170000_marketplace_commerce_analytics_foundation.sql','utf8');
 const anonymous=readFileSync('supabase/migrations/20260808171000_marketplace_analytics_anonymous_sessions.sql','utf8');
 const variants=readFileSync('supabase/migrations/20260808172000_marketplace_variant_analytics_projection.sql','utf8');
+const corrective=readFileSync('supabase/migrations/20260809120000_harden_marketplace_analytics_semantics.sql','utf8');
 const service=readFileSync('services/marketplaceAnalyticsService.ts','utf8');
 const detail=readFileSync('app/product/[id].tsx','utf8');
 const checkout=readFileSync('app/checkout.tsx','utf8');
@@ -44,6 +45,13 @@ test('variant performance uses seller scope and captured purchase values',()=>{
 });
 test('anonymous sessions are privacy safe and duplicate proof',()=>{
  assert.match(anonymous,/client_session_id,event_name,idempotency_key/);assert.match(anonymous,/grant execute.+to anon/s);assert.doesNotMatch(service,/device|advertising|walletconnect|phone|email/i);
+ assert.match(corrective,/actor is null and p_client_session_id is null/);assert.match(corrective,/marketplace_analytics_session_required/);assert.match(corrective,/on conflict do nothing returning id into event_id/);assert.match(corrective,/client_session_id=p_client_session_id and event_name=p_event_name and idempotency_key=p_idempotency_key/);assert.doesNotMatch(corrective,/do update set/);
+});
+test('server metadata allowlists reject arbitrary keys and bound typed values',()=>{
+ assert.match(corrective,/jsonb_object_keys\(p_metadata\).+not in\('media_kind','media_position'\)/s);assert.match(corrective,/not in\('item_count','store_count'\)/);assert.match(corrective,/p_metadata<>'\{\}'::jsonb/);assert.match(corrective,/media_position.+>20/s);assert.match(corrective,/item_count.+between 1 and 1000/s);assert.match(corrective,/marketplace_analytics_metadata_invalid/);
+});
+test('seller contracts distinguish orders, purchase items, and event activity rates',()=>{
+ assert.match(corrective,/count\(distinct order_id\)filter\(where event_name='purchase_completed'\) orders/);assert.match(corrective,/purchase_items/);assert.match(corrective,/purchase_orders/);assert.match(corrective,/view_to_cart_event_rate/);assert.match(corrective,/view_to_purchase_event_rate/);assert.doesNotMatch(corrective,/'conversion_view_to_/);assert.match(corrective,/not user\/session cohort conversion/);
 });
 test('product detail records view once, intentional variant, and successful cart only',()=>{
  assert.match(detail,/viewRecordedRef\.current===detail\.product\.id/);assert.match(detail,/recordProductView/);assert.match(detail,/selectedValues\[optionId\]===valueId\)return/);assert.match(detail,/recordVariantSelected/);assert.match(detail,/if\(!result\.ok\)/);assert.match(detail,/recordAddToCart/);
