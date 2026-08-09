@@ -35,8 +35,6 @@ export interface MarketplaceCartItem {
   availability: MarketplaceCartAvailability;
   addedAt: string;
   updatedAt: string;
-  adCampaignId?: string;
-  adTouchId?: string;
 }
 
 export type AddMarketplaceCartItemInput = Omit<

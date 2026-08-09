@@ -286,8 +286,6 @@ export default function ProductScreen() {
         quantity,
         availableQuantitySnapshot: selectedVariant.available_quantity,
         productUpdatedAt: product.updated_at,
-        adCampaignId: source === "ad" ? campaignId : undefined,
-        adTouchId: adTouchRef.current ?? undefined,
       });
       if (!result.ok) {
         showAlert(

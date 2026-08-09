@@ -24,7 +24,7 @@ const tabs = [
   ["active", "Activas"],
   ["scheduled", "Programadas"],
   ["paused", "Pausadas"],
-  ["completed", "Finalizadas"],
+  ["terminal", "Finalizadas"],
   ["", "Todas"],
 ] as const;
 export default function AdsDashboard() {

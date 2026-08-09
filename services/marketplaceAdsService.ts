@@ -44,12 +44,12 @@ const rows = <T>(data: unknown): T[] =>
   Array.isArray(data) ? (data as T[]) : [];
 export async function fetchSponsoredProducts(
   surface: "marketplace_home" | "marketplace_search",
-  categoryId?: string,
+  category?: string,
 ) {
   const { data, error } = await db().functions.invoke("marketplace-ads", {
     body: {
       surface,
-      categoryId: categoryId ?? null,
+      category: category ?? null,
       limit: 4,
       session: marketplaceCommerceSessionId(),
     },
@@ -105,6 +105,8 @@ export async function fetchAdConfig() {
     maximum_budget_bdag: number;
     minimum_duration: string;
     maximum_duration: string;
+    minimum_duration_seconds: number;
+    maximum_duration_seconds: number;
   };
 }
 export async function createAdDraft(input: {

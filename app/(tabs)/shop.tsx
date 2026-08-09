@@ -65,6 +65,10 @@ import {
   recordAdEvent,
   type SponsoredProduct,
 } from "@/services/marketplaceAdsService";
+import {
+  MARKETPLACE_AD_VISIBLE_MS,
+  MARKETPLACE_AD_VISIBLE_RATIO,
+} from "@/services/marketplaceAdVisibility";
 
 const { width: W } = Dimensions.get("window");
 const CARD_W = (W - Spacing.md * 2 - Spacing.sm) / 2;
@@ -426,7 +430,7 @@ const SponsoredCard = memo(function SponsoredCard({
         Math.min(top + height, Dimensions.get("window").height) -
           Math.max(top, 0),
       );
-    if (!sent.current && visible / height >= 0.5) {
+    if (!sent.current && visible / height >= MARKETPLACE_AD_VISIBLE_RATIO) {
       if (!timer.current)
         timer.current = setTimeout(() => {
           sent.current = true;
@@ -437,7 +441,7 @@ const SponsoredCard = memo(function SponsoredCard({
             surface: "marketplace_home",
             metadata: { position: 2 },
           }).catch(() => {});
-        }, 500);
+        }, MARKETPLACE_AD_VISIBLE_MS);
     } else if (timer.current) {
       clearTimeout(timer.current);
       timer.current = null;
@@ -623,7 +627,7 @@ export default function ShopScreen() {
     try {
       const [prods, ads] = await Promise.all([
         fetchProducts({ category: productCat || undefined, limit: 30 }),
-        fetchSponsoredProducts("marketplace_home").catch(() => []),
+        fetchSponsoredProducts("marketplace_home", productCat || undefined).catch(() => []),
       ]);
       setProducts(prods.filter((p) => p.seller_id !== user?.id));
       setSponsored(ads);

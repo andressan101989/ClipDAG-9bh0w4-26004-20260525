@@ -35,7 +35,7 @@ export default function CreateAd() {
     [days, setDays] = useState(1),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [config, setConfig] = useState<{minimum_budget_bdag:number;maximum_budget_bdag:number}|null>(null),
+    [config, setConfig] = useState<{minimum_budget_bdag:number;maximum_budget_bdag:number;minimum_duration_seconds:number;maximum_duration_seconds:number}|null>(null),
     createKey = useRef(randomUUID()),
     fundKey = useRef(randomUUID());
   useEffect(()=>{void fetchAdConfig().then(value=>{setConfig(value);setBudget(String(value.minimum_budget_bdag))}).catch(()=>{})},[]);
@@ -102,7 +102,7 @@ export default function CreateAd() {
         {config?<Text style={s.meta}>Permitido: {config.minimum_budget_bdag}–{config.maximum_budget_bdag} BDAG</Text>:null}
         <Text style={s.step}>3 · Duración</Text>
         <View style={s.row}>
-          {[1, 3, 7, 14].map((x) => (
+          {[1, 3, 7, 14].filter(x=>!config||(x*86400>=config.minimum_duration_seconds&&x*86400<=config.maximum_duration_seconds)).map((x) => (
             <Pressable
               key={x}
               style={[s.day, days === x && s.on]}
