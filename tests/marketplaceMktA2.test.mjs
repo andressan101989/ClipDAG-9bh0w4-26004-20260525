@@ -78,14 +78,14 @@ test('client contract: canonical detail resolves authoritative combinations',()=
   assert.match(selection,/variant\.status === 'active'/);
   assert.match(selection,/variant\.option_value_ids\.length === options\.length/);
   assert.match(detail,/selectedVariant\?\.price/);
-  assert.match(detail,/Completa tus opciones/);
-  assert.match(detail,/Esta combinación está agotada/);
-  assert.match(detail,/Producto agotado/);
+  assert.match(detail,/Selecciona \$\{missingOption/);
+  assert.match(detail,/Combinación agotada/);
+  assert.match(detail,/ProductPurchaseBar/);
   assert.match(detail,/accessibilityRole="radio"/);
   assert.match(detail,/accessibilityState=\{\{\s*selected,\s*disabled:\s*!enabled\s*\}\}/);
   assert.match(detail,/accessibilityLabel=\{`\$\{option\.name\} \$\{value\.value\}`\}/);
   assert.match(detail,/setQuantity\(1\)/);
-  assert.match(detail,/Math\.min\(available, q \+ 1\)/);
+  assert.match(detail,/onQuantity=\{setQuantity\}/);
   assert.match(detail,/selectedVariant\?\.image_url/);
   assert.match(detail,/selectedVariant\?\.available_quantity/);
   assert.match(detail,/selectedVariant\?\.compare_at_price/);

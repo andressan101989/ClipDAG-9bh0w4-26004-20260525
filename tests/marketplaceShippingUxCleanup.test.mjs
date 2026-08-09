@@ -34,7 +34,7 @@ const service = fs.readFileSync(
 test("product detail uses the existing checkout address affordance", () => {
   assert.match(
     product,
-    /MarketplaceShippingQuoteCard\s+productId=\{product\.id\}\s+quantity=\{quantity\}/,
+    /MarketplaceShippingQuoteCard[\s\S]*productId=\{product\.id\}[\s\S]*quantity=\{quantity\}/,
   );
   assert.match(product, /onRequestAddress/);
   assert.match(card, /Agregar dirección/);
