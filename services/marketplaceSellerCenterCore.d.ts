@@ -9,3 +9,4 @@ export function marketplaceSourceLabel(source:string):string;
 export function normalizeDailyAnalytics(rows:MarketplaceDailyAnalyticsRow[],days:number,dateTo:string):MarketplaceDailyAnalyticsRow[];
 export function sellerOrderNeedsAttention(status:string):boolean;
 export function sellerInventoryAttention(levels:MarketplaceInventoryLevel[]):{outOfStock:number;lowStock:number};
+export function sellerOrderItemsSubtotal(items:{lineTotal:number}[]):number;

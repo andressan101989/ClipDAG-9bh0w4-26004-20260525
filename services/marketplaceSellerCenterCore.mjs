@@ -15,3 +15,4 @@ export function normalizeDailyAnalytics(rows,days,dateTo){
 }
 export const sellerOrderNeedsAttention=status=>status==='confirmed'||status==='processing';
 export function sellerInventoryAttention(levels){return levels.reduce((result,level)=>{const available=Math.max(0,Number(level.available_quantity));if(available===0)result.outOfStock++;else if(available<=Number(level.low_stock_threshold))result.lowStock++;return result;},{outOfStock:0,lowStock:0});}
+export const sellerOrderItemsSubtotal=items=>items.reduce((total,item)=>total+Number(item.lineTotal),0);
