@@ -14,6 +14,7 @@
     "prove:marketplace-shipping": "node scripts/prove-marketplace-shipping.mjs",
     "prove:marketplace-publication": "node scripts/audit-marketplace-publication.mjs",
     "prove:marketplace-promotions": "node scripts/prove-marketplace-promotions.mjs",
+    "prove:marketplace-ads-finance": "node scripts/prove-marketplace-ads-finance.mjs",
     "prove:marketplace-runtime": "node scripts/prove-marketplace-client-runtime.mjs",
     "prove:marketplace-analytics": "node scripts/prove-marketplace-analytics.mjs",
     "lint": "expo lint"

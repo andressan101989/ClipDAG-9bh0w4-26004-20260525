@@ -1,0 +1,63 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { readFileSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import pg from 'pg';
+
+const read = p => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+const sql = read('supabase/migrations/20260810100000_marketplace_ads_financial_authority.sql');
+for (const token of ['marketplace_ads_escrow','marketplace_ads_revenue','marketplace_ad_campaigns','marketplace_ad_financial_events','marketplace_ad_fund','marketplace_ad_spend','marketplace_ad_release']) assert.match(sql,new RegExp(token));
+assert.match(sql,/spent_bdag\+released_bdag<=total_budget_bdag/);assert.match(sql,/order by id for update/g);assert.match(sql,/marketplace_ad_insufficient_bdag_balance/);assert.match(sql,/marketplace_ad_overspend/);assert.match(sql,/unique\(event_type,idempotency_key\)/);assert.match(sql,/auth\.role\(\)<>'service_role'/g);assert.match(sql,/for update skip locked/);assert.match(sql,/escrow_liability_difference/);
+for (const protectedFile of ['supabase/migrations/20260801043000_marketplace_mkt_a3c_bdag_payment.sql','supabase/migrations/20260803013000_marketplace_mkt_a4b_creator_settlement.sql','supabase/migrations/20260809200000_harden_marketplace_promotion_snapshots.sql']) assert.ok(read(protectedFile).length>0);
+
+const cache=join(tmpdir(),'onspace-ads-finance-npm-cache');mkdirSync(cache,{recursive:true});
+const cli=spawnSync(process.env.ComSpec,['/d','/s','/c','npx.cmd supabase db dump --linked --schema public --dry-run'],{cwd:process.cwd(),encoding:'utf8',windowsHide:true,env:{...process.env,npm_config_cache:cache}});
+const captured=`${cli.stdout??''}${cli.stderr??''}`,env=name=>captured.match(new RegExp(`(?:export |set \\"?)${name}=[\\"']?([^\\"'\\r\\n ]+)`))?.[1];
+assert.equal(cli.status,0,`ads_finance_secure_connection_failed:${captured.slice(-500)}`);
+const db=new pg.Client({host:env('PGHOST'),port:Number(env('PGPORT')),user:env('PGUSER'),password:env('PGPASSWORD'),database:env('PGDATABASE'),ssl:{rejectUnauthorized:false}});
+const ids=Object.fromEntries(['seller','store','session','create','fund','spend','release','create2','fund2','poorCreate','poorFund'].map(k=>[k,randomUUID()]));
+const claims=(role,sub='')=>db.query("select set_config('request.jwt.claims',$1,true),set_config('request.jwt.claim.role',$2,true),set_config('request.jwt.claim.sub',$3,true)",[JSON.stringify(sub?{role,sub}:{role}),role,sub]);
+async function rejected(run,token){await db.query('savepoint ads_expected');try{await run();throw new Error(`expected_${token}`)}catch(error){await db.query('rollback to savepoint ads_expected');assert.match(String(error.message),new RegExp(token))}finally{await db.query('release savepoint ads_expected').catch(()=>{})}}
+let open=false,product,variant;
+try{
+ await db.connect();await db.query('set role postgres');
+ const baseline=(await db.query('select (select count(*) from marketplace_ad_campaigns) campaigns,(select count(*) from marketplace_ad_financial_events) events')).rows[0];
+ await db.query('begin');open=true;await claims('service_role');
+ await db.query("insert into auth.users(id,instance_id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at)values($1,'00000000-0000-0000-0000-000000000000','authenticated','authenticated',$2,'proof',now(),now(),now())",[ids.seller,`${randomUUID()}@synthetic.local`]);
+ await db.query('insert into user_profiles(id,username,display_name)values($1,$2,$3)',[ids.seller,`ads_${randomUUID().replaceAll('-','').slice(0,12)}`,'Ads Finance Proof']);
+ await db.query("insert into marketplace_sellers(user_id,status,display_name,approved_at)values($1,'approved','Ads Finance Proof',now())",[ids.seller]);
+ await db.query("insert into marketplace_stores(id,seller_id,name,slug,status)values($1,$2,'Ads Proof Store',$3,'active')",[ids.store,ids.seller,`ads-proof-${randomUUID()}`]);
+ const category=(await db.query("select id from marketplace_categories where status='active' order by created_at limit 1")).rows[0]?.id;assert.ok(category,'active_marketplace_category_required');
+ await claims('authenticated',ids.seller);
+ product=(await db.query('select create_or_resume_marketplace_product_draft($1,$2,$3) id',[ids.store,category,ids.session])).rows[0].id;
+ await claims('service_role');
+ await db.query("update products set title='Ads Proof Product',description='Rollback-only finance proof',price=100,status='active',moderation_status='approved',published_at=now() where id=$1",[product]);
+ variant=(await db.query('select id from marketplace_product_variants where product_id=$1 order by is_default desc limit 1',[product])).rows[0].id;
+ await db.query("update marketplace_product_variants set price=100,status='active',archived_at=null where id=$1",[variant]);
+ await db.query('update marketplace_inventory_levels set on_hand=100,reserved=0 where variant_id=$1',[variant]);
+ const account=(await db.query('select ensure_ledger_account($1) id',[ids.seller])).rows[0].id;await db.query('update ledger_accounts set balance=1000 where id=$1',[account]);
+ await claims('authenticated',ids.seller);
+ const start=new Date(Date.now()-60000).toISOString(),end=new Date(Date.now()+86400000).toISOString();
+ const campaign=(await db.query('select create_marketplace_ad_campaign_draft($1,$2,$3,$4,$5,$6) result',[product,'Proof',100,start,end,ids.create])).rows[0].result.id;
+ const first=(await db.query('select activate_marketplace_ad_campaign($1,$2) result',[campaign,ids.fund])).rows[0].result;
+ const retry=(await db.query('select activate_marketplace_ad_campaign($1,$2) result',[campaign,ids.fund])).rows[0].result;assert.equal(first.id,retry.id);
+ assert.equal(Number((await db.query('select balance from ledger_accounts where id=$1',[account])).rows[0].balance),900);
+ assert.equal(Number((await db.query("select count(*) c from marketplace_ad_financial_events where campaign_id=$1 and event_type='fund'",[campaign])).rows[0].c),1);
+ const campaign2=(await db.query('select create_marketplace_ad_campaign_draft($1,$2,$3,$4,$5,$6) result',[product,'Conflict',50,start,end,ids.create2])).rows[0].result.id;
+ await rejected(()=>db.query('select activate_marketplace_ad_campaign($1,$2)',[campaign2,ids.fund]),'marketplace_ad_idempotency_conflict');
+ await claims('service_role');
+ await db.query('select spend_marketplace_ad_budget($1,$2,$3)',[campaign,30,ids.spend]);await db.query('select spend_marketplace_ad_budget($1,$2,$3)',[campaign,30,ids.spend]);
+ await rejected(()=>db.query('select spend_marketplace_ad_budget($1,$2,$3)',[campaign,31,ids.spend]),'marketplace_ad_idempotency_conflict');
+ await rejected(()=>db.query('select spend_marketplace_ad_budget($1,$2,$3)',[campaign,71,randomUUID()]),'marketplace_ad_overspend');
+ await db.query("update marketplace_ad_campaigns set starts_at=now()-interval'2 hours',ends_at=now()-interval'1 hour' where id=$1",[campaign]);
+ await db.query('select release_marketplace_ad_unused_budget($1,$2)',[campaign,ids.release]);await db.query('select release_marketplace_ad_unused_budget($1,$2)',[campaign,ids.release]);
+ const final=(await db.query('select * from marketplace_ad_campaigns where id=$1',[campaign])).rows[0];assert.equal(Number(final.spent_bdag),30);assert.equal(Number(final.released_bdag),70);assert.equal(Number((await db.query('select balance from ledger_accounts where id=$1',[account])).rows[0].balance),970);
+ const rec=(await db.query('select reconcile_marketplace_ad_finance() result')).rows[0].result;for(const key of['funding_reconciliation','spend_reconciliation','release_reconciliation','campaign_equation_mismatches','escrow_liability_difference'])assert.equal(Number(rec[key]),0,`${key}:${rec[key]}`);
+ await claims('authenticated',ids.seller);const poor=(await db.query('select create_marketplace_ad_campaign_draft($1,$2,$3,$4,$5,$6) result',[product,'Insufficient',100,start,end,ids.poorCreate])).rows[0].result.id;await claims('service_role');await db.query('update ledger_accounts set balance=50 where id=$1',[account]);await claims('authenticated',ids.seller);await rejected(()=>db.query('select activate_marketplace_ad_campaign($1,$2)',[poor,ids.poorFund]),'marketplace_ad_insufficient_bdag_balance');assert.equal(Number((await db.query('select balance from ledger_accounts where id=$1',[account])).rows[0].balance),50);
+ await db.query('rollback');open=false;
+ const after=(await db.query('select (select count(*) from marketplace_ad_campaigns) campaigns,(select count(*) from marketplace_ad_financial_events) events')).rows[0];assert.deepEqual(after,baseline);assert.equal(Number(after.campaigns),0);assert.equal(Number(after.events),0);
+ await claims('service_role');const deployedRec=(await db.query('select reconcile_marketplace_ad_finance() result')).rows[0].result;for(const key of['funding_reconciliation','spend_reconciliation','release_reconciliation','campaign_equation_mismatches','escrow_liability_difference'])assert.equal(Number(deployedRec[key]),0,`deployed_${key}:${deployedRec[key]}`);
+ console.log(JSON.stringify({ok:true,billing:'prepaid_escrow',fundingReconciliation:0,spendReconciliation:0,releaseReconciliation:0,paymentReconciliation:0,settlementReconciliation:0,commissionReconciliation:0,doubleActivation:true,activationConflict:true,insufficientBalance:true,spendIdempotency:true,overspendRejected:true,releaseIdempotency:true,persistentFixtures:0,rollback:true}));
+}finally{if(open)await db.query('rollback').catch(()=>{});await db.end().catch(()=>{})}
