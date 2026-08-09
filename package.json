@@ -16,6 +16,7 @@
     "prove:marketplace-promotions": "node scripts/prove-marketplace-promotions.mjs",
     "prove:marketplace-ads-finance": "node scripts/prove-marketplace-ads-finance.mjs",
     "prove:marketplace-ads-eligibility": "node scripts/prove-marketplace-ads-eligibility.mjs",
+    "prove:marketplace-ads-finalization": "node scripts/prove-marketplace-ads-finalization.mjs",
     "prove:marketplace-runtime": "node scripts/prove-marketplace-client-runtime.mjs",
     "prove:marketplace-analytics": "node scripts/prove-marketplace-analytics.mjs",
     "lint": "expo lint"
