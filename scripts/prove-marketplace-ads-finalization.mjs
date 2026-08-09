@@ -110,12 +110,13 @@ try {
   await settle(90, 36000, 100, 10, 0);
   const atTarget = await settle(40, 14400, 40, 0, 60);
   assert.equal(Number((await db.query("select count(*) c from marketplace_ad_financial_events where campaign_id=$1 and event_type='spend' and amount_bdag=0", [atTarget])).rows[0].c), 0);
-  const corrupt = await makeCampaign(50, 14400);
   await db.query('savepoint corrupt_target');
+  const corrupt = await makeCampaign(50, 14400);
   await assert.rejects(db.query('select finalize_marketplace_ad_campaign_delivery($1,$2)', [corrupt, randomUUID()]), /marketplace_ad_spend_above_final_pacing_target/);
   await db.query('rollback to savepoint corrupt_target');
+  await db.query('release savepoint corrupt_target');
   const rec = (await db.query('select reconcile_marketplace_ad_finalization() result')).rows[0].result;
-  for (const key of ['final_spend_above_pacing_target','completed_campaign_remaining_reserved','finalization_record_mismatches']) {
+  for (const key of ['expired_unfinalized_liability','final_spend_above_pacing_target','completed_campaign_remaining_reserved','finalization_record_mismatches']) {
     assert.equal(Number(rec[key]), 0, key + ':' + rec[key]);
   }
   await db.query('rollback');
