@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SellerScreenHeader } from "@/components/marketplace/SellerScreenHeader";
 import {
   Colors,
@@ -29,6 +30,7 @@ const tabs = [
 ] as const;
 export default function AdsDashboard() {
   const router = useRouter(),
+    insets = useSafeAreaInsets(),
     [tab, setTab] = useState(""),
     [rows, setRows] = useState<AdCampaign[]>([]),
     [loading, setLoading] = useState(true),
@@ -50,7 +52,7 @@ export default function AdsDashboard() {
     }, [load]),
   );
   return (
-    <View style={s.page}>
+    <View style={[s.page, { paddingTop: insets.top }]}>
       <SellerScreenHeader title="Ads" fallbackRoute="/seller" />
       <View style={s.head}>
         <View>

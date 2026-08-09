@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { randomUUID } from "expo-crypto";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SellerScreenHeader } from "@/components/marketplace/SellerScreenHeader";
 import { useShop } from "@/hooks/useShop";
 import { useWallet } from "@/hooks/useWallet";
@@ -28,6 +29,7 @@ import {
 export default function CreateAd() {
   const { productId } = useLocalSearchParams<{ productId?: string }>(),
     router = useRouter(),
+    insets = useSafeAreaInsets(),
     { myProducts } = useShop(),
     wallet = useWallet(),
     [selected, setSelected] = useState(productId ?? ""),
@@ -68,7 +70,7 @@ export default function CreateAd() {
     }
   };
   return (
-    <View style={s.page}>
+    <View style={[s.page, { paddingTop: insets.top }]}>
       <SellerScreenHeader title="Crear campaña" fallbackRoute="/seller/ads" />
       <ScrollView contentContainerStyle={s.body}>
         <Text style={s.step}>1 · Producto</Text>

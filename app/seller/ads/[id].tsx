@@ -7,6 +7,7 @@ import {
   View,
 } from "react-native";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SellerScreenHeader } from "@/components/marketplace/SellerScreenHeader";
 import {
   Colors,
@@ -23,6 +24,7 @@ import {
 } from "@/services/marketplaceAdsService";
 export default function AdDetail() {
   const { id } = useLocalSearchParams<{ id: string }>(),
+    insets = useSafeAreaInsets(),
     [row, setRow] = useState<AdCampaign | null>(null),
     [busy, setBusy] = useState(false);
   const load = useCallback(
@@ -47,7 +49,7 @@ export default function AdDetail() {
   };
   if (!row)
     return (
-      <View style={s.page}>
+      <View style={[s.page, { paddingTop: insets.top }]}>
         <SellerScreenHeader title="Campaña" fallbackRoute="/seller/ads" />
         <ActivityIndicator color={Colors.primary} />
       </View>
@@ -55,7 +57,7 @@ export default function AdDetail() {
   const ctr = row.impressions ? (row.clicks / row.impressions) * 100 : 0,
     roas = row.spent ? row.gmv / row.spent : null;
   return (
-    <View style={s.page}>
+    <View style={[s.page, { paddingTop: insets.top }]}>
       <SellerScreenHeader title="Campaña" fallbackRoute="/seller/ads" />
       <View style={s.body}>
         <Text style={s.title}>{row.product_title}</Text>
