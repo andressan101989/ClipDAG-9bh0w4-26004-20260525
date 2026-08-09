@@ -4,7 +4,7 @@ import {MaterialIcons} from '@expo/vector-icons';
 import {type Href,useRouter} from 'expo-router';
 import {Colors,FontSize,FontWeight,Spacing} from '@/constants/theme';
 
-export function SellerScreenHeader({title,fallbackRoute,onBack}:{title:string;fallbackRoute:Href|string;onBack?:()=>void}){
+export function SellerScreenHeader({title,fallbackRoute,onBack,accessibilityLabel}:{title:string;fallbackRoute:Href|string;onBack?:()=>void;accessibilityLabel?:string}){
   const router=useRouter();
   const goBack=useCallback(()=>{
     if(onBack){onBack();return;}
@@ -15,7 +15,7 @@ export function SellerScreenHeader({title,fallbackRoute,onBack}:{title:string;fa
   return <View style={styles.header}>
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Volver desde ${title}`}
+      accessibilityLabel={accessibilityLabel??`Volver desde ${title}`}
       hitSlop={8}
       onPress={goBack}
       style={styles.backButton}

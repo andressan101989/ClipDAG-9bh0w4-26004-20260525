@@ -8,6 +8,7 @@ const center=read('app/seller/index.tsx');
 const apply=read('app/seller/apply.tsx');
 const store=read('app/seller/store.tsx');
 const products=read('app/seller/products.tsx');
+const shipping=read('app/seller/shipping-profile.tsx');
 const edit=read('app/seller/product-editor/[productId].tsx');
 
 test('static client contract: shared header provides visible accessible history and fallback actions',()=>{
@@ -31,11 +32,14 @@ test('static client contract: every nested seller route has its deterministic fa
   assert.match(apply,/title="Solicitud de vendedor" fallbackRoute="\/seller"/);
   assert.match(store,/title="Configurar tienda" fallbackRoute="\/seller"/);
   assert.match(products,/title="Productos" fallbackRoute="\/seller"/);
+  assert.match(shipping,/title="Configurar envío"/);
+  assert.match(shipping,/fallbackRoute="\/seller"/);
+  assert.match(shipping,/accessibilityLabel="Volver"/);
   assert.match(edit,/router\.back\(\)/);
 });
 
 test('static client contract: no seller screen is a navigation dead end',()=>{
-  for(const source of [center,apply,store,products]){
+  for(const source of [center,apply,store,products,shipping]){
     assert.match(source,/SellerScreenHeader/);
   }
   assert.match(edit,/router\.back\(\)/);

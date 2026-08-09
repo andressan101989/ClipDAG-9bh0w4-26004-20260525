@@ -26,6 +26,7 @@ import {
   validateShippingSetup,
 } from "@/services/marketplaceShippingSetup";
 import { SearchableSelectField } from "@/components/marketplace/SearchableSelectField";
+import { SellerScreenHeader } from "@/components/marketplace/SellerScreenHeader";
 
 type DraftRule = Omit<
   MarketplaceShippingRegion,
@@ -213,24 +214,35 @@ export default function SellerShippingProfileScreen() {
   };
   if (loading)
     return (
-      <View style={[styles.root, styles.center]}>
-        <ActivityIndicator color={Colors.primary} />
+      <View style={[styles.root, { paddingTop: insets.top }]}>
+        <SellerScreenHeader
+          title="Configurar envío"
+          fallbackRoute="/seller"
+          accessibilityLabel="Volver"
+        />
+        <View style={[styles.content, styles.center]}>
+          <ActivityIndicator color={Colors.primary} />
+        </View>
       </View>
     );
   return (
-    <KeyboardAvoidingView
-      style={styles.root}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
-      <ScrollView
-        contentContainerStyle={{
-          paddingTop: insets.top + Spacing.md,
-          padding: Spacing.md,
-          gap: Spacing.md,
-        }}
-        keyboardShouldPersistTaps="handled"
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      <SellerScreenHeader
+        title="Configurar envío"
+        fallbackRoute="/seller"
+        accessibilityLabel="Volver"
+      />
+      <KeyboardAvoidingView
+        style={styles.content}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        <Text style={styles.title}>Configurar envío</Text>
+        <ScrollView
+          contentContainerStyle={{
+            padding: Spacing.md,
+            gap: Spacing.md,
+          }}
+          keyboardShouldPersistTaps="handled"
+        >
         <View style={styles.info}>
           <Text style={styles.infoTitle}>
             {rules.length ? "Destinos configurados" : "Configuración requerida"}
@@ -311,8 +323,9 @@ export default function SellerShippingProfileScreen() {
             <Text style={styles.primaryText}>Guardar envío</Text>
           )}
         </Pressable>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -418,8 +431,8 @@ function Field({
 }
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
+  content: { flex: 1 },
   center: { alignItems: "center", justifyContent: "center" },
-  title: { fontSize: 24, fontWeight: "800", color: Colors.textPrimary },
   heading: { fontSize: 17, fontWeight: "700", color: Colors.textPrimary },
   helper: { color: Colors.textSecondary, fontSize: 13 },
   info: {
