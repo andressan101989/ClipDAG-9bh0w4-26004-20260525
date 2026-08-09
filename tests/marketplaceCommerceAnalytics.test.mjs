@@ -48,6 +48,9 @@ test('anonymous sessions are privacy safe and duplicate proof',()=>{
 test('product detail records view once, intentional variant, and successful cart only',()=>{
  assert.match(detail,/viewRecordedRef\.current===detail\.product\.id/);assert.match(detail,/recordProductView/);assert.match(detail,/selectedValues\[optionId\]===valueId\)return/);assert.match(detail,/recordVariantSelected/);assert.match(detail,/if\(!result\.ok\)/);assert.match(detail,/recordAddToCart/);
 });
+test('media view records only an intentional gallery change',()=>{
+ assert.match(detail,/index===mediaIndex/);assert.match(detail,/recordProductMediaView/);assert.match(detail,/media_kind:gallery\[index\]\.kind,media_position:index/);assert.match(detail,/onSelect=\{chooseMedia\}/);
+});
 test('checkout starts once without address metadata',()=>{
  assert.match(checkout,/analyticsRecordedRef\.current/);assert.match(checkout,/item_count:availableItems\.length,store_count:targets\.length/);assert.doesNotMatch(service,/postal_code|recipient_name|shipping_address/);
 });

@@ -28,6 +28,7 @@ async function record(input:RecordInput){
 }
 
 export const recordProductView=(input:Omit<RecordInput,'eventName'>)=>record({...input,eventName:'product_view'});
+export const recordProductMediaView=(input:Omit<RecordInput,'eventName'>)=>record({...input,eventName:'product_media_view'});
 export const recordVariantSelected=(input:Omit<RecordInput,'eventName'>)=>record({...input,eventName:'variant_selected'});
 export const recordAddToCart=(input:Omit<RecordInput,'eventName'>)=>record({...input,eventName:'add_to_cart'});
 export const recordCheckoutStarted=(input:Omit<RecordInput,'eventName'>)=>record({...input,eventName:'checkout_started'});
