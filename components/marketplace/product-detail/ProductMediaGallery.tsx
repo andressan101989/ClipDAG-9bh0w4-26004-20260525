@@ -11,7 +11,6 @@ type Props = { items: MarketplaceProductGalleryItem[]; selectedIndex: number; on
 export function ProductMediaGallery({ items, selectedIndex, onSelect }: Props) {
   const selected = items[selectedIndex] ?? null;
   const player = useVideoPlayer(selected?.kind === "video" ? selected.url : null, instance => { instance.muted = true; });
-  useEffect(() => () => { player.pause(); }, [player]);
   useEffect(() => { if (selected?.kind !== "video") player.pause(); }, [player, selected?.kind]);
   const imageUrl = selected?.kind === "image" ? selected.url : items.find(item => item.kind === "image")?.url;
   return <View style={styles.wrap}>

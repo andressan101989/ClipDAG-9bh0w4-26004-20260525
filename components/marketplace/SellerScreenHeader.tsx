@@ -28,8 +28,8 @@ export function SellerScreenHeader({title,fallbackRoute,onBack,accessibilityLabe
 }
 
 const styles=StyleSheet.create({
-  header:{height:56,flexDirection:'row',alignItems:'center',paddingHorizontal:Spacing.md},
-  backButton:{width:44,height:44,alignItems:'center',justifyContent:'center'},
+  header:{height:56,flexDirection:'row',alignItems:'center',paddingHorizontal:Spacing.md,backgroundColor:Colors.bg,zIndex:10,elevation:2},
+  backButton:{width:44,height:44,alignItems:'center',justifyContent:'center',zIndex:11},
   title:{flex:1,color:Colors.textPrimary,fontSize:FontSize.xl,fontWeight:FontWeight.bold,textAlign:'center'},
   balance:{width:44},
 });
