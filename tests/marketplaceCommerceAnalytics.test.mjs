@@ -54,10 +54,10 @@ test('seller contracts distinguish orders, purchase items, and event activity ra
  assert.match(corrective,/count\(distinct order_id\)filter\(where event_name='purchase_completed'\) orders/);assert.match(corrective,/purchase_items/);assert.match(corrective,/purchase_orders/);assert.match(corrective,/view_to_cart_event_rate/);assert.match(corrective,/view_to_purchase_event_rate/);assert.doesNotMatch(corrective,/'conversion_view_to_/);assert.match(corrective,/not user\/session cohort conversion/);
 });
 test('product detail records view once, intentional variant, and successful cart only',()=>{
- assert.match(detail,/viewRecordedRef\.current===detail\.product\.id/);assert.match(detail,/recordProductView/);assert.match(detail,/selectedValues\[optionId\]===valueId\)return/);assert.match(detail,/recordVariantSelected/);assert.match(detail,/if\(!result\.ok\)/);assert.match(detail,/recordAddToCart/);
+ assert.match(detail,/viewRecordedRef\.current\s*===\s*detail\.product\.id/);assert.match(detail,/recordProductView/);assert.match(detail,/selectedValues\[optionId\]\s*===\s*valueId\)\s*return/);assert.match(detail,/recordVariantSelected/);assert.match(detail,/if\s*\(!result\.ok\)/);assert.match(detail,/recordAddToCart/);
 });
 test('media view records only an intentional gallery change',()=>{
- assert.match(detail,/index===mediaIndex/);assert.match(detail,/recordProductMediaView/);assert.match(detail,/media_kind:gallery\[index\]\.kind,media_position:index/);assert.match(detail,/onSelect=\{chooseMedia\}/);
+ assert.match(detail,/index\s*===\s*mediaIndex/);assert.match(detail,/recordProductMediaView/);assert.match(detail,/media_kind\s*:\s*gallery\[index\]\.kind,\s*media_position\s*:\s*index/);assert.match(detail,/onSelect=\{chooseMedia\}/);
 });
 test('checkout starts once without address metadata',()=>{
  assert.match(checkout,/analyticsRecordedRef\.current/);assert.match(checkout,/item_count:availableItems\.length,store_count:targets\.length/);assert.doesNotMatch(service,/postal_code|recipient_name|shipping_address/);
@@ -66,5 +66,5 @@ test('analytics client failures are catch-and-continue',()=>{
  assert.match(service,/catch\(error\)/);assert.match(service,/event_record_failed/);assert.match(service,/return false/);assert.match(detail,/void recordAddToCart/);assert.match(checkout,/void recordCheckoutStarted/);
 });
 test('only the currently provable shop navigation source is propagated',()=>{
- assert.match(shop,/params:\s*\{\s*id:\s*p\.id,\s*source:\s*'shop'/);assert.match(service,/MARKETPLACE_ANALYTICS_SOURCES|parseMarketplaceAnalyticsSource/);
+ assert.match(shop,/params:\s*\{\s*id:\s*p\.id,\s*source:\s*["']shop["']/);assert.match(service,/MARKETPLACE_ANALYTICS_SOURCES|parseMarketplaceAnalyticsSource/);
 });

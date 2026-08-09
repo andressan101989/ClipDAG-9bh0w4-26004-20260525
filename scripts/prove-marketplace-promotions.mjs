@@ -20,7 +20,7 @@ assert.match(pay,/fee_bps/);assert.match(pay,/seller_net_amount/);assert.match(a
 assert.match(analytics,/item\.unit_price,item\.line_total/);
 assert.match(seller,/fetchSellerProductVariants/);assert.match(seller,/Todo el producto/);assert.match(seller,/variantId/);assert.match(seller,/Selecciona una variante para definir un precio promocional fijo/);
 assert.match(client,/p_variant_id:input\.variantId\?\?null/);assert.match(client,/p_idempotency_key:input\.idempotencyKey/);assert.doesNotMatch(client,/randomUUID/);
-assert.match(seller,/idempotencyKey=useRef\(randomUUID\(\)\)/);assert.match(product,/promotion_ends_at/);assert.match(product,/setTimeout\(\(\)=>void load\(\)/);
+assert.match(seller,/idempotencyKey=useRef\(randomUUID\(\)\)/);assert.match(product,/promotion_ends_at/);assert.match(product,/setTimeout\(\s*\(\)\s*=>\s*void load\(\)/);
 assert.match(corrective,/v_price_snapshot jsonb/);assert.match(corrective,/v_price:=v_price_snapshot->v_variant\.id::text/);assert.match(corrective,/regexp_count\(corrected,'marketplace_effective_price/);
 assert.match(corrective,/if effective<=0 or effective>=v\.price then[\s\S]*'promotion_id',null/);assert.doesNotMatch(corrective,/marketplace_promotion_invalid_for_price/);
 assert.match(corrective,/if owned\.status='ended' then return to_jsonb\(owned\)/);assert.match(corrective,/scheduled cancellation remains/i);

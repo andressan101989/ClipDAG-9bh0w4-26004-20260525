@@ -84,10 +84,10 @@ test("Marketplace screen loaders are failure-safe and distinguish error from emp
   assert.match(marketScreen, /No pudimos conectar con la tienda\. Revisa tu conexión\./);
   assert.match(marketScreen, /La tienda necesita una actualización de acceso\. Inténtalo nuevamente\./);
   assert.match(marketScreen, /No pudimos cargar los productos\./);
-  assert.match(marketScreen, /!marketError&&products\.length === 0/);
+  assert.match(marketScreen, /!marketError\s*&&\s*products\.length\s*===\s*0/);
   assert.match(marketScreen, /Reintentar cargar productos/);
   assert.match(marketScreen, /Promise\.allSettled/);
-  assert.match(marketScreen, /finally \{setRefreshing\(false\);\}/);
+  assert.match(marketScreen, /finally\s*\{\s*setRefreshing\(false\);\s*\}/);
   assert.match(marketScreen, /void loadDiscover\(\)/);
   assert.match(marketScreen, /void loadProducts\(\)/);
   assert.match(marketScreen, /void loadExclusive\(\)/);

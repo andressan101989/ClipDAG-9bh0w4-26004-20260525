@@ -29,5 +29,5 @@ test("normal and adjusted cart feedback use authoritative quantities",()=>{
 });
 
 test("share uses safe text fallback and catches failures without invented URL",()=>{
- assert.match(screen,/const shareProduct=async/);assert.match(screen,/try\{await Share\.share/);assert.match(screen,/catch\(error\)/);assert.doesNotMatch(screen,/https:\/\/onspace\.app\/product/);
+ assert.match(screen,/const shareProduct\s*=\s*async/);assert.match(screen,/try\s*\{\s*await Share\.share/);assert.match(screen,/catch\s*\(error\)/);assert.doesNotMatch(screen,/https:\/\/onspace\.app\/product/);
 });

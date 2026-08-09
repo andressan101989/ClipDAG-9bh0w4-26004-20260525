@@ -1,73 +1,970 @@
-import React,{useCallback,useEffect,useMemo,useRef,useState}from"react";
-import{ActivityIndicator,Pressable,ScrollView,Share,StyleSheet,Text,View}from"react-native";
-import{MaterialIcons}from"@expo/vector-icons";
-import{StatusBar}from"expo-status-bar";
-import{useLocalSearchParams,useRouter}from"expo-router";
-import{useSafeAreaInsets}from"react-native-safe-area-context";
-import{Avatar}from"@/components/ui/Avatar";
-import{CyberButton}from"@/components/ui/CyberButton";
-import{MarketplaceShippingQuoteCard}from"@/components/marketplace/MarketplaceShippingQuoteCard";
-import{SearchableSelectField}from"@/components/marketplace/SearchableSelectField";
-import{ProductMediaGallery}from"@/components/marketplace/product-detail/ProductMediaGallery";
-import{ProductPurchaseBar}from"@/components/marketplace/product-detail/ProductPurchaseBar";
-import{Colors,FontSize,FontWeight,Radius,Spacing}from"@/constants/theme";
-import{useAlert}from"@/template";
-import{useAuth}from"@/hooks/useAuth";
-import{useMarketplaceCart}from"@/hooks/useMarketplaceCart";
-import{useShop}from"@/hooks/useShop";
-import{isPublicMarketplaceImageUrl}from"@/services/marketplaceCart";
-import{fetchMarketplaceProductDetail,MarketplaceReadError,type MarketplaceProductDetail}from"@/services/marketplaceService";
-import{isOptionValueSelectable,reconcileVariantSelection,resolveExactVariant,selectionForPreferredVariant}from"@/services/marketplaceVariantSelection";
-import{marketplaceCartToastFeedback,selectVariantMediaIndex,type MarketplaceCartToastFeedback}from"@/services/marketplaceProductDetailPresentation";
-import{marketplaceAnalyticsAppliedQuantity,marketplaceCommerceEventKey,marketplaceSourceFromParams,recordAddToCart,recordProductMediaView,recordProductView,recordVariantSelected}from"@/services/marketplaceAnalyticsService";
-import{marketplacePromotionRefreshDelay}from"@/services/marketplacePromotionTimer";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { MaterialIcons } from "@expo/vector-icons";
+import { StatusBar } from "expo-status-bar";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Avatar } from "@/components/ui/Avatar";
+import { CyberButton } from "@/components/ui/CyberButton";
+import { MarketplaceShippingQuoteCard } from "@/components/marketplace/MarketplaceShippingQuoteCard";
+import { SearchableSelectField } from "@/components/marketplace/SearchableSelectField";
+import { ProductMediaGallery } from "@/components/marketplace/product-detail/ProductMediaGallery";
+import { ProductPurchaseBar } from "@/components/marketplace/product-detail/ProductPurchaseBar";
+import {
+  Colors,
+  FontSize,
+  FontWeight,
+  Radius,
+  Spacing,
+} from "@/constants/theme";
+import { useAlert } from "@/template";
+import { useAuth } from "@/hooks/useAuth";
+import { useMarketplaceCart } from "@/hooks/useMarketplaceCart";
+import { useShop } from "@/hooks/useShop";
+import { isPublicMarketplaceImageUrl } from "@/services/marketplaceCart";
+import {
+  fetchMarketplaceProductDetail,
+  MarketplaceReadError,
+  type MarketplaceProductDetail,
+} from "@/services/marketplaceService";
+import {
+  isOptionValueSelectable,
+  reconcileVariantSelection,
+  resolveExactVariant,
+  selectionForPreferredVariant,
+} from "@/services/marketplaceVariantSelection";
+import {
+  marketplaceCartToastFeedback,
+  selectVariantMediaIndex,
+  type MarketplaceCartToastFeedback,
+} from "@/services/marketplaceProductDetailPresentation";
+import {
+  marketplaceAnalyticsAppliedQuantity,
+  marketplaceCommerceEventKey,
+  marketplaceSourceFromParams,
+  recordAddToCart,
+  recordProductMediaView,
+  recordProductView,
+  recordVariantSelected,
+} from "@/services/marketplaceAnalyticsService";
+import { marketplacePromotionRefreshDelay } from "@/services/marketplacePromotionTimer";
+import { recordAdEvent } from "@/services/marketplaceAdsService";
 
-const EMPTY_MEDIA:MarketplaceProductDetail["media"]=[];
+const EMPTY_MEDIA: MarketplaceProductDetail["media"] = [];
 
-export default function ProductScreen(){
- const{id,source,sourceId,creatorId,liveSessionId}=useLocalSearchParams<{id:string;source?:string;sourceId?:string;creatorId?:string;liveSessionId?:string}>(),router=useRouter(),insets=useSafeAreaInsets(),{user}=useAuth(),{products,toggleSaveProduct,isSavedProduct}=useShop(),{addItem,totalQuantity}=useMarketplaceCart(),{showAlert}=useAlert();
- const[detail,setDetail]=useState<MarketplaceProductDetail|null>(null),[loading,setLoading]=useState(true),[readError,setReadError]=useState<"permission"|"transport"|"missing"|null>(null),[selectedValues,setSelectedValues]=useState<Record<string,string>>({}),[quantity,setQuantity]=useState(1),[mediaIndex,setMediaIndex]=useState(0),[descriptionExpanded,setDescriptionExpanded]=useState(false),[cartFeedback,setCartFeedback]=useState<MarketplaceCartToastFeedback|null>(null);
- const addToCartLockRef=useRef(false),toastTimer=useRef<ReturnType<typeof setTimeout>|null>(null),analyticsInstanceRef=useRef(marketplaceCommerceEventKey('product-detail')),viewRecordedRef=useRef<string|null>(null);
- const load=useCallback(async()=>{if(!id){setReadError("missing");setLoading(false);return;}setLoading(true);setReadError(null);try{const value=await fetchMarketplaceProductDetail(id);if(!value){setReadError("missing");return;}setDetail(value);setSelectedValues(selectionForPreferredVariant(value.options,value.variants));}catch(error){setReadError(error instanceof MarketplaceReadError&&error.code==="marketplace_read_transport"?"transport":error instanceof MarketplaceReadError&&error.code==="marketplace_read_permission"?"permission":"missing");}finally{setLoading(false);}},[id]);
- useEffect(()=>{void load();return()=>{if(toastTimer.current)clearTimeout(toastTimer.current);};},[load]);
- const product=detail?.product??products.find(item=>item.id===id)??null,options=detail?.options??[],variants=detail?.variants??[],gallery=detail?.media??EMPTY_MEDIA;
- const analyticsSource=useMemo(()=>marketplaceSourceFromParams({source,sourceId,creatorId,liveSessionId}),[source,sourceId,creatorId,liveSessionId]);
- const activeVariants=variants.filter(item=>item.status==="active");
- const selectedVariant=options.length?resolveExactVariant(options,variants,selectedValues):activeVariants.find(item=>item.is_default)??activeVariants[0];
- useEffect(()=>{if(!selectedVariant?.promotion_id||!selectedVariant.promotion_ends_at)return;const expiresAt=Date.parse(selectedVariant.promotion_ends_at);if(!Number.isFinite(expiresAt))return;const timer=setTimeout(()=>void load(),marketplacePromotionRefreshDelay(expiresAt));return()=>clearTimeout(timer);},[selectedVariant?.id,selectedVariant?.promotion_id,selectedVariant?.promotion_ends_at,load]);
- useEffect(()=>{setMediaIndex(current=>selectVariantMediaIndex(gallery,selectedVariant?.image_url,current));},[gallery,selectedVariant?.id,selectedVariant?.image_url]);
- useEffect(()=>{if(!detail||viewRecordedRef.current===detail.product.id)return;viewRecordedRef.current=detail.product.id;void recordProductView({productId:detail.product.id,variantId:selectedVariant?.id,source:analyticsSource,idempotencyKey:`${analyticsInstanceRef.current}:view:${detail.product.id}`});},[detail,selectedVariant?.id,analyticsSource]);
- const effectivePrice=selectedVariant?.price??product?.price??0,available=selectedVariant?.available_quantity??0,isOwner=Boolean(product&&user?.id===product.seller_id),selectionIncomplete=options.length>0&&!selectedVariant,missingOption=options.find(option=>!selectedValues[option.id]);
- const selectionSummary=options.flatMap(option=>{const value=option.values.find(item=>item.id===selectedValues[option.id]);return value?[value.value]:[];}).join(" · ");
- const compareAt=selectedVariant?.compare_at_price,discount=compareAt!=null&&compareAt>effectivePrice?Math.round((1-effectivePrice/compareAt)*100):null,hasRange=product?.variant_price_max!=null&&product.variant_price_max>product.price&&!selectedVariant;
- const purchaseLabel=isOwner?"Este es tu producto":selectionIncomplete?`Selecciona ${missingOption?.name??"opciones"}`:available<=0?"Combinación agotada":"Agregar al carrito";
- const handleAddToCart=()=>{if(addToCartLockRef.current||!product||isOwner||!selectedVariant||available<=0||quantity<1||quantity>available)return;addToCartLockRef.current=true;try{const selectedOptions=options.flatMap(option=>{const value=option.values.find(candidate=>candidate.id===selectedValues[option.id]&&selectedVariant.option_value_ids.includes(candidate.id));return value?[{optionId:option.id,optionName:option.name,valueId:value.id,value:value.value}]:[];});if(selectedOptions.length!==options.length)return;const imageUrl=[selectedVariant.image_url,gallery.find(item=>item.kind==="image")?.url,product.images[0]].find(candidate=>candidate&&isPublicMarketplaceImageUrl(candidate))??null;const result=addItem({productId:product.id,variantId:selectedVariant.id,sellerId:product.seller_id,storeId:product.store_id,title:product.title,sellerUsername:product.seller?.username??null,sku:selectedVariant.sku,imageUrl,options:selectedOptions,currency:"BDAG",unitPrice:selectedVariant.price,compareAtPrice:selectedVariant.compare_at_price,quantity,availableQuantitySnapshot:selectedVariant.available_quantity,productUpdatedAt:product.updated_at});if(!result.ok){showAlert("No se pudo agregar",result.code==="cart_limit_reached"?"Tu carrito alcanzó el máximo de productos.":"Revisa la variante y la cantidad.");return;}const applied=marketplaceAnalyticsAppliedQuantity(result,quantity);if(applied)void recordAddToCart({productId:product.id,variantId:selectedVariant.id,quantity:applied,source:analyticsSource,idempotencyKey:marketplaceCommerceEventKey('cart')});setCartFeedback(marketplaceCartToastFeedback(result,quantity,selectionSummary||product.title));if(toastTimer.current)clearTimeout(toastTimer.current);toastTimer.current=setTimeout(()=>setCartFeedback(null),3200);}finally{addToCartLockRef.current=false;}};
- const chooseVariantValue=(optionId:string,valueId:string)=>{if(!product||selectedValues[optionId]===valueId)return;const next=reconcileVariantSelection(options,variants,selectedValues,optionId,valueId);setSelectedValues(next);setQuantity(1);const resolved=resolveExactVariant(options,variants,next);void recordVariantSelected({productId:product.id,variantId:resolved?.id??null,source:analyticsSource,idempotencyKey:marketplaceCommerceEventKey('variant')});};
- const chooseMedia=(index:number)=>{if(!product||index===mediaIndex||!gallery[index])return;setMediaIndex(index);void recordProductMediaView({productId:product.id,variantId:selectedVariant?.id??null,source:analyticsSource,metadata:{media_kind:gallery[index].kind,media_position:index},idempotencyKey:marketplaceCommerceEventKey('media')});};
- const shareProduct=async()=>{if(!product)return;try{await Share.share({message:[product.title,product.seller?.username?`Vendedor: @${product.seller.username}`:null].filter(Boolean).join("\n")});}catch(error){if(__DEV__)console.info("[MarketplaceProductShare]",{operation:"share_failed",code:error instanceof Error?error.name:null});}};
- if(loading)return <ProductDetailSkeleton top={insets.top}/>;
- if(!product||readError)return <View style={[styles.root,styles.center,{paddingTop:insets.top,paddingHorizontal:Spacing.xl}]}><StatusBar style="light"/><MaterialIcons name={readError==="transport"?"wifi-off":"inventory-2"}size={52}color={Colors.textSubtle}/><Text style={styles.errorTitle}>{readError==="transport"?"No pudimos conectar":"Producto no disponible"}</Text><Text style={styles.errorBody}>{readError==="transport"?"Revisa tu conexión e inténtalo nuevamente.":"Este producto no existe o ya no está disponible."}</Text>{readError!=="missing"?<CyberButton label="Reintentar" onPress={()=>void load()}/>:null}<CyberButton label="Volver"variant="secondary"onPress={()=>router.back()}/></View>;
- const saved=isSavedProduct(product.id),stockText=selectionIncomplete?`Selecciona ${missingOption?.name??"una opción"}`:available>10?"Disponible":available>0?`Solo quedan ${available}`:"Agotado";
- return <View style={[styles.root,{paddingTop:insets.top}]}><StatusBar style="light"/>
-  <View style={styles.header}><HeaderButton icon="arrow-back-ios"label="Volver"onPress={()=>router.back()}/><View style={{flex:1}}/><HeaderButton icon="ios-share"label="Compartir producto"onPress={()=>void shareProduct()}/><HeaderButton icon={saved?"bookmark":"bookmark-border"}label={saved?"Quitar de guardados":"Guardar producto"}selected={saved}onPress={()=>toggleSaveProduct(product.id)}/><Pressable style={styles.headerButton}onPress={()=>router.push("/cart"as never)}accessibilityRole="button"accessibilityLabel={`Carrito, ${totalQuantity} productos`}><MaterialIcons name="shopping-cart"size={23}color={Colors.textPrimary}/>{totalQuantity>0?<View style={styles.cartBadge}><Text style={styles.cartBadgeText}>{totalQuantity>99?"99+":totalQuantity}</Text></View>:null}</Pressable></View>
-  <ScrollView showsVerticalScrollIndicator={false}contentContainerStyle={[styles.scroll,{paddingBottom:116+insets.bottom}]}>
-   <ProductMediaGallery items={gallery}selectedIndex={mediaIndex}onSelect={chooseMedia}/>
-   <View style={styles.commerce}><Text style={styles.category}>{product.category}</Text><Text style={styles.title}>{product.title}</Text><View style={styles.priceRow}><Text style={styles.price}>{hasRange?"Desde ":""}{effectivePrice.toFixed(2)} BDAG</Text>{compareAt!=null&&compareAt>effectivePrice?<Text style={styles.compare}>{compareAt.toFixed(2)} BDAG</Text>:null}{discount?<View style={styles.discount}><Text style={styles.discountText}>-{discount}%</Text></View>:null}</View>{product.total_sales>0?<Text style={styles.sales}>{product.total_sales} vendidos</Text>:null}
-    {options.length?<View style={styles.selectionSummary}><Text style={styles.summaryLabel}>Seleccionado</Text><Text style={styles.summaryValue}>{selectionSummary||`Selecciona ${missingOption?.name??"opciones"}`}</Text></View>:null}
-    {options.map(option=><View key={option.id}style={styles.optionBlock}><Text style={styles.optionTitle}>{option.name}</Text>{option.values.length>6?<SearchableSelectField label={`Seleccionar ${option.name}`}value={selectedValues[option.id]??""}options={option.values.filter(value=>isOptionValueSelectable(variants,value.id,selectedValues,option.id)).map(value=>({value:value.id,label:value.value}))}onChange={valueId=>chooseVariantValue(option.id,valueId)}/>:<View style={styles.chips}>{option.values.map(value=>{const enabled=isOptionValueSelectable(variants,value.id,selectedValues,option.id),selected=selectedValues[option.id]===value.id;return <Pressable key={value.id}disabled={!enabled}style={[styles.chip,selected&&styles.chipSelected,!enabled&&styles.chipDisabled]}accessibilityRole="radio"accessibilityLabel={`${option.name} ${value.value}`}accessibilityState={{selected,disabled:!enabled}}onPress={()=>chooseVariantValue(option.id,value.id)}><Text style={[styles.chipText,selected&&styles.chipTextSelected]}>{value.value}</Text></Pressable>;})}</View>}</View>)}
-    <View style={styles.stock}><View style={[styles.stockDot,available>0&&!selectionIncomplete?styles.stockAvailable:styles.stockUnavailable]}/><Text style={styles.stockText}>{stockText}</Text></View>
-   </View>
-   <MarketplaceShippingQuoteCard productId={product.id}quantity={quantity}onRequestAddress={()=>router.push(user?"/checkout"as never:"/login"as never)}/>
-   <Pressable style={styles.sellerCard}onPress={()=>router.push(`/chat/${product.seller_id}`)}accessibilityRole="button"accessibilityLabel={`Contactar a ${product.seller?.username??"vendedor"}`}><Avatar uri={product.seller?.avatar_url??""}username={product.seller?.username??"Vendedor"}size={46}showBorder/><View style={{flex:1}}><Text style={styles.sellerLabel}>Vendedor</Text><Text style={styles.sellerName}>@{product.seller?.username??"Vendedor"}</Text></View><View style={styles.message}><MaterialIcons name="chat-bubble-outline"size={18}color={Colors.primary}/><Text style={styles.messageText}>Mensaje</Text></View></Pressable>
-   <View style={styles.section}><Text style={styles.sectionTitle}>Sobre el producto</Text><Text style={styles.description}numberOfLines={descriptionExpanded?undefined:5}>{product.description||"Sin descripción disponible."}</Text>{product.description.length>220?<Pressable onPress={()=>setDescriptionExpanded(value=>!value)}accessibilityRole="button"><Text style={styles.more}>{descriptionExpanded?"Ver menos":"Ver más"}</Text></Pressable>:null}</View>
-   {(product.brand||product.tags.length)?<View style={styles.section}><Text style={styles.sectionTitle}>Detalles</Text>{product.brand?<View style={styles.detailRow}><Text style={styles.detailLabel}>Marca</Text><Text style={styles.detailValue}>{product.brand}</Text></View>:null}<View style={styles.detailRow}><Text style={styles.detailLabel}>Categoría</Text><Text style={styles.detailValue}>{product.category}</Text></View>{product.tags.length?<View style={styles.tags}>{product.tags.map(tag=><Text key={tag}style={styles.tag}>#{tag}</Text>)}</View>:null}</View>:null}
-   <View style={styles.trust}><MaterialIcons name="account-balance-wallet"size={20}color={Colors.primaryLight}/><View><Text style={styles.trustTitle}>Pago con BDAG</Text><Text style={styles.trustBody}>La disponibilidad y el total se confirman antes del pago.</Text></View></View>
-  </ScrollView>
-  {cartFeedback?<Pressable style={[styles.toast,{bottom:84+insets.bottom}]}onPress={()=>router.push("/cart"as never)}accessibilityRole="button"><MaterialIcons name="check-circle"size={22}color={Colors.success}/><View style={{flex:1}}><Text style={styles.toastTitle}>{cartFeedback.title}</Text><Text style={styles.toastBody}>{cartFeedback.message}</Text></View><Text style={styles.toastAction}>Ver carrito</Text></Pressable>:null}
-  <ProductPurchaseBar bottom={insets.bottom}quantity={quantity}available={available}price={effectivePrice}disabled={isOwner||selectionIncomplete||available<=0}label={purchaseLabel}onQuantity={setQuantity}onAdd={handleAddToCart}/>
- </View>;
+export default function ProductScreen() {
+  const { id, source, sourceId, creatorId, liveSessionId, campaignId } =
+      useLocalSearchParams<{
+        id: string;
+        source?: string;
+        sourceId?: string;
+        creatorId?: string;
+        liveSessionId?: string;
+        campaignId?: string;
+      }>(),
+    router = useRouter(),
+    insets = useSafeAreaInsets(),
+    { user } = useAuth(),
+    { products, toggleSaveProduct, isSavedProduct } = useShop(),
+    { addItem, totalQuantity } = useMarketplaceCart(),
+    { showAlert } = useAlert();
+  const [detail, setDetail] = useState<MarketplaceProductDetail | null>(null),
+    [loading, setLoading] = useState(true),
+    [readError, setReadError] = useState<
+      "permission" | "transport" | "missing" | null
+    >(null),
+    [selectedValues, setSelectedValues] = useState<Record<string, string>>({}),
+    [quantity, setQuantity] = useState(1),
+    [mediaIndex, setMediaIndex] = useState(0),
+    [descriptionExpanded, setDescriptionExpanded] = useState(false),
+    [cartFeedback, setCartFeedback] =
+      useState<MarketplaceCartToastFeedback | null>(null);
+  const addToCartLockRef = useRef(false),
+    toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
+    analyticsInstanceRef = useRef(
+      marketplaceCommerceEventKey("product-detail"),
+    ),
+    viewRecordedRef = useRef<string | null>(null),
+    adTouchRef = useRef<string | null>(null);
+  const load = useCallback(async () => {
+    if (!id) {
+      setReadError("missing");
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setReadError(null);
+    try {
+      const value = await fetchMarketplaceProductDetail(id);
+      if (!value) {
+        setReadError("missing");
+        return;
+      }
+      setDetail(value);
+      setSelectedValues(
+        selectionForPreferredVariant(value.options, value.variants),
+      );
+    } catch (error) {
+      setReadError(
+        error instanceof MarketplaceReadError &&
+          error.code === "marketplace_read_transport"
+          ? "transport"
+          : error instanceof MarketplaceReadError &&
+              error.code === "marketplace_read_permission"
+            ? "permission"
+            : "missing",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+  useEffect(() => {
+    void load();
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
+  }, [load]);
+  const product =
+      detail?.product ?? products.find((item) => item.id === id) ?? null,
+    options = detail?.options ?? [],
+    variants = detail?.variants ?? [],
+    gallery = detail?.media ?? EMPTY_MEDIA;
+  const analyticsSource = useMemo(
+    () =>
+      marketplaceSourceFromParams({
+        source,
+        sourceId,
+        creatorId,
+        liveSessionId,
+      }),
+    [source, sourceId, creatorId, liveSessionId],
+  );
+  const activeVariants = variants.filter((item) => item.status === "active");
+  const selectedVariant = options.length
+    ? resolveExactVariant(options, variants, selectedValues)
+    : (activeVariants.find((item) => item.is_default) ?? activeVariants[0]);
+  useEffect(() => {
+    if (!selectedVariant?.promotion_id || !selectedVariant.promotion_ends_at)
+      return;
+    const expiresAt = Date.parse(selectedVariant.promotion_ends_at);
+    if (!Number.isFinite(expiresAt)) return;
+    const timer = setTimeout(
+      () => void load(),
+      marketplacePromotionRefreshDelay(expiresAt),
+    );
+    return () => clearTimeout(timer);
+  }, [
+    selectedVariant?.id,
+    selectedVariant?.promotion_id,
+    selectedVariant?.promotion_ends_at,
+    load,
+  ]);
+  useEffect(() => {
+    setMediaIndex((current) =>
+      selectVariantMediaIndex(gallery, selectedVariant?.image_url, current),
+    );
+  }, [gallery, selectedVariant?.id, selectedVariant?.image_url]);
+  useEffect(() => {
+    if (!detail || viewRecordedRef.current === detail.product.id) return;
+    viewRecordedRef.current = detail.product.id;
+    void recordProductView({
+      productId: detail.product.id,
+      variantId: selectedVariant?.id,
+      source: analyticsSource,
+      idempotencyKey: `${analyticsInstanceRef.current}:view:${detail.product.id}`,
+    });
+  }, [detail, selectedVariant?.id, analyticsSource]);
+  useEffect(() => {
+    if (!detail || source !== "ad" || !campaignId) return;
+    void recordAdEvent({
+      campaignId,
+      productId: detail.product.id,
+      eventType: "product_view",
+      surface: "product_detail",
+      eventKey: analyticsInstanceRef.current + ":ad-view:" + campaignId,
+    })
+      .then((value) => {
+        adTouchRef.current = value.touch_id ?? null;
+      })
+      .catch(() => {});
+  }, [detail, source, campaignId]);
+  const effectivePrice = selectedVariant?.price ?? product?.price ?? 0,
+    available = selectedVariant?.available_quantity ?? 0,
+    isOwner = Boolean(product && user?.id === product.seller_id),
+    selectionIncomplete = options.length > 0 && !selectedVariant,
+    missingOption = options.find((option) => !selectedValues[option.id]);
+  const selectionSummary = options
+    .flatMap((option) => {
+      const value = option.values.find(
+        (item) => item.id === selectedValues[option.id],
+      );
+      return value ? [value.value] : [];
+    })
+    .join(" · ");
+  const compareAt = selectedVariant?.compare_at_price,
+    discount =
+      compareAt != null && compareAt > effectivePrice
+        ? Math.round((1 - effectivePrice / compareAt) * 100)
+        : null,
+    hasRange =
+      product?.variant_price_max != null &&
+      product.variant_price_max > product.price &&
+      !selectedVariant;
+  const purchaseLabel = isOwner
+    ? "Este es tu producto"
+    : selectionIncomplete
+      ? `Selecciona ${missingOption?.name ?? "opciones"}`
+      : available <= 0
+        ? "Combinación agotada"
+        : "Agregar al carrito";
+  const handleAddToCart = () => {
+    if (
+      addToCartLockRef.current ||
+      !product ||
+      isOwner ||
+      !selectedVariant ||
+      available <= 0 ||
+      quantity < 1 ||
+      quantity > available
+    )
+      return;
+    addToCartLockRef.current = true;
+    try {
+      const selectedOptions = options.flatMap((option) => {
+        const value = option.values.find(
+          (candidate) =>
+            candidate.id === selectedValues[option.id] &&
+            selectedVariant.option_value_ids.includes(candidate.id),
+        );
+        return value
+          ? [
+              {
+                optionId: option.id,
+                optionName: option.name,
+                valueId: value.id,
+                value: value.value,
+              },
+            ]
+          : [];
+      });
+      if (selectedOptions.length !== options.length) return;
+      const imageUrl =
+        [
+          selectedVariant.image_url,
+          gallery.find((item) => item.kind === "image")?.url,
+          product.images[0],
+        ].find(
+          (candidate) => candidate && isPublicMarketplaceImageUrl(candidate),
+        ) ?? null;
+      const result = addItem({
+        productId: product.id,
+        variantId: selectedVariant.id,
+        sellerId: product.seller_id,
+        storeId: product.store_id,
+        title: product.title,
+        sellerUsername: product.seller?.username ?? null,
+        sku: selectedVariant.sku,
+        imageUrl,
+        options: selectedOptions,
+        currency: "BDAG",
+        unitPrice: selectedVariant.price,
+        compareAtPrice: selectedVariant.compare_at_price,
+        quantity,
+        availableQuantitySnapshot: selectedVariant.available_quantity,
+        productUpdatedAt: product.updated_at,
+        adCampaignId: source === "ad" ? campaignId : undefined,
+        adTouchId: adTouchRef.current ?? undefined,
+      });
+      if (!result.ok) {
+        showAlert(
+          "No se pudo agregar",
+          result.code === "cart_limit_reached"
+            ? "Tu carrito alcanzó el máximo de productos."
+            : "Revisa la variante y la cantidad.",
+        );
+        return;
+      }
+      const applied = marketplaceAnalyticsAppliedQuantity(result, quantity);
+      if (applied)
+        void recordAddToCart({
+          productId: product.id,
+          variantId: selectedVariant.id,
+          quantity: applied,
+          source: analyticsSource,
+          idempotencyKey: marketplaceCommerceEventKey("cart"),
+        });
+      if (applied && source === "ad" && campaignId)
+        void recordAdEvent({
+          campaignId,
+          productId: product.id,
+          eventType: "add_to_cart",
+          surface: "cart",
+          metadata: { variant_id: selectedVariant.id, quantity: applied },
+          eventKey: marketplaceCommerceEventKey("ad-cart"),
+        }).catch(() => {});
+      setCartFeedback(
+        marketplaceCartToastFeedback(
+          result,
+          quantity,
+          selectionSummary || product.title,
+        ),
+      );
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(() => setCartFeedback(null), 3200);
+    } finally {
+      addToCartLockRef.current = false;
+    }
+  };
+  const chooseVariantValue = (optionId: string, valueId: string) => {
+    if (!product || selectedValues[optionId] === valueId) return;
+    const next = reconcileVariantSelection(
+      options,
+      variants,
+      selectedValues,
+      optionId,
+      valueId,
+    );
+    setSelectedValues(next);
+    setQuantity(1);
+    const resolved = resolveExactVariant(options, variants, next);
+    void recordVariantSelected({
+      productId: product.id,
+      variantId: resolved?.id ?? null,
+      source: analyticsSource,
+      idempotencyKey: marketplaceCommerceEventKey("variant"),
+    });
+  };
+  const chooseMedia = (index: number) => {
+    if (!product || index === mediaIndex || !gallery[index]) return;
+    setMediaIndex(index);
+    void recordProductMediaView({
+      productId: product.id,
+      variantId: selectedVariant?.id ?? null,
+      source: analyticsSource,
+      metadata: { media_kind: gallery[index].kind, media_position: index },
+      idempotencyKey: marketplaceCommerceEventKey("media"),
+    });
+  };
+  const shareProduct = async () => {
+    if (!product) return;
+    try {
+      await Share.share({
+        message: [
+          product.title,
+          product.seller?.username
+            ? `Vendedor: @${product.seller.username}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      });
+    } catch (error) {
+      if (__DEV__)
+        console.info("[MarketplaceProductShare]", {
+          operation: "share_failed",
+          code: error instanceof Error ? error.name : null,
+        });
+    }
+  };
+  if (loading) return <ProductDetailSkeleton top={insets.top} />;
+  if (!product || readError)
+    return (
+      <View
+        style={[
+          styles.root,
+          styles.center,
+          { paddingTop: insets.top, paddingHorizontal: Spacing.xl },
+        ]}
+      >
+        <StatusBar style="light" />
+        <MaterialIcons
+          name={readError === "transport" ? "wifi-off" : "inventory-2"}
+          size={52}
+          color={Colors.textSubtle}
+        />
+        <Text style={styles.errorTitle}>
+          {readError === "transport"
+            ? "No pudimos conectar"
+            : "Producto no disponible"}
+        </Text>
+        <Text style={styles.errorBody}>
+          {readError === "transport"
+            ? "Revisa tu conexión e inténtalo nuevamente."
+            : "Este producto no existe o ya no está disponible."}
+        </Text>
+        {readError !== "missing" ? (
+          <CyberButton label="Reintentar" onPress={() => void load()} />
+        ) : null}
+        <CyberButton
+          label="Volver"
+          variant="secondary"
+          onPress={() => router.back()}
+        />
+      </View>
+    );
+  const saved = isSavedProduct(product.id),
+    stockText = selectionIncomplete
+      ? `Selecciona ${missingOption?.name ?? "una opción"}`
+      : available > 10
+        ? "Disponible"
+        : available > 0
+          ? `Solo quedan ${available}`
+          : "Agotado";
+  return (
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      <StatusBar style="light" />
+      <View style={styles.header}>
+        <HeaderButton
+          icon="arrow-back-ios"
+          label="Volver"
+          onPress={() => router.back()}
+        />
+        <View style={{ flex: 1 }} />
+        <HeaderButton
+          icon="ios-share"
+          label="Compartir producto"
+          onPress={() => void shareProduct()}
+        />
+        <HeaderButton
+          icon={saved ? "bookmark" : "bookmark-border"}
+          label={saved ? "Quitar de guardados" : "Guardar producto"}
+          selected={saved}
+          onPress={() => toggleSaveProduct(product.id)}
+        />
+        <Pressable
+          style={styles.headerButton}
+          onPress={() => router.push("/cart" as never)}
+          accessibilityRole="button"
+          accessibilityLabel={`Carrito, ${totalQuantity} productos`}
+        >
+          <MaterialIcons
+            name="shopping-cart"
+            size={23}
+            color={Colors.textPrimary}
+          />
+          {totalQuantity > 0 ? (
+            <View style={styles.cartBadge}>
+              <Text style={styles.cartBadgeText}>
+                {totalQuantity > 99 ? "99+" : totalQuantity}
+              </Text>
+            </View>
+          ) : null}
+        </Pressable>
+      </View>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[
+          styles.scroll,
+          { paddingBottom: 116 + insets.bottom },
+        ]}
+      >
+        <ProductMediaGallery
+          items={gallery}
+          selectedIndex={mediaIndex}
+          onSelect={chooseMedia}
+        />
+        <View style={styles.commerce}>
+          <Text style={styles.category}>{product.category}</Text>
+          <Text style={styles.title}>{product.title}</Text>
+          <View style={styles.priceRow}>
+            <Text style={styles.price}>
+              {hasRange ? "Desde " : ""}
+              {effectivePrice.toFixed(2)} BDAG
+            </Text>
+            {compareAt != null && compareAt > effectivePrice ? (
+              <Text style={styles.compare}>{compareAt.toFixed(2)} BDAG</Text>
+            ) : null}
+            {discount ? (
+              <View style={styles.discount}>
+                <Text style={styles.discountText}>-{discount}%</Text>
+              </View>
+            ) : null}
+          </View>
+          {product.total_sales > 0 ? (
+            <Text style={styles.sales}>{product.total_sales} vendidos</Text>
+          ) : null}
+          {options.length ? (
+            <View style={styles.selectionSummary}>
+              <Text style={styles.summaryLabel}>Seleccionado</Text>
+              <Text style={styles.summaryValue}>
+                {selectionSummary ||
+                  `Selecciona ${missingOption?.name ?? "opciones"}`}
+              </Text>
+            </View>
+          ) : null}
+          {options.map((option) => (
+            <View key={option.id} style={styles.optionBlock}>
+              <Text style={styles.optionTitle}>{option.name}</Text>
+              {option.values.length > 6 ? (
+                <SearchableSelectField
+                  label={`Seleccionar ${option.name}`}
+                  value={selectedValues[option.id] ?? ""}
+                  options={option.values
+                    .filter((value) =>
+                      isOptionValueSelectable(
+                        variants,
+                        value.id,
+                        selectedValues,
+                        option.id,
+                      ),
+                    )
+                    .map((value) => ({ value: value.id, label: value.value }))}
+                  onChange={(valueId) => chooseVariantValue(option.id, valueId)}
+                />
+              ) : (
+                <View style={styles.chips}>
+                  {option.values.map((value) => {
+                    const enabled = isOptionValueSelectable(
+                        variants,
+                        value.id,
+                        selectedValues,
+                        option.id,
+                      ),
+                      selected = selectedValues[option.id] === value.id;
+                    return (
+                      <Pressable
+                        key={value.id}
+                        disabled={!enabled}
+                        style={[
+                          styles.chip,
+                          selected && styles.chipSelected,
+                          !enabled && styles.chipDisabled,
+                        ]}
+                        accessibilityRole="radio"
+                        accessibilityLabel={`${option.name} ${value.value}`}
+                        accessibilityState={{ selected, disabled: !enabled }}
+                        onPress={() => chooseVariantValue(option.id, value.id)}
+                      >
+                        <Text
+                          style={[
+                            styles.chipText,
+                            selected && styles.chipTextSelected,
+                          ]}
+                        >
+                          {value.value}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          ))}
+          <View style={styles.stock}>
+            <View
+              style={[
+                styles.stockDot,
+                available > 0 && !selectionIncomplete
+                  ? styles.stockAvailable
+                  : styles.stockUnavailable,
+              ]}
+            />
+            <Text style={styles.stockText}>{stockText}</Text>
+          </View>
+        </View>
+        <MarketplaceShippingQuoteCard
+          productId={product.id}
+          quantity={quantity}
+          onRequestAddress={() =>
+            router.push(user ? ("/checkout" as never) : ("/login" as never))
+          }
+        />
+        <Pressable
+          style={styles.sellerCard}
+          onPress={() => router.push(`/chat/${product.seller_id}`)}
+          accessibilityRole="button"
+          accessibilityLabel={`Contactar a ${product.seller?.username ?? "vendedor"}`}
+        >
+          <Avatar
+            uri={product.seller?.avatar_url ?? ""}
+            username={product.seller?.username ?? "Vendedor"}
+            size={46}
+            showBorder
+          />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.sellerLabel}>Vendedor</Text>
+            <Text style={styles.sellerName}>
+              @{product.seller?.username ?? "Vendedor"}
+            </Text>
+          </View>
+          <View style={styles.message}>
+            <MaterialIcons
+              name="chat-bubble-outline"
+              size={18}
+              color={Colors.primary}
+            />
+            <Text style={styles.messageText}>Mensaje</Text>
+          </View>
+        </Pressable>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Sobre el producto</Text>
+          <Text
+            style={styles.description}
+            numberOfLines={descriptionExpanded ? undefined : 5}
+          >
+            {product.description || "Sin descripción disponible."}
+          </Text>
+          {product.description.length > 220 ? (
+            <Pressable
+              onPress={() => setDescriptionExpanded((value) => !value)}
+              accessibilityRole="button"
+            >
+              <Text style={styles.more}>
+                {descriptionExpanded ? "Ver menos" : "Ver más"}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {product.brand || product.tags.length ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Detalles</Text>
+            {product.brand ? (
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Marca</Text>
+                <Text style={styles.detailValue}>{product.brand}</Text>
+              </View>
+            ) : null}
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Categoría</Text>
+              <Text style={styles.detailValue}>{product.category}</Text>
+            </View>
+            {product.tags.length ? (
+              <View style={styles.tags}>
+                {product.tags.map((tag) => (
+                  <Text key={tag} style={styles.tag}>
+                    #{tag}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+        <View style={styles.trust}>
+          <MaterialIcons
+            name="account-balance-wallet"
+            size={20}
+            color={Colors.primaryLight}
+          />
+          <View>
+            <Text style={styles.trustTitle}>Pago con BDAG</Text>
+            <Text style={styles.trustBody}>
+              La disponibilidad y el total se confirman antes del pago.
+            </Text>
+          </View>
+        </View>
+      </ScrollView>
+      {cartFeedback ? (
+        <Pressable
+          style={[styles.toast, { bottom: 84 + insets.bottom }]}
+          onPress={() => router.push("/cart" as never)}
+          accessibilityRole="button"
+        >
+          <MaterialIcons name="check-circle" size={22} color={Colors.success} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.toastTitle}>{cartFeedback.title}</Text>
+            <Text style={styles.toastBody}>{cartFeedback.message}</Text>
+          </View>
+          <Text style={styles.toastAction}>Ver carrito</Text>
+        </Pressable>
+      ) : null}
+      <ProductPurchaseBar
+        bottom={insets.bottom}
+        quantity={quantity}
+        available={available}
+        price={effectivePrice}
+        disabled={isOwner || selectionIncomplete || available <= 0}
+        label={purchaseLabel}
+        onQuantity={setQuantity}
+        onAdd={handleAddToCart}
+      />
+    </View>
+  );
 }
 
-function HeaderButton({icon,label,onPress,selected=false}:{icon:React.ComponentProps<typeof MaterialIcons>["name"];label:string;onPress:()=>void;selected?:boolean}){return <Pressable style={styles.headerButton}onPress={onPress}accessibilityRole="button"accessibilityLabel={label}accessibilityState={{selected}}><MaterialIcons name={icon}size={23}color={selected?Colors.warning:Colors.textPrimary}/></Pressable>}
-function ProductDetailSkeleton({top}:{top:number}){return <View style={[styles.root,{paddingTop:top}]}><StatusBar style="light"/><View style={styles.skeletonHeader}><View style={styles.skeletonCircle}/><View style={{flex:1}}/><View style={styles.skeletonCircle}/><View style={styles.skeletonCircle}/></View><View style={styles.skeletonMedia}/><View style={styles.skeletonBody}><View style={[styles.skeletonLine,{width:"86%"}]}/><View style={[styles.skeletonLine,{width:"48%",height:26}]}/><View style={[styles.skeletonLine,{width:"100%",height:74}]}/><ActivityIndicator color={Colors.primary}/></View></View>}
-const styles=StyleSheet.create({root:{flex:1,backgroundColor:Colors.bg},center:{alignItems:"center",justifyContent:"center",gap:Spacing.md},header:{minHeight:56,flexDirection:"row",alignItems:"center",paddingHorizontal:Spacing.sm,borderBottomWidth:1,borderBottomColor:Colors.border,backgroundColor:Colors.bg},headerButton:{width:44,height:44,alignItems:"center",justifyContent:"center"},cartBadge:{position:"absolute",right:0,top:1,minWidth:18,height:18,borderRadius:9,paddingHorizontal:3,alignItems:"center",justifyContent:"center",backgroundColor:Colors.secondary},cartBadgeText:{color:"#fff",fontSize:9,fontWeight:FontWeight.bold},scroll:{gap:Spacing.md},commerce:{paddingHorizontal:Spacing.md,gap:Spacing.sm},category:{color:Colors.primaryLight,fontSize:FontSize.xs,fontWeight:FontWeight.bold,textTransform:"uppercase",letterSpacing:.8},title:{color:Colors.textPrimary,fontSize:26,lineHeight:32,fontWeight:FontWeight.extrabold},priceRow:{flexDirection:"row",alignItems:"center",flexWrap:"wrap",gap:Spacing.sm},price:{color:Colors.textPrimary,fontSize:28,fontWeight:FontWeight.extrabold},compare:{color:Colors.textSubtle,textDecorationLine:"line-through",fontSize:FontSize.sm},discount:{backgroundColor:"rgba(255,93,120,.15)",paddingHorizontal:8,paddingVertical:4,borderRadius:Radius.full},discountText:{color:Colors.secondary,fontWeight:FontWeight.bold,fontSize:FontSize.xs},sales:{color:Colors.textSecondary,fontSize:FontSize.sm},selectionSummary:{marginTop:Spacing.sm,flexDirection:"row",alignItems:"center",justifyContent:"space-between",backgroundColor:Colors.surface,padding:Spacing.md,borderRadius:Radius.md},summaryLabel:{color:Colors.textSecondary},summaryValue:{color:Colors.textPrimary,fontWeight:FontWeight.bold},optionBlock:{gap:Spacing.sm,marginTop:Spacing.sm},optionTitle:{color:Colors.textPrimary,fontSize:FontSize.md,fontWeight:FontWeight.bold},chips:{flexDirection:"row",flexWrap:"wrap",gap:Spacing.sm},chip:{minHeight:44,minWidth:48,borderWidth:1,borderColor:Colors.border,borderRadius:Radius.full,paddingHorizontal:Spacing.md,alignItems:"center",justifyContent:"center"},chipSelected:{borderColor:Colors.primary,backgroundColor:"rgba(124,92,255,.18)"},chipDisabled:{opacity:.3},chipText:{color:Colors.textSecondary,fontWeight:FontWeight.semibold},chipTextSelected:{color:Colors.primaryLight},stock:{flexDirection:"row",alignItems:"center",gap:Spacing.sm,marginTop:Spacing.sm},stockDot:{width:8,height:8,borderRadius:4},stockAvailable:{backgroundColor:Colors.success},stockUnavailable:{backgroundColor:Colors.secondary},stockText:{color:Colors.textSecondary,fontWeight:FontWeight.semibold},sellerCard:{marginHorizontal:Spacing.md,padding:Spacing.md,borderRadius:Radius.lg,borderWidth:1,borderColor:Colors.border,backgroundColor:Colors.surfaceElevated,flexDirection:"row",alignItems:"center",gap:Spacing.md},sellerLabel:{color:Colors.textSecondary,fontSize:FontSize.xs},sellerName:{color:Colors.textPrimary,fontWeight:FontWeight.bold},message:{flexDirection:"row",alignItems:"center",gap:5,paddingHorizontal:12,height:40,borderRadius:Radius.full,backgroundColor:"rgba(124,92,255,.13)"},messageText:{color:Colors.primaryLight,fontWeight:FontWeight.bold},section:{marginHorizontal:Spacing.md,padding:Spacing.md,borderRadius:Radius.lg,backgroundColor:Colors.surfaceElevated,gap:Spacing.sm},sectionTitle:{color:Colors.textPrimary,fontSize:FontSize.lg,fontWeight:FontWeight.bold},description:{color:Colors.textSecondary,fontSize:FontSize.md,lineHeight:24},more:{color:Colors.primaryLight,fontWeight:FontWeight.bold},detailRow:{flexDirection:"row",justifyContent:"space-between"},detailLabel:{color:Colors.textSecondary},detailValue:{color:Colors.textPrimary,fontWeight:FontWeight.semibold},tags:{flexDirection:"row",flexWrap:"wrap",gap:Spacing.sm},tag:{color:Colors.textSecondary,backgroundColor:Colors.surface,paddingHorizontal:9,paddingVertical:5,borderRadius:Radius.full},trust:{marginHorizontal:Spacing.md,flexDirection:"row",gap:Spacing.sm,alignItems:"center",padding:Spacing.md,borderRadius:Radius.lg,backgroundColor:"rgba(124,92,255,.1)"},trustTitle:{color:Colors.textPrimary,fontWeight:FontWeight.bold},trustBody:{color:Colors.textSecondary,fontSize:FontSize.xs},toast:{position:"absolute",left:Spacing.md,right:Spacing.md,minHeight:64,flexDirection:"row",alignItems:"center",gap:Spacing.sm,padding:Spacing.md,borderRadius:Radius.lg,backgroundColor:Colors.surfaceElevated,borderWidth:1,borderColor:Colors.success},toastTitle:{color:Colors.textPrimary,fontWeight:FontWeight.bold},toastBody:{color:Colors.textSecondary,fontSize:FontSize.xs},toastAction:{color:Colors.primaryLight,fontWeight:FontWeight.bold},errorTitle:{color:Colors.textPrimary,fontSize:FontSize.xl,fontWeight:FontWeight.bold},errorBody:{color:Colors.textSecondary,textAlign:"center"},skeletonHeader:{height:56,flexDirection:"row",alignItems:"center",paddingHorizontal:Spacing.md,gap:Spacing.sm},skeletonCircle:{width:40,height:40,borderRadius:20,backgroundColor:Colors.surface},skeletonMedia:{height:390,backgroundColor:Colors.surface},skeletonBody:{padding:Spacing.md,gap:Spacing.md},skeletonLine:{height:20,borderRadius:Radius.sm,backgroundColor:Colors.surface}});
+function HeaderButton({
+  icon,
+  label,
+  onPress,
+  selected = false,
+}: {
+  icon: React.ComponentProps<typeof MaterialIcons>["name"];
+  label: string;
+  onPress: () => void;
+  selected?: boolean;
+}) {
+  return (
+    <Pressable
+      style={styles.headerButton}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ selected }}
+    >
+      <MaterialIcons
+        name={icon}
+        size={23}
+        color={selected ? Colors.warning : Colors.textPrimary}
+      />
+    </Pressable>
+  );
+}
+function ProductDetailSkeleton({ top }: { top: number }) {
+  return (
+    <View style={[styles.root, { paddingTop: top }]}>
+      <StatusBar style="light" />
+      <View style={styles.skeletonHeader}>
+        <View style={styles.skeletonCircle} />
+        <View style={{ flex: 1 }} />
+        <View style={styles.skeletonCircle} />
+        <View style={styles.skeletonCircle} />
+      </View>
+      <View style={styles.skeletonMedia} />
+      <View style={styles.skeletonBody}>
+        <View style={[styles.skeletonLine, { width: "86%" }]} />
+        <View style={[styles.skeletonLine, { width: "48%", height: 26 }]} />
+        <View style={[styles.skeletonLine, { width: "100%", height: 74 }]} />
+        <ActivityIndicator color={Colors.primary} />
+      </View>
+    </View>
+  );
+}
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: Colors.bg },
+  center: { alignItems: "center", justifyContent: "center", gap: Spacing.md },
+  header: {
+    minHeight: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    backgroundColor: Colors.bg,
+  },
+  headerButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cartBadge: {
+    position: "absolute",
+    right: 0,
+    top: 1,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 3,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.secondary,
+  },
+  cartBadgeText: { color: "#fff", fontSize: 9, fontWeight: FontWeight.bold },
+  scroll: { gap: Spacing.md },
+  commerce: { paddingHorizontal: Spacing.md, gap: Spacing.sm },
+  category: {
+    color: Colors.primaryLight,
+    fontSize: FontSize.xs,
+    fontWeight: FontWeight.bold,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  title: {
+    color: Colors.textPrimary,
+    fontSize: 26,
+    lineHeight: 32,
+    fontWeight: FontWeight.extrabold,
+  },
+  priceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: Spacing.sm,
+  },
+  price: {
+    color: Colors.textPrimary,
+    fontSize: 28,
+    fontWeight: FontWeight.extrabold,
+  },
+  compare: {
+    color: Colors.textSubtle,
+    textDecorationLine: "line-through",
+    fontSize: FontSize.sm,
+  },
+  discount: {
+    backgroundColor: "rgba(255,93,120,.15)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: Radius.full,
+  },
+  discountText: {
+    color: Colors.secondary,
+    fontWeight: FontWeight.bold,
+    fontSize: FontSize.xs,
+  },
+  sales: { color: Colors.textSecondary, fontSize: FontSize.sm },
+  selectionSummary: {
+    marginTop: Spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: Colors.surface,
+    padding: Spacing.md,
+    borderRadius: Radius.md,
+  },
+  summaryLabel: { color: Colors.textSecondary },
+  summaryValue: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
+  optionBlock: { gap: Spacing.sm, marginTop: Spacing.sm },
+  optionTitle: {
+    color: Colors.textPrimary,
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.bold,
+  },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.sm },
+  chip: {
+    minHeight: 44,
+    minWidth: 48,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.full,
+    paddingHorizontal: Spacing.md,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  chipSelected: {
+    borderColor: Colors.primary,
+    backgroundColor: "rgba(124,92,255,.18)",
+  },
+  chipDisabled: { opacity: 0.3 },
+  chipText: { color: Colors.textSecondary, fontWeight: FontWeight.semibold },
+  chipTextSelected: { color: Colors.primaryLight },
+  stock: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
+  stockDot: { width: 8, height: 8, borderRadius: 4 },
+  stockAvailable: { backgroundColor: Colors.success },
+  stockUnavailable: { backgroundColor: Colors.secondary },
+  stockText: { color: Colors.textSecondary, fontWeight: FontWeight.semibold },
+  sellerCard: {
+    marginHorizontal: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceElevated,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.md,
+  },
+  sellerLabel: { color: Colors.textSecondary, fontSize: FontSize.xs },
+  sellerName: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
+  message: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    height: 40,
+    borderRadius: Radius.full,
+    backgroundColor: "rgba(124,92,255,.13)",
+  },
+  messageText: { color: Colors.primaryLight, fontWeight: FontWeight.bold },
+  section: {
+    marginHorizontal: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surfaceElevated,
+    gap: Spacing.sm,
+  },
+  sectionTitle: {
+    color: Colors.textPrimary,
+    fontSize: FontSize.lg,
+    fontWeight: FontWeight.bold,
+  },
+  description: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.md,
+    lineHeight: 24,
+  },
+  more: { color: Colors.primaryLight, fontWeight: FontWeight.bold },
+  detailRow: { flexDirection: "row", justifyContent: "space-between" },
+  detailLabel: { color: Colors.textSecondary },
+  detailValue: { color: Colors.textPrimary, fontWeight: FontWeight.semibold },
+  tags: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.sm },
+  tag: {
+    color: Colors.textSecondary,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: Radius.full,
+  },
+  trust: {
+    marginHorizontal: Spacing.md,
+    flexDirection: "row",
+    gap: Spacing.sm,
+    alignItems: "center",
+    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    backgroundColor: "rgba(124,92,255,.1)",
+  },
+  trustTitle: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
+  trustBody: { color: Colors.textSecondary, fontSize: FontSize.xs },
+  toast: {
+    position: "absolute",
+    left: Spacing.md,
+    right: Spacing.md,
+    minHeight: 64,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: Colors.success,
+  },
+  toastTitle: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
+  toastBody: { color: Colors.textSecondary, fontSize: FontSize.xs },
+  toastAction: { color: Colors.primaryLight, fontWeight: FontWeight.bold },
+  errorTitle: {
+    color: Colors.textPrimary,
+    fontSize: FontSize.xl,
+    fontWeight: FontWeight.bold,
+  },
+  errorBody: { color: Colors.textSecondary, textAlign: "center" },
+  skeletonHeader: {
+    height: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: Spacing.md,
+    gap: Spacing.sm,
+  },
+  skeletonCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.surface,
+  },
+  skeletonMedia: { height: 390, backgroundColor: Colors.surface },
+  skeletonBody: { padding: Spacing.md, gap: Spacing.md },
+  skeletonLine: {
+    height: 20,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.surface,
+  },
+});
