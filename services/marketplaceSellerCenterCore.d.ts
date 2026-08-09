@@ -1,0 +1,11 @@
+import type{MarketplaceDailyAnalyticsRow}from'./marketplaceAnalyticsService';
+import type{MarketplaceInventoryLevel}from'./marketplaceService';
+export const SELLER_ANALYTICS_RANGES:readonly number[];
+export function analyticsUtcRange(days:number,now?:Date):{dateFrom:string;dateTo:string};
+export function formatBDAG(value:number|null|undefined):string;
+export function formatMetricCount(value:number|null|undefined):string;
+export function formatEventRate(value:number|null|undefined):string;
+export function marketplaceSourceLabel(source:string):string;
+export function normalizeDailyAnalytics(rows:MarketplaceDailyAnalyticsRow[],days:number,dateTo:string):MarketplaceDailyAnalyticsRow[];
+export function sellerOrderNeedsAttention(status:string):boolean;
+export function sellerInventoryAttention(levels:MarketplaceInventoryLevel[]):{outOfStock:number;lowStock:number};

@@ -4,7 +4,12 @@ import{marketplaceAnalyticsAppliedQuantity,marketplaceCheckoutAnalyticsTargets,p
 
 export type MarketplaceAnalyticsSourceType='direct'|'shop'|'search'|'feed'|'clip'|'live'|'creator'|'affiliate'|'unknown';
 export interface MarketplaceCommerceSource{type:MarketplaceAnalyticsSourceType;entityId:string|null;creatorId:string|null;liveSessionId:string|null}
-export interface MarketplaceSellerAnalytics{date_from:string;date_to:string;timezone:'UTC';summary:{product_views:number;unique_viewer_sessions:number;add_to_cart_events:number;checkout_started:number;orders:number;purchase_items:number;units_sold:number;gross_merchandise_bdag:number;view_to_cart_event_rate:number;view_to_purchase_event_rate:number};products:unknown[];daily:unknown[];sources:unknown[]}
+export interface MarketplaceSellerSummary{product_views:number;unique_viewer_sessions:number;add_to_cart_events:number;checkout_started:number;orders:number;purchase_items:number;units_sold:number;gross_merchandise_bdag:number;view_to_cart_event_rate:number;view_to_purchase_event_rate:number}
+export interface MarketplaceProductAnalyticsRow{product_id:string;title:string|null;views:number;add_to_cart:number;purchase_orders:number;purchase_items:number;units_sold:number;gmv_bdag:number;view_to_cart_event_rate:number;view_to_purchase_event_rate:number}
+export interface MarketplaceDailyAnalyticsRow{event_day:string;views:number;add_to_cart:number;orders:number;purchase_items:number;units_sold:number;gmv_bdag:number}
+export interface MarketplaceSourceAnalyticsRow{source_type:MarketplaceAnalyticsSourceType;views:number;add_to_cart:number;orders:number;purchase_items:number;units_sold:number;gmv_bdag:number}
+export interface MarketplaceVariantAnalyticsRow{product_id:string;variant_id:string;product_title:string|null;sku:string|null;selections:number;add_to_cart:number;purchase_orders:number;purchase_items:number;units_sold:number;gmv_bdag:number}
+export interface MarketplaceSellerAnalytics{date_from:string;date_to:string;timezone:'UTC';summary:MarketplaceSellerSummary;products:MarketplaceProductAnalyticsRow[];daily:MarketplaceDailyAnalyticsRow[];sources:MarketplaceSourceAnalyticsRow[]}
 type RecordInput={eventName:'product_view'|'product_media_view'|'variant_selected'|'add_to_cart'|'checkout_started';productId:string;variantId?:string|null;quantity?:number|null;source?:MarketplaceCommerceSource;metadata?:Record<string,number|string|boolean>;idempotencyKey?:string};
 const clientSessionId=randomUUID();
 const db=()=>getSupabaseClient();
@@ -39,8 +44,8 @@ export async function fetchMyMarketplaceCommerceAnalytics(dateFrom:string,dateTo
  if(error){if(__DEV__)console.info('[MarketplaceAnalytics]',{operation:'seller_summary_failed',code:error.code});throw error;}
  return data as MarketplaceSellerAnalytics;
 }
-export async function fetchMyMarketplaceVariantAnalytics(dateFrom:string,dateTo:string):Promise<unknown[]>{
- const{data,error}=await db().rpc('get_my_marketplace_variant_analytics',{p_date_from:dateFrom,p_date_to:dateTo});if(error)throw error;return data as unknown[];
+export async function fetchMyMarketplaceVariantAnalytics(dateFrom:string,dateTo:string):Promise<MarketplaceVariantAnalyticsRow[]>{
+ const{data,error}=await db().rpc('get_my_marketplace_variant_analytics',{p_date_from:dateFrom,p_date_to:dateTo});if(error)throw error;return data as MarketplaceVariantAnalyticsRow[];
 }
 
 export{marketplaceAnalyticsAppliedQuantity,marketplaceCheckoutAnalyticsTargets,parseMarketplaceAnalyticsSource};

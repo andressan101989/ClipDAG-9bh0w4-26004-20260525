@@ -43,7 +43,7 @@ test('seller list distinguishes loading empty and read failure while retaining c
  assert.match(screen,/No pudimos cargar tus productos\./);
  assert.match(screen,/Tu sesión expiró\. Inicia sesión nuevamente\./);
  assert.match(screen,/Reintentar/);
- assert.match(screen,/sellerProductsState\s*===\s*"empty"/);
+ assert.match(screen,/sellerProductsState==='error'\?errorMessage:filter==='all'/);
 });
 
 test('seller products refreshes on focus and never exposes raw database errors',()=>{

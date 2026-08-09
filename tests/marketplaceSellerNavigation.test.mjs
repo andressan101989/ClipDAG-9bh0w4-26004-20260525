@@ -20,17 +20,17 @@ test('static client contract: shared header provides visible accessible history 
   assert.match(header,/width:44,height:44/);
 });
 
-test('static client contract: Seller Center falls back to Profile and keeps seller actions',()=>{
-  assert.match(center,/title="Centro de vendedor" fallbackRoute="\/\(tabs\)\/profile"/);
-  assert.match(center,/Configurar tienda/);
-  assert.match(center,/Mis productos/);
+test('static client contract: Seller Center V2 falls back to Profile and keeps seller actions',()=>{
+  assert.match(center,/title="Seller Center" fallbackRoute="\/\(tabs\)\/profile"/);
+  assert.match(center,/Tienda/);
+  assert.match(center,/seller\/products/);
   assert.match(center,/Solicitar acceso/);
 });
 
 test('static client contract: every nested seller route has its deterministic fallback',()=>{
   assert.match(apply,/title="Solicitud de vendedor" fallbackRoute="\/seller"/);
   assert.match(store,/title="Configurar tienda" fallbackRoute="\/seller"/);
-  assert.match(products,/title="Mis productos" fallbackRoute="\/seller"/);
+  assert.match(products,/title="Productos" fallbackRoute="\/seller"/);
   assert.match(edit,/router\.back\(\)/);
 });
 
