@@ -5,11 +5,7 @@ export type MarketplaceSponsoredMixItem<
   | { kind: "organic"; product: TOrganic; position: number }
   | { kind: "sponsored"; product: TSponsored; position: number };
 
-/**
- * Temporary physical-test accommodation for small catalogs. For 1-7 visible
- * organic products, one matching campaign replaces its organic card. The
- * large-catalog branch intentionally preserves the production 1-per-8 rule.
- */
+/** Mixes sponsored cards at the production 1-per-8 insertion boundary. */
 export function mixMarketplaceSponsoredProducts<
   TOrganic extends { id: string },
   TSponsored extends { campaign_id: string; product_id: string },
@@ -17,19 +13,6 @@ export function mixMarketplaceSponsoredProducts<
   organic: readonly TOrganic[],
   sponsored: readonly TSponsored[],
 ): MarketplaceSponsoredMixItem<TOrganic, TSponsored>[] {
-  if (organic.length > 0 && organic.length < 8) {
-    const visibleProductIds = new Set(organic.map((product) => product.id));
-    const matchingCampaign = sponsored.find((candidate) =>
-      visibleProductIds.has(candidate.product_id),
-    );
-
-    return organic.map((product, position) =>
-      matchingCampaign?.product_id === product.id
-        ? { kind: "sponsored", product: matchingCampaign, position }
-        : { kind: "organic", product, position },
-    );
-  }
-
   const organicProductIds = new Set(organic.map((product) => product.id));
   return organic.flatMap((product, position) => {
     const candidate =
