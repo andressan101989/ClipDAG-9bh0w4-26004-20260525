@@ -19,6 +19,7 @@
     "prove:marketplace-ads-finalization": "node scripts/prove-marketplace-ads-finalization.mjs",
     "prove:marketplace-ads": "node scripts/prove-marketplace-ads.mjs",
     "prove:marketplace-runtime": "node scripts/prove-marketplace-client-runtime.mjs",
+    "db:marketplace-disposable": "node scripts/create-marketplace-disposable-db.mjs",
     "prove:marketplace-analytics": "node scripts/prove-marketplace-analytics.mjs",
     "lint": "expo lint"
   },
