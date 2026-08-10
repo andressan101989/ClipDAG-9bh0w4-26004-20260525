@@ -69,6 +69,10 @@ import {
   MARKETPLACE_AD_VISIBLE_MS,
   MARKETPLACE_AD_VISIBLE_RATIO,
 } from "@/services/marketplaceAdVisibility";
+import {
+  marketplaceSponsoredProductRoute,
+  mixMarketplaceSponsoredProducts,
+} from "@/services/marketplaceSponsoredMix";
 
 const { width: W } = Dimensions.get("window");
 const CARD_W = (W - Spacing.md * 2 - Spacing.sm) / 2;
@@ -627,7 +631,10 @@ export default function ShopScreen() {
     try {
       const [prods, ads] = await Promise.all([
         fetchProducts({ category: productCat || undefined, limit: 30 }),
-        fetchSponsoredProducts("marketplace_home", productCat || undefined).catch(() => []),
+        fetchSponsoredProducts(
+          "marketplace_home",
+          productCat || undefined,
+        ).catch(() => []),
       ]);
       setProducts(prods.filter((p) => p.seller_id !== user?.id));
       setSponsored(ads);
@@ -1085,56 +1092,48 @@ export default function ShopScreen() {
                 style={styles.cardGrid}
                 onLayout={(event) => setGridY(event.nativeEvent.layout.y)}
               >
-                {products.flatMap((p, index) => {
-                  const ad =
-                    index > 0 && index % 8 === 0
-                      ? sponsored[Math.floor(index / 8) - 1]
-                      : null;
-                  const organic = (
-                    <ProductCard
-                      key={p.id}
-                      product={p}
-                      onPress={() =>
-                        router.push({
-                          pathname: "/product/[id]",
-                          params: { id: p.id, source: "shop" },
-                        })
-                      }
-                    />
-                  );
-                  if (
-                    !ad ||
-                    products.some((value) => value.id === ad.product_id)
-                  )
-                    return [organic];
-                  return [
-                    <SponsoredCard
-                      key={"ad:" + ad.campaign_id}
-                      item={ad}
-                      scrollY={scrollY}
-                      gridY={gridY}
-                      onPress={() => {
-                        void recordAdEvent({
-                          campaignId: ad.campaign_id,
-                          productId: ad.product_id,
-                          eventType: "click",
-                          surface: "marketplace_home",
-                          metadata: { position: index },
-                        }).catch(() => {});
-                        router.push({
-                          pathname: "/product/[id]",
-                          params: {
-                            id: ad.product_id,
-                            source: "ad",
+                {mixMarketplaceSponsoredProducts(products, sponsored).map(
+                  (item) => {
+                    if (item.kind === "organic") {
+                      const p = item.product;
+                      return (
+                        <ProductCard
+                          key={p.id}
+                          product={p}
+                          onPress={() =>
+                            router.push({
+                              pathname: "/product/[id]",
+                              params: { id: p.id, source: "shop" },
+                            })
+                          }
+                        />
+                      );
+                    }
+
+                    const ad = item.product;
+                    return (
+                      <SponsoredCard
+                        key={"ad:" + ad.campaign_id}
+                        item={ad}
+                        scrollY={scrollY}
+                        gridY={gridY}
+                        onPress={() => {
+                          void recordAdEvent({
                             campaignId: ad.campaign_id,
+                            productId: ad.product_id,
+                            eventType: "click",
                             surface: "marketplace_home",
-                          },
-                        });
-                      }}
-                    />,
-                    organic,
-                  ];
-                })}
+                            metadata: { position: item.position },
+                          }).catch(() => {});
+                          router.push({
+                            pathname: "/product/[id]",
+                            params: marketplaceSponsoredProductRoute(ad),
+                          });
+                        }}
+                      />
+                    );
+                  },
+                )}
               </View>
             )}
           </>
