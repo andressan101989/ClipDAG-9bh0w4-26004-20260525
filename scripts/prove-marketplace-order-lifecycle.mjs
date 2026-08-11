@@ -8,8 +8,9 @@ const projectRef = "aewwdlvbwpczqyvkwvvj";
 const fail = code => { throw new Error(code); };
 const assert = (condition, code) => { if (!condition) fail(code); };
 const reconciliationIsZero = (value, excluded=[]) => Object.entries(value??{}).every(([key,item]) => excluded.includes(key) || typeof item !== "number" || item === 0);
-const safeError = error => /^[a-z0-9_:-]+$/i.test(error?.message ?? '') ? error.message : (error?.code ?? 'database_error');
+const safeError = error => JSON.stringify({code:error?.code,message:error?.message,detail:error?.detail,hint:error?.hint,where:error?.where,schema:error?.schema,table:error?.table,constraint:error?.constraint});
 function linkedConfiguration() {
+  if(process.env.MARKETPLACE_DATABASE_URL)return {connectionString:process.env.MARKETPLACE_DATABASE_URL,ssl:false};
   const cli = spawnSync(process.env.ComSpec,["/d","/s","/c","npx.cmd supabase db dump --linked --schema public --dry-run"],{cwd:repo,encoding:"utf8",windowsHide:true});
   if (cli.status !== 0) fail("order_lifecycle_secure_connection_failed");
   const captured=`${cli.stdout??""}${cli.stderr??""}`;
@@ -59,7 +60,7 @@ try{
  assert((await db.query("select current_database() is not null ok")).rows[0].ok,'secure_connection_failed');
  const before=(await db.query(countsSql)).rows[0];
  await db.query('begin');open=true;await db.query('set role postgres');await claims('service_role');stage="synthetic_roots";
- for(const [id,email]of[[ids.seller,`lifecycle-seller-${randomUUID()}@onsynthetic.local`],[ids.buyer,`lifecycle-buyer-${randomUUID()}@onsynthetic.local`]])await db.query("insert into auth.users(id,instance_id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at)values($1,'00000000-0000-0000-0000-000000000000','authenticated','authenticated',$2,'proof',now(),now(),now())",[id,email]);
+ for(const [id,email]of[[ids.seller,`lifecycle-seller-${randomUUID()}@onsynthetic.local`],[ids.buyer,`lifecycle-buyer-${randomUUID()}@onsynthetic.local`]])await db.query("insert into auth.users(id,instance_id,aud,role,email,encrypted_password,confirmed_at,created_at,updated_at)values($1,'00000000-0000-0000-0000-000000000000','authenticated','authenticated',$2,'proof',now(),now(),now())",[id,email]);
  await db.query("insert into user_profiles(id,username,display_name)values($1,$2,'Lifecycle Seller'),($3,$4,'Lifecycle Buyer')",[ids.seller,`life_s_${randomUUID().replaceAll('-','').slice(0,18)}`,ids.buyer,`life_b_${randomUUID().replaceAll('-','').slice(0,18)}`]);
  await db.query("insert into marketplace_sellers(user_id,status,display_name,approved_at)values($1,'approved','Lifecycle Seller',now())",[ids.seller]);
  await db.query("insert into marketplace_stores(id,seller_id,name,slug,status)values($1,$2,'Lifecycle Store',$3,'active')",[ids.store,ids.seller,`lifecycle-${randomUUID()}`]);
