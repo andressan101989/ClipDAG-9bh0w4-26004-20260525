@@ -16,7 +16,8 @@ const read = (p) => readFileSync(new URL("../" + p, import.meta.url), "utf8"),
   detail = read("app/product/[id].tsx"),
   service = read("services/marketplaceAdsService.ts"),
   edge = read("supabase/functions/marketplace-ads/index.ts"),
-  cart = read("services/marketplaceCart.ts");
+  cart = read("services/marketplaceCart.ts"),
+  sponsoredMix = read("services/marketplaceSponsoredMix.ts");
 for (const token of [
   "marketplace_ad_delivery_materializations",
   "materialize_marketplace_ad_campaign_spend",
@@ -45,10 +46,11 @@ assert.doesNotMatch(service, /adService|ad_create/);
 assert.match(shop, /Patrocinado/);
 assert.match(shop, /visible\s*\/\s*height\s*>=\s*MARKETPLACE_AD_VISIBLE_RATIO/);
 assert.match(shop, /setTimeout/);
-assert.match(shop, /index\s*%\s*8\s*===\s*0/);
+assert.match(shop, /mixMarketplaceSponsoredProducts\(products,\s*sponsored\)/);
+assert.match(sponsoredMix, /position\s*%\s*8\s*===\s*0/);
 assert.match(
-  shop,
-  /products\.some\(\s*\(?value\)?\s*=>\s*value\.id\s*===\s*ad\.product_id\s*\)/,
+  sponsoredMix,
+  /organicProductIds\.has\(candidate\.product_id\)/,
 );
 assert.match(detail, /source\s*!==\s*["']ad["']/);
 assert.match(detail, /recordAdEvent/);

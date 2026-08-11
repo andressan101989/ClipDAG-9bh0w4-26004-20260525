@@ -10,6 +10,8 @@
     "web": "expo start --web",
     "prove:marketplace-fixtures": "node scripts/prove-marketplace-fixture-finalization.mjs",
     "prove:marketplace-order-lifecycle": "node scripts/prove-marketplace-order-lifecycle.mjs",
+    "prove:marketplace-settlement-reversal": "node scripts/prove-marketplace-settlement-reversal.mjs",
+    "audit:marketplace-b7r-remote": "node scripts/audit-marketplace-b7r-remote.mjs",
     "prove:marketplace-dispute-refund": "node scripts/prove-marketplace-held-dispute-refund.mjs",
     "prove:marketplace-shipping": "node scripts/prove-marketplace-shipping.mjs",
     "prove:marketplace-publication": "node scripts/audit-marketplace-publication.mjs",
