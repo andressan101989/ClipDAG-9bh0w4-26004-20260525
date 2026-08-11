@@ -228,10 +228,9 @@ This section is updated as commands complete.
 | TypeScript                         | BASELINE NONZERO - unrelated existing diagnostics; zero modified-file diagnostics |
 | iOS export                         | PASS - 3,387 modules bundled; existing package export-map warnings only            |
 | Remote pre-deploy reconciliations  | PASS - latest 20260810170000; all health counters zero; no B7R fixtures/hooks      |
-| Linked dry-run                     | PENDING                                                                            |
-| Deployment and parity              | PENDING                                                                            |
-| Remote post-deploy reconciliations | PENDING                                                                            |
-| Final push                         | PENDING                                                                            |
+| Linked dry-run                     | PASS - only `20260810180000_marketplace_post_settlement_reversal_authority.sql`    |
+| Deployment and parity              | PASS - deployed latest migration exactly `20260810180000`                          |
+| Remote post-deploy reconciliations | PASS - all legacy counters and all 32 B7R reversal counters zero                   |
 
 ## Residual risks
 
@@ -262,4 +261,24 @@ The read-only remote audit discovered these exact functions and returned healthy
 - `npm.cmd run db:marketplace-disposable -- destroy` returned `destroyed=true`.
 - `docker ps --filter name=clipdag-marketplace-disposable` returned no container name.
 
-All local, disposable, regression, export, and remote pre-deploy gates are complete. Commit, dry-run, deployment, parity, and post-deploy gates remain. No hard blocker has been established.
+## Commits, dry-run, deployment, and post-deploy verification
+
+- Commit 1: `1472d95` - `feat: add marketplace post-settlement reversal authority`.
+- Commit 2: `d0a335d` - `test: prove and document marketplace settlement reversals`.
+- Linked dry-run output: `migrations=[20260810180000_marketplace_post_settlement_reversal_authority.sql]`, `seeds=[]`, `roles=[]`.
+- Deployment output: the same one migration applied; no seeds or roles.
+- Remote latest migration after deploy: `20260810180000`.
+- `reconcile_marketplace_settlement_reversals`: all 32 required counters `0`.
+- Every pre-existing Marketplace reconciliation retained the same healthy result recorded above, including payment, settlement, LIVE commission, Ads finance, Ads finalization, Ads eligibility, Ads delivery, and Ads events.
+- Post-deploy held escrow remained exact: expected `71.00000000`, actual `71.00000000`, difference/shortage/surplus `0`.
+- Post-deploy B7R fixture users: `0`.
+- Post-deploy disposable failure function: absent.
+- Post-deploy disposable failure trigger: absent.
+
+## Final residual risk assessment
+
+- Partial post-settlement refunds remain deliberately unsupported in B7R V1 and retain the existing safe rejection/manual-review behavior.
+- A beneficiary balance below the aggregate immutable leg requirement produces a non-financial manual-review result; operations must recover the beneficiary funds before a later full-refund retry with a new idempotency key.
+- No atomicity, duplicate-money, same-account aggregation, creator-leg, held-refund, release-seller, forward LIVE commission, or migration-isolation residual risk was observed in proof.
+
+All local, disposable, regression, export, dry-run, deployment, parity, and remote post-deploy gates are complete. This record is finalized by the following verification commit; branch push and local/remote SHA equality necessarily occur afterward and are reported in the final handoff. No hard blocker has been established.
