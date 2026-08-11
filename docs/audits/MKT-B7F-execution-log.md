@@ -211,3 +211,32 @@ MKT-B7F generalizes the deployed single-creator Marketplace commission authority
 - **PRODUCTION ECONOMICS CHANGED:** No.
 - **RESIDUAL RISK:** None.
 - **STATUS:** RESOLVED
+
+## Deployment record
+
+- Production-authority commit: `a349064` (`feat: add marketplace multi-creator allocation authority`).
+- Proof/documentation commit: `bcc1367` (`test: prove and document marketplace multi-creator allocations`).
+- Dry-run result: exactly `20260811010000_marketplace_multi_creator_allocation_authority.sql`; no seeds, roles, historical, or unrelated migrations.
+- Deployment result: the exact B7F migration applied successfully.
+- Remote latest migration: `20260811010000`.
+- Remote B7F table and reconciliation function: present.
+- Remote authority audit: RLS enabled; authenticated authority denied; client raw mutation denied; internal settlement helper private.
+- Remote B7F proof fixture users: zero.
+- Remote fixture failure function/trigger: absent.
+- Remote B7F reconciliation: 27 of 27 counters zero.
+- Remote B7R reconciliation: 32 of 32 counters zero.
+- Remote payment reconciliation: healthy, all integrity counters zero.
+- Remote settlement reconciliation: healthy; held escrow expected 71, actual 71, difference/shortage/surplus zero.
+- Remote LIVE commission reconciliation: 9 of 9 counters zero.
+- Remote Ads delivery, eligibility, events, finalization, and finance reconciliations: all counters zero.
+
+## Residual risks
+
+- B7F V1 intentionally supports at most one creator per order item. Splitting one item among multiple creators remains outside scope.
+- Allocation is an immutable one-shot freeze for an order. Administrative reallocation is intentionally not provided.
+- Historical held single-creator allocations created before B7F settle through the preserved scalar compatibility fallback; new LIVE and canonical B7F allocations use normalized rows.
+- No B7A attribution/UI/source expansion was started.
+
+## Final status
+
+All implementation, financial proof, regression, export, dry-run, deployment, privilege, parity, reconciliation, cleanup, and source-safety gates passed. No hard blocker remains.
