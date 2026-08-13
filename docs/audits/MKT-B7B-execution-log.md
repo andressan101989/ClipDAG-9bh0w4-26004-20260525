@@ -169,3 +169,35 @@ STATUS: RESOLVED
 - Remote payments, settlements, LIVE commissions, Ads delivery, eligibility clock, events, finalization, and finance remained healthy. Held escrow remained expected 71 / actual 71 BDAG with zero shortage, surplus, or difference.
 - Remote B7B fixture users: zero. Fixture failure trigger/function: absent.
 - MKT-B7B Creator Product Selection / Showcase is CLOSED. B7C Feed/Reels Product Tagging is unblocked but was not started.
+
+## B7B-C Cart Attribution Freshness and Pagination Hardening
+
+### Audit findings and corrections
+
+- Cart freshness risk: the B7B cart treated a matching showcase item and creator as equivalent even when the opaque attribution ID changed. That could discard a newly issued token representing a newer seller-approved entitlement version. The merge rule now requires exact `attributionId` equality. A different token always returns `attribution_conflict`; the original line, quantity, and token remain unchanged. Normal unattributed repeats of an already-attributed line still merge while preserving the existing creator authority.
+- Public pagination defect: the profile fetched the initial 24-item page but discarded `nextCursor`. It now stores the cursor, exposes a compact `Ver más` action only while another page exists, requests `fetchCreatorShowcase(creatorId, cursor)`, deduplicates by showcase item ID, restores stable sort order, and uses an in-flight ref to reject double loads. Focus refresh replaces the first page. A `visible=false` response clears products and the cursor, preventing stale private/blocked content.
+- Capacity mismatch: management read and reorder supported at most 100 active items, while add could create more. Corrective migration `20260811023000_harden_marketplace_creator_showcase_capacity.sql` preserves the deployed add signature, authorization, fingerprint, command idempotency, offer resolution, and creator advisory lock, then rejects only a genuinely new 101st active item with `marketplace_creator_showcase_limit_reached`. Existing active-product calls and successful retries remain valid. Removed rows do not count; an unavailable but still-active selection continues to consume a slot until explicitly removed.
+- Management now shows the active count out of 100 and maps the deterministic limit error to: “Tu escaparate admite hasta 100 productos. Elimina uno antes de agregar otro.”
+- Reconciliation adds one real-query `active_showcase_over_limit` counter, bringing B7B to 23 counters. Historical deployed B7A/B7F/B7R/B7B migrations were not modified.
+
+### Proof and regression evidence
+
+- Focused client tests prove exact-token merging, same-creator/different-token conflict, different-creator conflict, unattributed-to-attributed conflict, creator-credit preservation, unchanged original token after conflicts, cursor storage/use, explicit load-more, overlap deduplication, double-load protection, focus replacement, privacy clearing, and limit UX.
+- Disposable capacity proof: 100 active selections allowed; new 101st rejected; 100th idempotent retry succeeded; existing active product with a new key returned the existing row; removal reduced active count to 99; a new selection returned it to 100; all 100 reordered with positions 0–99 and no duplicates; one removed historical row did not consume capacity.
+- B7B reconciliation: 23/23 zero. B7A: 36/36 zero. B7F: 27/27 zero. B7R: 32/32 zero. Persistent fixtures: zero.
+- Exact financial handoff remained seller 78, platform 10, creator X 5, creator Y 7, gross 100 BDAG. B7R refunded buyer +100. Insufficient creator balance remained `money_moved=false` with no partial movement.
+- Order lifecycle, shipping/LIVE, publication, fixture finalization, promotions, analytics, runtime, Ads finance, Ads eligibility, Ads finalization, and Ads delivery/events passed unchanged.
+- Node tests: 607 passed, 0 failed. Focused ESLint: zero errors; one pre-existing unused helper warning in the legacy public profile. TypeScript: 187 unrelated baseline diagnostics, zero from B7B-C files. iOS export passed. Build remains 22. No EAS.
+- Source safety audit: no fixture/test/debug/mock hooks, test GUCs, special fixture IDs, client commission/BPS authority, or hardcoded reconciliation success. `git diff --check` passed.
+
+### Remote pre-deploy state
+
+- Read-only audit passed at latest migration `20260811022000`; B7B-C was absent as expected. Existing B7B 22/22, B7A 36/36, B7F 27/27, B7R 32/32, payments, settlements, LIVE, Ads, and held escrow 71/71 BDAG were healthy. Fixtures and failure hooks were absent.
+
+### B7B-C deployment status
+
+- Linked dry-run was exact: only `20260811023000_harden_marketplace_creator_showcase_capacity.sql`; seeds and roles were empty.
+- The corrective migration deployed successfully. Final remote latest migration is `20260811023000`.
+- Final remote B7B reconciliation is 23/23 zero, including `active_showcase_over_limit=0`. B7A is 36/36 zero, B7F 27/27 zero, and B7R 32/32 zero.
+- Payments, settlements, LIVE commissions, Ads delivery/eligibility/events/finalization/finance, and held escrow expected 71 / actual 71 BDAG remained healthy. B7B fixture users were zero; failure hooks were absent; RLS, grants, raw-write denial, and internal-helper privacy passed.
+- MKT-B7B-C hardening and MKT-B7B are CLOSED. B7C is ready but was not started.

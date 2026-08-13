@@ -233,8 +233,58 @@ async function proveAuthorityLifecycle() {
     await expectError(db, () => db.query("select public.create_marketplace_creator_showcase_attribution($1,$2,$3)", [first.id, publicItem.variant, uid()]), "marketplace_creator_showcase_attribution_unavailable", "22023");
     const afterRemoval = (await db.query("select public.get_marketplace_creator_showcase($1,24,null,null)value", [fixture.creatorX])).rows[0].value;
     assert.deepEqual(afterRemoval.items.map((item) => item.showcase_item_id), [second.id]);
-    await assertReconciliation(db, "reconcile_marketplace_creator_showcase", 22);
+    await assertReconciliation(db, "reconcile_marketplace_creator_showcase", 23);
     return { publicVisible: true, specificPrivate: true, addRemoveReorder: true, idempotent: true, security: true };
+  });
+}
+
+async function proveShowcaseCapacity() {
+  return transactionScenario("B7BC_showcase_capacity", async () => {
+    const fixture = await createFixture(db, "b7bc");
+    const items = [];
+    for (let index = 0; index < 101; index += 1) {
+      const item = await addProduct(db, fixture, 10 + index / 100, 1000 + index);
+      await createOffer(db, fixture, item, null, 1000);
+      items.push(item);
+    }
+
+    const receipts = [];
+    let hundredthKey;
+    for (let index = 0; index < 100; index += 1) {
+      const key = uid();
+      if (index === 99) hundredthKey = key;
+      receipts.push(await addShowcase(db, fixture.creatorX, items[index].product, key));
+    }
+    assert.equal((await db.query("select count(*)::int n from public.marketplace_creator_showcase_items where creator_user_id=$1 and status='active'", [fixture.creatorX])).rows[0].n, 100);
+
+    const hundredthRetry = await addShowcase(db, fixture.creatorX, items[99].product, hundredthKey);
+    assert.equal(hundredthRetry.id, receipts[99].id, "hundredth_idempotent_retry_changed");
+    const existingWithNewKey = await addShowcase(db, fixture.creatorX, items[99].product, uid());
+    assert.equal(existingWithNewKey.id, receipts[99].id, "existing_active_add_changed");
+
+    await claim(db, "authenticated", fixture.creatorX, false);
+    await expectError(
+      db,
+      () => db.query("select public.add_my_marketplace_creator_showcase_product($1,$2)", [items[100].product, uid()]),
+      "marketplace_creator_showcase_limit_reached",
+      "22023",
+    );
+
+    await db.query("select public.remove_my_marketplace_creator_showcase_product($1,$2)", [receipts[0].id, uid()]);
+    assert.equal((await db.query("select count(*)::int n from public.marketplace_creator_showcase_items where creator_user_id=$1 and status='active'", [fixture.creatorX])).rows[0].n, 99);
+    const replacement = await addShowcase(db, fixture.creatorX, items[100].product);
+    assert(replacement.id);
+
+    const activeIds = (await db.query("select id from public.marketplace_creator_showcase_items where creator_user_id=$1 and status='active' order by sort_position,id", [fixture.creatorX])).rows.map((row) => row.id);
+    assert.equal(activeIds.length, 100);
+    await claim(db, "authenticated", fixture.creatorX, false);
+    await db.query("select public.reorder_my_marketplace_creator_showcase($1::uuid[],$2)", [activeIds.toReversed(), uid()]);
+    const ordering = (await db.query("select count(*)::int total,count(distinct sort_position)::int positions,min(sort_position)::int minimum,max(sort_position)::int maximum from public.marketplace_creator_showcase_items where creator_user_id=$1 and status='active'", [fixture.creatorX])).rows[0];
+    assert.deepEqual(ordering, { total: 100, positions: 100, minimum: 0, maximum: 99 });
+    assert.equal((await db.query("select count(*)::int n from public.marketplace_creator_showcase_items where creator_user_id=$1 and status='removed'", [fixture.creatorX])).rows[0].n, 1);
+    const reconciliation = await assertReconciliation(db, "reconcile_marketplace_creator_showcase", 23);
+    assert.equal(reconciliation.active_showcase_over_limit, 0);
+    return { allowed: 100, rejected: 101, retry: true, existing: true, removeFreesSlot: true, reordered: 100 };
   });
 }
 
@@ -301,7 +351,7 @@ async function proveFinancialHandoff(insufficient = false) {
     assert.deepEqual(totals(released.legs), { creator_commission: 12, platform_fee: 10, seller_net: 78 });
     const creatorLegs = released.legs.filter((leg) => leg.leg_type === "creator_commission");
     assert.deepEqual(new Map(creatorLegs.map((leg) => [leg.beneficiary_user_id, money(leg.amount)])), new Map([[fixture.creatorX, 5], [fixture.creatorY, 7]]));
-    await assertReconciliation(db, "reconcile_marketplace_creator_showcase", 22);
+    await assertReconciliation(db, "reconcile_marketplace_creator_showcase", 23);
     await assertReconciliation(db, "reconcile_marketplace_creator_commerce", 36);
     const review = await openReview(db, fixture, commerce);
     if (insufficient) {
@@ -330,7 +380,7 @@ async function proveFinancialHandoff(insufficient = false) {
     assert.equal(before.get(fixture.creatorY) - after.get(fixture.creatorY), 7);
     assert.equal(after.get(fixture.buyer) - before.get(fixture.buyer), 100);
     await assertReconciliation(db, "reconcile_marketplace_settlement_reversals", 32);
-    await assertReconciliation(db, "reconcile_marketplace_creator_showcase", 22);
+    await assertReconciliation(db, "reconcile_marketplace_creator_showcase", 23);
     return { orderCount: 1, settlementLegs: 4, seller: 78, platform: 10, creatorX: 5, creatorY: 7, gross: 100, buyerRefund: 100 };
   });
 }
@@ -435,11 +485,12 @@ async function proveConcurrency() {
 try {
   await db.connect();
   const authority = await proveAuthorityLifecycle();
+  const capacity = await proveShowcaseCapacity();
   const lifecycle = await proveOfferReplacementAndHistoricalFreeze();
   const financial = await proveFinancialHandoff(false);
   const insufficient = await proveFinancialHandoff(true);
   const concurrency = await proveConcurrency();
-  await assertReconciliation(db, "reconcile_marketplace_creator_showcase", 22);
+  await assertReconciliation(db, "reconcile_marketplace_creator_showcase", 23);
   await assertReconciliation(db, "reconcile_marketplace_creator_commerce", 36);
   await assertReconciliation(db, "reconcile_marketplace_multi_creator_allocations", 27);
   await assertReconciliation(db, "reconcile_marketplace_settlement_reversals", 32);
@@ -453,7 +504,8 @@ try {
       C_to_L_management_security: authority.addRemoveReorder,
       M_to_S_offer_and_removal_lifecycle: lifecycle,
       T_to_W_two_connection_races: concurrency,
-      X_reconciliation_22_of_22_zero: true,
+      B7BC_capacity: capacity,
+      X_reconciliation_23_of_23_zero: true,
       Y_persistent_fixtures_zero: fixtures === 0,
       Z_to_AK_client_assertions: "node_test",
       financial_handoff: financial,

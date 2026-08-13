@@ -8,6 +8,8 @@ import pg from "pg";
 const { Client } = pg;
 const requireB7b = process.argv.includes("--require-b7b");
 const expectPreB7b = process.argv.includes("--expect-pre-b7b");
+const requireB7bc = process.argv.includes("--require-b7bc");
+const expectPreB7bc = process.argv.includes("--expect-pre-b7bc");
 const finalizeExpiredAds = process.argv.includes("--finalize-expired-ads");
 const npmCache = join(tmpdir(), "onspace-b7a-npm-cache");
 mkdirSync(npmCache, { recursive: true });
@@ -76,6 +78,7 @@ try {
   const audit = (await db.query(`select
     (select version from supabase_migrations.schema_migrations order by version desc limit 1)latest_migration,
     exists(select 1 from supabase_migrations.schema_migrations where version='20260811022000')b7b_applied,
+    exists(select 1 from supabase_migrations.schema_migrations where version='20260811023000')b7bc_applied,
     to_regclass('public.marketplace_creator_showcase_items')is not null showcase_table_present,
     to_regprocedure('public.reconcile_marketplace_creator_showcase()')is not null reconciliation_present,
     to_regprocedure('fixture_ops.fail_b7b_after_showcase()')is not null failure_function_present,
@@ -102,13 +105,22 @@ try {
     assert.equal(audit.b7b_applied, false, "b7b_remote_unexpectedly_applied");
     assert.equal(audit.showcase_table_present, false, "b7b_remote_table_unexpected");
   }
+  if (expectPreB7bc) {
+    assert.equal(audit.latest_migration, "20260811022000", "b7bc_remote_predeploy_parity_mismatch");
+    assert.equal(audit.b7b_applied, true, "b7bc_remote_base_missing");
+    assert.equal(audit.b7bc_applied, false, "b7bc_remote_unexpectedly_applied");
+  }
   if (requireB7b) {
-    assert.equal(audit.latest_migration, "20260811022000", "b7b_remote_migration_parity_mismatch");
+    assert(["20260811022000", "20260811023000"].includes(audit.latest_migration), "b7b_remote_migration_parity_mismatch");
     assert.equal(audit.b7b_applied, true, "b7b_remote_migration_missing");
     assert.equal(audit.showcase_table_present, true, "b7b_remote_table_missing");
     assert.equal(audit.reconciliation_present, true, "b7b_remote_reconciliation_missing");
     assert(Object.hasOwn(reconciliations, "reconcile_marketplace_creator_showcase"));
-    assert.equal(Object.keys(reconciliations.reconcile_marketplace_creator_showcase).length, 22);
+    assert.equal(Object.keys(reconciliations.reconcile_marketplace_creator_showcase).length, audit.b7bc_applied ? 23 : 22);
+  }
+  if (requireB7bc) {
+    assert.equal(audit.latest_migration, "20260811023000", "b7bc_remote_migration_parity_mismatch");
+    assert.equal(audit.b7bc_applied, true, "b7bc_remote_migration_missing");
   }
   console.log(JSON.stringify({ ok: true, maintenance, ...audit, authority, reconciliations }, null, 2));
 } finally { await db.end().catch(() => {}); }
