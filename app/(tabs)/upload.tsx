@@ -61,6 +61,11 @@ import {
 } from '@/services/iosVideoGalleryService';
 import { setMyMarketplaceContentProductTags } from '@/services/marketplaceCreatorContentTagService';
 import type { MarketplaceCreatorShowcaseProduct } from '@/services/marketplaceCreatorShowcaseService';
+import {
+  attemptCreatorContentTagSave,
+  createPendingCreatorContentTagSave,
+  type PendingCreatorContentTagSave,
+} from '@/services/marketplaceCreatorContentTagPublishRetry';
 
 // ── Hashtag suggestions ────────────────────────────────────────────────────
 const HASHTAG_SUGGESTIONS = [
@@ -190,22 +195,57 @@ export default function UploadScreen() {
   const [carouselMedias, setCarouselMedias] = useState<SelectedMedia[]>([]);
   const [productSelectorVisible, setProductSelectorVisible] = useState(false);
   const [selectedProducts, setSelectedProducts] = useState<MarketplaceCreatorShowcaseProduct[]>([]);
+  const [pendingProductTagSave, setPendingProductTagSave] = useState<PendingCreatorContentTagSave | null>(null);
+  const [isRetryingProductTags, setIsRetryingProductTags] = useState(false);
+
+  const executeProductTagSave = useCallback(async (command: PendingCreatorContentTagSave) => (
+    attemptCreatorContentTagSave(command, (stableCommand) => setMyMarketplaceContentProductTags({
+      contentType: stableCommand.contentType,
+      contentId: stableCommand.contentId,
+      productIds: stableCommand.productIds,
+      idempotencyKey: stableCommand.idempotencyKey,
+    }))
+  ), []);
 
   const saveSelectedProductTags = useCallback(async (contentId: string, contentType: 'feed' | 'reel') => {
     if (!selectedProducts.length) return true;
-    try {
-      await setMyMarketplaceContentProductTags({
-        contentType,
-        contentId,
-        productIds: selectedProducts.map((product) => product.productId),
-        idempotencyKey: randomUUID(),
-      });
-      return true;
-    } catch {
-      showAlert('Contenido publicado', 'El contenido se publicó, pero no pudimos guardar sus productos. Intenta publicarlos de nuevo.');
-      return false;
+    const command = createPendingCreatorContentTagSave({
+      contentId,
+      contentType,
+      productIds: selectedProducts.map((product) => product.productId),
+      selectedProducts,
+      idempotencyKey: randomUUID(),
+    });
+    const result = await executeProductTagSave(command);
+    setPendingProductTagSave(result.pending);
+    if (!result.ok) {
+      showAlert(
+        'Contenido publicado, productos pendientes',
+        'El contenido ya está en el Feed. Usa Reintentar productos para agregar la selección sin volver a publicarlo.',
+      );
     }
-  }, [selectedProducts, showAlert]);
+    return result.ok;
+  }, [executeProductTagSave, selectedProducts, showAlert]);
+
+  const retryPendingProductTags = useCallback(async () => {
+    if (!pendingProductTagSave || isRetryingProductTags) return;
+    setIsRetryingProductTags(true);
+    const result = await executeProductTagSave(pendingProductTagSave);
+    setIsRetryingProductTags(false);
+    setPendingProductTagSave(result.pending);
+    if (result.ok) {
+      setSelectedProducts([]);
+      showAlert('Productos agregados', 'Los productos ya están disponibles en el contenido publicado.');
+    } else {
+      showAlert('Productos pendientes', 'No pudimos guardarlos todavía. Puedes volver a intentarlo.');
+    }
+  }, [executeProductTagSave, isRetryingProductTags, pendingProductTagSave, showAlert]);
+
+  const continueWithoutPendingProducts = useCallback(() => {
+    setPendingProductTagSave(null);
+    setSelectedProducts([]);
+    showAlert('Contenido publicado', 'El contenido continuará sin productos.');
+  }, [showAlert]);
 
   // ── Live ────────────────────────────────────────────────────────────────────
   const [showLiveTitleModal, setShowLiveTitleModal] = useState(false);
@@ -567,10 +607,11 @@ export default function UploadScreen() {
           sizeBytes:selectedMedia.fileSize??undefined,durationMs:selectedMedia.durationMs,
           caption:caption.trim(),music:musicName,signal:controller.signal,onStage:stageMessage,
         });
-        await saveSelectedProductTags(published.postId, 'reel');
+        const tagsSaved = await saveSelectedProductTags(published.postId, 'reel');
         await refreshFeed();
         deleteOwnedIosVideoCache(selectedMedia.ownedCacheUri);
         setCaption('');setSelectedMedia(null);setSelectedMusic(null);setSelectedProducts([]);setUploadProgress('');
+        if (!tagsSaved) return;
         showAlert('Video publicado','Tu video ya está disponible en el feed',[
           {text:'Ver Feed',onPress:()=>router.push('/(tabs)')},{text:'Crear otro'},
         ]);
@@ -595,10 +636,11 @@ export default function UploadScreen() {
       });
       if (uploaded.assetId && !postId) throw new Error('entity_create_failed');
       if (postId && uploaded.assetId) uploadedAssetId = undefined;
-      if (postId) await saveSelectedProductTags(postId, 'feed');
+      const tagsSaved = postId ? await saveSelectedProductTags(postId, 'feed') : true;
 
       setCaption(''); setSelectedMedia(null); setSelectedMusic(null); setSelectedProducts([]);
       setUploadProgress('');
+      if (!tagsSaved) return;
       showAlert(
         mode === 'photo' ? 'Foto publicada!' : 'Video publicado!',
         'Tu contenido ya está en el feed',
@@ -668,9 +710,10 @@ export default function UploadScreen() {
         mediaAssetIds: orderedUploads.map(item => item.assetId!),
       });
       if (!postId) throw new Error('CAROUSEL_CREATE_POST_FAILED');
-      await saveSelectedProductTags(postId, 'feed');
+      const tagsSaved = await saveSelectedProductTags(postId, 'feed');
       completedUploads.fill(undefined);
       setCaption(''); setCarouselMedias([]); setSelectedMusic(null); setSelectedProducts([]);
+      if (!tagsSaved) return;
       showAlert(
         'Carrusel publicado!',
         `${validUrls.length} fotos publicadas`,
@@ -741,6 +784,35 @@ export default function UploadScreen() {
         onChange={setSelectedProducts}
         onClose={() => setProductSelectorVisible(false)}
       />
+
+      {pendingProductTagSave ? (
+        <View style={styles.pendingProductTagsCard} accessibilityLabel="Productos pendientes del contenido publicado">
+          <View style={styles.pendingProductTagsCopy}>
+            <Text style={styles.pendingProductTagsTitle}>Contenido publicado, productos pendientes</Text>
+            <Text style={styles.pendingProductTagsText}>
+              {pendingProductTagSave.productIds.length} producto{pendingProductTagSave.productIds.length === 1 ? '' : 's'} por agregar
+            </Text>
+          </View>
+          <Pressable
+            style={styles.pendingProductTagsPrimary}
+            onPress={() => void retryPendingProductTags()}
+            disabled={isRetryingProductTags}
+            accessibilityLabel="Reintentar productos"
+          >
+            {isRetryingProductTags
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <Text style={styles.pendingProductTagsPrimaryText}>Reintentar productos</Text>}
+          </Pressable>
+          <Pressable
+            style={styles.pendingProductTagsSecondary}
+            onPress={continueWithoutPendingProducts}
+            disabled={isRetryingProductTags}
+            accessibilityLabel="Continuar sin productos"
+          >
+            <Text style={styles.pendingProductTagsSecondaryText}>Continuar sin productos</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {/* ── Live Camera (full-screen) ────────────────────────────────────── */}
       <LiveCameraPreview
@@ -1186,6 +1258,12 @@ const styles = StyleSheet.create({
   hashtagText: { color: Colors.primary, fontSize: FontSize.xs, fontWeight: FontWeight.medium },
   productTagButton:{minHeight:58,backgroundColor:Colors.surfaceElevated,borderWidth:1,borderColor:Colors.border,borderRadius:Radius.lg,paddingHorizontal:Spacing.md,flexDirection:'row',alignItems:'center',gap:Spacing.md},
   productTagCopy:{flex:1},productTagTitle:{color:Colors.textPrimary,fontSize:FontSize.sm,fontWeight:FontWeight.bold},productTagSubtitle:{color:Colors.textSubtle,fontSize:FontSize.xs,marginTop:2},
+  pendingProductTagsCard:{marginHorizontal:Spacing.md,marginBottom:Spacing.sm,padding:Spacing.md,gap:Spacing.sm,backgroundColor:Colors.surfaceElevated,borderWidth:1,borderColor:Colors.accentDim,borderRadius:Radius.lg},
+  pendingProductTagsCopy:{gap:2},pendingProductTagsTitle:{color:Colors.textPrimary,fontSize:FontSize.sm,fontWeight:FontWeight.bold},pendingProductTagsText:{color:Colors.textSecondary,fontSize:FontSize.xs},
+  pendingProductTagsPrimary:{minHeight:40,alignItems:'center',justifyContent:'center',borderRadius:Radius.md,backgroundColor:Colors.primary,paddingHorizontal:Spacing.md},
+  pendingProductTagsPrimaryText:{color:'#fff',fontSize:FontSize.sm,fontWeight:FontWeight.bold},
+  pendingProductTagsSecondary:{minHeight:36,alignItems:'center',justifyContent:'center',borderRadius:Radius.md,paddingHorizontal:Spacing.md},
+  pendingProductTagsSecondaryText:{color:Colors.textSecondary,fontSize:FontSize.sm,fontWeight:FontWeight.semibold},
 
   musicPickerBtn: { borderRadius: Radius.lg, overflow: 'hidden', borderWidth: 1, borderColor: Colors.border },
   musicPickerInner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, padding: Spacing.md },

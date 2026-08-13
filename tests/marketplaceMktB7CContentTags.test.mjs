@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { addMarketplaceCartItem } from "../services/marketplaceCart.ts";
 import { marketplaceContentTypeForMedia } from "../services/marketplaceCreatorContentTagCore.mjs";
+import {
+  attemptCreatorContentTagSave,
+  createPendingCreatorContentTagSave,
+} from "../services/marketplaceCreatorContentTagPublishRetry.ts";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const sql = read("supabase/migrations/20260811024000_marketplace_creator_content_product_tags.sql");
@@ -53,7 +57,47 @@ test("publish flow exposes one compact selector and saves tags after durable con
   assert.match(selector,/selected\.length < 5/);
   assert.match(upload,/saveSelectedProductTags\(published\.postId, 'reel'\)/);
   assert.match(upload,/saveSelectedProductTags\(postId, 'feed'\)/);
-  assert.match(upload,/El contenido se publicó, pero no pudimos guardar sus productos/);
+  assert.match(upload,/Contenido publicado, productos pendientes/);
+  assert.match(upload,/Reintentar productos/);
+  assert.match(upload,/Continuar sin productos/);
+});
+
+test("publish tag retry preserves the logical command and never republishes media", async () => {
+  const product = { productId:"product-a", title:"Product A" };
+  const pending = createPendingCreatorContentTagSave({
+    contentId:"content-1", contentType:"reel", productIds:["product-a"],
+    selectedProducts:[product], idempotencyKey:"stable-key",
+  });
+  let saveCalls = 0, publishCalls = 0;
+  const failed = await attemptCreatorContentTagSave(pending, async (command) => {
+    saveCalls += 1;
+    assert.equal(command.contentId,"content-1");
+    assert.equal(command.contentType,"reel");
+    assert.deepEqual(command.productIds,["product-a"]);
+    assert.equal(command.idempotencyKey,"stable-key");
+    throw new Error("transport uncertainty");
+  });
+  assert.equal(failed.ok,false); assert.equal(failed.pending,pending);
+  assert.deepEqual(failed.pending.selectedProducts,[product]);
+  const succeeded = await attemptCreatorContentTagSave(failed.pending, async (command) => {
+    saveCalls += 1;
+    assert.equal(command.contentId,"content-1");
+    assert.equal(command.contentType,"reel");
+    assert.deepEqual(command.productIds,["product-a"]);
+    assert.equal(command.idempotencyKey,"stable-key");
+  });
+  assert.equal(succeeded.ok,true); assert.equal(succeeded.pending,null);
+  assert.equal(saveCalls,2); assert.equal(publishCalls,0);
+});
+
+test("upload retry is shared by Stream, photo, and carousel and suppresses contradictory success", () => {
+  assert.match(upload,/saveSelectedProductTags\(published\.postId, 'reel'\)/);
+  assert.match(upload,/postId \? await saveSelectedProductTags\(postId, 'feed'\)/);
+  assert.match(upload,/const tagsSaved = await saveSelectedProductTags\(postId, 'feed'\)/);
+  assert.equal((upload.match(/if \(!tagsSaved\) return;/g)??[]).length,3);
+  assert.match(upload,/executeProductTagSave\(pendingProductTagSave\)/);
+  assert.match(upload,/setPendingProductTagSave\(result\.pending\)/);
+  assert.match(upload,/setPendingProductTagSave\(null\)/);
 });
 
 test("Feed batches summaries and native/web cards expose an unobtrusive shopping action", () => {
