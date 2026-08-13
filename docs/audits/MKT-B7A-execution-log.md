@@ -253,4 +253,45 @@ STATUS: RESOLVED
 
 ## Remote deployment and post-deploy audit
 
-Pending.
+### Primary deployment
+
+- Starting B7A SHA: `91da26873534a2062096ae309bf7a1e68d08a1b8`.
+- Primary production commit: `a2854091963fb3c351c398ae71bc73afb417aff3` (`feat: add marketplace creator commerce authority`).
+- Proof/audit commit: `208a891d9849bcb9a3e7962e35ad17160cddeeba` (`test: prove and document marketplace creator commerce`).
+- Primary migration: `20260811020000_marketplace_creator_commerce_authority.sql`.
+- The linked dry-run contained only `20260811020000_marketplace_creator_commerce_authority.sql`.
+- The primary migration deployed successfully.
+
+### Historical reconciliation correction
+
+- The initial post-deploy B7A reconciliation found 14 historical pre-B7F LIVE snapshots without normalized B7F rows. These were legitimate historical LIVE scalar financial snapshots created before B7F materialization existed.
+- No historical financial truth was rewritten, and no retroactive B7F financial rows were created. The correction narrowly scoped mandatory B7F materialization to B7A-era snapshots while preserving historical LIVE scalar financial truth.
+- Corrective migration: `20260811021000_marketplace_creator_commerce_reconciliation_scope.sql`.
+- Corrective commit: `d653f5d1e3a6b1ac61c8b391f3d684f8095ddf04` (`fix: scope creator commerce historical reconciliation`).
+- The corrective linked dry-run contained only `20260811021000_marketplace_creator_commerce_reconciliation_scope.sql`.
+- The corrective migration deployed successfully.
+
+### Final remote verification
+
+- Latest remote migration: `20260811021000`.
+- B7A creator commerce: 36/36 reconciliation counters zero.
+- B7F multi-creator allocations: 27/27 reconciliation counters zero.
+- B7R settlement reversals: 32/32 reconciliation counters zero.
+- LIVE commission reconciliation: healthy; all counters zero.
+- Payment and settlement reconciliations: healthy.
+- Ads delivery, eligibility, events, finalization, and finance reconciliations: healthy; all counters zero.
+- Held escrow: expected `71` BDAG, actual `71` BDAG; difference, shortage, and surplus zero.
+- B7A persistent proof fixtures: zero.
+- Remote failure/test hooks: absent.
+- RLS, ACL, raw-write, and authenticated-finalizer security checks: passed.
+- Node tests: 597 passed, 0 failed. Focused ESLint passed. TypeScript reported 188 existing unrelated baseline diagnostics and zero diagnostics from B7A-modified files. iOS export passed. Build remains `22`; no EAS command was run.
+- No merge, rebase, amend, squash, or force-push was performed.
+- Eleven blockers were recorded and resolved.
+
+### Final B7A status
+
+MKT-B7A Creator Commerce Authority is CLOSED.
+
+B7B Creator Product Selection / Showcase is unblocked but has not been started.
+
+No production code or financial semantics were changed by this documentation-only finalization.
