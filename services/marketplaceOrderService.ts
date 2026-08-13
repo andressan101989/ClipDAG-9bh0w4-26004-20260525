@@ -1,7 +1,7 @@
 import {getSupabaseClient} from '@/template';
 
 export interface ShippingAddressInput {recipientName:string;line1:string;line2?:string;city:string;region:string;postalCode:string;country:string;phone?:string}
-export interface CheckoutReservationInputItem {variantId:string;quantity:number}
+export interface CheckoutReservationInputItem {variantId:string;quantity:number;attributionId?:string}
 export type MarketplaceReservationStatus='active'|'consumed'|'released'|'expired';
 export type MarketplaceCheckoutStatus='pending_payment'|'payment_processing'|'paid'|'cancelled'|'expired'|'failed';
 export interface MarketplaceOrderItem {id:string;productId:string;variantId:string;productTitle:string;variantTitle:string|null;sku:string;options:{option_id:string;option_name:string;value_id:string;value:string}[];imageUrl:string|null;currency:'BDAG';unitPrice:number;quantity:number;lineTotal:number;reservationStatus:MarketplaceReservationStatus}
@@ -68,6 +68,11 @@ export function parseMarketplaceCheckoutReservation(value:unknown):CreateCheckou
 export async function createCheckoutReservation(items:CheckoutReservationInputItem[],address:ShippingAddressInput,idempotencyKey:string){
   const {data,error}=await db().rpc('create_marketplace_checkout_reservation',{p_items:items.map(item=>({variant_id:item.variantId,quantity:item.quantity})),p_shipping_address:{recipient_name:address.recipientName,line1:address.line1,line2:address.line2??null,city:address.city,region:address.region,postal_code:address.postalCode,country:address.country,phone:address.phone??null},p_idempotency_key:idempotencyKey});
   if(error)invokeError('create_marketplace_checkout_reservation',error);return parseMarketplaceCheckoutReservation(data);
+}
+export async function createCreatorCheckoutReservation(items:CheckoutReservationInputItem[],address:ShippingAddressInput,idempotencyKey:string){
+  const rpc='create_marketplace_creator_checkout_reservation';
+  const {data,error}=await db().rpc(rpc,{p_items:items.map(item=>({variant_id:item.variantId,quantity:item.quantity,...(item.attributionId?{attribution_id:item.attributionId}:{})})),p_shipping_address:{recipient_name:address.recipientName,line1:address.line1,line2:address.line2??null,city:address.city,region:address.region,postal_code:address.postalCode,country:address.country,phone:address.phone??null},p_idempotency_key:idempotencyKey});
+  if(error)invokeError(rpc,error);return parseMarketplaceCheckoutReservation(data);
 }
 export async function cancelCheckoutReservation(checkoutId:string){const rpc='cancel_marketplace_checkout_reservation';const {data,error}=await db().rpc(rpc,{p_checkout_id:checkoutId});if(error)invokeError(rpc,error);return parseMarketplaceCheckoutReservation(data);}
 export async function fetchMyCheckout(checkoutId:string){const rpc='fetch_my_marketplace_checkout';const {data,error}=await db().rpc(rpc,{p_checkout_id:checkoutId});if(error)invokeError(rpc,error);return parseMarketplaceCheckoutReservation(data);}
