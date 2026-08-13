@@ -25,6 +25,7 @@ import {
   fetchMyCreatorShowcase,
   removeMyCreatorShowcaseProduct,
   reorderMyCreatorShowcase,
+  MarketplaceCreatorShowcaseError,
   type MarketplaceCreatorShowcaseManagementItem,
   type MarketplaceCreatorShowcaseProduct,
 } from "@/services/marketplaceCreatorShowcaseService";
@@ -80,8 +81,12 @@ export default function CreatorShowcaseScreen() {
       await addMyCreatorShowcaseProduct(product.productId, randomUUID());
       await load(true);
       setTab("showcase");
-    } catch {
-      Alert.alert("Product unavailable", "The seller offer is no longer eligible for your showcase.");
+    } catch (error) {
+      if (error instanceof MarketplaceCreatorShowcaseError && error.code === "marketplace_creator_showcase_limit_reached") {
+        Alert.alert("Escaparate completo", "Tu escaparate admite hasta 100 productos. Elimina uno antes de agregar otro.");
+      } else {
+        Alert.alert("Product unavailable", "The seller offer is no longer eligible for your showcase.");
+      }
     } finally {
       setBusyId(null);
     }
@@ -139,7 +144,7 @@ export default function CreatorShowcaseScreen() {
         </Pressable>
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Creator Showcase</Text>
-          <Text style={styles.subtitle}>Products backed by seller-approved offers</Text>
+          <Text style={styles.subtitle}>Products backed by seller-approved offers · {active.length} / 100</Text>
         </View>
         <View style={styles.iconButton} />
       </View>

@@ -13,7 +13,7 @@
  *  • Exclusive content grid with lock/unlock
  *  • Subscriber badge + perks when subscribed
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
   ActivityIndicator, Dimensions,
@@ -89,7 +89,11 @@ export default function CreatorProfileScreen() {
   const [plans,       setPlans]       = useState<SubscriptionPlan[]>([]);
   const [dmConfig,    setDmConfig]    = useState<PremiumDMConfig | null>(null);
   const [showcase,    setShowcase]    = useState<MarketplaceCreatorShowcaseProduct[]>([]);
+  const [showcaseNextCursor, setShowcaseNextCursor] = useState<{ sortPosition: number; id: string } | null>(null);
+  const [showcaseLoadingMore, setShowcaseLoadingMore] = useState(false);
+  const [showcaseVisible, setShowcaseVisible] = useState(true);
   const [loading,     setLoading]     = useState(true);
+  const showcaseLoadMoreRef = useRef(false);
 
   // User-specific state
   const [subStatus,     setSubStatus]     = useState<{
@@ -116,6 +120,9 @@ export default function CreatorProfileScreen() {
       let cancelled = false;
       const load = async () => {
         setLoading(true);
+        setShowcase([]);
+        setShowcaseNextCursor(null);
+        setShowcaseVisible(true);
         const [profile, creatorStats, vids, excl, subPlans, dm, purchased, boosted, showcasePage] =
           await Promise.all([
             fetchCreatorProfile(creatorId),
@@ -138,7 +145,9 @@ export default function CreatorProfileScreen() {
         setDmConfig(dm);
         setPurchasedIds(purchased);
         setIsBoosted(boosted.boosted);
-        setShowcase(showcasePage.items);
+        setShowcase(showcasePage.visible === false ? [] : showcasePage.items);
+        setShowcaseNextCursor(showcasePage.visible === false ? null : showcasePage.nextCursor as { sortPosition: number; id: string } | null);
+        setShowcaseVisible(showcasePage.visible !== false);
 
         // Subscription status
         if (user?.id && user.id !== creatorId) {
@@ -157,6 +166,32 @@ export default function CreatorProfileScreen() {
       return () => { cancelled = true; };
     }, [creatorId, user?.id]),
   );
+
+  const loadMoreShowcase = useCallback(async () => {
+    if (!creatorId || !showcaseVisible || !showcaseNextCursor || showcaseLoadMoreRef.current) return;
+    showcaseLoadMoreRef.current = true;
+    setShowcaseLoadingMore(true);
+    try {
+      const page = await fetchCreatorShowcase(creatorId, showcaseNextCursor);
+      if (page.visible === false) {
+        setShowcase([]);
+        setShowcaseNextCursor(null);
+        setShowcaseVisible(false);
+        return;
+      }
+      setShowcase(current => {
+        const unique = new Map(current.map(item => [item.showcaseItemId, item]));
+        for (const item of page.items) unique.set(item.showcaseItemId, item);
+        return [...unique.values()].sort((a, b) =>
+          (a.sortPosition ?? 0) - (b.sortPosition ?? 0)
+          || String(a.showcaseItemId).localeCompare(String(b.showcaseItemId)));
+      });
+      setShowcaseNextCursor(page.nextCursor as { sortPosition: number; id: string } | null);
+    } finally {
+      showcaseLoadMoreRef.current = false;
+      setShowcaseLoadingMore(false);
+    }
+  }, [creatorId, showcaseNextCursor, showcaseVisible]);
 
   // ── Follow / Unfollow ─────────────────────────────────────────────────────
   // Uses AuthContext.toggleFollow (atomic follow_user/unfollow_user RPC) —
@@ -582,8 +617,9 @@ export default function CreatorProfileScreen() {
           )
         )}
         {profileTab === 'products' && showcase.length ? (
-          <View style={styles.showcaseGrid}>
-            {showcase.map(item => (
+          <View>
+            <View style={styles.showcaseGrid}>
+              {showcase.map(item => (
               <Pressable key={item.showcaseItemId} style={styles.showcaseCard}
                 onPress={() => router.push({ pathname: '/product/[id]', params: {
                   id: item.productId, source: 'creator_showcase', showcaseItemId: item.showcaseItemId!,
@@ -597,7 +633,14 @@ export default function CreatorProfileScreen() {
                   <Text style={styles.showcasePrice}>{item.minPrice.toFixed(2)} BDAG</Text>
                 </View>
               </Pressable>
-            ))}
+              ))}
+            </View>
+            {showcaseNextCursor ? (
+              <Pressable style={styles.showcaseLoadMore} disabled={showcaseLoadingMore}
+                onPress={() => void loadMoreShowcase()} accessibilityRole="button" accessibilityLabel="Ver más productos">
+                {showcaseLoadingMore ? <ActivityIndicator color={Colors.primary} /> : <Text style={styles.showcaseLoadMoreText}>Ver más</Text>}
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
       </ScrollView>
@@ -712,6 +755,8 @@ const styles = StyleSheet.create({
   showcaseTitle:       { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
   showcaseStore:       { color: Colors.textSubtle, fontSize: FontSize.xs },
   showcasePrice:       { color: Colors.primaryLight, fontSize: FontSize.sm, fontWeight: FontWeight.extrabold },
+  showcaseLoadMore:    { alignSelf: 'center', minHeight: 44, minWidth: 120, marginBottom: Spacing.lg, paddingHorizontal: Spacing.lg, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+  showcaseLoadMoreText:{ color: Colors.primaryLight, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
   exclusiveCard:       { width: (W - 4) / 2 - 1, height: 180, position: 'relative', backgroundColor: Colors.surface, borderRadius: 2, overflow: 'hidden' },
   exclusiveThumb:      { width: '100%', height: '100%' },
   exclusiveLockOverlay:{ ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', gap: 6 },
