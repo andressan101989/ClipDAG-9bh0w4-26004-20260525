@@ -133,7 +133,7 @@ async function proveAuthority() {
     const tombstone = (await db.query("select content_id,video_id,status from public.marketplace_creator_content_product_tags where id=$1", [tag])).rows[0];
     assert.equal(tombstone.content_id, reel); assert.equal(tombstone.video_id, null); assert.equal(tombstone.status, "removed");
     await reconcile(db, "reconcile_marketplace_creator_content_tags", 28);
-    return { feed: true, reel: true, fiveAllowed: true, sixthRejected: true, privacy: true, offerReplacement: true, removal: true, deletionTombstone: true };
+    return { feed: true, reel: true, fiveAllowed: true, sixthRejected: true, privacy: true, offerReplacement: true, removal: true, deletionTombstone: true, backendRetrySameCommand: true, backendChangedSetConflict: true };
   });
 }
 
@@ -211,6 +211,7 @@ async function cleanup(f) {
   await db.query("set session_replication_role=replica");
   try {
     const users=[f.seller,f.buyer,f.admin,f.creatorX,f.creatorY,f.outsider];
+    await db.query("delete from public.marketplace_creator_commerce_attributions where source_surface in('feed','reel')and source_entity_id in(select id from public.marketplace_creator_content_product_tags where creator_user_id=any($1::uuid[]))",[users]);
     await db.query("delete from public.marketplace_creator_content_tag_commands where actor_id=any($1::uuid[])",[users]);
     await db.query("delete from public.marketplace_creator_content_product_tags where creator_user_id=any($1::uuid[])",[users]);
     await db.query("delete from public.videos where id=any($1::uuid[])",[f.videos]);
@@ -228,15 +229,50 @@ async function cleanup(f) {
   } finally { await db.query("set session_replication_role=origin"); }
 }
 async function concurrency() {
-  stage="concurrency"; const f=await fixture(db,"b7cconcurrency"); const item=await product(db,f,20,1);await offer(db,f,item,"creatorX",1000);const content=await video(db,f,f.creatorX,"feed",1);
+  stage="concurrency"; const f=await fixture(db,"b7cconcurrency");
+  const items=[];for(let i=0;i<8;i++){const item=await product(db,f,20+i,i);await offer(db,f,item,"creatorX",i===0?1200:1000);items.push(item);}
   const a=new Client({connectionString,ssl:false}),b=new Client({connectionString,ssl:false});await Promise.all([a.connect(),b.connect()]);
   try{
-    await Promise.all([claim(a,"authenticated",f.creatorX,false),claim(b,"authenticated",f.creatorX,false)]);const key=uid();const same=await Promise.all([a.query("select public.set_my_marketplace_content_product_tags('feed',$1,$2,$3)value",[content,[item.product],key]),b.query("select public.set_my_marketplace_content_product_tags('feed',$1,$2,$3)value",[content,[item.product],key])]);assert.deepEqual(same[0].rows[0].value,same[1].rows[0].value);
-    assert.equal((await db.query("select count(*)::int n from public.marketplace_creator_content_product_tags where content_id=$1 and status='active'",[content])).rows[0].n,1);
-    const tag=same[0].rows[0].value.items[0].id;await Promise.all([claim(a,"authenticated",f.creatorX,false),claim(b,"authenticated",f.buyer,false)]);
-    const race=await Promise.allSettled([a.query("select public.set_my_marketplace_content_product_tags('feed',$1,'{}'::uuid[],$2)",[content,uid()]),b.query("select public.create_marketplace_creator_content_attribution($1,$2,$3)",[tag,item.variant,uid()])]);assert(race.some((x)=>x.status==="fulfilled"));
-    assert((await db.query("select count(*)::int n from public.marketplace_creator_commerce_attributions where source_entity_id=$1",[tag])).rows[0].n<=1);
-    return {sameRequest:true,removeAttributionSerialized:true};
+    const noDeadlock=(race)=>{for(const result of race)if(result.status==="rejected")assert.notEqual(result.reason?.code,"40P01","b7c_concurrency_deadlock");};
+    const activeProducts=async(content)=>(await db.query("select product_id,sort_position from public.marketplace_creator_content_product_tags where content_id=$1 and status='active'order by sort_position",[content])).rows;
+
+    const sameContent=await video(db,f,f.creatorX,"feed",31);await Promise.all([claim(a,"authenticated",f.creatorX,false),claim(b,"authenticated",f.creatorX,false)]);
+    const sameKey=uid();const same=await Promise.all([a.query("select public.set_my_marketplace_content_product_tags('feed',$1,$2,$3)value",[sameContent,[items[0].product],sameKey]),b.query("select public.set_my_marketplace_content_product_tags('feed',$1,$2,$3)value",[sameContent,[items[0].product],sameKey])]);
+    assert.deepEqual(same[0].rows[0].value,same[1].rows[0].value);assert.equal((await activeProducts(sameContent)).length,1);
+    assert.equal((await db.query("select count(*)::int n from public.marketplace_creator_content_tag_commands where content_id=$1",[sameContent])).rows[0].n,1);
+
+    const competingContent=await video(db,f,f.creatorX,"feed",32);await Promise.all([claim(a,"authenticated",f.creatorX,false),claim(b,"authenticated",f.creatorX,false)]);
+    const setA=[items[0].product,items[1].product],setB=[items[2].product,items[3].product];
+    const competing=await Promise.allSettled([a.query("select public.set_my_marketplace_content_product_tags('feed',$1,$2,$3)value",[competingContent,setA,uid()]),b.query("select public.set_my_marketplace_content_product_tags('feed',$1,$2,$3)value",[competingContent,setB,uid()])]);noDeadlock(competing);assert(competing.every((x)=>x.status==="fulfilled"));
+    const competingFinal=await activeProducts(competingContent);assert([JSON.stringify(setA),JSON.stringify(setB)].includes(JSON.stringify(competingFinal.map((x)=>x.product_id))));assert.deepEqual(competingFinal.map((x)=>x.sort_position),[0,1]);
+
+    const removeContent=await video(db,f,f.creatorX,"feed",33);const removeSet=await setTags(db,f.creatorX,"feed",removeContent,[items[1].product]);const removeTag=removeSet.items[0].id;
+    await Promise.all([claim(a,"authenticated",f.creatorX,false),claim(b,"authenticated",f.buyer,false)]);
+    const removeRace=await Promise.allSettled([a.query("select public.set_my_marketplace_content_product_tags('feed',$1,'{}'::uuid[],$2)value",[removeContent,uid()]),b.query("select public.create_marketplace_creator_content_attribution($1,$2,$3)value",[removeTag,items[1].variant,uid()])]);noDeadlock(removeRace);assert.equal(removeRace[0].status,"fulfilled");
+    const removed=(await db.query("select status,removed_at from public.marketplace_creator_content_product_tags where id=$1",[removeTag])).rows[0];assert.equal(removed.status,"removed");
+    const removeAttrs=(await db.query("select attributed_at from public.marketplace_creator_commerce_attributions where source_entity_id=$1",[removeTag])).rows;assert(removeAttrs.length<=1);if(removeAttrs.length)assert(new Date(removeAttrs[0].attributed_at)<=new Date(removed.removed_at));
+
+    const offerContent=await video(db,f,f.creatorX,"feed",34);const offerSet=await setTags(db,f.creatorX,"feed",offerContent,[items[0].product]);const offerTag=offerSet.items[0].id;
+    await Promise.all([claim(a,"authenticated",f.seller,false),claim(b,"authenticated",f.buyer,false)]);
+    const replacement=await Promise.allSettled([a.query("select public.upsert_my_live_affiliate_offer($1,'specific_creator',$2,900,'active',null,null,$3)value",[items[0].product,f.creatorX,uid()]),b.query("select public.create_marketplace_creator_content_attribution($1,$2,$3)value",[offerTag,items[0].variant,uid()])]);noDeadlock(replacement);assert(replacement.every((x)=>x.status==="fulfilled"));
+    const replacementBps=replacement[1].value.rows[0].value.commission_bps;assert([1200,900].includes(replacementBps));
+    await claim(b,"authenticated",f.buyer,false);const freshReplacement=(await b.query("select public.create_marketplace_creator_content_attribution($1,$2,$3)value",[offerTag,items[0].variant,uid()])).rows[0].value;assert.equal(freshReplacement.commission_bps,900);
+
+    await Promise.all([claim(a,"authenticated",f.seller,false),claim(b,"authenticated",f.buyer,false)]);
+    const revocation=await Promise.allSettled([a.query("select public.upsert_my_live_affiliate_offer($1,'specific_creator',$2,900,'removed',null,null,$3)value",[items[0].product,f.creatorX,uid()]),b.query("select public.create_marketplace_creator_content_attribution($1,$2,$3)value",[offerTag,items[0].variant,uid()])]);noDeadlock(revocation);assert.equal(revocation[0].status,"fulfilled");if(revocation[1].status==="fulfilled")assert.equal(revocation[1].value.rows[0].value.commission_bps,900);
+    await claim(b,"authenticated",f.buyer,false);let postRevoke;try{await b.query("select public.create_marketplace_creator_content_attribution($1,$2,$3)",[offerTag,items[0].variant,uid()]);}catch(error){postRevoke=error;}assert.equal(postRevoke?.message,"marketplace_creator_content_tag_offer_ineligible");
+
+    const deleteItem=items[4];const deleteContent=await video(db,f,f.creatorX,"reel",35);const deleteSet=await setTags(db,f.creatorX,"reel",deleteContent,[deleteItem.product]);const deleteTag=deleteSet.items[0].id;
+    await Promise.all([claim(a,"authenticated",f.creatorX,false),claim(b,"authenticated",f.buyer,false)]);
+    const deletion=await Promise.allSettled([a.query("delete from public.videos where id=$1",[deleteContent]),b.query("select public.create_marketplace_creator_content_attribution($1,$2,$3)value",[deleteTag,deleteItem.variant,uid()])]);noDeadlock(deletion);assert.equal(deletion[0].status,"fulfilled");
+    const tombstone=(await db.query("select content_id,video_id,status,removed_at from public.marketplace_creator_content_product_tags where id=$1",[deleteTag])).rows[0];assert.equal(tombstone.content_id,deleteContent);assert.equal(tombstone.video_id,null);assert.equal(tombstone.status,"removed");
+    const deleteAttrs=(await db.query("select attributed_at from public.marketplace_creator_commerce_attributions where source_entity_id=$1",[deleteTag])).rows;assert(deleteAttrs.length<=1);if(deleteAttrs.length)assert(new Date(deleteAttrs[0].attributed_at)<=new Date(tombstone.removed_at));
+
+    const mutationContent=await video(db,f,f.creatorX,"feed",36);await Promise.all([claim(a,"authenticated",f.creatorX,false),claim(b,"authenticated",f.creatorX,false)]);
+    const mutationA=[items[5].product,items[6].product,items[7].product],mutationB=[items[6].product];const mutations=await Promise.allSettled([a.query("select public.set_my_marketplace_content_product_tags('feed',$1,$2,$3)value",[mutationContent,mutationA,uid()]),b.query("select public.set_my_marketplace_content_product_tags('feed',$1,$2,$3)value",[mutationContent,mutationB,uid()])]);noDeadlock(mutations);assert(mutations.every((x)=>x.status==="fulfilled"));
+    const mutationFinal=await activeProducts(mutationContent);assert([JSON.stringify(mutationA),JSON.stringify(mutationB)].includes(JSON.stringify(mutationFinal.map((x)=>x.product_id))));assert.deepEqual(mutationFinal.map((x)=>x.sort_position),mutationFinal.map((_,i)=>i));
+    await reconcile(db,"reconcile_marketplace_creator_content_tags",28);
+    return {sameRequestRace:true,competingTagSetRace:true,removeAttributionRace:true,offerReplacementAttributionRace:true,offerRevocationAttributionRace:true,contentDeleteAttributionRace:true,competingMutationRace:true,noDeadlocks:true,noPartialState:true};
   }finally{await Promise.all([a.end(),b.end()]);await cleanup(f);}
 }
 

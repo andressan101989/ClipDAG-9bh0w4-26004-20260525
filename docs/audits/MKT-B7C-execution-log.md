@@ -153,3 +153,73 @@ The linked dry-run contained only `20260811024000_marketplace_creator_content_pr
 The final read-only remote audit confirmed latest migration `20260811024000`; B7C 28/28, B7B 23/23, B7A 36/36, B7F 27/27, and B7R 32/32 counters were zero. Payment, settlement, LIVE commission, Ads delivery, eligibility, events, finalization, and finance reconciliations were healthy. Held escrow remained exactly 71 BDAG expected and 71 BDAG actual, with zero difference, shortage, or surplus. The tag table had RLS enabled; authenticated raw mutation was denied; creator management, public read, and buyer wrapper grants were correct; internal B7A and B7F helpers remained private. B7C fixture users were zero and failure/test hooks were absent.
 
 MKT-B7C Feed/Reels Product Tagging is CLOSED. B7D Creator Analytics is unblocked but has not been started.
+
+## B7C-C Concurrency Completion and Publish Tag Retry
+
+### Lock-order audit and completed concurrency proof
+
+The deployed B7C lock order is retained unchanged. Tag-set commands acquire command-key then creator-content; buyer attribution acquires attribution-key then creator-content, product, and resolved offer; content deletion acquires creator-content before tombstoning; seller offer replacement locks the product before its offer namespace. All tested paths converged on the content/product boundary without a cycle, so no SQL correction or new migration was required.
+
+Two independent `pg.Client` connections executed every required race. Same request/same key returned one canonical command and tag set. Different complete sets on the same content serialized to one entire winning set. Remove versus attribution produced either a valid pre-removal attribution or a rejection, never an attribution after `removed_at`. Offer replacement produced only 1200 or 900 BPS according to serialization order; offer revocation allowed only a pre-revocation 900-BPS attribution and rejected subsequent requests. Content deletion either followed a valid attribution or won first and rejected it; the tag always survived as `status=removed`, `video_id=null`, with its immutable `content_id`. Competing reorder/removal-style sets ended with one complete set and exact positions `0..N-1`. No deadlocks, temporary positions, duplicates, mixed sets, or partial states were observed. B7C reconciliation remained 28/28 zero.
+
+### Publish product-tag retry
+
+Media publishing and tag saving remain deliberately separate transactions. The prior warning-only flow discarded the logical tag-save command after the media row was already durable. B7C-C now snapshots a pending command containing the returned content ID, exact `feed`/`reel` type, ordered product IDs, selected-product presentation data, and one UUID idempotency key. Stream uses `published.postId`; photo and carousel use the exact `addVideo` post ID. The retry calls only `set_my_marketplace_content_product_tags` with that same command and never invokes a media upload or publishing authority.
+
+On initial tag-save failure, the normal success/navigation alert is suppressed and a persistent card states `Contenido publicado, productos pendientes`. `Reintentar productos` reuses the same content ID, content type, product set, and idempotency key. Success clears the pending state and selected products; repeated failure retains them. `Continuar sin productos` explicitly clears the pending intent without deleting or republishing the already-valid media. Focused tests cover successful initial save, failed save retention, stable retry identity, no media republish, retry success, repeated failure, explicit discard, and all Stream/photo/carousel call sites. The backend proof separately confirms same-command retry returns the same result and changed products with the same key conflict.
+
+### B7C-C blockers and resolutions
+
+#### BLOCKER 8
+
+BLOCKER NUMBER: 8
+STAGE: B7C closure proof audit
+ERROR / SQLSTATE: No SQL error; proof coverage gap.
+SYMPTOM: Only same-key tag-set and remove-versus-attribution races were executed.
+ROOT CAUSE: The primary B7C harness collapsed concurrency into two broad checks.
+CLASSIFICATION: concurrency issue
+SOLUTION: Add real two-connection competing-set, offer replacement, offer revocation, content deletion, and competing-mutation scenarios with explicit outcomes.
+WHY THIS IS SAFEST: It validates the deployed authority before considering any SQL change.
+FILES/FUNCTIONS CHANGED: `scripts/prove-marketplace-creator-content-tags.mjs`.
+PROOF: All seven named race results returned true, with `noDeadlocks` and `noPartialState` true and reconciliation 28/28 zero.
+PRODUCTION ECONOMICS CHANGED: No.
+RESIDUAL RISK: PostgreSQL scheduling can select either documented winner; both outcomes are safe and reconciled.
+STATUS: RESOLVED
+
+#### BLOCKER 9
+
+BLOCKER NUMBER: 9
+STAGE: Upload/publish client audit
+ERROR / SQLSTATE: No SQL error; recoverability defect.
+SYMPTOM: Successful media followed by a failed tag RPC displayed a warning, cleared selection state, and then displayed a contradictory generic success alert.
+ROOT CAUSE: The idempotency key was generated inside each attempt and no pending logical command survived composer reset.
+CLASSIFICATION: publish-flow limitation
+SOLUTION: Introduce an immutable pending tag-save command plus a shared retry executor and persistent Retry/Continue UI.
+WHY THIS IS SAFEST: Retry touches only the already-published content's tag RPC and cannot duplicate Stream, Feed, photo, or carousel media.
+FILES/FUNCTIONS CHANGED: `app/(tabs)/upload.tsx`, `services/marketplaceCreatorContentTagPublishRetry.ts`, focused tests.
+PROOF: Focused tests preserve content ID/type/products/key, prove zero publisher calls, retain repeated failures, and cover all publishing modes.
+PRODUCTION ECONOMICS CHANGED: No.
+RESIDUAL RISK: Pending retry is screen-local; navigation is intentionally withheld until Retry or Continue resolves it.
+STATUS: RESOLVED
+
+#### BLOCKER 10
+
+BLOCKER NUMBER: 10
+STAGE: First disposable B7C-C proof invocation
+ERROR / SQLSTATE: `ECONNREFUSED 127.0.0.1:55422`.
+SYMPTOM: The proof could not connect immediately after `self-test`.
+ROOT CAUSE: Disposable self-test validates a temporary container and tears it down; it is not the persistent proof-create step.
+CLASSIFICATION: runtime/tooling issue
+SOLUTION: Run the canonical disposable `create` and `verify` commands before the proof.
+WHY THIS IS SAFEST: It uses the repository's disposable-only database lifecycle and cannot touch linked production fixtures.
+FILES/FUNCTIONS CHANGED: None.
+PROOF: Create/verify succeeded and the complete B7C proof passed with zero persistent fixtures.
+PRODUCTION ECONOMICS CHANGED: No.
+RESIDUAL RISK: None.
+STATUS: RESOLVED
+
+### B7C-C regression and release status
+
+B7C passed all original scenarios plus every named concurrency race, exact seller/platform/creator economics of 78/10/5/7 on gross 100, buyer refund 100, insufficient-balance `money_moved=false`, 28/28 counters zero, and zero fixtures. B7B passed 23/23, B7A 36/36, B7F 27/27, and B7R 32/32. Held refund, manual review, `release_seller`, lifecycle, shipping, publication, fixture finalization, promotions, analytics, runtime, and all Ads proofs passed. The full Node suite passed 621 tests with zero failures. Focused ESLint passed with zero errors. TypeScript retained 187 unrelated baseline diagnostics and zero diagnostics in B7C-C files. iOS export passed. Build remained 22. No EAS command was run.
+
+No production SQL or financial formula changed, no migration was created, and no Supabase push/dry-run/deployment was performed for B7C-C. Final read-only remote verification kept latest migration `20260811024000`; B7C 28/28, B7B 23/23, B7A 36/36, B7F 27/27, and B7R 32/32 were zero. Payment, settlement, LIVE, and Ads reconciliations were healthy; held escrow remained 71/71 BDAG; RLS/grants were correct; fixtures and failure hooks were absent.
