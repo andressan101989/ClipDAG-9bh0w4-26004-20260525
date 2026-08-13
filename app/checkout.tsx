@@ -8,7 +8,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useAuth} from '@/hooks/useAuth';
 import {useMarketplaceCart} from '@/hooks/useMarketplaceCart';
 import {Colors,FontSize,FontWeight,Radius,Spacing} from '@/constants/theme';
-import {createCheckoutReservation,expireMarketplaceCheckoutReservations,fetchMyActiveCheckout,MarketplaceOrderServiceError,normalizeShippingAddress,validateShippingAddress,type ShippingAddressInput} from '@/services/marketplaceOrderService';
+import {createCheckoutReservation,createCreatorCheckoutReservation,expireMarketplaceCheckoutReservations,fetchMyActiveCheckout,MarketplaceOrderServiceError,normalizeShippingAddress,validateShippingAddress,type ShippingAddressInput} from '@/services/marketplaceOrderService';
 import {MarketplaceShippingQuoteCard,type MarketplaceShippingQuoteState} from '@/components/marketplace/MarketplaceShippingQuoteCard';
 import {SearchableSelectField} from '@/components/marketplace/SearchableSelectField';
 import {MARKETPLACE_SHIPPING_COUNTRIES,shippingRegionsForCountry} from '@/services/marketplaceShippingSetup';
@@ -44,12 +44,13 @@ export default function MarketplaceCheckoutScreen(){
     if(submitLockRef.current||!user)return;const normalized=normalizeShippingAddress(address);const nextErrors=validateShippingAddress(normalized);
     setErrors(nextErrors);if(Object.keys(nextErrors).length||!availableItems.length)return;
     if(availableItems.some(item=>quoteStates[item.key]?.status!=='ready')){Alert.alert('Envío pendiente','Verifica que todos los productos se envíen a la dirección seleccionada.');return;}
-    const requestItems=availableItems.map(item=>({variantId:item.variantId,quantity:item.quantity}));
+    const requestItems=availableItems.map(item=>({variantId:item.variantId,quantity:item.quantity,attributionId:item.attributionId}));
     const signature=JSON.stringify({items:requestItems,address:normalized});
     if(!idempotencyRef.current||idempotencyRef.current.signature!==signature)idempotencyRef.current={signature,key:randomUUID()};
     submitLockRef.current=true;setSubmitting(true);
     try{
-      const result=await createCheckoutReservation(requestItems,normalized,idempotencyRef.current.key);
+      const hasCreatorAttribution=requestItems.some(item=>Boolean(item.attributionId));
+      const result=await (hasCreatorAttribution?createCreatorCheckoutReservation:createCheckoutReservation)(requestItems,normalized,idempotencyRef.current.key);
       const authoritative=new Map(result.orders.flatMap(order=>order.items).map(item=>[item.variantId,item.unitPrice]));
       const priceChanged=availableItems.some(item=>authoritative.has(item.variantId)&&authoritative.get(item.variantId)!==item.unitPrice);
       const continueToReservation=()=>{cart.removeItems(availableItems.map(item=>item.key));idempotencyRef.current=null;router.replace({pathname:'/checkout/reservation/[id]',params:{id:result.checkout.id}} as never)};

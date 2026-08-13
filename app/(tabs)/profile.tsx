@@ -570,6 +570,14 @@ export default function ProfileScreen() {
             />
             <View style={styles.settingsDivider} />
             <SettingsItem
+              icon="shopping-outline"
+              label="Creator Showcase"
+              sublabel="Choose and order products you recommend"
+              gradient={['#00E5A0', '#7C5CFF']}
+              onPress={() => router.push('/creator-showcase' as never)}
+            />
+            <View style={styles.settingsDivider} />
+            <SettingsItem
               icon="storefront-outline"
               label={t('profile.myProducts')}
               sublabel={t('profile.myProductsSub')}

@@ -45,6 +45,7 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import { SubscribeSheet } from '@/components/creator/SubscribeSheet';
 import { BoostProfileSheet } from '@/components/creator/BoostProfileSheet';
 import { ReportModal } from '@/components/feature/ReportModal';
+import { fetchCreatorShowcase, type MarketplaceCreatorShowcaseProduct } from '@/services/marketplaceCreatorShowcaseService';
 
 const { width: W } = Dimensions.get('window');
 const THUMB = (W - Spacing.md * 2 - 4) / 3;
@@ -87,6 +88,7 @@ export default function CreatorProfileScreen() {
   const [exclusive,   setExclusive]   = useState<any[]>([]);
   const [plans,       setPlans]       = useState<SubscriptionPlan[]>([]);
   const [dmConfig,    setDmConfig]    = useState<PremiumDMConfig | null>(null);
+  const [showcase,    setShowcase]    = useState<MarketplaceCreatorShowcaseProduct[]>([]);
   const [loading,     setLoading]     = useState(true);
 
   // User-specific state
@@ -114,16 +116,17 @@ export default function CreatorProfileScreen() {
       let cancelled = false;
       const load = async () => {
         setLoading(true);
-        const [profile, creatorStats, vids, excl, subPlans, dm, purchased, boosted] =
+        const [profile, creatorStats, vids, excl, subPlans, dm, purchased, boosted, showcasePage] =
           await Promise.all([
             fetchCreatorProfile(creatorId),
             fetchCreatorStats(creatorId),
             fetchCreatorVideos(creatorId, 24),
             fetchCreatorExclusiveContent(creatorId),
-            fetchCreatorSubscriptionPlans(creatorId),
+            fetchCreatorSubscriptionPlans({ creatorId }),
             getPremiumDMConfig(creatorId),
             user?.id ? fetchPurchasedContentIds(user.id) : Promise.resolve(new Set<string>()),
             isProfileBoosted(creatorId),
+            fetchCreatorShowcase(creatorId).catch(() => ({ items: [], nextCursor: null, visible: false })),
           ]);
         if (cancelled) return;
 
@@ -135,6 +138,7 @@ export default function CreatorProfileScreen() {
         setDmConfig(dm);
         setPurchasedIds(purchased);
         setIsBoosted(boosted.boosted);
+        setShowcase(showcasePage.items);
 
         // Subscription status
         if (user?.id && user.id !== creatorId) {
@@ -269,6 +273,7 @@ export default function CreatorProfileScreen() {
   const PROFILE_TABS: { key: ProfileTab; icon: string; label: string }[] = [
     { key: 'videos',    icon: 'videocam',         label: 'Videos' },
     { key: 'exclusive', icon: 'lock',              label: 'Exclusivo' },
+    ...(showcase.length ? [{ key: 'products' as const, icon: 'storefront', label: 'Productos' }] : []),
   ];
 
   return (
@@ -576,6 +581,25 @@ export default function CreatorProfileScreen() {
             </View>
           )
         )}
+        {profileTab === 'products' && showcase.length ? (
+          <View style={styles.showcaseGrid}>
+            {showcase.map(item => (
+              <Pressable key={item.showcaseItemId} style={styles.showcaseCard}
+                onPress={() => router.push({ pathname: '/product/[id]', params: {
+                  id: item.productId, source: 'creator_showcase', showcaseItemId: item.showcaseItemId!,
+                  creatorDisplayName: creator.username,
+                } } as never)} accessibilityRole="button" accessibilityLabel={`Abrir ${item.title}`}>
+                {item.imageUrl ? <Image source={{ uri: item.imageUrl }} style={styles.showcaseImage} contentFit="cover" transition={150} />
+                  : <View style={[styles.showcaseImage, styles.showcaseFallback]}><MaterialIcons name="image" size={30} color={Colors.textSubtle} /></View>}
+                <View style={styles.showcaseCopy}>
+                  <Text style={styles.showcaseTitle} numberOfLines={2}>{item.title}</Text>
+                  <Text style={styles.showcaseStore} numberOfLines={1}>{item.storeName}</Text>
+                  <Text style={styles.showcasePrice}>{item.minPrice.toFixed(2)} BDAG</Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
       </ScrollView>
 
       {/* Subscribe sheet */}
@@ -680,6 +704,14 @@ const styles = StyleSheet.create({
 
   // Exclusive content grid
   exclusiveGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 2, padding: 2 },
+  showcaseGrid:        { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, padding: Spacing.md },
+  showcaseCard:        { width: (W - Spacing.md * 2 - Spacing.sm) / 2, backgroundColor: Colors.surfaceElevated, borderRadius: Radius.lg, overflow: 'hidden', borderWidth: 1, borderColor: Colors.border },
+  showcaseImage:       { width: '100%', aspectRatio: 1 },
+  showcaseFallback:    { alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surface },
+  showcaseCopy:        { padding: Spacing.sm, gap: 3 },
+  showcaseTitle:       { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
+  showcaseStore:       { color: Colors.textSubtle, fontSize: FontSize.xs },
+  showcasePrice:       { color: Colors.primaryLight, fontSize: FontSize.sm, fontWeight: FontWeight.extrabold },
   exclusiveCard:       { width: (W - 4) / 2 - 1, height: 180, position: 'relative', backgroundColor: Colors.surface, borderRadius: 2, overflow: 'hidden' },
   exclusiveThumb:      { width: '100%', height: '100%' },
   exclusiveLockOverlay:{ ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', gap: 6 },

@@ -32,6 +32,10 @@ export interface MarketplaceCartItem {
   quantity: number;
   availableQuantitySnapshot: number;
   productUpdatedAt: string | null;
+  attributionId?: string;
+  showcaseItemId?: string;
+  creatorUserId?: string;
+  creatorDisplayName?: string;
   availability: MarketplaceCartAvailability;
   addedAt: string;
   updatedAt: string;
@@ -57,6 +61,7 @@ export type CartMutationResult =
         | "invalid_quantity"
         | "unavailable"
         | "cart_limit_reached"
+        | "attribution_conflict"
         | "invalid_item"
         | "not_found";
     };
@@ -95,17 +100,40 @@ export function addMarketplaceCartItem(
         option.optionId && option.optionName && option.valueId && option.value,
       ),
     ) ||
-    !isPublicMarketplaceImageUrl(input.imageUrl)
+    !isPublicMarketplaceImageUrl(input.imageUrl) ||
+    (input.attributionId !== undefined && !input.attributionId) ||
+    (input.attributionId !== undefined && (!input.showcaseItemId || !input.creatorUserId)) ||
+    (input.attributionId === undefined && (input.showcaseItemId !== undefined || input.creatorUserId !== undefined)) ||
+    (input.creatorDisplayName !== undefined && typeof input.creatorDisplayName !== "string")
   )
     return { items, result: { ok: false, code: "invalid_item" } };
   const key = marketplaceCartKey(input.productId, input.variantId);
   const index = items.findIndex((item) => item.key === key);
+  const current = index >= 0 ? items[index] : null;
+  const sameCreatorContext = Boolean(
+    current?.attributionId && input.attributionId &&
+    (current.attributionId === input.attributionId ||
+      (current.showcaseItemId === input.showcaseItemId && current.creatorUserId === input.creatorUserId)),
+  );
+  if (current && !current.attributionId && input.attributionId)
+    return { items, result: { ok: false, code: "attribution_conflict" } };
+  if (current?.attributionId && input.attributionId && !sameCreatorContext)
+    return { items, result: { ok: false, code: "attribution_conflict" } };
   if (index < 0 && items.length >= MAX_MARKETPLACE_CART_LINES)
     return { items, result: { ok: false, code: "cart_limit_reached" } };
   const requested = (index >= 0 ? items[index].quantity : 0) + input.quantity;
   const applied = Math.min(requested, input.availableQuantitySnapshot);
+  const attribution = current?.attributionId
+    ? {
+        attributionId: current.attributionId,
+        showcaseItemId: current.showcaseItemId,
+        creatorUserId: current.creatorUserId,
+        creatorDisplayName: current.creatorDisplayName,
+      }
+    : {};
   const item: MarketplaceCartItem = {
     ...input,
+    ...attribution,
     key,
     quantity: applied,
     availability: "available",
@@ -337,6 +365,13 @@ export function isMarketplaceCartItem(
     (item.sku === null || typeof item.sku === "string") &&
     (item.productUpdatedAt === null ||
       typeof item.productUpdatedAt === "string") &&
+    (item.attributionId === undefined || typeof item.attributionId === "string") &&
+    (item.showcaseItemId === undefined || typeof item.showcaseItemId === "string") &&
+    (item.creatorUserId === undefined || typeof item.creatorUserId === "string") &&
+    (item.creatorDisplayName === undefined || typeof item.creatorDisplayName === "string") &&
+    (item.attributionId === undefined
+      ? item.showcaseItemId === undefined && item.creatorUserId === undefined
+      : Boolean(item.showcaseItemId && item.creatorUserId)) &&
     typeof item.addedAt === "string" &&
     typeof item.updatedAt === "string"
   );

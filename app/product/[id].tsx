@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
+import { randomUUID } from "expo-crypto";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Avatar } from "@/components/ui/Avatar";
@@ -63,11 +64,12 @@ import {
 } from "@/services/marketplaceAnalyticsService";
 import { marketplacePromotionRefreshDelay } from "@/services/marketplacePromotionTimer";
 import { recordAdEvent } from "@/services/marketplaceAdsService";
+import { createCreatorShowcaseAttribution } from "@/services/marketplaceCreatorShowcaseService";
 
 const EMPTY_MEDIA: MarketplaceProductDetail["media"] = [];
 
 export default function ProductScreen() {
-  const { id, source, sourceId, creatorId, liveSessionId, campaignId } =
+  const { id, source, sourceId, creatorId, liveSessionId, campaignId, showcaseItemId, creatorDisplayName } =
       useLocalSearchParams<{
         id: string;
         source?: string;
@@ -75,6 +77,8 @@ export default function ProductScreen() {
         creatorId?: string;
         liveSessionId?: string;
         campaignId?: string;
+        showcaseItemId?: string;
+        creatorDisplayName?: string;
       }>(),
     router = useRouter(),
     insets = useSafeAreaInsets(),
@@ -99,7 +103,8 @@ export default function ProductScreen() {
       marketplaceCommerceEventKey("product-detail"),
     ),
     viewRecordedRef = useRef<string | null>(null),
-    adTouchRef = useRef<string | null>(null);
+    adTouchRef = useRef<string | null>(null),
+    showcaseAttributionKeysRef = useRef<Record<string, string>>({});
   const load = useCallback(async () => {
     if (!id) {
       setReadError("missing");
@@ -231,7 +236,7 @@ export default function ProductScreen() {
       : available <= 0
         ? "Combinación agotada"
         : "Agregar al carrito";
-  const handleAddToCart = () => {
+  const handleAddToCart = async (continueToCheckout = false) => {
     if (
       addToCartLockRef.current ||
       !product ||
@@ -244,6 +249,10 @@ export default function ProductScreen() {
       return;
     addToCartLockRef.current = true;
     try {
+      if (showcaseItemId && !user) {
+        router.push("/login" as never);
+        return;
+      }
       const selectedOptions = options.flatMap((option) => {
         const value = option.values.find(
           (candidate) =>
@@ -270,6 +279,20 @@ export default function ProductScreen() {
         ].find(
           (candidate) => candidate && isPublicMarketplaceImageUrl(candidate),
         ) ?? null;
+      let attribution:
+        | { attributionId: string; showcaseItemId: string; creatorUserId: string; creatorDisplayName?: string }
+        | undefined;
+      if (showcaseItemId) {
+        const key = showcaseAttributionKeysRef.current[selectedVariant.id] ?? randomUUID();
+        showcaseAttributionKeysRef.current[selectedVariant.id] = key;
+        const receipt = await createCreatorShowcaseAttribution(showcaseItemId, selectedVariant.id, key);
+        attribution = {
+          attributionId: receipt.id,
+          showcaseItemId,
+          creatorUserId: receipt.creatorUserId,
+          ...(creatorDisplayName ? { creatorDisplayName } : {}),
+        };
+      }
       const result = addItem({
         productId: product.id,
         variantId: selectedVariant.id,
@@ -286,8 +309,13 @@ export default function ProductScreen() {
         quantity,
         availableQuantitySnapshot: selectedVariant.available_quantity,
         productUpdatedAt: product.updated_at,
+        ...attribution,
       });
       if (!result.ok) {
+        if (result.code === "attribution_conflict") {
+          showAlert("Creator credit already set", "Remove this variant from the cart before changing its creator recommendation.");
+          return;
+        }
         showAlert(
           "No se pudo agregar",
           result.code === "cart_limit_reached"
@@ -323,6 +351,9 @@ export default function ProductScreen() {
       );
       if (toastTimer.current) clearTimeout(toastTimer.current);
       toastTimer.current = setTimeout(() => setCartFeedback(null), 3200);
+      if (continueToCheckout) router.push("/checkout" as never);
+    } catch {
+      showAlert("Showcase unavailable", "This creator selection or offer is no longer available. Return to the creator profile and try again.");
     } finally {
       addToCartLockRef.current = false;
     }
@@ -476,6 +507,15 @@ export default function ProductScreen() {
           onSelect={chooseMedia}
         />
         <View style={styles.commerce}>
+          {showcaseItemId ? (
+            <View style={styles.creatorRecommendation}>
+              <MaterialIcons name="storefront" size={17} color={Colors.accent} />
+              <Text style={styles.creatorRecommendationText}>Recommended by {creatorDisplayName ? `@${creatorDisplayName}` : "this creator"}</Text>
+              <Pressable onPress={() => void handleAddToCart(true)} accessibilityRole="button" accessibilityLabel="Buy now from creator recommendation">
+                <Text style={styles.buyNowText}>Buy now</Text>
+              </Pressable>
+            </View>
+          ) : null}
           <Text style={styles.category}>{product.category}</Text>
           <Text style={styles.title}>{product.title}</Text>
           <View style={styles.priceRow}>
@@ -687,7 +727,7 @@ export default function ProductScreen() {
         disabled={isOwner || selectionIncomplete || available <= 0}
         label={purchaseLabel}
         onQuantity={setQuantity}
-        onAdd={handleAddToCart}
+        onAdd={() => void handleAddToCart()}
       />
     </View>
   );
@@ -773,6 +813,9 @@ const styles = StyleSheet.create({
   cartBadgeText: { color: "#fff", fontSize: 9, fontWeight: FontWeight.bold },
   scroll: { gap: Spacing.md },
   commerce: { paddingHorizontal: Spacing.md, gap: Spacing.sm },
+  creatorRecommendation:{minHeight:44,flexDirection:"row",alignItems:"center",gap:Spacing.sm,paddingHorizontal:Spacing.md,borderRadius:Radius.md,backgroundColor:Colors.accentDim,borderWidth:1,borderColor:Colors.accent+"44"},
+  creatorRecommendationText:{flex:1,color:Colors.textSecondary,fontSize:FontSize.sm},
+  buyNowText:{color:Colors.accent,fontSize:FontSize.sm,fontWeight:FontWeight.bold},
   category: {
     color: Colors.primaryLight,
     fontSize: FontSize.xs,
