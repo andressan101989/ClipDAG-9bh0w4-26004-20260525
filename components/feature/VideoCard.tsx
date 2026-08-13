@@ -39,11 +39,13 @@ export interface VideoCardProps {
   onProfilePress: () => void;
   onSendGift?: (recipientId: string, videoId: string | null, giftType: string, dagValue: number) => Promise<{ success: boolean; error?: string }>;
   onViewTracked?: (watchDurationMs: number, completed: boolean) => void;
+  productTagCount?: number;
+  onProducts?: () => void;
 }
 
 // ── Web card — static image preview (no video playback) ──────────────────────
 export const VideoCard = memo(function VideoCard(props: VideoCardProps) {
-  const { video, isLiked, isSaved = false, isFollowing, onLike, onComment, onFollow, onSave, onProfilePress } = props;
+  const { video, isLiked, isSaved = false, isFollowing, onLike, onComment, onFollow, onSave, onProfilePress, productTagCount = 0, onProducts } = props;
   const { width: W } = Dimensions.get('window');
   const mediaUrl = video.thumbnailUrl || video.videoUrl || '';
   const isVideoMedia = /\.(mp4|mov|avi|mkv|webm)/i.test(mediaUrl);
@@ -100,6 +102,7 @@ export const VideoCard = memo(function VideoCard(props: VideoCardProps) {
             <MaterialCommunityIcons name="comment-outline" size={24} color={Colors.textPrimary} />
             <Text style={sty.actionCount}>{formatNumber(video.comments || 0)}</Text>
           </Pressable>
+          {productTagCount > 0 && onProducts ? <Pressable onPress={onProducts} style={sty.actionBtn} hitSlop={8} accessibilityLabel={`${productTagCount} productos etiquetados`}><MaterialCommunityIcons name="shopping-outline" size={24} color={Colors.primaryLight} />{productTagCount > 1 ? <Text style={[sty.actionCount,{color:Colors.primaryLight}]}>{productTagCount}</Text> : null}</Pressable> : null}
         </View>
         <Pressable onPress={onSave} hitSlop={8}>
           <MaterialCommunityIcons name={isSaved ? 'bookmark' : 'bookmark-outline'} size={25} color={isSaved ? Colors.primary : Colors.textPrimary} />

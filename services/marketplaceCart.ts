@@ -34,6 +34,8 @@ export interface MarketplaceCartItem {
   productUpdatedAt: string | null;
   attributionId?: string;
   showcaseItemId?: string;
+  contentProductTagId?: string;
+  sourceSurface?: "feed" | "reel";
   creatorUserId?: string;
   creatorDisplayName?: string;
   availability: MarketplaceCartAvailability;
@@ -102,8 +104,10 @@ export function addMarketplaceCartItem(
     ) ||
     !isPublicMarketplaceImageUrl(input.imageUrl) ||
     (input.attributionId !== undefined && !input.attributionId) ||
-    (input.attributionId !== undefined && (!input.showcaseItemId || !input.creatorUserId)) ||
-    (input.attributionId === undefined && (input.showcaseItemId !== undefined || input.creatorUserId !== undefined)) ||
+    (input.attributionId !== undefined && (!input.creatorUserId || Boolean(input.showcaseItemId) === Boolean(input.contentProductTagId))) ||
+    (input.contentProductTagId !== undefined && (!input.contentProductTagId || !["feed", "reel"].includes(input.sourceSurface ?? ""))) ||
+    (input.showcaseItemId !== undefined && input.sourceSurface !== undefined) ||
+    (input.attributionId === undefined && (input.showcaseItemId !== undefined || input.contentProductTagId !== undefined || input.sourceSurface !== undefined || input.creatorUserId !== undefined)) ||
     (input.creatorDisplayName !== undefined && typeof input.creatorDisplayName !== "string")
   )
     return { items, result: { ok: false, code: "invalid_item" } };
@@ -127,6 +131,8 @@ export function addMarketplaceCartItem(
     ? {
         attributionId: current.attributionId,
         showcaseItemId: current.showcaseItemId,
+        contentProductTagId: current.contentProductTagId,
+        sourceSurface: current.sourceSurface,
         creatorUserId: current.creatorUserId,
         creatorDisplayName: current.creatorDisplayName,
       }
@@ -367,11 +373,14 @@ export function isMarketplaceCartItem(
       typeof item.productUpdatedAt === "string") &&
     (item.attributionId === undefined || typeof item.attributionId === "string") &&
     (item.showcaseItemId === undefined || typeof item.showcaseItemId === "string") &&
+    (item.contentProductTagId === undefined || typeof item.contentProductTagId === "string") &&
+    (item.sourceSurface === undefined || item.sourceSurface === "feed" || item.sourceSurface === "reel") &&
     (item.creatorUserId === undefined || typeof item.creatorUserId === "string") &&
     (item.creatorDisplayName === undefined || typeof item.creatorDisplayName === "string") &&
     (item.attributionId === undefined
-      ? item.showcaseItemId === undefined && item.creatorUserId === undefined
-      : Boolean(item.showcaseItemId && item.creatorUserId)) &&
+      ? item.showcaseItemId === undefined && item.contentProductTagId === undefined && item.sourceSurface === undefined && item.creatorUserId === undefined
+      : Boolean(item.creatorUserId && (Boolean(item.showcaseItemId) !== Boolean(item.contentProductTagId))
+        && (item.showcaseItemId ? item.sourceSurface === undefined : item.sourceSurface === "feed" || item.sourceSurface === "reel"))) &&
     typeof item.addedAt === "string" &&
     typeof item.updatedAt === "string"
   );

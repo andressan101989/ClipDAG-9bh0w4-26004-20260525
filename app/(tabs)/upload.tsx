@@ -22,6 +22,7 @@ import { File } from 'expo-file-system';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import { randomUUID } from 'expo-crypto';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
@@ -30,6 +31,7 @@ import { useLiveStream } from '@/hooks/streaming/useLiveStream';
 import { LiveCameraPreview } from '@/components/feature/LiveCameraPreview';
 import { MusicPicker } from '@/components/feature/MusicPicker';
 import { IosVideoGalleryPicker } from '@/components/feature/IosVideoGalleryPicker';
+import { CreatorContentProductSelector } from '@/components/marketplace/CreatorContentProductSelector';
 import { LiveTitleModal } from '@/components/upload/LiveTitleModal';
 import { getSupabaseClient, useAlert } from '@/template';
 import { CyberButton } from '@/components/ui/CyberButton';
@@ -57,6 +59,8 @@ import {
   type IosVideoResolutionCode,
   type ResolvedIosVideo,
 } from '@/services/iosVideoGalleryService';
+import { setMyMarketplaceContentProductTags } from '@/services/marketplaceCreatorContentTagService';
+import type { MarketplaceCreatorShowcaseProduct } from '@/services/marketplaceCreatorShowcaseService';
 
 // ── Hashtag suggestions ────────────────────────────────────────────────────
 const HASHTAG_SUGGESTIONS = [
@@ -184,6 +188,24 @@ export default function UploadScreen() {
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
   const [iosVideoGalleryVisible, setIosVideoGalleryVisible] = useState(false);
   const [carouselMedias, setCarouselMedias] = useState<SelectedMedia[]>([]);
+  const [productSelectorVisible, setProductSelectorVisible] = useState(false);
+  const [selectedProducts, setSelectedProducts] = useState<MarketplaceCreatorShowcaseProduct[]>([]);
+
+  const saveSelectedProductTags = useCallback(async (contentId: string, contentType: 'feed' | 'reel') => {
+    if (!selectedProducts.length) return true;
+    try {
+      await setMyMarketplaceContentProductTags({
+        contentType,
+        contentId,
+        productIds: selectedProducts.map((product) => product.productId),
+        idempotencyKey: randomUUID(),
+      });
+      return true;
+    } catch {
+      showAlert('Contenido publicado', 'El contenido se publicó, pero no pudimos guardar sus productos. Intenta publicarlos de nuevo.');
+      return false;
+    }
+  }, [selectedProducts, showAlert]);
 
   // ── Live ────────────────────────────────────────────────────────────────────
   const [showLiveTitleModal, setShowLiveTitleModal] = useState(false);
@@ -540,14 +562,15 @@ export default function UploadScreen() {
           );
           else if(stage==='STREAM_PUBLISH') setUploadProgress('Publicando en el feed...');
         };
-        await uploadAndPublishStreamVideo({
+        const published = await uploadAndPublishStreamVideo({
           uri:selectedMedia.uri,mimeType,fileName:selectedMedia.fileName||undefined,
           sizeBytes:selectedMedia.fileSize??undefined,durationMs:selectedMedia.durationMs,
           caption:caption.trim(),music:musicName,signal:controller.signal,onStage:stageMessage,
         });
+        await saveSelectedProductTags(published.postId, 'reel');
         await refreshFeed();
         deleteOwnedIosVideoCache(selectedMedia.ownedCacheUri);
-        setCaption('');setSelectedMedia(null);setSelectedMusic(null);setUploadProgress('');
+        setCaption('');setSelectedMedia(null);setSelectedMusic(null);setSelectedProducts([]);setUploadProgress('');
         showAlert('Video publicado','Tu video ya está disponible en el feed',[
           {text:'Ver Feed',onPress:()=>router.push('/(tabs)')},{text:'Crear otro'},
         ]);
@@ -572,8 +595,9 @@ export default function UploadScreen() {
       });
       if (uploaded.assetId && !postId) throw new Error('entity_create_failed');
       if (postId && uploaded.assetId) uploadedAssetId = undefined;
+      if (postId) await saveSelectedProductTags(postId, 'feed');
 
-      setCaption(''); setSelectedMedia(null); setSelectedMusic(null);
+      setCaption(''); setSelectedMedia(null); setSelectedMusic(null); setSelectedProducts([]);
       setUploadProgress('');
       showAlert(
         mode === 'photo' ? 'Foto publicada!' : 'Video publicado!',
@@ -607,7 +631,7 @@ export default function UploadScreen() {
       uploadInFlightRef.current=false;
       setIsUploading(false);setUploadProgress('');
     }
-  }, [selectedMedia, caption, mode, selectedMusic, user, uploadMediaToStorage, addVideo, refreshFeed, router, showAlert, supabase]);
+  }, [selectedMedia, caption, mode, selectedMusic, user, uploadMediaToStorage, addVideo, refreshFeed, router, showAlert, supabase, saveSelectedProductTags]);
 
   const handleUploadCarousel = useCallback(async () => {
     if (carouselMedias.length < 2) { showAlert('Carrusel requerido', 'Selecciona al menos 2 fotos'); return; }
@@ -644,8 +668,9 @@ export default function UploadScreen() {
         mediaAssetIds: orderedUploads.map(item => item.assetId!),
       });
       if (!postId) throw new Error('CAROUSEL_CREATE_POST_FAILED');
+      await saveSelectedProductTags(postId, 'feed');
       completedUploads.fill(undefined);
-      setCaption(''); setCarouselMedias([]); setSelectedMusic(null);
+      setCaption(''); setCarouselMedias([]); setSelectedMusic(null); setSelectedProducts([]);
       showAlert(
         'Carrusel publicado!',
         `${validUrls.length} fotos publicadas`,
@@ -692,7 +717,7 @@ export default function UploadScreen() {
       showAlert('Error',`No se pudo publicar el carrusel.\nCódigo: ${safe.stage}/${safe.code}`);
     }
     setIsUploading(false); setUploadProgress('');
-  }, [carouselMedias, caption, user, uploadMediaToStorage, addVideo, router, showAlert]);
+  }, [carouselMedias, caption, user, uploadMediaToStorage, addVideo, router, showAlert, saveSelectedProductTags]);
 
   const MODES: { key: Mode; icon: string; label: string; color?: string }[] = [
     { key: 'video',    icon: 'videocam',      label: 'Video' },
@@ -709,6 +734,12 @@ export default function UploadScreen() {
         visible={showLiveTitleModal}
         onCancel={() => setShowLiveTitleModal(false)}
         onStart={handleLiveTitleConfirmed}
+      />
+      <CreatorContentProductSelector
+        visible={productSelectorVisible}
+        selected={selectedProducts}
+        onChange={setSelectedProducts}
+        onClose={() => setProductSelectorVisible(false)}
       />
 
       {/* ── Live Camera (full-screen) ────────────────────────────────────── */}
@@ -926,6 +957,12 @@ export default function UploadScreen() {
                 </ScrollView>
               </View>
 
+              <Pressable style={styles.productTagButton} onPress={() => setProductSelectorVisible(true)} accessibilityLabel="Seleccionar productos para el carrusel">
+                <MaterialCommunityIcons name="shopping-outline" size={21} color={Colors.blue} />
+                <View style={styles.productTagCopy}><Text style={styles.productTagTitle}>Productos</Text><Text style={styles.productTagSubtitle}>{selectedProducts.length ? `${selectedProducts.length} seleccionados` : 'Agrega hasta 5 productos'}</Text></View>
+                <MaterialIcons name="chevron-right" size={22} color={Colors.textSubtle} />
+              </Pressable>
+
               <View style={styles.infoCard}>
                 <MaterialIcons name="lock-clock" size={20} color={Colors.textSubtle} />
                 <Text style={styles.infoCardTitle}>Contenido exclusivo próximamente</Text>
@@ -1012,6 +1049,12 @@ export default function UploadScreen() {
                   ))}
                 </ScrollView>
               </View>
+
+              <Pressable style={styles.productTagButton} onPress={() => setProductSelectorVisible(true)} accessibilityLabel="Seleccionar productos para el contenido">
+                <MaterialCommunityIcons name="shopping-outline" size={21} color={Colors.primaryLight} />
+                <View style={styles.productTagCopy}><Text style={styles.productTagTitle}>Productos</Text><Text style={styles.productTagSubtitle}>{selectedProducts.length ? `${selectedProducts.length} seleccionados` : 'Agrega hasta 5 productos'}</Text></View>
+                <MaterialIcons name="chevron-right" size={22} color={Colors.textSubtle} />
+              </Pressable>
 
               <Pressable style={styles.musicPickerBtn} onPress={() => setMusicPickerVisible(true)}>
                 <LinearGradient
@@ -1141,6 +1184,8 @@ const styles = StyleSheet.create({
   hashtagRow: { flexDirection: 'row', gap: Spacing.sm, paddingVertical: 2 },
   hashtagChip: { backgroundColor: Colors.primaryDim, borderWidth: 1, borderColor: 'rgba(0,212,255,0.3)', borderRadius: Radius.full, paddingHorizontal: Spacing.sm, paddingVertical: 5 },
   hashtagText: { color: Colors.primary, fontSize: FontSize.xs, fontWeight: FontWeight.medium },
+  productTagButton:{minHeight:58,backgroundColor:Colors.surfaceElevated,borderWidth:1,borderColor:Colors.border,borderRadius:Radius.lg,paddingHorizontal:Spacing.md,flexDirection:'row',alignItems:'center',gap:Spacing.md},
+  productTagCopy:{flex:1},productTagTitle:{color:Colors.textPrimary,fontSize:FontSize.sm,fontWeight:FontWeight.bold},productTagSubtitle:{color:Colors.textSubtle,fontSize:FontSize.xs,marginTop:2},
 
   musicPickerBtn: { borderRadius: Radius.lg, overflow: 'hidden', borderWidth: 1, borderColor: Colors.border },
   musicPickerInner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, padding: Spacing.md },

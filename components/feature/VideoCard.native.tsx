@@ -100,6 +100,8 @@ export interface VideoCardProps {
   onProfilePress: () => void;
   onSendGift?: (recipientId: string, videoId: string | null, giftType: string, dagValue: number) => Promise<{ success: boolean; error?: string }>;
   onViewTracked?: (watchDurationMs: number, completed: boolean) => void;
+  productTagCount?: number;
+  onProducts?: () => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -221,11 +223,13 @@ interface CardActionsProps {
   onShare: () => void;
   onSave: () => void;
   onSendGift?: VideoCardProps['onSendGift'];
+  productTagCount: number;
+  onProducts?: () => void;
 }
 
 const CardActions = memo(function CardActions({
   video, isLiked, isSaved, currentUserId, currentUserDagBalance,
-  onLike, onComment, onShare, onSave, onSendGift,
+  onLike, onComment, onShare, onSave, onSendGift, productTagCount, onProducts,
 }: CardActionsProps) {
   const [giftVisible, setGiftVisible] = useState(false);
   const likeScale  = useRef(new Animated.Value(1)).current;
@@ -275,6 +279,12 @@ const CardActions = memo(function CardActions({
         {onSendGift && currentUserId !== video.userId ? (
           <Pressable style={styles.actionItem} onPress={() => setGiftVisible(true)} hitSlop={8}>
             <Text style={{ fontSize: 22 }}>🎁</Text>
+          </Pressable>
+        ) : null}
+        {productTagCount > 0 && onProducts ? (
+          <Pressable style={styles.actionItem} onPress={onProducts} hitSlop={8} accessibilityLabel={`${productTagCount} productos etiquetados`}>
+            <MaterialCommunityIcons name="shopping-outline" size={24} color={Colors.primaryLight} />
+            {productTagCount > 1 ? <Text style={[styles.actionCount,{color:Colors.primaryLight}]}>{productTagCount}</Text> : null}
           </Pressable>
         ) : null}
       </View>
@@ -360,6 +370,7 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
     video, isActive, isLiked, isSaved = false, isFollowing,
     currentUserDagBalance = 0, currentUserId = '',
     onLike, onComment, onFollow, onSave = () => {}, onProfilePress, onSendGift, onViewTracked,
+    productTagCount = 0, onProducts,
   } = props;
 
   const { showAlert } = useAlert();
@@ -647,6 +658,8 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
         onShare={handleShare}
         onSave={onSave}
         onSendGift={onSendGift}
+        productTagCount={productTagCount}
+        onProducts={onProducts}
       />
 
       {/* ── Caption ── */}

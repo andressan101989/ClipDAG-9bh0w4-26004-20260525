@@ -16,7 +16,7 @@ const db=()=>getSupabaseClient();
 
 export const marketplaceCommerceSessionId=()=>clientSessionId;
 export const marketplaceCommerceEventKey=(prefix:string)=>`${prefix}:${randomUUID()}`;
-export const marketplaceSourceFromParams=(params:{source?:string;sourceId?:string;creatorId?:string;liveSessionId?:string}):MarketplaceCommerceSource=>parseMarketplaceAnalyticsSource({type:params.source,entityId:params.sourceId,creatorId:params.creatorId,liveSessionId:params.liveSessionId});
+export const marketplaceSourceFromParams=(params:{source?:string;sourceId?:string;creatorId?:string;liveSessionId?:string}):MarketplaceCommerceSource=>parseMarketplaceAnalyticsSource({type:params.source==='reel'?'clip':params.source,entityId:params.sourceId,creatorId:params.creatorId,liveSessionId:params.liveSessionId});
 
 async function record(input:RecordInput){
  const source=input.source??{type:'unknown' as const,entityId:null,creatorId:null,liveSessionId:null};

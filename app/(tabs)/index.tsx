@@ -28,6 +28,12 @@ import { useScrollToTop } from '@react-navigation/native';
 import type { StoryGroup } from '@/components/feature/StoriesBar';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
 import { deleteMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
+import { CreatorContentProductSheet } from '@/components/marketplace/CreatorContentProductSheet';
+import {
+  fetchMarketplaceContentProductTagSummaries,
+  marketplaceContentTypeForMedia,
+  type MarketplaceCreatorContentType,
+} from '@/services/marketplaceCreatorContentTagService';
 
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 75 };
 
@@ -52,6 +58,28 @@ export default function FeedScreen() {
   const [viewingStoryGroup, setViewingStoryGroup] = useState<StoryGroup | null>(null);
   const [storyViewerVisible, setStoryViewerVisible] = useState(false);
   const [initialLoaded, setInitialLoaded] = useState(false);
+  const [productTagCounts, setProductTagCounts] = useState<Record<string, number>>({});
+  const [productSheet, setProductSheet] = useState<{
+    contentId: string;
+    contentType: MarketplaceCreatorContentType;
+    creatorDisplayName: string;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const ids = videos.map((video) => video.id).filter((id) => !id.startsWith('local_'));
+    const batches: string[][] = [];
+    for (let index = 0; index < ids.length; index += 50) batches.push(ids.slice(index, index + 50));
+    Promise.all(batches.map((batch) => fetchMarketplaceContentProductTagSummaries(batch)))
+      .then((pages) => {
+        if (cancelled) return;
+        const next: Record<string, number> = {};
+        for (const item of pages.flat()) next[item.contentId] = item.tagCount;
+        setProductTagCounts(next);
+      })
+      .catch(() => { if (!cancelled) setProductTagCounts({}); });
+    return () => { cancelled = true; };
+  }, [videos]);
 
   // Ensure AVAudioSession is in playback mode whenever the feed is visible.
   // DeepAR (Creator Studio) sets AVAudioSessionCategoryPlayAndRecord, which
@@ -253,6 +281,12 @@ export default function FeedScreen() {
             onProfilePress={() => {}}
             onSendGift={sendGift}
             onViewTracked={(durationMs, completed) => handleViewTracked(item.id, durationMs, completed)}
+            productTagCount={productTagCounts[item.id] ?? 0}
+            onProducts={() => setProductSheet({
+              contentId: item.id,
+              contentType: marketplaceContentTypeForMedia(item.videoUrl, item.mediaUrls),
+              creatorDisplayName: item.username,
+            })}
           />
         )}
         showsVerticalScrollIndicator={false}
@@ -283,6 +317,13 @@ export default function FeedScreen() {
       />
 
       <DAGRewardToast visible={toastVisible} amount={0.01} onHide={() => setToastVisible(false)} />
+      <CreatorContentProductSheet
+        visible={Boolean(productSheet)}
+        contentId={productSheet?.contentId ?? null}
+        contentType={productSheet?.contentType ?? 'feed'}
+        creatorDisplayName={productSheet?.creatorDisplayName}
+        onClose={() => setProductSheet(null)}
+      />
 
       <CommentSheet
         visible={commentVideoId !== null}

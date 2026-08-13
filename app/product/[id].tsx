@@ -65,11 +65,12 @@ import {
 import { marketplacePromotionRefreshDelay } from "@/services/marketplacePromotionTimer";
 import { recordAdEvent } from "@/services/marketplaceAdsService";
 import { createCreatorShowcaseAttribution } from "@/services/marketplaceCreatorShowcaseService";
+import { createCreatorContentAttribution } from "@/services/marketplaceCreatorContentTagService";
 
 const EMPTY_MEDIA: MarketplaceProductDetail["media"] = [];
 
 export default function ProductScreen() {
-  const { id, source, sourceId, creatorId, liveSessionId, campaignId, showcaseItemId, creatorDisplayName } =
+  const { id, source, sourceId, creatorId, liveSessionId, campaignId, showcaseItemId, contentProductTagId, creatorDisplayName } =
       useLocalSearchParams<{
         id: string;
         source?: string;
@@ -78,6 +79,7 @@ export default function ProductScreen() {
         liveSessionId?: string;
         campaignId?: string;
         showcaseItemId?: string;
+        contentProductTagId?: string;
         creatorDisplayName?: string;
       }>(),
     router = useRouter(),
@@ -104,7 +106,8 @@ export default function ProductScreen() {
     ),
     viewRecordedRef = useRef<string | null>(null),
     adTouchRef = useRef<string | null>(null),
-    showcaseAttributionKeysRef = useRef<Record<string, string>>({});
+    showcaseAttributionKeysRef = useRef<Record<string, string>>({}),
+    contentAttributionKeysRef = useRef<Record<string, string>>({});
   const load = useCallback(async () => {
     if (!id) {
       setReadError("missing");
@@ -249,8 +252,12 @@ export default function ProductScreen() {
       return;
     addToCartLockRef.current = true;
     try {
-      if (showcaseItemId && !user) {
+      if ((showcaseItemId || contentProductTagId) && !user) {
         router.push("/login" as never);
+        return;
+      }
+      if (showcaseItemId && contentProductTagId) {
+        showAlert("Invalid creator context", "Open this product again from a single creator surface.");
         return;
       }
       const selectedOptions = options.flatMap((option) => {
@@ -281,6 +288,7 @@ export default function ProductScreen() {
         ) ?? null;
       let attribution:
         | { attributionId: string; showcaseItemId: string; creatorUserId: string; creatorDisplayName?: string }
+        | { attributionId: string; contentProductTagId: string; sourceSurface: "feed" | "reel"; creatorUserId: string; creatorDisplayName?: string }
         | undefined;
       if (showcaseItemId) {
         const key = showcaseAttributionKeysRef.current[selectedVariant.id] ?? randomUUID();
@@ -289,6 +297,17 @@ export default function ProductScreen() {
         attribution = {
           attributionId: receipt.id,
           showcaseItemId,
+          creatorUserId: receipt.creatorUserId,
+          ...(creatorDisplayName ? { creatorDisplayName } : {}),
+        };
+      } else if (contentProductTagId && (source === "feed" || source === "reel")) {
+        const key = contentAttributionKeysRef.current[selectedVariant.id] ?? randomUUID();
+        contentAttributionKeysRef.current[selectedVariant.id] = key;
+        const receipt = await createCreatorContentAttribution(contentProductTagId, selectedVariant.id, key);
+        attribution = {
+          attributionId: receipt.id,
+          contentProductTagId,
+          sourceSurface: receipt.sourceSurface,
           creatorUserId: receipt.creatorUserId,
           ...(creatorDisplayName ? { creatorDisplayName } : {}),
         };
@@ -353,7 +372,7 @@ export default function ProductScreen() {
       toastTimer.current = setTimeout(() => setCartFeedback(null), 3200);
       if (continueToCheckout) router.push("/checkout" as never);
     } catch {
-      showAlert("Showcase unavailable", "This creator selection or offer is no longer available. Return to the creator profile and try again.");
+      showAlert("Creator recommendation unavailable", "This creator product tag or seller offer is no longer available. Return to the original content and try again.");
     } finally {
       addToCartLockRef.current = false;
     }
@@ -507,7 +526,7 @@ export default function ProductScreen() {
           onSelect={chooseMedia}
         />
         <View style={styles.commerce}>
-          {showcaseItemId ? (
+          {showcaseItemId || contentProductTagId ? (
             <View style={styles.creatorRecommendation}>
               <MaterialIcons name="storefront" size={17} color={Colors.accent} />
               <Text style={styles.creatorRecommendationText}>Recommended by {creatorDisplayName ? `@${creatorDisplayName}` : "this creator"}</Text>
