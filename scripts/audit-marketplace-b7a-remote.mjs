@@ -123,6 +123,7 @@ try {
     await db.query(`select
       (select version from supabase_migrations.schema_migrations order by version desc limit 1) latest_migration,
       exists(select 1 from supabase_migrations.schema_migrations where version='20260811020000') b7a_applied,
+      exists(select 1 from supabase_migrations.schema_migrations where version='20260811021000') b7a_reconciliation_scope_applied,
       to_regclass('public.marketplace_creator_commerce_attributions') is not null attribution_table_present,
       to_regclass('public.marketplace_order_item_creator_attributions') is not null snapshot_table_present,
       to_regprocedure('public.reconcile_marketplace_creator_commerce()') is not null reconciliation_present,
@@ -174,10 +175,15 @@ try {
   if (requireB7a) {
     assert.equal(
       audit.latest_migration,
-      "20260811020000",
+      "20260811021000",
       "b7a_remote_migration_parity_mismatch",
     );
     assert.equal(audit.b7a_applied, true, "b7a_remote_migration_missing");
+    assert.equal(
+      audit.b7a_reconciliation_scope_applied,
+      true,
+      "b7a_remote_reconciliation_scope_missing",
+    );
     assert.equal(
       audit.reconciliation_present,
       true,

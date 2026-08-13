@@ -58,6 +58,38 @@ PRODUCTION ECONOMICS CHANGED: No.
 RESIDUAL RISK: None; untracked files are not relevant because the starting worktree was clean and all deployable migrations are tracked.  
 STATUS: RESOLVED
 
+### Blocker 11
+
+BLOCKER NUMBER: 11
+STAGE: Post-deploy disposable verification of corrective migration
+ERROR / SQLSTATE: PostgreSQL `42P07`: relation `marketplace_creator_commerce_authority_state` already exists while reapplying the primary B7A migration
+SYMPTOM: The disposable `create` operation restores the current linked schema, which now already contains deployed B7A. An attempted redundant primary apply failed; the command sequence then applied the new corrective migration and the A–AF proof passed.
+ROOT CAUSE: Disposable runtime baseline advanced from pre-B7A to post-primary-B7A immediately after remote deployment.
+CLASSIFICATION: disposable runtime issue
+SOLUTION: Treat the restored linked schema as the authoritative post-primary baseline and apply only the undeployed corrective migration. Do not make the primary migration re-runnable and do not edit it.
+WHY THIS IS SAFEST: Historical migrations remain immutable and one-shot, matching Supabase migration semantics. The corrective is tested against the exact deployed-primary schema.
+FILES/FUNCTIONS CHANGED: Execution log only.
+PROOF: Corrective migration applied to the restored post-primary schema; A–AF passed with all 36 B7A and 27 B7F counters zero; disposable container destroyed.
+PRODUCTION ECONOMICS CHANGED: No.
+RESIDUAL RISK: None.
+STATUS: RESOLVED
+
+### Blocker 10
+
+BLOCKER NUMBER: 10
+STAGE: First remote post-deploy B7A reconciliation
+ERROR / SQLSTATE: Assertion `reconcile_marketplace_creator_commerce.missing_b7f_allocation_nonzero`; observed aggregate `14`
+SYMPTOM: The primary B7A migration deployed successfully, then the new reconciliation classified 14 historical LIVE order-item attribution backfills as missing B7F financial allocations.
+ROOT CAUSE: B7A deliberately backfills the durable entitlement/attribution chain for historical LIVE orders. Orders predating B7F legitimately retain legacy scalar financial snapshots and have no normalized B7F rows. The `missing_b7f_allocation` query lacked the activation-time scope already used by the complementary B7F/settlement counters.
+CLASSIFICATION: reconciliation issue
+SOLUTION: Preserve the deployed primary migration and create new corrective migration `20260811021000_marketplace_creator_commerce_reconciliation_scope.sql`. It scopes missing B7F enforcement to order-item attribution snapshots created at or after B7A activation; every current/new paid B7A snapshot remains required to have a B7F allocation.
+WHY THIS IS SAFEST: It neither inserts retroactive financial rows nor rewrites historical payment/allocation/settlement state. Historical attribution remains auditable, while the forward financial invariant stays strict.
+FILES/FUNCTIONS CHANGED: New corrective migration; `reconcile_marketplace_creator_commerce()`. The deployed `20260811020000` file is unchanged.
+PROOF: Clean disposable apply of primary plus corrective migration; A–AF proof; exact corrective-only linked dry-run; post-deploy B7A 36/36, B7F 27/27, and B7R 32/32 zero.
+PRODUCTION ECONOMICS CHANGED: No.
+RESIDUAL RISK: Historical pre-B7A LIVE orders continue relying on their immutable legacy scalar financial truth, as designed by B7F compatibility.
+STATUS: RESOLVED
+
 ### Blocker 9
 
 BLOCKER NUMBER: 9  
