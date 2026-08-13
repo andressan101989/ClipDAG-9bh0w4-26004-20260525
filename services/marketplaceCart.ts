@@ -110,14 +110,14 @@ export function addMarketplaceCartItem(
   const key = marketplaceCartKey(input.productId, input.variantId);
   const index = items.findIndex((item) => item.key === key);
   const current = index >= 0 ? items[index] : null;
-  const sameCreatorContext = Boolean(
-    current?.attributionId && input.attributionId &&
-    (current.attributionId === input.attributionId ||
-      (current.showcaseItemId === input.showcaseItemId && current.creatorUserId === input.creatorUserId)),
+  const sameAttribution = Boolean(
+    current?.attributionId &&
+      input.attributionId &&
+      current.attributionId === input.attributionId,
   );
   if (current && !current.attributionId && input.attributionId)
     return { items, result: { ok: false, code: "attribution_conflict" } };
-  if (current?.attributionId && input.attributionId && !sameCreatorContext)
+  if (current?.attributionId && input.attributionId && !sameAttribution)
     return { items, result: { ok: false, code: "attribution_conflict" } };
   if (index < 0 && items.length >= MAX_MARKETPLACE_CART_LINES)
     return { items, result: { ok: false, code: "cart_limit_reached" } };
