@@ -339,3 +339,59 @@ The B7C disposable proof preserved every existing race and added `causalSaveFenc
 The final read-only linked audit confirmed latest migration `20260811024000`, B7C 28/28, B7B 23/23, B7A 36/36, B7F 27/27, B7R 32/32, and healthy payment, settlement, LIVE, and Ads reconciliation. Held escrow remained exactly 71 BDAG expected and 71 BDAG actual. RLS/grants were healthy, B7C fixtures were zero, and failure hooks were absent.
 
 No SQL or deployed migration changed, no migration was created, no Supabase dry-run/push/deployment occurred, no financial formula or client commission authority changed, and no EAS command ran. MKT-B7C-C3 causal discard hardening is complete; MKT-B7C is fully and finally closed, and B7D is ready but has not been started.
+
+## B7C-C4 Pending Command Exclusivity
+
+### One-pending-command invariant
+
+The C3 SAVE-fence protocol made one recovery command causally safe, but its screen-local pending state was not exclusive. After content A published and its product-tag response became uncertain, a second publication B could reach `saveSelectedProductTags`; B success could clear pending A and B failure could replace it. The database remained financially correct, but the UI could orphan A's exact recovery intent.
+
+B7C-C4 enforces one unresolved post-publish tag command per upload screen. Pending state is mirrored synchronously into a ref and all mutations flow through one updater, eliminating the render-delay window in which a second handler could observe stale null state. A shared hard guard checks pending state and tag-operation state before allowing any new creation lifecycle, and the existing upload-in-flight ref now serializes single, Stream, photo, and carousel publication handlers.
+
+The guard protects `handleUploadSingle`, `handleUploadCarousel`, `handleGoLive`, LIVE title confirmation, mode switching, Creator Studio navigation, standard/AR camera, photo/video gallery, iOS video selection, file selection, carousel selection, product selection, and music selection. Existing local media or draft text is not destructively removed when pending appears. The recovery card remains visible independently of mode and retains content ID, content type, ordered product IDs, SAVE key, CLEAR key, and selected-product snapshot.
+
+`saveSelectedProductTags` also performs a defense-in-depth pending-ref check before the no-products branch or any backend call. Thus a bypassed outer path cannot overwrite or clear command A and does not call the B tag authority. Retry and authoritative Discard are the only recovery paths: failed Retry, failed SAVE fence, or failed CLEAR retains the exact pending object; confirmed Retry or confirmed fenced CLEAR sets pending null and unlocks publication. Recovery actions use a synchronous operation ref so Retry and Discard cannot start simultaneously. C3's stable keys, SAVE settlement fence, empty CLEAR, transport recovery, causal PostgreSQL proof, and no-media-republish contract remain unchanged.
+
+Focused tests model pending A while single, carousel, and Stream B attempts are made. All publication and tag-save counters remain zero, pending remains the same object, and both idempotency keys are unchanged. Separate tests prove failed Retry/Discard stay locked, successful Retry/Discard unlock, saving/clearing operation states block creation, all source entry points invoke the hard guard, and no direct `setPendingProductTagSave(result.pending)` overwrite remains.
+
+### B7C-C4 blockers and resolutions
+
+#### BLOCKER 15
+
+BLOCKER NUMBER: 15
+STAGE: Pending lifecycle audit
+ERROR / SQLSTATE: No SQL error; screen-local recoverability race.
+SYMPTOM: A second publication could overwrite pending command A with B or clear A after B tag-save success.
+ROOT CAUSE: New publication and picker handlers did not consult pending recovery state, and React state alone could lag within the same event turn.
+CLASSIFICATION: concurrency issue
+SOLUTION: Add a synchronized pending ref, one pure eligibility predicate, a shared hard guard across every creation entry point, and a defensive pending check inside tag saving.
+WHY THIS IS SAFEST: It preserves one bounded recovery command without introducing a queue, storage subsystem, navigation interceptor, or backend authority.
+FILES/FUNCTIONS CHANGED: Upload screen, commerce-only retry helper, and focused B7C client tests.
+PROOF: Pending-A models show zero B publication/tag calls, object/key identity preservation, failure lock retention, and confirmed resolution unlock.
+PRODUCTION ECONOMICS CHANGED: No.
+RESIDUAL RISK: Recovery remains intentionally screen-local; creator-owned publish controls now prevent leaving through a second creation workflow until resolution.
+STATUS: RESOLVED
+
+#### BLOCKER 16
+
+BLOCKER NUMBER: 16
+STAGE: Carousel recovery-path audit
+ERROR / SQLSTATE: No SQL error; client upload-lock lifecycle defect.
+SYMPTOM: Carousel returned immediately after a failed tag save without releasing the shared upload-in-flight ref, so successful later recovery would still leave new publication blocked.
+ROOT CAUSE: Carousel historically did not share the single-content `finally` path and its new common lock exposed the early-return gap.
+CLASSIFICATION: publish-flow limitation
+SOLUTION: Release only the upload-in-flight/progress state on the failed-tag early return while preserving pending command A; also use the shared ref for all carousel terminal paths.
+WHY THIS IS SAFEST: It keeps media A published and recoverable, prevents concurrent B, and unlocks only after the independent pending command is confirmed resolved.
+FILES/FUNCTIONS CHANGED: `app/(tabs)/upload.tsx` and focused source/runtime assertions.
+PROOF: Focused tests cover failure retention and Retry/Discard unlock; full Stream/photo/carousel source coverage and publication regressions pass.
+PRODUCTION ECONOMICS CHANGED: No.
+RESIDUAL RISK: None beyond the intentionally local recovery scope.
+STATUS: RESOLVED
+
+### Validation and final remote state
+
+The focused B7C suite passed 26/26 and the full Node suite passed 633 tests with zero failures. Focused ESLint passed with zero errors and zero warnings. TypeScript retained 187 unrelated baseline diagnostics and produced zero diagnostics in C4-modified files. The iOS export passed and Build remained 22.
+
+B7C retained every authority, concurrency, and C3 causal-fence proof with 28/28 counters zero and zero fixtures. B7B passed 23/23, B7A 36/36, B7F 27/27, and B7R 32/32. Economics remained seller 78, platform 10, Creator X 5, Creator Y 7, gross 100; buyer refund was exactly 100, and insufficient balance returned `money_moved=false` without partial movement. Held refund, manual review, `release_seller`, lifecycle, shipping, publication, fixture finalization, promotions, analytics, runtime, Ads finance, eligibility, finalization, delivery, and events passed.
+
+The final read-only audit confirmed latest migration `20260811024000`, all current reconciliations healthy, held escrow exactly 71 expected and 71 actual, RLS/grants healthy, B7C fixture users zero, and failure hooks absent. No SQL or migration changed, no Supabase dry-run/push/deployment occurred, no financial/BPS/LIVE/DeepAR/Banuba authority changed, and no EAS command ran. MKT-B7C-C4 pending-command exclusivity is complete; MKT-B7C is frozen and fully closed, and B7D is ready but has not been started.
