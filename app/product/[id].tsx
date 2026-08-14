@@ -154,12 +154,12 @@ export default function ProductScreen() {
   const analyticsSource = useMemo(
     () =>
       marketplaceSourceFromParams({
-        source,
-        sourceId,
+        source: showcaseItemId ? "creator" : source,
+        sourceId: sourceId ?? showcaseItemId ?? contentProductTagId,
         creatorId,
         liveSessionId,
       }),
-    [source, sourceId, creatorId, liveSessionId],
+    [source, sourceId, creatorId, liveSessionId, showcaseItemId, contentProductTagId],
   );
   const activeVariants = variants.filter((item) => item.status === "active");
   const selectedVariant = options.length

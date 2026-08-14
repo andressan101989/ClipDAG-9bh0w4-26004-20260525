@@ -146,7 +146,9 @@ export default function CreatorShowcaseScreen() {
           <Text style={styles.title}>Creator Showcase</Text>
           <Text style={styles.subtitle}>Products backed by seller-approved offers · {active.length} / 100</Text>
         </View>
-        <View style={styles.iconButton} />
+        <Pressable style={styles.iconButton} onPress={() => router.push('/creator-commerce-analytics' as never)} accessibilityRole="button" accessibilityLabel="Abrir rendimiento de Creator Commerce">
+          <MaterialCommunityIcons name="chart-line" size={22} color={Colors.accent} />
+        </Pressable>
       </View>
       <View style={styles.tabs}>
         <TabButton active={tab === "showcase"} label="My showcase" icon="storefront-outline" onPress={() => setTab("showcase")} />
