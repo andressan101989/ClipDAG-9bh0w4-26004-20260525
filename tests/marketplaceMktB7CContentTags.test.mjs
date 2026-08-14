@@ -360,7 +360,7 @@ test("product detail creates B7C attribution only inside explicit Add/Buy handle
   assert.match(product,/const handleAddToCart = async \(continueToCheckout = false\)/);
   assert.match(product,/handleAddToCart\(true\)/);
   assert.doesNotMatch(product,/useEffect\([\s\S]{0,400}createCreatorContentAttribution/);
-  assert.match(product,/showcaseItemId && contentProductTagId[\s\S]*Invalid creator context/);
+  assert.match(product,/\[showcaseItemId, contentProductTagId, liveSessionProductId\]\.filter\(Boolean\)\.length[\s\S]*Invalid creator context/);
 });
 
 test("Feed/Reel attributed cart lines preserve exact opaque-token semantics", () => {
