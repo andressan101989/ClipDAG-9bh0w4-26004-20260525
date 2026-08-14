@@ -131,6 +131,54 @@ PRODUCTION ECONOMICS CHANGED: No.
 RESIDUAL RISK: None beyond normal linked CLI credential availability.  
 STATUS: RESOLVED
 
+### BLOCKER 5
+
+BLOCKER NUMBER: 5
+STAGE: Primary post-deploy B7D reconciliation
+ERROR / SQLSTATE: Reconciliation counter `creator_settlement_leg_without_creator_allocation = 11`
+SYMPTOM: Eleven historical creator settlement legs had no normalized B7F item-allocation rows.
+ROOT CAUSE: These are legitimate pre-B7A/pre-B7F LIVE scalar settlement records created before normalized creator item allocations became mandatory.
+CLASSIFICATION: reconciliation issue / historical compatibility
+SOLUTION: Add `20260811025100_scope_marketplace_creator_analytics_history.sql`, scoping the mandatory normalized-settlement allocation counter to the B7A authority activation boundary while retaining all immutable historical settlement truth. The same corrective excludes legacy generic Feed/clip events unless their source ID is demonstrably a B7C content tag with the wrong type.
+WHY THIS IS SAFEST: It does not synthesize retroactive allocations, rewrite settlements, or weaken current-era identity and amount checks.
+FILES/FUNCTIONS CHANGED: Corrective migration; `reconcile_marketplace_creator_commerce_analytics()`; remote auditor parity check.
+PROOF: Initial remote counter was 11; clean disposable validation was 18/18 zero; corrective remote audit was 18/18 zero with B7C 28/28, B7B 23/23, B7A 36/36, B7F 27/27, and B7R 32/32.
+PRODUCTION ECONOMICS CHANGED: No.
+RESIDUAL RISK: Pre-authority LIVE history remains scalar by design and is not given invented item-level allocation rows.
+STATUS: RESOLVED
+
+### BLOCKER 6
+
+BLOCKER NUMBER: 6
+STAGE: Corrective disposable validation
+ERROR / SQLSTATE: Missing disposable seed prerequisites after a schema-only diagnostic restore
+SYMPTOM: The first diagnostic runtime lacked product category fixtures and could not execute the full financial proof.
+ROOT CAUSE: A schema-only linked restore is sufficient for reconciliation queries but not for fixture-heavy commerce proofs.
+CLASSIFICATION: runtime/tooling issue
+SOLUTION: Remove only the explicitly named disposable container, rebuild it through `db:marketplace-disposable -- create`, apply the corrective candidate, and rerun the canonical B7D proof.
+WHY THIS IS SAFEST: It uses the repository bootstrap and affects no linked data.
+FILES/FUNCTIONS CHANGED: None.
+PROOF: Canonical disposable proof passed with exact 78/10/5/7 economics, reversal and insufficiency assertions, 18/18 zero, and fixture count zero.
+PRODUCTION ECONOMICS CHANGED: No.
+RESIDUAL RISK: None.
+STATUS: RESOLVED
+
+### BLOCKER 7
+
+BLOCKER NUMBER: 7
+STAGE: Post-deploy corrective commit
+ERROR / SQLSTATE: N/A
+SYMPTOM: The primary implementation already consumed the preferred three-commit budget before the remote-only historical reconciliation mismatch was observable.
+ROOT CAUSE: The mismatch depended on legitimate remote pre-B7F history absent from disposable fixtures.
+CLASSIFICATION: deployment/reconciliation issue
+SOLUTION: Preserve immutable history and create one explicit fourth corrective commit; do not amend, rebase, squash, or hide the post-deploy correction.
+WHY THIS IS SAFEST: The repository history truthfully records the exact migration deployed to resolve the discovered remote condition.
+FILES/FUNCTIONS CHANGED: Corrective migration, remote auditor, and this execution log only.
+PROOF: Exact corrective dry-run contained one migration; corrective deployment and final read-only audit passed.
+PRODUCTION ECONOMICS CHANGED: No.
+RESIDUAL RISK: Commit count is four rather than the preferred maximum three; no unsafe Git history operation was used.
+STATUS: RESOLVED
+
 ## Remote pre-deploy audit
 
 Passed read-only at migration `20260811024000`. B7D objects were absent; B7C/B7B/B7A/B7F/B7R and all legacy Marketplace reconciliations were healthy, held escrow was 71/71, fixture users were zero, and failure hooks were absent.
@@ -157,4 +205,33 @@ Passed read-only at migration `20260811024000`. B7D objects were absent; B7C/B7B
 
 ## Deployment and final verification
 
-Pending completion of local regression, exact linked dry-run, deployment, and post-deploy audit.
+### Primary deployment
+
+- Primary migration: `20260811025000_marketplace_creator_commerce_analytics.sql`.
+- Linked dry-run contained exactly that migration, with no seeds or roles.
+- Primary migration deployed successfully.
+- The first remote B7D reconciliation then exposed 11 legitimate pre-B7F LIVE settlement legs without normalized item allocations; no financial row was rewritten.
+
+### Historical reconciliation correction
+
+- Corrective migration: `20260811025100_scope_marketplace_creator_analytics_history.sql`.
+- The correction scopes mandatory normalized allocation materialization to the B7A authority era and preserves pre-B7F LIVE scalar financial truth.
+- Corrective linked dry-run contained exactly that migration, with no seeds or roles.
+- Corrective migration deployed successfully.
+
+### Final remote verification
+
+- Latest migration: `20260811025100`.
+- B7D analytics reconciliation: 18/18 zero.
+- B7C content tags: 28/28 zero.
+- B7B Showcase: 23/23 zero.
+- B7A creator commerce: 36/36 zero.
+- B7F multi-creator allocations: 27/27 zero.
+- B7R settlement reversals: 32/32 zero.
+- Payments, settlements, LIVE, Ads delivery/events/eligibility/finalization/finance: healthy.
+- Held escrow: expected 71 BDAG, actual 71 BDAG, difference zero.
+- B7D fixture users: zero; failure hooks: absent.
+- Authenticated self-read, anonymous denial, private fact projections, and B7A/B7F helper privacy: passed.
+- Corrective local proof and full Node suite: 18/18 zero, fixtures zero, 639/639 tests passed.
+
+MKT-B7D Creator Commerce Analytics is CLOSED and deployed. B7E LIVE Creator Commerce V2 is unblocked but has not been started.

@@ -21,6 +21,7 @@ try{
   const audit=(await db.query(`select
     (select version from supabase_migrations.schema_migrations order by version desc limit 1)latest_migration,
     exists(select 1 from supabase_migrations.schema_migrations where version='20260811025000')b7d_applied,
+    exists(select 1 from supabase_migrations.schema_migrations where version='20260811025100')b7d_history_scope_applied,
     to_regprocedure('public.get_my_marketplace_creator_commerce_analytics(text)')is not null analytics_rpc_present,
     to_regprocedure('public.reconcile_marketplace_creator_commerce_analytics()')is not null reconciliation_present,
     to_regclass('public.marketplace_creator_commerce_analytics_facts')is not null financial_projection_present,
@@ -38,7 +39,7 @@ try{
     not has_function_privilege('authenticated','public.apply_marketplace_order_item_creator_allocations(uuid,jsonb,uuid)','EXECUTE')b7f_helper_private`)).rows[0];for(const[name,healthy]of Object.entries(authority))assert.equal(healthy,true,`b7d_remote_authority_${name}`);}
   assert.equal(audit.b7d_fixture_users,0,"b7d_remote_fixture_users_present");assert.equal(audit.failure_function_present,false,"b7d_remote_failure_function_present");assert.equal(audit.failure_trigger_present,false,"b7d_remote_failure_trigger_present");
   if(expectPreB7d){assert.equal(audit.latest_migration,"20260811024000","b7d_remote_predeploy_parity_mismatch");assert.equal(audit.b7d_applied,false,"b7d_remote_unexpectedly_applied");assert.equal(audit.analytics_rpc_present,false,"b7d_remote_rpc_unexpected");}
-  if(requireB7d){assert.equal(audit.latest_migration,"20260811025000","b7d_remote_migration_parity_mismatch");assert.equal(audit.b7d_applied,true,"b7d_remote_migration_missing");assert.equal(audit.analytics_rpc_present,true,"b7d_remote_rpc_missing");assert.equal(audit.reconciliation_present,true,"b7d_remote_reconciliation_missing");assert.equal(Object.keys(reconciliations.reconcile_marketplace_creator_commerce_analytics).length,18);}
+  if(requireB7d){assert.equal(audit.latest_migration,"20260811025100","b7d_remote_migration_parity_mismatch");assert.equal(audit.b7d_applied,true,"b7d_remote_migration_missing");assert.equal(audit.b7d_history_scope_applied,true,"b7d_remote_history_scope_missing");assert.equal(audit.analytics_rpc_present,true,"b7d_remote_rpc_missing");assert.equal(audit.reconciliation_present,true,"b7d_remote_reconciliation_missing");assert.equal(Object.keys(reconciliations.reconcile_marketplace_creator_commerce_analytics).length,18);}
   for(const[name,count]of[["reconcile_marketplace_creator_content_tags",28],["reconcile_marketplace_creator_showcase",23],["reconcile_marketplace_creator_commerce",36],["reconcile_marketplace_multi_creator_allocations",27],["reconcile_marketplace_settlement_reversals",32]])if(Object.hasOwn(reconciliations,name))assert.equal(Object.keys(reconciliations[name]).length,count,`${name}_counter_count`);
   console.log(JSON.stringify({ok:true,...audit,authority,reconciliations},null,2));
 }finally{await db.end().catch(()=>{});}
