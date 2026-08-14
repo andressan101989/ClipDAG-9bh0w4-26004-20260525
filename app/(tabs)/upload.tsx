@@ -62,7 +62,7 @@ import {
 import { setMyMarketplaceContentProductTags } from '@/services/marketplaceCreatorContentTagService';
 import type { MarketplaceCreatorShowcaseProduct } from '@/services/marketplaceCreatorShowcaseService';
 import {
-  attemptCreatorContentTagClear,
+  attemptCreatorContentTagAuthoritativeDiscard,
   attemptCreatorContentTagSave,
   createPendingCreatorContentTagSave,
   type PendingCreatorContentTagSave,
@@ -246,12 +246,12 @@ export default function UploadScreen() {
   const continueWithoutPendingProducts = useCallback(async () => {
     if (!pendingProductTagSave || productTagOperation !== 'idle') return;
     setProductTagOperation('clearing');
-    const result = await attemptCreatorContentTagClear(pendingProductTagSave, (clearCommand) => (
+    const result = await attemptCreatorContentTagAuthoritativeDiscard(pendingProductTagSave, (command) => (
       setMyMarketplaceContentProductTags({
-        contentType: clearCommand.contentType,
-        contentId: clearCommand.contentId,
-        productIds: clearCommand.productIds,
-        idempotencyKey: clearCommand.idempotencyKey,
+        contentType: command.contentType,
+        contentId: command.contentId,
+        productIds: command.productIds,
+        idempotencyKey: command.idempotencyKey,
       })
     ));
     setProductTagOperation('idle');
@@ -259,6 +259,8 @@ export default function UploadScreen() {
     if (result.ok) {
       setSelectedProducts([]);
       showAlert('Contenido publicado', 'El contenido continuará sin productos.');
+    } else if (result.stage === 'save_fence') {
+      showAlert('Productos pendientes', 'No pudimos confirmar el estado de los productos. Intenta nuevamente.');
     } else {
       showAlert('Productos pendientes', 'No pudimos confirmar que los productos se eliminaron. Intenta nuevamente.');
     }

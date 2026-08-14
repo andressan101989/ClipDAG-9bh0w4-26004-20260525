@@ -5,6 +5,7 @@ import { addMarketplaceCartItem } from "../services/marketplaceCart.ts";
 import { marketplaceContentTypeForMedia } from "../services/marketplaceCreatorContentTagCore.mjs";
 import {
   attemptCreatorContentTagClear,
+  attemptCreatorContentTagAuthoritativeDiscard,
   attemptCreatorContentTagSave,
   createPendingCreatorContentTagSave,
 } from "../services/marketplaceCreatorContentTagPublishRetry.ts";
@@ -91,6 +92,148 @@ test("publish tag retry preserves the logical command and never republishes medi
   assert.equal(saveCalls,2); assert.equal(publishCalls,0);
 });
 
+function createTagCommandModel() {
+  const commands = new Map();
+  const inflight = new Map();
+  const server = { products: [] };
+  let applications = 0;
+  const apply = async (command, beforeCommit) => {
+    const fingerprint = `${command.contentType}|${command.contentId}|${command.productIds.join(",")}`;
+    const prior = commands.get(command.idempotencyKey);
+    if (prior) {
+      if (prior.fingerprint !== fingerprint) throw new Error("idempotency conflict");
+      return prior.result;
+    }
+    const running = inflight.get(command.idempotencyKey);
+    if (running) return running;
+    const operation = (async () => {
+      await beforeCommit?.();
+      server.products = [...command.productIds];
+      applications += 1;
+      const result = { products: [...server.products] };
+      commands.set(command.idempotencyKey, { fingerprint, result });
+      return result;
+    })();
+    inflight.set(command.idempotencyKey, operation);
+    try { return await operation; } finally { inflight.delete(command.idempotencyKey); }
+  };
+  return { apply, commands, server, get applications() { return applications; } };
+}
+
+function createPendingFixture() {
+  return createPendingCreatorContentTagSave({
+    contentId:"content-remote", contentType:"feed", productIds:["p1"],
+    selectedProducts:[{ productId:"p1" }], idempotencyKey:"save-key", clearIdempotencyKey:"clear-key",
+  });
+}
+
+test("authoritative discard fences an in-flight original save before clear", async () => {
+  const pending = createPendingFixture();
+  const model = createTagCommandModel();
+  let releaseOriginal;
+  const originalMayCommit = new Promise((resolve) => { releaseOriginal = resolve; });
+  let originalStarted;
+  const started = new Promise((resolve) => { originalStarted = resolve; });
+  let originalServerOperation;
+  const uncertainSave = await attemptCreatorContentTagSave(pending, async (command) => {
+    originalServerOperation = model.apply(command, async () => { originalStarted(); await originalMayCommit; });
+    throw new Error("transport uncertainty while save remains in flight");
+  });
+  assert.equal(uncertainSave.ok,false);
+  await started;
+  let discardSettled = false;
+  const discardPromise = attemptCreatorContentTagAuthoritativeDiscard(uncertainSave.pending,model.apply)
+    .then((result) => { discardSettled = true; return result; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(discardSettled,false,"clear cannot overtake the in-flight save fence");
+  releaseOriginal();
+  await originalServerOperation;
+  const discarded = await discardPromise;
+  assert.equal(discarded.ok,true); assert.equal(discarded.pending,null);
+  assert.deepEqual(model.server.products,[]);
+  assert.deepEqual([...model.commands.keys()],["save-key","clear-key"]);
+});
+
+test("authoritative discard clears a committed save whose response was lost", async () => {
+  const pending = createPendingFixture();
+  const model = createTagCommandModel();
+  const uncertainSave = await attemptCreatorContentTagSave(pending,async (command) => {
+    await model.apply(command);
+    throw new Error("response lost after save commit");
+  });
+  assert.equal(uncertainSave.ok,false); assert.deepEqual(model.server.products,["p1"]);
+  const discarded = await attemptCreatorContentTagAuthoritativeDiscard(uncertainSave.pending,model.apply);
+  assert.equal(discarded.ok,true); assert.deepEqual(model.server.products,[]);
+});
+
+test("authoritative discard settles a save that never reached the server before clearing", async () => {
+  const pending = createPendingFixture();
+  const model = createTagCommandModel();
+  const uncertainSave = await attemptCreatorContentTagSave(pending,async () => {
+    throw new Error("request failed before server receipt");
+  });
+  assert.equal(model.commands.size,0);
+  const discarded = await attemptCreatorContentTagAuthoritativeDiscard(uncertainSave.pending,model.apply);
+  assert.equal(discarded.ok,true); assert.deepEqual(model.server.products,[]);
+  assert.deepEqual([...model.commands.keys()],["save-key","clear-key"]);
+});
+
+test("lost fence response prevents clear and a stable-key retry finishes empty", async () => {
+  const pending = createPendingFixture();
+  const model = createTagCommandModel();
+  let loseFenceResponse = true;
+  const first = await attemptCreatorContentTagAuthoritativeDiscard(pending,async (command) => {
+    const result = await model.apply(command);
+    if (command.idempotencyKey === "save-key" && loseFenceResponse) {
+      loseFenceResponse = false;
+      throw new Error("fence response lost");
+    }
+    return result;
+  });
+  assert.equal(first.ok,false); assert.equal(first.stage,"save_fence"); assert.equal(first.pending,pending);
+  assert.deepEqual(model.server.products,["p1"]); assert.equal(model.commands.has("clear-key"),false);
+  const retried = await attemptCreatorContentTagAuthoritativeDiscard(first.pending,model.apply);
+  assert.equal(retried.ok,true); assert.deepEqual(model.server.products,[]);
+});
+
+test("lost clear response retries both stable keys without reapplying the old save", async () => {
+  const pending = createPendingFixture();
+  assert.notEqual(pending.idempotencyKey,pending.clearIdempotencyKey);
+  const model = createTagCommandModel();
+  let publisherCalls = 0;
+  let loseClearResponse = true;
+  const uncertainClear = await attemptCreatorContentTagAuthoritativeDiscard(pending,async (command) => {
+    const result = await model.apply(command);
+    if (command.idempotencyKey === "clear-key" && loseClearResponse) {
+      loseClearResponse = false;
+      throw new Error("clear response lost after commit");
+    }
+    return result;
+  });
+  assert.equal(uncertainClear.ok,false); assert.equal(uncertainClear.stage,"clear");
+  assert.equal(uncertainClear.pending,pending); assert.deepEqual(model.server.products,[]);
+  const confirmedClear = await attemptCreatorContentTagAuthoritativeDiscard(uncertainClear.pending,async (command) => {
+    assert.equal(command.contentId,"content-remote"); assert.equal(command.contentType,"feed");
+    if (command.idempotencyKey === "save-key") assert.deepEqual(command.productIds,["p1"]);
+    else { assert.deepEqual(command.productIds,[]); assert.equal(command.idempotencyKey,"clear-key"); }
+    return model.apply(command);
+  });
+  assert.equal(confirmedClear.ok,true); assert.equal(confirmedClear.pending,null);
+  assert.deepEqual(model.server.products,[]); assert.equal(model.applications,2); assert.equal(publisherCalls,0);
+});
+
+test("failed discard fence retains pending state and skips clear", async () => {
+  const pending = createPendingFixture();
+  const calls=[];
+  const failed = await attemptCreatorContentTagAuthoritativeDiscard(pending,async (command) => {
+    calls.push(command); throw new Error("offline");
+  });
+  assert.equal(failed.ok,false); assert.equal(failed.stage,"save_fence"); assert.equal(failed.pending,pending);
+  assert.equal(calls.length,1); assert.equal(calls[0].idempotencyKey,"save-key");
+  assert.deepEqual(calls[0].productIds,["p1"]);
+  assert.match(upload,/No pudimos confirmar el estado de los productos/);
+});
+
 test("explicit discard authoritatively clears a transport-uncertain save with a distinct stable key", async () => {
   const pending = createPendingCreatorContentTagSave({
     contentId:"content-remote", contentType:"feed", productIds:["p1"],
@@ -141,8 +284,8 @@ test("upload retry is shared by Stream, photo, and carousel and suppresses contr
   assert.equal((upload.match(/if \(!tagsSaved\) return;/g)??[]).length,3);
   assert.match(upload,/executeProductTagSave\(pendingProductTagSave\)/);
   assert.match(upload,/setPendingProductTagSave\(result\.pending\)/);
-  assert.match(upload,/attemptCreatorContentTagClear\(pendingProductTagSave/);
-  assert.match(upload,/productIds: clearCommand\.productIds/);
+  assert.match(upload,/attemptCreatorContentTagAuthoritativeDiscard\(pendingProductTagSave/);
+  assert.match(upload,/productIds: command\.productIds/);
 });
 
 test("Feed batches summaries and native/web cards expose an unobtrusive shopping action", () => {

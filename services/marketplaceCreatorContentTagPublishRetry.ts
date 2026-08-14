@@ -28,6 +28,13 @@ export interface CreatorContentTagClearCommand {
   idempotencyKey: string;
 }
 
+export interface CreatorContentTagAuthorityCommand {
+  contentId: string;
+  contentType: MarketplaceCreatorContentType;
+  productIds: string[];
+  idempotencyKey: string;
+}
+
 export async function attemptCreatorContentTagClear(
   pending: PendingCreatorContentTagSave,
   clear: (command: CreatorContentTagClearCommand) => Promise<unknown>,
@@ -43,6 +50,36 @@ export async function attemptCreatorContentTagClear(
   } catch (error) {
     return { ok: false, pending, error };
   }
+}
+
+export async function attemptCreatorContentTagAuthoritativeDiscard(
+  pending: PendingCreatorContentTagSave,
+  setTags: (command: CreatorContentTagAuthorityCommand) => Promise<unknown>,
+): Promise<
+  | { ok: true; pending: null }
+  | {
+      ok: false;
+      pending: PendingCreatorContentTagSave;
+      stage: "save_fence" | "clear";
+      error: unknown;
+    }
+> {
+  try {
+    await setTags({
+      contentId: pending.contentId,
+      contentType: pending.contentType,
+      productIds: [...pending.productIds],
+      idempotencyKey: pending.idempotencyKey,
+    });
+  } catch (error) {
+    return { ok: false, pending, stage: "save_fence", error };
+  }
+
+  const clearResult = await attemptCreatorContentTagClear(pending, setTags);
+  if (!clearResult.ok) {
+    return { ...clearResult, stage: "clear" };
+  }
+  return clearResult;
 }
 
 export async function attemptCreatorContentTagSave(
