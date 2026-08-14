@@ -7,6 +7,7 @@ export interface PendingCreatorContentTagSave {
   productIds: string[];
   selectedProducts: MarketplaceCreatorShowcaseProduct[];
   idempotencyKey: string;
+  clearIdempotencyKey: string;
 }
 
 export function createPendingCreatorContentTagSave(input: PendingCreatorContentTagSave): PendingCreatorContentTagSave {
@@ -16,7 +17,32 @@ export function createPendingCreatorContentTagSave(input: PendingCreatorContentT
     productIds: [...input.productIds],
     selectedProducts: [...input.selectedProducts],
     idempotencyKey: input.idempotencyKey,
+    clearIdempotencyKey: input.clearIdempotencyKey,
   };
+}
+
+export interface CreatorContentTagClearCommand {
+  contentId: string;
+  contentType: MarketplaceCreatorContentType;
+  productIds: [];
+  idempotencyKey: string;
+}
+
+export async function attemptCreatorContentTagClear(
+  pending: PendingCreatorContentTagSave,
+  clear: (command: CreatorContentTagClearCommand) => Promise<unknown>,
+): Promise<{ ok: true; pending: null } | { ok: false; pending: PendingCreatorContentTagSave; error: unknown }> {
+  try {
+    await clear({
+      contentId: pending.contentId,
+      contentType: pending.contentType,
+      productIds: [],
+      idempotencyKey: pending.clearIdempotencyKey,
+    });
+    return { ok: true, pending: null };
+  } catch (error) {
+    return { ok: false, pending, error };
+  }
 }
 
 export async function attemptCreatorContentTagSave(

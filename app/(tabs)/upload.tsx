@@ -62,6 +62,7 @@ import {
 import { setMyMarketplaceContentProductTags } from '@/services/marketplaceCreatorContentTagService';
 import type { MarketplaceCreatorShowcaseProduct } from '@/services/marketplaceCreatorShowcaseService';
 import {
+  attemptCreatorContentTagClear,
   attemptCreatorContentTagSave,
   createPendingCreatorContentTagSave,
   type PendingCreatorContentTagSave,
@@ -196,7 +197,7 @@ export default function UploadScreen() {
   const [productSelectorVisible, setProductSelectorVisible] = useState(false);
   const [selectedProducts, setSelectedProducts] = useState<MarketplaceCreatorShowcaseProduct[]>([]);
   const [pendingProductTagSave, setPendingProductTagSave] = useState<PendingCreatorContentTagSave | null>(null);
-  const [isRetryingProductTags, setIsRetryingProductTags] = useState(false);
+  const [productTagOperation, setProductTagOperation] = useState<'idle' | 'saving' | 'clearing'>('idle');
 
   const executeProductTagSave = useCallback(async (command: PendingCreatorContentTagSave) => (
     attemptCreatorContentTagSave(command, (stableCommand) => setMyMarketplaceContentProductTags({
@@ -215,6 +216,7 @@ export default function UploadScreen() {
       productIds: selectedProducts.map((product) => product.productId),
       selectedProducts,
       idempotencyKey: randomUUID(),
+      clearIdempotencyKey: randomUUID(),
     });
     const result = await executeProductTagSave(command);
     setPendingProductTagSave(result.pending);
@@ -228,10 +230,10 @@ export default function UploadScreen() {
   }, [executeProductTagSave, selectedProducts, showAlert]);
 
   const retryPendingProductTags = useCallback(async () => {
-    if (!pendingProductTagSave || isRetryingProductTags) return;
-    setIsRetryingProductTags(true);
+    if (!pendingProductTagSave || productTagOperation !== 'idle') return;
+    setProductTagOperation('saving');
     const result = await executeProductTagSave(pendingProductTagSave);
-    setIsRetryingProductTags(false);
+    setProductTagOperation('idle');
     setPendingProductTagSave(result.pending);
     if (result.ok) {
       setSelectedProducts([]);
@@ -239,13 +241,28 @@ export default function UploadScreen() {
     } else {
       showAlert('Productos pendientes', 'No pudimos guardarlos todavía. Puedes volver a intentarlo.');
     }
-  }, [executeProductTagSave, isRetryingProductTags, pendingProductTagSave, showAlert]);
+  }, [executeProductTagSave, pendingProductTagSave, productTagOperation, showAlert]);
 
-  const continueWithoutPendingProducts = useCallback(() => {
-    setPendingProductTagSave(null);
-    setSelectedProducts([]);
-    showAlert('Contenido publicado', 'El contenido continuará sin productos.');
-  }, [showAlert]);
+  const continueWithoutPendingProducts = useCallback(async () => {
+    if (!pendingProductTagSave || productTagOperation !== 'idle') return;
+    setProductTagOperation('clearing');
+    const result = await attemptCreatorContentTagClear(pendingProductTagSave, (clearCommand) => (
+      setMyMarketplaceContentProductTags({
+        contentType: clearCommand.contentType,
+        contentId: clearCommand.contentId,
+        productIds: clearCommand.productIds,
+        idempotencyKey: clearCommand.idempotencyKey,
+      })
+    ));
+    setProductTagOperation('idle');
+    setPendingProductTagSave(result.pending);
+    if (result.ok) {
+      setSelectedProducts([]);
+      showAlert('Contenido publicado', 'El contenido continuará sin productos.');
+    } else {
+      showAlert('Productos pendientes', 'No pudimos confirmar que los productos se eliminaron. Intenta nuevamente.');
+    }
+  }, [pendingProductTagSave, productTagOperation, showAlert]);
 
   // ── Live ────────────────────────────────────────────────────────────────────
   const [showLiveTitleModal, setShowLiveTitleModal] = useState(false);
@@ -796,20 +813,22 @@ export default function UploadScreen() {
           <Pressable
             style={styles.pendingProductTagsPrimary}
             onPress={() => void retryPendingProductTags()}
-            disabled={isRetryingProductTags}
+            disabled={productTagOperation !== 'idle'}
             accessibilityLabel="Reintentar productos"
           >
-            {isRetryingProductTags
+            {productTagOperation === 'saving'
               ? <ActivityIndicator size="small" color="#fff" />
               : <Text style={styles.pendingProductTagsPrimaryText}>Reintentar productos</Text>}
           </Pressable>
           <Pressable
             style={styles.pendingProductTagsSecondary}
-            onPress={continueWithoutPendingProducts}
-            disabled={isRetryingProductTags}
+            onPress={() => void continueWithoutPendingProducts()}
+            disabled={productTagOperation !== 'idle'}
             accessibilityLabel="Continuar sin productos"
           >
-            <Text style={styles.pendingProductTagsSecondaryText}>Continuar sin productos</Text>
+            {productTagOperation === 'clearing'
+              ? <ActivityIndicator size="small" color={Colors.textSecondary} />
+              : <Text style={styles.pendingProductTagsSecondaryText}>Continuar sin productos</Text>}
           </Pressable>
         </View>
       ) : null}

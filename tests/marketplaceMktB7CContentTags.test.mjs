@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { addMarketplaceCartItem } from "../services/marketplaceCart.ts";
 import { marketplaceContentTypeForMedia } from "../services/marketplaceCreatorContentTagCore.mjs";
 import {
+  attemptCreatorContentTagClear,
   attemptCreatorContentTagSave,
   createPendingCreatorContentTagSave,
 } from "../services/marketplaceCreatorContentTagPublishRetry.ts";
@@ -66,7 +67,7 @@ test("publish tag retry preserves the logical command and never republishes medi
   const product = { productId:"product-a", title:"Product A" };
   const pending = createPendingCreatorContentTagSave({
     contentId:"content-1", contentType:"reel", productIds:["product-a"],
-    selectedProducts:[product], idempotencyKey:"stable-key",
+    selectedProducts:[product], idempotencyKey:"stable-key", clearIdempotencyKey:"stable-clear-key",
   });
   let saveCalls = 0, publishCalls = 0;
   const failed = await attemptCreatorContentTagSave(pending, async (command) => {
@@ -90,6 +91,49 @@ test("publish tag retry preserves the logical command and never republishes medi
   assert.equal(saveCalls,2); assert.equal(publishCalls,0);
 });
 
+test("explicit discard authoritatively clears a transport-uncertain save with a distinct stable key", async () => {
+  const pending = createPendingCreatorContentTagSave({
+    contentId:"content-remote", contentType:"feed", productIds:["p1"],
+    selectedProducts:[{ productId:"p1" }], idempotencyKey:"save-key", clearIdempotencyKey:"clear-key",
+  });
+  assert.notEqual(pending.idempotencyKey,pending.clearIdempotencyKey);
+  const commands = new Map(), server = { products:[] }, lost = new Set(["save-key","clear-key"]);
+  let publisherCalls = 0;
+  const apply = async (command) => {
+    const fingerprint = `${command.contentType}|${command.contentId}|${command.productIds.join(",")}`;
+    const prior = commands.get(command.idempotencyKey);
+    if (prior && prior.fingerprint !== fingerprint) throw new Error("idempotency conflict");
+    if (!prior) {
+      server.products = [...command.productIds];
+      commands.set(command.idempotencyKey,{ fingerprint, result:{ products:[...server.products] } });
+    }
+    if (lost.delete(command.idempotencyKey)) throw new Error("response lost after commit");
+    return commands.get(command.idempotencyKey).result;
+  };
+  const uncertainSave = await attemptCreatorContentTagSave(pending,apply);
+  assert.equal(uncertainSave.ok,false); assert.deepEqual(server.products,["p1"]);
+  const uncertainClear = await attemptCreatorContentTagClear(uncertainSave.pending,apply);
+  assert.equal(uncertainClear.ok,false); assert.equal(uncertainClear.pending,pending); assert.deepEqual(server.products,[]);
+  const confirmedClear = await attemptCreatorContentTagClear(uncertainClear.pending,async (command) => {
+    assert.equal(command.contentId,"content-remote"); assert.equal(command.contentType,"feed");
+    assert.deepEqual(command.productIds,[]); assert.equal(command.idempotencyKey,"clear-key");
+    return apply(command);
+  });
+  assert.equal(confirmedClear.ok,true); assert.equal(confirmedClear.pending,null);
+  assert.deepEqual(server.products,[]); assert.equal(publisherCalls,0);
+});
+
+test("failed authoritative clear retains pending state and cannot claim completion", async () => {
+  const pending = createPendingCreatorContentTagSave({
+    contentId:"content-1", contentType:"reel", productIds:["p1"], selectedProducts:[],
+    idempotencyKey:"save-key", clearIdempotencyKey:"clear-key",
+  });
+  const failed = await attemptCreatorContentTagClear(pending,async () => { throw new Error("offline"); });
+  assert.equal(failed.ok,false); assert.equal(failed.pending,pending);
+  assert.match(upload,/No pudimos confirmar que los productos se eliminaron/);
+  assert.match(upload,/if \(result\.ok\)[\s\S]*El contenido continuará sin productos/);
+});
+
 test("upload retry is shared by Stream, photo, and carousel and suppresses contradictory success", () => {
   assert.match(upload,/saveSelectedProductTags\(published\.postId, 'reel'\)/);
   assert.match(upload,/postId \? await saveSelectedProductTags\(postId, 'feed'\)/);
@@ -97,7 +141,8 @@ test("upload retry is shared by Stream, photo, and carousel and suppresses contr
   assert.equal((upload.match(/if \(!tagsSaved\) return;/g)??[]).length,3);
   assert.match(upload,/executeProductTagSave\(pendingProductTagSave\)/);
   assert.match(upload,/setPendingProductTagSave\(result\.pending\)/);
-  assert.match(upload,/setPendingProductTagSave\(null\)/);
+  assert.match(upload,/attemptCreatorContentTagClear\(pendingProductTagSave/);
+  assert.match(upload,/productIds: clearCommand\.productIds/);
 });
 
 test("Feed batches summaries and native/web cards expose an unobtrusive shopping action", () => {
