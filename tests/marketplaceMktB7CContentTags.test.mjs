@@ -7,6 +7,7 @@ import {
   attemptCreatorContentTagClear,
   attemptCreatorContentTagAuthoritativeDiscard,
   attemptCreatorContentTagSave,
+  canStartCreatorContentPublication,
   createPendingCreatorContentTagSave,
 } from "../services/marketplaceCreatorContentTagPublishRetry.ts";
 
@@ -234,6 +235,56 @@ test("failed discard fence retains pending state and skips clear", async () => {
   assert.match(upload,/No pudimos confirmar el estado de los productos/);
 });
 
+test("one unresolved command blocks single, carousel, and Stream publication without replacing pending A", () => {
+  const pendingA = createPendingFixture();
+  let pending = pendingA;
+  let singlePublishes = 0, carouselPublishes = 0, streamPublishes = 0, tagSaves = 0;
+  const start = (publish) => {
+    if (!canStartCreatorContentPublication(pending,"idle")) return false;
+    publish(); tagSaves += 1; pending = null; return true;
+  };
+  assert.equal(start(() => { singlePublishes += 1; }),false);
+  assert.equal(start(() => { carouselPublishes += 1; }),false);
+  assert.equal(start(() => { streamPublishes += 1; }),false);
+  assert.equal(singlePublishes,0); assert.equal(carouselPublishes,0); assert.equal(streamPublishes,0);
+  assert.equal(tagSaves,0); assert.equal(pending,pendingA);
+  assert.equal(pending.idempotencyKey,"save-key"); assert.equal(pending.clearIdempotencyKey,"clear-key");
+});
+
+test("failed Retry or Discard preserves pending exclusivity", async () => {
+  const pendingA = createPendingFixture();
+  const retry = await attemptCreatorContentTagSave(pendingA,async () => { throw new Error("offline"); });
+  assert.equal(retry.ok,false); assert.equal(retry.pending,pendingA);
+  assert.equal(canStartCreatorContentPublication(retry.pending,"idle"),false);
+  const discard = await attemptCreatorContentTagAuthoritativeDiscard(pendingA,async () => { throw new Error("offline"); });
+  assert.equal(discard.ok,false); assert.equal(discard.pending,pendingA); assert.equal(discard.stage,"save_fence");
+  assert.equal(canStartCreatorContentPublication(discard.pending,"idle"),false);
+});
+
+test("confirmed Retry or authoritative Discard unlocks the next publication", async () => {
+  const pendingA = createPendingFixture();
+  const retry = await attemptCreatorContentTagSave(pendingA,async () => ({ ok:true }));
+  assert.equal(retry.ok,true); assert.equal(canStartCreatorContentPublication(retry.pending,"idle"),true);
+  const discard = await attemptCreatorContentTagAuthoritativeDiscard(pendingA,async () => ({ ok:true }));
+  assert.equal(discard.ok,true); assert.equal(canStartCreatorContentPublication(discard.pending,"idle"),true);
+  assert.equal(canStartCreatorContentPublication(null,"saving"),false);
+  assert.equal(canStartCreatorContentPublication(null,"clearing"),false);
+});
+
+test("upload screen hard-guards publish, mode, picker, LIVE, and defensive tag-save entry points", () => {
+  assert.match(upload,/const handleUploadSingle = useCallback\(async \(\) => \{\s*if \(!guardNewCreatorContentPublication\(\)\) return;/);
+  assert.match(upload,/const handleUploadCarousel = useCallback\(async \(\) => \{\s*if \(!guardNewCreatorContentPublication\(\)\) return;/);
+  assert.match(upload,/const handleGoLive = useCallback\(\(\) => \{\s*if \(!guardNewCreatorContentPublication\(\)\) return;/);
+  assert.match(upload,/const handleLiveTitleConfirmed = useCallback[\s\S]*if \(!guardNewCreatorContentPublication\(\)\)/);
+  assert.match(upload,/const openCamera = useCallback[\s\S]*if \(!guardNewCreatorContentPublication\(\)\) return;/);
+  assert.match(upload,/const pickSingleMedia[\s\S]*if \(!guardNewCreatorContentPublication\(\)\) return;/);
+  assert.match(upload,/const pickCarouselImages = useCallback[\s\S]*if \(!guardNewCreatorContentPublication\(\)\) return;/);
+  assert.match(upload,/if\(!guardNewCreatorContentPublication\(\)\) return;[\s\S]*if \(m\.key === 'camera'\)/);
+  assert.match(upload,/const saveSelectedProductTags[\s\S]*if \(pendingProductTagSaveRef\.current\)[\s\S]*return false;/);
+  assert.doesNotMatch(upload,/setPendingProductTagSave\(result\.pending\)/);
+  assert.match(upload,/updatePendingProductTagSave\(result\.pending\)/);
+});
+
 test("explicit discard authoritatively clears a transport-uncertain save with a distinct stable key", async () => {
   const pending = createPendingCreatorContentTagSave({
     contentId:"content-remote", contentType:"feed", productIds:["p1"],
@@ -281,9 +332,9 @@ test("upload retry is shared by Stream, photo, and carousel and suppresses contr
   assert.match(upload,/saveSelectedProductTags\(published\.postId, 'reel'\)/);
   assert.match(upload,/postId \? await saveSelectedProductTags\(postId, 'feed'\)/);
   assert.match(upload,/const tagsSaved = await saveSelectedProductTags\(postId, 'feed'\)/);
-  assert.equal((upload.match(/if \(!tagsSaved\) return;/g)??[]).length,3);
+  assert.equal((upload.match(/if \(!tagsSaved\)/g)??[]).length,3);
   assert.match(upload,/executeProductTagSave\(pendingProductTagSave\)/);
-  assert.match(upload,/setPendingProductTagSave\(result\.pending\)/);
+  assert.match(upload,/updatePendingProductTagSave\(result\.pending\)/);
   assert.match(upload,/attemptCreatorContentTagAuthoritativeDiscard\(pendingProductTagSave/);
   assert.match(upload,/productIds: command\.productIds/);
 });

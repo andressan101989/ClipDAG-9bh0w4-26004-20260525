@@ -10,6 +10,15 @@ export interface PendingCreatorContentTagSave {
   clearIdempotencyKey: string;
 }
 
+export type CreatorContentTagOperation = "idle" | "saving" | "clearing";
+
+export function canStartCreatorContentPublication(
+  pending: PendingCreatorContentTagSave | null,
+  operation: CreatorContentTagOperation,
+): boolean {
+  return pending === null && operation === "idle";
+}
+
 export function createPendingCreatorContentTagSave(input: PendingCreatorContentTagSave): PendingCreatorContentTagSave {
   return {
     contentId: input.contentId,

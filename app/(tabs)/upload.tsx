@@ -64,7 +64,9 @@ import type { MarketplaceCreatorShowcaseProduct } from '@/services/marketplaceCr
 import {
   attemptCreatorContentTagAuthoritativeDiscard,
   attemptCreatorContentTagSave,
+  canStartCreatorContentPublication,
   createPendingCreatorContentTagSave,
+  type CreatorContentTagOperation,
   type PendingCreatorContentTagSave,
 } from '@/services/marketplaceCreatorContentTagPublishRetry';
 
@@ -197,7 +199,38 @@ export default function UploadScreen() {
   const [productSelectorVisible, setProductSelectorVisible] = useState(false);
   const [selectedProducts, setSelectedProducts] = useState<MarketplaceCreatorShowcaseProduct[]>([]);
   const [pendingProductTagSave, setPendingProductTagSave] = useState<PendingCreatorContentTagSave | null>(null);
-  const [productTagOperation, setProductTagOperation] = useState<'idle' | 'saving' | 'clearing'>('idle');
+  const pendingProductTagSaveRef = useRef<PendingCreatorContentTagSave | null>(null);
+  const [productTagOperation, setProductTagOperation] = useState<CreatorContentTagOperation>('idle');
+  const productTagOperationRef = useRef<CreatorContentTagOperation>('idle');
+
+  const updatePendingProductTagSave = useCallback((pending: PendingCreatorContentTagSave | null) => {
+    pendingProductTagSaveRef.current = pending;
+    setPendingProductTagSave(pending);
+  }, []);
+
+  const updateProductTagOperation = useCallback((operation: CreatorContentTagOperation) => {
+    productTagOperationRef.current = operation;
+    setProductTagOperation(operation);
+  }, []);
+
+  const showPendingProductsResolutionAlert = useCallback(() => {
+    showAlert(
+      'Productos pendientes',
+      'Resuelve primero los productos del contenido anterior antes de crear otra publicación.',
+    );
+  }, [showAlert]);
+
+  const guardNewCreatorContentPublication = useCallback(() => {
+    if (!canStartCreatorContentPublication(pendingProductTagSaveRef.current, productTagOperationRef.current)) {
+      showPendingProductsResolutionAlert();
+      return false;
+    }
+    return !uploadInFlightRef.current;
+  }, [showPendingProductsResolutionAlert]);
+
+  const openCreatorStudio = useCallback(() => {
+    if (guardNewCreatorContentPublication()) router.push('/creator-studio');
+  }, [guardNewCreatorContentPublication, router]);
 
   const executeProductTagSave = useCallback(async (command: PendingCreatorContentTagSave) => (
     attemptCreatorContentTagSave(command, (stableCommand) => setMyMarketplaceContentProductTags({
@@ -209,6 +242,10 @@ export default function UploadScreen() {
   ), []);
 
   const saveSelectedProductTags = useCallback(async (contentId: string, contentType: 'feed' | 'reel') => {
+    if (pendingProductTagSaveRef.current) {
+      showPendingProductsResolutionAlert();
+      return false;
+    }
     if (!selectedProducts.length) return true;
     const command = createPendingCreatorContentTagSave({
       contentId,
@@ -219,7 +256,7 @@ export default function UploadScreen() {
       clearIdempotencyKey: randomUUID(),
     });
     const result = await executeProductTagSave(command);
-    setPendingProductTagSave(result.pending);
+    updatePendingProductTagSave(result.pending);
     if (!result.ok) {
       showAlert(
         'Contenido publicado, productos pendientes',
@@ -227,25 +264,25 @@ export default function UploadScreen() {
       );
     }
     return result.ok;
-  }, [executeProductTagSave, selectedProducts, showAlert]);
+  }, [executeProductTagSave, selectedProducts, showAlert, showPendingProductsResolutionAlert, updatePendingProductTagSave]);
 
   const retryPendingProductTags = useCallback(async () => {
-    if (!pendingProductTagSave || productTagOperation !== 'idle') return;
-    setProductTagOperation('saving');
+    if (!pendingProductTagSave || productTagOperationRef.current !== 'idle') return;
+    updateProductTagOperation('saving');
     const result = await executeProductTagSave(pendingProductTagSave);
-    setProductTagOperation('idle');
-    setPendingProductTagSave(result.pending);
+    updateProductTagOperation('idle');
+    updatePendingProductTagSave(result.pending);
     if (result.ok) {
       setSelectedProducts([]);
       showAlert('Productos agregados', 'Los productos ya están disponibles en el contenido publicado.');
     } else {
       showAlert('Productos pendientes', 'No pudimos guardarlos todavía. Puedes volver a intentarlo.');
     }
-  }, [executeProductTagSave, pendingProductTagSave, productTagOperation, showAlert]);
+  }, [executeProductTagSave, pendingProductTagSave, showAlert, updatePendingProductTagSave, updateProductTagOperation]);
 
   const continueWithoutPendingProducts = useCallback(async () => {
-    if (!pendingProductTagSave || productTagOperation !== 'idle') return;
-    setProductTagOperation('clearing');
+    if (!pendingProductTagSave || productTagOperationRef.current !== 'idle') return;
+    updateProductTagOperation('clearing');
     const result = await attemptCreatorContentTagAuthoritativeDiscard(pendingProductTagSave, (command) => (
       setMyMarketplaceContentProductTags({
         contentType: command.contentType,
@@ -254,8 +291,8 @@ export default function UploadScreen() {
         idempotencyKey: command.idempotencyKey,
       })
     ));
-    setProductTagOperation('idle');
-    setPendingProductTagSave(result.pending);
+    updateProductTagOperation('idle');
+    updatePendingProductTagSave(result.pending);
     if (result.ok) {
       setSelectedProducts([]);
       showAlert('Contenido publicado', 'El contenido continuará sin productos.');
@@ -264,7 +301,7 @@ export default function UploadScreen() {
     } else {
       showAlert('Productos pendientes', 'No pudimos confirmar que los productos se eliminaron. Intenta nuevamente.');
     }
-  }, [pendingProductTagSave, productTagOperation, showAlert]);
+  }, [pendingProductTagSave, showAlert, updatePendingProductTagSave, updateProductTagOperation]);
 
   // ── Live ────────────────────────────────────────────────────────────────────
   const [showLiveTitleModal, setShowLiveTitleModal] = useState(false);
@@ -281,19 +318,24 @@ export default function UploadScreen() {
 
   // ── Live: user taps "Abrir Cámara y Transmitir" ───────────────────────────
   const handleGoLive = useCallback(() => {
+    if (!guardNewCreatorContentPublication()) return;
     if (!user) { showAlert('No autenticado', 'Inicia sesión para transmitir'); return; }
     setShowLiveTitleModal(true);
-  }, [user, showAlert]);
+  }, [guardNewCreatorContentPublication, user, showAlert]);
 
   // ── Live: title confirmed → open camera ──────────────────────────────────
   const handleLiveTitleConfirmed = useCallback(async (title: string) => {
+    if (!guardNewCreatorContentPublication()) {
+      setShowLiveTitleModal(false);
+      return;
+    }
     setShowLiveTitleModal(false);
     setLiveTitleForCamera(title);
 
     // Start the Supabase session + resource acquisition via useLiveStream
     await startStream(title);
     setLiveCameraVisible(true);
-  }, [startStream]);
+  }, [guardNewCreatorContentPublication, startStream]);
 
   // ── Live: camera closed ───────────────────────────────────────────────────
   const handleLiveCameraClose = useCallback(async () => {
@@ -322,6 +364,7 @@ export default function UploadScreen() {
     filterId: string,
     metadata:Partial<SelectedMedia>={},
   ) => {
+    if (!guardNewCreatorContentPublication()) return;
     const mimeType = type === 'video' ? 'video/mp4' : 'image/jpeg';
     if (mode === 'carousel' && type === 'photo') {
       setCarouselMedias(prev => [...prev, { uri, type: 'image', mimeType, filterId }]);
@@ -331,7 +374,7 @@ export default function UploadScreen() {
       if (type === 'video') setMode('video');
       else setMode('photo');
     }
-  }, [mode, replaceSelectedMedia]);
+  }, [guardNewCreatorContentPublication, mode, replaceSelectedMedia]);
 
   const handleImagePickerFailure=useCallback((
     error:unknown,operation:PickerOperation,mediaKind:'photo'|'video',
@@ -368,6 +411,7 @@ export default function UploadScreen() {
   },[showAlert]);
 
   const openCamera = useCallback(async (captureMode: 'photo' | 'video') => {
+    if (!guardNewCreatorContentPublication()) return;
     try {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
@@ -391,9 +435,10 @@ export default function UploadScreen() {
     } catch(error) {
       handleImagePickerFailure(error,'camera',captureMode);
     }
-  }, [showAlert, handleCameraCapture, handleImagePickerFailure]);
+  }, [guardNewCreatorContentPublication, showAlert, handleCameraCapture, handleImagePickerFailure]);
 
   const pickVideoFromFiles=useCallback(async ()=>{
+    if (!guardNewCreatorContentPublication()) return;
     try {
       const result=await DocumentPicker.getDocumentAsync({
         type:['video/mp4','video/quicktime','video/webm'],
@@ -425,9 +470,10 @@ export default function UploadScreen() {
       console.warn('[Upload] Video file picker failed',{code:getSafeImagePickerErrorCode(error)});
       showAlert('No se pudo abrir el video','Intenta nuevamente o selecciona otro archivo.');
     }
-  },[showAlert,replaceSelectedMedia]);
+  },[guardNewCreatorContentPublication,showAlert,replaceSelectedMedia]);
 
   const handleIosVideoSelected=useCallback((video:ResolvedIosVideo)=>{
+    if (!guardNewCreatorContentPublication()) return;
     replaceSelectedMedia({
       uri:video.uri,
       type:'video',
@@ -440,7 +486,7 @@ export default function UploadScreen() {
       ownedCacheUri:video.ownedCacheUri,
     });
     setIosVideoGalleryVisible(false);
-  },[replaceSelectedMedia]);
+  },[guardNewCreatorContentPublication,replaceSelectedMedia]);
 
   const handleIosVideoGalleryError=useCallback((code:IosVideoResolutionCode|'permission_denied'|'query_failed')=>{
     if(code==='permission_denied') {
@@ -480,6 +526,7 @@ export default function UploadScreen() {
   },[pickVideoFromFiles,showAlert]);
 
   const pickSingleMedia: (fromCamera:boolean)=>Promise<void> = useCallback(async (fromCamera: boolean) => {
+    if (!guardNewCreatorContentPublication()) return;
     const isPhoto = mode === 'photo';
     const operation:PickerOperation=fromCamera?'camera':isPhoto?'photo_library':'video_library';
     if(!fromCamera&&!isPhoto&&Platform.OS==='ios') {
@@ -520,9 +567,10 @@ export default function UploadScreen() {
         }:undefined,
       );
     }
-  }, [mode, showAlert, handleImagePickerFailure, pickVideoFromFiles, replaceSelectedMedia]);
+  }, [guardNewCreatorContentPublication, mode, showAlert, handleImagePickerFailure, pickVideoFromFiles, replaceSelectedMedia]);
 
   const pickCarouselImages = useCallback(async () => {
+    if (!guardNewCreatorContentPublication()) return;
     try {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
@@ -547,7 +595,7 @@ export default function UploadScreen() {
     } catch(error) {
       handleImagePickerFailure(error,'carousel','photo');
     }
-  }, [showAlert, handleImagePickerFailure]);
+  }, [guardNewCreatorContentPublication, showAlert, handleImagePickerFailure]);
 
   const removeCarouselItem = useCallback((idx: number) => {
     setCarouselMedias(prev => prev.filter((_, i) => i !== idx));
@@ -585,6 +633,7 @@ export default function UploadScreen() {
   }, [user, supabase, mode]);
 
   const handleUploadSingle = useCallback(async () => {
+    if (!guardNewCreatorContentPublication()) return;
     if (!selectedMedia) { showAlert('Sin contenido', `Selecciona ${mode === 'photo' ? 'una foto' : 'un video'}`); return; }
     if (!caption.trim()) { showAlert('Sin descripción', 'Agrega una descripción'); return; }
     if (!user) return;
@@ -692,12 +741,15 @@ export default function UploadScreen() {
       uploadInFlightRef.current=false;
       setIsUploading(false);setUploadProgress('');
     }
-  }, [selectedMedia, caption, mode, selectedMusic, user, uploadMediaToStorage, addVideo, refreshFeed, router, showAlert, supabase, saveSelectedProductTags]);
+  }, [guardNewCreatorContentPublication, selectedMedia, caption, mode, selectedMusic, user, uploadMediaToStorage, addVideo, refreshFeed, router, showAlert, supabase, saveSelectedProductTags]);
 
   const handleUploadCarousel = useCallback(async () => {
+    if (!guardNewCreatorContentPublication()) return;
     if (carouselMedias.length < 2) { showAlert('Carrusel requerido', 'Selecciona al menos 2 fotos'); return; }
     if (!caption.trim()) { showAlert('Sin descripción', 'Agrega una descripción'); return; }
     if (!user) return;
+    if(uploadInFlightRef.current) return;
+    uploadInFlightRef.current=true;
 
     setIsUploading(true);
     setUploadProgress(`Subiendo ${carouselMedias.length} fotos...`);
@@ -732,7 +784,11 @@ export default function UploadScreen() {
       const tagsSaved = await saveSelectedProductTags(postId, 'feed');
       completedUploads.fill(undefined);
       setCaption(''); setCarouselMedias([]); setSelectedMusic(null); setSelectedProducts([]);
-      if (!tagsSaved) return;
+      if (!tagsSaved) {
+        uploadInFlightRef.current=false;
+        setIsUploading(false);setUploadProgress('');
+        return;
+      }
       showAlert(
         'Carrusel publicado!',
         `${validUrls.length} fotos publicadas`,
@@ -767,6 +823,7 @@ export default function UploadScreen() {
           [{text:'Ver Feed',onPress:()=>router.push('/(tabs)')},{text:'Crear otro'}],
         );
         setIsUploading(false);setUploadProgress('');
+        uploadInFlightRef.current=false;
         return;
       }
       console.warn('[Upload] carousel publish failed', {
@@ -778,8 +835,9 @@ export default function UploadScreen() {
       await Promise.all(uploadedAssetIds.map(assetId => deleteMediaAsset(assetId).catch(() => {})));
       showAlert('Error',`No se pudo publicar el carrusel.\nCódigo: ${safe.stage}/${safe.code}`);
     }
+    uploadInFlightRef.current=false;
     setIsUploading(false); setUploadProgress('');
-  }, [carouselMedias, caption, user, uploadMediaToStorage, addVideo, router, showAlert, saveSelectedProductTags]);
+  }, [guardNewCreatorContentPublication, carouselMedias, caption, user, uploadMediaToStorage, addVideo, router, showAlert, saveSelectedProductTags]);
 
   const MODES: { key: Mode; icon: string; label: string; color?: string }[] = [
     { key: 'video',    icon: 'videocam',      label: 'Video' },
@@ -889,9 +947,10 @@ export default function UploadScreen() {
               style={[styles.modeBtn, isActive && { backgroundColor: bgColor, borderColor: bgColor }]}
               onPress={() => {
                 if(isUploading) return;
+                if(!guardNewCreatorContentPublication()) return;
                 if (m.key === 'camera') {
                   showAlert('Cámara con Filtros AR', '¿Qué quieres capturar?', [
-                    { text: 'Abrir Creator Studio', onPress: () => router.push('/creator-studio') },
+                    { text: 'Abrir Creator Studio', onPress: openCreatorStudio },
                     { text: 'Foto estándar', onPress: () => openCamera('photo') },
                     { text: 'Video estándar', onPress: () => openCamera('video') },
                     { text: 'Cancelar', style: 'cancel' },
@@ -1050,7 +1109,9 @@ export default function UploadScreen() {
                 </ScrollView>
               </View>
 
-              <Pressable style={styles.productTagButton} onPress={() => setProductSelectorVisible(true)} accessibilityLabel="Seleccionar productos para el carrusel">
+              <Pressable style={styles.productTagButton} onPress={() => {
+                if (guardNewCreatorContentPublication()) setProductSelectorVisible(true);
+              }} accessibilityLabel="Seleccionar productos para el carrusel">
                 <MaterialCommunityIcons name="shopping-outline" size={21} color={Colors.blue} />
                 <View style={styles.productTagCopy}><Text style={styles.productTagTitle}>Productos</Text><Text style={styles.productTagSubtitle}>{selectedProducts.length ? `${selectedProducts.length} seleccionados` : 'Agrega hasta 5 productos'}</Text></View>
                 <MaterialIcons name="chevron-right" size={22} color={Colors.textSubtle} />
@@ -1143,13 +1204,17 @@ export default function UploadScreen() {
                 </ScrollView>
               </View>
 
-              <Pressable style={styles.productTagButton} onPress={() => setProductSelectorVisible(true)} accessibilityLabel="Seleccionar productos para el contenido">
+              <Pressable style={styles.productTagButton} onPress={() => {
+                if (guardNewCreatorContentPublication()) setProductSelectorVisible(true);
+              }} accessibilityLabel="Seleccionar productos para el contenido">
                 <MaterialCommunityIcons name="shopping-outline" size={21} color={Colors.primaryLight} />
                 <View style={styles.productTagCopy}><Text style={styles.productTagTitle}>Productos</Text><Text style={styles.productTagSubtitle}>{selectedProducts.length ? `${selectedProducts.length} seleccionados` : 'Agrega hasta 5 productos'}</Text></View>
                 <MaterialIcons name="chevron-right" size={22} color={Colors.textSubtle} />
               </Pressable>
 
-              <Pressable style={styles.musicPickerBtn} onPress={() => setMusicPickerVisible(true)}>
+              <Pressable style={styles.musicPickerBtn} onPress={() => {
+                if (guardNewCreatorContentPublication()) setMusicPickerVisible(true);
+              }}>
                 <LinearGradient
                   colors={selectedMusic ? ['rgba(124,92,255,0.15)', 'rgba(255,45,120,0.1)'] : ['rgba(255,255,255,0.04)', 'rgba(255,255,255,0.02)']}
                   style={styles.musicPickerInner}
