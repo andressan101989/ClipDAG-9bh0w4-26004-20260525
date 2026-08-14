@@ -69,6 +69,11 @@ import { LiveProductBagSheet } from "@/components/live/shop/LiveProductBagSheet"
 import { LiveProductQuickView } from "@/components/live/shop/LiveProductQuickView";
 import { LiveShippingForm } from "@/components/live/shop/LiveShippingForm";
 import { MarketplaceShippingQuoteCard,type MarketplaceShippingQuoteState } from "@/components/marketplace/MarketplaceShippingQuoteCard";
+import {
+  marketplaceCommerceEventKey,
+  recordCheckoutStarted,
+  recordProductView,
+} from "@/services/marketplaceAnalyticsService";
 import { LiveReservationSummary } from "@/components/live/shop/LiveReservationSummary";
 import { LivePaymentConfirmation } from "@/components/live/shop/LivePaymentConfirmation";
 import { LivePurchaseSuccess } from "@/components/live/shop/LivePurchaseSuccess";
@@ -186,6 +191,17 @@ export function LiveViewerCommerce({
           throw new Error("unavailable");
         const next = await fetchMarketplaceProductDetail(item.productId);
         if (!next) throw new Error("unavailable");
+        void recordProductView({
+          productId: item.productId,
+          variantId: item.featuredVariantId,
+          source: {
+            type: "live",
+            entityId: item.id,
+            creatorId: null,
+            liveSessionId: sessionId,
+          },
+          idempotencyKey: marketplaceCommerceEventKey("live-product-open"),
+        });
         setPin(current);
         setDetail(next);
         setSelection(selectionForPreferredVariant(next.options, next.variants));
@@ -391,6 +407,18 @@ export function LiveViewerCommerce({
         normalized,
         command.idempotencyKey,
       );
+      void recordCheckoutStarted({
+        productId: pin.productId,
+        variantId: freshVariant.id,
+        quantity,
+        source: {
+          type: "live",
+          entityId: pin.id,
+          creatorId: null,
+          liveSessionId: sessionId,
+        },
+        idempotencyKey: `${command.idempotencyKey}:checkout-started`,
+      });
       if (__DEV__)
         console.log("[LiveCheckout] rpc_success", {
           checkoutPresent: Boolean(result.checkout.id),
@@ -744,6 +772,19 @@ export function LiveViewerCommerce({
                     pendingCommand.current = null;
                   }}
                   onContinue={() => setStage("shipping")}
+                  onOpenDetails={() => {
+                    onClose();
+                    router.push({
+                      pathname: "/product/[id]",
+                      params: {
+                        id: pin.productId,
+                        source: "live",
+                        sourceId: pin.id,
+                        liveSessionId: sessionId,
+                        liveSessionProductId: pin.id,
+                      },
+                    } as never);
+                  }}
                 />
               ) : stage === "shipping" ? (
                 <><LiveShippingForm

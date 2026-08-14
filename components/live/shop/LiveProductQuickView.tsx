@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, View } from "react-native";
 import {
   CommercePrice,
   LoadingButton,
+  OnSpaceButton,
   ProductAvailabilityBadge,
   ProductThumbnail,
   QuantityStepper,
@@ -24,6 +25,7 @@ export function LiveProductQuickView({
   onSelect,
   onQuantity,
   onContinue,
+  onOpenDetails,
 }: {
   pin: LiveSessionProduct;
   detail: MarketplaceProductDetail;
@@ -34,6 +36,7 @@ export function LiveProductQuickView({
   onSelect: (optionId: string, valueId: string) => void;
   onQuantity: (value: number) => void;
   onContinue: () => void;
+  onOpenDetails: () => void;
 }) {
   const variant = detail.variants.find(
       (item) =>
@@ -115,6 +118,13 @@ export function LiveProductQuickView({
         disabled={!canBuy}
         loading={busy}
         onPress={onContinue}
+      />
+      <OnSpaceButton
+        label="Ver detalles o agregar al carrito"
+        variant="secondary"
+        size="large"
+        disabled={busy}
+        onPress={onOpenDetails}
       />
     </ScrollView>
   );

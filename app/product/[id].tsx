@@ -66,11 +66,12 @@ import { marketplacePromotionRefreshDelay } from "@/services/marketplacePromotio
 import { recordAdEvent } from "@/services/marketplaceAdsService";
 import { createCreatorShowcaseAttribution } from "@/services/marketplaceCreatorShowcaseService";
 import { createCreatorContentAttribution } from "@/services/marketplaceCreatorContentTagService";
+import { createLiveCreatorAttribution } from "@/services/liveCommerceService";
 
 const EMPTY_MEDIA: MarketplaceProductDetail["media"] = [];
 
 export default function ProductScreen() {
-  const { id, source, sourceId, creatorId, liveSessionId, campaignId, showcaseItemId, contentProductTagId, creatorDisplayName } =
+  const { id, source, sourceId, creatorId, liveSessionId, campaignId, showcaseItemId, contentProductTagId, liveSessionProductId, creatorDisplayName } =
       useLocalSearchParams<{
         id: string;
         source?: string;
@@ -80,6 +81,7 @@ export default function ProductScreen() {
         campaignId?: string;
         showcaseItemId?: string;
         contentProductTagId?: string;
+        liveSessionProductId?: string;
         creatorDisplayName?: string;
       }>(),
     router = useRouter(),
@@ -107,7 +109,8 @@ export default function ProductScreen() {
     viewRecordedRef = useRef<string | null>(null),
     adTouchRef = useRef<string | null>(null),
     showcaseAttributionKeysRef = useRef<Record<string, string>>({}),
-    contentAttributionKeysRef = useRef<Record<string, string>>({});
+    contentAttributionKeysRef = useRef<Record<string, string>>({}),
+    liveAttributionKeysRef = useRef<Record<string, string>>({});
   const load = useCallback(async () => {
     if (!id) {
       setReadError("missing");
@@ -155,11 +158,11 @@ export default function ProductScreen() {
     () =>
       marketplaceSourceFromParams({
         source: showcaseItemId ? "creator" : source,
-        sourceId: sourceId ?? showcaseItemId ?? contentProductTagId,
+        sourceId: sourceId ?? showcaseItemId ?? contentProductTagId ?? liveSessionProductId,
         creatorId,
         liveSessionId,
       }),
-    [source, sourceId, creatorId, liveSessionId, showcaseItemId, contentProductTagId],
+    [source, sourceId, creatorId, liveSessionId, showcaseItemId, contentProductTagId, liveSessionProductId],
   );
   const activeVariants = variants.filter((item) => item.status === "active");
   const selectedVariant = options.length
@@ -252,11 +255,12 @@ export default function ProductScreen() {
       return;
     addToCartLockRef.current = true;
     try {
-      if ((showcaseItemId || contentProductTagId) && !user) {
+      if ((showcaseItemId || contentProductTagId || liveSessionProductId) && !user) {
         router.push("/login" as never);
         return;
       }
-      if (showcaseItemId && contentProductTagId) {
+      const creatorContextCount = [showcaseItemId, contentProductTagId, liveSessionProductId].filter(Boolean).length;
+      if (creatorContextCount > 1) {
         showAlert("Invalid creator context", "Open this product again from a single creator surface.");
         return;
       }
@@ -289,6 +293,7 @@ export default function ProductScreen() {
       let attribution:
         | { attributionId: string; showcaseItemId: string; creatorUserId: string; creatorDisplayName?: string }
         | { attributionId: string; contentProductTagId: string; sourceSurface: "feed" | "reel"; creatorUserId: string; creatorDisplayName?: string }
+        | { attributionId: string; liveSessionProductId: string; sourceSurface: "live"; creatorUserId: string; creatorDisplayName?: string }
         | undefined;
       if (showcaseItemId) {
         const key = showcaseAttributionKeysRef.current[selectedVariant.id] ?? randomUUID();
@@ -311,6 +316,19 @@ export default function ProductScreen() {
           creatorUserId: receipt.creatorUserId,
           ...(creatorDisplayName ? { creatorDisplayName } : {}),
         };
+      } else if (liveSessionProductId && source === "live") {
+        const key = liveAttributionKeysRef.current[selectedVariant.id] ?? randomUUID();
+        liveAttributionKeysRef.current[selectedVariant.id] = key;
+        const receipt = await createLiveCreatorAttribution(liveSessionProductId, selectedVariant.id, key);
+        if (receipt.id && receipt.creatorUserId) {
+          attribution = {
+            attributionId: receipt.id,
+            liveSessionProductId,
+            sourceSurface: "live",
+            creatorUserId: receipt.creatorUserId,
+            ...(creatorDisplayName ? { creatorDisplayName } : {}),
+          };
+        }
       }
       const result = addItem({
         productId: product.id,
@@ -526,7 +544,7 @@ export default function ProductScreen() {
           onSelect={chooseMedia}
         />
         <View style={styles.commerce}>
-          {showcaseItemId || contentProductTagId ? (
+          {showcaseItemId || contentProductTagId || liveSessionProductId ? (
             <View style={styles.creatorRecommendation}>
               <MaterialIcons name="storefront" size={17} color={Colors.accent} />
               <Text style={styles.creatorRecommendationText}>Recommended by {creatorDisplayName ? `@${creatorDisplayName}` : "this creator"}</Text>

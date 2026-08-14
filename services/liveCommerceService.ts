@@ -151,7 +151,23 @@ export interface ActiveLiveCheckout {
     imageUrl: string | null;
   }[];
 }
+export interface LiveCreatorAttributionReceipt {
+  id: string | null;
+  commerceMode: "own_product" | "affiliate_product";
+  creatorUserId: string | null;
+  productId: string;
+  variantId: string;
+  sourceSurface: "live";
+  sourceEntityId: string;
+}
 export type LiveCommerceErrorCode =
+  | "marketplace_auth_required"
+  | "marketplace_creator_live_attribution_invalid_input"
+  | "marketplace_creator_live_source_unavailable"
+  | "marketplace_creator_entitlement_ineligible"
+  | "marketplace_creator_entitlement_product_ineligible"
+  | "marketplace_creator_attribution_variant_mismatch"
+  | "marketplace_creator_attribution_idempotency_conflict"
   | "live_commerce_auth_required"
   | "live_commerce_host_not_eligible"
   | "live_commerce_product_unavailable"
@@ -196,6 +212,13 @@ const READINESS_REASONS: LiveProductReadinessReason[] = [
   "out_of_stock", "affiliate_offer_unavailable", "affiliate_offer_replaced",
 ];
 const CODES: LiveCommerceErrorCode[] = [
+  "marketplace_auth_required",
+  "marketplace_creator_live_attribution_invalid_input",
+  "marketplace_creator_live_source_unavailable",
+  "marketplace_creator_entitlement_ineligible",
+  "marketplace_creator_entitlement_product_ineligible",
+  "marketplace_creator_attribution_variant_mismatch",
+  "marketplace_creator_attribution_idempotency_conflict",
   "live_commerce_auth_required",
   "live_commerce_host_not_eligible",
   "live_commerce_product_unavailable",
@@ -695,6 +718,46 @@ export async function createLiveCheckoutReservation(
     }
   }
   return parseMarketplaceCheckoutReservation(data);
+}
+
+export async function createLiveCreatorAttribution(
+  pinId: string,
+  variantId: string,
+  idempotencyKey: string,
+): Promise<LiveCreatorAttributionReceipt> {
+  const rpc = "create_marketplace_creator_live_attribution";
+  const { data, error } = await db().rpc(rpc, {
+    p_live_session_product_id: uuid(pinId),
+    p_variant_id: uuid(variantId),
+    p_idempotency_key: uuid(idempotencyKey),
+  });
+  if (error) rpcError(rpc, error);
+  if (!data || typeof data !== "object")
+    throw new LiveCommerceError("live_commerce_unknown");
+  const row = data as Record<string, unknown>;
+  const commerceMode = row.commerce_mode;
+  if (
+    (commerceMode !== "own_product" && commerceMode !== "affiliate_product") ||
+    row.source_surface !== "live" ||
+    !validUuid(row.product_id) ||
+    !validUuid(row.variant_id) ||
+    !validUuid(row.source_entity_id) ||
+    (commerceMode === "affiliate_product" &&
+      (!validUuid(row.id) || !validUuid(row.creator_user_id))) ||
+    (commerceMode === "own_product" &&
+      (row.id !== null || row.creator_user_id !== null))
+  )
+    throw new LiveCommerceError("live_commerce_unknown");
+  return {
+    id: row.id === null ? null : String(row.id),
+    commerceMode,
+    creatorUserId:
+      row.creator_user_id === null ? null : String(row.creator_user_id),
+    productId: String(row.product_id),
+    variantId: String(row.variant_id),
+    sourceSurface: "live",
+    sourceEntityId: String(row.source_entity_id),
+  };
 }
 export async function fetchMyActiveLiveCheckout(
   sessionId: string,

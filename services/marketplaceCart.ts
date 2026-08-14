@@ -35,7 +35,8 @@ export interface MarketplaceCartItem {
   attributionId?: string;
   showcaseItemId?: string;
   contentProductTagId?: string;
-  sourceSurface?: "feed" | "reel";
+  liveSessionProductId?: string;
+  sourceSurface?: "feed" | "reel" | "live";
   creatorUserId?: string;
   creatorDisplayName?: string;
   availability: MarketplaceCartAvailability;
@@ -84,6 +85,11 @@ export function addMarketplaceCartItem(
   input: AddMarketplaceCartItemInput,
   now = new Date().toISOString(),
 ): { items: MarketplaceCartItem[]; result: CartMutationResult } {
+  const creatorSourceCount = [
+    input.showcaseItemId,
+    input.contentProductTagId,
+    input.liveSessionProductId,
+  ].filter(Boolean).length;
   if (
     !input.productId ||
     !input.variantId ||
@@ -104,10 +110,11 @@ export function addMarketplaceCartItem(
     ) ||
     !isPublicMarketplaceImageUrl(input.imageUrl) ||
     (input.attributionId !== undefined && !input.attributionId) ||
-    (input.attributionId !== undefined && (!input.creatorUserId || Boolean(input.showcaseItemId) === Boolean(input.contentProductTagId))) ||
+    (input.attributionId !== undefined && (!input.creatorUserId || creatorSourceCount !== 1)) ||
     (input.contentProductTagId !== undefined && (!input.contentProductTagId || !["feed", "reel"].includes(input.sourceSurface ?? ""))) ||
+    (input.liveSessionProductId !== undefined && (!input.liveSessionProductId || input.sourceSurface !== "live")) ||
     (input.showcaseItemId !== undefined && input.sourceSurface !== undefined) ||
-    (input.attributionId === undefined && (input.showcaseItemId !== undefined || input.contentProductTagId !== undefined || input.sourceSurface !== undefined || input.creatorUserId !== undefined)) ||
+    (input.attributionId === undefined && (input.showcaseItemId !== undefined || input.contentProductTagId !== undefined || input.liveSessionProductId !== undefined || input.sourceSurface !== undefined || input.creatorUserId !== undefined)) ||
     (input.creatorDisplayName !== undefined && typeof input.creatorDisplayName !== "string")
   )
     return { items, result: { ok: false, code: "invalid_item" } };
@@ -132,6 +139,7 @@ export function addMarketplaceCartItem(
         attributionId: current.attributionId,
         showcaseItemId: current.showcaseItemId,
         contentProductTagId: current.contentProductTagId,
+        liveSessionProductId: current.liveSessionProductId,
         sourceSurface: current.sourceSurface,
         creatorUserId: current.creatorUserId,
         creatorDisplayName: current.creatorDisplayName,
@@ -374,13 +382,19 @@ export function isMarketplaceCartItem(
     (item.attributionId === undefined || typeof item.attributionId === "string") &&
     (item.showcaseItemId === undefined || typeof item.showcaseItemId === "string") &&
     (item.contentProductTagId === undefined || typeof item.contentProductTagId === "string") &&
-    (item.sourceSurface === undefined || item.sourceSurface === "feed" || item.sourceSurface === "reel") &&
+    (item.liveSessionProductId === undefined || typeof item.liveSessionProductId === "string") &&
+    (item.sourceSurface === undefined || item.sourceSurface === "feed" || item.sourceSurface === "reel" || item.sourceSurface === "live") &&
     (item.creatorUserId === undefined || typeof item.creatorUserId === "string") &&
     (item.creatorDisplayName === undefined || typeof item.creatorDisplayName === "string") &&
     (item.attributionId === undefined
-      ? item.showcaseItemId === undefined && item.contentProductTagId === undefined && item.sourceSurface === undefined && item.creatorUserId === undefined
-      : Boolean(item.creatorUserId && (Boolean(item.showcaseItemId) !== Boolean(item.contentProductTagId))
-        && (item.showcaseItemId ? item.sourceSurface === undefined : item.sourceSurface === "feed" || item.sourceSurface === "reel"))) &&
+      ? item.showcaseItemId === undefined && item.contentProductTagId === undefined && item.liveSessionProductId === undefined && item.sourceSurface === undefined && item.creatorUserId === undefined
+      : Boolean(item.creatorUserId
+        && [item.showcaseItemId, item.contentProductTagId, item.liveSessionProductId].filter(Boolean).length === 1
+        && (item.showcaseItemId
+          ? item.sourceSurface === undefined
+          : item.liveSessionProductId
+            ? item.sourceSurface === "live"
+            : item.sourceSurface === "feed" || item.sourceSurface === "reel"))) &&
     typeof item.addedAt === "string" &&
     typeof item.updatedAt === "string"
   );
