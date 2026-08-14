@@ -279,3 +279,63 @@ The focused B7C client suite passed 16/16. The full Node suite passed 623 tests 
 The final read-only linked audit confirmed migration `20260811024000` remains latest. B7C 28/28, B7B 23/23, B7A 36/36, B7F 27/27, B7R 32/32, payment, settlement, LIVE, and all Ads reconciliations were healthy. Held escrow was exactly 71 BDAG expected and 71 BDAG actual. RLS and grants were correct, persistent B7C fixture users were zero, and failure/test hooks were absent.
 
 No historical migration changed, no migration was created, no Supabase dry-run or push was run, no financial formula changed, and no EAS command was run. MKT-B7C-C2 remote-clear hardening is complete; MKT-B7C remains fully closed and B7D is ready but has not been started.
+
+## B7C-C3 Save Settlement Fence Before Authoritative Clear
+
+### Remaining causal race and client protocol
+
+B7C-C2 made `Continuar sin productos` an authoritative empty-set command, but its raw concurrent SAVE-versus-CLEAR proof correctly allowed either database serialization winner. That protected database integrity without proving the stronger user contract: an older transport-uncertain SAVE could still be alive, serialize after a successful CLEAR, and restore products after the UI confirmed an empty result.
+
+B7C-C3 adds a causal settlement fence before CLEAR. The commerce-only retry helper first replays the original SAVE using the exact original content ID, `feed`/`reel` type, ordered product IDs, and stable SAVE idempotency key. Only after that replay is confirmed does it send `productIds=[]` with the distinct stable CLEAR key. The deployed authority locks the actor/key command namespace before reading its immutable command receipt, so replay waits behind an in-flight original transaction, returns an already-committed canonical result after response loss, or applies a never-arrived SAVE once. CLEAR therefore always occurs after the original SAVE is settled.
+
+If the SAVE fence fails or its response is lost, CLEAR is not sent, pending state is retained, and the UI reports that product state could not be confirmed. If CLEAR fails or its response is lost after a confirmed fence, pending state and both keys remain stable. The next discard attempt replays the historical SAVE receipt without reapplying products, then replays the same CLEAR receipt. Pending UI state is removed and `El contenido continuará sin productos` is shown only after both phases are confirmed. Retry Products remains unchanged and uses only the SAVE identity. No helper imports or calls media publishing, upload, navigation, or financial code.
+
+Focused deterministic transport models passed for an original SAVE still in flight, a committed SAVE with lost response, a SAVE that never reached the server, lost fence response, and lost CLEAR response. They prove SAVE and CLEAR keys differ and remain stable, all fence inputs match the original command, CLEAR is skipped on fence failure, CLEAR always sends an empty set after fence success, a prior CLEAR cannot be undone by historical SAVE replay, final successful discard is empty, and media publisher calls remain zero.
+
+### Controlled PostgreSQL causal proof
+
+The generic unordered two-connection SAVE/CLEAR race remains as an integrity proof and may finish with either complete command. A new causal proof holds the original SAVE transaction open on connection A after the canonical RPC has executed but before commit. Connection B replays the same SAVE key and is asserted not to settle while A remains open. After A commits, B receives the exact canonical SAVE receipt, then issues the distinct CLEAR key and receives count zero. Same-key CLEAR replay returns the identical empty receipt. The final active tag count is exactly zero, the command history contains exactly the SAVE and CLEAR identities in causal order, no deadlock or partial state occurs, and B7C reconciliation remains 28/28 zero.
+
+### B7C-C3 blockers and resolutions
+
+#### BLOCKER 13
+
+BLOCKER NUMBER: 13
+STAGE: C2 client/proof audit
+ERROR / SQLSTATE: No SQL error; causal ordering defect in the client protocol.
+SYMPTOM: The unordered SAVE-versus-CLEAR proof accepted either zero or one final active tag, so successful explicit discard did not prove a final empty server state.
+ROOT CAUSE: CLEAR was sent without first establishing that the older SAVE command had reached a terminal canonical result.
+CLASSIFICATION: concurrency issue
+SOLUTION: Replay the exact original SAVE key as a settlement fence, require confirmation, then issue the stable distinct CLEAR command.
+WHY THIS IS SAFEST: It uses the deployed immutable command receipt and advisory locks, adds no second authority, and cannot alter economics or media.
+FILES/FUNCTIONS CHANGED: `services/marketplaceCreatorContentTagPublishRetry.ts`, `app/(tabs)/upload.tsx`, focused client tests, and the disposable B7C proof.
+PROOF: Five transport-uncertainty models plus a controlled two-connection PostgreSQL transaction prove fence-before-clear and final active count zero.
+PRODUCTION ECONOMICS CHANGED: No.
+RESIDUAL RISK: Pending retry remains intentionally screen-local and blocks success navigation until the user obtains a confirmed Retry or Discard result.
+STATUS: RESOLVED
+
+#### BLOCKER 14
+
+BLOCKER NUMBER: 14
+STAGE: Other Marketplace regression command discovery
+ERROR / SQLSTATE: npm `Missing script: prove:marketplace-ads-delivery-events`.
+SYMPTOM: The conceptual Ads delivery/events label was not an executable package script.
+ROOT CAUSE: This repository exposes the combined delivery/events authority as `prove:marketplace-ads`.
+CLASSIFICATION: runtime/tooling issue
+SOLUTION: Discover the actual scripts from `package.json` and run `npm.cmd run prove:marketplace-ads` sequentially.
+WHY THIS IS SAFEST: It executes the maintained canonical proof instead of fabricating or bypassing a command.
+FILES/FUNCTIONS CHANGED: None.
+PROOF: The combined proof passed delivery and event reconciliation with all counters zero and persistent fixtures zero.
+PRODUCTION ECONOMICS CHANGED: No.
+RESIDUAL RISK: None.
+STATUS: RESOLVED
+
+### Validation and final remote state
+
+The focused B7C client suite passed 22/22 and the full Node suite passed 629 tests with zero failures. Focused ESLint passed with zero errors. TypeScript retained 187 unrelated baseline diagnostics and produced zero diagnostics in C3-modified files. The iOS export passed and Build remained 22.
+
+The B7C disposable proof preserved every existing race and added `causalSaveFenceClearRace=true` and `authoritativeDiscardFinalEmpty=true`; no deadlocks or partial states occurred, reconciliation was 28/28 zero, and fixtures were zero. B7B passed 23/23, B7A 36/36, B7F 27/27, and B7R 32/32. The financial handoff remained seller 78, platform 10, Creator X 5, Creator Y 7, gross 100; B7R returned exactly 100 to the buyer, and insufficient balance returned `money_moved=false` without partial movement. Held dispute/manual review/`release_seller`, lifecycle, shipping, publication, fixture finalization, promotions, analytics, runtime, Ads finance, eligibility, finalization, delivery, and events all passed.
+
+The final read-only linked audit confirmed latest migration `20260811024000`, B7C 28/28, B7B 23/23, B7A 36/36, B7F 27/27, B7R 32/32, and healthy payment, settlement, LIVE, and Ads reconciliation. Held escrow remained exactly 71 BDAG expected and 71 BDAG actual. RLS/grants were healthy, B7C fixtures were zero, and failure hooks were absent.
+
+No SQL or deployed migration changed, no migration was created, no Supabase dry-run/push/deployment occurred, no financial formula or client commission authority changed, and no EAS command ran. MKT-B7C-C3 causal discard hardening is complete; MKT-B7C is fully and finally closed, and B7D is ready but has not been started.

@@ -280,8 +280,21 @@ async function concurrency() {
     const saveClearContent=await video(db,f,f.creatorX,"feed",37);await Promise.all([claim(a,"authenticated",f.creatorX,false),claim(b,"authenticated",f.creatorX,false)]);
     const saveClear=await Promise.allSettled([a.query("select public.set_my_marketplace_content_product_tags('feed',$1,$2,$3)value",[saveClearContent,[items[5].product],uid()]),b.query("select public.set_my_marketplace_content_product_tags('feed',$1,'{}'::uuid[],$2)value",[saveClearContent,uid()])]);noDeadlock(saveClear);assert(saveClear.every((x)=>x.status==="fulfilled"));
     const saveClearFinal=await activeProducts(saveClearContent);assert([0,1].includes(saveClearFinal.length));if(saveClearFinal.length)assert.deepEqual(saveClearFinal.map((x)=>[x.product_id,x.sort_position]),[[items[5].product,0]]);
+    const causalContent=await video(db,f,f.creatorX,"feed",38);await Promise.all([claim(a,"authenticated",f.creatorX,false),claim(b,"authenticated",f.creatorX,false)]);
+    const causalSaveKey=uid(),causalClearKey=uid();assert.notEqual(causalSaveKey,causalClearKey);
+    await a.query("begin");
+    const originalSave=(await a.query("select public.set_my_marketplace_content_product_tags('feed',$1,$2,$3)value",[causalContent,[items[6].product],causalSaveKey])).rows[0].value;
+    assert.equal(originalSave.count,1);
+    let fenceSettled=false;
+    const fencePromise=b.query("select public.set_my_marketplace_content_product_tags('feed',$1,$2,$3)value",[causalContent,[items[6].product],causalSaveKey]).then((result)=>{fenceSettled=true;return result;});
+    await new Promise((resolve)=>setTimeout(resolve,50));assert.equal(fenceSettled,false,"b7c_save_fence_returned_before_original_transaction_settled");
+    await a.query("commit");
+    const fenceResult=(await fencePromise).rows[0].value;assert.deepEqual(fenceResult,originalSave);
+    const clearResult=(await b.query("select public.set_my_marketplace_content_product_tags('feed',$1,'{}'::uuid[],$2)value",[causalContent,causalClearKey])).rows[0].value;assert.equal(clearResult.count,0);assert.equal((await activeProducts(causalContent)).length,0);
+    const clearRetry=(await b.query("select public.set_my_marketplace_content_product_tags('feed',$1,'{}'::uuid[],$2)value",[causalContent,causalClearKey])).rows[0].value;assert.deepEqual(clearRetry,clearResult);assert.equal((await activeProducts(causalContent)).length,0);
+    const causalCommands=(await db.query("select idempotency_key,result_json from public.marketplace_creator_content_tag_commands where content_id=$1 order by created_at",[causalContent])).rows;assert.equal(causalCommands.length,2);assert.deepEqual(causalCommands.map((x)=>x.idempotency_key),[causalSaveKey,causalClearKey]);
     await reconcile(db,"reconcile_marketplace_creator_content_tags",28);
-    return {sameRequestRace:true,competingTagSetRace:true,removeAttributionRace:true,offerReplacementAttributionRace:true,offerRevocationAttributionRace:true,contentDeleteAttributionRace:true,competingMutationRace:true,saveClearRace:true,noDeadlocks:true,noPartialState:true};
+    return {sameRequestRace:true,competingTagSetRace:true,removeAttributionRace:true,offerReplacementAttributionRace:true,offerRevocationAttributionRace:true,contentDeleteAttributionRace:true,competingMutationRace:true,saveClearRace:true,causalSaveFenceClearRace:true,authoritativeDiscardFinalEmpty:true,noDeadlocks:true,noPartialState:true};
   }finally{await Promise.all([a.end(),b.end()]);await cleanup(f);}
 }
 
