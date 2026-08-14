@@ -234,4 +234,59 @@ Passed read-only at migration `20260811024000`. B7D objects were absent; B7C/B7B
 - Authenticated self-read, anonymous denial, private fact projections, and B7A/B7F helper privacy: passed.
 - Corrective local proof and full Node suite: 18/18 zero, fixtures zero, 639/639 tests passed.
 
-MKT-B7D Creator Commerce Analytics is CLOSED and deployed. B7E LIVE Creator Commerce V2 is unblocked but has not been started.
+## INDEPENDENT CLOSURE REVIEW / B7D-C1
+
+An independent GitHub review found that the production implementation existed and was financially well-structured, but the original disposable proof did not substantiate every closure claim. Specifically:
+
+1. Runtime source/surface coverage was incomplete.
+2. Creator Showcase was not runtime-proven.
+3. Existing LIVE affiliate commerce was not runtime-proven by B7D.
+4. Canonical direct creator link commerce was not runtime-proven.
+5. `surface_breakdown` lacked exact value assertions.
+6. No paid fixture older than 90 days existed.
+7. `90d` versus `all` was not actually distinguished.
+8. Engagement inclusion/exclusion across time ranges was incomplete.
+9. Trend bucket values were not asserted exactly.
+10. Same-order/multiple-item trend deduplication was not explicitly proven.
+
+### Closure-proof correction
+
+The B7D-C1 disposable proof now uses only existing canonical production APIs and rolls back every fixture:
+
+- Showcase: canonical B7B selection and buyer attribution wrapper; exact item snapshot, source entity, product breakdown, engagement, and surface values.
+- Feed and Reel: canonical B7C tags and attribution wrappers; exact snapshots, Feed/Reel surface values, and B3 `feed`/`clip` engagement.
+- Direct creator link: canonical B7A server-issued attribution from a specific-creator entitlement; exact financial and `affiliate` engagement mapping. A public offer that lacks pre-attribution canonical creator identity is explicitly excluded.
+- LIVE: existing `start_live_session`, affiliate offer, product pin, and LIVE checkout authority only; exact LIVE snapshot, source entity, 100 BDAG item GMV, 12 BDAG creator allocation, and B3 LIVE engagement. No B7E behavior was added.
+- Exact all-time Creator X surface values: LIVE 100/12, Feed 90/9, Showcase 40/4, direct link 30/3, Reel 20/2 for GMV/generated commission. Surface sums equal summary values and ordering is GMV-descending.
+- Canonical engagement isolation: mismatched product, mismatched Feed/Reel surface, and non-identifying public affiliate events do not enter another creator's analytics. Observational events do not create financial attribution.
+- Exact ranges: `7d` = 2 orders, 2 units, 70 GMV, 7 generated; `30d` = 4 orders, 5 units, 140 GMV, 14 generated; `90d` = 6 orders, 7 units, 180 GMV, 18 generated; `all` = 7 orders, 8 units, 280 GMV, 30 generated.
+- Exact engagement ranges: product opens are 3/4/5/6 and add-to-cart events are 2/3/4/5 for 7d/30d/90d/all.
+- A canonical LIVE sale aged 120 days contributes 100 GMV and 12 generated commission only to `all`, in its exact UTC monthly trend bucket.
+- Daily and all-time monthly trend payloads are compared field-for-field: bucket, distinct orders, GMV, generated, released, reversed, and net commission.
+- A two-item order for the same creator contributes 30 GMV and 3 commission but exactly one order to its trend bucket and summary.
+- Release and reversal stay on their actual timestamps; the historical paid sale remains in its payment bucket. Insufficient reversal creates no reversal analytics.
+
+### Validation
+
+- B7D proof: all five surfaces, exact breakdown, ranges, event ranges, trends, reversal semantics, self-only security, 18/18 reconciliation, and zero persistent fixtures passed.
+- B3 analytics: passed.
+- B7C: 28/28 zero.
+- B7B: 23/23 zero.
+- B7A: 36/36 zero.
+- B7F: 27/27 zero.
+- B7R: 32/32 zero.
+- Held refund, manual review, and `release_seller`: passed.
+- Focused B7D-C1 tests: 9 passed, 0 failed.
+- Full Node suite: 642 passed, 0 failed.
+- Focused ESLint: zero errors and zero warnings.
+- TypeScript: 187 unchanged unrelated baseline diagnostics; no B7D-C1 TypeScript files changed.
+- iOS export: passed.
+- Build: 22.
+- Final read-only remote audit: latest migration `20260811025100`; B7D 18/18, B7C 28/28, B7B 23/23, B7A 36/36, B7F 27/27, B7R 32/32; escrow 71/71; fixtures zero; failure hooks absent; authority/grants healthy.
+- Production application code, production SQL, deployed migrations, financial semantics, and remote state were not changed by B7D-C1.
+
+### PROCESS EXCEPTION ACCEPTED BY PROJECT OWNER
+
+Four B7D commits already existed. The fourth was a legitimate transparent post-deploy correction for historical pre-B7F LIVE reconciliation and was intentionally not amended, rebased, squashed, or otherwise rewritten. The project owner explicitly authorized one additional proof/documentation corrective commit. This process exception does not weaken any technical, security, financial, migration, or deployment gate.
+
+**MKT-B7D Creator Commerce Analytics is CLOSED. The previously exceeded commit-count gate is accepted as an explicit project-owner process exception. B7E LIVE Creator Commerce V2 is unblocked but has not been started.**
