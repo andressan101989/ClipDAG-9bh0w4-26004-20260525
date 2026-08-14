@@ -223,3 +223,59 @@ STATUS: RESOLVED
 B7C passed all original scenarios plus every named concurrency race, exact seller/platform/creator economics of 78/10/5/7 on gross 100, buyer refund 100, insufficient-balance `money_moved=false`, 28/28 counters zero, and zero fixtures. B7B passed 23/23, B7A 36/36, B7F 27/27, and B7R 32/32. Held refund, manual review, `release_seller`, lifecycle, shipping, publication, fixture finalization, promotions, analytics, runtime, and all Ads proofs passed. The full Node suite passed 621 tests with zero failures. Focused ESLint passed with zero errors. TypeScript retained 187 unrelated baseline diagnostics and zero diagnostics in B7C-C files. iOS export passed. Build remained 22. No EAS command was run.
 
 No production SQL or financial formula changed, no migration was created, and no Supabase push/dry-run/deployment was performed for B7C-C. Final read-only remote verification kept latest migration `20260811024000`; B7C 28/28, B7B 23/23, B7A 36/36, B7F 27/27, and B7R 32/32 were zero. Payment, settlement, LIVE, and Ads reconciliations were healthy; held escrow remained 71/71 BDAG; RLS/grants were correct; fixtures and failure hooks were absent.
+
+## B7C-C2 Explicit Server Clear Certainty
+
+### Authoritative discard semantics
+
+The remaining ambiguity was a valid transport-uncertainty sequence: the original non-empty tag-set command could commit in PostgreSQL while its response was lost, after which the previous `Continuar sin productos` action cleared only local React state. The user could therefore explicitly choose to continue without products while the published content remained remotely shoppable.
+
+B7C-C2 makes discard an authoritative second command. Every pending product-tag save now carries two distinct stable UUIDs: the original save idempotency key for the ordered non-empty product set, and a clear idempotency key for the empty set. `Reintentar productos` continues to send the original content ID, content type, ordered product IDs, and save key. `Continuar sin productos` sends the same content ID and type with `productIds=[]` and the distinct clear key through the existing canonical `set_my_marketplace_content_product_tags` authority.
+
+The pending card is dismissed only after the empty-set command is confirmed. A clear failure retains the complete pending state and reports that removal could not be confirmed. If the clear commits but its response is lost, another click retries the same content/type/empty-set/clear-key command and receives the canonical idempotent result. Both actions are disabled while either remote operation is in flight. No Stream, photo, carousel, Feed, or Reel publishing function is called by clear or retry.
+
+The deployed tag-set authority already accepts an empty UUID array, fingerprints it as a distinct request, locks the command key and creator-content namespace, marks the complete active set removed atomically, and supports idempotent replay. Disposable proof established `[P1,P2] -> []`, same-key empty-set replay, changed non-empty request conflict on the clear key, and a real two-connection save-versus-clear race. Both commands serialized without deadlock or partial state; the final state was exactly the last serialized complete command, with valid positions and B7C reconciliation 28/28 zero. No SQL correction or migration was required.
+
+Focused client tests model both uncertainty boundaries. When the original `[P1]` save commits but its response is lost, explicit clear leaves the authoritative model empty. When clear commits but its response is lost, retry reuses the same clear key and confirms the already-empty state. The tests also prove save and clear keys differ, content identity/type are preserved, clear always sends an empty list, failed clear retains pending state and does not claim success, successful clear removes pending state, and the media publisher is never invoked.
+
+### B7C-C2 blockers and resolutions
+
+#### BLOCKER 11
+
+BLOCKER NUMBER: 11
+STAGE: Post-publish retry state audit
+ERROR / SQLSTATE: No SQL error; remote-certainty defect under a committed-command/lost-response sequence.
+SYMPTOM: `Continuar sin productos` cleared only local pending and selected-product state, so remotely committed active tags could survive the user's explicit discard choice.
+ROOT CAUSE: The client represented discard as a local UI decision rather than a second canonical tag-set command.
+CLASSIFICATION: source-attribution issue
+SOLUTION: Execute an explicit empty-set command against the existing published content and clear local state only after confirmed server success.
+WHY THIS IS SAFEST: It reuses the single atomic, ownership-checked B7C authority and creates no second tag mutation path.
+FILES/FUNCTIONS CHANGED: `services/marketplaceCreatorContentTagPublishRetry.ts`, `app/(tabs)/upload.tsx`, `tests/marketplaceMktB7CContentTags.test.mjs`, `scripts/prove-marketplace-creator-content-tags.mjs`.
+PROOF: Transport models cover original-save commit/response loss and clear commit/response loss; disposable proof covers empty-set replay and two-connection save/clear serialization.
+PRODUCTION ECONOMICS CHANGED: No.
+RESIDUAL RISK: Pending state remains deliberately screen-local, with navigation withheld until Retry Products or Continue Without Products reaches a confirmed result.
+STATUS: RESOLVED
+
+#### BLOCKER 12
+
+BLOCKER NUMBER: 12
+STAGE: Combined sequential Marketplace regression run
+ERROR / SQLSTATE: `22023` from the B7A finalizer when settlement won its documented concurrency race.
+SYMPTOM: The first B7A regression invocation sampled the safe settlement-first outcome, while its older harness assertion expected the finalizer-first outcome.
+ROOT CAUSE: PostgreSQL scheduling selected the other explicitly supported serialization result; no authority or financial invariant failed.
+CLASSIFICATION: runtime/tooling issue
+SOLUTION: Preserve production authority unchanged and rerun the B7A proof in isolation, where the complete suite passed and reconciled.
+WHY THIS IS SAFEST: It does not weaken the settlement/finalization boundary merely to force one scheduler outcome.
+FILES/FUNCTIONS CHANGED: None.
+PROOF: Isolated B7A proof passed with 36/36 counters zero; B7F 27/27, B7R 32/32, and all other sequential financial regressions also passed.
+PRODUCTION ECONOMICS CHANGED: No.
+RESIDUAL RISK: The legacy B7A harness remains scheduling-sensitive when it samples the valid settlement-first branch.
+STATUS: RESOLVED
+
+### B7C-C2 validation and remote certainty
+
+The focused B7C client suite passed 16/16. The full Node suite passed 623 tests with zero failures. Focused ESLint passed with zero errors. TypeScript retained 187 unrelated baseline diagnostics and produced zero diagnostics in B7C-C2-modified files. The iOS export passed and Build remained 22. B7C retained exact seller/platform/creator economics of 78/10/5/7 on gross 100, exact buyer refund 100, and insufficient-balance `money_moved=false` with no partial movement. B7C was 28/28 zero, B7B 23/23, B7A 36/36, B7F 27/27, and B7R 32/32. Held refund, manual review, `release_seller`, lifecycle, shipping, publication, fixture finalization, promotions, analytics, runtime, and all Ads proofs passed. Disposable resources were destroyed.
+
+The final read-only linked audit confirmed migration `20260811024000` remains latest. B7C 28/28, B7B 23/23, B7A 36/36, B7F 27/27, B7R 32/32, payment, settlement, LIVE, and all Ads reconciliations were healthy. Held escrow was exactly 71 BDAG expected and 71 BDAG actual. RLS and grants were correct, persistent B7C fixture users were zero, and failure/test hooks were absent.
+
+No historical migration changed, no migration was created, no Supabase dry-run or push was run, no financial formula changed, and no EAS command was run. MKT-B7C-C2 remote-clear hardening is complete; MKT-B7C remains fully closed and B7D is ready but has not been started.

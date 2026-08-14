@@ -104,6 +104,12 @@ async function proveAuthority() {
     await expectError(db, () => setTags(db, f.creatorX, "feed", feed, [items[0].product, items[0].product]), "marketplace_creator_content_tag_duplicate_product", "22023");
     await expectError(db, () => setTags(db, f.creatorX, "feed", foreign, [items[0].product]), "marketplace_creator_content_forbidden", "42501");
     await expectError(db, () => setTags(db, f.creatorX, "reel", feed, [items[0].product]), "marketplace_creator_content_type_mismatch", "23514");
+    const clearContent = await video(db, f, f.creatorX, "feed", 4);
+    await setTags(db, f.creatorX, "feed", clearContent, [items[0].product, items[1].product]);
+    const clearKey = uid(), cleared = await setTags(db, f.creatorX, "feed", clearContent, [], clearKey);
+    assert.equal(cleared.count,0);assert.deepEqual(cleared.items,[]);
+    assert.deepEqual(await setTags(db, f.creatorX, "feed", clearContent, [], clearKey),cleared);
+    await expectError(db,()=>setTags(db,f.creatorX,"feed",clearContent,[items[0].product],clearKey),"marketplace_creator_content_tag_idempotency_conflict","23505");
     const reelSet = await setTags(db, f.creatorX, "reel", reel, [items[0].product]);
     const tag = reelSet.items[0].id;
     const attrKey = uid(), attr = await attribution(db, f.buyer, tag, items[0].variant, attrKey);
@@ -133,7 +139,7 @@ async function proveAuthority() {
     const tombstone = (await db.query("select content_id,video_id,status from public.marketplace_creator_content_product_tags where id=$1", [tag])).rows[0];
     assert.equal(tombstone.content_id, reel); assert.equal(tombstone.video_id, null); assert.equal(tombstone.status, "removed");
     await reconcile(db, "reconcile_marketplace_creator_content_tags", 28);
-    return { feed: true, reel: true, fiveAllowed: true, sixthRejected: true, privacy: true, offerReplacement: true, removal: true, deletionTombstone: true, backendRetrySameCommand: true, backendChangedSetConflict: true };
+    return { feed: true, reel: true, fiveAllowed: true, sixthRejected: true, privacy: true, offerReplacement: true, removal: true, deletionTombstone: true, backendRetrySameCommand: true, backendChangedSetConflict: true, explicitClearEmpty:true, clearRetrySameCommand:true, clearChangedSetConflict:true };
   });
 }
 
@@ -271,8 +277,11 @@ async function concurrency() {
     const mutationContent=await video(db,f,f.creatorX,"feed",36);await Promise.all([claim(a,"authenticated",f.creatorX,false),claim(b,"authenticated",f.creatorX,false)]);
     const mutationA=[items[5].product,items[6].product,items[7].product],mutationB=[items[6].product];const mutations=await Promise.allSettled([a.query("select public.set_my_marketplace_content_product_tags('feed',$1,$2,$3)value",[mutationContent,mutationA,uid()]),b.query("select public.set_my_marketplace_content_product_tags('feed',$1,$2,$3)value",[mutationContent,mutationB,uid()])]);noDeadlock(mutations);assert(mutations.every((x)=>x.status==="fulfilled"));
     const mutationFinal=await activeProducts(mutationContent);assert([JSON.stringify(mutationA),JSON.stringify(mutationB)].includes(JSON.stringify(mutationFinal.map((x)=>x.product_id))));assert.deepEqual(mutationFinal.map((x)=>x.sort_position),mutationFinal.map((_,i)=>i));
+    const saveClearContent=await video(db,f,f.creatorX,"feed",37);await Promise.all([claim(a,"authenticated",f.creatorX,false),claim(b,"authenticated",f.creatorX,false)]);
+    const saveClear=await Promise.allSettled([a.query("select public.set_my_marketplace_content_product_tags('feed',$1,$2,$3)value",[saveClearContent,[items[5].product],uid()]),b.query("select public.set_my_marketplace_content_product_tags('feed',$1,'{}'::uuid[],$2)value",[saveClearContent,uid()])]);noDeadlock(saveClear);assert(saveClear.every((x)=>x.status==="fulfilled"));
+    const saveClearFinal=await activeProducts(saveClearContent);assert([0,1].includes(saveClearFinal.length));if(saveClearFinal.length)assert.deepEqual(saveClearFinal.map((x)=>[x.product_id,x.sort_position]),[[items[5].product,0]]);
     await reconcile(db,"reconcile_marketplace_creator_content_tags",28);
-    return {sameRequestRace:true,competingTagSetRace:true,removeAttributionRace:true,offerReplacementAttributionRace:true,offerRevocationAttributionRace:true,contentDeleteAttributionRace:true,competingMutationRace:true,noDeadlocks:true,noPartialState:true};
+    return {sameRequestRace:true,competingTagSetRace:true,removeAttributionRace:true,offerReplacementAttributionRace:true,offerRevocationAttributionRace:true,contentDeleteAttributionRace:true,competingMutationRace:true,saveClearRace:true,noDeadlocks:true,noPartialState:true};
   }finally{await Promise.all([a.end(),b.end()]);await cleanup(f);}
 }
 
