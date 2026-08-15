@@ -1,4 +1,6 @@
 import { getSupabaseClient } from "@/template";
+import {rpcArray,rpcEnum,rpcNonnegative,rpcNonnegativeInteger,rpcObject,
+  rpcString,rpcTimestamp,rpcUuid} from "@/services/marketplaceRuntimeValidation";
 
 export type MarketplacePaymentErrorCode =
   | "marketplace_auth_required"
@@ -77,71 +79,50 @@ export class MarketplacePaymentError extends Error {
 }
 
 const finite = (value: unknown) => {
-  const number = Number(value);
-  if (!Number.isFinite(number) || number < 0)
-    throw new MarketplacePaymentError("marketplace_payment_unknown");
-  return number;
+  try{return rpcNonnegative(value,'payment.money');}catch{throw new MarketplacePaymentError("marketplace_payment_unknown");}
 };
 
-const mapReceipt = (value: unknown): MarketplacePaymentReceipt => {
-  if (!value || typeof value !== "object")
-    throw new MarketplacePaymentError("marketplace_payment_unknown");
-  const root = value as Record<string, unknown>;
-  const payment = root.payment as Record<string, unknown>;
-  const checkout = root.checkout as Record<string, unknown>;
-  const buyer = root.buyer as Record<string, unknown>;
-  if (
-    !payment ||
-    !checkout ||
-    !buyer ||
-    payment.currency !== "BDAG" ||
-    checkout.currency !== "BDAG" ||
-    payment.status !== "paid" ||
-    checkout.status !== "paid" ||
-    !Array.isArray(root.orders)
-  )
-    throw new MarketplacePaymentError("marketplace_payment_unknown");
+export const parseMarketplacePaymentReceipt = (value: unknown): MarketplacePaymentReceipt => {
+ try{
+  const root=rpcObject(value,'payment_receipt'),payment=rpcObject(root.payment,'payment_receipt.payment'),checkout=rpcObject(root.checkout,'payment_receipt.checkout'),buyer=rpcObject(root.buyer,'payment_receipt.buyer'),inventory=rpcObject(root.inventory,'payment_receipt.inventory');
   return {
     payment: {
-      id: String(payment.id),
-      checkoutId: String(payment.checkout_id),
-      status: "paid",
-      currency: "BDAG",
+      id: rpcUuid(payment.id,'payment_receipt.payment.id'),
+      checkoutId: rpcUuid(payment.checkout_id,'payment_receipt.payment.checkout_id'),
+      status: rpcEnum(payment.status,['paid']as const,'payment_receipt.payment.status'),
+      currency: rpcEnum(payment.currency,['BDAG']as const,'payment_receipt.payment.currency'),
       grossAmount: finite(payment.gross_amount),
       escrowAmount: finite(payment.escrow_amount),
-      feeBps: finite(payment.fee_bps),
-      financialTransactionId: String(payment.financial_transaction_id),
-      paidAt: String(payment.paid_at),
+      feeBps: rpcNonnegativeInteger(payment.fee_bps,'payment_receipt.payment.fee_bps'),
+      financialTransactionId: rpcUuid(payment.financial_transaction_id,'payment_receipt.payment.financial_transaction_id'),
+      paidAt: rpcTimestamp(payment.paid_at,'payment_receipt.payment.paid_at'),
     },
     checkout: {
-      id: String(checkout.id),
-      reference: String(checkout.reference),
-      status: "paid",
+      id: rpcUuid(checkout.id,'payment_receipt.checkout.id'),
+      reference: rpcString(checkout.reference,'payment_receipt.checkout.reference'),
+      status: rpcEnum(checkout.status,['paid']as const,'payment_receipt.checkout.status'),
       total: finite(checkout.total),
-      currency: "BDAG",
+      currency: rpcEnum(checkout.currency,['BDAG']as const,'payment_receipt.checkout.currency'),
     },
     buyer: { newBdagBalance: finite(buyer.new_bdag_balance) },
-    orders: root.orders.map((raw) => {
-      const order = raw as Record<string, unknown>;
+    orders: rpcArray(root.orders,'payment_receipt.orders').map((raw,index) => {
+      const order=rpcObject(raw,`payment_receipt.orders[${index}]`);
       return {
-        id: String(order.id),
-        orderNumber: String(order.order_number),
-        status: String(order.status),
+        id: rpcUuid(order.id,`payment_receipt.orders[${index}].id`),
+        orderNumber: rpcString(order.order_number,`payment_receipt.orders[${index}].order_number`),
+        status: rpcString(order.status,`payment_receipt.orders[${index}].status`),
         grossAmount: finite(order.gross_amount),
         platformFeeAmount: finite(order.platform_fee_amount),
         sellerNetAmount: finite(order.seller_net_amount),
-        allocationStatus: String(order.allocation_status) as MarketplacePaymentOrderAllocation["allocationStatus"],
+        allocationStatus: rpcEnum(order.allocation_status,["held","released","partially_refunded","refunded"]as const,`payment_receipt.orders[${index}].allocation_status`),
       };
     }),
     inventory: {
-      consumedReservations: finite(
-        (root.inventory as Record<string, unknown>)?.consumed_reservations,
-      ),
-      unitsConsumed: finite(
-        (root.inventory as Record<string, unknown>)?.units_consumed,
-      ),
+      consumedReservations: rpcNonnegativeInteger(inventory.consumed_reservations,'payment_receipt.inventory.consumed_reservations'),
+      unitsConsumed: rpcNonnegativeInteger(inventory.units_consumed,'payment_receipt.inventory.units_consumed'),
     },
   };
+ }catch(error){if(error instanceof MarketplacePaymentError)throw error;throw new MarketplacePaymentError("marketplace_payment_unknown");}
 };
 
 export async function payMarketplaceCheckout(
@@ -189,7 +170,7 @@ export async function payMarketplaceCheckout(
         });
       throw new MarketplacePaymentError(code);
     }
-    const receipt = mapReceipt(data.data);
+    const receipt = parseMarketplacePaymentReceipt(data.data);
     if (__DEV__)
       console.log("[MarketplacePayment] rpc_success", {
         orderCount: receipt.orders.length,

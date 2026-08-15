@@ -1,6 +1,9 @@
 import { randomUUID } from "expo-crypto";
 import { getSupabaseClient } from "@/template";
 import { marketplaceCommerceSessionId } from "./marketplaceAnalyticsService";
+import {rpcArray,rpcBoolean,rpcEnum,rpcNonnegative,rpcNonnegativeInteger,
+  rpcNullableString,rpcNullableUuid,rpcObject,rpcString,rpcStringArray,
+  rpcTimestamp,rpcUuid} from "./marketplaceRuntimeValidation";
 const db = () => getSupabaseClient();
 export type AdEventType =
   | "impression"
@@ -40,8 +43,10 @@ export interface AdCampaign {
   orders: number;
   gmv: number;
 }
-const rows = <T>(data: unknown): T[] =>
-  Array.isArray(data) ? (data as T[]) : [];
+const campaignStatuses=["draft","scheduled","active","paused","exhausted","completed","cancelled"]as const;
+export const parseSponsoredProduct=(value:unknown,path="sponsored"):SponsoredProduct=>{const row=rpcObject(value,path),seller=rpcObject(row.seller,`${path}.seller`);return{campaign_id:rpcUuid(row.campaign_id,`${path}.campaign_id`),product_id:rpcUuid(row.product_id,`${path}.product_id`),title:rpcString(row.title,`${path}.title`),images:rpcStringArray(row.images,`${path}.images`),seller:{username:rpcString(seller.username,`${path}.seller.username`),display_name:rpcNullableString(seller.display_name,`${path}.seller.display_name`)},price:rpcNonnegative(row.price,`${path}.price`),base_price:rpcNonnegative(row.base_price,`${path}.base_price`),promotion_id:rpcNullableUuid(row.promotion_id,`${path}.promotion_id`),sponsored:rpcBoolean(row.sponsored,`${path}.sponsored`)===true?true:(()=>{throw new Error('marketplace_payload_invalid:sponsored')})(),label:rpcEnum(row.label,["Patrocinado"]as const,`${path}.label`)}};
+export const parseAdCampaign=(value:unknown,path="campaign"):AdCampaign=>{const row=rpcObject(value,path);return{id:rpcUuid(row.id,`${path}.id`),product_id:rpcUuid(row.product_id,`${path}.product_id`),product_title:rpcString(row.product_title,`${path}.product_title`),images:rpcStringArray(row.images,`${path}.images`),name:rpcNullableString(row.name,`${path}.name`),status:rpcEnum(row.status,campaignStatuses,`${path}.status`),budget:rpcNonnegative(row.budget,`${path}.budget`),spent:rpcNonnegative(row.spent,`${path}.spent`),released:rpcNonnegative(row.released,`${path}.released`),remaining:rpcNonnegative(row.remaining,`${path}.remaining`),starts_at:rpcTimestamp(row.starts_at,`${path}.starts_at`),ends_at:rpcTimestamp(row.ends_at,`${path}.ends_at`),eligible_elapsed_seconds:rpcNonnegativeInteger(row.eligible_elapsed_seconds,`${path}.eligible_elapsed_seconds`),impressions:rpcNonnegativeInteger(row.impressions,`${path}.impressions`),clicks:rpcNonnegativeInteger(row.clicks,`${path}.clicks`),product_views:rpcNonnegativeInteger(row.product_views,`${path}.product_views`),cart_adds:rpcNonnegativeInteger(row.cart_adds,`${path}.cart_adds`),orders:rpcNonnegativeInteger(row.orders,`${path}.orders`),gmv:rpcNonnegative(row.gmv,`${path}.gmv`)}};
+const parseIdReceipt=(value:unknown,path:string)=>({id:rpcUuid(rpcObject(value,path).id,`${path}.id`)});
 export async function fetchSponsoredProducts(
   surface: "marketplace_home" | "marketplace_search",
   category?: string,
@@ -55,7 +60,9 @@ export async function fetchSponsoredProducts(
     },
   });
   if (error) throw error;
-  return rows<SponsoredProduct>((data as { products?: unknown })?.products);
+  const root=rpcObject(data,'marketplace_ads_edge');
+  if(root.success!==true)throw new Error('marketplace_payload_invalid:marketplace_ads_edge.success');
+  return rpcArray(root.products,'marketplace_ads_edge.products').map((value,index)=>parseSponsoredProduct(value,`marketplace_ads_edge.products[${index}]`));
 }
 export async function recordAdEvent(input: {
   campaignId: string;
@@ -79,7 +86,8 @@ export async function recordAdEvent(input: {
     p_metadata: input.metadata ?? {},
   });
   if (error) throw error;
-  return data as { id: string; touch_id?: string };
+  const row=rpcObject(data,'ad_event');
+  return{id:rpcUuid(row.id,'ad_event.id'),touch_id:row.touch_id==null?undefined:rpcUuid(row.touch_id,'ad_event.touch_id')};
 }
 export async function fetchMyAdCampaigns(status?: string) {
   const { data, error } = await db().rpc("fetch_my_marketplace_ad_campaigns", {
@@ -87,7 +95,7 @@ export async function fetchMyAdCampaigns(status?: string) {
     p_limit: 100,
   });
   if (error) throw error;
-  return rows<AdCampaign>(data);
+  return rpcArray(data,'ad_campaigns').map((value,index)=>parseAdCampaign(value,`ad_campaigns[${index}]`));
 }
 export async function fetchMyAdCampaignDetail(id: string) {
   const { data, error } = await db().rpc(
@@ -95,19 +103,21 @@ export async function fetchMyAdCampaignDetail(id: string) {
     { p_campaign_id: id },
   );
   if (error) throw error;
-  return data as AdCampaign | null;
+  return data===null?null:parseAdCampaign(data,'ad_campaign_detail');
 }
 export async function fetchAdConfig() {
   const { data, error } = await db().rpc("fetch_marketplace_ad_config");
   if (error) throw error;
-  return data as {
+  const row=rpcObject(data,'ad_config');
+  const result: {
     minimum_budget_bdag: number;
     maximum_budget_bdag: number;
     minimum_duration: string;
     maximum_duration: string;
     minimum_duration_seconds: number;
     maximum_duration_seconds: number;
-  };
+  } = {minimum_budget_bdag:rpcNonnegative(row.minimum_budget_bdag,'ad_config.minimum_budget_bdag'),maximum_budget_bdag:rpcNonnegative(row.maximum_budget_bdag,'ad_config.maximum_budget_bdag'),minimum_duration:rpcString(row.minimum_duration,'ad_config.minimum_duration'),maximum_duration:rpcString(row.maximum_duration,'ad_config.maximum_duration'),minimum_duration_seconds:rpcNonnegativeInteger(row.minimum_duration_seconds,'ad_config.minimum_duration_seconds'),maximum_duration_seconds:rpcNonnegativeInteger(row.maximum_duration_seconds,'ad_config.maximum_duration_seconds')};
+  return result;
 }
 export async function createAdDraft(input: {
   productId: string;
@@ -129,7 +139,7 @@ export async function createAdDraft(input: {
     },
   );
   if (error) throw error;
-  return data as { id: string };
+  return parseIdReceipt(data,'ad_draft');
 }
 export async function activateAdCampaign(id: string, key: string) {
   const { data, error } = await db().rpc("activate_marketplace_ad_campaign", {
@@ -137,19 +147,19 @@ export async function activateAdCampaign(id: string, key: string) {
     p_idempotency_key: key,
   });
   if (error) throw error;
-  return data as { id: string };
+  return parseIdReceipt(data,'ad_activation');
 }
 export async function pauseAdCampaign(id: string) {
   const { data, error } = await db().rpc("pause_marketplace_ad_campaign", {
     p_campaign_id: id,
   });
   if (error) throw error;
-  return data;
+  return parseIdReceipt(data,'ad_pause');
 }
 export async function resumeAdCampaign(id: string) {
   const { data, error } = await db().rpc("resume_marketplace_ad_campaign", {
     p_campaign_id: id,
   });
   if (error) throw error;
-  return data;
+  return parseIdReceipt(data,'ad_resume');
 }

@@ -1,5 +1,8 @@
 import { getSupabaseClient } from '@/template';
 import { extractRpcUuid } from '@/services/mediaService';
+import {rpcArray,rpcBoolean,rpcCursorPage,rpcEnum,rpcNonnegative,rpcNonnegativeInteger,rpcNullableNonnegative,
+  rpcNullableString,rpcNullableTimestamp,rpcNullableUuid,rpcObject,rpcString,rpcStringArray,
+  rpcTimestamp,rpcUuid} from '@/services/marketplaceRuntimeValidation';
 
 export type MarketplaceCategory = 'digital'|'physical'|'art'|'music'|'clothing'|'other';
 export type SellerStatus = 'pending'|'approved'|'rejected'|'suspended';
@@ -88,18 +91,29 @@ function throwReadError(error:unknown):never {
   throw new MarketplaceReadError('marketplace_product_unavailable',postgresCode);
 }
 
-function mapProduct(row:Record<string,unknown>):Product {
+function mapProduct(row:Record<string,unknown>,sellerProjection=false):Product {
+  const seller=row.seller==null?undefined:rpcObject(row.seller,'product.seller');
+  const stock=rpcNonnegativeInteger(row.stock,'product.stock');
   return {
-    ...(row as unknown as Product),
-    price:Number(row.price), compare_at_price:row.compare_at_price==null?null:Number(row.compare_at_price),
-    stock:Number(row.stock), total_sales:Number(row.total_sales),
-    variant_price_max:row.variant_price_max==null?null:Number(row.variant_price_max),
-    active_variant_count:Number(row.active_variant_count??1),
-    available_quantity:Number(row.available_quantity??row.stock??0),
-    publication_readiness_reason:typeof row.publication_readiness_reason==='string'?row.publication_readiness_reason:null,
-    images:Array.isArray(row.images)?row.images as string[]:[],
-    tags:Array.isArray(row.tags)?row.tags as string[]:[],
-    currency:'BDAG', product_type:'physical',
+    id:rpcUuid(row.id,'product.id'),seller_id:rpcUuid(row.seller_id,'product.seller_id'),
+    store_id:rpcUuid(row.store_id,'product.store_id'),category_id:rpcUuid(row.category_id,'product.category_id'),
+    title:rpcString(row.title,'product.title'),description:rpcString(row.description,'product.description'),
+    price:rpcNonnegative(row.price,'product.price'),currency:rpcEnum(row.currency,['BDAG']as const,'product.currency'),
+    category:rpcEnum(row.category,['digital','physical','art','music','clothing','other']as const,'product.category'),
+    images:rpcStringArray(row.images,'product.images'),stock,
+    status:rpcEnum(row.status,['active','paused','sold_out','deleted']as const,'product.status'),
+    tags:rpcStringArray(row.tags,'product.tags'),total_sales:rpcNonnegativeInteger(row.total_sales,'product.total_sales'),
+    brand:rpcNullableString(row.brand,'product.brand'),compare_at_price:rpcNullableNonnegative(row.compare_at_price,'product.compare_at_price'),
+    product_type:rpcEnum(row.product_type,['physical']as const,'product.product_type'),
+    moderation_status:rpcEnum(row.moderation_status,['pending','approved','rejected','suspended']as const,'product.moderation_status'),
+    published_at:rpcNullableTimestamp(row.published_at,'product.published_at'),deleted_at:rpcNullableTimestamp(row.deleted_at,'product.deleted_at'),
+    created_at:rpcTimestamp(row.created_at,'product.created_at'),updated_at:rpcTimestamp(row.updated_at,'product.updated_at'),
+    variant_price_max:rpcNullableNonnegative(row.variant_price_max,'product.variant_price_max'),
+    active_variant_count:rpcNonnegativeInteger(row.active_variant_count,'product.active_variant_count'),
+    shipping_profile_id:sellerProjection?rpcNullableUuid(row.shipping_profile_id,'product.shipping_profile_id'):null,
+    available_quantity:sellerProjection?rpcNonnegativeInteger(row.available_quantity,'product.available_quantity'):stock,
+    publication_readiness_reason:sellerProjection?rpcNullableString(row.publication_readiness_reason,'product.publication_readiness_reason'):null,
+    seller:seller?{username:rpcString(seller.username,'product.seller.username'),avatar_url:rpcNullableString(seller.avatar_url,'product.seller.avatar_url'),display_name:rpcNullableString(seller.display_name,'product.seller.display_name')}:undefined,
   };
 }
 
@@ -139,14 +153,17 @@ export async function fetchProduct(productId:string):Promise<Product|null> {
 
 function mapVariant(row:Record<string,unknown>):MarketplaceVariant {
   return {
-    ...(row as unknown as MarketplaceVariant),
-    price:Number(row.price),compare_at_price:row.compare_at_price==null?null:Number(row.compare_at_price),
-    base_price:Number(row.base_price??row.price),promotion_id:row.promotion_id==null?null:String(row.promotion_id),
-    promotion_type:row.promotion_type==null?null:String(row.promotion_type) as MarketplaceVariant['promotion_type'],
-    discount_percentage:row.discount_percentage==null?null:Number(row.discount_percentage),
-    promotion_ends_at:row.promotion_ends_at==null?null:String(row.promotion_ends_at),
-    available_quantity:Number(row.available_quantity??0),
-    option_value_ids:Array.isArray(row.option_value_ids)?row.option_value_ids as string[]:[],
+    id:rpcUuid(row.id,'variant.id'),product_id:rpcUuid(row.product_id,'variant.product_id'),
+    sku:rpcNullableString(row.sku,'variant.sku'),title:rpcNullableString(row.title,'variant.title'),
+    price:rpcNonnegative(row.price,'variant.price'),compare_at_price:rpcNullableNonnegative(row.compare_at_price,'variant.compare_at_price'),
+    base_price:rpcNonnegative(row.base_price,'variant.base_price'),promotion_id:rpcNullableUuid(row.promotion_id,'variant.promotion_id'),
+    promotion_type:row.promotion_type===null?null:rpcEnum(row.promotion_type,['percentage','fixed_amount','promotional_price']as const,'variant.promotion_type'),
+    discount_percentage:rpcNullableNonnegative(row.discount_percentage,'variant.discount_percentage'),
+    promotion_ends_at:rpcNullableTimestamp(row.promotion_ends_at,'variant.promotion_ends_at'),
+    status:rpcEnum(row.status,['active','inactive','archived']as const,'variant.status'),is_default:rpcBoolean(row.is_default,'variant.is_default'),
+    image_asset_id:rpcNullableUuid(row.image_asset_id,'variant.image_asset_id'),image_url:rpcNullableString(row.image_url,'variant.image_url'),
+    available_quantity:rpcNonnegativeInteger(row.available_quantity,'variant.available_quantity'),
+    option_value_ids:rpcArray(row.option_value_ids,'variant.option_value_ids').map((value,index)=>rpcUuid(value,`variant.option_value_ids[${index}]`)),
   };
 }
 
@@ -159,16 +176,17 @@ export async function fetchMarketplaceProductDetail(productId:string):Promise<Ma
   if(detailResult.error) throwReadError(detailResult.error);
   if(mediaResult.error) throwReadError(mediaResult.error);
   if(!productResult||!detailResult.data) return null;
-  const payload=detailResult.data as {options?:MarketplaceProductOption[];variants?:Record<string,unknown>[]};
-  const media=(Array.isArray(mediaResult.data)?mediaResult.data:[]).map((row:Record<string,unknown>)=>({
-    kind:row.kind==='video'?'video' as const:'image' as const,url:String(row.url),
-    durationMs:row.duration_ms==null?null:Number(row.duration_ms),mimeType:typeof row.mime_type==='string'?row.mime_type:null,
-    position:Number(row.position??0),isCover:row.is_cover===true,
-  }));
+  const payload=rpcObject(detailResult.data,'product_detail');
+  const options=rpcArray(payload.options,'product_detail.options').map((raw,index)=>{const option=rpcObject(raw,`product_detail.options[${index}]`);return{id:rpcUuid(option.id,'option.id'),name:rpcString(option.name,'option.name'),position:rpcNonnegativeInteger(option.position,'option.position'),values:rpcArray(option.values,'option.values').map((rawValue,valueIndex)=>{const value=rpcObject(rawValue,`option.values[${valueIndex}]`);return{id:rpcUuid(value.id,'option_value.id'),value:rpcString(value.value,'option_value.value'),position:rpcNonnegativeInteger(value.position,'option_value.position')}})}});
+  const media=rpcArray(mediaResult.data,'product_media').map((raw,index)=>{const row=rpcObject(raw,`product_media[${index}]`);return{
+    kind:rpcEnum(row.kind,['image','video']as const,'media.kind'),url:rpcString(row.url,'media.url'),
+    durationMs:row.duration_ms===null?null:rpcNonnegativeInteger(row.duration_ms,'media.duration_ms'),mimeType:rpcNullableString(row.mime_type,'media.mime_type'),
+    position:rpcNonnegativeInteger(row.position,'media.position'),isCover:rpcBoolean(row.is_cover,'media.is_cover'),
+  }});
   return {
     product:productResult,
-    options:Array.isArray(payload.options)?payload.options:[],
-    variants:Array.isArray(payload.variants)?payload.variants.map(mapVariant):[],
+    options,
+    variants:rpcArray(payload.variants,'product_detail.variants').map((raw,index)=>mapVariant(rpcObject(raw,`product_detail.variants[${index}]`))),
     media,
   };
 }
@@ -254,23 +272,26 @@ export async function setVariantLowStockThreshold(variantId:string,threshold:num
   if(error) throw error;
 }
 
-export async function fetchMyProducts():Promise<Product[]> {
+export interface MarketplaceSellerProductPage {items:Product[];nextCursor:{updatedAt:string;productId:string}|null}
+export async function fetchMyProductsPage(cursor:{updatedAt:string;productId:string}|null=null,limit=100):Promise<MarketplaceSellerProductPage> {
   const client=db();
-  if(__DEV__)console.log('[SellerProducts] fetch_start',{operation:'fetch_my_marketplace_products'});
+  if(__DEV__)console.log('[SellerProducts] fetch_start',{operation:'fetch_my_marketplace_products_v2'});
   const {data:{session},error:authError}=await client.auth.getSession();
   if(authError||!session?.user?.id)throw new MarketplaceSellerProductsError('marketplace_authentication_required');
-  const {data,error}=await client.rpc('fetch_my_marketplace_products');
+  const {data,error}=await client.rpc('fetch_my_marketplace_products_v2',{p_cursor_updated_at:cursor?.updatedAt??null,p_cursor_product_id:cursor?.productId??null,p_limit:limit});
   if(error){
     const text=`${error.message??''} ${error.details??''}`;
     const code:MarketplaceSellerProductsErrorCode=/marketplace_authentication_required/i.test(text)?'marketplace_authentication_required':error.code==='42501'?'marketplace_seller_products_permission':!error.code&&/network|fetch|timeout/i.test(text)?'marketplace_seller_products_transport':'marketplace_seller_products_request';
-    if(__DEV__)console.warn('[SellerProducts] fetch_failed',{code,postgresCode:error.code??null,operation:'fetch_my_marketplace_products'});
+    if(__DEV__)console.warn('[SellerProducts] fetch_failed',{code,postgresCode:error.code??null,operation:'fetch_my_marketplace_products_v2'});
     throw new MarketplaceSellerProductsError(code,error.code??null);
   }
-  if(!Array.isArray(data))throw new MarketplaceSellerProductsError('marketplace_seller_products_request');
-  const products=data.map(row=>mapProduct(row as Record<string,unknown>));
+  const page=rpcCursorPage(data,'seller_products');
+  const products=page.items.map((row,index)=>mapProduct(rpcObject(row,`seller_products.items[${index}]`),true));
+  const rawCursor=page.nextCursor,nextCursor=rawCursor?{updatedAt:rpcTimestamp(rawCursor.updated_at,'seller_products.next_cursor.updated_at'),productId:rpcUuid(rawCursor.product_id,'seller_products.next_cursor.product_id')}:null;
   if(__DEV__)console.log('[SellerProducts] fetch_success',{count:products.length,activeCount:products.filter(item=>item.status==='active').length,pausedCount:products.filter(item=>item.status==='paused').length});
-  return products;
+  return{items:products,nextCursor};
 }
+export async function fetchMyProducts():Promise<Product[]> {return(await fetchMyProductsPage(null,100)).items;}
 
 export async function fetchSellerFoundation():Promise<{seller:MarketplaceSeller|null;store:MarketplaceStore|null}> {
   const client=db();
