@@ -155,3 +155,18 @@ Routes are /login, /marketplace, /marketplace/orders, and /marketplace/orders/:o
 ## Final status
 
 MKT-B8A Web Admin Foundation + Marketplace Read-Only Ops is CLOSED. MKT-B8B is unblocked but has not been started.
+
+## B8A-C1 Admin Web Order Detail Payload Validation Closure
+
+- Starting SHA: c3a50a5ec99623915998d77df32338433386f672.
+- Scope: web robustness only; no SQL, migration, backend authority, Expo, Build, deployment, or B8B change.
+- Gap: getOrderDetail previously checked only the top-level object, order UUID, and top-level array/object shapes. Nested financial, date, identity, shipping, creator, settlement, dispute, reversal, and timeline values could reach the UI unchecked.
+- Correction: getOrderDetail now passes the complete RPC result through validateOrderDetail before returning it. Validation follows the deployed SQL contract and accepts null only for nullable sections and fields.
+- Validated sections: order, buyer, seller, store, items and optional creator trace, payment, payment allocation, shipping address/shipment, creator attributions, creator allocations, settlement and legs, dispute, reversal and legs, and timeline.
+- Safety: malformed UUIDs, money, timestamps, nested creator allocations, and array/object shapes reject with a controlled Error. No financial calculation was introduced.
+- Date rendering: formatDate now returns an em dash for an invalid external value and cannot throw RangeError or render Invalid Date.
+- UI behavior: MarketplaceOrderDetailPage's existing async error path renders “No se pudo cargar” and Reintentar; malformed data does not render undefined BDAG, NaN, or Invalid Date.
+- Proof: web tests include direct complete/nullable contract validation, five malformed payload classes, actual getOrderDetail RPC rejection, and controlled page error-state behavior.
+- Gates: web tests 19/19; web lint zero warnings/errors; web TypeScript/Vite build passed; focused B8A static tests 12/12; root Node 673/673; mobile TypeScript remained at the exact 187 unrelated-diagnostic baseline with zero B8A-C1 diagnostics.
+- Migration/deployment: unchanged at 20260811028000; no Supabase deployment.
+- B8B: not started.

@@ -65,6 +65,8 @@ test("web routes and shell are limited to B8A Marketplace pages",()=>{
 test("typed API validates UUIDs dates money cursors and payload objects",()=>{
   const api=read("apps/admin-web/src/lib/adminApi.ts");
   for(const marker of["const uuid","const date","const money","const object","OrderCursor","next_cursor"])assert.match(api,new RegExp(marker));
+  for(const marker of["validateOrderDetail","validateItem","validatePayment","validatePaymentAllocation","validateShipping","validateAttribution","validateAllocation","validateSettlement","validateSettlementLeg","validateDispute","validateReversal","validateReversalLeg","validateTimelineEvent"])assert.match(api,new RegExp(marker));
+  assert.match(api,/return validateOrderDetail\(await rpc\("get_marketplace_admin_order_detail"/);
 });
 test("proof covers authorization B8S pagination and exact creator economics",()=>{
   for(const marker of["anonymousDenied","ordinaryDenied","metadataForgeryDenied","b8sInsertEscalationDenied","b8sUpdateEscalationDenied","cursorPaginationExact","noDuplicates","multiCreator","liveCreatorTrace","settlementTrace","reversalTrace","fixtures"])assert.match(proof,new RegExp(marker));
