@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAdminAuth } from "../auth/AdminAuthProvider";
 
@@ -16,6 +17,8 @@ const titles: Record<string, string> = {
 export function AdminShell() {
   const { admin, logout } = useAdminAuth();
   const location = useLocation();
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  useEffect(() => setNavigationOpen(false), [location.pathname]);
   const section = Object.keys(titles).find(
     (path) =>
       path !== "/marketplace" && location.pathname.startsWith(`${path}/`),
@@ -33,8 +36,19 @@ export function AdminShell() {
             <small>Admin</small>
           </div>
         </div>
+        <button
+          aria-controls="marketplace-navigation"
+          aria-expanded={navigationOpen}
+          aria-label={navigationOpen ? "Cerrar navegación" : "Abrir navegación"}
+          className="nav-toggle"
+          onClick={() => setNavigationOpen((value) => !value)}
+          type="button"
+        >
+          <span aria-hidden="true">{navigationOpen ? "×" : "☰"}</span>
+          Menú
+        </button>
         <p className="nav-section">MARKETPLACE</p>
-        <nav aria-label="Marketplace">
+        <nav aria-label="Marketplace" className={navigationOpen ? "is-open" : ""} id="marketplace-navigation">
           <NavLink end to="/marketplace">
             Resumen
           </NavLink>
