@@ -1,0 +1,3 @@
+export function LoadingState({label="Cargando…"}:{label?:string}){return <div className="page-state" aria-busy="true"><div className="spinner"/><p>{label}</p></div>}
+export function ErrorState({message,onRetry}:{message:string;onRetry:()=>void}){return <div className="page-state error"><span className="state-icon">!</span><h2>No se pudo cargar</h2><p>{message}</p><button onClick={onRetry}>Reintentar</button></div>}
+export function EmptyState({title,detail}:{title:string;detail:string}){return <div className="page-state"><span className="state-icon muted">○</span><h2>{title}</h2><p>{detail}</p></div>}

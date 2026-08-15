@@ -1,0 +1,15 @@
+import { useEffect,useState } from "react";
+import { formatBdag,getOverview,ranges,type AdminRange,type Overview } from "../lib/adminApi";
+import { ErrorState,LoadingState } from "../components/PageState";
+
+const labels:Record<AdminRange,string>={"7d":"7D","30d":"30D","90d":"90D",all:"Todo"};
+export function MarketplaceOverviewPage(){const [range,setRange]=useState<AdminRange>("30d"),[data,setData]=useState<Overview|null>(null),[error,setError]=useState<string|null>(null),[nonce,setNonce]=useState(0);useEffect(()=>{let active=true;setData(null);setError(null);void getOverview(range).then((value)=>{if(active)setData(value)}).catch((e)=>{if(active)setError(e instanceof Error?e.message:"Error")});return()=>{active=false}},[range,nonce]);return <>
+  <div className="page-heading"><div><p className="eyebrow">ESTADO OPERATIVO</p><h2>Resumen</h2><p>Datos canónicos de pedidos, pagos y creator commerce.</p></div><div className="range-tabs" role="group" aria-label="Rango">{ranges.map((item)=><button key={item} className={range===item?"active":""} onClick={()=>setRange(item)}>{labels[item]}</button>)}</div></div>
+  {error?<ErrorState message={error} onRetry={()=>setNonce((x)=>x+1)}/>:!data?<LoadingState label="Consultando Marketplace…"/>:<div className="overview-grid">
+    <section className="metric-grid"><Metric title="GMV pagado" value={formatBdag(data.commerce.paid_gmv)} accent/><Metric title="Pedidos pagados" value={data.commerce.paid_orders}/><Metric title="Unidades" value={data.commerce.units}/><Metric title="Por despachar" value={data.commerce.pending_fulfillment}/><Metric title="Comisión generada" value={formatBdag(data.creator_commerce.commission_generated)}/><Metric title="Comisión neta" value={formatBdag(data.creator_commerce.commission_net)}/></section>
+    <section className="panel"><div className="panel-title"><h3>Atención operativa</h3><span>Actual</span></div><div className="attention-list"><Row label="Disputas abiertas" value={data.operations.open_disputes}/><Row label="Asignaciones retenidas" value={data.operations.held_allocations}/><Row label="Productos con atención" value={data.products.requiring_attention}/><Row label="Pedidos revertidos" value={data.commerce.reversed_orders}/></div></section>
+    <section className="panel"><div className="panel-title"><h3>Ecosistema</h3><span>Actual</span></div><div className="attention-list"><Row label="Vendedores aprobados" value={data.sellers.approved}/><Row label="Tiendas activas" value={data.sellers.active_stores}/><Row label="Productos publicados" value={data.products.active_published}/><Row label="Pedidos con creador" value={data.creator_commerce.attributed_orders}/></div></section>
+  </div>}
+  </>}
+function Metric({title,value,accent=false}:{title:string;value:string|number;accent?:boolean}){return <article className={`metric-card ${accent?"accent":""}`}><span>{title}</span><strong>{value}</strong></article>}
+function Row({label,value}:{label:string;value:string|number}){return <div className="attention-row"><span>{label}</span><strong>{value}</strong></div>}
