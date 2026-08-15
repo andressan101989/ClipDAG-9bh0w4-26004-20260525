@@ -90,6 +90,7 @@ test("Refinement preserves hardened commerce contracts and creates no later-phas
   const changed = shop + creator + product + gallery + purchaseBar;
   assert.doesNotMatch(changed, /service_role|atomic_ledger_transfer|ledger_(credit|debit)|spend_marketplace_ad_budget|release_marketplace_ad_unused_budget|B8D-3|B8D-4|LIVE Battles/i);
   const migrations = readdirSync(join(root, "supabase/migrations")).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(migrations.at(-1), "20260811033000_marketplace_production_hardening.sql");
+  assert.ok(migrations.includes("20260811033000_marketplace_production_hardening.sql"));
+  assert.equal(migrations.at(-1), "20260811034000_marketplace_verified_reviews_branding.sql");
   assert.equal(String(JSON.parse(read("app.json")).expo.ios.buildNumber), "22");
 });

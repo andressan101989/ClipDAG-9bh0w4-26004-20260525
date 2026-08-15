@@ -122,13 +122,13 @@ test("C2 Edge envelopes, balance, publication and table reads fail closed",()=>{
     assert.ok(compatibilityTests.includes(phrase),phrase);
 });
 
-test("C2 is client-only with no migration or new economic authority",()=>{
+test("C2 remained client-only and the later F1 review migration adds no economic authority",()=>{
   const later=readdirSync(join(root,"supabase/migrations")).filter((name)=>name>"20260811033000_marketplace_production_hardening.sql");
-  assert.deepEqual(later,[]);
+  assert.deepEqual(later,["20260811034000_marketplace_verified_reviews_branding.sql"]);
   assert.doesNotMatch(payment+settlement+product+showcase,/set_balance|adjust_wallet|repair_ledger|p_(seller_payout|creator_bps|platform_fee|ledger_account)/i);
 });
 
-test("proof and auditor are read-only remotely and B8D-2/3/4 were not started", () => {
+test("proof and auditor are read-only remotely and B8D-3/4 were not started", () => {
   assert.match(proof, /B8D1H_PROOF_REQUIRES_DISPOSABLE_DATABASE/);
   assert.match(proof, /rollback/);
   assert.match(auditor, /read_only: true/);

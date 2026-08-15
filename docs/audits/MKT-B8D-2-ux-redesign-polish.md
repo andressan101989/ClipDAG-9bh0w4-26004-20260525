@@ -272,3 +272,53 @@ The B8D-2R proof now requires no random/external fallback provider in the Shop, 
 - B8B 8/8, Creator and Ads failure counters zero; payments/settlements healthy; escrow expected/actual 71/71; fixtures zero; failure hook absent.
 
 No migration, Supabase push or EAS is part of C1; Build remains 22, no Ads/economic authority changed, and B8D-3 was not started.
+
+## MKT-B8D-2R-F1 — Product Experience & Verified Reputation
+
+Starting baseline: `e376a58f290e04f3bbac6a4d27c1f4cc2cf7e1e5`, branch `codex/mkt-a4b-premium-integration`, Build 22, remote migration `20260811033000_marketplace_production_hardening.sql`. Local/origin were identical, the worktree was clean, merge count since baseline was zero, and both inherited remote read-only auditors passed before implementation.
+
+### Existing authority audit and reuse
+
+No Marketplace product/store review table or review RPC existed. The canonical store model already contained `logo_asset_id` and `banner_asset_id`; the existing `set_marketplace_store_media(uuid,uuid,uuid)` authority already required the authenticated approved seller, editable store ownership, an owned ready/public image asset, and exact `store_logo` / `store_banner` purpose before binding it. The existing R2 media pipeline validates image MIME independently of filename and caps logo/banner uploads at 10 MB/25 MB. F1 reuses those columns, RPC and upload pipeline rather than introducing URLs or parallel branding authority.
+
+Audited sources included `marketplace_stores`, `media_assets`, media links, create/finalize upload functions, store media RPC, orders, order items, fulfillment/delivery timestamps, sellers, profiles, product/store projections, seller settings, public product detail and the current gallery/purchase components.
+
+### Forward review authority
+
+Migration: `20260811034000_marketplace_verified_reviews_branding.sql`.
+
+- Product reputation is one review per canonical `order_item_id`; seller/store reputation is separately one review per canonical delivered `order_id`.
+- The client supplies only the eligible purchase key, integer rating and optional comment. `auth.uid()`, buyer ownership, product, seller, store and order identities are resolved and compared inside fixed-search-path SECURITY DEFINER RPCs.
+- Eligibility requires canonical `delivered` plus a non-null `delivered_at`; cross-buyer and seller self-review paths are rejected.
+- Rating is integer 1–5. Comments are trimmed, empty becomes NULL, and non-null text is capped at 1,000 characters.
+- Exact-purchase retry/edit is an identity-checked upsert. Hidden moderation state is not reset by the buyer. Public reads include only `visible` reviews.
+- Both tables are RLS-enabled and have no anon/authenticated direct table privileges. Public projections expose only display name, username, public avatar, rating/comment/timestamps and server-emitted verified-purchase state—no email, phone, shipping, payment or ledger identity.
+- Product and seller aggregates are computed independently on the server. Product aggregate includes the 1→5 distribution. No-reviews average is NULL and the UI says `Sin reseñas todavía`.
+- Review lists are newest-first keysets on `(created_at,id)`, default 20, hard maximum 50, NULL/0/51 rejected, with no OFFSET.
+- Status is constrained to `visible|hidden`, allowing future privileged moderation to hide presentation without deleting purchase provenance. No client status mutation or new Admin moderation feature was added.
+- `reconcile_marketplace_reviews()` validates purchase identities, delivery, seller/store identities and self-review absence; all five counters were zero in disposable proof.
+
+### Store branding and public identity
+
+`app/seller/store.tsx` now provides canonical logo and optional banner upload/replace with square/wide preview, pending locks, safe error/retry copy and refetch. It never accepts an arbitrary URL. A newly uploaded asset is cleaned only if binding fails; once the existing canonical binding succeeds it is not treated as an orphan. Product Detail and the new existing-authority public store route resolve branding only through safe server projections. Stores without branding render a neutral storefront icon, never random company imagery.
+
+Disposable evidence bound an owned ready/public `store_logo`, rejected another user's logo and rejected a video asset for the logo slot. The inherited upload policy provides MIME and size enforcement; no service-role credential is present in mobile code.
+
+### Premium product experience
+
+`ProductMediaGallery` is now a horizontally paged native `FlatList`. Hero swipes update `selectedIndex`, externally selected thumbnails reposition the hero, hero selection re-centers the 66px thumbnail rail, and the `1 / N` counter follows the same state. Images expose `Toca para ampliar` and open a safe-area-aware black fullscreen modal with image-only horizontal paging, preserved selected source index, count and a 44×44 close action. Videos retain `expo-video` native controls and remain non-zoomable. Pinch/double-tap zoom was intentionally not added: no additional heavy gesture/animation dependency was warranted. Missing media remains the truthful `Imagen no disponible` state; no fake image/logo/review data exists.
+
+Product Detail now places the real product rating below the title, renders the canonical store logo/name and distinct seller rating, links to `Ver tienda`, and shows bounded product/seller review tabs, verified-purchase labels, optional product distribution, eligibility-specific forms and pending/error/retry/empty states. Product and seller submissions are explicit and separate. The sticky quantity/cart/buy bar and exact selected-variant checkout continuation are unchanged.
+
+All direct buyer-to-seller contact/chat actions were removed from Product Detail and Marketplace product/store commerce surfaces. The global OnSpace chat system, Creator DMs and order support/dispute routes were not changed. No product or store “verified” badge is emitted because the audited schema has no separate semantic that justifies that claim.
+
+### Tests and safety evidence
+
+- New static closure: verified authority derivation, RLS/grants, rating/comment bounds, keyset/privacy, distinct aggregates, deep mobile validation, paging/fullscreen synchronization, truthful media, branding reuse, removal of direct contact and unchanged checkout/economic paths.
+- New disposable proof: anon denial; foreign-order denial; seller self-review denial; undelivered denial; 0/6/decimal/oversized-comment denial; valid product/store review; deterministic edit; separate aggregate accuracy; keyset page 1/page 2/terminal behavior; safe public keys; branding ownership/MIME; review reconciliation 5/5 zero; fixture residue zero.
+- Full root Node: 747/747 passed after F1 additions.
+- Admin Web: 58/58 passed; ESLint passed with zero warnings; Vite production build passed (120 modules).
+- TypeScript: exactly 187 historical diagnostics and zero diagnostics in F1 changed production files.
+- All inherited disposable Marketplace proofs passed, including B8S/B8A/B8B/B8C/B8D hardening, order/payment lifecycle, inventory/shipping/publication, held refund, post-settlement reversal, Promotions, Creator/multi-creator/LIVE, Ads finance/eligibility/finalization/delivery/events, runtime and fixture finalization. The known schema-only dump omission of global default ACL was handled exactly as in B8D-2: deployed migration 33000 was reapplied only inside the local disposable container before its inherited proof.
+
+Remote deployment/post-audit evidence is recorded in the final F1 report after the linked dry-run and forward-only deployment. Build remains 22. Checkout, BDAG payment, escrow, settlement, refund/reversal, Creator commission, Promotions, Ads finance and Admin authority are unchanged. No EAS or mobile physical testing ran; B8D-3, B8D-4 and LIVE Battles were not started.
