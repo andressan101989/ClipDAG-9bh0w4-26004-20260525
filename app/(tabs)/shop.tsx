@@ -58,6 +58,15 @@ const fmtShort = (value: number) => {
 const categoryLabel = (category: MarketplaceCategory) =>
   PRODUCT_CATEGORIES.find((item) => item.key === category)?.label ?? category;
 
+const ProductMediaFallback = () => (
+  <View style={styles.productImageFallback} accessibilityLabel="Imagen no disponible">
+    <View style={styles.productImageFallbackIcon}>
+      <MaterialIcons name="image-not-supported" size={30} color={Colors.textSubtle} />
+    </View>
+    <Text style={styles.productImageFallbackText}>Imagen no disponible</Text>
+  </View>
+);
+
 const ProductCard = memo(function ProductCard({
   product,
   width,
@@ -67,9 +76,7 @@ const ProductCard = memo(function ProductCard({
   width: number;
   onPress: () => void;
 }) {
-  const image = product.images?.[0]
-    ? { uri: product.images[0] }
-    : { uri: `https://picsum.photos/seed/${product.id}/500/500` };
+  const image = product.images?.[0] ?? null;
   const soldOut = product.stock === 0;
   return (
     <Pressable
@@ -79,7 +86,11 @@ const ProductCard = memo(function ProductCard({
       accessibilityLabel={`${product.title}, ${fmt(product.price, 2)} BDAG`}
     >
       <View style={styles.productMedia}>
-        <Image source={image} style={styles.productImage} contentFit="cover" transition={180} />
+        {image ? (
+          <Image source={{ uri: image }} style={styles.productImage} contentFit="cover" transition={180} />
+        ) : (
+          <ProductMediaFallback />
+        )}
         <View style={styles.categoryBadge}>
           <Text style={styles.categoryBadgeText}>{categoryLabel(product.category)}</Text>
         </View>
@@ -149,7 +160,7 @@ const SponsoredCard = memo(function SponsoredCard({
       if (timer.current) clearTimeout(timer.current);
     };
   }, [gridY, item, scrollY, viewportHeight, width, y]);
-  const image = item.images?.[0] ?? `https://picsum.photos/seed/${item.product_id}/500/500`;
+  const image = item.images?.[0] ?? null;
   return (
     <View onLayout={(event) => setY(event.nativeEvent.layout.y)}>
       <Pressable
@@ -159,7 +170,11 @@ const SponsoredCard = memo(function SponsoredCard({
         accessibilityLabel={`Patrocinado, ${item.title}, ${Number(item.price).toFixed(2)} BDAG`}
       >
         <View style={styles.productMedia}>
-          <Image source={{ uri: image }} style={styles.productImage} contentFit="cover" transition={180} />
+          {image ? (
+            <Image source={{ uri: image }} style={styles.productImage} contentFit="cover" transition={180} />
+          ) : (
+            <ProductMediaFallback />
+          )}
           <View style={styles.sponsoredBadge}>
             <MaterialIcons name="campaign" size={12} color="#221604" />
             <Text style={styles.sponsoredBadgeText}>Patrocinado</Text>
@@ -458,6 +473,9 @@ const styles = StyleSheet.create({
   sponsoredCard: { borderColor: "rgba(255,177,27,.38)" },
   productMedia: { width: "100%", aspectRatio: 1, position: "relative", overflow: "hidden", backgroundColor: Colors.surface },
   productImage: { width: "100%", height: "100%" },
+  productImageFallback: { width: "100%", height: "100%", alignItems: "center", justifyContent: "center", gap: Spacing.xs, backgroundColor: Colors.surface },
+  productImageFallbackIcon: { width: 58, height: 58, borderRadius: 29, alignItems: "center", justifyContent: "center", backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
+  productImageFallbackText: { color: Colors.textSubtle, fontSize: 10, fontWeight: FontWeight.semibold, textAlign: "center" },
   categoryBadge: { position: "absolute", left: 8, top: 8, paddingHorizontal: 8, paddingVertical: 4, borderRadius: Radius.full, backgroundColor: "rgba(7,7,15,.76)" },
   categoryBadgeText: { color: "#fff", fontSize: 9, fontWeight: FontWeight.bold },
   sponsoredBadge: { position: "absolute", left: 8, top: 8, flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: Radius.full, backgroundColor: "#FFB11B" },
