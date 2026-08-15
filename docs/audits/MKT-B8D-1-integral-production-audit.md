@@ -326,3 +326,39 @@ Realistic malformed-JSON tests cover string/boolean money, malformed UUID/timest
 ### Residual scope
 
 B8D-001 through B8D-005 are corrected with production effective-state proof. The accepted P3 findings remain open unchanged: B8D-006 narrow navigation overflow, B8D-007 narrow table labels, and B8D-008 accessible privileged confirmation polish. They are reserved for separately authorized B8D-2. B8D-2, B8D-3 and B8D-4 were not started.
+
+## MKT-B8D-1H-C1 — Client Contract Compatibility Closure
+
+Baseline: branch `codex/mkt-a4b-premium-integration`, starting SHA `4132be800f4e5764fd750187b3962d1206870612`, Build 22, remote migration `20260811033000_marketplace_production_hardening.sql`. C1 is client/test/documentation-only: no migration was created, no historical migration changed, and no Supabase push occurred.
+
+### Runtime contract corrections
+
+- Products: `Product.product_type` and the network parser now accept exactly the canonical `physical | digital` values. Positive fixtures prove both, including a digital draft; an unknown value rejects instead of falling back to physical.
+- Text nullability: shared validators now distinguish arbitrary text (including `''`), required non-empty text, nullable text, and nullable non-empty text. Product and draft descriptions accept the canonical empty string while titles remain non-empty. Brand preserves its real nullable/empty-compatible contract.
+- Product drafts and private inventory: product/media draft projections and the complete seller-private product/options/option-values/variants/inventory/movements/media-assets payload are deeply validated for UUID, money, integer, enum, timestamp, boolean, array/object and actual nullability contracts. No required structured array remains an opaque cast.
+- Financial/support receipts: settlement, problem-report, dispute-detail and final/intermediate dispute-resolution receipts are validated deeply. Canonical held refund, release/reversal, already-released, review and rejection families remain server-authoritative; the client performs no financial calculation. Malformed UUID, money, timestamp, enum, boolean or nested identity fails closed with the existing controlled service errors.
+- Remaining in-scope reads: seller analytics and Creator Showcase/content-tag projections now validate their externally sourced structured rows rather than coercing required values. Repository-wide response-boundary review found no new client financial authority.
+
+Positive tests cover physical and digital products, empty descriptions, digital drafts, settlement receipts and dispute receipts. Realistic malformed tests cover unknown product types, empty required titles, invalid UUID/timestamp/media/enums, string/boolean money, fractional integers, malformed nested allocation/inventory/media objects and invalid Creator/analytics fields. The affected screens continue through their existing loading/error/retry behavior; no B8D-2 visual work was introduced.
+
+### Seller continuation closure
+
+The accepted database v2 contracts remain unchanged:
+
+- products: `(updated_at DESC, id DESC)` via `fetch_my_marketplace_products_v2`;
+- promotions: `(created_at DESC, id DESC)` via `list_my_marketplace_promotions_v2`;
+- shipping profiles: `(created_at ASC, id ASC)` via `fetch_my_marketplace_shipping_profiles_v2`.
+
+`ShopContext` and `app/seller/products.tsx` now own initial-page, refresh-reset, in-flight suppression, cursor continuation, id dedupe and terminal-stop behavior. Promotions independently continue both promotion and eligible-product result sets. The Product Editor exposes bounded continuation so a shipping profile after row 100 remains reachable and selectable. Logical 101+ row tests prove accumulation, no duplicates, refresh reset and terminal null behavior. Already-deployed Build-22 legacy wrappers remain bounded to their compatibility first page (maximum 100); current branch callers use true v2 continuation without automatically draining unbounded pages.
+
+### Verification
+
+- Focused B8S/B8A/B8B/B8C/B8D/mobile closure tests: 71 passed, 0 failed.
+- Full root Node suite: 722 passed, 0 failed.
+- Admin Web: 55 passed, lint 0 errors/0 warnings, production build succeeded (119 modules).
+- TypeScript: exactly 187 pre-existing diagnostics; C1 changed-file diagnostics: 0.
+- Disposable proofs passed for production hardening, runtime, fixture finalization, order lifecycle, shipping, held disputes/refunds, two-connection settlement reversals, promotions, Creator Commerce, multi-creator allocations, Creator Analytics, LIVE commerce, Marketplace analytics, Ads finance/eligibility/finalization/delivery/events, B8B operations and B8C intelligence. B8B remained 8/8 zero and all proofs ended with zero persistent fixtures.
+- The schema-only disposable restore does not carry PostgreSQL global default-privilege state; applying the already-deployed 33000 migration inside that disposable database restored production parity before the inherited ACL proof. This was local proof setup only, not a migration change or remote deployment.
+- Final read-only audits are healthy at remote migration 33000: schema/default ACL hardening unchanged, 204/204 Marketplace SECURITY DEFINER functions fixed-path, null-limit risks empty, stale Creator v1 authenticated grant absent, v2 seller contracts healthy, B8B 8/8 zero, all Creator/Ads/payment/settlement failure counters zero, escrow expected 71 = actual 71, fixtures 0 and failure hooks absent.
+
+Build remains 22. Economic writers, B7F/B7R, settlement/refund logic, promotion snapshots, Ads finance, B8B mutations and B8C temporal semantics were not changed. EAS was not run. B8D-006, B8D-007 and B8D-008 remain open P3 inputs; B8D-2, B8D-3 and B8D-4 were not started.

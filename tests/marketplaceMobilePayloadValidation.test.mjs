@@ -15,6 +15,8 @@ const id = "10000000-0000-4000-8000-000000000001";
 const at = "2026-08-15T12:00:00.000Z";
 
 test("Marketplace mobile validators accept canonical JSON primitives", () => {
+  assert.equal(v.rpcText("", "description"), "");
+  assert.throws(() => v.rpcNonEmptyString("", "title"), /marketplace_payload_invalid/);
   assert.equal(v.rpcUuid(id, "id"), id);
   assert.equal(v.rpcNonnegative(12.5, "money"), 12.5);
   assert.equal(v.rpcNonnegativeInteger(3, "quantity"), 3);

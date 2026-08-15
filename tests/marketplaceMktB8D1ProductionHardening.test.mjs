@@ -14,7 +14,15 @@ const validator = read("services/marketplaceRuntimeValidation.ts");
 const product = read("services/marketplaceService.ts");
 const promotion = read("services/marketplacePromotionService.ts");
 const shipping = read("services/marketplaceShippingService.ts");
-const mobile = [product, promotion, shipping, read("services/marketplaceAdsService.ts"), read("services/marketplacePaymentService.ts"), read("services/marketplaceOrderService.ts"), read("services/marketplaceFulfillmentService.ts"), read("services/marketplaceCreatorAnalyticsService.ts")].join("\n");
+const draft = read("services/marketplaceProductDraftService.ts");
+const settlement = read("services/marketplaceSettlementService.ts");
+const cursorCollection = read("services/marketplaceCursorCollection.ts");
+const shopContext = read("contexts/ShopContext.tsx");
+const productScreen = read("app/seller/products.tsx");
+const promotionScreen = read("app/seller/promotions.tsx");
+const editorScreen = read("app/seller/product-editor/[productId].tsx");
+const compatibilityTests = read("tests/marketplaceMobileContractCompatibility.test.mjs");
+const mobile = [product, promotion, shipping, draft, settlement, read("services/marketplaceAdsService.ts"), read("services/marketplacePaymentService.ts"), read("services/marketplaceOrderService.ts"), read("services/marketplaceFulfillmentService.ts"), read("services/marketplaceCreatorAnalyticsService.ts"),read("services/marketplaceAnalyticsService.ts"),read("services/marketplaceCreatorShowcaseService.ts"),read("services/marketplaceCreatorContentTagService.ts")].join("\n");
 
 test("B8D-1H is one forward-only migration after the frozen B8C closure", () => {
   assert.ok(existsSync(join(root, migrationPath)));
@@ -48,9 +56,9 @@ test("seller-owned lists use bounded keyset v2 RPCs and compatibility wrappers",
   assert.match(migration, /\(p\.created_at,p\.id\)>\(p_cursor_created_at,p_cursor_profile_id\)/i);
   assert.doesNotMatch(migration, /\boffset\b/i);
   assert.match(migration, /fetch_my_marketplace_products_v2\(null,null,100\)->'items'/i);
-  assert.match(product, /rpc\('fetch_my_marketplace_products_v2'/);
-  assert.match(promotion, /rpc\("list_my_marketplace_promotions_v2"/);
-  assert.match(shipping, /rpc\('fetch_my_marketplace_shipping_profiles_v2'/);
+  assert.match(product, /rpc\(["']fetch_my_marketplace_products_v2["']/);
+  assert.match(promotion, /rpc\(["']list_my_marketplace_promotions_v2["']/);
+  assert.match(shipping, /rpc\(["']fetch_my_marketplace_shipping_profiles_v2["']/);
   assert.doesNotMatch(product, /rpc\('fetch_my_marketplace_products'\s*[,)]/);
 });
 
@@ -66,6 +74,32 @@ test("mobile RPC payloads are validated without client financial authority", () 
   for (const service of ["marketplaceAdsService", "marketplacePromotionService", "marketplaceService", "marketplaceShippingService", "marketplacePaymentService", "marketplaceOrderService", "marketplaceFulfillmentService", "marketplaceCreatorAnalyticsService"]) assert.ok(mobile.includes("marketplaceRuntimeValidation"), service);
   assert.doesNotMatch(mobile, /rows<[^>]+>\(data\)/);
   assert.doesNotMatch(migration + mobile, /set_balance|adjust_wallet|repair_ledger|p_(seller_payout|creator_bps|platform_fee|ledger_account)/i);
+});
+
+test("C1 mobile contracts preserve canonical digital and empty-description payloads",()=>{
+  assert.match(product,/product_type:\s*"physical"\s*\|\s*"digital"/);
+  assert.match(product,/\["physical", "digital"\] as const,[\s\S]*?"product\.product_type"/);
+  assert.match(product,/description:\s*rpcText\(row\.description/);
+  assert.match(draft,/rpcEnum\(\s*p\.product_type,\s*\["physical", "digital"\]/);
+  assert.doesNotMatch(draft,/p\.product_type === "digital" \? "digital" : "physical"/);
+  assert.match(draft,/description:\s*rpcText\(p\.description/);
+  assert.match(compatibilityTests,/canonical physical\/digital products and empty descriptions are accepted/);
+});
+
+test("C1 private inventory and settlement boundaries are deeply parsed",()=>{
+  for(const field of["seller_inventory.detail.options","seller_inventory.inventory","seller_inventory.movements","seller_inventory.media_assets"])assert.ok(product.includes(field),field);
+  for(const parser of["parseMarketplaceSettlementReceipt","parseMarketplaceProblemReceipt","parseSupportMarketplaceDispute","parseMarketplaceDisputeResolution","validateFinancialResult"])assert.ok(settlement.includes(parser),parser);
+  assert.doesNotMatch(settlement,/const (amount|resolutionAmount)=.*Number\(/);
+  assert.match(compatibilityTests,/valid settlement and dispute financial receipts are accepted/);
+});
+
+test("C1 official seller flows consume continuation cursors while legacy wrappers stay bounded",()=>{
+  assert.match(shopContext,/fetchMoreMyProducts/);assert.match(productScreen,/onEndReached/);
+  assert.match(promotionScreen,/listMyMarketplacePromotionsPage/);assert.match(promotionScreen,/loadMorePromotions/);assert.match(promotionScreen,/loadMoreProducts/);
+  assert.match(editorScreen,/fetchMyMarketplaceShippingProfilesPage/);assert.match(editorScreen,/loadMoreShippingProfiles/);
+  assert.match(cursorCollection,/new Map/);assert.match(cursorCollection,/reset \? \[\]/);
+  assert.match(product,/fetchMyProductsPage\(null,\s*100\)/);assert.match(promotion,/listMyMarketplacePromotionsPage\(null,\s*100\)/);assert.match(shipping,/fetchMyMarketplaceShippingProfilesPage\(storeId,\s*null,\s*100\)/);
+  assert.match(compatibilityTests,/reaches rows beyond 100, dedupes, resets, and stops terminally/);
 });
 
 test("proof and auditor are read-only remotely and B8D-2/3/4 were not started", () => {
