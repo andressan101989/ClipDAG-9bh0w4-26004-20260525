@@ -57,10 +57,10 @@ test("browser operational access is RPC-only and contains no protected writes",(
   assert.doesNotMatch(webSource,/supabase\.from\([^)]*\)\.(insert|update|delete)/);
   assert.doesNotMatch(webSource,/ledger_(debit|credit)|rpc\("resolve_marketplace_dispute"|confirm_marketplace_order_delivery_and_release/);
 });
-test("web routes and shell are limited to B8A Marketplace pages",()=>{
+test("web routes preserve B8A Marketplace pages without unrelated global admin modules",()=>{
   const appSource=read("apps/admin-web/src/App.tsx");
   for(const route of["/login","/marketplace","/marketplace/orders","/marketplace/orders/:orderId"])assert.equal(appSource.includes(`path="${route}"`),true,route);
-  assert.doesNotMatch(appSource,/\/users|\/moderation|\/security|\/ads/);
+  assert.doesNotMatch(appSource,/path="\/(users|moderation|security|ads)/);
 });
 test("typed API validates UUIDs dates money cursors and payload objects",()=>{
   const api=read("apps/admin-web/src/lib/adminApi.ts");

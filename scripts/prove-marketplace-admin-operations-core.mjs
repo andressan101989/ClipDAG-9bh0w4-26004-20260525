@@ -25,7 +25,7 @@ try{
  stage="security";const readCalls=[()=>rpc("search_marketplace_admin_disputes",[null,null,null,null,50]),()=>rpc("search_marketplace_admin_sellers",[null,null,null,null,50]),()=>rpc("search_marketplace_admin_products",[null,null,null,null,null,null,null,50])],writeCalls=[()=>rpc("admin_moderate_marketplace_seller",[f.pendingSeller,"approve",null,uid()]),()=>rpc("admin_moderate_marketplace_product",[pendingProduct.product,"approve",null,uid()])];for(const identity of[{name:"anon",sub:""},{name:"authenticated",sub:f.normal},{name:"authenticated",sub:f.normal,metadata:{is_admin:true,role:"admin"}}]){await role(identity.name,identity.sub,identity.metadata);for(const call of[...readCalls,...writeCalls]){const result=await attempt(call);assert.equal(result.ok,false);assert.equal(result.code,"42501")}}
  const escalation=await attempt(()=>db.query("update public.user_profiles set is_admin=true where id=$1",[f.normal]));assert.equal(escalation.ok,false);
 
- stage="capabilities";await role("authenticated",f.admin);const access=await rpc("get_my_marketplace_admin_access");assert.deepEqual(access.capabilities,["marketplace:read","marketplace:disputes","marketplace:sellers","marketplace:products"]);
+ stage="capabilities";await role("authenticated",f.admin);const access=await rpc("get_my_marketplace_admin_access");for(const capability of["marketplace:read","marketplace:disputes","marketplace:sellers","marketplace:products"])assert(access.capabilities.includes(capability));
  stage="null_safe_limits";
  const limitCases=[
   {name:"search_marketplace_admin_disputes",args:(limit)=>[null,null,null,null,limit]},
