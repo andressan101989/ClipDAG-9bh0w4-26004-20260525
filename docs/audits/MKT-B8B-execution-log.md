@@ -81,3 +81,41 @@
 ## Scope statement
 
 B8C and B8D were not started. No arbitrary ledger/balance authority, service-role browser secret, mobile admin UI, or historical migration rewrite was introduced.
+
+## MKT-B8B-C1 closure hardening
+
+Independent closure review identified three contract defects after the deployed B8B authority was accepted:
+
+- The three B8B list RPCs used SQL `NOT BETWEEN`, which evaluates to NULL for `p_limit=NULL` and therefore did not explicitly reject an unbounded request.
+- Seller/product commands accepted reasons through 500 characters while the immutable audit table allowed only 100, so a canonically valid moderation input could fail while writing its mandatory audit receipt.
+- `resolveDispute()` checked only that the browser receipt was an object, leaving nested UUID, date, monetary, allocation, and receipt-family fields unvalidated before success presentation.
+
+The forward-only `20260811030000_marketplace_admin_operations_closure.sql` migration preserves default 50, hard maximum 100, keyset ordering, filters, indexes, grants, and all canonical mutation authority while explicitly rejecting NULL, 0, and 101 page limits. It widens only the audit reason constraint to 500 characters; dispute input remains 2–100 and seller/product rejection or suspension remains 2–500. No reason is silently truncated.
+
+The admin web now uses `validateDisputeOperationReceipt()` for the real canonical `intermediate_review` and `final_resolution` families. It deeply validates receipt identity, timestamps, canonical monetary strings/numbers, payment/allocation structure, outcome-specific financial-result structure, nullable review fields, and required booleans. Malformed receipts use the normal operation error state, do not display success, and preserve the same in-flight idempotency key for retry. `OperationConfirm` receives the exact domain reason maximum: 100 for disputes and 500 for seller/product moderation.
+
+The disposable proof covers omitted/default, 1, 100, NULL, 0, and 101 limits for all three list RPCs; exact 100/101 and 500/501 reason boundaries; unchanged targets, zero audit rows, and zero financial movement on over-limit rejection; the original real two-connection conflicting dispute race; 8/8 B8B reconciliation; and zero fixtures.
+
+The first full-page boundary run also exposed a pre-existing statement-scope defect in the deployed list definitions: their post-query `candidate` CTE reference raised `42P01` whenever a full page required `has_more` evaluation. The same forward replacement now derives rows, count, `has_more`, and the final cursor in one CTE-consuming statement. This preserves keyset semantics and makes the mandatory `p_limit=1` and `p_limit=100` boundaries actually executable; no OFFSET pagination was introduced.
+
+Local C1 gates completed successfully:
+
+- Admin web: 31/31 tests, ESLint zero errors/warnings, TypeScript/Vite production build successful.
+- Focused B8S/B8A/B8B static suite: 34/34 passed.
+- Full root Node suite: 685/685 passed, zero failed.
+- Root TypeScript: exactly the unchanged 187 unrelated diagnostics; zero diagnostics in C1-modified files.
+- Focused root ESLint for every changed MJS test/proof/auditor: zero errors/warnings.
+- Disposable C1 proof: all three list boundary matrices passed; reason boundary/rollback/audit assertions passed; the two-connection race retained exactly one canonical winner; B8B reconciliation 8/8 zero; fixtures zero.
+- Inherited sequential proofs passed: B3 analytics; B7A 36/36; B7B 23/23; B7C 28/28; B7D 18/18; B7E; B7F 27/27; B7R 32/32; dispute/refund; order lifecycle; shipping; publication; fixture finalization; and Marketplace runtime.
+- The disposable proof cleanup restores the canonical platform/escrow system-account baseline after its committed two-connection fixture cleanup. A same-database B3 then B7A run passed, proving no state leakage into inherited finance proofs.
+
+C1 changes no payment, ledger, allocation, settlement, B7F, B7R, or commission authority. B8C and B8D remain unstarted.
+
+C1 remote execution completed as follows:
+
+- Read-only predeploy audit passed at exact migration `20260811029000`; C1 objects were absent as expected, B8S/B8A/B8B remained healthy, B8B reconciliation was 8/8 zero, escrow was 71/71, fixtures were zero, and inherited reconciliations were zero.
+- The linked dry-run listed only `20260811030000_marketplace_admin_operations_closure.sql`, with no seeds and no roles.
+- Deployment applied only `20260811030000_marketplace_admin_operations_closure.sql`.
+- Read-only postdeploy audit passed at exact migration `20260811030000`: all three list definitions were NULL-safe, the audit reason contract allowed 500, grants remained safe, anonymous mutations remained denied, dangerous financial functions remained zero, B8B reconciliation was 8/8 zero, inherited reconciliations were zero, fixtures were zero, and failure hooks were absent.
+
+Final C1 commit SHAs and local/origin parity are reported in the Git handoff because a commit cannot contain its own resulting identifier.
