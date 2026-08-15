@@ -43,7 +43,7 @@ function create(){
  if(process.platform==="win32")run(process.env.ComSpec,["/d","/s","/c",`npx.cmd supabase db dump --linked --schema public,fixture_ops --file ${dump}`]);
  else run("npx",["supabase","db","dump","--linked","--schema","public,fixture_ops","--file",dump]);
  docker("cp",dump,`${name}:/tmp/linked-public-schema.sql`);
- psql("drop schema if exists public cascade;create schema public;grant all on schema public to postgres,anon,authenticated,service_role;grant all on schema public to public;");
+ psql("drop schema if exists public cascade;create schema public authorization postgres;grant usage on schema public to public,anon,authenticated,service_role;revoke create on schema public from public,anon,authenticated,authenticator,service_role;");
  const restored=run("docker",["exec",name,"psql","-U","postgres","-d","postgres","-v","ON_ERROR_STOP=1","-f","/tmp/linked-public-schema.sql"],{quiet:true});
  if(restored.status!==0)throw new Error("linked_schema_restore_failed");seedBaseline();verify();
  console.log(JSON.stringify({ready:true,container:name,connection_string:connection,schema_only:true},null,2));
