@@ -165,3 +165,27 @@ Provisional implementation finding count: P0 0, P1 0, correctness-affecting P2 0
 - No migration was created, no Supabase/Edge/Admin deploy occurred, no EAS/mobile build ran, and Build remained 22.
 
 Final findings: P0 0; P1 0; correctness-affecting P2 0; open B8D-2 P3 0. B8D-006, B8D-007 and B8D-008 are closed by implementation and automated evidence, subject to independent review. Physical/manual validation remains exclusively in the documented B8D-3 matrix and was not started.
+
+## MKT-B8D-2-C1 — Creator Mobile UX Closure
+
+Starting baseline: `016047c0fcf772d526bc6fabe7736fb317d62f24`, branch `codex/mkt-a4b-premium-integration`, Build 22, remote migration `20260811033000_marketplace_production_hardening.sql`. The worktree and local/origin branch were clean and identical; both inherited read-only remote auditors passed before the correction. Accepted Admin findings B8D-006, B8D-007 and B8D-008 were not reopened.
+
+Touch targets: the Creator Showcase move-up, move-down and remove Pressables now have actual 44×44 logical-pixel boxes. The icon sizes did not substitute for the interactive bounds. The vertical action rail remains outside the flexible copy area and does not introduce a per-card horizontal ScrollView.
+
+Accessibility: all three icon-only management actions declare `accessibilityRole="button"` and retain descriptive Spanish labels. Their `accessibilityState.disabled` values exactly follow the native `disabled` expressions: first-or-busy for move up, last-or-busy for move down, and busy for remove. Visual opacity remains supplementary and is not the only disabled signal. The existing destructive Alert still opens before any removal call, offers `Cancelar` and the explicit `Quitar producto` action, and performs the service mutation only from that action callback.
+
+Language consistency: user-visible Creator Showcase navigation, subtitle, tabs, search, loading, error/retry, empty states, availability, commission, actions, accessibility labels and Alerts are normalized to the existing Spanish Marketplace convention. Database enums, RPC/service names, error codes, IDs and Creator economic semantics were not translated or changed.
+
+Narrow-width reasoning: at 320px, the list leaves a 288px card after its 16px side insets. Card padding and the 8px card gap leave a bounded row containing the non-shrinking 44px action rail and a flexible product region. Within that region, the 82px image remains usable while `productTap`, copy and search/header text use `minWidth:0`, allowing long names/copy to shrink, truncate or wrap instead of pushing controls outside the card. The same contract has additional space at 360, 390 and 430px. Three management actions remain vertically reachable without horizontal scrolling.
+
+Automated evidence:
+
+- B8D-2 focused closure: 6/6 passed, including 44×44 dimensions, role/state wiring, Spanish copy, no horizontal card scrolling, confirmation-before-mutation ordering and unchanged add/remove/reorder service contracts.
+- Admin Web: 58/58 passed; ESLint passed with zero warnings; Vite production build passed with 120 modules.
+- Full root Node: 733/733 passed, zero failures.
+- TypeScript: exactly 187 historical diagnostics; zero diagnostics in the C1 changed files.
+- Build remained 22. No migration, Supabase push, Edge/Admin deploy, EAS or mobile build was performed.
+- Final read-only B8D auditor: passed at `20260811033000`, 204/204 Marketplace SECURITY DEFINER functions fixed-path, zero broad Marketplace DML, zero null-limit risks and zero exposed dynamic SQL.
+- Final read-only B8C auditor: passed; B8B 8/8 zero, all Creator and Ads failure counters zero, payment and settlement failure counters zero, escrow expected/actual 71/71, fixtures zero and failure hooks absent.
+
+No Marketplace service, database, attribution, commission or other economic authority changed. Historical migrations are unchanged. B8D-3 was not started or simulated.

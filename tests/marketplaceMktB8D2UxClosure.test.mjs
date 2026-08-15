@@ -12,6 +12,7 @@ const adminCss = read("apps/admin-web/src/styles/admin.css");
 const operationCss = read("apps/admin-web/src/styles/operations.css");
 const adminTests = read("apps/admin-web/src/tests/adminUx.test.tsx") + read("apps/admin-web/src/tests/operationsClosure.test.tsx");
 const mobileUi = read("components/marketplace/SellerCenterUI.tsx");
+const showcase = read("app/creator-showcase.tsx");
 
 test("B8D-006 provides a bounded responsive navigation without losing routes", () => {
   for (const path of ["orders", "disputes", "sellers", "products", "creator-commerce", "promotions", "ads", "health", "activity"])
@@ -57,9 +58,45 @@ test("mobile polish remains responsive and preserves seller continuation", () =>
   assert(promotions.includes("loadMorePromotions"));
   assert(promotions.includes("loadMoreProducts"));
   assert(editor.includes("loadMoreShippingProfiles"));
-  const showcase = read("app/creator-showcase.tsx");
-  for (const token of ["Remove from showcase", 'text: "Cancel"', 'text: "Remove product"', 'style: "destructive"'])
+  for (const token of ["Quitar del escaparate", 'text: "Cancelar"', 'text: "Quitar producto"', 'style: "destructive"'])
     assert(showcase.includes(token), `showcase ${token}`);
+});
+
+test("Creator Showcase closes the mobile touch, accessibility, language, and narrow-card gaps", () => {
+  assert.match(showcase, /action:\{width:44,height:44,/);
+  assert.match(showcase, /productTap:\{flex:1,minWidth:0,/);
+  assert.match(showcase, /copy:\{flex:1,minWidth:0,/);
+  assert.match(showcase, /actions:\{gap:2,flexShrink:0\}/);
+  assert.doesNotMatch(showcase, /horizontal=\{true\}|horizontal\s*\/?>/);
+
+  for (const contract of [
+    'disabled={index === 0 || busy} onPress={() => void move(management, -1)} accessibilityRole="button" accessibilityLabel={`Mover ${item.title} hacia arriba`} accessibilityState={{ disabled: index === 0 || busy }}',
+    'disabled={index === active.length - 1 || busy} onPress={() => void move(management, 1)} accessibilityRole="button" accessibilityLabel={`Mover ${item.title} hacia abajo`} accessibilityState={{ disabled: index === active.length - 1 || busy }}',
+    'disabled={busy} onPress={() => void remove(management)} accessibilityRole="button" accessibilityLabel={`Quitar ${item.title} del escaparate`} accessibilityState={{ disabled: busy }}',
+  ]) assert(showcase.includes(contract), contract);
+
+  for (const phrase of [
+    "Escaparate de Creator", "Mi escaparate", "Disponibles", "Buscar productos o tiendas",
+    "Cargando productos…", "No pudimos cargar tu escaparate", "Tu escaparate está vacío",
+    "No hay productos elegibles", "Explorar productos disponibles", "% de comisión",
+  ]) assert(showcase.includes(phrase), phrase);
+  for (const english of [
+    '"Back"', '"Creator Showcase"', '"My showcase"', '"Available"', '"Search products or stores"',
+    '"Loading products..."', '"Could not load your showcase"', '"Try again"', '"Your showcase is empty"',
+    '"No eligible products"', '"Browse available products"', '"Product unavailable"',
+    '"Remove from showcase"', '"Cancel"', '"Remove product"', '"Could not remove product"',
+    '"Could not reorder showcase"',
+  ]) assert(!showcase.includes(english), english);
+
+  const removeFlow = showcase.slice(showcase.indexOf("const remove ="), showcase.indexOf("const move ="));
+  assert(removeFlow.indexOf("Alert.alert(") < removeFlow.indexOf("removeMyCreatorShowcaseProduct("));
+  assert(removeFlow.indexOf("onPress: () =>") < removeFlow.indexOf("removeMyCreatorShowcaseProduct("));
+  for (const call of [
+    "addMyCreatorShowcaseProduct(product.productId, randomUUID())",
+    "removeMyCreatorShowcaseProduct(item.showcaseItemId, randomUUID())",
+    "reorderMyCreatorShowcase(next.map((value) => value.showcaseItemId), randomUUID())",
+  ]) assert(showcase.includes(call), call);
+  assert.doesNotMatch(showcase, /seller_payout|creator_payout|platform_fee|ledger_|commission_bps\s*[+\-*/=]/i);
 });
 
 test("B8D-2 changes no production migration, authority, build, or later phase", () => {
