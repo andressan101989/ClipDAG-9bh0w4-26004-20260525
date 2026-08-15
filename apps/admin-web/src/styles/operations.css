@@ -4,3 +4,4 @@
 .operation-panel textarea{min-height:90px;resize:vertical}.operation-message{margin:0;color:var(--green-dark)}
 button.danger{background:#a23b31}button.danger:hover{background:#7e2922}
 @media(max-width:720px){.filters.compact{grid-template-columns:1fr}}
+.health-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:18px}.health-ok{color:#16734a}.health-bad{color:#a23b31}.detail-card small{display:block;margin-top:5px;color:var(--muted)}
