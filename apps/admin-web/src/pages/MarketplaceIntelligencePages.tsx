@@ -212,7 +212,7 @@ export function MarketplaceCreatorCommercePage() {
                   <strong>
                     {safeText(row.display_name) || safeText(row.username)}
                   </strong>
-                  <small>{formatDate(row.last_sale)}</small>
+                  <small>{formatDate(row.last_activity_at)}</small>
                 </span>
                 <span>{safeNumber(row.orders)}</span>
                 <span>{formatBdag(safeNumber(row.attributed_gmv))}</span>
@@ -310,6 +310,7 @@ export function MarketplaceCreatorDetailPage() {
                   {formatBdag(safeNumber(row.attributed_gmv))}
                   <small>
                     Comisión {formatBdag(safeNumber(row.commission_generated))}
+                    {" · "}{safeNumber(row.historical_bps)} BPS históricos
                   </small>
                 </strong>
               </div>
