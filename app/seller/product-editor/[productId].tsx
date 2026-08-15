@@ -61,9 +61,10 @@ import {
   type MarketplaceCategoryRecord,
 } from "@/services/marketplaceService";
 import {
-  fetchMyMarketplaceShippingProfiles,
+  fetchMyMarketplaceShippingProfilesPage,
   type MarketplaceShippingProfile,
 } from "@/services/marketplaceShippingService";
+import { mergeMarketplaceCursorPage } from "@/services/marketplaceCursorCollection";
 import {
   fetchMyLiveAffiliateOffer,
   upsertMyLiveAffiliateOffer,
@@ -122,6 +123,12 @@ export default function ProductEditorScreen() {
     [shippingProfiles, setShippingProfiles] = useState<
       MarketplaceShippingProfile[]
     >([]),
+    [shippingProfilesCursor, setShippingProfilesCursor] = useState<{
+      createdAt: string;
+      profileId: string;
+    } | null>(null),
+    [shippingProfilesLoadingMore, setShippingProfilesLoadingMore] =
+      useState(false),
     [shippingProfileId, setShippingProfileId] = useState<string | null>(null),
     [title, setTitle] = useState(EMPTY.title),
     [description, setDescription] = useState(""),
@@ -150,7 +157,8 @@ export default function ProductEditorScreen() {
     mediaQueue = useRef<Promise<void>>(Promise.resolve()),
     imagesRef = useRef<ProductEditorMedia[]>([]),
     persistedVideoRef = useRef<ProductEditorMedia | null>(null),
-    pendingVideoRef = useRef<ProductEditorMedia | null>(null);
+    pendingVideoRef = useRef<ProductEditorMedia | null>(null),
+    shippingProfilesRequest = useRef(false);
   const shippingReady =
     productType === "digital" ||
     shippingProfiles.some(
@@ -252,9 +260,13 @@ export default function ProductEditorScreen() {
       const affiliate = await fetchMyLiveAffiliateOffer(id).catch(() => null);
       setAffiliateEnabled(affiliate?.status === "active");
       if (affiliate) setAffiliatePercent(String(affiliate.commissionBps / 100));
-      setShippingProfiles(
-        await fetchMyMarketplaceShippingProfiles(foundation.store.id),
+      const shippingPage = await fetchMyMarketplaceShippingProfilesPage(
+        foundation.store.id,
+        null,
+        50,
       );
+      setShippingProfiles(shippingPage.items);
+      setShippingProfilesCursor(shippingPage.nextCursor);
     } catch {
       Alert.alert(
         "No pudimos abrir el borrador",
@@ -268,15 +280,22 @@ export default function ProductEditorScreen() {
     void load();
   }, [load]);
   const refreshShippingProfiles = useCallback(async () => {
-    if (!storeId) return;
+    if (!storeId || shippingProfilesRequest.current) return;
+    shippingProfilesRequest.current = true;
     if (__DEV__)
       console.info("[MarketplaceProductEditor]", {
         operation: "shipping_refresh_start",
         storeIdPresent: true,
       });
     try {
-      const profiles = await fetchMyMarketplaceShippingProfiles(storeId);
+      const page = await fetchMyMarketplaceShippingProfilesPage(
+          storeId,
+          null,
+          50,
+        ),
+        profiles = page.items;
       setShippingProfiles(profiles);
+      setShippingProfilesCursor(page.nextCursor);
       const currentReady = profiles.some(
         (profile) =>
           profile.id === shippingProfileId &&
@@ -316,8 +335,36 @@ export default function ProductEditorScreen() {
               ? String(error.code)
               : null,
         });
+    } finally {
+      shippingProfilesRequest.current = false;
     }
   }, [shippingProfileId, storeId]);
+  const loadMoreShippingProfiles = useCallback(async () => {
+    if (!storeId || !shippingProfilesCursor || shippingProfilesRequest.current)
+      return;
+    shippingProfilesRequest.current = true;
+    setShippingProfilesLoadingMore(true);
+    try {
+      const page = await fetchMyMarketplaceShippingProfilesPage(
+        storeId,
+        shippingProfilesCursor,
+        50,
+      );
+      setShippingProfiles(
+        (current) =>
+          mergeMarketplaceCursorPage(
+            { items: current, nextCursor: shippingProfilesCursor },
+            page,
+          ).items,
+      );
+      setShippingProfilesCursor(page.nextCursor);
+    } catch {
+      Alert.alert("No pudimos cargar más métodos", "Inténtalo nuevamente.");
+    } finally {
+      shippingProfilesRequest.current = false;
+      setShippingProfilesLoadingMore(false);
+    }
+  }, [storeId, shippingProfilesCursor]);
   const refreshVariantSummary = useCallback(async () => {
     if (!productId) return;
     try {
@@ -1356,6 +1403,20 @@ export default function ProductEditorScreen() {
                           : "métodos necesitan"}{" "}
                         configuración.
                       </Text>
+                    ) : null}
+                    {shippingProfilesCursor !== null ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        style={styles.secondary}
+                        disabled={shippingProfilesLoadingMore}
+                        onPress={() => void loadMoreShippingProfiles()}
+                      >
+                        <Text style={styles.secondaryText}>
+                          {shippingProfilesLoadingMore
+                            ? "Cargando…"
+                            : "Cargar más métodos de envío"}
+                        </Text>
+                      </Pressable>
                     ) : null}
                   </>
                 );

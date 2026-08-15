@@ -1,17 +1,400 @@
-import React,{useCallback,useMemo,useState}from'react';
-import{ActivityIndicator,Alert,FlatList,Image,Pressable,RefreshControl,StyleSheet,Text,View}from'react-native';
-import{MaterialIcons}from'@expo/vector-icons';
-import{useFocusEffect,useRouter}from'expo-router';
-import{useSafeAreaInsets}from'react-native-safe-area-context';
-import{useShop}from'@/hooks/useShop';
-import{Colors,FontSize,FontWeight,Radius,Spacing}from'@/constants/theme';
-import{SellerScreenHeader}from'@/components/marketplace/SellerScreenHeader';
-import{classifySellerProductStatusCore}from'@/services/marketplaceSellerProductStatusCore.mjs';
-import{formatBDAG,formatMetricCount}from'@/services/marketplaceSellerCenterCore.mjs';
+import React, { useCallback, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Image,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { MaterialIcons } from "@expo/vector-icons";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useShop } from "@/hooks/useShop";
+import {
+  Colors,
+  FontSize,
+  FontWeight,
+  Radius,
+  Spacing,
+} from "@/constants/theme";
+import { SellerScreenHeader } from "@/components/marketplace/SellerScreenHeader";
+import { classifySellerProductStatusCore } from "@/services/marketplaceSellerProductStatusCore.mjs";
+import {
+  formatBDAG,
+  formatMetricCount,
+} from "@/services/marketplaceSellerCenterCore.mjs";
 
-const labels={draft:'Borrador',published:'Activo',sold_out:'Agotado',configuration_required:'Configuración requerida',paused:'Pausado'}as const;
-type Filter='all'|'published'|'draft'|'paused'|'sold_out';const filters:[Filter,string][]=[['all','Todos'],['published','Activos'],['draft','Borradores'],['paused','Pausados'],['sold_out','Agotados']];
-export default function SellerProducts(){const router=useRouter(),insets=useSafeAreaInsets();const{myProducts,sellerProductsState,sellerProductsError,fetchMyProducts,setPublished,deleteProduct}=useShop();const[filter,setFilter]=useState<Filter>('all');useFocusEffect(useCallback(()=>{void fetchMyProducts()},[fetchMyProducts]));const products=useMemo(()=>filter==='all'?myProducts:myProducts.filter(item=>classifySellerProductStatusCore(item)===filter),[filter,myProducts]);const errorMessage=sellerProductsError==='session'?'Tu sesión expiró. Inicia sesión nuevamente.':'No pudimos cargar tus productos.';
- const more=(item:(typeof myProducts)[number])=>Alert.alert(item.title,'Administra la visibilidad, promociones o elimina este producto.',[{text:'Volver',style:'cancel'},{text:'Impulsar',onPress:()=>router.push({pathname:'/seller/ads/create',params:{productId:item.id}}as never)},{text:'Promocionar',onPress:()=>router.push('/seller/promotions' as never)},{text:item.status==='active'?'Pausar':'Publicar',onPress:()=>void setPublished(item.id,item.status!=='active')},{text:'Eliminar',style:'destructive',onPress:()=>Alert.alert('Eliminar producto','El producto dejará de estar disponible. Esta acción requiere confirmación.',[{text:'Cancelar',style:'cancel'},{text:'Eliminar',style:'destructive',onPress:()=>void deleteProduct(item.id)}])}]);
- return <View style={[s.page,{paddingTop:insets.top}]}><SellerScreenHeader title="Productos" fallbackRoute="/seller"/><View style={s.toolbar}><Text style={s.count}>{formatMetricCount(myProducts.length)} productos</Text><Pressable accessibilityRole="button" accessibilityLabel="Agregar producto" style={s.add} onPress={()=>router.push('/create-product')}><MaterialIcons name="add" size={20} color={Colors.textOnBrand}/><Text style={s.addText}>Agregar producto</Text></Pressable></View><View style={s.filters}>{filters.map(([value,label])=><Pressable accessibilityRole="tab" accessibilityState={{selected:filter===value}} key={value} onPress={()=>setFilter(value)} style={[s.chip,filter===value&&s.chipOn]}><Text style={[s.chipText,filter===value&&s.chipTextOn]}>{label}</Text></Pressable>)}</View>{sellerProductsState==='loading'&&!myProducts.length?<ActivityIndicator style={s.loading} color={Colors.primary}/>:<FlatList data={products} keyExtractor={item=>item.id} refreshControl={<RefreshControl refreshing={sellerProductsState==='loading'} onRefresh={()=>void fetchMyProducts()} tintColor={Colors.primary}/>} contentContainerStyle={s.list} ListEmptyComponent={<View style={s.empty}><MaterialIcons name="inventory-2" size={34} color={Colors.textSubtle}/><Text style={s.emptyTitle}>{sellerProductsState==='error'?errorMessage:filter==='all'?'Aún no tienes productos':'No hay productos en este estado'}</Text>{sellerProductsState==='error'?<Pressable accessibilityRole="button" onPress={()=>void fetchMyProducts()}><Text style={s.retry}>Reintentar</Text></Pressable>:filter==='all'?<Pressable accessibilityRole="button" onPress={()=>router.push('/create-product')}><Text style={s.retry}>Publicar primer producto</Text></Pressable>:null}</View>} renderItem={({item})=>{const status=classifySellerProductStatusCore(item);return <View style={s.card}>{item.images[0]?<Image source={{uri:item.images[0]}} style={s.cover}/>:<View style={[s.cover,s.coverEmpty]}><MaterialIcons name="image" size={26} color={Colors.textSubtle}/></View>}<View style={s.grow}><View style={s.titleRow}><Text style={s.name} numberOfLines={1}>{item.title}</Text><View style={[s.badge,status==='sold_out'&&s.badgeError]}><Text style={s.badgeText}>{labels[status]}</Text></View></View><Text style={s.meta}>{formatBDAG(item.price)} · {formatMetricCount(item.available_quantity)} disponibles</Text><View style={s.actions}><Pressable accessibilityRole="button" accessibilityLabel={`Editar ${item.title}`} style={s.action} onPress={()=>router.push(`/seller/product-editor/${item.id}` as never)}><Text style={s.actionText}>{status==='draft'?'Continuar':'Editar'}</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Inventario de ${item.title}`} style={s.action} onPress={()=>router.push(`/seller/product/${item.id}/variants` as never)}><Text style={s.actionText}>Inventario</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Más acciones para ${item.title}`} style={s.more} onPress={()=>more(item)}><MaterialIcons name="more-horiz" size={22} color={Colors.textSecondary}/></Pressable></View></View></View>}}/>}</View>}
-const s=StyleSheet.create({page:{flex:1,backgroundColor:Colors.bg},toolbar:{paddingHorizontal:Spacing.md,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},count:{color:Colors.textSecondary},add:{minHeight:44,flexDirection:'row',alignItems:'center',gap:6,paddingHorizontal:Spacing.md,borderRadius:Radius.md,backgroundColor:Colors.primary},addText:{color:Colors.textOnBrand,fontWeight:FontWeight.bold},filters:{flexDirection:'row',gap:8,padding:Spacing.md,flexWrap:'wrap'},chip:{minHeight:40,justifyContent:'center',paddingHorizontal:12,borderRadius:Radius.full,backgroundColor:Colors.surfaceElevated},chipOn:{backgroundColor:Colors.primary},chipText:{color:Colors.textSecondary,fontSize:FontSize.sm,fontWeight:FontWeight.semibold},chipTextOn:{color:Colors.textOnBrand},loading:{flex:1},list:{padding:Spacing.md,gap:Spacing.md,flexGrow:1},card:{flexDirection:'row',gap:Spacing.md,padding:Spacing.md,borderRadius:Radius.lg,backgroundColor:Colors.surfaceElevated,borderWidth:1,borderColor:Colors.borderSubtle},cover:{width:76,height:76,borderRadius:Radius.md,backgroundColor:Colors.surfaceHighlight},coverEmpty:{alignItems:'center',justifyContent:'center'},grow:{flex:1},titleRow:{flexDirection:'row',alignItems:'center',gap:8},name:{flex:1,color:Colors.textPrimary,fontSize:FontSize.md,fontWeight:FontWeight.bold},badge:{paddingHorizontal:8,paddingVertical:4,borderRadius:Radius.full,backgroundColor:Colors.primaryDim},badgeError:{backgroundColor:'#FF3B5C22'},badgeText:{color:Colors.primaryLight,fontSize:10,fontWeight:FontWeight.bold},meta:{color:Colors.textSecondary,fontSize:FontSize.xs,marginTop:6},actions:{flexDirection:'row',alignItems:'center',gap:6,marginTop:10},action:{minHeight:38,justifyContent:'center',paddingHorizontal:10,borderRadius:Radius.sm,backgroundColor:Colors.surfaceHighlight},actionText:{color:Colors.textPrimary,fontSize:FontSize.xs,fontWeight:FontWeight.semibold},more:{width:40,height:40,alignItems:'center',justifyContent:'center'},empty:{flex:1,minHeight:320,alignItems:'center',justifyContent:'center',gap:Spacing.sm},emptyTitle:{color:Colors.textSecondary,textAlign:'center'},retry:{color:Colors.primaryLight,fontWeight:FontWeight.bold,padding:12}});
+const labels = {
+  draft: "Borrador",
+  published: "Activo",
+  sold_out: "Agotado",
+  configuration_required: "Configuración requerida",
+  paused: "Pausado",
+} as const;
+type Filter = "all" | "published" | "draft" | "paused" | "sold_out";
+const filters: [Filter, string][] = [
+  ["all", "Todos"],
+  ["published", "Activos"],
+  ["draft", "Borradores"],
+  ["paused", "Pausados"],
+  ["sold_out", "Agotados"],
+];
+
+export default function SellerProducts() {
+  const router = useRouter(),
+    insets = useSafeAreaInsets();
+  const {
+    myProducts,
+    sellerProductsState,
+    sellerProductsError,
+    fetchMyProducts,
+    fetchMoreMyProducts,
+    sellerProductsHasMore,
+    sellerProductsLoadingMore,
+    setPublished,
+    deleteProduct,
+  } = useShop();
+  const [filter, setFilter] = useState<Filter>("all");
+  useFocusEffect(
+    useCallback(() => {
+      void fetchMyProducts();
+    }, [fetchMyProducts]),
+  );
+  const products = useMemo(
+    () =>
+      filter === "all"
+        ? myProducts
+        : myProducts.filter(
+            (item) => classifySellerProductStatusCore(item) === filter,
+          ),
+    [filter, myProducts],
+  );
+  const errorMessage =
+    sellerProductsError === "session"
+      ? "Tu sesión expiró. Inicia sesión nuevamente."
+      : "No pudimos cargar tus productos.";
+  const more = (item: (typeof myProducts)[number]) =>
+    Alert.alert(
+      item.title,
+      "Administra la visibilidad, promociones o elimina este producto.",
+      [
+        { text: "Volver", style: "cancel" },
+        {
+          text: "Impulsar",
+          onPress: () =>
+            router.push({
+              pathname: "/seller/ads/create",
+              params: { productId: item.id },
+            } as never),
+        },
+        {
+          text: "Promocionar",
+          onPress: () => router.push("/seller/promotions" as never),
+        },
+        {
+          text: item.status === "active" ? "Pausar" : "Publicar",
+          onPress: () => void setPublished(item.id, item.status !== "active"),
+        },
+        {
+          text: "Eliminar",
+          style:'destructive',
+          onPress: () =>
+            Alert.alert(
+              "Eliminar producto",
+              "El producto dejará de estar disponible. Esta acción requiere confirmación.",
+              [
+                { text: "Cancelar", style: "cancel" },
+                {
+                  text: "Eliminar",
+                  style: "destructive",
+                  onPress: () => void deleteProduct(item.id),
+                },
+              ],
+            ),
+        },
+      ],
+    );
+  return (
+    <View style={[s.page, { paddingTop: insets.top }]}>
+      <SellerScreenHeader title="Productos" fallbackRoute="/seller" />
+      <View style={s.toolbar}>
+        <Text style={s.count}>
+          {formatMetricCount(myProducts.length)} productos
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Agregar producto"
+          style={s.add}
+          onPress={() => router.push('/create-product')}
+        >
+          <MaterialIcons name="add" size={20} color={Colors.textOnBrand} />
+          <Text style={s.addText}>Agregar producto</Text>
+        </Pressable>
+      </View>
+      <View style={s.filters}>
+        {filters.map(([value, label]) => (
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected: filter === value }}
+            key={value}
+            onPress={() => setFilter(value)}
+            style={[s.chip, filter === value && s.chipOn]}
+          >
+            <Text style={[s.chipText, filter === value && s.chipTextOn]}>
+              {label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {sellerProductsState === "loading" && !myProducts.length ? (
+        <ActivityIndicator style={s.loading} color={Colors.primary} />
+      ) : (
+        <FlatList
+          data={products}
+          keyExtractor={(item) => item.id}
+          onEndReachedThreshold={0.35}
+          onEndReached={() => {
+            if (sellerProductsHasMore && !sellerProductsLoadingMore)
+              void fetchMoreMyProducts();
+          }}
+          refreshControl={
+            <RefreshControl
+              refreshing={sellerProductsState === "loading"}
+              onRefresh={() => void fetchMyProducts()}
+              tintColor={Colors.primary}
+            />
+          }
+          contentContainerStyle={s.list}
+          ListFooterComponent={
+            sellerProductsLoadingMore ? (
+              <ActivityIndicator color={Colors.primary} />
+            ) : null
+          }
+          ListEmptyComponent={
+            <View style={s.empty}>
+              <MaterialIcons
+                name="inventory-2"
+                size={34}
+                color={Colors.textSubtle}
+              />
+              <Text style={s.emptyTitle}>
+                {sellerProductsState==='error'?errorMessage:filter==='all'
+                  ? "Aún no tienes productos"
+                  : "No hay productos en este estado"}
+              </Text>
+              {sellerProductsState === "error" ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => void fetchMyProducts()}
+                >
+                  <Text style={s.retry}>Reintentar</Text>
+                </Pressable>
+              ) : filter === "all" ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => router.push('/create-product')}
+                >
+                  <Text style={s.retry}>Publicar primer producto</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          }
+          renderItem={({ item }) => {
+            const status = classifySellerProductStatusCore(item);
+            return (
+              <View style={s.card}>
+                {item.images[0] ? (
+                  <Image source={{ uri: item.images[0] }} style={s.cover} />
+                ) : (
+                  <View style={[s.cover, s.coverEmpty]}>
+                    <MaterialIcons
+                      name="image"
+                      size={26}
+                      color={Colors.textSubtle}
+                    />
+                  </View>
+                )}
+                <View style={s.grow}>
+                  <View style={s.titleRow}>
+                    <Text style={s.name} numberOfLines={1}>
+                      {item.title}
+                    </Text>
+                    <View
+                      style={[s.badge, status === "sold_out" && s.badgeError]}
+                    >
+                      <Text style={s.badgeText}>{labels[status]}</Text>
+                    </View>
+                  </View>
+                  <Text style={s.meta}>
+                    {formatBDAG(item.price)} ·{" "}
+                    {formatMetricCount(item.available_quantity)} disponibles
+                  </Text>
+                  <View style={s.actions}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Editar ${item.title}`}
+                      style={s.action}
+                      onPress={() =>
+                        router.push(
+                          `/seller/product-editor/${item.id}` as never,
+                        )
+                      }
+                    >
+                      <Text style={s.actionText}>
+                        {status === "draft" ? "Continuar" : "Editar"}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Inventario de ${item.title}`}
+                      style={s.action}
+                      onPress={() =>
+                        router.push(
+                          `/seller/product/${item.id}/variants` as never,
+                        )
+                      }
+                    >
+                      <Text style={s.actionText}>Inventario</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Más acciones para ${item.title}`}
+                      style={s.more}
+                      onPress={() => more(item)}
+                    >
+                      <MaterialIcons
+                        name="more-horiz"
+                        size={22}
+                        color={Colors.textSecondary}
+                      />
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+            );
+          }}
+        />
+      )}
+    </View>
+  );
+}
+const s = StyleSheet.create({
+  page: { flex: 1, backgroundColor: Colors.bg },
+  toolbar: {
+    paddingHorizontal: Spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  count: { color: Colors.textSecondary },
+  add: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.primary,
+  },
+  addText: { color: Colors.textOnBrand, fontWeight: FontWeight.bold },
+  filters: {
+    flexDirection: "row",
+    gap: 8,
+    padding: Spacing.md,
+    flexWrap: "wrap",
+  },
+  chip: {
+    minHeight: 40,
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.surfaceElevated,
+  },
+  chipOn: { backgroundColor: Colors.primary },
+  chipText: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.semibold,
+  },
+  chipTextOn: { color: Colors.textOnBrand },
+  loading: { flex: 1 },
+  list: { padding: Spacing.md, gap: Spacing.md, flexGrow: 1 },
+  card: {
+    flexDirection: "row",
+    gap: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
+  cover: {
+    width: 76,
+    height: 76,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.surfaceHighlight,
+  },
+  coverEmpty: { alignItems: "center", justifyContent: "center" },
+  grow: { flex: 1 },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  name: {
+    flex: 1,
+    color: Colors.textPrimary,
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.bold,
+  },
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.primaryDim,
+  },
+  badgeError: { backgroundColor: "#FF3B5C22" },
+  badgeText: {
+    color: Colors.primaryLight,
+    fontSize: 10,
+    fontWeight: FontWeight.bold,
+  },
+  meta: { color: Colors.textSecondary, fontSize: FontSize.xs, marginTop: 6 },
+  actions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 10,
+  },
+  action: {
+    minHeight: 38,
+    justifyContent: "center",
+    paddingHorizontal: 10,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.surfaceHighlight,
+  },
+  actionText: {
+    color: Colors.textPrimary,
+    fontSize: FontSize.xs,
+    fontWeight: FontWeight.semibold,
+  },
+  more: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  empty: {
+    flex: 1,
+    minHeight: 320,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: Spacing.sm,
+  },
+  emptyTitle: { color: Colors.textSecondary, textAlign: "center" },
+  retry: {
+    color: Colors.primaryLight,
+    fontWeight: FontWeight.bold,
+    padding: 12,
+  },
+});
