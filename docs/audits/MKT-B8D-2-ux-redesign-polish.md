@@ -189,3 +189,65 @@ Automated evidence:
 - Final read-only B8C auditor: passed; B8B 8/8 zero, all Creator and Ads failure counters zero, payment and settlement failure counters zero, escrow expected/actual 71/71, fixtures zero and failure hooks absent.
 
 No Marketplace service, database, attribution, commission or other economic authority changed. Historical migrations are unchanged. B8D-3 was not started or simulated.
+
+## MKT-B8D-2R — SHOP-ONLY REFINEMENT
+
+Baseline: `54dd94adecdc61a719bd57e56075319953ce19a8`, branch `codex/mkt-a4b-premium-integration`, Build 22, remote migration `20260811033000_marketplace_production_hardening.sql`. The worktree and local/origin branch were clean and identical. The B8D hardening and inherited B8C read-only auditors passed before UX work.
+
+### Source inventory
+
+- Marketplace main route and its local product/creator/exclusive cards: `app/(tabs)/shop.tsx`.
+- Public product detail: `app/product/[id].tsx`.
+- Product gallery and sticky purchase controls: `components/marketplace/product-detail/ProductMediaGallery.tsx` and `ProductPurchaseBar.tsx`.
+- Public creator profile, normal content, exclusive content and Showcase products: `app/creator/[id].tsx`.
+- Exclusive profile data source: the existing `fetchCreatorExclusiveContent()` path in `services/creatorService.ts`; purchase/ownership remains in the existing economy service.
+- Product catalog, detail/runtime validation and physical/digital contract: `services/marketplaceService.ts` (audited, unchanged).
+- Marketplace top segmented control before refinement: the local `SHOP_TABS` definition in `shop.tsx`, with `Descubrir`, `Market` and `Exclusivo`.
+
+### Marketplace information architecture
+
+Before: the Marketplace route defaulted to creator discovery and mixed creator cards, subscriptions, products and global exclusive content behind three top-level tabs. Product search existed only inside the market branch, while the visible landing copy emphasized discovery and monetization.
+
+After: the route is one shop-only surface. It opens directly to a product catalog with a commerce header, wallet/cart access, product/store search, canonical category chips, a compact seller entrypoint, product results, explicit sponsored presentation and loading/empty/error/retry states. Creator discovery/subscription cards and the global Exclusive branch/imports/loaders were removed from this route. Sponsored impression/click recording, source propagation and product RPC authority are preserved.
+
+Product cards now use a square commerce image, clear category or sponsored badges, sold-out overlay, two-line title, store identity, prominent tabular BDAG price and sales/new-product context. `useWindowDimensions()` calculates a two-column grid at 320, 360, 390 and 430px without horizontal overflow; flexible header/search copy uses `minWidth:0`. No eager pagination drain, N+1 detail read or new recommendation backend was added.
+
+### Creator profile ownership of exclusive content
+
+The existing public creator profile already owned the correct creator-scoped exclusive data and purchase semantics. Its visible normal-content tab is now `Contenido`, paired with `Exclusivo`; the optional existing `Productos` Showcase tab remains. Tabs now expose semantic tab roles, labels and selected state. No paywall, subscription, purchase or Creator economics changed.
+
+### Product detail redesign
+
+- Top bar: balanced 44×44 back, share, save and cart controls with existing labels/state.
+- Gallery: responsive square hero media up to 430px, premium empty treatment, readable media count and 66×66 selectable image/video thumbnails.
+- Core commerce: raised product surface, product-type/category pill, stronger title, prominent blue tabular BDAG price, comparison/discount, sales and canonical availability.
+- Variants: distinct customization section, concise selected summary, 44px radio chips with check feedback and disabled/selected semantics; large option sets keep the existing searchable selector.
+- Confidence: payment protection, server-derived stock and shipping presentation are visually grouped; canonical shipping quote, seller contact, description, details and BDAG trust sections remain.
+- CTA: sticky two-row purchase surface keeps 44px quantity controls, displays the validated unit price, offers `Agregar` and `Comprar ahora`, and invokes only the existing locked `handleAddToCart()` / `handleAddToCart(true)` paths. The latter still adds the exact selected canonical variant and routes to the existing checkout. No payment or total authority moved client-side.
+- Layout: scroll padding and toast placement account for the taller action bar; two full-width CTA actions remain readable at 320px.
+
+### Files changed
+
+- `app/(tabs)/shop.tsx`
+- `app/creator/[id].tsx`
+- `app/product/[id].tsx`
+- `components/marketplace/product-detail/ProductMediaGallery.tsx`
+- `components/marketplace/product-detail/ProductPurchaseBar.tsx`
+- `tests/marketplaceMktB7BShowcase.test.mjs` (Spanish buy-now expectation only)
+- `tests/marketplaceMktB7CContentTags.test.mjs` (Spanish creator-context expectation only)
+- `tests/marketplaceRuntimeVisibility.test.mjs` (shop-only loading/error/retry contract)
+- `tests/marketplaceMktB8D2ShopRefinement.test.mjs`
+- `docs/audits/MKT-B8D-2-ux-redesign-polish.md`
+
+### Automated and remote evidence
+
+The dedicated refinement proof covers removal of the mixed Marketplace tabs and creator/exclusive loaders, the shop-only search/category/product structure, creator `Contenido` / `Exclusivo` tabs, premium gallery/pricing/variant/CTA structure, narrow-width/accessibility contracts, exact cart/checkout continuation, physical/digital validation retention, Build 22, migration `33000`, and absence of financial/later-phase authority.
+
+- Refinement and related focused tests: 85/85.
+- Admin Web: 58/58; lint passed with zero warnings; production build passed (120 modules).
+- Complete root Node suite: 739/739.
+- Root TypeScript baseline: exactly 187 historical diagnostics and zero diagnostics in B8D-2R production files.
+- Read-only B8D hardening auditor: passed at `20260811033000`; no broad Marketplace DML, dynamic SQL, null-limit or unsafe search-path findings.
+- Read-only inherited B8C auditor: passed at `20260811033000`; B8B 8/8, Creator and Ads failure counters zero, payments/settlements healthy, escrow expected/actual 71/71, fixtures zero and failure hook absent.
+
+No SQL migration, Supabase push, Edge/Admin deployment, EAS or mobile build is part of this refinement. B8D-3, B8D-4 and LIVE Battles were not started.

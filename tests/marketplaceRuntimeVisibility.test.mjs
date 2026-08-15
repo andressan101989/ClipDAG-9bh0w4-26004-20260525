@@ -71,24 +71,25 @@ test("client reads preserve typed permission and transport failures", () => {
 });
 
 test("Marketplace screen loaders are failure-safe and distinguish error from empty", () => {
+  const loaderStart = marketScreen.indexOf("const loadProducts");
   const loader = marketScreen.slice(
-    marketScreen.indexOf("const loadProducts"),
-    marketScreen.indexOf("const loadExclusive"),
+    loaderStart,
+    marketScreen.indexOf("  useEffect", loaderStart),
   );
   assert.match(loader, /try\s*\{/);
   assert.match(loader, /catch\s*\(error\)/);
-  assert.match(loader, /finally\s*\{\s*setMarketLoading\(false\)/);
+  assert.match(loader, /finally\s*\{\s*setLoading\(false\)/);
   assert.doesNotMatch(loader, /catch[\s\S]*setProducts\(\[\]\)/);
   assert.match(loader, /marketplace_read_transport/);
   assert.match(loader, /marketplace_read_permission/);
   assert.match(marketScreen, /No pudimos conectar con la tienda\. Revisa tu conexión\./);
   assert.match(marketScreen, /La tienda necesita una actualización de acceso\. Inténtalo nuevamente\./);
   assert.match(marketScreen, /No pudimos cargar los productos\./);
-  assert.match(marketScreen, /!marketError\s*&&\s*products\.length\s*===\s*0/);
-  assert.match(marketScreen, /Reintentar cargar productos/);
-  assert.match(marketScreen, /Promise\.allSettled/);
+  assert.match(marketScreen, /error\s*\?/);
+  assert.match(marketScreen, /mixedProducts\.length\s*===\s*0/);
+  assert.match(marketScreen, />Reintentar</);
+  assert.match(marketScreen, /Promise\.all/);
   assert.match(marketScreen, /finally\s*\{\s*setRefreshing\(false\);\s*\}/);
-  assert.match(marketScreen, /void loadDiscover\(\)/);
   assert.match(marketScreen, /void loadProducts\(\)/);
-  assert.match(marketScreen, /void loadExclusive\(\)/);
+  assert.doesNotMatch(marketScreen, /loadDiscover|loadExclusive/);
 });

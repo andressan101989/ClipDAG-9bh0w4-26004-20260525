@@ -85,7 +85,7 @@ test("product detail creates opaque attribution only for explicit cart or buy-no
   assert.match(product, /createCreatorShowcaseAttribution\(showcaseItemId, selectedVariant\.id, key\)/);
   assert.match(product, /attributionId: receipt\.id/);
   assert.match(product, /handleAddToCart\(true\)/);
-  assert.match(product, /Buy now/);
+  assert.match(product, /Comprar ahora/);
   assert.doesNotMatch(product, /commissionBps|commissionAmount|commission_amount/);
 });
 

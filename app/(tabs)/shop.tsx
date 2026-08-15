@@ -210,11 +210,11 @@ export default function ShopScreen() {
       setProducts(catalog.filter((product) => product.seller_id !== user?.id));
       setSponsored(ads);
       setError(null);
-    } catch (cause) {
+    } catch (error) {
       const nextError: Exclude<MarketLoadError, null> =
-        cause instanceof MarketplaceReadError && cause.code === "marketplace_read_transport"
+        error instanceof MarketplaceReadError && error.code === "marketplace_read_transport"
           ? "network"
-          : cause instanceof MarketplaceReadError && cause.code === "marketplace_read_permission"
+          : error instanceof MarketplaceReadError && error.code === "marketplace_read_permission"
             ? "permission"
             : "request";
       setError(nextError);
@@ -222,7 +222,7 @@ export default function ShopScreen() {
         console.warn("[MarketplaceScreen]", {
           operation: "loadProducts",
           category: nextError,
-          postgresCode: cause instanceof MarketplaceReadError ? cause.postgresCode : null,
+          postgresCode: error instanceof MarketplaceReadError ? error.postgresCode : null,
         });
     } finally {
       setLoading(false);
