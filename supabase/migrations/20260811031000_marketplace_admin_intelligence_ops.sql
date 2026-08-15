@@ -53,15 +53,21 @@ begin
   if p_limit is null or p_limit<1 or p_limit>100 or (v_query is not null and char_length(v_query)>100)
     or ((p_cursor_last_sale is null)<>(p_cursor_creator_id is null)) then
     raise exception using errcode='22023',message='marketplace_admin_creator_search_invalid';end if;
-  with grouped as(
+  with surface_totals as(
+    select f.creator_user_id,f.source_surface,sum(f.attributed_gmv)attributed_gmv
+    from public.marketplace_creator_commerce_analytics_facts f
+    where v_start is null or f.paid_at>=v_start group by f.creator_user_id,f.source_surface),
+  top_surfaces as(
+    select distinct on(creator_user_id)creator_user_id,source_surface
+    from surface_totals order by creator_user_id,attributed_gmv desc,source_surface),
+  grouped as(
     select f.creator_user_id,max(f.paid_at)last_sale,count(distinct f.order_id)orders,sum(f.attributed_gmv)gmv,
-      sum(f.commission_generated)generated,sum(f.commission_released)released,sum(f.commission_reversed)reversed,
-      (array_agg(f.source_surface order by f.attributed_gmv desc,f.source_surface))[1]top_surface
+      sum(f.commission_generated)generated,sum(f.commission_released)released,sum(f.commission_reversed)reversed
     from public.marketplace_creator_commerce_analytics_facts f where v_start is null or f.paid_at>=v_start group by f.creator_user_id),
   rows as(select jsonb_build_object('creator_id',g.creator_user_id,'username',u.username,'display_name',u.display_name,
     'orders',g.orders,'attributed_gmv',g.gmv,'commission_generated',g.generated,'commission_released',g.released,
-    'commission_reversed',g.reversed,'commission_net',g.released-g.reversed,'top_surface',g.top_surface,'last_sale',g.last_sale)j
-    from grouped g join public.user_profiles u on u.id=g.creator_user_id
+    'commission_reversed',g.reversed,'commission_net',g.released-g.reversed,'top_surface',t.source_surface,'last_sale',g.last_sale)j
+    from grouped g join top_surfaces t on t.creator_user_id=g.creator_user_id join public.user_profiles u on u.id=g.creator_user_id
     where (v_query is null or u.username ilike '%'||v_query||'%' or u.display_name ilike '%'||v_query||'%')
       and (p_cursor_last_sale is null or (g.last_sale,g.creator_user_id)<(p_cursor_last_sale,p_cursor_creator_id))
     order by g.last_sale desc,g.creator_user_id desc limit p_limit+1)
@@ -201,7 +207,10 @@ begin perform public.marketplace_require_admin();
     public.marketplace_admin_health_group('payments',public.reconcile_marketplace_payments()),
     public.marketplace_admin_health_group('settlements',public.reconcile_marketplace_settlements()),
     public.marketplace_admin_health_group('creator_commerce',public.reconcile_marketplace_creator_commerce()),
+    public.marketplace_admin_health_group('creator_showcase',public.reconcile_marketplace_creator_showcase()),
+    public.marketplace_admin_health_group('creator_content_tags',public.reconcile_marketplace_creator_content_tags()),
     public.marketplace_admin_health_group('creator_allocations',public.reconcile_marketplace_multi_creator_allocations()),
+    public.marketplace_admin_health_group('live_creator_commissions',public.reconcile_marketplace_live_commissions()),
     public.marketplace_admin_health_group('creator_analytics',public.reconcile_marketplace_creator_commerce_analytics()),
     public.marketplace_admin_health_group('reversals',public.reconcile_marketplace_settlement_reversals()),
     public.marketplace_admin_health_group('ads_finance',public.reconcile_marketplace_ad_finance()),
