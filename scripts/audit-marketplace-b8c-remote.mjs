@@ -8,6 +8,8 @@ import pg from "pg";
 const { Client } = pg,
   pre = process.argv.includes("--expect-pre-b8c"),
   required = process.argv.includes("--require-b8c"),
+  preC1 = process.argv.includes("--expect-pre-b8c-c1"),
+  requireC1 = process.argv.includes("--require-b8c-c1"),
   cache = join(tmpdir(), "onspace-b8b-npm-cache");
 mkdirSync(cache, { recursive: true });
 let captured = "";
@@ -56,11 +58,7 @@ const env = (name) =>
     ssl: { rejectUnauthorized: false },
   });
 const observational = new Set([
-  "confirmed",
-  "processing",
-  "shipped",
-  "delivered",
-  "refunded_fixture",
+  "confirmed_state_breakdown",
   "escrow_expected_held_total",
   "escrow_actual_balance",
 ]);
@@ -99,8 +97,10 @@ try {
   const r = (
     await db.query(`select (select version from supabase_migrations.schema_migrations order by version desc limit 1)latest,
  exists(select 1 from supabase_migrations.schema_migrations where version='20260811031000')b8c_applied,
+ exists(select 1 from supabase_migrations.schema_migrations where version='20260811032000')b8c_c1_applied,
  to_regprocedure('public.get_marketplace_admin_creator_commerce_overview(text)')is not null creator_overview,
  to_regprocedure('public.search_marketplace_admin_creators(text,text,timestamptz,uuid,integer)')is not null creator_search,
+ to_regprocedure('public.search_marketplace_admin_creators_v2(text,text,timestamptz,uuid,integer)')is not null creator_search_v2,
  to_regprocedure('public.get_marketplace_admin_creator_detail(uuid,text)')is not null creator_detail,
  to_regprocedure('public.search_marketplace_admin_promotions(text,text,timestamptz,uuid,integer)')is not null promotion_search,
  to_regprocedure('public.get_marketplace_admin_promotion_detail(uuid)')is not null promotion_detail,
@@ -114,6 +114,11 @@ try {
  not has_function_privilege('authenticated','public.release_marketplace_ad_unused_budget(uuid,uuid)','execute')ads_release_denied,
  not has_function_privilege('authenticated','public.finalize_marketplace_ad_campaign_delivery(uuid,uuid)','execute')ads_finalize_denied,
  not has_table_privilege('authenticated','public.marketplace_admin_action_audit','insert,update,delete')audit_immutable,
+ case when to_regprocedure('public.search_marketplace_admin_creators_v2(text,text,timestamptz,uuid,integer)')is null then false else has_function_privilege('authenticated','public.search_marketplace_admin_creators_v2(text,text,timestamptz,uuid,integer)','execute')end creator_v2_authenticated,
+ case when to_regprocedure('public.search_marketplace_admin_creators_v2(text,text,timestamptz,uuid,integer)')is null then true else not has_function_privilege('anon','public.search_marketplace_admin_creators_v2(text,text,timestamptz,uuid,integer)','execute')end creator_v2_anon_denied,
+ case when to_regprocedure('public.marketplace_admin_health_failure_count(text,jsonb)')is null then false else position('confirmed_state_breakdown' in pg_get_functiondef(to_regprocedure('public.marketplace_admin_health_failure_count(text,jsonb)')))>0 and position('escrow_expected_held_total' in pg_get_functiondef(to_regprocedure('public.marketplace_admin_health_failure_count(text,jsonb)')))>0 end health_classifier_aligned,
+ case when to_regprocedure('public.get_marketplace_admin_creator_commerce_overview(text)')is null then false else position('released_at>=v_start' in replace(pg_get_functiondef(to_regprocedure('public.get_marketplace_admin_creator_commerce_overview(text)')),' ',''))>0 and position('reversed_at>=v_start' in replace(pg_get_functiondef(to_regprocedure('public.get_marketplace_admin_creator_commerce_overview(text)')),' ',''))>0 and position('occurred_at>=v_start' in replace(pg_get_functiondef(to_regprocedure('public.get_marketplace_admin_creator_commerce_overview(text)')),' ',''))>0 and position('paid_at<v_end' in replace(pg_get_functiondef(to_regprocedure('public.get_marketplace_admin_creator_commerce_overview(text)')),' ',''))>0 end creator_ranges_aligned,
+ case when to_regprocedure('public.get_marketplace_admin_creator_detail(uuid,text)')is null then false else position('commission_bps' in pg_get_functiondef(to_regprocedure('public.get_marketplace_admin_creator_detail(uuid,text)')))>0 and position('historical_bps' in pg_get_functiondef(to_regprocedure('public.get_marketplace_admin_creator_detail(uuid,text)')))>0 end historical_bps_present,
  (select count(*)::int from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public'and p.proname in('get_marketplace_admin_creator_commerce_overview','search_marketplace_admin_creators','get_marketplace_admin_creator_detail','search_marketplace_admin_promotions','get_marketplace_admin_promotion_detail','search_marketplace_admin_ads','get_marketplace_admin_ad_detail','get_marketplace_admin_health','search_marketplace_admin_activity')and position('marketplace_require_admin' in lower(pg_get_functiondef(p.oid)))=0)unguarded,
  (select count(*)::int from auth.users where email like'b8c-%@proof.local')fixtures,
  to_regprocedure('fixture_ops.fail_b8c_admin_intelligence()')is not null failure_hook`)
@@ -124,6 +129,11 @@ try {
   if (pre) {
     assert.equal(r.latest, "20260811030000");
     assert.equal(r.b8c_applied, false);
+  }
+  if (preC1) {
+    assert.equal(r.latest, "20260811031000");
+    assert.equal(r.b8c_applied, true);
+    assert.equal(r.b8c_c1_applied, false);
   }
   if (required) {
     assert.equal(r.latest, "20260811031000");
@@ -146,11 +156,39 @@ try {
     ])
       assert.equal(r[key], true, key);
   }
+  if (requireC1) {
+    assert.equal(r.latest, "20260811032000");
+    for (const key of [
+      "b8c_applied",
+      "b8c_c1_applied",
+      "creator_overview",
+      "creator_search_v2",
+      "creator_v2_authenticated",
+      "creator_v2_anon_denied",
+      "creator_detail",
+      "health_rpc",
+      "health_classifier_aligned",
+      "creator_ranges_aligned",
+      "historical_bps_present",
+      "anon_denied",
+      "ads_spend_denied",
+      "ads_release_denied",
+      "ads_finalize_denied",
+      "audit_immutable",
+    ])
+      assert.equal(r[key], true, key);
+  }
   console.log(
     JSON.stringify(
       {
         ok: true,
-        mode: pre ? "pre-b8c" : "require-b8c",
+        mode: preC1
+          ? "pre-b8c-c1"
+          : requireC1
+            ? "require-b8c-c1"
+            : pre
+              ? "pre-b8c"
+              : "require-b8c",
         ...r,
         reconciliations,
       },

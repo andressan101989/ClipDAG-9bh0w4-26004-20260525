@@ -71,6 +71,143 @@ async function addUser(id, label, admin = false) {
     [id, `b8c${label}${token}`, `B8C ${label}`, admin],
   );
 }
+const amount = (value) => Number(Number(value).toFixed(8));
+const address = `jsonb_build_object('recipient_name','B8C','line1','Proof Street','city','New York','region','NY','postal_code','10001','country','US')`;
+async function affiliateOffer(f, productId, creatorId, bps) {
+  await role("authenticated", f.seller);
+  return (
+    await db.query(
+      "select public.upsert_my_live_affiliate_offer($1,'specific_creator',$2,$3,'active',null,null,$4)value",
+      [productId, creatorId, bps, uid()],
+    )
+  ).rows[0].value;
+}
+async function directAttribution(f, creatorId, variantId, entitlementId) {
+  await role("service_role", f.admin);
+  return (
+    await db.query(
+      "select public.create_marketplace_creator_commerce_attribution($1,$2,$3,'direct_creator_link',$1,$4)value",
+      [entitlementId, creatorId, variantId, uid()],
+    )
+  ).rows[0].value;
+}
+async function fundBuyer(f, value) {
+  await role("service_role", f.admin);
+  const platform = (
+    await db.query("select public.ensure_marketplace_platform_account()id")
+  ).rows[0].id;
+  const buyerAccount = (
+    await db.query("select public.ensure_ledger_account($1)id", [f.buyer])
+  ).rows[0].id;
+  const transaction = uid();
+  await db.query(
+    `insert into public.financial_transactions(
+      id,from_account_id,to_account_id,operation_type,amount,fee_amount,currency,status,
+      reference_type,reference_id,idempotency_key,initiated_by)
+     values($1,$2,$3,'marketplace_test_funding',$4,0,'BDAG','completed',
+      'marketplace_b8c_c1_proof',$5,$6,$7)`,
+    [transaction, platform, buyerAccount, value, f.store, `b8c-c1-fund:${transaction}`, f.buyer],
+  );
+  await db.query(
+    "select public.ledger_debit($1,$2,$3,'B8C C1 proof funding','{}'),public.ledger_credit($1,$4,$3,'B8C C1 proof funding','{}')",
+    [transaction, platform, value, buyerAccount],
+  );
+}
+async function creatorCheckout(f, lines) {
+  await role("authenticated", f.buyer);
+  const payload = lines.map((line) => ({
+    variant_id: line.variantId,
+    quantity: line.quantity ?? 1,
+    attribution_id: line.attribution.id,
+  }));
+  const receipt = (
+    await db.query(
+      `select public.create_marketplace_creator_checkout_reservation($1::jsonb,${address},$2)value`,
+      [JSON.stringify(payload), uid()],
+    )
+  ).rows[0].value;
+  assert.equal(receipt.orders.length, 1);
+  await role("service_role", f.admin);
+  await db.query("select public.pay_marketplace_checkout_with_bdag($1,$2,$3)", [
+    f.buyer,
+    receipt.checkout.id,
+    uid(),
+  ]);
+  const orderId = receipt.orders[0].id;
+  const payment = (
+    await db.query(
+      "select p.* from public.marketplace_payments p join public.marketplace_orders o on o.checkout_id=p.checkout_id where o.id=$1",
+      [orderId],
+    )
+  ).rows[0];
+  return { orderId, payment };
+}
+async function agePayment(paymentId, days) {
+  await operator();
+  await db.query("set local session_replication_role=replica");
+  const paidAt = (
+    await db.query(
+      "update public.marketplace_payments set paid_at=clock_timestamp()-make_interval(days=>$2::int) where id=$1 returning paid_at",
+      [paymentId, days],
+    )
+  ).rows[0].paid_at;
+  await db.query("set local session_replication_role=origin");
+  return paidAt;
+}
+async function settleOrder(f, orderId) {
+  await role("authenticated", f.seller);
+  await db.query("select public.seller_start_marketplace_order_processing($1,$2)", [orderId, uid()]);
+  await db.query(
+    "select public.seller_ship_marketplace_order($1,'B8C','Ground',$2,null,null,$3)",
+    [orderId, `B8C-${uid().slice(0, 8)}`, uid()],
+  );
+  await role("service_role", f.admin);
+  await db.query("select public.confirm_marketplace_order_delivery_and_release($1,$2,$3)", [
+    f.buyer,
+    orderId,
+    uid(),
+  ]);
+  return (
+    await db.query("select * from public.marketplace_order_settlements where order_id=$1", [orderId])
+  ).rows[0];
+}
+async function reverseOrder(f, orderId) {
+  await role("service_role", f.admin);
+  const review = (
+    await db.query(
+      "select public.open_marketplace_post_settlement_review($1,$2,'b8c_c1_range','proof',$3)value",
+      [f.admin, orderId, uid()],
+    )
+  ).rows[0].value;
+  return (
+    await db.query(
+      "select public.resolve_marketplace_dispute($1,$2,'refund_buyer','b8c_c1_refund','proof',$3,null)value",
+      [f.admin, review.dispute_id, uid()],
+    )
+  ).rows[0].value;
+}
+async function recordDirectEvent(f, eventName, productId, variantId, offerId, occurredAtSql = "clock_timestamp()") {
+  await role("authenticated", f.buyer);
+  const eventId = (
+    await db.query(
+      "select public.record_marketplace_commerce_event($1,$2,$3,$4,'affiliate',$5,null,null,$6,'{}',$7)id",
+      [eventName, productId, variantId, uid(), offerId, eventName === "add_to_cart" ? 1 : null, `b8c-c1-event-${uid()}`],
+    )
+  ).rows[0].id;
+  await operator();
+  await db.query("set local session_replication_role=replica");
+  await db.query(`update public.marketplace_commerce_events set occurred_at=${occurredAtSql} where id=$1`, [eventId]);
+  await db.query("set local session_replication_role=origin");
+  return eventId;
+}
+async function creatorAdminDetail(adminId, creatorId, range) {
+  await role("authenticated", adminId);
+  return rpc("get_marketplace_admin_creator_detail", [creatorId, range]);
+}
+async function creatorSelfAnalytics(creatorId, range) {
+  await role("authenticated", creatorId);
+  return rpc("get_my_marketplace_creator_commerce_analytics", [range]);
+}
 try {
   await db.connect();
   await db.query("begin");
@@ -78,9 +215,15 @@ try {
     admin: uid(),
     normal: uid(),
     seller: uid(),
+    buyer: uid(),
+    creator: uid(),
+    creatorY: uid(),
     store: uid(),
+    shipping: uid(),
     product: uid(),
     variant: uid(),
+    product2: uid(),
+    variant2: uid(),
     promotion: uid(),
     campaign: uid(),
     audit: uid(),
@@ -89,6 +232,9 @@ try {
   await addUser(f.admin, "admin", true);
   await addUser(f.normal, "normal");
   await addUser(f.seller, "seller");
+  await addUser(f.buyer, "buyer");
+  await addUser(f.creator, "creator");
+  await addUser(f.creatorY, "creatory");
   await operator();
   await db.query(
     "insert into public.marketplace_sellers(user_id,status,display_name,approved_at)values($1,'approved','B8C Seller',now())",
@@ -99,8 +245,16 @@ try {
     [f.store, f.seller, `b8c-${uid()}`],
   );
   await db.query(
-    "insert into public.products(id,seller_id,title,description,price,currency,category,stock,status,store_id,category_id,product_type,moderation_status,published_at,images)values($1,$2,'B8C Product','Proof',20,'BDAG','physical',20,'active',$3,'10000000-0000-4000-8000-000000000002','physical','approved',now(),'{}')",
-    [f.product, f.seller, f.store],
+    "insert into public.marketplace_shipping_profiles(id,seller_id,store_id,name,processing_days_min,processing_days_max,ships_from_country,return_policy_summary)values($1,$2,$3,'B8C Ground',1,2,'US','Proof')",
+    [f.shipping, f.seller, f.store],
+  );
+  await db.query(
+    "insert into public.marketplace_shipping_profile_regions(profile_id,country_code,shipping_price,transit_days_min,transit_days_max)values($1,'US',0,1,2)",
+    [f.shipping],
+  );
+  await db.query(
+    "insert into public.products(id,seller_id,title,description,price,currency,category,stock,status,store_id,category_id,product_type,moderation_status,published_at,shipping_profile_id,images)values($1,$2,'B8C Product','Proof',20,'BDAG','physical',20,'active',$3,'10000000-0000-4000-8000-000000000002','physical','approved',now(),$4,'{}')",
+    [f.product, f.seller, f.store, f.shipping],
   );
   await db.query(
     "insert into public.marketplace_product_variants(id,product_id,store_id,seller_id,sku,sku_normalized,title,price,status,is_default,combination_key)values($1,$2,$3,$4,$5,$5,'Default',20,'active',true,'')",
@@ -115,6 +269,19 @@ try {
   await db.query(
     "insert into public.marketplace_inventory_levels(variant_id,on_hand,reserved)values($1,20,0)",
     [f.variant],
+  );
+  await db.query(
+    "insert into public.products(id,seller_id,title,description,price,currency,category,stock,status,store_id,category_id,product_type,moderation_status,published_at,shipping_profile_id,images)values($1,$2,'B8C Product 2','Proof',30,'BDAG','physical',20,'active',$3,'10000000-0000-4000-8000-000000000002','physical','approved',now(),$4,'{}')",
+    [f.product2, f.seller, f.store, f.shipping],
+  );
+  const sku2 = `B8C-${uid().replaceAll("-", "").slice(0, 16).toUpperCase()}`;
+  await db.query(
+    "insert into public.marketplace_product_variants(id,product_id,store_id,seller_id,sku,sku_normalized,title,price,status,is_default,combination_key)values($1,$2,$3,$4,$5,$5,'Default',30,'active',true,'')",
+    [f.variant2, f.product2, f.store, f.seller, sku2],
+  );
+  await db.query(
+    "insert into public.marketplace_inventory_levels(variant_id,on_hand,reserved)values($1,20,0)",
+    [f.variant2],
   );
   await db.query(
     "insert into public.marketplace_product_promotions(id,seller_id,store_id,product_id,variant_id,promotion_type,percentage_off,starts_at,ends_at,status,created_by,idempotency_key)values($1,$2,$3,$4,$5,'percentage',10,now()-interval'1 day',now()+interval'7 days','enabled',$2,$6)",
@@ -280,6 +447,180 @@ try {
     /marketplace_orders[^]*sum\([^)]*total/i,
   );
 
+  stage = "creator_temporal_lifecycle";
+  await operator();
+  await db.query("savepoint creator_temporal");
+  await fundBuyer(f, 300);
+  const offerY1000 = await affiliateOffer(f, f.product2, f.creatorY, 1000);
+  const oldReleased = await creatorCheckout(f, [
+    {
+      variantId: f.variant2,
+      attribution: await directAttribution(f, f.creatorY, f.variant2, offerY1000.id),
+    },
+  ]);
+  await agePayment(oldReleased.payment.id, 40);
+  const releasedSettlement = await settleOrder(f, oldReleased.orderId);
+  const oldReversed = await creatorCheckout(f, [
+    {
+      variantId: f.variant2,
+      attribution: await directAttribution(f, f.creatorY, f.variant2, offerY1000.id),
+    },
+  ]);
+  await agePayment(oldReversed.payment.id, 40);
+  await settleOrder(f, oldReversed.orderId);
+  const reversalReceipt = await reverseOrder(f, oldReversed.orderId);
+  assert.equal(reversalReceipt.finalDecision.financial_result.money_moved, true);
+  const olderThan90 = await creatorCheckout(f, [
+    {
+      variantId: f.variant2,
+      attribution: await directAttribution(f, f.creatorY, f.variant2, offerY1000.id),
+    },
+  ]);
+  await agePayment(olderThan90.payment.id, 120);
+  const offerX1200 = await affiliateOffer(f, f.product2, f.creator, 1200);
+  await creatorCheckout(f, [
+    {
+      variantId: f.variant2,
+      attribution: await directAttribution(f, f.creator, f.variant2, offerX1200.id),
+    },
+  ]);
+  await recordDirectEvent(f, "product_view", f.product2, f.variant2, offerY1000.id);
+  await recordDirectEvent(f, "add_to_cart", f.product2, f.variant2, offerY1000.id);
+  await recordDirectEvent(
+    f,
+    "product_view",
+    f.product2,
+    f.variant2,
+    offerY1000.id,
+    "clock_timestamp()+interval'1 day'",
+  );
+
+  const temporalExpected = {
+    "7d": { orders: 0, gmv: 0, generated: 0, released: 6, reversed: 3, opens: 1, carts: 1 },
+    "30d": { orders: 0, gmv: 0, generated: 0, released: 6, reversed: 3, opens: 1, carts: 1 },
+    "90d": { orders: 2, gmv: 60, generated: 6, released: 6, reversed: 3, opens: 1, carts: 1 },
+    all: { orders: 3, gmv: 90, generated: 9, released: 6, reversed: 3, opens: 1, carts: 1 },
+  };
+  for (const [range, expected] of Object.entries(temporalExpected)) {
+    const detail = await creatorAdminDetail(f.admin, f.creatorY, range);
+    assert.equal(detail.summary.orders, expected.orders, `${range}:orders`);
+    assert.equal(amount(detail.summary.attributed_gmv), expected.gmv, `${range}:gmv`);
+    assert.equal(amount(detail.summary.commission_generated), expected.generated, `${range}:generated`);
+    assert.equal(amount(detail.summary.commission_released), expected.released, `${range}:released`);
+    assert.equal(amount(detail.summary.commission_reversed), expected.reversed, `${range}:reversed`);
+    assert.equal(amount(detail.summary.commission_net), expected.released - expected.reversed, `${range}:net`);
+    assert.equal(detail.summary.product_opens, expected.opens, `${range}:opens`);
+    assert.equal(detail.summary.add_to_cart, expected.carts, `${range}:carts`);
+    assert.equal(detail.surface_breakdown.length, 1);
+    const surface = detail.surface_breakdown[0];
+    assert.equal(surface.source_surface, "direct_creator_link");
+    assert.equal(amount(surface.attributed_gmv), expected.gmv);
+    assert.equal(amount(surface.commission_generated), expected.generated);
+    assert.equal(amount(surface.commission_released), expected.released);
+    assert.equal(amount(surface.commission_reversed), expected.reversed);
+    assert.equal(surface.product_opens, expected.opens);
+    assert.equal(surface.add_to_cart, expected.carts);
+  }
+  const adminSeven = await creatorAdminDetail(f.admin, f.creatorY, "7d");
+  const selfSeven = await creatorSelfAnalytics(f.creatorY, "7d");
+  for (const [adminField, selfField] of [
+    ["orders", "attributed_orders"],
+    ["units", "units_sold"],
+    ["attributed_gmv", "attributed_gmv"],
+    ["commission_generated", "commission_generated"],
+    ["commission_released", "commission_released"],
+    ["commission_reversed", "commission_reversed"],
+    ["commission_net", "commission_net"],
+    ["product_opens", "product_opens"],
+    ["add_to_cart", "add_to_cart"],
+  ])
+    assert.equal(amount(adminSeven.summary[adminField]), amount(selfSeven.summary[selfField]), `b7d_match:${adminField}`);
+  assert.equal(adminSeven.summary.attributed_gmv, 0);
+  assert.equal(amount(adminSeven.summary.commission_released), 6);
+  assert.equal(amount(adminSeven.summary.commission_reversed), 3);
+
+  await role("authenticated", f.admin);
+  const creatorPageOne = await rpc("search_marketplace_admin_creators_v2", [null, "7d", null, null, 1]);
+  assert.equal(creatorPageOne.page_size, 1);
+  assert(creatorPageOne.next_cursor);
+  const creatorPageTwo = await rpc("search_marketplace_admin_creators_v2", [
+    null,
+    "7d",
+    creatorPageOne.next_cursor.activity_at,
+    creatorPageOne.next_cursor.creator_id,
+    1,
+  ]);
+  assert.equal(creatorPageTwo.page_size, 1);
+  assert.notEqual(creatorPageOne.creators[0].creator_id, creatorPageTwo.creators[0].creator_id);
+  assert.equal(creatorPageTwo.next_cursor, null);
+  const pageCreators = [...creatorPageOne.creators, ...creatorPageTwo.creators];
+  const releaseOnlyCreator = pageCreators.find((row) => row.creator_id === f.creatorY);
+  assert(releaseOnlyCreator, "release_only_creator_missing");
+  assert.equal(amount(releaseOnlyCreator.attributed_gmv), 0);
+  assert.equal(amount(releaseOnlyCreator.commission_released), 6);
+
+  const replacementOfferY900 = await affiliateOffer(f, f.product2, f.creatorY, 900);
+  assert.equal(replacementOfferY900.commission_bps, 900);
+  const historicalDetail = await creatorAdminDetail(f.admin, f.creatorY, "all");
+  assert.equal(historicalDetail.item_trace.length, 3);
+  assert(historicalDetail.item_trace.every((row) => row.historical_bps === 1000));
+  await operator();
+  const storedBps = (
+    await db.query(
+      "select distinct commission_bps from public.marketplace_order_item_creator_attributions where creator_user_id=$1 and order_id=any($2::uuid[]) order by commission_bps",
+      [f.creatorY, [oldReleased.orderId, oldReversed.orderId, olderThan90.orderId]],
+    )
+  ).rows.map((row) => row.commission_bps);
+  assert.deepEqual(storedBps, [1000]);
+
+  const offerXProductOne = await affiliateOffer(f, f.product, f.creator, 1200);
+  const multiCreatorOrder = await creatorCheckout(f, [
+    {
+      variantId: f.variant,
+      attribution: await directAttribution(f, f.creator, f.variant, offerXProductOne.id),
+    },
+    {
+      variantId: f.variant2,
+      attribution: await directAttribution(f, f.creatorY, f.variant2, replacementOfferY900.id),
+    },
+  ]);
+  await operator();
+  const multiTrace = (
+    await db.query(
+      "select creator_user_id,commission_bps,order_item_id from public.marketplace_order_item_creator_attributions where order_id=$1 order by creator_user_id",
+      [multiCreatorOrder.orderId],
+    )
+  ).rows;
+  assert.equal(multiTrace.length, 2);
+  assert.equal(new Set(multiTrace.map((row) => row.order_item_id)).size, 2);
+  assert.deepEqual(
+    new Map(multiTrace.map((row) => [row.creator_user_id, row.commission_bps])),
+    new Map([
+      [f.creator, 1200],
+      [f.creatorY, 900],
+    ]),
+  );
+  const creatorXAll = await creatorAdminDetail(f.admin, f.creator, "all");
+  const creatorYAll = await creatorAdminDetail(f.admin, f.creatorY, "all");
+  assert(creatorXAll.item_trace.some((row) => row.order_id === multiCreatorOrder.orderId && row.historical_bps === 1200));
+  assert(creatorYAll.item_trace.some((row) => row.order_id === multiCreatorOrder.orderId && row.historical_bps === 900));
+  const creatorYHistorical = creatorYAll.item_trace.filter((row) => row.order_id !== multiCreatorOrder.orderId);
+  assert(creatorYHistorical.every((row) => row.historical_bps === 1000));
+
+  const temporalOverview = await rpc("get_marketplace_admin_creator_commerce_overview", ["7d"]);
+  assert.equal(amount(temporalOverview.summary.commission_released), 6);
+  assert.equal(amount(temporalOverview.summary.commission_reversed), 3);
+  await operator();
+  const creatorLeg = (
+    await db.query(
+      "select amount from public.marketplace_settlement_legs where settlement_id=$1 and leg_type='creator_commission' and beneficiary_user_id=$2",
+      [releasedSettlement.id, f.creatorY],
+    )
+  ).rows[0];
+  assert.equal(amount(creatorLeg.amount), 3);
+  await db.query("rollback to savepoint creator_temporal");
+  await db.query("release savepoint creator_temporal");
+
   stage = "promotions";
   await role("authenticated", f.admin);
   const promotions = await rpc("search_marketplace_admin_promotions", [
@@ -335,6 +676,34 @@ try {
   });
 
   stage = "health";
+  await operator();
+  assert.equal(
+    Number(
+      await rpc("marketplace_admin_health_failure_count", [
+        "payments",
+        { confirmed_state_breakdown: { confirmed: 9, delivered: 4 }, confirmed_state_mismatches: 0 },
+      ]),
+    ),
+    0,
+  );
+  assert.equal(
+    Number(
+      await rpc("marketplace_admin_health_failure_count", [
+        "settlements",
+        { escrow_expected_held_total: 71, escrow_actual_balance: 71, escrow_difference: 0 },
+      ]),
+    ),
+    0,
+  );
+  assert.equal(
+    Number(
+      await rpc("marketplace_admin_health_failure_count", [
+        "settlements",
+        { escrow_expected_held_total: 71, escrow_actual_balance: 70, escrow_difference: 1 },
+      ]),
+    ),
+    1,
+  );
   await role("authenticated", f.admin);
   const healthy = await rpc("get_marketplace_admin_health");
   if (!healthy.healthy) console.error(JSON.stringify(healthy, null, 2));
@@ -410,6 +779,16 @@ try {
         creatorCommerce: {
           ranges: ["7d", "30d", "90d", "all"],
           invalidRangeRejected: true,
+          oldSaleNewRelease7d: { gmv: 0, generated: 0, released: 6 },
+          oldSaleNewReversal7d: { gmv: 0, generated: 0, reversed: 3 },
+          currentSaleUnreleased: { gmv: 30, generated: 3.6, released: 0 },
+          occurredAtEngagement: { productOpens: 1, addToCart: 1 },
+          futureVEndExcluded: true,
+          b7dSameCreatorRangeMatch: true,
+          releaseOnlyCreatorMembership: true,
+          paginationNoDuplicatesOrSkips: true,
+          historicalBps: { source: "attribution_snapshot", preservedAfterOfferChange: true },
+          multiCreatorHistoricalBps: { creatorX: 1200, creatorY: 900 },
           projectionUsesCanonicalItemFacts: true,
           projectionExcludesWholeOrderTotals: true,
           commissionNet: "released-reversed",
@@ -438,6 +817,9 @@ try {
         },
         health: {
           healthyBaseline: true,
+          legitimateNonzeroObservationsHealthy: true,
+          expectedActualEqualityHealthy: true,
+          expectedActualMismatchUnhealthy: true,
           controlledMismatchSurfaced: true,
           rollbackHealthy: true,
         },

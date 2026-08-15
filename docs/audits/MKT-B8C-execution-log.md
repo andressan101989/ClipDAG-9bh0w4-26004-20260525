@@ -96,3 +96,70 @@ No service-role key, DB password, JWT secret, private key, or payment secret is 
 - Final SHA: the final proof/documentation commit containing this log (reported in the external final report).
 - Build: 22. No EAS. No merge. No historical migration edit.
 - B8D: NOT STARTED.
+
+## MKT-B8C-C1 closure
+
+### Independent review findings and correction
+
+Starting SHA: `b1818d4ff193d6d8692e0957c3f3ef15c659a54a`. Branch: `codex/mkt-a4b-premium-integration`. Build: `22`. Remote migration before correction: `20260811031000_marketplace_admin_intelligence_ops.sql`.
+
+Independent review identified three projection/validation gaps, without finding a new financial authority: B8C creator release/reversal metrics were incorrectly gated by the sale payment clock; the creator item trace omitted the immutable attribution `commission_bps`; and several browser payload contracts treated required nested fields as optional. It also required a complete audit of Health counter classification.
+
+Forward migration `20260811032000_marketplace_admin_intelligence_closure.sql` replaces only the affected read projections and Health classifier. It does not edit the deployed `20260811031000` migration or any earlier migration.
+
+The corrected creator overview, creator v2 search, and creator detail each take one stable `v_end := clock_timestamp()` and derive the frozen B7D sets independently:
+
+- sales: `paid_at >= v_start AND paid_at < v_end`;
+- releases: positive creator release with `released_at >= v_start AND released_at < v_end`;
+- reversals: positive creator reversal with `reversed_at >= v_start AND reversed_at < v_end`;
+- engagement: `occurred_at >= v_start AND occurred_at < v_end`;
+- `all`: no lower bound, while retaining the `< v_end` upper bound.
+
+Orders, units, attributed GMV, and generated commission come only from sales. Released commission comes only from releases; reversed commission comes only from reversals; net remains released minus reversed; observational opens/cart events come only from engagement. Surface projections use the same four sets and item facts, never whole-order GMV.
+
+The deployed creator-list signature is preserved and a narrow `search_marketplace_admin_creators_v2(text,text,timestamptz,uuid,integer)` is added for the corrected membership/cursor contract. Membership is the union of sales, releases, reversals, and engagement. Its keyset is `activity_at + creator_id`, avoiding the misleading old `last_sale` label. It defaults to 50, caps at 100, explicitly rejects NULL/0/101, has no OFFSET, emits no false terminal cursor, and the web uses only v2.
+
+Creator detail now joins `marketplace_order_item_creator_attributions` by the canonical order/item/creator identity and returns `a.commission_bps AS historical_bps`. The browser validates it as an integer in the frozen 1..3000 constraint and renders it read-only. It never reads current offer BPS and performs no BPS calculation.
+
+### Runtime temporal and historical proof
+
+The disposable proof constructs paid Marketplace orders through canonical B7A attribution, B7F allocation, settlement, B7R reversal, and B3 event functions. Controlled timestamps prove:
+
+- sale paid 40 days ago, released in the last day: 7d GMV/generated `0/0`, released `3`;
+- another sale paid 40 days ago and released/reversed in the last day: 7d GMV/generated `0/0`, release `3`, reversal `3`;
+- combined release-only creator at 7d: GMV/generated `0/0`, released `6`, reversed `3`, net `3`;
+- sale paid now and held: GMV `30`, generated `3.6`, released `0`;
+- B3 product view/cart at current `occurred_at`: `1/1`; a future-dated event is excluded;
+- 7d and 30d exclude the 40-day sales; 90d includes two orders/60 GMV/6 generated; all additionally includes a 120-day order for three orders/90 GMV/9 generated;
+- direct-link surface values match the corresponding summary clocks;
+- admin and frozen B7D self analytics match for the same creator and 7d range;
+- a creator with no 7d sale but a 7d release/reversal remains in the v2 list;
+- two one-row keyset pages contain no duplicate or skipped creator and the terminal page has no cursor.
+
+Attribution at 1000 BPS remains 1000 after the seller replaces the offer with 900 BPS. A multi-creator order proves separate immutable 1200 and 900 BPS snapshots on separate attributed items; the earlier creator rows remain 1000. No B8C endpoint can mutate `commission_bps`.
+
+### Runtime payload validation
+
+`adminIntelligenceApi.ts` now has distinct exact validators for creator overview/list/detail summaries, the five canonical creator surfaces, item trace and historical BPS; promotion type/state/status, canonical effective-price output, and historical snapshot money; complete Ads campaign identity/lifecycle/eligibility, seller/store/product, financial events, finalization, delivery, event counts, and attribution; Health group shape/nested counter types/attention entities; and Activity cursor/UUID fields. Required fields no longer use permissive `key in row` behavior. Optional helpers remain limited to SQL-nullable values.
+
+Sixteen B8C web tests include fourteen malformed contract cases: missing creator count, invalid surface, malformed BPS/item identity/timestamps/cursor, missing or invalid promotion contracts and snapshot money, missing Ads eligibility/invalid status, malformed Ads delivery/finalization/events, malformed Health counters/attention, and malformed Activity cursor/UUID. All produce controlled errors; pages retain retry behavior and cannot silently fabricate zero, `NaN`, `Invalid Date`, or `undefined BDAG`.
+
+### Health classifier audit
+
+Every reconciliation included by `get_marketplace_admin_health()` was audited. All selected leaves are failure counters except two documented observational shapes: payment `confirmed_state_breakdown`, and settlement `escrow_expected_held_total` / `escrow_actual_balance`. Their canonical `confirmed_state_mismatches`, invalid-detail array, and `escrow_difference`/shortage/surplus counters remain authoritative failures. The group-aware classifier ignores only those observations. Proof shows nonzero payment state totals remain healthy, equal nonzero expected/actual escrow remains healthy, an unequal pair with a nonzero canonical difference is unhealthy, a real controlled Ads reconciliation mismatch surfaces unhealthy, rollback restores healthy, and B8B remains 8/8 zero. No repair or write endpoint exists.
+
+### Gates, deployment, and status evidence
+
+- B8C disposable proof: passed; canonical lifecycle temporal assertions, B7D equality, BPS immutability/multi-creator trace, Health mismatch/rollback, authorization, pagination, promotions, Ads non-authority, activity immutability, B8B 8/8, and fixture residue `0`.
+- Admin Web: `50/50`; ESLint zero warnings/errors; TypeScript/Vite build passed with 119 modules.
+- Focused B8S/B8A/B8B/B8C: `50/50`.
+- Root Node: `701 passed / 0 failed`.
+- Mobile TypeScript: exactly `187` pre-existing diagnostics; C1 changed-file diagnostics `0`.
+- Canonical regressions: B3; B7A 36/36; B7B 23/23; B7C 28/28; B7D 18/18; B7E; B7F 27/27; B7R 32/32; disputes/refunds; orders; shipping; publication; promotions; Ads finance/eligibility/finalization/delivery/attribution; fixture finalization; runtime—all passed.
+- Remote predeploy: read-only pass at `20260811031000`; C1 absent; B8S/B8A/B8B/B8C healthy; fixtures `0`; all reconciliations zero.
+- Linked dry-run: exactly `20260811032000_marketplace_admin_intelligence_closure.sql`; seeds `[]`; roles `[]`.
+- Deployment: exactly that migration; no web hosting deployment.
+- Remote postdeploy: read-only pass at `20260811032000`; corrected definitions and grants present; Ads internal finance still denied; audit immutable; fixtures `0`; failure hooks absent; B8B 8/8, Creator Commerce, Ads, payments, settlements, and all inherited reconciliations healthy; escrow `71/71`.
+- Commits: `584af70` range/Health authority; `dbcb169` strict web payloads; final proof/auditor/log commit containing this section.
+- Final SHA: final proof/auditor/log commit reported in the external final report.
+- Build `22`; no EAS; no merge; no historical migration edit; no new financial authority; B8D NOT STARTED.
