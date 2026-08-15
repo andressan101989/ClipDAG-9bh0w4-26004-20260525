@@ -61,6 +61,42 @@ const finalReceipt = () => ({
   },
 });
 
+const releaseReceipt = (alreadyReleased: boolean) => ({
+  ...finalReceipt(),
+  finalDecision: {
+    ...finalReceipt().finalDecision,
+    outcome: "release_seller",
+    financial_result: {
+      money_moved: true,
+      settlement: alreadyReleased
+        ? {
+            settlement: { id: id("6"), status: "completed", released_at: at },
+            money_moved: false,
+            already_released: true,
+          }
+        : {
+            settlement: { id: id("6"), status: "released", released_at: at },
+            allocation: { status: "released", gross_amount: "10.00000000" },
+            money_moved: true,
+            actor_role: "admin",
+          },
+    },
+  },
+});
+
+const reversalReceipt = () => ({
+  ...finalReceipt(),
+  finalDecision: {
+    ...finalReceipt().finalDecision,
+    financial_result: {
+      money_moved: true,
+      reversal_id: id("7"),
+      buyer_refund_transaction_id: id("8"),
+      gross_refund_amount: "10.00000000",
+    },
+  },
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -73,6 +109,52 @@ describe("B8B-C1 dispute operation receipt validation", () => {
     );
     expect(validateDisputeOperationReceipt(finalReceipt())).toEqual(
       finalReceipt(),
+    );
+    expect(validateDisputeOperationReceipt(reversalReceipt())).toEqual(
+      reversalReceipt(),
+    );
+  });
+
+  it("accepts fresh and post-settlement already-released seller receipts", () => {
+    expect(validateDisputeOperationReceipt(releaseReceipt(false))).toEqual(
+      releaseReceipt(false),
+    );
+    expect(validateDisputeOperationReceipt(releaseReceipt(true))).toEqual(
+      releaseReceipt(true),
+    );
+  });
+
+  it("rejects malformed post-settlement already-released receipts", () => {
+    const malformedUuid = releaseReceipt(true);
+    malformedUuid.finalDecision.financial_result.settlement.settlement.id = "bad";
+    expect(() => validateDisputeOperationReceipt(malformedUuid)).toThrow(
+      /Respuesta inv.lida/,
+    );
+
+    const malformedTimestamp = releaseReceipt(true);
+    malformedTimestamp.finalDecision.financial_result.settlement.settlement.released_at = "bad";
+    expect(() => validateDisputeOperationReceipt(malformedTimestamp)).toThrow(
+      /Respuesta inv.lida/,
+    );
+
+    const movedAgain = releaseReceipt(true);
+    movedAgain.finalDecision.financial_result.settlement.money_moved = true;
+    expect(() => validateDisputeOperationReceipt(movedAgain)).toThrow(
+      /Respuesta inv.lida/,
+    );
+  });
+
+  it("keeps fresh release allocation and actor role mandatory", () => {
+    const missingAllocation = releaseReceipt(false);
+    delete missingAllocation.finalDecision.financial_result.settlement.allocation;
+    expect(() => validateDisputeOperationReceipt(missingAllocation)).toThrow(
+      /Respuesta inv.lida/,
+    );
+
+    const missingActor = releaseReceipt(false);
+    delete missingActor.finalDecision.financial_result.settlement.actor_role;
+    expect(() => validateDisputeOperationReceipt(missingActor)).toThrow(
+      /Respuesta inv.lida/,
     );
   });
 

@@ -119,3 +119,16 @@ C1 remote execution completed as follows:
 - Read-only postdeploy audit passed at exact migration `20260811030000`: all three list definitions were NULL-safe, the audit reason contract allowed 500, grants remained safe, anonymous mutations remained denied, dangerous financial functions remained zero, B8B reconciliation was 8/8 zero, inherited reconciliations were zero, fixtures were zero, and failure hooks were absent.
 
 Final C1 commit SHAs and local/origin parity are reported in the Git handoff because a commit cannot contain its own resulting identifier.
+
+## MKT-B8B-C2 post-settlement release receipt closure
+
+Independent review found one remaining browser-contract gap, not a server or financial-authority defect. The deployed `resolve_marketplace_dispute(...)` delegates held `release_seller` decisions to `resolve_marketplace_dispute_held_v1(...)`, which calls `release_marketplace_order_after_dispute_resolution(...)`. The canonical release authority has two legitimate receipts:
+
+- A fresh release returns settlement identity/status/time, released allocation status/gross amount, `money_moved:true`, and `actor_role:'admin'`.
+- An already-settled order returns settlement identity/status/time, `money_moved:false`, and `already_released:true`, without allocation or actor role. The enclosing final-decision financial result remains `money_moved:true` because the requested resolution is canonical and final, while the nested release correctly reports that this command moved no additional money.
+
+`validateDisputeOperationReceipt()` now accepts both exact families. Both validate settlement UUID, status, release timestamp, and nested movement boolean. The already-released branch requires `already_released:true` and `money_moved:false`; optional allocation/actor fields, if present, remain validated. The fresh branch still requires allocation status/gross money, actor role, and `money_moved:true`. Refund, B7R reversal-refund, intermediate-review, and all other validation remain strict. No financial calculation was added to the browser.
+
+The disposable proof created a real paid and canonically released order, opened review through `open_marketplace_post_settlement_review(...)`, and invoked `admin_resolve_marketplace_dispute(...,'release_seller',...)` as the protected admin. The canonical receipt contained `already_released:true`; final decisions were exactly 1, settlements remained exactly 1, additional financial movements were 0, and B8B audit rows were exactly 1. B8B reconciliation remained 8/8 zero, fixtures were zero, and the original two-connection conflicting-final-outcome proof retained exactly one winner with no partial state.
+
+C2 gates: admin web 34/34, web lint zero, Vite/TypeScript build successful, focused B8S/B8A/B8B 36/36, root Node 687/687, root TypeScript unchanged at 187 unrelated diagnostics with zero C2-file diagnostics, and focused root ESLint zero. Build remains 22. Remote read-only audit remained healthy at `20260811030000`; no migration or Supabase deployment occurred. B8C/B8D, Expo, EAS, B7F/B7R, and financial authority were untouched.

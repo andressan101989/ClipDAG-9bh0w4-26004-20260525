@@ -113,13 +113,22 @@ export async function getDisputeDetail(id:string){uuid(id,"disputeId");return va
 const validateReceiptDispute=(value:unknown,name:string)=>{const item=object(value,name);string(item.status,`${name}.status`);nullableDate(item.resolved_at,`${name}.resolved_at`);return item};
 const validateFinalFinancialResult=(value:unknown,outcome:string)=>{
   const result=object(value,"finalDecision.financial_result");
-  bool(result.money_moved,"finalDecision.financial_result.money_moved");
+  const financialMoneyMoved=bool(result.money_moved,"finalDecision.financial_result.money_moved");
   if(outcome==="refund_buyer"){
     if("reversal_id"in result){uuid(result.reversal_id,"finalDecision.financial_result.reversal_id");uuid(result.buyer_refund_transaction_id,"finalDecision.financial_result.buyer_refund_transaction_id");money(result.gross_refund_amount,"finalDecision.financial_result.gross_refund_amount");}
     else{money(result.refund_amount,"finalDecision.financial_result.refund_amount");uuid(result.financial_transaction_id,"finalDecision.financial_result.financial_transaction_id");for(const key of["seller_allocation","creator_allocation","platform_allocation"]as const)string(result[key],`finalDecision.financial_result.${key}`);}
   }else if(outcome==="release_seller"){
-    const release=object(result.settlement,"finalDecision.financial_result.settlement"),settlement=object(release.settlement,"finalDecision.financial_result.settlement.settlement"),allocation=object(release.allocation,"finalDecision.financial_result.settlement.allocation");
-    uuid(settlement.id,"finalDecision.financial_result.settlement.settlement.id");string(settlement.status,"finalDecision.financial_result.settlement.settlement.status");date(settlement.released_at,"finalDecision.financial_result.settlement.settlement.released_at");string(allocation.status,"finalDecision.financial_result.settlement.allocation.status");money(allocation.gross_amount,"finalDecision.financial_result.settlement.allocation.gross_amount");bool(release.money_moved,"finalDecision.financial_result.settlement.money_moved");string(release.actor_role,"finalDecision.financial_result.settlement.actor_role");
+    if(financialMoneyMoved!==true)invalid("finalDecision.financial_result.money_moved");
+    const release=object(result.settlement,"finalDecision.financial_result.settlement"),settlement=object(release.settlement,"finalDecision.financial_result.settlement.settlement"),releaseMoneyMoved=bool(release.money_moved,"finalDecision.financial_result.settlement.money_moved");
+    uuid(settlement.id,"finalDecision.financial_result.settlement.settlement.id");string(settlement.status,"finalDecision.financial_result.settlement.settlement.status");date(settlement.released_at,"finalDecision.financial_result.settlement.settlement.released_at");
+    if(release.already_released===true){
+      if(bool(release.already_released,"finalDecision.financial_result.settlement.already_released")!==true||releaseMoneyMoved!==false)invalid("finalDecision.financial_result.settlement");
+      if("allocation"in release){const allocation=object(release.allocation,"finalDecision.financial_result.settlement.allocation");string(allocation.status,"finalDecision.financial_result.settlement.allocation.status");money(allocation.gross_amount,"finalDecision.financial_result.settlement.allocation.gross_amount");}
+      if("actor_role"in release)string(release.actor_role,"finalDecision.financial_result.settlement.actor_role");
+    }else{
+      if("already_released"in release)invalid("finalDecision.financial_result.settlement.already_released");
+      const allocation=object(release.allocation,"finalDecision.financial_result.settlement.allocation");string(allocation.status,"finalDecision.financial_result.settlement.allocation.status");money(allocation.gross_amount,"finalDecision.financial_result.settlement.allocation.gross_amount");string(release.actor_role,"finalDecision.financial_result.settlement.actor_role");if(releaseMoneyMoved!==true)invalid("finalDecision.financial_result.settlement.money_moved");
+    }
   }else if(outcome==="reject_claim")bool(result.settlement_eligible,"finalDecision.financial_result.settlement_eligible");
   else invalid("finalDecision.outcome");
   return result;
