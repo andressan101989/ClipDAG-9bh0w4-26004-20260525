@@ -92,17 +92,32 @@ export default function CreatorShowcaseScreen() {
     }
   }, [busyId, load]);
 
-  const remove = useCallback(async (item: MarketplaceCreatorShowcaseManagementItem) => {
+  const remove = useCallback((item: MarketplaceCreatorShowcaseManagementItem) => {
     if (busyId) return;
-    setBusyId(item.showcaseItemId);
-    try {
-      await removeMyCreatorShowcaseProduct(item.showcaseItemId, randomUUID());
-      await load(true);
-    } catch {
-      Alert.alert("Could not remove product", "Please try again.");
-    } finally {
-      setBusyId(null);
-    }
+    Alert.alert(
+      "Remove from showcase",
+      `${item.title} will no longer appear in your public showcase. Historical attribution is not changed.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove product",
+          style: "destructive",
+          onPress: () => {
+            setBusyId(item.showcaseItemId);
+            void (async () => {
+              try {
+                await removeMyCreatorShowcaseProduct(item.showcaseItemId, randomUUID());
+                await load(true);
+              } catch {
+                Alert.alert("Could not remove product", "Please try again.");
+              } finally {
+                setBusyId(null);
+              }
+            })();
+          },
+        },
+      ],
+    );
   }, [busyId, load]);
 
   const move = useCallback(async (item: MarketplaceCreatorShowcaseManagementItem, delta: -1 | 1) => {
