@@ -15,16 +15,17 @@ import {
   View,
 } from "react-native";
 import { MaterialCommunityIcons, MaterialIcons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { StatusBar } from "expo-status-bar";
 import { randomUUID } from "expo-crypto";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Avatar } from "@/components/ui/Avatar";
 import { CyberButton } from "@/components/ui/CyberButton";
 import { MarketplaceShippingQuoteCard } from "@/components/marketplace/MarketplaceShippingQuoteCard";
 import { SearchableSelectField } from "@/components/marketplace/SearchableSelectField";
 import { ProductMediaGallery } from "@/components/marketplace/product-detail/ProductMediaGallery";
 import { ProductPurchaseBar } from "@/components/marketplace/product-detail/ProductPurchaseBar";
+import { ProductRatingSummary, ProductReviewsSection } from "@/components/marketplace/product-detail/ProductReviewsSection";
 import {
   Colors,
   FontSize,
@@ -67,6 +68,10 @@ import { recordAdEvent } from "@/services/marketplaceAdsService";
 import { createCreatorShowcaseAttribution } from "@/services/marketplaceCreatorShowcaseService";
 import { createCreatorContentAttribution } from "@/services/marketplaceCreatorContentTagService";
 import { createLiveCreatorAttribution } from "@/services/liveCommerceService";
+import {
+  fetchMarketplaceProductReputation,
+  type MarketplaceProductReputation,
+} from "@/services/marketplaceReviewService";
 
 const EMPTY_MEDIA: MarketplaceProductDetail["media"] = [];
 
@@ -99,6 +104,9 @@ export default function ProductScreen() {
     [quantity, setQuantity] = useState(1),
     [mediaIndex, setMediaIndex] = useState(0),
     [descriptionExpanded, setDescriptionExpanded] = useState(false),
+    [reputation, setReputation] = useState<MarketplaceProductReputation | null>(null),
+    [reputationLoading, setReputationLoading] = useState(false),
+    [reputationError, setReputationError] = useState(false),
     [cartFeedback, setCartFeedback] =
       useState<MarketplaceCartToastFeedback | null>(null);
   const addToCartLockRef = useRef(false),
@@ -143,12 +151,25 @@ export default function ProductScreen() {
       setLoading(false);
     }
   }, [id]);
+  const loadReputation = useCallback(async () => {
+    if (!id) return;
+    setReputationLoading(true);
+    setReputationError(false);
+    try {
+      setReputation(await fetchMarketplaceProductReputation(id));
+    } catch {
+      setReputationError(true);
+    } finally {
+      setReputationLoading(false);
+    }
+  }, [id]);
   useEffect(() => {
     void load();
     return () => {
       if (toastTimer.current) clearTimeout(toastTimer.current);
     };
   }, [load]);
+  useEffect(() => { void loadReputation(); }, [loadReputation, user?.id]);
   const product =
       detail?.product ?? products.find((item) => item.id === id) ?? null,
     options = detail?.options ?? [],
@@ -558,6 +579,7 @@ export default function ProductScreen() {
             <Text style={styles.category}>{product.category} · {product.product_type === "digital" ? "Digital" : "Físico"}</Text>
           </View>
           <Text style={styles.title}>{product.title}</Text>
+          {reputationLoading ? <ActivityIndicator color={Colors.primary} size="small" style={{ alignSelf: "flex-start", marginTop: 8 }} /> : <ProductRatingSummary reputation={reputation} />}
           <View style={styles.pricingPanel}>
             <View style={styles.priceRow}>
               <Text style={styles.price} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72}>
@@ -650,33 +672,23 @@ export default function ProductScreen() {
             router.push(user ? ("/checkout" as never) : ("/login" as never))
           }
         />
-        <Pressable
-          style={styles.sellerCard}
-          onPress={() => router.push(`/chat/${product.seller_id}`)}
-          accessibilityRole="button"
-          accessibilityLabel={`Contactar a ${product.seller?.username ?? "vendedor"}`}
-        >
-          <Avatar
-            uri={product.seller?.avatar_url ?? ""}
-            username={product.seller?.username ?? "Vendedor"}
-            size={46}
-            showBorder
-          />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.sellerLabel}>TIENDA</Text>
-            <Text style={styles.sellerName}>
-              @{product.seller?.username ?? "Vendedor"}
-            </Text>
-          </View>
-          <View style={styles.message}>
-            <MaterialIcons
-              name="chat-bubble-outline"
-              size={18}
-              color={Colors.primary}
-            />
-            <Text style={styles.messageText}>Mensaje</Text>
-          </View>
-        </Pressable>
+        {reputation ? <>
+          <Pressable
+            style={styles.sellerCard}
+            onPress={() => router.push({ pathname: "/store/[id]", params: { id: reputation.store.id } } as never)}
+            accessibilityRole="button"
+            accessibilityLabel={`Ver tienda ${reputation.store.name}`}
+          >
+            {reputation.store.logoUrl ? <Image source={{ uri: reputation.store.logoUrl }} style={styles.storeLogo} contentFit="cover" transition={150} /> : <View style={styles.storeLogoFallback}><MaterialIcons name="storefront" size={26} color={Colors.primaryLight} /></View>}
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.sellerLabel}>TIENDA</Text>
+              <Text style={styles.sellerName} numberOfLines={2}>{reputation.store.name}</Text>
+              {reputation.sellerAggregate.reviewCount > 0 && reputation.sellerAggregate.averageRating !== null ? <View style={styles.storeRating}><MaterialIcons name="star" size={14} color={Colors.warning} /><Text style={styles.storeRatingText}>{reputation.sellerAggregate.averageRating.toFixed(1)} · {reputation.sellerAggregate.reviewCount} {reputation.sellerAggregate.reviewCount === 1 ? "valoración" : "valoraciones"}</Text></View> : <Text style={styles.storeNoReviews}>Sin valoraciones todavía</Text>}
+            </View>
+            <View style={styles.viewStore}><Text style={styles.viewStoreText}>Ver tienda</Text><MaterialIcons name="chevron-right" size={20} color={Colors.primaryLight} /></View>
+          </Pressable>
+          <ProductReviewsSection productId={product.id} reputation={reputation} onReputationRefresh={loadReputation} />
+        </> : reputationError ? <View style={styles.reputationError}><Text style={styles.reputationErrorText}>No se pudo cargar la reputación de la tienda.</Text><Pressable onPress={() => void loadReputation()} accessibilityRole="button"><Text style={styles.retryReputation}>Reintentar</Text></Pressable></View> : null}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Sobre el producto</Text>
           <Text
@@ -961,16 +973,16 @@ const styles = StyleSheet.create({
   },
   sellerLabel: { color: Colors.textSubtle, fontSize: 9,fontWeight:FontWeight.bold,letterSpacing:.9 },
   sellerName: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
-  message: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 12,
-    height: 40,
-    borderRadius: Radius.full,
-    backgroundColor: "rgba(124,92,255,.13)",
-  },
-  messageText: { color: Colors.primaryLight, fontWeight: FontWeight.bold },
+  storeLogo: { width: 52, height: 52, borderRadius: Radius.md, backgroundColor: Colors.bg },
+  storeLogoFallback: { width: 52, height: 52, borderRadius: Radius.md, alignItems: "center", justifyContent: "center", backgroundColor: Colors.primaryDim, borderWidth: 1, borderColor: Colors.primaryGlow },
+  storeRating: { flexDirection: "row", alignItems: "center", gap: 3, marginTop: 3 },
+  storeRatingText: { color: Colors.textSecondary, fontSize: 11 },
+  storeNoReviews: { color: Colors.textSubtle, fontSize: 11, marginTop: 3 },
+  viewStore: { minHeight: 44, flexDirection: "row", alignItems: "center", paddingLeft: 6 },
+  viewStoreText: { color: Colors.primaryLight, fontWeight: FontWeight.bold, fontSize: 12 },
+  reputationError: { marginHorizontal: Spacing.md, padding: Spacing.md, alignItems: "center", borderRadius: Radius.lg, backgroundColor: Colors.surfaceElevated },
+  reputationErrorText: { color: Colors.textSecondary, textAlign: "center" },
+  retryReputation: { color: Colors.primaryLight, fontWeight: FontWeight.bold, padding: Spacing.sm },
   section: {
     marginHorizontal: Spacing.md,
     padding: Spacing.md,

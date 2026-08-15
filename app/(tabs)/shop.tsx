@@ -137,10 +137,10 @@ const SponsoredCard = memo(function SponsoredCard({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sent = useRef(false);
   useEffect(() => {
-    const cardHeight = width + 142;
+    const height = width + 142;
     const top = gridY + y - scrollY;
-    const visible = Math.max(0, Math.min(top + cardHeight, viewportHeight) - Math.max(top, 0));
-    if (!sent.current && visible / cardHeight >= MARKETPLACE_AD_VISIBLE_RATIO) {
+    const visible = Math.max(0, Math.min(top + height, viewportHeight) - Math.max(top, 0));
+    if (!sent.current && visible / height >= MARKETPLACE_AD_VISIBLE_RATIO) {
       if (!timer.current)
         timer.current = setTimeout(() => {
           sent.current = true;
