@@ -58,7 +58,7 @@ try{
 
   stage="admin_outputs";
   await role("authenticated",f.admin);
-  const access=await rpc("get_my_marketplace_admin_access");assert.equal(access.user_id,f.admin);assert.equal(access.admin,true);assert.deepEqual(access.capabilities,["marketplace:read"]);
+  const access=await rpc("get_my_marketplace_admin_access");assert.equal(access.user_id,f.admin);assert.equal(access.admin,true);assert(access.capabilities.includes("marketplace:read"));
   const overview=await rpc("get_marketplace_admin_overview",["all"]);assert.equal(overview.commerce.orders,3);assert.equal(overview.commerce.paid_orders,3);assert.equal(n(overview.commerce.paid_gmv),150);assert.equal(overview.commerce.units,4);assert.equal(overview.commerce.refunded_orders,1);assert.equal(overview.commerce.reversed_orders,1);assert.equal(n(overview.commerce.reversed_gross),100);assert.equal(overview.creator_commerce.attributed_orders,2);assert.equal(n(overview.creator_commerce.attributed_gmv),120);assert.equal(n(overview.creator_commerce.commission_generated),14);assert.equal(n(overview.creator_commerce.commission_released),12);assert.equal(n(overview.creator_commerce.commission_reversed),12);assert.equal(n(overview.creator_commerce.commission_net),0);
   for(const range of["7d","30d","90d","all"]){const value=await rpc("get_marketplace_admin_overview",[range]);assert.equal(value.range,range);}
   assert.equal((await attempt(()=>rpc("get_marketplace_admin_overview",["bad"]))).message,"marketplace_admin_range_invalid");

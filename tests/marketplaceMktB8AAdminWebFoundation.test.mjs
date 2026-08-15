@@ -55,7 +55,7 @@ test("overview and detail use canonical payment and creator facts",()=>{
 test("browser operational access is RPC-only and contains no protected writes",()=>{
   assert.match(webSource,/supabase\.rpc/);
   assert.doesNotMatch(webSource,/supabase\.from\([^)]*\)\.(insert|update|delete)/);
-  assert.doesNotMatch(webSource,/ledger_(debit|credit)|resolve_marketplace_dispute|confirm_marketplace_order_delivery_and_release/);
+  assert.doesNotMatch(webSource,/ledger_(debit|credit)|rpc\("resolve_marketplace_dispute"|confirm_marketplace_order_delivery_and_release/);
 });
 test("web routes and shell are limited to B8A Marketplace pages",()=>{
   const appSource=read("apps/admin-web/src/App.tsx");
@@ -82,8 +82,8 @@ test("remote auditor is read-only and covers pre/post B8A plus B8S",()=>{
   assert.match(auditor,/b8s_admin_update_denied/);
   assert.doesNotMatch(auditor,/\b(update|insert into|delete from) public\./i);
 });
-test("B8B mutation authority and hosting deployment are absent",()=>{
-  assert.doesNotMatch(webSource,/Refundar|Revertir pago|Liberar liquidación|Ajustar saldo|Aprobar vendedor/);
+test("later operations preserve the B8A foundation boundary and hosting remains absent",()=>{
+  assert.doesNotMatch(webSource,/Ajustar saldo|Establecer saldo|Editar precio|Cambiar comisión/);
   assert.equal(existsSync("apps/admin-web/vercel.json"),false);
   assert.equal(existsSync("apps/admin-web/netlify.toml"),false);
 });
