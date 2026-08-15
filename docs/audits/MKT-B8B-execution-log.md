@@ -51,7 +51,7 @@
 - Protected admin succeeded and received explicit capabilities.
 - Held full refund used canonical authority and moved the exact gross once.
 - Manual review created no financial transaction; release seller used canonical settlement authority; reject claim moved no money.
-- Same-key retry returned one effective result/audit row; a conflicting later final outcome was rejected without partial state.
+- Same-key retry returned one effective result/audit row. A controlled two-connection race sent conflicting `refund_buyer` and `release_seller` final outcomes simultaneously from two protected admins: exactly one command succeeded, one canonical decision and one audit row existed, the loser received `conflicting_decision`, exactly one canonical financial operation existed, and there was no partial state.
 - Seller approve/reject/suspend/restore, self-moderation denial, public eligibility gating, and retry behavior passed.
 - Product approve/reject, required reason, public suppression, retry behavior, and unchanged price/stock passed.
 - Audit append-only/immutable/client-DML denial passed.

@@ -6,13 +6,12 @@ const {Client}=pg,connectionString=process.env.MARKETPLACE_DATABASE_URL;
 if(!connectionString)throw new Error("MARKETPLACE_DATABASE_URL_REQUIRED");
 const parsed=new URL(connectionString);
 if(!["127.0.0.1","localhost"].includes(parsed.hostname)||parsed.port!=="55422")throw new Error("B8B_PROOF_REQUIRES_DISPOSABLE_DATABASE");
-const db=new Client({connectionString,ssl:false}),uid=()=>randomUUID(),num=(value)=>Number(value);let stage="connect";
+let db=new Client({connectionString,ssl:false});const uid=()=>randomUUID(),num=(value)=>Number(value);let stage="connect";
 async function role(name,sub="",metadata={}){await db.query("reset role");await db.query(`set local role ${name}`);await db.query("select set_config('request.jwt.claim.role',$1,true),set_config('request.jwt.claim.sub',$2,true),set_config('request.jwt.claims',$3,true)",[name,sub,JSON.stringify({role:name,sub,user_metadata:metadata,app_metadata:metadata})]);}
 async function operator(){await db.query("reset role");await db.query("select set_config('request.jwt.claim.role','service_role',true),set_config('request.jwt.claim.sub','',true)");}
 async function attempt(action){const savepoint=`b8b_${uid().replaceAll("-","")}`;await db.query(`savepoint ${savepoint}`);try{const result=await action();await db.query(`release savepoint ${savepoint}`);return{ok:true,result}}catch(error){await db.query(`rollback to savepoint ${savepoint}`);await db.query(`release savepoint ${savepoint}`);return{ok:false,code:error.code,message:error.message}}}
 async function user(id,label,admin=false){await operator();const token=uid().replaceAll("-","").slice(0,10);await db.query(`insert into auth.users(id,instance_id,aud,role,email,encrypted_password,confirmed_at,created_at,updated_at)values($1,'00000000-0000-0000-0000-000000000000','authenticated','authenticated',$2,'proof',now(),now(),now())`,[id,`b8b-${label}-${token}@proof.local`]);await db.query("insert into public.user_profiles(id,username,display_name,is_admin)values($1,$2,$3,$4)",[id,`b8b${label}${token}`,`B8B ${label}`,admin]);}
 async function rpc(name,args=[]){return(await db.query(`select public.${name}(${args.map((_,index)=>`$${index+1}`).join(",")})value`,args)).rows[0].value;}
-const address=`jsonb_build_object('recipient_name','B8B Proof','line1','Proof Street','city','New York','region','NY','postal_code','10001','country','US')`;
 async function createProduct(f,label,moderation="approved",status="active",price=10){await operator();const product=uid(),variant=uid(),sku=`B8B-${uid().replaceAll("-","").toUpperCase()}`;await db.query(`insert into public.products(id,seller_id,title,description,price,currency,category,stock,status,store_id,category_id,product_type,moderation_status,published_at,shipping_profile_id,images)values($1,$2,$3,'B8B rollback proof',$4,'BDAG','physical',20,$5,$6,'10000000-0000-4000-8000-000000000002','physical',$7,case when $5='active'then now()else null end,$8,$9)`,[product,f.seller,`B8B ${label}`,price,status,f.store,moderation,f.shipping,[`https://proof.local/${label}.jpg`]]);await db.query(`insert into public.marketplace_product_variants(id,product_id,store_id,seller_id,sku,sku_normalized,title,price,status,is_default,combination_key)values($1,$2,$3,$4,$5,$5,'Default',$6,'active',true,'')`,[variant,product,f.store,f.seller,sku,price]);await db.query("insert into public.marketplace_inventory_levels(variant_id,on_hand,reserved)values($1,20,0)",[variant]);return{product,variant,price}}
 async function fund(f,amount){await role("service_role",f.admin);const platform=(await db.query("select public.ensure_marketplace_platform_account()id")).rows[0].id,buyer=(await db.query("select public.ensure_ledger_account($1)id",[f.buyer])).rows[0].id,tx=uid();await db.query(`insert into public.financial_transactions(id,from_account_id,to_account_id,operation_type,amount,fee_amount,currency,status,reference_type,reference_id,idempotency_key,initiated_by)values($1,$2,$3,'marketplace_test_funding',$4,0,'BDAG','completed','marketplace_b8b_proof',$5,$6,$7)`,[tx,platform,buyer,amount,f.store,`b8b-fund:${tx}`,f.buyer]);await db.query("select public.ledger_debit($1,$2,$3,'B8B proof','{}'),public.ledger_credit($1,$4,$3,'B8B proof','{}')",[tx,platform,amount,buyer]);return buyer}
 async function disputedCheckout(f,item,label){await role("authenticated",f.buyer);const reservation=(await db.query("select public.create_marketplace_checkout_reservation($1::jsonb,$2::jsonb,$3)value",[JSON.stringify([{variant_id:item.variant,quantity:1}]),JSON.stringify({recipient_name:"B8B Proof",line1:"Proof Street",city:"New York",region:"NY",postal_code:"10001",country:"US"}),uid()])).rows[0].value;await role("service_role",f.admin);await db.query("select public.pay_marketplace_checkout_with_bdag($1,$2,$3)",[f.buyer,reservation.checkout.id,uid()]);const order=reservation.orders[0].id;await role("authenticated",f.seller);await db.query("select public.seller_start_marketplace_order_processing($1,$2)",[order,uid()]);await db.query("select public.seller_ship_marketplace_order($1,'B8B','Ground',$2,null,null,$3)",[order,`B8B-${label}`,uid()]);await role("authenticated",f.buyer);await rpc("report_marketplace_order_problem",[order,"not_received","B8B operations proof",uid()]);await operator();const dispute=(await db.query("select id from public.marketplace_order_disputes where order_id=$1",[order])).rows[0].id;return{order,dispute}}
@@ -37,5 +36,137 @@ try{
  stage="audit";const audits=(await db.query("select actor_id,action,target_type,target_id,idempotency_key,metadata from public.marketplace_admin_action_audit order by created_at,id")).rows;assert(audits.length>=9);assert(audits.every((row)=>row.actor_id===f.admin));assert.equal(audits.filter((row)=>row.idempotency_key===refundKey).length,1);assert.equal(audits.some((row)=>JSON.stringify(row).match(/password|token|private_key/i)),false);await role("authenticated",f.admin);for(const call of[()=>db.query("insert into public.marketplace_admin_action_audit(actor_id,action,target_type,target_id,idempotency_key,metadata)values($1,'seller_approve','seller',$2,$3,'{}')",[f.admin,f.seller,uid()]),()=>db.query("update public.marketplace_admin_action_audit set reason_code='forged'"),()=>db.query("delete from public.marketplace_admin_action_audit")])assert.equal((await attempt(call)).ok,false);
  await operator();const recon=await rpc("reconcile_marketplace_admin_operations");assert.equal(Object.keys(recon).length,8);assert(Object.values(recon).every((value)=>num(value)===0));const grants=(await db.query(`select has_table_privilege('authenticated','public.marketplace_admin_action_audit','insert') audit_insert,has_table_privilege('authenticated','public.marketplace_admin_action_audit','update') audit_update,has_table_privilege('authenticated','public.marketplace_admin_action_audit','delete') audit_delete,has_function_privilege('anon','public.admin_resolve_marketplace_dispute(uuid,text,text,text,uuid)','execute') anon_mutate`)).rows[0];assert.deepEqual(grants,{audit_insert:false,audit_update:false,audit_delete:false,anon_mutate:false});
  await db.query("rollback");const fixtures=num((await db.query("select count(*) n from auth.users where email like'b8b-%@proof.local'")).rows[0].n);assert.equal(fixtures,0);
- console.log(JSON.stringify({ok:true,security:{anonymousDenied:true,ordinaryDenied:true,metadataForgeryDenied:true,b8sEscalationDenied:true,adminAllowed:true,noClientActor:true},capabilities:access.capabilities,disputes:{heldRefundCanonical:true,releaseSellerCanonical:true,rejectClaimNoMoney:true,manualReviewNoMoney:true,sameKeyIdempotent:true,conflictingFinalOutcomeProtected:true,duplicateLedgerMovement:false,postSettlementAuthorityInherited:true,creatorAllocationsFrozen:true,multiCreatorAuthorityInherited:true},sellers:{approve:true,reject:true,suspend:true,restore:true,selfModerationDenied:true,publicEligibilityProtected:true,idempotent:true},stores:{directMutation:false,sellerStatusPropagation:true},products:{approve:true,reject:true,publicEligibilityProtected:true,catalogEconomicsUnchanged:true,idempotent:true},audit:{serverWritten:true,appendOnly:true,immutable:true,actorDerived:true,idempotencySafe:true,noSecrets:true},reconciliation:{count:8,allZero:true},fixtures},null,2));
+ console.log(JSON.stringify({ok:true,security:{anonymousDenied:true,ordinaryDenied:true,metadataForgeryDenied:true,b8sEscalationDenied:true,adminAllowed:true,noClientActor:true},capabilities:access.capabilities,disputes:{heldRefundCanonical:true,releaseSellerCanonical:true,rejectClaimNoMoney:true,manualReviewNoMoney:true,sameKeyIdempotent:true,sequentialConflictRejected:true,duplicateLedgerMovement:false,postSettlementAuthorityInherited:true,creatorAllocationsFrozen:true,multiCreatorAuthorityInherited:true},sellers:{approve:true,reject:true,suspend:true,restore:true,selfModerationDenied:true,publicEligibilityProtected:true,idempotent:true},stores:{directMutation:false,sellerStatusPropagation:true},products:{approve:true,reject:true,publicEligibilityProtected:true,catalogEconomicsUnchanged:true,idempotent:true},audit:{serverWritten:true,appendOnly:true,immutable:true,actorDerived:true,idempotencySafe:true,noSecrets:true},reconciliation:{count:8,allZero:true},fixtures},null,2));
 }catch(error){await db.query("rollback").catch(()=>{});console.error(`B8B_ADMIN_OPERATIONS_PROOF_FAILED:${stage}:${error.code??""}:${error.message}`);process.exitCode=1}finally{await db.end().catch(()=>{})}
+
+async function setAuthenticatedAdmin(client, actorId) {
+  await client.query("begin");
+  await client.query("set local role authenticated");
+  await client.query(
+    "select set_config('request.jwt.claim.role','authenticated',true),set_config('request.jwt.claim.sub',$1,true),set_config('request.jwt.claims',$2,true)",
+    [actorId, JSON.stringify({ role: "authenticated", sub: actorId })],
+  );
+}
+
+async function runFinalDecision(client, actorId, disputeId, outcome, reason) {
+  await setAuthenticatedAdmin(client, actorId);
+  try {
+    const result = await client.query(
+      "select public.admin_resolve_marketplace_dispute($1,$2,$3,$4,$5)value",
+      [disputeId, outcome, reason, "Simultaneous B8B final-decision proof", uid()],
+    );
+    await client.query("commit");
+    return result.rows[0].value;
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  }
+}
+
+async function proveSimultaneousConflictingFinalOutcomes() {
+  const raceUrl = connectionString;
+  let first;
+  let second;
+  let verify;
+  try {
+    db = new Client({ connectionString: raceUrl, ssl: false });
+    await db.connect();
+    await db.query("begin");
+    const f = {
+      admin: uid(),
+      secondAdmin: uid(),
+      buyer: uid(),
+      seller: uid(),
+      store: uid(),
+      shipping: uid(),
+    };
+    await user(f.admin, "raceadmina", true);
+    await user(f.secondAdmin, "raceadminb", true);
+    await user(f.buyer, "racebuyer");
+    await user(f.seller, "raceseller");
+    await operator();
+    await db.query(
+      "insert into public.marketplace_sellers(user_id,status,display_name,approved_at)values($1,'approved','B8B Race Seller',now())",
+      [f.seller],
+    );
+    await db.query(
+      "insert into public.marketplace_stores(id,seller_id,name,slug,status)values($1,$2,'B8B Race Store',$3,'active')",
+      [f.store, f.seller, `b8b-race-${uid()}`],
+    );
+    await db.query(
+      "insert into public.marketplace_shipping_profiles(id,seller_id,store_id,name,processing_days_min,processing_days_max,ships_from_country,return_policy_summary)values($1,$2,$3,'B8B Race Ground',1,2,'US','Proof')",
+      [f.shipping, f.seller, f.store],
+    );
+    await db.query(
+      "insert into public.marketplace_shipping_profile_regions(profile_id,country_code,shipping_price,transit_days_min,transit_days_max)values($1,'US',0,1,2)",
+      [f.shipping],
+    );
+    const product = await createProduct(f, "Race");
+    await fund(f, 100);
+    const fixture = await disputedCheckout(f, product, "RACE");
+    await db.query("commit");
+    await db.end();
+
+    first = new Client({ connectionString: raceUrl, ssl: false });
+    second = new Client({ connectionString: raceUrl, ssl: false });
+    await Promise.all([first.connect(), second.connect()]);
+    const results = await Promise.allSettled([
+      runFinalDecision(first, f.admin, fixture.dispute, "refund_buyer", "simultaneous_refund"),
+      runFinalDecision(second, f.secondAdmin, fixture.dispute, "release_seller", "simultaneous_release"),
+    ]);
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+    assert.match(results.find((result) => result.status === "rejected").reason.message, /conflicting_decision/);
+
+    verify = new Client({ connectionString: raceUrl, ssl: false });
+    await verify.connect();
+    const finalState = (
+      await verify.query(
+        "select (select count(*)::int from public.marketplace_dispute_decisions where dispute_id=$1::uuid) decisions,(select count(*)::int from public.marketplace_admin_action_audit where target_type='dispute'and target_id=$1::uuid) audits,(select count(*)::int from public.financial_transactions where reference_id::text=$2::text and operation_type='marketplace_dispute_refund')+(select count(*)::int from public.marketplace_order_settlements where order_id=$2::uuid) financial_operations",
+        [fixture.dispute, fixture.order],
+      )
+    ).rows[0];
+    assert.equal(finalState.decisions, 1);
+    assert.equal(finalState.audits, 1);
+    assert.equal(finalState.financial_operations, 1);
+    const reconciliation = (await verify.query("select public.reconcile_marketplace_admin_operations() value")).rows[0].value;
+    assert(Object.values(reconciliation).every((value) => num(value) === 0));
+    await verify.query("truncate table auth.users cascade");
+    const fixtures = num(
+      (await verify.query("select count(*) n from auth.users where email like 'b8b-%@proof.local'")).rows[0].n,
+    );
+    assert.equal(fixtures, 0);
+    console.log(
+      JSON.stringify(
+        {
+          simultaneousConflictingFinalOutcomes: true,
+          conflictingFinalOutcomeProtected: true,
+          exactlyOneWinner: true,
+          exactlyOneCanonicalDecision: true,
+          exactlyOneAuditRow: true,
+          noPartialFinancialState: true,
+          reconciliation: { count: 8, allZero: true },
+          fixtures,
+        },
+        null,
+        2,
+      ),
+    );
+  } finally {
+    await Promise.all([
+      first?.end().catch(() => {}),
+      second?.end().catch(() => {}),
+      verify?.end().catch(() => {}),
+      db?.end().catch(() => {}),
+    ]);
+  }
+}
+
+if (!process.exitCode) {
+  try {
+    await proveSimultaneousConflictingFinalOutcomes();
+  } catch (error) {
+    console.error(`B8B_ADMIN_OPERATIONS_PROOF_FAILED:simultaneous_conflict:${error.code ?? ""}:${error.message}`);
+    process.exitCode = 1;
+  }
+}
