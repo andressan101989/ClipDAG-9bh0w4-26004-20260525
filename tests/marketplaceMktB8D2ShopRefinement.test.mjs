@@ -41,6 +41,26 @@ test("Product detail exposes premium gallery and stronger commercial hierarchy",
     assert(product.includes(label), label);
 });
 
+test("Organic and sponsored cards use truthful neutral missing-media states", () => {
+  const organic = shop.slice(shop.indexOf("const ProductCard"), shop.indexOf("const SponsoredCard"));
+  const sponsored = shop.slice(shop.indexOf("const SponsoredCard"), shop.indexOf("export default function ShopScreen"));
+  assert.doesNotMatch(shop, /picsum\.photos|placeholder\.com|source\.unsplash/i);
+  assert.match(shop, /const ProductMediaFallback/);
+  assert.match(shop, /Imagen no disponible/);
+  assert.match(shop, /image-not-supported/);
+  assert.match(organic, /product\.images\?\.\[0\] \?\? null/);
+  assert.match(organic, /image \? \([\s\S]*<Image[\s\S]*<ProductMediaFallback/);
+  assert.match(sponsored, /item\.images\?\.\[0\] \?\? null/);
+  assert.match(sponsored, /image \? \([\s\S]*<Image[\s\S]*<ProductMediaFallback/);
+  assert.match(sponsored, /sponsoredBadge/);
+  assert.match(sponsored, />Patrocinado</);
+  assert.match(gallery, /Imagen no disponible/);
+  for (const token of ["recordAdEvent", 'eventType: "impression"', 'eventType: "click"', "marketplaceSponsoredProductRoute"])
+    assert(shop.includes(token), token);
+  assert.match(product, /handleAddToCart\(true\)/);
+  assert.match(product, /router\.push\("\/checkout" as never\)/);
+});
+
 test("Sticky CTA preserves quantity, cart, and existing checkout continuation", () => {
   for (const token of ["Precio por unidad", "Agregar al carrito", "Comprar ahora", 'accessibilityLabel="Aumentar cantidad"', 'accessibilityLabel="Reducir cantidad"'])
     assert(purchaseBar.includes(token), token);

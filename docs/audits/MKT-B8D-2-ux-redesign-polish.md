@@ -251,3 +251,24 @@ The dedicated refinement proof covers removal of the mixed Marketplace tabs and 
 - Read-only inherited B8C auditor: passed at `20260811033000`; B8B 8/8, Creator and Ads failure counters zero, payments/settlements healthy, escrow expected/actual 71/71, fixtures zero and failure hook absent.
 
 No SQL migration, Supabase push, Edge/Admin deployment, EAS or mobile build is part of this refinement. B8D-3, B8D-4 and LIVE Battles were not started.
+
+## MKT-B8D-2R-C1 — Product Media Trust Closure
+
+Baseline: `6fe70fb0261335fc9b3fa658708705c4e56a0982`, Build 22, remote migration `20260811033000_marketplace_production_hardening.sql`.
+
+The Shop audit found that both the organic `ProductCard` and `SponsoredCard` substituted a random `picsum.photos` photograph when canonical product media was absent. Those external product-image fallbacks were removed. Both card families now render the same intentional neutral Marketplace surface with an image-unavailable icon and the truthful user-visible text `Imagen no disponible`; no remote fallback URL or fabricated product/store/sponsored photograph is used. Sponsored cards retain the visible `Patrocinado` disclosure.
+
+The existing Product Detail gallery already used the same `Imagen no disponible` semantic and remains unchanged. Sponsored impression/click recording, campaign and product identifiers, source propagation, Ads finance, cart, checkout and all economic authority are unchanged.
+
+A Marketplace production-surface scan found two remaining `picsum.photos` references in `app/creator/[id].tsx`; both are thumbnails for Creator video/content entries rather than product media. They were reported and intentionally left unchanged under the C1 scope prohibition on unrelated creator placeholders.
+
+The B8D-2R proof now requires no random/external fallback provider in the Shop, explicit organic and sponsored missing-media branches, preserved sponsored disclosure, Product Detail consistency, unchanged Ads telemetry and unchanged cart/checkout contracts.
+
+- Focused Marketplace UX/media regression: 31/31.
+- Admin Web: 58/58; lint passed with zero warnings; production build passed (120 modules).
+- Complete root Node suite: 740/740.
+- Root TypeScript baseline: exactly 187 historical diagnostics and zero diagnostics in the C1 production file.
+- Read-only B8D and inherited B8C auditors passed before and after C1 at remote migration `20260811033000`.
+- B8B 8/8, Creator and Ads failure counters zero; payments/settlements healthy; escrow expected/actual 71/71; fixtures zero; failure hook absent.
+
+No migration, Supabase push or EAS is part of C1; Build remains 22, no Ads/economic authority changed, and B8D-3 was not started.
