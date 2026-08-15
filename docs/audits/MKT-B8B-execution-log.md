@@ -60,7 +60,23 @@
 
 ## Gates and deployment
 
-Results, commit SHAs, linked dry-run, deployment, post-deploy remote migration, inherited reconciliation counts, Node/web/TypeScript results, and final Git parity are appended after all gates complete.
+- Implementation commits:
+  - `4722feb` `feat: add marketplace admin operations authority`
+  - `418ff7d` `feat: add marketplace admin operations web`
+  - `0374a7e` `test: prove marketplace admin operations core`
+- Final implementation SHA before this documentation-only evidence commit: `0374a7ed0baee240ce0ac13c1f59dcd054e07d8c`. The final branch SHA is reported in the handoff after the evidence commit and push; a Git commit cannot embed its own resulting SHA.
+- Focused B8S/B8A/B8B Node tests: 32/32 passed.
+- Admin web tests: 25/25 passed; ESLint: 0 errors and 0 warnings; Vite/TypeScript production build: passed.
+- Full root Node suite: 683/683 passed, 0 failed.
+- Root TypeScript: unchanged 187-diagnostic unrelated baseline; zero diagnostics from B8B-modified TypeScript files.
+- iOS export: passed. Build remained 22. No EAS command was run.
+- Disposable B8B proof: passed, including authorization, canonical dispute outcomes, idempotent retry, conflicting final-decision protection, seller/product state machines, immutable audit history, 8/8 B8B reconciliation, and zero persistent fixtures.
+- Inherited proofs passed sequentially: B3 analytics; B7A 36/36; B7B 23/23; B7C 28/28; B7D 18/18; B7E; B7F 27/27; B7R 32/32; dispute/refund; order lifecycle; shipping; publication; promotions; runtime; fixtures; Ads finance, eligibility, finalization, and delivery/events.
+- Remote predeploy audit: passed at `20260811028000`; B8B objects absent and all inherited authority/reconciliation gates healthy.
+- Linked dry-run: exactly `20260811029000_marketplace_admin_operations_core.sql`; no seeds, roles, or historical migrations.
+- Deployment: exactly `20260811029000_marketplace_admin_operations_core.sql` applied.
+- Remote post-deploy audit: passed at `20260811029000`; B8B objects and grants healthy, audit client writes denied, anonymous mutations denied, `reconcile_marketplace_admin_operations()` 8/8 zero, inherited reconciliations zero, escrow 71/71, fixture users zero, and failure hooks absent.
+- Disposable database container was destroyed before push.
 
 ## Scope statement
 
