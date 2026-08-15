@@ -302,13 +302,16 @@ export async function confirmMarketplaceOrderDelivery(
       }
       throw error;
     }
-    if (!data?.success) {
-      const code = known.includes(data?.error)
-        ? (data.error as MarketplaceSettlementErrorCode)
+    const envelope = rpcObject(data, "settlement_edge_envelope"),
+      success = rpcBoolean(envelope.success, "settlement_edge_envelope.success");
+    if (success === false) {
+      const code =
+        typeof envelope.error === "string" && known.includes(envelope.error as MarketplaceSettlementErrorCode)
+        ? (envelope.error as MarketplaceSettlementErrorCode)
         : "marketplace_settlement_unknown";
       throw new MarketplaceSettlementError(code);
     }
-    return parseMarketplaceSettlementReceipt(data.data);
+    return parseMarketplaceSettlementReceipt(envelope.data);
   } catch (error) {
     if (error instanceof MarketplaceSettlementError) throw error;
     const message = error instanceof Error ? error.message : "";
@@ -422,7 +425,7 @@ function resolutionCode(error: unknown): MarketplaceDisputeResolutionErrorCode {
       context.body && typeof context.body === "object"
         ? (context.body as Record<string, unknown>)
         : {};
-  const text = [source.message,source.details,source.hint,context.message,body.error]
+  const text = [source.error,source.message,source.details,source.hint,context.message,body.error]
     .filter((value) => typeof value === "string")
     .join(" ");
   return (
@@ -774,9 +777,18 @@ async function supportInvoke(
         : null,
     );
   }
-  if (!data?.success)
-    throw new MarketplaceDisputeResolutionError(resolutionCode(data));
-  return data.data;
+  let envelope: Record<string, unknown>, success: boolean;
+  try {
+    envelope = rpcObject(data, "support_edge_envelope");
+    success = rpcBoolean(envelope.success, "support_edge_envelope.success");
+  } catch {
+    throw new MarketplaceDisputeResolutionError(
+      "marketplace_dispute_resolution_unknown",
+    );
+  }
+  if (success === false)
+    throw new MarketplaceDisputeResolutionError(resolutionCode(envelope));
+  return envelope.data;
 }
 export async function fetchSupportMarketplaceDispute(
   disputeId: string,

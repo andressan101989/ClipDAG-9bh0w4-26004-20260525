@@ -1,6 +1,11 @@
 import { getSupabaseClient } from "@/template";
-import {rpcArray,rpcEnum,rpcNonnegative,rpcNonnegativeInteger,rpcObject,
+import {rpcArray,rpcBoolean,rpcEnum,rpcNonnegative,rpcNonnegativeInteger,rpcObject,
   rpcString,rpcTimestamp,rpcUuid} from "@/services/marketplaceRuntimeValidation";
+
+const paymentOrderStatuses = [
+  "pending_payment","confirmed","processing","shipped","delivered",
+  "cancelled","expired","refunded","partially_refunded",
+] as const;
 
 export type MarketplacePaymentErrorCode =
   | "marketplace_auth_required"
@@ -21,7 +26,7 @@ export type MarketplacePaymentErrorCode =
 export interface MarketplacePaymentOrderAllocation {
   id: string;
   orderNumber: string;
-  status: string;
+  status: (typeof paymentOrderStatuses)[number];
   grossAmount: number;
   platformFeeAmount: number;
   sellerNetAmount: number;
@@ -110,7 +115,7 @@ export const parseMarketplacePaymentReceipt = (value: unknown): MarketplacePayme
       return {
         id: rpcUuid(order.id,`payment_receipt.orders[${index}].id`),
         orderNumber: rpcString(order.order_number,`payment_receipt.orders[${index}].order_number`),
-        status: rpcString(order.status,`payment_receipt.orders[${index}].status`),
+        status: rpcEnum(order.status,paymentOrderStatuses,`payment_receipt.orders[${index}].status`),
         grossAmount: finite(order.gross_amount),
         platformFeeAmount: finite(order.platform_fee_amount),
         sellerNetAmount: finite(order.seller_net_amount),
@@ -159,18 +164,21 @@ export async function payMarketplaceCheckout(
       }
       throw error;
     }
-    if (!data?.success) {
-      const code = codes.includes(data?.error)
-        ? (data.error as MarketplacePaymentErrorCode)
+    const envelope=rpcObject(data,"payment_edge_envelope"),
+      success=rpcBoolean(envelope.success,"payment_edge_envelope.success");
+    if (success === false) {
+      const code =
+        typeof envelope.error === "string" && codes.includes(envelope.error as MarketplacePaymentErrorCode)
+        ? (envelope.error as MarketplacePaymentErrorCode)
         : "marketplace_payment_unknown";
       if (__DEV__)
         console.warn("[MarketplacePayment] rpc_failed", {
-          postgresCode: data?.postgres_code ?? null,
+          postgresCode: envelope.postgres_code ?? null,
           marketplaceCode: code,
         });
       throw new MarketplacePaymentError(code);
     }
-    const receipt = parseMarketplacePaymentReceipt(data.data);
+    const receipt = parseMarketplacePaymentReceipt(envelope.data);
     if (__DEV__)
       console.log("[MarketplacePayment] rpc_success", {
         orderCount: receipt.orders.length,
@@ -197,5 +205,5 @@ export async function payMarketplaceCheckout(
 export async function fetchAuthoritativeBdagBalance(): Promise<number> {
   const { data, error } = await getSupabaseClient().rpc("get_bdag_wallet_balance");
   if (error) throw error;
-  return finite(data ?? 0);
+  return finite(data);
 }

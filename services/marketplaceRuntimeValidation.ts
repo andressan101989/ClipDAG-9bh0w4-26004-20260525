@@ -45,6 +45,10 @@ export const rpcNullableUuid = (value: unknown, path: string): string | null =>
   value === null ? null : rpcUuid(value, path);
 export const rpcFinite = (value: unknown, path: string): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fail(path);
+export const rpcInteger = (value: unknown, path: string): number => {
+  const result = rpcFinite(value, path);
+  return Number.isInteger(result) ? result : fail(path);
+};
 export const rpcNonnegative = (value: unknown, path: string): number => {
   const result = rpcFinite(value, path);
   return result >= 0 ? result : fail(path);
@@ -52,6 +56,15 @@ export const rpcNonnegative = (value: unknown, path: string): number => {
 export const rpcNonnegativeInteger = (value: unknown, path: string): number => {
   const result = rpcNonnegative(value, path);
   return Number.isInteger(result) ? result : fail(path);
+};
+export const rpcBoundedInteger = (
+  value: unknown,
+  minimum: number,
+  maximum: number,
+  path: string,
+): number => {
+  const result = rpcNonnegativeInteger(value, path);
+  return result >= minimum && result <= maximum ? result : fail(path);
 };
 export const rpcNullableNonnegative = (
   value: unknown,

@@ -5,6 +5,7 @@ import {
   rpcBoolean,
   rpcCursorPage,
   rpcEnum,
+  rpcInteger,
   rpcNonnegative,
   rpcNonnegativeInteger,
   rpcNullableNonnegative,
@@ -367,6 +368,27 @@ export const PRODUCT_CATEGORIES: {
   { key: "other", label: "Otros" },
 ];
 
+const marketplaceCategorySlugs = [
+  "digital",
+  "physical",
+  "art",
+  "music",
+  "clothing",
+  "other",
+] as const;
+export function parseMarketplaceCategoryRecord(
+  value: unknown,
+): MarketplaceCategoryRecord {
+  const row = rpcObject(value, "category");
+  return {
+    id: rpcUuid(row.id, "category.id"),
+    slug: rpcEnum(row.slug, marketplaceCategorySlugs, "category.slug"),
+    name: rpcString(row.name, "category.name"),
+    parent_id: rpcNullableUuid(row.parent_id, "category.parent_id"),
+    sort_order: rpcInteger(row.sort_order, "category.sort_order"),
+  };
+}
+
 export async function fetchCategories(): Promise<MarketplaceCategoryRecord[]> {
   const { data, error } = await db()
     .from("marketplace_categories")
@@ -374,7 +396,7 @@ export async function fetchCategories(): Promise<MarketplaceCategoryRecord[]> {
     .eq("status", "active")
     .order("sort_order", { ascending: true });
   if (error) throw error;
-  return (data ?? []) as MarketplaceCategoryRecord[];
+  return rpcArray(data, "categories").map(parseMarketplaceCategoryRecord);
 }
 
 export async function fetchProducts(opts?: {
@@ -896,8 +918,71 @@ export async function fetchSellerFoundation(): Promise<{
   if (sellerError) throw sellerError;
   if (storeError) throw storeError;
   return {
-    seller: seller as MarketplaceSeller | null,
-    store: store as MarketplaceStore | null,
+    seller: seller === null ? null : parseMarketplaceSeller(seller),
+    store: store === null ? null : parseMarketplaceStore(store),
+  };
+}
+
+export function parseMarketplaceSeller(value: unknown): MarketplaceSeller {
+  const row = rpcObject(value, "seller_foundation.seller");
+  return {
+    user_id: rpcUuid(row.user_id, "seller_foundation.seller.user_id"),
+    status: rpcEnum(
+      row.status,
+      ["pending", "approved", "rejected", "suspended"] as const,
+      "seller_foundation.seller.status",
+    ),
+    display_name: rpcString(
+      row.display_name,
+      "seller_foundation.seller.display_name",
+    ),
+    application_note: rpcNullableText(
+      row.application_note,
+      "seller_foundation.seller.application_note",
+    ),
+    created_at: rpcTimestamp(
+      row.created_at,
+      "seller_foundation.seller.created_at",
+    ),
+    updated_at: rpcTimestamp(
+      row.updated_at,
+      "seller_foundation.seller.updated_at",
+    ),
+  };
+}
+
+export function parseMarketplaceStore(value: unknown): MarketplaceStore {
+  const row = rpcObject(value, "seller_foundation.store");
+  return {
+    id: rpcUuid(row.id, "seller_foundation.store.id"),
+    seller_id: rpcUuid(row.seller_id, "seller_foundation.store.seller_id"),
+    name: rpcString(row.name, "seller_foundation.store.name"),
+    slug: rpcString(row.slug, "seller_foundation.store.slug"),
+    description: rpcNullableText(
+      row.description,
+      "seller_foundation.store.description",
+    ),
+    logo_asset_id: rpcNullableUuid(
+      row.logo_asset_id,
+      "seller_foundation.store.logo_asset_id",
+    ),
+    banner_asset_id: rpcNullableUuid(
+      row.banner_asset_id,
+      "seller_foundation.store.banner_asset_id",
+    ),
+    status: rpcEnum(
+      row.status,
+      ["draft", "active", "suspended"] as const,
+      "seller_foundation.store.status",
+    ),
+    created_at: rpcTimestamp(
+      row.created_at,
+      "seller_foundation.store.created_at",
+    ),
+    updated_at: rpcTimestamp(
+      row.updated_at,
+      "seller_foundation.store.updated_at",
+    ),
   };
 }
 
@@ -1034,11 +1119,27 @@ export async function setProductPublished(
   if (error) {
     throw normalizeMarketplacePublicationError(error);
   }
-  if (published && !(data as { published?: unknown } | null)?.published)
-    throw new MarketplacePublicationError(
-      "not_ready",
-      "marketplace_publication_result_invalid",
-    );
+  if (published) {
+    try {
+      const receipt = rpcObject(data, "publication_receipt");
+      if (
+        rpcBoolean(receipt.published, "publication_receipt.published") !== true ||
+        rpcBoolean(receipt.ready, "publication_receipt.ready") !== true ||
+        receipt.reason_code !== null ||
+        rpcEnum(
+          receipt.status,
+          ["active"] as const,
+          "publication_receipt.status",
+        ) !== "active"
+      )
+        throw new Error("publication_receipt_invalid");
+    } catch {
+      throw new MarketplacePublicationError(
+        "not_ready",
+        "marketplace_publication_result_invalid",
+      );
+    }
+  }
 }
 export type MarketplacePublicationReadinessReason =
   | "seller_not_approved"
@@ -1113,11 +1214,21 @@ export async function evaluateMarketplaceProductPublication(
     { p_product_id: id },
   );
   if (error) throw normalizeMarketplacePublicationError(error);
-  const row = data as Record<string, unknown> | null;
-  return {
-    ready: row?.ready === true,
-    reasonCode: row?.reason_code == null ? null : String(row.reason_code),
-  };
+  try {
+    const row = rpcObject(data, "publication_evaluation");
+    return {
+      ready: rpcBoolean(row.ready, "publication_evaluation.ready"),
+      reasonCode: rpcNullableString(
+        row.reason_code,
+        "publication_evaluation.reason_code",
+      ),
+    };
+  } catch {
+    throw new MarketplacePublicationError(
+      "not_ready",
+      "marketplace_publication_result_invalid",
+    );
+  }
 }
 export const marketplacePublicationMessage = (
   error: unknown,

@@ -1,6 +1,7 @@
 import { getSupabaseClient } from "@/template";
 import {
   rpcArray,
+  rpcBoundedInteger,
   rpcBoolean,
   rpcEnum,
   rpcNonnegative,
@@ -134,8 +135,10 @@ export function parseCreatorShowcaseProduct(
     commissionBps:
       row.commission_bps == null
         ? undefined
-        : rpcNonnegativeInteger(
+        : rpcBoundedInteger(
             row.commission_bps,
+            1,
+            3000,
             "creator_showcase.product.commission_bps",
           ),
     offerScope:
@@ -276,8 +279,10 @@ export async function fetchMyCreatorShowcase(): Promise<
         commissionBps:
           row.current_commission_bps == null
             ? undefined
-            : rpcNonnegativeInteger(
+            : rpcBoundedInteger(
                 row.current_commission_bps,
+                1,
+                3000,
                 "creator_showcase.management.current_commission_bps",
               ),
       };
