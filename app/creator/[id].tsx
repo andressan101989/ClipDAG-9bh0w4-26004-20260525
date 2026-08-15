@@ -306,7 +306,7 @@ export default function CreatorProfileScreen() {
     `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(creator.username || 'user')}`;
 
   const PROFILE_TABS: { key: ProfileTab; icon: string; label: string }[] = [
-    { key: 'videos',    icon: 'videocam',         label: 'Videos' },
+    { key: 'videos',    icon: 'grid-on',           label: 'Contenido' },
     { key: 'exclusive', icon: 'lock',              label: 'Exclusivo' },
     ...(showcase.length ? [{ key: 'products' as const, icon: 'storefront', label: 'Productos' }] : []),
   ];
@@ -515,6 +515,9 @@ export default function CreatorProfileScreen() {
             <Pressable key={t.key}
               style={[styles.contentTabBtn, profileTab === t.key && styles.contentTabBtnActive]}
               onPress={() => setProfileTab(t.key)}
+              accessibilityRole="tab"
+              accessibilityLabel={t.label}
+              accessibilityState={{ selected: profileTab === t.key }}
             >
               <MaterialIcons
                 name={t.icon as any}
