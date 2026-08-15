@@ -362,3 +362,35 @@ The accepted database v2 contracts remain unchanged:
 - Final read-only audits are healthy at remote migration 33000: schema/default ACL hardening unchanged, 204/204 Marketplace SECURITY DEFINER functions fixed-path, null-limit risks empty, stale Creator v1 authenticated grant absent, v2 seller contracts healthy, B8B 8/8 zero, all Creator/Ads/payment/settlement failure counters zero, escrow expected 71 = actual 71, fixtures 0 and failure hooks absent.
 
 Build remains 22. Economic writers, B7F/B7R, settlement/refund logic, promotion snapshots, Ads finance, B8B mutations and B8C temporal semantics were not changed. EAS was not run. B8D-006, B8D-007 and B8D-008 remain open P3 inputs; B8D-2, B8D-3 and B8D-4 were not started.
+
+## MKT-B8D-1H-C2 — Network Boundary Closure
+
+Baseline: branch `codex/mkt-a4b-premium-integration`, starting SHA `71ee5d73a35111c2c62776dff5ee8281d0e353c0`, Build 22, remote migration `20260811033000_marketplace_production_hardening.sql`. C2 contains no SQL migration and performed no Supabase push.
+
+### Exact Edge and RPC envelopes
+
+- Payment: `payMarketplaceCheckout` now requires a JSON object whose `success` field is the actual boolean `true` before parsing the canonical receipt. String, numeric, null, missing, object and array success values reject with the controlled payment error. The actual boolean `false` path still maps canonical error codes. The payment receipt now constrains order status to the database `marketplace_orders_status_check` enum rather than accepting arbitrary non-empty text.
+- Balance: `get_bdag_wallet_balance()` was audited as `RETURNS numeric` with a server-side `coalesce(v_balance,0)`. The client now accepts only a finite nonnegative numeric response. It accepts numeric `0` and `12.5`; null, missing, numeric strings, booleans and negative values reject. No fallback balance or client calculation remains.
+- Delivery/support: both `confirmMarketplaceOrderDelivery` and the shared dispute-support invocation require an exact boolean Edge envelope before invoking the already-hardened nested receipt parsers. Canonical `success:false` error tokens remain typed, including direct Edge `error` fields. Held refund, post-settlement reversal, fresh/already-released release, reject-claim and manual-review parsers were not weakened.
+
+### Direct table, publication and Creator contracts
+
+- Categories: the direct table result is now an array of deeply parsed `{id,slug,name,parent_id,sort_order}` rows. UUIDs, the six current Marketplace category slugs, text, nullable parent UUID and SQL integer sort order are checked; null or malformed collections fail closed.
+- Seller foundation: non-null seller/store rows are parsed field-by-field. Seller/store identity UUIDs, exact status enums, names/notes/descriptions, nullable media UUIDs and timestamps are validated. A legitimate `maybeSingle()` null result remains valid; malformed non-null rows do not.
+- Publication: `publish_my_marketplace_product_checked` was audited as returning exactly `published=true`, `ready=true`, `reason_code=null`, `status='active'`. The publish path validates all four values and rejects truthy strings, numbers, objects or missing fields. The void pause RPC remains compatible. The publication-readiness projection was also changed from a cast/coercion to an exact object/boolean/nullable-string contract.
+- Creator BPS: the Showcase eligibility and management projections source current offer BPS from `marketplace_live_affiliate_offers`, whose constraint is `commission_bps between 1 and 3000`. Both mobile boundaries now enforce 1..3000; 1 and 3000 pass, while 0 and 3001 fail. Commission economics and historical attribution are unchanged.
+
+The final `services/marketplace*.ts` response-boundary scan found no remaining `if (!data?.success)`, truthy-success check, `data ?? 0` balance fallback, opaque category array cast, or opaque seller/store foundation cast. Remaining casts are local input/state narrowing, error normalization, or follow explicit predicates before type narrowing; none synthesizes a consumed UUID, money, boolean, enum, timestamp, integer, array or object.
+
+### Real async and regression evidence
+
+`marketplaceMobileContractCompatibility.test.mjs` invokes the actual service functions with mocked Supabase clients: `payMarketplaceCheckout`, `fetchAuthoritativeBdagBalance`, `confirmMarketplaceOrderDelivery`, `fetchSupportMarketplaceDispute`, `setProductPublished`, `fetchCategories`, and `fetchSellerFoundation`. Valid canonical payloads pass. Realistic malformed network values fail closed, and canonical boolean-false error envelopes preserve their typed failure codes. Focused C2/hardening tests passed 22/22.
+
+- Admin Web: 55/55; lint 0 warnings/errors; production Vite build succeeded (119 modules).
+- Focused B8S/B8A/B8B/B8C/B8D/C1/C2: 73/73.
+- Full root Node suite: 727/727.
+- TypeScript: exactly 187 historical diagnostics; C2 changed-file diagnostics: 0.
+- Disposable proofs: production hardening, runtime, order lifecycle, shipping, settlement/reversal, held dispute/refund, promotions, Creator Commerce, multi-creator allocations, Showcase, content tags, Creator Analytics, LIVE creator commerce, Ads finance/eligibility/finalization/delivery/events, B8S/B8A/B8B/B8C and fixture finalization all passed. The already-deployed 33000 migration was replayed only inside the schema-only disposable database to restore global default-ACL parity before its inherited hardening proof. All proofs ended with zero persistent fixtures and the disposable container was destroyed.
+- Read-only remote audits remained healthy at 33000: ACL/default ACL hardening intact, 204/204 SECURITY DEFINER functions fixed-path, null-limit risks zero, stale Creator v1 closed, B8B 8/8 zero, Creator and Ads reconciliation counters zero, payment/settlement failures zero, escrow expected 71 = actual 71, fixtures 0 and failure hooks absent.
+
+No historical migration, checkout/payment economics, settlement/refund/reversal authority, Creator commission authority, promotion snapshot, Ads financial function, B8B mutation or B8C temporal contract changed. Build remains 22. No EAS. B8D-006, B8D-007 and B8D-008 remain open P3 findings. B8D-2, B8D-3 and B8D-4 were not started.

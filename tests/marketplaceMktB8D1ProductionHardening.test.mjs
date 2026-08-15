@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
@@ -16,6 +16,8 @@ const promotion = read("services/marketplacePromotionService.ts");
 const shipping = read("services/marketplaceShippingService.ts");
 const draft = read("services/marketplaceProductDraftService.ts");
 const settlement = read("services/marketplaceSettlementService.ts");
+const payment = read("services/marketplacePaymentService.ts");
+const showcase = read("services/marketplaceCreatorShowcaseService.ts");
 const cursorCollection = read("services/marketplaceCursorCollection.ts");
 const shopContext = read("contexts/ShopContext.tsx");
 const productScreen = read("app/seller/products.tsx");
@@ -100,6 +102,30 @@ test("C1 official seller flows consume continuation cursors while legacy wrapper
   assert.match(cursorCollection,/new Map/);assert.match(cursorCollection,/reset \? \[\]/);
   assert.match(product,/fetchMyProductsPage\(null,\s*100\)/);assert.match(promotion,/listMyMarketplacePromotionsPage\(null,\s*100\)/);assert.match(shipping,/fetchMyMarketplaceShippingProfilesPage\(storeId,\s*null,\s*100\)/);
   assert.match(compatibilityTests,/reaches rows beyond 100, dedupes, resets, and stops terminally/);
+});
+
+test("C2 Edge envelopes, balance, publication and table reads fail closed",()=>{
+  for(const source of[payment,settlement]){
+    assert.match(source,/rpcBoolean\([^,]+\.success,/);
+    assert.doesNotMatch(source,/if\s*\(!data\?\.success\)/);
+  }
+  assert.doesNotMatch(payment,/finite\(data\s*\?\?\s*0\)/);
+  assert.match(payment,/rpcEnum\(order\.status,paymentOrderStatuses/);
+  assert.match(product,/rpcBoolean\(receipt\.published,[\s\S]*?\)\s*!==\s*true/);
+  assert.doesNotMatch(product,/as MarketplaceCategoryRecord\[\]/);
+  assert.doesNotMatch(product,/seller:\s*seller as MarketplaceSeller/);
+  assert.doesNotMatch(product,/store:\s*store as MarketplaceStore/);
+  for(const parser of["parseMarketplaceCategoryRecord","parseMarketplaceSeller","parseMarketplaceStore"])
+    assert.ok(product.includes(parser),parser);
+  assert.match(showcase,/rpcBoundedInteger\([\s\S]*?1,[\s\S]*?3000/);
+  for(const phrase of["payment Edge envelope","settlement and support Edge envelopes","publication, categories, and seller foundation"])
+    assert.ok(compatibilityTests.includes(phrase),phrase);
+});
+
+test("C2 is client-only with no migration or new economic authority",()=>{
+  const later=readdirSync(join(root,"supabase/migrations")).filter((name)=>name>"20260811033000_marketplace_production_hardening.sql");
+  assert.deepEqual(later,[]);
+  assert.doesNotMatch(payment+settlement+product+showcase,/set_balance|adjust_wallet|repair_ledger|p_(seller_payout|creator_bps|platform_fee|ledger_account)/i);
 });
 
 test("proof and auditor are read-only remotely and B8D-2/3/4 were not started", () => {

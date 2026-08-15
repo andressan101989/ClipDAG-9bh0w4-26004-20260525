@@ -35,8 +35,9 @@ const compile = (path, stubs = {}) => {
   });
   return module.exports;
 };
+let activeClient = {};
 const validators = compile("../services/marketplaceRuntimeValidation.ts"),
-  template = { getSupabaseClient: () => ({}) };
+  template = { getSupabaseClient: () => activeClient };
 const products = compile("../services/marketplaceService.ts", {
   "@/template": template,
   "@/services/mediaService": { extractRpcUuid: () => "" },
@@ -56,6 +57,10 @@ const drafts = compile("../services/marketplaceProductDraftService.ts", {
 const settlements = compile("../services/marketplaceSettlementService.ts", {
   "@/template": template,
   "./marketplaceRuntimeValidation": validators,
+});
+const payments = compile("../services/marketplacePaymentService.ts", {
+  "@/template": template,
+  "@/services/marketplaceRuntimeValidation": validators,
 });
 const analytics = compile("../services/marketplaceAnalyticsService.ts", {
   "expo-crypto": { randomUUID: () => "99000000-0000-4000-8000-000000000001" },
@@ -84,6 +89,42 @@ const contentTags = compile(
 const cursor = compile("../services/marketplaceCursorCollection.ts");
 const id = (n) => `${String(n).padStart(8, "0")}-0000-4000-8000-000000000001`,
   at = "2026-08-15T12:00:00.000Z";
+const paymentReceipt = () => ({
+  payment: {
+    id: id(20), checkout_id: id(21), status: "paid", currency: "BDAG",
+    gross_amount: 20, escrow_amount: 20, fee_bps: 1000,
+    financial_transaction_id: id(22), paid_at: at,
+  },
+  checkout: {
+    id: id(21), reference: "CHK-TEST", status: "paid", total: 20,
+    currency: "BDAG",
+  },
+  buyer: { new_bdag_balance: 12.5 },
+  orders: [{
+    id: id(23), order_number: "ORD-TEST", status: "confirmed",
+    gross_amount: 20, platform_fee_amount: 2, seller_net_amount: 18,
+    allocation_status: "held",
+  }],
+  inventory: { consumed_reservations: 1, units_consumed: 2 },
+});
+const settlementReceipt = () => ({
+  settlement: {
+    id: id(10), status: "completed", order_id: id(11), currency: "BDAG",
+    gross_amount: 20, confirmed_at: at, released_at: at,
+  },
+  order: { id: id(11), status: "delivered", delivered_at: at },
+  shipment: { status: "delivered", delivered_at: at },
+  allocation: { status: "released", released_at: at },
+});
+const supportReceipt = () => ({
+  dispute: { id: id(12), status: "open", reason_code: "damaged", created_at: at },
+  order: { id: id(11), status: "delivered" },
+  payment: { status: "paid", gross_amount: 20 },
+  allocation: {
+    status: "released", gross_amount: 20, seller_net_amount: 17,
+    creator_commission_amount: 1, platform_fee_amount: 2,
+  },
+});
 const product = (type = "physical", description = "") => ({
   id: id(1),
   seller_id: id(2),
@@ -287,42 +328,13 @@ test("product drafts preserve digital type and canonical empty text without coer
 });
 
 test("valid settlement and dispute financial receipts are accepted", () => {
-  const receipt = {
-    settlement: {
-      id: id(10),
-      status: "completed",
-      order_id: id(11),
-      currency: "BDAG",
-      gross_amount: 20,
-      confirmed_at: at,
-      released_at: at,
-    },
-    order: { id: id(11), status: "delivered", delivered_at: at },
-    shipment: { status: "delivered", delivered_at: at },
-    allocation: { status: "released", released_at: at },
-  };
+  const receipt = settlementReceipt();
   assert.equal(
     settlements.parseMarketplaceSettlementReceipt(receipt).settlement
       .grossAmount,
     20,
   );
-  const support = {
-    dispute: {
-      id: id(12),
-      status: "open",
-      reason_code: "damaged",
-      created_at: at,
-    },
-    order: { id: id(11), status: "delivered" },
-    payment: { status: "paid", gross_amount: 20 },
-    allocation: {
-      status: "released",
-      gross_amount: 20,
-      seller_net_amount: 17,
-      creator_commission_amount: 1,
-      platform_fee_amount: 2,
-    },
-  };
+  const support = supportReceipt();
   assert.equal(
     settlements.parseSupportMarketplaceDispute(support).allocation
       .sellerNetAmount,
@@ -525,6 +537,24 @@ test("seller analytics and creator product projections reject coercive required 
     showcase.parseCreatorShowcaseProduct(creatorProduct).availableQuantity,
     4,
   );
+  assert.equal(
+    showcase.parseCreatorShowcaseProduct({ ...creatorProduct, commission_bps: 1 })
+      .commissionBps,
+    1,
+  );
+  assert.equal(
+    showcase.parseCreatorShowcaseProduct({ ...creatorProduct, commission_bps: 3000 })
+      .commissionBps,
+    3000,
+  );
+  assert.throws(
+    () => showcase.parseCreatorShowcaseProduct({ ...creatorProduct, commission_bps: 0 }),
+    /marketplace_payload_invalid/,
+  );
+  assert.throws(
+    () => showcase.parseCreatorShowcaseProduct({ ...creatorProduct, commission_bps: 3001 }),
+    /marketplace_payload_invalid/,
+  );
   assert.throws(
     () =>
       showcase.parseCreatorShowcaseProduct({
@@ -558,4 +588,170 @@ test("seller analytics and creator product projections reject coercive required 
       }),
     /marketplace_payload_invalid/,
   );
+});
+
+test("payment Edge envelope and authoritative BDAG balance reject coercive JSON", async () => {
+  const checkoutId = id(21), key = id(24), receipt = paymentReceipt();
+  activeClient = {
+    functions: { invoke: async () => ({ data: { success: true, data: receipt }, error: null }) },
+    rpc: async () => ({ data: 12.5, error: null }),
+  };
+  assert.equal((await payments.payMarketplaceCheckout(checkoutId, key)).payment.grossAmount, 20);
+  assert.equal(await payments.fetchAuthoritativeBdagBalance(), 12.5);
+  activeClient.rpc = async () => ({ data: 0, error: null });
+  assert.equal(await payments.fetchAuthoritativeBdagBalance(), 0);
+
+  for (const success of ["true", "false", 1, 0, null, undefined, {}, []]) {
+    activeClient.functions.invoke = async () => ({ data: { success, data: receipt }, error: null });
+    await assert.rejects(
+      () => payments.payMarketplaceCheckout(checkoutId, key),
+      /marketplace_payment_unknown/,
+    );
+  }
+  activeClient.functions.invoke = async () => ({
+    data: { success: false, error: "marketplace_checkout_expired", data: receipt },
+    error: null,
+  });
+  await assert.rejects(
+    () => payments.payMarketplaceCheckout(checkoutId, key),
+    /marketplace_checkout_expired/,
+  );
+  for (const balance of [null, undefined, "0", "12.5", false, -1]) {
+    activeClient.rpc = async () => ({ data: balance, error: null });
+    await assert.rejects(
+      () => payments.fetchAuthoritativeBdagBalance(),
+      /marketplace_payment_unknown/,
+    );
+  }
+  activeClient.functions.invoke = async () => ({
+    data: { success: true, data: { ...receipt, orders: [{ ...receipt.orders[0], status: "future" }] } },
+    error: null,
+  });
+  await assert.rejects(
+    () => payments.payMarketplaceCheckout(checkoutId, key),
+    /marketplace_payment_unknown/,
+  );
+});
+
+test("settlement and support Edge envelopes require an exact boolean success", async () => {
+  const orderId = id(11), key = id(24), settlement = settlementReceipt(), support = supportReceipt();
+  activeClient = {
+    functions: { invoke: async () => ({ data: { success: true, data: settlement }, error: null }) },
+  };
+  assert.equal(
+    (await settlements.confirmMarketplaceOrderDelivery(orderId, key)).settlement.status,
+    "completed",
+  );
+  for (const success of ["true", "false", 1, 0, null, undefined, {}, []]) {
+    activeClient.functions.invoke = async () => ({ data: { success, data: settlement }, error: null });
+    await assert.rejects(
+      () => settlements.confirmMarketplaceOrderDelivery(orderId, key),
+      /marketplace_settlement_unknown/,
+    );
+  }
+  activeClient.functions.invoke = async () => ({
+    data: { success: false, error: "marketplace_order_not_shipped", data: settlement },
+    error: null,
+  });
+  await assert.rejects(
+    () => settlements.confirmMarketplaceOrderDelivery(orderId, key),
+    /marketplace_order_not_shipped/,
+  );
+  activeClient.functions.invoke = async () => ({ data: { success: true, data: support }, error: null });
+  assert.equal(
+    (await settlements.fetchSupportMarketplaceDispute(id(12), key)).dispute.status,
+    "open",
+  );
+  for (const success of ["true", "false", 1, 0, null, undefined, {}, []]) {
+    activeClient.functions.invoke = async () => ({ data: { success, data: support }, error: null });
+    await assert.rejects(
+      () => settlements.fetchSupportMarketplaceDispute(id(12), key),
+      /marketplace_dispute_resolution_unknown/,
+    );
+  }
+  activeClient.functions.invoke = async () => ({
+    data: { success: false, error: "marketplace_dispute_not_found", data: support },
+    error: null,
+  });
+  await assert.rejects(
+    () => settlements.fetchSupportMarketplaceDispute(id(12), key),
+    /marketplace_dispute_not_found/,
+  );
+});
+
+test("publication, categories, and seller foundation validate real async boundaries", async () => {
+  const publication = { published: true, ready: true, reason_code: null, status: "active" };
+  activeClient = { rpc: async () => ({ data: publication, error: null }) };
+  await assert.doesNotReject(() => products.setProductPublished(id(1), true));
+  activeClient.rpc = async () => ({ data: null, error: null });
+  await assert.doesNotReject(() => products.setProductPublished(id(1), false));
+  for (const malformed of [
+    { ...publication, published: "true" },
+    { ...publication, published: "false" },
+    { ...publication, published: 1 },
+    { ...publication, published: {} },
+    { ready: true, reason_code: null, status: "active" },
+  ]) {
+    activeClient.rpc = async () => ({ data: malformed, error: null });
+    await assert.rejects(
+      () => products.setProductPublished(id(1), true),
+      /marketplace_publication_result_invalid/,
+    );
+  }
+
+  const category = { id: id(30), slug: "digital", name: "Digital", parent_id: null, sort_order: 10 };
+  const categoryClient = (data) => {
+    const chain = {
+      select: () => chain,
+      eq: () => chain,
+      order: async () => ({ data, error: null }),
+    };
+    return { from: () => chain };
+  };
+  activeClient = categoryClient([category]);
+  assert.equal((await products.fetchCategories())[0].slug, "digital");
+  for (const malformed of [
+    { ...category, id: "bad" },
+    { ...category, slug: "future" },
+    { ...category, sort_order: "10" },
+  ]) {
+    activeClient = categoryClient([malformed]);
+    await assert.rejects(() => products.fetchCategories(), /marketplace_payload_invalid/);
+  }
+
+  const seller = {
+      user_id: id(31), status: "approved", display_name: "Vendedor",
+      application_note: "", created_at: at, updated_at: at,
+    },
+    store = {
+      id: id(32), seller_id: id(31), name: "Tienda", slug: "tienda",
+      description: "", logo_asset_id: null, banner_asset_id: null,
+      status: "active", created_at: at, updated_at: at,
+    };
+  const foundationClient = (sellerRow, storeRow) => ({
+    auth: { getUser: async () => ({ data: { user: { id: id(31) } }, error: null }) },
+    from: (table) => {
+      const chain = {
+        select: () => chain,
+        eq: () => chain,
+        maybeSingle: async () => ({
+          data: table === "marketplace_sellers" ? sellerRow : storeRow,
+          error: null,
+        }),
+      };
+      return chain;
+    },
+  });
+  activeClient = foundationClient(seller, store);
+  assert.equal((await products.fetchSellerFoundation()).store.status, "active");
+  activeClient = foundationClient(null, null);
+  const emptyFoundation = await products.fetchSellerFoundation();
+  assert.equal(emptyFoundation.seller, null);
+  assert.equal(emptyFoundation.store, null);
+  activeClient = foundationClient({ ...seller, status: "future" }, store);
+  await assert.rejects(() => products.fetchSellerFoundation(), /marketplace_payload_invalid/);
+  activeClient = foundationClient(seller, { ...store, id: "bad" });
+  await assert.rejects(() => products.fetchSellerFoundation(), /marketplace_payload_invalid/);
+  activeClient = foundationClient({ ...seller, created_at: "bad" }, store);
+  await assert.rejects(() => products.fetchSellerFoundation(), /marketplace_payload_invalid/);
 });
