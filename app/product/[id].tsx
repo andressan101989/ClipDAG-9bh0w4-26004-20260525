@@ -14,7 +14,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { MaterialIcons } from "@expo/vector-icons";
+import { MaterialCommunityIcons, MaterialIcons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
 import { randomUUID } from "expo-crypto";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -261,7 +261,7 @@ export default function ProductScreen() {
       }
       const creatorContextCount = [showcaseItemId, contentProductTagId, liveSessionProductId].filter(Boolean).length;
       if (creatorContextCount > 1) {
-        showAlert("Invalid creator context", "Open this product again from a single creator surface.");
+        showAlert("Contexto de creator no válido", "Abre este producto nuevamente desde una sola recomendación de creator.");
         return;
       }
       const selectedOptions = options.flatMap((option) => {
@@ -350,7 +350,7 @@ export default function ProductScreen() {
       });
       if (!result.ok) {
         if (result.code === "attribution_conflict") {
-          showAlert("Creator credit already set", "Remove this variant from the cart before changing its creator recommendation.");
+          showAlert("Recomendación de creator ya asignada", "Quita esta variante del carrito antes de cambiar la recomendación de creator.");
           return;
         }
         showAlert(
@@ -390,7 +390,7 @@ export default function ProductScreen() {
       toastTimer.current = setTimeout(() => setCartFeedback(null), 3200);
       if (continueToCheckout) router.push("/checkout" as never);
     } catch {
-      showAlert("Creator recommendation unavailable", "This creator product tag or seller offer is no longer available. Return to the original content and try again.");
+      showAlert("Recomendación de creator no disponible", "La etiqueta del producto o la oferta del vendedor ya no está disponible. Vuelve al contenido original e inténtalo de nuevo.");
     } finally {
       addToCartLockRef.current = false;
     }
@@ -535,7 +535,7 @@ export default function ProductScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
           styles.scroll,
-          { paddingBottom: 116 + insets.bottom },
+          { paddingBottom: 176 + insets.bottom },
         ]}
       >
         <ProductMediaGallery
@@ -543,113 +543,105 @@ export default function ProductScreen() {
           selectedIndex={mediaIndex}
           onSelect={chooseMedia}
         />
-        <View style={styles.commerce}>
+        <View style={styles.commerceCard}>
           {showcaseItemId || contentProductTagId || liveSessionProductId ? (
             <View style={styles.creatorRecommendation}>
               <MaterialIcons name="storefront" size={17} color={Colors.accent} />
-              <Text style={styles.creatorRecommendationText}>Recommended by {creatorDisplayName ? `@${creatorDisplayName}` : "this creator"}</Text>
-              <Pressable onPress={() => void handleAddToCart(true)} accessibilityRole="button" accessibilityLabel="Buy now from creator recommendation">
-                <Text style={styles.buyNowText}>Buy now</Text>
+              <Text style={styles.creatorRecommendationText}>Recomendado por {creatorDisplayName ? `@${creatorDisplayName}` : "este creator"}</Text>
+              <Pressable style={styles.creatorBuyButton} onPress={() => void handleAddToCart(true)} accessibilityRole="button" accessibilityLabel="Comprar ahora desde la recomendación del creator">
+                <Text style={styles.buyNowText}>Comprar</Text>
               </Pressable>
             </View>
           ) : null}
-          <Text style={styles.category}>{product.category}</Text>
+          <View style={styles.categoryPill}>
+            <MaterialCommunityIcons name={product.product_type === "digital" ? "cloud-download-outline" : "package-variant-closed"} size={14} color={Colors.primaryLight} />
+            <Text style={styles.category}>{product.category} · {product.product_type === "digital" ? "Digital" : "Físico"}</Text>
+          </View>
           <Text style={styles.title}>{product.title}</Text>
-          <View style={styles.priceRow}>
-            <Text style={styles.price}>
-              {hasRange ? "Desde " : ""}
-              {effectivePrice.toFixed(2)} BDAG
-            </Text>
-            {compareAt != null && compareAt > effectivePrice ? (
-              <Text style={styles.compare}>{compareAt.toFixed(2)} BDAG</Text>
-            ) : null}
-            {discount ? (
-              <View style={styles.discount}>
-                <Text style={styles.discountText}>-{discount}%</Text>
-              </View>
-            ) : null}
-          </View>
-          {product.total_sales > 0 ? (
-            <Text style={styles.sales}>{product.total_sales} vendidos</Text>
-          ) : null}
-          {options.length ? (
-            <View style={styles.selectionSummary}>
-              <Text style={styles.summaryLabel}>Seleccionado</Text>
-              <Text style={styles.summaryValue}>
-                {selectionSummary ||
-                  `Selecciona ${missingOption?.name ?? "opciones"}`}
+          <View style={styles.pricingPanel}>
+            <View style={styles.priceRow}>
+              <Text style={styles.price} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72}>
+                {hasRange ? "Desde " : ""}
+                {effectivePrice.toFixed(2)} BDAG
               </Text>
+              {compareAt != null && compareAt > effectivePrice ? (
+                <Text style={styles.compare}>{compareAt.toFixed(2)} BDAG</Text>
+              ) : null}
+              {discount ? (
+                <View style={styles.discount}>
+                  <Text style={styles.discountText}>-{discount}%</Text>
+                </View>
+              ) : null}
+            </View>
+            <View style={styles.commerceMeta}>
+              <View style={styles.stock}>
+                <View style={[styles.stockDot, available > 0 && !selectionIncomplete ? styles.stockAvailable : styles.stockUnavailable]} />
+                <Text style={styles.stockText}>{stockText}</Text>
+              </View>
+              {product.total_sales > 0 ? <Text style={styles.sales}>{product.total_sales} vendidos</Text> : <Text style={styles.sales}>Producto nuevo</Text>}
+            </View>
+          </View>
+          {options.length ? (
+            <View style={styles.variantPanel}>
+              <View style={styles.variantHeading}>
+                <View>
+                  <Text style={styles.variantEyebrow}>PERSONALIZA TU COMPRA</Text>
+                  <Text style={styles.variantTitle}>Elige una opción</Text>
+                </View>
+                <View style={styles.selectionSummary}>
+                  <Text style={styles.summaryLabel}>Seleccionado</Text>
+                  <Text style={styles.summaryValue} numberOfLines={1}>
+                    {selectionSummary || `Selecciona ${missingOption?.name ?? "opciones"}`}
+                  </Text>
+                </View>
+              </View>
+              {options.map((option) => (
+                <View key={option.id} style={styles.optionBlock}>
+                  <Text style={styles.optionTitle}>{option.name}</Text>
+                  {option.values.length > 6 ? (
+                    <SearchableSelectField
+                      label={`Seleccionar ${option.name}`}
+                      value={selectedValues[option.id] ?? ""}
+                      options={option.values
+                        .filter((value) =>
+                          isOptionValueSelectable(variants, value.id, selectedValues, option.id),
+                        )
+                        .map((value) => ({ value: value.id, label: value.value }))}
+                      onChange={(valueId) => chooseVariantValue(option.id, valueId)}
+                    />
+                  ) : (
+                    <View style={styles.chips}>
+                      {option.values.map((value) => {
+                        const enabled = isOptionValueSelectable(variants, value.id, selectedValues, option.id);
+                        const selected = selectedValues[option.id] === value.id;
+                        return (
+                          <Pressable
+                            key={value.id}
+                            disabled={!enabled}
+                            style={[styles.chip, selected && styles.chipSelected, !enabled && styles.chipDisabled]}
+                            accessibilityRole="radio"
+                            accessibilityLabel={`${option.name} ${value.value}`}
+                            accessibilityState={{ selected, disabled: !enabled }}
+                            onPress={() => chooseVariantValue(option.id, value.id)}
+                          >
+                            <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{value.value}</Text>
+                            {selected ? <MaterialIcons name="check" size={15} color={Colors.primaryLight} /> : null}
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+              ))}
             </View>
           ) : null}
-          {options.map((option) => (
-            <View key={option.id} style={styles.optionBlock}>
-              <Text style={styles.optionTitle}>{option.name}</Text>
-              {option.values.length > 6 ? (
-                <SearchableSelectField
-                  label={`Seleccionar ${option.name}`}
-                  value={selectedValues[option.id] ?? ""}
-                  options={option.values
-                    .filter((value) =>
-                      isOptionValueSelectable(
-                        variants,
-                        value.id,
-                        selectedValues,
-                        option.id,
-                      ),
-                    )
-                    .map((value) => ({ value: value.id, label: value.value }))}
-                  onChange={(valueId) => chooseVariantValue(option.id, valueId)}
-                />
-              ) : (
-                <View style={styles.chips}>
-                  {option.values.map((value) => {
-                    const enabled = isOptionValueSelectable(
-                        variants,
-                        value.id,
-                        selectedValues,
-                        option.id,
-                      ),
-                      selected = selectedValues[option.id] === value.id;
-                    return (
-                      <Pressable
-                        key={value.id}
-                        disabled={!enabled}
-                        style={[
-                          styles.chip,
-                          selected && styles.chipSelected,
-                          !enabled && styles.chipDisabled,
-                        ]}
-                        accessibilityRole="radio"
-                        accessibilityLabel={`${option.name} ${value.value}`}
-                        accessibilityState={{ selected, disabled: !enabled }}
-                        onPress={() => chooseVariantValue(option.id, value.id)}
-                      >
-                        <Text
-                          style={[
-                            styles.chipText,
-                            selected && styles.chipTextSelected,
-                          ]}
-                        >
-                          {value.value}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              )}
-            </View>
-          ))}
-          <View style={styles.stock}>
-            <View
-              style={[
-                styles.stockDot,
-                available > 0 && !selectionIncomplete
-                  ? styles.stockAvailable
-                  : styles.stockUnavailable,
-              ]}
-            />
-            <Text style={styles.stockText}>{stockText}</Text>
-          </View>
+        </View>
+        <View style={styles.benefitsRow}>
+          <View style={styles.benefit}><MaterialIcons name="verified-user" size={19} color={Colors.success} /><Text style={styles.benefitText}>Pago protegido</Text></View>
+          <View style={styles.benefitDivider} />
+          <View style={styles.benefit}><MaterialCommunityIcons name="truck-fast-outline" size={20} color={Colors.blue} /><Text style={styles.benefitText}>Envío calculado</Text></View>
+          <View style={styles.benefitDivider} />
+          <View style={styles.benefit}><MaterialIcons name="inventory-2" size={18} color={Colors.warning} /><Text style={styles.benefitText}>Stock validado</Text></View>
         </View>
         <MarketplaceShippingQuoteCard
           productId={product.id}
@@ -671,7 +663,7 @@ export default function ProductScreen() {
             showBorder
           />
           <View style={{ flex: 1 }}>
-            <Text style={styles.sellerLabel}>Vendedor</Text>
+            <Text style={styles.sellerLabel}>TIENDA</Text>
             <Text style={styles.sellerName}>
               @{product.seller?.username ?? "Vendedor"}
             </Text>
@@ -744,7 +736,7 @@ export default function ProductScreen() {
       </ScrollView>
       {cartFeedback ? (
         <Pressable
-          style={[styles.toast, { bottom: 84 + insets.bottom }]}
+          style={[styles.toast, { bottom: 154 + insets.bottom }]}
           onPress={() => router.push("/cart" as never)}
           accessibilityRole="button"
         >
@@ -765,6 +757,7 @@ export default function ProductScreen() {
         label={purchaseLabel}
         onQuantity={setQuantity}
         onAdd={() => void handleAddToCart()}
+        onBuy={() => void handleAddToCart(true)}
       />
     </View>
   );
@@ -825,15 +818,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: Spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
     backgroundColor: Colors.bg,
   },
   headerButton: {
     width: 44,
     height: 44,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: Colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginHorizontal: 2,
   },
   cartBadge: {
     position: "absolute",
@@ -849,13 +845,15 @@ const styles = StyleSheet.create({
   },
   cartBadgeText: { color: "#fff", fontSize: 9, fontWeight: FontWeight.bold },
   scroll: { gap: Spacing.md },
-  commerce: { paddingHorizontal: Spacing.md, gap: Spacing.sm },
-  creatorRecommendation:{minHeight:44,flexDirection:"row",alignItems:"center",gap:Spacing.sm,paddingHorizontal:Spacing.md,borderRadius:Radius.md,backgroundColor:Colors.accentDim,borderWidth:1,borderColor:Colors.accent+"44"},
+  commerceCard: { marginHorizontal: Spacing.md, padding: Spacing.md, gap: Spacing.md, borderRadius: Radius.xl, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
+  creatorRecommendation:{minHeight:48,flexDirection:"row",alignItems:"center",gap:Spacing.sm,paddingHorizontal:Spacing.md,borderRadius:Radius.lg,backgroundColor:Colors.accentDim,borderWidth:1,borderColor:Colors.accent+"44"},
   creatorRecommendationText:{flex:1,color:Colors.textSecondary,fontSize:FontSize.sm},
+  creatorBuyButton:{minHeight:44,justifyContent:"center",paddingHorizontal:Spacing.sm},
   buyNowText:{color:Colors.accent,fontSize:FontSize.sm,fontWeight:FontWeight.bold},
+  categoryPill:{alignSelf:"flex-start",minHeight:32,flexDirection:"row",alignItems:"center",gap:5,paddingHorizontal:10,borderRadius:Radius.full,backgroundColor:Colors.primaryDim},
   category: {
     color: Colors.primaryLight,
-    fontSize: FontSize.xs,
+    fontSize: 10,
     fontWeight: FontWeight.bold,
     textTransform: "uppercase",
     letterSpacing: 0.8,
@@ -865,7 +863,18 @@ const styles = StyleSheet.create({
     fontSize: 26,
     lineHeight: 32,
     fontWeight: FontWeight.extrabold,
+    letterSpacing: -0.45,
   },
+  pricingPanel:{gap:Spacing.sm,padding:Spacing.md,borderRadius:Radius.lg,backgroundColor:Colors.surface,borderWidth:1,borderColor:Colors.border},
+  commerceMeta:{flexDirection:"row",alignItems:"center",justifyContent:"space-between",gap:Spacing.sm},
+  variantPanel:{gap:Spacing.md,paddingTop:Spacing.sm,borderTopWidth:1,borderTopColor:Colors.border},
+  variantHeading:{gap:Spacing.sm},
+  variantEyebrow:{color:Colors.primaryLight,fontSize:9,fontWeight:FontWeight.extrabold,letterSpacing:1.1},
+  variantTitle:{color:Colors.textPrimary,fontSize:FontSize.lg,fontWeight:FontWeight.extrabold,marginTop:2},
+  benefitsRow:{marginHorizontal:Spacing.md,minHeight:76,flexDirection:"row",alignItems:"stretch",borderRadius:Radius.lg,backgroundColor:Colors.surfaceElevated,borderWidth:1,borderColor:Colors.border,overflow:"hidden"},
+  benefit:{flex:1,minWidth:0,alignItems:"center",justifyContent:"center",gap:5,paddingHorizontal:4},
+  benefitDivider:{width:1,marginVertical:Spacing.sm,backgroundColor:Colors.border},
+  benefitText:{color:Colors.textSecondary,fontSize:9,fontWeight:FontWeight.semibold,textAlign:"center"},
   priceRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -873,9 +882,11 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
   },
   price: {
-    color: Colors.textPrimary,
-    fontSize: 28,
+    flexShrink: 1,
+    color: Colors.blue,
+    fontSize: 30,
     fontWeight: FontWeight.extrabold,
+    fontVariant: ["tabular-nums"],
   },
   compare: {
     color: Colors.textSubtle,
@@ -893,19 +904,16 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.bold,
     fontSize: FontSize.xs,
   },
-  sales: { color: Colors.textSecondary, fontSize: FontSize.sm },
+  sales: { color: Colors.textSecondary, fontSize: FontSize.xs },
   selectionSummary: {
-    marginTop: Spacing.sm,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    minWidth: 0,
     backgroundColor: Colors.surface,
-    padding: Spacing.md,
+    padding: Spacing.sm,
     borderRadius: Radius.md,
   },
-  summaryLabel: { color: Colors.textSecondary },
-  summaryValue: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
-  optionBlock: { gap: Spacing.sm, marginTop: Spacing.sm },
+  summaryLabel: { color: Colors.textSubtle, fontSize: 9, textTransform:"uppercase", letterSpacing:.6 },
+  summaryValue: { color: Colors.textPrimary, fontWeight: FontWeight.bold, marginTop:2 },
+  optionBlock: { gap: Spacing.sm },
   optionTitle: {
     color: Colors.textPrimary,
     fontSize: FontSize.md,
@@ -915,6 +923,8 @@ const styles = StyleSheet.create({
   chip: {
     minHeight: 44,
     minWidth: 48,
+    flexDirection:"row",
+    gap:5,
     borderWidth: 1,
     borderColor: Colors.border,
     borderRadius: Radius.full,
@@ -932,13 +942,12 @@ const styles = StyleSheet.create({
   stock: {
     flexDirection: "row",
     alignItems: "center",
-    gap: Spacing.sm,
-    marginTop: Spacing.sm,
+    gap: 6,
   },
   stockDot: { width: 8, height: 8, borderRadius: 4 },
   stockAvailable: { backgroundColor: Colors.success },
   stockUnavailable: { backgroundColor: Colors.secondary },
-  stockText: { color: Colors.textSecondary, fontWeight: FontWeight.semibold },
+  stockText: { color: Colors.textSecondary, fontSize:FontSize.xs,fontWeight: FontWeight.semibold },
   sellerCard: {
     marginHorizontal: Spacing.md,
     padding: Spacing.md,
@@ -950,7 +959,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: Spacing.md,
   },
-  sellerLabel: { color: Colors.textSecondary, fontSize: FontSize.xs },
+  sellerLabel: { color: Colors.textSubtle, fontSize: 9,fontWeight:FontWeight.bold,letterSpacing:.9 },
   sellerName: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
   message: {
     flexDirection: "row",
