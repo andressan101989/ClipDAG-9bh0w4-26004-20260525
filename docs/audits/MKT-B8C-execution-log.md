@@ -163,3 +163,40 @@ Every reconciliation included by `get_marketplace_admin_health()` was audited. A
 - Commits: `584af70` range/Health authority; `dbcb169` strict web payloads; final proof/auditor/log commit containing this section.
 - Final SHA: final proof/auditor/log commit reported in the external final report.
 - Build `22`; no EAS; no merge; no historical migration edit; no new financial authority; B8D NOT STARTED.
+
+## MKT-B8C-C2 — Health Runtime Contract Closure
+
+Starting SHA: `b569cc4b2c0d623ffdfd00d68e8b42d2381285d2`. Build: `22`. Remote migration before and after C2: `20260811032000_marketplace_admin_intelligence_closure.sql`.
+
+C1's server-side Health classifier was audited and found correct. Its treatment of payment `confirmed_state_breakdown` and settlement expected/actual escrow totals as observations, with canonical mismatch/difference counters retaining failure authority, is unchanged. The remaining defect was solely the browser contract: its generic recursive validator accepted JSON strings, booleans, and nulls where canonical numeric counters were required, and did not require the complete unique group set. C2 creates no SQL migration and performs no Supabase deployment.
+
+### Actual reconciliation schemas audited
+
+`get_marketplace_admin_health()` always returns exactly these 15 groups. The exact top-level counter keys are codified in the web `healthCounterKeys` contract and validated with these types:
+
+- `payments` — 11 keys: eight nonnegative integer failure counts; nonnegative numeric `escrow_shortfall`; required `confirmed_state_breakdown` object with exactly six nonnegative integer states (`confirmed`, `processing`, `shipped`, `delivered`, `refunded_fixture`, `invalid`); required `invalid_confirmed_state_details` array whose objects contain UUID `order_id`, string checkout/order states, and nullable string payment/allocation states.
+- `settlements` — 30 keys: 25 nonnegative integer failure counts plus numeric `escrow_expected_held_total`, `escrow_actual_balance`, signed `escrow_difference`, and numeric shortage/surplus. The numeric values are not hardcoded.
+- `creator_commerce`, `creator_showcase`, `creator_content_tags`, `creator_allocations`, `live_creator_commissions`, `creator_analytics`, and `reversals` — exact maps of respectively 36, 23, 28, 27, 9, 18, and 32 nonnegative integer failure counters.
+- `ads_finance` — 23 exact keys: numeric finance/directional differences; three signed integer transaction/event-count differences; nullable numeric `escrow_liability_difference` where the canonical escrow row is absent; all remaining entry/orphan/mismatch counters are nonnegative integers.
+- `ads_eligibility`, `ads_finalization`, `ads_delivery`, `ads_events`, and `admin_operations` — exact maps of respectively 4, 4, 5, 7, and 8 nonnegative integer failure counters.
+- Health attention remains an array of objects with string reason/entity/message, UUID entity ID, and `warning|critical` severity.
+
+No reconciliation payload contains a free-form boolean/string/null counter. Arrays and objects are accepted only at their specific canonical fields. `check_count` and `failing_check_count` must be nonnegative integers; `check_count` must equal the exact top-level counter-key count; group `healthy` must equal `failing_check_count === 0`; root `healthy` must equal every group being healthy. Missing, unknown, and duplicate groups are rejected.
+
+### Realistic JSON and page-flow proof
+
+The web suite uses only JSON-representable malformed inputs. It proves rejection of numeric failure counters encoded as `"0"` or boolean `false`; array/object substitutions in both directions; missing, duplicate, and unknown groups; negative check/failure counts; inconsistent group and root health classifications; malformed attention data; and incomplete counter maps. It proves acceptance of legitimate nonzero payment state observations and equal nonzero settlement expected/actual totals with zero difference. A canonical nonzero mismatch with a matching unhealthy classification is valid data, not a malformed payload.
+
+A mocked Health page call passes a realistic string-for-number payload through `validateHealth`; the page renders the controlled ErrorState and retry action, without a healthy badge, crash, `NaN`, or fabricated state. A separately validated canonical unhealthy payload renders `Requiere atención` and the exact failure count.
+
+### Gates and unchanged authority
+
+- Admin Web: `55 passed / 0 failed`; ESLint zero warnings/errors; TypeScript/Vite production build passed, 119 modules.
+- Focused B8S/B8A/B8B/B8C: `51 passed / 0 failed`.
+- Root Node: `702 passed / 0 failed`.
+- Root TypeScript: exactly `187` pre-existing diagnostics; C2 changed-file diagnostics `0`.
+- Disposable B8C intelligence proof: passed, including accepted server classifier semantics, controlled mismatch/rollback, B8B 8/8, and fixtures `0`.
+- Disposable B8B operations proof: passed, B8B 8/8 zero, concurrency intact, fixtures `0`.
+- Remote read-only B8C-C1 audit: healthy at unchanged migration `20260811032000`; B8S/B8A/B8B/B8C healthy; Creator and Ads reconciliations healthy; payments/settlements healthy; Ads financial functions denied; fixtures `0`; failure hooks absent.
+- No migration; no Supabase push; no financial or repair authority; no historical migration edit; Build `22`; no EAS; no merge; B8D NOT STARTED.
+- Final C2 SHA: the single C2 commit containing this section, reported in the external final report.

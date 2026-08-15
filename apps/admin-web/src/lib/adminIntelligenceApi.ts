@@ -631,45 +631,103 @@ const healthGroups = [
   "ads_events",
   "admin_operations",
 ] as const;
-const validateHealthCounterValue = (value: unknown, path: string): void => {
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) fail(path);
-    return;
-  }
-  if (typeof value === "string" || typeof value === "boolean" || value === null)
-    return;
-  if (Array.isArray(value)) {
-    value.forEach((entry, index) =>
-      validateHealthCounterValue(entry, `${path}[${index}]`),
-    );
-    return;
-  }
-  const record = obj(value, path);
-  Object.entries(record).forEach(([key, entry]) =>
-    validateHealthCounterValue(entry, `${path}.${key}`),
-  );
+type HealthGroup = (typeof healthGroups)[number];
+export const healthCounterKeys = {
+  payments: ["escrow_shortfall", "invalid_inventory", "paid_without_payment", "allocation_mismatches", "consumed_without_sale", "unbalanced_transactions", "confirmed_state_breakdown", "confirmed_state_mismatches", "payment_without_transaction", "paid_with_active_reservations", "invalid_confirmed_state_details"],
+  settlements: ["escrow_surplus", "escrow_shortage", "escrow_difference", "missing_seller_leg", "duplicate_seller_leg", "missing_platform_leg", "escrow_actual_balance", "duplicate_platform_leg", "escrow_expected_held_total", "settlement_amount_mismatch", "settlement_without_release", "delivery_timestamp_mismatch", "released_without_settlement", "seller_beneficiary_mismatch", "settlement_leg_sum_mismatch", "transaction_amount_mismatch", "transaction_status_mismatch", "released_order_not_delivered", "platform_beneficiary_mismatch", "transaction_currency_mismatch", "delivered_with_held_allocation", "transaction_reference_mismatch", "released_shipment_not_delivered", "positive_leg_without_transaction", "settlement_order_identity_mismatch", "transaction_operation_type_mismatch", "transaction_source_account_mismatch", "settlement_payment_identity_mismatch", "settlement_allocation_identity_mismatch", "transaction_destination_account_mismatch"],
+  creator_commerce: ["missing_creator", "b7f_bps_mismatch", "b7f_base_mismatch", "orphan_attribution", "orphan_entitlement", "b7f_amount_mismatch", "b7f_creator_mismatch", "missing_b7f_allocation", "invalid_entitlement_bps", "wrong_entitlement_store", "wrong_entitlement_seller", "unexpected_b7f_allocation", "wrong_entitlement_product", "wrong_entitlement_variant", "attribution_store_mismatch", "invalid_entitlement_status", "order_item_source_mismatch", "self_attribution_violation", "attribution_seller_mismatch", "expired_attribution_created", "frozen_attribution_mutation", "order_item_creator_mismatch", "order_item_product_mismatch", "order_item_variant_mismatch", "request_fingerprint_invalid", "attribution_creator_mismatch", "attribution_product_mismatch", "attribution_variant_mismatch", "orphan_order_item_attribution", "attribution_entitlement_mismatch", "live_source_attribution_mismatch", "order_item_commission_bps_mismatch", "revoked_entitlement_new_attribution", "allocation_without_valid_attribution", "settlement_without_creator_authority", "duplicate_order_item_creator_attribution"],
+  creator_showcase: ["wrong_showcase_store", "invalid_sort_position", "self_showcase_product", "wrong_showcase_seller", "invalid_showcase_status", "orphan_showcase_creator", "orphan_showcase_product", "showcase_b7f_bps_mismatch", "active_showcase_over_limit", "invalid_request_fingerprint", "selected_entitlement_missing", "showcase_b7f_creator_mismatch", "duplicate_active_sort_position", "duplicate_active_creator_product", "showcase_attribution_source_mismatch", "showcase_settlement_creator_mismatch", "selected_entitlement_product_mismatch", "showcase_attribution_creator_mismatch", "showcase_attribution_product_mismatch", "showcase_attribution_missing_source_item", "showcase_attribution_entitlement_mismatch", "selected_entitlement_creator_scope_mismatch", "showcase_item_attribution_snapshot_mismatch"],
+  creator_content_tags: ["wrong_tag_store", "wrong_tag_seller", "invalid_tag_status", "orphan_tag_content", "orphan_tag_creator", "orphan_tag_product", "wrong_content_owner", "invalid_sort_position", "content_b7f_bps_mismatch", "feed_tag_source_mismatch", "invalid_tag_content_type", "reel_tag_source_mismatch", "self_tagged_seller_product", "invalid_request_fingerprint", "content_b7f_creator_mismatch", "selected_entitlement_missing", "active_content_tag_over_limit", "content_item_snapshot_mismatch", "duplicate_active_sort_position", "duplicate_active_content_product", "content_attribution_source_mismatch", "content_settlement_creator_mismatch", "content_attribution_creator_mismatch", "content_attribution_product_mismatch", "attribution_created_after_tag_removal", "selected_entitlement_product_mismatch", "content_attribution_missing_source_tag", "selected_entitlement_creator_scope_mismatch"],
+  creator_allocations: ["invalid_bps", "wrong_order", "wrong_store", "wrong_seller", "wrong_payment", "wrong_checkout", "wrong_currency", "missing_creator", "invalid_base_amount", "allocation_after_refund", "wrong_payment_allocation", "invalid_commission_amount", "allocation_after_settlement", "request_fingerprint_invalid", "creator_transaction_mismatch", "parent_creator_total_mismatch", "missing_creator_settlement_leg", "orphan_item_creator_allocation", "duplicate_order_item_allocation", "settlement_creator_total_mismatch", "unexpected_creator_settlement_leg", "creator_ledger_destination_mismatch", "settlement_creator_recipient_mismatch", "duplicate_creator_settlement_recipient", "legacy_multi_creator_identity_mismatch", "seller_platform_creator_gross_mismatch", "legacy_single_creator_identity_mismatch"],
+  live_creator_commissions: ["missing_creator_leg", "duplicate_creator_leg", "unexpected_creator_leg", "allocation_split_mismatch", "source_allocation_mismatch", "creator_transaction_mismatch", "affiliate_commission_mismatch", "creator_credit_before_delivery", "own_product_commission_mismatch"],
+  creator_analytics: ["creator_surface_invalid", "creator_order_count_orphan", "creator_event_product_mismatch", "creator_item_gmv_basis_mismatch", "creator_reversal_total_mismatch", "creator_settlement_total_mismatch", "creator_allocation_creator_mismatch", "creator_allocation_product_mismatch", "creator_generated_commission_mismatch", "creator_reversal_beneficiary_mismatch", "creator_settlement_beneficiary_mismatch", "creator_allocation_without_item_attribution", "creator_analytics_event_source_unresolvable", "creator_item_attribution_without_allocation", "creator_net_commission_negative_unexplained", "creator_reversal_leg_without_settlement_leg", "creator_settlement_leg_without_creator_allocation", "creator_source_entity_missing_currently_required_identity"],
+  reversals: ["wrong_leg_type", "orphan_reversal", "wrong_beneficiary", "orphan_reversal_leg", "buyer_refund_missing", "order_state_mismatch", "wrong_source_account", "dispute_state_mismatch", "duplicate_buyer_refund", "payment_state_mismatch", "reversal_above_original", "wrong_escrow_destination", "allocation_state_mismatch", "creator_reversal_mismatch", "partial_reversal_leg_count", "wrong_original_transaction", "buyer_refund_amount_mismatch", "buyer_refund_account_mismatch", "reversed_total_gross_mismatch", "wrong_reversal_operation_type", "buyer_refund_operation_mismatch", "duplicate_original_leg_reversal", "unexpected_pre_release_reversal", "wrong_original_transaction_amount", "wrong_reversal_transaction_amount", "wrong_reversal_transaction_status", "wrong_original_transaction_currency", "wrong_reversal_transaction_accounts", "resolution_decision_without_reversal", "reversal_without_resolution_decision", "reversal_without_completed_settlement", "wrong_original_transaction_destination"],
+  ads_finance: ["orphan_ads_events", "spend_reconciliation", "funding_reconciliation", "release_reconciliation", "unexpected_ads_entries", "orphan_ads_transactions", "release_wrong_recipient", "spend_escrow_difference", "spend_revenue_difference", "spend_unexpected_entries", "funding_escrow_difference", "funding_source_difference", "release_escrow_difference", "funding_unexpected_entries", "release_unexpected_entries", "escrow_liability_difference", "campaign_equation_mismatches", "event_transaction_mismatches", "campaign_accounting_mismatches", "release_destination_difference", "fund_transaction_event_count_difference", "spend_transaction_event_count_difference", "release_transaction_event_count_difference"],
+  ads_eligibility: ["paused_eligible", "clock_mismatches", "unfunded_elapsed", "terminal_eligible"],
+  ads_finalization: ["expired_unfinalized_liability", "finalization_record_mismatches", "final_spend_above_pacing_target", "completed_campaign_remaining_reserved"],
+  ads_delivery: ["overspend", "bucket_duplicates", "target_violations", "orphan_materialization", "materialization_finance_mismatch"],
+  ads_events: ["invalid_events", "duplicate_event_keys", "touch_event_mismatch", "purchase_gmv_mismatch", "campaign_product_mismatch", "purchase_event_link_mismatch", "purchase_without_order_attribution"],
+  admin_operations: ["audit_orphan_actor", "audit_orphan_seller", "audit_orphan_dispute", "audit_orphan_product", "audit_invalid_fingerprint", "audit_action_target_mismatch", "audit_dispute_actor_mismatch", "audit_dispute_target_mismatch"],
+} as const satisfies Record<HealthGroup, readonly string[]>;
+const nonnegativeInt = (value: unknown, path: string) => {
+  const parsed = int(value, path);
+  return parsed >= 0 ? parsed : fail(path);
+};
+const exactHealthCounters = (value: unknown, group: HealthGroup, path: string) => {
+  const counters = obj(value, path), expected = healthCounterKeys[group], actual = Object.keys(counters);
+  if (actual.length !== expected.length || expected.some((key) => !(key in counters))) fail(path);
+  return counters;
+};
+const validateIntegerHealthCounters = (value: unknown, group: Exclude<HealthGroup, "payments" | "settlements" | "ads_finance">, path: string) => {
+  const counters = exactHealthCounters(value, group, path);
+  healthCounterKeys[group].forEach((key) => nonnegativeInt(counters[key], `${path}.${key}`));
+  return counters;
+};
+const validatePaymentsHealthCounters = (value: unknown, path: string) => {
+  const counters = exactHealthCounters(value, "payments", path);
+  healthCounterKeys.payments.filter((key) => !["escrow_shortfall", "confirmed_state_breakdown", "invalid_confirmed_state_details"].includes(key)).forEach((key) => nonnegativeInt(counters[key], `${path}.${key}`));
+  if (num(counters.escrow_shortfall, `${path}.escrow_shortfall`) < 0) fail(`${path}.escrow_shortfall`);
+  const breakdown = obj(counters.confirmed_state_breakdown, `${path}.confirmed_state_breakdown`), breakdownKeys = ["confirmed", "processing", "shipped", "delivered", "refunded_fixture", "invalid"] as const;
+  if (Object.keys(breakdown).length !== breakdownKeys.length || breakdownKeys.some((key) => !(key in breakdown))) fail(`${path}.confirmed_state_breakdown`);
+  breakdownKeys.forEach((key) => nonnegativeInt(breakdown[key], `${path}.confirmed_state_breakdown.${key}`));
+  arr(counters.invalid_confirmed_state_details, `${path}.invalid_confirmed_state_details`).forEach((entry, index) => {
+    const detailPath = `${path}.invalid_confirmed_state_details[${index}]`, detail = obj(entry, detailPath), keys = ["order_id", "checkout_status", "order_status", "payment_status", "allocation_status"] as const;
+    if (Object.keys(detail).length !== keys.length || keys.some((key) => !(key in detail))) fail(detailPath);
+    uuid(detail.order_id, `${detailPath}.order_id`);
+    str(detail.checkout_status, `${detailPath}.checkout_status`);
+    str(detail.order_status, `${detailPath}.order_status`);
+    nullableStr(detail.payment_status, `${detailPath}.payment_status`);
+    nullableStr(detail.allocation_status, `${detailPath}.allocation_status`);
+  });
+  return counters;
+};
+const validateSettlementsHealthCounters = (value: unknown, path: string) => {
+  const counters = exactHealthCounters(value, "settlements", path), moneyKeys = ["escrow_expected_held_total", "escrow_actual_balance", "escrow_difference", "escrow_shortage", "escrow_surplus"] as const;
+  healthCounterKeys.settlements.filter((key) => !moneyKeys.includes(key as (typeof moneyKeys)[number])).forEach((key) => nonnegativeInt(counters[key], `${path}.${key}`));
+  moneyKeys.forEach((key) => num(counters[key], `${path}.${key}`));
+  return counters;
+};
+const validateAdsFinanceHealthCounters = (value: unknown, path: string) => {
+  const counters = exactHealthCounters(value, "ads_finance", path), decimalKeys = ["spend_reconciliation", "funding_reconciliation", "release_reconciliation", "spend_escrow_difference", "spend_revenue_difference", "funding_escrow_difference", "funding_source_difference", "release_escrow_difference", "release_destination_difference"] as const, signedIntegerKeys = ["fund_transaction_event_count_difference", "spend_transaction_event_count_difference", "release_transaction_event_count_difference"] as const;
+  healthCounterKeys.ads_finance.forEach((key) => {
+    const fieldPath = `${path}.${key}`;
+    if (key === "escrow_liability_difference") {
+      if (counters[key] !== null) num(counters[key], fieldPath);
+    } else if (decimalKeys.includes(key as (typeof decimalKeys)[number])) num(counters[key], fieldPath);
+    else if (signedIntegerKeys.includes(key as (typeof signedIntegerKeys)[number])) int(counters[key], fieldPath);
+    else nonnegativeInt(counters[key], fieldPath);
+  });
+  return counters;
+};
+const validateHealthCounters = (value: unknown, group: HealthGroup, path: string) => {
+  if (group === "payments") return validatePaymentsHealthCounters(value, path);
+  if (group === "settlements") return validateSettlementsHealthCounters(value, path);
+  if (group === "ads_finance") return validateAdsFinanceHealthCounters(value, path);
+  return validateIntegerHealthCounters(value, group, path);
 };
 export function validateHealth(value: unknown) {
   const root = obj(value, "health");
   timestamp(root.checked_at, "checked_at");
   const overallHealthy = bool(root.healthy, "healthy");
   const groups = arr(root.groups, "groups");
+  if (groups.length !== healthGroups.length) fail("groups.complete");
+  const seen = new Set<HealthGroup>();
   groups.forEach((entry, index) => {
     const row = obj(entry, `groups[${index}]`);
-    enumValue(row.name, healthGroups, `groups[${index}].name`);
-    const counters = obj(row.counters, `groups[${index}].counters`),
-      checkCount = int(row.check_count, `groups[${index}].check_count`),
-      failing = int(
+    const name = enumValue(row.name, healthGroups, `groups[${index}].name`);
+    if (seen.has(name)) fail(`groups[${index}].duplicate`);
+    seen.add(name);
+    const counters = validateHealthCounters(row.counters, name, `groups[${index}].counters`),
+      checkCount = nonnegativeInt(row.check_count, `groups[${index}].check_count`),
+      failing = nonnegativeInt(
         row.failing_check_count,
         `groups[${index}].failing_check_count`,
       ),
       healthy = bool(row.healthy, `groups[${index}].healthy`);
     if (checkCount !== Object.keys(counters).length || healthy !== (failing === 0))
       fail(`groups[${index}].classification`);
-    Object.entries(counters).forEach(([key, entry]) =>
-      validateHealthCounterValue(entry, `groups[${index}].counters.${key}`),
-    );
   });
+  if (healthGroups.some((name) => !seen.has(name))) fail("groups.complete");
   if (overallHealthy !== groups.every((entry, index) =>
     bool(obj(entry, `groups[${index}]`).healthy, `groups[${index}].healthy`)))
     fail("health.classification");

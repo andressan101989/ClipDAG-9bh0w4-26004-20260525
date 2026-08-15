@@ -8,6 +8,7 @@ import {
   validateCreatorDetail,
   validateCreatorOverview,
   validateCreatorPage,
+  healthCounterKeys,
   validateHealth,
   validatePromotionDetail,
   validatePromotionPage,
@@ -60,6 +61,36 @@ const validAdDetail = () => ({
   delivery: { materializations: 1, eligible_elapsed_seconds: 10 },
   events: { impression: 1 }, attribution: { orders: 0, units: 0, gmv: "0" },
 });
+type HealthGroupName = keyof typeof healthCounterKeys;
+const validHealthCounters = (name: HealthGroupName) => {
+  const counters = Object.fromEntries(
+    healthCounterKeys[name].map((key) => [key, 0]),
+  ) as Record<string, unknown>;
+  if (name === "payments") {
+    counters.confirmed_state_breakdown = {
+      confirmed: 0, processing: 0, shipped: 0, delivered: 0,
+      refunded_fixture: 0, invalid: 0,
+    };
+    counters.invalid_confirmed_state_details = [];
+  }
+  return counters;
+};
+const validHealth = () => ({
+  checked_at: at,
+  healthy: true,
+  groups: (Object.keys(healthCounterKeys) as HealthGroupName[]).map((name) => ({
+    name,
+    check_count: healthCounterKeys[name].length,
+    failing_check_count: 0,
+    healthy: true,
+    counters: validHealthCounters(name),
+  })),
+  attention: [] as unknown[],
+});
+const healthGroup = (
+  payload: ReturnType<typeof validHealth>,
+  name: HealthGroupName,
+) => payload.groups.find((group) => group.name === name)!;
 
 describe("B8C-C1 exact runtime validation", () => {
   it("rejects Creator overview missing a required count", () => {
@@ -122,14 +153,80 @@ describe("B8C-C1 exact runtime validation", () => {
     const value = validAdDetail(); value.financial_events = [{ id: id(5), event_type: "refund", amount: "1", financial_transaction_id: id(6), created_at: at }];
     expect(() => validateAdDetail(value)).toThrow("inválida");
   });
-  it("rejects malformed Health counter types", () => {
-    expect(() => validateHealth({ checked_at: at, healthy: true,
-      groups: [{ name: "payments", check_count: 1, failing_check_count: 0, healthy: true, counters: { mismatch: Symbol("bad") } }], attention: [] })).toThrow("inválida");
+  it("rejects realistic string and boolean values for numeric Health counters", () => {
+    const stringCounter = validHealth();
+    healthGroup(stringCounter, "payments").counters.paid_without_payment = "0";
+    expect(() => validateHealth(stringCounter)).toThrow("inválida");
+    const booleanCounter = validHealth();
+    healthGroup(booleanCounter, "creator_commerce").counters.missing_creator = false;
+    expect(() => validateHealth(booleanCounter)).toThrow("inválida");
+  });
+  it("rejects required Health array and object shape substitutions", () => {
+    const arrayAsObject = validHealth();
+    healthGroup(arrayAsObject, "payments").counters.invalid_confirmed_state_details = {};
+    expect(() => validateHealth(arrayAsObject)).toThrow("inválida");
+    const objectAsArray = validHealth();
+    healthGroup(objectAsArray, "payments").counters.confirmed_state_breakdown = [];
+    expect(() => validateHealth(objectAsArray)).toThrow("inválida");
+  });
+  it("requires the complete unique canonical Health group set", () => {
+    const missing = validHealth();
+    missing.groups.pop();
+    expect(() => validateHealth(missing)).toThrow("inválida");
+    const duplicate = validHealth();
+    duplicate.groups[14] = { ...duplicate.groups[0] };
+    expect(() => validateHealth(duplicate)).toThrow("inválida");
+    const unknown = validHealth();
+    (unknown.groups[0] as { name: string }).name = "future_group";
+    expect(() => validateHealth(unknown)).toThrow("inválida");
+  });
+  it("rejects negative Health counts and inconsistent classifications", () => {
+    const negativeChecks = validHealth();
+    (healthGroup(negativeChecks, "payments") as { check_count: number }).check_count = -1;
+    expect(() => validateHealth(negativeChecks)).toThrow("inválida");
+    const negativeFailures = validHealth();
+    (healthGroup(negativeFailures, "payments") as { failing_check_count: number }).failing_check_count = -1;
+    expect(() => validateHealth(negativeFailures)).toThrow("inválida");
+    const groupMismatch = validHealth();
+    healthGroup(groupMismatch, "payments").healthy = false;
+    expect(() => validateHealth(groupMismatch)).toThrow("inválida");
+    const rootMismatch = validHealth();
+    rootMismatch.healthy = false;
+    expect(() => validateHealth(rootMismatch)).toThrow("inválida");
+  });
+  it("accepts legitimate nonzero observations and canonical unhealthy failures", () => {
+    const observations = validHealth();
+    healthGroup(observations, "payments").counters.confirmed_state_breakdown = {
+      confirmed: 2, processing: 1, shipped: 3, delivered: 21,
+      refunded_fixture: 233, invalid: 0,
+    };
+    const settlement = healthGroup(observations, "settlements").counters;
+    settlement.escrow_expected_held_total = 71;
+    settlement.escrow_actual_balance = 71;
+    settlement.escrow_difference = 0;
+    expect(() => validateHealth(observations)).not.toThrow();
+
+    const unhealthy = validHealth(), payment = healthGroup(unhealthy, "payments");
+    payment.counters.confirmed_state_mismatches = 1;
+    payment.counters.confirmed_state_breakdown = {
+      confirmed: 2, processing: 0, shipped: 0, delivered: 0,
+      refunded_fixture: 0, invalid: 1,
+    };
+    payment.counters.invalid_confirmed_state_details = [{
+      order_id: id(9), checkout_status: "paid", order_status: "invalid",
+      payment_status: "paid", allocation_status: "held",
+    }];
+    payment.failing_check_count = 2;
+    payment.healthy = false;
+    unhealthy.healthy = false;
+    expect(() => validateHealth(unhealthy)).not.toThrow();
   });
   it("rejects malformed Health attention severity and entity", () => {
-    expect(() => validateHealth({ checked_at: at, healthy: true, groups: [], attention: [
+    const malformed = validHealth();
+    malformed.attention = [
       { reason_code: "x", entity_type: "product", entity_id: "bad", severity: "fraud", message: "x" },
-    ] })).toThrow("inválida");
+    ];
+    expect(() => validateHealth(malformed)).toThrow("inválida");
   });
   it("rejects malformed Activity cursor and UUID", () => {
     expect(() => validateActivityPage({ activity: [], page_size: 0,
@@ -152,11 +249,31 @@ describe("B8C controlled page errors", () => {
     expect((await screen.findAllByText("Campaña")).length).toBeGreaterThan(0);
     expect(screen.queryByText(/liberar presupuesto|gastar presupuesto|finalizar campaña/i)).not.toBeInTheDocument();
   });
-  it("shows a controlled health error instead of crashing", async () => {
+  it("shows a controlled health error for realistic malformed JSON with retry", async () => {
     const api = await import("../lib/adminIntelligenceApi");
-    vi.mocked(api.getHealth).mockRejectedValue(new Error("Respuesta de inteligencia inválida: groups"));
+    const malformed = validHealth();
+    healthGroup(malformed, "payments").counters.paid_without_payment = "0";
+    vi.mocked(api.getHealth).mockImplementation(async () => validateHealth(malformed));
     render(<MarketplaceHealthPage />);
-    expect(await screen.findByText("Respuesta de inteligencia inválida: groups")).toBeInTheDocument();
+    expect(await screen.findByText(/Respuesta de inteligencia inválida/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /reintentar/i })).toBeInTheDocument();
+    expect(screen.queryByText("Saludable")).not.toBeInTheDocument();
+  });
+  it("renders a valid canonical unhealthy Health response as attention", async () => {
+    const api = await import("../lib/adminIntelligenceApi"),
+      unhealthy = validHealth(),
+      payment = healthGroup(unhealthy, "payments");
+    payment.counters.confirmed_state_mismatches = 1;
+    payment.counters.invalid_confirmed_state_details = [{
+      order_id: id(9), checkout_status: "paid", order_status: "invalid",
+      payment_status: "paid", allocation_status: "held",
+    }];
+    payment.failing_check_count = 2;
+    payment.healthy = false;
+    unhealthy.healthy = false;
+    vi.mocked(api.getHealth).mockResolvedValue(validateHealth(unhealthy));
+    render(<MarketplaceHealthPage />);
+    expect(await screen.findByText("Requiere atención")).toBeInTheDocument();
+    expect(screen.getByText("2 fallas")).toBeInTheDocument();
   });
 });
