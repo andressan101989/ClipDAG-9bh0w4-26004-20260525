@@ -158,7 +158,7 @@ try {
       assert.equal(r[key], true, key);
   }
   if (requireC1 || requireHardening) {
-    assert.equal(r.latest, requireHardening ? "20260811033000" : "20260811032000");
+    assert.equal(r.latest, requireHardening ? "20260811034000" : "20260811032000");
     for (const key of [
       "b8c_applied",
       "b8c_c1_applied",

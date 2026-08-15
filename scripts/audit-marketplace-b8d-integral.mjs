@@ -8,7 +8,7 @@ import pg from "pg";
 const { Client } = pg;
 const mode = process.argv[2] ?? "--expect-pre-hardening";
 assert.ok(["--expect-pre-hardening", "--require-hardening"].includes(mode), "usage: --expect-pre-hardening|--require-hardening");
-const expectedMigration = mode === "--require-hardening" ? "20260811033000" : "20260811032000";
+const expectedMigration = mode === "--require-hardening" ? "20260811034000" : "20260811032000";
 const cache = join(tmpdir(), "onspace-b8b-npm-cache");
 mkdirSync(cache, { recursive: true });
 
@@ -304,6 +304,19 @@ try {
       where n.nspname='public' and p.proname=any($1::text[]) order by p.proname`, [["fetch_my_marketplace_products_v2","list_my_marketplace_promotions_v2","fetch_my_marketplace_shipping_profiles_v2"]])
   ).rows;
 
+  const reviewAuthority = mode === "--require-hardening" ? (
+    await db.query(`select
+      to_regclass('public.marketplace_product_reviews') is not null product_table,
+      to_regclass('public.marketplace_seller_reviews') is not null seller_table,
+      has_table_privilege('authenticated','public.marketplace_product_reviews','INSERT,UPDATE,DELETE') product_direct_write,
+      has_table_privilege('authenticated','public.marketplace_seller_reviews','INSERT,UPDATE,DELETE') seller_direct_write,
+      has_function_privilege('anon','public.submit_my_marketplace_product_review(uuid,integer,text)','EXECUTE') anon_product_write,
+      has_function_privilege('authenticated','public.submit_my_marketplace_product_review(uuid,integer,text)','EXECUTE') authenticated_product_write,
+      has_function_privilege('authenticated','public.submit_my_marketplace_seller_review(uuid,integer,text)','EXECUTE') authenticated_seller_write,
+      has_function_privilege('anon','public.search_marketplace_product_reviews(uuid,timestamptz,uuid,integer)','EXECUTE') anon_product_read`)
+  ).rows[0] : null;
+  const reviewReconciliation = mode === "--require-hardening" ? (await db.query("select public.reconcile_marketplace_reviews() value")).rows[0]?.value : null;
+
   securityDefiner.client_writable_public = schemaPrivileges.some(
     (entry) =>
       ["anon", "authenticated", "authenticator"].includes(entry.role_name) &&
@@ -323,6 +336,8 @@ try {
     assert.equal(sellerListContracts.length, 3, "b8d_seller_list_contracts_missing");
     assert.ok(sellerListContracts.every((entry) => entry.prosecdef && entry.authenticated_execute && entry.config.some((setting) => setting.startsWith("search_path="))), "b8d_seller_list_contract_unsafe");
     assert.equal(broadTablePrivileges.length, 0, "b8d_broad_table_privilege");
+    assert.deepEqual(reviewAuthority, { product_table: true, seller_table: true, product_direct_write: false, seller_direct_write: false, anon_product_write: false, authenticated_product_write: true, authenticated_seller_write: true, anon_product_read: true }, "b8d_review_authority");
+    assert.ok(Object.values(reviewReconciliation).every((value) => Number(value) === 0), "b8d_review_reconciliation");
   }
 
   console.log(
@@ -349,6 +364,8 @@ try {
         promotion_dormant_privileges: promotionDormantPrivileges,
         creator_search_grants: creatorSearchGrants,
         seller_list_contracts: sellerListContracts,
+        review_authority: reviewAuthority,
+        review_reconciliation: reviewReconciliation,
         mode,
         read_only: true,
       },
