@@ -85,6 +85,7 @@ export function MarketplaceSellerDetailPage() {
           <p>GMV canónico: {formatBdag(orders.paid_gmv as string | number)}</p>
         </section>
         <OperationConfirm
+          maxReasonLength={500}
           title="Moderación del vendedor"
           actions={[
             { value: "approve", label: "Aprobar" },

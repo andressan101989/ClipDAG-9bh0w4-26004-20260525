@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 export function OperationConfirm({
   title,
   actions,
+  maxReasonLength,
   onRun,
 }: {
   title: string;
@@ -12,6 +13,7 @@ export function OperationConfirm({
     reasonRequired?: boolean;
     danger?: boolean;
   }>;
+  maxReasonLength: number;
   onRun: (
     action: string,
     reason: string,
@@ -29,6 +31,10 @@ export function OperationConfirm({
     const normalized = reason.trim();
     if (selected.reasonRequired && !normalized) {
       setMessage("El motivo es obligatorio.");
+      return;
+    }
+    if (normalized.length > maxReasonLength) {
+      setMessage(`El motivo no puede superar ${maxReasonLength} caracteres.`);
       return;
     }
     if (!window.confirm(`Confirmar: ${selected.label}`)) return;
@@ -80,7 +86,7 @@ export function OperationConfirm({
         Motivo
         <textarea
           aria-label="Motivo"
-          maxLength={1000}
+          maxLength={maxReasonLength}
           value={reason}
           disabled={pending}
           onChange={(event) => setReason(event.target.value)}

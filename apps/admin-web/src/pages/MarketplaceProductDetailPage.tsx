@@ -95,6 +95,7 @@ export function MarketplaceProductDetailPage() {
           <p>LIVE: {String(usage.live_refs ?? 0)}</p>
         </section>
         <OperationConfirm
+          maxReasonLength={500}
           title="Moderación del producto"
           actions={[
             { value: "approve", label: "Aprobar" },

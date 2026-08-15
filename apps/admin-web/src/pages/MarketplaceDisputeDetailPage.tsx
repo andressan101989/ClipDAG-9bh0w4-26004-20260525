@@ -134,6 +134,7 @@ export function MarketplaceDisputeDetailPage() {
           ))}
         </section>
         <OperationConfirm
+          maxReasonLength={100}
           title="Resolver disputa"
           actions={[
             {
