@@ -277,3 +277,52 @@ There is no integrity blocker under the phase's P0/P1 rule. The explicit process
 ## Recommended next action
 
 Independently review this artifact. If accepted, authorize a focused forward-only hardening phase for the selected P2 items—starting with default ACL/current grant cleanup and null-safe bounds—then rerun catalog, disposable, reconciliation and client-runtime regressions. Do not start B8D-2 until that decision is recorded. B8D-3 physical/browser testing and B8D-4 freeze remain not started.
+
+## MKT-B8D-1H — Production Hardening Closure
+
+Baseline: branch `codex/mkt-a4b-premium-integration`, starting SHA `892dc8d376e57b2e97e143399b48e9aa4309695e`, Build 22, remote migration `20260811032000`. The correction is the single forward migration `20260811033000_marketplace_production_hardening.sql`; no historical migration was edited and no economic formula or financial writer changed.
+
+### B8D-001 — default ACL and current privilege hardening
+
+- Original finding: postgres and supabase_admin public-schema default ACLs broadly granted future objects to anon/authenticated, promotions retained dormant `REFERENCES/TRIGGER/TRUNCATE`, and the disposable bootstrap overgranted schema CREATE.
+- Effective-owner audit: all 239 post-hardening Marketplace functions and all 60 Marketplace table/sequence/view objects are owned by postgres. Postgres cannot `SET ROLE supabase_admin`; supabase_admin owns zero Marketplace objects. Platform-managed supabase_admin defaults and service_role defaults were therefore preserved.
+- Fix: schema CREATE is defensively revoked from PUBLIC, anon, authenticated, authenticator and service_role. Postgres public defaults revoke anon/authenticated/PUBLIC table and sequence access. Because PostgreSQL's built-in function default grants PUBLIC EXECUTE globally and a schema-local revoke cannot override it, the migration also performs the necessary global postgres function-default revoke. Explicit service_role defaults remain. Promotion `REFERENCES/TRIGGER/TRUNCATE` is revoked from anon/authenticated.
+- Proof: rollback-created postgres table, sequence and function each gave anon/authenticated no initial privilege. Remote catalog reports anon/authenticated/authenticator/service_role `CREATE=false`, zero unexpected postgres default grants, zero broad Marketplace client DML/dormant privileges, and 204/204 Marketplace SECURITY DEFINER functions with fixed search paths (effective unsafe count zero). Disposable bootstrap now mirrors production CREATE denial. Residual risk: platform-managed supabase_admin defaults remain broad by design; they do not currently create Marketplace objects and were not changed without platform authority.
+
+### B8D-002 — NULL-safe bounded contracts
+
+- `expire_marketplace_checkout_reservations`: default 100; 1 and 100 accepted; NULL, 0 and 101 reject with SQLSTATE 22023.
+- `fetch_marketplace_sponsored_products` and v2: existing clamp contract preserved—default/NULL 4, 1 and 8 accepted, 0 returns no candidates, values above 8 clamp to 8. Explicit NULL can no longer become `LIMIT NULL`.
+- `fetch_my_marketplace_ad_campaigns`: existing clamp contract preserved—default/NULL 50, 1 and 100 accepted, 0 clamps to 1, 101 clamps to 100.
+- Remote catalog reports both the targeted and general authenticated null-limit risk lists empty.
+
+### B8D-003 — bounded seller-owned lists
+
+Added `fetch_my_marketplace_products_v2`, `list_my_marketplace_promotions_v2`, and `fetch_my_marketplace_shipping_profiles_v2`. Each is owner-derived from `auth.uid()`, SECURITY DEFINER with `search_path=pg_catalog, public`, default 50, hard max 100, explicit NULL/0/101 rejection, paired-cursor validation, and no OFFSET.
+
+Keysets are respectively `(updated_at DESC,id DESC)`, `(created_at DESC,id DESC)`, and `(created_at ASC,id ASC)`. Three matching indexes were added only for these query shapes. Official mobile callers use v2. To preserve already-shipped Build-22 compatibility, the old signatures remain but delegate to a bounded first page of at most 100; they can no longer perform an unbounded scan.
+
+Disposable fixtures produced pages 2+1 in all three domains with no duplicates/skips, deterministic cursors, terminal null cursors, and zero cross-seller rows. Default/max/null/0/101 contracts passed and rollback fixture residue was zero.
+
+### B8D-004 — superseded creator admin read
+
+Repository search found no supported old client; Admin Web and the corrected proof use `search_marketplace_admin_creators_v2`. The inaccurate v1 function remains only for trusted service-side compatibility: anon execute false, authenticated execute false, service_role execute true. Correct v2 remains anon false/authenticated true and independently calls the frozen admin guard. Disposable ordinary authenticated access returned 42501; a protected admin v2 call succeeded.
+
+### B8D-005 — mobile RPC runtime validation
+
+Added the shared `marketplaceRuntimeValidation.ts` boundary and applied it to Marketplace Ads, promotions, products/variants/seller lists, shipping profiles/quotes, Creator analytics, checkout/order reservation, payment receipts, and buyer/seller fulfillment detail/list/lifecycle reads. Required UUIDs, finite nonnegative money, integer quantities/counts, timestamps, enums, booleans, arrays, objects, nullable fields and cursor envelopes now fail closed with controlled typed service errors instead of coercing malformed JSON into `undefined`, `NaN`, `Invalid Date`, fabricated status, or wrong BDAG display.
+
+Realistic malformed-JSON tests cover string/boolean money, malformed UUID/timestamp/enum, fractional quantity, object/array substitution and malformed/oversized cursor envelopes. Existing screens retain their loading/error/retry boundaries; no visual redesign was introduced.
+
+### Verification and deployment evidence
+
+- Forward migration compiled twice on the disposable final-state schema. The focused hardening proof passed ACL/default-object creation, current grants, all four limit contracts, three multi-page seller lists, creator old/v2 access and fixture cleanup.
+- B8S/B8A/B8B/B8C plus hardening focused tests: 61 passed, 0 failed. Admin Web: 55 passed, lint 0 warnings/errors, Vite build succeeded (119 modules). Full root Node suite: 712 passed, 0 failed.
+- Mobile TypeScript remained exactly 187 pre-existing diagnostics; hardening changed-file diagnostics: 0. Build stayed 22. No EAS.
+- All inherited disposable Marketplace proofs passed: checkout/payment, inventory/order lifecycle, shipping/publication, settlements, held disputes, post-settlement reversals, B7A/B7B/B7C/B7D/B7E/B7F/B7R, promotions, Ads finance/eligibility/finalization/delivery/events, B8S/B8A/B8B/B8C, runtime and fixture finalization. All reported zero failure counters and zero persistent fixtures.
+- Predeploy remote audit was healthy at 32000. Linked dry-run contained exactly 33000, no seeds/roles/other migrations. The migration deployed once. Postdeploy catalog audit is healthy at 33000: default/client exposures zero, dormant promotion grants zero, null-limit risks zero, creator v1 policy correct, seller v2 grants/fixed paths correct, dynamic SQL exposure zero.
+- Postdeploy inherited remote reconciliation is healthy: B8B 8/8 zero; Creator Commerce 36/36, Showcase 23/23, Content Tags 28/28, allocations 27/27, LIVE 9/9, Analytics 18/18 and reversals 32/32 zero; Ads finance 23/23, eligibility 4/4, finalization 4/4, delivery 5/5 and events 7/7 zero; payments/settlements failure counters zero with escrow expected 71 = actual 71. Fixtures 0; failure hooks absent.
+
+### Residual scope
+
+B8D-001 through B8D-005 are corrected with production effective-state proof. The accepted P3 findings remain open unchanged: B8D-006 narrow navigation overflow, B8D-007 narrow table labels, and B8D-008 accessible privileged confirmation polish. They are reserved for separately authorized B8D-2. B8D-2, B8D-3 and B8D-4 were not started.

@@ -7,6 +7,7 @@ const service=read('services/marketplaceService.ts');
 const migration=read('supabase/migrations/20260727110000_fix_marketplace_seller_restore.sql');
 const original=read('supabase/migrations/20260727100000_marketplace_mkt_a1_seller_store_product_foundation.sql');
 const sellerList=read('supabase/migrations/20260805102000_restore_seller_product_list.sql');
+const hardening=read('supabase/migrations/20260811033000_marketplace_production_hardening.sql');
 
 function ownedRows(rows,userId,key){return rows.filter(row=>row[key]===userId);}
 
@@ -32,9 +33,10 @@ test('unit model: seller dashboard excludes another seller public products',()=>
   const start=service.indexOf('export async function fetchMyProducts');
   const end=service.indexOf('export async function fetchSellerFoundation');
   const block=service.slice(start,end);
-  assert.match(block,/rpc\('fetch_my_marketplace_products'\)/);
-  assert.match(sellerList,/p\.seller_id=actor/);
-  assert.match(sellerList,/p\.status<>'deleted'/);
+  assert.match(block,/rpc\('fetch_my_marketplace_products_v2'/);
+  assert.match(hardening,/p\.seller_id=actor/);
+  assert.match(hardening,/p\.status<>'deleted'/);
+  assert.match(hardening,/p_limit is null or p_limit<1 or p_limit>100/);
   assert.doesNotMatch(block,/sellerId\s*:/);
 });
 

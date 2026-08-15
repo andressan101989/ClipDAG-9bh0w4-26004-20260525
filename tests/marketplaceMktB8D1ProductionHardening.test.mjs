@@ -1,0 +1,78 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const root = process.cwd();
+const read = (path) => readFileSync(join(root, path), "utf8");
+const migrationPath = "supabase/migrations/20260811033000_marketplace_production_hardening.sql";
+const migration = read(migrationPath);
+const bootstrap = read("scripts/create-marketplace-disposable-db.mjs");
+const auditor = read("scripts/audit-marketplace-b8d-integral.mjs");
+const proof = read("scripts/prove-marketplace-production-hardening.mjs");
+const validator = read("services/marketplaceRuntimeValidation.ts");
+const product = read("services/marketplaceService.ts");
+const promotion = read("services/marketplacePromotionService.ts");
+const shipping = read("services/marketplaceShippingService.ts");
+const mobile = [product, promotion, shipping, read("services/marketplaceAdsService.ts"), read("services/marketplacePaymentService.ts"), read("services/marketplaceOrderService.ts"), read("services/marketplaceFulfillmentService.ts"), read("services/marketplaceCreatorAnalyticsService.ts")].join("\n");
+
+test("B8D-1H is one forward-only migration after the frozen B8C closure", () => {
+  assert.ok(existsSync(join(root, migrationPath)));
+  assert.match(migration, /^-- MKT-B8D-1H/);
+  assert.ok(existsSync(join(root, "supabase/migrations/20260811032000_marketplace_admin_intelligence_closure.sql")));
+  assert.equal(String(JSON.parse(read("app.json")).expo.ios.buildNumber), "22");
+});
+
+test("schema and postgres default privileges require explicit browser grants", () => {
+  assert.match(migration, /revoke create on schema public from public, anon, authenticated, authenticator, service_role/i);
+  for (const kind of ["tables", "sequences", "functions"]) assert.match(migration, new RegExp(`alter default privileges for role postgres in schema public[\\s\\S]*?${kind}`, "i"));
+  assert.match(migration, /revoke references, trigger, truncate on table public\.marketplace_product_promotions/i);
+  assert.doesNotMatch(migration, /grant\s+(insert|update|delete|truncate|trigger|references)\s+on\s+(all\s+)?tables?.*\b(anon|authenticated)\b/i);
+  assert.match(bootstrap, /revoke create on schema public from public,anon,authenticated,authenticator,service_role/i);
+});
+
+test("all four audited limits have explicit NULL-safe contracts", () => {
+  for (const name of ["expire_marketplace_checkout_reservations", "fetch_marketplace_sponsored_products", "fetch_marketplace_sponsored_products_v2", "fetch_my_marketplace_ad_campaigns"]) assert.match(migration, new RegExp(`create or replace function public\\.${name}\\(`, "i"));
+  assert.match(migration, /if p_limit is null or p_limit<1 or p_limit>100/i);
+  assert.ok((migration.match(/coalesce\(p_limit,/gi) ?? []).length >= 3);
+  assert.match(proof, /default=100;1\/100 accepted;NULL\/0\/101=22023/);
+});
+
+test("seller-owned lists use bounded keyset v2 RPCs and compatibility wrappers", () => {
+  for (const name of ["fetch_my_marketplace_products_v2", "list_my_marketplace_promotions_v2", "fetch_my_marketplace_shipping_profiles_v2"]) {
+    assert.match(migration, new RegExp(`create or replace function public\\.${name}\\(`, "i"));
+  }
+  assert.ok((migration.match(/p_limit is null or p_limit<1 or p_limit>100/gi) ?? []).length >= 3);
+  assert.match(migration, /\(p\.updated_at,p\.id\)<\(p_cursor_updated_at,p_cursor_product_id\)/i);
+  assert.match(migration, /\(p\.created_at,p\.id\)<\(p_cursor_created_at,p_cursor_promotion_id\)/i);
+  assert.match(migration, /\(p\.created_at,p\.id\)>\(p_cursor_created_at,p_cursor_profile_id\)/i);
+  assert.doesNotMatch(migration, /\boffset\b/i);
+  assert.match(migration, /fetch_my_marketplace_products_v2\(null,null,100\)->'items'/i);
+  assert.match(product, /rpc\('fetch_my_marketplace_products_v2'/);
+  assert.match(promotion, /rpc\("list_my_marketplace_promotions_v2"/);
+  assert.match(shipping, /rpc\('fetch_my_marketplace_shipping_profiles_v2'/);
+  assert.doesNotMatch(product, /rpc\('fetch_my_marketplace_products'\s*[,)]/);
+});
+
+test("superseded creator v1 is no longer an authenticated contract", () => {
+  assert.match(migration, /revoke all on function public\.search_marketplace_admin_creators\([\s\S]*?from public,anon,authenticated,service_role/i);
+  assert.match(migration, /grant execute on function public\.search_marketplace_admin_creators\([\s\S]*?to service_role/i);
+  assert.match(migration, /grant execute on function public\.search_marketplace_admin_creators_v2\([\s\S]*?to authenticated,service_role/i);
+  assert.match(proof, /ordinary_denied: true, protected_admin_allowed: true/);
+});
+
+test("mobile RPC payloads are validated without client financial authority", () => {
+  for (const helper of ["rpcObject", "rpcArray", "rpcUuid", "rpcNonnegative", "rpcNonnegativeInteger", "rpcTimestamp", "rpcEnum", "rpcCursorPage"]) assert.match(validator, new RegExp(`export const ${helper}`));
+  for (const service of ["marketplaceAdsService", "marketplacePromotionService", "marketplaceService", "marketplaceShippingService", "marketplacePaymentService", "marketplaceOrderService", "marketplaceFulfillmentService", "marketplaceCreatorAnalyticsService"]) assert.ok(mobile.includes("marketplaceRuntimeValidation"), service);
+  assert.doesNotMatch(mobile, /rows<[^>]+>\(data\)/);
+  assert.doesNotMatch(migration + mobile, /set_balance|adjust_wallet|repair_ledger|p_(seller_payout|creator_bps|platform_fee|ledger_account)/i);
+});
+
+test("proof and auditor are read-only remotely and B8D-2/3/4 were not started", () => {
+  assert.match(proof, /B8D1H_PROOF_REQUIRES_DISPOSABLE_DATABASE/);
+  assert.match(proof, /rollback/);
+  assert.match(auditor, /read_only: true/);
+  assert.doesNotMatch(auditor, /db\.query\(["'`]\s*(insert|update|delete|truncate)\b/i);
+  assert.doesNotMatch(auditor, /supabase\s+db\s+push/i);
+  assert.doesNotMatch(migration + mobile, /B8D-2|B8D-3|B8D-4|LIVE Battles/i);
+});

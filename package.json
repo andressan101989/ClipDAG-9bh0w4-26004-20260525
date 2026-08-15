@@ -21,6 +21,7 @@
     "prove:marketplace-admin-web-foundation": "node scripts/prove-marketplace-admin-web-foundation.mjs",
     "prove:marketplace-admin-operations-core": "node scripts/prove-marketplace-admin-operations-core.mjs",
     "prove:marketplace-admin-intelligence-ops": "node scripts/prove-marketplace-admin-intelligence-ops.mjs",
+    "prove:marketplace-production-hardening": "node scripts/prove-marketplace-production-hardening.mjs",
     "audit:marketplace-b7r-remote": "node scripts/audit-marketplace-b7r-remote.mjs",
     "audit:marketplace-b7f-remote": "node scripts/audit-marketplace-b7f-remote.mjs",
     "audit:marketplace-b7a-remote": "node scripts/audit-marketplace-b7a-remote.mjs",

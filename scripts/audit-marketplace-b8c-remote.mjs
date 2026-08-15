@@ -10,6 +10,7 @@ const { Client } = pg,
   required = process.argv.includes("--require-b8c"),
   preC1 = process.argv.includes("--expect-pre-b8c-c1"),
   requireC1 = process.argv.includes("--require-b8c-c1"),
+  requireHardening = process.argv.includes("--require-b8d1h"),
   cache = join(tmpdir(), "onspace-b8b-npm-cache");
 mkdirSync(cache, { recursive: true });
 let captured = "";
@@ -156,8 +157,8 @@ try {
     ])
       assert.equal(r[key], true, key);
   }
-  if (requireC1) {
-    assert.equal(r.latest, "20260811032000");
+  if (requireC1 || requireHardening) {
+    assert.equal(r.latest, requireHardening ? "20260811033000" : "20260811032000");
     for (const key of [
       "b8c_applied",
       "b8c_c1_applied",
@@ -184,6 +185,8 @@ try {
         ok: true,
         mode: preC1
           ? "pre-b8c-c1"
+          : requireHardening
+            ? "require-b8d1h"
           : requireC1
             ? "require-b8c-c1"
             : pre

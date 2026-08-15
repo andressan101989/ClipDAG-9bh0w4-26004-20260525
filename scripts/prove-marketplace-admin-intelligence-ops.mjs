@@ -356,7 +356,7 @@ try {
     {
       name: "creators",
       fn: (limit) =>
-        rpc("search_marketplace_admin_creators", [
+        rpc("search_marketplace_admin_creators_v2", [
           null,
           "30d",
           null,

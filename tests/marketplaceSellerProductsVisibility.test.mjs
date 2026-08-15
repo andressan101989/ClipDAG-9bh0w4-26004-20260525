@@ -6,10 +6,11 @@ const service=readFileSync('services/marketplaceService.ts','utf8');
 const context=readFileSync('contexts/ShopContext.tsx','utf8');
 const screen=readFileSync('app/seller/products.tsx','utf8');
 const migration=readFileSync('supabase/migrations/20260805102000_restore_seller_product_list.sql','utf8');
+const hardening=readFileSync('supabase/migrations/20260811033000_marketplace_production_hardening.sql','utf8');
 
 test('seller list uses its ownership-scoped RPC instead of a direct products select',()=>{
  const body=service.slice(service.indexOf('export async function fetchMyProducts'),service.indexOf('export async function fetchSellerFoundation'));
- assert.match(body,/rpc\('fetch_my_marketplace_products'\)/);
+ assert.match(body,/rpc\('fetch_my_marketplace_products_v2'/);
  assert.doesNotMatch(body,/from\('products'\)/);
  assert.match(body,/MarketplaceSellerProductsError/);
 });
@@ -22,6 +23,9 @@ test('seller RPC exposes owned manageable products without broad grants',()=>{
  assert.match(migration,/revoke all on function public\.fetch_my_marketplace_products\(\) from public,anon/);
  assert.match(migration,/grant execute on function public\.fetch_my_marketplace_products\(\) to authenticated,service_role/);
  assert.doesNotMatch(migration,/grant select .*products/i);
+ assert.match(hardening,/fetch_my_marketplace_products_v2/);
+ assert.match(hardening,/p_limit is null or p_limit<1 or p_limit>100/);
+ assert.match(hardening,/fetch_my_marketplace_products_v2\(null,null,100\)->'items'/);
 });
 
 test('public projection excludes seller-private shipping configuration',()=>{

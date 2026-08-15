@@ -6,6 +6,9 @@ import { join } from "node:path";
 import pg from "pg";
 
 const { Client } = pg;
+const mode = process.argv[2] ?? "--expect-pre-hardening";
+assert.ok(["--expect-pre-hardening", "--require-hardening"].includes(mode), "usage: --expect-pre-hardening|--require-hardening");
+const expectedMigration = mode === "--require-hardening" ? "20260811033000" : "20260811032000";
 const cache = join(tmpdir(), "onspace-b8b-npm-cache");
 mkdirSync(cache, { recursive: true });
 
@@ -71,7 +74,7 @@ try {
       "select version from supabase_migrations.schema_migrations order by version desc limit 1",
     )
   ).rows[0]?.version;
-  assert.equal(latest, "20260811032000", "b8d_remote_migration_mismatch");
+  assert.equal(latest, expectedMigration, "b8d_remote_migration_mismatch");
 
   const roles = (
     await db.query(`
@@ -80,8 +83,22 @@ try {
       from pg_roles
       where rolname = any($1::text[])
       order by rolname
-    `, [["anon", "authenticated", "authenticator", "service_role", "postgres"]])
+    `, [["anon", "authenticated", "authenticator", "service_role", "postgres", "supabase_admin"]])
   ).rows;
+
+  const roleMemberships = (
+    await db.query(`
+      select granted.rolname role, member.rolname member
+      from pg_auth_members membership
+      join pg_roles granted on granted.oid = membership.roleid
+      join pg_roles member on member.oid = membership.member
+      where granted.rolname = 'supabase_admin' or member.rolname = 'postgres'
+      order by granted.rolname, member.rolname
+    `)
+  ).rows;
+  const postgresCanSetSupabaseAdmin = (
+    await db.query("select pg_has_role('postgres','supabase_admin','SET') value")
+  ).rows[0]?.value;
 
   const schemaPrivileges = (
     await db.query(`
@@ -169,6 +186,24 @@ try {
     `)
   ).rows;
 
+  const marketplaceObjectOwners = (
+    await db.query(`
+      select object_type, owner, count(*)::int objects
+      from (
+        select 'table_or_sequence' object_type, c.relowner::regrole::text owner
+        from pg_class c join pg_namespace n on n.oid=c.relnamespace
+        where n.nspname='public' and c.relname like 'marketplace_%'
+          and c.relkind in ('r','p','S','v','m')
+        union all
+        select 'function', p.proowner::regrole::text
+        from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+        where n.nspname='public' and p.proname like '%marketplace%'
+      ) objects
+      group by object_type, owner
+      order by object_type, owner
+    `)
+  ).rows;
+
   const securityDefinerSearchPaths = (
     await db.query(`
       select coalesce((
@@ -217,6 +252,58 @@ try {
     `)
   ).rows;
 
+  const targetedLimitRisks = (
+    await db.query(`
+      select p.proname, pg_get_function_identity_arguments(p.oid) arguments
+      from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.proname=any($1::text[])
+        and p.prosrc ilike '%p_limit%'
+        and p.prosrc not ilike '%p_limit is null%'
+        and p.prosrc not ilike '%coalesce(p_limit%'
+      order by p.proname
+    `, [["expire_marketplace_checkout_reservations", "fetch_marketplace_sponsored_products", "fetch_marketplace_sponsored_products_v2", "fetch_my_marketplace_ad_campaigns"]])
+  ).rows;
+
+  const unexpectedPostgresDefaults = (
+    await db.query(`
+      select d.defaclobjtype object_type, coalesce(grantee.rolname,'PUBLIC') grantee,
+             privilege_type
+      from pg_default_acl d
+      left join pg_namespace n on n.oid=d.defaclnamespace
+      cross join lateral aclexplode(d.defaclacl) x
+      left join pg_roles grantee on grantee.oid=x.grantee
+      where d.defaclrole='postgres'::regrole
+        and coalesce(n.nspname,'public')='public'
+        and coalesce(grantee.rolname,'PUBLIC') in ('PUBLIC','anon','authenticated')
+      order by object_type,grantee,privilege_type
+    `)
+  ).rows;
+
+  const promotionDormantPrivileges = (
+    await db.query(`select role_name,
+      has_table_privilege(role_name,'public.marketplace_product_promotions','REFERENCES') can_reference,
+      has_table_privilege(role_name,'public.marketplace_product_promotions','TRIGGER') can_trigger,
+      has_table_privilege(role_name,'public.marketplace_product_promotions','TRUNCATE') can_truncate
+      from unnest(array['anon','authenticated']) role_name order by role_name`)
+  ).rows;
+
+  const creatorSearchGrants = (
+    await db.query(`select
+      has_function_privilege('anon','public.search_marketplace_admin_creators(text,text,timestamptz,uuid,integer)','EXECUTE') old_anon,
+      has_function_privilege('authenticated','public.search_marketplace_admin_creators(text,text,timestamptz,uuid,integer)','EXECUTE') old_authenticated,
+      has_function_privilege('service_role','public.search_marketplace_admin_creators(text,text,timestamptz,uuid,integer)','EXECUTE') old_service,
+      has_function_privilege('anon','public.search_marketplace_admin_creators_v2(text,text,timestamptz,uuid,integer)','EXECUTE') v2_anon,
+      has_function_privilege('authenticated','public.search_marketplace_admin_creators_v2(text,text,timestamptz,uuid,integer)','EXECUTE') v2_authenticated`)
+  ).rows[0];
+
+  const sellerListContracts = (
+    await db.query(`select p.proname,pg_get_function_identity_arguments(p.oid) arguments,
+      p.prosecdef,coalesce(p.proconfig,'{}'::text[]) config,
+      has_function_privilege('authenticated',p.oid,'EXECUTE') authenticated_execute
+      from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.proname=any($1::text[]) order by p.proname`, [["fetch_my_marketplace_products_v2","list_my_marketplace_promotions_v2","fetch_my_marketplace_shipping_profiles_v2"]])
+  ).rows;
+
   securityDefiner.client_writable_public = schemaPrivileges.some(
     (entry) =>
       ["anon", "authenticated", "authenticator"].includes(entry.role_name) &&
@@ -225,22 +312,44 @@ try {
   securityDefiner.effective_unsafe_search_path =
     securityDefiner.client_writable_public ? securityDefiner.public_in_path : 0;
 
+  assert.ok(schemaPrivileges.every((entry) => entry.can_create === false), "b8d_schema_create_exposure");
+  assert.equal(exposedDynamicSql.length, 0, "b8d_exposed_dynamic_sql");
+  assert.equal(securityDefiner.effective_unsafe_search_path, 0, "b8d_security_definer_search_path");
+  if (mode === "--require-hardening") {
+    assert.equal(unexpectedPostgresDefaults.length, 0, "b8d_default_acl_exposure");
+    assert.ok(promotionDormantPrivileges.every((entry) => !entry.can_reference && !entry.can_trigger && !entry.can_truncate), "b8d_promotion_dormant_privilege");
+    assert.equal(targetedLimitRisks.length, 0, "b8d_target_limit_risk");
+    assert.deepEqual(creatorSearchGrants, { old_anon: false, old_authenticated: false, old_service: true, v2_anon: false, v2_authenticated: true }, "b8d_creator_contract");
+    assert.equal(sellerListContracts.length, 3, "b8d_seller_list_contracts_missing");
+    assert.ok(sellerListContracts.every((entry) => entry.prosecdef && entry.authenticated_execute && entry.config.some((setting) => setting.startsWith("search_path="))), "b8d_seller_list_contract_unsafe");
+    assert.equal(broadTablePrivileges.length, 0, "b8d_broad_table_privilege");
+  }
+
   console.log(
     JSON.stringify(
       {
         ok: true,
         latest,
         roles,
+        role_memberships: roleMemberships,
+        postgres_can_set_supabase_admin: postgresCanSetSupabaseAdmin,
         schema_privileges: schemaPrivileges,
         schema_acl: schemaAcl,
         session_search_path: sessionSearchPath,
         default_acl: defaultAcl,
         marketplace_security_definer: securityDefiner,
         marketplace_security_definer_owners: securityDefinerOwners,
+        marketplace_object_owners: marketplaceObjectOwners,
         marketplace_security_definer_search_paths: securityDefinerSearchPaths,
         exposed_dynamic_sql: exposedDynamicSql,
         broad_marketplace_table_privileges: broadTablePrivileges,
         null_limit_risks: limitRisks,
+        targeted_null_limit_risks: targetedLimitRisks,
+        unexpected_postgres_default_privileges: unexpectedPostgresDefaults,
+        promotion_dormant_privileges: promotionDormantPrivileges,
+        creator_search_grants: creatorSearchGrants,
+        seller_list_contracts: sellerListContracts,
+        mode,
         read_only: true,
       },
       null,
