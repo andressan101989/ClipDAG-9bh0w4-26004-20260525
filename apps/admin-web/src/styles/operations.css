@@ -1,0 +1,6 @@
+.filters.compact{grid-template-columns:minmax(260px,1fr) 180px auto}
+.page-heading select,.operation-panel select,.operation-panel textarea{border:1px solid #cfd9d4;border-radius:9px;padding:12px;background:#fff}
+.operation-panel{display:grid;gap:14px}.operation-panel label{display:grid;gap:7px;font-size:13px;font-weight:700}
+.operation-panel textarea{min-height:90px;resize:vertical}.operation-message{margin:0;color:var(--green-dark)}
+button.danger{background:#a23b31}button.danger:hover{background:#7e2922}
+@media(max-width:720px){.filters.compact{grid-template-columns:1fr}}
