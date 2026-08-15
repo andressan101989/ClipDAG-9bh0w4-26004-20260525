@@ -17,7 +17,8 @@ test("B8S is a forward-only migration and leaves historical schema history intac
   assert.match(historical, /create policy "user_profiles_insert_self"/);
   assert.match(historical, /create policy "user_profiles_update_self"/);
   assert.match(migration, /protect_user_profile_server_fields/);
-  assert.equal(existsSync("apps/admin-web"), false);
+  assert.equal(existsSync("app/admin-web"), false);
+  assert.equal(existsSync("app/marketplace-admin"), false);
 });
 
 test("table-wide client DML is removed before safe column grants", () => {
