@@ -410,10 +410,10 @@ try {
         creatorCommerce: {
           ranges: ["7d", "30d", "90d", "all"],
           invalidRangeRejected: true,
-          itemLevelCanonicalFacts: true,
-          multiCreatorNoOrderTotalDuplication: true,
+          projectionUsesCanonicalItemFacts: true,
+          projectionExcludesWholeOrderTotals: true,
           commissionNet: "released-reversed",
-          surfaces: [
+          canonicalSurfacesAudited: [
             "creator_showcase",
             "feed",
             "reel",

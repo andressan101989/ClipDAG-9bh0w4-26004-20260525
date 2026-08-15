@@ -74,6 +74,8 @@ All new RPC payloads pass explicit deep runtime validation for UUIDs, timestamps
 - B8B reconciliation 8/8 zero;
 - fixture residue zero.
 
+Evidence is deliberately split rather than duplicated: the B8C-specific proof creates runtime admin, promotion, Ads, health-mismatch, and activity fixtures and inspects the deployed Creator projection definition. The canonical B7D/B7F regressions provide the runtime multi-creator, five-surface, historical allocation, release, and reversal fixtures; the canonical Ads finance/eligibility/finalization/delivery/attribution proofs provide the full Ads lifecycle fixtures. The B8C proof output labels these Creator checks as projection assertions and canonical surfaces audited, not as newly constructed B8C sales. A final evidence review corrected the earlier machine-readable labels so they do not imply a fixture that the B8C-specific script did not itself create.
+
 ## Security and financial non-authority
 
 No service-role key, DB password, JWT secret, private key, or payment secret is present in the web. B8C has no actor/admin parameter, raw ledger call, creator allocation mutation, promotion snapshot mutation, Ads financial mutation, or authenticated raw financial-table write. Historical migrations were not edited. B8D was not started.
