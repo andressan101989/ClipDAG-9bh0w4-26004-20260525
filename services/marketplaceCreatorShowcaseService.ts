@@ -1,17 +1,31 @@
 import { getSupabaseClient } from "@/template";
+import {
+  rpcArray,
+  rpcBoolean,
+  rpcEnum,
+  rpcNonnegative,
+  rpcNonnegativeInteger,
+  rpcNullableString,
+  rpcNullableTimestamp,
+  rpcNullableUuid,
+  rpcObject,
+  rpcString,
+  rpcTimestamp,
+  rpcUuid,
+} from "./marketplaceRuntimeValidation";
 
 export interface MarketplaceCreatorShowcaseProduct {
   showcaseItemId: string | null;
   creatorUserId?: string;
   productId: string;
-  sellerId: string;
-  storeId: string;
+  sellerId?: string;
+  storeId?: string;
   title: string;
   storeName: string;
   sellerName?: string;
   imageUrl: string | null;
   minPrice: number;
-  maxPrice: number;
+  maxPrice?: number;
   availableQuantity: number;
   commissionBps?: number;
   offerScope?: "public_creator" | "specific_creator";
@@ -23,6 +37,13 @@ export interface MarketplaceCreatorShowcaseProduct {
 export interface MarketplaceCreatorShowcaseManagementItem
   extends MarketplaceCreatorShowcaseProduct {
   showcaseItemId: string;
+  productId: string;
+  title: string;
+  storeName: string;
+  imageUrl: string | null;
+  minPrice: number;
+  availableQuantity: number;
+  sortPosition: number;
   status: "active" | "removed";
   selectedAt: string;
   removedAt: string | null;
@@ -54,84 +75,214 @@ export class MarketplaceCreatorShowcaseError extends Error {
 }
 
 const db = () => getSupabaseClient();
-const value = (input: unknown) => (input && typeof input === "object" ? input as Record<string, unknown> : {});
-const text = (input: unknown) => typeof input === "string" ? input : "";
-const nullableText = (input: unknown) => typeof input === "string" ? input : null;
-const number = (input: unknown) => Number.isFinite(Number(input)) ? Number(input) : 0;
 const rpcError = (error: unknown): never => {
-  const message = error && typeof error === "object" && "message" in error
-    ? String((error as { message: unknown }).message)
-    : "marketplace_creator_showcase_unknown";
-  throw new MarketplaceCreatorShowcaseError(message.match(/marketplace_[a-z0-9_]+/)?.[0] ?? "marketplace_creator_showcase_unknown");
+  const message =
+    error && typeof error === "object" && "message" in error
+      ? String((error as { message: unknown }).message)
+      : "marketplace_creator_showcase_unknown";
+  throw new MarketplaceCreatorShowcaseError(
+    message.match(/marketplace_[a-z0-9_]+/)?.[0] ??
+      "marketplace_creator_showcase_unknown",
+  );
 };
 
-function mapProduct(input: unknown): MarketplaceCreatorShowcaseProduct {
-  const row = value(input);
+export function parseCreatorShowcaseProduct(
+  input: unknown,
+): MarketplaceCreatorShowcaseProduct {
+  const row = rpcObject(input, "creator_showcase.product");
   return {
-    showcaseItemId: nullableText(row.showcase_item_id),
-    creatorUserId: nullableText(row.creator_user_id) ?? undefined,
-    productId: text(row.product_id),
-    sellerId: text(row.seller_id),
-    storeId: text(row.store_id),
-    title: text(row.title),
-    storeName: text(row.store_name),
-    sellerName: nullableText(row.seller_name) ?? undefined,
-    imageUrl: nullableText(row.image_url),
-    minPrice: number(row.min_price),
-    maxPrice: number(row.max_price),
-    availableQuantity: number(row.available_quantity),
-    commissionBps: row.commission_bps == null ? undefined : number(row.commission_bps),
-    offerScope: row.offer_scope === "specific_creator" ? "specific_creator" : row.offer_scope === "public_creator" ? "public_creator" : undefined,
-    selected: row.selected === true,
-    sortPosition: row.sort_position == null ? undefined : number(row.sort_position),
-    updatedAt: nullableText(row.updated_at) ?? undefined,
+    showcaseItemId:
+      row.showcase_item_id == null
+        ? null
+        : rpcUuid(
+            row.showcase_item_id,
+            "creator_showcase.product.showcase_item_id",
+          ),
+    creatorUserId:
+      row.creator_user_id == null
+        ? undefined
+        : rpcUuid(
+            row.creator_user_id,
+            "creator_showcase.product.creator_user_id",
+          ),
+    productId: rpcUuid(row.product_id, "creator_showcase.product.product_id"),
+    sellerId: rpcUuid(row.seller_id, "creator_showcase.product.seller_id"),
+    storeId: rpcUuid(row.store_id, "creator_showcase.product.store_id"),
+    title: rpcString(row.title, "creator_showcase.product.title"),
+    storeName: rpcString(row.store_name, "creator_showcase.product.store_name"),
+    sellerName:
+      rpcNullableString(
+        row.seller_name,
+        "creator_showcase.product.seller_name",
+      ) ?? undefined,
+    imageUrl: rpcNullableString(
+      row.image_url,
+      "creator_showcase.product.image_url",
+    ),
+    minPrice: rpcNonnegative(
+      row.min_price,
+      "creator_showcase.product.min_price",
+    ),
+    maxPrice: rpcNonnegative(
+      row.max_price,
+      "creator_showcase.product.max_price",
+    ),
+    availableQuantity: rpcNonnegativeInteger(
+      row.available_quantity,
+      "creator_showcase.product.available_quantity",
+    ),
+    commissionBps:
+      row.commission_bps == null
+        ? undefined
+        : rpcNonnegativeInteger(
+            row.commission_bps,
+            "creator_showcase.product.commission_bps",
+          ),
+    offerScope:
+      row.offer_scope == null
+        ? undefined
+        : rpcEnum(
+            row.offer_scope,
+            ["public_creator", "specific_creator"] as const,
+            "creator_showcase.product.offer_scope",
+          ),
+    selected:
+      row.selected == null
+        ? undefined
+        : rpcBoolean(row.selected, "creator_showcase.product.selected"),
+    sortPosition:
+      row.sort_position == null
+        ? undefined
+        : rpcNonnegativeInteger(
+            row.sort_position,
+            "creator_showcase.product.sort_position",
+          ),
+    updatedAt:
+      row.updated_at == null
+        ? undefined
+        : rpcTimestamp(row.updated_at, "creator_showcase.product.updated_at"),
   };
 }
 
-export async function fetchMyCreatorEligibleProducts(input: {
-  search?: string;
-  limit?: number;
-  cursor?: { updatedAt: string; id: string } | null;
-} = {}): Promise<MarketplaceCreatorShowcasePage<MarketplaceCreatorShowcaseProduct>> {
-  const { data, error } = await db().rpc("get_my_marketplace_creator_eligible_products", {
-    p_search: input.search?.trim() || null,
-    p_limit: input.limit ?? 20,
-    p_before_updated_at: input.cursor?.updatedAt ?? null,
-    p_before_id: input.cursor?.id ?? null,
-  });
+export async function fetchMyCreatorEligibleProducts(
+  input: {
+    search?: string;
+    limit?: number;
+    cursor?: { updatedAt: string; id: string } | null;
+  } = {},
+): Promise<MarketplaceCreatorShowcasePage<MarketplaceCreatorShowcaseProduct>> {
+  const { data, error } = await db().rpc(
+    "get_my_marketplace_creator_eligible_products",
+    {
+      p_search: input.search?.trim() || null,
+      p_limit: input.limit ?? 20,
+      p_before_updated_at: input.cursor?.updatedAt ?? null,
+      p_before_id: input.cursor?.id ?? null,
+    },
+  );
   if (error) rpcError(error);
-  const payload = value(data);
-  const cursor = value(payload.next_cursor);
+  const payload = rpcObject(data, "creator_showcase.eligible"),
+    cursor =
+      payload.next_cursor === null
+        ? null
+        : rpcObject(
+            payload.next_cursor,
+            "creator_showcase.eligible.next_cursor",
+          );
   return {
-    items: Array.isArray(payload.items) ? payload.items.map(mapProduct) : [],
-    nextCursor: cursor.updated_at && cursor.id
-      ? { updatedAt: text(cursor.updated_at), id: text(cursor.id) }
+    items: rpcArray(payload.items, "creator_showcase.eligible.items").map(
+      parseCreatorShowcaseProduct,
+    ),
+    nextCursor: cursor
+      ? {
+          updatedAt: rpcTimestamp(
+            cursor.updated_at,
+            "creator_showcase.eligible.next_cursor.updated_at",
+          ),
+          id: rpcUuid(cursor.id, "creator_showcase.eligible.next_cursor.id"),
+        }
       : null,
   };
 }
 
-export async function fetchMyCreatorShowcase(): Promise<MarketplaceCreatorShowcaseManagementItem[]> {
-  const { data, error } = await db().rpc("get_my_marketplace_creator_showcase", {
-    p_limit: 100,
-    p_before_selected_at: null,
-    p_before_id: null,
-  });
+export async function fetchMyCreatorShowcase(): Promise<
+  MarketplaceCreatorShowcaseManagementItem[]
+> {
+  const { data, error } = await db().rpc(
+    "get_my_marketplace_creator_showcase",
+    {
+      p_limit: 100,
+      p_before_selected_at: null,
+      p_before_id: null,
+    },
+  );
   if (error) rpcError(error);
-  const payload = value(data);
-  return (Array.isArray(payload.items) ? payload.items : []).map((input) => {
-    const row = value(input);
-    return {
-      ...mapProduct(row),
-      showcaseItemId: text(row.id),
-      status: row.status === "removed" ? "removed" : "active",
-      selectedAt: text(row.selected_at),
-      removedAt: nullableText(row.removed_at),
-      currentEligible: row.current_eligible === true,
-      selectedEntitlementId: text(row.selected_entitlement_id),
-      currentEntitlementId: nullableText(row.current_entitlement_id),
-      commissionBps: row.current_commission_bps == null ? undefined : number(row.current_commission_bps),
-    };
-  });
+  const payload = rpcObject(data, "creator_showcase.management");
+  return rpcArray(payload.items, "creator_showcase.management.items").map(
+    (input) => {
+      const row = rpcObject(input, "creator_showcase.management.item");
+      return {
+        showcaseItemId: rpcUuid(row.id, "creator_showcase.management.id"),
+        productId: rpcUuid(
+          row.product_id,
+          "creator_showcase.management.product_id",
+        ),
+        title: rpcString(row.title, "creator_showcase.management.title"),
+        storeName: rpcString(
+          row.store_name,
+          "creator_showcase.management.store_name",
+        ),
+        imageUrl: rpcNullableString(
+          row.image_url,
+          "creator_showcase.management.image_url",
+        ),
+        minPrice: rpcNonnegative(
+          row.min_price,
+          "creator_showcase.management.min_price",
+        ),
+        availableQuantity: rpcNonnegativeInteger(
+          row.available_quantity,
+          "creator_showcase.management.available_quantity",
+        ),
+        sortPosition: rpcNonnegativeInteger(
+          row.sort_position,
+          "creator_showcase.management.sort_position",
+        ),
+        status: rpcEnum(
+          row.status,
+          ["active", "removed"] as const,
+          "creator_showcase.management.status",
+        ),
+        selectedAt: rpcTimestamp(
+          row.selected_at,
+          "creator_showcase.management.selected_at",
+        ),
+        removedAt: rpcNullableTimestamp(
+          row.removed_at,
+          "creator_showcase.management.removed_at",
+        ),
+        currentEligible: rpcBoolean(
+          row.current_eligible,
+          "creator_showcase.management.current_eligible",
+        ),
+        selectedEntitlementId: rpcUuid(
+          row.selected_entitlement_id,
+          "creator_showcase.management.selected_entitlement_id",
+        ),
+        currentEntitlementId: rpcNullableUuid(
+          row.current_entitlement_id,
+          "creator_showcase.management.current_entitlement_id",
+        ),
+        commissionBps:
+          row.current_commission_bps == null
+            ? undefined
+            : rpcNonnegativeInteger(
+                row.current_commission_bps,
+                "creator_showcase.management.current_commission_bps",
+              ),
+      };
+    },
+  );
 }
 
 export async function fetchCreatorShowcase(
@@ -145,42 +296,71 @@ export async function fetchCreatorShowcase(
     p_before_id: cursor?.id ?? null,
   });
   if (error) rpcError(error);
-  const payload = value(data);
-  const next = value(payload.next_cursor);
+  const payload = rpcObject(data, "creator_showcase.public"),
+    next =
+      payload.next_cursor === null
+        ? null
+        : rpcObject(payload.next_cursor, "creator_showcase.public.next_cursor");
   return {
-    items: Array.isArray(payload.items) ? payload.items.map(mapProduct) : [],
-    nextCursor: next.sort_position != null && next.id
-      ? { sortPosition: number(next.sort_position), id: text(next.id) }
+    items: rpcArray(payload.items, "creator_showcase.public.items").map(
+      parseCreatorShowcaseProduct,
+    ),
+    nextCursor: next
+      ? {
+          sortPosition: rpcNonnegativeInteger(
+            next.sort_position,
+            "creator_showcase.public.next_cursor.sort_position",
+          ),
+          id: rpcUuid(next.id, "creator_showcase.public.next_cursor.id"),
+        }
       : null,
-    visible: payload.visible !== false,
+    visible: rpcBoolean(payload.visible, "creator_showcase.public.visible"),
   };
 }
 
-export async function addMyCreatorShowcaseProduct(productId: string, idempotencyKey: string) {
-  const { data, error } = await db().rpc("add_my_marketplace_creator_showcase_product", {
-    p_product_id: productId,
-    p_idempotency_key: idempotencyKey,
-  });
+export async function addMyCreatorShowcaseProduct(
+  productId: string,
+  idempotencyKey: string,
+) {
+  const { data, error } = await db().rpc(
+    "add_my_marketplace_creator_showcase_product",
+    {
+      p_product_id: productId,
+      p_idempotency_key: idempotencyKey,
+    },
+  );
   if (error) rpcError(error);
-  return value(data);
+  return rpcObject(data, "creator_showcase.add_receipt");
 }
 
-export async function removeMyCreatorShowcaseProduct(showcaseItemId: string, idempotencyKey: string) {
-  const { data, error } = await db().rpc("remove_my_marketplace_creator_showcase_product", {
-    p_showcase_item_id: showcaseItemId,
-    p_idempotency_key: idempotencyKey,
-  });
+export async function removeMyCreatorShowcaseProduct(
+  showcaseItemId: string,
+  idempotencyKey: string,
+) {
+  const { data, error } = await db().rpc(
+    "remove_my_marketplace_creator_showcase_product",
+    {
+      p_showcase_item_id: showcaseItemId,
+      p_idempotency_key: idempotencyKey,
+    },
+  );
   if (error) rpcError(error);
-  return value(data);
+  return rpcObject(data, "creator_showcase.remove_receipt");
 }
 
-export async function reorderMyCreatorShowcase(showcaseItemIds: string[], idempotencyKey: string) {
-  const { data, error } = await db().rpc("reorder_my_marketplace_creator_showcase", {
-    p_showcase_item_ids: showcaseItemIds,
-    p_idempotency_key: idempotencyKey,
-  });
+export async function reorderMyCreatorShowcase(
+  showcaseItemIds: string[],
+  idempotencyKey: string,
+) {
+  const { data, error } = await db().rpc(
+    "reorder_my_marketplace_creator_showcase",
+    {
+      p_showcase_item_ids: showcaseItemIds,
+      p_idempotency_key: idempotencyKey,
+    },
+  );
   if (error) rpcError(error);
-  return value(data);
+  return rpcObject(data, "creator_showcase.reorder_receipt");
 }
 
 export async function createCreatorShowcaseAttribution(
@@ -188,20 +368,38 @@ export async function createCreatorShowcaseAttribution(
   variantId: string,
   idempotencyKey: string,
 ): Promise<MarketplaceCreatorShowcaseAttribution> {
-  const { data, error } = await db().rpc("create_marketplace_creator_showcase_attribution", {
-    p_showcase_item_id: showcaseItemId,
-    p_variant_id: variantId,
-    p_idempotency_key: idempotencyKey,
-  });
+  const { data, error } = await db().rpc(
+    "create_marketplace_creator_showcase_attribution",
+    {
+      p_showcase_item_id: showcaseItemId,
+      p_variant_id: variantId,
+      p_idempotency_key: idempotencyKey,
+    },
+  );
   if (error) rpcError(error);
-  const row = value(data);
-  if (row.source_surface !== "creator_showcase") throw new MarketplaceCreatorShowcaseError("marketplace_creator_showcase_invalid_receipt");
+  const row = rpcObject(data, "creator_showcase.attribution");
+  if (row.source_surface !== "creator_showcase")
+    throw new MarketplaceCreatorShowcaseError(
+      "marketplace_creator_showcase_invalid_receipt",
+    );
   return {
-    id: text(row.id),
-    creatorUserId: text(row.creator_user_id),
-    productId: text(row.product_id),
-    variantId: nullableText(row.variant_id),
+    id: rpcUuid(row.id, "creator_showcase.attribution.id"),
+    creatorUserId: rpcUuid(
+      row.creator_user_id,
+      "creator_showcase.attribution.creator_user_id",
+    ),
+    productId: rpcUuid(
+      row.product_id,
+      "creator_showcase.attribution.product_id",
+    ),
+    variantId: rpcNullableUuid(
+      row.variant_id,
+      "creator_showcase.attribution.variant_id",
+    ),
     sourceSurface: "creator_showcase",
-    sourceEntityId: text(row.source_entity_id),
+    sourceEntityId: rpcUuid(
+      row.source_entity_id,
+      "creator_showcase.attribution.source_entity_id",
+    ),
   };
 }

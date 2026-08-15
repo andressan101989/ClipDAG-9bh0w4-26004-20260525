@@ -1,8 +1,22 @@
 import { getSupabaseClient } from "@/template";
 import { parseMarketplaceProductEditorFlags } from "./marketplaceProductEditorFlagsCore.mjs";
-
-const UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import {
+  rpcArray,
+  rpcBoolean,
+  rpcEnum,
+  rpcNonnegative,
+  rpcNonnegativeInteger,
+  rpcNullableNonnegative,
+  rpcNullableText,
+  rpcNullableTimestamp,
+  rpcNullableUuid,
+  rpcObject,
+  rpcString,
+  rpcStringArray,
+  rpcText,
+  rpcTimestamp,
+  rpcUuid,
+} from "./marketplaceRuntimeValidation";
 const db = () => getSupabaseClient();
 export type ProductType = "physical" | "digital";
 export type ProductEditorMediaState =
@@ -49,87 +63,81 @@ export interface SaveMarketplaceProductDraftInput
   id: string;
 }
 
-const object = (value: unknown): Record<string, unknown> => {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("marketplace_draft_response_invalid");
-  return value as Record<string, unknown>;
-};
-const text = (value: unknown, name: string) => {
-  if (
-    typeof value !== "string" ||
-    !value.trim() ||
-    value === "undefined" ||
-    value === "null"
-  )
-    throw new Error(`marketplace_draft_${name}_invalid`);
-  return value;
-};
-const uuid = (value: unknown, name: string) => {
-  const result = text(value, name);
-  if (!UUID.test(result)) throw new Error(`marketplace_draft_${name}_invalid`);
-  return result;
-};
 export function parseMarketplaceProductDraft(
   payload: unknown,
 ): MarketplaceProductDraft {
-  const root = object(payload),
-    p = object(root.product),
-    media = Array.isArray(root.media) ? root.media : [];
+  const root = rpcObject(payload, "draft"),
+    p = rpcObject(root.product, "draft.product"),
+    media = rpcArray(root.media, "draft.media");
   const configured = parseMarketplaceProductEditorFlags(
       p.editor_state,
       p.published_at,
     ),
-    price = Number(p.price),
-    stock = Number(p.stock);
-  if (
-    !Number.isFinite(price) ||
-    price <= 0 ||
-    !Number.isInteger(stock) ||
-    stock < 0
-  )
-    throw new Error("marketplace_draft_values_invalid");
+    price = rpcNonnegative(p.price, "draft.product.price"),
+    stock = rpcNonnegativeInteger(p.stock, "draft.product.stock");
+  if (price <= 0) throw new Error("marketplace_draft_values_invalid");
   return {
-    id: uuid(p.id, "id"),
-    storeId: uuid(p.store_id, "store"),
-    categoryId: uuid(p.category_id, "category"),
-    title: text(p.title, "title"),
-    description: typeof p.description === "string" ? p.description : "",
+    id: rpcUuid(p.id, "draft.product.id"),
+    storeId: rpcUuid(p.store_id, "draft.product.store_id"),
+    categoryId: rpcUuid(p.category_id, "draft.product.category_id"),
+    title: rpcString(p.title, "draft.product.title"),
+    description: rpcText(p.description, "draft.product.description"),
     price,
-    brand: typeof p.brand === "string" ? p.brand : "",
-    compareAtPrice:
-      p.compare_at_price == null ? null : Number(p.compare_at_price),
+    brand: rpcNullableText(p.brand, "draft.product.brand") ?? "",
+    compareAtPrice: rpcNullableNonnegative(
+      p.compare_at_price,
+      "draft.product.compare_at_price",
+    ),
     stock,
-    tags: Array.isArray(p.tags)
-      ? p.tags.filter((x): x is string => typeof x === "string")
-      : [],
-    shippingProfileId:
-      p.shipping_profile_id == null
-        ? null
-        : uuid(p.shipping_profile_id, "shipping_profile"),
-    productType: p.product_type === "digital" ? "digital" : "physical",
-    status: text(p.status, "status"),
-    savedAt: typeof p.editor_saved_at === "string" ? p.editor_saved_at : null,
+    tags: rpcStringArray(p.tags, "draft.product.tags"),
+    shippingProfileId: rpcNullableUuid(
+      p.shipping_profile_id,
+      "draft.product.shipping_profile_id",
+    ),
+    productType: rpcEnum(
+      p.product_type,
+      ["physical", "digital"] as const,
+      "draft.product.product_type",
+    ),
+    status: rpcEnum(
+      p.status,
+      ["active", "paused", "sold_out", "deleted"] as const,
+      "draft.product.status",
+    ),
+    savedAt: rpcNullableTimestamp(
+      p.editor_saved_at,
+      "draft.product.editor_saved_at",
+    ),
     ...configured,
     media: media
       .map((entry, index): ProductEditorMedia => {
-        const m = object(entry),
-          kind: "image" | "video" =
-            m.media_kind === "video" ? "video" : "image";
-        const duration = m.duration_ms == null ? null : Number(m.duration_ms);
+        const path = `draft.media[${index}]`,
+          m = rpcObject(entry, path),
+          kind = rpcEnum(
+            m.media_kind,
+            ["image", "video"] as const,
+            `${path}.media_kind`,
+          ),
+          duration =
+            m.duration_ms === null
+              ? null
+              : rpcNonnegativeInteger(m.duration_ms, `${path}.duration_ms`);
         if (
           kind === "video" &&
           (!Number.isFinite(duration) || duration! <= 0 || duration! > 60000)
         )
           throw new Error("marketplace_product_video_invalid");
         return {
-          clientKey: uuid(m.asset_id, "media"),
-          assetId: uuid(m.asset_id, "media"),
-          url: text(m.url, "media_url"),
+          clientKey: rpcUuid(m.asset_id, `${path}.asset_id`),
+          assetId: rpcUuid(m.asset_id, `${path}.asset_id`),
+          url: rpcString(m.url, `${path}.url`),
           kind,
-          mimeType: typeof m.mime_type === "string" ? m.mime_type : undefined,
+          mimeType:
+            rpcNullableText(m.mime_type ?? null, `${path}.mime_type`) ??
+            undefined,
           durationMs: duration,
-          position: Number(m.position ?? index),
-          isCover: m.is_cover === true,
+          position: rpcNonnegativeInteger(m.position, `${path}.position`),
+          isCover: rpcBoolean(m.is_cover, `${path}.is_cover`),
           state: "ready" as const,
         };
       })
@@ -150,7 +158,7 @@ export async function createOrResumeMarketplaceProductDraft(
     },
   );
   if (error) throw error;
-  return uuid(data, "id");
+  return rpcUuid(data, "draft.id");
 }
 export async function fetchMarketplaceProductDraft(
   id: string,
@@ -181,8 +189,8 @@ export async function saveMarketplaceProductDraft(
     p_category_configured: input.categoryConfigured,
   });
   if (error) throw error;
-  const row = object(data);
-  return text(row.saved_at, "saved_at");
+  const row = rpcObject(data, "draft.save");
+  return rpcTimestamp(row.saved_at, "draft.save.saved_at");
 }
 export async function persistMarketplaceProductMedia(
   productId: string,
