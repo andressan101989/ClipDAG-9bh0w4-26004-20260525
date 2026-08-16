@@ -50,7 +50,7 @@ test("final destination removal requires confirmation and permits zero rules", (
 test("zero-rule save preserves the profile and is backend-derived configuration required", () => {
   assert.doesNotMatch(migration, /jsonb_array_length\(p_regions\)<1/);
   assert.match(migration, /configuration_required/);
-  assert.match(seller, /profileId, storeId/);
+  assert.match(seller, /profileId,\s*storeId/);
   assert.match(seller, /regions: rules\.map/);
 });
 test("invalid input classes are exact and buyer safe", () => {
