@@ -546,15 +546,13 @@ export default function ShopScreen() {
       setSponsored(ads);
       setHeroIndex(0);
       setError(null);
-    } catch (caught) {
-      setProducts([]);
-      setSponsored([]);
+    } catch (error) {
       const nextError: Exclude<MarketLoadError, null> =
-        caught instanceof MarketplaceReadError &&
-        caught.code === "marketplace_read_transport"
+        error instanceof MarketplaceReadError &&
+        error.code === "marketplace_read_transport"
           ? "network"
-          : caught instanceof MarketplaceReadError &&
-              caught.code === "marketplace_read_permission"
+          : error instanceof MarketplaceReadError &&
+              error.code === "marketplace_read_permission"
             ? "permission"
             : "request";
       setError(nextError);
@@ -563,7 +561,7 @@ export default function ShopScreen() {
           operation: "loadProducts",
           category: nextError,
           postgresCode:
-            caught instanceof MarketplaceReadError ? caught.postgresCode : null,
+            error instanceof MarketplaceReadError ? error.postgresCode : null,
         });
     } finally {
       setLoading(false);
@@ -647,8 +645,9 @@ export default function ShopScreen() {
     () => mixMarketplaceSponsoredProducts(products, sponsored),
     [products, sponsored],
   );
+  const isCatalogEmpty = mixedProducts.length === 0;
   const data: GridEntry[] =
-    loading && products.length === 0 ? SKELETONS : mixedProducts;
+    error ? [] : loading && isCatalogEmpty ? SKELETONS : mixedProducts;
   const featured = sponsored[heroIndex];
   const hasActiveFilter = Boolean(searchQuery || category);
   const catalogTitle = searchQuery
@@ -882,19 +881,19 @@ export default function ShopScreen() {
           if (item.kind === "skeleton")
             return <ProductSkeleton width={cardWidth} />;
           if (item.kind === "organic") {
-            const product = item.product;
+            const p = item.product;
             return (
               <ProductCard
-                product={product}
+                product={p}
                 width={cardWidth}
-                rating={ratings[product.id]}
+                rating={ratings[p.id]}
                 canSave={Boolean(user)}
-                saved={isSavedProduct(product.id)}
-                onToggleSave={() => toggleSaveProduct(product.id)}
+                saved={isSavedProduct(p.id)}
+                onToggleSave={() => toggleSaveProduct(p.id)}
                 onPress={() =>
                   router.push({
                     pathname: "/product/[id]",
-                    params: { id: product.id, source: "shop" },
+                    params: { id: p.id, source: "shop" },
                   })
                 }
               />
