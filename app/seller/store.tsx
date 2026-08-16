@@ -52,7 +52,10 @@ export default function SellerStore() {
     router = useRouter(),
     { showAlert } = useAlert(),
     saveLock = useRef(false),
-    uploadLock = useRef(false);
+    uploadLock = useRef(false),
+    nameInputRef = useRef<TextInput>(null),
+    slugInputRef = useRef<TextInput>(null),
+    descriptionInputRef = useRef<TextInput>(null);
   const { width } = useWindowDimensions(),
     compact = width < 360,
     wide = width >= 760,
@@ -252,7 +255,6 @@ export default function SellerStore() {
 
   return (
     <View style={[styles.page, { paddingTop: insets.top }]}>
-      <View pointerEvents="none" style={styles.ambientGlow} />
       <LinearGradient
         colors={["rgba(10,10,15,.98)", "rgba(14,12,23,.98)"]}
         style={styles.headerFrame}
@@ -272,24 +274,32 @@ export default function SellerStore() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.profileRail} accessibilityRole="tablist">
-          <View
-            style={styles.profileTab}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: true }}
-          >
-            <Text style={styles.profileTabText}>Perfil de tienda</Text>
-          </View>
-          <View style={styles.profileRailLine} />
-        </View>
         <View style={[styles.section, styles.logoSection]}>
+          <Text style={styles.eyebrow}>IDENTIDAD</Text>
           <Text style={styles.sectionTitle}>Logo de la tienda</Text>
           <Text style={styles.sectionBody}>
             Este logo aparecerá en tu tienda y junto a tus productos.
           </Text>
           <View style={[styles.logoLayout, wide && styles.logoLayoutWide]}>
-            <View
-              style={[styles.logoPrimary, compact && styles.logoPrimaryCompact]}
+            <Pressable
+              disabled={!store || uploading !== null}
+              style={({ pressed }) => [
+                styles.logoPressable,
+                compact && styles.logoPressableCompact,
+                pressed && styles.directControlPressed,
+                (!store || uploading !== null) && styles.disabled,
+              ]}
+              onPress={() => void pickBranding("logo")}
+              accessibilityRole="button"
+              accessibilityLabel={
+                logoUrl
+                  ? "Cambiar logo de la tienda"
+                  : "Subir logo de la tienda"
+              }
+              accessibilityState={{
+                disabled: !store || uploading !== null,
+                busy: uploading === "logo",
+              }}
             >
               <View
                 style={[
@@ -321,107 +331,52 @@ export default function SellerStore() {
                   </View>
                 </LinearGradient>
                 <View style={styles.logoEditBadge} pointerEvents="none">
-                  <MaterialCommunityIcons
-                    name="pencil-outline"
-                    size={19}
-                    color="#fff"
-                  />
+                  {uploading === "logo" ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <MaterialCommunityIcons
+                      name="pencil-outline"
+                      size={19}
+                      color="#fff"
+                    />
+                  )}
                 </View>
               </View>
-              <View style={styles.logoActions}>
-                <Pressable
-                  disabled={!store || uploading !== null}
-                  style={[
-                    styles.uploadButton,
-                    (!store || uploading !== null) && styles.disabled,
-                  ]}
-                  onPress={() => void pickBranding("logo")}
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    logoUrl
-                      ? "Cambiar logo de la tienda"
-                      : "Subir logo de la tienda"
-                  }
-                  accessibilityState={{
-                    disabled: !store || uploading !== null,
-                    busy: uploading === "logo",
-                  }}
-                >
-                  <LinearGradient
-                    colors={["#7044FF", "#8A55FF"]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.uploadGradient}
-                  >
-                    {uploading === "logo" ? (
-                      <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                      <MaterialIcons
-                        name={logoUrl ? "image" : "file-upload"}
-                        size={21}
-                        color="#fff"
-                      />
-                    )}
-                    <Text style={styles.uploadButtonText}>
-                      {uploading === "logo"
-                        ? "Subiendo…"
-                        : logoUrl
-                          ? "Cambiar logo"
-                          : "Subir logo"}
-                    </Text>
-                  </LinearGradient>
-                </Pressable>
-                <Text style={styles.currentAsset}>
-                  {logoUrl
-                    ? "La nueva imagen reemplazará el logo actual."
-                    : "Añade una imagen que identifique tu tienda."}
-                </Text>
-              </View>
-            </View>
-            <View style={[styles.guidance, wide && styles.guidanceWide]}>
-              <Text style={styles.guidanceTitle}>Recomendaciones</Text>
-              {[
-                "Formato: JPG, PNG o WebP",
-                "Presentación cuadrada",
-                "Fondo transparente recomendado",
-                "Máx. 10 MB",
-              ].map((item) => (
-                <View key={item} style={styles.guidanceRow}>
-                  <MaterialIcons
-                    name="check-circle-outline"
-                    size={18}
-                    color={Colors.primaryLight}
-                  />
-                  <Text style={styles.guidanceText}>{item}</Text>
-                </View>
-              ))}
+              <Text style={styles.directHint}>
+                {logoUrl ? "Toca para cambiar" : "Toca para añadir tu logo"}
+              </Text>
+            </Pressable>
+            <View
+              style={[styles.logoGuidance, wide && styles.logoGuidanceWide]}
+            >
+              <Text style={styles.guidanceText}>JPG · PNG · WebP</Text>
+              <Text style={styles.guidanceText}>
+                Presentación cuadrada · Máx. 10 MB
+              </Text>
+              <Text style={styles.guidanceMuted}>
+                Fondo transparente recomendado
+              </Text>
             </View>
           </View>
         </View>
         <View style={styles.section}>
-          <View style={styles.sectionHeading}>
-            <View style={styles.sectionIcon}>
-              <MaterialCommunityIcons
-                name="store-cog-outline"
-                size={21}
-                color={Colors.primaryLight}
-              />
-            </View>
-            <View style={styles.sectionHeadingCopy}>
-              <Text style={styles.sectionTitle}>Información de la tienda</Text>
-              <Text style={styles.sectionBody}>
-                Mantén clara y reconocible tu identidad pública.
-              </Text>
-            </View>
+          <View style={styles.sectionHeadingCopy}>
+            <Text style={styles.eyebrow}>INFORMACIÓN</Text>
+            <Text style={styles.sectionTitle}>Información de la tienda</Text>
+            <Text style={styles.sectionBody}>
+              Mantén clara y reconocible tu identidad pública.
+            </Text>
           </View>
           <StoreField
-            icon="storefront"
             label="Nombre de la tienda"
             helper="Así te encontrarán los compradores"
             active={focusedField === "name"}
+            accessibilityLabel="Editar nombre de la tienda"
+            onEdit={() => nameInputRef.current?.focus()}
           >
             <TextInput
-              style={styles.rowInput}
+              ref={nameInputRef}
+              style={[styles.rowInput, styles.nameInput]}
               value={name}
               onChangeText={(value) => edit("name", value)}
               onFocus={() => setFocusedField("name")}
@@ -434,14 +389,16 @@ export default function SellerStore() {
             />
           </StoreField>
           <StoreField
-            icon="alternate-email"
             label="Identificador público"
             helper={
               slug ? `onspace.app/store/${slug}` : "URL pública de tu tienda"
             }
             active={focusedField === "slug"}
+            accessibilityLabel="Editar identificador público"
+            onEdit={() => slugInputRef.current?.focus()}
           >
             <TextInput
+              ref={slugInputRef}
               style={styles.rowInput}
               value={slug}
               onChangeText={(value) => edit("slug", value)}
@@ -457,14 +414,16 @@ export default function SellerStore() {
             />
           </StoreField>
           <StoreField
-            icon="format-list-bulleted"
             label="Descripción"
             helper="Resume qué vendes y qué hace especial a tu tienda"
             multiline
             active={focusedField === "description"}
+            accessibilityLabel="Editar descripción de la tienda"
+            onEdit={() => descriptionInputRef.current?.focus()}
           >
             <View>
               <TextInput
+                ref={descriptionInputRef}
                 style={[styles.rowInput, styles.rowInputMultiline]}
                 value={description}
                 onChangeText={(value) => edit("description", value)}
@@ -484,67 +443,38 @@ export default function SellerStore() {
           </StoreField>
         </View>
         <View style={styles.section}>
-          <View style={styles.sectionHeading}>
-            <View style={styles.sectionIcon}>
-              <MaterialCommunityIcons
-                name="palette-outline"
-                size={21}
-                color={Colors.primaryLight}
-              />
-            </View>
-            <View style={styles.sectionHeadingCopy}>
-              <Text style={styles.sectionTitle}>Identidad visual</Text>
-              <Text style={styles.sectionBody}>
-                Personaliza la apariencia pública de tu tienda.
-              </Text>
-            </View>
+          <View style={styles.sectionHeadingCopy}>
+            <Text style={styles.eyebrow}>PORTADA</Text>
+            <Text style={styles.sectionTitle}>Identidad visual</Text>
+            <Text style={styles.sectionBody}>
+              Personaliza la apariencia pública de tu tienda.
+            </Text>
           </View>
-          <View
-            style={[
-              styles.bannerHeading,
-              compact && styles.bannerHeadingCompact,
+          <View style={styles.bannerCopy}>
+            <Text style={styles.bannerTitle}>Imagen de portada</Text>
+            <Text style={styles.brandHelp}>
+              Se mostrará en el encabezado público de tu tienda.
+            </Text>
+          </View>
+          <Pressable
+            disabled={!store || uploading !== null}
+            style={({ pressed }) => [
+              styles.bannerPreview,
+              pressed && styles.directControlPressed,
+              (!store || uploading !== null) && styles.disabled,
             ]}
+            onPress={() => void pickBranding("banner")}
+            accessibilityRole="button"
+            accessibilityLabel={
+              bannerUrl
+                ? "Cambiar portada de la tienda"
+                : "Subir portada de la tienda"
+            }
+            accessibilityState={{
+              disabled: !store || uploading !== null,
+              busy: uploading === "banner",
+            }}
           >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.bannerTitle}>Imagen de portada</Text>
-              <Text style={styles.brandHelp}>
-                Se mostrará en el encabezado público de tu tienda.
-              </Text>
-            </View>
-            <Pressable
-              disabled={!store || uploading !== null}
-              style={[
-                styles.secondaryButton,
-                (!store || uploading !== null) && styles.disabled,
-              ]}
-              onPress={() => void pickBranding("banner")}
-              accessibilityRole="button"
-              accessibilityLabel={
-                bannerUrl
-                  ? "Cambiar portada de la tienda"
-                  : "Subir portada de la tienda"
-              }
-              accessibilityState={{ disabled: !store || uploading !== null }}
-            >
-              {uploading === "banner" ? (
-                <ActivityIndicator color={Colors.textPrimary} size="small" />
-              ) : (
-                <MaterialIcons
-                  name="image"
-                  size={19}
-                  color={Colors.textPrimary}
-                />
-              )}
-              <Text style={styles.secondaryButtonText}>
-                {uploading === "banner"
-                  ? "Subiendo…"
-                  : bannerUrl
-                    ? "Cambiar portada"
-                    : "Subir portada"}
-              </Text>
-            </Pressable>
-          </View>
-          <View style={styles.bannerPreview}>
             {bannerUrl ? (
               <>
                 <Image
@@ -568,13 +498,26 @@ export default function SellerStore() {
                   size={36}
                   color={Colors.textSubtle}
                 />
-                <Text style={styles.bannerFallbackTitle}>Sin portada</Text>
+                <Text style={styles.bannerFallbackTitle}>
+                  Toca para añadir portada
+                </Text>
                 <Text style={styles.bannerFallbackBody}>
-                  Añade una imagen horizontal para presentar tu marca.
+                  Usa una imagen horizontal que presente tu marca.
                 </Text>
               </>
             )}
-          </View>
+            <View style={styles.bannerEditBadge} pointerEvents="none">
+              {uploading === "banner" ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <MaterialCommunityIcons
+                  name="pencil-outline"
+                  size={19}
+                  color="#fff"
+                />
+              )}
+            </View>
+          </Pressable>
           <Text style={styles.bannerLimit}>JPG, PNG o WebP · máximo 25 MB</Text>
         </View>
         <View style={styles.section}>
@@ -585,6 +528,7 @@ export default function SellerStore() {
             ]}
           >
             <View style={{ flex: 1 }}>
+              <Text style={styles.eyebrow}>REPUTACIÓN</Text>
               <Text style={styles.sectionTitle}>
                 Cómo te ven los compradores
               </Text>
@@ -710,18 +654,20 @@ export default function SellerStore() {
 }
 
 function StoreField({
-  icon,
   label,
   helper,
   active = false,
   multiline = false,
+  accessibilityLabel,
+  onEdit,
   children,
 }: {
-  icon: React.ComponentProps<typeof MaterialIcons>["name"];
   label: string;
   helper: string;
   active?: boolean;
   multiline?: boolean;
+  accessibilityLabel: string;
+  onEdit: () => void;
   children: React.ReactNode;
 }) {
   return (
@@ -732,9 +678,6 @@ function StoreField({
         multiline && styles.storeFieldMultiline,
       ]}
     >
-      <View style={styles.fieldIcon}>
-        <MaterialIcons name={icon} size={20} color={Colors.primaryLight} />
-      </View>
       <View style={styles.fieldBody}>
         <View style={styles.fieldHeading}>
           <Text style={styles.fieldLabel}>{label}</Text>
@@ -744,6 +687,21 @@ function StoreField({
         </View>
         <View style={styles.fieldControl}>{children}</View>
       </View>
+      <Pressable
+        style={({ pressed }) => [
+          styles.fieldEditButton,
+          pressed && styles.directControlPressed,
+        ]}
+        onPress={onEdit}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+      >
+        <MaterialCommunityIcons
+          name="pencil-outline"
+          size={19}
+          color={active ? Colors.primaryLight : Colors.textSecondary}
+        />
+      </Pressable>
     </View>
   );
 }
@@ -804,16 +762,6 @@ function ReputationMetric({
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: "#08090D" },
-  ambientGlow: {
-    position: "absolute",
-    top: 42,
-    right: -120,
-    width: 290,
-    height: 290,
-    borderRadius: 145,
-    backgroundColor: Colors.primaryGlow,
-    opacity: 0.22,
-  },
   center: {
     alignItems: "center",
     justifyContent: "center",
@@ -832,43 +780,24 @@ const styles = StyleSheet.create({
     maxWidth: 940,
     alignSelf: "center",
     paddingHorizontal: 14,
-    paddingTop: 10,
+    paddingTop: 16,
     paddingBottom: 52,
-    gap: 16,
-  },
-  profileRail: {
-    minHeight: 46,
-    flexDirection: "row",
-    alignItems: "flex-end",
-  },
-  profileTab: {
-    minHeight: 44,
-    justifyContent: "center",
-    paddingHorizontal: 10,
-    borderBottomWidth: 3,
-    borderBottomColor: Colors.primary,
-  },
-  profileTabText: {
-    color: Colors.primaryLight,
-    fontSize: 13,
-    fontWeight: FontWeight.bold,
-  },
-  profileRailLine: {
-    flex: 1,
-    height: 1,
-    marginBottom: 0,
-    backgroundColor: Colors.border,
+    gap: 22,
   },
   section: {
-    gap: 14,
-    padding: 16,
-    borderRadius: 20,
-    backgroundColor: "rgba(22,22,30,.96)",
-    borderWidth: 1,
-    borderColor: "rgba(111,105,137,.28)",
-    ...Shadow.card,
+    gap: 12,
+    paddingHorizontal: 4,
+    paddingBottom: 22,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(111,105,137,.22)",
   },
-  logoSection: { paddingTop: 18 },
+  logoSection: { paddingTop: 2 },
+  eyebrow: {
+    color: Colors.primaryLight,
+    fontSize: 10,
+    fontWeight: FontWeight.bold,
+    letterSpacing: 1.25,
+  },
   sectionTitle: {
     color: Colors.textPrimary,
     fontSize: 19,
@@ -881,35 +810,22 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     marginTop: 2,
   },
-  sectionHeading: { flexDirection: "row", alignItems: "center", gap: 12 },
-  sectionHeadingCopy: { flex: 1, minWidth: 0 },
-  sectionIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 13,
+  sectionHeadingCopy: { minWidth: 0, gap: 2 },
+  logoLayout: {
+    width: "100%",
     alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: Colors.primaryDim,
-    borderWidth: 1,
-    borderColor: "rgba(124,92,255,.2)",
+    gap: 14,
+    paddingTop: 4,
   },
-  logoLayout: { width: "100%", gap: 16 },
-  logoLayoutWide: { flexDirection: "row", alignItems: "center" },
-  logoPrimary: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 16,
-  },
-  logoPrimaryCompact: { gap: 10 },
+  logoLayoutWide: { flexDirection: "row", justifyContent: "center" },
+  logoPressable: { alignItems: "center", gap: 8, padding: 4 },
+  logoPressableCompact: { padding: 2 },
   logoPreviewShell: { width: 136, height: 136, position: "relative" },
   logoPreviewShellCompact: { width: 108, height: 108 },
   logoRing: {
     flex: 1,
     borderRadius: 999,
     padding: 3,
-    ...Shadow.glow,
   },
   logoPreview: {
     flex: 1,
@@ -934,84 +850,40 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     borderWidth: 3,
     borderColor: "#171720",
-    ...Shadow.brand,
   },
-  logoActions: { minWidth: 0, flex: 1, alignItems: "stretch", gap: 8 },
-  uploadButton: {
-    minHeight: 54,
-    overflow: "hidden",
-    borderRadius: 14,
-    ...Shadow.brand,
-  },
-  uploadGradient: {
-    minHeight: 54,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 9,
-    paddingHorizontal: 12,
-  },
-  uploadButtonText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: FontWeight.bold,
-  },
-  currentAsset: {
-    color: Colors.textSubtle,
+  directHint: {
+    color: Colors.primaryLight,
     fontSize: 11,
-    lineHeight: 15,
-    textAlign: "center",
+    fontWeight: FontWeight.semibold,
   },
-  guidance: {
-    width: "100%",
-    padding: 14,
-    gap: 10,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: "rgba(12,13,18,.58)",
+  directControlPressed: { opacity: 0.72 },
+  logoGuidance: {
+    alignItems: "center",
+    gap: 5,
+    paddingVertical: 6,
   },
-  guidanceWide: { width: 260, flexShrink: 0 },
-  guidanceTitle: {
-    color: Colors.textPrimary,
-    fontSize: 13,
-    fontWeight: FontWeight.bold,
-  },
-  guidanceRow: { flexDirection: "row", alignItems: "center", gap: 9 },
-  guidanceText: { flex: 1, color: Colors.textSecondary, fontSize: 12 },
+  logoGuidanceWide: { alignItems: "flex-start" },
+  guidanceText: { color: Colors.textSecondary, fontSize: 12 },
+  guidanceMuted: { color: Colors.textSubtle, fontSize: 11 },
   brandImage: { width: "100%", height: "100%" },
   fallbackText: { color: Colors.textSubtle, fontSize: 11 },
   brandHelp: { color: Colors.textSecondary, fontSize: 11, lineHeight: 16 },
   storeField: {
-    minHeight: 94,
+    minHeight: 88,
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 11,
-    padding: 12,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: "rgba(12,13,18,.65)",
+    gap: 6,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
   storeFieldActive: {
-    borderColor: Colors.primary,
-    backgroundColor: "rgba(124,92,255,.07)",
-    shadowColor: Colors.primary,
-    shadowOpacity: 0.19,
-    shadowRadius: 10,
-    elevation: 4,
+    borderBottomWidth: 2,
+    borderBottomColor: Colors.primaryLight,
   },
-  storeFieldMultiline: { minHeight: 148 },
-  fieldIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: Colors.primaryDim,
-  },
+  storeFieldMultiline: { minHeight: 136 },
   fieldBody: { flex: 1, minWidth: 0 },
-  fieldHeading: { minHeight: 38, justifyContent: "center" },
+  fieldHeading: { minHeight: 34, justifyContent: "center" },
   fieldLabel: {
     color: Colors.textPrimary,
     fontSize: 13,
@@ -1019,6 +891,13 @@ const styles = StyleSheet.create({
   },
   fieldHelper: { color: Colors.textSubtle, fontSize: 10, marginTop: 2 },
   fieldControl: { minWidth: 0 },
+  fieldEditButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 24,
+  },
   rowInput: {
     minHeight: 44,
     paddingHorizontal: 0,
@@ -1027,6 +906,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: FontWeight.medium,
   },
+  nameInput: { fontSize: 17, fontWeight: FontWeight.semibold },
   rowInputMultiline: { minHeight: 72, textAlignVertical: "top" },
   characterCount: {
     color: Colors.textSubtle,
@@ -1034,12 +914,7 @@ const styles = StyleSheet.create({
     textAlign: "right",
     marginTop: 2,
   },
-  bannerHeading: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  bannerHeadingCompact: { alignItems: "stretch", flexDirection: "column" },
+  bannerCopy: { gap: 2 },
   bannerTitle: {
     color: Colors.textPrimary,
     fontSize: FontSize.md,
@@ -1057,6 +932,19 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(10,11,15,.72)",
     borderWidth: 1,
     borderColor: Colors.borderHighlight,
+  },
+  bannerEditBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(9,9,14,.82)",
+    borderWidth: 1,
+    borderColor: "rgba(161,131,255,.72)",
   },
   bannerOverlay: { ...StyleSheet.absoluteFillObject },
   previewBadge: {
@@ -1122,24 +1010,6 @@ const styles = StyleSheet.create({
   saveFeedbackError: { backgroundColor: "rgba(255,59,92,.08)" },
   saveFeedbackText: { color: Colors.success, fontSize: 11 },
   saveFeedbackTextError: { color: Colors.error },
-  secondaryButton: {
-    minHeight: 46,
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
-    paddingHorizontal: 15,
-    borderRadius: 13,
-    backgroundColor: "rgba(16,17,23,.88)",
-    borderWidth: 1,
-    borderColor: Colors.borderHighlight,
-  },
-  secondaryButtonText: {
-    color: Colors.textPrimary,
-    fontWeight: FontWeight.semibold,
-    fontSize: 12,
-  },
   disabled: { opacity: 0.48 },
   reputationHeading: {
     flexDirection: "row",
