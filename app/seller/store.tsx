@@ -38,7 +38,6 @@ import {
   Colors,
   FontSize,
   FontWeight,
-  Radius,
   Shadow,
   Spacing,
 } from "@/constants/theme";
@@ -46,6 +45,18 @@ import {
 type BrandingSlot = "logo" | "banner";
 type StoreFieldName = "name" | "slug" | "description";
 type SaveState = "idle" | "success" | "error";
+type StagedBrandingAsset = {
+  uri: string;
+  mimeType: string;
+  fileName?: string;
+  sizeBytes?: number;
+};
+type StagedBranding = Record<BrandingSlot, StagedBrandingAsset | null>;
+
+const emptyStagedBranding = (): StagedBranding => ({
+  logo: null,
+  banner: null,
+});
 
 const normalizeStoreSlugInput = (value: string) =>
   value
@@ -74,6 +85,7 @@ export default function SellerStore() {
     { showAlert } = useAlert(),
     saveLock = useRef(false),
     uploadLock = useRef(false),
+    pendingCreatedStoreId = useRef<string | null>(null),
     nameInputRef = useRef<TextInput>(null),
     slugInputRef = useRef<TextInput>(null),
     descriptionInputRef = useRef<TextInput>(null);
@@ -87,6 +99,9 @@ export default function SellerStore() {
     [description, setDescription] = useState("");
   const [logoUrl, setLogoUrl] = useState<string | null>(null),
     [bannerUrl, setBannerUrl] = useState<string | null>(null),
+    [stagedBranding, setStagedBranding] = useState<StagedBranding>(
+      emptyStagedBranding,
+    ),
     [reputation, setReputation] = useState<MarketplaceStoreReputation | null>(
       null,
     );
@@ -95,7 +110,8 @@ export default function SellerStore() {
     [uploading, setUploading] = useState<BrandingSlot | null>(null),
     [error, setError] = useState<string | null>(null),
     [focusedField, setFocusedField] = useState<StoreFieldName | null>(null),
-    [saveState, setSaveState] = useState<SaveState>("idle");
+    [saveState, setSaveState] = useState<SaveState>("idle"),
+    [saveMessage, setSaveMessage] = useState<string | null>(null);
 
   const hydrate = useCallback(
     async (silent = false) => {
@@ -137,27 +153,140 @@ export default function SellerStore() {
     void hydrate();
   }, [hydrate]);
 
+  const attachBrandingAsset = async (
+    currentStore: MarketplaceStore,
+    slot: BrandingSlot,
+    asset: StagedBrandingAsset,
+  ) => {
+    let uploadedId: string | null = null;
+    try {
+      const uploaded = await uploadMediaFromUri({
+        uri: asset.uri,
+        purpose: slot === "logo" ? "store_logo" : "store_banner",
+        mimeType: asset.mimeType,
+        fileName: asset.fileName,
+        sizeBytes: asset.sizeBytes,
+        visibility: "public",
+      });
+      uploadedId = uploaded.assetId;
+      await setStoreMedia(
+        currentStore.id,
+        slot === "logo" ? uploaded.assetId : currentStore.logo_asset_id,
+        slot === "banner" ? uploaded.assetId : currentStore.banner_asset_id,
+      );
+      uploadedId = null;
+      const nextStore: MarketplaceStore = {
+        ...currentStore,
+        [slot === "logo" ? "logo_asset_id" : "banner_asset_id"]:
+          uploaded.assetId,
+      };
+      const publicUrl =
+        uploaded.url ??
+        (await getMediaUrl(uploaded.assetId).catch(() => asset.uri));
+      return { store: nextStore, publicUrl };
+    } catch (cause) {
+      if (uploadedId) await deleteMediaAsset(uploadedId).catch(() => {});
+      throw cause;
+    }
+  };
+
   const persistStore = async () => {
     if (saveLock.current) return;
     saveLock.current = true;
     setSaving(true);
     setSaveState("idle");
+    setSaveMessage(null);
+    let storeTextPersisted = false;
     try {
-      if (store) await updateStore(store.id, name, slug, description);
-      else await createStore(name, slug, description);
+      let canonicalStore = store;
+      if (!canonicalStore && pendingCreatedStoreId.current) {
+        const recovered = await fetchSellerFoundation();
+        if (recovered.store?.id !== pendingCreatedStoreId.current)
+          throw new Error("created_store_recovery_failed");
+        canonicalStore = recovered.store;
+        setStore(recovered.store);
+      }
+      if (store) {
+        await updateStore(store.id, name, slug, description);
+      } else if (canonicalStore) {
+        await updateStore(canonicalStore.id, name, slug, description);
+      } else {
+        const createdId = await createStore(name, slug, description);
+        pendingCreatedStoreId.current = createdId;
+        const created = await fetchSellerFoundation();
+        if (created.store?.id !== createdId)
+          throw new Error("created_store_not_returned");
+        canonicalStore = created.store;
+        setStore(created.store);
+      }
+      if (!canonicalStore) throw new Error("canonical_store_missing");
+      storeTextPersisted = true;
+
+      const stagedSnapshot = { ...stagedBranding };
+      const failedSlots: BrandingSlot[] = [];
+      if (stagedSnapshot.logo || stagedSnapshot.banner) {
+        uploadLock.current = true;
+        for (const slot of ["logo", "banner"] as const) {
+          const asset = stagedSnapshot[slot];
+          if (!asset) continue;
+          setUploading(slot);
+          try {
+            const attached = await attachBrandingAsset(
+              canonicalStore,
+              slot,
+              asset,
+            );
+            canonicalStore = attached.store;
+            setStore(attached.store);
+            if (slot === "logo") setLogoUrl(attached.publicUrl);
+            else setBannerUrl(attached.publicUrl);
+            setStagedBranding((current) => ({ ...current, [slot]: null }));
+          } catch (cause) {
+            failedSlots.push(slot);
+            const safe = getSafeMediaError(cause);
+            if (__DEV__)
+              console.info("[MarketplaceStoreBranding]", {
+                operation: "first_save_upload_failed",
+                slot,
+                stage: safe.stage,
+                code: safe.code,
+              });
+          }
+        }
+        uploadLock.current = false;
+        setUploading(null);
+      }
+      if (failedSlots.length) {
+        const failedLabel = failedSlots
+          .map((slot) => (slot === "logo" ? "el logo" : "la portada"))
+          .join(" y ");
+        const message = `La tienda se guardó, pero no pudimos subir ${failedLabel}. Puedes volver a guardar para reintentar.`;
+        setSaveState("error");
+        setSaveMessage(message);
+        showAlert("Tienda guardada parcialmente", message);
+        return;
+      }
+
+      pendingCreatedStoreId.current = null;
+      setStagedBranding(emptyStagedBranding());
       await hydrate(true);
       setSaveState("success");
+      setSaveMessage("Cambios guardados correctamente.");
       showAlert(
         "Tienda guardada",
         "La configuración se actualizó correctamente.",
       );
     } catch {
       setSaveState("error");
-      showAlert(
-        "No se pudo guardar",
-        "Revisa el nombre y el identificador de la tienda.",
-      );
+      const message =
+        storeTextPersisted || pendingCreatedStoreId.current
+          ? "La tienda ya fue creada. No pudimos completar la configuración; vuelve a guardar para continuar sin crear otra tienda."
+          : "Revisa el nombre y el identificador de la tienda.";
+      setSaveMessage(message);
+      showAlert("No se pudo completar", message);
     } finally {
+      uploadLock.current = false;
+      setUploading(null);
       saveLock.current = false;
       setSaving(false);
     }
@@ -182,14 +311,7 @@ export default function SellerStore() {
   };
 
   const pickBranding = async (slot: BrandingSlot) => {
-    if (!store) {
-      showAlert(
-        "Guarda tu tienda",
-        "Primero guarda la información de la tienda.",
-      );
-      return;
-    }
-    if (uploadLock.current) return;
+    if (saveLock.current || uploadLock.current) return;
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
       showAlert(
@@ -206,35 +328,27 @@ export default function SellerStore() {
     });
     const asset = result.canceled ? null : result.assets[0];
     if (!asset) return;
+    const selected: StagedBrandingAsset = {
+      uri: asset.uri,
+      mimeType: asset.mimeType ?? "image/jpeg",
+      fileName: asset.fileName ?? undefined,
+      sizeBytes: asset.fileSize,
+    };
+    if (!store || stagedBranding[slot]) {
+      setStagedBranding((current) => ({ ...current, [slot]: selected }));
+      if (slot === "logo") setLogoUrl(asset.uri);
+      else setBannerUrl(asset.uri);
+      setSaveState("idle");
+      setSaveMessage(null);
+      return;
+    }
     uploadLock.current = true;
     setUploading(slot);
-    let uploadedId: string | null = null;
     try {
-      const uploaded = await uploadMediaFromUri({
-        uri: asset.uri,
-        purpose: slot === "logo" ? "store_logo" : "store_banner",
-        mimeType: asset.mimeType ?? "image/jpeg",
-        fileName: asset.fileName ?? undefined,
-        sizeBytes: asset.fileSize,
-        visibility: "public",
-      });
-      uploadedId = uploaded.assetId;
-      await setStoreMedia(
-        store.id,
-        slot === "logo" ? uploaded.assetId : store.logo_asset_id,
-        slot === "banner" ? uploaded.assetId : store.banner_asset_id,
-      );
-      uploadedId = null;
-      const nextStore = {
-        ...store,
-        [slot === "logo" ? "logo_asset_id" : "banner_asset_id"]:
-          uploaded.assetId,
-      };
-      setStore(nextStore);
-      const publicUrl =
-        uploaded.url ?? (await getMediaUrl(uploaded.assetId).catch(() => null));
-      if (slot === "logo") setLogoUrl(publicUrl);
-      else setBannerUrl(publicUrl);
+      const attached = await attachBrandingAsset(store, slot, selected);
+      setStore(attached.store);
+      if (slot === "logo") setLogoUrl(attached.publicUrl);
+      else setBannerUrl(attached.publicUrl);
       setReputation(
         await fetchMarketplaceStoreReputation(store.id).catch(() => reputation),
       );
@@ -243,7 +357,6 @@ export default function SellerStore() {
         "La identidad visual ya está disponible en Marketplace.",
       );
     } catch (cause) {
-      if (uploadedId) await deleteMediaAsset(uploadedId).catch(() => {});
       const safe = getSafeMediaError(cause);
       if (__DEV__)
         console.info("[MarketplaceStoreBranding]", {
@@ -341,12 +454,12 @@ export default function SellerStore() {
           <Text style={styles.eyebrow}>IDENTIDAD DE MARCA</Text>
           <View style={[styles.logoLayout, wide && styles.logoLayoutWide]}>
             <Pressable
-              disabled={!store || uploading !== null}
+              disabled={saving || uploading !== null}
               style={({ pressed }) => [
                 styles.logoPressable,
                 compact && styles.logoPressableCompact,
                 pressed && styles.directControlPressed,
-                (!store || uploading !== null) && styles.disabled,
+                (saving || uploading !== null) && styles.disabled,
               ]}
               onPress={() => void pickBranding("logo")}
               accessibilityRole="button"
@@ -356,7 +469,7 @@ export default function SellerStore() {
                   : "Subir logo de la tienda"
               }
               accessibilityState={{
-                disabled: !store || uploading !== null,
+                disabled: saving || uploading !== null,
                 busy: uploading === "logo",
               }}
             >
@@ -530,11 +643,11 @@ export default function SellerStore() {
         <View style={styles.section}>
           <Text style={styles.eyebrow}>PORTADA</Text>
           <Pressable
-            disabled={!store || uploading !== null}
+            disabled={saving || uploading !== null}
             style={({ pressed }) => [
               styles.bannerPreview,
               pressed && styles.directControlPressed,
-              (!store || uploading !== null) && styles.disabled,
+              (saving || uploading !== null) && styles.disabled,
             ]}
             onPress={() => void pickBranding("banner")}
             accessibilityRole="button"
@@ -544,7 +657,7 @@ export default function SellerStore() {
                 : "Subir portada de la tienda"
             }
             accessibilityState={{
-              disabled: !store || uploading !== null,
+              disabled: saving || uploading !== null,
               busy: uploading === "banner",
             }}
           >
@@ -693,9 +806,10 @@ export default function SellerStore() {
                   saveState === "error" && styles.saveFeedbackTextError,
                 ]}
               >
-                {saveState === "success"
-                  ? "Cambios guardados correctamente."
-                  : "No se pudieron guardar los cambios. Revisa los datos."}
+                {saveMessage ??
+                  (saveState === "success"
+                    ? "Cambios guardados correctamente."
+                    : "No se pudieron guardar los cambios. Revisa los datos.")}
               </Text>
             </View>
           ) : null}

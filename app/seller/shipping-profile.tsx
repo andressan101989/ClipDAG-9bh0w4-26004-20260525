@@ -14,9 +14,11 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors, Radius, Spacing } from "@/constants/theme";
+import { fetchSellerFoundation } from "@/services/marketplaceService";
 import {
   fetchMyMarketplaceShippingProfiles,
   upsertMyMarketplaceShippingProfile,
+  type MarketplaceShippingProfile,
   type MarketplaceShippingRegion,
 } from "@/services/marketplaceShippingService";
 import {
@@ -38,7 +40,7 @@ type DraftRule = Omit<
   shippingPrice: string;
   transitDaysMin: string;
   transitDaysMax: string;
-  freeShippingThreshold: number | null;
+  freeShippingThreshold: string;
 };
 const blankRule = (): DraftRule => ({
   id: null,
@@ -46,7 +48,7 @@ const blankRule = (): DraftRule => ({
   countryCode: "US",
   regionCode: null,
   shippingPrice: "5",
-  freeShippingThreshold: null,
+  freeShippingThreshold: "",
   transitDaysMin: "3",
   transitDaysMax: "7",
 });
@@ -64,20 +66,25 @@ export default function SellerShippingProfileScreen() {
     productId?: string;
   }>();
   const [loading, setLoading] = useState(true),
-    [saving, setSaving] = useState(false);
+    [saving, setSaving] = useState(false),
+    [loadError, setLoadError] = useState(false),
+    [storeMissing, setStoreMissing] = useState(false);
   const [name, setName] = useState("Envío principal"),
     [shipsFrom, setShipsFrom] = useState("US");
   const [processingMin, setProcessingMin] = useState("1"),
     [processingMax, setProcessingMax] = useState("3");
   const [returns, setReturns] = useState("Devoluciones dentro de 14 días."),
     [productsUsing, setProductsUsing] = useState(0);
-  const [rules, setRules] = useState<DraftRule[]>([blankRule()]);
-  const storeId = typeof params.storeId === "string" ? params.storeId : "";
+  const [rules, setRules] = useState<DraftRule[]>([blankRule()]),
+    [profiles, setProfiles] = useState<MarketplaceShippingProfile[]>([]);
+  const routeStoreId = typeof params.storeId === "string" ? params.storeId : "";
+  const [storeId, setStoreId] = useState(routeStoreId);
   // Keep profile routing explicit: const profileId = typeof params.profileId.
-  const profileId =
+  const routedProfileId =
     typeof params.profileId === "string" && params.profileId
       ? params.profileId
       : null;
+  const [profileId, setProfileId] = useState<string | null>(routedProfileId);
   const errors = useMemo(
     () =>
       validateShippingSetup({
@@ -93,43 +100,75 @@ export default function SellerShippingProfileScreen() {
   );
   const formValid = errors.length === 0;
 
+  const applyProfile = useCallback((profile: MarketplaceShippingProfile) => {
+    setProfileId(profile.id);
+    setName(profile.name);
+    setShipsFrom(profile.shipsFromCountry);
+    setProcessingMin(String(profile.processingDaysMin));
+    setProcessingMax(String(profile.processingDaysMax));
+    setReturns(profile.returnPolicySummary);
+    setProductsUsing(profile.productsUsing);
+    setRules(
+      profile.regions.map((rule) => ({
+        ...rule,
+        shippingPrice: String(rule.shippingPrice),
+        freeShippingThreshold:
+          rule.freeShippingThreshold == null
+            ? ""
+            : String(rule.freeShippingThreshold),
+        transitDaysMin: String(rule.transitDaysMin),
+        transitDaysMax: String(rule.transitDaysMax),
+      })),
+    );
+  }, []);
+
+  const startNewProfile = () => {
+    setProfileId(null);
+    setName("Envío principal");
+    setShipsFrom("US");
+    setProcessingMin("1");
+    setProcessingMax("3");
+    setReturns("Devoluciones dentro de 14 días.");
+    setProductsUsing(0);
+    setRules([blankRule()]);
+  };
+
   const load = useCallback(async () => {
-    if (!storeId) {
-      setLoading(false);
-      return;
-    }
     setLoading(true);
-    devLog("load", {
-      profileIdPresent: Boolean(profileId),
-      storeIdPresent: true,
-    });
+    setLoadError(false);
+    setStoreMissing(false);
     try {
-      const profiles = await fetchMyMarketplaceShippingProfiles(storeId),
-        profile = profiles.find((item) => item.id === profileId);
-      if (profile) {
-        setName(profile.name);
-        setShipsFrom(profile.shipsFromCountry);
-        setProcessingMin(String(profile.processingDaysMin));
-        setProcessingMax(String(profile.processingDaysMax));
-        setReturns(profile.returnPolicySummary);
-        setProductsUsing(profile.productsUsing);
-        setRules(
-          profile.regions.map((r) => ({
-            ...r,
-            shippingPrice: String(r.shippingPrice),
-            transitDaysMin: String(r.transitDaysMin),
-            transitDaysMax: String(r.transitDaysMax),
-          })),
-        );
+      let effectiveStoreId = routeStoreId;
+      if (!effectiveStoreId) {
+        const foundation = await fetchSellerFoundation();
+        effectiveStoreId = foundation.store?.id ?? "";
       }
+      if (!effectiveStoreId) {
+        setStoreId("");
+        setStoreMissing(true);
+        return;
+      }
+      setStoreId(effectiveStoreId);
+      devLog("load", {
+        profileIdPresent: Boolean(routedProfileId),
+        storeIdPresent: true,
+      });
+      const loadedProfiles =
+        await fetchMyMarketplaceShippingProfiles(effectiveStoreId);
+      setProfiles(loadedProfiles);
+      const profile = loadedProfiles.find(
+        (item) => item.id === routedProfileId,
+      );
+      if (profile) applyProfile(profile);
     } catch (error) {
       const safe = shippingSetupError(error);
       devLog("load_failed", safe);
+      setLoadError(true);
       Alert.alert("No pudimos cargar el perfil", safe.message);
     } finally {
       setLoading(false);
     }
-  }, [profileId, storeId]);
+  }, [applyProfile, routeStoreId, routedProfileId]);
   useEffect(() => {
     void load();
   }, [load]);
@@ -187,10 +226,14 @@ export default function SellerShippingProfileScreen() {
         regions: rules.map((r) => ({
           ...r,
           shippingPrice: Number(r.shippingPrice),
+          freeShippingThreshold: r.freeShippingThreshold.trim()
+            ? Number(r.freeShippingThreshold)
+            : null,
           transitDaysMin: Number(r.transitDaysMin),
           transitDaysMax: Number(r.transitDaysMax),
         })),
       });
+      setProfileId(savedId);
       devLog("save_success", {
         profileIdPresent: true,
         storeIdPresent: true,
@@ -225,6 +268,48 @@ export default function SellerShippingProfileScreen() {
         </View>
       </View>
     );
+  if (loadError)
+    return (
+      <View style={[styles.root, { paddingTop: insets.top }]}>
+        <SellerScreenHeader
+          title="Configurar envío"
+          fallbackRoute="/seller"
+          accessibilityLabel="Volver"
+        />
+        <View style={[styles.content, styles.emptyState]}>
+          <Text style={styles.heading}>No pudimos cargar tus métodos</Text>
+          <Text style={styles.text}>Revisa tu conexión e inténtalo nuevamente.</Text>
+          <Pressable style={styles.primary} onPress={() => void load()}>
+            <Text style={styles.primaryText}>Reintentar</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  if (storeMissing)
+    return (
+      <View style={[styles.root, { paddingTop: insets.top }]}>
+        <SellerScreenHeader
+          title="Configurar envío"
+          fallbackRoute="/seller"
+          accessibilityLabel="Volver"
+        />
+        <View style={[styles.content, styles.emptyState]}>
+          <Text style={styles.heading}>
+            Configura tu tienda antes de crear métodos de envío
+          </Text>
+          <Text style={styles.text}>
+            Necesitamos una tienda canónica para asociar tus métodos de envío.
+          </Text>
+          <Pressable
+            style={styles.primary}
+            onPress={() => router.push("/seller/store" as never)}
+            accessibilityRole="button"
+          >
+            <Text style={styles.primaryText}>Configurar tienda</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <SellerScreenHeader
@@ -243,6 +328,38 @@ export default function SellerShippingProfileScreen() {
           }}
           keyboardShouldPersistTaps="handled"
         >
+        {profiles.length ? (
+          <View style={styles.profileList}>
+            <View style={styles.profileListHeader}>
+              <Text style={styles.heading}>Tus métodos de envío</Text>
+              <Pressable onPress={startNewProfile} accessibilityRole="button">
+                <Text style={styles.link}>+ Nuevo</Text>
+              </Pressable>
+            </View>
+            {profiles.map((profile) => (
+              <Pressable
+                key={profile.id}
+                onPress={() => applyProfile(profile)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: profile.id === profileId }}
+                style={[
+                  styles.profileOption,
+                  profile.id === profileId && styles.profileOptionSelected,
+                ]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardTitle}>{profile.name}</Text>
+                  <Text style={styles.helper}>
+                    {profile.regions.length} destinos · {profile.productsUsing} productos
+                  </Text>
+                </View>
+                <Text style={styles.link}>
+                  {profile.id === profileId ? "Editando" : "Editar"}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
         <View style={styles.info}>
           <Text style={styles.infoTitle}>
             {rules.length ? "Destinos configurados" : "Configuración requerida"}
@@ -313,8 +430,11 @@ export default function SellerShippingProfileScreen() {
           </View>
         ) : null}
         <Pressable
-          disabled={!formValid || saving}
-          style={[styles.primary, (!formValid || saving) && styles.disabled]}
+          disabled={!formValid || !storeId || saving}
+          style={[
+            styles.primary,
+            (!formValid || !storeId || saving) && styles.disabled,
+          ]}
           onPress={() => void save()}
         >
           {saving ? (
@@ -385,6 +505,14 @@ function DestinationCard({
         onChange={(shippingPrice) => update(index, { shippingPrice })}
         numeric
       />
+      <Field
+        label="Envío gratis desde (BDAG, opcional)"
+        value={rule.freeShippingThreshold}
+        onChange={(freeShippingThreshold) =>
+          update(index, { freeShippingThreshold })
+        }
+        numeric
+      />
       <Text style={styles.label}>Tiempo de entrega</Text>
       <View style={styles.row}>
         <Field
@@ -433,6 +561,12 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
   content: { flex: 1 },
   center: { alignItems: "center", justifyContent: "center" },
+  emptyState: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: Spacing.md,
+    padding: Spacing.xl,
+  },
   heading: { fontSize: 17, fontWeight: "700", color: Colors.textPrimary },
   helper: { color: Colors.textSecondary, fontSize: 13 },
   info: {
@@ -443,6 +577,24 @@ const styles = StyleSheet.create({
   },
   infoTitle: { color: Colors.warning, fontWeight: "700" },
   text: { color: Colors.textSecondary },
+  profileList: { gap: Spacing.sm },
+  profileListHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  profileOption: {
+    minHeight: 64,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.surface,
+  },
+  profileOptionSelected: { borderColor: Colors.primary },
   row: { flexDirection: "row", gap: Spacing.sm },
   field: { flex: 1, gap: 5 },
   label: { color: Colors.textSecondary, fontSize: 13, fontWeight: "600" },

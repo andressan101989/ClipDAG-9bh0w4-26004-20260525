@@ -114,6 +114,7 @@ export interface ShippingSetupRuleDraft {
   countryCode: string;
   regionCode: string | null;
   shippingPrice: string;
+  freeShippingThreshold?: string | number | null;
   transitDaysMin: string;
   transitDaysMax: string;
 }
@@ -161,6 +162,16 @@ export function validateShippingSetup(
     const price = Number(rule.shippingPrice);
     if (!Number.isFinite(price) || price < 0)
       errors.push(`${label}: el costo de envío no puede ser negativo.`);
+    if (
+      rule.freeShippingThreshold != null &&
+      String(rule.freeShippingThreshold).trim() !== ""
+    ) {
+      const freeShippingThreshold = Number(rule.freeShippingThreshold);
+      if (!Number.isFinite(freeShippingThreshold) || freeShippingThreshold < 0)
+        errors.push(
+          `${label}: el mínimo para envío gratis no puede ser negativo.`,
+        );
+    }
     const min = Number(rule.transitDaysMin),
       max = Number(rule.transitDaysMax);
     if (!Number.isInteger(min) || min < 1)
