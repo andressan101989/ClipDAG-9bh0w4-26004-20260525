@@ -47,6 +47,27 @@ type BrandingSlot = "logo" | "banner";
 type StoreFieldName = "name" | "slug" | "description";
 type SaveState = "idle" | "success" | "error";
 
+const normalizeStoreSlugInput = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 80);
+
+const normalizeStoreSlug = (value: string) =>
+  normalizeStoreSlugInput(value).replace(/-+$/, "");
+
+const isMachineGeneratedSlug = (value: string) =>
+  /^store-[a-f0-9]{16,}$/.test(value);
+
+const isValidStoreSlug = (value: string) =>
+  value.length >= 3 &&
+  value.length <= 80 &&
+  /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
+
 export default function SellerStore() {
   const insets = useSafeAreaInsets(),
     router = useRouter(),
@@ -230,6 +251,19 @@ export default function SellerStore() {
     else setDescription(value);
   };
 
+  const beginSlugEdit = () => {
+    setFocusedField("slug");
+    if (store && slug === store.slug && isMachineGeneratedSlug(slug)) {
+      const suggestion = normalizeStoreSlug(name);
+      if (isValidStoreSlug(suggestion)) edit("slug", suggestion);
+    }
+  };
+
+  const slugIsValid = isValidStoreSlug(slug),
+    slugChanged = Boolean(store && slug !== store.slug),
+    canSave =
+      !saving && name.trim().length >= 2 && name.trim().length <= 100 && slugIsValid;
+
   if (loading)
     return (
       <View style={[styles.page, styles.center, { paddingTop: insets.top }]}>
@@ -275,11 +309,7 @@ export default function SellerStore() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={[styles.section, styles.logoSection]}>
-          <Text style={styles.eyebrow}>IDENTIDAD</Text>
-          <Text style={styles.sectionTitle}>Logo de la tienda</Text>
-          <Text style={styles.sectionBody}>
-            Este logo aparecerá en tu tienda y junto a tus productos.
-          </Text>
+          <Text style={styles.eyebrow}>IDENTIDAD DE MARCA</Text>
           <View style={[styles.logoLayout, wide && styles.logoLayoutWide]}>
             <Pressable
               disabled={!store || uploading !== null}
@@ -342,19 +372,12 @@ export default function SellerStore() {
                   )}
                 </View>
               </View>
-              <Text style={styles.directHint}>
-                {logoUrl ? "Toca para cambiar" : "Toca para añadir tu logo"}
-              </Text>
             </Pressable>
             <View
               style={[styles.logoGuidance, wide && styles.logoGuidanceWide]}
             >
-              <Text style={styles.guidanceText}>JPG · PNG · WebP</Text>
               <Text style={styles.guidanceText}>
-                Presentación cuadrada · Máx. 10 MB
-              </Text>
-              <Text style={styles.guidanceMuted}>
-                Fondo transparente recomendado
+                JPG · PNG · WebP · Máx. 10 MB
               </Text>
             </View>
           </View>
@@ -362,14 +385,9 @@ export default function SellerStore() {
         <View style={styles.section}>
           <View style={styles.sectionHeadingCopy}>
             <Text style={styles.eyebrow}>INFORMACIÓN</Text>
-            <Text style={styles.sectionTitle}>Información de la tienda</Text>
-            <Text style={styles.sectionBody}>
-              Mantén clara y reconocible tu identidad pública.
-            </Text>
           </View>
           <StoreField
             label="Nombre de la tienda"
-            helper="Así te encontrarán los compradores"
             active={focusedField === "name"}
             accessibilityLabel="Editar nombre de la tienda"
             onEdit={() => nameInputRef.current?.focus()}
@@ -393,20 +411,37 @@ export default function SellerStore() {
             helper={
               slug ? `onspace.app/store/${slug}` : "URL pública de tu tienda"
             }
+            notice={
+              focusedField === "slug"
+                ? !slugIsValid
+                  ? "Usa entre 3 y 80 caracteres: letras, números y guiones."
+                  : slugChanged
+                    ? "Esto cambiará la dirección pública de tu tienda al guardar."
+                    : undefined
+                : undefined
+            }
+            noticeIsError={!slugIsValid}
             active={focusedField === "slug"}
             accessibilityLabel="Editar identificador público"
             onEdit={() => slugInputRef.current?.focus()}
           >
             <TextInput
               ref={slugInputRef}
-              style={styles.rowInput}
+              style={[styles.rowInput, styles.slugInput]}
               value={slug}
-              onChangeText={(value) => edit("slug", value)}
-              onFocus={() => setFocusedField("slug")}
-              onBlur={() => setFocusedField(null)}
+              onChangeText={(value) =>
+                edit("slug", normalizeStoreSlugInput(value))
+              }
+              onFocus={beginSlugEdit}
+              onBlur={() => {
+                edit("slug", normalizeStoreSlug(slug));
+                setFocusedField(null);
+              }}
               autoCapitalize="none"
               autoCorrect={false}
               maxLength={80}
+              numberOfLines={1}
+              scrollEnabled={focusedField === "slug"}
               placeholder="identificador-tienda"
               placeholderTextColor={Colors.textSubtle}
               selectionColor={Colors.primaryLight}
@@ -415,7 +450,6 @@ export default function SellerStore() {
           </StoreField>
           <StoreField
             label="Descripción"
-            helper="Resume qué vendes y qué hace especial a tu tienda"
             multiline
             active={focusedField === "description"}
             accessibilityLabel="Editar descripción de la tienda"
@@ -443,19 +477,7 @@ export default function SellerStore() {
           </StoreField>
         </View>
         <View style={styles.section}>
-          <View style={styles.sectionHeadingCopy}>
-            <Text style={styles.eyebrow}>PORTADA</Text>
-            <Text style={styles.sectionTitle}>Identidad visual</Text>
-            <Text style={styles.sectionBody}>
-              Personaliza la apariencia pública de tu tienda.
-            </Text>
-          </View>
-          <View style={styles.bannerCopy}>
-            <Text style={styles.bannerTitle}>Imagen de portada</Text>
-            <Text style={styles.brandHelp}>
-              Se mostrará en el encabezado público de tu tienda.
-            </Text>
-          </View>
+          <Text style={styles.eyebrow}>PORTADA</Text>
           <Pressable
             disabled={!store || uploading !== null}
             style={({ pressed }) => [
@@ -501,9 +523,6 @@ export default function SellerStore() {
                 <Text style={styles.bannerFallbackTitle}>
                   Toca para añadir portada
                 </Text>
-                <Text style={styles.bannerFallbackBody}>
-                  Usa una imagen horizontal que presente tu marca.
-                </Text>
               </>
             )}
             <View style={styles.bannerEditBadge} pointerEvents="none">
@@ -518,7 +537,7 @@ export default function SellerStore() {
               )}
             </View>
           </Pressable>
-          <Text style={styles.bannerLimit}>JPG, PNG o WebP · máximo 25 MB</Text>
+          <Text style={styles.bannerLimit}>JPG · PNG · WebP · Máx. 25 MB</Text>
         </View>
         <View style={styles.section}>
           <View
@@ -529,12 +548,6 @@ export default function SellerStore() {
           >
             <View style={{ flex: 1 }}>
               <Text style={styles.eyebrow}>REPUTACIÓN</Text>
-              <Text style={styles.sectionTitle}>
-                Cómo te ven los compradores
-              </Text>
-              <Text style={styles.sectionBody}>
-                Así se ve tu reputación pública en OnSpace Marketplace.
-              </Text>
             </View>
             {store ? (
               <Pressable
@@ -548,10 +561,9 @@ export default function SellerStore() {
                 accessibilityRole="button"
                 accessibilityLabel="Ver mi tienda"
               >
-                <Text style={styles.viewStoreText}>Ver mi tienda</Text>
                 <MaterialIcons
-                  name="open-in-new"
-                  size={18}
+                  name="visibility"
+                  size={20}
                   color={Colors.primaryLight}
                 />
               </Pressable>
@@ -576,12 +588,12 @@ export default function SellerStore() {
         </View>
         <View style={styles.saveArea}>
           <Pressable
-            disabled={saving}
-            style={[styles.primaryButton, saving && styles.disabled]}
+            disabled={!canSave}
+            style={[styles.primaryButton, !canSave && styles.disabled]}
             onPress={() => void save()}
             accessibilityRole="button"
             accessibilityLabel="Guardar configuración de tienda"
-            accessibilityState={{ disabled: saving, busy: saving }}
+            accessibilityState={{ disabled: !canSave, busy: saving }}
           >
             <LinearGradient
               colors={["#6338FF", "#8654FF", "#7345FF"]}
@@ -656,6 +668,8 @@ export default function SellerStore() {
 function StoreField({
   label,
   helper,
+  notice,
+  noticeIsError = false,
   active = false,
   multiline = false,
   accessibilityLabel,
@@ -663,7 +677,9 @@ function StoreField({
   children,
 }: {
   label: string;
-  helper: string;
+  helper?: string;
+  notice?: string;
+  noticeIsError?: boolean;
   active?: boolean;
   multiline?: boolean;
   accessibilityLabel: string;
@@ -679,29 +695,46 @@ function StoreField({
       ]}
     >
       <View style={styles.fieldBody}>
-        <View style={styles.fieldHeading}>
-          <Text style={styles.fieldLabel}>{label}</Text>
-          <Text style={styles.fieldHelper} numberOfLines={1}>
+        <Text style={styles.fieldLabel}>{label}</Text>
+        <View style={styles.fieldValueRow}>
+          <View style={styles.fieldControl}>{children}</View>
+          <Pressable
+            style={({ pressed }) => [
+              styles.fieldEditButton,
+              pressed && styles.directControlPressed,
+            ]}
+            onPress={onEdit}
+            accessibilityRole="button"
+            accessibilityLabel={accessibilityLabel}
+          >
+            {({ pressed }) => (
+              <MaterialCommunityIcons
+                name="pencil-outline"
+                size={19}
+                color={
+                  active || pressed ? Colors.primaryLight : Colors.textSecondary
+                }
+              />
+            )}
+          </Pressable>
+        </View>
+        {helper ? (
+          <Text style={styles.fieldHelper} numberOfLines={1} ellipsizeMode="middle">
             {helper}
           </Text>
-        </View>
-        <View style={styles.fieldControl}>{children}</View>
+        ) : null}
+        {notice ? (
+          <Text
+            style={[
+              styles.fieldNotice,
+              noticeIsError && styles.fieldNoticeError,
+            ]}
+            accessibilityLiveRegion="polite"
+          >
+            {notice}
+          </Text>
+        ) : null}
       </View>
-      <Pressable
-        style={({ pressed }) => [
-          styles.fieldEditButton,
-          pressed && styles.directControlPressed,
-        ]}
-        onPress={onEdit}
-        accessibilityRole="button"
-        accessibilityLabel={accessibilityLabel}
-      >
-        <MaterialCommunityIcons
-          name="pencil-outline"
-          size={19}
-          color={active ? Colors.primaryLight : Colors.textSecondary}
-        />
-      </Pressable>
     </View>
   );
 }
@@ -780,47 +813,35 @@ const styles = StyleSheet.create({
     maxWidth: 940,
     alignSelf: "center",
     paddingHorizontal: 14,
-    paddingTop: 16,
+    paddingTop: 12,
     paddingBottom: 52,
-    gap: 22,
+    gap: 14,
   },
   section: {
-    gap: 12,
+    gap: 9,
     paddingHorizontal: 4,
-    paddingBottom: 22,
+    paddingBottom: 14,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(111,105,137,.22)",
   },
-  logoSection: { paddingTop: 2 },
+  logoSection: { paddingTop: 0 },
   eyebrow: {
     color: Colors.primaryLight,
     fontSize: 10,
     fontWeight: FontWeight.bold,
     letterSpacing: 1.25,
   },
-  sectionTitle: {
-    color: Colors.textPrimary,
-    fontSize: 19,
-    fontWeight: FontWeight.extrabold,
-    letterSpacing: -0.25,
-  },
-  sectionBody: {
-    color: Colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 2,
-  },
   sectionHeadingCopy: { minWidth: 0, gap: 2 },
   logoLayout: {
     width: "100%",
     alignItems: "center",
-    gap: 14,
-    paddingTop: 4,
+    gap: 8,
+    paddingTop: 1,
   },
   logoLayoutWide: { flexDirection: "row", justifyContent: "center" },
-  logoPressable: { alignItems: "center", gap: 8, padding: 4 },
+  logoPressable: { alignItems: "center", padding: 2 },
   logoPressableCompact: { padding: 2 },
-  logoPreviewShell: { width: 136, height: 136, position: "relative" },
+  logoPreviewShell: { width: 114, height: 114, position: "relative" },
   logoPreviewShellCompact: { width: 108, height: 108 },
   logoRing: {
     flex: 1,
@@ -851,29 +872,18 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     borderColor: "#171720",
   },
-  directHint: {
-    color: Colors.primaryLight,
-    fontSize: 11,
-    fontWeight: FontWeight.semibold,
-  },
   directControlPressed: { opacity: 0.72 },
   logoGuidance: {
     alignItems: "center",
-    gap: 5,
-    paddingVertical: 6,
+    paddingVertical: 2,
   },
   logoGuidanceWide: { alignItems: "flex-start" },
   guidanceText: { color: Colors.textSecondary, fontSize: 12 },
-  guidanceMuted: { color: Colors.textSubtle, fontSize: 11 },
   brandImage: { width: "100%", height: "100%" },
   fallbackText: { color: Colors.textSubtle, fontSize: 11 },
-  brandHelp: { color: Colors.textSecondary, fontSize: 11, lineHeight: 16 },
   storeField: {
-    minHeight: 88,
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 6,
-    paddingVertical: 10,
+    minHeight: 76,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
@@ -881,22 +891,23 @@ const styles = StyleSheet.create({
     borderBottomWidth: 2,
     borderBottomColor: Colors.primaryLight,
   },
-  storeFieldMultiline: { minHeight: 136 },
+  storeFieldMultiline: { minHeight: 126 },
   fieldBody: { flex: 1, minWidth: 0 },
-  fieldHeading: { minHeight: 34, justifyContent: "center" },
   fieldLabel: {
-    color: Colors.textPrimary,
-    fontSize: 13,
+    color: Colors.textSecondary,
+    fontSize: 12,
     fontWeight: FontWeight.semibold,
   },
-  fieldHelper: { color: Colors.textSubtle, fontSize: 10, marginTop: 2 },
-  fieldControl: { minWidth: 0 },
+  fieldValueRow: { flexDirection: "row", alignItems: "flex-start" },
+  fieldHelper: { color: Colors.textSubtle, fontSize: 10, marginTop: -2 },
+  fieldNotice: { color: Colors.warning, fontSize: 10, marginTop: 3 },
+  fieldNoticeError: { color: Colors.error },
+  fieldControl: { flex: 1, minWidth: 0 },
   fieldEditButton: {
     width: 44,
     height: 44,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 24,
   },
   rowInput: {
     minHeight: 44,
@@ -907,18 +918,13 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.medium,
   },
   nameInput: { fontSize: 17, fontWeight: FontWeight.semibold },
+  slugInput: { fontSize: 14 },
   rowInputMultiline: { minHeight: 72, textAlignVertical: "top" },
   characterCount: {
     color: Colors.textSubtle,
     fontSize: 10,
     textAlign: "right",
     marginTop: 2,
-  },
-  bannerCopy: { gap: 2 },
-  bannerTitle: {
-    color: Colors.textPrimary,
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.semibold,
   },
   bannerPreview: {
     width: "100%",
@@ -963,14 +969,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: FontWeight.semibold,
   },
-  bannerFallbackBody: {
-    maxWidth: 260,
-    color: Colors.textSubtle,
-    fontSize: 11,
-    lineHeight: 16,
-    textAlign: "center",
-  },
-  bannerLimit: { color: Colors.textSubtle, fontSize: 10, textAlign: "right" },
+  bannerLimit: { color: Colors.textSubtle, fontSize: 10, textAlign: "center" },
   primaryButton: {
     minHeight: 58,
     overflow: "hidden",
@@ -1021,23 +1020,18 @@ const styles = StyleSheet.create({
     flexDirection: "column",
   },
   viewStoreButton: {
-    minHeight: 44,
-    flexDirection: "row",
+    width: 44,
+    height: 44,
     alignItems: "center",
-    gap: 6,
-  },
-  viewStoreText: {
-    color: Colors.primaryLight,
-    fontWeight: FontWeight.bold,
-    fontSize: 12,
+    justifyContent: "center",
   },
   metrics: { flexDirection: "row", gap: 10 },
   metricsStacked: { flexDirection: "column" },
   metric: {
     flex: 1,
     minWidth: 0,
-    minHeight: 132,
-    padding: 13,
+    minHeight: 112,
+    padding: 11,
     borderRadius: 15,
     backgroundColor: "rgba(12,13,18,.65)",
     borderWidth: 1,
