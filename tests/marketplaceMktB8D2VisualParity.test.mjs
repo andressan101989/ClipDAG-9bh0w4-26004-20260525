@@ -220,7 +220,7 @@ test("C4 compact branding uses direct manipulation while reputation and save sta
     store,
     /accessibilityLabel=\{[\s\S]*?"Cambiar portada de la tienda"[\s\S]*?"Subir portada de la tienda"/,
   );
-  assert.match(store, /onPress=\{\(\) => void save\(\)\}/);
+  assert.match(store, /onPress=\{save\}/);
   assert.match(store, /updateStore\(store\.id, name, slug, description\)/);
   assert.doesNotMatch(
     store,
@@ -231,7 +231,7 @@ test("C4 compact branding uses direct manipulation while reputation and save sta
   assert.doesNotMatch(store, /getSupabaseClient|service_role|\.rpc\(/);
 });
 
-test("C4 compacts the logo and safely stages a friendly public identifier", () => {
+test("C4-C1 keeps focus passive and applies a friendly identifier only by explicit action", () => {
   assert.match(
     store,
     /logoPreviewShell:\s*\{\s*width:\s*114,\s*height:\s*114/,
@@ -246,16 +246,49 @@ test("C4 compacts the logo and safely stages a friendly public identifier", () =
     "isMachineGeneratedSlug",
     "isValidStoreSlug",
     "beginSlugEdit",
+    "suggestedSlug",
+    "showSlugSuggestion",
+    "Sugerencia",
     "Esto cambiará la dirección pública de tu tienda al guardar.",
   ])
     assert(store.includes(token), token);
-  assert.match(store, /store && slug === store\.slug && isMachineGeneratedSlug\(slug\)/);
-  assert.match(store, /const suggestion = normalizeStoreSlug\(name\)/);
-  assert.match(store, /if \(isValidStoreSlug\(suggestion\)\) edit\("slug", suggestion\)/);
+  const beginSlugEdit = store.match(
+    /const beginSlugEdit = \(\) => \{([\s\S]*?)\n\s*\};/,
+  )?.[1];
+  assert.ok(beginSlugEdit, "beginSlugEdit body");
+  assert.match(beginSlugEdit, /setFocusedField\("slug"\)/);
+  assert.doesNotMatch(beginSlugEdit, /edit\(|setSlug|normalizeStoreSlug/);
+  assert.match(store, /suggestedSlug = normalizeStoreSlug\(name\)/);
+  assert.match(store, /slug === store\.slug/);
+  assert.match(store, /isMachineGeneratedSlug\(store\.slug\)/);
+  assert.match(store, /onPress=\{\(\) => edit\("slug", suggestedSlug\)\}/);
+  assert.match(
+    store,
+    /accessibilityLabel=\{`Usar identificador sugerido \$\{suggestedSlug\}`\}/,
+  );
   assert.match(store, /onChangeText=\{\(value\) =>[\s\S]*?normalizeStoreSlugInput\(value\)/);
   assert.match(store, /numberOfLines=\{1\}/);
   assert.match(store, /ellipsizeMode="middle"/);
   assert.match(store, /updateStore\(store\.id, name, slug, description\)/);
+});
+
+test("C4-C1 confirms a changed public URL and keeps cancel and ordinary saves non-mutating", () => {
+  const saveBody = store.match(/const save = \(\) => \{([\s\S]*?)\n\s*\};/)?.[1];
+  assert.ok(saveBody, "save body");
+  assert.match(saveBody, /if \(store && slug !== store\.slug\)/);
+  assert.match(saveBody, /showAlert\(/);
+  assert.match(saveBody, /"Cambiar dirección pública"/);
+  assert.match(saveBody, /onspace\.app\/store\/\$\{slug\}/);
+  assert.match(saveBody, /El identificador anterior dejará de ser la dirección pública/);
+  assert.match(saveBody, /\{ text: "Cancelar", style: "cancel" \}/);
+  assert.match(saveBody, /text: "Cambiar y guardar"/);
+  assert.match(saveBody, /onPress: \(\) => void persistStore\(\)/);
+  assert.match(saveBody, /return;[\s\S]*?void persistStore\(\)/);
+  assert.doesNotMatch(saveBody, /updateStore\(/);
+  assert.match(
+    store,
+    /const persistStore = async \(\) => \{[\s\S]*?updateStore\(store\.id, name, slug, description\)/,
+  );
 });
 
 test("C3 removes per-field and per-section card chrome without removing media or metric surfaces", () => {

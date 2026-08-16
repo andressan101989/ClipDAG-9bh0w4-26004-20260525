@@ -137,7 +137,7 @@ export default function SellerStore() {
     void hydrate();
   }, [hydrate]);
 
-  const save = async () => {
+  const persistStore = async () => {
     if (saveLock.current) return;
     saveLock.current = true;
     setSaving(true);
@@ -161,6 +161,24 @@ export default function SellerStore() {
       saveLock.current = false;
       setSaving(false);
     }
+  };
+
+  const save = () => {
+    if (store && slug !== store.slug) {
+      showAlert(
+        "Cambiar dirección pública",
+        `Tu tienda usará:\nonspace.app/store/${slug}\n\nEl identificador anterior dejará de ser la dirección pública de esta tienda.`,
+        [
+          { text: "Cancelar", style: "cancel" },
+          {
+            text: "Cambiar y guardar",
+            onPress: () => void persistStore(),
+          },
+        ],
+      );
+      return;
+    }
+    void persistStore();
   };
 
   const pickBranding = async (slot: BrandingSlot) => {
@@ -253,14 +271,25 @@ export default function SellerStore() {
 
   const beginSlugEdit = () => {
     setFocusedField("slug");
-    if (store && slug === store.slug && isMachineGeneratedSlug(slug)) {
-      const suggestion = normalizeStoreSlug(name);
-      if (isValidStoreSlug(suggestion)) edit("slug", suggestion);
-    }
+  };
+
+  const finishSlugEdit = () => {
+    const normalizedSlug = normalizeStoreSlug(slug);
+    if (normalizedSlug !== slug) edit("slug", normalizedSlug);
+    setFocusedField(null);
   };
 
   const slugIsValid = isValidStoreSlug(slug),
     slugChanged = Boolean(store && slug !== store.slug),
+    suggestedSlug = normalizeStoreSlug(name),
+    showSlugSuggestion = Boolean(
+      focusedField === "slug" &&
+        store &&
+        slug === store.slug &&
+        isMachineGeneratedSlug(store.slug) &&
+        isValidStoreSlug(suggestedSlug) &&
+        suggestedSlug !== store.slug,
+    ),
     canSave =
       !saving && name.trim().length >= 2 && name.trim().length <= 100 && slugIsValid;
 
@@ -433,10 +462,7 @@ export default function SellerStore() {
                 edit("slug", normalizeStoreSlugInput(value))
               }
               onFocus={beginSlugEdit}
-              onBlur={() => {
-                edit("slug", normalizeStoreSlug(slug));
-                setFocusedField(null);
-              }}
+              onBlur={finishSlugEdit}
               autoCapitalize="none"
               autoCorrect={false}
               maxLength={80}
@@ -448,6 +474,31 @@ export default function SellerStore() {
               accessibilityLabel="Identificador público de la tienda"
             />
           </StoreField>
+          {showSlugSuggestion ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.slugSuggestion,
+                pressed && styles.slugSuggestionPressed,
+              ]}
+              onPress={() => edit("slug", suggestedSlug)}
+              accessibilityRole="button"
+              accessibilityLabel={`Usar identificador sugerido ${suggestedSlug}`}
+            >
+              <View style={styles.slugSuggestionCopy}>
+                <Text style={styles.slugSuggestionLabel}>Sugerencia</Text>
+                <Text style={styles.slugSuggestionValue} numberOfLines={1}>
+                  {suggestedSlug}
+                </Text>
+              </View>
+              <View style={styles.slugSuggestionAction}>
+                <MaterialCommunityIcons
+                  name="auto-fix"
+                  size={19}
+                  color={Colors.primaryLight}
+                />
+              </View>
+            </Pressable>
+          ) : null}
           <StoreField
             label="Descripción"
             multiline
@@ -590,7 +641,7 @@ export default function SellerStore() {
           <Pressable
             disabled={!canSave}
             style={[styles.primaryButton, !canSave && styles.disabled]}
-            onPress={() => void save()}
+            onPress={save}
             accessibilityRole="button"
             accessibilityLabel="Guardar configuración de tienda"
             accessibilityState={{ disabled: !canSave, busy: saving }}
@@ -919,6 +970,35 @@ const styles = StyleSheet.create({
   },
   nameInput: { fontSize: 17, fontWeight: FontWeight.semibold },
   slugInput: { fontSize: 14 },
+  slugSuggestion: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: -4,
+    paddingLeft: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(124,92,255,.24)",
+  },
+  slugSuggestionPressed: { backgroundColor: "rgba(124,92,255,.06)" },
+  slugSuggestionCopy: { flex: 1, minWidth: 0 },
+  slugSuggestionLabel: {
+    color: Colors.textSubtle,
+    fontSize: 10,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  slugSuggestionValue: {
+    color: Colors.primaryLight,
+    fontSize: 14,
+    fontWeight: FontWeight.semibold,
+  },
+  slugSuggestionAction: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   rowInputMultiline: { minHeight: 72, textAlignVertical: "top" },
   characterCount: {
     color: Colors.textSubtle,

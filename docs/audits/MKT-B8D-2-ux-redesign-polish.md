@@ -461,3 +461,23 @@ Responsive source reasoning covers 320/360/390/430 widths: the logo stays within
 - The inherited B8C auditor passed: B8B 8/8 and all Creator, Ads, review, payment, settlement and reversal failure counters are zero; escrow expected/actual is 70/70; fixtures are zero and the failure hook is absent.
 
 No migration, Supabase push, Edge deployment, EAS, physical-device test or economic-authority change occurred. Build remains 22, remote remains 34000 and B8D-3 was not started.
+
+## MKT-B8D-2R-F1-C4-C1 — Explicit Public Slug Consent
+
+Starting baseline: `b30e269413e993ec5445c103fbda93e43acc853e`, branch `codex/mkt-a4b-premium-integration`, Build 22, remote migration `20260811034000_marketplace_verified_reviews_branding.sql`. C4 visual hierarchy and all branding/economic authority remain frozen.
+
+The C4 focus handler previously staged a name-derived slug as soon as a seller focused a machine-generated identifier. C4-C1 removes that implicit state change. `beginSlugEdit()` now only marks the field focused; focusing and blurring an unchanged persisted slug leaves the value byte-for-byte unchanged and does not mark a pending public-address change.
+
+The friendly value is now presentation-only until explicitly accepted. While the unchanged machine-generated slug is being edited, a compact `Sugerencia` row shows the independently computed valid value and a 44×44 `auto-fix` action. Only that Pressable calls `edit("slug", suggestedSlug)`; its accessibility label contains the proposed identifier. Manual input continues through `normalizeStoreSlugInput`, blur cleanup through `normalizeStoreSlug`, and the existing server remains final normalization, ownership and uniqueness authority.
+
+Saving is now split between consent orchestration and the unchanged persistence operation. If an existing store has `slug !== store.slug`, `save()` opens the existing cross-platform alert pattern with title `Cambiar dirección pública`, the exact new `onspace.app/store/{slug}` address, a truthful statement that the prior identifier stops being this store's public address, and `Cancelar` / `Cambiar y guardar`. Cancel has no mutation callback. Only confirmation invokes `persistStore()`, which contains the existing `updateStore(store.id, name, slug, description)` call. Name/description-only changes and new-store creation still persist directly without this confirmation.
+
+### C4-C1 verification
+
+- Store/B8D visual, hardening and mobile-contract focus: 54/54 passed; dedicated visual/slug proof: 12/12.
+- Admin Web: 58/58 passed; lint passed with zero warnings; production build passed with 120 modules.
+- Complete root Node suite: 759/759 passed.
+- TypeScript: exactly 187 historical diagnostics and zero diagnostics in `app/seller/store.tsx`.
+- Read-only B8D and inherited B8C auditors passed at remote migration `20260811034000`; review reconciliation is 5/5 zero, B8B is 8/8 zero, all Creator/Ads/payment/settlement/reversal failure counters are zero, escrow is 70/70, fixtures are zero and the failure hook is absent.
+
+No migration, Supabase push, Edge deployment, EAS, backend authority change or physical-device test occurred. Build remains 22 and B8D-3 was not started.
