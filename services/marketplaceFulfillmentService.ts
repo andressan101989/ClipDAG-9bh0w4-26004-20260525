@@ -95,7 +95,7 @@ export interface MarketplaceOrderDetail {
     fulfillmentVersion: number;
   };
   store: { id: string; name: string; slug: string };
-  payment: { status: string; paidAt: string };
+  payment: { status: "paid" | "partially_refunded" | "refunded"; paidAt: string };
   allocation: MarketplaceHeldAllocation | null;
   settlement: {
     status: string;

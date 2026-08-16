@@ -47,6 +47,7 @@ const orderStatuses = [
   "refunded",
   "partially_refunded",
 ];
+const buyerPaymentStatuses = ["paid", "partially_refunded", "refunded"];
 const allocationStatuses = ["held", "released", "refunded", "partially_refunded"];
 const disputeStatuses = ["open", "under_review", "resolved", "rejected", "cancelled"];
 const disputeOutcomes = ["refund_buyer", "release_seller", "reject_claim"];
@@ -102,7 +103,11 @@ const page = (items, effectiveLimit) => {
 export function parseBuyerOrderListPayload(value, effectiveLimit) {
   const items = array(value, "buyer_orders").map((entry, index) => {
     const { row, item } = commonListRow(entry, index);
-    if (row.payment_status !== "paid") fail(`orders[${index}].payment_status`);
+    enumeration(
+      row.payment_status,
+      buyerPaymentStatuses,
+      `orders[${index}].payment_status`,
+    );
     return {
       ...item,
       firstItemTitle: nullableString(row.first_item_title, `orders[${index}].first_item_title`),
@@ -219,7 +224,11 @@ export function parseMarketplaceOrderDetailPayload(value) {
       slug: string(store.slug, "order_detail.store.slug"),
     },
     payment: {
-      status: string(payment.status, "order_detail.payment.status"),
+      status: enumeration(
+        payment.status,
+        buyerPaymentStatuses,
+        "order_detail.payment.status",
+      ),
       paidAt: timestamp(payment.paid_at, "order_detail.payment.paid_at"),
     },
     allocation: rawAllocation
