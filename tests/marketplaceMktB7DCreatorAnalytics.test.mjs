@@ -15,7 +15,7 @@ test("creator analytics RPC is self-only, server-ranged, and distinguishes gener
 });
 
 test("top funnel creator identity is resolved from canonical source entities",()=>{
-  assert.match(sql,/marketplace_creator_showcase_items/);assert.match(sql,/marketplace_creator_content_product_tags/);assert.match(sql,/live_session_products/);assert.match(sql,/marketplace_live_affiliate_offers/);assert.doesNotMatch(sql,/e\.source_creator_id/);assert.match(product,/source: showcaseItemId \? "creator" : source/);assert.match(product,/sourceId: sourceId \?\? showcaseItemId \?\? contentProductTagId/);
+  assert.match(sql,/marketplace_creator_showcase_items/);assert.match(sql,/marketplace_creator_content_product_tags/);assert.match(sql,/live_session_products/);assert.match(sql,/marketplace_live_affiliate_offers/);assert.doesNotMatch(sql,/e\.source_creator_id/);assert.match(product,/source: showcaseItemId \? "creator" : source/);assert.match(product,/sourceId:\s*sourceId\s*\?\?\s*showcaseItemId\s*\?\?\s*contentProductTagId/);
 });
 
 test("service delegates one typed range to one private RPC without financial calculations",()=>{

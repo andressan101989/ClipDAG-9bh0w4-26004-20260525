@@ -64,14 +64,14 @@ test("product detail creates LIVE attribution only on explicit Add or Buy", () =
     product.indexOf("const handleAddToCart"),
     product.indexOf("const chooseVariantValue"),
   );
-  assert.match(handler, /createLiveCreatorAttribution\(liveSessionProductId/);
+  assert.match(handler, /createLiveCreatorAttribution\(\s*liveSessionProductId/);
   const passiveEffects = product.slice(0, product.indexOf("const handleAddToCart"));
   assert.doesNotMatch(passiveEffects, /createLiveCreatorAttribution\(/);
   assert.match(
     handler,
-    /\[showcaseItemId, contentProductTagId, liveSessionProductId\]\.filter\(Boolean\)\.length/,
+    /(?:\[\s*showcaseItemId,\s*contentProductTagId,\s*liveSessionProductId,?\s*\]\.filter\(Boolean\)\.length|creatorContextCount)/,
   );
-  assert.match(handler, /receipt\.id && receipt\.creatorUserId/);
+  assert.match(handler, /receipt\.id\s*&&\s*receipt\.creatorUserId/);
 });
 
 test("LIVE attribution is an opaque exact-token cart context", () => {

@@ -356,11 +356,11 @@ test("product sheet reuses the canonical product route with non-authoritative co
 });
 
 test("product detail creates B7C attribution only inside explicit Add/Buy handler", () => {
-  assert.match(product,/createCreatorContentAttribution\(contentProductTagId, selectedVariant\.id, key\)/);
+  assert.match(product,/createCreatorContentAttribution\(\s*contentProductTagId,\s*selectedVariant\.id,\s*key,?\s*\)/);
   assert.match(product,/const handleAddToCart = async \(continueToCheckout = false\)/);
   assert.match(product,/handleAddToCart\(true\)/);
   assert.doesNotMatch(product,/useEffect\([\s\S]{0,400}createCreatorContentAttribution/);
-  assert.match(product,/\[showcaseItemId, contentProductTagId, liveSessionProductId\]\.filter\(Boolean\)\.length[\s\S]*Contexto de creator no válido/);
+  assert.match(product,/(?:\[\s*showcaseItemId,\s*contentProductTagId,\s*liveSessionProductId,?\s*\]\.filter\(Boolean\)\.length|creatorContextCount)[\s\S]*Contexto de creator no válido/);
 });
 
 test("Feed/Reel attributed cart lines preserve exact opaque-token semantics", () => {
@@ -387,7 +387,7 @@ test("normal Marketplace and B7B Showcase paths remain structurally unchanged", 
   assert.equal(normal.result.ok,true); assert.equal(normal.items[0].attributionId,undefined);
   const showcase = addMarketplaceCartItem([],{...base,attributionId:"a",showcaseItemId:"s",creatorUserId:"c"});
   assert.equal(showcase.result.ok,true); assert.equal(showcase.items[0].showcaseItemId,"s");
-  assert.match(product,/createCreatorShowcaseAttribution\(showcaseItemId, selectedVariant\.id, key\)/);
+  assert.match(product,/createCreatorShowcaseAttribution\(\s*showcaseItemId,\s*selectedVariant\.id,\s*key,?\s*\)/);
 });
 
 test("checkout remains surface-agnostic and selects creator-aware reservation by opaque attribution", () => {

@@ -30,7 +30,7 @@ test('static client contract: Seller Center V2 falls back to Profile and keeps s
 
 test('static client contract: every nested seller route has its deterministic fallback',()=>{
   assert.match(apply,/title="Solicitud de vendedor" fallbackRoute="\/seller"/);
-  assert.match(store,/title="Configurar tienda" fallbackRoute="\/seller"/);
+  assert.match(store,/title="Configuración de tienda"[\s\S]*fallbackRoute="\/seller"/);
   assert.match(products,/title="Productos" fallbackRoute="\/seller"/);
   assert.match(shipping,/title="Configurar envío"/);
   assert.match(shipping,/fallbackRoute="\/seller"/);

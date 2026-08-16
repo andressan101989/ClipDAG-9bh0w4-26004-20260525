@@ -21,7 +21,7 @@ test("variant authority keeps compatible selection and exact price inventory",()
  assert.match(screen,/option\.values\.length\s*>\s*6/);assert.match(screen,/SearchableSelectField/);
 });
 test("stock price discount and sticky purchase contracts are buyer focused",()=>{
- assert.match(screen,/available\s*>\s*10\s*\?\s*"Disponible"/);assert.match(screen,/`Solo quedan \$\{available\}`/);assert.match(screen,/"Agotado"/);assert.match(screen,/Math\.round\(\s*\(1\s*-\s*effectivePrice\s*\/\s*compareAt\)\s*\*\s*100\s*\)/);assert.match(screen,/hasRange\s*\?\s*"Desde "/);assert.match(bar,/Math\.min\(available,quantity\+1\)/);assert.match(bar,/accessibilityLabel="Aumentar cantidad"/);
+ assert.match(screen,/available\s*>\s*10\s*\?\s*"Disponible"/);assert.match(screen,/`Solo quedan \$\{available\}`/);assert.match(screen,/"Agotado"/);assert.match(screen,/Math\.round\(\s*\(1\s*-\s*effectivePrice\s*\/\s*compareAt\)\s*\*\s*100\s*\)/);assert.match(screen,/hasRange\s*\?\s*"Desde "/);assert.match(bar,/Math\.min\(\s*available,\s*quantity\s*\+\s*1,?\s*\)/);assert.match(bar,/accessibilityLabel="Aumentar cantidad"/);
 });
 test("cart operation is locked, owner blocked, and feedback is nonblocking",()=>{
  assert.match(screen,/addToCartLockRef\.current/);assert.match(screen,/isOwner\s*\|\|\s*!selectedVariant/);assert.match(screen,/finally\s*\{\s*addToCartLockRef\.current\s*=\s*false/);assert.match(screen,/marketplaceCartToastFeedback/);assert.match(screen,/Ver carrito/);

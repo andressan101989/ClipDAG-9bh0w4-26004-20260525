@@ -82,7 +82,7 @@ test('client contract: canonical detail resolves authoritative combinations',()=
   assert.match(detail,/Combinación agotada/);
   assert.match(detail,/ProductPurchaseBar/);
   assert.match(detail,/accessibilityRole="radio"/);
-  assert.match(detail,/accessibilityState=\{\{\s*selected,\s*disabled:\s*!enabled\s*\}\}/);
+  assert.match(detail,/accessibilityState=\{\{\s*selected,\s*disabled:\s*!enabled,?\s*\}\}/);
   assert.match(detail,/accessibilityLabel=\{`\$\{option\.name\} \$\{value\.value\}`\}/);
   assert.match(detail,/setQuantity\(1\)/);
   assert.match(detail,/onQuantity=\{setQuantity\}/);

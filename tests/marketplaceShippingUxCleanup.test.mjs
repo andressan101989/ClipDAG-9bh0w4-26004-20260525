@@ -38,7 +38,7 @@ test("product detail uses the existing checkout address affordance", () => {
   );
   assert.match(product, /onRequestAddress/);
   assert.match(card, /Agregar dirección/);
-  assert.match(card, /countryCode,productId,publish,quantity,regionCode/);
+  assert.match(card, /countryCode,\s*productId,\s*publish,\s*quantity,\s*regionCode/);
 });
 test("final destination removal requires confirmation and permits zero rules", () => {
   assert.match(seller, /¿Eliminar el último destino\?/);

@@ -37,7 +37,7 @@ test("product and seller aggregates remain distinct and reviews fail closed at t
   assert.match(reviewService, /rpcBoundedInteger\(row\.rating, 1, 5/);
   assert.match(reviewService, /rpcBoolean\(row\.verified_purchase/);
   assert.match(reviewService, /if \(.*verified_purchase.*!== true\)/s);
-  assert.match(reviews, /kind === "product" \? reputation\.productAggregate : reputation\.sellerAggregate/);
+  assert.match(reviews, /kind === "product"\s*\?\s*reputation\.productAggregate\s*:\s*reputation\.sellerAggregate/);
   assert.match(reviews, /Califica este producto/); assert.match(reviews, /Califica al vendedor/);
   assert.match(reviews, /disabled=\{rating === 0 \|\| submitting\}/);
   assert.match(reviews, /Las reseñas están disponibles para compradores verificados/);

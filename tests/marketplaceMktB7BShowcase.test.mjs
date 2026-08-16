@@ -82,7 +82,7 @@ test("public showcase paginates explicitly, deduplicates overlaps, and clears in
 });
 
 test("product detail creates opaque attribution only for explicit cart or buy-now action", () => {
-  assert.match(product, /createCreatorShowcaseAttribution\(showcaseItemId, selectedVariant\.id, key\)/);
+  assert.match(product, /createCreatorShowcaseAttribution\(\s*showcaseItemId,\s*selectedVariant\.id,\s*key,?\s*\)/);
   assert.match(product, /attributionId: receipt\.id/);
   assert.match(product, /handleAddToCart\(true\)/);
   assert.match(product, /Comprar ahora/);
