@@ -11,6 +11,7 @@ const shipping = read("app/seller/shipping-profile.tsx");
 const shippingSetup = read("services/marketplaceShippingSetup.ts");
 const productEditor = read("app/seller/product-editor/[productId].tsx");
 const fulfillment = read("services/marketplaceFulfillmentService.ts");
+const fulfillmentParsers = read("services/marketplaceFulfillmentParsers.mjs");
 const runtimeValidation = read("services/marketplaceRuntimeValidation.ts");
 const sellerOrders = read("app/seller/orders/index.tsx");
 const sellerOrderDetail = read("app/seller/orders/[id].tsx");
@@ -109,23 +110,17 @@ test("seller sales accept only omitted nullable display metadata while required 
     /rpcNullableString[\s\S]*value === null \? null : rpcNonEmptyString/,
   );
   assert.match(runtimeValidation, /const UUID =[\s\S]*export const rpcUuid/);
-  assert.match(
-    fulfillment,
-    /firstItemTitle:rpcNullableString\(x\.first_item_title\?\?null/,
-  );
-  assert.match(
-    fulfillment,
-    /firstItemImage:rpcNullableString\(x\.first_item_image\?\?null/,
-  );
+  assert.match(fulfillmentParsers, /row\.first_item_title \?\? null/);
+  assert.match(fulfillmentParsers, /row\.first_item_image \?\? null/);
   for (const required of [
-    "rpcUuid(x.id",
-    "rpcUuid(x.store_id",
-    "rpcString(x.order_number",
-    "rpcEnum(x.status",
-    "num(x.total)",
-    "integer(x.total_quantity)",
+    "uuid(row.id",
+    "uuid(row.store_id",
+    "string(row.order_number",
+    "enumeration(row.status",
+    "number(row.total",
+    "integer(row.total_quantity",
   ])
-    assert(fulfillment.includes(required), required);
+    assert(fulfillmentParsers.includes(required), required);
 });
 
 test("seller order RPC, pagination, UI and ownership remain canonical and fail closed", () => {
@@ -141,8 +136,8 @@ test("seller order RPC, pagination, UI and ownership remain canonical and fail c
     "p_before_id",
   ])
     assert(sellerRpc.includes(token), token);
-  assert.match(fulfillment, /nextCursor:items\.length===effectiveLimit/);
-  assert.match(fulfillment, /throw invalid\(\)/);
+  assert.match(fulfillmentParsers, /items\.length === effectiveLimit/);
+  assert.match(fulfillmentParsers, /throw new MarketplaceFulfillmentPayloadError/);
   assert.doesNotMatch(sellerRpc, /catch[\s\S]*return\s*\[\]/);
   assert.match(sellerOrders, /fetchSellerOrders/);
   assert.match(sellerOrders, /No pudimos cargar los pedidos/);
