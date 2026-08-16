@@ -31,15 +31,22 @@ import {
   submitDepositToBackend,
   requestWithdrawalFromBackend,
   transferBdagToUser,
-  chainKeyToId,
-  assetToTokenType,
 } from '@/services/walletApi';
+import {
+  presentLedgerTransaction,
+  presentLegacyWalletTransaction,
+} from '@/services/walletTransactionPresentation.mjs';
+import type {
+  WalletTransactionDirection,
+  WalletTransactionKind,
+  WalletTransactionPresentation,
+} from '@/services/walletTransactionPresentation';
 
 export { MIN_WITHDRAWAL_AMOUNT as MIN_WITHDRAWAL_BDAG };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type TxType   = 'reward' | 'withdraw' | 'deposit' | 'tip' | 'gift';
+export type TxType   = WalletTransactionKind;
 export type TxStatus = 'pending' | 'completed' | 'failed';
 
 export interface PlatformTransaction {
@@ -48,6 +55,9 @@ export interface PlatformTransaction {
   amount:         number;
   feeAmount:      number;
   type:           TxType;
+  label:          string;
+  direction:      WalletTransactionDirection;
+  signedAmount:   number;
   status:         TxStatus;
   description:    string;
   txHash?:        string;
@@ -55,7 +65,6 @@ export interface PlatformTransaction {
   createdAt:      string;
   chainKey?:      string;
 }
-
 export interface WalletStats {
   totalEarned:       number;
   totalWithdrawn:    number;
@@ -150,12 +159,16 @@ export function useWallet() {
 
         if (ledgerTxns && Array.isArray(ledgerTxns) && ledgerTxns.length > 0) {
           for (const t of ledgerTxns) {
+            const presentation = presentLedgerTransaction(t, acct.id) as WalletTransactionPresentation;
             mapped.push({
               id:          t.id,
               userId:      uid,
-              amount:      Number(t.amount ?? 0),
+              amount:      presentation.amount,
               feeAmount:   Number(t.fee_amount ?? 0),
-              type:        opTypeToTxType(t.operation_type),
+              type:        presentation.kind,
+              label:       presentation.label,
+              direction:   presentation.direction,
+              signedAmount:presentation.signedAmount,
               // 'failed' must map to 'failed', not fall through to 'pending' —
               // refund_withdrawal_to_ledger sets financial_transactions.status
               // = 'failed' on a refunded/failed withdrawal (not 'reversed'),
@@ -165,7 +178,7 @@ export function useWallet() {
               status:      t.status === 'completed' ? 'completed'
                          : (t.status === 'failed' || t.status === 'reversed') ? 'failed'
                          : 'pending', // covers 'pending' and 'processing' (broadcasted/signing)
-              description: buildDescription(t),
+              description: presentation.description,
               txHash:      t.blockchain_txid ?? undefined,
               createdAt:   t.created_at,
             });
@@ -183,14 +196,27 @@ export function useWallet() {
 
         if (legacyTxns) {
           for (const t of legacyTxns) {
+            let presentation: WalletTransactionPresentation;
+            try {
+              presentation = presentLegacyWalletTransaction(t) as WalletTransactionPresentation;
+            } catch {
+              if (__DEV__)
+                console.warn('[useWallet] omitted legacy transaction with unknown direction', {
+                  transactionId: typeof t.id === 'string' ? t.id.slice(0, 8) : null,
+                });
+              continue;
+            }
             mapped.push({
               id:            t.id,
               userId:        t.user_id,
-              amount:        Number(t.amount),
+              amount:        presentation.amount,
               feeAmount:     Number(t.fee_amount ?? 0),
-              type:          t.type,
+              type:          presentation.kind,
+              label:         presentation.label,
+              direction:     presentation.direction,
+              signedAmount:  presentation.signedAmount,
               status:        t.status,
-              description:   t.description,
+              description:   presentation.description,
               txHash:        t.tx_hash ?? undefined,
               walletAddress: t.wallet_address ?? undefined,
               createdAt:     t.created_at,
@@ -270,7 +296,7 @@ export function useWallet() {
     return () => {
       clearInterval(pollInterval);
     };
-  }, [user?.id]);
+  }, [user?.id, fullSync]);
 
   // ── Connect wallet address to profile ─────────────────────────────────
   const connectWalletAddress = useCallback(async (address: string) => {
@@ -299,7 +325,6 @@ export function useWallet() {
     setIsVerifyingDeposit(true);
     try {
       const resolvedChainKey = chainKey ?? 'ethereum';
-      const resolvedChainId  = chainKeyToId(resolvedChainKey);
       const resolvedAddr     = (walletAddress ?? '').trim().toLowerCase();
 
       if (!txHash || !/^0x[a-fA-F0-9]{64}$/i.test(txHash)) {
@@ -456,12 +481,12 @@ export function useWallet() {
   }, []);
 
   // ── Computed stats ────────────────────────────────────────────────────
-  const totalEarned    = transactions.filter(t => ['reward','tip','gift'].includes(t.type) && t.status === 'completed').reduce((s, t) => s + t.amount, 0);
+  const totalEarned    = transactions.filter(t => ['reward','gift_received','content_sale','subscription_income','premium_dm_received','marketplace_sale','marketplace_commission'].includes(t.type) && t.status === 'completed').reduce((s, t) => s + t.amount, 0);
   const totalDeposited = transactions.filter(t => t.type === 'deposit' && t.status === 'completed').reduce((s, t) => s + t.amount, 0);
 
   const stats: WalletStats = {
     totalEarned,
-    totalWithdrawn:    transactions.filter(t => t.type === 'withdraw' && t.status === 'completed').reduce((s, t) => s + t.amount, 0),
+    totalWithdrawn:    transactions.filter(t => t.type === 'withdrawal' && t.status === 'completed').reduce((s, t) => s + t.amount, 0),
     totalDeposited,
     totalEarnedUsd:    bdagToUsd(totalEarned),
     totalDepositedUsd: bdagToUsd(totalDeposited),
@@ -487,35 +512,4 @@ export function useWallet() {
     pollBalanceBurst,
     refreshBalance: dbBalance,
   };
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function opTypeToTxType(opType: string): TxType {
-  switch (opType) {
-    case 'deposit':          return 'deposit';
-    case 'withdrawal':       return 'withdraw';
-    case 'transfer':         return 'tip';
-    case 'gift':             return 'gift';
-    case 'reward':           return 'reward';
-    case 'content_purchase': return 'tip';
-    case 'subscription':     return 'tip';
-    case 'premium_dm':       return 'tip';
-    case 'boost':            return 'withdraw';
-    default:                 return 'reward';
-  }
-}
-
-function buildDescription(t: any): string {
-  switch (t.operation_type) {
-    case 'deposit':          return `Depósito blockchain${t.blockchain_txid ? ` · ${t.blockchain_txid.slice(0, 10)}...` : ''}`;
-    case 'withdrawal':       return 'Retiro BDAG';
-    case 'transfer':         return 'Transferencia BDAG';
-    case 'gift':             return 'Regalo enviado';
-    case 'content_purchase': return 'Compra de contenido exclusivo';
-    case 'subscription':     return 'Suscripción a creador';
-    case 'premium_dm':       return 'Premium DM';
-    case 'boost':            return 'Boost de perfil/contenido';
-    default:                 return t.operation_type ?? 'Transacción';
-  }
 }

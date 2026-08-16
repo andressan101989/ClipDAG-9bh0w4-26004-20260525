@@ -1,8 +1,8 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, ScrollView, Pressable, TextInput,
   StyleSheet, Modal, KeyboardAvoidingView, Platform,
-  ActivityIndicator, Dimensions, Linking, Alert, AppState,
+  ActivityIndicator, Linking, Alert, AppState,
 } from 'react-native';
 import { WalletErrorBoundary } from '@/components/wallet/WalletErrorBoundary';
 import { TransactionRow } from '@/components/wallet/TransactionRow';
@@ -35,14 +35,12 @@ import {
   REWARD_RATES,
 } from '@/services/walletConfig';
 import {
-  usdtToBdag, ethToBdag, bdagToUsd, bdagToWithdrawAsset,
-  applyWithdrawalFee, formatBdagWithUsd,
+  usdtToBdag, bdagToUsd, bdagToWithdrawAsset,
+  applyWithdrawalFee,
   WITHDRAWAL_FEE_PERCENT, USD_TO_BDAG_RATE, BDAG_TO_USD_RATE,
   fetchAndCacheEthPrice, getEthPrice,
   type DepositAsset,
 } from '@/services/conversionEngine';
-
-const { width: W } = Dimensions.get('window');
 
 // ── Colours ───────────────────────────────────────────────────────────────────
 const C = {
@@ -119,15 +117,15 @@ function WalletScreenInner() {
   const stats                  = walletData?.stats ?? { totalEarned: 0, totalWithdrawn: 0, totalDeposited: 0, totalEarnedUsd: 0, totalDepositedUsd: 0 };
   const syncStatus             = walletData?.syncStatus ?? { isSyncing: false, lastSyncAt: null, syncError: null };
   const isLoadingTx            = walletData?.isLoadingTx ?? false;
-  const connectWalletAddress   = walletData?.connectWalletAddress ?? (async () => ({ success: false, error: 'N/A' }));
-  const transferBdag           = walletData?.transferBdag ?? (async () => ({ success: false, error: 'N/A' }));
+  const connectWalletAddress   = useMemo(() => walletData?.connectWalletAddress ?? (async () => ({ success: false, error: 'N/A' })), [walletData?.connectWalletAddress]);
+  const transferBdag           = useMemo(() => walletData?.transferBdag ?? (async () => ({ success: false, error: 'N/A' })), [walletData?.transferBdag]);
   const getTreasuryAddress     = walletData?.getTreasuryAddress ?? ((_key?: string) => '0xEA0Af178948BebBfE71A223d8915d596592CB200');
   const fullSync               = walletData?.fullSync ?? (async () => {});
   const pollBalanceBurst       = walletData?.pollBalanceBurst ?? (async () => {});
 
   // ── Local loading states for direct walletApi calls ────────────────────
   const [isWithdrawing,      setIsWithdrawing]      = useState(false);
-  const [isVerifyingDeposit, setIsVerifyingDeposit] = useState(false);
+  const [, setIsVerifyingDeposit] = useState(false);
 
   // ── useExternalWallet destructuring ────────────────────────────────────
   const wcAvailable       = externalWallet?.isAvailable ?? false;
@@ -256,7 +254,6 @@ function WalletScreenInner() {
     if (amt < 1) { Alert.alert('Mínimo', 'El mínimo de transferencia es 1 BDAG'); return; }
     if (amt > balance) { Alert.alert('Saldo insuficiente', `Tienes ${safeFmt(balance)} BDAG disponibles`); return; }
 
-    const recipientName = selectedRecipient.display_name || selectedRecipient.username;
     Alert.alert(
       'Confirmar transferencia',
       `Enviar ${safeFmt(amt)} BDAG\n≈ $${safeFmt(bdagToUsd(amt))} USD\n\nA: @${selectedRecipient.username}${transferNote ? `\n\nNota: ${transferNote}` : ''}`,
@@ -503,14 +500,15 @@ function WalletScreenInner() {
   // ── Build history ────────────────────────────────────────────────────────
   const allHistory: TransactionItem[] = transactions
     .filter(tx => {
-      if (txFilter === 'earned')      return ['reward', 'tip', 'gift'].includes(tx.type);
+      if (txFilter === 'earned')      return ['reward', 'gift_received', 'content_sale', 'subscription_income', 'premium_dm_received', 'marketplace_sale', 'marketplace_commission'].includes(tx.type);
       if (txFilter === 'deposits')    return tx.type === 'deposit';
-      if (txFilter === 'withdrawals') return tx.type === 'withdraw';
+      if (txFilter === 'withdrawals') return tx.type === 'withdrawal';
       if (txFilter === 'transfers')   return ['transfer_sent', 'transfer_received'].includes(tx.type);
       return true;
     })
     .map(tx => ({
       id: tx.id, type: tx.type, amount: tx.amount,
+      label: tx.label, direction: tx.direction, signedAmount: tx.signedAmount,
       status: tx.status, description: tx.description, txHash: tx.txHash, createdAt: tx.createdAt,
     }))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -518,7 +516,6 @@ function WalletScreenInner() {
   const depositStepLabel: Record<string, string> = {
     input: 'Depositar', awaiting_wallet: 'Confirma en tu wallet...', verifying: 'Verificando...', done: 'Depósito acreditado',
   };
-  const depositNetworkConfig = NETWORKS[depositNetwork];
   const assetSymbol = depositAsset.toUpperCase();
 
   // Transfer amt num

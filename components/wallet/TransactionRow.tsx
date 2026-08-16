@@ -3,11 +3,11 @@
  * Single transaction history row for the Wallet screen.
  */
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { Linking } from 'react-native';
 import { getExplorerTxUrl, shortAddress } from '@/services/multiChainService';
 import { bdagToUsd } from '@/services/conversionEngine';
+import type { WalletTransactionDirection, WalletTransactionKind } from '@/services/walletTransactionPresentation';
 
 const C = {
   surface:   '#161628',
@@ -25,40 +25,37 @@ const C = {
   transfer:  '#FF9D00',
 };
 
-function txColor(type: string, status: string): string {
+function txColor(type: WalletTransactionKind, status: string, direction: WalletTransactionDirection): string {
   if (status === 'failed' || status === 'canceled') return C.textMuted;
   switch (type) {
     case 'reward':            return C.accent;
-    case 'tip':               return C.primary;
-    case 'gift':              return C.gold;
+    case 'gift_sent': case 'gift_received': return C.gold;
     case 'deposit':           return C.blue;
-    case 'withdraw':          return C.secondary;
+    case 'withdrawal':        return C.secondary;
     case 'transfer_sent':     return C.transfer;
     case 'transfer_received': return C.accent;
-    default: return '#888';
+    case 'marketplace_purchase': case 'marketplace_reversal': case 'fee': return C.secondary;
+    case 'marketplace_sale': case 'marketplace_commission': case 'marketplace_refund': return C.accent;
+    default: return direction === 'credit' ? C.accent : C.textSub;
   }
 }
 
-function txIcon(type: string): string {
+function txIcon(type: WalletTransactionKind): string {
   switch (type) {
     case 'reward':            return 'star';
-    case 'tip':               return 'card-giftcard';
-    case 'gift':              return 'redeem';
+    case 'gift_sent': case 'gift_received': return 'redeem';
     case 'deposit':           return 'arrow-downward';
-    case 'withdraw':          return 'arrow-upward';
+    case 'withdrawal':        return 'arrow-upward';
     case 'transfer_sent':     return 'send';
     case 'transfer_received': return 'call-received';
+    case 'marketplace_purchase': return 'shopping-bag';
+    case 'marketplace_sale': return 'storefront';
+    case 'marketplace_commission': return 'paid';
+    case 'marketplace_refund': return 'currency-exchange';
+    case 'marketplace_reversal': return 'undo';
+    case 'fee': return 'receipt-long';
     default: return 'swap-horiz';
   }
-}
-
-function txLabel(type: string): string {
-  const m: Record<string, string> = {
-    reward: 'Recompensa', tip: 'Propina', gift: 'Regalo',
-    deposit: 'Depósito', withdraw: 'Retiro',
-    transfer_sent: 'Enviado', transfer_received: 'Recibido',
-  };
-  return m[type] ?? type;
 }
 
 function statusColor(s: string): string {
@@ -95,8 +92,11 @@ function safeFmt(n: number | undefined | null, dec = 2): string {
 
 export interface TransactionItem {
   id: string;
-  type: string;
+  type: WalletTransactionKind;
   amount: number;
+  signedAmount: number;
+  direction: WalletTransactionDirection;
+  label: string;
   status: string;
   description: string;
   txHash?: string;
@@ -109,10 +109,11 @@ interface Props {
 }
 
 export function TransactionRow({ item, activeChainId }: Props) {
-  const color = txColor(item.type, item.status);
+  const color = txColor(item.type, item.status, item.direction);
   const sc    = statusColor(item.status);
-  const sign  = (item.type === 'withdraw' || item.type === 'transfer_sent') ? '-' : '+';
-  const usdEq = bdagToUsd(item.amount);
+  const sign  = item.direction === 'debit' ? '-' : '+';
+  const visibleAmount = Math.abs(item.signedAmount);
+  const usdEq = bdagToUsd(visibleAmount);
 
   return (
     <View style={s.row}>
@@ -121,9 +122,9 @@ export function TransactionRow({ item, activeChainId }: Props) {
       </View>
       <View style={s.body}>
         <View style={s.top}>
-          <Text style={s.label}>{txLabel(item.type)}</Text>
+          <Text style={s.label}>{item.label}</Text>
           <View style={{ alignItems: 'flex-end' }}>
-            <Text style={[s.amt, { color }]}>{sign}{safeFmt(item.amount)} BDAG</Text>
+            <Text style={[s.amt, { color }]}>{sign}{safeFmt(visibleAmount)} BDAG</Text>
             <Text style={s.usd}>{sign}${safeFmt(usdEq)}</Text>
           </View>
         </View>
