@@ -25,7 +25,10 @@ import { MarketplaceShippingQuoteCard } from "@/components/marketplace/Marketpla
 import { SearchableSelectField } from "@/components/marketplace/SearchableSelectField";
 import { ProductMediaGallery } from "@/components/marketplace/product-detail/ProductMediaGallery";
 import { ProductPurchaseBar } from "@/components/marketplace/product-detail/ProductPurchaseBar";
-import { ProductRatingSummary, ProductReviewsSection } from "@/components/marketplace/product-detail/ProductReviewsSection";
+import {
+  ProductRatingSummary,
+  ProductReviewsSection,
+} from "@/components/marketplace/product-detail/ProductReviewsSection";
 import {
   Colors,
   FontSize,
@@ -74,21 +77,49 @@ import {
 } from "@/services/marketplaceReviewService";
 
 const EMPTY_MEDIA: MarketplaceProductDetail["media"] = [];
+const PRODUCT_COLOR_HEX: Record<string, string> = {
+  negro: "#08090B",
+  blanco: "#F5F5F3",
+  azul: "#1E3A68",
+  rojo: "#C8303A",
+  verde: "#2F6B48",
+  gris: "#777A84",
+  beige: "#D8C6A2",
+  marrón: "#754D36",
+  morado: "#6F47A8",
+  rosa: "#D9799C",
+  black: "#08090B",
+  white: "#F5F5F3",
+  blue: "#1E3A68",
+  red: "#C8303A",
+  green: "#2F6B48",
+  gray: "#777A84",
+};
 
 export default function ProductScreen() {
-  const { id, source, sourceId, creatorId, liveSessionId, campaignId, showcaseItemId, contentProductTagId, liveSessionProductId, creatorDisplayName } =
-      useLocalSearchParams<{
-        id: string;
-        source?: string;
-        sourceId?: string;
-        creatorId?: string;
-        liveSessionId?: string;
-        campaignId?: string;
-        showcaseItemId?: string;
-        contentProductTagId?: string;
-        liveSessionProductId?: string;
-        creatorDisplayName?: string;
-      }>(),
+  const {
+      id,
+      source,
+      sourceId,
+      creatorId,
+      liveSessionId,
+      campaignId,
+      showcaseItemId,
+      contentProductTagId,
+      liveSessionProductId,
+      creatorDisplayName,
+    } = useLocalSearchParams<{
+      id: string;
+      source?: string;
+      sourceId?: string;
+      creatorId?: string;
+      liveSessionId?: string;
+      campaignId?: string;
+      showcaseItemId?: string;
+      contentProductTagId?: string;
+      liveSessionProductId?: string;
+      creatorDisplayName?: string;
+    }>(),
     router = useRouter(),
     insets = useSafeAreaInsets(),
     { user } = useAuth(),
@@ -104,7 +135,9 @@ export default function ProductScreen() {
     [quantity, setQuantity] = useState(1),
     [mediaIndex, setMediaIndex] = useState(0),
     [descriptionExpanded, setDescriptionExpanded] = useState(false),
-    [reputation, setReputation] = useState<MarketplaceProductReputation | null>(null),
+    [reputation, setReputation] = useState<MarketplaceProductReputation | null>(
+      null,
+    ),
     [reputationLoading, setReputationLoading] = useState(false),
     [reputationError, setReputationError] = useState(false),
     [cartFeedback, setCartFeedback] =
@@ -169,7 +202,9 @@ export default function ProductScreen() {
       if (toastTimer.current) clearTimeout(toastTimer.current);
     };
   }, [load]);
-  useEffect(() => { void loadReputation(); }, [loadReputation, user?.id]);
+  useEffect(() => {
+    void loadReputation();
+  }, [loadReputation, user?.id]);
   const product =
       detail?.product ?? products.find((item) => item.id === id) ?? null,
     options = detail?.options ?? [],
@@ -179,11 +214,23 @@ export default function ProductScreen() {
     () =>
       marketplaceSourceFromParams({
         source: showcaseItemId ? "creator" : source,
-        sourceId: sourceId ?? showcaseItemId ?? contentProductTagId ?? liveSessionProductId,
+        sourceId:
+          sourceId ??
+          showcaseItemId ??
+          contentProductTagId ??
+          liveSessionProductId,
         creatorId,
         liveSessionId,
       }),
-    [source, sourceId, creatorId, liveSessionId, showcaseItemId, contentProductTagId, liveSessionProductId],
+    [
+      source,
+      sourceId,
+      creatorId,
+      liveSessionId,
+      showcaseItemId,
+      contentProductTagId,
+      liveSessionProductId,
+    ],
   );
   const activeVariants = variants.filter((item) => item.status === "active");
   const selectedVariant = options.length
@@ -276,13 +323,23 @@ export default function ProductScreen() {
       return;
     addToCartLockRef.current = true;
     try {
-      if ((showcaseItemId || contentProductTagId || liveSessionProductId) && !user) {
+      if (
+        (showcaseItemId || contentProductTagId || liveSessionProductId) &&
+        !user
+      ) {
         router.push("/login" as never);
         return;
       }
-      const creatorContextCount = [showcaseItemId, contentProductTagId, liveSessionProductId].filter(Boolean).length;
+      const creatorContextCount = [
+        showcaseItemId,
+        contentProductTagId,
+        liveSessionProductId,
+      ].filter(Boolean).length;
       if (creatorContextCount > 1) {
-        showAlert("Contexto de creator no válido", "Abre este producto nuevamente desde una sola recomendación de creator.");
+        showAlert(
+          "Contexto de creator no válido",
+          "Abre este producto nuevamente desde una sola recomendación de creator.",
+        );
         return;
       }
       const selectedOptions = options.flatMap((option) => {
@@ -312,24 +369,55 @@ export default function ProductScreen() {
           (candidate) => candidate && isPublicMarketplaceImageUrl(candidate),
         ) ?? null;
       let attribution:
-        | { attributionId: string; showcaseItemId: string; creatorUserId: string; creatorDisplayName?: string }
-        | { attributionId: string; contentProductTagId: string; sourceSurface: "feed" | "reel"; creatorUserId: string; creatorDisplayName?: string }
-        | { attributionId: string; liveSessionProductId: string; sourceSurface: "live"; creatorUserId: string; creatorDisplayName?: string }
+        | {
+            attributionId: string;
+            showcaseItemId: string;
+            creatorUserId: string;
+            creatorDisplayName?: string;
+          }
+        | {
+            attributionId: string;
+            contentProductTagId: string;
+            sourceSurface: "feed" | "reel";
+            creatorUserId: string;
+            creatorDisplayName?: string;
+          }
+        | {
+            attributionId: string;
+            liveSessionProductId: string;
+            sourceSurface: "live";
+            creatorUserId: string;
+            creatorDisplayName?: string;
+          }
         | undefined;
       if (showcaseItemId) {
-        const key = showcaseAttributionKeysRef.current[selectedVariant.id] ?? randomUUID();
+        const key =
+          showcaseAttributionKeysRef.current[selectedVariant.id] ??
+          randomUUID();
         showcaseAttributionKeysRef.current[selectedVariant.id] = key;
-        const receipt = await createCreatorShowcaseAttribution(showcaseItemId, selectedVariant.id, key);
+        const receipt = await createCreatorShowcaseAttribution(
+          showcaseItemId,
+          selectedVariant.id,
+          key,
+        );
         attribution = {
           attributionId: receipt.id,
           showcaseItemId,
           creatorUserId: receipt.creatorUserId,
           ...(creatorDisplayName ? { creatorDisplayName } : {}),
         };
-      } else if (contentProductTagId && (source === "feed" || source === "reel")) {
-        const key = contentAttributionKeysRef.current[selectedVariant.id] ?? randomUUID();
+      } else if (
+        contentProductTagId &&
+        (source === "feed" || source === "reel")
+      ) {
+        const key =
+          contentAttributionKeysRef.current[selectedVariant.id] ?? randomUUID();
         contentAttributionKeysRef.current[selectedVariant.id] = key;
-        const receipt = await createCreatorContentAttribution(contentProductTagId, selectedVariant.id, key);
+        const receipt = await createCreatorContentAttribution(
+          contentProductTagId,
+          selectedVariant.id,
+          key,
+        );
         attribution = {
           attributionId: receipt.id,
           contentProductTagId,
@@ -338,9 +426,14 @@ export default function ProductScreen() {
           ...(creatorDisplayName ? { creatorDisplayName } : {}),
         };
       } else if (liveSessionProductId && source === "live") {
-        const key = liveAttributionKeysRef.current[selectedVariant.id] ?? randomUUID();
+        const key =
+          liveAttributionKeysRef.current[selectedVariant.id] ?? randomUUID();
         liveAttributionKeysRef.current[selectedVariant.id] = key;
-        const receipt = await createLiveCreatorAttribution(liveSessionProductId, selectedVariant.id, key);
+        const receipt = await createLiveCreatorAttribution(
+          liveSessionProductId,
+          selectedVariant.id,
+          key,
+        );
         if (receipt.id && receipt.creatorUserId) {
           attribution = {
             attributionId: receipt.id,
@@ -371,7 +464,10 @@ export default function ProductScreen() {
       });
       if (!result.ok) {
         if (result.code === "attribution_conflict") {
-          showAlert("Recomendación de creator ya asignada", "Quita esta variante del carrito antes de cambiar la recomendación de creator.");
+          showAlert(
+            "Recomendación de creator ya asignada",
+            "Quita esta variante del carrito antes de cambiar la recomendación de creator.",
+          );
           return;
         }
         showAlert(
@@ -411,7 +507,10 @@ export default function ProductScreen() {
       toastTimer.current = setTimeout(() => setCartFeedback(null), 3200);
       if (continueToCheckout) router.push("/checkout" as never);
     } catch {
-      showAlert("Recomendación de creator no disponible", "La etiqueta del producto o la oferta del vendedor ya no está disponible. Vuelve al contenido original e inténtalo de nuevo.");
+      showAlert(
+        "Recomendación de creator no disponible",
+        "La etiqueta del producto o la oferta del vendedor ya no está disponible. Vuelve al contenido original e inténtalo de nuevo.",
+      );
     } finally {
       addToCartLockRef.current = false;
     }
@@ -520,7 +619,15 @@ export default function ProductScreen() {
           label="Volver"
           onPress={() => router.back()}
         />
-        <View style={{ flex: 1 }} />
+        <View
+          style={styles.headerBrand}
+          accessibilityLabel="OnSpace Marketplace"
+        >
+          <Text style={styles.headerBrandName}>
+            On<Text style={styles.headerBrandAccent}>Space</Text>
+          </Text>
+          <Text style={styles.headerBrandSubtitle}>Marketplace</Text>
+        </View>
         <HeaderButton
           icon="ios-share"
           label="Compartir producto"
@@ -556,7 +663,7 @@ export default function ProductScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
           styles.scroll,
-          { paddingBottom: 176 + insets.bottom },
+          { paddingBottom: 124 + insets.bottom },
         ]}
       >
         <ProductMediaGallery
@@ -567,22 +674,54 @@ export default function ProductScreen() {
         <View style={styles.commerceCard}>
           {showcaseItemId || contentProductTagId || liveSessionProductId ? (
             <View style={styles.creatorRecommendation}>
-              <MaterialIcons name="storefront" size={17} color={Colors.accent} />
-              <Text style={styles.creatorRecommendationText}>Recomendado por {creatorDisplayName ? `@${creatorDisplayName}` : "este creator"}</Text>
-              <Pressable style={styles.creatorBuyButton} onPress={() => void handleAddToCart(true)} accessibilityRole="button" accessibilityLabel="Comprar ahora desde la recomendación del creator">
+              <MaterialIcons
+                name="storefront"
+                size={17}
+                color={Colors.accent}
+              />
+              <Text style={styles.creatorRecommendationText}>
+                Recomendado por{" "}
+                {creatorDisplayName ? `@${creatorDisplayName}` : "este creator"}
+              </Text>
+              <Pressable
+                style={styles.creatorBuyButton}
+                onPress={() => void handleAddToCart(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Comprar ahora desde la recomendación del creator"
+              >
                 <Text style={styles.buyNowText}>Comprar</Text>
               </Pressable>
             </View>
           ) : null}
           <View style={styles.categoryPill}>
-            <MaterialCommunityIcons name={product.product_type === "digital" ? "cloud-download-outline" : "package-variant-closed"} size={14} color={Colors.primaryLight} />
-            <Text style={styles.category}>{product.category} · {product.product_type === "digital" ? "Digital" : "Físico"}</Text>
+            <Text style={styles.category}>{product.category}</Text>
+            <MaterialIcons
+              name="chevron-right"
+              size={15}
+              color={Colors.textSubtle}
+            />
+            <Text style={styles.category}>
+              {product.product_type === "digital" ? "Digital" : "Físico"}
+            </Text>
           </View>
           <Text style={styles.title}>{product.title}</Text>
-          {reputationLoading ? <ActivityIndicator color={Colors.primary} size="small" style={{ alignSelf: "flex-start", marginTop: 8 }} /> : <ProductRatingSummary reputation={reputation} />}
+          {reputationLoading ? (
+            <ActivityIndicator
+              color={Colors.primary}
+              size="small"
+              style={{ alignSelf: "flex-start", marginTop: 8 }}
+            />
+          ) : (
+            <ProductRatingSummary reputation={reputation} />
+          )}
           <View style={styles.pricingPanel}>
             <View style={styles.priceRow}>
-              <Text style={styles.price} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72}>
+              <Text
+                style={styles.price}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.72}
+              >
                 {hasRange ? "Desde " : ""}
                 {effectivePrice.toFixed(2)} BDAG
               </Text>
@@ -597,57 +736,122 @@ export default function ProductScreen() {
             </View>
             <View style={styles.commerceMeta}>
               <View style={styles.stock}>
-                <View style={[styles.stockDot, available > 0 && !selectionIncomplete ? styles.stockAvailable : styles.stockUnavailable]} />
+                <View
+                  style={[
+                    styles.stockDot,
+                    available > 0 && !selectionIncomplete
+                      ? styles.stockAvailable
+                      : styles.stockUnavailable,
+                  ]}
+                />
                 <Text style={styles.stockText}>{stockText}</Text>
               </View>
-              {product.total_sales > 0 ? <Text style={styles.sales}>{product.total_sales} vendidos</Text> : <Text style={styles.sales}>Producto nuevo</Text>}
+              {product.total_sales > 0 ? (
+                <Text style={styles.sales}>{product.total_sales} vendidos</Text>
+              ) : (
+                <Text style={styles.sales}>Producto nuevo</Text>
+              )}
             </View>
           </View>
+          <MarketplaceShippingQuoteCard
+            productId={product.id}
+            quantity={quantity}
+            onRequestAddress={() =>
+              router.push(user ? ("/checkout" as never) : ("/login" as never))
+            }
+          />
           {options.length ? (
             <View style={styles.variantPanel}>
-              <View style={styles.variantHeading}>
-                <View>
-                  <Text style={styles.variantEyebrow}>PERSONALIZA TU COMPRA</Text>
-                  <Text style={styles.variantTitle}>Elige una opción</Text>
-                </View>
-                <View style={styles.selectionSummary}>
-                  <Text style={styles.summaryLabel}>Seleccionado</Text>
-                  <Text style={styles.summaryValue} numberOfLines={1}>
-                    {selectionSummary || `Selecciona ${missingOption?.name ?? "opciones"}`}
-                  </Text>
-                </View>
-              </View>
               {options.map((option) => (
                 <View key={option.id} style={styles.optionBlock}>
-                  <Text style={styles.optionTitle}>{option.name}</Text>
+                  <View style={styles.optionHeading}>
+                    <Text style={styles.optionTitle}>{option.name}</Text>
+                    {selectedValues[option.id] ? (
+                      <Text style={styles.optionSelection}>
+                        {
+                          option.values.find(
+                            (item) => item.id === selectedValues[option.id],
+                          )?.value
+                        }
+                      </Text>
+                    ) : null}
+                  </View>
                   {option.values.length > 6 ? (
                     <SearchableSelectField
                       label={`Seleccionar ${option.name}`}
                       value={selectedValues[option.id] ?? ""}
                       options={option.values
                         .filter((value) =>
-                          isOptionValueSelectable(variants, value.id, selectedValues, option.id),
+                          isOptionValueSelectable(
+                            variants,
+                            value.id,
+                            selectedValues,
+                            option.id,
+                          ),
                         )
-                        .map((value) => ({ value: value.id, label: value.value }))}
-                      onChange={(valueId) => chooseVariantValue(option.id, valueId)}
+                        .map((value) => ({
+                          value: value.id,
+                          label: value.value,
+                        }))}
+                      onChange={(valueId) =>
+                        chooseVariantValue(option.id, valueId)
+                      }
                     />
                   ) : (
                     <View style={styles.chips}>
                       {option.values.map((value) => {
-                        const enabled = isOptionValueSelectable(variants, value.id, selectedValues, option.id);
+                        const enabled = isOptionValueSelectable(
+                          variants,
+                          value.id,
+                          selectedValues,
+                          option.id,
+                        );
                         const selected = selectedValues[option.id] === value.id;
+                        const swatch = /color|colour/i.test(option.name)
+                          ? PRODUCT_COLOR_HEX[value.value.trim().toLowerCase()]
+                          : null;
                         return (
                           <Pressable
                             key={value.id}
                             disabled={!enabled}
-                            style={[styles.chip, selected && styles.chipSelected, !enabled && styles.chipDisabled]}
+                            style={[
+                              styles.chip,
+                              swatch && styles.colorChip,
+                              selected && styles.chipSelected,
+                              !enabled && styles.chipDisabled,
+                            ]}
                             accessibilityRole="radio"
                             accessibilityLabel={`${option.name} ${value.value}`}
-                            accessibilityState={{ selected, disabled: !enabled }}
-                            onPress={() => chooseVariantValue(option.id, value.id)}
+                            accessibilityState={{
+                              selected,
+                              disabled: !enabled,
+                            }}
+                            onPress={() =>
+                              chooseVariantValue(option.id, value.id)
+                            }
                           >
-                            <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{value.value}</Text>
-                            {selected ? <MaterialIcons name="check" size={15} color={Colors.primaryLight} /> : null}
+                            {swatch ? (
+                              <View
+                                style={[
+                                  styles.swatch,
+                                  { backgroundColor: swatch },
+                                  value.value.trim().toLowerCase() ===
+                                    "blanco" ||
+                                  value.value.trim().toLowerCase() === "white"
+                                    ? styles.lightSwatch
+                                    : null,
+                                ]}
+                              />
+                            ) : (
+                              <Text
+                                style={[
+                                  styles.chipText,
+                                  selected && styles.chipTextSelected,
+                                ]}
+                              >
+                                {value.value}
+                              </Text>
+                            )}
                           </Pressable>
                         );
                       })}
@@ -658,37 +862,122 @@ export default function ProductScreen() {
             </View>
           ) : null}
         </View>
-        <View style={styles.benefitsRow}>
-          <View style={styles.benefit}><MaterialIcons name="verified-user" size={19} color={Colors.success} /><Text style={styles.benefitText}>Pago protegido</Text></View>
-          <View style={styles.benefitDivider} />
-          <View style={styles.benefit}><MaterialCommunityIcons name="truck-fast-outline" size={20} color={Colors.blue} /><Text style={styles.benefitText}>Envío calculado</Text></View>
-          <View style={styles.benefitDivider} />
-          <View style={styles.benefit}><MaterialIcons name="inventory-2" size={18} color={Colors.warning} /><Text style={styles.benefitText}>Stock validado</Text></View>
-        </View>
-        <MarketplaceShippingQuoteCard
-          productId={product.id}
-          quantity={quantity}
-          onRequestAddress={() =>
-            router.push(user ? ("/checkout" as never) : ("/login" as never))
-          }
-        />
-        {reputation ? <>
-          <Pressable
-            style={styles.sellerCard}
-            onPress={() => router.push({ pathname: "/store/[id]", params: { id: reputation.store.id } } as never)}
-            accessibilityRole="button"
-            accessibilityLabel={`Ver tienda ${reputation.store.name}`}
-          >
-            {reputation.store.logoUrl ? <Image source={{ uri: reputation.store.logoUrl }} style={styles.storeLogo} contentFit="cover" transition={150} /> : <View style={styles.storeLogoFallback}><MaterialIcons name="storefront" size={26} color={Colors.primaryLight} /></View>}
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={styles.sellerLabel}>TIENDA</Text>
-              <Text style={styles.sellerName} numberOfLines={2}>{reputation.store.name}</Text>
-              {reputation.sellerAggregate.reviewCount > 0 && reputation.sellerAggregate.averageRating !== null ? <View style={styles.storeRating}><MaterialIcons name="star" size={14} color={Colors.warning} /><Text style={styles.storeRatingText}>{reputation.sellerAggregate.averageRating.toFixed(1)} · {reputation.sellerAggregate.reviewCount} {reputation.sellerAggregate.reviewCount === 1 ? "valoración" : "valoraciones"}</Text></View> : <Text style={styles.storeNoReviews}>Sin valoraciones todavía</Text>}
-            </View>
-            <View style={styles.viewStore}><Text style={styles.viewStoreText}>Ver tienda</Text><MaterialIcons name="chevron-right" size={20} color={Colors.primaryLight} /></View>
-          </Pressable>
-          <ProductReviewsSection productId={product.id} reputation={reputation} onReputationRefresh={loadReputation} />
-        </> : reputationError ? <View style={styles.reputationError}><Text style={styles.reputationErrorText}>No se pudo cargar la reputación de la tienda.</Text><Pressable onPress={() => void loadReputation()} accessibilityRole="button"><Text style={styles.retryReputation}>Reintentar</Text></Pressable></View> : null}
+        {reputation ? (
+          <>
+            <Pressable
+              style={styles.sellerCard}
+              onPress={() =>
+                router.push({
+                  pathname: "/store/[id]",
+                  params: { id: reputation.store.id },
+                } as never)
+              }
+              accessibilityRole="button"
+              accessibilityLabel={`Ver tienda ${reputation.store.name}`}
+            >
+              <View style={styles.sellerMain}>
+                {reputation.store.logoUrl ? (
+                  <Image
+                    source={{ uri: reputation.store.logoUrl }}
+                    style={styles.storeLogo}
+                    contentFit="cover"
+                    transition={150}
+                  />
+                ) : (
+                  <View style={styles.storeLogoFallback}>
+                    <MaterialIcons
+                      name="storefront"
+                      size={27}
+                      color={Colors.primaryLight}
+                    />
+                  </View>
+                )}
+                <View style={styles.sellerCopy}>
+                  <Text style={styles.sellerName} numberOfLines={2}>
+                    {reputation.store.name}
+                  </Text>
+                  {reputation.sellerAggregate.reviewCount > 0 &&
+                  reputation.sellerAggregate.averageRating !== null ? (
+                    <View style={styles.storeRating}>
+                      <MaterialIcons
+                        name="star"
+                        size={16}
+                        color={Colors.warning}
+                      />
+                      <Text style={styles.storeRatingText}>
+                        {reputation.sellerAggregate.averageRating.toFixed(1)} (
+                        {reputation.sellerAggregate.reviewCount})
+                      </Text>
+                      {product.total_sales > 0 ? (
+                        <>
+                          <Text style={styles.storeMetricDivider}>|</Text>
+                          <Text style={styles.storeRatingText}>
+                            {product.total_sales} ventas
+                          </Text>
+                        </>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <Text style={styles.storeNoReviews}>
+                      Sin valoraciones todavía
+                    </Text>
+                  )}
+                </View>
+                <View style={styles.viewStore}>
+                  <MaterialIcons
+                    name="chevron-right"
+                    size={25}
+                    color={Colors.textSecondary}
+                  />
+                </View>
+              </View>
+              <View style={styles.benefitsRow}>
+                <View style={styles.benefit}>
+                  <MaterialIcons
+                    name="verified-user"
+                    size={20}
+                    color={Colors.primaryLight}
+                  />
+                  <View>
+                    <Text style={styles.benefitText}>Compra protegida</Text>
+                    <Text style={styles.benefitSubtext}>Pago protegido</Text>
+                  </View>
+                </View>
+                <View style={styles.benefitDivider} />
+                <View style={styles.benefit}>
+                  <MaterialCommunityIcons
+                    name="truck-fast-outline"
+                    size={21}
+                    color={Colors.primaryLight}
+                  />
+                  <View>
+                    <Text style={styles.benefitText}>Envío seguro</Text>
+                    <Text style={styles.benefitSubtext}>
+                      Cotización canónica
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </Pressable>
+            <ProductReviewsSection
+              productId={product.id}
+              reputation={reputation}
+              onReputationRefresh={loadReputation}
+            />
+          </>
+        ) : reputationError ? (
+          <View style={styles.reputationError}>
+            <Text style={styles.reputationErrorText}>
+              No se pudo cargar la reputación de la tienda.
+            </Text>
+            <Pressable
+              onPress={() => void loadReputation()}
+              accessibilityRole="button"
+            >
+              <Text style={styles.retryReputation}>Reintentar</Text>
+            </Pressable>
+          </View>
+        ) : null}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Sobre el producto</Text>
           <Text
@@ -748,7 +1037,7 @@ export default function ProductScreen() {
       </ScrollView>
       {cartFeedback ? (
         <Pressable
-          style={[styles.toast, { bottom: 154 + insets.bottom }]}
+          style={[styles.toast, { bottom: 106 + insets.bottom }]}
           onPress={() => router.push("/cart" as never)}
           accessibilityRole="button"
         >
@@ -826,7 +1115,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
   center: { alignItems: "center", justifyContent: "center", gap: Spacing.md },
   header: {
-    minHeight: 56,
+    minHeight: 64,
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: Spacing.sm,
@@ -838,10 +1127,28 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: Colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    backgroundColor: "transparent",
     marginHorizontal: 2,
+  },
+  headerBrand: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: "center",
+    paddingLeft: 8,
+  },
+  headerBrandName: {
+    color: Colors.textPrimary,
+    fontSize: 21,
+    lineHeight: 23,
+    fontWeight: FontWeight.extrabold,
+    letterSpacing: -0.5,
+  },
+  headerBrandAccent: { color: Colors.primaryLight },
+  headerBrandSubtitle: {
+    color: Colors.primaryLight,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: FontWeight.medium,
   },
   cartBadge: {
     position: "absolute",
@@ -856,16 +1163,44 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.secondary,
   },
   cartBadgeText: { color: "#fff", fontSize: 9, fontWeight: FontWeight.bold },
-  scroll: { gap: Spacing.md },
-  commerceCard: { marginHorizontal: Spacing.md, padding: Spacing.md, gap: Spacing.md, borderRadius: Radius.xl, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
-  creatorRecommendation:{minHeight:48,flexDirection:"row",alignItems:"center",gap:Spacing.sm,paddingHorizontal:Spacing.md,borderRadius:Radius.lg,backgroundColor:Colors.accentDim,borderWidth:1,borderColor:Colors.accent+"44"},
-  creatorRecommendationText:{flex:1,color:Colors.textSecondary,fontSize:FontSize.sm},
-  creatorBuyButton:{minHeight:44,justifyContent:"center",paddingHorizontal:Spacing.sm},
-  buyNowText:{color:Colors.accent,fontSize:FontSize.sm,fontWeight:FontWeight.bold},
-  categoryPill:{alignSelf:"flex-start",minHeight:32,flexDirection:"row",alignItems:"center",gap:5,paddingHorizontal:10,borderRadius:Radius.full,backgroundColor:Colors.primaryDim},
+  scroll: { gap: 14 },
+  commerceCard: { marginHorizontal: Spacing.md, gap: 10 },
+  creatorRecommendation: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.accentDim,
+    borderWidth: 1,
+    borderColor: Colors.accent + "44",
+  },
+  creatorRecommendationText: {
+    flex: 1,
+    color: Colors.textSecondary,
+    fontSize: FontSize.sm,
+  },
+  creatorBuyButton: {
+    minHeight: 44,
+    justifyContent: "center",
+    paddingHorizontal: Spacing.sm,
+  },
+  buyNowText: {
+    color: Colors.accent,
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.bold,
+  },
+  categoryPill: {
+    alignSelf: "flex-start",
+    minHeight: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
   category: {
     color: Colors.primaryLight,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: FontWeight.bold,
     textTransform: "uppercase",
     letterSpacing: 0.8,
@@ -877,16 +1212,55 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.extrabold,
     letterSpacing: -0.45,
   },
-  pricingPanel:{gap:Spacing.sm,padding:Spacing.md,borderRadius:Radius.lg,backgroundColor:Colors.surface,borderWidth:1,borderColor:Colors.border},
-  commerceMeta:{flexDirection:"row",alignItems:"center",justifyContent:"space-between",gap:Spacing.sm},
-  variantPanel:{gap:Spacing.md,paddingTop:Spacing.sm,borderTopWidth:1,borderTopColor:Colors.border},
-  variantHeading:{gap:Spacing.sm},
-  variantEyebrow:{color:Colors.primaryLight,fontSize:9,fontWeight:FontWeight.extrabold,letterSpacing:1.1},
-  variantTitle:{color:Colors.textPrimary,fontSize:FontSize.lg,fontWeight:FontWeight.extrabold,marginTop:2},
-  benefitsRow:{marginHorizontal:Spacing.md,minHeight:76,flexDirection:"row",alignItems:"stretch",borderRadius:Radius.lg,backgroundColor:Colors.surfaceElevated,borderWidth:1,borderColor:Colors.border,overflow:"hidden"},
-  benefit:{flex:1,minWidth:0,alignItems:"center",justifyContent:"center",gap:5,paddingHorizontal:4},
-  benefitDivider:{width:1,marginVertical:Spacing.sm,backgroundColor:Colors.border},
-  benefitText:{color:Colors.textSecondary,fontSize:9,fontWeight:FontWeight.semibold,textAlign:"center"},
+  pricingPanel: { gap: 7 },
+  commerceMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: Spacing.sm,
+  },
+  variantPanel: { gap: 14, paddingTop: 4 },
+  variantHeading: { gap: Spacing.sm },
+  variantEyebrow: {
+    color: Colors.primaryLight,
+    fontSize: 9,
+    fontWeight: FontWeight.extrabold,
+    letterSpacing: 1.1,
+  },
+  variantTitle: {
+    color: Colors.textPrimary,
+    fontSize: FontSize.lg,
+    fontWeight: FontWeight.extrabold,
+    marginTop: 2,
+  },
+  benefitsRow: {
+    minHeight: 60,
+    flexDirection: "row",
+    alignItems: "stretch",
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    marginTop: 4,
+  },
+  benefit: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 6,
+  },
+  benefitDivider: {
+    width: 1,
+    marginVertical: 10,
+    backgroundColor: Colors.border,
+  },
+  benefitText: {
+    color: Colors.textPrimary,
+    fontSize: 11,
+    fontWeight: FontWeight.semibold,
+  },
+  benefitSubtext: { color: Colors.textSubtle, fontSize: 9, marginTop: 2 },
   priceRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -895,7 +1269,7 @@ const styles = StyleSheet.create({
   },
   price: {
     flexShrink: 1,
-    color: Colors.blue,
+    color: Colors.primaryLight,
     fontSize: 30,
     fontWeight: FontWeight.extrabold,
     fontVariant: ["tabular-nums"],
@@ -923,9 +1297,25 @@ const styles = StyleSheet.create({
     padding: Spacing.sm,
     borderRadius: Radius.md,
   },
-  summaryLabel: { color: Colors.textSubtle, fontSize: 9, textTransform:"uppercase", letterSpacing:.6 },
-  summaryValue: { color: Colors.textPrimary, fontWeight: FontWeight.bold, marginTop:2 },
+  summaryLabel: {
+    color: Colors.textSubtle,
+    fontSize: 9,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  summaryValue: {
+    color: Colors.textPrimary,
+    fontWeight: FontWeight.bold,
+    marginTop: 2,
+  },
   optionBlock: { gap: Spacing.sm },
+  optionHeading: {
+    minHeight: 22,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  optionSelection: { color: Colors.textSecondary, fontSize: FontSize.sm },
   optionTitle: {
     color: Colors.textPrimary,
     fontSize: FontSize.md,
@@ -935,11 +1325,11 @@ const styles = StyleSheet.create({
   chip: {
     minHeight: 44,
     minWidth: 48,
-    flexDirection:"row",
-    gap:5,
+    flexDirection: "row",
+    gap: 5,
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: Radius.full,
+    borderRadius: Radius.md,
     paddingHorizontal: Spacing.md,
     alignItems: "center",
     justifyContent: "center",
@@ -951,6 +1341,14 @@ const styles = StyleSheet.create({
   chipDisabled: { opacity: 0.3 },
   chipText: { color: Colors.textSecondary, fontWeight: FontWeight.semibold },
   chipTextSelected: { color: Colors.primaryLight },
+  colorChip: {
+    width: 48,
+    minWidth: 48,
+    paddingHorizontal: 0,
+    borderRadius: Radius.full,
+  },
+  swatch: { width: 34, height: 34, borderRadius: 17 },
+  lightSwatch: { borderWidth: 1, borderColor: Colors.borderHighlight },
   stock: {
     flexDirection: "row",
     alignItems: "center",
@@ -959,35 +1357,97 @@ const styles = StyleSheet.create({
   stockDot: { width: 8, height: 8, borderRadius: 4 },
   stockAvailable: { backgroundColor: Colors.success },
   stockUnavailable: { backgroundColor: Colors.secondary },
-  stockText: { color: Colors.textSecondary, fontSize:FontSize.xs,fontWeight: FontWeight.semibold },
+  stockText: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.xs,
+    fontWeight: FontWeight.semibold,
+  },
   sellerCard: {
     marginHorizontal: Spacing.md,
-    padding: Spacing.md,
+    padding: 0,
     borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: Colors.border,
     backgroundColor: Colors.surfaceElevated,
+    overflow: "hidden",
+  },
+  sellerMain: {
+    minHeight: 84,
     flexDirection: "row",
     alignItems: "center",
-    gap: Spacing.md,
+    gap: 12,
+    padding: 12,
   },
-  sellerLabel: { color: Colors.textSubtle, fontSize: 9,fontWeight:FontWeight.bold,letterSpacing:.9 },
-  sellerName: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
-  storeLogo: { width: 52, height: 52, borderRadius: Radius.md, backgroundColor: Colors.bg },
-  storeLogoFallback: { width: 52, height: 52, borderRadius: Radius.md, alignItems: "center", justifyContent: "center", backgroundColor: Colors.primaryDim, borderWidth: 1, borderColor: Colors.primaryGlow },
-  storeRating: { flexDirection: "row", alignItems: "center", gap: 3, marginTop: 3 },
+  sellerCopy: { flex: 1, minWidth: 0 },
+  sellerLabel: {
+    color: Colors.textSubtle,
+    fontSize: 9,
+    fontWeight: FontWeight.bold,
+    letterSpacing: 0.9,
+  },
+  sellerName: {
+    color: Colors.textPrimary,
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.bold,
+  },
+  storeLogo: {
+    width: 58,
+    height: 58,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.bg,
+  },
+  storeLogoFallback: {
+    width: 58,
+    height: 58,
+    borderRadius: Radius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.primaryDim,
+    borderWidth: 1,
+    borderColor: Colors.primaryGlow,
+  },
+  storeRating: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    marginTop: 3,
+  },
   storeRatingText: { color: Colors.textSecondary, fontSize: 11 },
+  storeMetricDivider: {
+    color: Colors.borderHighlight,
+    fontSize: 12,
+    marginHorizontal: 4,
+  },
   storeNoReviews: { color: Colors.textSubtle, fontSize: 11, marginTop: 3 },
-  viewStore: { minHeight: 44, flexDirection: "row", alignItems: "center", paddingLeft: 6 },
-  viewStoreText: { color: Colors.primaryLight, fontWeight: FontWeight.bold, fontSize: 12 },
-  reputationError: { marginHorizontal: Spacing.md, padding: Spacing.md, alignItems: "center", borderRadius: Radius.lg, backgroundColor: Colors.surfaceElevated },
+  viewStore: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  viewStoreText: {
+    color: Colors.primaryLight,
+    fontWeight: FontWeight.bold,
+    fontSize: 12,
+  },
+  reputationError: {
+    marginHorizontal: Spacing.md,
+    padding: Spacing.md,
+    alignItems: "center",
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surfaceElevated,
+  },
   reputationErrorText: { color: Colors.textSecondary, textAlign: "center" },
-  retryReputation: { color: Colors.primaryLight, fontWeight: FontWeight.bold, padding: Spacing.sm },
+  retryReputation: {
+    color: Colors.primaryLight,
+    fontWeight: FontWeight.bold,
+    padding: Spacing.sm,
+  },
   section: {
     marginHorizontal: Spacing.md,
     padding: Spacing.md,
     borderRadius: Radius.lg,
-    backgroundColor: Colors.surfaceElevated,
+    backgroundColor: "transparent",
     gap: Spacing.sm,
   },
   sectionTitle: {
@@ -1019,7 +1479,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: Spacing.md,
     borderRadius: Radius.lg,
-    backgroundColor: "rgba(124,92,255,.1)",
+    backgroundColor: "rgba(124,92,255,.08)",
   },
   trustTitle: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
   trustBody: { color: Colors.textSecondary, fontSize: FontSize.xs },
