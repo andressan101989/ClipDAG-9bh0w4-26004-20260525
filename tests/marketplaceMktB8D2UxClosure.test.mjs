@@ -99,9 +99,9 @@ test("Creator Showcase closes the mobile touch, accessibility, language, and nar
   assert.doesNotMatch(showcase, /seller_payout|creator_payout|platform_fee|ledger_|commission_bps\s*[+\-*/=]/i);
 });
 
-test("B8D-2R-F1 adds only its authorized reputation migration without changing build or later phases", () => {
+test("B8D-2R-F1 remains intact after the authorized C5 migration", () => {
   const migrations = readdirSync(join(root, "supabase/migrations")).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(migrations.at(-1), "20260811034000_marketplace_verified_reviews_branding.sql");
+  assert.equal(migrations.at(-1), "20260816010000_marketplace_admin_dispute_resolution_authority.sql");
   assert.equal(String(JSON.parse(read("app.json")).expo.ios.buildNumber), "22");
   assert(!existsSync(join(root, "docs/audits/MKT-B8D-3")));
   const changedUx = shell + dialog + operation + mobileUi;

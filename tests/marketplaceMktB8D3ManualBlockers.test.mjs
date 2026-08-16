@@ -159,13 +159,13 @@ test("seller order RPC, pagination, UI and ownership remain canonical and fail c
   );
 });
 
-test("B8D-3 corrective keeps Build 22 and adds no migration or later phase", () => {
+test("B8D-3 manual-blocker corrective stays intact with Build 22", () => {
   const migrations = readdirSync(join(root, "supabase/migrations"))
     .filter((name) => name.endsWith(".sql"))
     .sort();
   assert.equal(
     migrations.at(-1),
-    "20260811034000_marketplace_verified_reviews_branding.sql",
+    "20260816010000_marketplace_admin_dispute_resolution_authority.sql",
   );
   assert.equal(String(JSON.parse(read("app.json")).expo.ios.buildNumber), "22");
   const changed = store + sellerHome + shipping + fulfillment;

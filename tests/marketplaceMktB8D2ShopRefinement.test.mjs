@@ -165,7 +165,7 @@ test("Shop and product layouts retain narrow-width and accessibility contracts",
   );
 });
 
-test("Refinement preserves hardened commerce contracts and creates no later-phase authority", () => {
+test("Refinement preserves hardened commerce contracts across later authorized corrections", () => {
   for (const token of ["physical", "digital", "rpcText(row.description"])
     assert(marketplaceService.includes(token), token);
   assert.match(
@@ -185,7 +185,7 @@ test("Refinement preserves hardened commerce contracts and creates no later-phas
   );
   assert.equal(
     migrations.at(-1),
-    "20260811034000_marketplace_verified_reviews_branding.sql",
+    "20260816010000_marketplace_admin_dispute_resolution_authority.sql",
   );
   assert.equal(String(JSON.parse(read("app.json")).expo.ios.buildNumber), "22");
 });

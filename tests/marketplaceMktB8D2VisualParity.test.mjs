@@ -307,13 +307,13 @@ test("C3 removes per-field and per-section card chrome without removing media or
   assert.match(store, /metric:/);
 });
 
-test("visual closure adds no migration or economic authority and keeps Build 22", () => {
+test("visual closure retains no economic authority and keeps Build 22", () => {
   const migrations = readdirSync(join(root, "supabase/migrations"))
     .filter((name) => name.endsWith(".sql"))
     .sort();
   assert.equal(
     migrations.at(-1),
-    "20260811034000_marketplace_verified_reviews_branding.sql",
+    "20260816010000_marketplace_admin_dispute_resolution_authority.sql",
   );
   assert.equal(String(JSON.parse(read("app.json")).expo.ios.buildNumber), "22");
   const changed = product + gallery + purchase + reviews + shipping + store;

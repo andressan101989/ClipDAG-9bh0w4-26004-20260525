@@ -149,13 +149,13 @@ test("loading, empty state, bounded query and existing bottom navigation remain 
   assert.match(tabs, /name="shop"/);
 });
 
-test("Figma Shop implementation preserves Build 22 and the frozen remote migration", () => {
+test("Figma Shop implementation preserves Build 22 across later authorized migrations", () => {
   const migrations = readdirSync(join(root, "supabase/migrations"))
     .filter((name) => name.endsWith(".sql"))
     .sort();
   assert.equal(
     migrations.at(-1),
-    "20260811034000_marketplace_verified_reviews_branding.sql",
+    "20260816010000_marketplace_admin_dispute_resolution_authority.sql",
   );
   assert.equal(String(JSON.parse(read("app.json")).expo.ios.buildNumber), "22");
   assert.doesNotMatch(

@@ -344,3 +344,90 @@ describe("B8B-C1 safe operation UX", () => {
     expect(await screen.findByText(/confirmada por el servidor/i)).toBeInTheDocument();
   });
 });
+
+describe("C5 privileged dispute resolution integrity", () => {
+  const command = {
+    id: id("2"),
+    outcome: "refund_buyer",
+    reason: "support_refund",
+    note: "QA administrativa",
+    idempotencyKey: id("9"),
+  };
+
+  it("maps the internal authorization code to safe UI copy", async () => {
+    vi.mocked(supabase.rpc).mockResolvedValue({
+      data: null,
+      error: {
+        code: "42501",
+        message: "marketplace_dispute_resolution_auth_required",
+      },
+    } as never);
+    const onRun = async (_action: string, _reason: string, key: string) => {
+      await resolveDispute({ ...command, idempotencyKey: key });
+    };
+    render(
+      <OperationConfirm
+        title="Resolver disputa"
+        maxReasonLength={100}
+        actions={[{ value: "refund_buyer", label: "Reembolsar", reasonRequired: true }]}
+        onRun={onRun}
+      />,
+    );
+    await userEvent.type(screen.getByLabelText("Motivo"), command.reason);
+    await userEvent.click(screen.getByRole("button", { name: /Revisar operaci/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Reembolsar" }));
+    expect(await screen.findByText(/No pudimos autorizar esta operaci.n administrativa/)).toBeInTheDocument();
+    expect(screen.queryByText(/marketplace_dispute_resolution_auth_required/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/confirmada por el servidor/i)).not.toBeInTheDocument();
+  });
+
+  it("reconciles an ambiguous transport outcome from the canonical audit receipt", async () => {
+    vi.mocked(supabase.rpc)
+      .mockResolvedValueOnce({ data: null, error: { code: "", message: "Failed to fetch" } } as never)
+      .mockResolvedValueOnce({
+        data: {
+          committed: true,
+          action: "dispute_refund_buyer",
+          target_id: command.id,
+          idempotency_key: command.idempotencyKey,
+          result_kind: "final_resolution",
+          canonical_id: id("4"),
+          money_moved: true,
+        },
+        error: null,
+      } as never);
+    await expect(resolveDispute(command)).resolves.toMatchObject({ committed: true });
+    expect(supabase.rpc).toHaveBeenNthCalledWith(1, "admin_resolve_marketplace_dispute", {
+      p_dispute_id: command.id,
+      p_outcome: command.outcome,
+      p_reason_code: command.reason,
+      p_note: command.note,
+      p_idempotency_key: command.idempotencyKey,
+    });
+    expect(supabase.rpc).toHaveBeenNthCalledWith(2, "get_my_marketplace_admin_dispute_resolution_result", {
+      p_dispute_id: command.id,
+      p_idempotency_key: command.idempotencyKey,
+    });
+  });
+
+  it("never reports success when canonical read-back cannot prove commit", async () => {
+    vi.mocked(supabase.rpc)
+      .mockResolvedValueOnce({ data: null, error: { code: "", message: "network timeout" } } as never)
+      .mockResolvedValueOnce({ data: null, error: null } as never);
+    await expect(resolveDispute(command)).rejects.toThrow(/No pudimos confirmar el estado/);
+  });
+
+  it("submits no actor, service role, or financial authority fields", async () => {
+    vi.mocked(supabase.rpc).mockResolvedValue({ data: finalReceipt(), error: null } as never);
+    await resolveDispute(command);
+    const args = vi.mocked(supabase.rpc).mock.calls[0][1] as Record<string, unknown>;
+    expect(Object.keys(args).sort()).toEqual([
+      "p_dispute_id",
+      "p_idempotency_key",
+      "p_note",
+      "p_outcome",
+      "p_reason_code",
+    ]);
+    expect(JSON.stringify(args)).not.toMatch(/actor|resolver|service[_-]?role|refund_amount|ledger|escrow|commission|seller_net/);
+  });
+});
