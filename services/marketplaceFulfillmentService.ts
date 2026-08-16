@@ -1,35 +1,432 @@
-import {getSupabaseClient} from '@/template';
-import {rpcArray,rpcEnum,rpcNullableString,rpcNullableTimestamp,rpcNonnegative,rpcNonnegativeInteger,rpcObject,rpcString,rpcTimestamp,rpcUuid} from '@/services/marketplaceRuntimeValidation';
+import { getSupabaseClient } from "@/template";
+import {
+  isSafeMarketplaceTrackingUrl,
+  MarketplaceFulfillmentPayloadError,
+  mergeMarketplaceOrderLifecyclePayload,
+  parseBuyerOrderListPayload,
+  parseMarketplaceOrderDetailPayload,
+  parseSellerOrderListPayload,
+} from "@/services/marketplaceFulfillmentParsers.mjs";
+import { reconcileFulfillmentMutation } from "@/services/marketplaceFulfillmentMutationCore.mjs";
 
-export type MarketplaceOrderStatus='confirmed'|'processing'|'shipped'|'delivered'|'cancelled'|'refunded'|'partially_refunded';
-export type MarketplaceDisputeStatus='open'|'under_review'|'resolved'|'rejected'|'cancelled';
-export type MarketplaceDisputeOutcome='refund_buyer'|'release_seller'|'reject_claim';
-export interface MarketplaceOrderEvent{id:string;eventType:string;fromStatus:string|null;toStatus:string|null;actorRole:string;createdAt:string}
-export interface MarketplaceShipment{id:string|null;status:string;carrierName:string;serviceLevel:string|null;trackingNumber:string;trackingUrl:string|null;sellerNote:string|null;shippedAt:string;deliveredAt:string|null;estimatedDeliveryAt:string|null}
-export interface MarketplaceHeldAllocation{grossAmount:number;platformFeeAmount:number;sellerNetAmount:number;status:'held'|'released'|'refunded'|'partially_refunded';releasedAt:string|null}
-export interface MarketplaceOrderListItem{id:string;orderNumber:string;checkoutId:string;checkoutReference:string;status:MarketplaceOrderStatus;storeId:string;storeName:string;total:number;currency:'BDAG';createdAt:string;confirmedAt:string|null;processingAt:string|null;shippedAt:string|null;deliveredAt:string|null;firstItemTitle:string|null;firstItemImage:string|null;distinctLines:number;totalQuantity:number;carrierName:string|null;trackingNumber:string|null;recipientName?:string;city?:string;region?:string;country?:string;allocation?:MarketplaceHeldAllocation}
-export interface MarketplaceOrderDetail{order:{id:string;orderNumber:string;checkoutId:string;checkoutReference:string;status:MarketplaceOrderStatus;currency:'BDAG';total:number;createdAt:string;confirmedAt:string|null;processingAt:string|null;shippedAt:string|null;deliveredAt:string|null;fulfillmentVersion:number};store:{id:string;name:string;slug:string};payment:{status:string;paidAt:string};allocation:MarketplaceHeldAllocation|null;settlement:{status:string;grossAmount:number;sellerNetAmount:number|null;platformFeeAmount:number|null;confirmedAt:string;releasedAt:string;sellerBdagBalance:number|null}|null;shippingAddress:{recipientName:string;line1:string;line2:string|null;city:string;region:string;postalCode:string;country:string;phone:string|null};items:{id:string;productTitle:string;variantTitle:string|null;sku:string;options:{name?:string;value:string}[];imageUrl:string|null;unitPrice:number;quantity:number;lineTotal:number}[];shipment:MarketplaceShipment|null;events:MarketplaceOrderEvent[];escrowProtected:boolean;shippingAmount:number;shippingEstimate:{processingDaysMin:number;processingDaysMax:number;transitDaysMin:number;transitDaysMax:number;returnPolicySummary:string}|null;dispute:{status:MarketplaceDisputeStatus;reasonCode:string;createdAt:string;outcome:MarketplaceDisputeOutcome|null}|null}
-export interface MarketplaceOrderPage{items:MarketplaceOrderListItem[];nextCursor:{createdAt:string;id:string}|null}
-export interface ShipmentInput{carrierName:string;serviceLevel?:string;trackingNumber:string;trackingUrl?:string;sellerNote?:string}
-export type MarketplaceFulfillmentErrorCode='marketplace_invalid_cursor'|'marketplace_order_not_found'|'marketplace_order_not_owned'|'marketplace_seller_not_approved'|'marketplace_store_inactive'|'marketplace_order_not_paid'|'marketplace_order_not_fulfillable'|'marketplace_invalid_shipment'|'marketplace_fulfillment_idempotency_conflict'|'marketplace_fulfillment_transport'|'marketplace_fulfillment_unknown';
-export class MarketplaceFulfillmentError extends Error{constructor(public code:MarketplaceFulfillmentErrorCode){super(code);}}
-const db=()=>getSupabaseClient();
-const invalid=()=>new MarketplaceFulfillmentError('marketplace_fulfillment_unknown');
-const safe=<T>(reader:()=>T):T=>{try{return reader();}catch{throw invalid();}};
-const num=(v:unknown)=>safe(()=>rpcNonnegative(v,'fulfillment.money'));
-const integer=(v:unknown)=>safe(()=>rpcNonnegativeInteger(v,'fulfillment.integer'));
-const orderStatuses=['confirmed','processing','shipped','delivered','cancelled','refunded','partially_refunded']as const;
-const allocationStatuses=['held','released','refunded','partially_refunded']as const;
-export const isSafeTrackingUrl=(value:string|null|undefined)=>!value||/^https:\/\/[^\s]+$/i.test(value);
-function fail(rpc:string,error:{code?:string;message?:string;details?:string;hint?:string}):never{const known=(error.message??'').match(/marketplace_[a-z_]+/)?.[0] as MarketplaceFulfillmentErrorCode|undefined;if(__DEV__)console.error('[MarketplaceFulfillment] RPC failed',{rpc,code:error.code,message:error.message?.slice(0,200),details:error.details?.slice(0,200),hint:error.hint?.slice(0,200)});const rawCode=error.code?.trim();const transport=!rawCode&&/network|fetch|failed to fetch|timeout|timed out|connection|socket|offline/i.test(error.message??'');throw new MarketplaceFulfillmentError(known??(transport?'marketplace_fulfillment_transport':'marketplace_fulfillment_unknown'));}
-function shipment(v:unknown):MarketplaceShipment|null{if(v==null)return null;return safe(()=>{const x=rpcObject(v,'shipment'),url=rpcNullableString(x.tracking_url,'shipment.tracking_url');if(!isSafeTrackingUrl(url))throw invalid();return{id:x.id==null?null:rpcUuid(x.id,'shipment.id'),status:rpcString(x.status,'shipment.status'),carrierName:rpcString(x.carrier_name,'shipment.carrier_name'),serviceLevel:rpcNullableString(x.service_level,'shipment.service_level'),trackingNumber:rpcString(x.tracking_number,'shipment.tracking_number'),trackingUrl:url,sellerNote:rpcNullableString(x.seller_note,'shipment.seller_note'),shippedAt:rpcTimestamp(x.shipped_at,'shipment.shipped_at'),deliveredAt:rpcNullableTimestamp(x.delivered_at,'shipment.delivered_at'),estimatedDeliveryAt:rpcNullableTimestamp(x.estimated_delivery_at,'shipment.estimated_delivery_at')};});}
-function detail(v:unknown):MarketplaceOrderDetail{return safe(()=>{const x=rpcObject(v,'order_detail'),o=rpcObject(x.order,'order_detail.order'),s=rpcObject(x.store,'order_detail.store'),p=rpcObject(x.payment,'order_detail.payment'),a=rpcObject(x.shipping_address,'order_detail.shipping_address');if(o.currency!=='BDAG'||typeof x.escrow_protected!=='boolean')throw invalid();const raw=x.allocation==null?null:rpcObject(x.allocation,'order_detail.allocation'),settlement=x.settlement==null?null:rpcObject(x.settlement,'order_detail.settlement');return{order:{id:rpcUuid(o.id,'order.id'),orderNumber:rpcString(o.order_number,'order.order_number'),checkoutId:rpcUuid(o.checkout_id,'order.checkout_id'),checkoutReference:rpcString(o.checkout_reference,'order.checkout_reference'),status:rpcEnum(o.status,orderStatuses,'order.status'),currency:'BDAG',total:num(o.total),createdAt:rpcTimestamp(o.created_at,'order.created_at'),confirmedAt:rpcNullableTimestamp(o.confirmed_at,'order.confirmed_at'),processingAt:rpcNullableTimestamp(o.processing_at,'order.processing_at'),shippedAt:rpcNullableTimestamp(o.shipped_at,'order.shipped_at'),deliveredAt:rpcNullableTimestamp(o.delivered_at,'order.delivered_at'),fulfillmentVersion:integer(o.fulfillment_version)},store:{id:rpcUuid(s.id,'store.id'),name:rpcString(s.name,'store.name'),slug:rpcString(s.slug,'store.slug')},payment:{status:rpcString(p.status,'payment.status'),paidAt:rpcTimestamp(p.paid_at,'payment.paid_at')},allocation:raw?{grossAmount:num(raw.gross_amount),platformFeeAmount:num(raw.platform_fee_amount),sellerNetAmount:num(raw.seller_net_amount),status:rpcEnum(raw.status,allocationStatuses,'allocation.status'),releasedAt:rpcNullableTimestamp(raw.released_at,'allocation.released_at')}:null,settlement:settlement?{status:rpcString(settlement.status,'settlement.status'),grossAmount:num(settlement.gross_amount),sellerNetAmount:settlement.seller_net_amount==null?null:num(settlement.seller_net_amount),platformFeeAmount:settlement.platform_fee_amount==null?null:num(settlement.platform_fee_amount),confirmedAt:rpcTimestamp(settlement.confirmed_at,'settlement.confirmed_at'),releasedAt:rpcTimestamp(settlement.released_at,'settlement.released_at'),sellerBdagBalance:settlement.seller_bdag_balance==null?null:num(settlement.seller_bdag_balance)}:null,shippingAddress:{recipientName:rpcString(a.recipient_name,'address.recipient_name'),line1:rpcString(a.line1,'address.line1'),line2:rpcNullableString(a.line2,'address.line2'),city:rpcString(a.city,'address.city'),region:rpcString(a.region,'address.region'),postalCode:rpcString(a.postal_code,'address.postal_code'),country:rpcString(a.country,'address.country'),phone:rpcNullableString(a.phone,'address.phone')},items:rpcArray(x.items,'items').map((value,index)=>{const i=rpcObject(value,`items[${index}]`);return{id:rpcUuid(i.id,'item.id'),productTitle:rpcString(i.product_title,'item.product_title'),variantTitle:rpcNullableString(i.variant_title,'item.variant_title'),sku:rpcString(i.sku,'item.sku'),options:rpcArray(i.options,'item.options').map((option,optionIndex)=>{const entry=rpcObject(option,`item.options[${optionIndex}]`);return{name:entry.name==null?undefined:rpcString(entry.name,'option.name'),value:rpcString(entry.value,'option.value')};}),imageUrl:rpcNullableString(i.image_url,'item.image_url'),unitPrice:num(i.unit_price),quantity:integer(i.quantity),lineTotal:num(i.line_total)};}),shipment:shipment(x.shipment),events:rpcArray(x.events,'events').map((value,index)=>{const e=rpcObject(value,`events[${index}]`);return{id:rpcUuid(e.id,'event.id'),eventType:rpcString(e.event_type,'event.event_type'),fromStatus:rpcNullableString(e.from_status,'event.from_status'),toStatus:rpcNullableString(e.to_status,'event.to_status'),actorRole:rpcString(e.actor_role,'event.actor_role'),createdAt:rpcTimestamp(e.created_at,'event.created_at')};}),escrowProtected:x.escrow_protected,shippingAmount:0,shippingEstimate:null,dispute:null};});}
-function list(v:unknown,effectiveLimit:number):MarketplaceOrderPage{return safe(()=>{const items=rpcArray(v,'orders').map((value,index)=>{const x=rpcObject(value,`orders[${index}]`);if(x.currency!=='BDAG')throw invalid();return{id:rpcUuid(x.id,'order.id'),orderNumber:rpcString(x.order_number,'order.order_number'),checkoutId:rpcUuid(x.checkout_id,'order.checkout_id'),checkoutReference:rpcString(x.checkout_reference,'order.checkout_reference'),status:rpcEnum(x.status,orderStatuses,'order.status'),storeId:rpcUuid(x.store_id,'order.store_id'),storeName:rpcString(x.store_name,'order.store_name'),total:num(x.total),currency:'BDAG' as const,createdAt:rpcTimestamp(x.created_at,'order.created_at'),confirmedAt:rpcNullableTimestamp(x.confirmed_at,'order.confirmed_at'),processingAt:rpcNullableTimestamp(x.processing_at,'order.processing_at'),shippedAt:rpcNullableTimestamp(x.shipped_at,'order.shipped_at'),deliveredAt:rpcNullableTimestamp(x.delivered_at,'order.delivered_at'),firstItemTitle:rpcNullableString(x.first_item_title??null,'order.first_item_title'),firstItemImage:rpcNullableString(x.first_item_image??null,'order.first_item_image'),distinctLines:integer(x.distinct_lines),totalQuantity:integer(x.total_quantity),carrierName:rpcNullableString(x.carrier_name,'order.carrier_name'),trackingNumber:rpcNullableString(x.tracking_number,'order.tracking_number'),recipientName:x.recipient_name==null?undefined:rpcString(x.recipient_name,'order.recipient_name'),city:x.city==null?undefined:rpcString(x.city,'order.city'),region:x.region==null?undefined:rpcString(x.region,'order.region'),country:x.country==null?undefined:rpcString(x.country,'order.country'),allocation:x.gross_amount==null?undefined:{grossAmount:num(x.gross_amount),platformFeeAmount:num(x.platform_fee_amount),sellerNetAmount:num(x.seller_net_amount),status:rpcEnum(x.allocation_status,allocationStatuses,'order.allocation_status'),releasedAt:rpcNullableTimestamp(x.released_at,'order.released_at')}};});const last=items.at(-1);return{items,nextCursor:items.length===effectiveLimit&&last?{createdAt:last.createdAt,id:last.id}:null};});}
-async function rpc(name:string,args:Record<string,unknown>){const{data,error}=await db().rpc(name,args);if(error)fail(name,error);return data;}
-const validCursor=(cursor?:{createdAt:string;id:string})=>{if(!cursor)return undefined;if(!Number.isFinite(Date.parse(cursor.createdAt))||!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cursor.id))throw new MarketplaceFulfillmentError('marketplace_invalid_cursor');return cursor;};
-export async function fetchBuyerOrders(filters:{status?:MarketplaceOrderStatus|null;limit?:number;cursor?:{createdAt:string;id:string}}={}):Promise<MarketplaceOrderPage>{const limit=Math.min(50,Math.max(1,filters.limit??20)),cursor=validCursor(filters.cursor);return list(await rpc('fetch_my_marketplace_orders',{p_status:filters.status??null,p_limit:limit,p_before_created_at:cursor?.createdAt??null,p_before_id:cursor?.id??null}),limit);}
-export async function fetchSellerOrders(filters:{status?:MarketplaceOrderStatus|null;limit?:number;cursor?:{createdAt:string;id:string}}={}):Promise<MarketplaceOrderPage>{const limit=Math.min(50,Math.max(1,filters.limit??20)),cursor=validCursor(filters.cursor);return list(await rpc('fetch_my_marketplace_sales',{p_status:filters.status??null,p_limit:limit,p_before_created_at:cursor?.createdAt??null,p_before_id:cursor?.id??null}),limit);}
-async function enrichLifecycle(value:MarketplaceOrderDetail):Promise<MarketplaceOrderDetail>{const response=await rpc('fetch_my_marketplace_order_lifecycle',{p_order_id:value.order.id});return safe(()=>{const raw=rpcObject(response,'lifecycle'),estimate=raw.shipping_snapshot==null?null:rpcObject(raw.shipping_snapshot,'lifecycle.shipping_snapshot'),dispute=raw.dispute==null?null:rpcObject(raw.dispute,'lifecycle.dispute'),shipping=raw.shipping==null?null:rpcObject(raw.shipping,'lifecycle.shipping');if(value.shipment&&shipping?.estimated_delivery_at)value.shipment.estimatedDeliveryAt=rpcTimestamp(shipping.estimated_delivery_at,'lifecycle.shipping.estimated_delivery_at');return{...value,shippingAmount:num(raw.shipping_amount),shippingEstimate:estimate?{processingDaysMin:integer(estimate.processing_days_min),processingDaysMax:integer(estimate.processing_days_max),transitDaysMin:integer(estimate.transit_days_min),transitDaysMax:integer(estimate.transit_days_max),returnPolicySummary:rpcString(estimate.return_policy_summary,'lifecycle.shipping_snapshot.return_policy_summary')}:null,dispute:dispute?{status:rpcEnum(dispute.status,['open','under_review','resolved','rejected','cancelled']as const,'lifecycle.dispute.status'),reasonCode:rpcString(dispute.reason_code,'lifecycle.dispute.reason_code'),createdAt:rpcTimestamp(dispute.created_at,'lifecycle.dispute.created_at'),outcome:dispute.outcome==null?null:rpcEnum(dispute.outcome,['refund_buyer','release_seller','reject_claim']as const,'lifecycle.dispute.outcome')}:null};});}
-export async function fetchBuyerOrder(id:string){return enrichLifecycle(detail(await rpc('fetch_my_marketplace_order',{p_order_id:id})));}export async function fetchSellerOrder(id:string){return enrichLifecycle(detail(await rpc('fetch_my_marketplace_sale',{p_order_id:id})));}
-export async function startSellerOrderProcessing(id:string,key:string){return enrichLifecycle(detail(await rpc('seller_start_marketplace_order_processing',{p_order_id:id,p_idempotency_key:key})));}
-export async function shipSellerOrder(id:string,input:ShipmentInput,key:string){if(input.carrierName.trim().length<2||input.trackingNumber.trim().length<2||!isSafeTrackingUrl(input.trackingUrl))throw new MarketplaceFulfillmentError('marketplace_invalid_shipment');return enrichLifecycle(detail(await rpc('seller_ship_marketplace_order',{p_order_id:id,p_carrier_name:input.carrierName,p_service_level:input.serviceLevel??null,p_tracking_number:input.trackingNumber,p_tracking_url:input.trackingUrl??null,p_seller_note:input.sellerNote??null,p_idempotency_key:key})));}
+export type MarketplaceOrderStatus =
+  | "confirmed"
+  | "processing"
+  | "shipped"
+  | "delivered"
+  | "cancelled"
+  | "refunded"
+  | "partially_refunded";
+export type MarketplaceDisputeStatus =
+  | "open"
+  | "under_review"
+  | "resolved"
+  | "rejected"
+  | "cancelled";
+export type MarketplaceDisputeOutcome = "refund_buyer" | "release_seller" | "reject_claim";
+export interface MarketplaceOrderEvent {
+  id: string;
+  eventType: string;
+  fromStatus: string | null;
+  toStatus: string | null;
+  actorRole: string;
+  createdAt: string;
+}
+export interface MarketplaceShipment {
+  id: string | null;
+  status: string;
+  carrierName: string;
+  serviceLevel: string | null;
+  trackingNumber: string;
+  trackingUrl: string | null;
+  sellerNote: string | null;
+  shippedAt: string;
+  deliveredAt: string | null;
+  estimatedDeliveryAt: string | null;
+}
+export interface MarketplaceHeldAllocation {
+  grossAmount: number;
+  platformFeeAmount: number;
+  sellerNetAmount: number;
+  status: "held" | "released" | "refunded" | "partially_refunded";
+  releasedAt: string | null;
+}
+export interface MarketplaceOrderListItem {
+  id: string;
+  orderNumber: string;
+  checkoutId: string;
+  checkoutReference: string;
+  status: MarketplaceOrderStatus;
+  storeId: string;
+  storeName: string;
+  total: number;
+  currency: "BDAG";
+  createdAt: string;
+  confirmedAt: string | null;
+  processingAt: string | null;
+  shippedAt: string | null;
+  deliveredAt: string | null;
+  firstItemTitle: string | null;
+  firstItemImage: string | null;
+  distinctLines: number;
+  totalQuantity: number;
+  carrierName: string | null;
+  trackingNumber: string | null;
+  recipientName?: string;
+  city?: string;
+  region?: string;
+  country?: string;
+  allocation?: MarketplaceHeldAllocation;
+}
+export interface MarketplaceOrderDetail {
+  order: {
+    id: string;
+    orderNumber: string;
+    checkoutId: string;
+    checkoutReference: string;
+    status: MarketplaceOrderStatus;
+    currency: "BDAG";
+    total: number;
+    createdAt: string;
+    confirmedAt: string | null;
+    processingAt: string | null;
+    shippedAt: string | null;
+    deliveredAt: string | null;
+    fulfillmentVersion: number;
+  };
+  store: { id: string; name: string; slug: string };
+  payment: { status: string; paidAt: string };
+  allocation: MarketplaceHeldAllocation | null;
+  settlement: {
+    status: string;
+    grossAmount: number;
+    sellerNetAmount: number | null;
+    platformFeeAmount: number | null;
+    confirmedAt: string;
+    releasedAt: string;
+    sellerBdagBalance: number | null;
+  } | null;
+  shippingAddress: {
+    recipientName: string;
+    line1: string;
+    line2: string | null;
+    city: string;
+    region: string;
+    postalCode: string;
+    country: string;
+    phone: string | null;
+  };
+  items: {
+    id: string;
+    productTitle: string;
+    variantTitle: string | null;
+    sku: string;
+    options: { name?: string; value: string }[];
+    imageUrl: string | null;
+    unitPrice: number;
+    quantity: number;
+    lineTotal: number;
+  }[];
+  shipment: MarketplaceShipment | null;
+  events: MarketplaceOrderEvent[];
+  escrowProtected: boolean;
+  shippingAmount: number;
+  shippingEstimate: {
+    processingDaysMin: number;
+    processingDaysMax: number;
+    transitDaysMin: number;
+    transitDaysMax: number;
+    returnPolicySummary: string;
+  } | null;
+  dispute: {
+    status: MarketplaceDisputeStatus;
+    reasonCode: string;
+    createdAt: string;
+    outcome: MarketplaceDisputeOutcome | null;
+  } | null;
+  postMutationRefreshFailed?: boolean;
+}
+export interface MarketplaceOrderPage {
+  items: MarketplaceOrderListItem[];
+  nextCursor: { createdAt: string; id: string } | null;
+}
+export interface ShipmentInput {
+  carrierName: string;
+  serviceLevel?: string;
+  trackingNumber: string;
+  trackingUrl?: string;
+  sellerNote?: string;
+}
+export type MarketplaceFulfillmentErrorCode =
+  | "marketplace_invalid_cursor"
+  | "marketplace_order_not_found"
+  | "marketplace_order_not_owned"
+  | "marketplace_seller_not_approved"
+  | "marketplace_store_inactive"
+  | "marketplace_order_not_paid"
+  | "marketplace_order_not_fulfillable"
+  | "marketplace_invalid_shipment"
+  | "marketplace_fulfillment_idempotency_conflict"
+  | "marketplace_fulfillment_transport"
+  | "marketplace_fulfillment_outcome_unknown"
+  | "marketplace_fulfillment_unknown";
+
+export class MarketplaceFulfillmentError extends Error {
+  constructor(public code: MarketplaceFulfillmentErrorCode) {
+    super(code);
+  }
+}
+
+const db = () => getSupabaseClient();
+const invalid = () => new MarketplaceFulfillmentError("marketplace_fulfillment_unknown");
+export const isSafeTrackingUrl = isSafeMarketplaceTrackingUrl;
+
+function diagnostic(stage: string, error: unknown) {
+  if (!__DEV__) return;
+  console.error("[MarketplaceFulfillment] operation failed", {
+    stage,
+    code: error instanceof MarketplaceFulfillmentError ? error.code : undefined,
+    path:
+      error instanceof MarketplaceFulfillmentPayloadError
+        ? error.path
+        : undefined,
+  });
+}
+
+function parse<T>(stage: string, reader: () => T): T {
+  try {
+    return reader();
+  } catch (error) {
+    diagnostic(stage, error);
+    throw invalid();
+  }
+}
+
+function fail(
+  rpcName: string,
+  stage: string,
+  error: { code?: string; message?: string; details?: string; hint?: string },
+): never {
+  const known = (error.message ?? "").match(
+    /marketplace_[a-z_]+/,
+  )?.[0] as MarketplaceFulfillmentErrorCode | undefined;
+  const rawCode = error.code?.trim();
+  const transport =
+    !rawCode &&
+    /network|fetch|failed to fetch|timeout|timed out|connection|socket|offline/i.test(
+      error.message ?? "",
+    );
+  const normalized = new MarketplaceFulfillmentError(
+    known ?? (transport ? "marketplace_fulfillment_transport" : "marketplace_fulfillment_unknown"),
+  );
+  if (__DEV__)
+    console.error("[MarketplaceFulfillment] RPC failed", {
+      stage,
+      rpc: rpcName,
+      code: error.code,
+      message: error.message?.slice(0, 200),
+      details: error.details?.slice(0, 200),
+      hint: error.hint?.slice(0, 200),
+    });
+  throw normalized;
+}
+
+async function rpc(name: string, args: Record<string, unknown>, stage: string) {
+  const { data, error } = await db().rpc(name, args);
+  if (error) fail(name, stage, error);
+  return data;
+}
+
+const validCursor = (cursor?: { createdAt: string; id: string }) => {
+  if (!cursor) return undefined;
+  if (
+    !Number.isFinite(Date.parse(cursor.createdAt)) ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      cursor.id,
+    )
+  )
+    throw new MarketplaceFulfillmentError("marketplace_invalid_cursor");
+  return cursor;
+};
+
+export async function fetchBuyerOrders(
+  filters: {
+    status?: MarketplaceOrderStatus | null;
+    limit?: number;
+    cursor?: { createdAt: string; id: string };
+  } = {},
+): Promise<MarketplaceOrderPage> {
+  const limit = Math.min(50, Math.max(1, filters.limit ?? 20));
+  const cursor = validCursor(filters.cursor);
+  const response = await rpc(
+    "fetch_my_marketplace_orders",
+    {
+      p_status: filters.status ?? null,
+      p_limit: limit,
+      p_before_created_at: cursor?.createdAt ?? null,
+      p_before_id: cursor?.id ?? null,
+    },
+    "buyer_list_rpc",
+  );
+  return parse("buyer_list_parser", () =>
+    parseBuyerOrderListPayload(response, limit),
+  ) as MarketplaceOrderPage;
+}
+
+export async function fetchSellerOrders(
+  filters: {
+    status?: MarketplaceOrderStatus | null;
+    limit?: number;
+    cursor?: { createdAt: string; id: string };
+  } = {},
+): Promise<MarketplaceOrderPage> {
+  const limit = Math.min(50, Math.max(1, filters.limit ?? 20));
+  const cursor = validCursor(filters.cursor);
+  const response = await rpc(
+    "fetch_my_marketplace_sales",
+    {
+      p_status: filters.status ?? null,
+      p_limit: limit,
+      p_before_created_at: cursor?.createdAt ?? null,
+      p_before_id: cursor?.id ?? null,
+    },
+    "seller_list_rpc",
+  );
+  return parse("seller_list_parser", () =>
+    parseSellerOrderListPayload(response, limit),
+  ) as MarketplaceOrderPage;
+}
+
+async function fetchBuyerOrderBase(id: string): Promise<MarketplaceOrderDetail> {
+  const response = await rpc(
+    "fetch_my_marketplace_order",
+    { p_order_id: id },
+    "buyer_detail_rpc",
+  );
+  return parse("buyer_detail_parser", () =>
+    parseMarketplaceOrderDetailPayload(response),
+  ) as MarketplaceOrderDetail;
+}
+
+async function fetchSellerOrderBase(
+  id: string,
+  stage = "seller_detail",
+): Promise<MarketplaceOrderDetail> {
+  const response = await rpc(
+    "fetch_my_marketplace_sale",
+    { p_order_id: id },
+    `${stage}_rpc`,
+  );
+  return parse(`${stage}_parser`, () =>
+    parseMarketplaceOrderDetailPayload(response),
+  ) as MarketplaceOrderDetail;
+}
+
+async function enrichLifecycle(
+  value: MarketplaceOrderDetail,
+  stage: string,
+): Promise<MarketplaceOrderDetail> {
+  const response = await rpc(
+    "fetch_my_marketplace_order_lifecycle",
+    { p_order_id: value.order.id },
+    `${stage}_lifecycle_rpc`,
+  );
+  return parse(`${stage}_lifecycle_parser`, () =>
+    mergeMarketplaceOrderLifecyclePayload(value, response),
+  ) as MarketplaceOrderDetail;
+}
+
+export async function fetchBuyerOrder(id: string) {
+  return enrichLifecycle(await fetchBuyerOrderBase(id), "buyer_detail");
+}
+
+export async function fetchSellerOrder(id: string) {
+  return enrichLifecycle(await fetchSellerOrderBase(id), "seller_detail");
+}
+
+const isAmbiguousMutationError = (error: unknown) =>
+  error instanceof MarketplaceFulfillmentError &&
+  error.code === "marketplace_fulfillment_transport";
+const unknownOutcome = () =>
+  new MarketplaceFulfillmentError("marketplace_fulfillment_outcome_unknown");
+
+async function committedMutation(
+  stage: "seller_processing" | "seller_shipping",
+  execute: () => Promise<unknown>,
+  readBack: () => Promise<MarketplaceOrderDetail>,
+  provesCommitted: (value: MarketplaceOrderDetail) => boolean,
+): Promise<MarketplaceOrderDetail> {
+  const outcome = (await reconcileFulfillmentMutation({
+    execute,
+    parse: (response: unknown) =>
+      parse(`${stage}_mutation_parser`, () =>
+        parseMarketplaceOrderDetailPayload(response),
+      ) as MarketplaceOrderDetail,
+    readBack,
+    enrich: (value: MarketplaceOrderDetail) =>
+      enrichLifecycle(value, `${stage}_post_mutation`),
+    provesCommitted,
+    isAmbiguousError: isAmbiguousMutationError,
+    createUnknownError: unknownOutcome,
+    onReconciled: () => {
+      if (__DEV__)
+        console.warn("[MarketplaceFulfillment] mutation reconciled", { stage });
+    },
+    onPostMutationRefreshFailure: (error: unknown) =>
+      diagnostic(`${stage}_post_mutation_enrichment`, error),
+  })) as {
+    value: MarketplaceOrderDetail;
+    reconciled: boolean;
+    postMutationRefreshFailed: boolean;
+  };
+  return outcome.postMutationRefreshFailed
+    ? { ...outcome.value, postMutationRefreshFailed: true }
+    : outcome.value;
+}
+
+export async function startSellerOrderProcessing(id: string, key: string) {
+  return committedMutation(
+    "seller_processing",
+    () =>
+      rpc(
+        "seller_start_marketplace_order_processing",
+        { p_order_id: id, p_idempotency_key: key },
+        "seller_processing_mutation_rpc",
+      ),
+    () => fetchSellerOrderBase(id, "seller_processing_readback"),
+    (value) => ["processing", "shipped", "delivered"].includes(value.order.status),
+  );
+}
+
+export async function shipSellerOrder(id: string, input: ShipmentInput, key: string) {
+  if (
+    input.carrierName.trim().length < 2 ||
+    input.trackingNumber.trim().length < 2 ||
+    !isSafeTrackingUrl(input.trackingUrl)
+  )
+    throw new MarketplaceFulfillmentError("marketplace_invalid_shipment");
+  const expectedCarrier = input.carrierName.trim();
+  const expectedTracking = input.trackingNumber.trim();
+  return committedMutation(
+    "seller_shipping",
+    () =>
+      rpc(
+        "seller_ship_marketplace_order",
+        {
+          p_order_id: id,
+          p_carrier_name: input.carrierName,
+          p_service_level: input.serviceLevel ?? null,
+          p_tracking_number: input.trackingNumber,
+          p_tracking_url: input.trackingUrl ?? null,
+          p_seller_note: input.sellerNote ?? null,
+          p_idempotency_key: key,
+        },
+        "seller_shipping_mutation_rpc",
+      ),
+    () => fetchSellerOrderBase(id, "seller_shipping_readback"),
+    (value) =>
+      ["shipped", "delivered"].includes(value.order.status) &&
+      value.shipment?.carrierName === expectedCarrier &&
+      value.shipment.trackingNumber === expectedTracking,
+  );
+}
