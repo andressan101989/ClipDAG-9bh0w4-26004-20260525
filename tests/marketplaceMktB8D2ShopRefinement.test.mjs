@@ -19,10 +19,10 @@ const marketplaceService = read("services/marketplaceService.ts");
 test("Marketplace main is a shop-only product route without the old mixed tabs", () => {
   for (const token of [
     "Tienda",
-    "Buscar productos o tiendas",
+    "Buscar productos",
     "PRODUCT_CATEGORIES",
     "fetchProducts",
-    "productGrid",
+    "FlatList",
     "ProductCard",
     "SponsoredCard",
   ])
@@ -44,7 +44,7 @@ test("Marketplace main is a shop-only product route without the old mixed tabs",
   assert(!shop.includes(">Exclusivo<"));
   assert.match(
     shop,
-    /fetchProducts\(\{ category: category \|\| undefined, search: search\.trim\(\) \|\| undefined, limit: 30 \}\)/,
+    /fetchProducts\(\{[\s\S]*?category: category \|\| undefined,[\s\S]*?search: searchQuery \|\| undefined,[\s\S]*?limit: MARKETPLACE_PAGE_LIMIT/,
   );
 });
 
@@ -72,7 +72,10 @@ test("Product detail exposes premium gallery and stronger commercial hierarchy",
   ])
     assert(product.includes(token), token);
   assert.match(gallery, /aspectRatio:\s*1\.62/);
-  assert.match(gallery, /thumbnail:\s*\{[\s\S]*?width:\s*68,[\s\S]*?height:\s*58/);
+  assert.match(
+    gallery,
+    /thumbnail:\s*\{[\s\S]*?width:\s*68,[\s\S]*?height:\s*58/,
+  );
   assert.match(gallery, /selectedIndex \+ 1/);
   for (const label of [
     "Volver",
@@ -140,11 +143,14 @@ test("Shop and product layouts retain narrow-width and accessibility contracts",
   assert.match(shop, /useWindowDimensions\(\)/);
   assert.match(
     shop,
-    /Math\.max\(136, \(viewportWidth - Spacing\.md \* 2 - Spacing\.sm\) \/ 2\)/,
+    /Math\.max\([\s\S]*?136,[\s\S]*?\(viewportWidth - Spacing\.md \* 2 - Spacing\.sm\) \/ 2,[\s\S]*?\)/,
   );
   assert.match(shop, /headerCopy: \{ flex: 1, minWidth: 0/);
-  assert.match(shop, /heroCopy: \{ flex: 1, minWidth: 0/);
-  assert.match(shop, /searchInput: \{ flex: 1, minWidth: 0/);
+  assert.match(shop, /heroCopy:\s*\{[\s\S]*?flex:\s*1,[\s\S]*?minWidth:\s*0/);
+  assert.match(
+    shop,
+    /searchInput:\s*\{[\s\S]*?flex:\s*1,[\s\S]*?minWidth:\s*0/,
+  );
   assert.match(
     purchaseBar,
     /purchaseRow:\s*\{[\s\S]*?minHeight:\s*58,[\s\S]*?flexDirection:\s*"row"/,
