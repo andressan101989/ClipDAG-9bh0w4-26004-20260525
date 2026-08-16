@@ -46,6 +46,8 @@ test("Marketplace main is a shop-only product route without the old mixed tabs",
     shop,
     /fetchProducts\(\{[\s\S]*?category: category \|\| undefined,[\s\S]*?search: searchQuery \|\| undefined,[\s\S]*?limit: MARKETPLACE_PAGE_LIMIT/,
   );
+  assert.doesNotMatch(shop, /\bRecientes\b|name="schedule"/);
+  assert.match(shop, /<FlatList[\s\S]*?numColumns=\{2\}/);
 });
 
 test("Creator profiles own the accessible Contenido and Exclusivo information architecture", () => {

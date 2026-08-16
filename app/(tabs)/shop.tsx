@@ -819,14 +819,6 @@ export default function ShopScreen() {
             {category ? "Categoría activa" : "Todas las categorías"}
           </Text>
         </View>
-        <View style={styles.filterStatus}>
-          <MaterialIcons
-            name="schedule"
-            size={14}
-            color={Colors.textSecondary}
-          />
-          <Text style={styles.filterStatusText}>Recientes</Text>
-        </View>
         {hasActiveFilter ? (
           <Pressable
             style={styles.clearFiltersButton}

@@ -61,6 +61,39 @@ test("wallet, cart, search, categories, seller and detail navigation stay canoni
   assert.match(marketplace, /p_search:\s*opts\?\.search \?\? null/);
 });
 
+test("Shop exposes only truthful catalog filters", () => {
+  const filterRail = shop.slice(
+    shop.indexOf('<View style={styles.filterRail}>'),
+    shop.indexOf('<View style={styles.catalogHeader}>'),
+  );
+
+  assert.doesNotMatch(shop, /\bRecientes\b/);
+  assert.doesNotMatch(filterRail, /name="schedule"/);
+  assert.doesNotMatch(
+    filterRail,
+    /MÃ¡s recientes|Relevancia|MÃ¡s vendidos|Precio|Ordenar/,
+  );
+  assert.match(shop, /categoryOptions\.map/);
+  assert.match(shop, /fetchCategories\(\)/);
+  assert.match(
+    shop,
+    /fetchProducts\(\{[\s\S]*?category: category \|\| undefined,[\s\S]*?search: searchQuery \|\| undefined,[\s\S]*?limit: MARKETPLACE_PAGE_LIMIT/,
+  );
+  assert.match(
+    shop,
+    /setTimeout\(\(\) => setSearchQuery\(search\.trim\(\)\), 250\)/,
+  );
+  assert.match(
+    shop,
+    /const hasActiveFilter = Boolean\(searchQuery \|\| category\)/,
+  );
+  assert.match(filterRail, /\{hasActiveFilter \? \([\s\S]*?Limpiar[\s\S]*?\) : null\}/);
+  assert.match(
+    shop,
+    /const clearFilters = useCallback\(\(\) => \{[\s\S]*?setSearch\(""\);[\s\S]*?setSearchQuery\(""\);[\s\S]*?setCategory\(""\);[\s\S]*?\}, \[\]\);/,
+  );
+});
+
 test("grid renders only real Marketplace products, media and honest fallbacks", () => {
   assert.match(shop, /mixMarketplaceSponsoredProducts\(products, sponsored\)/);
   assert.match(shop, /product\.images\?\.\[0\] \?\? null/);
