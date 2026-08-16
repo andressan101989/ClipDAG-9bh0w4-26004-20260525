@@ -52,6 +52,20 @@ const allocationStatuses = ["held", "released", "refunded", "partially_refunded"
 const disputeStatuses = ["open", "under_review", "resolved", "rejected", "cancelled"];
 const disputeOutcomes = ["refund_buyer", "release_seller", "reject_claim"];
 
+const sellerHistoryStateIsCompatible = (orderStatus, paymentStatus, allocationStatus) =>
+  (["confirmed", "processing", "shipped", "cancelled"].includes(orderStatus) &&
+    paymentStatus === "paid" &&
+    allocationStatus === "held") ||
+  (orderStatus === "delivered" &&
+    paymentStatus === "paid" &&
+    allocationStatus === "released") ||
+  (orderStatus === "refunded" &&
+    ["paid", "refunded"].includes(paymentStatus) &&
+    allocationStatus === "refunded") ||
+  (orderStatus === "partially_refunded" &&
+    ["paid", "partially_refunded"].includes(paymentStatus) &&
+    allocationStatus === "partially_refunded");
+
 export const isSafeMarketplaceTrackingUrl = (value) =>
   !value || /^https:\/\/[^\s]+$/i.test(value);
 
@@ -187,6 +201,20 @@ export function parseMarketplaceOrderDetailPayload(value) {
   if (order.currency !== "BDAG") fail("order_detail.order.currency");
   const rawAllocation = root.allocation == null ? null : object(root.allocation, "order_detail.allocation");
   const rawSettlement = root.settlement == null ? null : object(root.settlement, "order_detail.settlement");
+  const orderStatus = enumeration(order.status, orderStatuses, "order_detail.order.status");
+  const paymentStatus = enumeration(
+    payment.status,
+    buyerPaymentStatuses,
+    "order_detail.payment.status",
+  );
+  const allocationStatus = rawAllocation
+    ? enumeration(rawAllocation.status, allocationStatuses, "order_detail.allocation.status")
+    : null;
+  if (
+    allocationStatus &&
+    !sellerHistoryStateIsCompatible(orderStatus, paymentStatus, allocationStatus)
+  )
+    fail("order_detail.allocation.status");
   return {
     order: {
       id: uuid(order.id, "order_detail.order.id"),
@@ -196,7 +224,7 @@ export function parseMarketplaceOrderDetailPayload(value) {
         order.checkout_reference,
         "order_detail.order.checkout_reference",
       ),
-      status: enumeration(order.status, orderStatuses, "order_detail.order.status"),
+      status: orderStatus,
       currency: "BDAG",
       total: number(order.total, "order_detail.order.total"),
       createdAt: timestamp(order.created_at, "order_detail.order.created_at"),
@@ -224,11 +252,7 @@ export function parseMarketplaceOrderDetailPayload(value) {
       slug: string(store.slug, "order_detail.store.slug"),
     },
     payment: {
-      status: enumeration(
-        payment.status,
-        buyerPaymentStatuses,
-        "order_detail.payment.status",
-      ),
+      status: paymentStatus,
       paidAt: timestamp(payment.paid_at, "order_detail.payment.paid_at"),
     },
     allocation: rawAllocation
@@ -242,11 +266,7 @@ export function parseMarketplaceOrderDetailPayload(value) {
             rawAllocation.seller_net_amount,
             "order_detail.allocation.seller_net_amount",
           ),
-          status: enumeration(
-            rawAllocation.status,
-            allocationStatuses,
-            "order_detail.allocation.status",
-          ),
+          status: allocationStatus,
           releasedAt: nullableTimestamp(
             rawAllocation.released_at,
             "order_detail.allocation.released_at",
