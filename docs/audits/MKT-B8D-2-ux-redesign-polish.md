@@ -376,3 +376,30 @@ Build remains 22. Remote remains 34000. No SQL, Supabase push, Edge deployment, 
 - TypeScript: exactly 187 historical diagnostics and zero diagnostics in C1 production files.
 - Read-only B8D hardening and inherited B8C audits both passed at remote migration `20260811034000`; review reconciliation 5/5, B8B 8/8 and all Creator/Ads failure counters are zero, payments/settlements are healthy, escrow expected/actual is 71/71, fixtures are zero and the failure hook is absent.
 - No migration, Supabase push, Edge deployment, EAS, physical-device test or economic-authority change occurred.
+
+## MKT-B8D-2R-F1-C2 — Exact Store Settings Mockup Parity
+
+Starting baseline: `86c5ddbd410bd458eb5dcd115626bd7b075adb1d`, branch `codex/mkt-a4b-premium-integration`, Build 22, remote migration `20260811034000_marketplace_verified_reviews_branding.sql`. Local/origin were identical and clean; the B8D hardening and inherited B8C read-only auditors passed before work.
+
+This closure is confined to the Seller Store Settings presentation in `app/seller/store.tsx`, focused structural tests and this audit entry. The existing `updateStore`, `uploadMediaFromUri`, `setStoreMedia` and `fetchMarketplaceStoreReputation` boundaries remain authoritative and unchanged.
+
+### Store mockup parity result
+
+- Header: premium near-black/charcoal frame, deterministic shared Seller Center back behavior, exact `Configuración de tienda` title and `OnSpace Marketplace` subtitle, followed by a single active `Perfil de tienda` rail without inventing unsupported settings pages.
+- Logo: elevated section, large circular canonical preview with purple gradient ring and edit affordance, responsive preview/action composition, gradient upload/replace CTA, pending/disabled accessibility state and a dedicated recommendations panel for JPG/PNG/WebP, square presentation, transparent background and the real 10 MB limit.
+- Information: canonical name, public slug and description remain editable. Each is presented in an individual dark settings surface with icon, helper copy, purple focus border/glow, controlled input, accessible label and description character count.
+- Visual identity: canonical banner upload/replace remains unchanged; presentation now uses an emphasized horizontal preview, real-image overlay and `Vista previa` badge, or an honest neutral empty state. The real 25 MB banner limit remains visible.
+- Public reputation: product and seller aggregates always occupy separate premium cards, use only server-projected averages/counts, render honest no-review states, and stack only at the narrowest width.
+- Save: the same canonical create/update operation is presented as a strong purple gradient action with idle, busy, success and error feedback plus the existing OnSpace security footer.
+- Responsive reasoning: at 320px the 108px logo preview shares a bounded row with the flexible CTA, banner/reputation headings stack and rating cards stack; 360/390/430 retain side-by-side reputation cards and no horizontal scroll. At 760px the logo, actions and recommendations reproduce the wide mockup composition.
+
+No verification badge, store category, business hours, shipping-policy editor or fake rating was introduced because no corresponding canonical authority exists. No SQL, migration, Supabase push, Edge deployment, EAS or economic-authority change is part of C2. Physical-device validation remains outside this task.
+
+### C2 proof and render limitation
+
+- Premium store/F1/B8D-focused tests: 106/106 passed; the dedicated store/reputation/navigation subset passed 21/21.
+- Admin Web: 58/58 passed; ESLint passed with zero warnings; production build passed with 120 modules.
+- Complete root Node suite: 756/756 passed.
+- TypeScript: exactly 187 historical diagnostics and zero diagnostics in `app/seller/store.tsx`.
+- Read-only B8D and inherited B8C auditors passed after C2 at remote migration `20260811034000`; review reconciliation 5/5, B8B 8/8 and all Creator/Ads failure counters are zero, settlements are healthy with current escrow expected/actual 70/70, fixtures are zero and the failure hook is absent.
+- A local Expo Web render was attempted. The repository-wide bundle was blocked before route rendering by the pre-existing missing `@lottiefiles/dotlottie-react` dependency reached through the LIVE broadcast import graph. C2 did not install or alter that unrelated dependency, and no screenshot or pixel-perfect/device-validation claim is made.

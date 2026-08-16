@@ -167,6 +167,46 @@ test("approved store configuration structure uses only canonical branding and re
   );
 });
 
+test("C2 store profile keeps editable canonical fields inside premium focused controls", () => {
+  assert.match(store, /accessibilityLabel="Nombre de la tienda"/);
+  assert.match(store, /value=\{name\}/);
+  assert.match(store, /onChangeText=\{\(value\) => edit\("name", value\)\}/);
+  assert.match(store, /focusedField === "name"/);
+  assert.match(store, /styles\.storeFieldActive/);
+  assert.match(store, /selectionColor=\{Colors\.primaryLight\}/);
+  for (const token of [
+    "Así te encontrarán los compradores",
+    "URL pública de tu tienda",
+    "Resume qué vendes y qué hace especial a tu tienda",
+    "description.length",
+  ])
+    assert(store.includes(token), token);
+});
+
+test("C2 store mockup parity includes premium branding, reputation, and save states", () => {
+  for (const token of [
+    "profileRail",
+    "logoPreviewShell",
+    "logoEditBadge",
+    "uploadGradient",
+    "Fondo transparente recomendado",
+    "bannerOverlay",
+    "Vista previa",
+    "metricsStacked",
+    "metricStars",
+    "Guardar cambios",
+    "Guardando cambios…",
+    "Cambios guardados correctamente.",
+    "saveFeedbackError",
+  ])
+    assert(store.includes(token), token);
+  assert.match(store, /onPress=\{\(\) => void pickBranding\("logo"\)\}/);
+  assert.match(store, /onPress=\{\(\) => void pickBranding\("banner"\)\}/);
+  assert.match(store, /onPress=\{\(\) => void save\(\)\}/);
+  assert.match(store, /updateStore\(store\.id, name, slug, description\)/);
+  assert.doesNotMatch(store, /getSupabaseClient|service_role|\.rpc\(/);
+});
+
 test("visual closure adds no migration or economic authority and keeps Build 22", () => {
   const migrations = readdirSync(join(root, "supabase/migrations"))
     .filter((name) => name.endsWith(".sql"))
