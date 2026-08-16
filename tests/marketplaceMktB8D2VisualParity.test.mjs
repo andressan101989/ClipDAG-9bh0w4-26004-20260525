@@ -81,7 +81,10 @@ test("approved compact variants, truthful shipping, store identity, and trust st
     'accessibilityRole="radio"',
   ])
     assert(product.includes(token), token);
-  assert.match(product, /accessibilityState=\{\{\s*selected,\s*disabled:\s*!enabled,?\s*\}\}/);
+  assert.match(
+    product,
+    /accessibilityState=\{\{\s*selected,\s*disabled:\s*!enabled,?\s*\}\}/,
+  );
   assert.match(product, /reputation\.store\.logoUrl/);
   assert.match(product, /reputation\.sellerAggregate\.averageRating/);
   assert.match(product, /product\.total_sales > 0/);
@@ -140,8 +143,7 @@ test("approved store configuration structure uses only canonical branding and re
     "Configuración de tienda",
     "OnSpace Marketplace",
     "Logo de la tienda",
-    "Recomendaciones",
-    "Formato: JPG, PNG o WebP",
+    "JPG · PNG · WebP",
     "Máx. 10 MB",
     "Información de la tienda",
     "Identidad visual",
@@ -167,10 +169,22 @@ test("approved store configuration structure uses only canonical branding and re
   );
 });
 
-test("C2 store profile keeps editable canonical fields inside premium focused controls", () => {
+test("C3 store information stays directly editable with quiet focus controls", () => {
   assert.match(store, /accessibilityLabel="Nombre de la tienda"/);
   assert.match(store, /value=\{name\}/);
   assert.match(store, /onChangeText=\{\(value\) => edit\("name", value\)\}/);
+  assert.match(store, /ref=\{nameInputRef\}/);
+  assert.match(store, /ref=\{slugInputRef\}/);
+  assert.match(store, /ref=\{descriptionInputRef\}/);
+  assert.match(store, /accessibilityLabel="Editar nombre de la tienda"/);
+  assert.match(store, /accessibilityLabel="Editar identificador público"/);
+  assert.match(store, /accessibilityLabel="Editar descripción de la tienda"/);
+  assert.match(store, /onEdit=\{\(\) => nameInputRef\.current\?\.focus\(\)\}/);
+  assert.match(store, /onEdit=\{\(\) => slugInputRef\.current\?\.focus\(\)\}/);
+  assert.match(
+    store,
+    /onEdit=\{\(\) => descriptionInputRef\.current\?\.focus\(\)\}/,
+  );
   assert.match(store, /focusedField === "name"/);
   assert.match(store, /styles\.storeFieldActive/);
   assert.match(store, /selectionColor=\{Colors\.primaryLight\}/);
@@ -183,14 +197,13 @@ test("C2 store profile keeps editable canonical fields inside premium focused co
     assert(store.includes(token), token);
 });
 
-test("C2 store mockup parity includes premium branding, reputation, and save states", () => {
+test("C3 branding uses direct manipulation while reputation and save states remain", () => {
   for (const token of [
-    "profileRail",
     "logoPreviewShell",
     "logoEditBadge",
-    "uploadGradient",
     "Fondo transparente recomendado",
     "bannerOverlay",
+    "bannerEditBadge",
     "Vista previa",
     "metricsStacked",
     "metricStars",
@@ -202,9 +215,38 @@ test("C2 store mockup parity includes premium branding, reputation, and save sta
     assert(store.includes(token), token);
   assert.match(store, /onPress=\{\(\) => void pickBranding\("logo"\)\}/);
   assert.match(store, /onPress=\{\(\) => void pickBranding\("banner"\)\}/);
+  assert.match(
+    store,
+    /accessibilityLabel=\{[\s\S]*?"Cambiar logo de la tienda"[\s\S]*?"Subir logo de la tienda"/,
+  );
+  assert.match(
+    store,
+    /accessibilityLabel=\{[\s\S]*?"Cambiar portada de la tienda"[\s\S]*?"Subir portada de la tienda"/,
+  );
   assert.match(store, /onPress=\{\(\) => void save\(\)\}/);
   assert.match(store, /updateStore\(store\.id, name, slug, description\)/);
+  assert.doesNotMatch(
+    store,
+    /styles\.(uploadButton|secondaryButton|profileRail|profileTab)/,
+  );
+  assert.doesNotMatch(store, />\s*(Cambiar|Subir) (logo|portada)\s*</);
   assert.doesNotMatch(store, /getSupabaseClient|service_role|\.rpc\(/);
+});
+
+test("C3 removes per-field and per-section card chrome without removing media or metric surfaces", () => {
+  const storeFieldStyle = store.match(
+    /storeField:\s*\{([\s\S]*?)\n\s*\},\n\s*storeFieldActive:/,
+  )?.[1];
+  const sectionStyle = store.match(
+    /section:\s*\{([\s\S]*?)\n\s*\},\n\s*logoSection:/,
+  )?.[1];
+  assert.ok(storeFieldStyle, "storeField style");
+  assert.ok(sectionStyle, "section style");
+  assert.doesNotMatch(storeFieldStyle, /backgroundColor|borderRadius/);
+  assert.doesNotMatch(sectionStyle, /backgroundColor|borderRadius|Shadow/);
+  assert.match(storeFieldStyle, /borderBottomWidth/);
+  assert.match(store, /bannerPreview:/);
+  assert.match(store, /metric:/);
 });
 
 test("visual closure adds no migration or economic authority and keeps Build 22", () => {

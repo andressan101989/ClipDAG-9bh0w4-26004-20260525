@@ -403,3 +403,32 @@ No verification badge, store category, business hours, shipping-policy editor or
 - TypeScript: exactly 187 historical diagnostics and zero diagnostics in `app/seller/store.tsx`.
 - Read-only B8D and inherited B8C auditors passed after C2 at remote migration `20260811034000`; review reconciliation 5/5, B8B 8/8 and all Creator/Ads failure counters are zero, settlements are healthy with current escrow expected/actual 70/70, fixtures are zero and the failure hook is absent.
 - A local Expo Web render was attempted. The repository-wide bundle was blocked before route rendering by the pre-existing missing `@lottiefiles/dotlottie-react` dependency reached through the LIVE broadcast import graph. C2 did not install or alter that unrelated dependency, and no screenshot or pixel-perfect/device-validation claim is made.
+
+## MKT-B8D-2R-F1-C3 — Low-Chrome Direct Store Editing
+
+Starting baseline: `f2470b598b7506564cbc1947f0c5578230969c91`, branch `codex/mkt-a4b-premium-integration`, Build 22, remote migration `20260811034000_marketplace_verified_reviews_branding.sql`. Local/origin were identical and clean, and both inherited remote read-only auditors passed before the UI refinement.
+
+This closure changes only `app/seller/store.tsx`, its structural visual-contract test and this appended audit record. The screen is now a low-chrome branding editor: the single inactive `Perfil de tienda` rail, rounded section containers, nested recommendation panel, per-field cards/icon boxes, ambient glow, large logo upload button and large banner upload button were removed. Typography, whitespace and quiet dividers now provide the section hierarchy.
+
+### Direct-edit behavior
+
+- Logo: the canonical logo or neutral placeholder is the 44px-accessible Pressable. Tapping the object invokes the unchanged `pickBranding("logo")` pipeline; the overlapping pencil carries pending feedback and the accessible label reflects upload/replace state. Guidance is compact inline copy with the existing JPG/PNG/WebP, square and 10 MB contract.
+- Store information: name, public slug and description remain controlled `TextInput` fields backed by the unchanged `edit(...)` state path. Each value is directly editable, while a 44×44 pencil focuses the exact input through a ref. The active row uses only a subtle purple underline; no per-field background card remains. The public URL preview and description character count remain visible.
+- Banner: the canonical cover or neutral empty surface is directly tappable and invokes the unchanged `pickBranding("banner")` pipeline. A 44×44 overlay pencil communicates edit/pending state; the old textual upload/replace button was removed.
+- Reputation: the two compact product/seller aggregate cards remain because those metrics benefit from explicit grouping. Values continue to come only from `fetchMarketplaceStoreReputation`; no fake values were introduced.
+- Save: `Guardar cambios` remains the sole dominant text CTA with the inherited idle, busy, success and error behavior. `createStore`, `updateStore`, `uploadMediaFromUri` and `setStoreMedia` authority are unchanged.
+
+At 320/360/390/430 widths, sections stay within the bounded page padding, inputs flex around their fixed 44px edit targets, the logo scales from 108px to 136px, the banner remains width-bound, and reputation cards stack only below 360px. No horizontal ScrollView or additional nested surface was introduced.
+
+Structural proof verifies all three controlled inputs and pencil focus wiring, direct logo/banner invocation, accessible labels, removal of large media buttons and the inactive rail, absence of background/radius chrome in `storeField` and `section`, continued reputation/save behavior, Build 22, migration 34000 and unchanged economic authority.
+
+### C3 verification
+
+- Store/B8D visual, UX, hardening and mobile-contract focus: 52/52 passed; the dedicated parity file passed 10/10.
+- Admin Web: 58/58 passed; ESLint passed with zero warnings; production build passed with 120 modules.
+- Complete root Node suite: 757/757 passed.
+- TypeScript: exactly 187 historical diagnostics and zero diagnostics in `app/seller/store.tsx`.
+- The read-only B8D hardening auditor passed at remote migration `20260811034000` with 211/211 Marketplace SECURITY DEFINER functions fixed-path, zero unsafe effective search paths, zero broad Marketplace DML and review reconciliation 5/5 zero.
+- The inherited B8C read-only auditor passed: B8B 8/8 and all Creator, Ads, review, payment, settlement and reversal failure counters are zero; escrow expected/actual is currently 70/70; fixtures are zero and the failure hook is absent.
+
+No migration, Supabase push, Edge deployment, EAS, physical-device test or economic-authority change occurred. Build remains 22, remote remains 34000 and B8D-3 was not started.
