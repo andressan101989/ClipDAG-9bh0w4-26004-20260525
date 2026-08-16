@@ -10,6 +10,7 @@ const orderDetail = read("app/seller/orders/[id].tsx");
 const buyerOrderDetail = read("app/orders/[id].tsx");
 const statusBadge = read("components/marketplace/OrderStatus.tsx");
 const fulfillment = read("services/marketplaceFulfillmentService.ts");
+const presentation = read("services/marketplaceOrderPresentation.ts");
 
 test("seller order filters use one responsive horizontal rail instead of wrapping", () => {
   assert.match(orders, /useWindowDimensions/);
@@ -49,14 +50,11 @@ test("compact widths shorten only presentation while retaining tap targets", () 
 });
 
 test("list order references use a deterministic bounded presentation", () => {
-  const helper = orders.slice(
-    orders.indexOf("const formatOrderNumberForList"),
-    orders.indexOf("export default function SellerOrders"),
-  );
-  assert.match(helper, /orderNumber\.trim\(\)/);
-  assert.match(helper, /normalized\.length <= 14/);
-  assert.match(helper, /normalized\.slice\(0, 8\)/);
-  assert.match(helper, /normalized\.slice\(-5\)/);
+  assert.match(orders, /formatOrderNumberForList.*marketplaceOrderPresentation/);
+  assert.match(presentation, /orderNumber\.trim\(\)/);
+  assert.match(presentation, /normalized\.length <= 14/);
+  assert.match(presentation, /normalized\.slice\(0, 8\)/);
+  assert.match(presentation, /normalized\.slice\(-5\)/);
   const formatOrderNumberForList = (value) => {
     const normalized = value.trim();
     return normalized.length <= 14

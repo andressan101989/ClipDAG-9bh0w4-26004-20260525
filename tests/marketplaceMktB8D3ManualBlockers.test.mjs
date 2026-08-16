@@ -165,7 +165,7 @@ test("B8D-3 manual-blocker corrective stays intact with Build 22", () => {
     .sort();
   assert.equal(
     migrations.at(-1),
-    "20260816021000_fix_marketplace_buyer_purchase_history_paid_evidence.sql",
+    "20260816022000_marketplace_seller_purchase_history.sql",
   );
   assert.equal(String(JSON.parse(read("app.json")).expo.ios.buildNumber), "22");
   const changed = store + sellerHome + shipping + fulfillment;
