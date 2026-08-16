@@ -9,6 +9,7 @@ import { OrderTimeline, StatusBadge } from '@/components/marketplace/OrderStatus
 import { SellerScreenHeader } from '@/components/marketplace/SellerScreenHeader';
 import { MarketplaceDisputePanel } from '@/components/marketplace/MarketplaceDisputePanel';
 import { confirmMarketplaceOrderDelivery, MarketplaceSettlementError } from '@/services/marketplaceSettlementService';
+import { buyerOrderProtectionMessage } from '@/services/marketplaceOrderPresentation';
 
 export default function BuyerOrder() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -51,7 +52,7 @@ export default function BuyerOrder() {
     <View style={styles.card}><Text style={styles.heading}>Productos</Text>{data.items.map(item => <View key={item.id} style={styles.row}><View style={styles.flex}><Text style={styles.text}>{item.productTitle}</Text><Text style={styles.muted}>{item.options.map(option => option.value).join(' · ')} · Cantidad {item.quantity}</Text></View><Text style={styles.text}>{item.lineTotal.toFixed(2)} BDAG</Text></View>)}{data.shippingAmount > 0 ? <Text style={styles.text}>Envío · {data.shippingAmount.toFixed(2)} BDAG</Text> : null}<Text style={styles.total}>Total · {data.order.total.toFixed(2)} BDAG</Text></View>
     <View style={styles.card}><Text style={styles.heading}>Entrega</Text><Text style={styles.text}>{data.shippingAddress.recipientName}</Text><Text style={styles.muted}>{data.shippingAddress.city}, {data.shippingAddress.region} · {data.shippingAddress.country}</Text>{data.shipment ? <><Text style={styles.text}>{data.shipment.carrierName} · {data.shipment.trackingNumber}</Text>{data.shipment.estimatedDeliveryAt ? <Text style={styles.muted}>Entrega estimada: {new Date(data.shipment.estimatedDeliveryAt).toLocaleDateString()}</Text> : null}{data.shipment.trackingUrl ? <Pressable style={styles.button} onPress={() => void track()}><Text style={styles.buttonText}>Ver seguimiento</Text></Pressable> : null}</> : <Text style={styles.muted}>El vendedor todavía está preparando el pedido.</Text>}</View>
     <View style={styles.card}><Text style={styles.heading}>Historial</Text><OrderTimeline events={data.events} /></View>
-    <Text style={styles.protect}>{data.dispute ? 'Liquidación pausada por el problema reportado.' : data.order.status === 'delivered' ? 'Entrega confirmada y fondos liquidados de forma segura.' : 'Tu pago permanece protegido durante la entrega.'}</Text>
+    <Text style={styles.protect}>{buyerOrderProtectionMessage(data.order.status, data.dispute)}</Text>
     {data.order.status === 'shipped' && !data.dispute ? <><Pressable style={styles.button} disabled={settling} onPress={confirmDelivery} accessibilityRole="button"><Text style={styles.buttonText}>{settling ? 'Confirmando…' : 'Confirmar recepción'}</Text></Pressable><MarketplaceDisputePanel orderId={data.order.id} current={data.dispute} onSubmitted={load} /></> : null}
     {data.dispute ? <MarketplaceDisputePanel orderId={data.order.id} current={data.dispute} onSubmitted={load} /> : null}
     <Pressable style={styles.outline} onPress={() => router.push(`/checkout/reservation/${data.order.checkoutId}` as never)}><Text style={styles.buttonText}>Ver recibo de pago</Text></Pressable>

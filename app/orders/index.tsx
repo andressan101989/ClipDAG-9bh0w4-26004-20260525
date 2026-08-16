@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { Image } from '@/components/ui/SafeImage';
@@ -21,8 +22,11 @@ import {
 } from '@/services/marketplaceFulfillmentService';
 import { StatusBadge } from '@/components/marketplace/OrderStatus';
 import { SellerScreenHeader } from '@/components/marketplace/SellerScreenHeader';
+import { formatOrderNumberForList } from '@/services/marketplaceOrderPresentation';
 
 const PAGE = 20;
+const COMPACT_BREAKPOINT = 390;
+const ICON_ONLY_STATUS_BREAKPOINT = 350;
 const filters: [string, MarketplaceOrderStatus | null][] = [
   ['Todos', null],
   ['Confirmados', 'confirmed'],
@@ -37,6 +41,9 @@ const filters: [string, MarketplaceOrderStatus | null][] = [
 export default function BuyerOrders() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const compact = width < COMPACT_BREAKPOINT;
+  const iconOnlyStatus = width < ICON_ONLY_STATUS_BREAKPOINT;
   const lock = useRef(false);
   const generation = useRef(0);
   const [status, setStatus] = useState<MarketplaceOrderStatus | null>(null);
@@ -94,11 +101,13 @@ export default function BuyerOrders() {
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.filters}
       accessibilityRole="tablist"
+      style={styles.filterRail}
     >
       {filters.map(([label, value]) => <Pressable
         key={label}
         accessibilityRole="tab"
         accessibilityState={{ selected: status === value }}
+        hitSlop={2}
         onPress={() => {
           if (status !== value) {
             generation.current++;
@@ -131,19 +140,35 @@ export default function BuyerOrders() {
             </Pressable> : null}
           </View>}
           renderItem={({ item }) => <Pressable
-            style={styles.card}
+            accessibilityLabel={`Ver pedido ${item.orderNumber}`}
+            accessibilityRole="button"
+            style={[styles.card, compact && styles.cardCompact]}
             onPress={() => router.push(`/orders/${item.id}` as never)}
           >
             <Image
               source={item.firstItemImage ? { uri: item.firstItemImage } : undefined}
-              style={styles.image}
+              style={[styles.image, compact && styles.imageCompact]}
             />
             <View style={styles.cardContent}>
-              <Text style={styles.title}>{item.firstItemTitle}</Text>
-              <Text style={styles.muted}>{item.storeName} · {item.orderNumber}</Text>
-              <Text style={styles.price}>{item.total.toFixed(2)} BDAG</Text>
+              <Text style={styles.title} numberOfLines={2}>{item.firstItemTitle}</Text>
+              <Text style={styles.muted} numberOfLines={1}>{item.storeName}</Text>
+              <Text
+                accessibilityLabel={`Pedido ${item.orderNumber}`}
+                ellipsizeMode="middle"
+                numberOfLines={1}
+                style={styles.orderNumber}
+              >
+                {formatOrderNumberForList(item.orderNumber)}
+              </Text>
+              <Text style={styles.price} numberOfLines={1}>{item.total.toFixed(2)} BDAG</Text>
             </View>
-            <StatusBadge status={item.status} />
+            <View style={styles.statusSlot}>
+              <StatusBadge
+                status={item.status}
+                compact={compact}
+                showLabel={!iconOnlyStatus}
+              />
+            </View>
           </Pressable>}
         />}
   </View>;
@@ -151,14 +176,19 @@ export default function BuyerOrders() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
-  filters: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingVertical: 10 },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: Radius.full, backgroundColor: Colors.surfaceElevated },
+  filterRail: { flexGrow: 0, height: 52, maxHeight: 52 },
+  filters: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6 },
+  chip: { height: 40, maxHeight: 40, flexShrink: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderRadius: Radius.full, backgroundColor: Colors.surfaceElevated },
   selectedChip: { backgroundColor: Colors.primary },
   text: { color: Colors.textPrimary },
   list: { padding: Spacing.md, gap: Spacing.md, flexGrow: 1 },
   card: { flexDirection: 'row', gap: 12, padding: 12, backgroundColor: Colors.surfaceElevated, borderRadius: Radius.lg, alignItems: 'center' },
-  cardContent: { flex: 1, minWidth: 0 },
-  image: { width: 64, height: 64, borderRadius: Radius.md, backgroundColor: Colors.surfaceHighlight },
+  cardCompact: { gap: 8, paddingHorizontal: 10 },
+  cardContent: { flex: 1, flexShrink: 1, minWidth: 0 },
+  image: { width: 64, height: 64, flexShrink: 0, borderRadius: Radius.md, backgroundColor: Colors.surfaceHighlight },
+  imageCompact: { width: 56, height: 56 },
+  statusSlot: { flexShrink: 0 },
+  orderNumber: { color: Colors.textSecondary, flexShrink: 1, minWidth: 0 },
   title: { color: Colors.textPrimary, fontWeight: '700' },
   muted: { color: Colors.textSecondary },
   price: { color: Colors.primaryLight, fontWeight: '800' },

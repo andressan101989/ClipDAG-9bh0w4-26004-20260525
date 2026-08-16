@@ -24,6 +24,7 @@ import {
 import { formatBDAG, formatMetricCount } from "@/services/marketplaceSellerCenterCore.mjs";
 import { StatusBadge } from "@/components/marketplace/OrderStatus";
 import { SellerScreenHeader } from "@/components/marketplace/SellerScreenHeader";
+import { formatOrderNumberForList } from "@/services/marketplaceOrderPresentation";
 
 /* eslint-disable react-hooks/exhaustive-deps -- focus refresh keys only on the selected server status */
 const PAGE = 20;
@@ -75,12 +76,6 @@ const filters: OrderFilter[] = [
     value: "delivered",
   },
 ];
-
-const formatOrderNumberForList = (orderNumber: string) => {
-  const normalized = orderNumber.trim();
-  if (normalized.length <= 14) return normalized;
-  return `${normalized.slice(0, 8)}…${normalized.slice(-5)}`;
-};
 
 export default function SellerOrders() {
   const router = useRouter();
