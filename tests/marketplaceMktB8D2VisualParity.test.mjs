@@ -142,13 +142,12 @@ test("approved store configuration structure uses only canonical branding and re
   for (const token of [
     "Configuración de tienda",
     "OnSpace Marketplace",
-    "Logo de la tienda",
+    "IDENTIDAD DE MARCA",
     "JPG · PNG · WebP",
     "Máx. 10 MB",
-    "Información de la tienda",
-    "Identidad visual",
-    "Imagen de portada",
-    "Cómo te ven los compradores",
+    "INFORMACIÓN",
+    "PORTADA",
+    "REPUTACIÓN",
     "Calificación de productos",
     "Calificación del vendedor",
     "Guardar cambios",
@@ -169,7 +168,7 @@ test("approved store configuration structure uses only canonical branding and re
   );
 });
 
-test("C3 store information stays directly editable with quiet focus controls", () => {
+test("C4 store information stays directly editable with editorial focus controls", () => {
   assert.match(store, /accessibilityLabel="Nombre de la tienda"/);
   assert.match(store, /value=\{name\}/);
   assert.match(store, /onChangeText=\{\(value\) => edit\("name", value\)\}/);
@@ -188,20 +187,18 @@ test("C3 store information stays directly editable with quiet focus controls", (
   assert.match(store, /focusedField === "name"/);
   assert.match(store, /styles\.storeFieldActive/);
   assert.match(store, /selectionColor=\{Colors\.primaryLight\}/);
-  for (const token of [
-    "Así te encontrarán los compradores",
-    "URL pública de tu tienda",
-    "Resume qué vendes y qué hace especial a tu tienda",
-    "description.length",
-  ])
-    assert(store.includes(token), token);
+  assert(store.includes("URL pública de tu tienda"));
+  assert(store.includes("description.length"));
+  assert.doesNotMatch(
+    store,
+    /Así te encontrarán los compradores|Mantén clara y reconocible|Resume qué vendes/,
+  );
 });
 
-test("C3 branding uses direct manipulation while reputation and save states remain", () => {
+test("C4 compact branding uses direct manipulation while reputation and save states remain", () => {
   for (const token of [
     "logoPreviewShell",
     "logoEditBadge",
-    "Fondo transparente recomendado",
     "bannerOverlay",
     "bannerEditBadge",
     "Vista previa",
@@ -230,7 +227,35 @@ test("C3 branding uses direct manipulation while reputation and save states rema
     /styles\.(uploadButton|secondaryButton|profileRail|profileTab)/,
   );
   assert.doesNotMatch(store, />\s*(Cambiar|Subir) (logo|portada)\s*</);
+  assert.doesNotMatch(store, /Toca para cambiar/);
   assert.doesNotMatch(store, /getSupabaseClient|service_role|\.rpc\(/);
+});
+
+test("C4 compacts the logo and safely stages a friendly public identifier", () => {
+  assert.match(
+    store,
+    /logoPreviewShell:\s*\{\s*width:\s*114,\s*height:\s*114/,
+  );
+  assert.match(
+    store,
+    /logoPreviewShellCompact:\s*\{\s*width:\s*108,\s*height:\s*108/,
+  );
+  for (const token of [
+    "normalizeStoreSlugInput",
+    "normalizeStoreSlug",
+    "isMachineGeneratedSlug",
+    "isValidStoreSlug",
+    "beginSlugEdit",
+    "Esto cambiará la dirección pública de tu tienda al guardar.",
+  ])
+    assert(store.includes(token), token);
+  assert.match(store, /store && slug === store\.slug && isMachineGeneratedSlug\(slug\)/);
+  assert.match(store, /const suggestion = normalizeStoreSlug\(name\)/);
+  assert.match(store, /if \(isValidStoreSlug\(suggestion\)\) edit\("slug", suggestion\)/);
+  assert.match(store, /onChangeText=\{\(value\) =>[\s\S]*?normalizeStoreSlugInput\(value\)/);
+  assert.match(store, /numberOfLines=\{1\}/);
+  assert.match(store, /ellipsizeMode="middle"/);
+  assert.match(store, /updateStore\(store\.id, name, slug, description\)/);
 });
 
 test("C3 removes per-field and per-section card chrome without removing media or metric surfaces", () => {

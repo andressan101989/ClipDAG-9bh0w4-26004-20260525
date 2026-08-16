@@ -432,3 +432,32 @@ Structural proof verifies all three controlled inputs and pencil focus wiring, d
 - The inherited B8C read-only auditor passed: B8B 8/8 and all Creator, Ads, review, payment, settlement and reversal failure counters are zero; escrow expected/actual is currently 70/70; fixtures are zero and the failure hook is absent.
 
 No migration, Supabase push, Edge deployment, EAS, physical-device test or economic-authority change occurred. Build remains 22, remote remains 34000 and B8D-3 was not started.
+
+## MKT-B8D-2R-F1-C4 — Compact Store Identity Editor
+
+Starting baseline: `3685e9d578c8e5db60563ae17cf8aba09fb51bdc`, branch `codex/mkt-a4b-premium-integration`, Build 22, remote migration `20260811034000_marketplace_verified_reviews_branding.sql`. Local/origin were identical and clean before this presentation-only refinement.
+
+C4 preserves the accepted C3 direct-edit architecture while reducing first-viewport height and explanatory copy. `IDENTIDAD DE MARCA` now leads directly to a 114px logo on normal phones and 108px below 360px, followed by one `JPG · PNG · WebP · Máx. 10 MB` line. The visible `Toca para cambiar`, repeated logo title/description, repeated information title/body, and permanent square/transparent-background guidance were removed. The existing 44×44 logo pencil, direct Pressable and secure media pipeline remain intact.
+
+Store information now reads as three editorial rows: subdued label, primary value, value-aligned 44×44 pencil and quiet divider. Name remains the highest-priority 17px semibold controlled input. Slug remains a one-line controlled input with a middle-ellipsized public URL preview, and description remains multiline with its character count. Focus changes only the underline and pencil color; the previous instructional helper paragraphs are gone.
+
+### Public identifier audit and behavior
+
+The effective `marketplace_stores.slug` contract is unique, lowercase ASCII kebab case. `create_marketplace_store` and `update_marketplace_store` both call the canonical `marketplace_normalize_slug`, enforce 3–80 characters and translate uniqueness violations to controlled store/slug errors. Seller ownership remains enforced by `update_marketplace_store`; C4 adds no write authority. Current public-store navigation uses `/store/[id]` with the immutable store UUID, while the slug remains the public-address field and may affect external/shared addresses when changed.
+
+C4 does not automatically rewrite persisted values. A machine-generated `store-<long hex>` slug remains unchanged at rest and is visually constrained. Only when the seller focuses that field does the client stage a lowercase, accent-normalized, hyphenated suggestion derived from the current store name. The suggestion stays local until the existing `Guardar cambios` path calls `updateStore`; while focused, concise validation and the message `Esto cambiará la dirección pública de tu tienda al guardar.` appear when applicable. The server remains the final normalization, ownership and uniqueness authority.
+
+Portada retains its direct-tap media action and 44×44 pencil while surrounding copy is reduced to `PORTADA`, the media surface and one format/25 MB line. Reputation keeps the two real aggregate cards and replaces the textual public-store link with an accessible 44×44 eye action. Save remains the sole strong text CTA with inherited idle, busy, success and error states.
+
+Responsive source reasoning covers 320/360/390/430 widths: the logo stays within 108–114px, values flex beside fixed edit targets, the machine slug and URL cannot exceed their bounded row, the multiline description remains usable, the banner is width-bound and reputation still stacks below 360px. No horizontal scrolling or new card surface was introduced.
+
+### C4 verification
+
+- Store/B8D visual, UX, hardening and mobile-contract focus: 53/53 passed; the dedicated visual-parity file passed 11/11.
+- Admin Web: 58/58 passed; ESLint passed with zero warnings; production build passed with 120 modules.
+- Complete root Node suite: 758/758 passed.
+- TypeScript: exactly 187 historical diagnostics and zero diagnostics in `app/seller/store.tsx`.
+- The read-only B8D hardening auditor passed at remote migration `20260811034000`: 211/211 Marketplace SECURITY DEFINER functions fixed-path, zero effective unsafe paths, zero broad Marketplace DML and review reconciliation 5/5 zero.
+- The inherited B8C auditor passed: B8B 8/8 and all Creator, Ads, review, payment, settlement and reversal failure counters are zero; escrow expected/actual is 70/70; fixtures are zero and the failure hook is absent.
+
+No migration, Supabase push, Edge deployment, EAS, physical-device test or economic-authority change occurred. Build remains 22, remote remains 34000 and B8D-3 was not started.
