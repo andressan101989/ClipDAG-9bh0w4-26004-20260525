@@ -29,6 +29,7 @@ export type LiveProductReadinessReason =
   | "product_deleted"
   | "unsupported_product_type"
   | "unsupported_currency"
+  | "shipping_incomplete"
   | "no_active_variant"
   | "inventory_not_configured"
   | "out_of_stock"
@@ -208,8 +209,9 @@ export type LiveCommerceErrorCode =
 const READINESS_REASONS: LiveProductReadinessReason[] = [
   "ready", "seller_not_approved", "store_not_active", "product_not_active",
   "product_not_approved", "product_deleted", "unsupported_product_type",
-  "unsupported_currency", "no_active_variant", "inventory_not_configured",
-  "out_of_stock", "affiliate_offer_unavailable", "affiliate_offer_replaced",
+  "unsupported_currency", "shipping_incomplete", "no_active_variant",
+  "inventory_not_configured", "out_of_stock", "affiliate_offer_unavailable",
+  "affiliate_offer_replaced",
 ];
 const CODES: LiveCommerceErrorCode[] = [
   "marketplace_auth_required",
@@ -453,11 +455,16 @@ export async function fetchMyLiveProductCandidates(
       p_before_id: cursor?.id ?? null,
     });
   if (error) rpcError(rpc, error);
-  if (!data || typeof data !== "object" || !Array.isArray(data.items))
+  return parseLiveProductCandidatePage(data);
+}
+export function parseLiveProductCandidatePage(
+  data: { items?: unknown; next_cursor?: unknown } | null,
+): LiveCandidatePage {
+  if (!data || !Array.isArray(data.items))
     throw new LiveCommerceError("live_commerce_unknown");
   const items = data.items.map((raw: unknown) => {
     const r = raw as Record<string, unknown>,
-      commerceMode = r.commerce_mode,
+      commerceMode = r.commerce_mode as LiveProductCandidate["commerceMode"],
       candidateAvailability = r.candidate_availability,
       readinessReasonCode = String(r.readiness_reason_code),
       nullableBps = (value: unknown) => {

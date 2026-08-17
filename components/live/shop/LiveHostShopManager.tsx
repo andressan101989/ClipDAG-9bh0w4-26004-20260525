@@ -47,6 +47,8 @@ const readinessMessage: Partial<
   product_deleted: "Este producto fue eliminado.",
   unsupported_product_type: "Solo los productos físicos pueden venderse en LIVE.",
   unsupported_currency: "Este producto debe venderse en BDAG.",
+  shipping_incomplete:
+    "Configura un método de envío para poder vender este producto en LIVE.",
   no_active_variant: "Configura al menos una variante activa.",
   inventory_not_configured: "Completa el inventario de este producto.",
   out_of_stock: "Este producto no tiene inventario disponible.",
@@ -75,6 +77,11 @@ const errorMessage = (error: unknown) => {
     return "Revisa tu conexión e inténtalo nuevamente.";
   return "No pudimos completar la acción.";
 };
+const errorTitle = (error: unknown) =>
+  error instanceof LiveCommerceError &&
+  error.code === "live_commerce_host_not_eligible"
+    ? "Tienda no disponible"
+    : "No pudimos cargar los productos";
 const HostProductRow = memo(function HostProductRow({
   item,
   busy,
@@ -220,7 +227,7 @@ export function LiveHostShopManager({
     [loading, setLoading] = useState(false),
     [more, setMore] = useState(false),
     [refreshing, setRefreshing] = useState(false),
-    [error, setError] = useState<string | null>(null),
+    [error, setError] = useState<{ title: string; body: string } | null>(null),
     [busyIds, setBusyIds] = useState(new Set<string>()),
     inFlight = useRef(false);
   const merge = useCallback(
@@ -251,7 +258,7 @@ export function LiveHostShopManager({
         merge(page.items, mode !== "more");
         setCursor(page.nextCursor);
       } catch (cause) {
-        setError(errorMessage(cause));
+        setError({ title: errorTitle(cause), body: errorMessage(cause) });
       } finally {
         inFlight.current = false;
         setLoading(false);
@@ -286,7 +293,7 @@ export function LiveHostShopManager({
       await load("refresh");
       onChanged();
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError({ title: errorTitle(cause), body: errorMessage(cause) });
     } finally {
       setBusyIds((current) => {
         const next = new Set(current);
@@ -356,8 +363,8 @@ export function LiveHostShopManager({
           />
           {error ? (
             <ErrorState
-              title="Tienda no disponible"
-              body={error}
+              title={error.title}
+              body={error.body}
               onRetry={() => void load("refresh")}
             />
           ) : loading ? (
