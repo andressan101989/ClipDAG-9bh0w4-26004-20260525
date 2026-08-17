@@ -120,7 +120,7 @@ test("ratings, offers, sponsorship and favorites require existing authorities", 
   assert.match(shop, /item\.sponsored|SponsoredCard|sponsoredBadge/);
   assert.match(shop, /toggleSaveProduct/);
   assert.match(shop, /isSavedProduct/);
-  assert.match(saves, /persistSave\(user\.id, id, !saved\)/);
+  assert.match(saves, /persistSave\(userId, id, !saved\)/);
   assert.match(reviews, /get_marketplace_product_reputation/);
   assert.doesNotMatch(shop, /averageRating:\s*5|reviewCount:\s*[1-9]\d*/);
 });
