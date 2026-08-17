@@ -73,7 +73,7 @@ function safeMessage(error: unknown): string {
 
 export function ShopProvider({ children }: { children: ReactNode }) {
   const auth = useContext(AuthContext);
-  const user = auth?.user;
+  const userId = auth?.user?.id ?? null;
   const [products, setProducts] = useState<Product[]>([]);
   const [myProducts, setMyProducts] = useState<Product[]>([]);
   const [savedProductIds, setSavedProductIds] = useState<Set<string>>(
@@ -136,7 +136,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     [],
   );
   const fetchMyProducts=useCallback(async () => {
-    if (!user) {
+    if (!userId) {
       setMyProducts([]);
       setSellerProductsCursor(null);
       setSellerProductsState("idle");
@@ -171,9 +171,9 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     } finally {
       sellerProductsRequest.current = false;
     }
-  }, [user]);
+  }, [userId]);
   const fetchMoreMyProducts = useCallback(async () => {
-    if (!user || !sellerProductsCursor || sellerProductsRequest.current) return;
+    if (!userId || !sellerProductsCursor || sellerProductsRequest.current) return;
     sellerProductsRequest.current = true;
     setSellerProductsLoadingMore(true);
     try {
@@ -203,12 +203,12 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       sellerProductsRequest.current = false;
       setSellerProductsLoadingMore(false);
     }
-  }, [user, sellerProductsCursor]);
+  }, [userId, sellerProductsCursor]);
 
   useEffect(()=>{void fetchProducts();
   }, [fetchProducts]);
   useEffect(() => {
-    if (!user) {
+    if (!userId) {
       setSavedProductIds(new Set());
       setMyProducts([]);
       setSellerProductsCursor(null);
@@ -217,8 +217,8 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       return;
     }
     void fetchMyProducts();
-    void fetchSavedProductIds(user.id).then(setSavedProductIds);
-  }, [user, fetchMyProducts]);
+    void fetchSavedProductIds(userId).then(setSavedProductIds);
+  }, [userId, fetchMyProducts]);
 
   const createProduct = useCallback(
     async (input: ProductMutation) => {
@@ -261,7 +261,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   );
   const toggleSaveProduct = useCallback(
     (id: string) => {
-      if (!user) return;
+      if (!userId) return;
       const saved = savedProductIds.has(id);
       setSavedProductIds((previous) => {
         const next = new Set(previous);
@@ -269,7 +269,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
         else next.add(id);
         return next;
       });
-      void persistSave(user.id, id, !saved).then((ok) => {
+      void persistSave(userId, id, !saved).then((ok) => {
         if (!ok)
           setSavedProductIds((previous) => {
             const next = new Set(previous);
@@ -279,7 +279,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
           });
       });
     },
-    [user, savedProductIds],
+    [userId, savedProductIds],
   );
   const value = useMemo(
     () => ({
