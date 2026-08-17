@@ -12,12 +12,14 @@ export function LiveCommerceButton({
   disabled = false,
   label = "Abrir productos del LIVE",
   textLabel,
+  compact = false,
 }: {
   count: number;
   onPress: () => void;
   disabled?: boolean;
   label?: string;
   textLabel?: string;
+  compact?: boolean;
 }) {
   const handlePress = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -28,6 +30,7 @@ export function LiveCommerceButton({
     <Pressable
       style={({ pressed }) => [
         styles.button,
+        compact && styles.compact,
         pressed && styles.pressed,
         disabled && styles.disabled,
       ]}
@@ -38,8 +41,8 @@ export function LiveCommerceButton({
       accessibilityState={{ disabled }}
       hitSlop={6}
     >
-      <MaterialIcons name="shopping-bag" size={23} color={colors.textInverse} />
-      {textLabel ? (
+      <MaterialIcons name="shopping-bag" size={23} color={compact ? colors.textPrimary : colors.textInverse} />
+      {textLabel && !compact ? (
         <OnSpaceText variant="caption" color="textInverse">
           {textLabel}
         </OnSpaceText>
@@ -76,6 +79,12 @@ const styles = StyleSheet.create({
   pressed: {
     transform: [{ scale: 0.96 }],
     backgroundColor: colors.backgroundElevated,
+  },
+  compact: {
+    minWidth: 46,
+    width: 46,
+    height: 46,
+    paddingHorizontal: 0,
   },
   badge: {
     position: "absolute",

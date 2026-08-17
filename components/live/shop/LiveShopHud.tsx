@@ -62,9 +62,11 @@ export function LivePurchaseToast({
 export function LivePurchaseToastQueue({
   purchases,
   autoDismissMs = 3400,
+  top = 116,
 }: {
   purchases: LivePurchaseToastData[];
   autoDismissMs?: number;
+  top?: number;
 }) {
   const [active, setActive] = useState<LivePurchaseToastData | null>(null),
     shown = useRef(new Set<string>()),
@@ -82,7 +84,7 @@ export function LivePurchaseToastQueue({
     <Animated.View
       entering={reduced ? undefined : FadeInDown}
       exiting={reduced ? undefined : FadeOutUp}
-      style={styles.toast}
+      style={[styles.toast, { top }]}
     >
       <LivePurchaseToast purchase={active} />
     </Animated.View>
@@ -106,7 +108,6 @@ const styles = StyleSheet.create({
   },
   toast: {
     position: "absolute",
-    top: 116,
     left: spacing.xl,
     right: spacing.xl,
     zIndex: 20,

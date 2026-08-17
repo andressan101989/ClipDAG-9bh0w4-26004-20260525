@@ -1,5 +1,5 @@
 import React from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View, useWindowDimensions } from "react-native";
 import {
   CommercePrice,
   OnSpaceText,
@@ -18,17 +18,22 @@ export function LiveFeaturedProductCard({
   mode: "host" | "viewer";
   onAction: () => void;
 }) {
+  const { width } = useWindowDimensions();
+  const host = mode === "host";
+  const compactHost = host && width < 370;
   const unavailable = product.availability !== "available",
     disabled = mode === "viewer" && unavailable;
   return (
-    <View style={s.card} accessibilityLabel="Producto destacado del LIVE">
-      <ProductThumbnail uri={product.imageUrl} size="medium" />
-      <View style={s.info}>
+    <View style={[s.card, host && s.hostCard, compactHost && s.compactHostCard]} accessibilityLabel="Producto destacado del LIVE">
+      <ProductThumbnail uri={product.imageUrl} size={host && !compactHost ? "large" : "medium"} />
+      <View style={[s.info, host && s.hostInfo]}>
         <View style={s.badges}>
           {product.isFeatured ? (
-            <OnSpaceText variant="caption" color="commerceAccent">
-              DESTACADO
-            </OnSpaceText>
+            <View style={s.featuredBadge}>
+              <OnSpaceText variant="caption" color="commerceAccent">
+                DESTACADO
+              </OnSpaceText>
+            </View>
           ) : null}
           <ProductAvailabilityBadge availability={product.availability} />
         </View>
@@ -42,6 +47,7 @@ export function LiveFeaturedProductCard({
           <CommercePrice
             price={product.minPrice}
             compareAtPrice={product.compareAtPrice}
+            size={host ? "large" : "regular"}
           />
           <OnSpaceText variant="caption" color="textMuted">
             {product.availableQuantity} disponibles
@@ -60,6 +66,8 @@ export function LiveFeaturedProductCard({
         onPress={onAction}
         style={({ pressed }) => [
           s.action,
+          host && s.hostAction,
+          compactHost && s.compactAction,
           disabled && s.disabled,
           pressed && s.pressed,
         ]}
@@ -86,8 +94,18 @@ const s = StyleSheet.create({
     borderColor: colors.borderElevated,
     ...shadows.floating,
   },
+  hostCard: {
+    minHeight: 164,
+    padding: spacing.md,
+    borderRadius: 22,
+    borderColor: "rgba(168,85,247,.88)",
+    backgroundColor: "rgba(13,15,23,.97)",
+  },
+  compactHostCard: { minHeight: 142, padding: spacing.sm },
   info: { flex: 1, minWidth: 0, gap: 1 },
+  hostInfo: { alignSelf: "stretch", justifyContent: "center", gap: 3 },
   badges: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  featuredBadge: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: radii.pill, backgroundColor: "rgba(99,35,54,.72)" },
   price: {
     flexDirection: "row",
     alignItems: "center",
@@ -104,6 +122,8 @@ const s = StyleSheet.create({
     justifyContent: "center",
     ...shadows.commerce,
   },
+  hostAction: { position: "absolute", right: spacing.md, bottom: 26 },
+  compactAction: { minWidth: 70, paddingHorizontal: spacing.sm, right: spacing.sm, bottom: spacing.sm },
   pressed: { opacity: 0.82, transform: [{ scale: 0.97 }] },
   disabled: { opacity: 0.48 },
 });

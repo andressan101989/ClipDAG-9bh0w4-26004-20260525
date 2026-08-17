@@ -26,13 +26,13 @@ export function LiveHostSalesSummary({
           size={17}
           color={colors.commerceAccent}
         />
-        <OnSpaceText variant="labelStrong" color="textInverse">
+        <OnSpaceText variant="caption" color="textPrimary" numberOfLines={1}>
           Ventas {stats.ordersCount} · {stats.grossSales.toFixed(2)} BDAG
         </OnSpaceText>
         <MaterialIcons
           name="expand-more"
           size={18}
-          color={colors.textInverse}
+          color={colors.textPrimary}
         />
       </Pressable>
       <Modal
@@ -108,10 +108,8 @@ function Metric({
 }
 const s = StyleSheet.create({
   pill: {
-    position: "absolute",
-    right: spacing.md,
     zIndex: 13,
-    minHeight: 44,
+    height: 38,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs,

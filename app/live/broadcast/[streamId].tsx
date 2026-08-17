@@ -11,7 +11,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList, TextInput, ActivityIndicator, Dimensions,
-  Keyboard, Platform, Animated, AppState, AppStateStatus, BackHandler, Alert,
+  Keyboard, Platform, Animated, AppState, AppStateStatus, BackHandler, Alert, useWindowDimensions,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -109,6 +109,8 @@ type FloatingReaction = {
   big?: boolean;
 };
 
+type HostActionPanel = 'requests' | 'gifts' | 'participants' | null;
+
 function liveGiftEventFromPayload(row: any, streamId: string): LiveGiftEvent | null {
   const payload = row?.payload ?? {};
   if (row?.event_type !== 'reaction' || payload?.gift_real !== true) return null;
@@ -197,6 +199,7 @@ export default function LiveBroadcasterScreen() {
   const router   = useRouter();
   const { user } = useAuth();
   const supabase = getSupabaseClient();
+  const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
 
   const myUid = user?.id ? useridToAgoraUid(user.id) : 0;
 
@@ -216,8 +219,14 @@ export default function LiveBroadcasterScreen() {
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
   const [commerceVisible, setCommerceVisible] = useState(false);
   const [moreControlsVisible,setMoreControlsVisible]=useState(false);
+  const [hostActionPanel, setHostActionPanel] = useState<HostActionPanel>(null);
   const [liveProducts, setLiveProducts] = useState<LiveSessionProduct[]>([]);
   const { activeGift, floatingGifts, enqueueGift } = useLiveGiftAnimations(streamId);
+
+  const toggleHostActionPanel = useCallback((panel: Exclude<HostActionPanel, null>) => {
+    Keyboard.dismiss();
+    setHostActionPanel(current => current === panel ? null : panel);
+  }, []);
 
   const refreshLiveProducts = useCallback(async () => {
     if (!streamId || !live) return;
@@ -968,11 +977,14 @@ export default function LiveBroadcasterScreen() {
     p.status === 'active' &&
     p.user_id !== user?.id
   );
-  const pendingPanelHeight = pendingRequests.length > 0 ? Math.min(pendingRequests.length, 3) * 51 : 0;
-  const cohostPanelHeight = structuredCohosts.length > 0 ? Math.min(structuredCohosts.length, 2) * 48 : 0;
   const composerBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
-  const composerClearance = composerBottom + composerHeight + 16;
-  const controlsBottom = composerBottom + composerHeight + 14;
+  const composerClearance = composerBottom + composerHeight + 12;
+  const controlsBottom = composerBottom + composerHeight + 8;
+  const compactHost = viewportWidth < 370;
+  const actionsBottom = controlsBottom + (compactHost ? 48 : 52);
+  const productBottom = actionsBottom + 48;
+  const productHeight = compactHost ? 142 : 164;
+  const actionPanelBottom = productBottom + productHeight + 8;
   const featuredLiveProduct = liveProducts.find(product => product.isFeatured) ?? null;
 
   return (
@@ -1010,14 +1022,19 @@ export default function LiveBroadcasterScreen() {
       ) : null}
 
       {/* ── Header overlay ────────────────────────────────────────────────── */}
-      <View style={[styles.header,{top:insets.top+8,height:undefined,paddingHorizontal:0,backgroundColor:'transparent',borderWidth:0}]}><LiveSessionHeader hostName={user?.username||user?.email?.split('@')[0]||'Host'} viewerCount={viewerCount} elapsed={formatLiveDuration(liveSeconds)} onClose={endBroadcast}/></View>
+      <View style={[styles.header,{top:insets.top+8,height:undefined,paddingHorizontal:0,backgroundColor:'transparent',borderWidth:0}]}><LiveSessionHeader hostName={user?.username||user?.email?.split('@')[0]||'Host'} viewerCount={viewerCount} elapsed={formatLiveDuration(liveSeconds)} onClose={endBroadcast} hostV3 /></View>
 
-      <View style={[styles.titleBlock, { top: insets.top + 88 }]}>
-        <Text style={styles.streamTitle} numberOfLines={2}>{title.trim()}</Text>
-        <View style={styles.conversationChip}>
+      <View style={[styles.titleBlock, { top: insets.top + 204 }]}>
+        <Text style={styles.streamTitle} numberOfLines={1}>{title.trim()}</Text>
+        <Pressable
+          style={styles.conversationChip}
+          onPress={() => inputRef.current?.focus()}
+          accessibilityRole="button"
+          accessibilityLabel="Abrir conversación del LIVE"
+        >
           <MaterialIcons name="chat-bubble-outline" size={14} color="#fff" />
           <Text style={styles.conversationText}>Conversación</Text>
-        </View>
+        </Pressable>
       </View>
 
       {error ? (
@@ -1036,8 +1053,13 @@ export default function LiveBroadcasterScreen() {
 
       <LiveGiftOverlay activeGift={activeGift} floatingGifts={floatingGifts} />
 
-      {pendingRequests.length > 0 ? (
-        <View style={[styles.requestPanel, { top: insets.top + 154 }]}>
+      {hostActionPanel === 'requests' ? (
+        <View style={[styles.requestPanel, { bottom: actionPanelBottom }]}>
+          {pendingRequests.length === 0 ? (
+            <View style={styles.hostPanelEmpty}>
+              <Text style={styles.hostPanelEmptyText}>No hay solicitudes pendientes</Text>
+            </View>
+          ) : null}
           {pendingRequests.slice(0, 3).map(participant => (
             <View key={participant.id} style={styles.requestRow}>
               <Text style={styles.requestName} numberOfLines={1}>
@@ -1066,8 +1088,8 @@ export default function LiveBroadcasterScreen() {
         </View>
       ) : null}
 
-      {structuredCohosts.length > 0 ? (
-        <View style={[styles.cohostPanel, { top: insets.top + 154 + pendingPanelHeight }]}>
+      {hostActionPanel === 'participants' && structuredCohosts.length > 0 ? (
+        <View style={[styles.cohostPanel, { bottom: actionPanelBottom + (activeAudiences.length > 0 ? Math.min(activeAudiences.length, 3) * 42 + 6 : 0) }]}>
           {structuredCohosts.slice(0, 2).map(participant => {
             const timerText = cohostTimerTick >= 0 ? getCohostTimerText(participant) : null;
             return (
@@ -1123,8 +1145,8 @@ export default function LiveBroadcasterScreen() {
       ) : null}
 
       {/* ── Chat overlay ──────────────────────────────────────────────────── */}
-      {activeAudiences.length > 0 ? (
-        <View style={[styles.audiencePanel, { top: insets.top + 154 + pendingPanelHeight + cohostPanelHeight }]}>
+      {hostActionPanel === 'participants' && activeAudiences.length > 0 ? (
+        <View style={[styles.audiencePanel, { bottom: actionPanelBottom }]}>
           {activeAudiences.slice(0, 3).map(participant => (
             <View key={participant.id} style={styles.audienceRow}>
               <MaterialIcons name="people" size={13} color="rgba(255,255,255,0.78)" />
@@ -1142,7 +1164,28 @@ export default function LiveBroadcasterScreen() {
         </View>
       ) : null}
 
-      <View style={[styles.chatArea, { bottom: composerClearance + 150, maxHeight: Math.max(120, SCREEN_HEIGHT - composerClearance - 290) }]}>
+      {hostActionPanel === 'participants' && structuredCohosts.length === 0 && activeAudiences.length === 0 ? (
+        <View style={[styles.hostPanelEmpty, styles.hostPanelFloating, { bottom: actionPanelBottom }]}>
+          <Text style={styles.hostPanelEmptyText}>No hay participantes disponibles para subir</Text>
+        </View>
+      ) : null}
+
+      {hostActionPanel === 'gifts' ? (
+        <View style={[styles.giftActivityPanel, { bottom: actionPanelBottom }]}>
+          <MaterialIcons name="auto-awesome" size={18} color="#FF9AAE" />
+          <View style={styles.giftActivityCopy}>
+            <Text style={styles.giftActivityTitle}>Regalos del LIVE</Text>
+            <Text style={styles.giftActivityText} numberOfLines={2}>
+              {activeGift || floatingGifts[0]
+                ? `${(activeGift ?? floatingGifts[0]).senderUsername || 'Alguien'} envió ${(activeGift ?? floatingGifts[0]).giftName}`
+                : 'Los regalos recibidos aparecerán aquí y sobre el video.'}
+            </Text>
+          </View>
+        </View>
+      ) : null}
+
+      {hostActionPanel === null ? (
+      <View style={[styles.chatArea, { bottom: keyboardHeight > 0 ? composerClearance + 8 : actionPanelBottom + 8, maxHeight: Math.max(104, viewportHeight - actionPanelBottom - insets.top - 260) }]}>
         <FlatList
           ref={chatRef}
           data={messages}
@@ -1163,10 +1206,30 @@ export default function LiveBroadcasterScreen() {
           showsVerticalScrollIndicator={false}
         />
       </View>
+      ) : null}
 
       {/* ── Controls ──────────────────────────────────────────────────────── */}
+      {keyboardHeight === 0 ? (
+      <View style={[styles.hostPrimaryActions, { bottom: actionsBottom }]}>
+        <Pressable style={[styles.hostPrimaryAction, hostActionPanel === 'requests' && styles.hostPrimaryActionActive]} onPress={() => toggleHostActionPanel('requests')} accessibilityRole="button" accessibilityLabel="Abrir solicitudes para subir al LIVE">
+          <MaterialIcons name="radio-button-checked" size={16} color="#FF9AAE" />
+          <Text style={styles.hostPrimaryActionText}>Solicitudes</Text>
+          {pendingRequests.length > 0 ? <View style={styles.hostPrimaryBadge}><Text style={styles.hostPrimaryBadgeText}>{pendingRequests.length > 99 ? '99+' : pendingRequests.length}</Text></View> : null}
+        </Pressable>
+        <Pressable style={[styles.hostPrimaryAction, hostActionPanel === 'gifts' && styles.hostPrimaryActionActive]} onPress={() => toggleHostActionPanel('gifts')} accessibilityRole="button" accessibilityLabel="Ver actividad de regalos del LIVE">
+          <MaterialIcons name="auto-awesome" size={16} color="#FF9AAE" />
+          <Text style={styles.hostPrimaryActionText}>Regalos</Text>
+        </Pressable>
+        <Pressable style={[styles.hostPrimaryAction, styles.hostPrimaryActionWide, hostActionPanel === 'participants' && styles.hostPrimaryActionActive]} onPress={() => toggleHostActionPanel('participants')} accessibilityRole="button" accessibilityLabel="Invitar o subir participantes al LIVE">
+          <MaterialIcons name="north-east" size={16} color="#FFB7C4" />
+          <Text style={[styles.hostPrimaryActionText, compactHost && styles.hostPrimaryActionTextCompact]}>Invitar / Subir</Text>
+        </Pressable>
+      </View>
+      ) : null}
+
+      {keyboardHeight === 0 ? (
       <View style={[styles.controls, { bottom: controlsBottom }]}>
-        <View style={styles.controlGroup}><LiveCommerceButton count={liveProducts.length} onPress={() => { Keyboard.dismiss(); setCommerceVisible(true); }} disabled={!live} label="Administrar productos del LIVE" textLabel="Productos" /></View>
+        <View style={styles.controlGroup}><LiveCommerceButton count={liveProducts.length} onPress={() => { Keyboard.dismiss(); setCommerceVisible(true); }} disabled={!live} label="Administrar productos del LIVE" textLabel="Productos" compact /></View>
         <View style={styles.controlGroup}>
           <Pressable
             style={styles.controlBtn}
@@ -1179,7 +1242,7 @@ export default function LiveBroadcasterScreen() {
         </View>
         <View style={styles.controlGroup}>
           <Pressable
-            style={[styles.controlBtn, isMuted && styles.controlBtnActive]}
+            style={[styles.controlBtn, styles.micControlBtn, isMuted && styles.controlBtnActive]}
             onPress={toggleMute}
             hitSlop={8}
             accessibilityLabel={isMuted ? 'Activar micrófono' : 'Silenciar micrófono'}
@@ -1216,19 +1279,20 @@ export default function LiveBroadcasterScreen() {
           <MaterialIcons name="call-end" size={22} color="#fff" />
         </Pressable>
       </View>
-      {moreControlsVisible?<View style={[styles.moreControls,{bottom:controlsBottom+72}]}><Pressable style={styles.secondaryControl} onPress={()=>sendReaction('\u2764\uFE0F')} accessibilityRole="button" accessibilityLabel="Enviar reacción"><MaterialIcons name="favorite" size={20} color="#fff"/><Text style={styles.secondaryControlText}>Reacción</Text></Pressable></View>:null}
+      ) : null}
+      {keyboardHeight === 0 && moreControlsVisible?<View style={[styles.moreControls,{bottom:actionsBottom+48}]}><Pressable style={styles.secondaryControl} onPress={()=>sendReaction('\u2764\uFE0F')} accessibilityRole="button" accessibilityLabel="Enviar reacción"><MaterialIcons name="favorite" size={20} color="#fff"/><Text style={styles.secondaryControlText}>Reacción</Text></Pressable></View>:null}
       {featuredLiveProduct ? (
         <LiveProductRail
           product={featuredLiveProduct}
           productCount={liveProducts.length}
-          bottom={controlsBottom + 62}
+          bottom={productBottom}
           keyboardVisible={keyboardHeight > 0}
           mode="host"
           onBuy={() => setCommerceVisible(true)}
           onOpenBag={() => setCommerceVisible(true)}
         />
-      ) : live ? (
-        <Pressable style={[styles.addProductCta,{bottom:controlsBottom+72}]} onPress={()=>setCommerceVisible(true)} accessibilityRole="button" accessibilityLabel="Agregar producto al LIVE"><MaterialIcons name="add-shopping-cart" size={18} color="#fff"/><Text style={styles.addProductText}>Agregar producto</Text></Pressable>
+      ) : keyboardHeight === 0 && live ? (
+        <Pressable style={[styles.addProductCta,{bottom:productBottom}]} onPress={()=>setCommerceVisible(true)} accessibilityRole="button" accessibilityLabel="Agregar producto al LIVE"><MaterialIcons name="add-shopping-cart" size={18} color="#fff"/><Text style={styles.addProductText}>Agregar producto</Text></Pressable>
       ) : null}
       {streamId ? <LiveHostPurchaseFeed sessionId={streamId} /> : null}
       {streamId ? <LiveHostProductManager visible={commerceVisible} sessionId={streamId} onClose={() => setCommerceVisible(false)} onChanged={refreshLiveProducts} /> : null}
@@ -1329,9 +1393,9 @@ const styles = StyleSheet.create({
   liveTimer: { color: '#fff', fontSize: 11, fontWeight: FontWeight.semibold, maxWidth: SCREEN_WIDTH < 380 ? 58 : 74 },
   viewerChipText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.semibold, maxWidth: SCREEN_WIDTH < 380 ? 58 : 82 },
   headerEndBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,45,85,0.82)', alignItems: 'center', justifyContent: 'center' },
-  titleBlock: { position: 'absolute', left: 16, right: 90, zIndex: 9 },
-  streamTitle: { color: '#fff', fontSize: 24, fontWeight: FontWeight.bold },
-  conversationChip: { marginTop: 10, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 18, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  titleBlock: { position: 'absolute', left: 20, right: 90, zIndex: 9, alignItems: 'flex-start' },
+  streamTitle: { maxWidth: 220, color: 'rgba(255,255,255,0.78)', fontSize: 11, fontWeight: FontWeight.semibold, marginBottom: 6 },
+  conversationChip: { minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: 'rgba(54,48,47,0.72)', borderRadius: 18, paddingHorizontal: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   conversationText: { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
 
   errorBanner: { position: 'absolute', left: Spacing.md, right: Spacing.md, zIndex: 10, backgroundColor: 'rgba(255,45,85,0.15)', borderRadius: Radius.sm, padding: Spacing.xs },
@@ -1354,10 +1418,10 @@ const styles = StyleSheet.create({
 
   requestPanel: {
     position: 'absolute',
-    left: 16,
-    right: 88,
+    left: 20,
+    right: 20,
     gap: 7,
-    zIndex: 11,
+    zIndex: 14,
   },
   requestRow: {
     minHeight: 44,
@@ -1379,10 +1443,10 @@ const styles = StyleSheet.create({
   requestRejectBtn: { backgroundColor: 'rgba(255,255,255,0.16)' },
   cohostPanel: {
     position: 'absolute',
-    left: 16,
-    right: 12,
+    left: 20,
+    right: 20,
     gap: 6,
-    zIndex: 10,
+    zIndex: 14,
   },
   cohostControlRow: {
     minHeight: 42,
@@ -1404,7 +1468,7 @@ const styles = StyleSheet.create({
   timerBtn: { minWidth: SCREEN_WIDTH < 380 ? 24 : 29, height: SCREEN_WIDTH < 380 ? 26 : 28, borderRadius: 14, paddingHorizontal: SCREEN_WIDTH < 380 ? 5 : 7, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)' },
   timerBtnText: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
   cohostTimerText: { width: 34, color: '#fff', fontSize: 10, fontWeight: FontWeight.bold, textAlign: 'right' },
-  audiencePanel: { position: 'absolute', left: 16, right: 88, gap: 6, zIndex: 9 },
+  audiencePanel: { position: 'absolute', left: 20, right: 20, gap: 6, zIndex: 14 },
   audienceRow: {
     minHeight: 36,
     flexDirection: 'row',
@@ -1419,10 +1483,17 @@ const styles = StyleSheet.create({
   },
   audienceName: { flex: 1, color: 'rgba(255,255,255,0.86)', fontSize: 11, fontWeight: FontWeight.semibold },
   audienceInviteBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+  hostPanelEmpty: { minHeight: 48, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14, borderRadius: 20, backgroundColor: 'rgba(17,19,27,0.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' },
+  hostPanelFloating: { position: 'absolute', left: 20, right: 20, zIndex: 14 },
+  hostPanelEmptyText: { color: 'rgba(255,255,255,0.76)', fontSize: 12, fontWeight: FontWeight.semibold, textAlign: 'center' },
+  giftActivityPanel: { position: 'absolute', left: 20, right: 20, minHeight: 64, zIndex: 14, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20, backgroundColor: 'rgba(17,19,27,0.95)', borderWidth: 1, borderColor: 'rgba(168,85,247,0.64)' },
+  giftActivityCopy: { flex: 1, minWidth: 0, gap: 2 },
+  giftActivityTitle: { color: '#fff', fontSize: 13, fontWeight: FontWeight.bold },
+  giftActivityText: { color: 'rgba(255,255,255,0.72)', fontSize: 11, lineHeight: 15 },
 
   chatArea: {
     position: 'absolute',
-    left: 12,
+    left: 20,
     width: SCREEN_WIDTH * 0.56,
     bottom: 108,
     maxHeight: SCREEN_HEIGHT * 0.32,
@@ -1430,30 +1501,34 @@ const styles = StyleSheet.create({
   },
 
   controls: {
-    position: 'absolute', left: 12, right: 12,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.lg,
-    height: 66,
-    paddingHorizontal: 12,
-    backgroundColor: 'rgba(20,20,30,0.55)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    borderRadius: 28,
-    zIndex: 9,
+    position: 'absolute', left: 20, right: 14,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: SCREEN_WIDTH < 370 ? 3 : 7,
+    height: 48,
+    zIndex: 12,
   },
   controlGroup: { alignItems: 'center' },
   controlBtn: {
-    width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(255,255,255,0.14)',
+    width: SCREEN_WIDTH < 370 ? 42 : 46, height: SCREEN_WIDTH < 370 ? 42 : 46, borderRadius: 23, backgroundColor: 'rgba(17,19,27,0.86)',
     alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
   },
+  micControlBtn: { borderColor: '#A855F7', borderWidth: 2 },
   controlBtnActive: { backgroundColor: Colors.textPrimary },
-  endBtn: { width: 54, height: 54, backgroundColor: '#FF2D55', borderRadius: 27, alignItems: 'center', justifyContent: 'center' },
+  endBtn: { width: SCREEN_WIDTH < 370 ? 42 : 46, height: SCREEN_WIDTH < 370 ? 42 : 46, backgroundColor: '#FF2D55', borderRadius: 23, alignItems: 'center', justifyContent: 'center' },
+  hostPrimaryActions: { position: 'absolute', left: 20, right: 20, height: 40, zIndex: 13, flexDirection: 'row', alignItems: 'center', gap: SCREEN_WIDTH < 370 ? 4 : 6 },
+  hostPrimaryAction: { flex: 1, minWidth: 0, height: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SCREEN_WIDTH < 370 ? 3 : 6, paddingHorizontal: SCREEN_WIDTH < 370 ? 5 : 9, borderRadius: 21, backgroundColor: 'rgba(26,27,35,0.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
+  hostPrimaryActionWide: { flex: 1.14 },
+  hostPrimaryActionActive: { borderColor: 'rgba(168,85,247,0.82)', backgroundColor: 'rgba(65,42,88,0.92)' },
+  hostPrimaryActionText: { flexShrink: 1, color: '#fff', fontSize: SCREEN_WIDTH < 370 ? 10 : 12, fontWeight: FontWeight.semibold },
+  hostPrimaryActionTextCompact: { fontSize: 9 },
+  hostPrimaryBadge: { position: 'absolute', top: -8, right: 2, minWidth: 21, height: 21, paddingHorizontal: 4, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FF2D78' },
+  hostPrimaryBadgeText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.bold },
   moreControls:{position:'absolute',right:18,zIndex:13,padding:6,borderRadius:18,backgroundColor:'rgba(15,15,22,.9)',borderWidth:1,borderColor:'rgba(255,255,255,.14)'},
   secondaryControl:{minHeight:44,flexDirection:'row',alignItems:'center',gap:8,paddingHorizontal:12},
   secondaryControlText:{color:'#fff',fontSize:12,fontWeight:FontWeight.semibold},
   addProductCta:{position:'absolute',left:16,zIndex:12,minHeight:44,flexDirection:'row',alignItems:'center',gap:8,paddingHorizontal:14,borderRadius:22,backgroundColor:'rgba(15,15,22,.86)',borderWidth:1,borderColor:'rgba(255,255,255,.16)'},
   addProductText:{color:'#fff',fontSize:12,fontWeight:FontWeight.bold},
-  inputRow: { position: 'absolute', left: 12, right: 12, minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 20, elevation: 20 },
-  input: { flex: 1, height: 58, backgroundColor: 'rgba(255,255,255,0.10)', borderRadius: Radius.full, paddingHorizontal: 18, color: '#fff', fontSize: FontSize.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  inputRow: { position: 'absolute', left: 20, right: 12, minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 20, elevation: 20 },
+  input: { flex: 1, height: 44, backgroundColor: 'rgba(17,19,27,0.95)', borderRadius: Radius.full, paddingHorizontal: 18, color: '#fff', fontSize: FontSize.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
   sendBtn: { width: 46, height: 46, borderRadius: 23, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { opacity: 0.4 },
 });

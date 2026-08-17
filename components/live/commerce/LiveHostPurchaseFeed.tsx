@@ -106,10 +106,10 @@ export function LiveHostPurchaseFeed({ sessionId }: { sessionId: string }) {
 
   return (
     <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-      <View style={[styles.summary, { top: insets.top + 70 }]}>
+      <View style={[styles.summary, { top: insets.top + 74 }]}>
         <LiveHostSalesSummary stats={stats} error={statsError} />
       </View>
-      <LivePurchaseToastQueue purchases={purchases} />
+      <LivePurchaseToastQueue purchases={purchases} top={insets.top + 130} />
     </View>
   );
 }
@@ -117,8 +117,9 @@ export function LiveHostPurchaseFeed({ sessionId }: { sessionId: string }) {
 const styles = StyleSheet.create({
   summary: {
     position: "absolute",
+    left: spacing.md,
     right: spacing.md,
+    alignItems: "center",
     zIndex: 12,
-    minWidth: 190,
   },
 });

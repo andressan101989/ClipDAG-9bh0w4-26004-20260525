@@ -1,5 +1,5 @@
 import React, { memo, useEffect } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View, useWindowDimensions } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import Animated, {
@@ -32,6 +32,7 @@ export const LiveProductRail = memo(function LiveProductRail({
   onBuy,
   onOpenBag,
 }: LiveProductRailProps) {
+  const { width } = useWindowDimensions();
   const reduced = useReducedMotion(),
     scale = useSharedValue(reduced ? 1 : 0.94);
   useEffect(() => {
@@ -45,10 +46,10 @@ export const LiveProductRail = memo(function LiveProductRail({
     <Animated.View
       accessibilityLabel="Producto destacado del LIVE"
       entering={reduced ? undefined : FadeIn.duration(motion.duration.fast)}
-      style={[styles.container, { bottom }, animated]}
+      style={[styles.container, mode === "host" && styles.hostContainer, { bottom, minHeight: mode === "host" ? (width < 370 ? 142 : 164) : undefined }, animated]}
     >
       <LiveFeaturedProductCard product={product} mode={mode} onAction={onBuy} />
-      <Pressable
+      {mode === "viewer" ? <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Abrir bolsa con ${productCount} productos`}
         onPress={() => {
@@ -65,7 +66,7 @@ export const LiveProductRail = memo(function LiveProductRail({
         <View style={styles.count}>
           <OnSpaceText variant="caption">{productCount}</OnSpaceText>
         </View>
-      </Pressable>
+      </Pressable> : null}
     </Animated.View>
   );
 });
@@ -79,6 +80,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.sm,
     alignItems: "stretch",
+  },
+  hostContainer: {
+    left: 18,
+    right: 18,
+    minHeight: 164,
   },
   product: {
     flex: 1,
