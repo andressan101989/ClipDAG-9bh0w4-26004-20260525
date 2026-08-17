@@ -196,8 +196,17 @@ const orderStatuses = [
   "refunded",
   "partially_refunded",
 ] as const;
-const paymentStatuses = ["pending", "paid", "refunded", "failed"] as const;
-const allocationStatuses = ["held", "released", "refunded"] as const;
+const paymentStatuses = [
+  "paid",
+  "partially_refunded",
+  "refunded",
+] as const;
+const allocationStatuses = [
+  "held",
+  "released",
+  "partially_refunded",
+  "refunded",
+] as const;
 
 export function parseMarketplaceSettlementReceipt(
   value: unknown,
