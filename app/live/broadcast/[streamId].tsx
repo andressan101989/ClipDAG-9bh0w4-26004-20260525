@@ -44,6 +44,8 @@ const POLL_INTERVAL_MS = 3000;
 const HEARTBEAT_INTERVAL_MS = 12_000;
 const MAX_MESSAGES     = 50;
 const SPAM_THROTTLE_MS = 2500;
+const REACTION_ANIMATION_DURATION_MS = 3600;
+const REACTION_CLEANUP_DELAY_MS = 3800;
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface ChatMessage {
@@ -160,13 +162,22 @@ function getCohostTimerText(participant: LiveParticipant) {
   return `${Math.floor(remaining / 60)}:${(remaining % 60).toString().padStart(2, '0')}`;
 }
 
-function FloatingReactionBubble({ reaction, bottom }: { reaction: FloatingReaction; bottom: number }) {
+function FloatingReactionBubble({
+  reaction,
+  bottom,
+  viewportHeight,
+}: {
+  reaction: FloatingReaction;
+  bottom: number;
+  viewportHeight: number;
+}) {
   const progress = useRef(new Animated.Value(0)).current;
+  const travelDistance = Math.max(viewportHeight * 0.95, viewportHeight - bottom + 64);
 
   useEffect(() => {
     Animated.timing(progress, {
       toValue: 1,
-      duration: 1900,
+      duration: REACTION_ANIMATION_DURATION_MS,
       useNativeDriver: true,
     }).start();
   }, [progress]);
@@ -179,9 +190,9 @@ function FloatingReactionBubble({ reaction, bottom }: { reaction: FloatingReacti
         {
           left: `${reaction.x * 100}%`,
           bottom,
-          opacity: progress.interpolate({ inputRange: [0, 0.75, 1], outputRange: [0, 1, 0] }),
+          opacity: progress.interpolate({ inputRange: [0, 0.08, 0.9, 1], outputRange: [0, 1, 1, 0] }),
           transform: [
-            { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [0, -150] }) },
+            { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [0, -travelDistance] }) },
             { scale: progress.interpolate({ inputRange: [0, 0.18, 1], outputRange: [reaction.big ? 1.1 : 0.82, reaction.big ? 1.4 : 1.08, reaction.big ? 1.3 : 1] }) },
           ],
         },
@@ -311,7 +322,7 @@ export default function LiveBroadcasterScreen() {
     setTimeout(() => {
       if (!mountedRef.current) return;
       setFloatingReactions(prev => prev.filter(item => item.id !== reaction.id));
-    }, 2200);
+    }, REACTION_CLEANUP_DELAY_MS);
   }, []);
 
   const clearLiveTimers = useCallback(() => {
@@ -994,8 +1005,13 @@ export default function LiveBroadcasterScreen() {
   const actionsBottom = controlsBottom + 56;
   const productBottom = actionsBottom + 60;
   const productHeight = 88;
-  const actionPanelBottom = productBottom + productHeight + 8;
   const featuredLiveProduct = liveProducts.find(product => product.isFeatured) ?? null;
+  const productPlaceholderHeight = 44;
+  const productOverlayClearance = productBottom
+    + (featuredLiveProduct ? productHeight : productPlaceholderHeight)
+    + 12;
+  const chatBottom = keyboardHeight > 0 ? composerClearance + 8 : productOverlayClearance;
+  const chatMaxHeight = Math.max(104, viewportHeight - chatBottom - insets.top - 132);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -1045,6 +1061,7 @@ export default function LiveBroadcasterScreen() {
           key={reaction.id}
           reaction={reaction}
           bottom={composerClearance + 128}
+          viewportHeight={viewportHeight}
         />
       ))}
 
@@ -1076,7 +1093,7 @@ export default function LiveBroadcasterScreen() {
       <LiveGiftOverlay activeGift={activeGift} floatingGifts={floatingGifts} />
 
       {hostActionPanel === 'requests' ? (
-        <View style={[styles.requestPanel, { bottom: actionPanelBottom }]}>
+        <View style={[styles.requestPanel, { bottom: productOverlayClearance }]}>
           {pendingRequests.length === 0 ? (
             <View style={styles.hostPanelEmpty}>
               <Text style={styles.hostPanelEmptyText}>No hay solicitudes pendientes</Text>
@@ -1111,7 +1128,7 @@ export default function LiveBroadcasterScreen() {
       ) : null}
 
       {hostActionPanel === 'participants' && structuredCohosts.length > 0 ? (
-        <View style={[styles.cohostPanel, { bottom: actionPanelBottom + (activeAudiences.length > 0 ? Math.min(activeAudiences.length, 3) * 42 + 6 : 0) }]}>
+        <View style={[styles.cohostPanel, { bottom: productOverlayClearance + (activeAudiences.length > 0 ? Math.min(activeAudiences.length, 3) * 42 + 6 : 0) }]}>
           {structuredCohosts.slice(0, 2).map(participant => {
             const timerText = cohostTimerTick >= 0 ? getCohostTimerText(participant) : null;
             return (
@@ -1168,7 +1185,7 @@ export default function LiveBroadcasterScreen() {
 
       {/* ── Chat overlay ──────────────────────────────────────────────────── */}
       {hostActionPanel === 'participants' && activeAudiences.length > 0 ? (
-        <View style={[styles.audiencePanel, { bottom: actionPanelBottom }]}>
+        <View style={[styles.audiencePanel, { bottom: productOverlayClearance }]}>
           {activeAudiences.slice(0, 3).map(participant => (
             <View key={participant.id} style={styles.audienceRow}>
               <MaterialIcons name="people" size={13} color="rgba(255,255,255,0.78)" />
@@ -1187,13 +1204,13 @@ export default function LiveBroadcasterScreen() {
       ) : null}
 
       {hostActionPanel === 'participants' && structuredCohosts.length === 0 && activeAudiences.length === 0 ? (
-        <View style={[styles.hostPanelEmpty, styles.hostPanelFloating, { bottom: actionPanelBottom }]}>
+        <View style={[styles.hostPanelEmpty, styles.hostPanelFloating, { bottom: productOverlayClearance }]}>
           <Text style={styles.hostPanelEmptyText}>No hay participantes disponibles para subir</Text>
         </View>
       ) : null}
 
       {hostActionPanel === 'moderation' ? (
-        <View style={[styles.moderationPanel, { bottom: actionPanelBottom }]}>
+        <View style={[styles.moderationPanel, { bottom: productOverlayClearance }]}>
           <View style={styles.moderationHeading}>
             <MaterialIcons name="shield" size={17} color="#D8B4FE" />
             <Text style={styles.moderationTitle}>Moderación del LIVE</Text>
@@ -1213,7 +1230,7 @@ export default function LiveBroadcasterScreen() {
       ) : null}
 
       {hostActionPanel === 'gifts' ? (
-        <View style={[styles.giftActivityPanel, { bottom: actionPanelBottom }]}>
+        <View style={[styles.giftActivityPanel, { bottom: productOverlayClearance }]}>
           <MaterialIcons name="auto-awesome" size={18} color="#FF9AAE" />
           <View style={styles.giftActivityCopy}>
             <Text style={styles.giftActivityTitle}>Regalos del LIVE</Text>
@@ -1227,7 +1244,7 @@ export default function LiveBroadcasterScreen() {
       ) : null}
 
       {hostActionPanel === null ? (
-      <View style={[styles.chatArea, { bottom: keyboardHeight > 0 ? composerClearance + 8 : actionPanelBottom + 8, maxHeight: Math.max(104, viewportHeight - actionPanelBottom - insets.top - 260) }]}>
+      <View style={[styles.chatArea, { bottom: chatBottom, maxHeight: chatMaxHeight }]}>
         <FlatList
           ref={chatRef}
           data={messages}
@@ -1329,7 +1346,7 @@ export default function LiveBroadcasterScreen() {
         </Pressable>
       </View>
       ) : null}
-      {keyboardHeight === 0 && moreControlsVisible?<View style={[styles.moreControls,{bottom:actionsBottom+56}]}><Text style={styles.secondaryControlText}>Las interacciones están en el rail lateral.</Text></View>:null}
+      {keyboardHeight === 0 && moreControlsVisible?<View style={[styles.moreControls,{bottom:productOverlayClearance}]}><Text style={styles.secondaryControlText}>Las interacciones están en el rail lateral.</Text></View>:null}
       {featuredLiveProduct ? (
         <LiveProductRail
           product={featuredLiveProduct}
@@ -1484,7 +1501,8 @@ const styles = StyleSheet.create({
     left: 20,
     right: 20,
     gap: 7,
-    zIndex: 14,
+    zIndex: 17,
+    elevation: 17,
   },
   requestRow: {
     minHeight: 44,
@@ -1509,7 +1527,8 @@ const styles = StyleSheet.create({
     left: 20,
     right: 20,
     gap: 6,
-    zIndex: 14,
+    zIndex: 17,
+    elevation: 17,
   },
   cohostControlRow: {
     minHeight: 42,
@@ -1531,7 +1550,7 @@ const styles = StyleSheet.create({
   timerBtn: { minWidth: SCREEN_WIDTH < 380 ? 24 : 29, height: SCREEN_WIDTH < 380 ? 26 : 28, borderRadius: 14, paddingHorizontal: SCREEN_WIDTH < 380 ? 5 : 7, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)' },
   timerBtnText: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
   cohostTimerText: { width: 34, color: '#fff', fontSize: 10, fontWeight: FontWeight.bold, textAlign: 'right' },
-  audiencePanel: { position: 'absolute', left: 20, right: 20, gap: 6, zIndex: 14 },
+  audiencePanel: { position: 'absolute', left: 20, right: 20, gap: 6, zIndex: 17, elevation: 17 },
   audienceRow: {
     minHeight: 36,
     flexDirection: 'row',
@@ -1547,13 +1566,13 @@ const styles = StyleSheet.create({
   audienceName: { flex: 1, color: 'rgba(255,255,255,0.86)', fontSize: 11, fontWeight: FontWeight.semibold },
   audienceInviteBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
   hostPanelEmpty: { minHeight: 48, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14, borderRadius: 20, backgroundColor: 'rgba(17,19,27,0.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' },
-  hostPanelFloating: { position: 'absolute', left: 20, right: 20, zIndex: 14 },
+  hostPanelFloating: { position: 'absolute', left: 20, right: 20, zIndex: 17, elevation: 17 },
   hostPanelEmptyText: { color: 'rgba(255,255,255,0.76)', fontSize: 12, fontWeight: FontWeight.semibold, textAlign: 'center' },
-  giftActivityPanel: { position: 'absolute', left: 20, right: 20, minHeight: 64, zIndex: 14, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20, backgroundColor: 'rgba(17,19,27,0.95)', borderWidth: 1, borderColor: 'rgba(168,85,247,0.64)' },
+  giftActivityPanel: { position: 'absolute', left: 20, right: 20, minHeight: 64, zIndex: 17, elevation: 17, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20, backgroundColor: 'rgba(17,19,27,0.95)', borderWidth: 1, borderColor: 'rgba(168,85,247,0.64)' },
   giftActivityCopy: { flex: 1, minWidth: 0, gap: 2 },
   giftActivityTitle: { color: '#fff', fontSize: 13, fontWeight: FontWeight.bold },
   giftActivityText: { color: 'rgba(255,255,255,0.72)', fontSize: 11, lineHeight: 15 },
-  moderationPanel: { position: 'absolute', left: 20, right: 20, zIndex: 14, gap: 8, padding: 12, borderRadius: 20, backgroundColor: 'rgba(17,19,27,0.96)', borderWidth: 1, borderColor: 'rgba(168,85,247,0.55)' },
+  moderationPanel: { position: 'absolute', left: 20, right: 20, zIndex: 17, elevation: 17, gap: 8, padding: 12, borderRadius: 20, backgroundColor: 'rgba(17,19,27,0.96)', borderWidth: 1, borderColor: 'rgba(168,85,247,0.55)' },
   moderationHeading: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   moderationTitle: { color: '#fff', fontSize: 13, fontWeight: FontWeight.bold },
   moderationText: { color: 'rgba(255,255,255,0.72)', fontSize: 11 },
@@ -1593,7 +1612,7 @@ const styles = StyleSheet.create({
   hostPrimaryActionTextCompact: { fontSize: 9 },
   hostPrimaryBadge: { position: 'absolute', top: -8, right: 2, minWidth: 21, height: 21, paddingHorizontal: 4, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FF2D78' },
   hostPrimaryBadgeText: { color: '#fff', fontSize: 11, fontWeight: FontWeight.bold },
-  moreControls:{position:'absolute',right:18,zIndex:13,padding:6,borderRadius:18,backgroundColor:'rgba(15,15,22,.9)',borderWidth:1,borderColor:'rgba(255,255,255,.14)'},
+  moreControls:{position:'absolute',right:18,zIndex:17,elevation:17,padding:6,borderRadius:18,backgroundColor:'rgba(15,15,22,.9)',borderWidth:1,borderColor:'rgba(255,255,255,.14)'},
   secondaryControl:{minHeight:44,flexDirection:'row',alignItems:'center',gap:8,paddingHorizontal:12},
   secondaryControlText:{color:'#fff',fontSize:12,fontWeight:FontWeight.semibold},
   addProductCta:{position:'absolute',left:16,zIndex:12,minHeight:44,flexDirection:'row',alignItems:'center',gap:8,paddingHorizontal:14,borderRadius:22,backgroundColor:'rgba(15,15,22,.86)',borderWidth:1,borderColor:'rgba(255,255,255,.16)'},
