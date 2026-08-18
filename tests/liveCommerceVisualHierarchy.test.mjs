@@ -39,7 +39,7 @@ test("host sales are collapsed by default with progressive disclosure", () => {
 test("featured product card supports host and viewer actions and states", () => {
   assert.match(featured, /mode:\s*"host"\s*\|\s*"viewer"/);
   assert.match(featured, /\?\s*"Gestionar"\s*:\s*"Comprar"/);
-  assert.match(featured, /numberOfLines=\{2\}/);
+  assert.match(featured, /numberOfLines=\{hostV4 \? 1 : 2\}/);
   assert.match(featured, /storeName\s*\|\|\s*product\.sellerName/);
   assert.match(featured, /ProductAvailabilityBadge/);
   assert.match(featured, /availableQuantity/);
@@ -57,8 +57,11 @@ test("viewer commerce is prominent without duplicating the social rail", () => {
   assert.match(button, /textLabel/);
 });
 
-test("host controls retain primary actions and move reaction under More", () => {
-  assert.match(host, /textLabel="Productos"/);
+test("host controls retain technical handlers under the V4 interaction hierarchy", () => {
+  for (const label of ["Fijar", "Ofertas", "Solicitudes", "Invitar", "Moderar"])
+    assert.match(host, new RegExp(`>${label}<\\/Text>`));
+  assert.match(host, /engagementRail/);
+  assert.match(host, /sendReaction/);
   assert.match(host, /toggleMute/);
   assert.match(host, /switchCamera/);
   assert.match(host, /toggleCamera/);

@@ -11,6 +11,7 @@ export function LiveSessionHeader({
   onClose,
   commerceSummary,
   hostV3 = false,
+  hostV4 = false,
 }: {
   hostName: string;
   viewerCount: number;
@@ -18,17 +19,19 @@ export function LiveSessionHeader({
   onClose: () => void;
   commerceSummary?: string;
   hostV3?: boolean;
+  hostV4?: boolean;
 }) {
   const { width } = useWindowDimensions();
   const compact = width < 370;
+  const premiumHost = hostV3 || hostV4;
   return (
-    <View style={[s.row, hostV3 && s.hostRow, compact && hostV3 && s.compactHostRow]} accessibilityLabel={`EN VIVO con ${hostName}`}>
-      <View style={[s.avatar, hostV3 && s.hostAvatar]}>
-        <OnSpaceText variant="labelStrong" color={hostV3 ? "textPrimary" : "textInverse"}>
+    <View style={[s.row, premiumHost && s.hostRow, hostV4 && s.hostV4Row, compact && premiumHost && s.compactHostRow]} accessibilityLabel={`EN VIVO con ${hostName}`}>
+      <View style={[s.avatar, premiumHost && s.hostAvatar, hostV4 && s.hostV4Avatar]}>
+        <OnSpaceText variant="labelStrong" color={premiumHost ? "textPrimary" : "textInverse"}>
           {hostName.charAt(0).toUpperCase()}
         </OnSpaceText>
       </View>
-      <View style={[s.identity, hostV3 && s.hostIdentity]}>
+      <View style={[s.identity, premiumHost && s.hostIdentity]}>
         <OnSpaceText
           variant="labelStrong"
           color="textInverse"
@@ -36,6 +39,11 @@ export function LiveSessionHeader({
         >
           {hostName}
         </OnSpaceText>
+        {hostV4 ? (
+          <OnSpaceText variant="caption" color="textMuted" numberOfLines={1}>
+            Anfitrión
+          </OnSpaceText>
+        ) : null}
         {commerceSummary ? (
           <OnSpaceText variant="caption" color="textMuted" numberOfLines={1}>
             {commerceSummary}
@@ -44,11 +52,11 @@ export function LiveSessionHeader({
       </View>
       <View style={s.live}>
         <View style={s.dot} />
-        <OnSpaceText variant="caption" color={hostV3 ? "textPrimary" : "textInverse"}>
+        <OnSpaceText variant="caption" color={premiumHost ? "textPrimary" : "textInverse"}>
           EN VIVO
         </OnSpaceText>
       </View>
-      {hostV3 ? (
+      {premiumHost ? (
         <View style={s.hostMetrics}>
           <View style={s.metric}>
             <MaterialIcons name="visibility" size={12} color={colors.textPrimary} />
@@ -76,9 +84,9 @@ export function LiveSessionHeader({
         accessibilityRole="button"
         accessibilityLabel="Cerrar LIVE"
         hitSlop={8}
-        style={[s.close, hostV3 && s.hostClose]}
+        style={[s.close, premiumHost && s.hostClose]}
       >
-        <MaterialIcons name="close" size={21} color={hostV3 ? colors.textPrimary : colors.textInverse} />
+        <MaterialIcons name="close" size={21} color={premiumHost ? colors.textPrimary : colors.textInverse} />
       </Pressable>
     </View>
   );
@@ -105,8 +113,10 @@ const s = StyleSheet.create({
     backgroundColor: colors.brandPrimary,
   },
   hostRow: { minHeight: 58, paddingHorizontal: 10, backgroundColor: "rgba(17,19,27,.94)", borderColor: "rgba(65,70,91,.72)" },
+  hostV4Row: { borderRadius: 23, backgroundColor: "rgba(17,19,27,.92)", borderColor: "rgba(255,255,255,.14)" },
   compactHostRow: { gap: 4, paddingHorizontal: 7 },
   hostAvatar: { width: 36, height: 36, borderRadius: 18 },
+  hostV4Avatar: { backgroundColor: "rgba(92,18,47,.92)", borderWidth: 1, borderColor: "rgba(255,61,141,.62)" },
   hostIdentity: { flexGrow: 1, flexBasis: 64 },
   identity: { flex: 1, minWidth: 0 },
   live: {

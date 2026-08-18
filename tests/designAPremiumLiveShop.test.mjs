@@ -88,7 +88,7 @@ test("feedback primitives cover loading empty error toast and metrics", () => {
 test("featured rail is compact animated accessible and sold-out safe", () => {
   for (const marker of [
     "productRailHeight",
-    "numberOfLines={2}",
+    "hostV4 \\? 1 : 2",
     "withSpring",
     "useReducedMotion",
     "ProductAvailabilityBadge",

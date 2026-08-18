@@ -16,15 +16,15 @@ const [host, header, rail, featured, feed, hud, commerceButton] = await Promise.
 test("Host V3 keeps video dominant with a compact responsive overlay hierarchy", () => {
   assert.match(host, /RtcSurfaceView[\s\S]*style=\{styles\.videoStream\}/);
   assert.match(host, /useWindowDimensions/);
-  assert.match(host, /hostV3/);
+  assert.match(host, /hostV4/);
   assert.match(header, /hostRow/);
-  assert.match(host, /conversationChip/);
+  assert.match(host, /engagementRail/);
   assert.match(host, /inputRef\.current\?\.focus\(\)/);
   assert.match(host, /keyboardHeight === 0/);
 });
 
-test("Host V3 exposes the three approved actions through existing participant state", () => {
-  for (const label of ["Solicitudes", "Regalos", "Invitar / Subir"])
+test("Host keeps V3 request, gift, and invitation authority under the V4 composition", () => {
+  for (const label of ["Solicitudes", "Gift", "Invitar"])
     assert.match(host, new RegExp(label.replace("/", "\\/")));
   assert.match(host, /pendingRequests\.length > 0/);
   assert.match(host, /acceptJoinRequest\(participant\)/);

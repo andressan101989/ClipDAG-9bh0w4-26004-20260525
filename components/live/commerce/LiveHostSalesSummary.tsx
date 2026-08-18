@@ -109,11 +109,11 @@ function Metric({
 const s = StyleSheet.create({
   pill: {
     zIndex: 13,
-    height: 38,
+    height: 30,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.sm,
     borderRadius: radii.pill,
     backgroundColor: "rgba(12,12,18,.78)",
     borderWidth: 1,

@@ -20,6 +20,7 @@ interface LiveProductRailProps {
   bottom: number;
   keyboardVisible?: boolean;
   mode?: "viewer" | "host";
+  hostV4?: boolean;
   onBuy: () => void;
   onOpenBag: () => void;
 }
@@ -29,6 +30,7 @@ export const LiveProductRail = memo(function LiveProductRail({
   bottom,
   keyboardVisible = false,
   mode = "viewer",
+  hostV4 = false,
   onBuy,
   onOpenBag,
 }: LiveProductRailProps) {
@@ -46,9 +48,9 @@ export const LiveProductRail = memo(function LiveProductRail({
     <Animated.View
       accessibilityLabel="Producto destacado del LIVE"
       entering={reduced ? undefined : FadeIn.duration(motion.duration.fast)}
-      style={[styles.container, mode === "host" && styles.hostContainer, { bottom, minHeight: mode === "host" ? (width < 370 ? 142 : 164) : undefined }, animated]}
+      style={[styles.container, mode === "host" && styles.hostContainer, hostV4 && styles.hostV4Container, { bottom, minHeight: mode === "host" ? (hostV4 ? 88 : (width < 370 ? 142 : 164)) : undefined }, animated]}
     >
-      <LiveFeaturedProductCard product={product} mode={mode} onAction={onBuy} />
+      <LiveFeaturedProductCard product={product} mode={mode} hostV4={hostV4} onAction={onBuy} />
       {mode === "viewer" ? <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Abrir bolsa con ${productCount} productos`}
@@ -85,6 +87,12 @@ const styles = StyleSheet.create({
     left: 18,
     right: 18,
     minHeight: 164,
+  },
+  hostV4Container: {
+    left: 16,
+    right: 16,
+    minHeight: 88,
+    zIndex: 15,
   },
   product: {
     flex: 1,
