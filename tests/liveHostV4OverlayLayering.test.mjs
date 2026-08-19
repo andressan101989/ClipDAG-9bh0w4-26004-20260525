@@ -60,7 +60,7 @@ test("every active host panel uses the product-safe boundary", () => {
   ]) {
     assert.match(host, new RegExp(`styles\\.${style}[^\\n]*bottom:productOverlayClearance|styles\\.${style}[^\\n]*bottom: productOverlayClearance`));
   }
-  assert.match(host, /styles\.cohostPanel[^\n]*bottom: productOverlayClearance \+/);
+  assert.match(host, /styles\.cohostPanel[^\n]*bottom: productOverlayClearance/);
 });
 
 test("active panels render above the product while hearts remain behind it", () => {

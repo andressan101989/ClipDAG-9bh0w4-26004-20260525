@@ -10,7 +10,7 @@
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, Pressable, StyleSheet, FlatList, TextInput, ActivityIndicator, Dimensions,
+  View, Text, Pressable, StyleSheet, FlatList, ScrollView, TextInput, ActivityIndicator, Dimensions,
   Keyboard, Platform, Animated, AppState, AppStateStatus, BackHandler, Alert, Share, useWindowDimensions,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -1145,62 +1145,6 @@ export default function LiveBroadcasterScreen() {
         </View>
       ) : null}
 
-      {hostActionPanel === 'participants' && structuredCohosts.length > 0 ? (
-        <View style={[styles.cohostPanel, { bottom: productOverlayClearance + (activeAudiences.length > 0 ? Math.min(activeAudiences.length, 3) * 42 + 6 : 0) }]}>
-          {structuredCohosts.slice(0, 2).map(participant => {
-            const timerText = cohostTimerTick >= 0 ? getCohostTimerText(participant) : null;
-            return (
-            <View key={participant.id} style={styles.cohostControlRow}>
-              <Text style={styles.cohostText} numberOfLines={1}>@{participant.username || 'Invitado'}</Text>
-              <View style={styles.cohostControlActions}>
-                <Pressable
-                  style={[styles.cohostIconBtn, participant.mic_muted && styles.cohostIconBtnActive]}
-                  onPress={() => toggleCohostMute(participant)}
-                  hitSlop={6}
-                  accessibilityLabel={participant.mic_muted ? 'Activar micrófono del cohost' : 'Silenciar cohost'}
-                >
-                  <MaterialIcons name={participant.mic_muted ? 'mic-off' : 'mic'} size={15} color="#fff" />
-                </Pressable>
-                <Pressable
-                  style={[styles.cohostIconBtn, participant.mic_locked && styles.cohostIconBtnActive]}
-                  onPress={() => toggleCohostMicLock(participant)}
-                  hitSlop={6}
-                  accessibilityLabel={participant.mic_locked ? 'Desbloquear micrófono del cohost' : 'Bloquear micrófono del cohost'}
-                >
-                  <MaterialIcons name={participant.mic_locked ? 'lock' : 'lock-open'} size={15} color="#fff" />
-                </Pressable>
-                <Pressable
-                  style={[styles.cohostIconBtn, participant.floor_granted && styles.cohostIconBtnActive]}
-                  onPress={() => toggleCohostFloor(participant)}
-                  hitSlop={6}
-                  accessibilityLabel={participant.floor_granted ? 'Quitar derecho de palabra' : 'Dar derecho de palabra'}
-                >
-                  <MaterialIcons name={participant.floor_granted ? 'record-voice-over' : 'voice-over-off'} size={15} color="#fff" />
-                </Pressable>
-                <Pressable style={styles.timerBtn} onPress={() => setCohostTimer(participant, 60)} hitSlop={6} accessibilityLabel="Timer de un minuto">
-                  <Text style={styles.timerBtnText}>1m</Text>
-                </Pressable>
-                <Pressable style={styles.timerBtn} onPress={() => setCohostTimer(participant, 120)} hitSlop={6} accessibilityLabel="Timer de dos minutos">
-                  <Text style={styles.timerBtnText}>2m</Text>
-                </Pressable>
-                <Pressable style={styles.timerBtn} onPress={() => setCohostTimer(participant, null)} hitSlop={6} accessibilityLabel="Timer libre">
-                  <Text style={styles.timerBtnText}>∞</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.cohostIconBtn, styles.cohostRemoveBtn]}
-                  onPress={() => removeCohost(participant)}
-                  hitSlop={6}
-                  accessibilityLabel="Bajar cohost del live"
-                >
-                  <MaterialIcons name="person-remove" size={15} color="#fff" />
-                </Pressable>
-              </View>
-              {timerText ? <Text style={styles.cohostTimerText}>{timerText}</Text> : null}
-            </View>
-          );})}
-        </View>
-      ) : null}
-
       {/* ── Chat overlay ──────────────────────────────────────────────────── */}
       {hostActionPanel === 'participants' && activeAudiences.length > 0 ? (
         <View style={[styles.audiencePanel, { bottom: productOverlayClearance }]}>
@@ -1221,29 +1165,74 @@ export default function LiveBroadcasterScreen() {
         </View>
       ) : null}
 
-      {hostActionPanel === 'participants' && structuredCohosts.length === 0 && activeAudiences.length === 0 ? (
+      {hostActionPanel === 'participants' && activeAudiences.length === 0 ? (
         <View style={[styles.hostPanelEmpty, styles.hostPanelFloating, { bottom: productOverlayClearance }]}>
-          <Text style={styles.hostPanelEmptyText}>No hay participantes disponibles para subir</Text>
+          <Text style={styles.hostPanelEmptyText}>No hay espectadores disponibles para invitar</Text>
         </View>
       ) : null}
 
       {hostActionPanel === 'moderation' ? (
-        <View style={[styles.moderationPanel, { bottom: productOverlayClearance }]}>
+        <View style={[styles.cohostPanel, styles.moderationPanel, { bottom: productOverlayClearance, maxHeight: Math.max(120, viewportHeight - productOverlayClearance - insets.top - 80) }]}>
           <View style={styles.moderationHeading}>
             <MaterialIcons name="shield" size={17} color="#D8B4FE" />
             <Text style={styles.moderationTitle}>Moderación del LIVE</Text>
           </View>
           {structuredCohosts.length === 0 ? (
             <Text style={styles.moderationText}>No hay cohosts activos que moderar.</Text>
-          ) : structuredCohosts.slice(0, 3).map(participant => (
-            <View key={participant.id} style={styles.moderationRow}>
-              <Text style={styles.moderationName} numberOfLines={1}>@{participant.username || 'Invitado'}</Text>
-              <Pressable style={styles.moderationRemove} onPress={() => removeCohost(participant)} accessibilityRole="button" accessibilityLabel={`Bajar a ${participant.username || 'Invitado'} del LIVE`}>
-                <MaterialIcons name="person-remove" size={16} color="#fff" />
-                <Text style={styles.moderationRemoveText}>Bajar</Text>
-              </Pressable>
-            </View>
-          ))}
+          ) : <ScrollView style={styles.moderationList} contentContainerStyle={styles.moderationListContent} showsVerticalScrollIndicator={false}>{structuredCohosts.map(participant => {
+            const timerText = cohostTimerTick >= 0 ? getCohostTimerText(participant) : null;
+            return (
+              <View key={participant.id} style={styles.cohostControlRow}>
+                <View style={styles.cohostControlHeader}>
+                  <Text style={styles.cohostText} numberOfLines={1}>@{participant.username || 'Invitado'}</Text>
+                  {timerText ? <Text style={styles.cohostTimerText}>{timerText}</Text> : null}
+                </View>
+                <View style={styles.cohostControlActions}>
+                  <Pressable
+                    style={[styles.cohostIconBtn, participant.mic_muted && styles.cohostIconBtnActive]}
+                    onPress={() => toggleCohostMute(participant)}
+                    hitSlop={6}
+                    accessibilityLabel={participant.mic_muted ? 'Activar micrófono del cohost' : 'Silenciar cohost'}
+                  >
+                    <MaterialIcons name={participant.mic_muted ? 'mic-off' : 'mic'} size={15} color="#fff" />
+                  </Pressable>
+                  <Pressable
+                    style={[styles.cohostIconBtn, participant.mic_locked && styles.cohostIconBtnActive]}
+                    onPress={() => toggleCohostMicLock(participant)}
+                    hitSlop={6}
+                    accessibilityLabel={participant.mic_locked ? 'Desbloquear micrófono del cohost' : 'Bloquear micrófono del cohost'}
+                  >
+                    <MaterialIcons name={participant.mic_locked ? 'lock' : 'lock-open'} size={15} color="#fff" />
+                  </Pressable>
+                  <Pressable
+                    style={[styles.cohostIconBtn, participant.floor_granted && styles.cohostIconBtnActive]}
+                    onPress={() => toggleCohostFloor(participant)}
+                    hitSlop={6}
+                    accessibilityLabel={participant.floor_granted ? 'Quitar derecho de palabra' : 'Dar derecho de palabra'}
+                  >
+                    <MaterialIcons name={participant.floor_granted ? 'record-voice-over' : 'voice-over-off'} size={15} color="#fff" />
+                  </Pressable>
+                  <Pressable style={[styles.timerBtn, participant.floor_duration_seconds === 60 && styles.timerBtnActive]} onPress={() => setCohostTimer(participant, 60)} hitSlop={6} accessibilityLabel="Timer de un minuto">
+                    <Text style={styles.timerBtnText}>1m</Text>
+                  </Pressable>
+                  <Pressable style={[styles.timerBtn, participant.floor_duration_seconds === 120 && styles.timerBtnActive]} onPress={() => setCohostTimer(participant, 120)} hitSlop={6} accessibilityLabel="Timer de dos minutos">
+                    <Text style={styles.timerBtnText}>2m</Text>
+                  </Pressable>
+                  <Pressable style={[styles.timerBtn, participant.floor_granted && participant.floor_duration_seconds === null && styles.timerBtnActive]} onPress={() => setCohostTimer(participant, null)} hitSlop={6} accessibilityLabel="Timer libre">
+                    <Text style={styles.timerBtnText}>∞</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.cohostIconBtn, styles.cohostRemoveBtn]}
+                    onPress={() => removeCohost(participant)}
+                    hitSlop={6}
+                    accessibilityLabel="Bajar cohost del live"
+                  >
+                    <MaterialIcons name="person-remove" size={15} color="#fff" />
+                  </Pressable>
+                </View>
+              </View>
+            );
+          })}</ScrollView>}
         </View>
       ) : null}
 
@@ -1551,23 +1540,23 @@ const styles = StyleSheet.create({
     elevation: 17,
   },
   cohostControlRow: {
-    minHeight: 42,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingLeft: 12,
-    paddingRight: 6,
+    minHeight: 70,
+    gap: 7,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
     backgroundColor: 'rgba(0,0,0,0.42)',
-    borderRadius: 21,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
   },
-  cohostText: { width: SCREEN_WIDTH < 380 ? 54 : 78, color: 'rgba(255,255,255,0.88)', fontSize: 11, fontWeight: FontWeight.semibold },
-  cohostControlActions: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: SCREEN_WIDTH < 380 ? 3 : 5 },
+  cohostControlHeader: { minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  cohostText: { flex: 1, minWidth: 0, color: 'rgba(255,255,255,0.88)', fontSize: 11, fontWeight: FontWeight.semibold },
+  cohostControlActions: { width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: SCREEN_WIDTH < 380 ? 3 : 5 },
   cohostIconBtn: { width: SCREEN_WIDTH < 380 ? 27 : 30, height: SCREEN_WIDTH < 380 ? 27 : 30, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
   cohostIconBtnActive: { backgroundColor: 'rgba(124,92,255,0.78)' },
   cohostRemoveBtn: { backgroundColor: 'rgba(255,45,85,0.74)' },
   timerBtn: { minWidth: SCREEN_WIDTH < 380 ? 24 : 29, height: SCREEN_WIDTH < 380 ? 26 : 28, borderRadius: 14, paddingHorizontal: SCREEN_WIDTH < 380 ? 5 : 7, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)' },
+  timerBtnActive: { backgroundColor: 'rgba(124,92,255,0.78)' },
   timerBtnText: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
   cohostTimerText: { width: 34, color: '#fff', fontSize: 10, fontWeight: FontWeight.bold, textAlign: 'right' },
   audiencePanel: { position: 'absolute', left: 20, right: 20, gap: 6, zIndex: 17, elevation: 17 },
@@ -1596,10 +1585,8 @@ const styles = StyleSheet.create({
   moderationHeading: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   moderationTitle: { color: '#fff', fontSize: 13, fontWeight: FontWeight.bold },
   moderationText: { color: 'rgba(255,255,255,0.72)', fontSize: 11 },
-  moderationRow: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  moderationName: { flex: 1, minWidth: 0, color: '#fff', fontSize: 11, fontWeight: FontWeight.semibold },
-  moderationRemove: { minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, borderRadius: 17, backgroundColor: 'rgba(255,45,85,0.76)' },
-  moderationRemoveText: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
+  moderationList: { flexGrow: 0 },
+  moderationListContent: { gap: 7 },
 
   chatArea: {
     position: 'absolute',
