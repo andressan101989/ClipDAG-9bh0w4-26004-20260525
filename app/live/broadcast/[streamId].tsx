@@ -49,6 +49,9 @@ const REACTION_CLEANUP_DELAY_MS = 3800;
 const PRODUCT_HEIGHT_FALLBACK = 88;
 const PRODUCT_PLACEHOLDER_HEIGHT = 44;
 const PRODUCT_OVERLAY_GAP = 12;
+const COHOST_PREVIEW_GAP = 12;
+const COHOST_PREVIEW_HEIGHT = 108;
+const COHOST_PREVIEW_TOP_CLEARANCE = 108;
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface ChatMessage {
@@ -1028,6 +1031,14 @@ export default function LiveBroadcasterScreen() {
   const productOverlayClearance = productBottom
     + (featuredLiveProduct ? effectiveProductHeight : PRODUCT_PLACEHOLDER_HEIGHT)
     + PRODUCT_OVERLAY_GAP;
+  const cohostPreviewBottom = productOverlayClearance + COHOST_PREVIEW_GAP;
+  const cohostPreviewMaxHeight = Math.max(
+    0,
+    viewportHeight - cohostPreviewBottom - insets.top - COHOST_PREVIEW_TOP_CLEARANCE
+  );
+  const hostPanelOccupiesCohostPreview = hostActionPanel !== null || moreControlsVisible;
+  const showCohostPreview = cohostPreviewMaxHeight >= COHOST_PREVIEW_HEIGHT
+    && !hostPanelOccupiesCohostPreview;
   const chatBottom = keyboardHeight > 0 ? composerClearance + 8 : productOverlayClearance;
   const chatMaxHeight = Math.max(104, viewportHeight - chatBottom - insets.top - 132);
 
@@ -1052,8 +1063,8 @@ export default function LiveBroadcasterScreen() {
       <LinearGradient colors={['rgba(0,0,0,0.45)', 'transparent']} style={styles.topShade} pointerEvents="none" />
       <LinearGradient colors={['transparent', 'rgba(0,0,0,0.6)']} style={styles.bottomShade} pointerEvents="none" />
 
-      {RtcSurfaceView && remoteUids.length > 0 ? (
-        <View style={[styles.remoteStrip, { bottom: composerClearance + 150 }]}>
+      {RtcSurfaceView && remoteUids.length > 0 && showCohostPreview ? (
+        <View style={[styles.remoteStrip, { bottom: cohostPreviewBottom, maxHeight: cohostPreviewMaxHeight }]}>
           {remoteUids.map(uid => (
             <View key={uid} style={styles.remoteTile}>
               <RtcSurfaceView canvas={{ uid }} style={styles.remoteVideo} />
@@ -1433,7 +1444,7 @@ const styles = StyleSheet.create({
   keyboardDismissLayer: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
   topShade: { position: 'absolute', top: 0, left: 0, right: 0, height: 170, zIndex: 2 },
   bottomShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 320, zIndex: 2 },
-  remoteStrip: { position: 'absolute', right: 12, width: 140, gap: 12, zIndex: 8 },
+  remoteStrip: { position: 'absolute', left: 20, width: 140, gap: 12, zIndex: 8, overflow: 'hidden' },
   remoteTile: { width: 140, height: 108, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000', borderWidth: 1.5, borderColor: 'rgba(236,72,153,0.62)' },
   remoteVideo: { flex: 1 },
   remoteBadge: { position: 'absolute', left: 8, bottom: 7, width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.48)', alignItems: 'center', justifyContent: 'center' },
