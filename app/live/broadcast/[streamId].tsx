@@ -46,6 +46,9 @@ const MAX_MESSAGES     = 50;
 const SPAM_THROTTLE_MS = 2500;
 const REACTION_ANIMATION_DURATION_MS = 3600;
 const REACTION_CLEANUP_DELAY_MS = 3800;
+const PRODUCT_HEIGHT_FALLBACK = 88;
+const PRODUCT_PLACEHOLDER_HEIGHT = 44;
+const PRODUCT_OVERLAY_GAP = 12;
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface ChatMessage {
@@ -231,7 +234,22 @@ export default function LiveBroadcasterScreen() {
   const [moreControlsVisible,setMoreControlsVisible]=useState(false);
   const [hostActionPanel, setHostActionPanel] = useState<HostActionPanel>(null);
   const [liveProducts, setLiveProducts] = useState<LiveSessionProduct[]>([]);
+  const featuredLiveProduct = liveProducts.find(product => product.isFeatured) ?? null;
+  const featuredProductId = featuredLiveProduct?.id ?? null;
+  const [featuredProductMeasurement, setFeaturedProductMeasurement] = useState<{
+    productId: string;
+    height: number;
+  } | null>(null);
   const { activeGift, floatingGifts, enqueueGift } = useLiveGiftAnimations(streamId);
+
+  const handleProductRailLayout = useCallback((height: number) => {
+    if (!featuredProductId || !Number.isFinite(height) || height <= 0) return;
+    setFeaturedProductMeasurement(current =>
+      current?.productId === featuredProductId && Math.abs(current.height - height) < 1
+        ? current
+        : { productId: featuredProductId, height }
+    );
+  }, [featuredProductId]);
 
   const toggleHostActionPanel = useCallback((panel: Exclude<HostActionPanel, null>) => {
     Keyboard.dismiss();
@@ -1004,12 +1022,12 @@ export default function LiveBroadcasterScreen() {
   const controlsBottom = composerBottom + composerHeight + 12;
   const actionsBottom = controlsBottom + 56;
   const productBottom = actionsBottom + 60;
-  const productHeight = 88;
-  const featuredLiveProduct = liveProducts.find(product => product.isFeatured) ?? null;
-  const productPlaceholderHeight = 44;
+  const effectiveProductHeight = featuredProductMeasurement?.productId === featuredProductId
+    ? featuredProductMeasurement.height
+    : PRODUCT_HEIGHT_FALLBACK;
   const productOverlayClearance = productBottom
-    + (featuredLiveProduct ? productHeight : productPlaceholderHeight)
-    + 12;
+    + (featuredLiveProduct ? effectiveProductHeight : PRODUCT_PLACEHOLDER_HEIGHT)
+    + PRODUCT_OVERLAY_GAP;
   const chatBottom = keyboardHeight > 0 ? composerClearance + 8 : productOverlayClearance;
   const chatMaxHeight = Math.max(104, viewportHeight - chatBottom - insets.top - 132);
 
@@ -1349,12 +1367,14 @@ export default function LiveBroadcasterScreen() {
       {keyboardHeight === 0 && moreControlsVisible?<View style={[styles.moreControls,{bottom:productOverlayClearance}]}><Text style={styles.secondaryControlText}>Las interacciones están en el rail lateral.</Text></View>:null}
       {featuredLiveProduct ? (
         <LiveProductRail
+          key={featuredLiveProduct.id}
           product={featuredLiveProduct}
           productCount={liveProducts.length}
           bottom={productBottom}
           keyboardVisible={keyboardHeight > 0}
           mode="host"
           hostV4
+          onLayoutHeight={handleProductRailLayout}
           onBuy={() => setCommerceVisible(true)}
           onOpenBag={() => setCommerceVisible(true)}
         />

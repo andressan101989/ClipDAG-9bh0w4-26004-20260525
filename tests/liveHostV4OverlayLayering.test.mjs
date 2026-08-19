@@ -9,14 +9,35 @@ const [host, rail, viewer] = await Promise.all([
   read("app/live/watch/[streamId].tsx"),
 ]);
 
-test("Host V4 derives one product-safe overlay boundary from product presence", () => {
-  assert.match(host, /const productHeight = 88/);
-  assert.match(host, /const productPlaceholderHeight = 44/);
+test("Host V4 measures the complete outer product rail with an optional callback", () => {
+  assert.match(rail, /onLayoutHeight\?: \(height: number\) => void/);
+  assert.match(rail, /onLayout=\{onLayoutHeight \? event => onLayoutHeight\(event\.nativeEvent\.layout\.height\) : undefined\}/);
+  assert.match(host, /const \[featuredProductMeasurement, setFeaturedProductMeasurement\] = useState/);
+  assert.match(host, /Math\.abs\(current\.height - height\) < 1/);
+  assert.match(host, /onLayoutHeight=\{handleProductRailLayout\}/);
+});
+
+test("measured product height replaces the nominal fallback in the safe boundary", () => {
+  assert.match(host, /const PRODUCT_HEIGHT_FALLBACK = 88/);
+  assert.match(host, /const PRODUCT_PLACEHOLDER_HEIGHT = 44/);
+  assert.match(host, /const PRODUCT_OVERLAY_GAP = 12/);
   assert.match(
     host,
-    /const productOverlayClearance = productBottom\s*\+ \(featuredLiveProduct \? productHeight : productPlaceholderHeight\)\s*\+ 12/,
+    /const effectiveProductHeight = featuredProductMeasurement\?\.productId === featuredProductId\s*\? featuredProductMeasurement\.height\s*:\s*PRODUCT_HEIGHT_FALLBACK/,
   );
+  assert.match(
+    host,
+    /const productOverlayClearance = productBottom\s*\+ \(featuredLiveProduct \? effectiveProductHeight : PRODUCT_PLACEHOLDER_HEIGHT\)\s*\+ PRODUCT_OVERLAY_GAP/,
+  );
+  assert.doesNotMatch(host, /const productHeight = 88/);
   assert.doesNotMatch(host, /actionPanelBottom/);
+});
+
+test("measurements are product-scoped and a changed product remounts for a fresh layout", () => {
+  assert.match(host, /const featuredProductId = featuredLiveProduct\?\.id \?\? null/);
+  assert.match(host, /current\?\.productId === featuredProductId/);
+  assert.match(host, /\{ productId: featuredProductId, height \}/);
+  assert.match(host, /<LiveProductRail\s+key=\{featuredLiveProduct\.id\}/);
 });
 
 test("chat ends above a featured product and reclaims space without one", () => {
@@ -25,7 +46,7 @@ test("chat ends above a featured product and reclaims space without one", () => 
     /const chatBottom = keyboardHeight > 0 \? composerClearance \+ 8 : productOverlayClearance/,
   );
   assert.match(host, /styles\.chatArea, \{ bottom: chatBottom, maxHeight: chatMaxHeight \}/);
-  assert.match(host, /featuredLiveProduct \? productHeight : productPlaceholderHeight/);
+  assert.match(host, /featuredLiveProduct \? effectiveProductHeight : PRODUCT_PLACEHOLDER_HEIGHT/);
 });
 
 test("every active host panel uses the product-safe boundary", () => {
@@ -62,5 +83,6 @@ test("the overlay polish remains explicitly Host-only", () => {
   assert.match(host, /<LiveProductRail[\s\S]*mode="host"[\s\S]*hostV4/);
   assert.match(viewer, /<LiveProductRail/);
   assert.doesNotMatch(viewer, /<LiveProductRail[\s\S]{0,600}hostV4/);
+  assert.doesNotMatch(viewer, /onLayoutHeight/);
   assert.doesNotMatch(viewer, /productOverlayClearance|REACTION_ANIMATION_DURATION_MS/);
 });

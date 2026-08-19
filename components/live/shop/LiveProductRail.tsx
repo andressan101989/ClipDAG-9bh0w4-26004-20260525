@@ -21,6 +21,7 @@ interface LiveProductRailProps {
   keyboardVisible?: boolean;
   mode?: "viewer" | "host";
   hostV4?: boolean;
+  onLayoutHeight?: (height: number) => void;
   onBuy: () => void;
   onOpenBag: () => void;
 }
@@ -31,6 +32,7 @@ export const LiveProductRail = memo(function LiveProductRail({
   keyboardVisible = false,
   mode = "viewer",
   hostV4 = false,
+  onLayoutHeight,
   onBuy,
   onOpenBag,
 }: LiveProductRailProps) {
@@ -48,6 +50,7 @@ export const LiveProductRail = memo(function LiveProductRail({
     <Animated.View
       accessibilityLabel="Producto destacado del LIVE"
       entering={reduced ? undefined : FadeIn.duration(motion.duration.fast)}
+      onLayout={onLayoutHeight ? event => onLayoutHeight(event.nativeEvent.layout.height) : undefined}
       style={[styles.container, mode === "host" && styles.hostContainer, hostV4 && styles.hostV4Container, { bottom, minHeight: mode === "host" ? (hostV4 ? 88 : (width < 370 ? 142 : 164)) : undefined }, animated]}
     >
       <LiveFeaturedProductCard product={product} mode={mode} hostV4={hostV4} onAction={onBuy} />
