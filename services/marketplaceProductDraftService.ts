@@ -52,6 +52,7 @@ export interface MarketplaceProductDraft {
   shippingProfileId: string | null;
   productType: ProductType;
   status: string;
+  publishedAt: string | null;
   savedAt: string | null;
   titleConfigured: boolean;
   priceConfigured: boolean;
@@ -59,7 +60,10 @@ export interface MarketplaceProductDraft {
   media: ProductEditorMedia[];
 }
 export interface SaveMarketplaceProductDraftInput
-  extends Omit<MarketplaceProductDraft, "id" | "media" | "status" | "savedAt"> {
+  extends Omit<
+    MarketplaceProductDraft,
+    "id" | "media" | "status" | "publishedAt" | "savedAt"
+  > {
   id: string;
 }
 
@@ -103,6 +107,10 @@ export function parseMarketplaceProductDraft(
       p.status,
       ["active", "paused", "sold_out", "deleted"] as const,
       "draft.product.status",
+    ),
+    publishedAt: rpcNullableTimestamp(
+      p.published_at,
+      "draft.product.published_at",
     ),
     savedAt: rpcNullableTimestamp(
       p.editor_saved_at,

@@ -68,8 +68,12 @@ import { mergeMarketplaceCursorPage } from "@/services/marketplaceCursorCollecti
 import {
   fetchMyLiveAffiliateOffer,
   upsertMyLiveAffiliateOffer,
+  type LiveAffiliateOffer,
 } from "@/services/liveCommerceService";
-import { creatorCommissionPercentToBps } from "@/services/affiliateCommissionState";
+import {
+  creatorCommissionBpsToPercent,
+  creatorCommissionPercentToBps,
+} from "@/services/affiliateCommissionState";
 import { ProductEditorProgress } from "@/components/marketplace/product-editor/ProductEditorProgress";
 import { ProductQualityScore } from "@/components/marketplace/product-editor/ProductQualityScore";
 import { ProductMediaTile } from "@/components/marketplace/product-editor/ProductMediaTile";
@@ -106,6 +110,7 @@ interface SaveSnapshot {
   priceConfigured: boolean;
   categoryConfigured: boolean;
 }
+type SecondaryLoadState = "loading" | "loaded" | "error";
 export default function ProductEditorScreen() {
   const params = useLocalSearchParams<{ productId: string }>(),
     router = useRouter(),
@@ -148,17 +153,31 @@ export default function ProductEditorScreen() {
     [titleConfigured, setTitleConfigured] = useState(false),
     [priceConfigured, setPriceConfigured] = useState(false),
     [categoryConfigured, setCategoryConfigured] = useState(false),
+    [publishedAt, setPublishedAt] = useState<string | null>(null),
     [dirty, setDirty] = useState(false),
     [message, setMessage] = useState(""),
     [affiliateEnabled, setAffiliateEnabled] = useState(false),
     [affiliatePercent, setAffiliatePercent] = useState("10"),
+    [affiliateOffer, setAffiliateOffer] = useState<LiveAffiliateOffer | null>(
+      null,
+    ),
+    [affiliateLoadState, setAffiliateLoadState] =
+      useState<SecondaryLoadState>("loading"),
+    [affiliateBusy, setAffiliateBusy] = useState(false),
+    [variantsLoadState, setVariantsLoadState] =
+      useState<SecondaryLoadState>("loading"),
+    [shippingLoadState, setShippingLoadState] =
+      useState<SecondaryLoadState>("loading"),
     saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
     saveQueue = useRef(new LatestSaveQueue<SaveSnapshot>()),
     mediaQueue = useRef<Promise<void>>(Promise.resolve()),
     imagesRef = useRef<ProductEditorMedia[]>([]),
     persistedVideoRef = useRef<ProductEditorMedia | null>(null),
     pendingVideoRef = useRef<ProductEditorMedia | null>(null),
-    shippingProfilesRequest = useRef(false);
+    shippingProfilesRequest = useRef(false),
+    affiliateRequest = useRef(false),
+    affiliateIdempotencyKey = useRef(randomUUID());
+  const isPublished = publishedAt !== null;
   const shippingReady =
     productType === "digital" ||
     shippingProfiles.some(
@@ -224,7 +243,84 @@ export default function ProductEditorScreen() {
     setTitleConfigured(d.titleConfigured);
     setPriceConfigured(d.priceConfigured);
     setCategoryConfigured(d.categoryConfigured);
+    setPublishedAt(d.publishedAt);
   };
+  const loadVariantsForEditor = useCallback(async (id: string) => {
+    setVariantsLoadState("loading");
+    try {
+      const variantData = await fetchSellerProductVariants(id);
+      setVariantsReady(deriveMarketplaceVariantsReady(variantData));
+      setVariantSummary({
+        options: variantData.detail.options.length,
+        variants: variantData.detail.variants.filter(
+          (variant) => variant.status === "active",
+        ).length,
+      });
+      setVariantsLoadState("loaded");
+    } catch (error) {
+      setVariantsLoadState("error");
+      if (__DEV__)
+        console.info("[MarketplaceProductEditor]", {
+          operation: "variants_load_failed",
+          code:
+            error && typeof error === "object" && "code" in error
+              ? String(error.code)
+              : null,
+        });
+    }
+  }, []);
+  const loadAffiliateForEditor = useCallback(async (id: string) => {
+    if (affiliateRequest.current) return;
+    affiliateRequest.current = true;
+    setAffiliateLoadState("loading");
+    try {
+      const offer = await fetchMyLiveAffiliateOffer(id);
+      setAffiliateOffer(offer);
+      setAffiliateEnabled(offer?.status === "active");
+      if (offer)
+        setAffiliatePercent(creatorCommissionBpsToPercent(offer.commissionBps));
+      setAffiliateLoadState("loaded");
+    } catch (error) {
+      setAffiliateLoadState("error");
+      if (__DEV__)
+        console.info("[MarketplaceProductEditor]", {
+          operation: "affiliate_load_failed",
+          code:
+            error && typeof error === "object" && "code" in error
+              ? String(error.code)
+              : null,
+        });
+    } finally {
+      affiliateRequest.current = false;
+    }
+  }, []);
+  const loadShippingForEditor = useCallback(async (sellerStoreId: string) => {
+    if (shippingProfilesRequest.current) return;
+    shippingProfilesRequest.current = true;
+    setShippingLoadState("loading");
+    try {
+      const shippingPage = await fetchMyMarketplaceShippingProfilesPage(
+        sellerStoreId,
+        null,
+        50,
+      );
+      setShippingProfiles(shippingPage.items);
+      setShippingProfilesCursor(shippingPage.nextCursor);
+      setShippingLoadState("loaded");
+    } catch (error) {
+      setShippingLoadState("error");
+      if (__DEV__)
+        console.info("[MarketplaceProductEditor]", {
+          operation: "shipping_load_failed",
+          code:
+            error && typeof error === "object" && "code" in error
+              ? String(error.code)
+              : null,
+        });
+    } finally {
+      shippingProfilesRequest.current = false;
+    }
+  }, []);
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -249,39 +345,31 @@ export default function ProductEditorScreen() {
         router.replace(`/seller/product-editor/${id}` as never);
       }
       hydrate(await fetchMarketplaceProductDraft(id));
-      const variantData = await fetchSellerProductVariants(id);
-      setVariantsReady(deriveMarketplaceVariantsReady(variantData));
-      setVariantSummary({
-        options: variantData.detail.options.length,
-        variants: variantData.detail.variants.filter(
-          (variant) => variant.status === "active",
-        ).length,
-      });
-      const affiliate = await fetchMyLiveAffiliateOffer(id).catch(() => null);
-      setAffiliateEnabled(affiliate?.status === "active");
-      if (affiliate) setAffiliatePercent(String(affiliate.commissionBps / 100));
-      const shippingPage = await fetchMyMarketplaceShippingProfilesPage(
-        foundation.store.id,
-        null,
-        50,
-      );
-      setShippingProfiles(shippingPage.items);
-      setShippingProfilesCursor(shippingPage.nextCursor);
+      void loadVariantsForEditor(id);
+      void loadAffiliateForEditor(id);
+      void loadShippingForEditor(foundation.store.id);
     } catch {
       Alert.alert(
-        "No pudimos abrir el borrador",
+        "No pudimos abrir el producto",
         "Tu trabajo guardado permanece seguro. Intentalo nuevamente.",
       );
     } finally {
       setLoading(false);
     }
-  }, [productId, router]);
+  }, [
+    loadAffiliateForEditor,
+    loadShippingForEditor,
+    loadVariantsForEditor,
+    productId,
+    router,
+  ]);
   useEffect(() => {
     void load();
   }, [load]);
   const refreshShippingProfiles = useCallback(async () => {
     if (!storeId || shippingProfilesRequest.current) return;
     shippingProfilesRequest.current = true;
+    setShippingLoadState("loading");
     if (__DEV__)
       console.info("[MarketplaceProductEditor]", {
         operation: "shipping_refresh_start",
@@ -326,7 +414,9 @@ export default function ProductEditorScreen() {
           profileCount: profiles.length,
           selectedProfilePresent: Boolean(selected),
         });
+      setShippingLoadState("loaded");
     } catch (error) {
+      setShippingLoadState("error");
       if (__DEV__)
         console.info("[MarketplaceProductEditor]", {
           operation: "shipping_refresh_failed",
@@ -367,19 +457,8 @@ export default function ProductEditorScreen() {
   }, [storeId, shippingProfilesCursor]);
   const refreshVariantSummary = useCallback(async () => {
     if (!productId) return;
-    try {
-      const variantData = await fetchSellerProductVariants(productId);
-      setVariantsReady(deriveMarketplaceVariantsReady(variantData));
-      setVariantSummary({
-        options: variantData.detail.options.length,
-        variants: variantData.detail.variants.filter(
-          (variant) => variant.status === "active",
-        ).length,
-      });
-    } catch {
-      setVariantsReady(false);
-    }
-  }, [productId]);
+    await loadVariantsForEditor(productId);
+  }, [loadVariantsForEditor, productId]);
   useFocusEffect(
     useCallback(() => {
       if (storeId) {
@@ -475,11 +554,13 @@ export default function ProductEditorScreen() {
         );
         if (result.current) {
           setDirty(false);
-          setMessage("Borrador guardado");
+          setMessage(isPublished ? "Cambios guardados" : "Borrador guardado");
           if (!silent)
             Alert.alert(
-              "Borrador guardado",
-              "Puedes continuar cuando quieras.",
+              isPublished ? "Cambios guardados" : "Borrador guardado",
+              isPublished
+                ? "El producto conserva su estado publicado."
+                : "Puedes continuar cuando quieras.",
             );
         }
         return result.succeeded;
@@ -488,29 +569,32 @@ export default function ProductEditorScreen() {
         if (!silent)
           Alert.alert(
             "No pudimos guardar",
-            "El borrador anterior permanece seguro.",
+            isPublished
+              ? "La version publicada anterior permanece disponible."
+              : "El borrador anterior permanece seguro.",
           );
         return false;
       } finally {
         setSaving(false);
       }
     },
-    [snapshot],
+    [isPublished, snapshot],
   );
   useEffect(() => {
-    if (!dirty || loading) return;
+    if (!dirty || loading || isPublished) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => void flushDraftSave(true), 1200);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [dirty, loading, flushDraftSave]);
+  }, [dirty, loading, flushDraftSave, isPublished]);
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
-      if (state !== "active" && dirty) void flushDraftSave(true);
+      if (state !== "active" && dirty && !isPublished)
+        void flushDraftSave(true);
     });
     return () => sub.remove();
-  }, [dirty, flushDraftSave]);
+  }, [dirty, flushDraftSave, isPublished]);
   const change =
     <T,>(setter: React.Dispatch<React.SetStateAction<T>>) =>
     (value: T) => {
@@ -946,14 +1030,136 @@ export default function ProductEditorScreen() {
     await queueMediaPersistence(imagesRef.current, null);
     updatePersistedVideo(null);
   };
+  const syncSimpleVariantAndInventory = async (
+    id: string,
+    inventoryReason: string,
+  ) => {
+    const inventory = await fetchSellerProductVariants(id),
+      configurableVariants = inventory.detail.variants.filter(
+        (variant) => variant.status !== "archived",
+      ),
+      defaultVariant = configurableVariants.find(
+        (variant) => variant.is_default,
+      );
+    setVariantsReady(deriveMarketplaceVariantsReady(inventory));
+    setVariantsLoadState("loaded");
+    if (!defaultVariant) throw new Error("variant");
+    if (
+      configurableVariants.length === 1 &&
+      inventory.detail.options.length === 0
+    ) {
+      await updateVariant(defaultVariant.id, {
+        sku: defaultVariant.sku ?? `SKU-${id.slice(0, 8).toUpperCase()}`,
+        price: Number(price),
+        status: "active",
+        imageAssetId: null,
+      });
+      const currentInventory = inventory.inventory.find(
+        (level) => level.variant_id === defaultVariant.id,
+      );
+      if (currentInventory?.on_hand !== Number(stock))
+        await setVariantInventory(
+          defaultVariant.id,
+          Number(stock),
+          inventoryReason,
+          randomUUID(),
+        );
+    }
+  };
+  const saveAffiliateSettings = async (status: "active" | "paused") => {
+    if (!productId || affiliateBusy) return;
+    if (affiliateLoadState !== "loaded") {
+      Alert.alert(
+        "No pudimos confirmar la configuracion",
+        "Recarga la seccion de afiliados antes de guardar cambios.",
+      );
+      return;
+    }
+    let commissionBps: number;
+    try {
+      commissionBps = creatorCommissionPercentToBps(affiliatePercent);
+    } catch {
+      Alert.alert(
+        "Comision invalida",
+        "Ingresa un porcentaje entre 0.01% y 30%, con hasta dos decimales.",
+      );
+      return;
+    }
+    setAffiliateBusy(true);
+    try {
+      await upsertMyLiveAffiliateOffer({
+        productId,
+        offerScope: "public_creator",
+        creatorId: null,
+        commissionBps,
+        status,
+        startsAt: affiliateOffer?.startsAt ?? null,
+        endsAt: affiliateOffer?.endsAt ?? null,
+        idempotencyKey: affiliateIdempotencyKey.current,
+      });
+      affiliateIdempotencyKey.current = randomUUID();
+      try {
+        const next = await fetchMyLiveAffiliateOffer(productId);
+        setAffiliateOffer(next);
+        setAffiliateEnabled(next?.status === "active");
+        if (next)
+          setAffiliatePercent(
+            creatorCommissionBpsToPercent(next.commissionBps),
+          );
+        setAffiliateLoadState("loaded");
+      } catch {
+        setAffiliateLoadState("error");
+      }
+      Alert.alert(
+        status === "active" ? "Afiliados activados" : "Afiliados desactivados",
+        status === "active"
+          ? "La comision se aplicara solo a futuras ventas elegibles."
+          : "Las ventas anteriores y sus comisiones no cambian.",
+      );
+    } catch {
+      Alert.alert(
+        "No pudimos actualizar afiliados",
+        "La configuracion anterior se conserva. Intentalo nuevamente.",
+      );
+    } finally {
+      setAffiliateBusy(false);
+    }
+  };
+  const savePublishedProductChanges = async () => {
+    if (!productId || !isPublished || publishing) return;
+    setPublishing(true);
+    try {
+      if (!(await flushDraftSave(true))) throw new Error("draft_save_failed");
+      await saveQueue.current.wait();
+      await mediaQueue.current;
+      await syncSimpleVariantAndInventory(productId, "Edicion de producto");
+      setMessage("Cambios guardados");
+      Alert.alert(
+        "Cambios guardados",
+        "El producto conserva su estado publicado.",
+      );
+    } catch {
+      setDirty(true);
+      Alert.alert(
+        "No pudimos guardar los cambios",
+        "La version publicada anterior permanece disponible. Reintenta.",
+      );
+    } finally {
+      setPublishing(false);
+    }
+  };
   const leaveEditor = useCallback(async () => {
-    if (!dirty || (await flushDraftSave(true))) {
+    if (!dirty || (!isPublished && (await flushDraftSave(true)))) {
       router.back();
       return;
     }
     Alert.alert(
-      "No pudimos guardar los ultimos cambios.",
-      "El borrador guardado anteriormente permanece seguro.",
+      isPublished
+        ? "Hay cambios sin guardar"
+        : "No pudimos guardar los ultimos cambios.",
+      isPublished
+        ? "Usa Guardar cambios antes de salir para conservar esta edicion."
+        : "El borrador guardado anteriormente permanece seguro.",
       [
         { text: "Cancelar", style: "cancel" },
         {
@@ -961,10 +1167,12 @@ export default function ProductEditorScreen() {
           style: "destructive",
           onPress: () => router.back(),
         },
-        { text: "Reintentar", onPress: () => void leaveEditor() },
+        isPublished
+          ? { text: "Revisar cambios", onPress: () => setStep(5) }
+          : { text: "Reintentar", onPress: () => void leaveEditor() },
       ],
     );
-  }, [dirty, flushDraftSave, router]);
+  }, [dirty, flushDraftSave, isPublished, router]);
   useFocusEffect(
     useCallback(() => {
       const subscription = BackHandler.addEventListener(
@@ -1001,6 +1209,13 @@ export default function ProductEditorScreen() {
       );
       return;
     }
+    if (productType === "physical" && shippingLoadState !== "loaded") {
+      Alert.alert(
+        "No pudimos confirmar el envio",
+        "Recarga los metodos de envio antes de publicar.",
+      );
+      return;
+    }
     if (productType === "physical" && !shippingReady) {
       Alert.alert(
         "Configuracion de envio requerida",
@@ -1015,35 +1230,7 @@ export default function ProductEditorScreen() {
       await mediaQueue.current;
       if (images.some((x) => x.state !== "ready") || !images.length)
         throw new Error("media");
-      const inventory = await fetchSellerProductVariants(productId),
-        configurableVariants = inventory.detail.variants.filter(
-          (x) => x.status !== "archived",
-        ),
-        defaultVariant = configurableVariants.find((x) => x.is_default);
-      setVariantsReady(deriveMarketplaceVariantsReady(inventory));
-      if (!defaultVariant) throw new Error("variant");
-      if (
-        configurableVariants.length === 1 &&
-        inventory.detail.options.length === 0
-      ) {
-        await updateVariant(defaultVariant.id, {
-          sku:
-            defaultVariant.sku ?? `SKU-${productId.slice(0, 8).toUpperCase()}`,
-          price: Number(price),
-          status: "active",
-          imageAssetId: null,
-        });
-        const currentInventory = inventory.inventory.find(
-          (x) => x.variant_id === defaultVariant.id,
-        );
-        if (currentInventory?.on_hand !== Number(stock))
-          await setVariantInventory(
-            defaultVariant.id,
-            Number(stock),
-            "Publicacion V2",
-            randomUUID(),
-          );
-      }
+      await syncSimpleVariantAndInventory(productId, "Publicacion V2");
       const readiness = await evaluateMarketplaceProductPublication(productId);
       if (!readiness.ready)
         throw new Error(readiness.reasonCode ?? "not_ready");
@@ -1092,7 +1279,7 @@ export default function ProductEditorScreen() {
     return (
       <View style={[styles.root, styles.center]}>
         <ActivityIndicator color={Colors.primary} />
-        <Text style={styles.muted}>Preparando tu borrador...</Text>
+        <Text style={styles.muted}>Preparando tu producto...</Text>
       </View>
     );
   const nav = (
@@ -1115,12 +1302,16 @@ export default function ProductEditorScreen() {
         <Pressable
           disabled={publishing}
           style={[styles.primary, publishing && styles.disabled]}
-          onPress={() => void publish()}
+          onPress={() =>
+            void (isPublished ? savePublishedProductChanges() : publish())
+          }
         >
           {publishing ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.primaryText}>Publicar producto</Text>
+            <Text style={styles.primaryText}>
+              {isPublished ? "Guardar cambios" : "Publicar producto"}
+            </Text>
           )}
         </Pressable>
       )}
@@ -1146,14 +1337,26 @@ export default function ProductEditorScreen() {
           </Pressable>
           <View>
             <Text style={styles.heading}>
-              {params.productId === "new"
+              {!isPublished && params.productId === "new"
                 ? "Crear producto"
                 : "Editar producto"}
             </Text>
-            <Text style={styles.muted}>{message || "Borrador privado"}</Text>
+            <Text style={styles.muted}>
+              {message ||
+                (isPublished ? "Producto publicado" : "Borrador privado")}
+            </Text>
           </View>
-          <Pressable disabled={saving} onPress={() => void flushDraftSave()}>
-            <Text style={styles.save}>Guardar borrador</Text>
+          <Pressable
+            disabled={saving || publishing}
+            onPress={() =>
+              void (isPublished
+                ? savePublishedProductChanges()
+                : flushDraftSave())
+            }
+          >
+            <Text style={styles.save}>
+              {isPublished ? "Guardar cambios" : "Guardar borrador"}
+            </Text>
           </Pressable>
         </View>
         <ProductEditorProgress step={step} />
@@ -1256,24 +1459,6 @@ export default function ProductEditorScreen() {
                 />
               </>
             ) : null}
-            <Text style={styles.label}>
-              Permitir que otros creadores vendan este producto
-            </Text>
-            <Choice
-              label={
-                affiliateEnabled ? "Afiliados activados" : "Activar afiliados"
-              }
-              selected={affiliateEnabled}
-              onPress={() => setAffiliateEnabled((x) => !x)}
-            />
-            {affiliateEnabled ? (
-              <EditorField
-                label="Comision del creador (%)"
-                value={affiliatePercent}
-                onChange={setAffiliatePercent}
-                keyboardType="decimal-pad"
-              />
-            ) : null}
             <Pressable style={styles.secondary} onPress={() => void addVideo()}>
               <Text style={styles.secondaryText}>
                 {persistedVideo ? "Cambiar video" : "Agregar video"}
@@ -1303,7 +1488,23 @@ export default function ProductEditorScreen() {
         ) : null}
         {step === 3 ? (
           <EditorCard title="Variantes">
-            {variantSummary.options === 0 ? (
+            {variantsLoadState === "loading" ? (
+              <Text style={styles.muted}>Cargando variantes...</Text>
+            ) : null}
+            {variantsLoadState === "error" ? (
+              <View style={styles.secondaryState}>
+                <Text style={styles.warning}>
+                  No pudimos cargar el resumen de variantes.
+                </Text>
+                <Pressable
+                  style={styles.secondary}
+                  onPress={() => void refreshVariantSummary()}
+                >
+                  <Text style={styles.secondaryText}>Reintentar</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {variantsLoadState === "loaded" && variantSummary.options === 0 ? (
               <>
                 <Text style={styles.body}>
                   Este producto no tiene opciones.
@@ -1312,17 +1513,19 @@ export default function ProductEditorScreen() {
                   Precio: {price} BDAG · Stock: {stock}
                 </Text>
               </>
-            ) : (
+            ) : variantsLoadState === "loaded" ? (
               <Text style={styles.body}>
                 {variantSummary.options} opciones · {variantSummary.variants}{" "}
                 combinaciones
               </Text>
-            )}
-            <Text style={variantsReady ? styles.videoReady : styles.warning}>
-              {variantsReady
-                ? "✓ Variantes listas"
-                : "⚠ Completa precios y stock"}
-            </Text>
+            ) : null}
+            {variantsLoadState === "loaded" ? (
+              <Text style={variantsReady ? styles.videoReady : styles.warning}>
+                {variantsReady
+                  ? "✓ Variantes listas"
+                  : "⚠ Completa precios y stock"}
+              </Text>
+            ) : null}
             {productId ? (
               <Pressable
                 style={styles.secondary}
@@ -1343,6 +1546,26 @@ export default function ProductEditorScreen() {
           <EditorCard title="Envio">
             {productType === "physical" ? (
               (() => {
+                if (shippingLoadState === "loading")
+                  return (
+                    <Text style={styles.muted}>
+                      Cargando metodos de envio...
+                    </Text>
+                  );
+                if (shippingLoadState === "error")
+                  return (
+                    <View style={styles.secondaryState}>
+                      <Text style={styles.warning}>
+                        No pudimos cargar los metodos de envio.
+                      </Text>
+                      <Pressable
+                        style={styles.secondary}
+                        onPress={() => void refreshShippingProfiles()}
+                      >
+                        <Text style={styles.secondaryText}>Reintentar</Text>
+                      </Pressable>
+                    </View>
+                  );
                 const readyProfiles = shippingProfiles.filter(
                   (p) =>
                     p.status === "active" &&
@@ -1426,7 +1649,9 @@ export default function ProductEditorScreen() {
                 Los productos digitales no tienen cargo de envio.
               </Text>
             )}
-            {productType === "physical" && !shippingReady ? (
+            {productType === "physical" &&
+            shippingLoadState === "loaded" &&
+            !shippingReady ? (
               <>
                 <Text style={styles.warning}>
                   Configuracion de envio requerida
@@ -1447,7 +1672,7 @@ export default function ProductEditorScreen() {
                   <Text style={styles.secondaryText}>Configurar envío</Text>
                 </Pressable>
               </>
-            ) : productType === "physical" ? (
+            ) : productType === "physical" && shippingLoadState === "loaded" ? (
               <Pressable
                 style={styles.secondary}
                 onPress={() =>
@@ -1467,36 +1692,156 @@ export default function ProductEditorScreen() {
           </EditorCard>
         ) : null}
         {step === 5 ? (
-          <EditorCard title="Vista previa">
-            {images[0] ? (
-              <Image
-                source={{
-                  uri: (images.find((x) => x.isCover) ?? images[0]).url,
-                }}
-                style={styles.preview}
-              />
-            ) : (
-              <View style={[styles.preview, styles.center]}>
-                <Text style={styles.muted}>Agrega una portada</Text>
-              </View>
-            )}
-            <Text style={styles.previewTitle}>{title}</Text>
-            <Text style={styles.price}>{price} BDAG</Text>
-            <Text style={styles.body}>{description || "Sin descripcion"}</Text>
-            <Text style={styles.muted}>
-              {stock} disponibles ·{" "}
-              {shippingReady ? "Envio configurado" : "Envio pendiente"}
-            </Text>
-            {persistedVideo ? (
-              <Text style={styles.videoReady}>
-                Video listo ·{" "}
-                {Math.ceil((persistedVideo.durationMs ?? 0) / 1000)}s
+          <>
+            <EditorCard title="Vista previa">
+              {images[0] ? (
+                <Image
+                  source={{
+                    uri: (images.find((x) => x.isCover) ?? images[0]).url,
+                  }}
+                  style={styles.preview}
+                />
+              ) : (
+                <View style={[styles.preview, styles.center]}>
+                  <Text style={styles.muted}>Agrega una portada</Text>
+                </View>
+              )}
+              <Text style={styles.previewTitle}>{title}</Text>
+              <Text style={styles.price}>{price} BDAG</Text>
+              <Text style={styles.body}>
+                {description || "Sin descripcion"}
               </Text>
-            ) : null}
-            <Text style={styles.previewBadge}>
-              Vista previa privada · no genera impresiones
-            </Text>
-          </EditorCard>
+              <Text style={styles.muted}>
+                {stock} disponibles ·{" "}
+                {shippingReady ? "Envio configurado" : "Envio pendiente"}
+              </Text>
+              {persistedVideo ? (
+                <Text style={styles.videoReady}>
+                  Video listo ·{" "}
+                  {Math.ceil((persistedVideo.durationMs ?? 0) / 1000)}s
+                </Text>
+              ) : null}
+              <Text style={styles.previewBadge}>
+                {isPublished
+                  ? "Vista previa del producto publicado"
+                  : "Vista previa privada · no genera impresiones"}
+              </Text>
+            </EditorCard>
+            <EditorCard title="Afiliados y comisiones">
+              <Text style={styles.muted}>
+                Permitir que otros creadores vendan este producto en sus LIVE.
+              </Text>
+              {affiliateLoadState === "loading" ? (
+                <View style={styles.secondaryState}>
+                  <ActivityIndicator color={Colors.primary} />
+                  <Text style={styles.muted}>Cargando configuracion...</Text>
+                </View>
+              ) : null}
+              {affiliateLoadState === "error" ? (
+                <View style={styles.secondaryState}>
+                  <Text style={styles.warning}>
+                    No pudimos cargar la configuracion de afiliados.
+                  </Text>
+                  <Pressable
+                    style={styles.secondary}
+                    onPress={() =>
+                      productId && void loadAffiliateForEditor(productId)
+                    }
+                  >
+                    <Text style={styles.secondaryText}>Reintentar</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+              {affiliateLoadState === "loaded" ? (
+                <>
+                  <View style={styles.affiliateStatusRow}>
+                    <Text style={styles.label}>Afiliados</Text>
+                    <Text
+                      style={
+                        affiliateOffer?.status === "active"
+                          ? styles.videoReady
+                          : styles.muted
+                      }
+                    >
+                      {affiliateOffer?.status === "active"
+                        ? "Activos"
+                        : "Desactivados"}
+                    </Text>
+                  </View>
+                  {isPublished ? (
+                    <>
+                      <EditorField
+                        label="Comision del creador (%)"
+                        value={affiliatePercent}
+                        onChange={(value) => {
+                          setAffiliatePercent(value);
+                          affiliateIdempotencyKey.current = randomUUID();
+                        }}
+                        keyboardType="decimal-pad"
+                      />
+                      <Text style={styles.muted}>
+                        Entre 0.01% y 30%. Solo cambia futuras ventas elegibles.
+                      </Text>
+                      <View style={styles.affiliateActions}>
+                        <Pressable
+                          disabled={affiliateBusy}
+                          style={[
+                            styles.primary,
+                            styles.affiliateAction,
+                            affiliateBusy && styles.disabled,
+                          ]}
+                          onPress={() => void saveAffiliateSettings("active")}
+                        >
+                          <Text style={styles.primaryText}>
+                            {affiliateOffer?.status === "active"
+                              ? "Guardar comision"
+                              : "Activar afiliados"}
+                          </Text>
+                        </Pressable>
+                        {affiliateOffer?.status === "active" ? (
+                          <Pressable
+                            disabled={affiliateBusy}
+                            style={[
+                              styles.secondary,
+                              styles.affiliateAction,
+                              affiliateBusy && styles.disabled,
+                            ]}
+                            onPress={() => void saveAffiliateSettings("paused")}
+                          >
+                            <Text style={styles.secondaryText}>
+                              Desactivar afiliados
+                            </Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    </>
+                  ) : (
+                    <>
+                      <Choice
+                        label={
+                          affiliateEnabled
+                            ? "Afiliados activados al publicar"
+                            : "Activar afiliados al publicar"
+                        }
+                        selected={affiliateEnabled}
+                        onPress={() =>
+                          setAffiliateEnabled((current) => !current)
+                        }
+                      />
+                      {affiliateEnabled ? (
+                        <EditorField
+                          label="Comision del creador (%)"
+                          value={affiliatePercent}
+                          onChange={setAffiliatePercent}
+                          keyboardType="decimal-pad"
+                        />
+                      ) : null}
+                    </>
+                  )}
+                </>
+              ) : null}
+            </EditorCard>
+          </>
         ) : null}
         {nav}
       </ScrollView>
@@ -1548,6 +1893,14 @@ const styles = StyleSheet.create({
   body: { color: Colors.textSecondary, lineHeight: 21 },
   currency: { color: Colors.primaryLight, fontWeight: "800" },
   warning: { color: Colors.warning, fontWeight: "800" },
+  secondaryState: { gap: 10, alignItems: "flex-start" },
+  affiliateStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  affiliateActions: { gap: 10 },
+  affiliateAction: { width: "100%" },
   preview: {
     width: "100%",
     aspectRatio: 1.4,

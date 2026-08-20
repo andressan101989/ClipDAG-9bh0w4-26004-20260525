@@ -284,6 +284,14 @@ test("product drafts preserve digital type and canonical empty text without coer
   assert.equal(parsed.productType, "digital");
   assert.equal(parsed.description, "");
   assert.equal(parsed.brand, "");
+  assert.equal(parsed.publishedAt, null);
+  assert.equal(
+    drafts.parseMarketplaceProductDraft({
+      ...payload,
+      product: { ...payload.product, published_at: at },
+    }).publishedAt,
+    at,
+  );
   assert.throws(
     () =>
       drafts.parseMarketplaceProductDraft({
@@ -305,6 +313,14 @@ test("product drafts preserve digital type and canonical empty text without coer
       drafts.parseMarketplaceProductDraft({
         ...payload,
         product: { ...payload.product, editor_saved_at: "bad" },
+      }),
+    /marketplace_payload_invalid/,
+  );
+  assert.throws(
+    () =>
+      drafts.parseMarketplaceProductDraft({
+        ...payload,
+        product: { ...payload.product, published_at: "bad" },
       }),
     /marketplace_payload_invalid/,
   );
