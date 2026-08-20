@@ -40,6 +40,101 @@ export const deriveMarketplaceVariantsReady = (payload: {
   );
 };
 
+type PublishedProductVariant = {
+  id: string;
+  status: string;
+  is_default: boolean;
+  price: number;
+  base_price: number;
+};
+
+type PublishedProductInventoryLevel = {
+  variant_id: string;
+  on_hand: number;
+};
+
+export type PublishedProductSyncStage =
+  | "variant_fetch_failed"
+  | "variant_state_invalid"
+  | "inventory_state_invalid"
+  | "variant_update_failed"
+  | "inventory_update_failed";
+
+export class PublishedProductSyncError extends Error {
+  readonly stage: PublishedProductSyncStage;
+  readonly originalError: unknown;
+
+  constructor(
+    stage: PublishedProductSyncStage,
+    originalError: unknown = null,
+  ) {
+    super(stage);
+    this.name = "PublishedProductSyncError";
+    this.stage = stage;
+    this.originalError = originalError;
+  }
+}
+
+export type PublishedProductSyncResult = {
+  kind: "configurable" | "simple";
+  priceUpdated: boolean;
+  inventoryUpdated: boolean;
+};
+
+export async function syncPublishedSimpleProductChanges(input: {
+  variants: PublishedProductVariant[];
+  optionsCount: number;
+  inventory: PublishedProductInventoryLevel[];
+  editorPrice: number;
+  editorStock: number;
+  updatePrice: (variant: PublishedProductVariant) => Promise<void>;
+  updateInventory: (variant: PublishedProductVariant) => Promise<void>;
+}): Promise<PublishedProductSyncResult> {
+  const configurableVariants = input.variants.filter(
+    (variant) => variant.status !== "archived",
+  );
+  if (configurableVariants.length !== 1 || input.optionsCount !== 0)
+    return {
+      kind: "configurable",
+      priceUpdated: false,
+      inventoryUpdated: false,
+    };
+
+  const defaultVariant = configurableVariants.find(
+    (variant) => variant.is_default,
+  );
+  if (!defaultVariant)
+    throw new PublishedProductSyncError("variant_state_invalid");
+
+  const currentInventory = input.inventory.find(
+    (level) => level.variant_id === defaultVariant.id,
+  );
+  if (!currentInventory)
+    throw new PublishedProductSyncError("inventory_state_invalid");
+
+  const priceChanged = defaultVariant.base_price !== input.editorPrice;
+  const inventoryChanged = currentInventory.on_hand !== input.editorStock;
+  if (priceChanged) {
+    try {
+      await input.updatePrice(defaultVariant);
+    } catch (error) {
+      throw new PublishedProductSyncError("variant_update_failed", error);
+    }
+  }
+  if (inventoryChanged) {
+    try {
+      await input.updateInventory(defaultVariant);
+    } catch (error) {
+      throw new PublishedProductSyncError("inventory_update_failed", error);
+    }
+  }
+  return {
+    kind: "simple",
+    priceUpdated: priceChanged,
+    inventoryUpdated: inventoryChanged,
+  };
+}
+
 export class LatestSaveQueue<T> {
   private chain: Promise<void> = Promise.resolve();
   private revision = 0;

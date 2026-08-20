@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import {
+  PublishedProductSyncError,
+  syncPublishedSimpleProductChanges,
+} from "../services/marketplaceProductEditorState.ts";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 const [editor, drafts, affiliateService, legacy] = await Promise.all([
@@ -111,17 +115,158 @@ test("published affiliate settings reuse the existing canonical authority", () =
 });
 
 test("published product save preserves status and simple inventory consistency", () => {
-  assert.match(publishedSave, /flushDraftSave\(true\)/);
+  assert.match(publishedSave, /flushDraftSave\(true, false, false\)/);
   assert.match(publishedSave, /saveQueue\.current\.wait\(\)/);
   assert.match(publishedSave, /mediaQueue\.current/);
   assert.match(publishedSave, /syncSimpleVariantAndInventory/);
   assert.match(publishedSave, /setDirty\(true\)/);
+  assert.match(publishedSave, /setDirty\(false\)/);
+  assert.match(publishedSave, /productFieldsSaved/);
+  assert.match(publishedSave, /El producto se guardo parcialmente/);
+  assert.doesNotMatch(publishedSave, /version publicada anterior/);
   assert.doesNotMatch(
     publishedSave,
     /setProductPublished|evaluateMarketplaceProductPublication/,
   );
   assert.match(editor, /updateVariant\(defaultVariant\.id/);
   assert.match(editor, /setVariantInventory\(/);
+});
+
+const simpleInventory = (price = 25, stock = 14) => ({
+  variants: [
+    {
+      id: "variant-1",
+      status: "active",
+      is_default: true,
+      price,
+      base_price: price,
+    },
+  ],
+  optionsCount: 0,
+  inventory: [{ variant_id: "variant-1", on_hand: stock }],
+});
+
+test("published no-op save skips variant and inventory mutations", async () => {
+  let priceWrites = 0;
+  let inventoryWrites = 0;
+  const result = await syncPublishedSimpleProductChanges({
+    ...simpleInventory(),
+    editorPrice: 25,
+    editorStock: 14,
+    updatePrice: async () => {
+      priceWrites += 1;
+    },
+    updateInventory: async () => {
+      inventoryWrites += 1;
+    },
+  });
+  assert.deepEqual(result, {
+    kind: "simple",
+    priceUpdated: false,
+    inventoryUpdated: false,
+  });
+  assert.equal(priceWrites, 0);
+  assert.equal(inventoryWrites, 0);
+});
+
+test("published save compares the canonical base price, not a promoted price", async () => {
+  let priceWrites = 0;
+  const current = simpleInventory();
+  current.variants[0].price = 20;
+  await syncPublishedSimpleProductChanges({
+    ...current,
+    editorPrice: 25,
+    editorStock: 14,
+    updatePrice: async () => {
+      priceWrites += 1;
+    },
+    updateInventory: async () => {},
+  });
+  assert.equal(priceWrites, 0);
+});
+
+test("published price change updates only the default variant", async () => {
+  let priceWrites = 0;
+  let inventoryWrites = 0;
+  const result = await syncPublishedSimpleProductChanges({
+    ...simpleInventory(),
+    editorPrice: 27,
+    editorStock: 14,
+    updatePrice: async () => {
+      priceWrites += 1;
+    },
+    updateInventory: async () => {
+      inventoryWrites += 1;
+    },
+  });
+  assert.equal(result.priceUpdated, true);
+  assert.equal(result.inventoryUpdated, false);
+  assert.equal(priceWrites, 1);
+  assert.equal(inventoryWrites, 0);
+});
+
+test("published stock change updates only canonical inventory", async () => {
+  let priceWrites = 0;
+  let inventoryWrites = 0;
+  const result = await syncPublishedSimpleProductChanges({
+    ...simpleInventory(),
+    editorPrice: 25,
+    editorStock: 20,
+    updatePrice: async () => {
+      priceWrites += 1;
+    },
+    updateInventory: async () => {
+      inventoryWrites += 1;
+    },
+  });
+  assert.equal(result.priceUpdated, false);
+  assert.equal(result.inventoryUpdated, true);
+  assert.equal(priceWrites, 0);
+  assert.equal(inventoryWrites, 1);
+});
+
+test("published partial sync failure retains an exact retry stage", async () => {
+  await assert.rejects(
+    syncPublishedSimpleProductChanges({
+      ...simpleInventory(),
+      editorPrice: 27,
+      editorStock: 14,
+      updatePrice: async () => {
+        throw new Error("transport");
+      },
+      updateInventory: async () => {},
+    }),
+    (error) =>
+      error instanceof PublishedProductSyncError &&
+      error.stage === "variant_update_failed",
+  );
+  assert.match(publishedSave, /setDirty\(true\)/);
+  assert.match(
+    publishedSave,
+    /Reintenta para terminar la sincronizacion de precio e inventario/,
+  );
+});
+
+test("configurable products retain their dedicated variant authority", async () => {
+  let writes = 0;
+  const result = await syncPublishedSimpleProductChanges({
+    ...simpleInventory(),
+    optionsCount: 1,
+    editorPrice: 27,
+    editorStock: 20,
+    updatePrice: async () => {
+      writes += 1;
+    },
+    updateInventory: async () => {
+      writes += 1;
+    },
+  });
+  assert.deepEqual(result, {
+    kind: "configurable",
+    priceUpdated: false,
+    inventoryUpdated: false,
+  });
+  assert.equal(writes, 0);
 });
 
 test("new products retain readiness evaluation and checked publication", () => {

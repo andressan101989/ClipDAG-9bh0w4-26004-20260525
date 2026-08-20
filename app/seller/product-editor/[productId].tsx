@@ -47,8 +47,10 @@ import { calculateMarketplaceProductQuality } from "@/services/marketplaceProduc
 import {
   deriveMarketplaceVariantsReady,
   LatestSaveQueue,
+  PublishedProductSyncError,
   readyProductImages,
   replaceEditorMedia,
+  syncPublishedSimpleProductChanges,
 } from "@/services/marketplaceProductEditorState";
 import {
   evaluateMarketplaceProductPublication,
@@ -111,6 +113,31 @@ interface SaveSnapshot {
   categoryConfigured: boolean;
 }
 type SecondaryLoadState = "loading" | "loaded" | "error";
+type PublishedProductSaveStage =
+  | "snapshot_invalid"
+  | "product_save_failed"
+  | "save_queue_failed"
+  | "media_wait_failed"
+  | "variant_fetch_failed"
+  | "variant_state_invalid"
+  | "inventory_state_invalid"
+  | "variant_update_failed"
+  | "inventory_update_failed";
+
+const safePublishedSaveCode = (error: unknown) => {
+  if (error && typeof error === "object" && "code" in error)
+    return String(error.code);
+  return error instanceof Error ? error.message : "unknown";
+};
+
+const logPublishedSave = (stage: string, error?: unknown) => {
+  if (!__DEV__) return;
+  console.info("[MarketplacePublishedProductSave]", {
+    stage,
+    ...(error === undefined ? {} : { code: safePublishedSaveCode(error) }),
+  });
+};
+
 export default function ProductEditorScreen() {
   const params = useLocalSearchParams<{ productId: string }>(),
     router = useRouter(),
@@ -176,6 +203,7 @@ export default function ProductEditorScreen() {
     pendingVideoRef = useRef<ProductEditorMedia | null>(null),
     shippingProfilesRequest = useRef(false),
     affiliateRequest = useRef(false),
+    lastDraftSaveError = useRef<unknown>(null),
     affiliateIdempotencyKey = useRef(randomUUID());
   const isPublished = publishedAt !== null;
   const shippingReady =
@@ -517,7 +545,11 @@ export default function ProductEditorScreen() {
     categoryConfigured,
   ]);
   const flushDraftSave = useCallback(
-    async (silent = false): Promise<boolean> => {
+    async (
+      silent = false,
+      waitForMedia = true,
+      markComplete = true,
+    ): Promise<boolean> => {
       const current = snapshot();
       if (!current) {
         if (!silent)
@@ -528,6 +560,7 @@ export default function ProductEditorScreen() {
         return false;
       }
       setSaving(true);
+      lastDraftSaveError.current = null;
       try {
         const result = await saveQueue.current.enqueue(
           current,
@@ -549,10 +582,10 @@ export default function ProductEditorScreen() {
               priceConfigured: value.priceConfigured,
               categoryConfigured: value.categoryConfigured,
             });
-            await mediaQueue.current;
+            if (waitForMedia) await mediaQueue.current;
           },
         );
-        if (result.current) {
+        if (result.current && markComplete) {
           setDirty(false);
           setMessage(isPublished ? "Cambios guardados" : "Borrador guardado");
           if (!silent)
@@ -564,7 +597,8 @@ export default function ProductEditorScreen() {
             );
         }
         return result.succeeded;
-      } catch {
+      } catch (error) {
+        lastDraftSaveError.current = error;
         setMessage("No pudimos guardar. Reintenta.");
         if (!silent)
           Alert.alert(
@@ -1033,21 +1067,53 @@ export default function ProductEditorScreen() {
   const syncSimpleVariantAndInventory = async (
     id: string,
     inventoryReason: string,
+    publishedEdit = false,
   ) => {
-    const inventory = await fetchSellerProductVariants(id),
-      configurableVariants = inventory.detail.variants.filter(
-        (variant) => variant.status !== "archived",
-      ),
+    let inventory;
+    try {
+      inventory = await fetchSellerProductVariants(id);
+    } catch (error) {
+      if (publishedEdit)
+        throw new PublishedProductSyncError("variant_fetch_failed", error);
+      throw error;
+    }
+    const configurableVariants = inventory.detail.variants.filter(
+      (variant) => variant.status !== "archived",
+    ),
       defaultVariant = configurableVariants.find(
         (variant) => variant.is_default,
       );
     setVariantsReady(deriveMarketplaceVariantsReady(inventory));
     setVariantsLoadState("loaded");
-    if (!defaultVariant) throw new Error("variant");
     if (
       configurableVariants.length === 1 &&
       inventory.detail.options.length === 0
     ) {
+      if (publishedEdit) {
+        return syncPublishedSimpleProductChanges({
+          variants: inventory.detail.variants,
+          optionsCount: inventory.detail.options.length,
+          inventory: inventory.inventory,
+          editorPrice: Number(price),
+          editorStock: Number(stock),
+          updatePrice: async (variant) =>
+            updateVariant(variant.id, {
+              sku:
+                defaultVariant?.sku ?? `SKU-${id.slice(0, 8).toUpperCase()}`,
+              price: Number(price),
+              status: "active",
+              imageAssetId: null,
+            }),
+          updateInventory: async (variant) =>
+            setVariantInventory(
+              variant.id,
+              Number(stock),
+              inventoryReason,
+              randomUUID(),
+            ),
+        });
+      }
+      if (!defaultVariant) throw new Error("variant");
       await updateVariant(defaultVariant.id, {
         sku: defaultVariant.sku ?? `SKU-${id.slice(0, 8).toUpperCase()}`,
         price: Number(price),
@@ -1127,23 +1193,77 @@ export default function ProductEditorScreen() {
   };
   const savePublishedProductChanges = async () => {
     if (!productId || !isPublished || publishing) return;
+    if (!snapshot()) {
+      logPublishedSave("snapshot_invalid");
+      Alert.alert(
+        "Revisa los cambios",
+        "Completa los campos marcados antes de guardar.",
+      );
+      return;
+    }
     setPublishing(true);
+    let stage: PublishedProductSaveStage = "product_save_failed";
+    let productFieldsSaved = false;
     try {
-      if (!(await flushDraftSave(true))) throw new Error("draft_save_failed");
+      logPublishedSave("product_save_start");
+      if (!(await flushDraftSave(true, false, false)))
+        throw lastDraftSaveError.current ?? new Error("product_save_failed");
+      productFieldsSaved = true;
+      logPublishedSave("product_save_success");
+      stage = "save_queue_failed";
+      logPublishedSave("save_queue_wait_start");
       await saveQueue.current.wait();
+      logPublishedSave("save_queue_wait_success");
+      stage = "media_wait_failed";
+      logPublishedSave("media_wait_start");
       await mediaQueue.current;
-      await syncSimpleVariantAndInventory(productId, "Edicion de producto");
+      logPublishedSave("media_wait_success");
+      logPublishedSave("variant_fetch_start");
+      const sync = await syncSimpleVariantAndInventory(
+        productId,
+        "Edicion de producto",
+        true,
+      );
+      if (sync?.kind === "configurable")
+        logPublishedSave("variant_sync_skipped", new Error("configurable"));
+      else if (!sync?.priceUpdated && !sync?.inventoryUpdated)
+        logPublishedSave("variant_sync_skipped", new Error("no_changes"));
+      else {
+        if (sync.priceUpdated) logPublishedSave("variant_update_success");
+        if (sync.inventoryUpdated) logPublishedSave("inventory_update_success");
+      }
       setMessage("Cambios guardados");
+      setDirty(false);
+      logPublishedSave("save_success");
       Alert.alert(
         "Cambios guardados",
         "El producto conserva su estado publicado.",
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof PublishedProductSyncError) stage = error.stage;
       setDirty(true);
-      Alert.alert(
-        "No pudimos guardar los cambios",
-        "La version publicada anterior permanece disponible. Reintenta.",
+      logPublishedSave(
+        stage,
+        error instanceof PublishedProductSyncError
+          ? error.originalError ?? error
+          : error,
       );
+      if (productFieldsSaved)
+        Alert.alert(
+          "El producto se guardo parcialmente",
+          stage === "variant_update_failed" ||
+            stage === "inventory_update_failed" ||
+            stage === "variant_state_invalid" ||
+            stage === "inventory_state_invalid" ||
+            stage === "variant_fetch_failed"
+            ? "Reintenta para terminar la sincronizacion de precio e inventario."
+            : "No pudimos completar todos los cambios. Reintenta para terminar.",
+        );
+      else
+        Alert.alert(
+          "No pudimos guardar el producto",
+          "Tus cambios siguen en pantalla. Reintenta.",
+        );
     } finally {
       setPublishing(false);
     }
