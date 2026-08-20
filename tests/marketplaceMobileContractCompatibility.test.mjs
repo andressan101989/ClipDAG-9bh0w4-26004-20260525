@@ -195,7 +195,7 @@ test("canonical physical/digital products and empty descriptions are accepted", 
   );
 });
 
-test("seller private inventory is deeply validated", () => {
+test("seller private inventory accepts canonical sale history and remains strict", async () => {
   const payload = {
     product: product(),
     detail: {
@@ -223,7 +223,7 @@ test("seller private inventory is deeply validated", () => {
       {
         id: id(8),
         variant_id: id(5),
-        movement_type: "seller_set",
+        movement_type: "sale",
         delta: 3,
         resulting_on_hand: 3,
         reason: "Inicial",
@@ -232,10 +232,21 @@ test("seller private inventory is deeply validated", () => {
     ],
     media_assets: [{ id: id(9), url: "https://example.test/a.jpg" }],
   };
-  assert.equal(
-    products.parseSellerProductInventory(payload).inventory[0].on_hand,
-    3,
-  );
+  const parsed = products.parseSellerProductInventory(payload);
+  assert.equal(parsed.inventory[0].on_hand, 3);
+  assert.equal(parsed.movements[0].movement_type, "sale");
+  activeClient = {
+    auth: {
+      getSession: async () => ({
+        data: { session: { user: { id: id(1) } } },
+        error: null,
+      }),
+    },
+    rpc: async () => ({ data: payload, error: null }),
+  };
+  const fetched = await products.fetchSellerProductVariants(id(2));
+  assert.equal(fetched.movements[0].movement_type, "sale");
+  activeClient = {};
   assert.throws(
     () =>
       products.parseSellerProductInventory({
@@ -249,6 +260,16 @@ test("seller private inventory is deeply validated", () => {
       products.parseSellerProductInventory({
         ...payload,
         detail: { ...payload.detail, options: {} },
+      }),
+    /marketplace_payload_invalid/,
+  );
+  assert.throws(
+    () =>
+      products.parseSellerProductInventory({
+        ...payload,
+        movements: [
+          { ...payload.movements[0], movement_type: "future_movement" },
+        ],
       }),
     /marketplace_payload_invalid/,
   );

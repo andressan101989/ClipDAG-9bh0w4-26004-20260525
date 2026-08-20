@@ -146,15 +146,20 @@ export interface MarketplaceInventoryLevel {
   low_stock_threshold: number;
   version: number;
 }
+export const marketplaceInventoryMovementTypes = [
+  "backfill",
+  "initial",
+  "seller_set",
+  "seller_adjust",
+  "correction",
+  "sale",
+] as const;
+export type MarketplaceInventoryMovementType =
+  (typeof marketplaceInventoryMovementTypes)[number];
 export interface MarketplaceInventoryMovement {
   id: string;
   variant_id: string;
-  movement_type:
-    | "backfill"
-    | "initial"
-    | "seller_set"
-    | "seller_adjust"
-    | "correction";
+  movement_type: MarketplaceInventoryMovementType;
   delta: number;
   resulting_on_hand: number;
   reason: string | null;
@@ -643,13 +648,7 @@ export function parseSellerProductInventory(
       variant_id: rpcUuid(row.variant_id, `${path}.variant_id`),
       movement_type: rpcEnum(
         row.movement_type,
-        [
-          "backfill",
-          "initial",
-          "seller_set",
-          "seller_adjust",
-          "correction",
-        ] as const,
+        marketplaceInventoryMovementTypes,
         `${path}.movement_type`,
       ),
       delta,
