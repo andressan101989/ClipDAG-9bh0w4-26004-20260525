@@ -39,8 +39,8 @@ export function LiveReservationSummary({
 }: {
   reference: string;
   total: number;
-  subtotal: number;
-  shippingAmount: number;
+  subtotal: number | null;
+  shippingAmount: number | null;
   balance: number | null;
   remaining: number;
   terminal?: string | null;
@@ -98,7 +98,7 @@ export function LiveReservationSummary({
                 : "Opción confirmada por el servidor"}
             </OnSpaceText>
           </View>
-          <OnSpaceText variant="labelStrong">{shippingAmount.toFixed(2)} BDAG</OnSpaceText>
+          <OnSpaceText variant="labelStrong">{shippingAmount == null ? "—" : `${shippingAmount.toFixed(2)} BDAG`}</OnSpaceText>
         </View>
       </View>
 
@@ -113,8 +113,8 @@ export function LiveReservationSummary({
 
       <View style={styles.card}>
         <Heading number={5} title="Resumen del pedido" />
-        <View style={styles.moneyRow}><OnSpaceText variant="bodySmall" color="textSecondary">Subtotal</OnSpaceText><OnSpaceText variant="bodySmall">{subtotal.toFixed(2)} BDAG</OnSpaceText></View>
-        <View style={styles.moneyRow}><OnSpaceText variant="bodySmall" color="textSecondary">Envío</OnSpaceText><OnSpaceText variant="bodySmall">{shippingAmount.toFixed(2)} BDAG</OnSpaceText></View>
+        <View style={styles.moneyRow}><OnSpaceText variant="bodySmall" color="textSecondary">Subtotal</OnSpaceText><OnSpaceText variant="bodySmall">{subtotal == null ? "—" : `${subtotal.toFixed(2)} BDAG`}</OnSpaceText></View>
+        <View style={styles.moneyRow}><OnSpaceText variant="bodySmall" color="textSecondary">Envío</OnSpaceText><OnSpaceText variant="bodySmall">{shippingAmount == null ? "—" : `${shippingAmount.toFixed(2)} BDAG`}</OnSpaceText></View>
         <View style={styles.divider} />
         <View style={styles.moneyRow}><OnSpaceText variant="headingSmall">Total</OnSpaceText><CommercePrice price={total} size="large" /></View>
       </View>

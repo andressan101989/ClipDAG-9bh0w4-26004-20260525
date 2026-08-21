@@ -30,10 +30,34 @@ test("checkout country authority shows localized names while retaining ISO value
   }
   assert.equal(searchShippingCountries("república dominicana")[0]?.code, "DO");
   assert.equal(searchShippingCountries("estados unidos")[0]?.code, "US");
-  assert.equal(MARKETPLACE_SHIPPING_COUNTRIES.some(({ label }) => /^[A-Z]{2}$/.test(label)), false);
+  for (const { code, label } of MARKETPLACE_SHIPPING_COUNTRIES) {
+    assert.ok(label.trim().length > 0);
+    assert.notEqual(label, code);
+    assert.notEqual(label, "País no disponible");
+    assert.doesNotMatch(label, /^[A-Z]{2}$/);
+  }
   assert.match(addressForm, /value=\{value\.country\}[\s\S]*value: code, label/);
   assert.match(selector, /selected\?\.label/);
   assert.match(selector, /accessibilityLabel=\{`\$\{label\}: \$\{selected\?\.label/);
+});
+
+test("country fallback remains complete when Intl.DisplayNames is unavailable", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Intl, "DisplayNames");
+  try {
+    Object.defineProperty(Intl, "DisplayNames", { configurable: true, value: undefined });
+    const fallbackModule = await import(
+      `../services/marketplaceShippingSetup.ts?fallback=${Date.now()}`
+    );
+    for (const { code, label } of fallbackModule.MARKETPLACE_SHIPPING_COUNTRIES) {
+      assert.ok(label.trim().length > 0);
+      assert.notEqual(label, code);
+      assert.notEqual(label, "País no disponible");
+      assert.doesNotMatch(label, /^[A-Z]{2}$/);
+    }
+    assert.equal(fallbackModule.shippingCountryLabel("DO"), "República Dominicana");
+  } finally {
+    if (descriptor) Object.defineProperty(Intl, "DisplayNames", descriptor);
+  }
 });
 
 test("SHOP and LIVE collect delivery data without contact fields", () => {
@@ -81,12 +105,33 @@ test("buyer summaries show only authoritative subtotal shipping and total", () =
   assert.match(live, /shippingAmount:\s*result\.checkout\.shippingAmount/);
 });
 
+test("LIVE recovery hydrates canonical checkout money without client arithmetic", () => {
+  assert.match(live, /const EMPTY_ADDRESS:[\s\S]*country:\s*""/);
+  assert.match(live, /fetchMyActiveLiveCheckout\(sessionId\)/);
+  assert.match(live, /fetchMyCheckout\(active\.checkoutId\)/);
+  assert.match(live, /subtotal:\s*authoritative\?\.checkout\.subtotal\s*\?\?\s*null/);
+  assert.match(live, /shippingAmount:\s*authoritative\?\.checkout\.shippingAmount\s*\?\?\s*null/);
+  assert.match(live, /total:\s*authoritative\?\.checkout\.total\s*\?\?\s*active\.total/);
+  assert.doesNotMatch(live, /active\.total\s*-\s*active\.items/);
+  assert.doesNotMatch(live, /active\.items\.reduce/);
+  assert.match(live, /productTitle:\s*authoritativeItem\?\.productTitle\s*\?\?\s*activeItem\?\.title/);
+  assert.match(live, /productTitle=\{reservation\.productTitle\}/);
+  assert.match(liveSummary, /subtotal == null \? "—"/);
+  assert.match(liveSummary, /shippingAmount == null \? "—"/);
+});
+
+test("SHOP frozen shipping uses neutral server-truthful copy", () => {
+  assert.match(reservation, /Envío disponible/);
+  assert.doesNotMatch(reservation, /Envío estándar/);
+});
+
 test("reservation and payment authorities remain unchanged", () => {
   assert.match(shop, /createCreatorCheckoutReservation/);
   assert.match(shop, /createCheckoutReservation/);
   assert.match(shop, /idempotencyRef/);
   assert.match(live, /createLiveCheckoutReservation/);
   assert.match(live, /reservationCommandFor/);
+  assert.match(live, /livePaymentGuard/);
   assert.match(live, /payMarketplaceCheckout/);
   assert.match(reservation, /fetchAuthoritativeBdagBalance/);
   assert.match(reservation, /payMarketplaceCheckout/);

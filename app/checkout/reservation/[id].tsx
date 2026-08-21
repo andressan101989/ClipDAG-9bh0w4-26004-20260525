@@ -154,7 +154,7 @@ export default function ReservationDetailScreen() {
           {data.orders.flatMap((order) => order.frozenShipping).map((shipping) => (
             <View key={shipping.shippingQuoteFingerprint} style={styles.shippingRow} accessibilityRole="radio" accessibilityState={{ checked: true }}>
               <MaterialIcons name="check-circle" size={20} color={Colors.primaryLight} />
-              <View style={styles.productCopy}><Text style={styles.textStrong}>Envío estándar</Text><Text style={styles.mutedLeft}>Entrega estimada en {shipping.processingDaysMin + shipping.transitDaysMin}–{shipping.processingDaysMax + shipping.transitDaysMax} días</Text></View>
+              <View style={styles.productCopy}><Text style={styles.textStrong}>Envío disponible</Text><Text style={styles.mutedLeft}>Entrega estimada en {shipping.processingDaysMin + shipping.transitDaysMin}–{shipping.processingDaysMax + shipping.transitDaysMax} días</Text></View>
               <Text style={styles.price}>{shipping.shippingAmount.toFixed(2)} BDAG</Text>
             </View>
           ))}

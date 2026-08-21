@@ -93,10 +93,14 @@ type Reservation = {
   status: string;
   expiresAt: string;
   total: number;
-  subtotal: number;
-  shippingAmount: number;
+  subtotal: number | null;
+  shippingAmount: number | null;
   shippingDaysMin: number | null;
   shippingDaysMax: number | null;
+  productTitle: string;
+  imageUrl: string | null;
+  quantity: number;
+  unitPrice: number;
   orderId: string | null;
 };
 const EMPTY_ADDRESS: ShippingAddressInput = {
@@ -105,7 +109,7 @@ const EMPTY_ADDRESS: ShippingAddressInput = {
   city: "",
   region: "",
   postalCode: "",
-  country: "US",
+  country: "",
   phone: undefined,
 };
 const stageTitle: Record<Stage, string> = {
@@ -290,19 +294,35 @@ export function LiveViewerCommerce({
       return;
     }
     if (active && active.pinId === pin.id) {
+      const authoritative = await fetchMyCheckout(active.checkoutId).catch(
+        () => null,
+      );
+      const authoritativeItem = authoritative?.orders
+        .flatMap((order) => order.items)
+        .at(0);
+      const activeItem = active.items.at(0);
+      const reservedItem = authoritativeItem ?? activeItem;
+      const frozenShipping = authoritative?.orders
+        .flatMap((order) => order.frozenShipping)
+        .at(0);
       setReservation({
         id: active.checkoutId,
         reference: active.reference,
         status: active.status,
         expiresAt: active.expiresAt,
-        total: active.total,
-        subtotal: active.items.reduce((sum, item) => sum + item.lineTotal, 0),
-        shippingAmount: Math.max(
-          0,
-          active.total - active.items.reduce((sum, item) => sum + item.lineTotal, 0),
-        ),
-        shippingDaysMin: null,
-        shippingDaysMax: null,
+        total: authoritative?.checkout.total ?? active.total,
+        subtotal: authoritative?.checkout.subtotal ?? null,
+        shippingAmount: authoritative?.checkout.shippingAmount ?? null,
+        shippingDaysMin: frozenShipping
+          ? frozenShipping.processingDaysMin + frozenShipping.transitDaysMin
+          : null,
+        shippingDaysMax: frozenShipping
+          ? frozenShipping.processingDaysMax + frozenShipping.transitDaysMax
+          : null,
+        productTitle: authoritativeItem?.productTitle ?? activeItem?.title ?? pin.title,
+        imageUrl: reservedItem?.imageUrl ?? pin.imageUrl,
+        quantity: reservedItem?.quantity ?? 1,
+        unitPrice: reservedItem?.unitPrice ?? 0,
         orderId: active.orderId,
       });
       paymentKey.current = randomUUID();
@@ -439,6 +459,7 @@ export function LiveViewerCommerce({
       pendingCommand.current = null;
       paymentKey.current = randomUUID();
       const frozenShipping = result.orders[0]?.frozenShipping[0];
+      const reservedItem = result.orders[0]?.items[0];
       setReservation({
         id: result.checkout.id,
         reference: result.checkout.reference,
@@ -453,6 +474,10 @@ export function LiveViewerCommerce({
         shippingDaysMax: frozenShipping
           ? frozenShipping.processingDaysMax + frozenShipping.transitDaysMax
           : null,
+        productTitle: reservedItem?.productTitle ?? pin.title,
+        imageUrl: reservedItem?.imageUrl ?? pin.imageUrl,
+        quantity: reservedItem?.quantity ?? quantity,
+        unitPrice: reservedItem?.unitPrice ?? variant.price,
         orderId: result.orders[0]?.id ?? null,
       });
       await refreshBalance();
@@ -824,11 +849,11 @@ export function LiveViewerCommerce({
                   subtotal={reservation.subtotal}
                   shippingAmount={reservation.shippingAmount}
                   balance={balance}
-                  productTitle={detail?.product.title ?? pin?.title ?? "Producto del LIVE"}
+                  productTitle={reservation.productTitle}
                   storeName={pin?.storeName ?? "OnSpace LIVE"}
-                  imageUrl={variant?.image_url ?? detail?.product.images[0] ?? pin?.imageUrl ?? null}
-                  quantity={quantity}
-                  unitPrice={variant?.price ?? 0}
+                  imageUrl={reservation.imageUrl}
+                  quantity={reservation.quantity}
+                  unitPrice={reservation.unitPrice}
                   address={address}
                   shippingDaysMin={reservation.shippingDaysMin}
                   shippingDaysMax={reservation.shippingDaysMax}
