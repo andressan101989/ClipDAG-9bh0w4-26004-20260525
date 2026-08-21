@@ -116,6 +116,14 @@ test("LIVE recovery hydrates canonical checkout money without client arithmetic"
   assert.doesNotMatch(live, /active\.items\.reduce/);
   assert.match(live, /productTitle:\s*authoritativeItem\?\.productTitle\s*\?\?\s*activeItem\?\.title/);
   assert.match(live, /productTitle=\{reservation\.productTitle\}/);
+  assert.match(live, /shippingAddress:\s*authoritative\?\.shippingAddress\s*\?\?\s*null/);
+  assert.match(live, /shippingAddress:\s*normalized/);
+  assert.match(live, /address=\{reservation\.shippingAddress\}/);
+  assert.doesNotMatch(live, /address=\{address\}/);
+  assert.match(liveSummary, /address:\s*CheckoutShippingAddressDisplay \| null/);
+  assert.match(liveSummary, /shippingCountryLabel\(address\.country\)/);
+  assert.match(liveSummary, /Dirección guardada en la reserva/);
+  assert.match(liveSummary, /No pudimos cargar el detalle de la dirección/);
   assert.match(liveSummary, /subtotal == null \? "—"/);
   assert.match(liveSummary, /shippingAmount == null \? "—"/);
 });

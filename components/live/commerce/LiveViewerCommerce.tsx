@@ -74,7 +74,10 @@ import {
   recordCheckoutStarted,
   recordProductView,
 } from "@/services/marketplaceAnalyticsService";
-import { LiveReservationSummary } from "@/components/live/shop/LiveReservationSummary";
+import {
+  LiveReservationSummary,
+  type CheckoutShippingAddressDisplay,
+} from "@/components/live/shop/LiveReservationSummary";
 import { LivePaymentConfirmation } from "@/components/live/shop/LivePaymentConfirmation";
 import { LivePurchaseSuccess } from "@/components/live/shop/LivePurchaseSuccess";
 
@@ -101,6 +104,7 @@ type Reservation = {
   imageUrl: string | null;
   quantity: number;
   unitPrice: number;
+  shippingAddress: CheckoutShippingAddressDisplay | null;
   orderId: string | null;
 };
 const EMPTY_ADDRESS: ShippingAddressInput = {
@@ -323,6 +327,7 @@ export function LiveViewerCommerce({
         imageUrl: reservedItem?.imageUrl ?? pin.imageUrl,
         quantity: reservedItem?.quantity ?? 1,
         unitPrice: reservedItem?.unitPrice ?? 0,
+        shippingAddress: authoritative?.shippingAddress ?? null,
         orderId: active.orderId,
       });
       paymentKey.current = randomUUID();
@@ -478,6 +483,7 @@ export function LiveViewerCommerce({
         imageUrl: reservedItem?.imageUrl ?? pin.imageUrl,
         quantity: reservedItem?.quantity ?? quantity,
         unitPrice: reservedItem?.unitPrice ?? variant.price,
+        shippingAddress: normalized,
         orderId: result.orders[0]?.id ?? null,
       });
       await refreshBalance();
@@ -854,7 +860,7 @@ export function LiveViewerCommerce({
                   imageUrl={reservation.imageUrl}
                   quantity={reservation.quantity}
                   unitPrice={reservation.unitPrice}
-                  address={address}
+                  address={reservation.shippingAddress}
                   shippingDaysMin={reservation.shippingDaysMin}
                   shippingDaysMax={reservation.shippingDaysMax}
                   remaining={remaining}

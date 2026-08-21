@@ -9,8 +9,17 @@ import {
   StatusPill,
 } from "@/components/design";
 import { colors, radii, spacing } from "@/design";
-import type { ShippingAddressInput } from "@/services/marketplaceOrderService";
 import { shippingCountryLabel } from "@/services/marketplaceShippingSetup";
+
+export type CheckoutShippingAddressDisplay = {
+  recipientName: string;
+  line1?: string | null;
+  line2?: string | null;
+  city: string;
+  region: string;
+  postalCode?: string | null;
+  country: string;
+};
 
 function Heading({ number, title }: { number: number; title: string }) {
   return <View style={styles.heading}><View style={styles.step}><OnSpaceText variant="caption" color="brandHighlight">{number}</OnSpaceText></View><OnSpaceText variant="labelStrong">{title}</OnSpaceText></View>;
@@ -51,7 +60,7 @@ export function LiveReservationSummary({
   imageUrl: string | null;
   quantity: number;
   unitPrice: number;
-  address: ShippingAddressInput;
+  address: CheckoutShippingAddressDisplay | null;
   shippingDaysMin: number | null;
   shippingDaysMax: number | null;
   onPay: () => void;
@@ -59,6 +68,17 @@ export function LiveReservationSummary({
 }) {
   const minutes = Math.floor(remaining / 60);
   const seconds = String(remaining % 60).padStart(2, "0");
+  const addressLine = address
+    ? [address.line1, address.line2].filter((value) => value?.trim()).join(" · ")
+    : "";
+  const cityRegion = address
+    ? [address.city, address.region].filter((value) => value.trim()).join(", ")
+    : "";
+  const destinationLine = address
+    ? [cityRegion, shippingCountryLabel(address.country), address.postalCode]
+        .filter((value) => value?.trim())
+        .join(" · ")
+    : "";
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <View style={styles.statusLine}>
@@ -80,9 +100,18 @@ export function LiveReservationSummary({
 
       <View style={styles.card}>
         <Heading number={2} title="Dirección de envío" />
-        <OnSpaceText variant="labelStrong">{address.recipientName}</OnSpaceText>
-        <OnSpaceText variant="bodySmall" color="textSecondary">{address.line1}{address.line2 ? ` · ${address.line2}` : ""}</OnSpaceText>
-        <OnSpaceText variant="bodySmall" color="textSecondary">{address.city}, {address.region} · {shippingCountryLabel(address.country)} · {address.postalCode}</OnSpaceText>
+        {address ? (
+          <>
+            <OnSpaceText variant="labelStrong">{address.recipientName}</OnSpaceText>
+            {addressLine ? <OnSpaceText variant="bodySmall" color="textSecondary">{addressLine}</OnSpaceText> : null}
+            {destinationLine ? <OnSpaceText variant="bodySmall" color="textSecondary">{destinationLine}</OnSpaceText> : null}
+          </>
+        ) : (
+          <>
+            <OnSpaceText variant="labelStrong">Dirección guardada en la reserva</OnSpaceText>
+            <OnSpaceText variant="bodySmall" color="textSecondary">No pudimos cargar el detalle de la dirección en este momento.</OnSpaceText>
+          </>
+        )}
         <OnSpaceText variant="caption" color="textMuted">Toda la comunicación y actualizaciones del pedido se realizan dentro de la app.</OnSpaceText>
       </View>
 
