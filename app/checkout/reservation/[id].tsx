@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { randomUUID } from "expo-crypto";
 import { StatusBar } from "expo-status-bar";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors, FontSize, FontWeight, Radius, Spacing } from "@/constants/theme";
+import { ProductThumbnail } from "@/components/design";
 import {
   cancelCheckoutReservation,
   expireMarketplaceCheckoutReservations,
@@ -135,7 +135,7 @@ export default function ReservationDetailScreen() {
           <SectionHeading number={1} title="Producto" />
           {data.orders.flatMap((order) => order.items).map((item) => (
             <View key={item.id} style={styles.productRow}>
-              <Image source={item.imageUrl ? { uri: item.imageUrl } : undefined} style={styles.productImage} contentFit="cover" accessibilityLabel={item.productTitle} />
+              <ProductThumbnail uri={item.imageUrl} size="medium" label={item.productTitle} />
               <View style={styles.productCopy}><Text style={styles.textStrong} numberOfLines={2}>{item.productTitle}</Text><Text style={styles.options}>{item.options.map((option) => option.value).join(" · ")}</Text><Text style={styles.mutedLeft}>Cantidad {item.quantity}</Text></View>
               <Text style={styles.price}>{item.lineTotal.toFixed(2)} BDAG</Text>
             </View>
@@ -210,7 +210,6 @@ const styles = StyleSheet.create({
   stepText: { color: Colors.primaryLight, fontSize: FontSize.xs, fontWeight: FontWeight.bold },
   sectionTitle: { color: Colors.textPrimary, fontWeight: FontWeight.bold, fontSize: FontSize.md },
   productRow: { flexDirection: "row", alignItems: "center", gap: Spacing.sm, minWidth: 0 },
-  productImage: { width: 64, height: 64, borderRadius: Radius.md, backgroundColor: Colors.surfaceHighlight },
   productCopy: { flex: 1, minWidth: 0, gap: 3 },
   textStrong: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
   options: { color: Colors.primaryLight, fontSize: FontSize.sm },

@@ -11,13 +11,13 @@ import {
   View,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { randomUUID } from "expo-crypto";
 import { StatusBar } from "expo-status-bar";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CheckoutShippingAddressForm } from "@/components/marketplace/CheckoutShippingAddressForm";
+import { ProductThumbnail } from "@/components/design";
 import {
   MarketplaceShippingQuoteCard,
   type MarketplaceShippingQuoteState,
@@ -224,7 +224,7 @@ export default function MarketplaceCheckoutScreen() {
               <SectionHeading number={1} title="Producto" />
               {availableItems.map((item) => (
                 <View key={item.key} style={styles.productRow}>
-                  <Image source={item.imageUrl ? { uri: item.imageUrl } : undefined} style={styles.productImage} contentFit="cover" accessibilityLabel={item.title} />
+                  <ProductThumbnail uri={item.imageUrl} size="medium" label={item.title} />
                   <View style={styles.productCopy}>
                     <Text style={styles.itemTitle} numberOfLines={2}>{item.title}</Text>
                     <Text style={styles.storeLabel} numberOfLines={1}>{item.sellerUsername ? `@${item.sellerUsername}` : "OnSpace Shop"}</Text>
@@ -311,7 +311,6 @@ const styles = StyleSheet.create({
   sectionTitle: { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.bold },
   muted: { color: Colors.textSecondary, fontSize: FontSize.sm, textAlign: "center" },
   productRow: { flexDirection: "row", alignItems: "center", gap: Spacing.sm, minWidth: 0 },
-  productImage: { width: 68, height: 68, borderRadius: Radius.md, backgroundColor: Colors.surfaceHighlight },
   productCopy: { flex: 1, minWidth: 0, gap: 2 },
   itemTitle: { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.bold },
   storeLabel: { color: Colors.textSecondary, fontSize: FontSize.sm },

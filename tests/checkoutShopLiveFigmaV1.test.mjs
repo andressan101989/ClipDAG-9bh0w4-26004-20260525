@@ -133,6 +133,20 @@ test("SHOP frozen shipping uses neutral server-truthful copy", () => {
   assert.doesNotMatch(reservation, /Envío estándar/);
 });
 
+test("SHOP checkout uses the canonical cart image with the safe thumbnail renderer", () => {
+  assert.match(shop, /import \{ ProductThumbnail \} from "@\/components\/design"/);
+  assert.match(shop, /<ProductThumbnail uri=\{item\.imageUrl\} size="medium" label=\{item\.title\} \/>/);
+  assert.doesNotMatch(shop, /from "expo-image"/);
+  assert.doesNotMatch(shop, /fetchMarketplaceProductDetail/);
+});
+
+test("SHOP reservation and paid states render the frozen order item image", () => {
+  assert.match(reservation, /import \{ ProductThumbnail \} from "@\/components\/design"/);
+  assert.match(reservation, /<ProductThumbnail uri=\{item\.imageUrl\} size="medium" label=\{item\.productTitle\} \/>/);
+  assert.match(orderService, /imageUrl:rpcNullableString\(i\.image_url,'item\.image_url'\)/);
+  assert.doesNotMatch(reservation, /from "expo-image"|fetchMarketplaceProductDetail/);
+});
+
 test("reservation and payment authorities remain unchanged", () => {
   assert.match(shop, /createCreatorCheckoutReservation/);
   assert.match(shop, /createCheckoutReservation/);
