@@ -155,8 +155,9 @@ test("Figma Shop implementation preserves Build 22 across later authorized migra
     .sort();
   assert.equal(
     migrations.at(-1),
-    "20260817011718_harden_buyer_financial_exposure.sql",
+    "20260820010000_fix_marketplace_checkout_order_image_snapshot.sql",
   );
+  assert.ok(migrations.includes("20260817011718_harden_buyer_financial_exposure.sql"));
   assert.equal(String(JSON.parse(read("app.json")).expo.ios.buildNumber), "22");
   assert.doesNotMatch(
     shop,
