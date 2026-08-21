@@ -60,7 +60,7 @@ test('media view records only an intentional gallery change',()=>{
  assert.match(detail,/index\s*===\s*mediaIndex/);assert.match(detail,/recordProductMediaView/);assert.match(detail,/media_kind\s*:\s*gallery\[index\]\.kind,\s*media_position\s*:\s*index/);assert.match(detail,/onSelect=\{chooseMedia\}/);
 });
 test('checkout starts once without address metadata',()=>{
- assert.match(checkout,/analyticsRecordedRef\.current/);assert.match(checkout,/item_count:availableItems\.length,store_count:targets\.length/);assert.doesNotMatch(service,/postal_code|recipient_name|shipping_address/);
+ assert.match(checkout,/analyticsRecordedRef\.current/);assert.match(checkout,/item_count: availableItems\.length, store_count: targets\.length/);assert.doesNotMatch(service,/postal_code|recipient_name|shipping_address/);
 });
 test('analytics client failures are catch-and-continue',()=>{
  assert.match(service,/catch\(error\)/);assert.match(service,/event_record_failed/);assert.match(service,/return false/);assert.match(detail,/void recordAddToCart/);assert.match(checkout,/void recordCheckoutStarted/);

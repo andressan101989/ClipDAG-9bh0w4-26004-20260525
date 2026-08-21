@@ -391,8 +391,8 @@ test("normal Marketplace and B7B Showcase paths remain structurally unchanged", 
 });
 
 test("checkout remains surface-agnostic and selects creator-aware reservation by opaque attribution", () => {
-  assert.match(checkout,/some\(item=>Boolean\(item\.attributionId\)\)/);
-  assert.match(checkout,/hasCreatorAttribution\?createCreatorCheckoutReservation:createCheckoutReservation/);
+  assert.match(checkout,/some\(\(item\) => Boolean\(item\.attributionId\)\)/);
+  assert.match(checkout,/hasCreatorAttribution[\s\S]*createCreatorCheckoutReservation[\s\S]*createCheckoutReservation/);
   assert.doesNotMatch(checkout,/contentProductTagId|showcaseItemId/);
 });
 

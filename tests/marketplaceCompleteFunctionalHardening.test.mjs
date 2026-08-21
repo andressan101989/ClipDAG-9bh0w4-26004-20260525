@@ -20,9 +20,9 @@ test("LIVE checkout exposes the complete in-session purchase state machine", () 
 });
 
 test("normal LIVE checkout presents review and payment rather than a reservation task", () => {
-  assert.match(shipping, /label="Revisar pedido"/);
-  assert.match(review, /Revisa y paga tu pedido/);
-  assert.match(review, /label="Pagar ahora"/);
+  assert.match(shipping, /label="Continuar al método de envío"/);
+  assert.match(review, /Resumen del pedido/);
+  assert.match(review, /label=\{`Confirmar compra/);
   assert.doesNotMatch(review, /Ver reserva/);
   assert.doesNotMatch(viewer, /onOpenReservation/);
 });

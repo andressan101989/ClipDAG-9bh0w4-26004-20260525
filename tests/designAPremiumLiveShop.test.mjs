@@ -22,7 +22,7 @@ const commerce = read("components/design/Commerce.tsx");
 const rail = read("components/live/shop/LiveProductRail.tsx")+read("components/live/commerce/LiveFeaturedProductCard.tsx");
 const bag = read("components/live/shop/LiveProductBagSheet.tsx");
 const variant = read("components/live/shop/LiveVariantSelector.tsx");
-const shipping = read("components/live/shop/LiveShippingForm.tsx");
+const shipping = read("components/live/shop/LiveShippingForm.tsx")+read("components/marketplace/CheckoutShippingAddressForm.tsx");
 const reservation = read("components/live/shop/LiveReservationSummary.tsx");
 const success = read("components/live/shop/LivePurchaseSuccess.tsx");
 const host = read("components/live/shop/LiveHostShopManager.tsx");
@@ -137,7 +137,7 @@ test("quick-buy stages provide inline delivery reservation and success presentat
   ])
     assert.match(shipping, new RegExp(marker));
   for (const marker of [
-    "Tiempo restante",
+    "remaining",
     "Saldo disponible",
     "Protección Marketplace",
     "Cancelar compra pendiente",

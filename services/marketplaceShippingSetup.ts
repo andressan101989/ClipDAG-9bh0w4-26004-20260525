@@ -10,6 +10,7 @@ const SPANISH_FALLBACK: Record<string, string> = {
   CA: "Canadá",
   CL: "Chile",
   CO: "Colombia",
+  DO: "República Dominicana",
   ES: "España",
   FR: "Francia",
   GB: "Reino Unido",
@@ -18,18 +19,25 @@ const SPANISH_FALLBACK: Record<string, string> = {
   US: "Estados Unidos",
   VE: "Venezuela",
 };
-const displayNames =
-  typeof Intl !== "undefined" && "DisplayNames" in Intl
-    ? new Intl.DisplayNames(["es"], { type: "region" })
-    : null;
+const displayNames = (() => {
+  try {
+    return typeof Intl !== "undefined" && "DisplayNames" in Intl
+      ? new Intl.DisplayNames(["es"], { type: "region" })
+      : null;
+  } catch {
+    return null;
+  }
+})();
+const localizedCountryLabel = (code: string) =>
+  SPANISH_FALLBACK[code] ?? displayNames?.of(code) ?? "País no disponible";
 export const MARKETPLACE_SHIPPING_COUNTRIES = ISO_COUNTRY_CODES.map((code) => ({
   code,
-  label: SPANISH_FALLBACK[code] ?? displayNames?.of(code) ?? code,
+  label: localizedCountryLabel(code),
   requiresCanonicalRegion: code === "US" || code === "CA",
 })).sort((a, b) => a.label.localeCompare(b.label, "es"));
 export const shippingCountryLabel = (code: string) =>
   MARKETPLACE_SHIPPING_COUNTRIES.find((item) => item.code === code)?.label ??
-  code;
+  "País no disponible";
 export const searchShippingCountries = (query: string) =>
   MARKETPLACE_SHIPPING_COUNTRIES.filter((item) =>
     item.label

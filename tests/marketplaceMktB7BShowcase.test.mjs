@@ -136,7 +136,7 @@ test("normal repeat of an attributed line preserves creator credit", () => {
 });
 
 test("checkout selects creator-aware RPC only when one or more items carry attribution", () => {
-  assert.match(checkout, /some\(item=>Boolean\(item\.attributionId\)\)/);
-  assert.match(checkout, /hasCreatorAttribution\?createCreatorCheckoutReservation:createCheckoutReservation/);
-  assert.match(checkout, /attributionId:item\.attributionId/);
+  assert.match(checkout, /some\(\(item\) => Boolean\(item\.attributionId\)\)/);
+  assert.match(checkout, /hasCreatorAttribution[\s\S]*createCreatorCheckoutReservation[\s\S]*createCheckoutReservation/);
+  assert.match(checkout, /attributionId: item\.attributionId/);
 });

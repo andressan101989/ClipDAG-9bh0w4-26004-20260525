@@ -1,30 +1,23 @@
 import React from "react";
-import { ScrollView, StyleSheet, TextInput, View } from "react-native";
+import { ScrollView, StyleSheet, View } from "react-native";
 import { LoadingButton, OnSpaceText } from "@/components/design";
-import { colors, radii, spacing } from "@/design";
+import { CheckoutShippingAddressForm } from "@/components/marketplace/CheckoutShippingAddressForm";
+import { spacing } from "@/design";
 import type { ShippingAddressInput } from "@/services/marketplaceOrderService";
-
-const fields: [keyof ShippingAddressInput, string, string][] = [
-  ["recipientName", "Persona que recibe", "Nombre completo"],
-  ["line1", "Dirección", "Calle y número"],
-  ["city", "Ciudad", "Ciudad"],
-  ["region", "Estado o provincia", "Región"],
-  ["postalCode", "Código postal", "Código postal"],
-  ["country", "País", "País"],
-  ["phone", "Teléfono", "Opcional"],
-];
 export function LiveShippingForm({
   value,
   errors = {},
   busy,
   onChange,
   onSubmit,
+  shippingMethod,
 }: {
   value: ShippingAddressInput;
   errors?: Partial<Record<keyof ShippingAddressInput, string>>;
   busy: boolean;
   onChange: (value: ShippingAddressInput) => void;
   onSubmit: () => void;
+  shippingMethod?: React.ReactNode;
 }) {
   return (
     <ScrollView
@@ -34,31 +27,20 @@ export function LiveShippingForm({
       showsVerticalScrollIndicator={false}
     >
       <View>
-        <OnSpaceText variant="headingMedium">¿Dónde lo entregamos?</OnSpaceText>
+        <OnSpaceText variant="headingMedium">Dirección de envío</OnSpaceText>
         <OnSpaceText variant="bodySmall" color="textSecondary">
-          Tu dirección se protege dentro del pedido y no se comparte en el LIVE.
+          Tus datos de entrega se protegen dentro del pedido y no se muestran en el LIVE.
         </OnSpaceText>
       </View>
-      {fields.map(([key, label, placeholder]) => (
-        <View key={key} style={styles.field}>
-          <OnSpaceText variant="label" color="textSecondary">
-            {label}
-          </OnSpaceText>
-          <TextInput
-            accessibilityLabel={label}
-            value={value[key] ?? ""}
-            placeholder={placeholder}
-            placeholderTextColor={colors.textMuted}
-            onChangeText={(text) => onChange({ ...value, [key]: text })}
-            style={[styles.input, errors[key] && styles.inputError]}
-          />
-          <OnSpaceText variant="caption" color="textDanger">
-            {errors[key] ?? " "}
-          </OnSpaceText>
+      <CheckoutShippingAddressForm value={value} errors={errors} onChange={onChange} />
+      {shippingMethod ? (
+        <View style={styles.shippingSection}>
+          <OnSpaceText variant="headingSmall">Método de envío</OnSpaceText>
+          {shippingMethod}
         </View>
-      ))}
+      ) : null}
       <LoadingButton
-        label="Revisar pedido"
+        label="Continuar al método de envío"
         variant="commerce"
         size="large"
         loading={busy}
@@ -69,16 +51,5 @@ export function LiveShippingForm({
 }
 const styles = StyleSheet.create({
   content: { gap: spacing.md, paddingBottom: spacing.jumbo },
-  field: { gap: spacing.xs },
-  input: {
-    minHeight: 52,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.borderSubtle,
-    backgroundColor: colors.backgroundElevated,
-    paddingHorizontal: spacing.lg,
-    color: colors.textPrimary,
-    fontSize: 16,
-  },
-  inputError: { borderColor: colors.textDanger },
+  shippingSection: { gap: spacing.sm },
 });

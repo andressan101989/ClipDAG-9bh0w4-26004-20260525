@@ -14,6 +14,7 @@ import {
   quoteMarketplaceShipping,
   type MarketplaceShippingQuote,
 } from "@/services/marketplaceShippingService";
+import { shippingCountryLabel } from "@/services/marketplaceShippingSetup";
 
 export type MarketplaceShippingQuoteState = {
   status: "idle" | "loading" | "ready" | "error";
@@ -27,6 +28,7 @@ export function MarketplaceShippingQuoteCard({
   regionCode,
   onChange,
   onRequestAddress,
+  selectionMode = false,
 }: {
   productId: string;
   quantity: number;
@@ -34,6 +36,7 @@ export function MarketplaceShippingQuoteCard({
   regionCode?: string | null;
   onChange?: (state: MarketplaceShippingQuoteState) => void;
   onRequestAddress?: () => void;
+  selectionMode?: boolean;
 }) {
   const [state, setState] = useState<MarketplaceShippingQuoteState>({
       status: "idle",
@@ -80,7 +83,15 @@ export function MarketplaceShippingQuoteCard({
     void load();
   }, [load]);
   return (
-    <View style={styles.card} accessibilityLabel="Disponibilidad de envío">
+    <View
+      style={[styles.card, selectionMode && styles.selectionCard]}
+      accessibilityRole={selectionMode ? "radio" : undefined}
+      accessibilityState={selectionMode ? { checked: state.status === "ready" } : undefined}
+      accessibilityLabel="Método de envío"
+    >
+      {selectionMode ? (
+        <View style={[styles.radio, state.status === "ready" && styles.radioSelected]} />
+      ) : null}
       <MaterialCommunityIcons
         name="truck-fast-outline"
         size={20}
@@ -109,7 +120,7 @@ export function MarketplaceShippingQuoteCard({
             </Text>
             <Text style={styles.destination}>
               {state.quote.shippingAmount.toFixed(2)} BDAG ·{" "}
-              {state.quote.countryCode}
+              {shippingCountryLabel(state.quote.countryCode ?? "")}
               {state.quote.regionCode ? ` / ${state.quote.regionCode}` : ""}
             </Text>
           </>
@@ -143,6 +154,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 6,
     gap: Spacing.sm,
+  },
+  selectionCard: {
+    minHeight: 72,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surface,
+  },
+  radio: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: Colors.textSubtle,
+  },
+  radioSelected: {
+    borderWidth: 5,
+    borderColor: Colors.primary,
   },
   copy: { flex: 1, minWidth: 0 },
   row: { flexDirection: "row", alignItems: "center", gap: Spacing.sm },

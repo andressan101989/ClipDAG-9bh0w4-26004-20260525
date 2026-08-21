@@ -3,13 +3,13 @@ import {readFileSync} from "node:fs";
 import test from "node:test";
 import {MARKETPLACE_SHIPPING_COUNTRIES,shippingRegionsForCountry} from "../services/marketplaceShippingSetup.ts";
 import {cartesianVariantValues} from "../services/marketplaceVariantDraft.ts";
-const checkout=readFileSync("app/checkout.tsx","utf8"),product=readFileSync("app/product/[id].tsx","utf8"),gallery=readFileSync("components/marketplace/product-detail/ProductMediaGallery.tsx","utf8"),seller=readFileSync("app/seller/product/[id]/variants.tsx","utf8"),picker=readFileSync("services/marketplaceMediaPickerService.ts","utf8"),migration=readFileSync("supabase/migrations/20260808150000_expose_public_marketplace_product_media.sql","utf8");
+const checkout=readFileSync("app/checkout.tsx","utf8"),checkoutAddress=readFileSync("components/marketplace/CheckoutShippingAddressForm.tsx","utf8"),product=readFileSync("app/product/[id].tsx","utf8"),gallery=readFileSync("components/marketplace/product-detail/ProductMediaGallery.tsx","utf8"),seller=readFileSync("app/seller/product/[id]/variants.tsx","utf8"),picker=readFileSync("services/marketplaceMediaPickerService.ts","utf8"),migration=readFileSync("supabase/migrations/20260808150000_expose_public_marketplace_product_media.sql","utf8");
 
 test("checkout uses friendly country and canonical US/CA region selectors",()=>{
  assert.equal(MARKETPLACE_SHIPPING_COUNTRIES.find(x=>x.label==="Venezuela")?.code,"VE");
  assert.equal(shippingRegionsForCountry("US").find(x=>x[1]==="Florida")?.[0],"FL");
  assert.equal(shippingRegionsForCountry("CA").find(x=>x[1]==="Ontario")?.[0],"ON");
- assert.match(checkout,/SearchableSelectField/);assert.match(checkout,/country,\s*region:["']{2}/);assert.match(checkout,/countryCode=\{address\.country\}/);assert.match(checkout,/regionCode=\{address\.region\}/);
+ assert.match(checkout,/CheckoutShippingAddressForm/);assert.match(checkoutAddress,/SearchableSelectField/);assert.match(checkoutAddress,/country,\s*region:\s*""/);assert.match(checkout,/countryCode=\{address\.country\}/);assert.match(checkout,/regionCode=\{address\.region\}/);
 });
 test("public media projection is exact-product ready public and publication gated",()=>{
  for(const token of ["l.entity_id=p.id","a.status='ready'","a.visibility='public'","product_video","p.status='active'","p.moderation_status='approved'"])assert.match(migration,new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));

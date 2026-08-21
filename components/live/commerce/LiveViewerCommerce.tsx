@@ -93,6 +93,10 @@ type Reservation = {
   status: string;
   expiresAt: string;
   total: number;
+  subtotal: number;
+  shippingAmount: number;
+  shippingDaysMin: number | null;
+  shippingDaysMax: number | null;
   orderId: string | null;
 };
 const EMPTY_ADDRESS: ShippingAddressInput = {
@@ -101,8 +105,8 @@ const EMPTY_ADDRESS: ShippingAddressInput = {
   city: "",
   region: "",
   postalCode: "",
-  country: "",
-  phone: "",
+  country: "US",
+  phone: undefined,
 };
 const stageTitle: Record<Stage, string> = {
   bag: "Productos del LIVE",
@@ -292,6 +296,13 @@ export function LiveViewerCommerce({
         status: active.status,
         expiresAt: active.expiresAt,
         total: active.total,
+        subtotal: active.items.reduce((sum, item) => sum + item.lineTotal, 0),
+        shippingAmount: Math.max(
+          0,
+          active.total - active.items.reduce((sum, item) => sum + item.lineTotal, 0),
+        ),
+        shippingDaysMin: null,
+        shippingDaysMax: null,
         orderId: active.orderId,
       });
       paymentKey.current = randomUUID();
@@ -427,12 +438,21 @@ export function LiveViewerCommerce({
         });
       pendingCommand.current = null;
       paymentKey.current = randomUUID();
+      const frozenShipping = result.orders[0]?.frozenShipping[0];
       setReservation({
         id: result.checkout.id,
         reference: result.checkout.reference,
         status: result.checkout.status,
         expiresAt: result.checkout.expiresAt,
         total: result.checkout.total,
+        subtotal: result.checkout.subtotal,
+        shippingAmount: result.checkout.shippingAmount,
+        shippingDaysMin: frozenShipping
+          ? frozenShipping.processingDaysMin + frozenShipping.transitDaysMin
+          : null,
+        shippingDaysMax: frozenShipping
+          ? frozenShipping.processingDaysMax + frozenShipping.transitDaysMax
+          : null,
         orderId: result.orders[0]?.id ?? null,
       });
       await refreshBalance();
@@ -737,11 +757,9 @@ export function LiveViewerCommerce({
                 onPress={() => setStage("bag")}
               />
               <View style={styles.title}>
-                <OnSpaceText variant="headingSmall">
-                  {stageTitle[stage]}
-                </OnSpaceText>
+                <OnSpaceText variant="headingSmall">Checkout · EN VIVO</OnSpaceText>
                 <OnSpaceText variant="caption" color="textMuted">
-                  Compra sin salir del LIVE
+                  {stageTitle[stage]} · Compra sin salir del LIVE
                 </OnSpaceText>
               </View>
               <IconButton
@@ -797,12 +815,23 @@ export function LiveViewerCommerce({
                     pendingCommand.current = null;
                   }}
                   onSubmit={() => void reserve()}
-                /><MarketplaceShippingQuoteCard productId={pin?.productId??''} quantity={quantity} countryCode={address.country} regionCode={address.region} onChange={setShippingQuote}/></>
+                  shippingMethod={<MarketplaceShippingQuoteCard productId={pin?.productId??''} quantity={quantity} countryCode={address.country} regionCode={address.region} selectionMode onChange={setShippingQuote}/>}
+                /></>
               ) : stage === "review" && reservation ? (
                 <LiveReservationSummary
                   reference={reservation.reference}
                   total={reservation.total}
+                  subtotal={reservation.subtotal}
+                  shippingAmount={reservation.shippingAmount}
                   balance={balance}
+                  productTitle={detail?.product.title ?? pin?.title ?? "Producto del LIVE"}
+                  storeName={pin?.storeName ?? "OnSpace LIVE"}
+                  imageUrl={variant?.image_url ?? detail?.product.images[0] ?? pin?.imageUrl ?? null}
+                  quantity={quantity}
+                  unitPrice={variant?.price ?? 0}
+                  address={address}
+                  shippingDaysMin={reservation.shippingDaysMin}
+                  shippingDaysMax={reservation.shippingDaysMax}
                   remaining={remaining}
                   terminal={feedback}
                   busy={busy}

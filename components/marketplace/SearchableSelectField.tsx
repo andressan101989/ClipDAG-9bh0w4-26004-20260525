@@ -45,6 +45,7 @@ export function SearchableSelectField({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`${label}: ${selected?.label ?? "Seleccionar"}`}
+        accessibilityState={{ expanded: open }}
         style={styles.field}
         onPress={() => setOpen(true)}
       >
@@ -84,6 +85,9 @@ export function SearchableSelectField({
             renderItem={({ item }) => (
               <Pressable
                 style={styles.option}
+                accessibilityRole="button"
+                accessibilityLabel={item.label}
+                accessibilityState={{ selected: item.value === value }}
                 onPress={() => {
                   onChange(item.value);
                   setSearch("");
