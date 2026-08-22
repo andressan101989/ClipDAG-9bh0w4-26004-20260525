@@ -57,13 +57,22 @@ const allocationStatuses = ["held", "released", "refunded", "partially_refunded"
 const disputeStatuses = ["open", "under_review", "resolved", "rejected", "cancelled"];
 const disputeOutcomes = ["refund_buyer", "release_seller", "reject_claim"];
 
-const sellerHistoryStateIsCompatible = (orderStatus, paymentStatus, allocationStatus) =>
+const sellerHistoryStateIsCompatible = (
+  orderStatus,
+  paymentStatus,
+  allocationStatus,
+  hasCanonicalCompletedSettlement,
+) =>
   (["confirmed", "processing", "shipped", "cancelled"].includes(orderStatus) &&
     paymentStatus === "paid" &&
     allocationStatus === "held") ||
   (orderStatus === "delivered" &&
     paymentStatus === "paid" &&
     allocationStatus === "released") ||
+  (orderStatus === "shipped" &&
+    paymentStatus === "paid" &&
+    allocationStatus === "released" &&
+    hasCanonicalCompletedSettlement) ||
   (orderStatus === "refunded" &&
     ["paid", "refunded"].includes(paymentStatus) &&
     allocationStatus === "refunded") ||
@@ -215,9 +224,79 @@ export function parseMarketplaceOrderDetailPayload(value) {
   const allocationStatus = rawAllocation
     ? enumeration(rawAllocation.status, allocationStatuses, "order_detail.allocation.status")
     : null;
+  const parsedAllocation = rawAllocation
+    ? {
+        grossAmount: number(rawAllocation.gross_amount, "order_detail.allocation.gross_amount"),
+        platformFeeAmount: number(
+          rawAllocation.platform_fee_amount,
+          "order_detail.allocation.platform_fee_amount",
+        ),
+        sellerNetAmount: number(
+          rawAllocation.seller_net_amount,
+          "order_detail.allocation.seller_net_amount",
+        ),
+        status: allocationStatus,
+        releasedAt: nullableTimestamp(
+          rawAllocation.released_at,
+          "order_detail.allocation.released_at",
+        ),
+      }
+    : null;
+  const parsedSettlement = rawSettlement
+    ? {
+        status: string(rawSettlement.status, "order_detail.settlement.status"),
+        grossAmount: number(
+          rawSettlement.gross_amount,
+          "order_detail.settlement.gross_amount",
+        ),
+        sellerNetAmount:
+          rawSettlement.seller_net_amount == null
+            ? null
+            : number(
+                rawSettlement.seller_net_amount,
+                "order_detail.settlement.seller_net_amount",
+              ),
+        platformFeeAmount:
+          rawSettlement.platform_fee_amount == null
+            ? null
+            : number(
+                rawSettlement.platform_fee_amount,
+                "order_detail.settlement.platform_fee_amount",
+              ),
+        confirmedAt: timestamp(
+          rawSettlement.confirmed_at,
+          "order_detail.settlement.confirmed_at",
+        ),
+        releasedAt: timestamp(
+          rawSettlement.released_at,
+          "order_detail.settlement.released_at",
+        ),
+        sellerBdagBalance:
+          rawSettlement.seller_bdag_balance == null
+            ? null
+            : number(
+                rawSettlement.seller_bdag_balance,
+                "order_detail.settlement.seller_bdag_balance",
+              ),
+      }
+    : null;
+  const hasCanonicalCompletedSettlement =
+    parsedAllocation != null &&
+    parsedSettlement != null &&
+    parsedSettlement.status === "completed" &&
+    parsedSettlement.sellerNetAmount != null &&
+    parsedSettlement.platformFeeAmount != null &&
+    parsedSettlement.grossAmount === parsedAllocation.grossAmount &&
+    parsedSettlement.sellerNetAmount === parsedAllocation.sellerNetAmount &&
+    parsedSettlement.platformFeeAmount === parsedAllocation.platformFeeAmount;
   if (
     allocationStatus &&
-    !sellerHistoryStateIsCompatible(orderStatus, paymentStatus, allocationStatus)
+    !sellerHistoryStateIsCompatible(
+      orderStatus,
+      paymentStatus,
+      allocationStatus,
+      hasCanonicalCompletedSettlement,
+    )
   )
     fail("order_detail.allocation.status");
   return {
@@ -260,62 +339,8 @@ export function parseMarketplaceOrderDetailPayload(value) {
       status: paymentStatus,
       paidAt: timestamp(payment.paid_at, "order_detail.payment.paid_at"),
     },
-    allocation: rawAllocation
-      ? {
-          grossAmount: number(rawAllocation.gross_amount, "order_detail.allocation.gross_amount"),
-          platformFeeAmount: number(
-            rawAllocation.platform_fee_amount,
-            "order_detail.allocation.platform_fee_amount",
-          ),
-          sellerNetAmount: number(
-            rawAllocation.seller_net_amount,
-            "order_detail.allocation.seller_net_amount",
-          ),
-          status: allocationStatus,
-          releasedAt: nullableTimestamp(
-            rawAllocation.released_at,
-            "order_detail.allocation.released_at",
-          ),
-        }
-      : null,
-    settlement: rawSettlement
-      ? {
-          status: string(rawSettlement.status, "order_detail.settlement.status"),
-          grossAmount: number(
-            rawSettlement.gross_amount,
-            "order_detail.settlement.gross_amount",
-          ),
-          sellerNetAmount:
-            rawSettlement.seller_net_amount == null
-              ? null
-              : number(
-                  rawSettlement.seller_net_amount,
-                  "order_detail.settlement.seller_net_amount",
-                ),
-          platformFeeAmount:
-            rawSettlement.platform_fee_amount == null
-              ? null
-              : number(
-                  rawSettlement.platform_fee_amount,
-                  "order_detail.settlement.platform_fee_amount",
-                ),
-          confirmedAt: timestamp(
-            rawSettlement.confirmed_at,
-            "order_detail.settlement.confirmed_at",
-          ),
-          releasedAt: timestamp(
-            rawSettlement.released_at,
-            "order_detail.settlement.released_at",
-          ),
-          sellerBdagBalance:
-            rawSettlement.seller_bdag_balance == null
-              ? null
-              : number(
-                  rawSettlement.seller_bdag_balance,
-                  "order_detail.settlement.seller_bdag_balance",
-                ),
-        }
-      : null,
+    allocation: parsedAllocation,
+    settlement: parsedSettlement,
     shippingAddress: {
       recipientName: string(address.recipient_name, "order_detail.shipping_address.recipient_name"),
       line1: string(address.line1, "order_detail.shipping_address.line1"),
