@@ -210,7 +210,7 @@ export default function SellerOrders() {
           renderItem={({ item }) => (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Ver pedido ${item.orderNumber}${item.activeDispute ? item.activeDispute.status === "open" ? ". Este pedido tiene una disputa abierta" : ". Este pedido tiene una disputa en revisión" : ""}`}
+              accessibilityLabel={`Ver pedido ${item.orderNumber}${item.activeDispute ? item.activeDispute.status === "open" ? ". Este pedido tiene una disputa abierta" : ". Este pedido tiene una disputa en revisión" : ""}${item.activeReturnRequest ? ". Este pedido tiene una solicitud de devolución pendiente" : ""}`}
               style={[s.card, compact && s.cardCompact]}
               onPress={() => router.push(`/seller/orders/${item.id}` as never)}
             >
@@ -243,6 +243,14 @@ export default function SellerOrders() {
                     <Text style={s.disputeText} numberOfLines={1}>
                       {item.activeDispute.status === "open" ? "Disputa abierta" : "Disputa en revisión"}
                       {item.activeDispute.sellerResponseSubmitted ? " · Respondida" : " · Respuesta pendiente"}
+                    </Text>
+                  </View>
+                ) : null}
+                {item.activeReturnRequest ? (
+                  <View style={s.disputeAlert}>
+                    <View style={s.disputeDot} />
+                    <Text style={s.disputeText} numberOfLines={1}>
+                      Solicitud de devolución · Decisión pendiente
                     </Text>
                   </View>
                 ) : null}

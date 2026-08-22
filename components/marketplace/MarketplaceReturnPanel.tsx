@@ -28,6 +28,8 @@ const messageFor = (error: unknown) => {
     return "Ya existe una solicitud de devolución para este pedido.";
   if (code === "marketplace_return_already_decided")
     return "La solicitud ya fue decidida. Actualiza el pedido para ver el estado.";
+  if (code === "marketplace_return_approval_funding_required")
+    return "La devolución todavía no puede aceptarse porque los fondos del reembolso no están asegurados.";
   if (code === "marketplace_fulfillment_outcome_unknown")
     return "No pudimos confirmar el resultado. Actualiza el pedido antes de volver a intentarlo.";
   return "No pudimos completar la operación. Revisa los datos e inténtalo nuevamente.";
@@ -168,6 +170,9 @@ export function MarketplaceReturnPanel({
           ) : null}
           {role === "seller" && current.status === "requested" ? (
             <>
+              <Text style={styles.warning}>
+                Aceptar estará disponible cuando la app pueda asegurar los fondos del reembolso.
+              </Text>
               <TextInput
                 accessibilityLabel="Nota para el comprador"
                 value={sellerNote}
@@ -182,9 +187,9 @@ export function MarketplaceReturnPanel({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Aceptar devolución"
-                  accessibilityState={{ disabled: busy }}
-                  disabled={busy}
-                  style={[styles.actionButton, styles.approveButton]}
+                  accessibilityState={{ disabled: true }}
+                  disabled
+                  style={[styles.actionButton, styles.approveButton, styles.disabledButton]}
                   onPress={() => confirmDecision("approve")}
                 >
                   <Text style={styles.primaryText}>Aceptar devolución</Text>
@@ -203,9 +208,16 @@ export function MarketplaceReturnPanel({
             </>
           ) : null}
           {role === "seller" && current.status !== "requested" ? (
-            <Text style={styles.title}>
-              {current.status === "approved" ? "Devolución aceptada" : "Devolución rechazada"}
-            </Text>
+            <>
+              <Text style={styles.title}>
+                {current.status === "approved" ? "Devolución aceptada" : "Devolución rechazada"}
+              </Text>
+              {current.status === "approved" ? (
+                <Text style={styles.warning}>
+                  Los fondos del reembolso todavía no están retenidos.
+                </Text>
+              ) : null}
+            </>
           ) : null}
         </>
       ) : null}
@@ -247,6 +259,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
   },
   approveButton: { backgroundColor: Colors.primary },
+  disabledButton: { opacity: 0.45 },
   rejectButton: { backgroundColor: Colors.error },
   primaryButton: {
     minHeight: 48,

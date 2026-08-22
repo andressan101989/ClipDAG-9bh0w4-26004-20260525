@@ -8,6 +8,7 @@ import {
   parseMarketplaceReturnMutationReceipt,
   parseSellerOrderListPayload,
   parseSellerDisputeIndexPayload,
+  parseSellerReturnIndexPayload,
 } from "@/services/marketplaceFulfillmentParsers.mjs";
 import { reconcileFulfillmentMutation } from "@/services/marketplaceFulfillmentMutationCore.mjs";
 
@@ -96,6 +97,11 @@ export interface MarketplaceOrderListItem {
     createdAt: string;
     sellerResponseSubmitted: boolean;
   } | null;
+  activeReturnRequest?: {
+    id: string;
+    status: "requested";
+    createdAt: string;
+  } | null;
 }
 export interface MarketplaceSellerDisputeSummary {
   id: string;
@@ -116,6 +122,23 @@ export interface MarketplaceSellerDisputePage {
   openCount: number;
   underReviewCount: number;
   disputes: MarketplaceSellerDisputeSummary[];
+  nextCursor: { createdAt: string; id: string } | null;
+}
+export interface MarketplaceSellerReturnSummary {
+  id: string;
+  status: "requested";
+  createdAt: string;
+  orderId: string;
+  orderNumber: string;
+  orderStatus: MarketplaceOrderStatus;
+  storeId: string;
+  storeName: string;
+}
+export interface MarketplaceSellerReturnPage {
+  attentionCount: number;
+  requestedCount: number;
+  approvedCount: number;
+  returns: MarketplaceSellerReturnSummary[];
   nextCursor: { createdAt: string; id: string } | null;
 }
 export interface MarketplaceOrderDetail {
@@ -239,6 +262,7 @@ export type MarketplaceFulfillmentErrorCode =
   | "marketplace_return_decision_invalid_input"
   | "marketplace_return_decision_idempotency_conflict"
   | "marketplace_return_already_decided"
+  | "marketplace_return_approval_funding_required"
   | "marketplace_fulfillment_unknown";
 
 export class MarketplaceFulfillmentError extends Error {
@@ -387,6 +411,28 @@ export async function fetchSellerDisputes(
   return parse("seller_dispute_list_parser", () =>
     parseSellerDisputeIndexPayload(response, limit),
   ) as MarketplaceSellerDisputePage;
+}
+
+export async function fetchSellerReturns(
+  filters: {
+    limit?: number;
+    cursor?: { createdAt: string; id: string };
+  } = {},
+): Promise<MarketplaceSellerReturnPage> {
+  const limit = Math.min(50, Math.max(1, filters.limit ?? 20));
+  const cursor = validCursor(filters.cursor);
+  const response = await rpc(
+    "fetch_my_marketplace_returns",
+    {
+      p_limit: limit,
+      p_before_created_at: cursor?.createdAt ?? null,
+      p_before_id: cursor?.id ?? null,
+    },
+    "seller_return_list_rpc",
+  );
+  return parse("seller_return_list_parser", () =>
+    parseSellerReturnIndexPayload(response, limit),
+  ) as MarketplaceSellerReturnPage;
 }
 
 async function fetchBuyerOrderBase(id: string): Promise<MarketplaceOrderDetail> {

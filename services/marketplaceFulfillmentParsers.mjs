@@ -169,6 +169,10 @@ export function parseSellerOrderListPayload(value, effectiveLimit) {
       row.active_dispute == null
         ? null
         : object(row.active_dispute, `orders[${index}].active_dispute`);
+    const activeReturnRequest =
+      row.active_return_request == null
+        ? null
+        : object(row.active_return_request, `orders[${index}].active_return_request`);
     return {
       ...item,
       firstItemTitle: nullableString(
@@ -216,6 +220,23 @@ export function parseSellerOrderListPayload(value, effectiveLimit) {
             sellerResponseSubmitted: boolean(
               activeDispute.seller_response_submitted,
               `orders[${index}].active_dispute.seller_response_submitted`,
+            ),
+          }
+        : null,
+      activeReturnRequest: activeReturnRequest
+        ? {
+            id: uuid(
+              activeReturnRequest.id,
+              `orders[${index}].active_return_request.id`,
+            ),
+            status: enumeration(
+              activeReturnRequest.status,
+              ["requested"],
+              `orders[${index}].active_return_request.status`,
+            ),
+            createdAt: timestamp(
+              activeReturnRequest.created_at,
+              `orders[${index}].active_return_request.created_at`,
             ),
           }
         : null,
@@ -291,6 +312,69 @@ export function parseSellerDisputeIndexPayload(value, effectiveLimit) {
       ? {
           createdAt: timestamp(rawCursor.created_at, "seller_disputes.next_cursor.created_at"),
           id: uuid(rawCursor.id, "seller_disputes.next_cursor.id"),
+        }
+      : null,
+  };
+}
+
+export function parseSellerReturnIndexPayload(value, effectiveLimit) {
+  const root = object(value, "seller_returns");
+  const returns = array(root.returns, "seller_returns.returns").map((entry, index) => {
+    const row = object(entry, `seller_returns.returns[${index}]`);
+    return {
+      id: uuid(row.return_id, `seller_returns.returns[${index}].return_id`),
+      status: enumeration(
+        row.status,
+        ["requested"],
+        `seller_returns.returns[${index}].status`,
+      ),
+      createdAt: timestamp(
+        row.created_at,
+        `seller_returns.returns[${index}].created_at`,
+      ),
+      orderId: uuid(row.order_id, `seller_returns.returns[${index}].order_id`),
+      orderNumber: string(
+        row.order_number,
+        `seller_returns.returns[${index}].order_number`,
+      ),
+      orderStatus: enumeration(
+        row.order_status,
+        orderStatuses,
+        `seller_returns.returns[${index}].order_status`,
+      ),
+      storeId: uuid(row.store_id, `seller_returns.returns[${index}].store_id`),
+      storeName: string(
+        row.store_name,
+        `seller_returns.returns[${index}].store_name`,
+      ),
+    };
+  });
+  if (
+    returns.length > effectiveLimit ||
+    new Set(returns.map((row) => row.id)).size !== returns.length
+  )
+    fail("seller_returns.returns");
+  const attentionCount = integer(root.attention_count, "seller_returns.attention_count");
+  const requestedCount = integer(root.requested_count, "seller_returns.requested_count");
+  const approvedCount = integer(root.approved_count, "seller_returns.approved_count");
+  if (attentionCount !== requestedCount || returns.length > attentionCount)
+    fail("seller_returns.attention_count");
+  const rawCursor =
+    root.next_cursor == null
+      ? null
+      : object(root.next_cursor, "seller_returns.next_cursor");
+  return {
+    attentionCount,
+    requestedCount,
+    approvedCount,
+    returns,
+    nextCursor: rawCursor
+      ? {
+          createdAt: timestamp(
+            rawCursor.created_at,
+            "seller_returns.next_cursor.created_at",
+          ),
+          id: uuid(rawCursor.id, "seller_returns.next_cursor.id"),
         }
       : null,
   };

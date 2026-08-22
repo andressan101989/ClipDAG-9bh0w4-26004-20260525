@@ -25,7 +25,7 @@ export function marketplaceReturnStatusCopy(status: MarketplaceReturnStatus) {
   if (status === "approved")
     return {
       title: "Devolución aceptada",
-      body: "El siguiente paso será coordinar el envío de regreso.",
+      body: "Espera a que la app confirme que los fondos del reembolso están asegurados antes de enviar el producto.",
     };
   return {
     title: "Devolución rechazada por el vendedor",
