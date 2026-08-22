@@ -177,7 +177,7 @@ test("refund status labels and timeline events are explicit", () => {
   assert.match(statuses, /refunded:'Reembolsado'/);
   assert.match(statuses, /partially_refunded:'Reembolso parcial'/);
   assert.match(statuses, /dispute_opened:'Problema reportado'/);
-  assert.match(statuses, /refund_created:'Reembolso realizado'/);
+  assert.match(statuses, /refund_created:'Fondos reembolsados al comprador'/);
 });
 
 test("refunded detail cannot confirm delivery or open a second dispute", () => {
