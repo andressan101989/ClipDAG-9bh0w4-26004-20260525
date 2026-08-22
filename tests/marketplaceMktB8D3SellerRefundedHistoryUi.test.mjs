@@ -17,6 +17,7 @@ const migration = read("supabase/migrations/20260816022000_marketplace_seller_pu
 const buyerList = read("app/orders/index.tsx");
 const buyerDetail = read("app/orders/[id].tsx");
 const sellerDetail = read("app/seller/orders/[id].tsx");
+const sellerDispute = read("components/marketplace/MarketplaceSellerDisputePanel.tsx");
 const c6 = read("supabase/migrations/20260816021000_fix_marketplace_buyer_purchase_history_paid_evidence.sql");
 const remoteAudit = read("scripts/audit-marketplace-b8d3-c7-remote.mjs");
 const app = JSON.parse(read("app.json"));
@@ -137,8 +138,9 @@ test("refunded seller UI has no fulfillment action and shows dispute context", (
   assert.match(sellerDetail, /data\.order\.status==='confirmed'\?<[\s\S]*Preparar pedido/);
   assert.match(sellerDetail, /data\.order\.status==='processing'\?<[\s\S]*Marcar como enviado/);
   assert.doesNotMatch(sellerDetail, /data\.order\.status==='refunded'[\s\S]{0,160}(Preparar pedido|Marcar como enviado)/);
-  assert.match(sellerDetail, /marketplaceDisputeReasonLabel\(data\.dispute\.reasonCode\)/);
-  assert.match(sellerDetail, /marketplaceDisputeOutcomeMessage\(data\.dispute\)/);
+  assert.match(sellerDetail, /MarketplaceSellerDisputePanel order=\{data\}/);
+  assert.match(sellerDispute, /marketplaceDisputeReasonLabel\(dispute\.reasonCode\)/);
+  assert.match(sellerDispute, /statusLabels\[dispute\.status\]/);
 });
 
 test("known dispute reasons are safe user-readable Spanish labels", () => {

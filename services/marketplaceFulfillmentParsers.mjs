@@ -37,6 +37,11 @@ const nullableTimestamp = (value, path) => (value === null ? null : timestamp(va
 const enumeration = (value, values, path) =>
   typeof value === "string" && values.includes(value) ? value : fail(path);
 const boolean = (value, path) => (typeof value === "boolean" ? value : fail(path));
+const uniqueUuidArray = (value, path, max) => {
+  const result = array(value, path).map((entry, index) => uuid(entry, `${path}[${index}]`));
+  if (result.length > max || new Set(result).size !== result.length) fail(path);
+  return result;
+};
 
 const orderStatuses = [
   "confirmed",
@@ -392,6 +397,10 @@ export function mergeMarketplaceOrderLifecyclePayload(detail, value) {
       : object(root.shipping_snapshot, "order_lifecycle.shipping_snapshot");
   const rawDispute =
     root.dispute == null ? null : object(root.dispute, "order_lifecycle.dispute");
+  const rawSellerResponse =
+    rawDispute?.seller_response == null
+      ? null
+      : object(rawDispute.seller_response, "order_lifecycle.dispute.seller_response");
   const shippingAmount = number(root.shipping_amount, "order_lifecycle.shipping_amount");
   const snapshotHasValues =
     rawSnapshot != null &&
@@ -443,12 +452,17 @@ export function mergeMarketplaceOrderLifecyclePayload(detail, value) {
         : null,
     dispute: rawDispute
       ? {
+          id: uuid(rawDispute.id, "order_lifecycle.dispute.id"),
           status: enumeration(
             rawDispute.status,
             disputeStatuses,
             "order_lifecycle.dispute.status",
           ),
           reasonCode: string(rawDispute.reason_code, "order_lifecycle.dispute.reason_code"),
+          buyerNote: nullableString(
+            rawDispute.buyer_note,
+            "order_lifecycle.dispute.buyer_note",
+          ),
           createdAt: timestamp(rawDispute.created_at, "order_lifecycle.dispute.created_at"),
           outcome:
             rawDispute.outcome == null
@@ -458,6 +472,37 @@ export function mergeMarketplaceOrderLifecyclePayload(detail, value) {
                   disputeOutcomes,
                   "order_lifecycle.dispute.outcome",
                 ),
+          affectedItemIds: uniqueUuidArray(
+            rawDispute.affected_item_ids,
+            "order_lifecycle.dispute.affected_item_ids",
+            100,
+          ),
+          buyerEvidenceAssetIds: uniqueUuidArray(
+            rawDispute.buyer_evidence_asset_ids,
+            "order_lifecycle.dispute.buyer_evidence_asset_ids",
+            6,
+          ),
+          sellerResponse: rawSellerResponse
+            ? {
+                id: uuid(
+                  rawSellerResponse.id,
+                  "order_lifecycle.dispute.seller_response.id",
+                ),
+                note: nullableString(
+                  rawSellerResponse.note,
+                  "order_lifecycle.dispute.seller_response.note",
+                ),
+                createdAt: timestamp(
+                  rawSellerResponse.created_at,
+                  "order_lifecycle.dispute.seller_response.created_at",
+                ),
+                evidenceAssetIds: uniqueUuidArray(
+                  rawSellerResponse.evidence_asset_ids,
+                  "order_lifecycle.dispute.seller_response.evidence_asset_ids",
+                  6,
+                ),
+              }
+            : null,
         }
       : null,
   };

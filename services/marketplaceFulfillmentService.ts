@@ -139,10 +139,20 @@ export interface MarketplaceOrderDetail {
     returnPolicySummary: string;
   } | null;
   dispute: {
+    id: string;
     status: MarketplaceDisputeStatus;
     reasonCode: string;
+    buyerNote: string | null;
     createdAt: string;
     outcome: MarketplaceDisputeOutcome | null;
+    affectedItemIds: string[];
+    buyerEvidenceAssetIds: string[];
+    sellerResponse: {
+      id: string;
+      note: string | null;
+      createdAt: string;
+      evidenceAssetIds: string[];
+    } | null;
   } | null;
   postMutationRefreshFailed?: boolean;
 }
@@ -169,6 +179,13 @@ export type MarketplaceFulfillmentErrorCode =
   | "marketplace_fulfillment_idempotency_conflict"
   | "marketplace_fulfillment_transport"
   | "marketplace_fulfillment_outcome_unknown"
+  | "marketplace_dispute_not_found"
+  | "marketplace_dispute_not_owned"
+  | "marketplace_dispute_response_invalid_input"
+  | "marketplace_dispute_response_state_conflict"
+  | "marketplace_dispute_settlement_completed"
+  | "marketplace_dispute_response_idempotency_conflict"
+  | "marketplace_dispute_response_already_submitted"
   | "marketplace_fulfillment_unknown";
 
 export class MarketplaceFulfillmentError extends Error {
@@ -342,6 +359,56 @@ export async function fetchBuyerOrder(id: string) {
 
 export async function fetchSellerOrder(id: string) {
   return enrichLifecycle(await fetchSellerOrderBase(id), "seller_detail");
+}
+
+const sameOrderedValues = (left: string[], right: string[]) =>
+  left.length === right.length && left.every((value, index) => value === right[index]);
+
+export async function respondToMarketplaceDispute(
+  orderId: string,
+  disputeId: string,
+  note: string,
+  evidenceAssetIds: string[],
+  idempotencyKey: string,
+): Promise<MarketplaceOrderDetail> {
+  const expectedNote = note.trim() || null;
+  const provesCommitted = (value: MarketplaceOrderDetail) => {
+    const response = value.dispute?.sellerResponse;
+    return Boolean(
+      value.dispute?.id === disputeId &&
+        response &&
+        response.note === expectedNote &&
+        sameOrderedValues(response.evidenceAssetIds, evidenceAssetIds),
+    );
+  };
+  try {
+    await rpc(
+      "respond_to_marketplace_dispute",
+      {
+        p_dispute_id: disputeId,
+        p_seller_note: note,
+        p_evidence_asset_ids: evidenceAssetIds,
+        p_idempotency_key: idempotencyKey,
+      },
+      "seller_dispute_response_rpc",
+    );
+  } catch (error) {
+    if (!isAmbiguousMutationError(error)) throw error;
+    try {
+      const recovered = await fetchSellerOrder(orderId);
+      if (provesCommitted(recovered)) return recovered;
+    } catch {
+      // An ambiguous mutation outcome must never trigger evidence cleanup.
+    }
+    throw unknownOutcome();
+  }
+  try {
+    const canonical = await fetchSellerOrder(orderId);
+    if (provesCommitted(canonical)) return canonical;
+  } catch (error) {
+    diagnostic("seller_dispute_response_readback", error);
+  }
+  throw unknownOutcome();
 }
 
 const isAmbiguousMutationError = (error: unknown) =>

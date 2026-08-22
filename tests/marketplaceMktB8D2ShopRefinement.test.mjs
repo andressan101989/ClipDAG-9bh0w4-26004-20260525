@@ -185,9 +185,10 @@ test("Refinement preserves hardened commerce contracts across later authorized c
   );
   assert.equal(
     migrations.at(-1),
-    "20260821010000_marketplace_buyer_dispute_evidence_r1a.sql",
+    "20260821020000_marketplace_seller_dispute_defense_r1b.sql",
   );
   assert.ok(migrations.includes("20260820010000_fix_marketplace_checkout_order_image_snapshot.sql"));
+  assert.ok(migrations.includes("20260821010000_marketplace_buyer_dispute_evidence_r1a.sql"));
   assert.ok(migrations.includes("20260817011718_harden_buyer_financial_exposure.sql"));
   assert.equal(String(JSON.parse(read("app.json")).expo.ios.buildNumber), "22");
 });
