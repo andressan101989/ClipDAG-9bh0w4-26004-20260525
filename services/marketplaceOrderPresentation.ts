@@ -1,6 +1,8 @@
 import type {
   MarketplaceDisputeOutcome,
   MarketplaceDisputeStatus,
+  MarketplaceHeldAllocation,
+  MarketplaceOrderEvent,
   MarketplaceOrderStatus,
 } from "@/services/marketplaceFulfillmentService";
 
@@ -9,6 +11,63 @@ export type MarketplaceDisputeSummary = {
   reasonCode: string;
   outcome: MarketplaceDisputeOutcome | null;
 };
+
+export type MarketplaceTimelineSettlement = { status: string; releasedAt: string };
+export type MarketplaceTimelineItem = { id: string; label: string; createdAt: string };
+
+export function marketplaceDisputeResolutionEventLabel(
+  outcome: MarketplaceDisputeOutcome | null,
+) {
+  if (outcome === "refund_buyer") return "Reclamo resuelto: reembolso al comprador";
+  if (outcome === "release_seller") return "Reclamo resuelto a favor del vendedor";
+  if (outcome === "reject_claim") return "Reclamo rechazado por administración";
+  return "Reclamo resuelto";
+}
+
+export function marketplaceOrderTimelineItems(
+  events: MarketplaceOrderEvent[],
+  allocationStatus?: MarketplaceHeldAllocation["status"] | null,
+  settlement?: MarketplaceTimelineSettlement | null,
+): MarketplaceTimelineItem[] {
+  const label = (event: MarketplaceOrderEvent) => {
+    if (event.eventType === "dispute_resolved")
+      return marketplaceDisputeResolutionEventLabel(event.disputeOutcome);
+    return ({
+      order_confirmed: "Pedido confirmado",
+      processing_started: "El vendedor comenzó a preparar el pedido",
+      shipment_created: "Pedido enviado",
+      order_shipped: "Pedido enviado",
+      shipment_updated: "Información de seguimiento actualizada",
+      delivery_confirmed: "Entrega confirmada",
+      escrow_released: "Fondos liberados al vendedor",
+      dispute_opened: "Problema reportado",
+      refund_created: "Fondos reembolsados al comprador",
+    } as Record<string, string>)[event.eventType] ?? "Actualización del pedido";
+  };
+  const items = events.map((event, sourceIndex) => ({
+    id: event.id,
+    label: label(event),
+    createdAt: event.createdAt,
+    sourceIndex,
+  }));
+  if (
+    !events.some((event) => event.eventType === "escrow_released") &&
+    allocationStatus === "released" &&
+    settlement?.status === "completed"
+  )
+    items.push({
+      id: "derived-settlement-release",
+      label: "Fondos liberados al vendedor",
+      createdAt: settlement.releasedAt,
+      sourceIndex: events.length,
+    });
+  return items
+    .sort((left, right) => {
+      const timestampDifference = Date.parse(left.createdAt) - Date.parse(right.createdAt);
+      return timestampDifference || left.sourceIndex - right.sourceIndex;
+    })
+    .map(({ id, label: itemLabel, createdAt }) => ({ id, label: itemLabel, createdAt }));
+}
 
 export function formatOrderNumberForList(orderNumber: string) {
   const normalized = orderNumber.trim();

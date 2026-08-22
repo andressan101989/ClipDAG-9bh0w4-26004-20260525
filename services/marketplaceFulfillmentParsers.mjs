@@ -148,6 +148,10 @@ export function parseBuyerOrderListPayload(value, effectiveLimit) {
 export function parseSellerOrderListPayload(value, effectiveLimit) {
   const items = array(value, "seller_orders").map((entry, index) => {
     const { row, item } = commonListRow(entry, index);
+    const activeDispute =
+      row.active_dispute == null
+        ? null
+        : object(row.active_dispute, `orders[${index}].active_dispute`);
     return {
       ...item,
       firstItemTitle: nullableString(
@@ -176,9 +180,103 @@ export function parseSellerOrderListPayload(value, effectiveLimit) {
         ),
         releasedAt: nullableTimestamp(row.released_at, `orders[${index}].released_at`),
       },
+      activeDispute: activeDispute
+        ? {
+            id: uuid(activeDispute.id, `orders[${index}].active_dispute.id`),
+            status: enumeration(
+              activeDispute.status,
+              ["open", "under_review"],
+              `orders[${index}].active_dispute.status`,
+            ),
+            reasonCode: string(
+              activeDispute.reason_code,
+              `orders[${index}].active_dispute.reason_code`,
+            ),
+            createdAt: timestamp(
+              activeDispute.created_at,
+              `orders[${index}].active_dispute.created_at`,
+            ),
+            sellerResponseSubmitted: boolean(
+              activeDispute.seller_response_submitted,
+              `orders[${index}].active_dispute.seller_response_submitted`,
+            ),
+          }
+        : null,
     };
   });
   return page(items, effectiveLimit);
+}
+
+export function parseSellerDisputeIndexPayload(value, effectiveLimit) {
+  const root = object(value, "seller_disputes");
+  const disputes = array(root.disputes, "seller_disputes.disputes").map((entry, index) => {
+    const row = object(entry, `seller_disputes.disputes[${index}]`);
+    return {
+      id: uuid(row.dispute_id, `seller_disputes.disputes[${index}].dispute_id`),
+      status: enumeration(
+        row.status,
+        ["open", "under_review"],
+        `seller_disputes.disputes[${index}].status`,
+      ),
+      reasonCode: string(
+        row.reason_code,
+        `seller_disputes.disputes[${index}].reason_code`,
+      ),
+      createdAt: timestamp(
+        row.created_at,
+        `seller_disputes.disputes[${index}].created_at`,
+      ),
+      orderId: uuid(row.order_id, `seller_disputes.disputes[${index}].order_id`),
+      orderNumber: string(
+        row.order_number,
+        `seller_disputes.disputes[${index}].order_number`,
+      ),
+      orderStatus: enumeration(
+        row.order_status,
+        orderStatuses,
+        `seller_disputes.disputes[${index}].order_status`,
+      ),
+      storeId: uuid(row.store_id, `seller_disputes.disputes[${index}].store_id`),
+      storeName: string(
+        row.store_name,
+        `seller_disputes.disputes[${index}].store_name`,
+      ),
+      sellerResponseSubmitted: boolean(
+        row.seller_response_submitted,
+        `seller_disputes.disputes[${index}].seller_response_submitted`,
+      ),
+      affectedItemCount: integer(
+        row.affected_item_count,
+        `seller_disputes.disputes[${index}].affected_item_count`,
+      ),
+      buyerEvidenceCount: integer(
+        row.buyer_evidence_count,
+        `seller_disputes.disputes[${index}].buyer_evidence_count`,
+      ),
+    };
+  });
+  if (disputes.length > effectiveLimit || new Set(disputes.map((row) => row.id)).size !== disputes.length)
+    fail("seller_disputes.disputes");
+  const activeCount = integer(root.active_count, "seller_disputes.active_count");
+  const openCount = integer(root.open_count, "seller_disputes.open_count");
+  const underReviewCount = integer(
+    root.under_review_count,
+    "seller_disputes.under_review_count",
+  );
+  if (openCount + underReviewCount !== activeCount) fail("seller_disputes.active_count");
+  const rawCursor = root.next_cursor == null ? null : object(root.next_cursor, "seller_disputes.next_cursor");
+  return {
+    activeCount,
+    openCount,
+    underReviewCount,
+    disputes,
+    nextCursor: rawCursor
+      ? {
+          createdAt: timestamp(rawCursor.created_at, "seller_disputes.next_cursor.created_at"),
+          id: uuid(rawCursor.id, "seller_disputes.next_cursor.id"),
+        }
+      : null,
+  };
 }
 
 const shipment = (value) => {
@@ -394,15 +492,27 @@ export function parseMarketplaceOrderDetailPayload(value) {
     shipment: shipment(root.shipment),
     events: array(root.events, "order_detail.events").map((entry, index) => {
       const event = object(entry, `order_detail.events[${index}]`);
+      const eventType = string(event.event_type, `order_detail.events[${index}].event_type`);
+      const disputeOutcome =
+        event.dispute_outcome == null
+          ? null
+          : enumeration(
+              event.dispute_outcome,
+              disputeOutcomes,
+              `order_detail.events[${index}].dispute_outcome`,
+            );
+      if (eventType !== "dispute_resolved" && disputeOutcome !== null)
+        fail(`order_detail.events[${index}].dispute_outcome`);
       return {
         id: uuid(event.id, `order_detail.events[${index}].id`),
-        eventType: string(event.event_type, `order_detail.events[${index}].event_type`),
+        eventType,
         fromStatus: nullableString(
           event.from_status,
           `order_detail.events[${index}].from_status`,
         ),
         toStatus: nullableString(event.to_status, `order_detail.events[${index}].to_status`),
         actorRole: string(event.actor_role, `order_detail.events[${index}].actor_role`),
+        disputeOutcome,
         createdAt: timestamp(event.created_at, `order_detail.events[${index}].created_at`),
       };
     }),

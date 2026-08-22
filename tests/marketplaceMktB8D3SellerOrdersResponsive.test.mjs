@@ -66,7 +66,8 @@ test("list order references use a deterministic bounded presentation", () => {
 });
 
 test("canonical full order number remains in accessibility navigation and detail", () => {
-  assert.match(orders, /accessibilityLabel=\{`Ver pedido \$\{item\.orderNumber\}`\}/);
+  assert.match(orders, /accessibilityLabel=\{`Ver pedido \$\{item\.orderNumber\}/);
+  assert.match(orders, /Este pedido tiene una disputa abierta/);
   assert.match(orders, /router\.push\(`\/seller\/orders\/\$\{item\.id\}` as never\)/);
   assert.match(orders, /formatOrderNumberForList\(item\.orderNumber\)/);
   assert.match(orderDetail, /\{data\.order\.orderNumber\}/);

@@ -1,6 +1,7 @@
 import type {
   MarketplaceOrderDetail,
   MarketplaceOrderPage,
+  MarketplaceSellerDisputePage,
 } from "./marketplaceFulfillmentService";
 
 export class MarketplaceFulfillmentPayloadError extends Error {
@@ -16,6 +17,10 @@ export function parseSellerOrderListPayload(
   value: unknown,
   effectiveLimit: number,
 ): MarketplaceOrderPage;
+export function parseSellerDisputeIndexPayload(
+  value: unknown,
+  effectiveLimit: number,
+): MarketplaceSellerDisputePage;
 export function parseMarketplaceOrderDetailPayload(value: unknown): MarketplaceOrderDetail;
 export function mergeMarketplaceOrderLifecyclePayload(
   detail: MarketplaceOrderDetail,

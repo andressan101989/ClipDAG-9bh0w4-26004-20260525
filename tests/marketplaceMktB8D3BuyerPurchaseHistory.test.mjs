@@ -13,6 +13,7 @@ const parser = read("services/marketplaceFulfillmentParsers.mjs");
 const buyerList = read("app/orders/index.tsx");
 const buyerDetail = read("app/orders/[id].tsx");
 const statuses = read("components/marketplace/OrderStatus.tsx");
+const orderPresentation = read("services/marketplaceOrderPresentation.ts");
 const remoteAudit = read("scripts/audit-marketplace-b8d3-c6-remote.mjs");
 const app = JSON.parse(read("app.json"));
 
@@ -176,8 +177,9 @@ test("buyer filters expose exact paginated refund states in one horizontal rail"
 test("refund status labels and timeline events are explicit", () => {
   assert.match(statuses, /refunded:'Reembolsado'/);
   assert.match(statuses, /partially_refunded:'Reembolso parcial'/);
-  assert.match(statuses, /dispute_opened:'Problema reportado'/);
-  assert.match(statuses, /refund_created:'Fondos reembolsados al comprador'/);
+  assert.match(orderPresentation, /dispute_opened: "Problema reportado"/);
+  assert.match(orderPresentation, /refund_created: "Fondos reembolsados al comprador"/);
+  assert.match(statuses, /marketplaceOrderTimelineItems/);
 });
 
 test("refunded detail cannot confirm delivery or open a second dispute", () => {

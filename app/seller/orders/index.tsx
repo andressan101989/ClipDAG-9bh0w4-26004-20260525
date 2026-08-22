@@ -210,7 +210,7 @@ export default function SellerOrders() {
           renderItem={({ item }) => (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Ver pedido ${item.orderNumber}`}
+              accessibilityLabel={`Ver pedido ${item.orderNumber}${item.activeDispute ? item.activeDispute.status === "open" ? ". Este pedido tiene una disputa abierta" : ". Este pedido tiene una disputa en revisión" : ""}`}
               style={[s.card, compact && s.cardCompact]}
               onPress={() => router.push(`/seller/orders/${item.id}` as never)}
             >
@@ -237,6 +237,15 @@ export default function SellerOrders() {
                 <Text style={s.product} numberOfLines={1}>
                   {item.firstItemTitle ?? "Pedido Marketplace"}
                 </Text>
+                {item.activeDispute ? (
+                  <View style={s.disputeAlert}>
+                    <View style={s.disputeDot} />
+                    <Text style={s.disputeText} numberOfLines={1}>
+                      {item.activeDispute.status === "open" ? "Disputa abierta" : "Disputa en revisión"}
+                      {item.activeDispute.sellerResponseSubmitted ? " · Respondida" : " · Respuesta pendiente"}
+                    </Text>
+                  </View>
+                ) : null}
                 <Text style={s.muted} numberOfLines={1}>
                   {formatMetricCount(item.totalQuantity)} unidades ·{" "}
                   {new Date(item.createdAt).toLocaleDateString()}
@@ -319,6 +328,9 @@ const s = StyleSheet.create({
   },
   statusSlot: { flexShrink: 0 },
   product: { color: Colors.textPrimary, fontWeight: FontWeight.semibold },
+  disputeAlert: { flexDirection: "row", alignItems: "center", gap: 6 },
+  disputeDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.warning },
+  disputeText: { flex: 1, color: Colors.warning, fontSize: FontSize.xs, fontWeight: FontWeight.bold },
   muted: { color: Colors.textSecondary, fontSize: FontSize.xs },
   total: { color: Colors.accent, fontWeight: FontWeight.bold, fontSize: FontSize.sm },
   center: {

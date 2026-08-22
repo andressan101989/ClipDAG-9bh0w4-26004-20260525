@@ -155,8 +155,9 @@ test("Figma Shop implementation preserves Build 22 across later authorized migra
     .sort();
   assert.equal(
     migrations.at(-1),
-    "20260822040000_marketplace_admin_release_readback_r1c_f1b.sql",
+    "20260822154610_marketplace_seller_dispute_awareness_r1c_f1c1.sql",
   );
+  assert.ok(migrations.includes("20260822040000_marketplace_admin_release_readback_r1c_f1b.sql"));
   assert.ok(migrations.includes("20260822030000_marketplace_admin_settlement_reconciliation_r1c_f1a.sql"));
   assert.ok(migrations.includes("20260822020000_marketplace_post_reject_release_r1c_f1.sql"));
   assert.ok(migrations.includes("20260822010000_marketplace_admin_dispute_evidence_r1c.sql"));

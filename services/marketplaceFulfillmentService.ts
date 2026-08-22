@@ -6,6 +6,7 @@ import {
   parseBuyerOrderListPayload,
   parseMarketplaceOrderDetailPayload,
   parseSellerOrderListPayload,
+  parseSellerDisputeIndexPayload,
 } from "@/services/marketplaceFulfillmentParsers.mjs";
 import { reconcileFulfillmentMutation } from "@/services/marketplaceFulfillmentMutationCore.mjs";
 
@@ -30,6 +31,7 @@ export interface MarketplaceOrderEvent {
   fromStatus: string | null;
   toStatus: string | null;
   actorRole: string;
+  disputeOutcome: MarketplaceDisputeOutcome | null;
   createdAt: string;
 }
 export interface MarketplaceShipment {
@@ -77,6 +79,34 @@ export interface MarketplaceOrderListItem {
   region?: string;
   country?: string;
   allocation?: MarketplaceHeldAllocation;
+  activeDispute?: {
+    id: string;
+    status: "open" | "under_review";
+    reasonCode: string;
+    createdAt: string;
+    sellerResponseSubmitted: boolean;
+  } | null;
+}
+export interface MarketplaceSellerDisputeSummary {
+  id: string;
+  status: "open" | "under_review";
+  reasonCode: string;
+  createdAt: string;
+  orderId: string;
+  orderNumber: string;
+  orderStatus: MarketplaceOrderStatus;
+  storeId: string;
+  storeName: string;
+  sellerResponseSubmitted: boolean;
+  affectedItemCount: number;
+  buyerEvidenceCount: number;
+}
+export interface MarketplaceSellerDisputePage {
+  activeCount: number;
+  openCount: number;
+  underReviewCount: number;
+  disputes: MarketplaceSellerDisputeSummary[];
+  nextCursor: { createdAt: string; id: string } | null;
 }
 export interface MarketplaceOrderDetail {
   order: {
@@ -312,6 +342,28 @@ export async function fetchSellerOrders(
   return parse("seller_list_parser", () =>
     parseSellerOrderListPayload(response, limit),
   ) as MarketplaceOrderPage;
+}
+
+export async function fetchSellerDisputes(
+  filters: {
+    limit?: number;
+    cursor?: { createdAt: string; id: string };
+  } = {},
+): Promise<MarketplaceSellerDisputePage> {
+  const limit = Math.min(50, Math.max(1, filters.limit ?? 20));
+  const cursor = validCursor(filters.cursor);
+  const response = await rpc(
+    "fetch_my_marketplace_disputes",
+    {
+      p_limit: limit,
+      p_before_created_at: cursor?.createdAt ?? null,
+      p_before_id: cursor?.id ?? null,
+    },
+    "seller_dispute_list_rpc",
+  );
+  return parse("seller_dispute_list_parser", () =>
+    parseSellerDisputeIndexPayload(response, limit),
+  ) as MarketplaceSellerDisputePage;
 }
 
 async function fetchBuyerOrderBase(id: string): Promise<MarketplaceOrderDetail> {
