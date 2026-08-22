@@ -112,3 +112,25 @@ test("client reconciliation keeps a stable key and never deletes ambiguous evide
   assert.match(panel, /outcomeUnknown[\s\S]*if \(!outcomeUnknown && uploadedNow\.length > 0\)/);
   assert.doesNotMatch(panel, /refund|release funds|liberar fondos|aprobar devolución/i);
 });
+
+test("seller response notes use one surrounding-whitespace normalization contract", () => {
+  const normalizeInput = (value) => value.trim();
+  const normalizeReadback = (value) => value?.trim() || null;
+  const notesMatch = (submitted, stored) =>
+    normalizeReadback(stored) === (normalizeInput(submitted) || null);
+
+  assert.equal(normalizeInput("Respuesta del vendedor\n"), "Respuesta del vendedor");
+  assert.equal(normalizeInput("  Respuesta del vendedor  "), "Respuesta del vendedor");
+  assert.equal(normalizeInput("Producto  correcto"), "Producto  correcto");
+  assert.equal(notesMatch("Respuesta del vendedor", "Respuesta del vendedor\n"), true);
+  assert.equal(notesMatch("Respuesta del vendedor", "  Respuesta del vendedor  "), true);
+  assert.equal(notesMatch("Producto correcto", "Producto incorrecto"), false);
+
+  assert.match(service, /const normalizedNote = note\.trim\(\);/);
+  assert.match(service, /const expectedNote = normalizedNote \|\| null;/);
+  assert.match(service, /p_seller_note: normalizedNote/);
+  assert.match(service, /\(response\.note\?\.trim\(\) \|\| null\) === expectedNote/);
+  assert.doesNotMatch(service, /p_seller_note: note,/);
+  assert.match(service, /marketplace_dispute_response_idempotency_conflict/);
+  assert.doesNotMatch(service, /replace\(\/\\s\+\/|toLowerCase\(\)/);
+});

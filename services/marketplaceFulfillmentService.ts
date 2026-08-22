@@ -371,13 +371,14 @@ export async function respondToMarketplaceDispute(
   evidenceAssetIds: string[],
   idempotencyKey: string,
 ): Promise<MarketplaceOrderDetail> {
-  const expectedNote = note.trim() || null;
+  const normalizedNote = note.trim();
+  const expectedNote = normalizedNote || null;
   const provesCommitted = (value: MarketplaceOrderDetail) => {
     const response = value.dispute?.sellerResponse;
     return Boolean(
       value.dispute?.id === disputeId &&
         response &&
-        response.note === expectedNote &&
+        (response.note?.trim() || null) === expectedNote &&
         sameOrderedValues(response.evidenceAssetIds, evidenceAssetIds),
     );
   };
@@ -386,7 +387,7 @@ export async function respondToMarketplaceDispute(
       "respond_to_marketplace_dispute",
       {
         p_dispute_id: disputeId,
-        p_seller_note: note,
+        p_seller_note: normalizedNote,
         p_evidence_asset_ids: evidenceAssetIds,
         p_idempotency_key: idempotencyKey,
       },
