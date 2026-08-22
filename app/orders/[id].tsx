@@ -30,7 +30,7 @@ export default function BuyerOrder() {
   useFocusEffect(useCallback(() => { void load(); }, [load]));
   if (state === 'loading') return <View style={[styles.root, styles.center, { paddingTop: insets.top }]}><ActivityIndicator color={Colors.primary} /></View>;
   if (state === 'error' || !data) return <View style={[styles.root, { paddingTop: insets.top }]}><SellerScreenHeader title="Pedido no disponible" fallbackRoute="/orders" /><View style={styles.center}><Text style={styles.title}>Pedido no disponible</Text><Text style={styles.muted}>No pudimos cargar este pedido.</Text><Pressable style={styles.button} onPress={() => void load()}><Text style={styles.buttonText}>Reintentar</Text></Pressable></View></View>;
-  const confirmDelivery = () => Alert.alert('Confirmar recepción', 'Confirma únicamente si recibiste el pedido en buenas condiciones. Esto puede liberar los fondos retenidos al vendedor.', [
+  const confirmDelivery = () => Alert.alert('Confirmar recepción', 'Confirma únicamente si recibiste el pedido en buenas condiciones. Esto puede liberar los fondos retenidos al vendedor; si ya fueron liberados, solo registrará la entrega física.', [
     { text: 'Volver', style: 'cancel' },
     { text: 'Sí, confirmar recepción', onPress: async () => {
       if (settlementLock.current || !id) return;
@@ -54,7 +54,8 @@ export default function BuyerOrder() {
     <View style={styles.card}><Text style={styles.heading}>Entrega</Text><Text style={styles.text}>{data.shippingAddress.recipientName}</Text><Text style={styles.muted}>{data.shippingAddress.city}, {data.shippingAddress.region} · {data.shippingAddress.country}</Text>{data.shipment ? <><Text style={styles.text}>{data.shipment.carrierName} · {data.shipment.trackingNumber}</Text>{data.shipment.estimatedDeliveryAt ? <Text style={styles.muted}>Entrega estimada: {new Date(data.shipment.estimatedDeliveryAt).toLocaleDateString()}</Text> : null}{data.shipment.trackingUrl ? <Pressable style={styles.button} onPress={() => void track()}><Text style={styles.buttonText}>Ver seguimiento</Text></Pressable> : null}</> : <Text style={styles.muted}>El vendedor todavía está preparando el pedido.</Text>}</View>
     <View style={styles.card}><Text style={styles.heading}>Historial</Text><OrderTimeline events={data.events} /></View>
     <Text style={styles.protect}>{buyerOrderProtectionMessage(data.order.status, data.dispute)}</Text>
-    {data.order.status === 'shipped' && !data.dispute ? <><Pressable style={styles.button} disabled={settling} onPress={confirmDelivery} accessibilityRole="button"><Text style={styles.buttonText}>{settling ? 'Confirmando…' : 'Confirmar recepción'}</Text></Pressable><MarketplaceDisputePanel orderId={data.order.id} items={data.items} current={data.dispute} onSubmitted={load} /></> : null}
+    {data.order.status === 'shipped' && (!data.dispute || ['resolved', 'rejected', 'cancelled'].includes(data.dispute.status)) ? <Pressable style={styles.button} disabled={settling} onPress={confirmDelivery} accessibilityRole="button"><Text style={styles.buttonText}>{settling ? 'Confirmando…' : 'Confirmar recepción'}</Text></Pressable> : null}
+    {data.order.status === 'shipped' && !data.dispute ? <MarketplaceDisputePanel orderId={data.order.id} items={data.items} current={data.dispute} onSubmitted={load} /> : null}
     {data.dispute ? <MarketplaceDisputePanel orderId={data.order.id} items={data.items} current={data.dispute} onSubmitted={load} /> : null}
     <MarketplaceReturnPanel role="buyer" order={data} onUpdated={setData} />
     <Pressable style={styles.outline} onPress={() => router.push(`/checkout/reservation/${data.order.checkoutId}` as never)}><Text style={styles.buttonText}>Ver recibo de pago</Text></Pressable>
