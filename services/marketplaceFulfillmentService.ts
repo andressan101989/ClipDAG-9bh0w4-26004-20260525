@@ -5,6 +5,7 @@ import {
   mergeMarketplaceOrderLifecyclePayload,
   parseBuyerOrderListPayload,
   parseMarketplaceOrderDetailPayload,
+  parseMarketplaceReturnMutationReceipt,
   parseSellerOrderListPayload,
   parseSellerDisputeIndexPayload,
 } from "@/services/marketplaceFulfillmentParsers.mjs";
@@ -25,6 +26,15 @@ export type MarketplaceDisputeStatus =
   | "rejected"
   | "cancelled";
 export type MarketplaceDisputeOutcome = "refund_buyer" | "release_seller" | "reject_claim";
+export type MarketplaceReturnStatus = "requested" | "approved" | "rejected";
+export interface MarketplaceReturnRequest {
+  id: string;
+  status: MarketplaceReturnStatus;
+  buyerNote: string;
+  sellerNote: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
 export interface MarketplaceOrderEvent {
   id: string;
   eventType: string;
@@ -184,6 +194,8 @@ export interface MarketplaceOrderDetail {
       evidenceAssetIds: string[];
     } | null;
   } | null;
+  returnEligible: boolean;
+  returnRequest: MarketplaceReturnRequest | null;
   postMutationRefreshFailed?: boolean;
 }
 export interface MarketplaceOrderPage {
@@ -216,6 +228,17 @@ export type MarketplaceFulfillmentErrorCode =
   | "marketplace_dispute_settlement_completed"
   | "marketplace_dispute_response_idempotency_conflict"
   | "marketplace_dispute_response_already_submitted"
+  | "marketplace_return_invalid_input"
+  | "marketplace_return_order_not_found"
+  | "marketplace_return_not_eligible"
+  | "marketplace_return_active_dispute"
+  | "marketplace_return_already_requested"
+  | "marketplace_return_idempotency_conflict"
+  | "marketplace_return_not_found"
+  | "marketplace_return_not_owned"
+  | "marketplace_return_decision_invalid_input"
+  | "marketplace_return_decision_idempotency_conflict"
+  | "marketplace_return_already_decided"
   | "marketplace_fulfillment_unknown";
 
 export class MarketplaceFulfillmentError extends Error {
@@ -460,6 +483,93 @@ export async function respondToMarketplaceDispute(
     if (provesCommitted(canonical)) return canonical;
   } catch (error) {
     diagnostic("seller_dispute_response_readback", error);
+  }
+  throw unknownOutcome();
+}
+
+export async function requestMarketplaceReturn(
+  orderId: string,
+  buyerNote: string,
+  idempotencyKey: string,
+): Promise<MarketplaceOrderDetail> {
+  const normalizedNote = buyerNote.trim();
+  const provesCommitted = (value: MarketplaceOrderDetail) =>
+    value.returnRequest?.buyerNote.trim() === normalizedNote;
+  try {
+    const receipt = await rpc(
+      "request_marketplace_return",
+      {
+        p_order_id: orderId,
+        p_buyer_note: normalizedNote,
+        p_idempotency_key: idempotencyKey,
+      },
+      "buyer_return_request_rpc",
+    );
+    parse("buyer_return_request_receipt", () =>
+      parseMarketplaceReturnMutationReceipt(receipt),
+    );
+  } catch (error) {
+    if (!isAmbiguousMutationError(error)) throw error;
+    try {
+      const recovered = await fetchBuyerOrder(orderId);
+      if (provesCommitted(recovered)) return recovered;
+    } catch {
+      // Keep the idempotency key stable when the transport result is unknown.
+    }
+    throw unknownOutcome();
+  }
+  try {
+    const canonical = await fetchBuyerOrder(orderId);
+    if (provesCommitted(canonical)) return canonical;
+  } catch (error) {
+    diagnostic("buyer_return_request_readback", error);
+  }
+  throw unknownOutcome();
+}
+
+export async function respondToMarketplaceReturn(
+  orderId: string,
+  returnId: string,
+  decision: "approve" | "reject",
+  sellerNote: string,
+  idempotencyKey: string,
+): Promise<MarketplaceOrderDetail> {
+  const normalizedNote = sellerNote.trim();
+  const expectedStatus: MarketplaceReturnStatus =
+    decision === "approve" ? "approved" : "rejected";
+  const provesCommitted = (value: MarketplaceOrderDetail) =>
+    value.returnRequest?.id === returnId &&
+    value.returnRequest.status === expectedStatus &&
+    (value.returnRequest.sellerNote?.trim() || null) === (normalizedNote || null);
+  try {
+    const receipt = await rpc(
+      "respond_to_marketplace_return",
+      {
+        p_return_id: returnId,
+        p_decision: decision,
+        p_seller_note: normalizedNote,
+        p_idempotency_key: idempotencyKey,
+      },
+      "seller_return_decision_rpc",
+    );
+    parse("seller_return_decision_receipt", () =>
+      parseMarketplaceReturnMutationReceipt(receipt),
+    );
+  } catch (error) {
+    if (!isAmbiguousMutationError(error)) throw error;
+    try {
+      const recovered = await fetchSellerOrder(orderId);
+      if (provesCommitted(recovered)) return recovered;
+    } catch {
+      // Never retry a possibly committed seller decision with a new key.
+    }
+    throw unknownOutcome();
+  }
+  try {
+    const canonical = await fetchSellerOrder(orderId);
+    if (provesCommitted(canonical)) return canonical;
+  } catch (error) {
+    diagnostic("seller_return_decision_readback", error);
   }
   throw unknownOutcome();
 }

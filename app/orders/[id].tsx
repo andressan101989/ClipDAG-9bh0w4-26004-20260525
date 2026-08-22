@@ -8,6 +8,7 @@ import { fetchBuyerOrder, isSafeTrackingUrl, type MarketplaceOrderDetail } from 
 import { OrderTimeline, StatusBadge } from '@/components/marketplace/OrderStatus';
 import { SellerScreenHeader } from '@/components/marketplace/SellerScreenHeader';
 import { MarketplaceDisputePanel } from '@/components/marketplace/MarketplaceDisputePanel';
+import { MarketplaceReturnPanel } from '@/components/marketplace/MarketplaceReturnPanel';
 import { confirmMarketplaceOrderDelivery, MarketplaceSettlementError } from '@/services/marketplaceSettlementService';
 import { buyerOrderProtectionMessage } from '@/services/marketplaceOrderPresentation';
 
@@ -55,6 +56,7 @@ export default function BuyerOrder() {
     <Text style={styles.protect}>{buyerOrderProtectionMessage(data.order.status, data.dispute)}</Text>
     {data.order.status === 'shipped' && !data.dispute ? <><Pressable style={styles.button} disabled={settling} onPress={confirmDelivery} accessibilityRole="button"><Text style={styles.buttonText}>{settling ? 'Confirmando…' : 'Confirmar recepción'}</Text></Pressable><MarketplaceDisputePanel orderId={data.order.id} items={data.items} current={data.dispute} onSubmitted={load} /></> : null}
     {data.dispute ? <MarketplaceDisputePanel orderId={data.order.id} items={data.items} current={data.dispute} onSubmitted={load} /> : null}
+    <MarketplaceReturnPanel role="buyer" order={data} onUpdated={setData} />
     <Pressable style={styles.outline} onPress={() => router.push(`/checkout/reservation/${data.order.checkoutId}` as never)}><Text style={styles.buttonText}>Ver recibo de pago</Text></Pressable>
   </ScrollView></View>;
 }

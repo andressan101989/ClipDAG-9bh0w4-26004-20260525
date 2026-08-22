@@ -4,6 +4,7 @@ import type {
   MarketplaceHeldAllocation,
   MarketplaceOrderEvent,
   MarketplaceOrderStatus,
+  MarketplaceReturnStatus,
 } from "@/services/marketplaceFulfillmentService";
 
 export type MarketplaceDisputeSummary = {
@@ -14,6 +15,23 @@ export type MarketplaceDisputeSummary = {
 
 export type MarketplaceTimelineSettlement = { status: string; releasedAt: string };
 export type MarketplaceTimelineItem = { id: string; label: string; createdAt: string };
+
+export function marketplaceReturnStatusCopy(status: MarketplaceReturnStatus) {
+  if (status === "requested")
+    return {
+      title: "Solicitud de devolución enviada",
+      body: "Esperando respuesta del vendedor.",
+    };
+  if (status === "approved")
+    return {
+      title: "Devolución aceptada",
+      body: "El siguiente paso será coordinar el envío de regreso.",
+    };
+  return {
+    title: "Devolución rechazada por el vendedor",
+    body: "El vendedor decidió no aceptar esta devolución.",
+  };
+}
 
 export function marketplaceDisputeResolutionEventLabel(
   outcome: MarketplaceDisputeOutcome | null,
@@ -42,6 +60,9 @@ export function marketplaceOrderTimelineItems(
       escrow_released: "Fondos liberados al vendedor",
       dispute_opened: "Problema reportado",
       refund_created: "Fondos reembolsados al comprador",
+      return_requested: "Solicitud de devolución enviada",
+      return_approved: "Devolución aceptada",
+      return_rejected: "Devolución rechazada por el vendedor",
     } as Record<string, string>)[event.eventType] ?? "Actualización del pedido";
   };
   const items = events.map((event, sourceIndex) => ({

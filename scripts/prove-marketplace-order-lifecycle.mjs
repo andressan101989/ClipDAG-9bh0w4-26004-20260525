@@ -1,23 +1,18 @@
-import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 
 const { Client } = pg;
-const repo = process.cwd();
 const projectRef = "aewwdlvbwpczqyvkwvvj";
 const fail = code => { throw new Error(code); };
 const assert = (condition, code) => { if (!condition) fail(code); };
 const reconciliationIsZero = (value, excluded=[]) => Object.entries(value??{}).every(([key,item]) => excluded.includes(key) || typeof item !== "number" || item === 0);
 const safeError = error => JSON.stringify({code:error?.code,message:error?.message,detail:error?.detail,hint:error?.hint,where:error?.where,schema:error?.schema,table:error?.table,constraint:error?.constraint});
 function linkedConfiguration() {
-  if(process.env.MARKETPLACE_DATABASE_URL)return {connectionString:process.env.MARKETPLACE_DATABASE_URL,ssl:false};
-  const cli = spawnSync(process.env.ComSpec,["/d","/s","/c","npx.cmd supabase db dump --linked --schema public --dry-run"],{cwd:repo,encoding:"utf8",windowsHide:true});
-  if (cli.status !== 0) fail("order_lifecycle_secure_connection_failed");
-  const captured=`${cli.stdout??""}${cli.stderr??""}`;
-  const value=name=>captured.match(new RegExp(`(?:export |set \\"?)${name}=[\\"']?([^\\"'\\r\\n ]+)`))?.[1];
-  const config={host:value("PGHOST"),port:Number(value("PGPORT")),user:value("PGUSER"),password:value("PGPASSWORD"),database:value("PGDATABASE"),ssl:{rejectUnauthorized:false}};
-  if(!config.host||!config.port||!config.user||!config.password||!config.database)fail("order_lifecycle_secure_connection_failed");
-  return config;
+  const connectionString=process.env.MARKETPLACE_DATABASE_URL;
+  if(!connectionString)fail("order_lifecycle_disposable_connection_required");
+  const url=new URL(connectionString);
+  if(!["127.0.0.1","localhost"].includes(url.hostname)||url.port!=="55422")fail("order_lifecycle_disposable_connection_required");
+  return {connectionString,ssl:false};
 }
 const countsSql=`select (select count(*)::int from auth.users)users,(select count(*)::int from products)products,
  (select count(*)::int from marketplace_product_variants)variants,(select count(*)::int from marketplace_inventory_levels)inventory,
@@ -25,13 +20,15 @@ const countsSql=`select (select count(*)::int from auth.users)users,(select coun
  (select count(*)::int from marketplace_order_items)order_items,(select count(*)::int from marketplace_inventory_reservations)reservations,
  (select count(*)::int from marketplace_payments)payments,(select count(*)::int from marketplace_payment_allocations)allocations,
  (select count(*)::int from marketplace_order_shipments)shipments,(select count(*)::int from marketplace_order_disputes)disputes,
+ (select count(*)::int from marketplace_return_requests)return_requests,(select count(*)::int from marketplace_settlement_reversals)reversals,
  (select count(*)::int from marketplace_order_settlements)settlements,(select count(*)::int from financial_transactions)transactions,
  (select count(*)::int from ledger_entries)ledger_entries`;
 const db=new Client(linkedConfiguration());
 let open=false;
 let stage="connect";
-const ids={seller:randomUUID(),buyer:randomUUID(),store:randomUUID(),profile:randomUUID(),product:randomUUID(),variant:randomUUID(),fund:randomUUID()};
-async function claims(role,subject=null){await db.query("select set_config('request.jwt.claim.role',$1,true),set_config('request.jwt.claim.sub',$2,true)",[role,subject??'']);}
+const ids={seller:randomUUID(),otherSeller:randomUUID(),buyer:randomUUID(),admin:randomUUID(),store:randomUUID(),profile:randomUUID(),product:randomUUID(),variant:randomUUID(),fund:randomUUID()};
+async function claims(role,subject=null){const sub=subject??'';await db.query("select set_config('request.jwt.claim.role',$1,true),set_config('request.jwt.claim.sub',$2,true),set_config('request.jwt.claims',$3,true)",[role,sub,JSON.stringify({role,...(sub?{sub}:{})})]);}
+async function expectMessage(call,message){await db.query("savepoint expected_error");let matched=false;try{await call()}catch(error){matched=error?.message===message}await db.query("rollback to savepoint expected_error");await db.query("release savepoint expected_error");assert(matched,`expected_${message}`);}
 async function checkout(label){
   stage=`${label.toLowerCase()}_reservation`;
   await claims('authenticated',ids.buyer);
@@ -60,16 +57,16 @@ try{
  assert((await db.query("select current_database() is not null ok")).rows[0].ok,'secure_connection_failed');
  const before=(await db.query(countsSql)).rows[0];
  await db.query('begin');open=true;await db.query('set role postgres');await claims('service_role');stage="synthetic_roots";
- for(const [id,email]of[[ids.seller,`lifecycle-seller-${randomUUID()}@onsynthetic.local`],[ids.buyer,`lifecycle-buyer-${randomUUID()}@onsynthetic.local`]])await db.query("insert into auth.users(id,instance_id,aud,role,email,encrypted_password,confirmed_at,created_at,updated_at)values($1,'00000000-0000-0000-0000-000000000000','authenticated','authenticated',$2,'proof',now(),now(),now())",[id,email]);
- await db.query("insert into user_profiles(id,username,display_name)values($1,$2,'Lifecycle Seller'),($3,$4,'Lifecycle Buyer')",[ids.seller,`life_s_${randomUUID().replaceAll('-','').slice(0,18)}`,ids.buyer,`life_b_${randomUUID().replaceAll('-','').slice(0,18)}`]);
- await db.query("insert into marketplace_sellers(user_id,status,display_name,approved_at)values($1,'approved','Lifecycle Seller',now())",[ids.seller]);
+ for(const [id,email]of[[ids.seller,`lifecycle-seller-${randomUUID()}@onsynthetic.local`],[ids.otherSeller,`lifecycle-other-seller-${randomUUID()}@onsynthetic.local`],[ids.buyer,`lifecycle-buyer-${randomUUID()}@onsynthetic.local`],[ids.admin,`lifecycle-admin-${randomUUID()}@onsynthetic.local`]])await db.query("insert into auth.users(id,instance_id,aud,role,email,encrypted_password,confirmed_at,created_at,updated_at)values($1,'00000000-0000-0000-0000-000000000000','authenticated','authenticated',$2,'proof',now(),now(),now())",[id,email]);
+ await db.query("insert into user_profiles(id,username,display_name,is_admin)values($1,$2,'Lifecycle Seller',false),($3,$4,'Lifecycle Other Seller',false),($5,$6,'Lifecycle Buyer',false),($7,$8,'Lifecycle Admin',true)",[ids.seller,`life_s_${randomUUID().replaceAll('-','').slice(0,18)}`,ids.otherSeller,`life_os_${randomUUID().replaceAll('-','').slice(0,17)}`,ids.buyer,`life_b_${randomUUID().replaceAll('-','').slice(0,18)}`,ids.admin,`life_a_${randomUUID().replaceAll('-','').slice(0,18)}`]);
+ await db.query("insert into marketplace_sellers(user_id,status,display_name,approved_at)values($1,'approved','Lifecycle Seller',now()),($2,'approved','Lifecycle Other Seller',now())",[ids.seller,ids.otherSeller]);
  await db.query("insert into marketplace_stores(id,seller_id,name,slug,status)values($1,$2,'Lifecycle Store',$3,'active')",[ids.store,ids.seller,`lifecycle-${randomUUID()}`]);
  await db.query("insert into marketplace_shipping_profiles(id,seller_id,store_id,name,processing_days_min,processing_days_max,ships_from_country,return_policy_summary)values($1,$2,$3,'US Ground',1,3,'US','Returns within 14 days.')",[ids.profile,ids.seller,ids.store]);
  await db.query("insert into marketplace_shipping_profile_regions(profile_id,country_code,shipping_price,transit_days_min,transit_days_max)values($1,'US',0.25,2,7)",[ids.profile]);
  await db.query("insert into products(id,seller_id,title,description,price,currency,category,stock,status,store_id,category_id,product_type,moderation_status,published_at,shipping_profile_id)values($1,$2,'Lifecycle Proof','Rollback only',1,'BDAG','physical',5,'active',$3,'10000000-0000-4000-8000-000000000002','physical','approved',now(),$4)",[ids.product,ids.seller,ids.store,ids.profile]);
  const sku=`LIFECYCLE-${randomUUID().toUpperCase()}`;
  await db.query("insert into marketplace_product_variants(id,product_id,store_id,seller_id,sku,sku_normalized,title,price,status,is_default,combination_key)values($1,$2,$3,$4,$5,$5,'Default',1,'active',true,'')",[ids.variant,ids.product,ids.store,ids.seller,sku]);
- await db.query("insert into marketplace_inventory_levels(variant_id,on_hand,reserved)values($1,5,0)",[ids.variant]);
+ await db.query("insert into marketplace_inventory_levels(variant_id,on_hand,reserved)values($1,10,0)",[ids.variant]);
  stage="funding";const buyerAccount=(await db.query("select public.ensure_ledger_account($1)id",[ids.buyer])).rows[0].id;
  const platform=(await db.query("select id from ledger_accounts where owner_id is null and account_type='platform' and currency='BDAG' for update")).rows[0].id;
  await db.query("insert into financial_transactions(id,from_account_id,to_account_id,operation_type,amount,fee_amount,currency,status,reference_type,reference_id,idempotency_key,initiated_by)values($1,$2,$3,'marketplace_test_funding',10,0,'BDAG','completed','marketplace_test_fixture',$4,$5,$6)",[ids.fund,platform,buyerAccount,ids.product,`lifecycle-fund-${ids.fund}`,ids.buyer]);
@@ -78,10 +75,57 @@ try{
  await claims('service_role');
  await db.query("select confirm_marketplace_order_delivery_and_release($1,$2,$3)",[ids.buyer,direct.orderId,randomUUID()]);
  assert((await db.query("select count(*)::int n from marketplace_order_settlements where order_id=$1",[direct.orderId])).rows[0].n===1,'receipt_settlement_missing');
+ stage="r2a_approved_return";
+ const returnFinancialState=async orderId=>(await db.query(`select
+   (select count(*)::int from financial_transactions)transactions,
+   (select count(*)::int from ledger_entries)ledger_entries,
+   (select jsonb_object_agg(id,balance order by id) from ledger_accounts)ledger_balances,
+   (select to_jsonb(p) from marketplace_payments p where checkout_id=(select checkout_id from marketplace_orders where id=$1))payment,
+   (select to_jsonb(a) from marketplace_payment_allocations a where order_id=$1)allocation,
+   (select to_jsonb(s) from marketplace_order_settlements s where order_id=$1)settlement,
+   (select count(*)::int from marketplace_order_settlements where order_id=$1)settlements,
+   (select count(*)::int from marketplace_settlement_reversals where order_id=$1)reversals,
+   (select count(*)::int from marketplace_order_disputes where order_id=$1)disputes`,[orderId])).rows[0];
+ const approvedBefore=await returnFinancialState(direct.orderId);
+ await claims('authenticated',ids.admin);
+ await expectMessage(()=>db.query("select request_marketplace_return($1,'Wrong buyer cannot request',$2)",[direct.orderId,randomUUID()]),'marketplace_return_order_not_found');
+ await claims('authenticated',ids.seller);
+ await expectMessage(()=>db.query("select request_marketplace_return($1,'Seller cannot request',$2)",[direct.orderId,randomUUID()]),'marketplace_return_order_not_found');
+ await claims('authenticated',ids.buyer);
+ const eligibleLifecycle=(await db.query("select fetch_my_marketplace_order_lifecycle($1)value",[direct.orderId])).rows[0].value;
+ assert(eligibleLifecycle.return_eligible===true&&eligibleLifecycle.return_request===null,'delivered_released_not_return_eligible');
+ const requestKey=randomUUID(),requestNote='Full order return proof';
+ const requested=(await db.query("select request_marketplace_return($1,$2,$3)value",[direct.orderId,requestNote,requestKey])).rows[0].value;
+ const requestedRetry=(await db.query("select request_marketplace_return($1,$2,$3)value",[direct.orderId,requestNote,requestKey])).rows[0].value;
+ assert(JSON.stringify(requestedRetry)===JSON.stringify(requested)&&requested.money_moved===false,'return_request_retry_failed');
+ await expectMessage(()=>db.query("select request_marketplace_return($1,'Different request',$2)",[direct.orderId,requestKey]),'marketplace_return_idempotency_conflict');
+ await expectMessage(()=>db.query("select request_marketplace_return($1,$2,$3)",[direct.orderId,requestNote,randomUUID()]),'marketplace_return_already_requested');
+ const buyerRequestedLifecycle=(await db.query("select fetch_my_marketplace_order_lifecycle($1)value",[direct.orderId])).rows[0].value;
+ assert(buyerRequestedLifecycle.return_eligible===false&&buyerRequestedLifecycle.return_request.status==='requested','buyer_return_lifecycle_missing');
+ const returnId=buyerRequestedLifecycle.return_request.id,decisionKey=randomUUID();
+ await expectMessage(()=>db.query("select respond_to_marketplace_return($1,'approve',null,$2)",[returnId,decisionKey]),'marketplace_return_not_owned');
+ await claims('authenticated',ids.otherSeller);
+ await expectMessage(()=>db.query("select respond_to_marketplace_return($1,'approve',null,$2)",[returnId,decisionKey]),'marketplace_return_not_owned');
+ await claims('authenticated',ids.seller);
+ const sellerRequestedLifecycle=(await db.query("select fetch_my_marketplace_order_lifecycle($1)value",[direct.orderId])).rows[0].value;
+ assert(sellerRequestedLifecycle.return_request.id===returnId,'seller_return_lifecycle_missing');
+ const approved=(await db.query("select respond_to_marketplace_return($1,'approve','Approved for return',$2)value",[returnId,decisionKey])).rows[0].value;
+ const approvedRetry=(await db.query("select respond_to_marketplace_return($1,'approve','Approved for return',$2)value",[returnId,decisionKey])).rows[0].value;
+ assert(JSON.stringify(approvedRetry)===JSON.stringify(approved)&&approved.return_request.status==='approved'&&approved.money_moved===false,'return_approval_retry_failed');
+ await expectMessage(()=>db.query("select respond_to_marketplace_return($1,'reject','Changed',$2)",[returnId,decisionKey]),'marketplace_return_decision_idempotency_conflict');
+ await expectMessage(()=>db.query("select respond_to_marketplace_return($1,'approve','Approved for return',$2)",[returnId,randomUUID()]),'marketplace_return_already_decided');
+ const approvedAfter=await returnFinancialState(direct.orderId);
+ assert(JSON.stringify(approvedAfter)===JSON.stringify(approvedBefore),'return_approval_changed_financial_state');
+ const approvedEvents=(await db.query("select array_agg(event_type order by created_at,id)events from marketplace_order_events where order_id=$1 and event_type like'return_%'",[direct.orderId])).rows[0].events;
+ assert(JSON.stringify(approvedEvents)===JSON.stringify(['return_requested','return_approved']),'return_approval_events_wrong');
  stage="automatic_checkout";const auto=await checkout('AUTO');
  await db.query("update marketplace_order_shipments set shipped_at=now()-interval '30 days' where order_id=$1",[auto.orderId]);
  await claims('service_role');const autoFirst=(await db.query("select run_scheduled_marketplace_settlement() value")).rows[0].value;const txBeforeRetry=(await db.query("select count(*)::int n from financial_transactions where reference_id=$1",[auto.orderId])).rows[0].n;const autoSecond=(await db.query("select run_scheduled_marketplace_settlement() value")).rows[0].value;const txAfterRetry=(await db.query("select count(*)::int n from financial_transactions where reference_id=$1",[auto.orderId])).rows[0].n;
  assert(autoFirst.processed===1&&autoSecond.processed===0&&txBeforeRetry===txAfterRetry,'scheduler_retry_failed');
+ stage="r2a_shipped_released_denied";const adminReleased=await checkout('ADMINRETURN');await claims('authenticated',ids.buyer);const adminReleasedItem=(await db.query("select id from marketplace_order_items where order_id=$1 order by created_at limit 1",[adminReleased.orderId])).rows[0].id;const adminReleasedDispute=(await db.query("select report_marketplace_order_problem($1,'not_received','Admin release return proof',$2,array[$3::uuid],'{}'::uuid[])value",[adminReleased.orderId,randomUUID(),adminReleasedItem])).rows[0].value;await claims('authenticated',ids.admin);await db.query("select admin_resolve_marketplace_dispute($1,'release_seller','release_for_proof','Disposable Admin release',$2)",[adminReleasedDispute.dispute_id,randomUUID()]);await claims('authenticated',ids.buyer);await expectMessage(()=>db.query("select request_marketplace_return($1,'Not delivered yet',$2)",[adminReleased.orderId,randomUUID()]),'marketplace_return_not_eligible');await claims('authenticated',ids.seller);const shippedReleased=(await db.query("select fetch_my_marketplace_sale($1)value",[adminReleased.orderId])).rows[0].value;assert(shippedReleased.order.status==='shipped'&&shippedReleased.allocation.status==='released','shipped_released_seller_readback_regressed');
+ stage="r2a_rejected_return";const rejectedReturn=await checkout('RETURNREJECT');await claims('service_role');await db.query("select confirm_marketplace_order_delivery_and_release($1,$2,$3)",[ids.buyer,rejectedReturn.orderId,randomUUID()]);const rejectedBefore=await returnFinancialState(rejectedReturn.orderId);await claims('authenticated',ids.buyer);const rejectRequest=(await db.query("select request_marketplace_return($1,'Reject path proof',$2)value",[rejectedReturn.orderId,randomUUID()])).rows[0].value;await claims('authenticated',ids.seller);const rejected=(await db.query("select respond_to_marketplace_return($1,'reject',null,$2)value",[rejectRequest.return_request.id,randomUUID()])).rows[0].value;assert(rejected.return_request.status==='rejected'&&rejected.money_moved===false,'return_rejection_failed');const rejectedAfter=await returnFinancialState(rejectedReturn.orderId);assert(JSON.stringify(rejectedAfter)===JSON.stringify(rejectedBefore),'return_rejection_changed_financial_state');await claims('authenticated',ids.buyer);const rejectedLifecycle=(await db.query("select fetch_my_marketplace_order_lifecycle($1)value",[rejectedReturn.orderId])).rows[0].value;assert(rejectedLifecycle.return_request.status==='rejected','buyer_rejected_return_lifecycle_missing');
+ stage="r2a_active_post_settlement_dispute";const activeReview=await checkout('RETURNACTIVE');await claims('service_role');await db.query("select confirm_marketplace_order_delivery_and_release($1,$2,$3)",[ids.buyer,activeReview.orderId,randomUUID()]);const activeReviewReceipt=(await db.query("select open_marketplace_post_settlement_review($1,$2,'return_review','Disposable active review',$3)value",[ids.admin,activeReview.orderId,randomUUID()])).rows[0].value;assert(activeReviewReceipt.money_moved===false,'post_settlement_review_moved_money');await claims('authenticated',ids.buyer);await expectMessage(()=>db.query("select request_marketplace_return($1,'Blocked by active review',$2)",[activeReview.orderId,randomUUID()]),'marketplace_return_active_dispute');await claims('service_role');const closedReview=(await db.query("select resolve_marketplace_dispute($1,$2,'reject_claim','return_review_closed','Close disposable review',$3,null)value",[ids.admin,activeReviewReceipt.dispute_id,randomUUID()])).rows[0].value;assert(closedReview.finalDecision.outcome==='reject_claim','active_review_cleanup_failed');
+ stage="r2a_reversed_settlement";const reversedOrder=await checkout('RETURNREVERSED');await claims('service_role');await db.query("select confirm_marketplace_order_delivery_and_release($1,$2,$3)",[ids.buyer,reversedOrder.orderId,randomUUID()]);const reversalReview=(await db.query("select open_marketplace_post_settlement_review($1,$2,'return_reversal','Disposable reversal',$3)value",[ids.admin,reversedOrder.orderId,randomUUID()])).rows[0].value;const reversal=(await db.query("select resolve_marketplace_dispute($1,$2,'refund_buyer','return_reversal','Disposable full reversal',$3,null)value",[ids.admin,reversalReview.dispute_id,randomUUID()])).rows[0].value;assert(reversal.finalDecision.outcome==='refund_buyer','b7r_reversal_setup_failed');await claims('authenticated',ids.buyer);await expectMessage(()=>db.query("select request_marketplace_return($1,'Already reversed',$2)",[reversedOrder.orderId,randomUUID()]),'marketplace_return_not_eligible');
  stage="dispute_checkout";const disputed=await checkout('DISPUTE');
  await db.query("update marketplace_order_shipments set shipped_at=now()-interval '30 days' where order_id=$1",[disputed.orderId]);
  await claims('authenticated',ids.buyer);const disputeKey=randomUUID();await db.query("select report_marketplace_order_problem($1,'not_received','Rollback proof',$2)",[disputed.orderId,disputeKey]);await db.query("select report_marketplace_order_problem($1,'not_received','Rollback proof',$2)",[disputed.orderId,disputeKey]);
@@ -89,11 +133,11 @@ try{
  const eventContext=(await db.query("select checkout_id,buyer_id,seller_id,store_id from marketplace_orders where id=$1",[disputed.orderId])).rows[0];await db.query("insert into marketplace_order_events(order_id,checkout_id,buyer_id,seller_id,store_id,event_type,actor_role,metadata,created_at)values($1,$2,$3,$4,$5,'dispute_resolved','admin',jsonb_build_object('outcome','reject_claim'),now()+interval '1 second'),($1,$2,$3,$4,$5,'dispute_resolved','admin',jsonb_build_object('outcome','refund_buyer'),now()+interval '2 seconds')",[disputed.orderId,eventContext.checkout_id,eventContext.buyer_id,eventContext.seller_id,eventContext.store_id]);const eventHistory=(await db.query("select marketplace_order_detail_response($1,'seller') value",[disputed.orderId])).rows[0].value.events.filter(event=>event.event_type==='dispute_resolved');assert(eventHistory.length===2&&eventHistory[0].dispute_outcome==='reject_claim'&&eventHistory[1].dispute_outcome==='refund_buyer','event_specific_dispute_outcome_missing');
  await claims('authenticated',ids.buyer);await db.query('savepoint seller_awareness_non_seller');let nonSellerDenied=false;try{await db.query("select fetch_my_marketplace_disputes(20,null,null)")}catch(error){nonSellerDenied=error?.code==='42501'}await db.query('rollback to savepoint seller_awareness_non_seller');assert(nonSellerDenied,'ordinary_non_seller_not_denied');
  await claims('service_role');const blocked=(await db.query("select run_scheduled_marketplace_settlement() value")).rows[0].value;assert(blocked.processed===0,'dispute_did_not_block_settlement');assert((await db.query("select status from marketplace_payment_allocations where order_id=$1",[disputed.orderId])).rows[0].status==='held','dispute_allocation_released');
- const inside={direct_settlements:1,auto_processed:autoFirst.processed,auto_retry_processed:autoSecond.processed,dispute_blocked:true,seller_awareness:true,event_specific_history:true,shipment_retry:true,shipping_frozen:(await db.query("select shipping_amount from marketplace_orders where id=$1",[direct.orderId])).rows[0].shipping_amount};
+ const inside={direct_settlements:1,auto_processed:autoFirst.processed,auto_retry_processed:autoSecond.processed,dispute_blocked:true,seller_awareness:true,event_specific_history:true,shipment_retry:true,r2a_approved:true,r2a_rejected:true,r2a_shipped_released_denied:true,r2a_active_dispute_denied:true,r2a_reversed_denied:true,r2a_zero_money:true,shipping_frozen:(await db.query("select shipping_amount from marketplace_orders where id=$1",[direct.orderId])).rows[0].shipping_amount};
  await db.query('rollback');open=false;
  const after=(await db.query(countsSql)).rows[0];assert(JSON.stringify(before)===JSON.stringify(after),'rollback_counts_changed');
  const reconciled=(await db.query("select reconcile_marketplace_payments() payments,reconcile_marketplace_settlements() settlements,reconcile_marketplace_live_commissions() commissions")).rows[0];
  assert(reconciliationIsZero(reconciled.payments),'payment_reconciliation_nonzero');assert(reconciliationIsZero(reconciled.settlements,['escrow_actual_balance','escrow_expected_held_total']),'settlement_reconciliation_nonzero');assert(reconciliationIsZero(reconciled.commissions),'commission_reconciliation_nonzero');
  const cron=(await db.query("select count(*)::int n from cron.job where jobname='settle-eligible-marketplace-orders' and schedule='17 * * * *' and active")).rows[0].n;assert(cron===1,'settlement_cron_not_active');
- console.log(JSON.stringify({project_ref:projectRef,direct:{settled:inside.direct_settlements===1},automatic:{processed:inside.auto_processed,retry_processed:inside.auto_retry_processed,cron_active:true},dispute:{blocked:inside.dispute_blocked,seller_awareness:inside.seller_awareness,event_specific_history:inside.event_specific_history,ordinary_non_seller_denied:true},shipment:{idempotent:inside.shipment_retry},shipping:{frozen_amount:Number(inside.shipping_frozen)},rollback:{global_counts_unchanged:true},reconciliation:{payments:0,settlements:0,commissions:0}},null,2));
+ console.log(JSON.stringify({project_ref:projectRef,direct:{settled:inside.direct_settlements===1},automatic:{processed:inside.auto_processed,retry_processed:inside.auto_retry_processed,cron_active:true},dispute:{blocked:inside.dispute_blocked,seller_awareness:inside.seller_awareness,event_specific_history:inside.event_specific_history,ordinary_non_seller_denied:true},returns:{approved:inside.r2a_approved,rejected:inside.r2a_rejected,shipped_released_denied:inside.r2a_shipped_released_denied,active_dispute_denied:inside.r2a_active_dispute_denied,reversed_denied:inside.r2a_reversed_denied,zero_money:inside.r2a_zero_money,buyer_seller_lifecycle:true,idempotent:true},shipment:{idempotent:inside.shipment_retry},shipping:{frozen_amount:Number(inside.shipping_frozen)},rollback:{global_counts_unchanged:true},reconciliation:{payments:0,settlements:0,commissions:0}},null,2));
 }catch(error){if(open)await db.query('rollback').catch(()=>{});console.error(`MARKETPLACE_ORDER_LIFECYCLE_PROOF_FAILED:${stage}:${safeError(error)}`);process.exitCode=1;}finally{await db.end().catch(()=>{});}

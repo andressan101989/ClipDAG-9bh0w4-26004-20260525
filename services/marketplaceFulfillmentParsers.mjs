@@ -56,6 +56,23 @@ const buyerPaymentStatuses = ["paid", "partially_refunded", "refunded"];
 const allocationStatuses = ["held", "released", "refunded", "partially_refunded"];
 const disputeStatuses = ["open", "under_review", "resolved", "rejected", "cancelled"];
 const disputeOutcomes = ["refund_buyer", "release_seller", "reject_claim"];
+const returnStatuses = ["requested", "approved", "rejected"];
+
+const marketplaceReturnRequest = (value, path, includeOrderId = false) => {
+  const row = object(value, path);
+  const status = enumeration(row.status, returnStatuses, `${path}.status`);
+  const decidedAt = nullableTimestamp(row.decided_at, `${path}.decided_at`);
+  if ((status === "requested") !== (decidedAt === null)) fail(`${path}.decided_at`);
+  return {
+    id: uuid(row.id, `${path}.id`),
+    ...(includeOrderId ? { orderId: uuid(row.order_id, `${path}.order_id`) } : {}),
+    status,
+    buyerNote: string(row.buyer_note, `${path}.buyer_note`),
+    sellerNote: nullableString(row.seller_note, `${path}.seller_note`),
+    createdAt: timestamp(row.created_at, `${path}.created_at`),
+    decidedAt,
+  };
+};
 
 const sellerHistoryStateIsCompatible = (
   orderStatus,
@@ -520,6 +537,8 @@ export function parseMarketplaceOrderDetailPayload(value) {
     shippingAmount: 0,
     shippingEstimate: null,
     dispute: null,
+    returnEligible: false,
+    returnRequest: null,
   };
 }
 
@@ -536,6 +555,10 @@ export function mergeMarketplaceOrderLifecyclePayload(detail, value) {
     rawDispute?.seller_response == null
       ? null
       : object(rawDispute.seller_response, "order_lifecycle.dispute.seller_response");
+  const rawReturnRequest =
+    root.return_request == null
+      ? null
+      : object(root.return_request, "order_lifecycle.return_request");
   const shippingAmount = number(root.shipping_amount, "order_lifecycle.shipping_amount");
   const snapshotHasValues =
     rawSnapshot != null &&
@@ -640,5 +663,26 @@ export function mergeMarketplaceOrderLifecyclePayload(detail, value) {
             : null,
         }
       : null,
+    returnEligible:
+      root.return_eligible == null
+        ? false
+        : boolean(root.return_eligible, "order_lifecycle.return_eligible"),
+    returnRequest: rawReturnRequest
+      ? marketplaceReturnRequest(rawReturnRequest, "order_lifecycle.return_request")
+      : null,
+  };
+}
+
+export function parseMarketplaceReturnMutationReceipt(value) {
+  const root = object(value, "marketplace_return_receipt");
+  if (boolean(root.money_moved, "marketplace_return_receipt.money_moved"))
+    fail("marketplace_return_receipt.money_moved");
+  return {
+    returnRequest: marketplaceReturnRequest(
+      root.return_request,
+      "marketplace_return_receipt.return_request",
+      true,
+    ),
+    moneyMoved: false,
   };
 }
