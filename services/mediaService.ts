@@ -18,6 +18,7 @@ export type MediaPurpose =
   | "music_audio"
   | "document"
   | "attachment"
+  | "dispute_evidence"
   | "live_cover";
 export type MediaVisibility = "public" | "private";
 export interface UploadMediaInput {
@@ -112,6 +113,7 @@ const IMAGE_PURPOSES = new Set<MediaPurpose>([
   "store_logo",
   "store_banner",
   "chat_image",
+  "dispute_evidence",
   "live_cover",
 ]);
 const UUID_PATTERN =

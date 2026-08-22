@@ -8,7 +8,7 @@ test('all authorized purposes have explicit limits and MIME allowlists', () => {
   for (const purpose of [
     'avatar', 'post_image', 'carousel_image', 'thumbnail', 'product_image', 'store_logo', 'store_banner',
     'chat_image', 'chat_audio', 'voice_note', 'music_audio', 'document',
-    'attachment', 'live_cover',
+    'attachment', 'dispute_evidence', 'live_cover',
     'product_video',
   ]) assert.match(source, new RegExp(`${purpose}:\\s*\\{`));
   assert.match(source, /avatar:\s*\{\s*kind:\s*"image",\s*maxBytes:\s*10_000_000/);

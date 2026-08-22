@@ -101,7 +101,8 @@ test("Creator Showcase closes the mobile touch, accessibility, language, and nar
 
 test("B8D-2R-F1 remains intact after the authorized C5 migration", () => {
   const migrations = readdirSync(join(root, "supabase/migrations")).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(migrations.at(-1), "20260820010000_fix_marketplace_checkout_order_image_snapshot.sql");
+  assert.equal(migrations.at(-1), "20260821010000_marketplace_buyer_dispute_evidence_r1a.sql");
+  assert.ok(migrations.includes("20260820010000_fix_marketplace_checkout_order_image_snapshot.sql"));
   assert.ok(migrations.includes("20260817011718_harden_buyer_financial_exposure.sql"));
   assert.equal(String(JSON.parse(read("app.json")).expo.ios.buildNumber), "22");
   assert(!existsSync(join(root, "docs/audits/MKT-B8D-3")));

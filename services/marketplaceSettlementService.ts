@@ -391,13 +391,23 @@ export async function reportMarketplaceOrderProblem(
     | "other",
   buyerNote: string,
   idempotencyKey: string,
+  orderItemIds: string[],
+  evidenceAssetIds: string[],
 ): Promise<{
   status: string;
   reasonCode: string;
   settlementBlocked: true;
   createdAt: string;
 }> {
-  if (!UUID.test(orderId) || !UUID.test(idempotencyKey))
+  if (
+    !UUID.test(orderId) ||
+    !UUID.test(idempotencyKey) ||
+    orderItemIds.length < 1 ||
+    orderItemIds.length > 100 ||
+    evidenceAssetIds.length > 6 ||
+    orderItemIds.some((id) => !UUID.test(id)) ||
+    evidenceAssetIds.some((id) => !UUID.test(id))
+  )
     throw new MarketplaceSettlementError("marketplace_dispute_invalid_input");
   const { data, error } = await getSupabaseClient().rpc(
     "report_marketplace_order_problem",
@@ -406,6 +416,8 @@ export async function reportMarketplaceOrderProblem(
       p_reason_code: reasonCode,
       p_buyer_note: buyerNote.trim() || null,
       p_idempotency_key: idempotencyKey,
+      p_order_item_ids: orderItemIds,
+      p_evidence_asset_ids: evidenceAssetIds,
     },
   );
   if (error) {

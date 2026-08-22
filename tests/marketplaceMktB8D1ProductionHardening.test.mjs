@@ -124,7 +124,7 @@ test("C2 Edge envelopes, balance, publication and table reads fail closed",()=>{
 
 test("C2 remained client-only and later authorized correctives add no client economic authority",()=>{
   const later=readdirSync(join(root,"supabase/migrations")).filter((name)=>name>"20260811033000_marketplace_production_hardening.sql");
-  assert.deepEqual(later,["20260811034000_marketplace_verified_reviews_branding.sql","20260816010000_marketplace_admin_dispute_resolution_authority.sql","20260816020000_marketplace_buyer_purchase_history.sql","20260816021000_fix_marketplace_buyer_purchase_history_paid_evidence.sql","20260816022000_marketplace_seller_purchase_history.sql","20260817011224_harden_financial_security_definer_functions.sql","20260817011718_harden_buyer_financial_exposure.sql","20260820010000_fix_marketplace_checkout_order_image_snapshot.sql"]);
+  assert.deepEqual(later,["20260811034000_marketplace_verified_reviews_branding.sql","20260816010000_marketplace_admin_dispute_resolution_authority.sql","20260816020000_marketplace_buyer_purchase_history.sql","20260816021000_fix_marketplace_buyer_purchase_history_paid_evidence.sql","20260816022000_marketplace_seller_purchase_history.sql","20260817011224_harden_financial_security_definer_functions.sql","20260817011718_harden_buyer_financial_exposure.sql","20260820010000_fix_marketplace_checkout_order_image_snapshot.sql","20260821010000_marketplace_buyer_dispute_evidence_r1a.sql"]);
   assert.doesNotMatch(payment+settlement+product+showcase,/set_balance|adjust_wallet|repair_ledger|p_(seller_payout|creator_bps|platform_fee|ledger_account)/i);
 });
 

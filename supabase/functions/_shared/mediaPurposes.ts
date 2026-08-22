@@ -13,6 +13,7 @@ export type MediaPurpose =
   | "music_audio"
   | "document"
   | "attachment"
+  | "dispute_evidence"
   | "live_cover";
 
 type Rule = {
@@ -126,6 +127,12 @@ export const MEDIA_PURPOSES: Record<MediaPurpose, Rule> = {
     kind: "document",
     maxBytes: 50_000_000,
     mimeTypes: DOCUMENTS,
+    defaultVisibility: "private",
+  },
+  dispute_evidence: {
+    kind: "image",
+    maxBytes: 25_000_000,
+    mimeTypes: IMAGES,
     defaultVisibility: "private",
   },
 };

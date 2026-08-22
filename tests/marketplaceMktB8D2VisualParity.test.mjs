@@ -313,8 +313,9 @@ test("visual closure retains no economic authority and keeps Build 22", () => {
     .sort();
   assert.equal(
     migrations.at(-1),
-    "20260820010000_fix_marketplace_checkout_order_image_snapshot.sql",
+    "20260821010000_marketplace_buyer_dispute_evidence_r1a.sql",
   );
+  assert.ok(migrations.includes("20260820010000_fix_marketplace_checkout_order_image_snapshot.sql"));
   assert.ok(migrations.includes("20260817011718_harden_buyer_financial_exposure.sql"));
   assert.equal(String(JSON.parse(read("app.json")).expo.ios.buildNumber), "22");
   const changed = product + gallery + purchase + reviews + shipping + store;
