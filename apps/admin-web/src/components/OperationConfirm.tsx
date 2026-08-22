@@ -5,6 +5,7 @@ export function OperationConfirm({
   title,
   actions,
   maxReasonLength,
+  minReasonLength = 1,
   onRun,
 }: {
   title: string;
@@ -15,6 +16,7 @@ export function OperationConfirm({
     danger?: boolean;
   }>;
   maxReasonLength: number;
+  minReasonLength?: number;
   onRun: (
     action: string,
     reason: string,
@@ -35,6 +37,10 @@ export function OperationConfirm({
     const normalized = reason.trim();
     if (selected.reasonRequired && !normalized) {
       setMessage("El motivo es obligatorio.");
+      return;
+    }
+    if (selected.reasonRequired && normalized.length < minReasonLength) {
+      setMessage(`El motivo debe tener al menos ${minReasonLength} caracteres.`);
       return;
     }
     if (normalized.length > maxReasonLength) {

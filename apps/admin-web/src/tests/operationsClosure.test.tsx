@@ -84,6 +84,17 @@ const releaseReceipt = (alreadyReleased: boolean) => ({
   },
 });
 
+const postRejectReleaseReceipt = (alreadyReleased = false) => ({
+  kind: "post_reject_release",
+  money_moved: !alreadyReleased,
+  dispute_id: id("2"),
+  prior_decision_id: id("3"),
+  prior_outcome: "reject_claim",
+  settlement: { id: id("6"), status: "completed", released_at: at },
+  allocation: { status: "released", gross_amount: "10.00000000" },
+  already_released: alreadyReleased,
+});
+
 const reversalReceipt = () => ({
   ...finalReceipt(),
   finalDecision: {
@@ -121,6 +132,13 @@ describe("B8B-C1 dispute operation receipt validation", () => {
     expect(validateDisputeOperationReceipt(releaseReceipt(true))).toEqual(
       releaseReceipt(true),
     );
+  });
+
+  it("accepts canonical post-reject release and replay receipts", () => {
+    expect(validateDisputeOperationReceipt(postRejectReleaseReceipt())).toEqual(postRejectReleaseReceipt());
+    expect(validateDisputeOperationReceipt(postRejectReleaseReceipt(true))).toEqual(postRejectReleaseReceipt(true));
+    expect(() => validateDisputeOperationReceipt({ ...postRejectReleaseReceipt(), prior_outcome: "release_seller" })).toThrow(/Respuesta inv.lida/);
+    expect(() => validateDisputeOperationReceipt({ ...postRejectReleaseReceipt(true), money_moved: true })).toThrow(/Respuesta inv.lida/);
   });
 
   it("rejects malformed post-settlement already-released receipts", () => {
@@ -294,6 +312,24 @@ describe("B8B-C1 safe operation UX", () => {
     await userEvent.click(screen.getByRole("button", { name: "Suspender" }));
     await waitFor(() => expect(onRun).toHaveBeenCalledTimes(1));
     expect(screen.getByLabelText("Motivo")).toHaveAttribute("maxlength", "500");
+  });
+
+  it("supports a dispute-specific minimum without changing the default", async () => {
+    const onRun = vi.fn().mockResolvedValue(undefined);
+    const { unmount } = render(
+      <OperationConfirm title="Disputa" minReasonLength={2} maxReasonLength={100} actions={[{ value: "release_seller", label: "Liberar", reasonRequired: true }]} onRun={onRun} />,
+    );
+    await userEvent.type(screen.getByLabelText("Motivo"), "x");
+    await userEvent.click(screen.getByRole("button", { name: /Revisar operaci/ }));
+    expect(screen.getByText(/al menos 2 caracteres/)).toBeInTheDocument();
+    expect(onRun).not.toHaveBeenCalled();
+    unmount();
+    render(
+      <OperationConfirm title="Otra operación" maxReasonLength={100} actions={[{ value: "other", label: "Continuar", reasonRequired: true }]} onRun={onRun} />,
+    );
+    await userEvent.type(screen.getByLabelText("Motivo"), "x");
+    await userEvent.click(screen.getByRole("button", { name: /Revisar operaci/ }));
+    expect(screen.getByRole("dialog", { name: "Otra operación" })).toBeInTheDocument();
   });
 
   it("opens an accessible dialog without mutation and cancel restores safety", async () => {

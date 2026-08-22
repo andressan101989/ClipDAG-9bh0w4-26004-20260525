@@ -46,6 +46,8 @@ describe("Marketplace Admin dispute evidence R1C", () => {
     await userEvent.click(screen.getByAltText("Evidencia del comprador 1"));
     expect(screen.getByRole("dialog", { name: "Vista ampliada de evidencia del comprador" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Reembolsar al comprador" })).toHaveValue("refund_buyer");
+    expect(screen.getByRole("option", { name: "Resolver a favor del vendedor y liberar ahora" })).toHaveValue("release_seller");
+    expect(screen.getByRole("option", { name: "Rechazar reclamo y mantener liberación normal" })).toHaveValue("reject_claim");
   });
   it("renders neutral empty states", async () => {
     const empty = { ...structuredClone(detail), buyer_evidence_asset_ids: [], seller_response: null };
@@ -54,11 +56,25 @@ describe("Marketplace Admin dispute evidence R1C", () => {
     expect(await screen.findByText("El vendedor aún no ha presentado una respuesta.")).toBeInTheDocument();
     expect(screen.getByText("Sin evidencia fotográfica adjunta.")).toBeInTheDocument();
   });
-  it("keeps a finalized case read-only", async () => {
-    const resolved = { ...structuredClone(detail), dispute: { ...detail.dispute, status: "resolved", resolved_at: "2026-08-21T15:00:00Z" }, final_decision: { id: id("12"), resolver_id: id("13"), outcome: "reject_claim", reason_code: "evidence_reviewed", note: null, financial_result: {}, decided_at: "2026-08-21T15:00:00Z" } };
+  it("keeps the decision read-only while offering only pending release after reject_claim", async () => {
+    const resolved = { ...structuredClone(detail), dispute: { ...detail.dispute, status: "rejected", resolved_at: "2026-08-21T15:00:00Z" }, allocation: { id: id("14"), status: "held", gross_amount: "25.00000000", platform_fee_amount: "2.50000000", seller_net_amount: "22.50000000", creator_commission_amount: "0.00000000", released_at: null, refunded_at: null }, final_decision: { id: id("12"), resolver_id: id("13"), outcome: "reject_claim", reason_code: "evidence_reviewed", note: null, financial_result: { money_moved: false, settlement_eligible: true }, decided_at: "2026-08-21T15:00:00Z" } };
     vi.mocked(supabase.rpc).mockResolvedValue({ data: resolved, error: null } as never);
     render(<MemoryRouter initialEntries={[`/marketplace/disputes/${id("1")}`]}><Routes><Route path="/marketplace/disputes/:id" element={<MarketplaceDisputeDetailPage />} /></Routes></MemoryRouter>);
     expect(await screen.findByText("Este expediente es de solo lectura.")).toBeInTheDocument();
     expect(screen.queryByText("Resolver disputa")).not.toBeInTheDocument();
+    expect(screen.getByText("Fondos pendientes")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Liberar fondos pendientes al vendedor" })).toHaveValue("release_seller");
+  });
+  it("does not offer follow-up release after funds are released or a refund decision", async () => {
+    const base = { ...structuredClone(detail), dispute: { ...detail.dispute, status: "rejected", resolved_at: "2026-08-21T15:00:00Z" }, allocation: { id: id("14"), status: "released", gross_amount: "25.00000000", platform_fee_amount: "2.50000000", seller_net_amount: "22.50000000", creator_commission_amount: "0.00000000", released_at: "2026-08-21T15:00:00Z", refunded_at: null }, settlement: { id: id("15"), status: "completed", gross_amount: "25.00000000", seller_net_amount: "22.50000000", platform_fee_amount: "2.50000000", creator_commission_amount: "0.00000000", released_at: "2026-08-21T15:00:00Z" }, final_decision: { id: id("12"), resolver_id: id("13"), outcome: "reject_claim", reason_code: "evidence_reviewed", note: null, financial_result: { money_moved: false, settlement_eligible: true }, decided_at: "2026-08-21T15:00:00Z" } };
+    vi.mocked(supabase.rpc).mockResolvedValue({ data: base, error: null } as never);
+    const { unmount } = render(<MemoryRouter initialEntries={[`/marketplace/disputes/${id("1")}`]}><Routes><Route path="/marketplace/disputes/:id" element={<MarketplaceDisputeDetailPage />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText("Este expediente es de solo lectura.")).toBeInTheDocument();
+    expect(screen.queryByText("Fondos pendientes")).not.toBeInTheDocument();
+    unmount();
+    vi.mocked(supabase.rpc).mockResolvedValue({ data: { ...base, settlement: null, allocation: { ...base.allocation, status: "held", released_at: null }, final_decision: { ...base.final_decision, outcome: "refund_buyer", financial_result: { money_moved: true } } }, error: null } as never);
+    render(<MemoryRouter initialEntries={[`/marketplace/disputes/${id("1")}`]}><Routes><Route path="/marketplace/disputes/:id" element={<MarketplaceDisputeDetailPage />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText("Este expediente es de solo lectura.")).toBeInTheDocument();
+    expect(screen.queryByText("Fondos pendientes")).not.toBeInTheDocument();
   });
 });
