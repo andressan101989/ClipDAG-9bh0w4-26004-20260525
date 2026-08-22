@@ -41,6 +41,17 @@ test("private evidence signer grants only linked dispute evidence to Marketplace
   assert.match(auth, /authenticatedClient/);
 });
 
+test("get-media-url supports browser preflight without weakening its POST boundary", () => {
+  assert.match(edge, /'Access-Control-Allow-Origin':'\*'/);
+  assert.match(edge, /'Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type'/);
+  assert.match(edge, /'Access-Control-Allow-Methods':'POST, OPTIONS'/);
+  assert.match(edge, /req\.method==='OPTIONS'[\s\S]*status:204[\s\S]*headers:corsHeaders/);
+  assert.match(edge, /req\.method!=='POST'[\s\S]*corsJson\(\{error:'method_not_allowed'\},405\)/);
+  for (const status of [401,403,404]) assert.match(edge, new RegExp(`corsJson\\(\\{error:'[^']+'\\},${status}\\)`));
+  assert.match(edge, /return corsJson\(\{success:true/);
+  assert.doesNotMatch(edge, /mode:\s*["']no-cors|verify_jwt\s*=\s*false/);
+});
+
 test("Admin client validates the dossier and reuses get-media-url", () => {
   for (const token of ["affected_items", "buyer_evidence_asset_ids", "seller_response", "evidence_asset_ids"]) assert.match(api, new RegExp(token));
   assert.match(api, /ids\.length>6/);

@@ -59,7 +59,7 @@ test("private signer allows only the dispute seller to read linked buyer evidenc
   assert.match(edge, /slot','buyer_evidence'/);
   assert.match(edge, /marketplace_order_disputes/);
   assert.match(edge, /seller_id',userId/);
-  assert.match(edge, /return json\(\{error:'forbidden'\},403\)/);
+  assert.match(edge, /return corsJson\(\{error:'forbidden'\},403\)/);
   assert.match(edge, /a\.visibility==='public'\?publicUrl[\s\S]*signGet/);
   assert.doesNotMatch(edge, /seller_evidence.*seller_id|expiresAt.*86400/);
 });
