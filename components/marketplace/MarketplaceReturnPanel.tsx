@@ -335,7 +335,6 @@ export function MarketplaceReturnPanel({
     });
     setBusy(true);
     let assetId = uploadedLabelAssetId;
-    let uploadedNow = false;
     try {
       if (!assetId) {
         const uploaded = await uploadMediaFromUri({
@@ -347,7 +346,6 @@ export function MarketplaceReturnPanel({
           visibility: "private",
         });
         assetId = uploaded.assetId;
-        uploadedNow = true;
         setUploadedLabelAssetId(assetId);
       }
       const updated = await sendMarketplaceReturnLabel(
@@ -367,10 +365,14 @@ export function MarketplaceReturnPanel({
       const ambiguous =
         error instanceof MarketplaceFulfillmentError &&
         error.code === "marketplace_fulfillment_outcome_unknown";
-      if (uploadedNow && assetId && !ambiguous) {
-        await deleteMediaAsset(assetId).catch(() => {});
-        setUploadedLabelAssetId(null);
-        shippingAttempt.current = null;
+      if (assetId && !ambiguous) {
+        try {
+          await deleteMediaAsset(assetId);
+          setUploadedLabelAssetId(null);
+          shippingAttempt.current = null;
+        } catch {
+          // Preserve the asset and key: it may be linked or cleanup may be uncertain.
+        }
       }
       Alert.alert("No se pudo enviar el label", messageFor(error));
     } finally {

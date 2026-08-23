@@ -198,6 +198,28 @@ test("active client flow has no manual buyer carrier authority", () => {
   assert.match(panel, /Reembolsar y permitir que conserve el producto/);
 });
 
+test("return label cleanup preserves ambiguous attempts and cleans definitive failures", () => {
+  const body = panel.split("const sendReturnLabel = async () => {")[1]
+    .split("const confirmSendReturnLabel")[0];
+  assert.doesNotMatch(panel, /uploadedNow/);
+  assert.match(body, /if \(assetId && !ambiguous\) \{/);
+
+  const cleanup = body.split("if (assetId && !ambiguous) {")[1]
+    .split('Alert.alert("No se pudo enviar el label"')[0];
+  const successfulCleanup = cleanup.split("} catch {")[0];
+  const failedCleanup = cleanup.split("} catch {")[1];
+
+  assert.match(successfulCleanup, /await deleteMediaAsset\(assetId\);/);
+  assert.match(successfulCleanup, /setUploadedLabelAssetId\(null\);/);
+  assert.match(successfulCleanup, /shippingAttempt\.current = null;/);
+  assert.doesNotMatch(failedCleanup, /setUploadedLabelAssetId\(null\)/);
+  assert.doesNotMatch(failedCleanup, /shippingAttempt\.current = null/);
+
+  const ambiguousGuard = body.indexOf("if (assetId && !ambiguous)");
+  const deleteAttempt = body.indexOf("await deleteMediaAsset(assetId)");
+  assert.ok(ambiguousGuard >= 0 && ambiguousGuard < deleteAttempt);
+});
+
 test("return label media registry and private read authority are exact", () => {
   assert.match(media, /return_label:\s*\{\s*kind: "document",\s*maxBytes: 10_000_000,\s*mimeTypes: \["application\/pdf"\],\s*defaultVisibility: "private"/);
   assert.match(mediaUrl, /entity_type','marketplace_return_shipment'/);
