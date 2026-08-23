@@ -195,7 +195,7 @@ const buyerReturnProgressLabel = (
   ? 'Devolución enviada'
   : status === 'awaiting_buyer_shipment'
     ? labelSent ? 'Label listo para imprimir' : 'Esperando label del vendedor'
-    : 'Esperando instrucciones de devolución';
+    : 'Esperando label del vendedor';
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },

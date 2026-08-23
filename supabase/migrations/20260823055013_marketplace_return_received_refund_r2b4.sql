@@ -3,6 +3,30 @@
 -- It does not debit settlement beneficiaries again and does not create B7R rows.
 begin;
 
+-- R2B-2 destination/tracking columns are retained only for immutable legacy
+-- shipments. New return shipments are label-only: the private PDF is the
+-- complete shipping authority and the app neither collects nor infers address,
+-- carrier, service, tracking, or destination fingerprints.
+drop function public.prepare_marketplace_return_shipment(
+  uuid,text,text,text,text,text,text,text,text,text,uuid
+);
+drop function public.send_marketplace_return_label(
+  uuid,uuid,text,text,text,text,uuid
+);
+
+alter table public.marketplace_return_shipments
+  alter column recipient_name drop not null,
+  alter column line1 drop not null,
+  alter column city drop not null,
+  alter column region drop not null,
+  alter column postal_code drop not null,
+  alter column country drop not null,
+  alter column instructions_provided_at drop not null,
+  alter column instructions_provided_at drop default,
+  alter column seller_instruction_idempotency_key drop not null,
+  alter column seller_instruction_fingerprint drop not null,
+  alter column destination_fingerprint drop not null;
+
 alter table public.marketplace_return_shipments
   add column received_at timestamptz,
   add column received_by uuid references auth.users(id) on delete restrict,
@@ -46,44 +70,54 @@ alter table public.marketplace_return_shipments
       and buyer_shipping_fingerprint is null and shipped_destination_fingerprint is null
       and received_at is null and received_by is null and seller_receipt_note is null
       and seller_receipt_idempotency_key is null and seller_receipt_fingerprint is null
-      and(
-        (return_label_asset_id is null and label_sent_at is null
-          and label_idempotency_key is null and label_fingerprint is null
-          and carrier_name is null and service_level is null
-          and tracking_number is null and tracking_url is null)
-        or
-        (return_label_asset_id is not null and label_sent_at is not null
-          and label_idempotency_key is not null and label_fingerprint is not null
-          and carrier_name is not null and tracking_number is not null)
-      ))
+      and return_label_asset_id is not null and label_sent_at is not null
+      and label_idempotency_key is not null and label_fingerprint is not null
+      and recipient_name is null and line1 is null and line2 is null
+      and city is null and region is null and postal_code is null and country is null
+      and phone is null and seller_instructions is null
+      and carrier_name is null and service_level is null
+      and tracking_number is null and tracking_url is null
+      and instructions_provided_at is null
+      and seller_instruction_idempotency_key is null
+      and seller_instruction_fingerprint is null and destination_fingerprint is null)
     or
-    (status='shipped' and carrier_name is not null and tracking_number is not null
-      and shipped_at is not null and buyer_shipping_idempotency_key is not null
-      and buyer_shipping_fingerprint is not null
-      and shipped_destination_fingerprint=destination_fingerprint
+    (status='shipped' and shipped_at is not null
+      and buyer_shipping_idempotency_key is not null and buyer_shipping_fingerprint is not null
       and received_at is null and received_by is null and seller_receipt_note is null
       and seller_receipt_idempotency_key is null and seller_receipt_fingerprint is null
       and(
-        (return_label_asset_id is null and label_sent_at is null
-          and label_idempotency_key is null and label_fingerprint is null)
-        or
         (return_label_asset_id is not null and label_sent_at is not null
-          and label_idempotency_key is not null and label_fingerprint is not null)
+          and label_idempotency_key is not null and label_fingerprint is not null
+          and carrier_name is null and service_level is null
+          and tracking_number is null and tracking_url is null
+          and shipped_destination_fingerprint is null)
+        or
+        (return_label_asset_id is null and label_sent_at is null
+          and label_idempotency_key is null and label_fingerprint is null
+          and carrier_name is not null and tracking_number is not null
+          and destination_fingerprint is not null
+          and shipped_destination_fingerprint=destination_fingerprint
+          and created_at<timestamptz '2026-08-23 04:27:37+00')
       ))
     or
-    (status='received' and carrier_name is not null and tracking_number is not null
-      and shipped_at is not null and buyer_shipping_idempotency_key is not null
-      and buyer_shipping_fingerprint is not null
-      and shipped_destination_fingerprint=destination_fingerprint
+    (status='received' and shipped_at is not null
+      and buyer_shipping_idempotency_key is not null and buyer_shipping_fingerprint is not null
       and received_at is not null and received_by=seller_id
       and seller_receipt_idempotency_key is not null
       and seller_receipt_fingerprint is not null
       and(
-        (return_label_asset_id is null and label_sent_at is null
-          and label_idempotency_key is null and label_fingerprint is null)
-        or
         (return_label_asset_id is not null and label_sent_at is not null
-          and label_idempotency_key is not null and label_fingerprint is not null)
+          and label_idempotency_key is not null and label_fingerprint is not null
+          and carrier_name is null and service_level is null
+          and tracking_number is null and tracking_url is null
+          and shipped_destination_fingerprint is null)
+        or
+        (return_label_asset_id is null and label_sent_at is null
+          and label_idempotency_key is null and label_fingerprint is null
+          and carrier_name is not null and tracking_number is not null
+          and destination_fingerprint is not null
+          and shipped_destination_fingerprint=destination_fingerprint
+          and created_at<timestamptz '2026-08-23 04:27:37+00')
       ))
   );
 
@@ -190,11 +224,11 @@ create or replace function public.marketplace_return_shipment_json(p_return_id u
 returns jsonb language sql stable security definer set search_path=pg_catalog,public as $$
 select case when rs.id is null then null else jsonb_build_object(
   'status',rs.status,
-  'destination',jsonb_build_object(
+  'destination',case when rs.recipient_name is null then null else jsonb_build_object(
     'recipient_name',rs.recipient_name,'line1',rs.line1,'line2',rs.line2,
     'city',rs.city,'region',rs.region,'postal_code',rs.postal_code,
     'country',rs.country,'phone',rs.phone
-  ),
+  )end,
   'seller_instructions',rs.seller_instructions,
   'return_label_asset_id',rs.return_label_asset_id,
   'return_label_file_name',ma.original_filename,
@@ -235,6 +269,214 @@ from public.marketplace_return_requests rr
 left join public.marketplace_return_refund_holds h on h.return_request_id=rr.id
 left join public.marketplace_return_refunds rf on rf.return_request_id=rr.id
 where rr.id=p_return_id;
+$$;
+
+create function public.send_marketplace_return_label(
+  p_return_id uuid,
+  p_label_asset_id uuid,
+  p_idempotency_key uuid
+)returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
+declare
+  v_actor uuid:=auth.uid();
+  rr public.marketplace_return_requests;
+  h public.marketplace_return_refund_holds;
+  o public.marketplace_orders;
+  s public.marketplace_order_settlements;
+  p public.marketplace_payments;
+  a public.marketplace_payment_allocations;
+  rs public.marketplace_return_shipments;
+  ma public.media_assets;
+  v_fingerprint text;
+  v_now timestamptz:=clock_timestamp();
+begin
+  if v_actor is null then
+    raise exception using errcode='42501',message='marketplace_auth_required';
+  end if;
+  if p_return_id is null or p_label_asset_id is null or p_idempotency_key is null then
+    raise exception using errcode='22023',message='marketplace_return_label_invalid_input';
+  end if;
+  v_fingerprint:=encode(extensions.digest(convert_to(jsonb_build_object(
+    'return_id',p_return_id,'label_asset_id',p_label_asset_id
+  )::text,'UTF8'),'sha256'),'hex');
+
+  perform pg_advisory_xact_lock(hashtextextended(
+    'marketplace-return-label:'||p_return_id::text,0));
+  select * into rr from public.marketplace_return_requests where id=p_return_id for update;
+  if not found then
+    raise exception using errcode='P0002',message='marketplace_return_not_found';
+  end if;
+  if rr.seller_id<>v_actor then
+    raise exception using errcode='42501',message='marketplace_return_not_owned';
+  end if;
+  select * into rs from public.marketplace_return_shipments
+    where return_request_id=rr.id for update;
+  if rs.id is not null and rs.label_idempotency_key=p_idempotency_key then
+    if rs.return_label_asset_id<>p_label_asset_id or rs.label_fingerprint<>v_fingerprint then
+      raise exception using errcode='23505',message='marketplace_return_shipment_idempotency_conflict';
+    end if;
+    return public.marketplace_return_shipment_receipt(rr.id);
+  end if;
+  if exists(select 1 from public.marketplace_return_shipments x
+    where x.seller_id=v_actor and x.label_idempotency_key=p_idempotency_key)then
+    raise exception using errcode='23505',message='marketplace_return_shipment_idempotency_conflict';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(
+    'marketplace-return-review-order:'||rr.order_id::text,0));
+  select * into o from public.marketplace_orders where id=rr.order_id for update;
+  select * into s from public.marketplace_order_settlements where id=rr.settlement_id for update;
+  if s.id is null then
+    raise exception using errcode='55000',message='marketplace_return_shipment_not_eligible';
+  end if;
+  select * into p from public.marketplace_payments where id=s.payment_id for update;
+  select * into a from public.marketplace_payment_allocations where id=s.allocation_id for update;
+  select * into h from public.marketplace_return_refund_holds
+    where return_request_id=rr.id for update;
+  select * into ma from public.media_assets where id=p_label_asset_id for update;
+
+  if rr.status<>'approved' or rs.id is not null
+    or o.id is null or o.status<>'delivered'
+    or(o.id,o.checkout_id,o.buyer_id,o.seller_id,o.store_id)
+      is distinct from(rr.order_id,rr.checkout_id,rr.buyer_id,rr.seller_id,rr.store_id)
+    or s.status<>'completed' or s.released_at is null or s.currency<>'BDAG'
+    or p.id is null or p.status<>'paid' or p.refunded_at is not null or p.currency<>'BDAG'
+    or a.id is null or a.status<>'released' or a.refunded_at is not null or a.currency<>'BDAG'
+    or(s.payment_id,s.allocation_id,s.order_id,s.checkout_id,s.buyer_id,s.seller_id,s.store_id)
+      is distinct from(p.id,a.id,o.id,o.checkout_id,o.buyer_id,o.seller_id,o.store_id)
+    or h.id is null or h.status<>'held' or h.gross_amount<>s.gross_amount
+    or h.currency<>'BDAG'
+    or(h.return_request_id,h.settlement_id,h.payment_id,h.allocation_id,h.checkout_id,
+      h.order_id,h.buyer_id,h.seller_id,h.store_id)
+      is distinct from(rr.id,s.id,p.id,a.id,o.checkout_id,o.id,o.buyer_id,o.seller_id,o.store_id)then
+    raise exception using errcode='55000',message='marketplace_return_shipment_not_eligible';
+  end if;
+  if ma.id is null or ma.owner_id<>v_actor or ma.status<>'ready'
+    or ma.visibility<>'private' or ma.media_kind<>'document'
+    or ma.purpose<>'return_label' or ma.mime_type<>'application/pdf'
+    or ma.size_bytes is null or ma.size_bytes<=0 or ma.size_bytes>10000000 then
+    raise exception using errcode='22023',message='marketplace_return_label_invalid_input';
+  end if;
+  if not exists(select 1 from public.marketplace_sellers se
+      where se.user_id=v_actor and se.status='approved')
+    or not exists(select 1 from public.marketplace_stores st
+      where st.id=o.store_id and st.seller_id=v_actor and st.status='active')then
+    raise exception using errcode='42501',message='marketplace_seller_not_approved';
+  end if;
+  if exists(select 1 from public.marketplace_return_refunds rf where rf.return_request_id=rr.id)
+    or exists(select 1 from public.marketplace_settlement_reversals rv
+      where rv.order_id=o.id or rv.settlement_id=s.id)
+    or exists(select 1 from public.marketplace_order_disputes d
+      where d.order_id=o.id and d.status in('open','under_review'))then
+    raise exception using errcode='55000',message='marketplace_return_shipment_incompatible_review';
+  end if;
+
+  insert into public.marketplace_return_shipments(
+    return_request_id,order_id,buyer_id,seller_id,store_id,status,
+    return_label_asset_id,label_sent_at,label_idempotency_key,label_fingerprint,
+    created_at,updated_at
+  )values(
+    rr.id,o.id,o.buyer_id,o.seller_id,o.store_id,'awaiting_buyer_shipment',
+    ma.id,v_now,p_idempotency_key,v_fingerprint,v_now,v_now
+  )returning * into rs;
+  insert into public.media_asset_links(asset_id,entity_type,entity_id,slot,position)
+  values(ma.id,'marketplace_return_shipment',rs.id,'return_label',0);
+  insert into public.marketplace_order_events(
+    order_id,checkout_id,buyer_id,seller_id,store_id,event_type,from_status,to_status,
+    actor_id,actor_role,reason_code,idempotency_key,metadata,created_at
+  )values(
+    o.id,o.checkout_id,o.buyer_id,o.seller_id,o.store_id,'return_label_sent',
+    o.status,o.status,v_actor,'seller','marketplace_return_label_sent',p_idempotency_key,
+    jsonb_build_object('return_request_id',rr.id,'return_shipment_id',rs.id,
+      'return_label_asset_id',ma.id,'request_fingerprint',v_fingerprint,'money_moved',false),v_now
+  );
+  return public.marketplace_return_shipment_receipt(rr.id);
+end;
+$$;
+
+create or replace function public.confirm_marketplace_return_shipment(
+  p_return_id uuid,p_buyer_note text,p_idempotency_key uuid
+)returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
+declare
+  v_actor uuid:=auth.uid();
+  rr public.marketplace_return_requests;
+  h public.marketplace_return_refund_holds;
+  o public.marketplace_orders;
+  s public.marketplace_order_settlements;
+  p public.marketplace_payments;
+  a public.marketplace_payment_allocations;
+  rs public.marketplace_return_shipments;
+  v_note text:=nullif(regexp_replace(coalesce(p_buyer_note,''),'^[[:space:]]+|[[:space:]]+$','','g'),'');
+  v_fingerprint text;
+  v_now timestamptz:=clock_timestamp();
+begin
+  if v_actor is null then
+    raise exception using errcode='42501',message='marketplace_auth_required';
+  end if;
+  if p_return_id is null or p_idempotency_key is null
+    or(v_note is not null and(char_length(v_note)>500
+      or v_note~*'<[[:space:]]*/?[[:alpha:]][^>]*>'))then
+    raise exception using errcode='22023',message='marketplace_return_tracking_invalid_input';
+  end if;
+  v_fingerprint:=encode(extensions.digest(convert_to(jsonb_build_object(
+    'return_id',p_return_id,'buyer_note',v_note
+  )::text,'UTF8'),'sha256'),'hex');
+  perform pg_advisory_xact_lock(hashtextextended(
+    'marketplace-return-shipment-buyer:'||p_return_id::text,0));
+  select * into rr from public.marketplace_return_requests where id=p_return_id for update;
+  if not found then raise exception using errcode='P0002',message='marketplace_return_not_found';end if;
+  if rr.buyer_id<>v_actor then raise exception using errcode='42501',message='marketplace_return_not_owned';end if;
+  select * into rs from public.marketplace_return_shipments where return_request_id=rr.id for update;
+  if rs.id is not null and rs.buyer_shipping_idempotency_key=p_idempotency_key then
+    if rs.buyer_shipping_fingerprint<>v_fingerprint then
+      raise exception using errcode='23505',message='marketplace_return_shipment_idempotency_conflict';
+    end if;
+    return public.marketplace_return_shipment_receipt(rr.id);
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended(
+    'marketplace-return-review-order:'||rr.order_id::text,0));
+  select * into o from public.marketplace_orders where id=rr.order_id for update;
+  select * into s from public.marketplace_order_settlements where id=rr.settlement_id for update;
+  if s.id is null then raise exception using errcode='55000',message='marketplace_return_shipment_not_eligible';end if;
+  select * into p from public.marketplace_payments where id=s.payment_id for update;
+  select * into a from public.marketplace_payment_allocations where id=s.allocation_id for update;
+  select * into h from public.marketplace_return_refund_holds where return_request_id=rr.id for update;
+  if rr.status<>'approved' or o.id is null or o.buyer_id<>v_actor or o.status<>'delivered'
+    or s.status<>'completed' or s.released_at is null
+    or p.id is null or p.status<>'paid' or p.refunded_at is not null
+    or a.id is null or a.status<>'released' or a.refunded_at is not null
+    or h.id is null or h.status<>'held' or h.gross_amount<>s.gross_amount
+    or rs.id is null or rs.status<>'awaiting_buyer_shipment'
+    or rs.return_label_asset_id is null or rs.label_sent_at is null
+    or rs.label_idempotency_key is null or rs.label_fingerprint is null then
+    raise exception using errcode='55000',message='marketplace_return_shipment_not_eligible';
+  end if;
+  if exists(select 1 from public.marketplace_return_refunds rf where rf.return_request_id=rr.id)
+    or exists(select 1 from public.marketplace_settlement_reversals rv
+      where rv.order_id=o.id or rv.settlement_id=s.id)
+    or exists(select 1 from public.marketplace_order_disputes d
+      where d.order_id=o.id and d.status in('open','under_review'))then
+    raise exception using errcode='55000',message='marketplace_return_shipment_incompatible_review';
+  end if;
+  update public.marketplace_return_shipments set
+    status='shipped',buyer_note=v_note,
+    buyer_shipping_idempotency_key=p_idempotency_key,
+    buyer_shipping_fingerprint=v_fingerprint,
+    shipped_at=v_now,updated_at=v_now
+  where id=rs.id and status='awaiting_buyer_shipment' returning * into rs;
+  if not found then
+    raise exception using errcode='55000',message='marketplace_return_shipment_not_eligible';
+  end if;
+  insert into public.marketplace_order_events(
+    order_id,checkout_id,buyer_id,seller_id,store_id,event_type,from_status,to_status,
+    actor_id,actor_role,reason_code,idempotency_key,metadata,created_at
+  )values(
+    o.id,o.checkout_id,o.buyer_id,o.seller_id,o.store_id,'return_shipped',
+    o.status,o.status,v_actor,'buyer','marketplace_return_shipped',p_idempotency_key,
+    jsonb_build_object('return_request_id',rr.id,'return_shipment_id',rs.id,
+      'request_fingerprint',v_fingerprint,'money_moved',false),v_now
+  );
+  return public.marketplace_return_shipment_receipt(rr.id);
+end;
 $$;
 
 create function public.marketplace_complete_return_refund_core(
@@ -355,15 +597,24 @@ begin
     if rs.id is null or rs.status<>'shipped'
       or(rs.return_request_id,rs.order_id,rs.buyer_id,rs.seller_id,rs.store_id)
         is distinct from(rr.id,o.id,o.buyer_id,o.seller_id,o.store_id)
-      or rs.carrier_name is null or rs.tracking_number is null or rs.shipped_at is null
-      or rs.buyer_shipping_idempotency_key is null or rs.buyer_shipping_fingerprint is null
-      or rs.shipped_destination_fingerprint is distinct from rs.destination_fingerprint
+      or rs.shipped_at is null or rs.buyer_shipping_idempotency_key is null
+      or rs.buyer_shipping_fingerprint is null
       or not(
         (rs.return_label_asset_id is not null and rs.label_sent_at is not null
-          and rs.label_idempotency_key is not null and rs.label_fingerprint is not null)
+          and rs.label_idempotency_key is not null and rs.label_fingerprint is not null
+          and rs.carrier_name is null and rs.service_level is null
+          and rs.tracking_number is null and rs.tracking_url is null
+          and rs.shipped_destination_fingerprint is null
+          and exists(select 1 from public.media_asset_links ml
+            where ml.asset_id=rs.return_label_asset_id
+              and ml.entity_type='marketplace_return_shipment'
+              and ml.entity_id=rs.id and ml.slot='return_label'))
         or
         (rs.return_label_asset_id is null and rs.label_sent_at is null
           and rs.label_idempotency_key is null and rs.label_fingerprint is null
+          and rs.carrier_name is not null and rs.tracking_number is not null
+          and rs.destination_fingerprint is not null
+          and rs.shipped_destination_fingerprint=rs.destination_fingerprint
           and rs.created_at<timestamptz '2026-08-23 04:27:37+00')
       )then
       raise exception using errcode='55000',message='marketplace_return_receipt_not_eligible';
@@ -722,8 +973,8 @@ begin
         'attention_reason',case
           when rr.status='requested'then'decision_pending'
           when rr.status='approved'and h.id is null then'funds_pending'
-          when rr.status='approved'and rs.id is null then'destination_pending'
-          when rr.status='approved'and rs.return_label_asset_id is null then'label_pending'
+          when rr.status='approved'and(rs.id is null or rs.return_label_asset_id is null)
+            then'label_pending'
           when rr.status='approved'and rs.status='shipped'then'receipt_confirmation_pending'
           else null end
       )from public.marketplace_return_requests rr
@@ -766,8 +1017,8 @@ begin
       st.id store_id,st.name store_name,h.id is not null funded,rs.status shipping_status,
       case when rr.status='requested'then'decision_pending'
         when rr.status='approved'and h.id is null then'funds_pending'
-        when rr.status='approved'and rs.id is null then'destination_pending'
-        when rr.status='approved'and rs.return_label_asset_id is null then'label_pending'
+        when rr.status='approved'and(rs.id is null or rs.return_label_asset_id is null)
+          then'label_pending'
         when rr.status='approved'and rs.status='shipped'then'receipt_confirmation_pending'
         else null end attention_reason
     from public.marketplace_return_requests rr
@@ -786,9 +1037,7 @@ begin
     'requested_count',(select count(*)from attention where attention_reason='decision_pending'),
     'approved_count',(select count(*)from attention where status='approved'),
     'funding_pending_count',(select count(*)from attention where attention_reason='funds_pending'),
-    'destination_pending_count',(select count(*)from attention where attention_reason='destination_pending'),
     'label_pending_count',(select count(*)from attention where attention_reason='label_pending'),
-    'in_transit_count',(select count(*)from scoped where shipping_status='shipped'),
     'receipt_confirmation_pending_count',(select count(*)from attention
       where attention_reason='receipt_confirmation_pending'),
     'returns',coalesce((select jsonb_agg(jsonb_build_object(
@@ -951,15 +1200,30 @@ select jsonb_build_object(
       or a.status<>'ready'or a.visibility<>'private'or a.media_kind<>'document'
       or a.purpose<>'return_label'or a.mime_type<>'application/pdf')),
   'legacy_shipped_without_label',(select count(*)from public.marketplace_return_shipments rs
-    where rs.status='shipped'and rs.return_label_asset_id is null),
+    where rs.status='shipped'and rs.return_label_asset_id is null
+      and rs.created_at<timestamptz '2026-08-23 04:27:37+00'),
   'invalid_tracking_state',(select count(*)from public.marketplace_return_shipments rs
-    where(rs.status='awaiting_buyer_shipment'and rs.return_label_asset_id is null and(
-      rs.carrier_name is not null or rs.tracking_number is not null or rs.label_sent_at is not null))
-      or(rs.return_label_asset_id is not null and(
-        rs.carrier_name is null or rs.tracking_number is null or rs.label_sent_at is null))
-      or(rs.status in('shipped','received')and(
-        rs.carrier_name is null or rs.tracking_number is null or rs.shipped_at is null
-        or rs.buyer_shipping_idempotency_key is null or rs.buyer_shipping_fingerprint is null))),
+    where(
+      rs.return_label_asset_id is not null and(
+        rs.label_sent_at is null or rs.label_idempotency_key is null or rs.label_fingerprint is null
+        or rs.carrier_name is not null or rs.service_level is not null
+        or rs.tracking_number is not null or rs.tracking_url is not null
+        or(rs.status in('shipped','received')and(rs.shipped_at is null
+          or rs.buyer_shipping_idempotency_key is null or rs.buyer_shipping_fingerprint is null))
+      )
+    )or(
+      rs.return_label_asset_id is null and not(
+        rs.status in('shipped','received')
+        and rs.label_sent_at is null and rs.label_idempotency_key is null
+        and rs.label_fingerprint is null and rs.carrier_name is not null
+        and rs.tracking_number is not null and rs.shipped_at is not null
+        and rs.buyer_shipping_idempotency_key is not null
+        and rs.buyer_shipping_fingerprint is not null
+        and rs.destination_fingerprint is not null
+        and rs.shipped_destination_fingerprint=rs.destination_fingerprint
+        and rs.created_at<timestamptz '2026-08-23 04:27:37+00'
+      )
+    )),
   'destination_changed_after_shipping',(select count(*)from public.marketplace_return_shipments rs
     where rs.status in('shipped','received')
       and rs.shipped_destination_fingerprint is distinct from rs.destination_fingerprint),
@@ -1012,6 +1276,10 @@ comment on function public.marketplace_complete_return_refund_core(uuid,uuid,tex
   'Private shared financial authority for keep-item and seller-confirmed returned-item refunds from funded return escrow.';
 comment on function public.confirm_marketplace_return_received(uuid,text,uuid) is
   'Seller-only irreversible receipt confirmation and atomic returned-item buyer refund from return escrow.';
+comment on function public.send_marketplace_return_label(uuid,uuid,uuid) is
+  'Seller-only label authority. Creates the canonical label-only return shipment without destination or tracking input.';
+comment on function public.confirm_marketplace_return_shipment(uuid,text,uuid) is
+  'Buyer-only carrier handoff acknowledgement for a canonical seller-issued return label; never moves money.';
 comment on table public.marketplace_return_refunds is
   'Immutable canonical return refunds, including keep-item and seller-confirmed returned-item resolutions.';
 
@@ -1020,6 +1288,15 @@ revoke all on function public.marketplace_complete_return_refund_core(uuid,uuid,
 revoke all on function public.confirm_marketplace_return_received(uuid,text,uuid)
   from public,anon,authenticated;
 grant execute on function public.confirm_marketplace_return_received(uuid,text,uuid)
+  to authenticated,service_role;
+
+revoke all on function public.send_marketplace_return_label(uuid,uuid,uuid)
+  from public,anon,authenticated;
+revoke all on function public.confirm_marketplace_return_shipment(uuid,text,uuid)
+  from public,anon,authenticated;
+grant execute on function public.send_marketplace_return_label(uuid,uuid,uuid)
+  to authenticated,service_role;
+grant execute on function public.confirm_marketplace_return_shipment(uuid,text,uuid)
   to authenticated,service_role;
 
 revoke all on function public.fetch_my_marketplace_order_lifecycle(uuid)

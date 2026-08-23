@@ -32,9 +32,7 @@ export default function SellerReturns() {
     attention: 0,
     requested: 0,
     funding: 0,
-    destination: 0,
     label: 0,
-    transit: 0,
     receipt: 0,
   });
   const [next, setNext] = useState<MarketplaceSellerReturnPage["nextCursor"]>(null);
@@ -66,9 +64,7 @@ export default function SellerReturns() {
           attention: page.attentionCount,
           requested: page.requestedCount,
           funding: page.fundingPendingCount,
-          destination: page.destinationPendingCount,
           label: page.labelPendingCount,
-          transit: page.inTransitCount,
           receipt: page.receiptConfirmationPendingCount,
         });
         setNext(page.nextCursor);
@@ -116,7 +112,7 @@ export default function SellerReturns() {
                     : "Solicitudes pendientes"}
                 </Text>
                 <Text style={styles.muted}>
-                  {summary.requested} por decidir · {summary.funding} por financiar · {summary.destination} sin dirección · {summary.label} labels pendientes · {summary.receipt} por recibir
+                  {summary.requested} por decidir · {summary.funding} por financiar · {summary.label} labels pendientes · {summary.receipt} por recibir
                 </Text>
               </View>
             </View>
@@ -191,10 +187,8 @@ function ReturnCard({
           ? "El comprador solicitó devolver este pedido."
           : item.attentionReason === "funds_pending"
             ? "La devolución fue aceptada antes de asegurar el reembolso."
-            : item.attentionReason === "destination_pending"
-              ? "Los fondos están asegurados; falta indicar la dirección de devolución."
-              : item.attentionReason === "label_pending"
-                ? "La dirección está lista; falta enviar el label al comprador."
+            : item.attentionReason === "label_pending"
+                ? "Los fondos están asegurados; falta enviar el label al comprador."
               : "El producto fue enviado; falta confirmar su recepción."}
       </Text>
       <Text style={styles.pending}>
@@ -216,9 +210,7 @@ function ReturnCard({
 const returnAttentionLabel = (reason: MarketplaceSellerReturnSummary["attentionReason"]) => ({
   decision_pending: "Decisión pendiente",
   funds_pending: "Fondos por asegurar",
-  destination_pending: "Dirección de devolución pendiente",
   label_pending: "Label de devolución pendiente",
-  return_in_transit: "Devolución en camino",
   receipt_confirmation_pending: "Confirmar recepción",
 })[reason];
 

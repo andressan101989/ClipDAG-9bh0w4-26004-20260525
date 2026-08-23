@@ -27,17 +27,17 @@ const destination = {
 };
 const returnShipment = (status, label, overrides = {}) => ({
   status,
-  destination,
-  seller_instructions: "Use the rear entrance",
+  destination: label ? null : destination,
+  seller_instructions: label ? null : "Use the rear entrance",
   return_label_asset_id: label ? id("90") : null,
   return_label_file_name: label ? "return-label.pdf" : null,
   label_sent_at: label ? at : null,
-  carrier_name: label || status === "shipped" ? "UPS" : null,
-  service_level: label || status === "shipped" ? "Ground" : null,
-  tracking_number: label || status === "shipped" ? "1Z-R2B3" : null,
-  tracking_url: label || status === "shipped" ? "https://tracking.example/1Z-R2B3" : null,
+  carrier_name: label ? null : "UPS",
+  service_level: label ? null : "Ground",
+  tracking_number: label ? null : "1Z-R2B3",
+  tracking_url: label ? null : "https://tracking.example/1Z-R2B3",
   buyer_note: status === "shipped" ? "Handed to UPS" : null,
-  instructions_provided_at: at,
+  instructions_provided_at: label ? null : at,
   shipped_at: status === "shipped" ? at : null,
   ...overrides,
 });
@@ -136,7 +136,7 @@ test("parser fails closed for incomplete or malformed new label states", () => {
   for (const malformed of [
     returnShipment("awaiting_buyer_shipment", true, { label_sent_at: null }),
     returnShipment("awaiting_buyer_shipment", true, { return_label_file_name: "label.png" }),
-    returnShipment("awaiting_buyer_shipment", true, { tracking_number: null }),
+    returnShipment("awaiting_buyer_shipment", true, { tracking_number: "CLIENT-TRACKING" }),
   ]) assert.throws(
     () => mergeMarketplaceOrderLifecyclePayload(base, lifecycle(malformed)),
     MarketplaceFulfillmentPayloadError,
@@ -166,8 +166,8 @@ test("refunded return receipt is strict and exposes only keep-item result", () =
 test("seller and buyer awareness include label_pending and labelSent", () => {
   const page = parseSellerReturnIndexPayload({
     attention_count: 1, requested_count: 0, approved_count: 1,
-    funding_pending_count: 0, destination_pending_count: 0, label_pending_count: 1,
-    in_transit_count: 0,
+    funding_pending_count: 0, label_pending_count: 1,
+    receipt_confirmation_pending_count: 0,
     returns: [{ return_id: id("5"), status: "approved", created_at: at,
       attention_reason: "label_pending", return_shipping_status: "awaiting_buyer_shipment",
       order_id: id("1"), order_number: "ORD-R2B3", order_status: "delivered",

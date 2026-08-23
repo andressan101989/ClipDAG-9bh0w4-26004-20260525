@@ -48,7 +48,7 @@ export function marketplaceReturnStatusCopy(
         : refundFunded
       ? {
           title: "Fondos del reembolso asegurados",
-          body: "Tu reembolso está protegido. Esperando instrucciones de devolución del vendedor.",
+          body: "Tu reembolso está protegido. Esperando label del vendedor.",
         }
       : {
           title: "Devolución aceptada",

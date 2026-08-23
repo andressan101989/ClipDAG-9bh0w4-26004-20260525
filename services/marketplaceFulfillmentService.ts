@@ -45,7 +45,7 @@ export interface MarketplaceReturnShipment {
     postalCode: string;
     country: string;
     phone: string | null;
-  };
+  } | null;
   sellerInstructions: string | null;
   returnLabelAssetId: string | null;
   returnLabelFileName: string | null;
@@ -55,7 +55,7 @@ export interface MarketplaceReturnShipment {
   trackingNumber: string | null;
   trackingUrl: string | null;
   buyerNote: string | null;
-  instructionsProvidedAt: string;
+  instructionsProvidedAt: string | null;
   shippedAt: string | null;
   receivedAt: string | null;
   receivedBy: string | null;
@@ -144,9 +144,7 @@ export interface MarketplaceOrderListItem {
     attentionReason:
       | "decision_pending"
       | "funds_pending"
-      | "destination_pending"
       | "label_pending"
-      | "return_in_transit"
       | "receipt_confirmation_pending";
   } | null;
   returnProgress?: {
@@ -189,9 +187,7 @@ export interface MarketplaceSellerReturnSummary {
   attentionReason:
     | "decision_pending"
     | "funds_pending"
-    | "destination_pending"
     | "label_pending"
-    | "return_in_transit"
     | "receipt_confirmation_pending";
   shippingStatus: "awaiting_buyer_shipment" | "shipped" | "received" | null;
 }
@@ -200,9 +196,7 @@ export interface MarketplaceSellerReturnPage {
   requestedCount: number;
   approvedCount: number;
   fundingPendingCount: number;
-  destinationPendingCount: number;
   labelPendingCount: number;
-  inTransitCount: number;
   receiptConfirmationPendingCount: number;
   returns: MarketplaceSellerReturnSummary[];
   nextCursor: { createdAt: string; id: string } | null;
@@ -298,23 +292,8 @@ export interface ShipmentInput {
   trackingUrl?: string;
   sellerNote?: string;
 }
-export interface MarketplaceReturnDestinationInput {
-  recipientName: string;
-  line1: string;
-  line2?: string;
-  city: string;
-  region: string;
-  postalCode: string;
-  country: string;
-  phone?: string;
-  sellerInstructions?: string;
-}
 export interface MarketplaceReturnLabelInput {
   labelAssetId: string;
-  carrierName: string;
-  serviceLevel?: string;
-  trackingNumber: string;
-  trackingUrl?: string;
 }
 export interface MarketplaceReturnShipmentConfirmationInput {
   buyerNote?: string;
@@ -355,18 +334,18 @@ export type MarketplaceFulfillmentErrorCode =
   | "marketplace_return_refund_hold_settlement_reversed"
   | "marketplace_return_refund_hold_requires_approved"
   | "marketplace_return_refund_hold_idempotency_conflict"
-  | "marketplace_return_destination_invalid_input"
   | "marketplace_return_tracking_invalid_input"
   | "marketplace_return_label_invalid_input"
   | "marketplace_return_shipment_not_eligible"
   | "marketplace_return_shipment_incompatible_review"
   | "marketplace_return_shipment_idempotency_conflict"
-  | "marketplace_return_destination_immutable"
   | "marketplace_return_already_shipped"
   | "marketplace_return_refund_idempotency_conflict"
   | "marketplace_return_refund_not_eligible"
   | "marketplace_return_refund_already_completed"
   | "marketplace_return_refund_escrow_insufficient"
+  | "marketplace_return_receipt_not_eligible"
+  | "marketplace_fulfillment_authority_unavailable"
   | "marketplace_fulfillment_unknown";
 
 export class MarketplaceFulfillmentError extends Error {
@@ -414,8 +393,13 @@ function fail(
     /network|fetch|failed to fetch|timeout|timed out|connection|socket|offline/i.test(
       error.message ?? "",
     );
+  const authorityUnavailable = rawCode === "PGRST202" || rawCode === "42883";
   const normalized = new MarketplaceFulfillmentError(
-    known ?? (transport ? "marketplace_fulfillment_transport" : "marketplace_fulfillment_unknown"),
+    known ?? (authorityUnavailable
+      ? "marketplace_fulfillment_authority_unavailable"
+      : transport
+        ? "marketplace_fulfillment_transport"
+        : "marketplace_fulfillment_unknown"),
   );
   if (__DEV__)
     console.error("[MarketplaceFulfillment] RPC failed", {
@@ -762,108 +746,19 @@ export async function fundMarketplaceReturnRefundHold(
   throw unknownOutcome();
 }
 
-export async function prepareMarketplaceReturnShipment(
-  orderId: string,
-  returnId: string,
-  input: MarketplaceReturnDestinationInput,
-  idempotencyKey: string,
-): Promise<MarketplaceOrderDetail> {
-  const normalized = {
-    recipientName: input.recipientName.trim(),
-    line1: input.line1.trim(),
-    line2: input.line2?.trim() ?? "",
-    city: input.city.trim(),
-    region: input.region.trim(),
-    postalCode: input.postalCode.trim(),
-    country: input.country.trim().toUpperCase(),
-    phone: input.phone?.trim() ?? "",
-    sellerInstructions: input.sellerInstructions?.trim() ?? "",
-  };
-  const provesCommitted = (value: MarketplaceOrderDetail) => {
-    const shipment = value.returnRequest?.returnShipment;
-    return Boolean(
-      value.returnRequest?.id === returnId &&
-        shipment &&
-        shipment.destination.recipientName === normalized.recipientName &&
-        shipment.destination.line1 === normalized.line1 &&
-        (shipment.destination.line2 ?? "") === normalized.line2 &&
-        shipment.destination.city === normalized.city &&
-        shipment.destination.region === normalized.region &&
-        shipment.destination.postalCode === normalized.postalCode &&
-        shipment.destination.country === normalized.country &&
-        (shipment.destination.phone ?? "") === normalized.phone &&
-        (shipment.sellerInstructions ?? "") === normalized.sellerInstructions,
-    );
-  };
-  try {
-    const receipt = await rpc(
-      "prepare_marketplace_return_shipment",
-      {
-        p_return_id: returnId,
-        p_recipient_name: normalized.recipientName,
-        p_line1: normalized.line1,
-        p_line2: normalized.line2,
-        p_city: normalized.city,
-        p_region: normalized.region,
-        p_postal_code: normalized.postalCode,
-        p_country: normalized.country,
-        p_phone: normalized.phone,
-        p_instructions: normalized.sellerInstructions,
-        p_idempotency_key: idempotencyKey,
-      },
-      "seller_return_destination_rpc",
-    );
-    parse("seller_return_destination_receipt", () =>
-      parseMarketplaceReturnShipmentMutationReceipt(receipt),
-    );
-  } catch (error) {
-    if (!isAmbiguousMutationError(error)) throw error;
-    try {
-      const recovered = await fetchSellerOrder(orderId);
-      if (provesCommitted(recovered)) return recovered;
-    } catch {
-      // The stable key must be reused after an ambiguous destination write.
-    }
-    throw unknownOutcome();
-  }
-  try {
-    const canonical = await fetchSellerOrder(orderId);
-    if (provesCommitted(canonical)) return canonical;
-  } catch (error) {
-    diagnostic("seller_return_destination_readback", error);
-  }
-  throw unknownOutcome();
-}
-
 export async function sendMarketplaceReturnLabel(
   orderId: string,
   returnId: string,
   input: MarketplaceReturnLabelInput,
   idempotencyKey: string,
 ): Promise<MarketplaceOrderDetail> {
-  const normalized = {
-    labelAssetId: input.labelAssetId,
-    carrierName: input.carrierName.trim(),
-    serviceLevel: input.serviceLevel?.trim() ?? "",
-    trackingNumber: input.trackingNumber.trim(),
-    trackingUrl: input.trackingUrl?.trim() ?? "",
-  };
-  if (
-    normalized.carrierName.length < 2 ||
-    normalized.trackingNumber.length < 2 ||
-    !isSafeTrackingUrl(normalized.trackingUrl)
-  )
-    throw new MarketplaceFulfillmentError("marketplace_return_tracking_invalid_input");
+  const normalized = { labelAssetId: input.labelAssetId };
   const provesCommitted = (value: MarketplaceOrderDetail) => {
     const shipment = value.returnRequest?.returnShipment;
     return Boolean(
       value.returnRequest?.id === returnId &&
         shipment?.status === "awaiting_buyer_shipment" &&
-        shipment.returnLabelAssetId === normalized.labelAssetId &&
-        shipment.carrierName === normalized.carrierName &&
-        shipment.trackingNumber === normalized.trackingNumber &&
-        (shipment.serviceLevel ?? "") === normalized.serviceLevel &&
-        (shipment.trackingUrl ?? "") === normalized.trackingUrl,
+        shipment.returnLabelAssetId === normalized.labelAssetId,
     );
   };
   try {
@@ -872,10 +767,6 @@ export async function sendMarketplaceReturnLabel(
       {
         p_return_id: returnId,
         p_label_asset_id: normalized.labelAssetId,
-        p_carrier_name: normalized.carrierName,
-        p_service_level: normalized.serviceLevel,
-        p_tracking_number: normalized.trackingNumber,
-        p_tracking_url: normalized.trackingUrl,
         p_idempotency_key: idempotencyKey,
       },
       "seller_return_label_rpc",

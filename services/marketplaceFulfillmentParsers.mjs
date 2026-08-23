@@ -65,16 +65,14 @@ const returnShipmentStatuses = ["awaiting_buyer_shipment", "shipped", "received"
 const returnAttentionReasons = [
   "decision_pending",
   "funds_pending",
-  "destination_pending",
   "label_pending",
-  "return_in_transit",
   "receipt_confirmation_pending",
 ];
 
 const marketplaceReturnShipment = (value, path) => {
   if (value == null) return null;
   const row = object(value, path);
-  const destination = object(row.destination, `${path}.destination`);
+  const destination = row.destination == null ? null : object(row.destination, `${path}.destination`);
   const status = enumeration(row.status, returnShipmentStatuses, `${path}.status`);
   const trackingUrl = nullableString(row.tracking_url, `${path}.tracking_url`);
   if (!isSafeMarketplaceTrackingUrl(trackingUrl)) fail(`${path}.tracking_url`);
@@ -98,6 +96,11 @@ const marketplaceReturnShipment = (value, path) => {
     `${path}.return_label_file_name`,
   );
   const labelSentAt = nullableTimestamp(row.label_sent_at ?? null, `${path}.label_sent_at`);
+  const sellerInstructions = nullableString(row.seller_instructions, `${path}.seller_instructions`);
+  const instructionsProvidedAt = nullableTimestamp(
+    row.instructions_provided_at ?? null,
+    `${path}.instructions_provided_at`,
+  );
   const hasLabel = returnLabelAssetId !== null;
   if (
     hasLabel !== (returnLabelFileName !== null) ||
@@ -107,13 +110,17 @@ const marketplaceReturnShipment = (value, path) => {
     fail(`${path}.return_label_asset_id`);
   if (
     (status === "awaiting_buyer_shipment" &&
-      ((!hasLabel &&
-        (carrierName !== null || serviceLevel !== null || trackingNumber !== null ||
-          trackingUrl !== null)) ||
-        (hasLabel && (carrierName === null || trackingNumber === null)) ||
+      (!hasLabel || destination !== null || sellerInstructions !== null ||
+        instructionsProvidedAt !== null || carrierName !== null || serviceLevel !== null ||
+        trackingNumber !== null || trackingUrl !== null ||
         buyerNote !== null || shippedAt !== null)) ||
-    (["shipped", "received"].includes(status) &&
-      (carrierName === null || trackingNumber === null || shippedAt === null)) ||
+    (["shipped", "received"].includes(status) && shippedAt === null) ||
+    (hasLabel &&
+      (destination !== null || sellerInstructions !== null || instructionsProvidedAt !== null ||
+        carrierName !== null || serviceLevel !== null || trackingNumber !== null || trackingUrl !== null)) ||
+    (!hasLabel &&
+      (status === "awaiting_buyer_shipment" || destination === null ||
+        carrierName === null || trackingNumber === null || instructionsProvidedAt === null)) ||
     (status === "received" && (receivedAt === null || receivedBy === null)) ||
     (status !== "received" &&
       (receivedAt !== null || receivedBy !== null || sellerReceiptNote !== null))
@@ -121,7 +128,7 @@ const marketplaceReturnShipment = (value, path) => {
     fail(`${path}.status`);
   return {
     status,
-    destination: {
+    destination: destination ? {
       recipientName: string(destination.recipient_name, `${path}.destination.recipient_name`),
       line1: string(destination.line1, `${path}.destination.line1`),
       line2: nullableString(destination.line2, `${path}.destination.line2`),
@@ -130,8 +137,8 @@ const marketplaceReturnShipment = (value, path) => {
       postalCode: string(destination.postal_code, `${path}.destination.postal_code`),
       country: countryCode(destination.country, `${path}.destination.country`),
       phone: nullableString(destination.phone, `${path}.destination.phone`),
-    },
-    sellerInstructions: nullableString(row.seller_instructions, `${path}.seller_instructions`),
+    } : null,
+    sellerInstructions,
     returnLabelAssetId,
     returnLabelFileName,
     labelSentAt,
@@ -140,10 +147,7 @@ const marketplaceReturnShipment = (value, path) => {
     trackingNumber,
     trackingUrl,
     buyerNote,
-    instructionsProvidedAt: timestamp(
-      row.instructions_provided_at,
-      `${path}.instructions_provided_at`,
-    ),
+    instructionsProvidedAt,
     shippedAt,
     receivedAt,
     receivedBy,
@@ -538,20 +542,12 @@ export function parseSellerReturnIndexPayload(value, effectiveLimit) {
     root.funding_pending_count ?? approvedCount,
     "seller_returns.funding_pending_count",
   );
-  const destinationPendingCount = integer(
-    root.destination_pending_count ?? 0,
-    "seller_returns.destination_pending_count",
-  );
   const labelPendingCount = integer(
     root.label_pending_count ?? 0,
     "seller_returns.label_pending_count",
   );
-  const inTransitCount = integer(
-    root.in_transit_count ?? 0,
-    "seller_returns.in_transit_count",
-  );
   const receiptConfirmationPendingCount = integer(
-    root.receipt_confirmation_pending_count ?? inTransitCount,
+    root.receipt_confirmation_pending_count ?? 0,
     "seller_returns.receipt_confirmation_pending_count",
   );
   if (attentionCount !== requestedCount + approvedCount || returns.length > attentionCount)
@@ -559,7 +555,6 @@ export function parseSellerReturnIndexPayload(value, effectiveLimit) {
   if (
     approvedCount !==
     fundingPendingCount +
-      destinationPendingCount +
       labelPendingCount +
       receiptConfirmationPendingCount
   )
@@ -573,9 +568,7 @@ export function parseSellerReturnIndexPayload(value, effectiveLimit) {
     requestedCount,
     approvedCount,
     fundingPendingCount,
-    destinationPendingCount,
     labelPendingCount,
-    inTransitCount,
     receiptConfirmationPendingCount,
     returns,
     nextCursor: rawCursor

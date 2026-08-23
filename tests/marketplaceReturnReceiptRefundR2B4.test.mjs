@@ -17,6 +17,10 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 const migration = read("supabase/migrations/20260823055013_marketplace_return_received_refund_r2b4.sql");
 const service = read("services/marketplaceFulfillmentService.ts");
 const panel = read("components/marketplace/MarketplaceReturnPanel.tsx");
+const parser = read("services/marketplaceFulfillmentParsers.mjs");
+const sellerHome = read("app/seller/index.tsx");
+const sellerOrders = read("app/seller/orders/index.tsx");
+const sellerInbox = read("app/seller/returns/index.tsx");
 const at = "2026-08-23T05:50:13.000Z";
 const id = (suffix) => `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
 
@@ -40,13 +44,12 @@ const detailPayload = {
 
 const receivedShipment = (overrides = {}) => ({
   status: "received",
-  destination: { recipient_name: "Seller", line1: "123 Return Street", line2: null,
-    city: "Miami", region: "FL", postal_code: "33101", country: "US", phone: null },
+  destination: null,
   seller_instructions: null,
   return_label_asset_id: id("90"), return_label_file_name: "label.pdf", label_sent_at: at,
-  carrier_name: "UPS", service_level: "Ground", tracking_number: "1Z-R2B4",
-  tracking_url: "https://tracking.example/1Z-R2B4", buyer_note: "Handed to carrier",
-  instructions_provided_at: at, shipped_at: at, received_at: at, received_by: id("6"),
+  carrier_name: null, service_level: null, tracking_number: null,
+  tracking_url: null, buyer_note: "Handed to carrier",
+  instructions_provided_at: null, shipped_at: at, received_at: at, received_by: id("6"),
   seller_receipt_note: "Received intact", ...overrides,
 });
 
@@ -70,6 +73,34 @@ test("R2B-4 extends the canonical shipment and refund authorities without parall
   assert.match(migration, /create function public\.confirm_marketplace_return_received/);
   assert.doesNotMatch(migration, /create table public\.marketplace_return_refunds/);
   assert.doesNotMatch(migration, /create table public\.marketplace_return_refund_holds/);
+});
+
+test("R2B-4 makes the private PDF the only active shipping authority", () => {
+  assert.match(migration, /drop function public\.prepare_marketplace_return_shipment/);
+  assert.match(migration, /drop function public\.send_marketplace_return_label\(\s*uuid,uuid,text,text,text,text,uuid/);
+  assert.match(migration, /create function public\.send_marketplace_return_label\(\s*p_return_id uuid,\s*p_label_asset_id uuid,\s*p_idempotency_key uuid/);
+  const label = migration.split("create function public.send_marketplace_return_label")[1]
+    .split("create or replace function public.confirm_marketplace_return_shipment")[0];
+  for (const proof of ["ma.owner_id<>v_actor", "ma.status<>'ready'", "ma.visibility<>'private'",
+    "ma.media_kind<>'document'", "ma.purpose<>'return_label'",
+    "ma.mime_type<>'application/pdf'", "ma.size_bytes>10000000"])
+    assert.ok(label.includes(proof), proof);
+  assert.doesNotMatch(label, /p_carrier_name|p_tracking_number|ledger_(debit|credit)/);
+});
+
+test("active UI and service contain no destination or tracking data-entry authority", () => {
+  assert.doesNotMatch(service, /prepareMarketplaceReturnShipment|prepare_marketplace_return_shipment/);
+  assert.doesNotMatch(panel, /Nombre del destinatario|Dirección de devolución|Transportista de devolución|Número de seguimiento de devolución|URL de seguimiento de devolución/);
+  assert.match(panel, /Seleccionar label PDF/);
+  assert.match(panel, /Enviar label al comprador/);
+  assert.match(panel, /Imprime el label, pégalo en la caja y entrega el paquete en la agencia indicada en el documento/);
+});
+
+test("seller attention has exactly the four active label-only stages", () => {
+  assert.match(parser, /"decision_pending",\s*"funds_pending",\s*"label_pending",\s*"receipt_confirmation_pending"/);
+  for (const source of [parser, sellerHome, sellerOrders, sellerInbox]) {
+    assert.doesNotMatch(source, /destination_pending|return_in_transit|destinationPendingCount|inTransitCount/);
+  }
 });
 
 test("shipment guard permits only marked shipped-to-received transition and freezes received rows", () => {
@@ -148,8 +179,8 @@ test("keep-item refunded payload still requires no shipment", () => {
 test("seller attention uses receipt confirmation rather than generic transit", () => {
   const parsed = parseSellerReturnIndexPayload({
     attention_count: 1, requested_count: 0, approved_count: 1,
-    funding_pending_count: 0, destination_pending_count: 0, label_pending_count: 0,
-    in_transit_count: 1, receipt_confirmation_pending_count: 1,
+    funding_pending_count: 0, label_pending_count: 0,
+    receipt_confirmation_pending_count: 1,
     returns: [{ return_id: id("5"), status: "approved", created_at: at,
       attention_reason: "receipt_confirmation_pending", return_shipping_status: "shipped",
       order_id: id("1"), order_number: "ORD-R2B4", order_status: "delivered",

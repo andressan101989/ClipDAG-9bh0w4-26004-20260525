@@ -113,14 +113,8 @@ test("shipping RPCs require a funded canonical return and contain no money mutat
   assert.match(buyer, /'money_moved',false/);
 });
 
-test("lifecycle parser accepts destination and shipped tracking states", () => {
+test("lifecycle parser keeps read compatibility for a historical shipped tracking state", () => {
   const detail = parseMarketplaceOrderDetailPayload(detailPayload);
-  const awaiting = mergeMarketplaceOrderLifecyclePayload(
-    detail,
-    lifecycle(returnShipment("awaiting_buyer_shipment")),
-  );
-  assert.equal(awaiting.returnRequest?.returnShipment?.destination.line1, destination.line1);
-  assert.equal(awaiting.returnRequest?.returnShipment?.trackingNumber, null);
   const shipped = mergeMarketplaceOrderLifecyclePayload(detail, lifecycle(returnShipment("shipped")));
   assert.equal(shipped.returnRequest?.returnShipment?.status, "shipped");
   assert.equal(shipped.returnRequest?.returnShipment?.trackingNumber, "1Z-R2B2");
@@ -163,45 +157,44 @@ test("seller and buyer list parsers expose only operational progress", () => {
     region: "FL", country: "US", gross_amount: 50, platform_fee_amount: 5,
     seller_net_amount: 45, allocation_status: "released", released_at: at,
     active_dispute: null, active_return_request: { id: id("5"), status: "approved",
-      created_at: at, attention_reason: "destination_pending" } }], 20).items[0];
-  assert.equal(seller.activeReturnRequest?.attentionReason, "destination_pending");
+      created_at: at, attention_reason: "label_pending" } }], 20).items[0];
+  assert.equal(seller.activeReturnRequest?.attentionReason, "label_pending");
   const buyer = parseBuyerOrderListPayload([{ ...common, first_item_title: "Product",
     first_item_image: null, payment_status: "paid", return_progress: { return_id: id("5"),
       status: "approved", return_shipping_status: "shipped", label_sent: false } }], 20).items[0];
   assert.equal(buyer.returnProgress?.shippingStatus, "shipped");
 });
 
-test("seller inbox distinguishes each R2B-2 attention stage", () => {
+test("seller inbox uses only the active label-only attention stages", () => {
   const rows = [
     ["5", "requested", "decision_pending", null],
     ["6", "approved", "funds_pending", null],
-    ["7", "approved", "destination_pending", null],
-    ["8", "approved", "return_in_transit", "shipped"],
+    ["7", "approved", "label_pending", null],
+    ["8", "approved", "receipt_confirmation_pending", "shipped"],
   ].map(([suffix, status, reason, shipping]) => ({
     return_id: id(suffix), status, created_at: at, attention_reason: reason,
     return_shipping_status: shipping, order_id: id(`${suffix}1`), order_number: `ORD-${suffix}`,
     order_status: "delivered", store_id: id("3"), store_name: "Store",
   }));
   const page = parseSellerReturnIndexPayload({ attention_count: 4, requested_count: 1,
-    approved_count: 3, funding_pending_count: 1, destination_pending_count: 1,
-    in_transit_count: 1, returns: rows, next_cursor: null }, 20);
+    approved_count: 3, funding_pending_count: 1, label_pending_count: 1,
+    receipt_confirmation_pending_count: 1, returns: rows, next_cursor: null }, 20);
   assert.deepEqual(page.returns.map((row) => row.attentionReason), [
-    "decision_pending", "funds_pending", "destination_pending", "return_in_transit",
+    "decision_pending", "funds_pending", "label_pending", "receipt_confirmation_pending",
   ]);
 });
 
 test("R2B-2 remains historical while R2B-3 replaces its active buyer authority", () => {
-  assert.match(panel, /Indicar dirección de devolución/);
   assert.match(panel, /Confirmar que entregué el paquete/);
   assert.match(panel, /Los fondos seguirán protegidos/);
-  assert.match(panel, /Producto de devolución en camino/);
-  assert.doesNotMatch(panel, /Confirmar recepción de devolución|Liberar reembolso/i);
-  assert.match(service, /prepare_marketplace_return_shipment/);
+  assert.match(panel, /Producto enviado por el comprador/);
+  assert.doesNotMatch(panel, /Indicar dirección de devolución|Actualizar dirección/);
+  assert.doesNotMatch(service, /prepareMarketplaceReturnShipment|prepare_marketplace_return_shipment/);
   assert.match(service, /confirm_marketplace_return_shipment/);
   assert.doesNotMatch(service, /export async function shipMarketplaceReturn/);
-  assert.match(sellerOrders, /Dirección pendiente/);
-  assert.match(sellerInbox, /Devolución en camino/);
-  assert.match(sellerHome, /destinationPendingCount/);
+  assert.doesNotMatch(sellerOrders, /Dirección pendiente|Devolución en camino/);
+  assert.doesNotMatch(sellerInbox, /Dirección pendiente|Devolución en camino/);
+  assert.doesNotMatch(sellerHome, /destinationPendingCount|inTransitCount/);
   assert.match(buyerOrders, /Esperando label del vendedor/);
 });
 
