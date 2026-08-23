@@ -69,9 +69,14 @@ const validHealthCounters = (name: HealthGroupName) => {
   if (name === "payments") {
     counters.confirmed_state_breakdown = {
       confirmed: 0, processing: 0, shipped: 0, delivered: 0,
-      refunded_fixture: 0, invalid: 0,
+      refunded_fixture: 0, refunded_dispute: 0, refunded_return: 0, invalid: 0,
     };
     counters.invalid_confirmed_state_details = [];
+  } else if (name === "settlements") {
+    counters.refunded_settlement_breakdown = {
+      refunded_after_return: 0,
+      refunded_after_dispute: 0,
+    };
   }
   return counters;
 };
@@ -198,19 +203,23 @@ describe("B8C-C1 exact runtime validation", () => {
     const observations = validHealth();
     healthGroup(observations, "payments").counters.confirmed_state_breakdown = {
       confirmed: 2, processing: 1, shipped: 3, delivered: 21,
-      refunded_fixture: 233, invalid: 0,
+      refunded_fixture: 233, refunded_dispute: 2, refunded_return: 3, invalid: 0,
     };
     const settlement = healthGroup(observations, "settlements").counters;
     settlement.escrow_expected_held_total = 71;
     settlement.escrow_actual_balance = 71;
     settlement.escrow_difference = 0;
+    settlement.refunded_settlement_breakdown = {
+      refunded_after_return: 3,
+      refunded_after_dispute: 0,
+    };
     expect(() => validateHealth(observations)).not.toThrow();
 
     const unhealthy = validHealth(), payment = healthGroup(unhealthy, "payments");
     payment.counters.confirmed_state_mismatches = 1;
     payment.counters.confirmed_state_breakdown = {
       confirmed: 2, processing: 0, shipped: 0, delivered: 0,
-      refunded_fixture: 0, invalid: 1,
+      refunded_fixture: 0, refunded_dispute: 0, refunded_return: 0, invalid: 1,
     };
     payment.counters.invalid_confirmed_state_details = [{
       order_id: id(9), checkout_status: "paid", order_status: "invalid",

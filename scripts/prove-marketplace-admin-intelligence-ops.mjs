@@ -690,7 +690,15 @@ try {
     Number(
       await rpc("marketplace_admin_health_failure_count", [
         "settlements",
-        { escrow_expected_held_total: 71, escrow_actual_balance: 71, escrow_difference: 0 },
+        {
+          escrow_expected_held_total: 71,
+          escrow_actual_balance: 71,
+          escrow_difference: 0,
+          refunded_settlement_breakdown: {
+            refunded_after_return: 3,
+            refunded_after_dispute: 2,
+          },
+        },
       ]),
     ),
     0,

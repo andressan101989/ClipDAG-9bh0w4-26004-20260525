@@ -631,7 +631,19 @@ async function resolveAndAssert(setup, expectedLegs) {
   ).rows[0].value;
   for (const [name, value] of Object.entries(recon))
     assert.equal(Number(value), 0, `reconciliation:${name}`);
-  return { receipt, resolutionKey, reversalId, refundId, snapshots, recon };
+  const canonical = (
+    await db.query(
+      "select public.reconcile_marketplace_payments() payments,public.reconcile_marketplace_settlements() settlements",
+    )
+  ).rows[0];
+  assert.equal(canonical.payments.confirmed_state_mismatches, 0);
+  assert.equal(canonical.payments.confirmed_state_breakdown.refunded_dispute, 1);
+  assert.equal(canonical.settlements.settlement_without_release, 0);
+  assert.equal(
+    canonical.settlements.refunded_settlement_breakdown.refunded_after_dispute,
+    1,
+  );
+  return { receipt, resolutionKey, reversalId, refundId, snapshots, recon, canonical };
 }
 
 async function proveSuccessfulReversals() {
