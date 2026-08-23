@@ -180,6 +180,19 @@ test("mutation receipt proves zero money movement and validates canonical fields
   });
   assert.equal(funded.moneyMoved, true);
   assert.equal(funded.returnRequest.refundHold?.grossAmount, 50);
+  const fundedReplay = parseMarketplaceReturnMutationReceipt({
+    return_request: {
+      ...rawReturn({
+        status: "approved",
+        decided_at: at,
+        refund_hold: { status: "held", gross_amount: 50, held_at: at },
+      }),
+      order_id: ids.order,
+    },
+    money_moved: false,
+  });
+  assert.equal(fundedReplay.moneyMoved, false);
+  assert.equal(fundedReplay.returnRequest.refundHold?.status, "held");
 });
 
 test("return status copy and timeline are explicit without financial inference", () => {

@@ -777,7 +777,7 @@ export function parseMarketplaceReturnMutationReceipt(value) {
     "marketplace_return_receipt.return_request",
     true,
   );
-  if (moneyMoved !== Boolean(returnRequest.refundHold))
+  if (moneyMoved && returnRequest.refundHold == null)
     fail("marketplace_return_receipt.money_moved");
   return {
     returnRequest,

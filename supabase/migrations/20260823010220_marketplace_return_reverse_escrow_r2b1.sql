@@ -125,7 +125,10 @@ create trigger marketplace_return_refund_hold_legs_immutable
 before update or delete on public.marketplace_return_refund_hold_legs
 for each row execute function public.marketplace_reject_return_refund_hold_mutation();
 
-create function public.marketplace_return_refund_hold_receipt(p_return_id uuid)
+create function public.marketplace_return_refund_hold_receipt(
+  p_return_id uuid,
+  p_money_moved boolean
+)
 returns jsonb language sql stable security definer set search_path=pg_catalog,public as $$
 select jsonb_build_object(
   'return_request',jsonb_build_object(
@@ -136,7 +139,7 @@ select jsonb_build_object(
       'status',h.status,'gross_amount',h.gross_amount,'held_at',h.held_at
     )end
   ),
-  'money_moved',h.id is not null
+  'money_moved',p_money_moved
 )
 from public.marketplace_return_requests rr
 left join public.marketplace_return_refund_holds h on h.return_request_id=rr.id
@@ -197,13 +200,13 @@ begin
     raise exception using errcode='23505',message='marketplace_return_refund_hold_idempotency_conflict';
   end if;
 
+  perform pg_advisory_xact_lock(hashtextextended(
+    'marketplace-return-review-order:'||rr.order_id::text,0));
   select * into o from public.marketplace_orders where id=rr.order_id for update;
   select * into s from public.marketplace_order_settlements where id=rr.settlement_id for update;
   if s.id is null then
     raise exception using errcode='23514',message='marketplace_return_refund_hold_settlement_basis_invalid';
   end if;
-  perform pg_advisory_xact_lock(hashtextextended(
-    'marketplace-return-review-order:'||o.id::text,0));
   select * into p from public.marketplace_payments where id=s.payment_id for update;
   select * into a from public.marketplace_payment_allocations where id=s.allocation_id for update;
 
@@ -216,7 +219,7 @@ begin
     if prior.request_fingerprint<>v_fingerprint then
       raise exception using errcode='23505',message='marketplace_return_refund_hold_idempotency_conflict';
     end if;
-    return public.marketplace_return_refund_hold_receipt(rr.id);
+    return public.marketplace_return_refund_hold_receipt(rr.id,false);
   end if;
   select * into h from public.marketplace_return_refund_holds
   where return_request_id=rr.id for update;
@@ -225,7 +228,7 @@ begin
       or h.request_fingerprint<>v_fingerprint then
       raise exception using errcode='23514',message='marketplace_return_refund_hold_integrity_error';
     end if;
-    return public.marketplace_return_refund_hold_receipt(rr.id);
+    return public.marketplace_return_refund_hold_receipt(rr.id,false);
   end if;
 
   if rr.status not in('requested','approved')
@@ -378,7 +381,7 @@ begin
     );
   end loop;
 
-  return public.marketplace_return_refund_hold_receipt(rr.id);
+  return public.marketplace_return_refund_hold_receipt(rr.id,true);
 end;
 $$;
 
@@ -398,6 +401,7 @@ declare
   v_fingerprint text;
   v_now timestamptz:=clock_timestamp();
   v_hold_receipt jsonb;
+  v_money_moved boolean:=false;
 begin
   if v_actor is null then
     raise exception using errcode='42501',message='marketplace_auth_required';
@@ -435,7 +439,7 @@ begin
     if v_prior.id<>p_return_id or v_prior.decision_fingerprint<>v_fingerprint then
       raise exception using errcode='23505',message='marketplace_return_decision_idempotency_conflict';
     end if;
-    return public.marketplace_return_refund_hold_receipt(v_prior.id);
+    return public.marketplace_return_refund_hold_receipt(v_prior.id,false);
   end if;
   if v_request.status<>'requested' then
     raise exception using errcode='23505',message='marketplace_return_already_decided';
@@ -444,7 +448,8 @@ begin
   if v_decision='approve' then
     v_hold_receipt:=public.marketplace_create_return_refund_hold_core(
       v_request.id,v_actor,p_idempotency_key);
-    if coalesce((v_hold_receipt->>'money_moved')::boolean,false) is not true
+    v_money_moved:=coalesce((v_hold_receipt->>'money_moved')::boolean,false);
+    if v_money_moved is not true
       or v_hold_receipt->'return_request'->'refund_hold'->>'status'<>'held' then
       raise exception using errcode='23514',message='marketplace_return_refund_hold_integrity_error';
     end if;
@@ -478,7 +483,7 @@ begin
     ),v_now
   );
 
-  return public.marketplace_return_refund_hold_receipt(v_request.id);
+  return public.marketplace_return_refund_hold_receipt(v_request.id,v_money_moved);
 end;
 $$;
 
@@ -888,7 +893,7 @@ comment on function public.open_marketplace_post_settlement_review(uuid,uuid,tex
   'Admin-only released-settlement review authority; an active funded return hold is mutually exclusive.';
 
 revoke all on function public.marketplace_reject_return_refund_hold_mutation(),
-  public.marketplace_return_refund_hold_receipt(uuid),
+  public.marketplace_return_refund_hold_receipt(uuid,boolean),
   public.marketplace_create_return_refund_hold_core(uuid,uuid,uuid)
 from public,anon,authenticated,service_role;
 
