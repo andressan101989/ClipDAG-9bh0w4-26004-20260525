@@ -268,7 +268,7 @@ test("canonical order history is reused for request and seller decision", () => 
   assert.doesNotMatch(migration, /create table public\.[a-z_]*return[a-z_]*events/);
 });
 
-test("service and existing detail routes expose request and decision only", () => {
+test("R2A request and decision remain integrated in the existing detail routes", () => {
   assert.match(service, /request_marketplace_return/);
   assert.match(service, /respond_to_marketplace_return/);
   assert.match(service, /parseMarketplaceReturnMutationReceipt/);
@@ -280,5 +280,5 @@ test("service and existing detail routes expose request and decision only", () =
   assert.match(buyer, /MarketplaceReturnPanel role="buyer"/);
   assert.match(seller, /MarketplaceReturnPanel role="seller"/);
   assert.match(seller, /MarketplaceSellerDisputePanel/);
-  assert.doesNotMatch(panel, /reverseMarketplace|refundMarketplace|ledger|escrow/);
+  assert.doesNotMatch(panel, /ledger_debit|ledger_credit|reverse_marketplace_released_settlement/);
 });

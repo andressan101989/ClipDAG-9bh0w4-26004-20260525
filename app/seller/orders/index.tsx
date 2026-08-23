@@ -276,6 +276,7 @@ const sellerReturnAttentionText = (
   decision_pending: "Solicitud de devolución · Decisión pendiente",
   funds_pending: "Devolución aceptada · Fondos por asegurar",
   destination_pending: "Devolución aceptada · Dirección pendiente",
+  label_pending: "Devolución aceptada · Label pendiente",
   return_in_transit: "Devolución en camino",
 })[reason];
 
@@ -285,6 +286,7 @@ const sellerReturnAttentionAccessibility = (
   decision_pending: "Este pedido tiene una solicitud de devolución pendiente",
   funds_pending: "Este pedido tiene fondos de devolución por asegurar",
   destination_pending: "Este pedido requiere una dirección de devolución",
+  label_pending: "Este pedido requiere enviar el label de devolución",
   return_in_transit: "Este pedido tiene una devolución en camino",
 })[reason];
 

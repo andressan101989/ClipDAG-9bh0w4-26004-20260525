@@ -44,6 +44,25 @@ async function adminMayReadDisputeEvidence(req:Request,assetId:string){
   return !accessError&&access?.admin===true;
 }
 
+async function returnParticipantMayReadLabel(assetId:string,userId:string){
+  const database=admin();
+  const {data:links,error:linksError}=await database.from('media_asset_links')
+    .select('entity_id')
+    .eq('asset_id',assetId)
+    .eq('entity_type','marketplace_return_shipment')
+    .eq('slot','return_label');
+  if(linksError||!links?.length)return false;
+  const shipmentIds=[...new Set(links.map(link=>link.entity_id))];
+  const {data:shipment,error:shipmentError}=await database.from('marketplace_return_shipments')
+    .select('id')
+    .in('id',shipmentIds)
+    .eq('return_label_asset_id',assetId)
+    .or(`buyer_id.eq.${userId},seller_id.eq.${userId}`)
+    .limit(1)
+    .maybeSingle();
+  return !shipmentError&&Boolean(shipment);
+}
+
 Deno.serve(async(req)=>{
   if(req.method==='OPTIONS')return new Response(null,{status:204,headers:corsHeaders});
   if(req.method!=='POST') return corsJson({error:'method_not_allowed'},405);
@@ -53,6 +72,7 @@ Deno.serve(async(req)=>{
   if(!a) return corsJson({error:'not_found'},404);
   if(a.visibility==='private'&&a.owner_id!==user.id
     &&!(await sellerMayReadBuyerDisputeEvidence(a.id,user.id))
+    &&!(await returnParticipantMayReadLabel(a.id,user.id))
     &&!(await adminMayReadDisputeEvidence(req,a.id))) return corsJson({error:'forbidden'},403);
   const url=a.visibility==='public'?publicUrl(a.object_key):await signGet(a.bucket_name,a.object_key);
   return corsJson({success:true,data:{assetId:a.id,url,expiresAt:a.visibility==='private'?new Date(Date.now()+300_000).toISOString():null}});

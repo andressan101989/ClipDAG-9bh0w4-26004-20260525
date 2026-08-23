@@ -28,7 +28,7 @@ export type MarketplaceDisputeStatus =
   | "rejected"
   | "cancelled";
 export type MarketplaceDisputeOutcome = "refund_buyer" | "release_seller" | "reject_claim";
-export type MarketplaceReturnStatus = "requested" | "approved" | "rejected";
+export type MarketplaceReturnStatus = "requested" | "approved" | "rejected" | "refunded";
 export interface MarketplaceReturnRefundHold {
   status: "held";
   grossAmount: number;
@@ -47,6 +47,9 @@ export interface MarketplaceReturnShipment {
     phone: string | null;
   };
   sellerInstructions: string | null;
+  returnLabelAssetId: string | null;
+  returnLabelFileName: string | null;
+  labelSentAt: string | null;
   carrierName: string | null;
   serviceLevel: string | null;
   trackingNumber: string | null;
@@ -63,6 +66,11 @@ export interface MarketplaceReturnRequest {
   createdAt: string;
   decidedAt: string | null;
   refundHold: MarketplaceReturnRefundHold | null;
+  refund: {
+    mode: "keep_item";
+    grossAmount: number;
+    refundedAt: string;
+  } | null;
   returnShipment: MarketplaceReturnShipment | null;
 }
 export interface MarketplaceOrderEvent {
@@ -134,12 +142,14 @@ export interface MarketplaceOrderListItem {
       | "decision_pending"
       | "funds_pending"
       | "destination_pending"
+      | "label_pending"
       | "return_in_transit";
   } | null;
   returnProgress?: {
     id: string;
     status: "approved";
     shippingStatus: "awaiting_buyer_shipment" | "shipped" | null;
+    labelSent: boolean;
   } | null;
 }
 export interface MarketplaceSellerDisputeSummary {
@@ -176,6 +186,7 @@ export interface MarketplaceSellerReturnSummary {
     | "decision_pending"
     | "funds_pending"
     | "destination_pending"
+    | "label_pending"
     | "return_in_transit";
   shippingStatus: "awaiting_buyer_shipment" | "shipped" | null;
 }
@@ -185,6 +196,7 @@ export interface MarketplaceSellerReturnPage {
   approvedCount: number;
   fundingPendingCount: number;
   destinationPendingCount: number;
+  labelPendingCount: number;
   inTransitCount: number;
   returns: MarketplaceSellerReturnSummary[];
   nextCursor: { createdAt: string; id: string } | null;
@@ -291,11 +303,14 @@ export interface MarketplaceReturnDestinationInput {
   phone?: string;
   sellerInstructions?: string;
 }
-export interface MarketplaceReturnShippingInput {
+export interface MarketplaceReturnLabelInput {
+  labelAssetId: string;
   carrierName: string;
   serviceLevel?: string;
   trackingNumber: string;
   trackingUrl?: string;
+}
+export interface MarketplaceReturnShipmentConfirmationInput {
   buyerNote?: string;
 }
 export type MarketplaceFulfillmentErrorCode =
@@ -336,11 +351,16 @@ export type MarketplaceFulfillmentErrorCode =
   | "marketplace_return_refund_hold_idempotency_conflict"
   | "marketplace_return_destination_invalid_input"
   | "marketplace_return_tracking_invalid_input"
+  | "marketplace_return_label_invalid_input"
   | "marketplace_return_shipment_not_eligible"
   | "marketplace_return_shipment_incompatible_review"
   | "marketplace_return_shipment_idempotency_conflict"
   | "marketplace_return_destination_immutable"
   | "marketplace_return_already_shipped"
+  | "marketplace_return_refund_idempotency_conflict"
+  | "marketplace_return_refund_not_eligible"
+  | "marketplace_return_refund_already_completed"
+  | "marketplace_return_refund_escrow_insufficient"
   | "marketplace_fulfillment_unknown";
 
 export class MarketplaceFulfillmentError extends Error {
@@ -809,18 +829,18 @@ export async function prepareMarketplaceReturnShipment(
   throw unknownOutcome();
 }
 
-export async function shipMarketplaceReturn(
+export async function sendMarketplaceReturnLabel(
   orderId: string,
   returnId: string,
-  input: MarketplaceReturnShippingInput,
+  input: MarketplaceReturnLabelInput,
   idempotencyKey: string,
 ): Promise<MarketplaceOrderDetail> {
   const normalized = {
+    labelAssetId: input.labelAssetId,
     carrierName: input.carrierName.trim(),
     serviceLevel: input.serviceLevel?.trim() ?? "",
     trackingNumber: input.trackingNumber.trim(),
     trackingUrl: input.trackingUrl?.trim() ?? "",
-    buyerNote: input.buyerNote?.trim() ?? "",
   };
   if (
     normalized.carrierName.length < 2 ||
@@ -832,24 +852,67 @@ export async function shipMarketplaceReturn(
     const shipment = value.returnRequest?.returnShipment;
     return Boolean(
       value.returnRequest?.id === returnId &&
-        shipment?.status === "shipped" &&
+        shipment?.status === "awaiting_buyer_shipment" &&
+        shipment.returnLabelAssetId === normalized.labelAssetId &&
         shipment.carrierName === normalized.carrierName &&
         shipment.trackingNumber === normalized.trackingNumber &&
         (shipment.serviceLevel ?? "") === normalized.serviceLevel &&
-        (shipment.trackingUrl ?? "") === normalized.trackingUrl &&
-        (shipment.buyerNote ?? "") === normalized.buyerNote,
+        (shipment.trackingUrl ?? "") === normalized.trackingUrl,
     );
   };
   try {
     const receipt = await rpc(
-      "ship_marketplace_return",
+      "send_marketplace_return_label",
       {
         p_return_id: returnId,
+        p_label_asset_id: normalized.labelAssetId,
         p_carrier_name: normalized.carrierName,
         p_service_level: normalized.serviceLevel,
         p_tracking_number: normalized.trackingNumber,
         p_tracking_url: normalized.trackingUrl,
-        p_buyer_note: normalized.buyerNote,
+        p_idempotency_key: idempotencyKey,
+      },
+      "seller_return_label_rpc",
+    );
+    parse("seller_return_label_receipt", () =>
+      parseMarketplaceReturnShipmentMutationReceipt(receipt),
+    );
+  } catch (error) {
+    if (!isAmbiguousMutationError(error)) throw error;
+    try {
+      const recovered = await fetchSellerOrder(orderId);
+      if (provesCommitted(recovered)) return recovered;
+    } catch {
+      // Keep both the uploaded asset and stable key after an ambiguous link result.
+    }
+    throw unknownOutcome();
+  }
+  try {
+    const canonical = await fetchSellerOrder(orderId);
+    if (provesCommitted(canonical)) return canonical;
+  } catch (error) {
+    diagnostic("seller_return_label_readback", error);
+  }
+  throw unknownOutcome();
+}
+
+export async function confirmMarketplaceReturnShipment(
+  orderId: string,
+  returnId: string,
+  input: MarketplaceReturnShipmentConfirmationInput,
+  idempotencyKey: string,
+): Promise<MarketplaceOrderDetail> {
+  const buyerNote = input.buyerNote?.trim() ?? "";
+  const provesCommitted = (value: MarketplaceOrderDetail) =>
+    value.returnRequest?.id === returnId &&
+    value.returnRequest.returnShipment?.status === "shipped" &&
+    (value.returnRequest.returnShipment.buyerNote ?? "") === buyerNote;
+  try {
+    const receipt = await rpc(
+      "confirm_marketplace_return_shipment",
+      {
+        p_return_id: returnId,
+        p_buyer_note: buyerNote,
         p_idempotency_key: idempotencyKey,
       },
       "buyer_return_shipping_rpc",
@@ -872,6 +935,49 @@ export async function shipMarketplaceReturn(
     if (provesCommitted(canonical)) return canonical;
   } catch (error) {
     diagnostic("buyer_return_shipping_readback", error);
+  }
+  throw unknownOutcome();
+}
+
+export async function refundMarketplaceReturnWithoutShipment(
+  orderId: string,
+  returnId: string,
+  sellerNote: string,
+  idempotencyKey: string,
+): Promise<MarketplaceOrderDetail> {
+  const normalizedNote = sellerNote.trim();
+  const provesCommitted = (value: MarketplaceOrderDetail) =>
+    value.returnRequest?.id === returnId &&
+    value.returnRequest.status === "refunded" &&
+    value.returnRequest.refund?.mode === "keep_item";
+  try {
+    const receipt = await rpc(
+      "refund_marketplace_return_without_shipment",
+      {
+        p_return_id: returnId,
+        p_seller_note: normalizedNote,
+        p_idempotency_key: idempotencyKey,
+      },
+      "seller_return_keep_item_refund_rpc",
+    );
+    parse("seller_return_keep_item_refund_receipt", () =>
+      parseMarketplaceReturnMutationReceipt(receipt),
+    );
+  } catch (error) {
+    if (!isAmbiguousMutationError(error)) throw error;
+    try {
+      const recovered = await fetchSellerOrder(orderId);
+      if (provesCommitted(recovered)) return recovered;
+    } catch {
+      // Never retry a possibly committed refund with a new key.
+    }
+    throw unknownOutcome();
+  }
+  try {
+    const canonical = await fetchSellerOrder(orderId);
+    if (provesCommitted(canonical)) return canonical;
+  } catch (error) {
+    diagnostic("seller_return_keep_item_refund_readback", error);
   }
   throw unknownOutcome();
 }

@@ -1,16 +1,24 @@
 import React, { useRef, useState } from "react";
 import { Alert, Linking, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { randomUUID } from "expo-crypto";
+import * as DocumentPicker from "expo-document-picker";
 import { Colors, Radius, Spacing } from "@/constants/theme";
 import {
   fundMarketplaceReturnRefundHold,
+  confirmMarketplaceReturnShipment,
   MarketplaceFulfillmentError,
   prepareMarketplaceReturnShipment,
+  refundMarketplaceReturnWithoutShipment,
   requestMarketplaceReturn,
   respondToMarketplaceReturn,
-  shipMarketplaceReturn,
+  sendMarketplaceReturnLabel,
   type MarketplaceOrderDetail,
 } from "@/services/marketplaceFulfillmentService";
+import {
+  deleteMediaAsset,
+  getMediaUrl,
+  uploadMediaFromUri,
+} from "@/services/mediaService";
 import { marketplaceReturnStatusCopy } from "@/services/marketplaceOrderPresentation";
 
 type Attempt = { payload: string; key: string };
@@ -41,6 +49,12 @@ const messageFor = (error: unknown) => {
     return "Revisa la dirección de devolución y completa todos los campos obligatorios.";
   if (code === "marketplace_return_tracking_invalid_input")
     return "Revisa el transportista, el número de seguimiento y usa una URL HTTPS segura.";
+  if (code === "marketplace_return_label_invalid_input")
+    return "Selecciona un label PDF válido de hasta 10 MB y revisa el seguimiento.";
+  if (code === "marketplace_return_refund_not_eligible")
+    return "Esta devolución ya no permite un reembolso inmediato sin envío.";
+  if (code === "marketplace_return_refund_escrow_insufficient")
+    return "Los fondos protegidos no alcanzan para completar el reembolso. No se movió dinero.";
   if (code === "marketplace_return_shipment_not_eligible")
     return "Esta devolución todavía no está lista para avanzar al envío.";
   if (code === "marketplace_return_shipment_incompatible_review")
@@ -76,17 +90,26 @@ export function MarketplaceReturnPanel({
   const [country, setCountry] = useState(shipment?.destination.country ?? "US");
   const [phone, setPhone] = useState(shipment?.destination.phone ?? "");
   const [sellerInstructions, setSellerInstructions] = useState(shipment?.sellerInstructions ?? "");
-  const [carrierName, setCarrierName] = useState("");
-  const [serviceLevel, setServiceLevel] = useState("");
-  const [trackingNumber, setTrackingNumber] = useState("");
-  const [trackingUrl, setTrackingUrl] = useState("");
+  const [carrierName, setCarrierName] = useState(shipment?.carrierName ?? "");
+  const [serviceLevel, setServiceLevel] = useState(shipment?.serviceLevel ?? "");
+  const [trackingNumber, setTrackingNumber] = useState(shipment?.trackingNumber ?? "");
+  const [trackingUrl, setTrackingUrl] = useState(shipment?.trackingUrl ?? "");
   const [returnShippingNote, setReturnShippingNote] = useState("");
+  const [labelDocument, setLabelDocument] = useState<{
+    uri: string;
+    name: string;
+    mimeType: string;
+    size: number;
+  } | null>(null);
+  const [uploadedLabelAssetId, setUploadedLabelAssetId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const requestAttempt = useRef<Attempt | null>(null);
   const decisionAttempt = useRef<Attempt | null>(null);
   const fundingAttempt = useRef<Attempt | null>(null);
   const destinationAttempt = useRef<Attempt | null>(null);
   const shippingAttempt = useRef<Attempt | null>(null);
+  const confirmationAttempt = useRef<Attempt | null>(null);
+  const refundAttempt = useRef<Attempt | null>(null);
   const refundAmount = order.settlement?.grossAmount ?? order.allocation?.grossAmount;
   const refundAmountLabel = refundAmount == null ? "el importe completo" : `${refundAmount.toFixed(2)} BDAG`;
 
@@ -148,7 +171,7 @@ export function MarketplaceReturnPanel({
 
   const confirmDecision = (decision: "approve" | "reject") =>
     Alert.alert(
-      decision === "approve" ? "Aceptar devolución" : "Rechazar devolución",
+      decision === "approve" ? "Aceptar devolución física" : "Rechazar devolución",
       decision === "approve"
         ? `Al aceptar, ${refundAmountLabel} serán retenidos para garantizar el reembolso. El comprador todavía no recibirá el dinero.`
         : "El comprador será informado de que la devolución fue rechazada.",
@@ -158,6 +181,40 @@ export function MarketplaceReturnPanel({
           text: decision === "approve" ? "Aceptar" : "Rechazar",
           style: decision === "reject" ? "destructive" : "default",
           onPress: () => void decide(decision),
+        },
+      ],
+    );
+
+  const refundAndKeepItem = async () => {
+    if (!current || current.returnShipment) return;
+    const normalized = sellerNote.trim();
+    const payload = `keep_item:${normalized}`;
+    setBusy(true);
+    try {
+      const updated = await refundMarketplaceReturnWithoutShipment(
+        order.order.id,
+        current.id,
+        normalized,
+        attemptKey(refundAttempt, payload),
+      );
+      onUpdated(updated);
+    } catch (error) {
+      Alert.alert("No se pudo completar el reembolso", messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmKeepItemRefund = () =>
+    Alert.alert(
+      "Reembolsar y permitir que conserve el producto",
+      `Se devolverán ${refundAmountLabel} inmediatamente desde los fondos protegidos. El comprador no tendrá que enviar el producto.`,
+      [
+        { text: "Volver", style: "cancel" },
+        {
+          text: "Reembolsar ahora",
+          style: "destructive",
+          onPress: () => void refundAndKeepItem(),
         },
       ],
     );
@@ -237,8 +294,32 @@ export function MarketplaceReturnPanel({
       ],
     );
 
-  const registerReturnShipment = async () => {
-    if (!current) return;
+  const pickReturnLabel = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: "application/pdf",
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+    if (result.canceled) return;
+    const file = result.assets[0];
+    const mimeType = file.mimeType?.toLowerCase() ?? "";
+    if (
+      mimeType !== "application/pdf" ||
+      !/\.pdf$/i.test(file.name) ||
+      typeof file.size !== "number" ||
+      file.size <= 0 ||
+      file.size > 10_000_000
+    ) {
+      Alert.alert("Label no válido", "Selecciona un PDF de hasta 10 MB.");
+      return;
+    }
+    setLabelDocument({ uri: file.uri, name: file.name, mimeType, size: file.size });
+    setUploadedLabelAssetId(null);
+    shippingAttempt.current = null;
+  };
+
+  const sendReturnLabel = async () => {
+    if (!current || !labelDocument) return;
     if (carrierName.trim().length < 2 || trackingNumber.trim().length < 2) {
       Alert.alert("Revisa el seguimiento", "Indica transportista y número de seguimiento.");
       return;
@@ -250,19 +331,77 @@ export function MarketplaceReturnPanel({
     const payload = JSON.stringify({
       carrierName: carrierName.trim(), serviceLevel: serviceLevel.trim(),
       trackingNumber: trackingNumber.trim(), trackingUrl: trackingUrl.trim(),
-      buyerNote: returnShippingNote.trim(),
+      labelName: labelDocument.name,
     });
     setBusy(true);
+    let assetId = uploadedLabelAssetId;
+    let uploadedNow = false;
     try {
-      const updated = await shipMarketplaceReturn(
+      if (!assetId) {
+        const uploaded = await uploadMediaFromUri({
+          uri: labelDocument.uri,
+          purpose: "return_label",
+          mimeType: "application/pdf",
+          fileName: labelDocument.name,
+          sizeBytes: labelDocument.size,
+          visibility: "private",
+        });
+        assetId = uploaded.assetId;
+        uploadedNow = true;
+        setUploadedLabelAssetId(assetId);
+      }
+      const updated = await sendMarketplaceReturnLabel(
         order.order.id,
         current.id,
-        { carrierName, serviceLevel, trackingNumber, trackingUrl, buyerNote: returnShippingNote },
+        {
+          labelAssetId: assetId,
+          carrierName,
+          serviceLevel,
+          trackingNumber,
+          trackingUrl,
+        },
         attemptKey(shippingAttempt, payload),
       );
       onUpdated(updated);
     } catch (error) {
-      Alert.alert("No se pudo registrar el envío", messageFor(error));
+      const ambiguous =
+        error instanceof MarketplaceFulfillmentError &&
+        error.code === "marketplace_fulfillment_outcome_unknown";
+      if (uploadedNow && assetId && !ambiguous) {
+        await deleteMediaAsset(assetId).catch(() => {});
+        setUploadedLabelAssetId(null);
+        shippingAttempt.current = null;
+      }
+      Alert.alert("No se pudo enviar el label", messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmSendReturnLabel = () =>
+    Alert.alert(
+      "Enviar label al comprador",
+      "El transportista, tracking, dirección y label quedarán congelados para este envío.",
+      [
+        { text: "Volver", style: "cancel" },
+        { text: "Enviar label", onPress: () => void sendReturnLabel() },
+      ],
+    );
+
+  const registerReturnShipment = async () => {
+    if (!current) return;
+    const buyerNote = returnShippingNote.trim();
+    setBusy(true);
+    try {
+      const updated = await confirmMarketplaceReturnShipment(
+        order.order.id,
+        current.id,
+        { buyerNote },
+        attemptKey(confirmationAttempt, buyerNote),
+      );
+      onUpdated(updated);
+    } catch (error) {
+      Alert.alert("No se pudo confirmar el envío", messageFor(error));
     } finally {
       setBusy(false);
     }
@@ -278,10 +417,22 @@ export function MarketplaceReturnPanel({
       ],
     );
 
+  const openReturnLabel = async () => {
+    const assetId = shipment?.returnLabelAssetId;
+    if (!assetId) return;
+    try {
+      const url = await getMediaUrl(assetId);
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert("No se pudo abrir el label", "Actualiza el pedido e inténtalo nuevamente.");
+    }
+  };
+
   const stateCopy = marketplaceReturnStatusCopy(
     current?.status ?? "requested",
     Boolean(current?.refundHold),
     shipment?.status,
+    Boolean(shipment?.returnLabelAssetId),
   );
   const destination = shipment?.destination;
 
@@ -346,13 +497,25 @@ export function MarketplaceReturnPanel({
               <View style={styles.actions}>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Aceptar devolución"
+                  accessibilityLabel="Aceptar devolución física"
                   accessibilityState={{ disabled: busy }}
                   disabled={busy}
                   style={[styles.actionButton, styles.approveButton]}
                   onPress={() => confirmDecision("approve")}
                 >
-                  <Text style={styles.primaryText}>Aceptar devolución</Text>
+                  <Text style={styles.primaryText}>Aceptar devolución física</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Reembolsar y permitir que conserve el producto"
+                  accessibilityState={{ disabled: busy }}
+                  disabled={busy}
+                  style={[styles.actionButton, styles.keepItemButton]}
+                  onPress={confirmKeepItemRefund}
+                >
+                  <Text style={styles.primaryText}>
+                    Reembolsar y permitir que conserve el producto
+                  </Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
@@ -370,7 +533,11 @@ export function MarketplaceReturnPanel({
           {role === "seller" && current.status !== "requested" ? (
             <>
               <Text style={styles.title}>
-                {current.status === "approved" ? "Devolución aceptada" : "Devolución rechazada"}
+                {current.status === "approved"
+                  ? "Devolución aceptada"
+                  : current.status === "refunded"
+                    ? "Reembolso completado"
+                    : "Devolución rechazada"}
               </Text>
               {current.status === "approved" ? (
                 current.refundHold ? (
@@ -394,6 +561,11 @@ export function MarketplaceReturnPanel({
                     </Pressable>
                   </>
                 )
+              ) : null}
+              {current.status === "refunded" ? (
+                <Text style={styles.success}>
+                  El dinero fue devuelto de inmediato y el comprador puede conservar el producto.
+                </Text>
               ) : null}
             </>
           ) : null}
@@ -419,8 +591,26 @@ export function MarketplaceReturnPanel({
             ) : (
               <>
                 <Text style={styles.title}>
-                  {shipment ? "Esperando que el comprador envíe el producto" : "Dirección de devolución pendiente"}
+                  {shipment?.returnLabelAssetId
+                    ? "Esperando que el comprador entregue el producto"
+                    : shipment
+                      ? "Label de devolución pendiente"
+                      : "Dirección de devolución pendiente"}
                 </Text>
+                {!shipment ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Reembolsar y permitir que conserve el producto"
+                    accessibilityState={{ disabled: busy }}
+                    disabled={busy}
+                    style={[styles.actionButton, styles.keepItemButton]}
+                    onPress={confirmKeepItemRefund}
+                  >
+                    <Text style={styles.primaryText}>
+                      Reembolsar y permitir que conserve el producto
+                    </Text>
+                  </Pressable>
+                ) : null}
                 {destination ? (
                   <View style={styles.destinationCard}>
                     <Text style={styles.label}>Dirección de devolución</Text>
@@ -436,6 +626,8 @@ export function MarketplaceReturnPanel({
                     ) : null}
                   </View>
                 ) : null}
+                {!shipment?.returnLabelAssetId ? (
+                  <>
                 <Text style={styles.label}>{shipment ? "Corregir dirección" : "Indicar dirección de devolución"}</Text>
                 <TextInput accessibilityLabel="Nombre del destinatario" value={recipientName} onChangeText={setRecipientName} placeholder="Nombre del destinatario" placeholderTextColor={Colors.textSubtle} maxLength={120} style={styles.singleInput} />
                 <TextInput accessibilityLabel="Dirección de devolución" value={line1} onChangeText={setLine1} placeholder="Dirección" placeholderTextColor={Colors.textSubtle} maxLength={200} style={styles.singleInput} />
@@ -453,6 +645,45 @@ export function MarketplaceReturnPanel({
                 <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy }} disabled={busy} style={styles.primaryButton} onPress={confirmDestination}>
                   <Text style={styles.primaryText}>{busy ? "Guardando…" : shipment ? "Actualizar dirección" : "Indicar dirección de devolución"}</Text>
                 </Pressable>
+                {shipment ? (
+                  <>
+                    <Text style={styles.label}>Label PDF privado</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Seleccionar label PDF"
+                      accessibilityState={{ disabled: busy }}
+                      disabled={busy}
+                      style={styles.secondaryButton}
+                      onPress={() => void pickReturnLabel()}
+                    >
+                      <Text style={styles.linkText}>
+                        {labelDocument?.name ?? "Seleccionar label PDF"}
+                      </Text>
+                    </Pressable>
+                    <TextInput accessibilityLabel="Transportista de devolución" value={carrierName} onChangeText={setCarrierName} placeholder="Transportista" placeholderTextColor={Colors.textSubtle} maxLength={100} style={styles.singleInput} />
+                    <TextInput accessibilityLabel="Número de seguimiento de devolución" value={trackingNumber} onChangeText={setTrackingNumber} placeholder="Número de seguimiento" placeholderTextColor={Colors.textSubtle} maxLength={120} style={styles.singleInput} />
+                    <TextInput accessibilityLabel="Servicio de devolución" value={serviceLevel} onChangeText={setServiceLevel} placeholder="Servicio (opcional)" placeholderTextColor={Colors.textSubtle} maxLength={100} style={styles.singleInput} />
+                    <TextInput accessibilityLabel="URL de seguimiento de devolución" autoCapitalize="none" value={trackingUrl} onChangeText={setTrackingUrl} placeholder="https://… (opcional)" placeholderTextColor={Colors.textSubtle} style={styles.singleInput} />
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Enviar label al comprador"
+                      accessibilityState={{ disabled: busy || !labelDocument }}
+                      disabled={busy || !labelDocument}
+                      style={[styles.primaryButton, !labelDocument && styles.disabledButton]}
+                      onPress={confirmSendReturnLabel}
+                    >
+                      <Text style={styles.primaryText}>{busy ? "Enviando…" : "Enviar label al comprador"}</Text>
+                    </Pressable>
+                  </>
+                ) : null}
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.success}>Label enviado al comprador</Text>
+                    <Text style={styles.text}>{shipment.returnLabelFileName}</Text>
+                    <Text style={styles.text}>{shipment.carrierName} · {shipment.trackingNumber}</Text>
+                  </>
+                )}
               </>
             )
           ) : null}
@@ -479,14 +710,29 @@ export function MarketplaceReturnPanel({
                   <Text style={styles.text}>{destination?.country}</Text>
                   {shipment.sellerInstructions ? <Text style={styles.muted}>{shipment.sellerInstructions}</Text> : null}
                 </View>
-                <TextInput accessibilityLabel="Transportista de devolución" value={carrierName} onChangeText={setCarrierName} placeholder="Transportista" placeholderTextColor={Colors.textSubtle} maxLength={100} style={styles.singleInput} />
-                <TextInput accessibilityLabel="Número de seguimiento de devolución" value={trackingNumber} onChangeText={setTrackingNumber} placeholder="Número de seguimiento" placeholderTextColor={Colors.textSubtle} maxLength={120} style={styles.singleInput} />
-                <TextInput accessibilityLabel="Servicio de devolución" value={serviceLevel} onChangeText={setServiceLevel} placeholder="Servicio (opcional)" placeholderTextColor={Colors.textSubtle} maxLength={100} style={styles.singleInput} />
-                <TextInput accessibilityLabel="URL de seguimiento de devolución" autoCapitalize="none" value={trackingUrl} onChangeText={setTrackingUrl} placeholder="https://… (opcional)" placeholderTextColor={Colors.textSubtle} style={styles.singleInput} />
-                <TextInput accessibilityLabel="Nota del envío de devolución" value={returnShippingNote} onChangeText={setReturnShippingNote} placeholder="Nota opcional" placeholderTextColor={Colors.textSubtle} maxLength={500} multiline style={styles.input} />
-                <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy }} disabled={busy} style={styles.primaryButton} onPress={confirmReturnShipment}>
-                  <Text style={styles.primaryText}>{busy ? "Guardando…" : "Marcar producto como enviado"}</Text>
-                </Pressable>
+                {shipment.returnLabelAssetId ? (
+                  <>
+                    <Text style={styles.success}>Label listo para imprimir</Text>
+                    <Pressable
+                      accessibilityRole="link"
+                      accessibilityLabel="Abrir o imprimir label"
+                      style={styles.secondaryButton}
+                      onPress={() => void openReturnLabel()}
+                    >
+                      <Text style={styles.linkText}>Abrir / imprimir label</Text>
+                    </Pressable>
+                    <Text style={styles.muted}>
+                      Imprime el label, pégalo al paquete y entrégalo en la agencia de {shipment.carrierName}.
+                    </Text>
+                    <Text style={styles.text}>{shipment.trackingNumber}</Text>
+                    <TextInput accessibilityLabel="Nota del envío de devolución" value={returnShippingNote} onChangeText={setReturnShippingNote} placeholder="Nota opcional" placeholderTextColor={Colors.textSubtle} maxLength={500} multiline style={styles.input} />
+                    <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy }} disabled={busy} style={styles.primaryButton} onPress={confirmReturnShipment}>
+                      <Text style={styles.primaryText}>{busy ? "Confirmando…" : "Confirmar que entregué el paquete"}</Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <Text style={styles.muted}>Esperando que el vendedor envíe el label de devolución.</Text>
+                )}
               </>
             )
           ) : null}
@@ -548,7 +794,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
   },
   approveButton: { backgroundColor: Colors.primary },
+  keepItemButton: { backgroundColor: Colors.warning },
   rejectButton: { backgroundColor: Colors.error },
+  disabledButton: { opacity: 0.5 },
   primaryButton: {
     minHeight: 48,
     borderRadius: Radius.md,

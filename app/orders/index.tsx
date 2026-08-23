@@ -142,7 +142,10 @@ export default function BuyerOrders() {
           renderItem={({ item }) => <Pressable
             accessibilityLabel={`Ver pedido ${item.orderNumber}`}
             accessibilityHint={item.returnProgress
-              ? buyerReturnProgressLabel(item.returnProgress.shippingStatus)
+              ? buyerReturnProgressLabel(
+                  item.returnProgress.shippingStatus,
+                  item.returnProgress.labelSent,
+                )
               : undefined}
             accessibilityRole="button"
             style={[styles.card, compact && styles.cardCompact]}
@@ -165,7 +168,10 @@ export default function BuyerOrders() {
               </Text>
               <Text style={styles.price} numberOfLines={1}>{item.total.toFixed(2)} BDAG</Text>
               {item.returnProgress ? <Text style={styles.returnProgress} numberOfLines={1}>
-                {buyerReturnProgressLabel(item.returnProgress.shippingStatus)}
+                {buyerReturnProgressLabel(
+                  item.returnProgress.shippingStatus,
+                  item.returnProgress.labelSent,
+                )}
               </Text> : null}
             </View>
             <View style={styles.statusSlot}>
@@ -182,10 +188,11 @@ export default function BuyerOrders() {
 
 const buyerReturnProgressLabel = (
   status: NonNullable<MarketplaceOrderListItem['returnProgress']>['shippingStatus'],
+  labelSent: boolean,
 ) => status === 'shipped'
   ? 'Devolución enviada'
   : status === 'awaiting_buyer_shipment'
-    ? 'Devolución lista para enviar'
+    ? labelSent ? 'Label listo para imprimir' : 'Esperando label del vendedor'
     : 'Esperando instrucciones de devolución';
 
 const styles = StyleSheet.create({

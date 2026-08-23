@@ -19,6 +19,7 @@ export type MediaPurpose =
   | "document"
   | "attachment"
   | "dispute_evidence"
+  | "return_label"
   | "live_cover";
 export type MediaVisibility = "public" | "private";
 export interface UploadMediaInput {

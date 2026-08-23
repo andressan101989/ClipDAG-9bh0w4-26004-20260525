@@ -14,6 +14,7 @@ export type MediaPurpose =
   | "document"
   | "attachment"
   | "dispute_evidence"
+  | "return_label"
   | "live_cover";
 
 type Rule = {
@@ -133,6 +134,12 @@ export const MEDIA_PURPOSES: Record<MediaPurpose, Rule> = {
     kind: "image",
     maxBytes: 25_000_000,
     mimeTypes: IMAGES,
+    defaultVisibility: "private",
+  },
+  return_label: {
+    kind: "document",
+    maxBytes: 10_000_000,
+    mimeTypes: ["application/pdf"],
     defaultVisibility: "private",
   },
 };

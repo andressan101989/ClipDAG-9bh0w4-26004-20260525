@@ -21,6 +21,7 @@ export function marketplaceReturnStatusCopy(
   status: MarketplaceReturnStatus,
   refundFunded = false,
   shipmentStatus?: MarketplaceReturnShipment["status"] | null,
+  labelSent = false,
 ) {
   if (status === "requested")
     return {
@@ -33,10 +34,15 @@ export function marketplaceReturnStatusCopy(
           title: "Producto enviado",
           body: "Tu reembolso continúa protegido mientras el vendedor recibe el producto.",
         }
-      : refundFunded && shipmentStatus === "awaiting_buyer_shipment"
+      : refundFunded && shipmentStatus === "awaiting_buyer_shipment" && labelSent
         ? {
-            title: "Devolución lista para enviar",
-            body: "Los fondos del reembolso están asegurados. Envía el producto usando las instrucciones del vendedor.",
+            title: "Label listo para imprimir",
+            body: "Abre e imprime el label antes de entregar el paquete al transportista.",
+          }
+        : refundFunded && shipmentStatus === "awaiting_buyer_shipment"
+          ? {
+              title: "Esperando label del vendedor",
+              body: "Tu reembolso está protegido. Espera el label antes de enviar el producto.",
           }
         : refundFunded
       ? {
@@ -47,6 +53,11 @@ export function marketplaceReturnStatusCopy(
           title: "Devolución aceptada",
           body: "Espera a que la app confirme que los fondos del reembolso están asegurados antes de enviar el producto.",
         };
+  if (status === "refunded")
+    return {
+      title: "Reembolso completado",
+      body: "El dinero fue devuelto de inmediato y puedes conservar el producto.",
+    };
   return {
     title: "Devolución rechazada por el vendedor",
     body: "El vendedor decidió no aceptar esta devolución.",
@@ -84,6 +95,7 @@ export function marketplaceOrderTimelineItems(
       return_approved: "Devolución aceptada",
       return_rejected: "Devolución rechazada por el vendedor",
       return_instructions_provided: "Dirección de devolución disponible",
+      return_label_sent: "Label de devolución enviado",
       return_shipped: "Producto enviado de regreso",
     } as Record<string, string>)[event.eventType] ?? "Actualización del pedido";
   };

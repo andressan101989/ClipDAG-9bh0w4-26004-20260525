@@ -60,12 +60,13 @@ const buyerPaymentStatuses = ["paid", "partially_refunded", "refunded"];
 const allocationStatuses = ["held", "released", "refunded", "partially_refunded"];
 const disputeStatuses = ["open", "under_review", "resolved", "rejected", "cancelled"];
 const disputeOutcomes = ["refund_buyer", "release_seller", "reject_claim"];
-const returnStatuses = ["requested", "approved", "rejected"];
+const returnStatuses = ["requested", "approved", "rejected", "refunded"];
 const returnShipmentStatuses = ["awaiting_buyer_shipment", "shipped"];
 const returnAttentionReasons = [
   "decision_pending",
   "funds_pending",
   "destination_pending",
+  "label_pending",
   "return_in_transit",
 ];
 
@@ -81,10 +82,29 @@ const marketplaceReturnShipment = (value, path) => {
   const trackingNumber = nullableString(row.tracking_number, `${path}.tracking_number`);
   const buyerNote = nullableString(row.buyer_note, `${path}.buyer_note`);
   const shippedAt = nullableTimestamp(row.shipped_at, `${path}.shipped_at`);
+  const returnLabelAssetId =
+    row.return_label_asset_id == null
+      ? null
+      : uuid(row.return_label_asset_id, `${path}.return_label_asset_id`);
+  const returnLabelFileName = nullableString(
+    row.return_label_file_name ?? null,
+    `${path}.return_label_file_name`,
+  );
+  const labelSentAt = nullableTimestamp(row.label_sent_at ?? null, `${path}.label_sent_at`);
+  const hasLabel = returnLabelAssetId !== null;
+  if (
+    hasLabel !== (returnLabelFileName !== null) ||
+    hasLabel !== (labelSentAt !== null) ||
+    (returnLabelFileName !== null && !/\.pdf$/i.test(returnLabelFileName))
+  )
+    fail(`${path}.return_label_asset_id`);
   if (
     (status === "awaiting_buyer_shipment" &&
-      (carrierName !== null || serviceLevel !== null || trackingNumber !== null ||
-        trackingUrl !== null || buyerNote !== null || shippedAt !== null)) ||
+      ((!hasLabel &&
+        (carrierName !== null || serviceLevel !== null || trackingNumber !== null ||
+          trackingUrl !== null)) ||
+        (hasLabel && (carrierName === null || trackingNumber === null)) ||
+        buyerNote !== null || shippedAt !== null)) ||
     (status === "shipped" &&
       (carrierName === null || trackingNumber === null || shippedAt === null))
   )
@@ -102,6 +122,9 @@ const marketplaceReturnShipment = (value, path) => {
       phone: nullableString(destination.phone, `${path}.destination.phone`),
     },
     sellerInstructions: nullableString(row.seller_instructions, `${path}.seller_instructions`),
+    returnLabelAssetId,
+    returnLabelFileName,
+    labelSentAt,
     carrierName,
     serviceLevel,
     trackingNumber,
@@ -122,7 +145,9 @@ const marketplaceReturnRequest = (value, path, includeOrderId = false) => {
   const rawRefundHold =
     row.refund_hold == null ? null : object(row.refund_hold, `${path}.refund_hold`);
   if ((status === "requested") !== (decidedAt === null)) fail(`${path}.decided_at`);
-  if (rawRefundHold && status !== "approved") fail(`${path}.refund_hold`);
+  if (rawRefundHold && !["approved", "refunded"].includes(status)) fail(`${path}.refund_hold`);
+  const rawRefund = row.refund == null ? null : object(row.refund, `${path}.refund`);
+  if ((status === "refunded") !== (rawRefund !== null)) fail(`${path}.refund`);
   const returnShipment = marketplaceReturnShipment(row.return_shipment, `${path}.return_shipment`);
   if (returnShipment && (!rawRefundHold || status !== "approved"))
     fail(`${path}.return_shipment`);
@@ -134,6 +159,15 @@ const marketplaceReturnRequest = (value, path, includeOrderId = false) => {
       }
     : null;
   if (refundHold && refundHold.grossAmount <= 0) fail(`${path}.refund_hold.gross_amount`);
+  const refund = rawRefund
+    ? {
+        mode: enumeration(rawRefund.mode, ["keep_item"], `${path}.refund.mode`),
+        grossAmount: number(rawRefund.gross_amount, `${path}.refund.gross_amount`),
+        refundedAt: timestamp(rawRefund.refunded_at, `${path}.refund.refunded_at`),
+      }
+    : null;
+  if (refund && (!refundHold || refund.grossAmount <= 0 || refund.grossAmount !== refundHold.grossAmount))
+    fail(`${path}.refund.gross_amount`);
   return {
     id: uuid(row.id, `${path}.id`),
     ...(includeOrderId ? { orderId: uuid(row.order_id, `${path}.order_id`) } : {}),
@@ -143,6 +177,7 @@ const marketplaceReturnRequest = (value, path, includeOrderId = false) => {
     createdAt: timestamp(row.created_at, `${path}.created_at`),
     decidedAt,
     refundHold,
+    refund,
     returnShipment,
   };
 };
@@ -250,6 +285,10 @@ export function parseBuyerOrderListPayload(value, effectiveLimit) {
                     returnShipmentStatuses,
                     `orders[${index}].return_progress.return_shipping_status`,
                   ),
+            labelSent: boolean(
+              rawReturnProgress.label_sent,
+              `orders[${index}].return_progress.label_sent`,
+            ),
           }
         : null,
     };
@@ -481,13 +520,20 @@ export function parseSellerReturnIndexPayload(value, effectiveLimit) {
     root.destination_pending_count ?? 0,
     "seller_returns.destination_pending_count",
   );
+  const labelPendingCount = integer(
+    root.label_pending_count ?? 0,
+    "seller_returns.label_pending_count",
+  );
   const inTransitCount = integer(
     root.in_transit_count ?? 0,
     "seller_returns.in_transit_count",
   );
   if (attentionCount !== requestedCount + approvedCount || returns.length > attentionCount)
     fail("seller_returns.attention_count");
-  if (approvedCount !== fundingPendingCount + destinationPendingCount + inTransitCount)
+  if (
+    approvedCount !==
+    fundingPendingCount + destinationPendingCount + labelPendingCount + inTransitCount
+  )
     fail("seller_returns.approved_count");
   const rawCursor =
     root.next_cursor == null
@@ -499,6 +545,7 @@ export function parseSellerReturnIndexPayload(value, effectiveLimit) {
     approvedCount,
     fundingPendingCount,
     destinationPendingCount,
+    labelPendingCount,
     inTransitCount,
     returns,
     nextCursor: rawCursor

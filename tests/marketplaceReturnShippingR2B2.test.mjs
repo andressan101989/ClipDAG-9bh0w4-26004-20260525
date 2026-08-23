@@ -167,7 +167,7 @@ test("seller and buyer list parsers expose only operational progress", () => {
   assert.equal(seller.activeReturnRequest?.attentionReason, "destination_pending");
   const buyer = parseBuyerOrderListPayload([{ ...common, first_item_title: "Product",
     first_item_image: null, payment_status: "paid", return_progress: { return_id: id("5"),
-      status: "approved", return_shipping_status: "shipped" } }], 20).items[0];
+      status: "approved", return_shipping_status: "shipped", label_sent: false } }], 20).items[0];
   assert.equal(buyer.returnProgress?.shippingStatus, "shipped");
 });
 
@@ -190,18 +190,19 @@ test("seller inbox distinguishes each R2B-2 attention stage", () => {
   ]);
 });
 
-test("UI reuses the canonical panel and existing inbox without R2B-3 actions", () => {
+test("R2B-2 remains historical while R2B-3 replaces its active buyer authority", () => {
   assert.match(panel, /Indicar dirección de devolución/);
-  assert.match(panel, /Marcar producto como enviado/);
+  assert.match(panel, /Confirmar que entregué el paquete/);
   assert.match(panel, /Los fondos seguirán protegidos/);
   assert.match(panel, /Producto de devolución en camino/);
   assert.doesNotMatch(panel, /Confirmar recepción de devolución|Liberar reembolso/i);
   assert.match(service, /prepare_marketplace_return_shipment/);
-  assert.match(service, /ship_marketplace_return/);
+  assert.match(service, /confirm_marketplace_return_shipment/);
+  assert.doesNotMatch(service, /export async function shipMarketplaceReturn/);
   assert.match(sellerOrders, /Dirección pendiente/);
   assert.match(sellerInbox, /Devolución en camino/);
   assert.match(sellerHome, /destinationPendingCount/);
-  assert.match(buyerOrders, /Esperando instrucciones de devolución/);
+  assert.match(buyerOrders, /Esperando label del vendedor/);
 });
 
 test("return history uses the existing order timeline", () => {
