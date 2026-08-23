@@ -141,6 +141,9 @@ export default function BuyerOrders() {
           </View>}
           renderItem={({ item }) => <Pressable
             accessibilityLabel={`Ver pedido ${item.orderNumber}`}
+            accessibilityHint={item.returnProgress
+              ? buyerReturnProgressLabel(item.returnProgress.shippingStatus)
+              : undefined}
             accessibilityRole="button"
             style={[styles.card, compact && styles.cardCompact]}
             onPress={() => router.push(`/orders/${item.id}` as never)}
@@ -161,6 +164,9 @@ export default function BuyerOrders() {
                 {formatOrderNumberForList(item.orderNumber)}
               </Text>
               <Text style={styles.price} numberOfLines={1}>{item.total.toFixed(2)} BDAG</Text>
+              {item.returnProgress ? <Text style={styles.returnProgress} numberOfLines={1}>
+                {buyerReturnProgressLabel(item.returnProgress.shippingStatus)}
+              </Text> : null}
             </View>
             <View style={styles.statusSlot}>
               <StatusBadge
@@ -173,6 +179,14 @@ export default function BuyerOrders() {
         />}
   </View>;
 }
+
+const buyerReturnProgressLabel = (
+  status: NonNullable<MarketplaceOrderListItem['returnProgress']>['shippingStatus'],
+) => status === 'shipped'
+  ? 'Devolución enviada'
+  : status === 'awaiting_buyer_shipment'
+    ? 'Devolución lista para enviar'
+    : 'Esperando instrucciones de devolución';
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
@@ -192,6 +206,7 @@ const styles = StyleSheet.create({
   title: { color: Colors.textPrimary, fontWeight: '700' },
   muted: { color: Colors.textSecondary },
   price: { color: Colors.primaryLight, fontWeight: '800' },
+  returnProgress: { color: Colors.warning, fontSize: 12, fontWeight: '700' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
   retry: { minHeight: 44, padding: 12, backgroundColor: Colors.primary, borderRadius: Radius.md },
 });

@@ -210,7 +210,7 @@ export default function SellerOrders() {
           renderItem={({ item }) => (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Ver pedido ${item.orderNumber}${item.activeDispute ? item.activeDispute.status === "open" ? ". Este pedido tiene una disputa abierta" : ". Este pedido tiene una disputa en revisión" : ""}${item.activeReturnRequest ? item.activeReturnRequest.status === "requested" ? ". Este pedido tiene una solicitud de devolución pendiente" : ". Este pedido tiene fondos de devolución por asegurar" : ""}`}
+              accessibilityLabel={`Ver pedido ${item.orderNumber}${item.activeDispute ? item.activeDispute.status === "open" ? ". Este pedido tiene una disputa abierta" : ". Este pedido tiene una disputa en revisión" : ""}${item.activeReturnRequest ? `. ${sellerReturnAttentionAccessibility(item.activeReturnRequest.attentionReason)}` : ""}`}
               style={[s.card, compact && s.cardCompact]}
               onPress={() => router.push(`/seller/orders/${item.id}` as never)}
             >
@@ -250,9 +250,7 @@ export default function SellerOrders() {
                   <View style={s.disputeAlert}>
                     <View style={s.disputeDot} />
                     <Text style={s.disputeText} numberOfLines={1}>
-                      {item.activeReturnRequest.status === "requested"
-                        ? "Solicitud de devolución · Decisión pendiente"
-                        : "Devolución aceptada · Fondos por asegurar"}
+                      {sellerReturnAttentionText(item.activeReturnRequest.attentionReason)}
                     </Text>
                   </View>
                 ) : null}
@@ -271,6 +269,24 @@ export default function SellerOrders() {
     </View>
   );
 }
+
+const sellerReturnAttentionText = (
+  reason: NonNullable<MarketplaceOrderListItem["activeReturnRequest"]>["attentionReason"],
+) => ({
+  decision_pending: "Solicitud de devolución · Decisión pendiente",
+  funds_pending: "Devolución aceptada · Fondos por asegurar",
+  destination_pending: "Devolución aceptada · Dirección pendiente",
+  return_in_transit: "Devolución en camino",
+})[reason];
+
+const sellerReturnAttentionAccessibility = (
+  reason: NonNullable<MarketplaceOrderListItem["activeReturnRequest"]>["attentionReason"],
+) => ({
+  decision_pending: "Este pedido tiene una solicitud de devolución pendiente",
+  funds_pending: "Este pedido tiene fondos de devolución por asegurar",
+  destination_pending: "Este pedido requiere una dirección de devolución",
+  return_in_transit: "Este pedido tiene una devolución en camino",
+})[reason];
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },

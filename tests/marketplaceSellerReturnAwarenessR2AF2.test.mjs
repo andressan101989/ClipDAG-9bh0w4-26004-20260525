@@ -113,6 +113,7 @@ test("seller order parser exposes requested and approved-unfunded attention", ()
     id: id("4"),
     status: "requested",
     createdAt: "2026-08-22T13:00:00.000Z",
+    attentionReason: "decision_pending",
   });
   assert.equal(parseSellerOrderListPayload([sellerRow(null)], 20).items[0].activeReturnRequest, null);
   const approved = parseSellerOrderListPayload(

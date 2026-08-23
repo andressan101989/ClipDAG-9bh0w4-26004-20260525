@@ -37,6 +37,10 @@ const nullableTimestamp = (value, path) => (value === null ? null : timestamp(va
 const enumeration = (value, values, path) =>
   typeof value === "string" && values.includes(value) ? value : fail(path);
 const boolean = (value, path) => (typeof value === "boolean" ? value : fail(path));
+const countryCode = (value, path) => {
+  const result = string(value, path);
+  return /^[A-Z]{2}$/.test(result) ? result : fail(path);
+};
 const uniqueUuidArray = (value, path, max) => {
   const result = array(value, path).map((entry, index) => uuid(entry, `${path}[${index}]`));
   if (result.length > max || new Set(result).size !== result.length) fail(path);
@@ -57,6 +61,59 @@ const allocationStatuses = ["held", "released", "refunded", "partially_refunded"
 const disputeStatuses = ["open", "under_review", "resolved", "rejected", "cancelled"];
 const disputeOutcomes = ["refund_buyer", "release_seller", "reject_claim"];
 const returnStatuses = ["requested", "approved", "rejected"];
+const returnShipmentStatuses = ["awaiting_buyer_shipment", "shipped"];
+const returnAttentionReasons = [
+  "decision_pending",
+  "funds_pending",
+  "destination_pending",
+  "return_in_transit",
+];
+
+const marketplaceReturnShipment = (value, path) => {
+  if (value == null) return null;
+  const row = object(value, path);
+  const destination = object(row.destination, `${path}.destination`);
+  const status = enumeration(row.status, returnShipmentStatuses, `${path}.status`);
+  const trackingUrl = nullableString(row.tracking_url, `${path}.tracking_url`);
+  if (!isSafeMarketplaceTrackingUrl(trackingUrl)) fail(`${path}.tracking_url`);
+  const carrierName = nullableString(row.carrier_name, `${path}.carrier_name`);
+  const serviceLevel = nullableString(row.service_level, `${path}.service_level`);
+  const trackingNumber = nullableString(row.tracking_number, `${path}.tracking_number`);
+  const buyerNote = nullableString(row.buyer_note, `${path}.buyer_note`);
+  const shippedAt = nullableTimestamp(row.shipped_at, `${path}.shipped_at`);
+  if (
+    (status === "awaiting_buyer_shipment" &&
+      (carrierName !== null || serviceLevel !== null || trackingNumber !== null ||
+        trackingUrl !== null || buyerNote !== null || shippedAt !== null)) ||
+    (status === "shipped" &&
+      (carrierName === null || trackingNumber === null || shippedAt === null))
+  )
+    fail(`${path}.status`);
+  return {
+    status,
+    destination: {
+      recipientName: string(destination.recipient_name, `${path}.destination.recipient_name`),
+      line1: string(destination.line1, `${path}.destination.line1`),
+      line2: nullableString(destination.line2, `${path}.destination.line2`),
+      city: string(destination.city, `${path}.destination.city`),
+      region: string(destination.region, `${path}.destination.region`),
+      postalCode: string(destination.postal_code, `${path}.destination.postal_code`),
+      country: countryCode(destination.country, `${path}.destination.country`),
+      phone: nullableString(destination.phone, `${path}.destination.phone`),
+    },
+    sellerInstructions: nullableString(row.seller_instructions, `${path}.seller_instructions`),
+    carrierName,
+    serviceLevel,
+    trackingNumber,
+    trackingUrl,
+    buyerNote,
+    instructionsProvidedAt: timestamp(
+      row.instructions_provided_at,
+      `${path}.instructions_provided_at`,
+    ),
+    shippedAt,
+  };
+};
 
 const marketplaceReturnRequest = (value, path, includeOrderId = false) => {
   const row = object(value, path);
@@ -66,6 +123,9 @@ const marketplaceReturnRequest = (value, path, includeOrderId = false) => {
     row.refund_hold == null ? null : object(row.refund_hold, `${path}.refund_hold`);
   if ((status === "requested") !== (decidedAt === null)) fail(`${path}.decided_at`);
   if (rawRefundHold && status !== "approved") fail(`${path}.refund_hold`);
+  const returnShipment = marketplaceReturnShipment(row.return_shipment, `${path}.return_shipment`);
+  if (returnShipment && (!rawRefundHold || status !== "approved"))
+    fail(`${path}.return_shipment`);
   const refundHold = rawRefundHold
     ? {
         status: enumeration(rawRefundHold.status, ["held"], `${path}.refund_hold.status`),
@@ -83,6 +143,7 @@ const marketplaceReturnRequest = (value, path, includeOrderId = false) => {
     createdAt: timestamp(row.created_at, `${path}.created_at`),
     decidedAt,
     refundHold,
+    returnShipment,
   };
 };
 
@@ -160,6 +221,10 @@ const page = (items, effectiveLimit) => {
 export function parseBuyerOrderListPayload(value, effectiveLimit) {
   const items = array(value, "buyer_orders").map((entry, index) => {
     const { row, item } = commonListRow(entry, index);
+    const rawReturnProgress =
+      row.return_progress == null
+        ? null
+        : object(row.return_progress, `orders[${index}].return_progress`);
     enumeration(
       row.payment_status,
       buyerPaymentStatuses,
@@ -169,6 +234,24 @@ export function parseBuyerOrderListPayload(value, effectiveLimit) {
       ...item,
       firstItemTitle: nullableString(row.first_item_title, `orders[${index}].first_item_title`),
       firstItemImage: nullableString(row.first_item_image, `orders[${index}].first_item_image`),
+      returnProgress: rawReturnProgress
+        ? {
+            id: uuid(rawReturnProgress.return_id, `orders[${index}].return_progress.return_id`),
+            status: enumeration(
+              rawReturnProgress.status,
+              ["approved"],
+              `orders[${index}].return_progress.status`,
+            ),
+            shippingStatus:
+              rawReturnProgress.return_shipping_status == null
+                ? null
+                : enumeration(
+                    rawReturnProgress.return_shipping_status,
+                    returnShipmentStatuses,
+                    `orders[${index}].return_progress.return_shipping_status`,
+                  ),
+          }
+        : null,
     };
   });
   return page(items, effectiveLimit);
@@ -249,6 +332,14 @@ export function parseSellerOrderListPayload(value, effectiveLimit) {
             createdAt: timestamp(
               activeReturnRequest.created_at,
               `orders[${index}].active_return_request.created_at`,
+            ),
+            attentionReason: enumeration(
+              activeReturnRequest.attention_reason ??
+                (activeReturnRequest.status === "requested"
+                  ? "decision_pending"
+                  : "funds_pending"),
+              returnAttentionReasons,
+              `orders[${index}].active_return_request.attention_reason`,
             ),
           }
         : null,
@@ -359,6 +450,19 @@ export function parseSellerReturnIndexPayload(value, effectiveLimit) {
         row.store_name,
         `seller_returns.returns[${index}].store_name`,
       ),
+      attentionReason: enumeration(
+        row.attention_reason ?? (row.status === "requested" ? "decision_pending" : "funds_pending"),
+        returnAttentionReasons,
+        `seller_returns.returns[${index}].attention_reason`,
+      ),
+      shippingStatus:
+        row.return_shipping_status == null
+          ? null
+          : enumeration(
+              row.return_shipping_status,
+              returnShipmentStatuses,
+              `seller_returns.returns[${index}].return_shipping_status`,
+            ),
     };
   });
   if (
@@ -369,8 +473,22 @@ export function parseSellerReturnIndexPayload(value, effectiveLimit) {
   const attentionCount = integer(root.attention_count, "seller_returns.attention_count");
   const requestedCount = integer(root.requested_count, "seller_returns.requested_count");
   const approvedCount = integer(root.approved_count, "seller_returns.approved_count");
+  const fundingPendingCount = integer(
+    root.funding_pending_count ?? approvedCount,
+    "seller_returns.funding_pending_count",
+  );
+  const destinationPendingCount = integer(
+    root.destination_pending_count ?? 0,
+    "seller_returns.destination_pending_count",
+  );
+  const inTransitCount = integer(
+    root.in_transit_count ?? 0,
+    "seller_returns.in_transit_count",
+  );
   if (attentionCount !== requestedCount + approvedCount || returns.length > attentionCount)
     fail("seller_returns.attention_count");
+  if (approvedCount !== fundingPendingCount + destinationPendingCount + inTransitCount)
+    fail("seller_returns.approved_count");
   const rawCursor =
     root.next_cursor == null
       ? null
@@ -379,6 +497,9 @@ export function parseSellerReturnIndexPayload(value, effectiveLimit) {
     attentionCount,
     requestedCount,
     approvedCount,
+    fundingPendingCount,
+    destinationPendingCount,
+    inTransitCount,
     returns,
     nextCursor: rawCursor
       ? {
@@ -782,5 +903,25 @@ export function parseMarketplaceReturnMutationReceipt(value) {
   return {
     returnRequest,
     moneyMoved,
+  };
+}
+
+export function parseMarketplaceReturnShipmentMutationReceipt(value) {
+  const root = object(value, "marketplace_return_shipment_receipt");
+  const moneyMoved = boolean(
+    root.money_moved,
+    "marketplace_return_shipment_receipt.money_moved",
+  );
+  const returnShipment = marketplaceReturnShipment(
+    root.return_shipment,
+    "marketplace_return_shipment_receipt.return_shipment",
+  );
+  if (moneyMoved || returnShipment == null)
+    fail("marketplace_return_shipment_receipt.money_moved");
+  return {
+    returnId: uuid(root.return_id, "marketplace_return_shipment_receipt.return_id"),
+    orderId: uuid(root.order_id, "marketplace_return_shipment_receipt.order_id"),
+    returnShipment,
+    moneyMoved: false,
   };
 }

@@ -187,5 +187,5 @@ test("buyer and seller copy preserves the R2B-1 boundary", () => {
   assert.match(panel, /Fondos del reembolso asegurados/);
   assert.match(presentation, /Tu reembolso está protegido/);
   assert.match(service, /fund_marketplace_return_refund_hold/);
-  assert.doesNotMatch(panel, /tracking|número de guía|confirmar recepción de devolución/i);
+  assert.doesNotMatch(panel, /confirmar recepción de devolución|reembolsar al comprador/i);
 });

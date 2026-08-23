@@ -5,6 +5,7 @@ import type {
   MarketplaceOrderEvent,
   MarketplaceOrderStatus,
   MarketplaceReturnStatus,
+  MarketplaceReturnShipment,
 } from "@/services/marketplaceFulfillmentService";
 
 export type MarketplaceDisputeSummary = {
@@ -19,6 +20,7 @@ export type MarketplaceTimelineItem = { id: string; label: string; createdAt: st
 export function marketplaceReturnStatusCopy(
   status: MarketplaceReturnStatus,
   refundFunded = false,
+  shipmentStatus?: MarketplaceReturnShipment["status"] | null,
 ) {
   if (status === "requested")
     return {
@@ -26,10 +28,20 @@ export function marketplaceReturnStatusCopy(
       body: "Esperando respuesta del vendedor.",
     };
   if (status === "approved")
-    return refundFunded
+    return refundFunded && shipmentStatus === "shipped"
+      ? {
+          title: "Producto enviado",
+          body: "Tu reembolso continúa protegido mientras el vendedor recibe el producto.",
+        }
+      : refundFunded && shipmentStatus === "awaiting_buyer_shipment"
+        ? {
+            title: "Devolución lista para enviar",
+            body: "Los fondos del reembolso están asegurados. Envía el producto usando las instrucciones del vendedor.",
+          }
+        : refundFunded
       ? {
           title: "Fondos del reembolso asegurados",
-          body: "Tu reembolso está protegido. El siguiente paso será enviar el producto de regreso.",
+          body: "Tu reembolso está protegido. Esperando instrucciones de devolución del vendedor.",
         }
       : {
           title: "Devolución aceptada",
@@ -71,6 +83,8 @@ export function marketplaceOrderTimelineItems(
       return_requested: "Solicitud de devolución enviada",
       return_approved: "Devolución aceptada",
       return_rejected: "Devolución rechazada por el vendedor",
+      return_instructions_provided: "Dirección de devolución disponible",
+      return_shipped: "Producto enviado de regreso",
     } as Record<string, string>)[event.eventType] ?? "Actualización del pedido";
   };
   const items = events.map((event, sourceIndex) => ({

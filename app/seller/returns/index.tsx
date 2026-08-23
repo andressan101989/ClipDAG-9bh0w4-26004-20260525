@@ -28,7 +28,13 @@ export default function SellerReturns() {
   const lock = useRef(false);
   const generation = useRef(0);
   const [items, setItems] = useState<MarketplaceSellerReturnSummary[]>([]);
-  const [summary, setSummary] = useState({ attention: 0, requested: 0, approved: 0 });
+  const [summary, setSummary] = useState({
+    attention: 0,
+    requested: 0,
+    funding: 0,
+    destination: 0,
+    transit: 0,
+  });
   const [next, setNext] = useState<MarketplaceSellerReturnPage["nextCursor"]>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -57,7 +63,9 @@ export default function SellerReturns() {
         setSummary({
           attention: page.attentionCount,
           requested: page.requestedCount,
-          approved: page.approvedCount,
+          funding: page.fundingPendingCount,
+          destination: page.destinationPendingCount,
+          transit: page.inTransitCount,
         });
         setNext(page.nextCursor);
         setError(false);
@@ -104,7 +112,7 @@ export default function SellerReturns() {
                     : "Solicitudes pendientes"}
                 </Text>
                 <Text style={styles.muted}>
-                  {summary.requested} por decidir · {summary.approved} con fondos por asegurar
+                  {summary.requested} por decidir · {summary.funding} por financiar · {summary.destination} sin dirección · {summary.transit} en camino
                 </Text>
               </View>
             </View>
@@ -163,7 +171,7 @@ function ReturnCard({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Abrir devolución del pedido ${item.orderNumber}. ${item.status === "requested" ? "Decisión pendiente" : "Fondos por asegurar"}`}
+      accessibilityLabel={`Abrir devolución del pedido ${item.orderNumber}. ${returnAttentionLabel(item.attentionReason)}`}
       style={styles.card}
       onPress={open}
     >
@@ -175,12 +183,16 @@ function ReturnCard({
         <Text style={styles.status}>{item.status === "requested" ? "Solicitada" : "Aceptada"}</Text>
       </View>
       <Text style={styles.reason}>
-        {item.status === "requested"
+        {item.attentionReason === "decision_pending"
           ? "El comprador solicitó devolver este pedido."
-          : "La devolución fue aceptada antes de asegurar el reembolso."}
+          : item.attentionReason === "funds_pending"
+            ? "La devolución fue aceptada antes de asegurar el reembolso."
+            : item.attentionReason === "destination_pending"
+              ? "Los fondos están asegurados; falta indicar la dirección de devolución."
+              : "El producto de devolución está en camino."}
       </Text>
       <Text style={styles.pending}>
-        {item.status === "requested" ? "Decisión pendiente" : "Fondos por asegurar"}
+        {returnAttentionLabel(item.attentionReason)}
       </Text>
       <Text style={styles.muted}>
         Solicitada el {new Date(item.createdAt).toLocaleDateString()}
@@ -194,6 +206,13 @@ function ReturnCard({
     </Pressable>
   );
 }
+
+const returnAttentionLabel = (reason: MarketplaceSellerReturnSummary["attentionReason"]) => ({
+  decision_pending: "Decisión pendiente",
+  funds_pending: "Fondos por asegurar",
+  destination_pending: "Dirección de devolución pendiente",
+  return_in_transit: "Devolución en camino",
+})[reason];
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
