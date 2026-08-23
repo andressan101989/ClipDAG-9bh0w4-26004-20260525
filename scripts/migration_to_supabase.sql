@@ -18,16 +18,17 @@
 --   refund_withdrawal_to_ledger, credit_deposit_to_ledger, ledger_debit,
 --   ensure_ledger_account, purchase_exclusive_content, subscribe_to_creator,
 --   purchase_boost, get_user_bdag_balance, send_premium_dm,
---   release_premium_dm, run_reconciliation_check,
---   refund_expired_premium_dms, cleanup_expired_idempotency_keys,
+--   release_premium_dm,
 --   follow_user, unfollow_user, __increment_likes.
 --   Their source isn't present anywhere in this repo, and money-movement
 --   logic (debits/credits/escrow) is exactly the kind of thing that must
 --   not be guessed at — an invented version could silently corrupt
 --   balances. If those functions don't already exist in the target
---   Supabase project, bdag-withdraw / bdag-deposit / bdag-monitor /
---   bdag-ledger / AuthContext.toggleFollow will fail at the .rpc() call
+--   Supabase project, bdag-withdraw / bdag-deposit / bdag-ledger /
+--   AuthContext.toggleFollow will fail at the .rpc() call
 --   until the real definitions are sourced and added separately.
+--   bdag-monitor intentionally does not call the removed generic
+--   reconciliation, Premium DM expiry, or idempotency cleanup RPCs.
 --
 --   Also out of scope (referenced by code but not in the requested table
 --   list): follows, likes, video_saves, gifts, exclusive_content,

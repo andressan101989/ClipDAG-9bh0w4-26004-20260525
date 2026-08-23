@@ -13,6 +13,7 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 const monitor = read("supabase/functions/bdag-monitor/index.ts");
 const ledger = read("supabase/functions/bdag-ledger/index.ts");
 const architecture = read("services/financial/ARCHITECTURE.ts");
+const migrationContract = read("scripts/migration_to_supabase.sql");
 
 const staleRpcNames = [
   "refund_expired_premium_dms",
@@ -93,6 +94,7 @@ test("documentation describes deployed monitor reality without claiming auto-cor
   assert.match(architecture, /idempotency keys are not/);
   assert.match(architecture, /Premium DM remains a separate incomplete module/);
   assert.doesNotMatch(architecture, /Automated reconciliation \+ auto-fix/);
+  for (const name of staleRpcNames) assert.doesNotMatch(migrationContract, new RegExp(name));
 });
 
 test("correction adds no migration, RPC, table or client-side financial authority", () => {
