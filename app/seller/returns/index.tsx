@@ -35,6 +35,7 @@ export default function SellerReturns() {
     destination: 0,
     label: 0,
     transit: 0,
+    receipt: 0,
   });
   const [next, setNext] = useState<MarketplaceSellerReturnPage["nextCursor"]>(null);
   const [loading, setLoading] = useState(true);
@@ -68,6 +69,7 @@ export default function SellerReturns() {
           destination: page.destinationPendingCount,
           label: page.labelPendingCount,
           transit: page.inTransitCount,
+          receipt: page.receiptConfirmationPendingCount,
         });
         setNext(page.nextCursor);
         setError(false);
@@ -114,7 +116,7 @@ export default function SellerReturns() {
                     : "Solicitudes pendientes"}
                 </Text>
                 <Text style={styles.muted}>
-                  {summary.requested} por decidir · {summary.funding} por financiar · {summary.destination} sin dirección · {summary.label} labels pendientes · {summary.transit} en camino
+                  {summary.requested} por decidir · {summary.funding} por financiar · {summary.destination} sin dirección · {summary.label} labels pendientes · {summary.receipt} por recibir
                 </Text>
               </View>
             </View>
@@ -193,7 +195,7 @@ function ReturnCard({
               ? "Los fondos están asegurados; falta indicar la dirección de devolución."
               : item.attentionReason === "label_pending"
                 ? "La dirección está lista; falta enviar el label al comprador."
-              : "El producto de devolución está en camino."}
+              : "El producto fue enviado; falta confirmar su recepción."}
       </Text>
       <Text style={styles.pending}>
         {returnAttentionLabel(item.attentionReason)}
@@ -217,6 +219,7 @@ const returnAttentionLabel = (reason: MarketplaceSellerReturnSummary["attentionR
   destination_pending: "Dirección de devolución pendiente",
   label_pending: "Label de devolución pendiente",
   return_in_transit: "Devolución en camino",
+  receipt_confirmation_pending: "Confirmar recepción",
 })[reason];
 
 const styles = StyleSheet.create({

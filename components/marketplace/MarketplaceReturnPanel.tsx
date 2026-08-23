@@ -5,6 +5,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { Colors, Radius, Spacing } from "@/constants/theme";
 import {
   fundMarketplaceReturnRefundHold,
+  confirmMarketplaceReturnReceived,
   confirmMarketplaceReturnShipment,
   MarketplaceFulfillmentError,
   prepareMarketplaceReturnShipment,
@@ -95,6 +96,7 @@ export function MarketplaceReturnPanel({
   const [trackingNumber, setTrackingNumber] = useState(shipment?.trackingNumber ?? "");
   const [trackingUrl, setTrackingUrl] = useState(shipment?.trackingUrl ?? "");
   const [returnShippingNote, setReturnShippingNote] = useState("");
+  const [sellerReceiptNote, setSellerReceiptNote] = useState("");
   const [labelDocument, setLabelDocument] = useState<{
     uri: string;
     name: string;
@@ -110,6 +112,7 @@ export function MarketplaceReturnPanel({
   const shippingAttempt = useRef<Attempt | null>(null);
   const confirmationAttempt = useRef<Attempt | null>(null);
   const refundAttempt = useRef<Attempt | null>(null);
+  const receiptAttempt = useRef<Attempt | null>(null);
   const refundAmount = order.settlement?.grossAmount ?? order.allocation?.grossAmount;
   const refundAmountLabel = refundAmount == null ? "el importe completo" : `${refundAmount.toFixed(2)} BDAG`;
 
@@ -430,11 +433,45 @@ export function MarketplaceReturnPanel({
     }
   };
 
+  const receiveAndRefund = async () => {
+    if (!current || shipment?.status !== "shipped") return;
+    const normalized = sellerReceiptNote.trim();
+    setBusy(true);
+    try {
+      const updated = await confirmMarketplaceReturnReceived(
+        order.order.id,
+        current.id,
+        normalized,
+        attemptKey(receiptAttempt, normalized),
+      );
+      onUpdated(updated);
+    } catch (error) {
+      Alert.alert("No se pudo confirmar la recepción", messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmReceipt = () =>
+    Alert.alert(
+      "Confirmar recepción y reembolso",
+      "Al confirmar, el reembolso completo se enviará inmediatamente al comprador desde los fondos protegidos. Esta acción no se puede deshacer.",
+      [
+        { text: "Volver", style: "cancel" },
+        {
+          text: "Confirmar y reembolsar",
+          style: "destructive",
+          onPress: () => void receiveAndRefund(),
+        },
+      ],
+    );
+
   const stateCopy = marketplaceReturnStatusCopy(
     current?.status ?? "requested",
     Boolean(current?.refundHold),
     shipment?.status,
     Boolean(shipment?.returnLabelAssetId),
+    current?.refund?.mode ?? null,
   );
   const destination = shipment?.destination;
 
@@ -566,7 +603,9 @@ export function MarketplaceReturnPanel({
               ) : null}
               {current.status === "refunded" ? (
                 <Text style={styles.success}>
-                  El dinero fue devuelto de inmediato y el comprador puede conservar el producto.
+                  {current.refund?.mode === "returned_item"
+                    ? "Recepción confirmada · Reembolso completado al comprador."
+                    : "El dinero fue devuelto de inmediato y el comprador puede conservar el producto."}
                 </Text>
               ) : null}
             </>
@@ -579,6 +618,12 @@ export function MarketplaceReturnPanel({
                   {shipment.carrierName} · {shipment.trackingNumber}
                 </Text>
                 {shipment.serviceLevel ? <Text style={styles.muted}>{shipment.serviceLevel}</Text> : null}
+                <Text style={styles.muted}>
+                  Enviado: {shipment.shippedAt ? new Date(shipment.shippedAt).toLocaleString() : "—"}
+                </Text>
+                {shipment.buyerNote ? (
+                  <Text style={styles.muted}>Nota del comprador: {shipment.buyerNote}</Text>
+                ) : null}
                 {shipment.trackingUrl ? (
                   <Pressable
                     accessibilityRole="link"
@@ -588,7 +633,28 @@ export function MarketplaceReturnPanel({
                     <Text style={styles.linkText}>Ver seguimiento</Text>
                   </Pressable>
                 ) : null}
-                <Text style={styles.muted}>La confirmación de recepción estará disponible en la siguiente fase.</Text>
+                <TextInput
+                  accessibilityLabel="Nota de recepción"
+                  value={sellerReceiptNote}
+                  onChangeText={setSellerReceiptNote}
+                  placeholder="Nota de recepción (opcional)"
+                  placeholderTextColor={Colors.textSubtle}
+                  maxLength={500}
+                  multiline
+                  style={styles.input}
+                />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Confirmar que recibí el producto"
+                  accessibilityState={{ disabled: busy }}
+                  disabled={busy}
+                  style={styles.primaryButton}
+                  onPress={confirmReceipt}
+                >
+                  <Text style={styles.primaryText}>
+                    {busy ? "Confirmando…" : "Confirmar que recibí el producto"}
+                  </Text>
+                </Pressable>
               </>
             ) : (
               <>
@@ -692,7 +758,10 @@ export function MarketplaceReturnPanel({
           {role === "buyer" && current.status === "approved" && current.refundHold && shipment ? (
             shipment.status === "shipped" ? (
               <>
-                <Text style={styles.success}>Tu reembolso continúa protegido.</Text>
+                <Text style={styles.title}>Producto enviado al vendedor</Text>
+                <Text style={styles.success}>
+                  El reembolso permanece protegido mientras el vendedor confirma la recepción.
+                </Text>
                 <Text style={styles.label}>Seguimiento de devolución</Text>
                 <Text style={styles.text}>{shipment.carrierName} · {shipment.trackingNumber}</Text>
                 {shipment.trackingUrl ? (

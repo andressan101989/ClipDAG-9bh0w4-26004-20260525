@@ -189,7 +189,9 @@ export default function BuyerOrders() {
 const buyerReturnProgressLabel = (
   status: NonNullable<MarketplaceOrderListItem['returnProgress']>['shippingStatus'],
   labelSent: boolean,
-) => status === 'shipped'
+) => status === 'received'
+  ? 'Producto recibido · Reembolso completado'
+  : status === 'shipped'
   ? 'Devolución enviada'
   : status === 'awaiting_buyer_shipment'
     ? labelSent ? 'Label listo para imprimir' : 'Esperando label del vendedor'

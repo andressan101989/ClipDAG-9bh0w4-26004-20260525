@@ -178,7 +178,7 @@ test("refund status labels and timeline events are explicit", () => {
   assert.match(statuses, /refunded:'Reembolsado'/);
   assert.match(statuses, /partially_refunded:'Reembolso parcial'/);
   assert.match(orderPresentation, /dispute_opened: "Problema reportado"/);
-  assert.match(orderPresentation, /refund_created: "Fondos reembolsados al comprador"/);
+  assert.match(orderPresentation, /refund_created:[\s\S]*"Reembolso de devolución completado"[\s\S]*"Fondos reembolsados al comprador"/);
   assert.match(statuses, /marketplaceOrderTimelineItems/);
 });
 

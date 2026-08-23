@@ -35,7 +35,7 @@ export interface MarketplaceReturnRefundHold {
   heldAt: string;
 }
 export interface MarketplaceReturnShipment {
-  status: "awaiting_buyer_shipment" | "shipped";
+  status: "awaiting_buyer_shipment" | "shipped" | "received";
   destination: {
     recipientName: string;
     line1: string;
@@ -57,6 +57,9 @@ export interface MarketplaceReturnShipment {
   buyerNote: string | null;
   instructionsProvidedAt: string;
   shippedAt: string | null;
+  receivedAt: string | null;
+  receivedBy: string | null;
+  sellerReceiptNote: string | null;
 }
 export interface MarketplaceReturnRequest {
   id: string;
@@ -67,7 +70,7 @@ export interface MarketplaceReturnRequest {
   decidedAt: string | null;
   refundHold: MarketplaceReturnRefundHold | null;
   refund: {
-    mode: "keep_item";
+    mode: "keep_item" | "returned_item";
     grossAmount: number;
     refundedAt: string;
   } | null;
@@ -143,12 +146,13 @@ export interface MarketplaceOrderListItem {
       | "funds_pending"
       | "destination_pending"
       | "label_pending"
-      | "return_in_transit";
+      | "return_in_transit"
+      | "receipt_confirmation_pending";
   } | null;
   returnProgress?: {
     id: string;
-    status: "approved";
-    shippingStatus: "awaiting_buyer_shipment" | "shipped" | null;
+    status: "approved" | "refunded";
+    shippingStatus: "awaiting_buyer_shipment" | "shipped" | "received" | null;
     labelSent: boolean;
   } | null;
 }
@@ -187,8 +191,9 @@ export interface MarketplaceSellerReturnSummary {
     | "funds_pending"
     | "destination_pending"
     | "label_pending"
-    | "return_in_transit";
-  shippingStatus: "awaiting_buyer_shipment" | "shipped" | null;
+    | "return_in_transit"
+    | "receipt_confirmation_pending";
+  shippingStatus: "awaiting_buyer_shipment" | "shipped" | "received" | null;
 }
 export interface MarketplaceSellerReturnPage {
   attentionCount: number;
@@ -198,6 +203,7 @@ export interface MarketplaceSellerReturnPage {
   destinationPendingCount: number;
   labelPendingCount: number;
   inTransitCount: number;
+  receiptConfirmationPendingCount: number;
   returns: MarketplaceSellerReturnSummary[];
   nextCursor: { createdAt: string; id: string } | null;
 }
@@ -978,6 +984,51 @@ export async function refundMarketplaceReturnWithoutShipment(
     if (provesCommitted(canonical)) return canonical;
   } catch (error) {
     diagnostic("seller_return_keep_item_refund_readback", error);
+  }
+  throw unknownOutcome();
+}
+
+export async function confirmMarketplaceReturnReceived(
+  orderId: string,
+  returnId: string,
+  sellerNote: string,
+  idempotencyKey: string,
+): Promise<MarketplaceOrderDetail> {
+  const normalizedNote = sellerNote.trim();
+  const provesCommitted = (value: MarketplaceOrderDetail) =>
+    value.order.status === "refunded" &&
+    value.returnRequest?.id === returnId &&
+    value.returnRequest.status === "refunded" &&
+    value.returnRequest.refund?.mode === "returned_item" &&
+    value.returnRequest.returnShipment?.status === "received";
+  try {
+    const receipt = await rpc(
+      "confirm_marketplace_return_received",
+      {
+        p_return_id: returnId,
+        p_seller_note: normalizedNote,
+        p_idempotency_key: idempotencyKey,
+      },
+      "seller_return_received_refund_rpc",
+    );
+    parse("seller_return_received_refund_receipt", () =>
+      parseMarketplaceReturnMutationReceipt(receipt),
+    );
+  } catch (error) {
+    if (!isAmbiguousMutationError(error)) throw error;
+    try {
+      const recovered = await fetchSellerOrder(orderId);
+      if (provesCommitted(recovered)) return recovered;
+    } catch {
+      // Keep the same idempotency key until canonical state is known.
+    }
+    throw unknownOutcome();
+  }
+  try {
+    const canonical = await fetchSellerOrder(orderId);
+    if (provesCommitted(canonical)) return canonical;
+  } catch (error) {
+    diagnostic("seller_return_received_refund_readback", error);
   }
   throw unknownOutcome();
 }

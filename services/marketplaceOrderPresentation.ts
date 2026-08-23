@@ -22,6 +22,7 @@ export function marketplaceReturnStatusCopy(
   refundFunded = false,
   shipmentStatus?: MarketplaceReturnShipment["status"] | null,
   labelSent = false,
+  refundMode?: "keep_item" | "returned_item" | null,
 ) {
   if (status === "requested")
     return {
@@ -54,10 +55,15 @@ export function marketplaceReturnStatusCopy(
           body: "Espera a que la app confirme que los fondos del reembolso están asegurados antes de enviar el producto.",
         };
   if (status === "refunded")
-    return {
+    return refundMode === "returned_item"
+      ? {
+          title: "Producto recibido",
+          body: "Reembolso completado. El vendedor confirmó la recepción y el dinero fue devuelto.",
+        }
+      : {
       title: "Reembolso completado",
       body: "El dinero fue devuelto de inmediato y puedes conservar el producto.",
-    };
+        };
   return {
     title: "Devolución rechazada por el vendedor",
     body: "El vendedor decidió no aceptar esta devolución.",
@@ -77,6 +83,7 @@ export function marketplaceOrderTimelineItems(
   events: MarketplaceOrderEvent[],
   allocationStatus?: MarketplaceHeldAllocation["status"] | null,
   settlement?: MarketplaceTimelineSettlement | null,
+  returnRefundMode?: "keep_item" | "returned_item" | null,
 ): MarketplaceTimelineItem[] {
   const label = (event: MarketplaceOrderEvent) => {
     if (event.eventType === "dispute_resolved")
@@ -90,13 +97,17 @@ export function marketplaceOrderTimelineItems(
       delivery_confirmed: "Entrega confirmada",
       escrow_released: "Fondos liberados al vendedor",
       dispute_opened: "Problema reportado",
-      refund_created: "Fondos reembolsados al comprador",
+      refund_created:
+        returnRefundMode === "returned_item"
+          ? "Reembolso de devolución completado"
+          : "Fondos reembolsados al comprador",
       return_requested: "Solicitud de devolución enviada",
       return_approved: "Devolución aceptada",
       return_rejected: "Devolución rechazada por el vendedor",
       return_instructions_provided: "Dirección de devolución disponible",
       return_label_sent: "Label de devolución enviado",
       return_shipped: "Producto enviado de regreso",
+      return_received: "Producto recibido por el vendedor",
     } as Record<string, string>)[event.eventType] ?? "Actualización del pedido";
   };
   const items = events.map((event, sourceIndex) => ({

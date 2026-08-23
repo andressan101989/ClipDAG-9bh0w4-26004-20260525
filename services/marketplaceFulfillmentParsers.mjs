@@ -61,13 +61,14 @@ const allocationStatuses = ["held", "released", "refunded", "partially_refunded"
 const disputeStatuses = ["open", "under_review", "resolved", "rejected", "cancelled"];
 const disputeOutcomes = ["refund_buyer", "release_seller", "reject_claim"];
 const returnStatuses = ["requested", "approved", "rejected", "refunded"];
-const returnShipmentStatuses = ["awaiting_buyer_shipment", "shipped"];
+const returnShipmentStatuses = ["awaiting_buyer_shipment", "shipped", "received"];
 const returnAttentionReasons = [
   "decision_pending",
   "funds_pending",
   "destination_pending",
   "label_pending",
   "return_in_transit",
+  "receipt_confirmation_pending",
 ];
 
 const marketplaceReturnShipment = (value, path) => {
@@ -82,6 +83,12 @@ const marketplaceReturnShipment = (value, path) => {
   const trackingNumber = nullableString(row.tracking_number, `${path}.tracking_number`);
   const buyerNote = nullableString(row.buyer_note, `${path}.buyer_note`);
   const shippedAt = nullableTimestamp(row.shipped_at, `${path}.shipped_at`);
+  const receivedAt = nullableTimestamp(row.received_at ?? null, `${path}.received_at`);
+  const receivedBy = row.received_by == null ? null : uuid(row.received_by, `${path}.received_by`);
+  const sellerReceiptNote = nullableString(
+    row.seller_receipt_note ?? null,
+    `${path}.seller_receipt_note`,
+  );
   const returnLabelAssetId =
     row.return_label_asset_id == null
       ? null
@@ -105,8 +112,11 @@ const marketplaceReturnShipment = (value, path) => {
           trackingUrl !== null)) ||
         (hasLabel && (carrierName === null || trackingNumber === null)) ||
         buyerNote !== null || shippedAt !== null)) ||
-    (status === "shipped" &&
-      (carrierName === null || trackingNumber === null || shippedAt === null))
+    (["shipped", "received"].includes(status) &&
+      (carrierName === null || trackingNumber === null || shippedAt === null)) ||
+    (status === "received" && (receivedAt === null || receivedBy === null)) ||
+    (status !== "received" &&
+      (receivedAt !== null || receivedBy !== null || sellerReceiptNote !== null))
   )
     fail(`${path}.status`);
   return {
@@ -135,6 +145,9 @@ const marketplaceReturnShipment = (value, path) => {
       `${path}.instructions_provided_at`,
     ),
     shippedAt,
+    receivedAt,
+    receivedBy,
+    sellerReceiptNote,
   };
 };
 
@@ -149,7 +162,7 @@ const marketplaceReturnRequest = (value, path, includeOrderId = false) => {
   const rawRefund = row.refund == null ? null : object(row.refund, `${path}.refund`);
   if ((status === "refunded") !== (rawRefund !== null)) fail(`${path}.refund`);
   const returnShipment = marketplaceReturnShipment(row.return_shipment, `${path}.return_shipment`);
-  if (returnShipment && (!rawRefundHold || status !== "approved"))
+  if (returnShipment && !rawRefundHold)
     fail(`${path}.return_shipment`);
   const refundHold = rawRefundHold
     ? {
@@ -161,13 +174,22 @@ const marketplaceReturnRequest = (value, path, includeOrderId = false) => {
   if (refundHold && refundHold.grossAmount <= 0) fail(`${path}.refund_hold.gross_amount`);
   const refund = rawRefund
     ? {
-        mode: enumeration(rawRefund.mode, ["keep_item"], `${path}.refund.mode`),
+        mode: enumeration(rawRefund.mode, ["keep_item", "returned_item"], `${path}.refund.mode`),
         grossAmount: number(rawRefund.gross_amount, `${path}.refund.gross_amount`),
         refundedAt: timestamp(rawRefund.refunded_at, `${path}.refund.refunded_at`),
       }
     : null;
   if (refund && (!refundHold || refund.grossAmount <= 0 || refund.grossAmount !== refundHold.grossAmount))
     fail(`${path}.refund.gross_amount`);
+  if (
+    (status === "approved" && returnShipment?.status === "received") ||
+    (status === "refunded" && refund?.mode === "keep_item" && returnShipment !== null) ||
+    (status === "refunded" &&
+      refund?.mode === "returned_item" &&
+      returnShipment?.status !== "received") ||
+    (status !== "refunded" && refund !== null)
+  )
+    fail(`${path}.return_shipment`);
   return {
     id: uuid(row.id, `${path}.id`),
     ...(includeOrderId ? { orderId: uuid(row.order_id, `${path}.order_id`) } : {}),
@@ -274,7 +296,7 @@ export function parseBuyerOrderListPayload(value, effectiveLimit) {
             id: uuid(rawReturnProgress.return_id, `orders[${index}].return_progress.return_id`),
             status: enumeration(
               rawReturnProgress.status,
-              ["approved"],
+              ["approved", "refunded"],
               `orders[${index}].return_progress.status`,
             ),
             shippingStatus:
@@ -528,11 +550,18 @@ export function parseSellerReturnIndexPayload(value, effectiveLimit) {
     root.in_transit_count ?? 0,
     "seller_returns.in_transit_count",
   );
+  const receiptConfirmationPendingCount = integer(
+    root.receipt_confirmation_pending_count ?? inTransitCount,
+    "seller_returns.receipt_confirmation_pending_count",
+  );
   if (attentionCount !== requestedCount + approvedCount || returns.length > attentionCount)
     fail("seller_returns.attention_count");
   if (
     approvedCount !==
-    fundingPendingCount + destinationPendingCount + labelPendingCount + inTransitCount
+    fundingPendingCount +
+      destinationPendingCount +
+      labelPendingCount +
+      receiptConfirmationPendingCount
   )
     fail("seller_returns.approved_count");
   const rawCursor =
@@ -547,6 +576,7 @@ export function parseSellerReturnIndexPayload(value, effectiveLimit) {
     destinationPendingCount,
     labelPendingCount,
     inTransitCount,
+    receiptConfirmationPendingCount,
     returns,
     nextCursor: rawCursor
       ? {

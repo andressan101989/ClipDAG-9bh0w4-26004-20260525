@@ -33,7 +33,7 @@ test('dispute resolution and financial event labels are explicit', () => {
 test('seller passes canonical settlement context to the existing timeline', () => {
   assert.match(
     seller,
-    /<OrderTimeline events=\{data\.events\} allocationStatus=\{data\.allocation\?\.status\?\?null\} settlement=\{data\.settlement\}\/>/,
+    /<OrderTimeline events=\{data\.events\} allocationStatus=\{data\.allocation\?\.status\?\?null\} settlement=\{data\.settlement\} returnRefundMode=\{data\.returnRequest\?\.refund\?\.mode\?\?null\}\/>/,
   );
   assert.equal((seller.match(/<OrderTimeline/g) ?? []).length, 1);
 });
@@ -76,7 +76,7 @@ test('event context preserves existing timeline callers and avoids false resolut
   assert.equal(marketplaceOrderTimelineItems([event('dispute_opened', '2026-08-22T10:00:00Z')])[0].label, 'Problema reportado');
   assert.match(timeline, /allocationStatus\?:MarketplaceHeldAllocation\['status'\]\|null/);
   assert.match(timeline, /settlement\?:MarketplaceTimelineSettlement\|null/);
-  assert.match(timeline, /marketplaceOrderTimelineItems\(events,allocationStatus,settlement\)/);
+  assert.match(timeline, /marketplaceOrderTimelineItems\(events,allocationStatus,settlement,returnRefundMode\)/);
   assert.doesNotMatch(seller, /disputeOutcome=\{data\.dispute/);
 });
 

@@ -278,6 +278,7 @@ const sellerReturnAttentionText = (
   destination_pending: "Devolución aceptada · Dirección pendiente",
   label_pending: "Devolución aceptada · Label pendiente",
   return_in_transit: "Devolución en camino",
+  receipt_confirmation_pending: "Devolución recibida por confirmar",
 })[reason];
 
 const sellerReturnAttentionAccessibility = (
@@ -288,6 +289,7 @@ const sellerReturnAttentionAccessibility = (
   destination_pending: "Este pedido requiere una dirección de devolución",
   label_pending: "Este pedido requiere enviar el label de devolución",
   return_in_transit: "Este pedido tiene una devolución en camino",
+  receipt_confirmation_pending: "Este pedido requiere confirmar la recepción de la devolución",
 })[reason];
 
 const s = StyleSheet.create({
