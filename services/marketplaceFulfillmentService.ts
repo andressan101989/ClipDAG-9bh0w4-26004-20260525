@@ -28,6 +28,11 @@ export type MarketplaceDisputeStatus =
   | "cancelled";
 export type MarketplaceDisputeOutcome = "refund_buyer" | "release_seller" | "reject_claim";
 export type MarketplaceReturnStatus = "requested" | "approved" | "rejected";
+export interface MarketplaceReturnRefundHold {
+  status: "held";
+  grossAmount: number;
+  heldAt: string;
+}
 export interface MarketplaceReturnRequest {
   id: string;
   status: MarketplaceReturnStatus;
@@ -35,6 +40,7 @@ export interface MarketplaceReturnRequest {
   sellerNote: string | null;
   createdAt: string;
   decidedAt: string | null;
+  refundHold: MarketplaceReturnRefundHold | null;
 }
 export interface MarketplaceOrderEvent {
   id: string;
@@ -99,7 +105,7 @@ export interface MarketplaceOrderListItem {
   } | null;
   activeReturnRequest?: {
     id: string;
-    status: "requested";
+    status: "requested" | "approved";
     createdAt: string;
   } | null;
 }
@@ -126,7 +132,7 @@ export interface MarketplaceSellerDisputePage {
 }
 export interface MarketplaceSellerReturnSummary {
   id: string;
-  status: "requested";
+  status: "requested" | "approved";
   createdAt: string;
   orderId: string;
   orderNumber: string;
@@ -263,6 +269,11 @@ export type MarketplaceFulfillmentErrorCode =
   | "marketplace_return_decision_idempotency_conflict"
   | "marketplace_return_already_decided"
   | "marketplace_return_approval_funding_required"
+  | "marketplace_return_refund_funding_insufficient_balance"
+  | "marketplace_return_refund_hold_active_review"
+  | "marketplace_return_refund_hold_settlement_reversed"
+  | "marketplace_return_refund_hold_requires_approved"
+  | "marketplace_return_refund_hold_idempotency_conflict"
   | "marketplace_fulfillment_unknown";
 
 export class MarketplaceFulfillmentError extends Error {
@@ -586,7 +597,8 @@ export async function respondToMarketplaceReturn(
   const provesCommitted = (value: MarketplaceOrderDetail) =>
     value.returnRequest?.id === returnId &&
     value.returnRequest.status === expectedStatus &&
-    (value.returnRequest.sellerNote?.trim() || null) === (normalizedNote || null);
+    (value.returnRequest.sellerNote?.trim() || null) === (normalizedNote || null) &&
+    (decision === "reject" || value.returnRequest.refundHold?.status === "held");
   try {
     const receipt = await rpc(
       "respond_to_marketplace_return",
@@ -616,6 +628,43 @@ export async function respondToMarketplaceReturn(
     if (provesCommitted(canonical)) return canonical;
   } catch (error) {
     diagnostic("seller_return_decision_readback", error);
+  }
+  throw unknownOutcome();
+}
+
+export async function fundMarketplaceReturnRefundHold(
+  orderId: string,
+  returnId: string,
+  idempotencyKey: string,
+): Promise<MarketplaceOrderDetail> {
+  const provesCommitted = (value: MarketplaceOrderDetail) =>
+    value.returnRequest?.id === returnId &&
+    value.returnRequest.status === "approved" &&
+    value.returnRequest.refundHold?.status === "held";
+  try {
+    const receipt = await rpc(
+      "fund_marketplace_return_refund_hold",
+      { p_return_id: returnId, p_idempotency_key: idempotencyKey },
+      "seller_return_funding_rpc",
+    );
+    parse("seller_return_funding_receipt", () =>
+      parseMarketplaceReturnMutationReceipt(receipt),
+    );
+  } catch (error) {
+    if (!isAmbiguousMutationError(error)) throw error;
+    try {
+      const recovered = await fetchSellerOrder(orderId);
+      if (provesCommitted(recovered)) return recovered;
+    } catch {
+      // Never retry a possibly funded hold with a new idempotency key.
+    }
+    throw unknownOutcome();
+  }
+  try {
+    const canonical = await fetchSellerOrder(orderId);
+    if (provesCommitted(canonical)) return canonical;
+  } catch (error) {
+    diagnostic("seller_return_funding_readback", error);
   }
   throw unknownOutcome();
 }

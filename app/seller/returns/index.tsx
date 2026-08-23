@@ -104,7 +104,7 @@ export default function SellerReturns() {
                     : "Solicitudes pendientes"}
                 </Text>
                 <Text style={styles.muted}>
-                  {summary.requested} por decidir · {summary.approved} aceptadas
+                  {summary.requested} por decidir · {summary.approved} con fondos por asegurar
                 </Text>
               </View>
             </View>
@@ -163,7 +163,7 @@ function ReturnCard({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Abrir solicitud de devolución del pedido ${item.orderNumber}. Decisión pendiente`}
+      accessibilityLabel={`Abrir devolución del pedido ${item.orderNumber}. ${item.status === "requested" ? "Decisión pendiente" : "Fondos por asegurar"}`}
       style={styles.card}
       onPress={open}
     >
@@ -172,10 +172,16 @@ function ReturnCard({
         <Text style={styles.order} numberOfLines={1}>
           {item.orderNumber}
         </Text>
-        <Text style={styles.status}>Solicitada</Text>
+        <Text style={styles.status}>{item.status === "requested" ? "Solicitada" : "Aceptada"}</Text>
       </View>
-      <Text style={styles.reason}>El comprador solicitó devolver este pedido.</Text>
-      <Text style={styles.pending}>Decisión pendiente</Text>
+      <Text style={styles.reason}>
+        {item.status === "requested"
+          ? "El comprador solicitó devolver este pedido."
+          : "La devolución fue aceptada antes de asegurar el reembolso."}
+      </Text>
+      <Text style={styles.pending}>
+        {item.status === "requested" ? "Decisión pendiente" : "Fondos por asegurar"}
+      </Text>
       <Text style={styles.muted}>
         Solicitada el {new Date(item.createdAt).toLocaleDateString()}
       </Text>

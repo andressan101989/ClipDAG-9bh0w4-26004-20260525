@@ -62,7 +62,18 @@ const marketplaceReturnRequest = (value, path, includeOrderId = false) => {
   const row = object(value, path);
   const status = enumeration(row.status, returnStatuses, `${path}.status`);
   const decidedAt = nullableTimestamp(row.decided_at, `${path}.decided_at`);
+  const rawRefundHold =
+    row.refund_hold == null ? null : object(row.refund_hold, `${path}.refund_hold`);
   if ((status === "requested") !== (decidedAt === null)) fail(`${path}.decided_at`);
+  if (rawRefundHold && status !== "approved") fail(`${path}.refund_hold`);
+  const refundHold = rawRefundHold
+    ? {
+        status: enumeration(rawRefundHold.status, ["held"], `${path}.refund_hold.status`),
+        grossAmount: number(rawRefundHold.gross_amount, `${path}.refund_hold.gross_amount`),
+        heldAt: timestamp(rawRefundHold.held_at, `${path}.refund_hold.held_at`),
+      }
+    : null;
+  if (refundHold && refundHold.grossAmount <= 0) fail(`${path}.refund_hold.gross_amount`);
   return {
     id: uuid(row.id, `${path}.id`),
     ...(includeOrderId ? { orderId: uuid(row.order_id, `${path}.order_id`) } : {}),
@@ -71,6 +82,7 @@ const marketplaceReturnRequest = (value, path, includeOrderId = false) => {
     sellerNote: nullableString(row.seller_note, `${path}.seller_note`),
     createdAt: timestamp(row.created_at, `${path}.created_at`),
     decidedAt,
+    refundHold,
   };
 };
 
@@ -231,7 +243,7 @@ export function parseSellerOrderListPayload(value, effectiveLimit) {
             ),
             status: enumeration(
               activeReturnRequest.status,
-              ["requested"],
+              ["requested", "approved"],
               `orders[${index}].active_return_request.status`,
             ),
             createdAt: timestamp(
@@ -325,7 +337,7 @@ export function parseSellerReturnIndexPayload(value, effectiveLimit) {
       id: uuid(row.return_id, `seller_returns.returns[${index}].return_id`),
       status: enumeration(
         row.status,
-        ["requested"],
+        ["requested", "approved"],
         `seller_returns.returns[${index}].status`,
       ),
       createdAt: timestamp(
@@ -357,7 +369,7 @@ export function parseSellerReturnIndexPayload(value, effectiveLimit) {
   const attentionCount = integer(root.attention_count, "seller_returns.attention_count");
   const requestedCount = integer(root.requested_count, "seller_returns.requested_count");
   const approvedCount = integer(root.approved_count, "seller_returns.approved_count");
-  if (attentionCount !== requestedCount || returns.length > attentionCount)
+  if (attentionCount !== requestedCount + approvedCount || returns.length > attentionCount)
     fail("seller_returns.attention_count");
   const rawCursor =
     root.next_cursor == null
@@ -759,14 +771,16 @@ export function mergeMarketplaceOrderLifecyclePayload(detail, value) {
 
 export function parseMarketplaceReturnMutationReceipt(value) {
   const root = object(value, "marketplace_return_receipt");
-  if (boolean(root.money_moved, "marketplace_return_receipt.money_moved"))
+  const moneyMoved = boolean(root.money_moved, "marketplace_return_receipt.money_moved");
+  const returnRequest = marketplaceReturnRequest(
+    root.return_request,
+    "marketplace_return_receipt.return_request",
+    true,
+  );
+  if (moneyMoved !== Boolean(returnRequest.refundHold))
     fail("marketplace_return_receipt.money_moved");
   return {
-    returnRequest: marketplaceReturnRequest(
-      root.return_request,
-      "marketplace_return_receipt.return_request",
-      true,
-    ),
-    moneyMoved: false,
+    returnRequest,
+    moneyMoved,
   };
 }

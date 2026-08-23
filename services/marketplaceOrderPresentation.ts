@@ -16,17 +16,25 @@ export type MarketplaceDisputeSummary = {
 export type MarketplaceTimelineSettlement = { status: string; releasedAt: string };
 export type MarketplaceTimelineItem = { id: string; label: string; createdAt: string };
 
-export function marketplaceReturnStatusCopy(status: MarketplaceReturnStatus) {
+export function marketplaceReturnStatusCopy(
+  status: MarketplaceReturnStatus,
+  refundFunded = false,
+) {
   if (status === "requested")
     return {
       title: "Solicitud de devolución enviada",
       body: "Esperando respuesta del vendedor.",
     };
   if (status === "approved")
-    return {
-      title: "Devolución aceptada",
-      body: "Espera a que la app confirme que los fondos del reembolso están asegurados antes de enviar el producto.",
-    };
+    return refundFunded
+      ? {
+          title: "Fondos del reembolso asegurados",
+          body: "Tu reembolso está protegido. El siguiente paso será enviar el producto de regreso.",
+        }
+      : {
+          title: "Devolución aceptada",
+          body: "Espera a que la app confirme que los fondos del reembolso están asegurados antes de enviar el producto.",
+        };
   return {
     title: "Devolución rechazada por el vendedor",
     body: "El vendedor decidió no aceptar esta devolución.",

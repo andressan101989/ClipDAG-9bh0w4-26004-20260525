@@ -54,7 +54,7 @@ const sellerRow = (activeReturnRequest) => ({
 });
 
 const returnPage = (overrides = {}) => ({
-  attention_count: 1,
+  attention_count: 3,
   requested_count: 1,
   approved_count: 2,
   returns: [
@@ -98,7 +98,7 @@ test("new approvals fail closed after idempotent replay and before mutation", ()
   assert.doesNotMatch(migration, /update public\.marketplace_return_requests set\s*status='requested'/);
 });
 
-test("seller order parser exposes requested return attention only", () => {
+test("seller order parser exposes requested and approved-unfunded attention", () => {
   const active = parseSellerOrderListPayload(
     [
       sellerRow({
@@ -115,19 +115,16 @@ test("seller order parser exposes requested return attention only", () => {
     createdAt: "2026-08-22T13:00:00.000Z",
   });
   assert.equal(parseSellerOrderListPayload([sellerRow(null)], 20).items[0].activeReturnRequest, null);
-  assert.throws(
-    () =>
-      parseSellerOrderListPayload(
-        [sellerRow({ id: id("4"), status: "approved", created_at: "2026-08-22T13:00:00.000Z" })],
-        20,
-      ),
-    MarketplaceFulfillmentPayloadError,
-  );
+  const approved = parseSellerOrderListPayload(
+    [sellerRow({ id: id("4"), status: "approved", created_at: "2026-08-22T13:00:00.000Z" })],
+    20,
+  ).items[0];
+  assert.equal(approved.activeReturnRequest?.status, "approved");
 });
 
 test("seller return inbox parser validates counts, rows, duplicates, and cursor", () => {
   const parsed = parseSellerReturnIndexPayload(returnPage(), 20);
-  assert.equal(parsed.attentionCount, 1);
+  assert.equal(parsed.attentionCount, 3);
   assert.equal(parsed.requestedCount, 1);
   assert.equal(parsed.approvedCount, 2);
   assert.equal(parsed.returns[0].orderId, id("1"));
@@ -143,13 +140,12 @@ test("seller return inbox parser validates counts, rows, duplicates, and cursor"
       ),
     MarketplaceFulfillmentPayloadError,
   );
-  assert.throws(
-    () =>
-      parseSellerReturnIndexPayload(
-        returnPage({ returns: [{ ...returnPage().returns[0], status: "approved" }] }),
-        20,
-      ),
-    MarketplaceFulfillmentPayloadError,
+  assert.equal(
+    parseSellerReturnIndexPayload(
+      returnPage({ returns: [{ ...returnPage().returns[0], status: "approved" }] }),
+      20,
+    ).returns[0].status,
+    "approved",
   );
 });
 
@@ -179,9 +175,9 @@ test("legacy approved returns warn both parties not to ship before funding", () 
     /Espera a que la app confirme que los fondos del reembolso están asegurados antes de enviar el producto/,
   );
   assert.doesNotMatch(presentation, /El siguiente paso será coordinar el envío de regreso/);
-  assert.match(panel, /Los fondos del reembolso todavía no están retenidos/);
-  assert.match(panel, /Aceptar estará disponible cuando la app pueda asegurar los fondos del reembolso/);
-  assert.match(panel, /accessibilityState=\{\{ disabled: true \}\}/);
+  assert.match(panel, /los fondos todavía no están asegurados/);
+  assert.match(panel, /Asegurar fondos del reembolso/);
+  assert.match(panel, /Fondos del reembolso asegurados/);
   assert.match(panel, /Rechazar devolución/);
 });
 

@@ -110,6 +110,7 @@ const rawReturn = (overrides = {}) => ({
   seller_note: null,
   created_at: at,
   decided_at: null,
+  refund_hold: null,
   ...overrides,
 });
 
@@ -166,6 +167,19 @@ test("mutation receipt proves zero money movement and validates canonical fields
     }),
     MarketplaceFulfillmentPayloadError,
   );
+  const funded = parseMarketplaceReturnMutationReceipt({
+    return_request: {
+      ...rawReturn({
+        status: "approved",
+        decided_at: at,
+        refund_hold: { status: "held", gross_amount: 50, held_at: at },
+      }),
+      order_id: ids.order,
+    },
+    money_moved: true,
+  });
+  assert.equal(funded.moneyMoved, true);
+  assert.equal(funded.returnRequest.refundHold?.grossAmount, 50);
 });
 
 test("return status copy and timeline are explicit without financial inference", () => {
@@ -174,6 +188,7 @@ test("return status copy and timeline are explicit without financial inference",
     body: "Esperando respuesta del vendedor.",
   });
   assert.equal(marketplaceReturnStatusCopy("approved").title, "Devolución aceptada");
+  assert.match(marketplaceReturnStatusCopy("approved", true).body, /reembolso está protegido/);
   assert.equal(
     marketplaceReturnStatusCopy("rejected").title,
     "Devolución rechazada por el vendedor",
@@ -247,7 +262,7 @@ test("service and existing detail routes expose request and decision only", () =
   assert.match(service, /fetchBuyerOrder\(orderId\)/);
   assert.match(service, /fetchSellerOrder\(orderId\)/);
   assert.match(panel, /La devolución queda sujeta a la aprobación del vendedor/);
-  assert.match(panel, /Todavía no se realizará ningún reembolso/);
+  assert.match(panel, /El comprador todavía no recibirá el dinero/);
   assert.match(panel, /current\.status === "requested"/);
   assert.match(buyer, /MarketplaceReturnPanel role="buyer"/);
   assert.match(seller, /MarketplaceReturnPanel role="seller"/);

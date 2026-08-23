@@ -3,6 +3,7 @@ import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-nativ
 import { randomUUID } from "expo-crypto";
 import { Colors, Radius, Spacing } from "@/constants/theme";
 import {
+  fundMarketplaceReturnRefundHold,
   MarketplaceFulfillmentError,
   requestMarketplaceReturn,
   respondToMarketplaceReturn,
@@ -30,6 +31,10 @@ const messageFor = (error: unknown) => {
     return "La solicitud ya fue decidida. Actualiza el pedido para ver el estado.";
   if (code === "marketplace_return_approval_funding_required")
     return "La devolución todavía no puede aceptarse porque los fondos del reembolso no están asegurados.";
+  if (code === "marketplace_return_refund_funding_insufficient_balance")
+    return "No hay saldo suficiente para asegurar el reembolso completo. La devolución no fue aceptada y no se movió dinero.";
+  if (code === "marketplace_return_refund_hold_active_review")
+    return "Este pedido tiene una revisión financiera activa y no puede asegurar fondos de devolución.";
   if (code === "marketplace_fulfillment_outcome_unknown")
     return "No pudimos confirmar el resultado. Actualiza el pedido antes de volver a intentarlo.";
   return "No pudimos completar la operación. Revisa los datos e inténtalo nuevamente.";
@@ -49,7 +54,10 @@ export function MarketplaceReturnPanel({
   const [busy, setBusy] = useState(false);
   const requestAttempt = useRef<Attempt | null>(null);
   const decisionAttempt = useRef<Attempt | null>(null);
+  const fundingAttempt = useRef<Attempt | null>(null);
   const current = order.returnRequest;
+  const refundAmount = order.settlement?.grossAmount ?? order.allocation?.grossAmount;
+  const refundAmountLabel = refundAmount == null ? "el importe completo" : `${refundAmount.toFixed(2)} BDAG`;
 
   if (role === "buyer" && !current && !order.returnEligible) return null;
   if (role === "seller" && !current) return null;
@@ -111,7 +119,7 @@ export function MarketplaceReturnPanel({
     Alert.alert(
       decision === "approve" ? "Aceptar devolución" : "Rechazar devolución",
       decision === "approve"
-        ? "Aceptar autoriza al comprador a devolver el producto. Todavía no se realizará ningún reembolso."
+        ? `Al aceptar, ${refundAmountLabel} serán retenidos para garantizar el reembolso. El comprador todavía no recibirá el dinero.`
         : "El comprador será informado de que la devolución fue rechazada.",
       [
         { text: "Volver", style: "cancel" },
@@ -123,7 +131,37 @@ export function MarketplaceReturnPanel({
       ],
     );
 
-  const stateCopy = marketplaceReturnStatusCopy(current?.status ?? "requested");
+  const fundLegacyApproval = async () => {
+    if (!current) return;
+    setBusy(true);
+    try {
+      const updated = await fundMarketplaceReturnRefundHold(
+        order.order.id,
+        current.id,
+        attemptKey(fundingAttempt, current.id),
+      );
+      onUpdated(updated);
+    } catch (error) {
+      Alert.alert("No se pudieron asegurar los fondos", messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmLegacyFunding = () =>
+    Alert.alert(
+      "Asegurar fondos del reembolso",
+      `Se retendrán ${refundAmountLabel} para garantizar esta devolución. El comprador todavía no recibirá el dinero.`,
+      [
+        { text: "Volver", style: "cancel" },
+        { text: "Asegurar fondos", onPress: () => void fundLegacyApproval() },
+      ],
+    );
+
+  const stateCopy = marketplaceReturnStatusCopy(
+    current?.status ?? "requested",
+    Boolean(current?.refundHold),
+  );
 
   return (
     <View style={styles.card} accessibilityLabel="Solicitud de devolución">
@@ -171,7 +209,7 @@ export function MarketplaceReturnPanel({
           {role === "seller" && current.status === "requested" ? (
             <>
               <Text style={styles.warning}>
-                Aceptar estará disponible cuando la app pueda asegurar los fondos del reembolso.
+                Al aceptar, {refundAmountLabel} serán retenidos para garantizar el reembolso.
               </Text>
               <TextInput
                 accessibilityLabel="Nota para el comprador"
@@ -187,9 +225,9 @@ export function MarketplaceReturnPanel({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Aceptar devolución"
-                  accessibilityState={{ disabled: true }}
-                  disabled
-                  style={[styles.actionButton, styles.approveButton, styles.disabledButton]}
+                  accessibilityState={{ disabled: busy }}
+                  disabled={busy}
+                  style={[styles.actionButton, styles.approveButton]}
                   onPress={() => confirmDecision("approve")}
                 >
                   <Text style={styles.primaryText}>Aceptar devolución</Text>
@@ -213,9 +251,27 @@ export function MarketplaceReturnPanel({
                 {current.status === "approved" ? "Devolución aceptada" : "Devolución rechazada"}
               </Text>
               {current.status === "approved" ? (
-                <Text style={styles.warning}>
-                  Los fondos del reembolso todavía no están retenidos.
-                </Text>
+                current.refundHold ? (
+                  <Text style={styles.success}>Fondos del reembolso asegurados</Text>
+                ) : (
+                  <>
+                    <Text style={styles.warning}>
+                      Devolución aceptada, pero los fondos todavía no están asegurados.
+                    </Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Asegurar fondos del reembolso"
+                      accessibilityState={{ disabled: busy }}
+                      disabled={busy}
+                      style={[styles.actionButton, styles.approveButton]}
+                      onPress={confirmLegacyFunding}
+                    >
+                      <Text style={styles.primaryText}>
+                        {busy ? "Asegurando…" : "Asegurar fondos del reembolso"}
+                      </Text>
+                    </Pressable>
+                  </>
+                )
               ) : null}
             </>
           ) : null}
@@ -240,6 +296,7 @@ const styles = StyleSheet.create({
   text: { color: Colors.textPrimary, lineHeight: 20 },
   muted: { color: Colors.textSecondary, lineHeight: 20 },
   warning: { color: Colors.warning, fontWeight: "700", lineHeight: 20 },
+  success: { color: Colors.accent, fontWeight: "800", lineHeight: 20 },
   input: {
     minHeight: 88,
     borderWidth: 1,
@@ -259,7 +316,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
   },
   approveButton: { backgroundColor: Colors.primary },
-  disabledButton: { opacity: 0.45 },
   rejectButton: { backgroundColor: Colors.error },
   primaryButton: {
     minHeight: 48,
