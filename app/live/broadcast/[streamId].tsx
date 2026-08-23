@@ -24,11 +24,18 @@ import { useAuth } from '@/hooks/useAuth';
 import { useAgoraEngine } from '@/hooks/useAgoraEngine';
 import { RtcSurfaceView, useridToAgoraUid, isAgoraAvailable } from '@/services/agoraService';
 import {
+  controlLiveParticipant,
+  decideLiveJoinRequest,
+  emitLiveReaction,
   endLiveSession,
+  enforceLiveParticipantTimer,
   heartbeatLiveSession,
+  inviteLiveParticipant,
   markLiveSessionDisconnected,
+  sendLiveMessage,
   startLiveSession,
   type LiveEndReason,
+  type LiveHostControlAction,
 } from '@/services/liveSessionService';
 import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
@@ -143,20 +150,6 @@ function liveGiftEventFromPayload(row: any, streamId: string): LiveGiftEvent | n
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
   };
 }
-
-type LiveControlEventType =
-  | 'request_join'
-  | 'approve_join'
-  | 'mute'
-  | 'unmute'
-  | 'lock_mic'
-  | 'unlock_mic'
-  | 'grant_floor'
-  | 'revoke_floor'
-  | 'remove_cohost'
-  | 'timer_start'
-  | 'timer_stop'
-  | 'reaction';
 
 function getCohostTimerText(participant: LiveParticipant) {
   if (!participant.floor_started_at) return null;
@@ -297,7 +290,6 @@ export default function LiveBroadcasterScreen() {
   const heartbeatFailuresRef = useRef(0);
   const finalizePromiseRef = useRef<Promise<void> | null>(null);
   const expiredTimerMutedRef = useRef<Set<string>>(new Set());
-  const processedAcceptedInviteIdsRef = useRef<Set<string>>(new Set());
   const seenReactionEventIdsRef = useRef<Set<string>>(new Set());
   const lastReactionAtRef = useRef(0);
 
@@ -585,244 +577,74 @@ export default function LiveBroadcasterScreen() {
     }
   }, [streamId, finalizeLiveSession]);
 
-  const approveParticipantAsCohost = useCallback(async (
-    participant: LiveParticipant,
-    options?: { acceptedHostInvite?: boolean },
-  ) => {
+  const approveParticipantAsCohost = useCallback(async (participant: LiveParticipant) => {
     if (!user?.id || !streamId) return;
-    const username = participant.username || 'Invitado';
-    const floorStartedAt = new Date().toISOString();
     try {
-      const { error: updateError } = await supabase
-        .from('live_participants')
-        .update({
-          role: 'cohost',
-          status: 'active',
-          mic_muted: false,
-          mic_locked: false,
-          camera_enabled: true,
-          floor_granted: true,
-          floor_started_at: floorStartedAt,
-          floor_duration_seconds: null,
-        })
-        .eq('id', participant.id);
-      if (updateError) throw updateError;
-
-      const { error: eventError } = await supabase.from('live_control_events').insert({
-        session_id: streamId,
-        target_user_id: participant.user_id,
-        actor_user_id: user.id,
-        event_type: 'approve_join',
-        payload: {
-          username,
-          ...(options?.acceptedHostInvite ? { accepted_host_invite: true } : {}),
-        },
-      });
-      if (eventError) console.warn('[LiveBroadcast] approve event failed', eventError.message);
-      setParticipants(prev => prev.map(item => item.id === participant.id ? {
-        ...item,
-        role: 'cohost',
-        status: 'active',
-        mic_muted: false,
-        mic_locked: false,
-        camera_enabled: true,
-        floor_granted: true,
-        floor_started_at: floorStartedAt,
-        floor_duration_seconds: null,
-      } : item));
-      loadParticipants();
+      await decideLiveJoinRequest(streamId, participant.user_id, true);
+      await loadParticipants();
     } catch (err: any) {
       console.warn('[LiveBroadcast] approve cohost failed', err?.message ?? err);
     }
-  }, [user?.id, streamId, supabase, loadParticipants]);
+  }, [user?.id, streamId, loadParticipants]);
 
   const acceptJoinRequest = useCallback((participant: LiveParticipant) => {
     approveParticipantAsCohost(participant);
   }, [approveParticipantAsCohost]);
 
-  useEffect(() => {
-    if (!live || !streamId || !user?.id) return;
-
-    const approveAcceptedInvite = async (row: any) => {
-      if (!row?.id || processedAcceptedInviteIdsRef.current.has(row.id)) return;
-      if (row.event_type !== 'request_join') return;
-      if (row.payload?.accepted_host_invite !== true) return;
-
-      const acceptedUserId = row.actor_user_id || row.target_user_id;
-      if (!acceptedUserId) return;
-      processedAcceptedInviteIdsRef.current.add(row.id);
-
-      const existingParticipant = participants.find(participant =>
-        participant.user_id === row.target_user_id ||
-        participant.user_id === row.actor_user_id
-      );
-
-      if (existingParticipant) {
-        approveParticipantAsCohost(existingParticipant, { acceptedHostInvite: true });
-        return;
-      }
-
-      try {
-        const { data, error: participantError } = await supabase
-          .from('live_participants')
-          .select('*')
-          .eq('session_id', streamId)
-          .eq('user_id', acceptedUserId)
-          .single();
-
-        if (participantError || !data) {
-          console.warn('[LiveBroadcast] accepted invite participant not found', participantError?.message ?? acceptedUserId);
-          return;
-        }
-
-        approveParticipantAsCohost(data as LiveParticipant, { acceptedHostInvite: true });
-      } catch (err: any) {
-        console.warn('[LiveBroadcast] accepted invite lookup failed', err?.message ?? err);
-      }
-    };
-
-    const channel = supabase
-      .channel(`live-accepted-invites:${streamId}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'live_control_events', filter: `session_id=eq.${streamId}` },
-        payload => {
-          approveAcceptedInvite(payload.new);
-        },
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [live, streamId, user?.id, supabase, participants, approveParticipantAsCohost]);
-
   const rejectJoinRequest = useCallback(async (participant: LiveParticipant) => {
     if (!user?.id || !streamId) return;
-    const username = participant.username || 'Invitado';
     try {
-      const { error: updateError } = await supabase
-        .from('live_participants')
-        .update({
-          role: 'removed',
-          status: 'removed',
-        })
-        .eq('id', participant.id);
-      if (updateError) throw updateError;
-
-      const { error: eventError } = await supabase.from('live_control_events').insert({
-        session_id: streamId,
-        target_user_id: participant.user_id,
-        actor_user_id: user.id,
-        event_type: 'reject_join',
-        payload: { username },
-      });
-      if (eventError) console.warn('[LiveBroadcast] reject event failed', eventError.message);
-      loadParticipants();
+      await decideLiveJoinRequest(streamId, participant.user_id, false);
+      await loadParticipants();
     } catch (err: any) {
       console.warn('[LiveBroadcast] reject join failed', err?.message ?? err);
     }
-  }, [user?.id, streamId, supabase, loadParticipants]);
-
-  const insertLiveControlEvent = useCallback(async (
-    eventType: LiveControlEventType,
-    participant: LiveParticipant,
-    payload: Record<string, unknown> = {},
-  ) => {
-    if (!user?.id || !streamId) return;
-    const username = participant.username || 'Invitado';
-    const { error: eventError } = await supabase.from('live_control_events').insert({
-      session_id: streamId,
-      target_user_id: participant.user_id,
-      actor_user_id: user.id,
-      event_type: eventType,
-      payload: { username, ...payload },
-    });
-    if (eventError) console.warn(`[LiveBroadcast] ${eventType} event failed`, eventError.message);
-  }, [user?.id, streamId, supabase]);
+  }, [user?.id, streamId, loadParticipants]);
 
   const updateCohostControls = useCallback(async (
     participant: LiveParticipant,
-    patch: Partial<Pick<LiveParticipant, 'mic_muted' | 'mic_locked' | 'camera_enabled' | 'floor_granted' | 'floor_started_at' | 'floor_duration_seconds' | 'role' | 'status'>>,
-    eventType: LiveControlEventType,
-    payload?: Record<string, unknown>,
+    action: LiveHostControlAction,
+    durationSeconds: 60 | 120 | null = null,
   ) => {
     try {
-      const { error: updateError } = await supabase
-        .from('live_participants')
-        .update(patch)
-        .eq('id', participant.id);
-      if (updateError) throw updateError;
-      setParticipants(prev => prev
-        .map(item => item.id === participant.id ? { ...item, ...patch } : item)
-        .filter(item => item.status === 'active'));
-      await insertLiveControlEvent(eventType, participant, payload);
-      loadParticipants();
+      await controlLiveParticipant(streamId, participant.user_id, action, durationSeconds);
+      await loadParticipants();
     } catch (err: any) {
-      console.warn(`[LiveBroadcast] ${eventType} failed`, err?.message ?? err);
+      console.warn(`[LiveBroadcast] ${action} failed`, err?.message ?? err);
     }
-  }, [supabase, insertLiveControlEvent, loadParticipants]);
+  }, [streamId, loadParticipants]);
 
   const toggleCohostMute = useCallback((participant: LiveParticipant) => {
     const nextMuted = !participant.mic_muted;
-    updateCohostControls(
-      participant,
-      { mic_muted: nextMuted },
-      nextMuted ? 'mute' : 'unmute',
-    );
+    updateCohostControls(participant, nextMuted ? 'mute' : 'unmute');
   }, [updateCohostControls]);
 
   const toggleCohostMicLock = useCallback((participant: LiveParticipant) => {
     const nextLocked = !participant.mic_locked;
-    updateCohostControls(
-      participant,
-      nextLocked ? { mic_locked: true, mic_muted: true } : { mic_locked: false },
-      nextLocked ? 'lock_mic' : 'unlock_mic',
-    );
+    updateCohostControls(participant, nextLocked ? 'lock_mic' : 'unlock_mic');
   }, [updateCohostControls]);
 
   const toggleCohostFloor = useCallback((participant: LiveParticipant) => {
     const nextGranted = !participant.floor_granted;
-    updateCohostControls(
-      participant,
-      nextGranted
-        ? { floor_granted: true, floor_started_at: new Date().toISOString(), floor_duration_seconds: null }
-        : { floor_granted: false, floor_started_at: null, floor_duration_seconds: null },
-      nextGranted ? 'grant_floor' : 'revoke_floor',
-    );
+    updateCohostControls(participant, nextGranted ? 'grant_floor' : 'revoke_floor');
   }, [updateCohostControls]);
 
-  const setCohostTimer = useCallback((participant: LiveParticipant, seconds: number | null) => {
-    updateCohostControls(
-      participant,
-      seconds === null
-        ? { floor_granted: true, floor_started_at: new Date().toISOString(), floor_duration_seconds: null }
-        : { floor_granted: true, floor_started_at: new Date().toISOString(), floor_duration_seconds: seconds },
-      seconds === null ? 'timer_stop' : 'timer_start',
-      seconds === null ? undefined : { seconds },
-    );
+  const setCohostTimer = useCallback((participant: LiveParticipant, seconds: 60 | 120 | null) => {
+    updateCohostControls(participant, seconds === null ? 'timer_stop' : 'timer_start', seconds);
   }, [updateCohostControls]);
 
   const removeCohost = useCallback((participant: LiveParticipant) => {
-    updateCohostControls(
-      participant,
-      {
-        role: 'removed',
-        status: 'removed',
-        mic_muted: true,
-        mic_locked: true,
-        camera_enabled: false,
-        floor_granted: false,
-        floor_started_at: null,
-        floor_duration_seconds: null,
-      },
-      'remove_cohost',
-    );
+    updateCohostControls(participant, 'remove_cohost');
   }, [updateCohostControls]);
 
-  const sendHostInviteToAudience = useCallback((participant: LiveParticipant) => {
-    insertLiveControlEvent('request_join', participant, { invited_by_host: true });
-  }, [insertLiveControlEvent]);
+  const sendHostInviteToAudience = useCallback(async (participant: LiveParticipant) => {
+    if (!streamId) return;
+    try {
+      await inviteLiveParticipant(streamId, participant.user_id);
+    } catch (err: any) {
+      console.warn('[LiveBroadcast] invite participant failed', err?.message ?? err);
+    }
+  }, [streamId]);
 
   useEffect(() => {
     if (!live || !streamId) return;
@@ -873,19 +695,16 @@ export default function LiveBroadcasterScreen() {
           if (remaining > 0 || participant.mic_muted || expiredTimerMutedRef.current.has(timerKey)) return;
 
           expiredTimerMutedRef.current.add(timerKey);
-          updateCohostControls(
-            participant,
-            { mic_muted: true, floor_granted: false },
-            'mute',
-            { reason: 'timer_expired', seconds: participant.floor_duration_seconds },
-          );
+          enforceLiveParticipantTimer(streamId, participant.user_id)
+            .then(() => loadParticipants())
+            .catch((err: any) => console.warn('[LiveBroadcast] timer enforcement failed', err?.message ?? err));
         });
     };
 
     enforceExpiredTimers();
     const timer = setInterval(enforceExpiredTimers, 1000);
     return () => clearInterval(timer);
-  }, [live, participants, updateCohostControls]);
+  }, [live, participants, streamId, loadParticipants]);
 
   const sendMessage = useCallback(async () => {
     const text = chatInput.trim();
@@ -897,17 +716,8 @@ export default function LiveBroadcasterScreen() {
     setSending(true);
     setChatInput('');
 
-    const username = user.username || user.email?.split('@')[0] || 'host';
-
     try {
-      const { data, error: insertError } = await supabase.from('live_messages').insert({
-        session_id: streamId,
-        user_id: user.id,
-        username,
-        message: text,
-      }).select('id, user_id, username, message, created_at').single();
-
-      if (insertError) throw insertError;
+      const data = await sendLiveMessage(streamId, text);
       if (data) {
         setMessages(prev => mergeMessages(prev, [{
           id: data.id,
@@ -926,7 +736,7 @@ export default function LiveBroadcasterScreen() {
       sendingRef.current = false;
       setSending(false);
     }
-  }, [chatInput, user, streamId, sending, supabase, scrollToLatest, dismissKeyboard]);
+  }, [chatInput, user, streamId, sending, scrollToLatest, dismissKeyboard]);
 
   const sendReaction = useCallback(async (emoji: string) => {
     if (!streamId || !user?.id) return;
@@ -936,25 +746,13 @@ export default function LiveBroadcasterScreen() {
 
     const username = user.username || user.email?.split('@')[0] || 'host';
     try {
-      const { data, error: reactionError } = await supabase
-        .from('live_control_events')
-        .insert({
-          session_id: streamId,
-          actor_user_id: user.id,
-          target_user_id: null,
-          event_type: 'reaction',
-          payload: { emoji, username },
-        })
-        .select('id')
-        .single();
-
-      if (reactionError) throw reactionError;
+      const data = await emitLiveReaction(streamId, emoji);
       if (data?.id) seenReactionEventIdsRef.current.add(data.id);
       addFloatingReaction(emoji, username);
     } catch (err: any) {
       console.warn('[LiveBroadcast] reaction failed', err?.message ?? err);
     }
-  }, [streamId, user, supabase, addFloatingReaction]);
+  }, [streamId, user, addFloatingReaction]);
 
   const shareLive = useCallback(async () => {
     try {

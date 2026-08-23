@@ -37,16 +37,16 @@ test("Invitar remains audience-only instead of duplicating cohost moderation", (
   assert.doesNotMatch(invitation, /toggleCohostMute|toggleCohostMicLock|setCohostTimer|removeCohost/);
 });
 
-test("mute lock floor timer and removal keep the existing participant/event authority", () => {
+test("mute lock floor timer and removal use canonical server authority", () => {
   assert.match(host, /const updateCohostControls = useCallback/);
-  assert.match(host, /\.from\('live_participants'\)[\s\S]*\.update\(patch\)/);
-  assert.match(host, /await insertLiveControlEvent\(eventType, participant, payload\)/);
+  assert.match(host, /controlLiveParticipant\(streamId, participant\.user_id, action, durationSeconds\)/);
+  assert.doesNotMatch(host, /\.from\('live_participants'\)[\s\S]*\.update\(/);
+  assert.doesNotMatch(host, /\.from\('live_control_events'\)[\s\S]*\.insert\(/);
   for (const event of ["mute", "unmute", "lock_mic", "unlock_mic", "grant_floor", "revoke_floor", "timer_start", "timer_stop", "remove_cohost"])
     assert.match(host, new RegExp(`'${event}'`));
 });
 
 test("a host microphone lock remains enforced by the existing guest listener", () => {
-  assert.match(host, /nextLocked \? \{ mic_locked: true, mic_muted: true \} : \{ mic_locked: false \}/);
   assert.match(host, /nextLocked \? 'lock_mic' : 'unlock_mic'/);
   assert.match(viewer, /if \(participantRow\?\.mic_locked\) return/);
   assert.match(viewer, /disabled=\{!!participantRow\?\.mic_locked \|\| wasRemoved\}/);
@@ -63,11 +63,11 @@ test("audited timer presets remain 1m 2m and free with active-state feedback", (
 });
 
 test("timer expiration retains canonical auto-mute on host and guest", () => {
-  assert.match(host, /reason: 'timer_expired'/);
-  assert.match(host, /\{ mic_muted: true, floor_granted: false \}/);
+  assert.match(host, /enforceLiveParticipantTimer\(streamId, participant\.user_id\)/);
   assert.match(host, /const timer = setInterval\(enforceExpiredTimers, 1000\)/);
   assert.match(viewer, /floorSecondsRemaining !== 0/);
   assert.match(viewer, /if \(!isMuted\) toggleMute\(\)/);
+  assert.match(viewer, /enforceLiveParticipantTimer\(streamId, user\.id\)/);
 });
 
 test("Moderar stays above the measured product boundary", () => {

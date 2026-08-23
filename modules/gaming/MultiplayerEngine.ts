@@ -650,29 +650,6 @@ class MultiplayerEngineImpl {
     const room = new GameRoom(roomId, userId, initialState);
     this._rooms.set(roomId, room);
 
-    // Register/update lobby in Supabase
-    try {
-      const supabase = getSupabaseClient();
-      const { data } = await supabase
-        .from('live_sessions')
-        .select('id, status')
-        .eq('id', roomId)
-        .maybeSingle();
-
-      if (!data) {
-        await supabase.from('live_sessions').upsert({
-          id:           roomId,
-          host_id:      userId,
-          title:        `battle:${roomId}`,
-          status:       'live',
-          viewer_count: 0,
-          started_at:   new Date().toISOString(),
-        });
-      }
-    } catch (e: any) {
-      console.warn('[MultiplayerEngine] lobby registration failed (non-fatal):', e?.message);
-    }
-
     EventBus.emit('battle:started' as any, { battleId: roomId, hostId: userId });
     CrashIntelligence.addBreadcrumb('state', 'MultiplayerEngine room joined', { roomId, userId });
     console.log('[MultiplayerEngine] joined room:', roomId, '— user:', userId);

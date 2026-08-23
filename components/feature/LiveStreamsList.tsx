@@ -13,7 +13,6 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { getSupabaseClient } from '@/template';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
-import { closeStaleLiveSessions } from '@/services/liveSessionService';
 
 const POLL_INTERVAL_MS = 10_000;
 const STALE_VISIBLE_MS = 90_000;
@@ -37,7 +36,6 @@ export function LiveStreamsList() {
     const supabase = getSupabaseClient();
     if (!supabase) { if (mountedRef.current) setLoading(false); return; }
     try {
-      closeStaleLiveSessions().catch(() => {});
       const heartbeatCutoff = new Date(Date.now() - STALE_VISIBLE_MS).toISOString();
       const { data, error } = await supabase
         .from('live_sessions')

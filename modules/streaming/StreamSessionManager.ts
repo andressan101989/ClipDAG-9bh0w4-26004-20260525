@@ -27,6 +27,8 @@ import { BackpressureQueue }   from '../core/BackpressureQueue';
 import { AppLifecycle }        from '../core/AppLifecycle';
 import { LeakDetector }        from '../core/LeakDetector';
 import { getSupabaseClient }   from '@/template';
+import { generateUUID }        from '@/services/agoraService';
+import { endLiveSession, startLiveSession } from '@/services/liveSessionService';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -179,14 +181,9 @@ class StreamSessionManagerImpl {
     }
 
     try {
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase
-        .from('live_sessions')
-        .insert({ host_id: userId, title, status: 'live', viewer_count: 0 })
-        .select()
-        .single();
-
-      if (error) return { error: error.message };
+      const sessionId = generateUUID();
+      const data = await startLiveSession(sessionId, title);
+      if (!data?.id) return { error: 'Failed to create session' };
 
       const session = this._buildSession(data.id, 'host');
       this._session = session;
@@ -224,11 +221,7 @@ class StreamSessionManagerImpl {
     this._setPhase('ending');
 
     try {
-      const supabase = getSupabaseClient();
-      await supabase
-        .from('live_sessions')
-        .update({ status: 'ended', ended_at: new Date().toISOString() })
-        .eq('id', sessionId);
+      await endLiveSession(sessionId);
     } catch (e: any) {
       console.warn('[StreamSessionManager] end error:', e?.message);
     }

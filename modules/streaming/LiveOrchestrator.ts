@@ -22,6 +22,12 @@ import { CrashIntelligence }      from '../core/CrashIntelligence';
 import { ThermalMonitor }         from '../core/ThermalMonitor';
 import { PresenceManager }        from '../realtime/PresenceManager';
 import { getSupabaseClient }      from '@/template';
+import { generateUUID }           from '@/services/agoraService';
+import {
+  endLiveSession,
+  startLiveSession,
+  updateLiveSessionTitle,
+} from '@/services/liveSessionService';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -79,18 +85,9 @@ class LiveOrchestratorImpl {
    */
   async startHostSession(hostId: string, title: string): Promise<StartSessionResult> {
     try {
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase
-        .from('live_sessions')
-        .insert({ host_id: hostId, title, status: 'live', viewer_count: 0 })
-        .select()
-        .single();
-
-      if (error || !data) {
-        const msg = error?.message ?? 'Failed to create session';
-        console.warn('[LiveOrchestrator] startHostSession error:', msg);
-        return { session: null, error: msg };
-      }
+      const sessionId = generateUUID();
+      const data = await startLiveSession(sessionId, title);
+      if (!data?.id) return { session: null, error: 'Failed to create session' };
 
       PresenceManager.registerStreamSession(data.id);
 
@@ -225,8 +222,7 @@ class HostSessionImpl implements HostSession {
   async setTitle(title: string): Promise<void> {
     this.title = title;
     try {
-      const supabase = getSupabaseClient();
-      await supabase.from('live_sessions').update({ title }).eq('id', this.sessionId);
+      await updateLiveSessionTitle(this.sessionId, title);
     } catch { /* non-critical */ }
   }
 
@@ -246,11 +242,7 @@ class HostSessionImpl implements HostSession {
 
     // Update Supabase session
     try {
-      const supabase = getSupabaseClient();
-      await supabase
-        .from('live_sessions')
-        .update({ status: 'ended', ended_at: new Date().toISOString() })
-        .eq('id', this.sessionId);
+      await endLiveSession(this.sessionId);
     } catch { /* non-critical — session may already be deleted */ }
 
     // Reset presence
@@ -392,14 +384,7 @@ class HostSessionImpl implements HostSession {
     setTimeout(async () => {
       if (this._ended) return;
       try {
-        const supabase = getSupabaseClient();
-        await supabase.from('live_sessions').upsert({
-          id:           this.sessionId,
-          host_id:      this.hostId,
-          title:        this.title,
-          status:       'live',
-          viewer_count: this.viewerCount,
-        });
+        await startLiveSession(this.sessionId, this.title);
         this._recoveryCount = 0;
         console.log('[LiveOrchestrator] session recovered:', this.sessionId);
       } catch (e: any) {

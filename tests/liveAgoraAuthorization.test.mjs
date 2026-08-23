@@ -92,8 +92,11 @@ assert.doesNotMatch(
   /console\.(?:log|info|error)\([^\n]*(?:req\.headers|AGORA_APP_CERTIFICATE|SUPABASE_SERVICE_ROLE_KEY|authorizedChannel|numericUid)[^\n]*\)/,
 );
 
-// Viewer count begins only after Agora reports a real join.
-assert.match(watch, /if \(!joined \|\| leftRef\.current \|\| viewerCountBumpedRef\.current\) return/);
-assert.match(watch, /\[joined, bumpViewerCount\]/);
+// Canonical presence begins only after Agora reports a real join. The client
+// cannot provide a viewer delta or participant authority fields.
+assert.match(watch, /if \(!joined \|\| leftRef\.current \|\| presenceRegisteredRef\.current \|\| !streamId\) return/);
+assert.match(watch, /setLiveParticipantPresence\(streamId, true\)/);
+assert.match(watch, /setLiveParticipantPresence\(streamId, false\)/);
+assert.doesNotMatch(watch, /increment_live_viewer_count|p_delta/);
 
 console.log('LIVE Agora authorization tests: PASS');

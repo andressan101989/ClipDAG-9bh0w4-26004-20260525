@@ -29,6 +29,11 @@ import { getSupabaseClient } from '@/template';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 import { LiveOrchestrator, type StreamQualityTier } from '@/modules/streaming/LiveOrchestrator';
 import { CrashIntelligence } from '@/modules/core/CrashIntelligence';
+import {
+  controlLiveParticipant,
+  decideLiveJoinRequest,
+  sendLiveMessage,
+} from '@/services/liveSessionService';
 
 const { width: W } = Dimensions.get('window');
 
@@ -225,18 +230,20 @@ export function LiveCameraPreview({
   const pollJoinRequests = useCallback(async (sid: string) => {
     try {
       const { data } = await supabase
-        .from('live_join_requests')
+        .from('live_participants')
         .select('*')
         .eq('session_id', sid)
+        .eq('role', 'requested')
+        .eq('status', 'active')
         .order('created_at', { ascending: false });
 
       if (!data) return;
       setJoinRequests(data.map((r: any) => ({
         id:                r.id,
-        requesterId:       r.requester_id,
-        requesterUsername: r.requester_username,
-        requesterAvatar:   r.requester_avatar,
-        status:            r.status,
+        requesterId:       r.user_id,
+        requesterUsername: r.username,
+        requesterAvatar:   '',
+        status:            'pending',
         createdAt:         r.created_at,
       })));
       const accepted = data.filter((r: any) => r.status === 'accepted');
@@ -370,27 +377,32 @@ export function LiveCameraPreview({
     setTimeout(() => chatListRef.current?.scrollToEnd({ animated: true }), 100);
 
     try {
-      await supabase.from('live_messages').insert({
-        session_id: sessionId,
-        user_id:    hostUser.id,
-        username:   hostUser.username,
-        avatar_url: hostUser.avatar ?? '',
-        message:    text,
-      });
+      const data = await sendLiveMessage(sessionId, text);
+      if (data) {
+        setMessages(prev => prev.map(message => message.id === optimistic.id ? {
+          ...message,
+          id: data.id,
+          userId: data.user_id,
+          username: data.username,
+          message: data.message,
+          createdAt: data.created_at,
+        } : message));
+      }
     } catch { /* non-fatal */ }
     setIsSendingMsg(false);
-  }, [chatInput, hostUser, sessionId, supabase]);
+  }, [chatInput, hostUser, sessionId]);
 
   // ── Handle join request ────────────────────────────────────────────────────
   const handleRequest = useCallback(async (requestId: string, accept: boolean) => {
     const newStatus = accept ? 'accepted' : 'rejected';
+    const req = joinRequests.find(r => r.id === requestId);
+    if (!sessionId || !req) return;
     setJoinRequests(prev => prev.map(r => r.id === requestId ? { ...r, status: newStatus as any } : r));
     try {
-      await supabase.from('live_join_requests').update({ status: newStatus }).eq('id', requestId);
-    } catch { /* non-fatal */ }
+      await decideLiveJoinRequest(sessionId, req.requesterId, accept);
+    } catch { return; }
 
     if (accept) {
-      const req = joinRequests.find(r => r.id === requestId);
       if (req) {
         setGuests(prev => [...prev, { id: req.requesterId, username: req.requesterUsername, avatarUrl: req.requesterAvatar, joinedAt: new Date().toISOString() }]);
         const sysMsg: LiveMessage = {
@@ -401,16 +413,16 @@ export function LiveCameraPreview({
         setMessages(prev => [...prev.slice(-MAX_CHAT_MESSAGES), sysMsg]);
       }
     }
-  }, [joinRequests, supabase]);
+  }, [joinRequests, sessionId]);
 
   const removeGuest = useCallback(async (guestId: string) => {
     setGuests(prev => prev.filter(g => g.id !== guestId));
     if (sessionId) {
       try {
-        await supabase.from('live_join_requests').update({ status: 'rejected' }).eq('session_id', sessionId).eq('requester_id', guestId);
+        await controlLiveParticipant(sessionId, guestId, 'remove_cohost');
       } catch { /* non-fatal */ }
     }
-  }, [sessionId, supabase]);
+  }, [sessionId]);
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   const formatTime = (s: number) =>

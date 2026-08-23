@@ -12,6 +12,11 @@ import { getSupabaseClient } from '@/template';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { LiveStream, TIP_AMOUNTS, formatNumber } from '@/services/mockData';
+import {
+  requestToJoinLive,
+  sendLiveMessage,
+  setLiveParticipantPresence,
+} from '@/services/liveSessionService';
 
 const { height: H } = Dimensions.get('window');
 
@@ -137,20 +142,24 @@ export function LiveViewerSheet({
         setMessages(prev => [...prev, ...newMsgs].slice(-MAX_MESSAGES));
         setTimeout(() => chatListRef.current?.scrollToEnd({ animated: true }), 100);
       }
-    } catch (_) {}
+    } catch {}
   }, [supabase]);
 
   const pollJoinStatus = useCallback(async (sid: string) => {
     if (!currentUser || joinStatus !== 'pending') return;
     try {
       const { data } = await supabase
-        .from('live_join_requests')
-        .select('status')
+        .from('live_participants')
+        .select('role, status')
         .eq('session_id', sid)
-        .eq('requester_id', currentUser.id)
+        .eq('user_id', currentUser.id)
         .single();
-      if (data) setJoinStatus(data.status as any);
-    } catch (_) {}
+      if (data) {
+        setJoinStatus(data.role === 'cohost' && data.status === 'active'
+          ? 'accepted'
+          : data.role === 'requested' ? 'pending' : 'none');
+      }
+    } catch {}
   }, [supabase, currentUser, joinStatus]);
 
   useEffect(() => {
@@ -163,7 +172,23 @@ export function LiveViewerSheet({
       }, POLL_INTERVAL);
     }
     return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
-  }, [visible, sessionId]);
+  }, [visible, sessionId, pollJoinStatus, pollMessages]);
+
+  useEffect(() => {
+    if (!visible || !sessionId || !currentUser?.id) return;
+    let registered = false;
+    let cancelled = false;
+    setLiveParticipantPresence(sessionId, true)
+      .then(() => {
+        if (cancelled) setLiveParticipantPresence(sessionId, false).catch(() => {});
+        else registered = true;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      if (registered) setLiveParticipantPresence(sessionId, false).catch(() => {});
+    };
+  }, [visible, sessionId, currentUser?.id]);
 
   useEffect(() => {
     if (!visible) {
@@ -208,14 +233,18 @@ export function LiveViewerSheet({
 
     if (sessionId) {
       try {
-        await supabase.from('live_messages').insert({
-          session_id: sessionId,
-          user_id: currentUser.id,
-          username: currentUser.username,
-          avatar_url: currentUser.avatar || '',
-          message: text,
-        });
-      } catch (_) {}
+        const data = await sendLiveMessage(sessionId, text);
+        if (data) {
+          setMessages(prev => prev.map(message => message.id === optimistic.id ? {
+            ...message,
+            id: data.id,
+            userId: data.user_id,
+            username: data.username,
+            message: data.message,
+            createdAt: data.created_at,
+          } : message));
+        }
+      } catch {}
     }
     setIsSending(false);
   };
@@ -225,14 +254,9 @@ export function LiveViewerSheet({
     setHasRequestedJoin(true);
     setJoinStatus('pending');
     try {
-      await supabase.from('live_join_requests').insert({
-        session_id: sessionId,
-        requester_id: currentUser.id,
-        requester_username: currentUser.username,
-        requester_avatar: currentUser.avatar || '',
-        status: 'pending',
-      });
-    } catch (_) {
+      await setLiveParticipantPresence(sessionId, true);
+      await requestToJoinLive(sessionId);
+    } catch {
       setHasRequestedJoin(false);
       setJoinStatus('none');
     }
@@ -260,14 +284,8 @@ export function LiveViewerSheet({
 
       if (sessionId) {
         try {
-          await supabase.from('live_messages').insert({
-            session_id: sessionId,
-            user_id: currentUser.id,
-            username: currentUser.username,
-            avatar_url: currentUser.avatar || '',
-            message: `Envio un tip de ${amount} $DAG! 💎`,
-          });
-        } catch (_) {}
+          await sendLiveMessage(sessionId, `Envio un tip de ${amount} $DAG! 💎`);
+        } catch {}
       }
     }
   };

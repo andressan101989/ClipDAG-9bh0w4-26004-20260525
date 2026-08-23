@@ -15,7 +15,12 @@
  */
 
 import { EventBus } from '../core/EventBus';
-import { getSupabaseClient } from '@/template';
+import { generateUUID } from '@/services/agoraService';
+import {
+  endLiveSession,
+  setLiveParticipantPresence,
+  startLiveSession,
+} from '@/services/liveSessionService';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type StreamStatus = 'idle' | 'preparing' | 'live' | 'ending' | 'ended' | 'error';
@@ -51,14 +56,9 @@ class StreamManagerImpl {
   /** Start a new live session as host. */
   async startStream(hostId: string, title: string): Promise<{ sessionId: string } | { error: string }> {
     try {
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase
-        .from('live_sessions')
-        .insert({ host_id: hostId, title, status: 'live', viewer_count: 0 })
-        .select()
-        .single();
-
-      if (error) return { error: error.message };
+      const sessionId = generateUUID();
+      const data = await startLiveSession(sessionId, title);
+      if (!data?.id) return { error: 'Failed to create session' };
 
       this._session = {
         sessionId:   data.id,
@@ -82,11 +82,7 @@ class StreamManagerImpl {
     if (!this._session) return;
     const { sessionId } = this._session;
     try {
-      const supabase = getSupabaseClient();
-      await supabase
-        .from('live_sessions')
-        .update({ status: 'ended', ended_at: new Date().toISOString() })
-        .eq('id', sessionId);
+      await endLiveSession(sessionId);
     } catch (e: any) {
       console.warn('[StreamManager] endStream error:', e?.message);
     }
@@ -99,9 +95,7 @@ class StreamManagerImpl {
   /** Viewer joins a stream — logs view, increments counter. */
   async joinStream(sessionId: string, userId: string): Promise<void> {
     try {
-      const supabase = getSupabaseClient();
-      // Optimistic increment
-      await supabase.rpc('increment_live_viewer_count' as any, { p_session_id: sessionId, p_delta: 1 }).catch(() => {});
+      await setLiveParticipantPresence(sessionId, true);
     } catch { /* ignore */ }
     EventBus.emit('stream:viewer_joined', { sessionId, userId });
   }

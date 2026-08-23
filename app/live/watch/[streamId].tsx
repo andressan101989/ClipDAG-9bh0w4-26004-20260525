@@ -33,6 +33,14 @@ import { LiveCommerceButton } from '@/components/live/commerce/LiveCommerceButto
 import { LiveProductRail } from '@/components/live/shop/LiveProductRail';
 import { LiveViewerCommerce } from '@/components/live/commerce/LiveViewerCommerce';
 import { fetchLiveSessionProducts, type LiveSessionProduct } from '@/services/liveCommerceService';
+import {
+  emitLiveReaction,
+  enforceLiveParticipantTimer,
+  requestToJoinLive,
+  respondToLiveHostInvite,
+  sendLiveMessage,
+  setLiveParticipantPresence,
+} from '@/services/liveSessionService';
 
 const POLL_INTERVAL_MS = 3000;
 const MAX_MESSAGES     = 50;
@@ -99,7 +107,6 @@ type HostInviteEvent = {
   id: string;
   payload?: {
     username?: string;
-    invited_by_host?: boolean;
   } | null;
 };
 
@@ -265,12 +272,11 @@ export default function LiveWatchScreen() {
   const sendingRef  = useRef(false);
   const mountedRef  = useRef(true);
   const leftRef     = useRef(false);
-  const viewerCountBumpedRef = useRef(false);
+  const presenceRegisteredRef = useRef(false);
   const promotingRef = useRef(false);
   const previousRemoteMicMutedRef = useRef<boolean | null>(null);
   const removedHandledRef = useRef(false);
   const timerExpiredHandledRef = useRef(false);
-  const participantRowRef = useRef<LiveParticipant | null>(null);
   const lastPromotionKeyRef = useRef<string | null>(null);
   const seenHostInviteIdsRef = useRef<Set<string>>(new Set());
   const seenReactionEventIdsRef = useRef<Set<string>>(new Set());
@@ -282,10 +288,6 @@ export default function LiveWatchScreen() {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
-
-  useEffect(() => {
-    participantRowRef.current = participantRow;
-  }, [participantRow]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -431,33 +433,8 @@ export default function LiveWatchScreen() {
   // update with the computed value) lost updates whenever two viewers
   // joined/left concurrently, since both would read the same stale count
   // before either write landed.
-  const bumpViewerCount = useCallback(async (delta: 1 | -1) => {
-    if (!streamId) return;
-    try {
-      await supabase.rpc('increment_live_viewer_count', { p_session_id: streamId, p_delta: delta });
-    } catch { /* ignore */ }
-  }, [streamId, supabase]);
-
-  const markPassiveParticipantInactive = useCallback(async () => {
-    const row = participantRowRef.current;
-    if (!row || !streamId || !user?.id) return;
-    if (row.role !== 'audience' && row.role !== 'requested') return;
-    try {
-      const { error: inactiveError } = await supabase
-        .from('live_participants')
-        .update({ status: 'inactive' })
-        .eq('session_id', streamId)
-        .eq('user_id', user.id)
-        .in('role', ['audience', 'requested']);
-      if (inactiveError) console.warn('[LiveWatch] participant inactive failed', inactiveError.message);
-    } catch (err: any) {
-      console.warn('[LiveWatch] participant inactive failed', err?.message ?? err);
-    }
-  }, [streamId, user?.id, supabase]);
-
   const loadParticipant = useCallback(async () => {
     if (!streamId || !user?.id) return;
-    const username = getDisplayUsername(user);
 
     try {
       const { data, error: selectError } = await supabase
@@ -472,49 +449,11 @@ export default function LiveWatchScreen() {
         return;
       }
 
-      if (data) {
-        if ((data.role === 'audience' || data.role === 'requested') && data.status !== 'active') {
-          const { data: activeRow, error: activeError } = await supabase
-            .from('live_participants')
-            .update({ status: 'active', username, agora_uid: myUid || null })
-            .eq('id', data.id)
-            .select('*')
-            .single();
-          if (activeError) {
-            console.warn('[LiveWatch] reactivate participant failed', activeError.message);
-            setParticipantRow(data as LiveParticipant);
-            return;
-          }
-          setParticipantRow(activeRow as LiveParticipant);
-          return;
-        }
-        setParticipantRow(data as LiveParticipant);
-        return;
-      }
-
-      const { data: inserted, error: insertError } = await supabase
-        .from('live_participants')
-        .insert({
-          session_id: streamId,
-          user_id: user.id,
-          agora_uid: myUid || null,
-          username,
-          role: 'audience',
-          status: 'active',
-        })
-        .select('*')
-        .single();
-
-      if (insertError) {
-        console.warn('[LiveWatch] create participant failed', insertError.message);
-        return;
-      }
-
-      setParticipantRow(inserted as LiveParticipant);
+      setParticipantRow((data as LiveParticipant | null) ?? null);
     } catch (err: any) {
       console.warn('[LiveWatch] participant sync failed', err?.message ?? err);
     }
-  }, [streamId, user, myUid, supabase]);
+  }, [streamId, user?.id, supabase]);
 
   useEffect(() => {
     if (session?.status !== 'live' || !user?.id) return;
@@ -554,8 +493,7 @@ export default function LiveWatchScreen() {
         payload => {
           const row = payload.new as any;
           if (row?.target_user_id !== user.id) return;
-          if (row?.event_type !== 'request_join') return;
-          if (row?.payload?.invited_by_host !== true) return;
+          if (row?.event_type !== 'host_invite') return;
           if (seenHostInviteIdsRef.current.has(row.id)) return;
           seenHostInviteIdsRef.current.add(row.id);
           if (isStructuredCohost || requestSent) return;
@@ -724,30 +662,41 @@ export default function LiveWatchScreen() {
     if (floorSecondsRemaining !== 0 || !isStructuredCohost || timerExpiredHandledRef.current) return;
     timerExpiredHandledRef.current = true;
     if (!isMuted) toggleMute();
-  }, [floorSecondsRemaining, isStructuredCohost, isMuted, toggleMute]);
+    if (streamId && user?.id) {
+      enforceLiveParticipantTimer(streamId, user.id).catch((err: any) => {
+        console.warn('[LiveWatch] timer enforcement failed', err?.message ?? err);
+      });
+    }
+  }, [floorSecondsRemaining, isStructuredCohost, isMuted, toggleMute, streamId, user?.id]);
 
   useEffect(() => {
     if (!streamId) { router.back(); return; }
-    viewerCountBumpedRef.current = false;
+    presenceRegisteredRef.current = false;
     fetchSession();
     pollRef.current = setInterval(poll, POLL_INTERVAL_MS);
 
     return () => {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
       if (!leftRef.current) { leftRef.current = true; leave(); }
-      markPassiveParticipantInactive();
-      if (viewerCountBumpedRef.current) {
-        viewerCountBumpedRef.current = false;
-        bumpViewerCount(-1);
+      if (presenceRegisteredRef.current) {
+        presenceRegisteredRef.current = false;
+        setLiveParticipantPresence(streamId, false).catch((err: any) => {
+          console.warn('[LiveWatch] leave presence failed', err?.message ?? err);
+        });
       }
     };
-  }, [streamId, markPassiveParticipantInactive]);
+  }, [streamId]);
 
   useEffect(() => {
-    if (!joined || leftRef.current || viewerCountBumpedRef.current) return;
-    viewerCountBumpedRef.current = true;
-    bumpViewerCount(1);
-  }, [joined, bumpViewerCount]);
+    if (!joined || leftRef.current || presenceRegisteredRef.current || !streamId) return;
+    presenceRegisteredRef.current = true;
+    setLiveParticipantPresence(streamId, true)
+      .then(data => { if (data && mountedRef.current) setParticipantRow(data as LiveParticipant); })
+      .catch((err: any) => {
+        presenceRegisteredRef.current = false;
+        console.warn('[LiveWatch] enter presence failed', err?.message ?? err);
+      });
+  }, [joined, streamId]);
 
   // ── Send message ─────────────────────────────────────────────────────────
   const sendMessage = useCallback(async () => {
@@ -761,14 +710,7 @@ export default function LiveWatchScreen() {
     setChatInput('');
 
     try {
-      const username = user.username || user.email?.split('@')[0] || 'user';
-      const { data, error: insertError } = await supabase.from('live_messages').insert({
-        session_id: streamId, user_id: user.id,
-        username,
-        message: text,
-      }).select('id, user_id, username, message, created_at').single();
-
-      if (insertError) throw insertError;
+      const data = await sendLiveMessage(streamId, text);
       if (data) {
         setMessages(prev => mergeMessages(prev, [{
           id: data.id,
@@ -789,115 +731,43 @@ export default function LiveWatchScreen() {
     }
   }, [chatInput, user, streamId, sending, supabase, scrollToLatest, dismissKeyboard]);
 
-  const requestToJoin = useCallback(async (options?: { acceptedHostInvite?: boolean }) => {
+  const requestToJoin = useCallback(async () => {
     if (!user || !streamId || requestSent || promotedToPublisher || isStructuredCohost) return;
-    const username = getDisplayUsername(user);
-
     try {
-      const { data: existing, error: selectError } = await supabase
-        .from('live_participants')
-        .select('*')
-        .eq('session_id', streamId)
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (selectError) throw selectError;
-      if (existing?.role === 'requested' && existing.status === 'active') {
-        setParticipantRow(existing as LiveParticipant);
-        return;
-      }
-      if (existing?.role === 'cohost' && existing.status === 'active') {
-        setParticipantRow(existing as LiveParticipant);
-        return;
-      }
-      const retry = existing?.role === 'removed' || existing?.status === 'removed';
-
-      const optimistic: LiveParticipant = {
-        ...((existing as LiveParticipant | null) ?? participantRow ?? {
-          id: `local_${user.id}`,
-          session_id: streamId,
-          user_id: user.id,
-          agora_uid: myUid || null,
-          mic_muted: false,
-          mic_locked: false,
-          camera_enabled: true,
-          floor_granted: false,
-          floor_started_at: null,
-          floor_duration_seconds: null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }),
-        session_id: streamId,
-        user_id: user.id,
-        agora_uid: myUid || null,
-        username,
-        role: 'requested',
-        status: 'active',
-        mic_muted: false,
-        mic_locked: false,
-        camera_enabled: true,
-        floor_granted: false,
-        floor_started_at: null,
-        floor_duration_seconds: null,
-      };
-      setParticipantRow(optimistic);
-      setPromotedToPublisher(false);
-      promotingRef.current = false;
-      lastPromotionKeyRef.current = null;
-      removedHandledRef.current = false;
-
-      const { data, error: upsertError } = await supabase
-        .from('live_participants')
-        .upsert({
-          session_id: streamId,
-          user_id: user.id,
-          agora_uid: myUid || null,
-          username,
-          role: 'requested',
-          status: 'active',
-          mic_muted: false,
-          mic_locked: false,
-          camera_enabled: true,
-          floor_granted: false,
-          floor_started_at: null,
-          floor_duration_seconds: null,
-        }, { onConflict: 'session_id,user_id' })
-        .select('*')
-        .single();
-
-      if (upsertError) throw upsertError;
-
-      const { error: eventError } = await supabase.from('live_control_events').insert({
-        session_id: streamId,
-        target_user_id: user.id,
-        actor_user_id: user.id,
-        event_type: 'request_join',
-        payload: {
-          username,
-          ...(retry ? { retry: true } : {}),
-          ...(options?.acceptedHostInvite ? { accepted_host_invite: true } : {}),
-        },
-      });
-      if (eventError) console.warn('[LiveWatch] request event failed', eventError.message);
-
+      const data = await requestToJoinLive(streamId);
       if (data) setParticipantRow(data as LiveParticipant);
     } catch (err: any) {
       setParticipantRow(participantRow);
       console.warn('[LiveWatch] request join failed', err?.message ?? err);
       Alert.alert('No se pudo enviar la solicitud');
     }
-  }, [user, streamId, requestSent, promotedToPublisher, isStructuredCohost, participantRow, myUid, supabase]);
+  }, [user, streamId, requestSent, promotedToPublisher, isStructuredCohost, participantRow]);
 
-  const acceptHostInvite = useCallback(() => {
+  const acceptHostInvite = useCallback(async () => {
+    if (!streamId || !hostInvite) return;
+    const invite = hostInvite;
     setHostInvite(null);
-    requestToJoin({ acceptedHostInvite: true });
-  }, [requestToJoin]);
+    try {
+      const data = await respondToLiveHostInvite(streamId, invite.id, true);
+      if (data) setParticipantRow(data as LiveParticipant);
+    } catch (err: any) {
+      console.warn('[LiveWatch] accept invite failed', err?.message ?? err);
+      Alert.alert('No se pudo aceptar la invitación');
+    }
+  }, [streamId, hostInvite]);
 
-  const rejectHostInvite = useCallback(() => {
+  const rejectHostInvite = useCallback(async () => {
+    if (!streamId || !hostInvite) return;
+    const invite = hostInvite;
     setHostInvite(null);
-  }, []);
+    try {
+      await respondToLiveHostInvite(streamId, invite.id, false);
+    } catch (err: any) {
+      console.warn('[LiveWatch] reject invite failed', err?.message ?? err);
+    }
+  }, [streamId, hostInvite]);
 
-  const sendReaction = useCallback(async (emoji: string, giftVisual = false) => {
+  const sendReaction = useCallback(async (emoji: string) => {
     if (!streamId || !user?.id) return;
     const now = Date.now();
     if (now - lastReactionAtRef.current < 600) return;
@@ -905,19 +775,7 @@ export default function LiveWatchScreen() {
 
     const username = getDisplayUsername(user);
     try {
-      const { data, error: reactionError } = await supabase
-        .from('live_control_events')
-        .insert({
-          session_id: streamId,
-          actor_user_id: user.id,
-          target_user_id: user.id,
-          event_type: 'reaction',
-          payload: giftVisual ? { emoji, username, gift_visual: true } : { emoji, username },
-        })
-        .select('id')
-        .single();
-
-      if (reactionError) throw reactionError;
+      const data = await emitLiveReaction(streamId, emoji);
       if (data?.id) seenReactionEventIdsRef.current.add(data.id);
       addFloatingReaction(emoji, username);
     } catch (err: any) {
