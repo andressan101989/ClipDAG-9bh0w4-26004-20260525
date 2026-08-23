@@ -195,7 +195,8 @@ test("R2B-2 remains historical while R2B-3 replaces its active buyer authority",
   assert.doesNotMatch(sellerOrders, /Dirección pendiente|Devolución en camino/);
   assert.doesNotMatch(sellerInbox, /Dirección pendiente|Devolución en camino/);
   assert.doesNotMatch(sellerHome, /destinationPendingCount|inTransitCount/);
-  assert.match(buyerOrders, /Esperando label del vendedor/);
+  assert.match(buyerOrders, /marketplaceBuyerReturnProgressLabel/);
+  assert.doesNotMatch(buyerOrders, /Esperando label del vendedor/);
 });
 
 test("return history uses the existing order timeline", () => {

@@ -3,6 +3,7 @@ import type {
   MarketplaceDisputeStatus,
   MarketplaceHeldAllocation,
   MarketplaceOrderEvent,
+  MarketplaceOrderListItem,
   MarketplaceOrderStatus,
   MarketplaceReturnStatus,
   MarketplaceReturnShipment,
@@ -16,6 +17,21 @@ export type MarketplaceDisputeSummary = {
 
 export type MarketplaceTimelineSettlement = { status: string; releasedAt: string };
 export type MarketplaceTimelineItem = { id: string; label: string; createdAt: string };
+
+export function marketplaceBuyerReturnProgressLabel(
+  returnProgress: MarketplaceOrderListItem["returnProgress"],
+) {
+  if (!returnProgress) return null;
+  const { status, shippingStatus, labelSent } = returnProgress;
+  if (status === "refunded" && shippingStatus === null) return null;
+  if (shippingStatus === "received") return "Producto recibido · Reembolso completado";
+  if (shippingStatus === "shipped") return "Devolución enviada";
+  if (shippingStatus === "awaiting_buyer_shipment")
+    return labelSent ? "Label listo para imprimir" : "Esperando label del vendedor";
+  if (status === "approved" && shippingStatus === null)
+    return "Esperando label del vendedor";
+  return null;
+}
 
 export function marketplaceReturnStatusCopy(
   status: MarketplaceReturnStatus,

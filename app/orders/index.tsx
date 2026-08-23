@@ -22,7 +22,10 @@ import {
 } from '@/services/marketplaceFulfillmentService';
 import { StatusBadge } from '@/components/marketplace/OrderStatus';
 import { SellerScreenHeader } from '@/components/marketplace/SellerScreenHeader';
-import { formatOrderNumberForList } from '@/services/marketplaceOrderPresentation';
+import {
+  formatOrderNumberForList,
+  marketplaceBuyerReturnProgressLabel,
+} from '@/services/marketplaceOrderPresentation';
 
 const PAGE = 20;
 const COMPACT_BREAKPOINT = 390;
@@ -139,63 +142,47 @@ export default function BuyerOrders() {
               <Text style={styles.text}>Reintentar</Text>
             </Pressable> : null}
           </View>}
-          renderItem={({ item }) => <Pressable
-            accessibilityLabel={`Ver pedido ${item.orderNumber}`}
-            accessibilityHint={item.returnProgress
-              ? buyerReturnProgressLabel(
-                  item.returnProgress.shippingStatus,
-                  item.returnProgress.labelSent,
-                )
-              : undefined}
-            accessibilityRole="button"
-            style={[styles.card, compact && styles.cardCompact]}
-            onPress={() => router.push(`/orders/${item.id}` as never)}
-          >
-            <Image
-              source={item.firstItemImage ? { uri: item.firstItemImage } : undefined}
-              style={[styles.image, compact && styles.imageCompact]}
-            />
-            <View style={styles.cardContent}>
-              <Text style={styles.title} numberOfLines={2}>{item.firstItemTitle}</Text>
-              <Text style={styles.muted} numberOfLines={1}>{item.storeName}</Text>
-              <Text
-                accessibilityLabel={`Pedido ${item.orderNumber}`}
-                ellipsizeMode="middle"
-                numberOfLines={1}
-                style={styles.orderNumber}
-              >
-                {formatOrderNumberForList(item.orderNumber)}
-              </Text>
-              <Text style={styles.price} numberOfLines={1}>{item.total.toFixed(2)} BDAG</Text>
-              {item.returnProgress ? <Text style={styles.returnProgress} numberOfLines={1}>
-                {buyerReturnProgressLabel(
-                  item.returnProgress.shippingStatus,
-                  item.returnProgress.labelSent,
-                )}
-              </Text> : null}
-            </View>
-            <View style={styles.statusSlot}>
-              <StatusBadge
-                status={item.status}
-                compact={compact}
-                showLabel={!iconOnlyStatus}
+          renderItem={({ item }) => {
+            const returnProgressLabel = marketplaceBuyerReturnProgressLabel(item.returnProgress);
+            return <Pressable
+              accessibilityLabel={`Ver pedido ${item.orderNumber}`}
+              accessibilityHint={returnProgressLabel ?? undefined}
+              accessibilityRole="button"
+              style={[styles.card, compact && styles.cardCompact]}
+              onPress={() => router.push(`/orders/${item.id}` as never)}
+            >
+              <Image
+                source={item.firstItemImage ? { uri: item.firstItemImage } : undefined}
+                style={[styles.image, compact && styles.imageCompact]}
               />
-            </View>
-          </Pressable>}
+              <View style={styles.cardContent}>
+                <Text style={styles.title} numberOfLines={2}>{item.firstItemTitle}</Text>
+                <Text style={styles.muted} numberOfLines={1}>{item.storeName}</Text>
+                <Text
+                  accessibilityLabel={`Pedido ${item.orderNumber}`}
+                  ellipsizeMode="middle"
+                  numberOfLines={1}
+                  style={styles.orderNumber}
+                >
+                  {formatOrderNumberForList(item.orderNumber)}
+                </Text>
+                <Text style={styles.price} numberOfLines={1}>{item.total.toFixed(2)} BDAG</Text>
+                {returnProgressLabel ? <Text style={styles.returnProgress} numberOfLines={1}>
+                  {returnProgressLabel}
+                </Text> : null}
+              </View>
+              <View style={styles.statusSlot}>
+                <StatusBadge
+                  status={item.status}
+                  compact={compact}
+                  showLabel={!iconOnlyStatus}
+                />
+              </View>
+            </Pressable>;
+          }}
         />}
   </View>;
 }
-
-const buyerReturnProgressLabel = (
-  status: NonNullable<MarketplaceOrderListItem['returnProgress']>['shippingStatus'],
-  labelSent: boolean,
-) => status === 'received'
-  ? 'Producto recibido · Reembolso completado'
-  : status === 'shipped'
-  ? 'Devolución enviada'
-  : status === 'awaiting_buyer_shipment'
-    ? labelSent ? 'Label listo para imprimir' : 'Esperando label del vendedor'
-    : 'Esperando label del vendedor';
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },

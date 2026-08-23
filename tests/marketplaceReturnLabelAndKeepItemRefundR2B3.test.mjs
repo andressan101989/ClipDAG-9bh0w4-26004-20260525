@@ -9,13 +9,17 @@ import {
   parseMarketplaceReturnMutationReceipt,
   parseSellerReturnIndexPayload,
 } from "../services/marketplaceFulfillmentParsers.mjs";
-import { marketplaceReturnStatusCopy } from "../services/marketplaceOrderPresentation.ts";
+import {
+  marketplaceBuyerReturnProgressLabel,
+  marketplaceReturnStatusCopy,
+} from "../services/marketplaceOrderPresentation.ts";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const migration = read("supabase/migrations/20260823042737_marketplace_return_label_and_keep_item_refund_r2b3.sql");
 const corrective = read("supabase/migrations/20260823043212_marketplace_return_legacy_shipment_reconciliation_r2b3_f1.sql");
 const service = read("services/marketplaceFulfillmentService.ts");
 const panel = read("components/marketplace/MarketplaceReturnPanel.tsx");
+const buyerOrders = read("app/orders/index.tsx");
 const media = read("supabase/functions/_shared/mediaPurposes.ts");
 const mediaUrl = read("supabase/functions/get-media-url/index.ts");
 const at = "2026-08-23T04:32:12.000Z";
@@ -184,6 +188,36 @@ test("seller and buyer awareness include label_pending and labelSent", () => {
       return_shipping_status: "awaiting_buyer_shipment", label_sent: true },
   }], 20).items[0];
   assert.equal(buyer.returnProgress?.labelSent, true);
+});
+
+test("buyer return progress hides physical-label copy for keep-item refunds", () => {
+  assert.equal(marketplaceBuyerReturnProgressLabel(null), null);
+  assert.equal(marketplaceBuyerReturnProgressLabel({
+    id: id("5"), status: "refunded", shippingStatus: null, labelSent: false,
+  }), null);
+  assert.equal(marketplaceBuyerReturnProgressLabel({
+    id: id("5"), status: "approved", shippingStatus: null, labelSent: false,
+  }), "Esperando label del vendedor");
+});
+
+test("buyer return progress preserves every canonical physical-return state", () => {
+  const progress = (shippingStatus, labelSent = false) => marketplaceBuyerReturnProgressLabel({
+    id: id("5"), status: shippingStatus === "received" ? "refunded" : "approved",
+    shippingStatus, labelSent,
+  });
+  assert.equal(progress("awaiting_buyer_shipment"), "Esperando label del vendedor");
+  assert.equal(progress("awaiting_buyer_shipment", true), "Label listo para imprimir");
+  assert.equal(progress("shipped", true), "Devolución enviada");
+  assert.equal(progress("received", true), "Producto recibido · Reembolso completado");
+});
+
+test("buyer orders reuse one presentation for visible and accessible return progress", () => {
+  assert.match(buyerOrders, /marketplaceBuyerReturnProgressLabel/);
+  assert.match(buyerOrders, /const returnProgressLabel = marketplaceBuyerReturnProgressLabel\(item\.returnProgress\)/);
+  assert.match(buyerOrders, /accessibilityHint=\{returnProgressLabel \?\? undefined\}/);
+  assert.match(buyerOrders, /\{returnProgressLabel \? <Text[\s\S]*\{returnProgressLabel\}/);
+  assert.doesNotMatch(buyerOrders, /const buyerReturnProgressLabel|Esperando label del vendedor/);
+  assert.doesNotMatch(buyerOrders, /ledger_|financial_transactions|supabase\./i);
 });
 
 test("active client flow has no manual buyer carrier authority", () => {
