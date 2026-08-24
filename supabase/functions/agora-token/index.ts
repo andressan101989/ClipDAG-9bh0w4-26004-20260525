@@ -14,19 +14,27 @@
  *
  * Body:    { callId: string } | { groupRoomId: string }
  *        | { liveSessionId: string, requestedRole: 'host' | 'viewer' | 'cohost' }
+ *        | { liveBattleId: string }
  *        | { channelName: string, uid?: unknown, role?: unknown } (legacy call/group)
- * Returns: { token, appId, channel, uid }
+ * Returns: existing contracts use { token, appId, channel, uid }; Battle
+ *          relay uses { appId, battleRelay: { battleId, source, destination, expiresIn } }.
  */
 
+// deno-lint-ignore no-import-prefix -- deployment keeps these runtime versions pinned.
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+// deno-lint-ignore no-import-prefix -- deployment keeps these runtime versions pinned.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
+import {
+  authorizeBattleRelay,
+  BattleRelayAuthorizationError,
+  type BattleRelaySession,
+} from './battleRelayAuthorization.ts';
 
 const AGORA_APP_ID          = Deno.env.get('AGORA_APP_ID')          ?? '';
 const AGORA_APP_CERTIFICATE = Deno.env.get('AGORA_APP_CERTIFICATE') ?? '';
 const SUPABASE_URL          = Deno.env.get('SUPABASE_URL')          ?? '';
-const SUPABASE_ANON_KEY     =
-  Deno.env.get('SUPABASE_ANON_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const SUPABASE_ANON_KEY     = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
 // Privilege IDs (AccessToken v1 spec)
@@ -65,12 +73,20 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function isUuid(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
 type AgoraTokenRequest = {
   callId?: unknown;
   groupRoomId?: unknown;
   liveSessionId?: unknown;
+  liveBattleId?: unknown;
   requestedRole?: unknown;
   channelName?: unknown;
+  sourceChannel?: unknown;
+  destinationChannel?: unknown;
   uid?: unknown;
   role?: unknown;
 };
@@ -83,6 +99,7 @@ type RequestContract =
       liveSessionId: string;
       requestedRole: 'host' | 'viewer' | 'cohost';
     }
+  | { kind: 'battle_relay'; liveBattleId: string }
   | { kind: 'legacy_call'; channelName: string };
 
 type AuthorizedCall = {
@@ -97,10 +114,12 @@ function parseRequestContract(body: AgoraTokenRequest): RequestContract | null {
   const hasCallId = Object.prototype.hasOwnProperty.call(body, 'callId');
   const hasGroupRoomId = Object.prototype.hasOwnProperty.call(body, 'groupRoomId');
   const hasLiveSessionId = Object.prototype.hasOwnProperty.call(body, 'liveSessionId');
+  const hasLiveBattleId = Object.prototype.hasOwnProperty.call(body, 'liveBattleId');
   const hasChannelName = Object.prototype.hasOwnProperty.call(body, 'channelName');
   const suppliedResourceCount = Number(hasCallId)
     + Number(hasGroupRoomId)
     + Number(hasLiveSessionId)
+    + Number(hasLiveBattleId)
     + Number(hasChannelName);
 
   if (suppliedResourceCount !== 1) return null;
@@ -119,6 +138,10 @@ function parseRequestContract(body: AgoraTokenRequest): RequestContract | null {
       liveSessionId: body.liveSessionId.trim(),
       requestedRole: body.requestedRole,
     };
+  }
+  if (hasLiveBattleId && isUuid(body.liveBattleId)
+    && Object.keys(body).every(key => key === 'liveBattleId')) {
+    return { kind: 'battle_relay', liveBattleId: body.liveBattleId.trim() };
   }
   if (hasChannelName && isNonEmptyString(body.channelName)) {
     return { kind: 'legacy_call', channelName: body.channelName.trim() };
@@ -175,10 +198,14 @@ function crc32(data: Uint8Array): number {
 
 // ── HMAC-SHA256 ───────────────────────────────────────────────────────────────
 async function hmacSha256(keyBytes: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+  // Deno 2 models BufferSource with an ArrayBuffer backing store. Copying the
+  // two short buffers preserves the token bytes and avoids ArrayBufferLike.
+  const keyData = Uint8Array.from(keyBytes).buffer;
+  const signedData = Uint8Array.from(data).buffer;
   const key = await crypto.subtle.importKey(
-    'raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+    'raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   );
-  return new Uint8Array(await crypto.subtle.sign('HMAC', key, data));
+  return new Uint8Array(await crypto.subtle.sign('HMAC', key, signedData));
 }
 
 // ── AccessToken v1 builder ────────────────────────────────────────────────────
@@ -258,14 +285,16 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
-  if (!AGORA_APP_ID || !AGORA_APP_CERTIFICATE || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  if (!AGORA_APP_ID || !AGORA_APP_CERTIFICATE || !SUPABASE_URL
+    || !SUPABASE_ANON_KEY || !SUPABASE_SERVICE_ROLE_KEY) {
     return new Response(
       JSON.stringify({ error: 'Agora not configured — AGORA_APP_ID or AGORA_APP_CERTIFICATE missing' }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 },
     );
   }
 
-  const user = await getUserFromToken(req.headers.get('Authorization'));
+  const authHeader = req.headers.get('Authorization');
+  const user = await getUserFromToken(authHeader);
   if (!user) {
     return new Response(
       JSON.stringify({ error: 'unauthorized' }),
@@ -305,6 +334,96 @@ serve(async (req) => {
     const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
+
+    if (contract.kind === 'battle_relay') {
+      const userScoped = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        global: { headers: { Authorization: authHeader ?? '' } },
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data: reconciledBattle, error: battleError } = await userScoped.rpc(
+        'get_live_battle_state',
+        { p_battle_id: contract.liveBattleId },
+      );
+      if (battleError) {
+        const hidden = battleError.message === 'live_battle_not_found'
+          || battleError.message === 'live_battle_forbidden';
+        return jsonError(hidden ? 'battle relay not found' : 'battle relay not authorized', hidden ? 404 : 409);
+      }
+
+      const battle = Array.isArray(reconciledBattle) ? reconciledBattle[0] : reconciledBattle;
+      const battleRecord = battle && typeof battle === 'object' && !Array.isArray(battle)
+        ? battle as Record<string, unknown>
+        : {};
+      const sessionIds = [battleRecord.challenger_session_id, battleRecord.opponent_session_id]
+        .filter((value): value is string => typeof value === 'string');
+      if (sessionIds.length !== 2) return jsonError('battle relay not found', 404);
+
+      const { data: sessions, error: sessionsError } = await admin
+        .from('live_sessions')
+        .select('id, host_id, status, ended_at')
+        .in('id', sessionIds)
+        .returns<BattleRelaySession[]>();
+      if (sessionsError) throw new Error('battle relay session lookup failed');
+
+      let authorization;
+      try {
+        authorization = authorizeBattleRelay(user.id, battle, sessions ?? []);
+      } catch (error) {
+        if (error instanceof BattleRelayAuthorizationError) {
+          const message = error.status === 404 ? 'battle relay not found' : 'battle relay not authorized';
+          return jsonError(message, error.status);
+        }
+        throw error;
+      }
+
+      const numericUid = userIdToAgoraUid(user.id);
+      const [sourceToken, destinationToken] = await Promise.all([
+        buildToken({
+          appId: AGORA_APP_ID,
+          appCert: AGORA_APP_CERTIFICATE,
+          channelName: authorization.sourceSessionId,
+          uid: numericUid,
+          isPublisher: true,
+          expireSec: TOKEN_EXPIRE_SEC,
+        }),
+        buildToken({
+          appId: AGORA_APP_ID,
+          appCert: AGORA_APP_CERTIFICATE,
+          channelName: authorization.destinationSessionId,
+          uid: numericUid,
+          isPublisher: true,
+          expireSec: TOKEN_EXPIRE_SEC,
+        }),
+      ]);
+
+      console.info('agora-token authorized', {
+        contract: 'battle_relay',
+        participant: authorization.participant,
+      });
+      return new Response(JSON.stringify({
+        appId: AGORA_APP_ID,
+        battleRelay: {
+          battleId: authorization.battleId,
+          source: {
+            liveSessionId: authorization.sourceSessionId,
+            channel: authorization.sourceSessionId,
+            uid: numericUid,
+            token: sourceToken,
+          },
+          destination: {
+            liveSessionId: authorization.destinationSessionId,
+            channel: authorization.destinationSessionId,
+            uid: numericUid,
+            token: destinationToken,
+          },
+          expiresIn: TOKEN_EXPIRE_SEC,
+        },
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    }
+
     let authorizedChannel: string | null = null;
     let isPublisher = true;
     let observedContract: RequestContract['kind'] | 'legacy_group' = contract.kind;
