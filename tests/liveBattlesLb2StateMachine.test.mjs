@@ -5,6 +5,7 @@ import test from 'node:test';
 
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const migrationName = '20260824025639_live_battles_lb2_state_machine.sql';
+const correctionName = '20260824034049_live_battles_lb2_f1_session_liveness.sql';
 const migration = await read(`supabase/migrations/${migrationName}`);
 const service = await read('services/liveBattleService.ts');
 const harness = await read('scripts/prove-live-lb2-concurrency.mjs');
@@ -12,13 +13,15 @@ const harness = await read('scripts/prove-live-lb2-concurrency.mjs');
 test('LB2 adds exactly one forward migration without changing deployed LB1 migrations', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
     .filter(name => name > '20260824014644_live_lb1_fix_agora_uid_lint.sql');
-  assert.deepEqual(names, [migrationName]);
+  assert.deepEqual(names, [migrationName, correctionName]);
   assert.equal(createHash('sha256').update(await read(
     'supabase/migrations/20260823223420_live_lb1_canonical_authority.sql',
   )).digest('hex'), '3bf38a499b3e57f159ec3e937ea67c95ac09c7b8f99a36113ece827b0b7c8d1b');
   assert.equal(createHash('sha256').update(await read(
     'supabase/migrations/20260824014644_live_lb1_fix_agora_uid_lint.sql',
   )).digest('hex'), 'f959c6d026793fea8e3a1f671c3b89e4ad677e809de6965e9d64c99ee9cec6ea');
+  assert.equal(createHash('sha256').update(migration).digest('hex'),
+    '81740478f548a0866725b08c5f8853cb2f6cc3ce497bc5d2ca64bd5678898e56');
 });
 
 test('schema is normalized, timestamp constrained, and contains no Battle scoring or finance', () => {

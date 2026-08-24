@@ -14,6 +14,10 @@ const migration = await readFile(new URL(
   '../supabase/migrations/20260824025639_live_battles_lb2_state_machine.sql',
   import.meta.url,
 ), 'utf8');
+const correction = await readFile(new URL(
+  '../supabase/migrations/20260824034049_live_battles_lb2_f1_session_liveness.sql',
+  import.meta.url,
+), 'utf8');
 const admin = new Client({ connectionString, ssl: false });
 const peers = [];
 const evidence = {
@@ -51,6 +55,26 @@ create table public.live_sessions(
   ended_at timestamptz
 );
 create unique index live_sessions_one_live_per_host_uidx on public.live_sessions(host_id) where status='live';
+create or replace function public.end_live_session(p_session_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path=''
+as $$
+declare
+  v_actor uuid := auth.uid();
+  v_session public.live_sessions%rowtype;
+begin
+  if v_actor is null then raise exception using errcode='42501',message='live_auth_required'; end if;
+  select * into v_session from public.live_sessions where id=p_session_id for update;
+  if not found then raise exception using errcode='P0002',message='live_session_not_found'; end if;
+  if v_session.host_id <> v_actor then raise exception using errcode='42501',message='live_host_required'; end if;
+  if v_session.status='ended' and v_session.ended_at is not null then return; end if;
+  update public.live_sessions set status='ended',ended_at=clock_timestamp() where id=p_session_id;
+end;
+$$;
+revoke all on function public.end_live_session(uuid) from public,anon,authenticated,service_role;
+grant execute on function public.end_live_session(uuid) to authenticated;
 create publication supabase_realtime;
 `;
 
@@ -101,13 +125,18 @@ async function denied(promise) {
 }
 
 async function host(label, status = 'live') {
-  const userId = randomUUID();
+  const userId = await user(label);
   const sessionId = randomUUID();
-  await admin.query('insert into auth.users(id,email) values($1,$2)', [userId, `${label}-${userId}@proof.local`]);
   await admin.query(`insert into public.live_sessions(id,host_id,title,status,viewer_count,ended_at)
     values($1,$2,$3,$4,0,case when $4='ended' then clock_timestamp() else null end)`,
   [sessionId, userId, label, status]);
   return { userId, sessionId };
+}
+
+async function user(label) {
+  const userId = randomUUID();
+  await admin.query('insert into auth.users(id,email) values($1,$2)', [userId, `${label}-${userId}@proof.local`]);
+  return userId;
 }
 
 async function pair(label) {
@@ -134,6 +163,18 @@ async function state(battleId) {
 
 async function eventCount(battleId) {
   return Number((await admin.query('select count(*) n from public.live_battle_events where battle_id=$1', [battleId])).rows[0].n);
+}
+
+async function cancellationEvent(battleId) {
+  return (await admin.query(`select actor_user_id,from_status,to_status,reason,version
+    from public.live_battle_events
+    where battle_id=$1 and to_status='cancelled'
+    order by version`, [battleId])).rows;
+}
+
+async function endSession(client, actorId, sessionId) {
+  await claim(client, actorId);
+  await client.query('select public.end_live_session($1)', [sessionId]);
 }
 
 async function acceptedBattle(client, label) {
@@ -176,6 +217,7 @@ try {
   await admin.connect();
   await admin.query(bootstrap);
   await admin.query(migration);
+  await admin.query(correction);
   const first = await peer('connection-a');
   const second = await peer('connection-b');
   assert.notEqual(evidence.connections[0].pid, evidence.connections[1].pid);
@@ -268,6 +310,79 @@ try {
     ],
   ));
 
+  const challengerEndedAtPair = await pair('negative-challenger-ended-at');
+  await admin.query(`update public.live_sessions set ended_at=clock_timestamp() where id=$1`,
+    [challengerEndedAtPair.challenger.sessionId]);
+  await claim(second, challengerEndedAtPair.challenger.userId);
+  evidence.negative.challengerEndedAtInvite = await denied(second.query(
+    'select public.create_live_battle_invite($1,$2,$3)', [
+      challengerEndedAtPair.opponent.userId,
+      challengerEndedAtPair.challenger.sessionId,
+      challengerEndedAtPair.opponent.sessionId,
+    ],
+  ));
+  assert.equal(evidence.negative.challengerEndedAtInvite.message, 'live_battle_session_not_live');
+
+  const opponentEndedAtPair = await pair('negative-opponent-ended-at');
+  await admin.query(`update public.live_sessions set ended_at=clock_timestamp() where id=$1`,
+    [opponentEndedAtPair.opponent.sessionId]);
+  await claim(second, opponentEndedAtPair.challenger.userId);
+  evidence.negative.opponentEndedAtInvite = await denied(second.query(
+    'select public.create_live_battle_invite($1,$2,$3)', [
+      opponentEndedAtPair.opponent.userId,
+      opponentEndedAtPair.challenger.sessionId,
+      opponentEndedAtPair.opponent.sessionId,
+    ],
+  ));
+  assert.equal(evidence.negative.opponentEndedAtInvite.message, 'live_battle_session_not_live');
+
+  const acceptEndedChallenger = await pair('negative-accept-ended-challenger');
+  const acceptEndedChallengerInvite = await createInvite(first, acceptEndedChallenger);
+  await admin.query(`update public.live_sessions set status='ended',ended_at=clock_timestamp() where id=$1`,
+    [acceptEndedChallenger.challenger.sessionId]);
+  await claim(second, acceptEndedChallenger.opponent.userId);
+  evidence.negative.acceptEndedChallenger = await denied(second.query(
+    'select public.respond_live_battle_invite($1,true)', [acceptEndedChallengerInvite.id],
+  ));
+  assert.equal(evidence.negative.acceptEndedChallenger.message, 'live_battle_session_not_live');
+
+  const acceptEndedOpponent = await pair('negative-accept-ended-opponent');
+  const acceptEndedOpponentInvite = await createInvite(first, acceptEndedOpponent);
+  await admin.query(`update public.live_sessions set status='ended',ended_at=clock_timestamp() where id=$1`,
+    [acceptEndedOpponent.opponent.sessionId]);
+  await claim(second, acceptEndedOpponent.opponent.userId);
+  evidence.negative.acceptEndedOpponent = await denied(second.query(
+    'select public.respond_live_battle_invite($1,true)', [acceptEndedOpponentInvite.id],
+  ));
+  assert.equal(evidence.negative.acceptEndedOpponent.message, 'live_battle_session_not_live');
+
+  const startEnded = await acceptedBattle(first, 'negative-start-ended');
+  await admin.query(`update public.live_sessions set status='ended',ended_at=clock_timestamp() where id=$1`,
+    [startEnded.battlePair.opponent.sessionId]);
+  await claim(second, startEnded.battlePair.challenger.userId);
+  evidence.negative.startEnded = await denied(second.query(
+    'select public.start_live_battle($1)', [startEnded.battleId],
+  ));
+  assert.equal(evidence.negative.startEnded.message, 'live_battle_session_not_live');
+
+  const startHostChanged = await acceptedBattle(first, 'negative-start-host-changed');
+  const replacementHost = await user('negative-replacement-host');
+  await admin.query(`update public.live_sessions set host_id=$1 where id=$2`,
+    [replacementHost, startHostChanged.battlePair.opponent.sessionId]);
+  await claim(second, startHostChanged.battlePair.challenger.userId);
+  evidence.negative.startHostChanged = await denied(second.query(
+    'select public.start_live_battle($1)', [startHostChanged.battleId],
+  ));
+  assert.equal(evidence.negative.startHostChanged.message, 'live_battle_host_authority_changed');
+
+  const privateTransitionPair = await pair('negative-private-transition');
+  const privateTransitionBattle = await countdownBattle(first, 'negative-private-transition-battle');
+  await claim(second, privateTransitionPair.challenger.userId);
+  evidence.negative.serverCancellationDirect = await denied(second.query(
+    `select private.live_battle_transition($1,'countdown','cancelled',null,
+      'session_not_live_before_start',clock_timestamp())`, [privateTransitionBattle.battleId],
+  ));
+
   const rejectPair = await pair('positive-reject');
   const rejectedInvite = await createInvite(first, rejectPair);
   const rejectedState = await respond(first, rejectPair.opponent.userId, rejectedInvite.id, false);
@@ -358,11 +473,139 @@ try {
   assert.equal(await eventCount(startCancel.battleId), Number(final.version));
   evidence.concurrency.startVsCancel = { results: results.map(x => x.status), status: final.status, version: Number(final.version) };
 
+  const endThenReconcile = await countdownBattle(first, 'concurrent-end-then-reconcile');
+  await makeCountdownElapsed(endThenReconcile.battleId);
+  await endSession(first, endThenReconcile.battlePair.challenger.userId,
+    endThenReconcile.battlePair.challenger.sessionId);
+  await claim(second, endThenReconcile.battlePair.opponent.userId);
+  const endThenResult = (await second.query(
+    'select public.get_live_battle_state($1) value', [endThenReconcile.battleId],
+  )).rows[0].value;
+  assert.equal(endThenResult.status, 'cancelled');
+  assert.equal(endThenResult.version, 4);
+  assert.equal(endThenResult.last_transition_reason, 'session_not_live_before_start');
+  assert.equal(endThenResult.last_transition_actor_id, null);
+  let cancellations = await cancellationEvent(endThenReconcile.battleId);
+  const canonicalServerCancellationCount = Number((await admin.query(`select count(*) n
+    from public.live_battle_events
+    where battle_id=$1 and actor_user_id is null
+      and from_status='countdown' and to_status='cancelled'
+      and reason='session_not_live_before_start'`, [endThenReconcile.battleId])).rows[0].n);
+  assert.equal(canonicalServerCancellationCount, 1);
+  assert.deepEqual(cancellations.map(row => ({
+    actor: row.actor_user_id,
+    from: row.from_status,
+    to: row.to_status,
+    reason: row.reason,
+    version: Number(row.version),
+  })), [{ actor: null, from: 'countdown', to: 'cancelled', reason: 'session_not_live_before_start', version: 4 }]);
+  evidence.concurrency.endThenReconcile = {
+    case: 'end_then_reconcile',
+    endConnection: evidence.connections[0].pid,
+    reconcileConnection: evidence.connections[1].pid,
+    status: endThenResult.status,
+    version: endThenResult.version,
+    reason: endThenResult.last_transition_reason,
+    actor: endThenResult.last_transition_actor_id,
+    cancellationEvents: canonicalServerCancellationCount,
+  };
+
+  const bothEnd = await countdownBattle(first, 'concurrent-both-end');
+  await makeCountdownElapsed(bothEnd.battleId);
+  await Promise.all([
+    claim(first, bothEnd.battlePair.challenger.userId),
+    claim(second, bothEnd.battlePair.opponent.userId),
+  ]);
+  results = await race('both_sessions_end_during_countdown',
+    () => first.query('select public.end_live_session($1)', [bothEnd.battlePair.challenger.sessionId]),
+    () => second.query('select public.end_live_session($1)', [bothEnd.battlePair.opponent.sessionId]));
+  assert.equal(fulfilled(results).length, 2);
+  await claim(first, bothEnd.battlePair.challenger.userId);
+  const bothEndResult = (await first.query(
+    'select public.get_live_battle_state($1) value', [bothEnd.battleId],
+  )).rows[0].value;
+  assert.equal(bothEndResult.status, 'cancelled');
+  assert.equal(bothEndResult.version, 4);
+  cancellations = await cancellationEvent(bothEnd.battleId);
+  assert.equal(cancellations.length, 1);
+  assert.equal(cancellations[0].actor_user_id, null);
+  assert.equal(cancellations[0].reason, 'session_not_live_before_start');
+  evidence.concurrency.bothSessionsEnd = {
+    results: results.map(x => x.status), status: bothEndResult.status,
+    version: bothEndResult.version, cancellationEvents: cancellations.length,
+  };
+
+  const doubleAfterEnd = await countdownBattle(first, 'concurrent-double-after-end');
+  await makeCountdownElapsed(doubleAfterEnd.battleId);
+  await endSession(first, doubleAfterEnd.battlePair.challenger.userId,
+    doubleAfterEnd.battlePair.challenger.sessionId);
+  await Promise.all([
+    claim(first, doubleAfterEnd.battlePair.challenger.userId),
+    claim(second, doubleAfterEnd.battlePair.opponent.userId),
+  ]);
+  results = await race('double_reconcile_after_session_end',
+    () => first.query('select public.get_live_battle_state($1) value', [doubleAfterEnd.battleId]),
+    () => second.query('select public.get_live_battle_state($1) value', [doubleAfterEnd.battleId]));
+  assert.equal(fulfilled(results).length, 2);
+  final = await state(doubleAfterEnd.battleId);
+  assert.equal(final.status, 'cancelled');
+  assert.equal(final.version, '4');
+  cancellations = await cancellationEvent(doubleAfterEnd.battleId);
+  assert.equal(cancellations.length, 1);
+  evidence.concurrency.doubleReconcileAfterEnd = {
+    results: results.map(x => x.status), status: final.status,
+    version: Number(final.version), cancellationEvents: cancellations.length,
+  };
+
+  const reconcileCancel = await countdownBattle(first, 'concurrent-reconcile-cancel');
+  await makeCountdownElapsed(reconcileCancel.battleId);
+  await endSession(first, reconcileCancel.battlePair.opponent.userId,
+    reconcileCancel.battlePair.opponent.sessionId);
+  await Promise.all([
+    claim(first, reconcileCancel.battlePair.challenger.userId),
+    claim(second, reconcileCancel.battlePair.opponent.userId),
+  ]);
+  results = await race('reconcile_vs_participant_cancel',
+    () => first.query('select public.get_live_battle_state($1) value', [reconcileCancel.battleId]),
+    () => second.query('select public.cancel_live_battle($1) value', [reconcileCancel.battleId]));
+  assert.equal(fulfilled(results).length, 2);
+  final = await state(reconcileCancel.battleId);
+  assert.equal(final.status, 'cancelled');
+  assert.equal(final.version, '4');
+  cancellations = await cancellationEvent(reconcileCancel.battleId);
+  assert.equal(cancellations.length, 1);
+  assert.equal(cancellations[0].reason, 'session_not_live_before_start');
+  assert.equal(cancellations[0].actor_user_id, null);
+  evidence.concurrency.reconcileVsParticipantCancel = {
+    results: results.map(x => x.status), status: final.status,
+    version: Number(final.version), reason: cancellations[0].reason,
+    actor: cancellations[0].actor_user_id, cancellationEvents: cancellations.length,
+  };
+
+  const changedHostCountdown = await countdownBattle(first, 'negative-countdown-host-changed');
+  await makeCountdownElapsed(changedHostCountdown.battleId);
+  const countdownReplacementHost = await user('negative-countdown-replacement-host');
+  await admin.query('update public.live_sessions set host_id=$1 where id=$2', [
+    countdownReplacementHost, changedHostCountdown.battlePair.opponent.sessionId,
+  ]);
+  await claim(first, changedHostCountdown.battlePair.challenger.userId);
+  const changedHostCountdownResult = (await first.query(
+    'select public.get_live_battle_state($1) value', [changedHostCountdown.battleId],
+  )).rows[0].value;
+  assert.equal(changedHostCountdownResult.status, 'cancelled');
+  assert.equal(changedHostCountdownResult.last_transition_reason, 'session_not_live_before_start');
+  assert.equal(changedHostCountdownResult.last_transition_actor_id, null);
+  evidence.negative.countdownHostChanged = {
+    denied: true,
+    status: changedHostCountdownResult.status,
+    reason: changedHostCountdownResult.last_transition_reason,
+  };
+
   const countdown = await countdownBattle(first, 'concurrent-countdown');
   await makeCountdownElapsed(countdown.battleId);
   await claim(first, countdown.battlePair.challenger.userId);
   await claim(second, countdown.battlePair.opponent.userId);
-  results = await race('countdown_reconciliation',
+  results = await race('valid_countdown_reconciliation',
     () => first.query('select public.get_live_battle_state($1) value', [countdown.battleId]),
     () => second.query('select public.get_live_battle_state($1) value', [countdown.battleId]));
   assert.equal(fulfilled(results).length, 2);
