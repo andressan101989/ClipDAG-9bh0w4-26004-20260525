@@ -156,6 +156,44 @@ function jsonError(error: string, status: number): Response {
   });
 }
 
+type BattleStateRpcError = { code?: unknown; message?: unknown };
+
+const BATTLE_RPC_HIDDEN_ERRORS = new Map<string, readonly string[]>([
+  ['live_battle_not_found', ['P0002']],
+  ['live_battle_forbidden', ['42501']],
+]);
+const BATTLE_RPC_CONFLICT_ERRORS = new Map<string, readonly string[]>([
+  ['live_battle_auth_required', ['42501']],
+  ['live_battle_users_invalid', ['22023']],
+  ['live_battle_user_not_found', ['P0002']],
+  ['live_battle_sessions_invalid', ['22023']],
+  ['live_battle_session_not_found', ['P0002']],
+  ['live_battle_state_changed', ['55000']],
+  ['live_battle_session_not_live', ['55000']],
+  ['live_battle_host_authority_changed', ['42501']],
+  ['live_battle_terminal', ['55000']],
+  ['live_battle_transition_invalid', ['55000']],
+  ['live_battle_transition_actor_invalid', ['42501']],
+]);
+
+function matchesCanonicalRpcError(
+  error: BattleStateRpcError,
+  expected: Map<string, readonly string[]>,
+): boolean {
+  if (typeof error.message !== 'string') return false;
+  const acceptedCodes = expected.get(error.message.trim());
+  if (!acceptedCodes) return false;
+  return typeof error.code !== 'string' || acceptedCodes.includes(error.code);
+}
+
+function classifyBattleStateRpcError(error: unknown): 404 | 409 | 500 {
+  if (!error || typeof error !== 'object' || Array.isArray(error)) return 500;
+  const candidate = error as BattleStateRpcError;
+  if (matchesCanonicalRpcError(candidate, BATTLE_RPC_HIDDEN_ERRORS)) return 404;
+  if (matchesCanonicalRpcError(candidate, BATTLE_RPC_CONFLICT_ERRORS)) return 409;
+  return 500;
+}
+
 // ── Binary helpers ────────────────────────────────────────────────────────────
 function u16LE(v: number): Uint8Array {
   return new Uint8Array([v & 0xff, (v >> 8) & 0xff]);
@@ -222,9 +260,11 @@ async function buildToken(params: {
   uid:         number;
   isPublisher: boolean;
   expireSec:   number;
+  publishData?: boolean;
+  issuedAtSec?: number;
 }): Promise<string> {
   const enc = new TextEncoder();
-  const now = Math.floor(Date.now() / 1000);
+  const now = params.issuedAtSec ?? Math.floor(Date.now() / 1000);
   const ts   = now + params.expireSec;                   // privilege expire timestamp
   const salt = (Math.random() * 0xFFFF_FFFF) >>> 0;     // random uint32
 
@@ -236,8 +276,8 @@ async function buildToken(params: {
     privileges.push(
       [PRIV_PUB_AUDIO, ts],
       [PRIV_PUB_VIDEO, ts],
-      [PRIV_PUB_DATA,  ts],
     );
+    if (params.publishData ?? true) privileges.push([PRIV_PUB_DATA, ts]);
   }
 
   // ── Pack PrivilegeMessage: salt(4LE) + ts(4LE) + count(2LE) + [id(2LE)+expire(4LE)]... ─
@@ -345,18 +385,26 @@ serve(async (req) => {
         { p_battle_id: contract.liveBattleId },
       );
       if (battleError) {
-        const hidden = battleError.message === 'live_battle_not_found'
-          || battleError.message === 'live_battle_forbidden';
-        return jsonError(hidden ? 'battle relay not found' : 'battle relay not authorized', hidden ? 404 : 409);
+        const status = classifyBattleStateRpcError(battleError);
+        if (status === 500) {
+          console.error('agora-token battle state RPC failed', { code: 'unexpected_rpc_error' });
+          return jsonError('battle relay unavailable', 500);
+        }
+        return jsonError(status === 404 ? 'battle relay not found' : 'battle relay not authorized', status);
       }
 
       const battle = Array.isArray(reconciledBattle) ? reconciledBattle[0] : reconciledBattle;
-      const battleRecord = battle && typeof battle === 'object' && !Array.isArray(battle)
-        ? battle as Record<string, unknown>
-        : {};
+      if (!battle || typeof battle !== 'object' || Array.isArray(battle)) {
+        console.error('agora-token battle state RPC failed', { code: 'invalid_rpc_response' });
+        return jsonError('battle relay unavailable', 500);
+      }
+      const battleRecord = battle as Record<string, unknown>;
       const sessionIds = [battleRecord.challenger_session_id, battleRecord.opponent_session_id]
-        .filter((value): value is string => typeof value === 'string');
-      if (sessionIds.length !== 2) return jsonError('battle relay not found', 404);
+        .filter((value): value is string => isUuid(value));
+      if (sessionIds.length !== 2) {
+        console.error('agora-token battle state RPC failed', { code: 'invalid_rpc_response' });
+        return jsonError('battle relay unavailable', 500);
+      }
 
       const { data: sessions, error: sessionsError } = await admin
         .from('live_sessions')
@@ -366,8 +414,9 @@ serve(async (req) => {
       if (sessionsError) throw new Error('battle relay session lookup failed');
 
       let authorization;
+      const requestNow = new Date();
       try {
-        authorization = authorizeBattleRelay(user.id, battle, sessions ?? []);
+        authorization = authorizeBattleRelay(user.id, battle, sessions ?? [], requestNow);
       } catch (error) {
         if (error instanceof BattleRelayAuthorizationError) {
           const message = error.status === 404 ? 'battle relay not found' : 'battle relay not authorized';
@@ -377,6 +426,7 @@ serve(async (req) => {
       }
 
       const numericUid = userIdToAgoraUid(user.id);
+      const issuedAtSec = Math.floor(requestNow.getTime() / 1000);
       const [sourceToken, destinationToken] = await Promise.all([
         buildToken({
           appId: AGORA_APP_ID,
@@ -384,7 +434,9 @@ serve(async (req) => {
           channelName: authorization.sourceSessionId,
           uid: numericUid,
           isPublisher: true,
-          expireSec: TOKEN_EXPIRE_SEC,
+          expireSec: authorization.expiresIn,
+          publishData: false,
+          issuedAtSec,
         }),
         buildToken({
           appId: AGORA_APP_ID,
@@ -392,7 +444,9 @@ serve(async (req) => {
           channelName: authorization.destinationSessionId,
           uid: numericUid,
           isPublisher: true,
-          expireSec: TOKEN_EXPIRE_SEC,
+          expireSec: authorization.expiresIn,
+          publishData: false,
+          issuedAtSec,
         }),
       ]);
 
@@ -416,7 +470,7 @@ serve(async (req) => {
             uid: numericUid,
             token: destinationToken,
           },
-          expiresIn: TOKEN_EXPIRE_SEC,
+          expiresIn: authorization.expiresIn,
         },
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

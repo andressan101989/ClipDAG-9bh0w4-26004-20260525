@@ -88,7 +88,9 @@ export function parseLiveBattleRelayCredentials(
     || source.liveSessionId === destination.liveSessionId
     || source.channel === destination.channel
     || source.uid !== destination.uid
-    || relay.expiresIn !== 3600) {
+    || !Number.isSafeInteger(relay.expiresIn)
+    || Number(relay.expiresIn) <= 0
+    || Number(relay.expiresIn) > 360) {
     throw new LiveBattleRelayError('battle_relay_invalid_response');
   }
   return {
@@ -97,7 +99,7 @@ export function parseLiveBattleRelayCredentials(
       battleId: expectedBattleId,
       source,
       destination,
-      expiresIn: 3600,
+      expiresIn: Number(relay.expiresIn),
     },
   };
 }
