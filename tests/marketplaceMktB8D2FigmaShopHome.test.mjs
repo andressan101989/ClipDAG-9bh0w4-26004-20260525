@@ -155,7 +155,7 @@ test("Figma Shop implementation preserves Build 22 across later authorized migra
     .sort();
   assert.equal(
     migrations.at(-1),
-    "20260823223420_live_lb1_canonical_authority.sql",
+    "20260824014644_live_lb1_fix_agora_uid_lint.sql",
   );
   assert.ok(migrations.includes("20260822221008_marketplace_post_settlement_delivery_ack_r2a_f1.sql"));
   assert.ok(migrations.includes("20260822165852_marketplace_post_settlement_returns_r2a.sql"));
