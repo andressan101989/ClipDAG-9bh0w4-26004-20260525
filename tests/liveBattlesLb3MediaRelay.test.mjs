@@ -254,6 +254,7 @@ function loadEdgeHarness({
   const rpcCalls = [];
   const clients = [];
   const logs = [];
+  let tokenBuildCalls = 0;
   const tableRows = {
     live_sessions: sessions(),
     calls: [],
@@ -293,13 +294,28 @@ function loadEdgeHarness({
       return { ok: valid, json: async () => valid ? { id: actor } : {} };
     },
     Date: fixedDateClass(now),
+    crypto: {
+      subtle: {
+        importKey: (...args) => {
+          tokenBuildCalls += 1;
+          return globalThis.crypto.subtle.importKey(...args);
+        },
+        sign: (...args) => globalThis.crypto.subtle.sign(...args),
+      },
+    },
     console: {
       info: (...args) => logs.push(['info', ...args]),
       error: (...args) => logs.push(['error', ...args]),
     },
   });
   assert.equal(typeof handler, 'function');
-  return { handler, rpcCalls, clients, logs };
+  return {
+    handler,
+    rpcCalls,
+    clients,
+    logs,
+    getTokenBuildCalls: () => tokenBuildCalls,
+  };
 }
 
 async function invokeEdge(harness, body, authorization = 'Bearer valid-jwt') {
@@ -357,10 +373,15 @@ function tokenChannelCrc(token) {
 test('Edge handler denies missing/invalid JWT, hidden Battles, third parties, and mixed authority', async () => {
   assert.equal((await invokeEdge(loadEdgeHarness(), { liveBattleId: BATTLE_A }, null)).status, 401);
   assert.equal((await invokeEdge(loadEdgeHarness(), { liveBattleId: BATTLE_A }, 'Bearer invalid')).status, 401);
-  for (const message of ['live_battle_not_found', 'live_battle_forbidden']) {
-    const result = await invokeEdge(loadEdgeHarness({ rpcError: { message } }), { liveBattleId: BATTLE_A });
+  for (const [message, code] of [
+    ['live_battle_not_found', 'P0002'],
+    ['live_battle_forbidden', '42501'],
+  ]) {
+    const harness = loadEdgeHarness({ rpcError: { message, code } });
+    const result = await invokeEdge(harness, { liveBattleId: BATTLE_A });
     assert.equal(result.status, 404);
     assert.deepEqual(result.body, { error: 'battle relay not found' });
+    assert.equal(harness.getTokenBuildCalls(), 0);
   }
   for (const extra of [
     { uid: 7 }, { channelName: SESSION_A }, { sourceChannel: SESSION_A },
@@ -376,34 +397,68 @@ test('Edge handler denies missing/invalid JWT, hidden Battles, third parties, an
 
 test('unexpected Battle RPC failures are sanitized 500 responses and never mint tokens', async () => {
   const sensitive = 'SQL failure for 20000000-0000-4000-8000-000000000001 with jwt-secret';
-  for (const rpcError of [
-    { code: 'XX000', message: sensitive, details: 'database-secret' },
+  const unexpectedErrors = [
+    { message: 'live_battle_not_found' },
+    { code: null, message: 'live_battle_not_found' },
+    { code: 42501, message: 'live_battle_forbidden' },
+    { code: '', message: 'live_battle_forbidden' },
+    { code: 'XX000', message: 'live_battle_state_changed' },
+    { code: 'P0002' },
+    { code: '55000', message: 'unknown_battle_error' },
+    { code: 'P0002', message: ' live_battle_not_found' },
+    { code: 'P0002', message: 'live_battle_not_found ' },
+    { code: ' P0002', message: 'live_battle_not_found' },
+    { code: 'P0002 ', message: 'live_battle_not_found' },
+    { code: '08006', message: 'network failure' },
+    { code: '57014', message: 'query timeout' },
     { code: 'PGRST003', message: 'timeout while acquiring connection' },
-    null,
-  ]) {
-    const harness = loadEdgeHarness({
-      rpcData: rpcError === null ? 'corrupt-response' : battle(),
-      rpcError,
-    });
+    { code: 'XX000', message: sensitive, details: 'database-secret' },
+    {},
+    'corrupt-error',
+  ];
+  for (const rpcError of unexpectedErrors) {
+    const harness = loadEdgeHarness({ rpcError });
     const result = await invokeEdge(harness, { liveBattleId: BATTLE_A });
     assert.equal(result.status, 500);
     assert.deepEqual(result.body, { error: 'battle relay unavailable' });
+    assert.equal(harness.getTokenBuildCalls(), 0);
     const observable = JSON.stringify({ body: result.body, logs: harness.logs });
     assert.doesNotMatch(observable, /SQL failure|database-secret|jwt-secret|20000000-|006[0-9a-f]{32}|sourceToken|destinationToken/i);
-    assert.match(observable, /unexpected_rpc_error|invalid_rpc_response/);
+    assert.match(observable, /unexpected_rpc_error/);
   }
 
-  const conflict = await invokeEdge(loadEdgeHarness({
-    rpcError: { code: '55000', message: 'live_battle_state_changed' },
-  }), { liveBattleId: BATTLE_A });
-  assert.equal(conflict.status, 409);
-  assert.deepEqual(conflict.body, { error: 'battle relay not authorized' });
+  for (const rpcData of [null, 'corrupt-response', [], 7]) {
+    const harness = loadEdgeHarness({ rpcData, rpcError: null });
+    const result = await invokeEdge(harness, { liveBattleId: BATTLE_A });
+    assert.equal(result.status, 500);
+    assert.deepEqual(result.body, { error: 'battle relay unavailable' });
+    assert.equal(harness.getTokenBuildCalls(), 0);
+    assert.deepEqual(harness.logs.at(-1), [
+      'error',
+      'agora-token battle state RPC failed',
+      { code: 'invalid_rpc_response' },
+    ]);
+  }
 
-  const mismatchedCode = await invokeEdge(loadEdgeHarness({
-    rpcError: { code: 'XX000', message: 'live_battle_state_changed' },
-  }), { liveBattleId: BATTLE_A });
-  assert.equal(mismatchedCode.status, 500);
-  assert.deepEqual(mismatchedCode.body, { error: 'battle relay unavailable' });
+  for (const [message, code] of [
+    ['live_battle_auth_required', '42501'],
+    ['live_battle_users_invalid', '22023'],
+    ['live_battle_user_not_found', 'P0002'],
+    ['live_battle_sessions_invalid', '22023'],
+    ['live_battle_session_not_found', 'P0002'],
+    ['live_battle_state_changed', '55000'],
+    ['live_battle_session_not_live', '55000'],
+    ['live_battle_host_authority_changed', '42501'],
+    ['live_battle_terminal', '55000'],
+    ['live_battle_transition_invalid', '55000'],
+    ['live_battle_transition_actor_invalid', '42501'],
+  ]) {
+    const harness = loadEdgeHarness({ rpcError: { message, code } });
+    const result = await invokeEdge(harness, { liveBattleId: BATTLE_A });
+    assert.equal(result.status, 409, `${message}/${code}`);
+    assert.deepEqual(result.body, { error: 'battle relay not authorized' });
+    assert.equal(harness.getTokenBuildCalls(), 0);
+  }
 });
 
 test('Edge handler authorizes countdown/active with deadline-bound minimal tokens', async () => {
@@ -414,6 +469,7 @@ test('Edge handler authorizes countdown/active with deadline-bound minimal token
     const harness = loadEdgeHarness({ actor, rpcData: battle({ status }) });
     const result = await invokeEdge(harness, { liveBattleId: BATTLE_A });
     assert.equal(result.status, 200);
+    assert.equal(harness.getTokenBuildCalls(), 2);
     assert.equal(harness.rpcCalls.length, 1);
     assert.deepEqual(harness.rpcCalls[0], {
       name: 'get_live_battle_state',

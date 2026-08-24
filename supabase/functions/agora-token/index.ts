@@ -180,10 +180,11 @@ function matchesCanonicalRpcError(
   error: BattleStateRpcError,
   expected: Map<string, readonly string[]>,
 ): boolean {
-  if (typeof error.message !== 'string') return false;
-  const acceptedCodes = expected.get(error.message.trim());
-  if (!acceptedCodes) return false;
-  return typeof error.code !== 'string' || acceptedCodes.includes(error.code);
+  if (typeof error.message !== 'string' || typeof error.code !== 'string') {
+    return false;
+  }
+  const acceptedCodes = expected.get(error.message);
+  return acceptedCodes?.includes(error.code) ?? false;
 }
 
 function classifyBattleStateRpcError(error: unknown): 404 | 409 | 500 {
