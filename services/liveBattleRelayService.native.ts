@@ -223,6 +223,20 @@ export class LiveBattleRelayService {
     return promise;
   }
 
+  /** Stops relay synchronously before the owning LIVE engine leaves/releases. */
+  stopImmediately(): void {
+    if (this.disposed) return;
+    this.generation += 1;
+    this.pendingStart = null;
+    this.pendingStop = null;
+    this.unregisterOwnHandler();
+    if (this.activeBattleId) {
+      try { this.engine.stopChannelMediaRelay(); } catch { /* LIVE teardown must continue */ }
+    }
+    this.activeBattleId = null;
+    this.setState('idle', null);
+  }
+
   dispose(): Promise<void> {
     if (this.disposeFlight) return this.disposeFlight;
     const generation = ++this.generation;

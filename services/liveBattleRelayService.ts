@@ -35,6 +35,10 @@ export class LiveBattleRelayService {
     return Promise.resolve(this.getSnapshot());
   }
 
+  stopImmediately(): void {
+    // Web never starts a relay.
+  }
+
   dispose(): Promise<void> {
     return Promise.resolve();
   }

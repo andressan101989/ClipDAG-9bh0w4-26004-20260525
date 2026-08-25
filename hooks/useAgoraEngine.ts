@@ -34,6 +34,8 @@ export function useAgoraEngine(_params: UseAgoraEngineParams) {
     isFront:     true,
     speakerOn:   false,
     localVideoReady: false,
+    getEngine:   () => null,
+    registerBeforeEngineRelease: (_listener: (engine: unknown) => void) => () => undefined,
     join:        async () => {},
     leave:       async () => {},
     toggleMute:  () => {},

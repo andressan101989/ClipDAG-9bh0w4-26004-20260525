@@ -137,6 +137,7 @@ export function useAgoraEngine({
   liveRequestedRole,
 }: UseAgoraEngineParams) {
   const engineRef   = useRef<any>(null);
+  const beforeReleaseListenersRef = useRef(new Set<(engine: any) => void>());
   const handlersRef = useRef<any>(null);
   const mountedRef  = useRef(true);
   const joinTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -186,6 +187,11 @@ export function useAgoraEngine({
     const ownsCurrentEngine = engineRef.current === engine;
     const handlers = ownedHandlers ?? (ownsCurrentEngine ? handlersRef.current : null);
     try {
+      if (ownsCurrentEngine) {
+        for (const listener of beforeReleaseListenersRef.current) {
+          try { listener(engine); } catch { /* one guard cannot block LIVE teardown */ }
+        }
+      }
       if (handlers) {
         try { engine.unregisterEventHandler(handlers); } catch { /* continue teardown */ }
       }
@@ -671,12 +677,25 @@ export function useAgoraEngine({
     setIsFront(prev => !prev);
   }, []);
 
+  const getEngine = useCallback(() => engineRef.current, []);
+
+  const registerBeforeEngineRelease = useCallback((listener: (engine: any) => void) => {
+    beforeReleaseListenersRef.current.add(listener);
+    let registered = true;
+    return () => {
+      if (!registered) return;
+      registered = false;
+      beforeReleaseListenersRef.current.delete(listener);
+    };
+  }, []);
+
   return {
     engineReady: isAgoraAvailable(),
     joined, joining, error, errorCode,
     remoteUids,
     isMuted, isCameraOff, isFront, speakerOn,
     localVideoReady,
+    getEngine, registerBeforeEngineRelease,
     join, leave,
     toggleMute, toggleCamera, switchCamera, toggleSpeaker, promoteToPublisher, demoteToAudience,
   };

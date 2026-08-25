@@ -58,6 +58,7 @@ type LiveBattleRow = {
 
 const STATUS_SET = new Set<string>(LIVE_BATTLE_STATUSES);
 const NON_TERMINAL_STATUSES: LiveBattleStatus[] = ['pending', 'accepted', 'countdown', 'active'];
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KNOWN_ERROR_CODES = new Set([
   'live_battle_auth_required',
   'live_battle_users_invalid',
@@ -191,6 +192,30 @@ export const completeLiveBattle = (battleId: string): Promise<LiveBattle> =>
 export const getLiveBattleState = (battleId: string): Promise<LiveBattle> =>
   battleRpc('get_live_battle_state', { p_battle_id: battleId });
 
+export function isLiveBattleUuid(value: unknown): value is string {
+  return typeof value === 'string' && UUID_PATTERN.test(value);
+}
+
+/**
+ * RLS restricts this read to Battle participants. The session filter keeps
+ * discovery scoped to the host's current LIVE and the RPC remains the
+ * authority for every state consumed by the runtime.
+ */
+export async function getOpenLiveBattlesForSession(sessionId: string): Promise<LiveBattle[]> {
+  if (!isLiveBattleUuid(sessionId)) {
+    throw new LiveBattleServiceError('live_battle_invalid_session_id');
+  }
+  const { data, error } = await getSupabaseClient()
+    .from('live_battles')
+    .select('*')
+    .in('status', NON_TERMINAL_STATUSES)
+    .or(`challenger_session_id.eq.${sessionId},opponent_session_id.eq.${sessionId}`)
+    .order('updated_at', { ascending: false })
+    .limit(3);
+  if (error) throw normalizeRpcError(error);
+  return (data ?? []).map(parseLiveBattle);
+}
+
 export async function getMyOpenLiveBattle(): Promise<LiveBattle | null> {
   const client = getSupabaseClient();
   const { data: authData, error: authError } = await client.auth.getUser();
@@ -210,6 +235,11 @@ export async function getMyOpenLiveBattle(): Promise<LiveBattle | null> {
 
 export type LiveBattleSubscription = {
   unsubscribe: () => Promise<void>;
+};
+
+export type LiveBattleSessionSignal = {
+  battleId: string;
+  version: number;
 };
 
 let channelSequence = 0;
@@ -247,6 +277,59 @@ export function subscribeToLiveBattle(
   return {
     unsubscribe: () => {
       cleanup ??= client.removeChannel(channel).then(() => undefined);
+      return cleanup;
+    },
+  };
+}
+
+export function subscribeToLiveBattlesForSession(
+  sessionId: string,
+  onSignal: (signal: LiveBattleSessionSignal) => void,
+  onError?: (error: LiveBattleServiceError) => void,
+): LiveBattleSubscription {
+  if (!isLiveBattleUuid(sessionId)) {
+    throw new LiveBattleServiceError('live_battle_invalid_session_id');
+  }
+  const client = getSupabaseClient();
+  const columns = ['challenger_session_id', 'opponent_session_id'] as const;
+  const channels = columns.map(column => {
+    channelSequence += 1;
+    return client
+      .channel(`live-battle-session:${channelSequence}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'live_battles',
+        filter: `${column}=eq.${sessionId}`,
+      }, (payload: { new: unknown; old: unknown }) => {
+        try {
+          const candidate = payload.new && typeof payload.new === 'object'
+            && !Array.isArray(payload.new) && Object.keys(payload.new).length > 0
+            ? payload.new
+            : payload.old;
+          const battle = parseLiveBattle(candidate);
+          if (battle.challengerSessionId !== sessionId && battle.opponentSessionId !== sessionId) {
+            throw new LiveBattleServiceError('live_battle_invalid_response');
+          }
+          onSignal({ battleId: battle.id, version: battle.version });
+        } catch (error) {
+          onError?.(error instanceof LiveBattleServiceError
+            ? error
+            : new LiveBattleServiceError('live_battle_invalid_response'));
+        }
+      })
+      .subscribe(status => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          onError?.(new LiveBattleServiceError('live_battle_realtime_unavailable'));
+        }
+      });
+  });
+
+  let cleanup: Promise<void> | null = null;
+  return {
+    unsubscribe: () => {
+      cleanup ??= Promise.all(channels.map(channel => client.removeChannel(channel)))
+        .then(() => undefined);
       return cleanup;
     },
   };

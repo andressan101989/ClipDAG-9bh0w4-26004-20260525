@@ -41,6 +41,7 @@ import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
 import { LiveSessionHeader } from '@/components/live/LiveSessionHeader';
 import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
+import { useLiveBattleRelayRuntime } from '@/hooks/live/useLiveBattleRelayRuntime';
 import type { LiveGiftEvent } from '@/types/liveGifts';
 import { LiveHostProductManager } from '@/components/live/commerce/LiveHostProductManager';
 import { LiveHostPurchaseFeed } from '@/components/live/commerce/LiveHostPurchaseFeed';
@@ -214,6 +215,8 @@ export default function LiveBroadcasterScreen() {
 
   const [title, setTitle]           = useState('');
   const [live, setLive]             = useState(false);
+  const [sessionIsCanonicalLive, setSessionIsCanonicalLive] = useState(false);
+  const [isForeground, setIsForeground] = useState(AppState.currentState === 'active');
   const [starting, setStarting]     = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [viewerCount, setViewerCount] = useState(0);
@@ -267,6 +270,7 @@ export default function LiveBroadcasterScreen() {
   const {
     engineReady, joined, error,
     remoteUids, isMuted, isCameraOff, localVideoReady, join, leave, toggleMute, toggleCamera, switchCamera,
+    getEngine, registerBeforeEngineRelease,
   } = useAgoraEngine({
     channelName: live ? streamId ?? null : null,
     uid: myUid,
@@ -274,6 +278,18 @@ export default function LiveBroadcasterScreen() {
     profile: 'live-broadcasting',
     liveSessionId: live ? streamId : undefined,
     liveRequestedRole: 'host',
+  });
+
+  const { stop: stopBattleRuntime } = useLiveBattleRelayRuntime({
+    liveSessionId: streamId ?? null,
+    hostUserId: user?.id ?? null,
+    isCanonicalHost: sessionIsCanonicalLive,
+    isSessionLive: live && sessionIsCanonicalLive,
+    engineReady,
+    joined,
+    isForeground,
+    getEngine,
+    registerBeforeEngineRelease,
   });
 
   const chatRef    = useRef<FlatList>(null);
@@ -374,6 +390,7 @@ export default function LiveBroadcasterScreen() {
       await startLiveSession(streamId, title.trim());
       heartbeatFailuresRef.current = 0;
       endedRef.current = false;
+      setSessionIsCanonicalLive(true);
       setLive(true);
     } catch (err: any) {
       if (__DEV__) console.warn('[LiveBroadcast] start live failed', err?.message ?? err);
@@ -408,8 +425,13 @@ export default function LiveBroadcasterScreen() {
     if (!streamId) return;
     try {
       const { data: sData } = await supabase
-        .from('live_sessions').select('viewer_count, status').eq('id', streamId).single();
+        .from('live_sessions').select('viewer_count, status, host_id, ended_at').eq('id', streamId).single();
       if (sData && mountedRef.current) setViewerCount(sData.viewer_count ?? 0);
+      const canonicalLive = sData?.status === 'live'
+        && sData.ended_at === null
+        && sData.host_id === user?.id;
+      if (mountedRef.current) setSessionIsCanonicalLive(canonicalLive);
+      if (!canonicalLive) void stopBattleRuntime();
       if (sData?.status === 'ended') {
         clearLiveTimers();
         if (mountedRef.current) setLive(false);
@@ -436,7 +458,7 @@ export default function LiveBroadcasterScreen() {
         scrollToLatest(true);
       }
     } catch { /* Controlled polling retries on the next interval. */ }
-  }, [streamId, supabase, scrollToLatest, user, clearLiveTimers]);
+  }, [streamId, supabase, scrollToLatest, user, clearLiveTimers, stopBattleRuntime]);
 
   useEffect(() => {
     if (!live) return;
@@ -506,9 +528,12 @@ export default function LiveBroadcasterScreen() {
 
     endedRef.current = true;
     liveRef.current = false;
+    setSessionIsCanonicalLive(false);
     clearLiveTimers();
 
     finalizePromiseRef.current = (async () => {
+      await stopBattleRuntime();
+
       try {
         await leave();
       } catch { /* best effort */ }
@@ -524,7 +549,7 @@ export default function LiveBroadcasterScreen() {
     })();
 
     return finalizePromiseRef.current;
-  }, [streamId, leave, router, clearLiveTimers]);
+  }, [streamId, leave, router, clearLiveTimers, stopBattleRuntime]);
 
   const endBroadcast = useCallback(async () => {
     await finalizeLiveSession('host_ended', true);
@@ -545,6 +570,7 @@ export default function LiveBroadcasterScreen() {
     if (!live || !streamId) return;
 
     const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      setIsForeground(nextState === 'active');
       if (!liveRef.current || endedRef.current) return;
 
       if (nextState === 'active') {
@@ -552,13 +578,15 @@ export default function LiveBroadcasterScreen() {
         return;
       }
 
+      void stopBattleRuntime();
+
       markLiveSessionDisconnected(streamId).catch((err: any) => {
         if (__DEV__) console.warn('[LiveBroadcast] mark disconnected failed', err?.message ?? err);
       });
     });
 
     return () => subscription.remove();
-  }, [live, streamId, sendHeartbeat]);
+  }, [live, streamId, sendHeartbeat, stopBattleRuntime]);
 
   useEffect(() => {
     if (!live) return;
