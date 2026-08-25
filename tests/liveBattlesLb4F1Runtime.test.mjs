@@ -116,6 +116,7 @@ function createHarness(initialBattles, relayOverrides = {}) {
   };
   const controller = new controllerModule.LiveBattleRuntimeController({
     relay,
+    now: () => Date.parse('2026-08-24T12:00:00.000Z'),
     discover: async sessionId => {
       discoverCalls += 1;
       assert.equal(sessionId, SESSION);
@@ -269,6 +270,7 @@ test('a delayed reconciliation after stop cannot revive relay', async () => {
   };
   const controller = new controllerModule.LiveBattleRuntimeController({
     relay,
+    now: () => Date.parse('2026-08-24T12:00:00.000Z'),
     discover: () => new Promise(resolve => { resolveDiscovery = resolve; }),
     reconcile: async value => value,
     subscribe: () => ({ unsubscribe: async () => undefined }),
@@ -298,6 +300,7 @@ test('a delayed relay authorization promise cannot revive a stopped runtime', as
   };
   const controller = new controllerModule.LiveBattleRuntimeController({
     relay,
+    now: () => Date.parse('2026-08-24T12:00:00.000Z'),
     discover: async () => [battle()],
     reconcile: async () => battle(),
     subscribe: () => ({ unsubscribe: async () => undefined }),

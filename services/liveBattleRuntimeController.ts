@@ -30,7 +30,10 @@ export type LiveBattleRuntimeSnapshot = {
   battleId: string | null;
   version: number | null;
   errorCode: string | null;
+  battle: LiveBattle | null;
 };
+
+export type LiveBattleRuntimeListener = (snapshot: LiveBattleRuntimeSnapshot) => void;
 
 export type LiveBattleRuntimeRelay = {
   start: (battleId: string) => Promise<unknown>;
@@ -48,9 +51,13 @@ export type LiveBattleRuntimeDependencies = {
     onError: () => void,
   ) => LiveBattleSubscription;
   relay: LiveBattleRuntimeRelay;
+  now?: () => number;
+  setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
 };
 
 const RELAY_STATUSES = new Set(['countdown', 'active']);
+const TERMINAL_STATUSES = new Set(['completed', 'rejected', 'cancelled', 'expired']);
 
 const EMPTY_CONTEXT: LiveBattleRuntimeContext = {
   liveSessionId: null,
@@ -76,7 +83,7 @@ function battleBelongsToHostSession(
   battle: LiveBattle,
   context: LiveBattleRuntimeContext,
 ): boolean {
-  return battle.endedAt === null && (
+  return (
     (battle.challengerSessionId === context.liveSessionId
       && battle.challengerUserId === context.hostUserId)
     || (battle.opponentSessionId === context.liveSessionId
@@ -94,7 +101,9 @@ export class LiveBattleRuntimeController {
     battleId: null,
     version: null,
     errorCode: null,
+    battle: null,
   };
+  private readonly listeners = new Set<LiveBattleRuntimeListener>();
   private subscription: LiveBattleSubscription | null = null;
   private generation = 0;
   private refreshFlight: Promise<void> | null = null;
@@ -105,19 +114,86 @@ export class LiveBattleRuntimeController {
   private readonly observedVersions = new Map<string, number>();
   private suspended = false;
   private disposed = false;
+  private deadlineTimer: ReturnType<typeof setTimeout> | null = null;
+  private scheduledDeadlineKey: string | null = null;
+  private deadlineWakeKey: string | null = null;
+  private deadlineWakeAttempts = 0;
+  private readonly now: () => number;
+  private readonly setTimer: NonNullable<LiveBattleRuntimeDependencies['setTimer']>;
+  private readonly clearTimer: NonNullable<LiveBattleRuntimeDependencies['clearTimer']>;
 
   constructor(private readonly dependencies: LiveBattleRuntimeDependencies) {
     this.discover = dependencies.discover ?? getOpenLiveBattlesForSession;
     this.reconcile = dependencies.reconcile ?? getLiveBattleState;
     this.createSubscription = dependencies.subscribe ?? subscribeToLiveBattlesForSession;
+    this.now = dependencies.now ?? Date.now;
+    this.setTimer = dependencies.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
+    this.clearTimer = dependencies.clearTimer ?? (timer => clearTimeout(timer));
   }
 
   getSnapshot(): LiveBattleRuntimeSnapshot {
-    return { ...this.snapshot };
+    return { ...this.snapshot, battle: this.snapshot.battle ? { ...this.snapshot.battle } : null };
+  }
+
+  subscribe(listener: LiveBattleRuntimeListener): () => void {
+    if (this.disposed) return () => undefined;
+    this.listeners.add(listener);
+    listener(this.getSnapshot());
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      this.listeners.delete(listener);
+    };
+  }
+
+  private publish(next: LiveBattleRuntimeSnapshot): void {
+    this.snapshot = next;
+    for (const listener of this.listeners) {
+      try { listener(this.getSnapshot()); } catch { /* observers cannot alter authority */ }
+    }
   }
 
   async waitForIdle(): Promise<void> {
     while (this.refreshFlight) await this.refreshFlight;
+  }
+
+  async reconcileNow(): Promise<void> {
+    if (this.disposed || !contextIsEligible(this.context)) return;
+    if (this.suspended) {
+      this.suspended = false;
+      this.generation += 1;
+      this.refreshQueued = false;
+      this.replaceSubscription(this.context.liveSessionId as string);
+    }
+    this.requestRefresh();
+    await this.waitForIdle();
+  }
+
+  async applyAuthoritativeBattle(battle: LiveBattle): Promise<void> {
+    if (this.disposed || !this.isEligible()) return;
+    const generation = this.generation;
+    if (!battleBelongsToHostSession(battle, this.context)) {
+      await this.failClosed('live_battle_host_authority_changed');
+      return;
+    }
+    const observed = this.observedVersions.get(battle.id) ?? 0;
+    if (battle.version < observed) {
+      this.requestRefresh();
+      await this.waitForIdle();
+      return;
+    }
+    this.observedVersions.set(battle.id, battle.version);
+    await this.applyBattle(battle, generation);
+  }
+
+  dismissTerminalBattle(): void {
+    const battle = this.snapshot.battle;
+    if (this.disposed || !battle || !TERMINAL_STATUSES.has(battle.status)) return;
+    this.scheduledDeadlineKey = null;
+    this.deadlineWakeKey = null;
+    this.deadlineWakeAttempts = 0;
+    this.publish({ status: 'observing', battleId: null, version: null, errorCode: null, battle: null });
   }
 
   updateContext(context: LiveBattleRuntimeContext): void {
@@ -139,6 +215,9 @@ export class LiveBattleRuntimeController {
       this.refreshQueued = false;
       this.observedVersions.clear();
       this.attemptedRelayVersion = null;
+      this.scheduledDeadlineKey = null;
+      this.deadlineWakeKey = null;
+      this.deadlineWakeAttempts = 0;
       this.replaceSubscription(context.liveSessionId as string);
       this.requestRefresh();
       return;
@@ -160,7 +239,7 @@ export class LiveBattleRuntimeController {
         signal => this.handleRealtimeSignal(signal),
         () => this.failClosed('live_battle_realtime_unavailable'),
       );
-      this.snapshot = { status: 'observing', battleId: null, version: null, errorCode: null };
+      this.publish({ status: 'observing', battleId: null, version: null, errorCode: null, battle: null });
     } catch {
       this.failClosed('live_battle_realtime_unavailable');
     }
@@ -221,6 +300,17 @@ export class LiveBattleRuntimeController {
         return;
       }
       if (candidates.length === 0) {
+        const currentBattleId = this.snapshot.battleId;
+        if (currentBattleId && isLiveBattleUuid(currentBattleId)) {
+          const current = await this.reconcile(currentBattleId);
+          if (!this.isCurrent(generation)) return;
+          if (!battleBelongsToHostSession(current, this.context)) {
+            await this.failClosed('live_battle_host_authority_changed');
+            return;
+          }
+          await this.applyBattle(current, generation);
+          return;
+        }
         await this.stopRelay('observing');
         return;
       }
@@ -242,14 +332,15 @@ export class LiveBattleRuntimeController {
   }
 
   private async applyBattle(battle: LiveBattle, generation: number): Promise<void> {
-    if (!RELAY_STATUSES.has(battle.status)) {
-      await this.stopRelay('observing', battle.id, battle.version);
+    this.scheduleDeadline(battle, generation);
+    if (!RELAY_STATUSES.has(battle.status) || battle.endedAt !== null) {
+      await this.stopRelay('observing', battle.id, battle.version, battle);
       return;
     }
     if (this.relayBattleId === battle.id) {
-      this.snapshot = {
-        status: 'relaying', battleId: battle.id, version: battle.version, errorCode: null,
-      };
+      this.publish({
+        status: 'relaying', battleId: battle.id, version: battle.version, errorCode: null, battle,
+      });
       return;
     }
 
@@ -265,24 +356,68 @@ export class LiveBattleRuntimeController {
       await this.dependencies.relay.start(battle.id);
       if (!this.isCurrent(generation)) return;
       this.relayBattleId = battle.id;
-      this.snapshot = {
-        status: 'relaying', battleId: battle.id, version: battle.version, errorCode: null,
-      };
+      this.publish({
+        status: 'relaying', battleId: battle.id, version: battle.version, errorCode: null, battle,
+      });
     } catch {
       if (!this.isCurrent(generation)) return;
       this.relayBattleId = null;
       this.relayOperationPossible = false;
-      this.snapshot = {
+      this.publish({
         status: 'failed', battleId: battle.id, version: battle.version,
-        errorCode: 'live_battle_relay_failed',
-      };
+        errorCode: 'live_battle_relay_failed', battle,
+      });
     }
+  }
+
+  private clearDeadlineTimer(): void {
+    if (!this.deadlineTimer) return;
+    this.clearTimer(this.deadlineTimer);
+    this.deadlineTimer = null;
+  }
+
+  private scheduleDeadline(battle: LiveBattle, generation: number): void {
+    const timestamp = battle.status === 'pending'
+      ? battle.inviteExpiresAt
+      : battle.status === 'countdown'
+        ? battle.scheduledStartAt
+        : battle.status === 'active'
+          ? battle.scheduledEndAt
+          : null;
+    const deadlineKey = `${battle.id}:${battle.version}:${battle.status}:${timestamp ?? ''}`;
+    if (this.deadlineWakeKey !== deadlineKey) {
+      this.deadlineWakeKey = deadlineKey;
+      this.deadlineWakeAttempts = 0;
+    }
+    if (this.scheduledDeadlineKey === deadlineKey) return;
+    this.clearDeadlineTimer();
+    this.scheduledDeadlineKey = deadlineKey;
+    if (!timestamp) return;
+    const deadline = Date.parse(timestamp);
+    if (!Number.isFinite(deadline)) return;
+    if (this.deadlineWakeAttempts >= 3) return;
+    const remaining = deadline - this.now() + 25;
+    const delay = Math.max(
+      this.deadlineWakeAttempts > 0 ? 1_000 : 0,
+      Math.min(remaining, 2_147_483_647),
+    );
+    const battleId = battle.id;
+    const version = battle.version;
+    this.deadlineTimer = this.setTimer(() => {
+      this.deadlineTimer = null;
+      if (!this.isCurrent(generation)) return;
+      if (this.snapshot.battleId !== battleId || this.snapshot.version !== version) return;
+      this.scheduledDeadlineKey = null;
+      this.deadlineWakeAttempts += 1;
+      this.requestRefresh();
+    }, delay);
   }
 
   private async stopRelay(
     status: LiveBattleRuntimeStatus = 'idle',
     battleId: string | null = null,
     version: number | null = null,
+    battle: LiveBattle | null = null,
   ): Promise<void> {
     this.attemptedRelayVersion = null;
     if (this.relayOperationPossible) {
@@ -290,7 +425,7 @@ export class LiveBattleRuntimeController {
       this.relayBattleId = null;
       this.relayOperationPossible = false;
     }
-    if (!this.disposed) this.snapshot = { status, battleId, version, errorCode: null };
+    if (!this.disposed) this.publish({ status, battleId, version, errorCode: null, battle });
   }
 
   private failClosed(errorCode: string): Promise<void> {
@@ -298,13 +433,15 @@ export class LiveBattleRuntimeController {
     this.suspended = true;
     this.generation += 1;
     this.refreshQueued = false;
+    this.clearDeadlineTimer();
+    this.scheduledDeadlineKey = null;
+    this.deadlineWakeKey = null;
+    this.deadlineWakeAttempts = 0;
     this.removeSubscription();
-    this.snapshot = {
-      status: 'failed', battleId: null, version: null, errorCode,
-    };
+    this.publish({ status: 'failed', battleId: null, version: null, errorCode, battle: null });
     return this.stopRelay('failed').then(() => {
       if (!this.disposed) {
-        this.snapshot = { status: 'failed', battleId: null, version: null, errorCode };
+        this.publish({ status: 'failed', battleId: null, version: null, errorCode, battle: null });
       }
     });
   }
@@ -312,6 +449,10 @@ export class LiveBattleRuntimeController {
   private invalidateAndStop(status: LiveBattleRuntimeStatus): void {
     this.generation += 1;
     this.refreshQueued = false;
+    this.clearDeadlineTimer();
+    this.scheduledDeadlineKey = null;
+    this.deadlineWakeKey = null;
+    this.deadlineWakeAttempts = 0;
     this.removeSubscription();
     void this.stopRelay(status);
   }
@@ -321,6 +462,10 @@ export class LiveBattleRuntimeController {
     this.suspended = true;
     this.generation += 1;
     this.refreshQueued = false;
+    this.clearDeadlineTimer();
+    this.scheduledDeadlineKey = null;
+    this.deadlineWakeKey = null;
+    this.deadlineWakeAttempts = 0;
     this.removeSubscription();
     await this.stopRelay('idle');
   }
@@ -330,11 +475,15 @@ export class LiveBattleRuntimeController {
     this.suspended = true;
     this.generation += 1;
     this.refreshQueued = false;
+    this.clearDeadlineTimer();
+    this.scheduledDeadlineKey = null;
+    this.deadlineWakeKey = null;
+    this.deadlineWakeAttempts = 0;
     this.removeSubscription();
     this.dependencies.relay.stopImmediately();
     this.relayBattleId = null;
     this.relayOperationPossible = false;
-    this.snapshot = { status: 'idle', battleId: null, version: null, errorCode: null };
+    this.publish({ status: 'idle', battleId: null, version: null, errorCode: null, battle: null });
   }
 
   async dispose(): Promise<void> {
@@ -342,6 +491,7 @@ export class LiveBattleRuntimeController {
     this.handleEngineRelease();
     this.disposed = true;
     await this.dependencies.relay.dispose().catch(() => undefined);
-    this.snapshot = { status: 'disposed', battleId: null, version: null, errorCode: null };
+    this.listeners.clear();
+    this.snapshot = { status: 'disposed', battleId: null, version: null, errorCode: null, battle: null };
   }
 }

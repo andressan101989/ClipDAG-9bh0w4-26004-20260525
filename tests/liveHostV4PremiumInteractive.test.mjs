@@ -30,12 +30,11 @@ test("V4 has one permanent Gift and one permanent Share entry", () => {
 });
 
 test("engagement rail reuses reactions and chat without inventing aggregates", () => {
-  for (const label of ["Like", "Chat", "Gift", "Share", "Save"])
+  for (const label of ["Like", "Chat", "Gift", "Share"])
     assert.match(host, new RegExp(`>${label}<\\/Text>`));
+  assert.match(host, /<LiveBattleHostControls/);
   assert.match(host, /sendReaction\('\\u2764\\uFE0F'\)/);
   assert.match(host, /inputRef\.current\?\.focus\(\)/);
-  assert.match(host, /Guardar LIVE no disponible/);
-  assert.match(host, /accessibilityState=\{\{ disabled: true \}\}/);
   assert.doesNotMatch(host, /2\.4K|Top 3 en Moda|134<\/Text>/);
 });
 

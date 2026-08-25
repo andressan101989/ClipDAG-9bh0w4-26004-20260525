@@ -40,6 +40,7 @@ import {
 import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
 import { LiveSessionHeader } from '@/components/live/LiveSessionHeader';
+import { LiveBattleHostControls } from '@/components/live/LiveBattleHostControls';
 import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
 import { useLiveBattleRelayRuntime } from '@/hooks/live/useLiveBattleRelayRuntime';
 import type { LiveGiftEvent } from '@/types/liveGifts';
@@ -280,7 +281,7 @@ export default function LiveBroadcasterScreen() {
     liveRequestedRole: 'host',
   });
 
-  const { stop: stopBattleRuntime } = useLiveBattleRelayRuntime({
+  const battleRuntime = useLiveBattleRelayRuntime({
     liveSessionId: streamId ?? null,
     hostUserId: user?.id ?? null,
     isCanonicalHost: sessionIsCanonicalLive,
@@ -291,6 +292,7 @@ export default function LiveBroadcasterScreen() {
     getEngine,
     registerBeforeEngineRelease,
   });
+  const { stop: stopBattleRuntime } = battleRuntime;
 
   const chatRef    = useRef<FlatList>(null);
   const inputRef   = useRef<TextInput | null>(null);
@@ -938,10 +940,24 @@ export default function LiveBroadcasterScreen() {
             <MaterialIcons name="ios-share" size={21} color="#F8FAFC" />
             <Text style={styles.engagementLabel}>Share</Text>
           </Pressable>
-          <Pressable style={[styles.engagementAction, styles.engagementActionDisabled]} disabled accessibilityRole="button" accessibilityLabel="Guardar LIVE no disponible" accessibilityState={{ disabled: true }}>
-            <MaterialIcons name="star-border" size={22} color="#A4AAB8" />
-            <Text style={styles.engagementLabel}>Save</Text>
-          </Pressable>
+          {sessionIsCanonicalLive && user?.id && streamId ? (
+            <LiveBattleHostControls
+              enabled={live && sessionIsCanonicalLive && engineReady && joined && isForeground}
+              hostUserId={user.id}
+              liveSessionId={streamId}
+              presentationTick={liveSeconds}
+              snapshot={battleRuntime.snapshot}
+              actionPending={battleRuntime.actionPending}
+              actionError={battleRuntime.actionError}
+              invite={battleRuntime.invite}
+              respond={battleRuntime.respond}
+              start={battleRuntime.start}
+              cancel={battleRuntime.cancel}
+              reconcile={battleRuntime.reconcile}
+              clearActionError={battleRuntime.clearActionError}
+              dismissTerminalBattle={battleRuntime.dismissTerminalBattle}
+            />
+          ) : null}
         </View>
       ) : null}
 

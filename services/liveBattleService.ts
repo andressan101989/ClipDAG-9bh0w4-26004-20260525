@@ -14,6 +14,20 @@ export const LIVE_BATTLE_STATUSES = [
 export type LiveBattleStatus = typeof LIVE_BATTLE_STATUSES[number];
 export type LiveBattleInviteDecision = 'accept' | 'reject';
 
+export interface LiveBattleOpponentCandidate {
+  liveSessionId: string;
+  hostUserId: string;
+  title: string;
+  username: string;
+  avatarUrl: string | null;
+}
+
+export interface LiveBattlePublicProfile {
+  userId: string;
+  username: string;
+  avatarUrl: string | null;
+}
+
 export interface LiveBattle {
   id: string;
   challengerUserId: string;
@@ -54,6 +68,15 @@ type LiveBattleRow = {
   version: unknown;
   created_at: unknown;
   updated_at: unknown;
+};
+
+type LiveBattleCandidateRow = {
+  id: unknown;
+  host_id: unknown;
+  title: unknown;
+  status: unknown;
+  ended_at: unknown;
+  user_profiles: unknown;
 };
 
 const STATUS_SET = new Set<string>(LIVE_BATTLE_STATUSES);
@@ -194,6 +217,86 @@ export const getLiveBattleState = (battleId: string): Promise<LiveBattle> =>
 
 export function isLiveBattleUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_PATTERN.test(value);
+}
+
+function publicProfileFromRelation(value: unknown): { username: string; avatarUrl: string | null } {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  if (!candidate || typeof candidate !== 'object') {
+    return { username: 'Host', avatarUrl: null };
+  }
+  const row = candidate as { username?: unknown; avatar_url?: unknown };
+  return {
+    username: typeof row.username === 'string' && row.username.trim()
+      ? row.username.trim()
+      : 'Host',
+    avatarUrl: typeof row.avatar_url === 'string' && row.avatar_url.length > 0
+      ? row.avatar_url
+      : null,
+  };
+}
+
+/**
+ * Uses the existing LIVE discovery projection. This list is advisory only;
+ * create_live_battle_invite revalidates both hosts and sessions atomically.
+ */
+export async function listLiveBattleOpponentCandidates(input: {
+  currentSessionId: string;
+  currentHostUserId: string;
+}): Promise<LiveBattleOpponentCandidate[]> {
+  if (!isLiveBattleUuid(input.currentSessionId) || !isLiveBattleUuid(input.currentHostUserId)) {
+    throw new LiveBattleServiceError('live_battle_invalid_session_id');
+  }
+  const { data, error } = await getSupabaseClient()
+    .from('live_sessions')
+    .select('id, host_id, title, status, ended_at, user_profiles!live_sessions_host_id_fkey(username, avatar_url)')
+    .eq('status', 'live')
+    .is('ended_at', null)
+    .neq('id', input.currentSessionId)
+    .neq('host_id', input.currentHostUserId)
+    .order('created_at', { ascending: false })
+    .limit(30);
+  if (error) throw normalizeRpcError(error);
+
+  return (data ?? []).flatMap(value => {
+    const row = value as LiveBattleCandidateRow;
+    if (row.status !== 'live' || row.ended_at !== null
+      || !isLiveBattleUuid(row.id) || !isLiveBattleUuid(row.host_id)
+      || row.id === input.currentSessionId || row.host_id === input.currentHostUserId) {
+      return [];
+    }
+    const profile = publicProfileFromRelation(row.user_profiles);
+    return [{
+      liveSessionId: row.id,
+      hostUserId: row.host_id,
+      title: typeof row.title === 'string' ? row.title : '',
+      username: profile.username,
+      avatarUrl: profile.avatarUrl,
+    }];
+  });
+}
+
+export async function getLiveBattlePublicProfiles(
+  userIds: readonly string[],
+): Promise<LiveBattlePublicProfile[]> {
+  const uniqueIds = Array.from(new Set(userIds.filter(isLiveBattleUuid))).slice(0, 2);
+  if (uniqueIds.length === 0) return [];
+  const { data, error } = await getSupabaseClient()
+    .from('user_profiles')
+    .select('id, username, avatar_url')
+    .in('id', uniqueIds);
+  if (error) throw normalizeRpcError(error);
+  return (data ?? []).flatMap(row => {
+    if (!isLiveBattleUuid(row.id)) return [];
+    return [{
+      userId: row.id,
+      username: typeof row.username === 'string' && row.username.trim()
+        ? row.username.trim()
+        : 'Host',
+      avatarUrl: typeof row.avatar_url === 'string' && row.avatar_url.length > 0
+        ? row.avatar_url
+        : null,
+    }];
+  });
 }
 
 /**
