@@ -84,12 +84,15 @@ const context = overrides => ({
   ...overrides,
 });
 
-function runtimeHarness(initialBattle) {
+function runtimeHarness(initialBattle, options = {}) {
   let current = initialBattle;
+  let nowMs = options.nowMs ?? Date.parse('2026-08-24T12:00:00.000Z');
+  let reconcileImplementation = options.reconcile ?? (async () => current);
   let signal = () => undefined;
   const timers = [];
-  const cleared = [];
   let reconcileCalls = 0;
+  let activeReconciles = 0;
+  let maxActiveReconciles = 0;
   const relay = {
     starts: [], stops: 0,
     async start(id) { this.starts.push(id); },
@@ -99,27 +102,45 @@ function runtimeHarness(initialBattle) {
   };
   const controller = new controllerModule.LiveBattleRuntimeController({
     relay,
-    now: () => Date.parse('2026-08-24T12:00:00.000Z'),
+    now: () => nowMs,
     setTimer: (callback, delay) => {
-      const timer = { callback, delay, cleared: false };
+      const timer = { delay, cleared: false, fired: false };
+      timer.callback = () => {
+        if (timer.cleared || timer.fired) return;
+        timer.fired = true;
+        callback();
+      };
       timers.push(timer);
       return timer;
     },
-    clearTimer: timer => { timer.cleared = true; cleared.push(timer); },
+    clearTimer: timer => { timer.cleared = true; },
     discover: async () => current && ['pending', 'accepted', 'countdown', 'active'].includes(current.status)
       ? [current]
       : [],
-    reconcile: async () => { reconcileCalls += 1; return current; },
+    reconcile: async () => {
+      reconcileCalls += 1;
+      activeReconciles += 1;
+      maxActiveReconciles = Math.max(maxActiveReconciles, activeReconciles);
+      try {
+        return await reconcileImplementation({ call: reconcileCalls, current });
+      } finally {
+        activeReconciles -= 1;
+      }
+    },
     subscribe: (_session, onSignal) => {
       signal = onSignal;
       return { unsubscribe: async () => undefined };
     },
   });
   return {
-    controller, relay, timers, cleared,
+    controller, relay, timers,
     setBattle: next => { current = next; },
+    setNow: value => { nowMs = value; },
+    setReconcile: implementation => { reconcileImplementation = implementation; },
     emit: value => signal(value),
     reconcileCalls: () => reconcileCalls,
+    maxActiveReconciles: () => maxActiveReconciles,
+    activeTimers: () => timers.filter(timer => !timer.cleared && !timer.fired),
     settle: async () => {
       await new Promise(resolve => setImmediate(resolve));
       await controller.waitForIdle();
@@ -151,6 +172,12 @@ test('pending, countdown, and active deadlines only wake server reconciliation',
     await harness.controller.waitForIdle();
     assert.equal(harness.timers.length, 1);
     const before = harness.reconcileCalls();
+    const deadline = value.status === 'pending'
+      ? value.inviteExpiresAt
+      : value.status === 'countdown'
+        ? value.scheduledStartAt
+        : value.scheduledEndAt;
+    harness.setNow(Date.parse(deadline) + 25);
     harness.timers[0].callback();
     await harness.settle();
     assert.ok(harness.reconcileCalls() > before);
@@ -159,17 +186,214 @@ test('pending, countdown, and active deadlines only wake server reconciliation',
   }
 });
 
-test('early device-clock deadline wakeups retry only within a strict bound', async () => {
-  const harness = runtimeHarness(battle());
+test('a clock ten minutes ahead keeps reconciling past three attempts until pending expires', async () => {
+  const expired = battle({
+    status: 'expired',
+    version: 2,
+    endedAt: '2026-08-24T12:00:30.000Z',
+    lastTransitionActorId: null,
+    lastTransitionReason: 'invite_expired',
+  });
+  const harness = runtimeHarness(battle(), {
+    nowMs: Date.parse('2026-08-24T12:10:00.000Z'),
+    reconcile: async ({ call, current }) => call >= 5 ? expired : current,
+  });
   harness.controller.updateContext(context());
   await harness.controller.waitForIdle();
-  for (let index = 0; index < 3; index += 1) {
+  for (let index = 0; index < 4; index += 1) {
     harness.timers[index].callback();
     await harness.settle();
   }
-  assert.equal(harness.timers.length, 3);
-  assert.equal(harness.reconcileCalls(), 4);
+  assert.deepEqual(harness.timers.map(timer => timer.delay), [1_000, 2_000, 4_000, 8_000]);
+  assert.equal(harness.reconcileCalls(), 5);
+  assert.equal(harness.controller.getSnapshot().battle?.status, 'expired');
+  assert.equal(harness.activeTimers().length, 0);
   await harness.controller.dispose();
+});
+
+test('deadline backoff grows to fifteen seconds and never permanently exhausts', async () => {
+  const harness = runtimeHarness(battle(), {
+    nowMs: Date.parse('2026-08-24T12:10:00.000Z'),
+  });
+  harness.controller.updateContext(context());
+  await harness.controller.waitForIdle();
+  for (let index = 0; index < 6; index += 1) {
+    harness.timers[index].callback();
+    await harness.settle();
+  }
+  assert.deepEqual(
+    harness.timers.slice(0, 7).map(timer => timer.delay),
+    [1_000, 2_000, 4_000, 8_000, 15_000, 15_000, 15_000],
+  );
+  assert.equal(harness.activeTimers().length, 1);
+  assert.doesNotMatch(controllerSource, /setInterval|deadlineWakeAttempts\s*>=\s*3/);
+  await harness.controller.dispose();
+});
+
+test('countdown and active clock skew reconcile after more than three unchanged responses', async () => {
+  const countdown = battle({
+    status: 'countdown', version: 2, scheduledStartAt: '2026-08-24T12:00:03.000Z',
+  });
+  const active = battle({
+    status: 'active', version: 3, scheduledStartAt: '2026-08-24T12:00:03.000Z',
+    startedAt: '2026-08-24T12:00:03.000Z', scheduledEndAt: '2026-08-24T12:05:03.000Z',
+  });
+  const completed = battle({
+    ...active, status: 'completed', version: 4, endedAt: '2026-08-24T12:05:03.000Z',
+    lastTransitionActorId: null, lastTransitionReason: 'duration_elapsed',
+  });
+  const countdownHarness = runtimeHarness(countdown, {
+    nowMs: Date.parse('2026-08-24T12:10:00.000Z'),
+    reconcile: async ({ call, current }) => call >= 5 ? active : current,
+  });
+  countdownHarness.controller.updateContext(context());
+  await countdownHarness.controller.waitForIdle();
+  for (let index = 0; index < 4; index += 1) {
+    countdownHarness.timers[index].callback();
+    await countdownHarness.settle();
+  }
+  assert.equal(countdownHarness.controller.getSnapshot().battle?.status, 'active');
+  assert.deepEqual(countdownHarness.relay.starts, [BATTLE_A]);
+
+  const activeHarness = runtimeHarness(active, {
+    nowMs: Date.parse('2026-08-24T12:10:00.000Z'),
+    reconcile: async ({ call, current }) => call >= 5 ? completed : current,
+  });
+  activeHarness.controller.updateContext(context());
+  await activeHarness.controller.waitForIdle();
+  for (let index = 0; index < 4; index += 1) {
+    activeHarness.timers[index].callback();
+    await activeHarness.settle();
+  }
+  assert.equal(activeHarness.controller.getSnapshot().battle?.status, 'completed');
+  assert.equal(activeHarness.relay.stops, 1);
+  assert.equal(activeHarness.activeTimers().length, 0);
+  await countdownHarness.controller.dispose();
+  await activeHarness.controller.dispose();
+});
+
+test('a clock ten minutes behind uses bounded timer chunks and foreground reconciles once', async () => {
+  const harness = runtimeHarness(battle(), {
+    nowMs: Date.parse('2026-08-24T11:50:00.000Z'),
+  });
+  harness.controller.updateContext(context());
+  await harness.controller.waitForIdle();
+  assert.equal(harness.timers[0].delay, 60_000);
+  const beforeChunk = harness.reconcileCalls();
+  harness.timers[0].callback();
+  assert.equal(harness.reconcileCalls(), beforeChunk);
+  assert.equal(harness.timers[1].delay, 60_000);
+  assert.equal(harness.activeTimers().length, 1);
+
+  harness.controller.updateContext(context({ isForeground: false }));
+  assert.equal(harness.activeTimers().length, 0);
+  const beforeForeground = harness.reconcileCalls();
+  harness.controller.updateContext(context({ isForeground: true }));
+  await harness.controller.waitForIdle();
+  assert.equal(harness.reconcileCalls(), beforeForeground + 1);
+  assert.equal(harness.activeTimers().length, 1);
+  assert.ok(harness.activeTimers()[0].delay <= 60_000);
+  await harness.controller.dispose();
+});
+
+test('deadline reconciliation keeps one RPC in flight and recovers from a network error', async () => {
+  let releaseSecond;
+  const expired = battle({ status: 'expired', version: 2, endedAt: '2026-08-24T12:00:30.000Z' });
+  const harness = runtimeHarness(battle(), {
+    nowMs: Date.parse('2026-08-24T12:10:00.000Z'),
+  });
+  harness.setReconcile(({ call, current }) => {
+    if (call === 2) return new Promise((_resolve, reject) => { releaseSecond = () => reject(new Error('network')); });
+    if (call >= 3) return Promise.resolve(expired);
+    return Promise.resolve(current);
+  });
+  harness.controller.updateContext(context());
+  await harness.controller.waitForIdle();
+  harness.timers[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.maxActiveReconciles(), 1);
+  const manual = harness.controller.reconcileNow();
+  assert.equal(harness.maxActiveReconciles(), 1);
+  releaseSecond();
+  await manual;
+  assert.equal(harness.maxActiveReconciles(), 1);
+  assert.equal(harness.controller.getSnapshot().battle?.status, 'expired');
+  assert.equal(harness.activeTimers().length, 0);
+  await harness.controller.dispose();
+});
+
+test('network failure schedules controlled backoff and recovers without remounting', async () => {
+  const expired = battle({ status: 'expired', version: 2, endedAt: '2026-08-24T12:00:30.000Z' });
+  const harness = runtimeHarness(battle(), {
+    nowMs: Date.parse('2026-08-24T12:10:00.000Z'),
+    reconcile: async ({ call, current }) => {
+      if (call === 2) throw new Error('temporary network failure');
+      return call >= 3 ? expired : current;
+    },
+  });
+  harness.controller.updateContext(context());
+  await harness.controller.waitForIdle();
+  harness.timers[0].callback();
+  await harness.settle();
+  assert.equal(harness.controller.getSnapshot().errorCode, 'live_battle_reconcile_failed');
+  assert.equal(harness.activeTimers().length, 1);
+  assert.equal(harness.activeTimers()[0].delay, 2_000);
+  harness.activeTimers()[0].callback();
+  await harness.settle();
+  assert.equal(harness.controller.getSnapshot().battle?.status, 'expired');
+  assert.equal(harness.activeTimers().length, 0);
+  await harness.controller.dispose();
+});
+
+test('a delayed deadline response cannot rearm after lifecycle invalidation', async () => {
+  let releaseReconcile;
+  const harness = runtimeHarness(battle(), {
+    nowMs: Date.parse('2026-08-24T12:10:00.000Z'),
+  });
+  harness.setReconcile(({ call, current }) => {
+    if (call === 2) {
+      return new Promise(resolve => { releaseReconcile = () => resolve(current); });
+    }
+    return Promise.resolve(current);
+  });
+  harness.controller.updateContext(context());
+  await harness.controller.waitForIdle();
+  harness.timers[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+  harness.controller.updateContext(context({ isForeground: false }));
+  releaseReconcile();
+  await harness.controller.waitForIdle();
+  assert.equal(harness.activeTimers().length, 0);
+  assert.equal(harness.controller.getSnapshot().status, 'idle');
+  await harness.controller.dispose();
+});
+
+test('authority loss, ended LIVE, Battle replacement, and dispose cancel owned timers', async () => {
+  for (const invalidContext of [
+    { isCanonicalHost: false },
+    { isSessionLive: false },
+    { engineReady: false },
+  ]) {
+    const harness = runtimeHarness(battle());
+    harness.controller.updateContext(context());
+    await harness.controller.waitForIdle();
+    assert.equal(harness.activeTimers().length, 1);
+    harness.controller.updateContext(context(invalidContext));
+    assert.equal(harness.activeTimers().length, 0);
+    await harness.controller.dispose();
+  }
+
+  const replacement = runtimeHarness(battle());
+  replacement.controller.updateContext(context());
+  await replacement.controller.waitForIdle();
+  const oldTimer = replacement.activeTimers()[0];
+  replacement.setBattle(battle({ id: BATTLE_B, version: 1 }));
+  replacement.emit({ battleId: BATTLE_B, version: 1 });
+  await replacement.settle();
+  assert.equal(oldTimer.cleared, true);
+  assert.equal(replacement.activeTimers().length, 1);
+  await replacement.controller.dispose();
+  assert.equal(replacement.activeTimers().length, 0);
 });
 
 test('an obsolete deadline cannot affect a replacement Battle', async () => {

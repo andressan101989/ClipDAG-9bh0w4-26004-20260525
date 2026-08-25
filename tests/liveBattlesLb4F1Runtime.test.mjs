@@ -125,7 +125,11 @@ function createHarness(initialBattles, relayOverrides = {}) {
     reconcile: async battleId => {
       reconcileCalls += 1;
       const found = battles.find(item => item.id === battleId);
-      if (!found) throw new Error('not found');
+      if (!found) {
+        const error = new Error('live_battle_not_found');
+        error.code = 'live_battle_not_found';
+        throw error;
+      }
       return found;
     },
     subscribe: (sessionId, onSignal, onError) => {

@@ -58,6 +58,9 @@ export type LiveBattleRuntimeDependencies = {
 
 const RELAY_STATUSES = new Set(['countdown', 'active']);
 const TERMINAL_STATUSES = new Set(['completed', 'rejected', 'cancelled', 'expired']);
+const DEADLINE_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000] as const;
+const DEADLINE_TIMER_MAX_CHUNK_MS = 60_000;
+const DEADLINE_CLOCK_TOLERANCE_MS = 25;
 
 const EMPTY_CONTEXT: LiveBattleRuntimeContext = {
   liveSessionId: null,
@@ -117,7 +120,7 @@ export class LiveBattleRuntimeController {
   private deadlineTimer: ReturnType<typeof setTimeout> | null = null;
   private scheduledDeadlineKey: string | null = null;
   private deadlineWakeKey: string | null = null;
-  private deadlineWakeAttempts = 0;
+  private deadlineBackoffStep = 0;
   private readonly now: () => number;
   private readonly setTimer: NonNullable<LiveBattleRuntimeDependencies['setTimer']>;
   private readonly clearTimer: NonNullable<LiveBattleRuntimeDependencies['clearTimer']>;
@@ -166,6 +169,8 @@ export class LiveBattleRuntimeController {
       this.refreshQueued = false;
       this.replaceSubscription(this.context.liveSessionId as string);
     }
+    this.clearDeadlineTimer();
+    this.scheduledDeadlineKey = null;
     this.requestRefresh();
     await this.waitForIdle();
   }
@@ -190,9 +195,7 @@ export class LiveBattleRuntimeController {
   dismissTerminalBattle(): void {
     const battle = this.snapshot.battle;
     if (this.disposed || !battle || !TERMINAL_STATUSES.has(battle.status)) return;
-    this.scheduledDeadlineKey = null;
-    this.deadlineWakeKey = null;
-    this.deadlineWakeAttempts = 0;
+    this.resetDeadlineScheduler();
     this.publish({ status: 'observing', battleId: null, version: null, errorCode: null, battle: null });
   }
 
@@ -215,9 +218,7 @@ export class LiveBattleRuntimeController {
       this.refreshQueued = false;
       this.observedVersions.clear();
       this.attemptedRelayVersion = null;
-      this.scheduledDeadlineKey = null;
-      this.deadlineWakeKey = null;
-      this.deadlineWakeAttempts = 0;
+      this.resetDeadlineScheduler();
       this.replaceSubscription(context.liveSessionId as string);
       this.requestRefresh();
       return;
@@ -308,9 +309,10 @@ export class LiveBattleRuntimeController {
             await this.failClosed('live_battle_host_authority_changed');
             return;
           }
-          await this.applyBattle(current, generation);
+          await this.applyBattle(current, generation, true);
           return;
         }
+        this.resetDeadlineScheduler();
         await this.stopRelay('observing');
         return;
       }
@@ -325,14 +327,30 @@ export class LiveBattleRuntimeController {
       const observedVersion = this.observedVersions.get(battle.id) ?? 0;
       if (battle.version < observedVersion) return;
       this.observedVersions.set(battle.id, battle.version);
-      await this.applyBattle(battle, generation);
-    } catch {
-      if (this.isCurrent(generation)) await this.failClosed('live_battle_reconcile_failed');
+      await this.applyBattle(battle, generation, true);
+    } catch (error) {
+      if (!this.isCurrent(generation)) return;
+      const candidate = error && typeof error === 'object'
+        ? error as { code?: unknown; message?: unknown }
+        : null;
+      if (
+        candidate?.code === 'live_battle_not_found'
+        && candidate.message === 'live_battle_not_found'
+      ) {
+        this.resetDeadlineScheduler();
+        await this.stopRelay('observing');
+        return;
+      }
+      this.handleReconcileFailure(generation);
     }
   }
 
-  private async applyBattle(battle: LiveBattle, generation: number): Promise<void> {
-    this.scheduleDeadline(battle, generation);
+  private async applyBattle(
+    battle: LiveBattle,
+    generation: number,
+    reconciledByServer = false,
+  ): Promise<void> {
+    this.scheduleDeadline(battle, generation, reconciledByServer);
     if (!RELAY_STATUSES.has(battle.status) || battle.endedAt !== null) {
       await this.stopRelay('observing', battle.id, battle.version, battle);
       return;
@@ -376,41 +394,148 @@ export class LiveBattleRuntimeController {
     this.deadlineTimer = null;
   }
 
-  private scheduleDeadline(battle: LiveBattle, generation: number): void {
-    const timestamp = battle.status === 'pending'
+  private resetDeadlineScheduler(): void {
+    this.clearDeadlineTimer();
+    this.scheduledDeadlineKey = null;
+    this.deadlineWakeKey = null;
+    this.deadlineBackoffStep = 0;
+  }
+
+  private getDeadlineTimestamp(battle: LiveBattle): string | null {
+    return battle.status === 'pending'
       ? battle.inviteExpiresAt
       : battle.status === 'countdown'
         ? battle.scheduledStartAt
         : battle.status === 'active'
           ? battle.scheduledEndAt
           : null;
+  }
+
+  private getBackoffDelay(): number {
+    const index = Math.max(
+      0,
+      Math.min(this.deadlineBackoffStep - 1, DEADLINE_RETRY_DELAYS_MS.length - 1),
+    );
+    return DEADLINE_RETRY_DELAYS_MS[index];
+  }
+
+  private scheduleDeadline(
+    battle: LiveBattle,
+    generation: number,
+    reconciledByServer = false,
+  ): void {
+    const timestamp = this.getDeadlineTimestamp(battle);
     const deadlineKey = `${battle.id}:${battle.version}:${battle.status}:${timestamp ?? ''}`;
     if (this.deadlineWakeKey !== deadlineKey) {
       this.deadlineWakeKey = deadlineKey;
-      this.deadlineWakeAttempts = 0;
+      this.deadlineBackoffStep = 0;
+    }
+    if (!timestamp) {
+      this.clearDeadlineTimer();
+      this.scheduledDeadlineKey = null;
+      return;
+    }
+    const deadline = Date.parse(timestamp);
+    if (!Number.isFinite(deadline)) {
+      this.clearDeadlineTimer();
+      this.scheduledDeadlineKey = null;
+      return;
+    }
+    if (
+      reconciledByServer
+      && deadline - this.now() + DEADLINE_CLOCK_TOLERANCE_MS <= 0
+      && this.deadlineBackoffStep === 0
+    ) {
+      this.deadlineBackoffStep = 1;
     }
     if (this.scheduledDeadlineKey === deadlineKey) return;
     this.clearDeadlineTimer();
     this.scheduledDeadlineKey = deadlineKey;
-    if (!timestamp) return;
-    const deadline = Date.parse(timestamp);
-    if (!Number.isFinite(deadline)) return;
-    if (this.deadlineWakeAttempts >= 3) return;
-    const remaining = deadline - this.now() + 25;
-    const delay = Math.max(
-      this.deadlineWakeAttempts > 0 ? 1_000 : 0,
-      Math.min(remaining, 2_147_483_647),
-    );
+    const remaining = deadline - this.now() + DEADLINE_CLOCK_TOLERANCE_MS;
+    const delay = this.deadlineBackoffStep > 0
+      ? this.getBackoffDelay()
+      : Math.max(0, Math.min(remaining, DEADLINE_TIMER_MAX_CHUNK_MS));
     const battleId = battle.id;
     const version = battle.version;
-    this.deadlineTimer = this.setTimer(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    timer = this.setTimer(() => {
+      if (this.deadlineTimer !== timer) return;
       this.deadlineTimer = null;
       if (!this.isCurrent(generation)) return;
       if (this.snapshot.battleId !== battleId || this.snapshot.version !== version) return;
       this.scheduledDeadlineKey = null;
-      this.deadlineWakeAttempts += 1;
+      if (
+        this.deadlineBackoffStep === 0
+        && deadline - this.now() + DEADLINE_CLOCK_TOLERANCE_MS > 0
+      ) {
+        const current = this.snapshot.battle;
+        if (current) this.scheduleDeadline(current, generation);
+        return;
+      }
+      this.deadlineBackoffStep = Math.min(
+        this.deadlineBackoffStep + 1,
+        DEADLINE_RETRY_DELAYS_MS.length,
+      );
       this.requestRefresh();
     }, delay);
+    this.deadlineTimer = timer;
+  }
+
+  private scheduleRefreshRetry(generation: number): void {
+    const battle = this.snapshot.battle;
+    if (battle && TERMINAL_STATUSES.has(battle.status)) {
+      this.resetDeadlineScheduler();
+      return;
+    }
+    const deadline = battle ? this.getDeadlineTimestamp(battle) : null;
+    if (battle && deadline && battleBelongsToHostSession(battle, this.context)) {
+      const deadlineKey = `${battle.id}:${battle.version}:${battle.status}:${deadline}`;
+      if (this.deadlineWakeKey !== deadlineKey) {
+        this.deadlineWakeKey = deadlineKey;
+        this.deadlineBackoffStep = 0;
+      }
+      this.deadlineBackoffStep = Math.max(1, this.deadlineBackoffStep);
+      this.clearDeadlineTimer();
+      this.scheduledDeadlineKey = null;
+      this.scheduleDeadline(battle, generation);
+      return;
+    }
+
+    const retryKey = `refresh:${this.context.liveSessionId ?? ''}`;
+    if (this.deadlineWakeKey !== retryKey) {
+      this.deadlineWakeKey = retryKey;
+      this.deadlineBackoffStep = 1;
+    } else {
+      this.deadlineBackoffStep = Math.max(1, this.deadlineBackoffStep);
+    }
+    this.clearDeadlineTimer();
+    this.scheduledDeadlineKey = retryKey;
+    let timer: ReturnType<typeof setTimeout>;
+    timer = this.setTimer(() => {
+      if (this.deadlineTimer !== timer) return;
+      this.deadlineTimer = null;
+      if (!this.isCurrent(generation) || this.deadlineWakeKey !== retryKey) return;
+      this.scheduledDeadlineKey = null;
+      this.deadlineBackoffStep = Math.min(
+        this.deadlineBackoffStep + 1,
+        DEADLINE_RETRY_DELAYS_MS.length,
+      );
+      this.requestRefresh();
+    }, this.getBackoffDelay());
+    this.deadlineTimer = timer;
+  }
+
+  private handleReconcileFailure(generation: number): void {
+    if (!this.isCurrent(generation)) return;
+    const battle = this.snapshot.battle;
+    this.publish({
+      status: 'failed',
+      battleId: battle?.id ?? null,
+      version: battle?.version ?? null,
+      errorCode: 'live_battle_reconcile_failed',
+      battle,
+    });
+    this.scheduleRefreshRetry(generation);
   }
 
   private async stopRelay(
@@ -433,10 +558,7 @@ export class LiveBattleRuntimeController {
     this.suspended = true;
     this.generation += 1;
     this.refreshQueued = false;
-    this.clearDeadlineTimer();
-    this.scheduledDeadlineKey = null;
-    this.deadlineWakeKey = null;
-    this.deadlineWakeAttempts = 0;
+    this.resetDeadlineScheduler();
     this.removeSubscription();
     this.publish({ status: 'failed', battleId: null, version: null, errorCode, battle: null });
     return this.stopRelay('failed').then(() => {
@@ -449,10 +571,7 @@ export class LiveBattleRuntimeController {
   private invalidateAndStop(status: LiveBattleRuntimeStatus): void {
     this.generation += 1;
     this.refreshQueued = false;
-    this.clearDeadlineTimer();
-    this.scheduledDeadlineKey = null;
-    this.deadlineWakeKey = null;
-    this.deadlineWakeAttempts = 0;
+    this.resetDeadlineScheduler();
     this.removeSubscription();
     void this.stopRelay(status);
   }
@@ -462,10 +581,7 @@ export class LiveBattleRuntimeController {
     this.suspended = true;
     this.generation += 1;
     this.refreshQueued = false;
-    this.clearDeadlineTimer();
-    this.scheduledDeadlineKey = null;
-    this.deadlineWakeKey = null;
-    this.deadlineWakeAttempts = 0;
+    this.resetDeadlineScheduler();
     this.removeSubscription();
     await this.stopRelay('idle');
   }
@@ -475,10 +591,7 @@ export class LiveBattleRuntimeController {
     this.suspended = true;
     this.generation += 1;
     this.refreshQueued = false;
-    this.clearDeadlineTimer();
-    this.scheduledDeadlineKey = null;
-    this.deadlineWakeKey = null;
-    this.deadlineWakeAttempts = 0;
+    this.resetDeadlineScheduler();
     this.removeSubscription();
     this.dependencies.relay.stopImmediately();
     this.relayBattleId = null;
