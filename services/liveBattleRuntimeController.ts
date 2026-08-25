@@ -59,7 +59,11 @@ export type LiveBattleRuntimeDependencies = {
 const RELAY_STATUSES = new Set(['countdown', 'active']);
 const TERMINAL_STATUSES = new Set(['completed', 'rejected', 'cancelled', 'expired']);
 const DEADLINE_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000] as const;
-const DEADLINE_TIMER_MAX_CHUNK_MS = 60_000;
+const DEADLINE_CHECKPOINT_MS = {
+  pending: 10_000,
+  countdown: 1_000,
+  active: 30_000,
+} as const;
 const DEADLINE_CLOCK_TOLERANCE_MS = 25;
 
 const EMPTY_CONTEXT: LiveBattleRuntimeContext = {
@@ -121,6 +125,7 @@ export class LiveBattleRuntimeController {
   private scheduledDeadlineKey: string | null = null;
   private deadlineWakeKey: string | null = null;
   private deadlineBackoffStep = 0;
+  private deadlineBackoffReason: 'none' | 'deadline' | 'error' = 'none';
   private readonly now: () => number;
   private readonly setTimer: NonNullable<LiveBattleRuntimeDependencies['setTimer']>;
   private readonly clearTimer: NonNullable<LiveBattleRuntimeDependencies['clearTimer']>;
@@ -399,6 +404,7 @@ export class LiveBattleRuntimeController {
     this.scheduledDeadlineKey = null;
     this.deadlineWakeKey = null;
     this.deadlineBackoffStep = 0;
+    this.deadlineBackoffReason = 'none';
   }
 
   private getDeadlineTimestamp(battle: LiveBattle): string | null {
@@ -419,6 +425,16 @@ export class LiveBattleRuntimeController {
     return DEADLINE_RETRY_DELAYS_MS[index];
   }
 
+  private getDeadlineCheckpointDelay(battle: LiveBattle): number | null {
+    return battle.status === 'pending'
+      ? DEADLINE_CHECKPOINT_MS.pending
+      : battle.status === 'countdown'
+        ? DEADLINE_CHECKPOINT_MS.countdown
+        : battle.status === 'active'
+          ? DEADLINE_CHECKPOINT_MS.active
+          : null;
+  }
+
   private scheduleDeadline(
     battle: LiveBattle,
     generation: number,
@@ -429,6 +445,7 @@ export class LiveBattleRuntimeController {
     if (this.deadlineWakeKey !== deadlineKey) {
       this.deadlineWakeKey = deadlineKey;
       this.deadlineBackoffStep = 0;
+      this.deadlineBackoffReason = 'none';
     }
     if (!timestamp) {
       this.clearDeadlineTimer();
@@ -441,20 +458,30 @@ export class LiveBattleRuntimeController {
       this.scheduledDeadlineKey = null;
       return;
     }
-    if (
-      reconciledByServer
-      && deadline - this.now() + DEADLINE_CLOCK_TOLERANCE_MS <= 0
-      && this.deadlineBackoffStep === 0
-    ) {
-      this.deadlineBackoffStep = 1;
+    const remaining = deadline - this.now() + DEADLINE_CLOCK_TOLERANCE_MS;
+    let returnedToCheckpointMode = false;
+    if (reconciledByServer) {
+      if (remaining <= 0) {
+        this.deadlineBackoffReason = 'deadline';
+        this.deadlineBackoffStep = Math.max(1, this.deadlineBackoffStep);
+      } else if (this.deadlineBackoffReason !== 'none') {
+        this.deadlineBackoffReason = 'none';
+        this.deadlineBackoffStep = 0;
+        returnedToCheckpointMode = true;
+      }
+    }
+    if (returnedToCheckpointMode && this.scheduledDeadlineKey === deadlineKey) {
+      this.clearDeadlineTimer();
+      this.scheduledDeadlineKey = null;
     }
     if (this.scheduledDeadlineKey === deadlineKey) return;
     this.clearDeadlineTimer();
     this.scheduledDeadlineKey = deadlineKey;
-    const remaining = deadline - this.now() + DEADLINE_CLOCK_TOLERANCE_MS;
+    const checkpointDelay = this.getDeadlineCheckpointDelay(battle);
+    if (checkpointDelay === null) return;
     const delay = this.deadlineBackoffStep > 0
       ? this.getBackoffDelay()
-      : Math.max(0, Math.min(remaining, DEADLINE_TIMER_MAX_CHUNK_MS));
+      : Math.max(0, Math.min(remaining, checkpointDelay));
     const battleId = battle.id;
     const version = battle.version;
     let timer: ReturnType<typeof setTimeout>;
@@ -464,18 +491,14 @@ export class LiveBattleRuntimeController {
       if (!this.isCurrent(generation)) return;
       if (this.snapshot.battleId !== battleId || this.snapshot.version !== version) return;
       this.scheduledDeadlineKey = null;
-      if (
-        this.deadlineBackoffStep === 0
-        && deadline - this.now() + DEADLINE_CLOCK_TOLERANCE_MS > 0
-      ) {
-        const current = this.snapshot.battle;
-        if (current) this.scheduleDeadline(current, generation);
-        return;
+      const deadlineReached = deadline - this.now() + DEADLINE_CLOCK_TOLERANCE_MS <= 0;
+      if (deadlineReached || this.deadlineBackoffStep > 0) {
+        if (deadlineReached) this.deadlineBackoffReason = 'deadline';
+        this.deadlineBackoffStep = Math.min(
+          this.deadlineBackoffStep + 1,
+          DEADLINE_RETRY_DELAYS_MS.length,
+        );
       }
-      this.deadlineBackoffStep = Math.min(
-        this.deadlineBackoffStep + 1,
-        DEADLINE_RETRY_DELAYS_MS.length,
-      );
       this.requestRefresh();
     }, delay);
     this.deadlineTimer = timer;
@@ -493,7 +516,9 @@ export class LiveBattleRuntimeController {
       if (this.deadlineWakeKey !== deadlineKey) {
         this.deadlineWakeKey = deadlineKey;
         this.deadlineBackoffStep = 0;
+        this.deadlineBackoffReason = 'none';
       }
+      if (this.deadlineBackoffReason === 'none') this.deadlineBackoffReason = 'error';
       this.deadlineBackoffStep = Math.max(1, this.deadlineBackoffStep);
       this.clearDeadlineTimer();
       this.scheduledDeadlineKey = null;
@@ -505,7 +530,9 @@ export class LiveBattleRuntimeController {
     if (this.deadlineWakeKey !== retryKey) {
       this.deadlineWakeKey = retryKey;
       this.deadlineBackoffStep = 1;
+      this.deadlineBackoffReason = 'error';
     } else {
+      this.deadlineBackoffReason = 'error';
       this.deadlineBackoffStep = Math.max(1, this.deadlineBackoffStep);
     }
     this.clearDeadlineTimer();
