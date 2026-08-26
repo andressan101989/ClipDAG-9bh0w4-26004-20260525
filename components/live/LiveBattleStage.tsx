@@ -1,7 +1,12 @@
 import React, { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import type { LiveBattlePublicState } from '@/services/liveBattleSpectatorService';
+import {
+  estimateLiveBattleServerNow,
+  readLiveBattleMonotonicNow,
+  type LiveBattlePublicState,
+  type LiveBattleServerClockAnchor,
+} from '@/services/liveBattleSpectatorService';
 
 type HostIdentity = {
   username: string;
@@ -15,6 +20,7 @@ type LiveBattleStageProps = {
   localSurface: ReactNode;
   opponentSurface: ReactNode;
   localLabel?: string;
+  clockAnchor: LiveBattleServerClockAnchor | null;
 };
 
 function secondsUntil(value: string | null, now: number): number | null {
@@ -67,16 +73,31 @@ export function LiveBattleStage({
   localSurface,
   opponentSurface,
   localLabel = 'Anfitrión',
+  clockAnchor,
 }: LiveBattleStageProps) {
-  const [now, setNow] = useState(Date.now());
+  const [monotonicNow, setMonotonicNow] = useState<number | null>(
+    () => clockAnchor ? readLiveBattleMonotonicNow() : null,
+  );
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 250);
+    if (!clockAnchor) {
+      setMonotonicNow(null);
+      return;
+    }
+    setMonotonicNow(readLiveBattleMonotonicNow());
+    const timer = setInterval(() => setMonotonicNow(readLiveBattleMonotonicNow()), 1_000);
     return () => clearInterval(timer);
-  }, []);
+  }, [clockAnchor]);
 
-  const timerText = useMemo(() => state.status === 'countdown'
-    ? String(Math.max(1, secondsUntil(state.scheduledStartAt, now) ?? 1))
-    : clock(secondsUntil(state.scheduledEndAt, now)), [now, state]);
+  const timerText = useMemo(() => {
+    const serverNow = estimateLiveBattleServerNow(clockAnchor, monotonicNow);
+    if (serverNow === null) return '--:--';
+    const remaining = secondsUntil(
+      state.status === 'countdown' ? state.scheduledStartAt : state.scheduledEndAt,
+      serverNow,
+    );
+    if (remaining === null) return '--:--';
+    return state.status === 'countdown' && remaining > 0 ? String(remaining) : clock(remaining);
+  }, [clockAnchor, monotonicNow, state.scheduledEndAt, state.scheduledStartAt, state.status]);
 
   return (
     <View style={styles.root} accessibilityLabel="Battle LIVE de dos anfitriones">

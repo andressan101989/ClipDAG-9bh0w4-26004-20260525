@@ -889,6 +889,7 @@ export default function LiveBroadcasterScreen() {
       {battleState ? (
         <LiveBattleStage
           state={battleState}
+          clockAnchor={battleProjection.clockAnchor}
           localLabel="Tú"
           localHost={{
             username: battleProjection.localHostProfile?.username ?? user?.username ?? user?.email?.split('@')[0] ?? 'Host',

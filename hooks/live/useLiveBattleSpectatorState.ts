@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import {
   subscribeToLiveBattlePublicState,
   type LiveBattlePublicState,
+  type LiveBattleServerClockAnchor,
 } from '@/services/liveBattleSpectatorService';
 import {
   getLiveBattlePublicProfiles,
@@ -14,12 +16,14 @@ export function useLiveBattleSpectatorState(
 ) {
   const generationRef = useRef(0);
   const [state, setState] = useState<LiveBattlePublicState | null>(null);
+  const [clockAnchor, setClockAnchor] = useState<LiveBattleServerClockAnchor | null>(null);
   const [profiles, setProfiles] = useState<Map<string, LiveBattlePublicProfile>>(new Map());
   const [errorCode, setErrorCode] = useState<string | null>(null);
 
   useEffect(() => {
     const generation = ++generationRef.current;
     setState(null);
+    setClockAnchor(null);
     setProfiles(new Map());
     setErrorCode(null);
     if (!enabled || !sessionId) return;
@@ -36,6 +40,9 @@ export function useLiveBattleSpectatorState(
         error => {
           if (generation === generationRef.current) setErrorCode(error.code);
         },
+        anchor => {
+          if (generation === generationRef.current) setClockAnchor(anchor);
+        },
       );
     } catch (error) {
       const code = error && typeof error === 'object' && 'code' in error
@@ -46,8 +53,18 @@ export function useLiveBattleSpectatorState(
       return;
     }
 
+    let previousAppState: AppStateStatus = AppState.currentState;
+    const appStateSubscription = AppState.addEventListener('change', nextAppState => {
+      const returningToForeground = previousAppState !== 'active' && nextAppState === 'active';
+      previousAppState = nextAppState;
+      if (returningToForeground && generation === generationRef.current) {
+        void subscription.reconcile();
+      }
+    });
+
     return () => {
       generationRef.current += 1;
+      appStateSubscription.remove();
       void subscription.unsubscribe().catch(() => undefined);
     };
   }, [enabled, sessionId]);
@@ -71,6 +88,7 @@ export function useLiveBattleSpectatorState(
 
   return {
     state,
+    clockAnchor,
     errorCode,
     localHostProfile: state ? profiles.get(state.localHostUserId) ?? null : null,
     opponentHostProfile: state ? profiles.get(state.opponentHostUserId) ?? null : null,

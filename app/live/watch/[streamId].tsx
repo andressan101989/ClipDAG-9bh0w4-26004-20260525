@@ -887,6 +887,7 @@ export default function LiveWatchScreen() {
       {battleState ? (
         <LiveBattleStage
           state={battleState}
+          clockAnchor={battleProjection.clockAnchor}
           localHost={{
             username: battleProjection.localHostProfile?.username ?? session.hostUsername,
             avatarUrl: battleProjection.localHostProfile?.avatarUrl ?? null,

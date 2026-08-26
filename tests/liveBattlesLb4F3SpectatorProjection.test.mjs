@@ -59,34 +59,24 @@ const row = (overrides = {}) => ({
 });
 
 function clientHarness(snapshot = row()) {
-  let realtimeCallback = () => undefined;
-  let channelOptions = null;
+  let currentSnapshot = snapshot;
+  const realtimeRegistrations = [];
   let channelName = null;
   let removeCalls = 0;
-  let selectedColumns = null;
-  let selectedSession = null;
+  let rpcCall = null;
   const channel = {
     on(_kind, options, callback) {
-      channelOptions = options;
-      realtimeCallback = callback;
+      realtimeRegistrations.push({ options, callback });
       return channel;
     },
     subscribe() { return channel; },
   };
   const client = {
-    from(table) {
-      assert.equal(table, 'live_battle_public_states');
+    async rpc(name, args) {
+      rpcCall = { name, args };
       return {
-        select(columns) {
-          selectedColumns = columns;
-          return {
-            eq(column, value) {
-              assert.equal(column, 'session_id');
-              selectedSession = value;
-              return { maybeSingle: async () => ({ data: snapshot, error: null }) };
-            },
-          };
-        },
+        data: { server_now: '2026-08-26T12:00:00.000Z', state: currentSnapshot },
+        error: null,
       };
     },
     channel(name) { channelName = name; return channel; },
@@ -94,8 +84,13 @@ function clientHarness(snapshot = row()) {
   };
   return {
     client,
-    emit: payload => realtimeCallback(payload),
-    inspect: () => ({ channelOptions, channelName, removeCalls, selectedColumns, selectedSession }),
+    emit: (event, payload) => {
+      const registration = realtimeRegistrations.find(item => item.options.event === event);
+      assert.ok(registration, `missing ${event} registration`);
+      registration.callback(payload);
+    },
+    setSnapshot: value => { currentSnapshot = value; },
+    inspect: () => ({ realtimeRegistrations, channelName, removeCalls, rpcCall }),
   };
 }
 
@@ -164,25 +159,30 @@ test('snapshot and exact-session Realtime are monotonic, replace Battles, and cl
   const subscription = service.subscribeToLiveBattlePublicState(SESSION, value => values.push(value));
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(values.at(-1).battleId, BATTLE_A);
-  assert.deepEqual(harness.inspect().channelOptions, {
-    event: '*', schema: 'public', table: 'live_battle_public_states', filter: `session_id=eq.${SESSION}`,
+  assert.deepEqual(harness.inspect().realtimeRegistrations.map(item => item.options), [
+    { event: 'INSERT', schema: 'public', table: 'live_battle_public_states', filter: `session_id=eq.${SESSION}` },
+    { event: 'UPDATE', schema: 'public', table: 'live_battle_public_states', filter: `session_id=eq.${SESSION}` },
+    { event: 'DELETE', schema: 'public', table: 'live_battle_public_states' },
+  ]);
+  assert.deepEqual(harness.inspect().rpcCall, {
+    name: 'get_live_battle_public_snapshot', args: { p_session_id: SESSION },
   });
-  assert.equal(harness.inspect().selectedSession, SESSION);
   assert.match(harness.inspect().channelName, new RegExp(`^live-battle-public:${SESSION}:`));
-  assert.doesNotMatch(harness.inspect().selectedColumns, /token|score|winner|gift|wallet/i);
 
   const beforeDuplicate = values.length;
-  harness.emit({ eventType: 'UPDATE', new: row() });
-  harness.emit({ eventType: 'UPDATE', new: row({ version: 2 }) });
+  harness.emit('UPDATE', { new: row() });
+  harness.emit('UPDATE', { new: row({ version: 2 }) });
   assert.equal(values.length, beforeDuplicate);
 
-  harness.emit({ eventType: 'UPDATE', new: row({ version: 4, status: 'active', started_at: '2026-08-26T12:00:03.000Z', scheduled_end_at: '2026-08-26T12:05:03.000Z', updated_at: '2026-08-26T12:00:03.000Z' }) });
+  harness.emit('UPDATE', { new: row({ version: 4, status: 'active', started_at: '2026-08-26T12:00:03.000Z', scheduled_end_at: '2026-08-26T12:05:03.000Z', updated_at: '2026-08-26T12:00:03.000Z' }) });
   assert.equal(values.at(-1).version, 4);
 
   const replacement = row({ battle_id: BATTLE_B, version: 1, updated_at: '2026-08-26T12:06:00.000Z' });
-  harness.emit({ eventType: 'UPDATE', new: replacement });
+  harness.emit('UPDATE', { new: replacement });
   assert.equal(values.at(-1).battleId, BATTLE_B);
-  harness.emit({ eventType: 'DELETE', old: replacement });
+  harness.setSnapshot(null);
+  harness.emit('DELETE', { old: { session_id: SESSION } });
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(values.at(-1), null);
 
   await subscription.unsubscribe();
