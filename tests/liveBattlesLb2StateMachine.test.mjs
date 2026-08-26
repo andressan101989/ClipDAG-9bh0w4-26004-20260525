@@ -12,7 +12,8 @@ const harness = await read('scripts/prove-live-lb2-concurrency.mjs');
 
 test('LB2 adds exactly one forward migration without changing deployed LB1 migrations', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
-    .filter(name => name > '20260824014644_live_lb1_fix_agora_uid_lint.sql');
+    .filter(name => name > '20260824014644_live_lb1_fix_agora_uid_lint.sql'
+      && name <= correctionName);
   assert.deepEqual(names, [migrationName, correctionName]);
   assert.equal(createHash('sha256').update(await read(
     'supabase/migrations/20260823223420_live_lb1_canonical_authority.sql',

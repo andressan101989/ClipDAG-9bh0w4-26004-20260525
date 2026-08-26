@@ -40,9 +40,12 @@ import {
 import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
 import { LiveSessionHeader } from '@/components/live/LiveSessionHeader';
+import { LiveBattleStage } from '@/components/live/LiveBattleStage';
 import { LiveBattleHostControls } from '@/components/live/LiveBattleHostControls';
 import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
 import { useLiveBattleRelayRuntime } from '@/hooks/live/useLiveBattleRelayRuntime';
+import { useLiveBattleSpectatorState } from '@/hooks/live/useLiveBattleSpectatorState';
+import { isLiveBattleStageStatus } from '@/services/liveBattleSpectatorService';
 import type { LiveGiftEvent } from '@/types/liveGifts';
 import { LiveHostProductManager } from '@/components/live/commerce/LiveHostProductManager';
 import { LiveHostPurchaseFeed } from '@/components/live/commerce/LiveHostPurchaseFeed';
@@ -292,6 +295,10 @@ export default function LiveBroadcasterScreen() {
     getEngine,
     registerBeforeEngineRelease,
   });
+  const battleProjection = useLiveBattleSpectatorState(
+    streamId ?? null,
+    Boolean(user?.id && live && sessionIsCanonicalLive),
+  );
   const { stop: stopBattleRuntime } = battleRuntime;
 
   const chatRef    = useRef<FlatList>(null);
@@ -848,6 +855,11 @@ export default function LiveBroadcasterScreen() {
     p.status === 'active' &&
     p.user_id !== user?.id
   );
+  const battleState = battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status)
+    ? battleProjection.state
+    : null;
+  const battleOpponentUid = battleState?.opponentHostAgoraUid;
+  const cohostRemoteUids = remoteUids.filter(uid => uid !== battleOpponentUid);
   const composerBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
   const composerClearance = composerBottom + composerHeight + 12;
   const controlsBottom = composerBottom + composerHeight + 12;
@@ -874,7 +886,26 @@ export default function LiveBroadcasterScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="light" />
 
-      {RtcSurfaceView && localVideoReady && !isCameraOff ? (
+      {battleState ? (
+        <LiveBattleStage
+          state={battleState}
+          localLabel="Tú"
+          localHost={{
+            username: battleProjection.localHostProfile?.username ?? user?.username ?? user?.email?.split('@')[0] ?? 'Host',
+            avatarUrl: battleProjection.localHostProfile?.avatarUrl ?? user?.avatar ?? null,
+          }}
+          opponentHost={{
+            username: battleProjection.opponentHostProfile?.username ?? 'Host',
+            avatarUrl: battleProjection.opponentHostProfile?.avatarUrl ?? null,
+          }}
+          localSurface={RtcSurfaceView && localVideoReady && !isCameraOff
+            ? <RtcSurfaceView canvas={{ uid: 0 }} style={styles.battleVideo} />
+            : null}
+          opponentSurface={RtcSurfaceView && remoteUids.includes(battleState.opponentHostAgoraUid)
+            ? <RtcSurfaceView canvas={{ uid: battleState.opponentHostAgoraUid }} style={styles.battleVideo} />
+            : null}
+        />
+      ) : RtcSurfaceView && localVideoReady && !isCameraOff ? (
         <RtcSurfaceView canvas={{ uid: 0 }} style={styles.videoStream} />
       ) : (
         <View style={styles.videoPlaceholder}>
@@ -891,9 +922,9 @@ export default function LiveBroadcasterScreen() {
       <LinearGradient colors={['rgba(0,0,0,0.45)', 'transparent']} style={styles.topShade} pointerEvents="none" />
       <LinearGradient colors={['transparent', 'rgba(0,0,0,0.6)']} style={styles.bottomShade} pointerEvents="none" />
 
-      {RtcSurfaceView && remoteUids.length > 0 && showCohostPreview ? (
+      {RtcSurfaceView && cohostRemoteUids.length > 0 && showCohostPreview ? (
         <View style={[styles.remoteStrip, { bottom: cohostPreviewBottom, maxHeight: cohostPreviewMaxHeight }]}>
-          {remoteUids.map(uid => (
+          {cohostRemoteUids.map(uid => (
             <View key={uid} style={styles.remoteTile}>
               <RtcSurfaceView canvas={{ uid }} style={styles.remoteVideo} />
               <View style={styles.remoteBadge}>
@@ -1282,6 +1313,7 @@ const styles = StyleSheet.create({
   cancelText: { color: Colors.textSubtle, fontSize: FontSize.sm },
 
   videoStream:      { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
+  battleVideo:      { flex: 1, backgroundColor: '#000' },
   videoPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surface },
   keyboardDismissLayer: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
   topShade: { position: 'absolute', top: 0, left: 0, right: 0, height: 170, zIndex: 2 },

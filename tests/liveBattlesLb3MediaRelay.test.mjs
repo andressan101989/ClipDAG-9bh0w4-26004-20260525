@@ -97,7 +97,8 @@ const sessions = (overrides = {}) => [
 
 test('LB3 contains no migration, schema, finance, screen, or Battle scoring change', async () => {
   const migrations = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
-    .filter(name => name > '20260824034049_live_battles_lb2_f1_session_liveness.sql');
+    .filter(name => name > '20260824034049_live_battles_lb2_f1_session_liveness.sql'
+      && name < '20260826043828_live_battles_lb4_f3_spectator_projection.sql');
   assert.deepEqual(migrations, []);
   const combined = `${authorizationSource}\n${contractSource}\n${nativeSource}\n${webSource}`;
   assert.doesNotMatch(combined, /create table|alter table|create policy|grant execute|security definer/i);

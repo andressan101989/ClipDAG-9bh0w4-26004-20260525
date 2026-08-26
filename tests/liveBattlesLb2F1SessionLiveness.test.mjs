@@ -11,7 +11,7 @@ const harness = await read('scripts/prove-live-lb2-concurrency.mjs');
 
 test('LB2-F1 is the only forward correction and deployed migrations are byte-identical', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
-    .filter(name => name > lb2Name);
+    .filter(name => name > lb2Name && name <= correctionName);
   assert.deepEqual(names, [correctionName]);
   assert.equal(createHash('sha256').update(await read(`supabase/migrations/${lb2Name}`)).digest('hex'),
     '81740478f548a0866725b08c5f8853cb2f6cc3ce497bc5d2ca64bd5678898e56');

@@ -9,7 +9,8 @@ const [host, viewer] = await Promise.all([
 ]);
 
 test("Host keeps the existing Agora remote UID video authority", () => {
-  assert.match(host, /remoteUids\.map\(uid =>/);
+  assert.match(host, /cohostRemoteUids\.map\(uid =>/);
+  assert.match(host, /remoteUids\.filter\(uid => uid !== battleOpponentUid\)/);
   assert.match(host, /<RtcSurfaceView canvas=\{\{ uid \}\} style=\{styles\.remoteVideo\}/);
   assert.equal((host.match(/useAgoraEngine\(/g) ?? []).length, 1);
 });
@@ -35,7 +36,7 @@ test("product measurement remains the geometry authority", () => {
 
 test("active Host panels hide only the local preview surface", () => {
   assert.match(host, /const hostPanelOccupiesCohostPreview = hostActionPanel !== null \|\| moreControlsVisible/);
-  assert.match(host, /remoteUids\.length > 0 && showCohostPreview/);
+  assert.match(host, /cohostRemoteUids\.length > 0 && showCohostPreview/);
   assert.doesNotMatch(host, /hostPanelOccupiesCohostPreview[\s\S]{0,240}(?:leave\(|removeCohost\(|remoteUids\s*=)/);
 });
 

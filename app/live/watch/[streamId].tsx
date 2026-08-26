@@ -27,7 +27,10 @@ import { LiveGiftSheet } from '@/components/live/gifts/LiveGiftSheet';
 import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
 import { LiveSessionHeader } from '@/components/live/LiveSessionHeader';
+import { LiveBattleStage } from '@/components/live/LiveBattleStage';
 import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
+import { useLiveBattleSpectatorState } from '@/hooks/live/useLiveBattleSpectatorState';
+import { isLiveBattleStageStatus } from '@/services/liveBattleSpectatorService';
 import type { LiveGiftEvent } from '@/types/liveGifts';
 import { LiveCommerceButton } from '@/components/live/commerce/LiveCommerceButton';
 import { LiveProductRail } from '@/components/live/shop/LiveProductRail';
@@ -258,6 +261,10 @@ export default function LiveWatchScreen() {
     engineReady, joined, remoteUids, error, join, leave, promoteToPublisher,
     isMuted, isCameraOff, toggleMute, toggleCamera,
   } = agora;
+  const battleProjection = useLiveBattleSpectatorState(
+    streamId ?? null,
+    Boolean(user?.id && session?.status === 'live'),
+  );
   const demoteToAudience = (agora as any).demoteToAudience as undefined | (() => Promise<boolean>);
 
   const requestSent = participantRow?.role === 'requested';
@@ -854,8 +861,16 @@ export default function LiveWatchScreen() {
     );
   }
 
-  const remoteUid = remoteUids[0];
-  const coHostUids = remoteUids.slice(1);
+  const battleState = battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status)
+    ? battleProjection.state
+    : null;
+  const canonicalHostUid = useridToAgoraUid(session.hostId);
+  const remoteUid = remoteUids.includes(canonicalHostUid) ? canonicalHostUid : remoteUids[0];
+  const battleHostUid = battleState?.localHostAgoraUid;
+  const battleOpponentUid = battleState?.opponentHostAgoraUid;
+  const coHostUids = remoteUids.filter(uid => battleState
+    ? uid !== battleHostUid && uid !== battleOpponentUid
+    : uid !== remoteUid);
   const composerBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
   const composerClearance = composerBottom + composerHeight + 16;
   const featuredLiveProduct = liveProducts.find(product => product.isFeatured) ?? null;
@@ -869,7 +884,25 @@ export default function LiveWatchScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="light" />
 
-      {RtcSurfaceView && remoteUid !== undefined ? (
+      {battleState ? (
+        <LiveBattleStage
+          state={battleState}
+          localHost={{
+            username: battleProjection.localHostProfile?.username ?? session.hostUsername,
+            avatarUrl: battleProjection.localHostProfile?.avatarUrl ?? null,
+          }}
+          opponentHost={{
+            username: battleProjection.opponentHostProfile?.username ?? 'Host',
+            avatarUrl: battleProjection.opponentHostProfile?.avatarUrl ?? null,
+          }}
+          localSurface={RtcSurfaceView && remoteUids.includes(battleState.localHostAgoraUid)
+            ? <RtcSurfaceView canvas={{ uid: battleState.localHostAgoraUid }} style={styles.battleVideo} />
+            : null}
+          opponentSurface={RtcSurfaceView && remoteUids.includes(battleState.opponentHostAgoraUid)
+            ? <RtcSurfaceView canvas={{ uid: battleState.opponentHostAgoraUid }} style={styles.battleVideo} />
+            : null}
+        />
+      ) : RtcSurfaceView && remoteUid !== undefined ? (
         <RtcSurfaceView canvas={{ uid: remoteUid }} style={styles.videoStream} />
       ) : (
         <View style={styles.videoPlaceholder}>
@@ -1137,6 +1170,7 @@ const styles = StyleSheet.create({
 
   container: { flex: 1, backgroundColor: '#050508' },
   videoStream:      { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
+  battleVideo:      { flex: 1, backgroundColor: '#000' },
   videoPlaceholder: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, backgroundColor: Colors.surface },
   keyboardDismissLayer: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
   waitingText: { color: Colors.textSecondary, fontSize: FontSize.sm },
