@@ -355,12 +355,15 @@ export function subscribeToLiveBattlePublicState(
       table: 'live_battle_public_states',
     }, handleDelete)
     .subscribe(status => {
+      if (disposed) return;
+      if (status === 'SUBSCRIBED') {
+        void reconcile();
+        return;
+      }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         onError?.(new LiveBattleSpectatorError('live_battle_public_realtime_unavailable'));
       }
     });
-
-  void reconcile();
 
   let cleanup: Promise<void> | null = null;
   return {

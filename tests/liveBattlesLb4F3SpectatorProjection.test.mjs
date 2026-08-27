@@ -64,12 +64,13 @@ function clientHarness(snapshot = row()) {
   let channelName = null;
   let removeCalls = 0;
   let rpcCall = null;
+  let subscribeCallback = null;
   const channel = {
     on(_kind, options, callback) {
       realtimeRegistrations.push({ options, callback });
       return channel;
     },
-    subscribe() { return channel; },
+    subscribe(callback) { subscribeCallback = callback; return channel; },
   };
   const client = {
     async rpc(name, args) {
@@ -88,6 +89,10 @@ function clientHarness(snapshot = row()) {
       const registration = realtimeRegistrations.find(item => item.options.event === event);
       assert.ok(registration, `missing ${event} registration`);
       registration.callback(payload);
+    },
+    emitStatus: status => {
+      assert.ok(subscribeCallback, 'missing subscribe callback');
+      subscribeCallback(status);
     },
     setSnapshot: value => { currentSnapshot = value; },
     inspect: () => ({ realtimeRegistrations, channelName, removeCalls, rpcCall }),
@@ -157,6 +162,7 @@ test('snapshot and exact-session Realtime are monotonic, replace Battles, and cl
   const { service } = loadService(harness);
   const values = [];
   const subscription = service.subscribeToLiveBattlePublicState(SESSION, value => values.push(value));
+  harness.emitStatus('SUBSCRIBED');
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(values.at(-1).battleId, BATTLE_A);
   assert.deepEqual(harness.inspect().realtimeRegistrations.map(item => item.options), [

@@ -165,7 +165,7 @@ test("B8D-3 manual-blocker corrective stays intact with Build 22", () => {
     .sort();
   assert.equal(
     migrations.at(-1),
-    "20260826115337_live_battles_lb4_f3_f1_realtime_delete_clock.sql",
+    "20260827012913_live_battles_lb4_f3_f2_snapshot_contract.sql",
   );
   assert.ok(migrations.includes("20260822221008_marketplace_post_settlement_delivery_ack_r2a_f1.sql"));
   assert.ok(migrations.includes("20260822165852_marketplace_post_settlement_returns_r2a.sql"));

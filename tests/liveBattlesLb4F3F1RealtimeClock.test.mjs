@@ -72,12 +72,13 @@ function clientHarness() {
   const rpcRequests = [];
   let removeCalls = 0;
   let channelName = null;
+  let subscribeCallback = null;
   const channel = {
     on(_kind, options, callback) {
       registrations.push({ options, callback });
       return channel;
     },
-    subscribe() { return channel; },
+    subscribe(callback) { subscribeCallback = callback; return channel; },
   };
   const client = {
     rpc(name, args) {
@@ -97,6 +98,10 @@ function clientHarness() {
       const registration = registrations.find(item => item.options.event === event);
       assert.ok(registration, `missing ${event} registration`);
       registration.callback(payload);
+    },
+    emitStatus(status) {
+      assert.ok(subscribeCallback, 'missing subscribe callback');
+      subscribeCallback(status);
     },
     resolveRpc(index, data, error = null) {
       assert.ok(rpcRequests[index], `missing RPC ${index}`);
@@ -188,6 +193,7 @@ test('Realtime registers filtered INSERT/UPDATE and unfiltered PK-only DELETE re
     anchor => anchors.push(anchor),
     () => (monotonic += 50),
   );
+  harness.emitStatus('SUBSCRIBED');
   assert.deepEqual(harness.inspect().registrations.map(item => item.options), [
     { event: 'INSERT', schema: 'public', table: 'live_battle_public_states', filter: `session_id=eq.${SESSION}` },
     { event: 'UPDATE', schema: 'public', table: 'live_battle_public_states', filter: `session_id=eq.${SESSION}` },
@@ -229,6 +235,7 @@ test('DELETE reconciliation cannot clear a newer Battle and a late initial snaps
     undefined,
     () => (monotonic += 10),
   );
+  harness.emitStatus('SUBSCRIBED');
 
   const newerA = row({ version: 5, updated_at: '2026-08-26T12:00:05.000Z' });
   harness.emit('UPDATE', { new: newerA });
@@ -255,6 +262,7 @@ test('snapshot RPC is canonical, cleanup is idempotent, and no callback survives
   const service = loadService(harness);
   const values = [];
   const subscription = service.subscribeToLiveBattlePublicState(SESSION, value => values.push(value));
+  harness.emitStatus('SUBSCRIBED');
   assert.deepEqual(harness.inspect().rpcRequests[0].name, 'get_live_battle_public_snapshot');
   assert.deepEqual(harness.inspect().rpcRequests[0].args, { p_session_id: SESSION });
   await subscription.unsubscribe();
