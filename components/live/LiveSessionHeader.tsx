@@ -12,6 +12,7 @@ export function LiveSessionHeader({
   commerceSummary,
   hostV3 = false,
   hostV4 = false,
+  battleMode = false,
 }: {
   hostName: string;
   viewerCount: number;
@@ -20,10 +21,40 @@ export function LiveSessionHeader({
   commerceSummary?: string;
   hostV3?: boolean;
   hostV4?: boolean;
+  battleMode?: boolean;
 }) {
   const { width } = useWindowDimensions();
   const compact = width < 370;
   const premiumHost = hostV3 || hostV4;
+  if (battleMode) {
+    return (
+      <View style={s.battleRow} accessibilityLabel={`EN VIVO con ${hostName}`}>
+        <View style={s.battleLivePill}>
+          <OnSpaceText variant="caption" color="textInverse" style={s.battlePillText}>EN VIVO</OnSpaceText>
+        </View>
+        <View style={s.battleMetricPill}>
+          <MaterialIcons name="visibility" size={12} color={colors.textInverse} />
+          <OnSpaceText variant="caption" color="textInverse" style={s.battlePillText}>
+            {viewerCount.toLocaleString()}
+          </OnSpaceText>
+        </View>
+        <View style={s.battleDurationPill}>
+          <OnSpaceText variant="caption" color="textInverse" style={s.battlePillText}>{elapsed}</OnSpaceText>
+        </View>
+        <View style={s.battleSpacer} />
+        <Pressable
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Cerrar LIVE"
+          style={s.battleCloseTarget}
+        >
+          <View style={s.battleCloseCircle}>
+            <MaterialIcons name="close" size={20} color={colors.textInverse} />
+          </View>
+        </Pressable>
+      </View>
+    );
+  }
   return (
     <View style={[s.row, premiumHost && s.hostRow, hostV4 && s.hostV4Row, compact && premiumHost && s.compactHostRow]} accessibilityLabel={`EN VIVO con ${hostName}`}>
       <View style={[s.avatar, premiumHost && s.hostAvatar, hostV4 && s.hostV4Avatar]}>
@@ -145,4 +176,44 @@ const s = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,.12)",
   },
   hostClose: { width: 36, height: 36, borderRadius: 18 },
+  battleRow: {
+    minHeight: 44,
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "transparent",
+  },
+  battleLivePill: {
+    width: 76,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(235,20,51,0.96)",
+  },
+  battleMetricPill: {
+    minWidth: 72,
+    height: 30,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingHorizontal: 9,
+    borderRadius: 15,
+    backgroundColor: "rgba(8,10,18,0.62)",
+  },
+  battleDurationPill: {
+    minWidth: 64,
+    height: 30,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    borderRadius: 15,
+    backgroundColor: "rgba(8,10,18,0.62)",
+  },
+  battlePillText: { fontSize: 11, lineHeight: 14, fontWeight: "700" },
+  battleSpacer: { flex: 1 },
+  battleCloseTarget: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  battleCloseCircle: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(8,10,18,0.66)" },
 });
