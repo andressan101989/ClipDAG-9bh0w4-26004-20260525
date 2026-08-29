@@ -6,6 +6,7 @@ import test from 'node:test';
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const previousName = '20260829142317_live_battles_lb4_f3_f3_f1_accepted_lifecycle.sql';
 const migrationName = '20260829150940_live_battles_lb4_f3_f3_f1_f1_cancellation_authority.sql';
+const transitionPlanMigrationName = '20260829161856_live_battles_lb4_f3_f3_f1_f2_transition_plan.sql';
 const proofName = 'live_battles_lb4_f3_f3_f1_f1_cancellation_authority.sql';
 const migration = await read(`supabase/migrations/${migrationName}`);
 const sqlProof = await read(`supabase/tests/${proofName}`);
@@ -21,7 +22,7 @@ function functionBody(name) {
 test('LB4-F3-F3-F1-F1 is the only forward migration and preserves the deployed predecessor', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
     .filter(name => name > previousName);
-  assert.deepEqual(names, [migrationName]);
+  assert.deepEqual(names, [migrationName, transitionPlanMigrationName]);
   const previous = (await read(`supabase/migrations/${previousName}`)).replaceAll('\r\n', '\n');
   assert.equal(createHash('sha256').update(previous).digest('hex'),
     '024989d6a5f16be79e5725dfd3f375d334340c234ee7d536ec7ec0ad60b85f43');

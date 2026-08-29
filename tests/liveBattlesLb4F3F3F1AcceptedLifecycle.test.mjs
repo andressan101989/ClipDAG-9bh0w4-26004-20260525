@@ -7,6 +7,7 @@ const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const previousName = '20260829054911_live_battles_lb4_f3_f3_stale_lifecycle.sql';
 const migrationName = '20260829142317_live_battles_lb4_f3_f3_f1_accepted_lifecycle.sql';
 const cancellationAuthorityMigrationName = '20260829150940_live_battles_lb4_f3_f3_f1_f1_cancellation_authority.sql';
+const transitionPlanMigrationName = '20260829161856_live_battles_lb4_f3_f3_f1_f2_transition_plan.sql';
 const sqlProofName = 'live_battles_lb4_f3_f3_f1_accepted_lifecycle.sql';
 const migration = await read(`supabase/migrations/${migrationName}`);
 const sqlProof = await read(`supabase/tests/${sqlProofName}`);
@@ -22,7 +23,11 @@ function functionBody(schema, name) {
 test('LB4-F3-F3-F1 adds one forward migration without changing LB4-F3-F3', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
     .filter(name => name > previousName);
-  assert.deepEqual(names, [migrationName, cancellationAuthorityMigrationName]);
+  assert.deepEqual(names, [
+    migrationName,
+    cancellationAuthorityMigrationName,
+    transitionPlanMigrationName,
+  ]);
   const previous = (await read(`supabase/migrations/${previousName}`)).replaceAll('\r\n', '\n');
   assert.equal(createHash('sha256').update(previous).digest('hex'),
     '073857375cde4a7fb641d565a033809fc32b1431f319dc510e5070d9ecdf32d9');

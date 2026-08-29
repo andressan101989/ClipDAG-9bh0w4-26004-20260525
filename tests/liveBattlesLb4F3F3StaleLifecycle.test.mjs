@@ -8,6 +8,7 @@ const previousName = '20260827012913_live_battles_lb4_f3_f2_snapshot_contract.sq
 const migrationName = '20260829054911_live_battles_lb4_f3_f3_stale_lifecycle.sql';
 const acceptedLifecycleMigrationName = '20260829142317_live_battles_lb4_f3_f3_f1_accepted_lifecycle.sql';
 const cancellationAuthorityMigrationName = '20260829150940_live_battles_lb4_f3_f3_f1_f1_cancellation_authority.sql';
+const transitionPlanMigrationName = '20260829161856_live_battles_lb4_f3_f3_f1_f2_transition_plan.sql';
 const sqlProofName = 'live_battles_lb4_f3_f3_stale_lifecycle.sql';
 const migration = await read(`supabase/migrations/${migrationName}`);
 const sqlProof = await read(`supabase/tests/${sqlProofName}`);
@@ -27,6 +28,7 @@ test('LB4-F3-F3 adds one migration and leaves every deployed migration byte-iden
     migrationName,
     acceptedLifecycleMigrationName,
     cancellationAuthorityMigrationName,
+    transitionPlanMigrationName,
   ]);
   const previous = (await read(`supabase/migrations/${previousName}`)).replaceAll('\r\n', '\n');
   assert.equal(createHash('sha256').update(previous).digest('hex'),
