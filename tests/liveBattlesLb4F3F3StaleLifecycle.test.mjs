@@ -6,6 +6,7 @@ import test from 'node:test';
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const previousName = '20260827012913_live_battles_lb4_f3_f2_snapshot_contract.sql';
 const migrationName = '20260829054911_live_battles_lb4_f3_f3_stale_lifecycle.sql';
+const acceptedLifecycleMigrationName = '20260829142317_live_battles_lb4_f3_f3_f1_accepted_lifecycle.sql';
 const sqlProofName = 'live_battles_lb4_f3_f3_stale_lifecycle.sql';
 const migration = await read(`supabase/migrations/${migrationName}`);
 const sqlProof = await read(`supabase/tests/${sqlProofName}`);
@@ -21,7 +22,7 @@ function functionBody(schema, name) {
 test('LB4-F3-F3 adds one migration and leaves every deployed migration byte-identical', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
     .filter(name => name > previousName);
-  assert.deepEqual(names, [migrationName]);
+  assert.deepEqual(names, [migrationName, acceptedLifecycleMigrationName]);
   const previous = (await read(`supabase/migrations/${previousName}`)).replaceAll('\r\n', '\n');
   assert.equal(createHash('sha256').update(previous).digest('hex'),
     '9cf43c3d095e5cc86a15b91bbf284327184e1ec8e136fc3718889eea248fad1b');
