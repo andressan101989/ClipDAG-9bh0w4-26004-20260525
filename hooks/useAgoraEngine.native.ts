@@ -9,6 +9,7 @@ import { Platform } from 'react-native';
 import {
   createAgoraRtcEngine, ChannelProfileType, ClientRoleType,
   isAgoraAvailable, fetchAgoraToken, getAgoraAppId, AudioSessionOperationRestriction,
+  ConnectionStateType,
 } from '@/services/agoraService';
 import type { AgoraTokenResource, LiveRequestedRole } from '@/services/agoraService';
 import { applyPendingAgoraCallMute, registerActiveCallAudioController } from '@/services/callAudioControlService';
@@ -169,6 +170,8 @@ export function useAgoraEngine({
   // (enableVideo doubles as the video/audio-call signal here).
   const [speakerOn,       setSpeakerOn]        = useState(enableVideo);
   const speakerOnRef = useRef(enableVideo);
+  const reconnectingRef = useRef(false);
+  const [reconnectEpoch, setReconnectEpoch] = useState(0);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -212,6 +215,7 @@ export function useAgoraEngine({
 
   const cleanupEngine = useCallback(() => {
     joinGenerationRef.current += 1;
+    reconnectingRef.current = false;
     clearJoinTimeout();
     const engine = engineRef.current;
     const activeKey = attemptedJoinKeyRef.current;
@@ -408,6 +412,17 @@ export function useAgoraEngine({
             joinKey: safeJoinKey,
             state, reason,
           });
+          if (state === ConnectionStateType.ConnectionStateReconnecting) {
+            reconnectingRef.current = true;
+          } else if (state === ConnectionStateType.ConnectionStateConnected) {
+            if (reconnectingRef.current && mountedRef.current) {
+              reconnectingRef.current = false;
+              setReconnectEpoch(value => value + 1);
+            }
+          } else if (state === ConnectionStateType.ConnectionStateDisconnected
+            || state === ConnectionStateType.ConnectionStateFailed) {
+            reconnectingRef.current = false;
+          }
         },
         onUserJoined: (_conn: any, remoteUid: number) => {
           logAgora('onUserJoined', { joinKey: safeJoinKey, remoteUid });
@@ -695,6 +710,7 @@ export function useAgoraEngine({
     remoteUids,
     isMuted, isCameraOff, isFront, speakerOn,
     localVideoReady,
+    reconnectEpoch,
     getEngine, registerBeforeEngineRelease,
     join, leave,
     toggleMute, toggleCamera, switchCamera, toggleSpeaker, promoteToPublisher, demoteToAudience,

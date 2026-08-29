@@ -1,4 +1,5 @@
 import {
+  ChannelMediaRelayError,
   ChannelMediaRelayState,
   type ChannelMediaRelayConfiguration,
   type IRtcEngine,
@@ -23,7 +24,38 @@ type RelayEngine = Pick<
 
 type RelayDependencies = {
   requestCredentials?: (battleId: string) => Promise<LiveBattleRelayCredentials>;
+  logger?: (event: string, data: Record<string, unknown>) => void;
 };
+
+function shortId(value: string): string {
+  return value.slice(-8);
+}
+
+function defaultRelayLogger(event: string, data: Record<string, unknown>): void {
+  console.info(`[LIVE-BATTLE-RELAY] ${event}`, data);
+}
+
+function relayFailureCode(code: number): string {
+  if (code === ChannelMediaRelayError.RelayErrorSrcTokenExpired
+    || code === ChannelMediaRelayError.RelayErrorDestTokenExpired) {
+    return 'battle_relay_token_expired';
+  }
+  if (code === ChannelMediaRelayError.RelayErrorFailedJoinSrc
+    || code === ChannelMediaRelayError.RelayErrorFailedJoinDest) {
+    return 'battle_relay_channel_join_failed';
+  }
+  if (code === ChannelMediaRelayError.RelayErrorServerNoResponse) {
+    return 'battle_relay_service_unavailable';
+  }
+  if (code === ChannelMediaRelayError.RelayErrorServerConnectionLost) {
+    return 'battle_relay_connection_lost';
+  }
+  if (code === ChannelMediaRelayError.RelayErrorFailedPacketReceivedFromSrc
+    || code === ChannelMediaRelayError.RelayErrorFailedPacketSentToDest) {
+    return 'battle_relay_transport_failed';
+  }
+  return 'battle_relay_agora_state_failure';
+}
 
 function configurationFrom(credentials: LiveBattleRelayCredentials): ChannelMediaRelayConfiguration {
   const relay = credentials.battleRelay;
@@ -59,12 +91,14 @@ export class LiveBattleRelayService {
   private pendingStop: Promise<LiveBattleRelaySnapshot> | null = null;
   private disposeFlight: Promise<void> | null = null;
   private disposed = false;
+  private readonly logger: (event: string, data: Record<string, unknown>) => void;
 
   constructor(
     private readonly engine: RelayEngine,
     dependencies: RelayDependencies = {},
   ) {
     this.requestCredentials = dependencies.requestCredentials ?? requestLiveBattleRelayCredentials;
+    this.logger = dependencies.logger ?? defaultRelayLogger;
   }
 
   getSnapshot(): LiveBattleRelaySnapshot {
@@ -118,16 +152,19 @@ export class LiveBattleRelayService {
     const handler: IRtcEngineEventHandler = {
       onChannelMediaRelayStateChanged: (state, code) => {
         if (generation !== this.generation || this.disposed || this.handler !== handler) return;
+        this.logger('state', { battle: shortId(battleId), state, code });
         if (state === ChannelMediaRelayState.RelayStateIdle) {
           this.activeBattleId = null;
-          this.setState('idle', null, null, code);
+          this.setState('failed', battleId, 'battle_relay_stopped', code);
           this.unregisterOwnHandler();
         } else if (state === ChannelMediaRelayState.RelayStateConnecting) {
           this.setState('connecting', battleId, null, code);
-        } else if (state === ChannelMediaRelayState.RelayStateRunning) {
+        } else if (state === ChannelMediaRelayState.RelayStateRunning
+          && code === ChannelMediaRelayError.RelayOk) {
           this.setState('running', battleId, null, code);
-        } else if (state === ChannelMediaRelayState.RelayStateFailure) {
-          this.setState('failed', battleId, 'battle_relay_agora_state_failure', code);
+        } else if (state === ChannelMediaRelayState.RelayStateFailure
+          || code !== ChannelMediaRelayError.RelayOk) {
+          this.setState('failed', battleId, relayFailureCode(code), code);
         }
       },
     };
@@ -146,18 +183,19 @@ export class LiveBattleRelayService {
   private async stopLocked(generation: number): Promise<LiveBattleRelaySnapshot> {
     this.assertCurrent(generation);
     if (!this.activeBattleId && !this.handler) {
-      return this.setState('idle', null);
+      return this.setState('idle', null, null, null);
     }
     const battleId = this.activeBattleId ?? this.snapshot.battleId;
     this.setState('stopping', battleId);
     this.unregisterOwnHandler();
     const result = this.engine.stopChannelMediaRelay();
+    this.logger('stop_result', { battle: battleId ? shortId(battleId) : null, result });
     if (result < 0) {
       throw new LiveBattleRelayError('battle_relay_agora_stop_failed', undefined, result);
     }
     this.assertCurrent(generation);
     this.activeBattleId = null;
-    return this.setState('idle', null);
+    return this.setState('idle', null, null, null);
   }
 
   start(battleId: string): Promise<LiveBattleRelaySnapshot> {
@@ -179,13 +217,22 @@ export class LiveBattleRelayService {
       this.assertCurrent(generation);
       this.installHandler(generation, battleId);
       this.activeBattleId = battleId;
-      this.setState('connecting', battleId);
+      const relay = credentials.battleRelay;
+      this.setState('connecting', battleId, null, null);
+      this.logger('start', {
+        battle: shortId(battleId),
+        route: `${shortId(relay.source.liveSessionId)}->${shortId(relay.destination.liveSessionId)}`,
+        sourceUid: relay.source.uid,
+        destinationUid: relay.destination.uid,
+      });
       const result = this.engine.startOrUpdateChannelMediaRelay(configurationFrom(credentials));
-      if (result < 0) {
+      this.logger('start_result', { battle: shortId(battleId), result });
+      if (typeof result !== 'number' || result !== 0) {
         this.unregisterOwnHandler();
         this.activeBattleId = null;
-        this.setState('failed', battleId, 'battle_relay_agora_start_failed', result);
-        throw new LiveBattleRelayError('battle_relay_agora_start_failed', undefined, result);
+        const relayCode = typeof result === 'number' ? result : -1;
+        this.setState('failed', battleId, 'battle_relay_agora_start_failed', relayCode);
+        throw new LiveBattleRelayError('battle_relay_agora_start_failed', undefined, relayCode);
       }
       return this.getSnapshot();
     }).catch(error => {
@@ -234,7 +281,7 @@ export class LiveBattleRelayService {
       try { this.engine.stopChannelMediaRelay(); } catch { /* LIVE teardown must continue */ }
     }
     this.activeBattleId = null;
-    this.setState('idle', null);
+    this.setState('idle', null, null, null);
   }
 
   dispose(): Promise<void> {
@@ -252,7 +299,9 @@ export class LiveBattleRelayService {
         this.unregisterOwnHandler();
         this.activeBattleId = null;
         this.listeners.clear();
-        this.snapshot = { state: 'idle', battleId: null, errorCode: null, relayCode: null };
+        this.snapshot = {
+          state: 'idle', battleId: null, errorCode: null, relayCode: null,
+        };
         this.disposed = true;
       }
     });
@@ -261,6 +310,7 @@ export class LiveBattleRelayService {
 }
 
 export { configurationFrom as buildLiveBattleRelayConfiguration };
+export { relayFailureCode as classifyLiveBattleRelayFailure };
 export type {
   LiveBattleRelayCredentials,
   LiveBattleRelaySnapshot,

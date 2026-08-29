@@ -93,12 +93,36 @@ function runtimeHarness(initialBattle, options = {}) {
   let reconcileCalls = 0;
   let activeReconciles = 0;
   let maxActiveReconciles = 0;
+  let relaySnapshot = {
+    state: 'idle', battleId: null, errorCode: null, relayCode: null,
+  };
+  const relayListeners = new Set();
+  const publishRelay = next => {
+    relaySnapshot = next;
+    for (const listener of relayListeners) listener({ ...next });
+  };
   const relay = {
     starts: [], stops: 0,
-    async start(id) { this.starts.push(id); },
-    async stop() { this.stops += 1; },
-    stopImmediately() {},
-    async dispose() {},
+    async start(id) {
+      this.starts.push(id);
+      publishRelay({ state: 'running', battleId: id, errorCode: null, relayCode: 0 });
+      return { ...relaySnapshot };
+    },
+    async stop() {
+      this.stops += 1;
+      publishRelay({ state: 'idle', battleId: null, errorCode: null, relayCode: null });
+      return { ...relaySnapshot };
+    },
+    stopImmediately() {
+      publishRelay({ state: 'idle', battleId: null, errorCode: null, relayCode: null });
+    },
+    getSnapshot: () => ({ ...relaySnapshot }),
+    subscribe(listener) {
+      relayListeners.add(listener);
+      listener({ ...relaySnapshot });
+      return () => relayListeners.delete(listener);
+    },
+    async dispose() { relayListeners.clear(); },
   };
   const controller = new controllerModule.LiveBattleRuntimeController({
     relay,

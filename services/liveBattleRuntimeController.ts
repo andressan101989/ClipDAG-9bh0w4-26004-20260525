@@ -7,6 +7,7 @@ import {
   type LiveBattleSessionSignal,
   type LiveBattleSubscription,
 } from './liveBattleService';
+import type { LiveBattleRelaySnapshot } from './liveBattleRelayContract';
 
 export type LiveBattleRuntimeContext = {
   liveSessionId: string | null;
@@ -40,6 +41,8 @@ export type LiveBattleRuntimeRelay = {
   stop: () => Promise<unknown>;
   stopImmediately: () => void;
   dispose: () => Promise<void>;
+  getSnapshot: () => LiveBattleRelaySnapshot;
+  subscribe: (listener: (snapshot: LiveBattleRelaySnapshot) => void) => () => void;
 };
 
 export type LiveBattleRuntimeDependencies = {
@@ -129,6 +132,8 @@ export class LiveBattleRuntimeController {
   private readonly now: () => number;
   private readonly setTimer: NonNullable<LiveBattleRuntimeDependencies['setTimer']>;
   private readonly clearTimer: NonNullable<LiveBattleRuntimeDependencies['clearTimer']>;
+  private relayUnsubscribe: (() => void) | null = null;
+  private reconnectRetryFlight: Promise<void> | null = null;
 
   constructor(private readonly dependencies: LiveBattleRuntimeDependencies) {
     this.discover = dependencies.discover ?? getOpenLiveBattlesForSession;
@@ -137,6 +142,35 @@ export class LiveBattleRuntimeController {
     this.now = dependencies.now ?? Date.now;
     this.setTimer = dependencies.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
     this.clearTimer = dependencies.clearTimer ?? (timer => clearTimeout(timer));
+    this.relayUnsubscribe = dependencies.relay.subscribe(relay => this.handleRelaySnapshot(relay));
+  }
+
+  private handleRelaySnapshot(relay: LiveBattleRelaySnapshot): void {
+    if (this.disposed || !relay.battleId) return;
+    const battle = this.snapshot.battle;
+    if (!battle || battle.id !== relay.battleId || !RELAY_STATUSES.has(battle.status)) return;
+    if (relay.state === 'running') {
+      this.relayBattleId = relay.battleId;
+      this.publish({
+        status: 'relaying', battleId: battle.id, version: battle.version,
+        errorCode: null, battle,
+      });
+      return;
+    }
+    if (relay.state === 'failed') {
+      this.relayBattleId = null;
+      this.publish({
+        status: 'failed', battleId: battle.id, version: battle.version,
+        errorCode: 'live_battle_relay_failed', battle,
+      });
+      return;
+    }
+    if (relay.state === 'authorizing' || relay.state === 'connecting') {
+      this.publish({
+        status: 'observing', battleId: battle.id, version: battle.version,
+        errorCode: null, battle,
+      });
+    }
   }
 
   getSnapshot(): LiveBattleRuntimeSnapshot {
@@ -375,13 +409,17 @@ export class LiveBattleRuntimeController {
     if (this.attemptedRelayVersion === attemptKey) return;
     this.attemptedRelayVersion = attemptKey;
     this.relayOperationPossible = true;
+    this.publish({
+      status: 'observing', battleId: battle.id, version: battle.version,
+      errorCode: null, battle,
+    });
     try {
       await this.dependencies.relay.start(battle.id);
       if (!this.isCurrent(generation)) return;
-      this.relayBattleId = battle.id;
-      this.publish({
-        status: 'relaying', battleId: battle.id, version: battle.version, errorCode: null, battle,
-      });
+      const relay = this.dependencies.relay.getSnapshot();
+      if (relay.battleId === battle.id && relay.state === 'running') {
+        this.handleRelaySnapshot(relay);
+      }
     } catch {
       if (!this.isCurrent(generation)) return;
       this.relayBattleId = null;
@@ -613,6 +651,25 @@ export class LiveBattleRuntimeController {
     await this.stopRelay('idle');
   }
 
+  retryRelayAfterReconnect(): Promise<void> {
+    if (this.reconnectRetryFlight) return this.reconnectRetryFlight;
+    const battle = this.snapshot.battle;
+    if (this.disposed || !this.isEligible() || !battle
+      || !RELAY_STATUSES.has(battle.status) || battle.endedAt !== null) {
+      return Promise.resolve();
+    }
+    const generation = this.generation;
+    this.reconnectRetryFlight = (async () => {
+      await this.stopRelay('observing', battle.id, battle.version, battle);
+      if (!this.isCurrent(generation)) return;
+      this.requestRefresh();
+      await this.waitForIdle();
+    })().finally(() => {
+      this.reconnectRetryFlight = null;
+    });
+    return this.reconnectRetryFlight;
+  }
+
   handleEngineRelease(): void {
     if (this.disposed) return;
     this.suspended = true;
@@ -630,6 +687,8 @@ export class LiveBattleRuntimeController {
     if (this.disposed) return;
     this.handleEngineRelease();
     this.disposed = true;
+    this.relayUnsubscribe?.();
+    this.relayUnsubscribe = null;
     await this.dependencies.relay.dispose().catch(() => undefined);
     this.listeners.clear();
     this.snapshot = { status: 'disposed', battleId: null, version: null, errorCode: null, battle: null };

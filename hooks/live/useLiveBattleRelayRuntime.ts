@@ -8,6 +8,7 @@ import type {
 type UseLiveBattleRelayRuntimeParams = LiveBattleRuntimeContext & {
   getEngine: () => unknown;
   registerBeforeEngineRelease: (listener: (engine: unknown) => void) => () => void;
+  reconnectEpoch: number;
 };
 
 /** Web fallback: it never requests Battle tokens and never claims relay support. */

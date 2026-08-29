@@ -49,15 +49,17 @@ function requiredUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_PATTERN.test(value);
 }
 
-function parseEndpoint(value: unknown): LiveBattleRelayEndpoint {
+function parseEndpoint(value: unknown, kind: 'source' | 'destination'): LiveBattleRelayEndpoint {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new LiveBattleRelayError('battle_relay_invalid_response');
   }
   const endpoint = value as Record<string, unknown>;
+  const uidIsValid = kind === 'source'
+    ? endpoint.uid === 0
+    : Number.isSafeInteger(endpoint.uid) && Number(endpoint.uid) > 0;
   if (!requiredUuid(endpoint.liveSessionId)
     || endpoint.channel !== endpoint.liveSessionId
-    || !Number.isSafeInteger(endpoint.uid)
-    || Number(endpoint.uid) <= 0
+    || !uidIsValid
     || typeof endpoint.token !== 'string'
     || endpoint.token.length === 0) {
     throw new LiveBattleRelayError('battle_relay_invalid_response');
@@ -82,12 +84,11 @@ export function parseLiveBattleRelayCredentials(
     throw new LiveBattleRelayError('battle_relay_invalid_response');
   }
   const relay = relayValue as Record<string, unknown>;
-  const source = parseEndpoint(relay.source);
-  const destination = parseEndpoint(relay.destination);
+  const source = parseEndpoint(relay.source, 'source');
+  const destination = parseEndpoint(relay.destination, 'destination');
   if (relay.battleId !== expectedBattleId
     || source.liveSessionId === destination.liveSessionId
     || source.channel === destination.channel
-    || source.uid !== destination.uid
     || !Number.isSafeInteger(relay.expiresIn)
     || Number(relay.expiresIn) <= 0
     || Number(relay.expiresIn) > 360) {
