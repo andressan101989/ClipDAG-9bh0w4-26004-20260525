@@ -185,7 +185,7 @@ test("Refinement preserves hardened commerce contracts across later authorized c
   );
   assert.equal(
     migrations.at(-1),
-    "20260829142317_live_battles_lb4_f3_f3_f1_accepted_lifecycle.sql",
+    "20260829150940_live_battles_lb4_f3_f3_f1_f1_cancellation_authority.sql",
   );
   assert.ok(migrations.includes("20260822221008_marketplace_post_settlement_delivery_ack_r2a_f1.sql"));
   assert.ok(migrations.includes("20260822165852_marketplace_post_settlement_returns_r2a.sql"));
