@@ -8,6 +8,8 @@ const previousName = '20260829054911_live_battles_lb4_f3_f3_stale_lifecycle.sql'
 const migrationName = '20260829142317_live_battles_lb4_f3_f3_f1_accepted_lifecycle.sql';
 const cancellationAuthorityMigrationName = '20260829150940_live_battles_lb4_f3_f3_f1_f1_cancellation_authority.sql';
 const transitionPlanMigrationName = '20260829161856_live_battles_lb4_f3_f3_f1_f2_transition_plan.sql';
+const directedGiftsMigrationName = '20260829225002_live_battles_lb4_f4a_directed_gifts.sql';
+const scoreOutcomeMigrationName = '20260830030845_live_battles_lb4_f4b_score_outcome.sql';
 const sqlProofName = 'live_battles_lb4_f3_f3_f1_accepted_lifecycle.sql';
 const migration = await read(`supabase/migrations/${migrationName}`);
 const sqlProof = await read(`supabase/tests/${sqlProofName}`);
@@ -27,6 +29,8 @@ test('LB4-F3-F3-F1 adds one forward migration without changing LB4-F3-F3', async
     migrationName,
     cancellationAuthorityMigrationName,
     transitionPlanMigrationName,
+    directedGiftsMigrationName,
+    scoreOutcomeMigrationName,
   ]);
   const previous = (await read(`supabase/migrations/${previousName}`)).replaceAll('\r\n', '\n');
   assert.equal(createHash('sha256').update(previous).digest('hex'),

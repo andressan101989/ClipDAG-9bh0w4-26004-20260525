@@ -102,7 +102,7 @@ test("correction adds no migration, RPC, table or client-side financial authorit
     .filter((name) => name.endsWith(".sql"))
     .sort()
     .at(-1);
-  assert.equal(latestMigration, "20260829161856_live_battles_lb4_f3_f3_f1_f2_transition_plan.sql");
+  assert.equal(latestMigration, "20260830030845_live_battles_lb4_f4b_score_outcome.sql");
   assert.doesNotMatch(monitor, /create (table|function)|atomic_ledger_transfer/i);
   assert.equal((monitor.match(/admin\.rpc\('ledger_debit'/g) ?? []).length, 1);
   assert.match(monitor, /reverseProvisionalCredit[\s\S]*admin\.rpc\('ledger_debit'/);

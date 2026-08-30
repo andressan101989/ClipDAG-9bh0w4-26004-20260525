@@ -6,6 +6,8 @@ import test from 'node:test';
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const previousName = '20260829150940_live_battles_lb4_f3_f3_f1_f1_cancellation_authority.sql';
 const migrationName = '20260829161856_live_battles_lb4_f3_f3_f1_f2_transition_plan.sql';
+const directedGiftsMigrationName = '20260829225002_live_battles_lb4_f4a_directed_gifts.sql';
+const scoreOutcomeMigrationName = '20260830030845_live_battles_lb4_f4b_score_outcome.sql';
 const proofName = 'live_battles_lb4_f3_f3_f1_f2_transition_plan.sql';
 const migration = await read(`supabase/migrations/${migrationName}`);
 const sqlProof = await read(`supabase/tests/${proofName}`);
@@ -21,7 +23,7 @@ function functionBody(name) {
 test('LB4-F3-F3-F1-F2 is the only forward migration and preserves F1-F1 byte semantics', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
     .filter(name => name > previousName);
-  assert.deepEqual(names, [migrationName]);
+  assert.deepEqual(names, [migrationName, directedGiftsMigrationName, scoreOutcomeMigrationName]);
   const previous = (await read(`supabase/migrations/${previousName}`)).replaceAll('\r\n', '\n');
   assert.equal(createHash('sha256').update(previous).digest('hex'),
     'e1300f80737631582cf389ecb4feee66f8f9c94cad29f87299404f801dacdcfb');

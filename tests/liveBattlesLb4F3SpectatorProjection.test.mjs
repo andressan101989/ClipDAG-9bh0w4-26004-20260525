@@ -55,6 +55,13 @@ const row = (overrides = {}) => ({
   scheduled_end_at: null,
   ended_at: null,
   updated_at: '2026-08-26T12:00:00.000Z',
+  challenger_score: 0,
+  opponent_score: 0,
+  score_version: 0,
+  outcome: 'pending',
+  winner_user_id: null,
+  score_updated_at: '2026-08-26T12:00:00.000Z',
+  projection_version: overrides.projection_version ?? overrides.version ?? 3,
   ...overrides,
 });
 

@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const migrationName = '20260829225002_live_battles_lb4_f4a_directed_gifts.sql';
+const scoreOutcomeMigrationName = '20260830030845_live_battles_lb4_f4b_score_outcome.sql';
 const migration = await read(`supabase/migrations/${migrationName}`);
 const service = await read('services/liveGiftsService.ts');
 const types = await read('types/liveGifts.ts');
@@ -21,7 +22,7 @@ function functionBody(name) {
 test('LB4-F4A adds exactly one post-stage migration and no Edge Function', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
     .filter(name => name > '20260829161856_live_battles_lb4_f3_f3_f1_f2_transition_plan.sql');
-  assert.deepEqual(names, [migrationName]);
+  assert.deepEqual(names, [migrationName, scoreOutcomeMigrationName]);
   assert.doesNotMatch(migration, /edge function|agora-token|supabase\.functions/i);
 });
 

@@ -51,6 +51,13 @@ const row = (version, overrides = {}) => ({
   scheduled_end_at: '2026-08-27T01:04:00.000Z',
   ended_at: null,
   updated_at: `2026-08-27T01:00:0${Math.min(version, 9)}.000Z`,
+  challenger_score: 0,
+  opponent_score: 0,
+  score_version: 0,
+  outcome: 'pending',
+  winner_user_id: null,
+  score_updated_at: `2026-08-27T01:00:0${Math.min(version, 9)}.000Z`,
+  projection_version: version,
   ...overrides,
 });
 

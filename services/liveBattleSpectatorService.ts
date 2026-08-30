@@ -9,6 +9,16 @@ export const LIVE_BATTLE_PUBLIC_STATUSES = [
 
 export type LiveBattlePublicStatus = typeof LIVE_BATTLE_PUBLIC_STATUSES[number];
 
+export const LIVE_BATTLE_PUBLIC_OUTCOMES = [
+  'pending',
+  'challenger',
+  'opponent',
+  'tie',
+  'cancelled',
+] as const;
+
+export type LiveBattlePublicOutcome = typeof LIVE_BATTLE_PUBLIC_OUTCOMES[number];
+
 export type LiveBattlePublicState = {
   sessionId: string;
   battleId: string;
@@ -24,6 +34,13 @@ export type LiveBattlePublicState = {
   scheduledEndAt: string | null;
   endedAt: string | null;
   updatedAt: string;
+  challengerScore: number;
+  opponentScore: number;
+  scoreVersion: number;
+  outcome: LiveBattlePublicOutcome;
+  winnerUserId: string | null;
+  scoreUpdatedAt: string;
+  projectionVersion: number;
 };
 
 export type LiveBattleServerClockAnchor = {
@@ -53,6 +70,13 @@ type LiveBattlePublicStateRow = {
   scheduled_end_at: unknown;
   ended_at: unknown;
   updated_at: unknown;
+  challenger_score: unknown;
+  opponent_score: unknown;
+  score_version: unknown;
+  outcome: unknown;
+  winner_user_id: unknown;
+  score_updated_at: unknown;
+  projection_version: unknown;
 };
 
 export type LiveBattleSpectatorSubscription = {
@@ -68,6 +92,7 @@ export class LiveBattleSpectatorError extends Error {
 }
 
 const PUBLIC_STATUS_SET = new Set<string>(LIVE_BATTLE_PUBLIC_STATUSES);
+const PUBLIC_OUTCOME_SET = new Set<string>(LIVE_BATTLE_PUBLIC_OUTCOMES);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_AGORA_UID = 2_147_483_647;
 
@@ -98,6 +123,19 @@ function requiredVersion(value: unknown): number {
     throw new LiveBattleSpectatorError('live_battle_public_invalid_version');
   }
   return version;
+}
+
+function nonnegativeSafeInteger(value: unknown, field: string): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new LiveBattleSpectatorError(`live_battle_public_invalid_${field}`);
+  }
+  return parsed;
+}
+
+function nullableUuid(value: unknown, field: string): string | null {
+  if (value === null) return null;
+  return requiredUuid(value, field);
 }
 
 function timestamp(value: unknown, field: string, required: boolean): string | null {
@@ -176,6 +214,27 @@ export function parseLiveBattlePublicState(value: unknown): LiveBattlePublicStat
     throw new LiveBattleSpectatorError('live_battle_public_invalid_ended_at');
   }
 
+  if (typeof row.outcome !== 'string' || !PUBLIC_OUTCOME_SET.has(row.outcome)) {
+    throw new LiveBattleSpectatorError('live_battle_public_invalid_outcome');
+  }
+  const outcome = row.outcome as LiveBattlePublicOutcome;
+  const challengerScore = nonnegativeSafeInteger(row.challenger_score, 'challenger_score');
+  const opponentScore = nonnegativeSafeInteger(row.opponent_score, 'opponent_score');
+  const winnerUserId = nullableUuid(row.winner_user_id, 'winner_user_id');
+  if (
+    (outcome === 'pending' && winnerUserId !== null) ||
+    (outcome === 'challenger' && (winnerUserId === null || challengerScore <= opponentScore)) ||
+    (outcome === 'opponent' && (winnerUserId === null || opponentScore <= challengerScore)) ||
+    (outcome === 'tie' && (winnerUserId !== null || challengerScore !== opponentScore)) ||
+    (outcome === 'cancelled' && winnerUserId !== null) ||
+    (winnerUserId !== null && winnerUserId !== localHostUserId && winnerUserId !== opponentHostUserId) ||
+    ((status === 'countdown' || status === 'active') && outcome !== 'pending') ||
+    (status === 'completed' && !['challenger', 'opponent', 'tie'].includes(outcome)) ||
+    (status === 'cancelled' && outcome !== 'cancelled')
+  ) {
+    throw new LiveBattleSpectatorError('live_battle_public_invalid_result');
+  }
+
   return {
     sessionId,
     battleId: requiredUuid(row.battle_id, 'battle_id'),
@@ -191,6 +250,13 @@ export function parseLiveBattlePublicState(value: unknown): LiveBattlePublicStat
     scheduledEndAt,
     endedAt,
     updatedAt: timestamp(row.updated_at, 'updated_at', true) as string,
+    challengerScore,
+    opponentScore,
+    scoreVersion: nonnegativeSafeInteger(row.score_version, 'score_version'),
+    outcome,
+    winnerUserId,
+    scoreUpdatedAt: timestamp(row.score_updated_at, 'score_updated_at', true) as string,
+    projectionVersion: requiredVersion(row.projection_version),
   };
 }
 
@@ -216,7 +282,7 @@ export function reduceLiveBattlePublicState(
 ): LiveBattlePublicState | null {
   if (!current) return next;
   if (current.battleId === next.battleId) {
-    return next.version > current.version ? next : current;
+    return next.projectionVersion > current.projectionVersion ? next : current;
   }
   return Date.parse(next.updatedAt) > Date.parse(current.updatedAt) ? next : current;
 }
