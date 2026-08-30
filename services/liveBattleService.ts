@@ -106,6 +106,13 @@ const KNOWN_ERROR_CODES = new Set([
   'live_battle_complete_state_invalid',
   'live_battle_state_changed',
   'live_battle_transition_invalid',
+  'live_battle_glove_auth_required',
+  'live_battle_glove_input_invalid',
+  'live_battle_glove_forbidden',
+  'live_battle_glove_not_active',
+  'live_battle_glove_deadline_elapsed',
+  'live_battle_glove_unavailable',
+  'live_battle_glove_already_active',
 ]);
 
 export class LiveBattleServiceError extends Error {
@@ -117,6 +124,33 @@ export class LiveBattleServiceError extends Error {
     this.name = 'LiveBattleServiceError';
   }
 }
+
+export type ActivateLiveBattleGloveInput = {
+  battleId: string;
+  idempotencyKey: string;
+};
+
+export type LiveBattleGloveActivation = {
+  boostId: string;
+  battleId: string;
+  side: 'challenger' | 'opponent';
+  kind: 'glove_x3';
+  multiplier: 3;
+  startsAt: string;
+  expiresAt: string;
+  powerVersion: number;
+};
+
+type LiveBattleGloveActivationRow = {
+  boost_id: unknown;
+  battle_id: unknown;
+  side: unknown;
+  kind: unknown;
+  multiplier: unknown;
+  starts_at: unknown;
+  expires_at: unknown;
+  power_version: unknown;
+};
 
 function requiredString(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.length === 0) {
@@ -173,6 +207,71 @@ function normalizeRpcError(error: unknown): LiveBattleServiceError {
     code,
     typeof candidate?.code === 'string' ? candidate.code : null,
   );
+}
+
+function parseLiveBattleGloveActivation(
+  value: unknown,
+): LiveBattleGloveActivation {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new LiveBattleServiceError('live_battle_glove_invalid_response');
+  }
+  const row = value as LiveBattleGloveActivationRow;
+  const boostId = requiredString(row.boost_id, 'glove_boost_id');
+  const battleId = requiredString(row.battle_id, 'glove_battle_id');
+  const startsAt = requiredString(row.starts_at, 'glove_starts_at');
+  const expiresAt = requiredString(row.expires_at, 'glove_expires_at');
+  const powerVersion = typeof row.power_version === 'number'
+    ? row.power_version
+    : Number(row.power_version);
+  if (
+    !UUID_PATTERN.test(boostId) ||
+    !UUID_PATTERN.test(battleId) ||
+    row.side !== 'challenger' && row.side !== 'opponent' ||
+    row.kind !== 'glove_x3' ||
+    Number(row.multiplier) !== 3 ||
+    !Number.isSafeInteger(powerVersion) ||
+    powerVersion < 0 ||
+    !Number.isFinite(Date.parse(startsAt)) ||
+    !Number.isFinite(Date.parse(expiresAt)) ||
+    Date.parse(expiresAt) <= Date.parse(startsAt)
+  ) {
+    throw new LiveBattleServiceError('live_battle_glove_invalid_response');
+  }
+  return {
+    boostId,
+    battleId,
+    side: row.side,
+    kind: 'glove_x3',
+    multiplier: 3,
+    startsAt,
+    expiresAt,
+    powerVersion,
+  };
+}
+
+export async function activateLiveBattleGlove(
+  input: ActivateLiveBattleGloveInput,
+): Promise<LiveBattleGloveActivation> {
+  if (
+    !UUID_PATTERN.test(input.battleId) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.idempotencyKey)
+  ) {
+    throw new LiveBattleServiceError('live_battle_glove_input_invalid');
+  }
+  const { data, error } = await getSupabaseClient().rpc(
+    'activate_live_battle_glove',
+    {
+      p_battle_id: input.battleId,
+      p_idempotency_key: input.idempotencyKey,
+    },
+  );
+  if (error) throw normalizeRpcError(error);
+  const row = Array.isArray(data) ? data[0] : data;
+  const activation = parseLiveBattleGloveActivation(row);
+  if (activation.battleId !== input.battleId) {
+    throw new LiveBattleServiceError('live_battle_glove_invalid_response');
+  }
+  return activation;
 }
 
 async function battleRpc(name: string, parameters: Record<string, unknown>): Promise<LiveBattle> {

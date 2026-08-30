@@ -283,6 +283,6 @@ test('only the approved client files are required and no migration was added', a
   const migrationNames = await readdir(new URL('../supabase/migrations/', import.meta.url));
   assert.equal(
     migrationNames.filter(name => name.endsWith('.sql')).sort().at(-1),
-    '20260830053531_live_battles_lb4_f4d_a_power_engine.sql',
+    '20260830162244_live_battles_lb4_f4d_b_power_projection.sql',
   );
 });

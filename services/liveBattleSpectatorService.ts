@@ -19,6 +19,14 @@ export const LIVE_BATTLE_PUBLIC_OUTCOMES = [
 
 export type LiveBattlePublicOutcome = typeof LIVE_BATTLE_PUBLIC_OUTCOMES[number];
 
+export type LiveBattlePowerSide = 'challenger' | 'opponent';
+export type LiveBattlePowerBoostKind = 'rose_x2' | 'glove_x3';
+
+export type LiveBattlePowerWindow = {
+  startsAt: string;
+  expiresAt: string;
+};
+
 export type LiveBattlePublicState = {
   sessionId: string;
   battleId: string;
@@ -41,6 +49,21 @@ export type LiveBattlePublicState = {
   winnerUserId: string | null;
   scoreUpdatedAt: string;
   projectionVersion: number;
+  boostRuleVersion: number;
+  roseTargetUnits: number;
+  challengerRoseProgressUnits: number;
+  opponentRoseProgressUnits: number;
+  challengerRoseActivationsRemaining: number;
+  opponentRoseActivationsRemaining: number;
+  challengerGloveUsesRemaining: number;
+  opponentGloveUsesRemaining: number;
+  challengerX2Window: LiveBattlePowerWindow | null;
+  opponentX2Window: LiveBattlePowerWindow | null;
+  challengerX3Window: LiveBattlePowerWindow | null;
+  opponentX3Window: LiveBattlePowerWindow | null;
+  powerVersion: number;
+  powerUpdatedAt: string;
+  serverClockAt: string;
 };
 
 export type LiveBattleServerClockAnchor = {
@@ -77,6 +100,25 @@ type LiveBattlePublicStateRow = {
   winner_user_id: unknown;
   score_updated_at: unknown;
   projection_version: unknown;
+  boost_rule_version: unknown;
+  rose_target_units: unknown;
+  challenger_rose_progress_units: unknown;
+  opponent_rose_progress_units: unknown;
+  challenger_rose_activations_remaining: unknown;
+  opponent_rose_activations_remaining: unknown;
+  challenger_glove_uses_remaining: unknown;
+  opponent_glove_uses_remaining: unknown;
+  challenger_x2_starts_at: unknown;
+  challenger_x2_expires_at: unknown;
+  opponent_x2_starts_at: unknown;
+  opponent_x2_expires_at: unknown;
+  challenger_x3_starts_at: unknown;
+  challenger_x3_expires_at: unknown;
+  opponent_x3_starts_at: unknown;
+  opponent_x3_expires_at: unknown;
+  power_version: unknown;
+  power_updated_at: unknown;
+  server_clock_at: unknown;
 };
 
 export type LiveBattleSpectatorSubscription = {
@@ -146,6 +188,23 @@ function timestamp(value: unknown, field: string, required: boolean): string | n
   return value;
 }
 
+function powerWindow(
+  startsAtValue: unknown,
+  expiresAtValue: unknown,
+  field: string,
+): LiveBattlePowerWindow | null {
+  if (startsAtValue === null && expiresAtValue === null) return null;
+  if (startsAtValue === null || expiresAtValue === null) {
+    throw new LiveBattleSpectatorError('live_battle_public_invalid_' + field);
+  }
+  const startsAt = timestamp(startsAtValue, field + '_starts_at', true) as string;
+  const expiresAt = timestamp(expiresAtValue, field + '_expires_at', true) as string;
+  if (Date.parse(expiresAt) <= Date.parse(startsAt)) {
+    throw new LiveBattleSpectatorError('live_battle_public_invalid_' + field);
+  }
+  return { startsAt, expiresAt };
+}
+
 export function readLiveBattleMonotonicNow(): number | null {
   const value = globalThis.performance?.now?.();
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -184,6 +243,68 @@ export function estimateLiveBattleServerNow(
     monotonicNow < anchor.monotonicMsAtAnchor
   ) return null;
   return anchor.serverEpochMsAtAnchor + monotonicNow - anchor.monotonicMsAtAnchor;
+}
+
+export type LiveBattlePowerVisualState = {
+  multiplier: 1 | 2 | 3;
+  activeBoost: LiveBattlePowerBoostKind | null;
+  remainingMs: number;
+};
+
+export function deriveLiveBattlePowerVisualState(
+  state: LiveBattlePublicState,
+  side: LiveBattlePowerSide,
+  anchor: LiveBattleServerClockAnchor | null,
+  monotonicNow: number | null = readLiveBattleMonotonicNow(),
+): LiveBattlePowerVisualState {
+  const serverNow = estimateLiveBattleServerNow(anchor, monotonicNow);
+  const deadline = state.scheduledEndAt === null
+    ? null
+    : Date.parse(state.scheduledEndAt);
+  if (
+    state.status !== 'active' ||
+    serverNow === null ||
+    deadline === null ||
+    !Number.isFinite(deadline) ||
+    serverNow >= deadline
+  ) {
+    return { multiplier: 1, activeBoost: null, remainingMs: 0 };
+  }
+
+  const x2 = side === 'challenger'
+    ? state.challengerX2Window
+    : state.opponentX2Window;
+  const x3 = side === 'challenger'
+    ? state.challengerX3Window
+    : state.opponentX3Window;
+  const active = (
+    window: LiveBattlePowerWindow | null,
+  ): { active: boolean; remainingMs: number } => {
+    if (!window) return { active: false, remainingMs: 0 };
+    const startsAt = Date.parse(window.startsAt);
+    const expiresAt = Math.min(Date.parse(window.expiresAt), deadline);
+    return {
+      active: startsAt <= serverNow && serverNow < expiresAt,
+      remainingMs: Math.max(0, expiresAt - serverNow),
+    };
+  };
+  const x3State = active(x3);
+  if (x3State.active) {
+    return {
+      multiplier: 3,
+      activeBoost: 'glove_x3',
+      remainingMs: x3State.remainingMs,
+    };
+  }
+  const x2State = active(x2);
+  if (x2State.active) {
+    return {
+      multiplier: 2,
+      activeBoost: 'rose_x2',
+      remainingMs: x2State.remainingMs,
+    };
+  }
+  return { multiplier: 1, activeBoost: null, remainingMs: 0 };
 }
 
 export function parseLiveBattlePublicState(value: unknown): LiveBattlePublicState {
@@ -235,6 +356,92 @@ export function parseLiveBattlePublicState(value: unknown): LiveBattlePublicStat
     throw new LiveBattleSpectatorError('live_battle_public_invalid_result');
   }
 
+  const boostRuleVersion = requiredVersion(row.boost_rule_version);
+  const roseTargetUnits = nonnegativeSafeInteger(
+    row.rose_target_units,
+    'rose_target_units',
+  );
+  const challengerRoseProgressUnits = nonnegativeSafeInteger(
+    row.challenger_rose_progress_units,
+    'challenger_rose_progress_units',
+  );
+  const opponentRoseProgressUnits = nonnegativeSafeInteger(
+    row.opponent_rose_progress_units,
+    'opponent_rose_progress_units',
+  );
+  const challengerRoseActivationsRemaining = nonnegativeSafeInteger(
+    row.challenger_rose_activations_remaining,
+    'challenger_rose_activations_remaining',
+  );
+  const opponentRoseActivationsRemaining = nonnegativeSafeInteger(
+    row.opponent_rose_activations_remaining,
+    'opponent_rose_activations_remaining',
+  );
+  const challengerGloveUsesRemaining = nonnegativeSafeInteger(
+    row.challenger_glove_uses_remaining,
+    'challenger_glove_uses_remaining',
+  );
+  const opponentGloveUsesRemaining = nonnegativeSafeInteger(
+    row.opponent_glove_uses_remaining,
+    'opponent_glove_uses_remaining',
+  );
+  const challengerX2Window = powerWindow(
+    row.challenger_x2_starts_at,
+    row.challenger_x2_expires_at,
+    'challenger_x2',
+  );
+  const opponentX2Window = powerWindow(
+    row.opponent_x2_starts_at,
+    row.opponent_x2_expires_at,
+    'opponent_x2',
+  );
+  const challengerX3Window = powerWindow(
+    row.challenger_x3_starts_at,
+    row.challenger_x3_expires_at,
+    'challenger_x3',
+  );
+  const opponentX3Window = powerWindow(
+    row.opponent_x3_starts_at,
+    row.opponent_x3_expires_at,
+    'opponent_x3',
+  );
+  const allPowerWindows = [
+    challengerX2Window,
+    opponentX2Window,
+    challengerX3Window,
+    opponentX3Window,
+  ];
+  if (
+    challengerRoseProgressUnits > roseTargetUnits ||
+    opponentRoseProgressUnits > roseTargetUnits ||
+    (
+      scheduledEndAt !== null &&
+      allPowerWindows.some(window => (
+        window !== null &&
+        Date.parse(window.expiresAt) > Date.parse(scheduledEndAt)
+      ))
+    ) ||
+    (
+      boostRuleVersion === 1 &&
+      (
+        roseTargetUnits !== 0 ||
+        challengerRoseProgressUnits !== 0 ||
+        opponentRoseProgressUnits !== 0 ||
+        challengerRoseActivationsRemaining !== 0 ||
+        opponentRoseActivationsRemaining !== 0 ||
+        challengerGloveUsesRemaining !== 0 ||
+        opponentGloveUsesRemaining !== 0 ||
+        allPowerWindows.some(window => window !== null)
+      )
+    ) ||
+    (
+      (status === 'completed' || status === 'cancelled') &&
+      (challengerGloveUsesRemaining !== 0 || opponentGloveUsesRemaining !== 0)
+    )
+  ) {
+    throw new LiveBattleSpectatorError('live_battle_public_invalid_power_state');
+  }
+
   return {
     sessionId,
     battleId: requiredUuid(row.battle_id, 'battle_id'),
@@ -257,6 +464,21 @@ export function parseLiveBattlePublicState(value: unknown): LiveBattlePublicStat
     winnerUserId,
     scoreUpdatedAt: timestamp(row.score_updated_at, 'score_updated_at', true) as string,
     projectionVersion: requiredVersion(row.projection_version),
+    boostRuleVersion,
+    roseTargetUnits,
+    challengerRoseProgressUnits,
+    opponentRoseProgressUnits,
+    challengerRoseActivationsRemaining,
+    opponentRoseActivationsRemaining,
+    challengerGloveUsesRemaining,
+    opponentGloveUsesRemaining,
+    challengerX2Window,
+    opponentX2Window,
+    challengerX3Window,
+    opponentX3Window,
+    powerVersion: nonnegativeSafeInteger(row.power_version, 'power_version'),
+    powerUpdatedAt: timestamp(row.power_updated_at, 'power_updated_at', true) as string,
+    serverClockAt: timestamp(row.server_clock_at, 'server_clock_at', true) as string,
   };
 }
 

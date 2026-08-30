@@ -3,6 +3,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
 
 const migrationName = '20260830053531_live_battles_lb4_f4d_a_power_engine.sql';
+const powerProjectionMigrationName = '20260830162244_live_battles_lb4_f4d_b_power_projection.sql';
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const migration = await read(`supabase/migrations/${migrationName}`);
 const proof = await read('supabase/tests/live_battles_lb4_f4d_a_power_engine.sql');
@@ -19,7 +20,7 @@ function body(schema, name) {
 test('F4D-A is the only migration after F4B and changes no UI, Edge or Realtime publication', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
     .filter(name => name > '20260830030845_live_battles_lb4_f4b_score_outcome.sql');
-  assert.deepEqual(names, [migrationName]);
+  assert.deepEqual(names, [migrationName, powerProjectionMigrationName]);
   assert.doesNotMatch(migration, /alter publication|create policy/i);
   assert.doesNotMatch(migration, /atomic_ledger_transfer\s*\(|financial_transactions|ledger_entries/);
 });
