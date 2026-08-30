@@ -5,6 +5,7 @@ import ts from 'typescript';
 
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const migrationName = '20260830030845_live_battles_lb4_f4b_score_outcome.sql';
+const powerEngineMigrationName = '20260830053531_live_battles_lb4_f4d_a_power_engine.sql';
 const migration = await read(`supabase/migrations/${migrationName}`);
 const proof = await read('supabase/tests/live_battles_lb4_f4b_score_outcome.sql');
 const concurrencyProof = await read('scripts/prove-live-battle-score-concurrency.mjs');
@@ -65,7 +66,7 @@ const publicRow = (overrides = {}) => ({
 test('F4B is the only migration after F4A and adds no UI, Edge Function, wallet or ledger authority', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
     .filter(name => name > '20260829225002_live_battles_lb4_f4a_directed_gifts.sql');
-  assert.deepEqual(names, [migrationName]);
+  assert.deepEqual(names, [migrationName, powerEngineMigrationName]);
   assert.doesNotMatch(migration, /edge function|agora-token|create table[^;]*(wallet|ledger|escrow)/i);
   assert.doesNotMatch(migration, /rosas?|guante|\bx2\b|\bx3\b|power.?up|probabil/i);
 });
