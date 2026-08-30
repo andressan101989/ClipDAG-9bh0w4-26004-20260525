@@ -427,13 +427,19 @@ serve(async (req) => {
       }
 
       const numericUid = userIdToAgoraUid(user.id);
+      // Agora RN 4.x requires the source relay UID to remain 0 when App
+      // Certificate authentication is enabled. The destination UID is the
+      // canonical numeric UID of the source host so the rival LIVE observes
+      // the relayed stream under the same authoritative identity.
+      const sourceRelayUid = 0;
+      const destinationRelayUid = numericUid;
       const issuedAtSec = Math.floor(requestNow.getTime() / 1000);
       const [sourceToken, destinationToken] = await Promise.all([
         buildToken({
           appId: AGORA_APP_ID,
           appCert: AGORA_APP_CERTIFICATE,
           channelName: authorization.sourceSessionId,
-          uid: numericUid,
+          uid: sourceRelayUid,
           isPublisher: true,
           expireSec: authorization.expiresIn,
           publishData: false,
@@ -443,7 +449,7 @@ serve(async (req) => {
           appId: AGORA_APP_ID,
           appCert: AGORA_APP_CERTIFICATE,
           channelName: authorization.destinationSessionId,
-          uid: numericUid,
+          uid: destinationRelayUid,
           isPublisher: true,
           expireSec: authorization.expiresIn,
           publishData: false,
@@ -462,13 +468,13 @@ serve(async (req) => {
           source: {
             liveSessionId: authorization.sourceSessionId,
             channel: authorization.sourceSessionId,
-            uid: numericUid,
+            uid: sourceRelayUid,
             token: sourceToken,
           },
           destination: {
             liveSessionId: authorization.destinationSessionId,
             channel: authorization.destinationSessionId,
-            uid: numericUid,
+            uid: destinationRelayUid,
             token: destinationToken,
           },
           expiresIn: authorization.expiresIn,

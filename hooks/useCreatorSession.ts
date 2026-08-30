@@ -43,7 +43,6 @@ export interface CreatorSessionReturn {
 }
 
 const SESSION_ID    = 'creator_studio_main';
-const AUTOSAVE_MS   = 10_000;
 
 /**
  * Usage:
@@ -62,8 +61,8 @@ export function useCreatorSession(
 ): CreatorSessionReturn {
   const [sessionReady, setSessionReady] = useState(false); // Changed to useState
   const gpuSlotRef      = useRef<string | null>(null);
-  const autosaveRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef      = useRef(true);
+  const lifecycleGenerationRef = useRef(0);
 
   // Stable refs for callbacks so useEffect deps stay minimal
   const onPauseRef     = useRef(callbacks.onPause);
@@ -76,10 +75,6 @@ export function useCreatorSession(
   currentStateRef.current = currentState;
 
   const cleanup = useCallback(async () => {
-    if (autosaveRef.current) {
-      clearInterval(autosaveRef.current);
-      autosaveRef.current = null;
-    }
     try {
       await CreatorRecoveryManager.saveCheckpoint(
         SESSION_ID, 'editing', currentStateRef.current(),
@@ -107,6 +102,7 @@ export function useCreatorSession(
   }, []);
 
   useEffect(() => {
+    const generation = ++lifecycleGenerationRef.current;
     mountedRef.current = true;
     CrashIntelligence.addBreadcrumb('navigation', 'CreatorStudio mounted');
 
@@ -137,17 +133,19 @@ export function useCreatorSession(
         await CreatorSessionManager.startSession(SESSION_ID);
 
         const draft = await CreatorRecoveryManager.getLatestDraft(SESSION_ID);
-        if (draft && mountedRef.current) {
+        if (draft && mountedRef.current && generation === lifecycleGenerationRef.current) {
           onDraftRef.current?.(draft);
         }
 
-        autosaveRef.current = setInterval(async () => {
-          await CreatorRecoveryManager.saveCheckpoint(
-            SESSION_ID, 'editing', currentStateRef.current(),
-          );
-        }, AUTOSAVE_MS);
+        if (!mountedRef.current || generation !== lifecycleGenerationRef.current) return;
+        CreatorRecoveryManager.startAutosave(SESSION_ID, {
+          getCheckpoint: () => ({
+            phase: 'editing',
+            data: currentStateRef.current(),
+          }),
+        });
 
-        if (mountedRef.current) {
+        if (mountedRef.current && generation === lifecycleGenerationRef.current) {
           setSessionReady(true); // Update state directly
           CrashIntelligence.addBreadcrumb('state', 'CreatorStudio session ready');
         }
@@ -163,13 +161,15 @@ export function useCreatorSession(
     init();
 
     return () => {
+      lifecycleGenerationRef.current += 1;
       mountedRef.current = false;
+      CreatorRecoveryManager.stopAutosave();
       // NOTE: React effect cleanup must be synchronous; cleanup() is async.
       // The final saveCheckpoint call inside cleanup() may not complete if the
       // component unmounts abruptly. This is an accepted React limitation.
       // Mitigation: CreatorRecoveryManager autosaves every 10s, so at most
       // one autosave window of work could be lost on fast unmounts.
-      cleanup();
+      void cleanup();
     };
   }, [cleanup]);
 

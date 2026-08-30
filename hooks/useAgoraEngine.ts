@@ -29,6 +29,7 @@ export function useAgoraEngine(_params: UseAgoraEngineParams) {
     error:       'Agora is not available on web',
     errorCode:   null as string | null,
     remoteUids:  [] as number[],
+    reconnectEpoch: 0,
     isMuted:     false,
     isCameraOff: false,
     isFront:     true,

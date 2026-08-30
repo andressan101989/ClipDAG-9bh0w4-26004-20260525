@@ -27,6 +27,7 @@ export const ClientRoleType: any                      = AgoraModule?.ClientRoleT
 export const RenderModeType: any                      = AgoraModule?.RenderModeType ?? {};
 export const VideoSourceType: any                     = AgoraModule?.VideoSourceType ?? {};
 export const AudioSessionOperationRestriction: any    = AgoraModule?.AudioSessionOperationRestriction ?? {};
+export const ConnectionStateType: any                 = AgoraModule?.ConnectionStateType ?? {};
 
 export function getAgoraAppId(): string {
   return process.env.EXPO_PUBLIC_AGORA_APP_ID ?? '';

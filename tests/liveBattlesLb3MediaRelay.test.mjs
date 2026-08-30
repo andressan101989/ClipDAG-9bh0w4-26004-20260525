@@ -483,7 +483,9 @@ test('Edge handler authorizes countdown/active with deadline-bound minimal token
     assert.ok(relay.expiresIn <= 360);
     assert.equal(relay.source.channel, expectedSource);
     assert.equal(relay.destination.channel, expectedDestination);
-    assert.equal(relay.source.uid, relay.destination.uid);
+    assert.equal(relay.source.uid, 0);
+    assert.ok(Number.isSafeInteger(relay.destination.uid));
+    assert.ok(relay.destination.uid > 0);
     assert.equal(tokenChannelCrc(relay.source.token), crc32(expectedSource));
     assert.equal(tokenChannelCrc(relay.destination.token), crc32(expectedDestination));
     assert.notEqual(tokenChannelCrc(relay.source.token), crc32('arbitrary-channel'));
@@ -491,7 +493,7 @@ test('Edge handler authorizes countdown/active with deadline-bound minimal token
     for (const endpoint of [relay.source, relay.destination]) {
       const decoded = decodeAgoraToken(endpoint.token);
       assert.equal(decoded.channelCrc, crc32(endpoint.channel));
-      assert.equal(decoded.uidCrc, crc32(String(endpoint.uid)));
+      assert.equal(decoded.uidCrc, crc32(endpoint.uid === 0 ? '' : String(endpoint.uid)));
       assert.equal(decoded.expirationTimestamp, FIXED_NOW_SEC + expectedExpiresIn);
       assert.deepEqual([...decoded.privileges.keys()], [1, 2, 3]);
       assert.equal(decoded.privileges.has(4), false);
@@ -579,7 +581,7 @@ function credentialFixture(battleId, source = SESSION_A, destination = SESSION_B
     appId: '0123456789abcdef0123456789abcdef',
     battleRelay: {
       battleId,
-      source: { liveSessionId: source, channel: source, uid: 1758552870, token: `source-${battleId}` },
+      source: { liveSessionId: source, channel: source, uid: 0, token: `source-${battleId}` },
       destination: { liveSessionId: destination, channel: destination, uid: 1758552870, token: `dest-${battleId}` },
       expiresIn,
     },
@@ -596,8 +598,25 @@ function loadClientModules(invoke = async () => ({ data: null, error: null })) {
     RelayStateRunning: 2,
     RelayStateFailure: 3,
   };
+  const relayErrors = {
+    RelayOk: 0,
+    RelayErrorServerErrorResponse: 1,
+    RelayErrorServerNoResponse: 2,
+    RelayErrorNoResourceAvailable: 3,
+    RelayErrorFailedJoinSrc: 4,
+    RelayErrorFailedJoinDest: 5,
+    RelayErrorFailedPacketReceivedFromSrc: 6,
+    RelayErrorFailedPacketSentToDest: 7,
+    RelayErrorServerConnectionLost: 8,
+    RelayErrorInternalError: 9,
+    RelayErrorSrcTokenExpired: 10,
+    RelayErrorDestTokenExpired: 11,
+  };
   const native = loadTypeScript(nativeSource, {
-    'react-native-agora': { ChannelMediaRelayState: relayStates },
+    'react-native-agora': {
+      ChannelMediaRelayState: relayStates,
+      ChannelMediaRelayError: relayErrors,
+    },
     './liveBattleRelayContract': contract,
   });
   return { contract, native, relayStates };
@@ -628,7 +647,8 @@ test('client requests only liveBattleId and validates the complete credential co
     { ...fixture, battleRelay: { ...fixture.battleRelay, expiresIn: 3600 } },
     { ...fixture, battleRelay: { ...fixture.battleRelay, expiresIn: 35.5 } },
     { ...fixture, battleRelay: { ...fixture.battleRelay, destination: fixture.battleRelay.source } },
-    { ...fixture, battleRelay: { ...fixture.battleRelay, destination: { ...fixture.battleRelay.destination, uid: 7 } } },
+    { ...fixture, battleRelay: { ...fixture.battleRelay, source: { ...fixture.battleRelay.source, uid: 7 } } },
+    { ...fixture, battleRelay: { ...fixture.battleRelay, destination: { ...fixture.battleRelay.destination, uid: 0 } } },
   ]) {
     assert.throws(
       () => contract.parseLiveBattleRelayCredentials(invalid, BATTLE_A),
@@ -681,6 +701,7 @@ test('native service builds the 4.6.2 relay configuration and start is idempoten
   const engine = new MockEngine();
   const service = new native.LiveBattleRelayService(engine, {
     requestCredentials: async () => { requests += 1; return credentials; },
+    logger: () => undefined,
   });
   const first = service.start(BATTLE_A);
   const retry = service.start(BATTLE_A);
@@ -690,7 +711,7 @@ test('native service builds the 4.6.2 relay configuration and start is idempoten
   assert.equal(requests, 1);
   assert.equal(engine.configurations.length, 1);
   assert.deepEqual(engine.configurations[0], {
-    srcInfo: { channelName: SESSION_A, uid: 1758552870, token: `source-${BATTLE_A}` },
+    srcInfo: { channelName: SESSION_A, uid: 0, token: `source-${BATTLE_A}` },
     destInfos: [{ channelName: SESSION_B, uid: 1758552870, token: `dest-${BATTLE_A}` }],
     destCount: 1,
   });
@@ -705,6 +726,7 @@ test('different Battle stops first, stale callbacks cannot revive it, and stop i
   const engine = new MockEngine();
   const service = new native.LiveBattleRelayService(engine, {
     requestCredentials: async battleId => credentialFixture(battleId),
+    logger: () => undefined,
   });
   await service.start(BATTLE_A);
   const staleHandler = engine.registered.at(-1);
@@ -726,13 +748,14 @@ test('relay callbacks and negative Agora returns map to stable failure states', 
   const engine = new MockEngine();
   const service = new native.LiveBattleRelayService(engine, {
     requestCredentials: async battleId => credentialFixture(battleId),
+    logger: () => undefined,
   });
   await service.start(BATTLE_A);
   engine.emit(relayStates.RelayStateFailure, 8);
   assert.deepEqual(service.getSnapshot(), {
     state: 'failed',
     battleId: BATTLE_A,
-    errorCode: 'battle_relay_agora_state_failure',
+    errorCode: 'battle_relay_connection_lost',
     relayCode: 8,
   });
   await service.stop();
@@ -752,6 +775,7 @@ test('dispose unregisters only its own handler and never leaves or releases the 
   engine.handlers.add(foreignHandler);
   const service = new native.LiveBattleRelayService(engine, {
     requestCredentials: async battleId => credentialFixture(battleId),
+    logger: () => undefined,
   });
   await service.start(BATTLE_A);
   const ownHandler = engine.registered.at(-1);

@@ -304,7 +304,8 @@ export default function LiveBroadcasterScreen() {
 
   const {
     engineReady, joined, error,
-    remoteUids, isMuted, isCameraOff, localVideoReady, join, leave, toggleMute, toggleCamera, switchCamera,
+    remoteUids, isMuted, isCameraOff, localVideoReady, reconnectEpoch,
+    join, leave, toggleMute, toggleCamera, switchCamera,
     getEngine, registerBeforeEngineRelease,
   } = useAgoraEngine({
     channelName: live ? streamId ?? null : null,
@@ -325,6 +326,7 @@ export default function LiveBroadcasterScreen() {
     isForeground,
     getEngine,
     registerBeforeEngineRelease,
+    reconnectEpoch,
   });
   const battleProjection = useLiveBattleSpectatorState(
     streamId ?? null,
@@ -962,6 +964,11 @@ export default function LiveBroadcasterScreen() {
     ? battleProjection.state
     : null;
   const battleOpponentUid = battleState?.opponentHostAgoraUid;
+  const battleMediaError = battleState
+    && battleRuntime.snapshot.status === 'failed'
+    && battleRuntime.snapshot.errorCode === 'live_battle_relay_failed'
+    ? 'No se pudo conectar el audio y video del rival.'
+    : null;
   const cohostRemoteUids = remoteUids.filter(uid => uid !== battleOpponentUid);
   const composerBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
   const composerClearance = composerBottom + composerHeight + 12;
@@ -1058,9 +1065,9 @@ export default function LiveBroadcasterScreen() {
       {/* ── Header overlay ────────────────────────────────────────────────── */}
       <View style={[styles.header,{top:insets.top+8,height:undefined,paddingHorizontal:0,backgroundColor:'transparent',borderWidth:0}]}><LiveSessionHeader hostName={user?.username||user?.email?.split('@')[0]||'Host'} viewerCount={viewerCount} elapsed={formatLiveDuration(liveSeconds)} onClose={endBroadcast} hostV4 battleMode={Boolean(battleState)} /></View>
 
-      {error ? (
+      {error || battleMediaError ? (
         <View style={[styles.errorBanner, { top: insets.top + 48 }]}>
-          <Text style={styles.errorText}>{error}</Text>
+          <Text style={styles.errorText}>{error ?? battleMediaError}</Text>
         </View>
       ) : null}
 

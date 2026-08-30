@@ -18,6 +18,7 @@ import {
 type UseLiveBattleRelayRuntimeParams = LiveBattleRuntimeContext & {
   getEngine: () => unknown;
   registerBeforeEngineRelease: (listener: (engine: unknown) => void) => () => void;
+  reconnectEpoch: number;
 };
 
 export function useLiveBattleRelayRuntime({
@@ -30,12 +31,14 @@ export function useLiveBattleRelayRuntime({
   isForeground,
   getEngine,
   registerBeforeEngineRelease,
+  reconnectEpoch,
 }: UseLiveBattleRelayRuntimeParams) {
   const controllerRef = useRef<LiveBattleRuntimeController | null>(null);
   const actionFlightRef = useRef(false);
   const actionGenerationRef = useRef(0);
   const actionsEnabledRef = useRef(false);
   const mountedRef = useRef(true);
+  const lastReconnectEpochRef = useRef(reconnectEpoch);
   const [snapshot, setSnapshot] = useState<LiveBattleRuntimeSnapshot>({
     status: 'idle', battleId: null, version: null, errorCode: null, battle: null,
   });
@@ -97,6 +100,12 @@ export function useLiveBattleRelayRuntime({
     joined,
     liveSessionId,
   ]);
+
+  useEffect(() => {
+    if (reconnectEpoch <= lastReconnectEpochRef.current) return;
+    lastReconnectEpochRef.current = reconnectEpoch;
+    void controllerRef.current?.retryRelayAfterReconnect();
+  }, [reconnectEpoch]);
 
   const stop = useCallback(async () => {
     await controllerRef.current?.stop();

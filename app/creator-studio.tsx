@@ -95,7 +95,7 @@ export default function CreatorStudioScreen() {
         );
       }, []), // clearDraft/addBreadcrumb are stable hook refs — dep array causes TS2448 (TDZ)
     },
-    useCallback(() => ({ tab, timestamp: Date.now() }), [tab]),
+    useCallback(() => ({ tab }), [tab]),
   );
 
   // Mark navigation ready once session is ready

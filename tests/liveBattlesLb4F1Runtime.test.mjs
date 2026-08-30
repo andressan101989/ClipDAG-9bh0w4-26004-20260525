@@ -93,6 +93,14 @@ function createHarness(initialBattles, relayOverrides = {}) {
   let unsubscribeCalls = 0;
   let discoverCalls = 0;
   let reconcileCalls = 0;
+  let relaySnapshot = {
+    state: 'idle', battleId: null, errorCode: null, relayCode: null,
+  };
+  const relayListeners = new Set();
+  const publishRelay = next => {
+    relaySnapshot = next;
+    for (const listener of relayListeners) listener({ ...next });
+  };
   const relay = {
     startCalls: [],
     stopCalls: 0,
@@ -100,19 +108,34 @@ function createHarness(initialBattles, relayOverrides = {}) {
     disposeCalls: 0,
     async start(battleId) {
       this.startCalls.push(battleId);
-      if (relayOverrides.start) return relayOverrides.start(battleId);
-      return {};
+      if (relayOverrides.start) await relayOverrides.start(battleId);
+      publishRelay({
+        state: 'running', battleId, errorCode: null, relayCode: 0,
+      });
+      return { ...relaySnapshot };
     },
     async stop() {
       this.stopCalls += 1;
-      if (relayOverrides.stop) return relayOverrides.stop();
-      return {};
+      if (relayOverrides.stop) await relayOverrides.stop();
+      publishRelay({
+        state: 'idle', battleId: null, errorCode: null, relayCode: null,
+      });
+      return { ...relaySnapshot };
     },
     stopImmediately() {
       this.immediateStopCalls += 1;
       relayOverrides.stopImmediately?.();
+      publishRelay({
+        state: 'idle', battleId: null, errorCode: null, relayCode: null,
+      });
     },
-    async dispose() { this.disposeCalls += 1; },
+    getSnapshot() { return { ...relaySnapshot }; },
+    subscribe(listener) {
+      relayListeners.add(listener);
+      listener({ ...relaySnapshot });
+      return () => relayListeners.delete(listener);
+    },
+    async dispose() { this.disposeCalls += 1; relayListeners.clear(); },
   };
   const controller = new controllerModule.LiveBattleRuntimeController({
     relay,
@@ -233,6 +256,19 @@ test('background stops relay and foreground performs a fresh authoritative recon
   await harness.controller.dispose();
 });
 
+test('engine reconnect performs one controlled relay restart per reconnect flight', async () => {
+  const harness = createHarness([battle()]);
+  await harness.activate();
+  const first = harness.controller.retryRelayAfterReconnect();
+  const duplicate = harness.controller.retryRelayAfterReconnect();
+  assert.strictEqual(first, duplicate);
+  await first;
+  assert.equal(harness.relay.stopCalls, 1);
+  assert.deepEqual(harness.relay.startCalls, [BATTLE_A, BATTLE_A]);
+  assert.equal(harness.controller.getSnapshot().status, 'relaying');
+  await harness.controller.dispose();
+});
+
 test('Battle switch stops the old relay before starting the new one', async () => {
   const order = [];
   const harness = createHarness([battle()], {
@@ -271,6 +307,13 @@ test('a delayed reconciliation after stop cannot revive relay', async () => {
     async stop() {},
     stopImmediately() {},
     async dispose() {},
+    getSnapshot: () => ({
+      state: 'idle', battleId: null, errorCode: null, relayCode: null,
+    }),
+    subscribe: listener => {
+      listener({ state: 'idle', battleId: null, errorCode: null, relayCode: null });
+      return () => undefined;
+    },
   };
   const controller = new controllerModule.LiveBattleRuntimeController({
     relay,
@@ -301,6 +344,13 @@ test('a delayed relay authorization promise cannot revive a stopped runtime', as
     stop: async () => { stops += 1; },
     stopImmediately() {},
     async dispose() {},
+    getSnapshot: () => ({
+      state: 'idle', battleId: null, errorCode: null, relayCode: null,
+    }),
+    subscribe: listener => {
+      listener({ state: 'idle', battleId: null, errorCode: null, relayCode: null });
+      return () => undefined;
+    },
   };
   const controller = new controllerModule.LiveBattleRuntimeController({
     relay,

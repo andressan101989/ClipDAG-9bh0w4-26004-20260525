@@ -19,6 +19,7 @@ export const ClientRoleType: any                      = {};
 export const RenderModeType: any                      = {};
 export const VideoSourceType: any                     = {};
 export const AudioSessionOperationRestriction: any    = {};
+export const ConnectionStateType: any                 = {};
 
 export function getAgoraAppId(): string {
   return process.env.EXPO_PUBLIC_AGORA_APP_ID ?? '';
