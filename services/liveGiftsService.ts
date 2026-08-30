@@ -19,6 +19,8 @@ import type {
   LiveGiftCategory,
   LiveGiftDefinition,
   LiveGiftSendResult,
+  LiveBattleGiftSendResult,
+  SendLiveBattleGiftInput,
 } from '@/types/liveGifts';
 
 export interface GiftCatalogRow {
@@ -43,6 +45,7 @@ export type GiftCatalogItem = LiveGiftDefinition;
 export type SendLiveGiftResult = LiveGiftSendResult;
 
 const supabase = () => getSupabaseClient();
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const FALLBACK_METADATA: Record<string, Partial<LiveGiftDefinition>> = {
   heart:      { icon: '\u2764\uFE0F', category: 'basic',     animationType: 'floating',    durationMs: 1800, priority: 1 },
@@ -171,5 +174,90 @@ export async function sendLiveGift(opts: {
     animation_asset: row.animation_asset ?? null,
     duration_ms: Number(row.duration_ms ?? FALLBACK_METADATA[row.gift_id]?.durationMs ?? 1800),
     priority: Number(row.priority ?? FALLBACK_METADATA[row.gift_id]?.priority ?? 0),
+  };
+}
+
+function mapBattleGiftError(message?: string): string {
+  const code = message ?? '';
+  if (code.includes('live_battle_gift_auth_required')) return 'Sesion no disponible';
+  if (code.includes('live_battle_not_found')) return 'Battle no disponible';
+  if (
+    code.includes('live_battle_gift_not_active')
+    || code.includes('live_battle_gift_deadline_elapsed')
+  ) return 'La Battle ya no acepta regalos';
+  if (
+    code.includes('live_battle_gift_target_invalid')
+    || code.includes('live_battle_gift_self_forbidden')
+    || code.includes('live_battle_gift_target_session_not_live')
+  ) return 'Destinatario Battle no disponible';
+  if (code.includes('live_battle_gift_unavailable')) return 'Regalo no disponible';
+  if (code.includes('live_battle_gift_idempotency_conflict')) return 'Reintento de regalo incompatible';
+  if (code.includes('insufficient balance')) return 'Saldo BDAG insuficiente';
+  return 'No se pudo enviar el regalo Battle';
+}
+
+/**
+ * Sends one directed Battle gift through the dedicated server authority.
+ * The caller supplies identities only; price, fee, session, deadline and
+ * receiver validation are derived and locked by PostgreSQL.
+ */
+export async function sendLiveBattleGift(
+  input: SendLiveBattleGiftInput,
+): Promise<LiveBattleGiftSendResult> {
+  if (!UUID_PATTERN.test(input.battleId) || !UUID_PATTERN.test(input.targetUserId)) {
+    return { success: false, error: 'Datos de Battle invalidos' };
+  }
+  if (
+    input.giftId.trim().length === 0
+    || input.idempotencyKey.trim().length === 0
+    || input.idempotencyKey.length > 200
+  ) {
+    return { success: false, error: 'Datos de regalo invalidos' };
+  }
+
+  const { data, error } = await supabase().rpc('send_live_battle_gift', {
+    p_battle_id: input.battleId,
+    p_target_user_id: input.targetUserId,
+    p_gift_id: input.giftId,
+    p_idempotency_key: input.idempotencyKey,
+  });
+
+  if (error) return { success: false, error: mapBattleGiftError(error.message) };
+
+  const row = Array.isArray(data) ? data[0] : data;
+  const amount = Number(row?.amount_coins);
+  const balance = Number(row?.new_sender_balance);
+  if (
+    !row
+    || !UUID_PATTERN.test(String(row.transaction_id ?? ''))
+    || row.battle_id !== input.battleId
+    || !UUID_PATTERN.test(String(row.target_session_id ?? ''))
+    || row.receiver_user_id !== input.targetUserId
+    || row.gift_id !== input.giftId
+    || !Number.isFinite(amount)
+    || !Number.isFinite(balance)
+  ) {
+    return { success: false, error: 'Respuesta de regalo Battle invalida' };
+  }
+
+  return {
+    success: true,
+    transaction_id: row.transaction_id,
+    battle_id: row.battle_id,
+    target_session_id: row.target_session_id,
+    gift_id: row.gift_id,
+    emoji: row.emoji,
+    icon: row.emoji,
+    amount_coins: amount,
+    amount_bdag: amount,
+    creator_amount_coins: Number(row.creator_amount_coins ?? 0),
+    new_sender_balance: balance,
+    receiver_user_id: row.receiver_user_id,
+    recipient_user_id: row.receiver_user_id,
+    category: FALLBACK_METADATA[row.gift_id]?.category ?? 'basic',
+    animation_type: FALLBACK_METADATA[row.gift_id]?.animationType ?? 'floating',
+    animation_asset: null,
+    duration_ms: FALLBACK_METADATA[row.gift_id]?.durationMs ?? 1800,
+    priority: FALLBACK_METADATA[row.gift_id]?.priority ?? 0,
   };
 }

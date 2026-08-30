@@ -59,3 +59,15 @@ export type LiveGiftSendResult = {
   duration_ms?: number;
   priority?: number;
 };
+
+export type SendLiveBattleGiftInput = {
+  battleId: string;
+  targetUserId: string;
+  giftId: string;
+  idempotencyKey: string;
+};
+
+export type LiveBattleGiftSendResult = LiveGiftSendResult & {
+  battle_id?: string;
+  target_session_id?: string;
+};
