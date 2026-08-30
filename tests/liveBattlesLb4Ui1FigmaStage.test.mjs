@@ -283,6 +283,6 @@ test('the canonical-side migration is the only latest schema addition', async ()
   const migrationNames = await readdir(new URL('../supabase/migrations/', import.meta.url));
   assert.equal(
     migrationNames.filter(name => name.endsWith('.sql')).sort().at(-1),
-    '20260830190436_live_battles_lb4_f4d_c_visual_realtime.sql',
+    '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql',
   );
 });

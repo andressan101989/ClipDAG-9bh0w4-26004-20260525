@@ -23,7 +23,7 @@ test('F4D-A is the only migration after F4B and changes no UI, Edge or Realtime 
   assert.deepEqual(names, [
     migrationName,
     powerProjectionMigrationName,
-    '20260830190436_live_battles_lb4_f4d_c_visual_realtime.sql',
+    '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql',
   ]);
   assert.doesNotMatch(migration, /alter publication|create policy/i);
   assert.doesNotMatch(migration, /atomic_ledger_transfer\s*\(|financial_transactions|ledger_entries/);

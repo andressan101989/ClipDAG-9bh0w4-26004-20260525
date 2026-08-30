@@ -9,7 +9,7 @@ const stageSource = await read('components/live/LiveBattleStage.tsx');
 const hostSource = await read('app/live/broadcast/[streamId].tsx');
 const viewerSource = await read('app/live/watch/[streamId].tsx');
 const migration = await read(
-  'supabase/migrations/20260830190436_live_battles_lb4_f4d_c_visual_realtime.sql',
+  'supabase/migrations/20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql',
 );
 const physicalProof = await read(
   'supabase/tests/live_battles_lb4_f4d_c_visual_realtime.sql',
