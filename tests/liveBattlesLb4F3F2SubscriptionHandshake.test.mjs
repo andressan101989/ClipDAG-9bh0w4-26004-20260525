@@ -40,6 +40,7 @@ const row = (version, overrides = {}) => ({
   session_id: SESSION,
   battle_id: BATTLE_A,
   opponent_session_id: OTHER_SESSION,
+  local_battle_side: 'challenger',
   local_host_user_id: HOST,
   opponent_host_user_id: OPPONENT,
   local_host_agora_uid: 1758552870,
@@ -192,6 +193,7 @@ test('Realtime UPDATE wins over an older post-SUBSCRIBED snapshot', async () => 
   harness.emitStatus('SUBSCRIBED');
   harness.emit('UPDATE', { new: row(5) });
   harness.resolveRpc(0, envelope(row(4)));
+  harness.resolveRpc(1, envelope(row(5)));
   await settle();
   assert.deepEqual(values.map(value => value?.version), [5]);
   await subscription.unsubscribe();
@@ -236,11 +238,13 @@ test('null snapshots respect intervening mutations and clear only when still aut
   const staleNull = subscription.reconcile();
   harness.emit('UPDATE', { new: row(6) });
   harness.resolveRpc(1, envelope(null));
+  harness.resolveRpc(2, envelope(row(6)));
   await staleNull;
+  await settle();
   assert.equal(values.at(-1).version, 6);
 
   const currentNull = subscription.reconcile();
-  harness.resolveRpc(2, envelope(null));
+  harness.resolveRpc(3, envelope(null));
   await currentNull;
   assert.equal(values.at(-1), null);
   await subscription.unsubscribe();
@@ -275,6 +279,9 @@ test('PK-only DELETE behavior and DELETE-to-new-Battle race remain closed', asyn
     new: row(1, { battle_id: BATTLE_B, updated_at: '2026-08-27T01:01:00.000Z' }),
   });
   harness.resolveRpc(1, envelope(null));
+  harness.resolveRpc(2, envelope(
+    row(1, { battle_id: BATTLE_B, updated_at: '2026-08-27T01:01:00.000Z' }),
+  ));
   await settle();
   assert.equal(values.at(-1).battleId, BATTLE_B);
   await subscription.unsubscribe();

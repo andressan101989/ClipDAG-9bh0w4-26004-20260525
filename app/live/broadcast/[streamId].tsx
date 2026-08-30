@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { randomUUID } from 'expo-crypto';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -45,7 +46,14 @@ import { LiveBattleHostControls } from '@/components/live/LiveBattleHostControls
 import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
 import { useLiveBattleRelayRuntime } from '@/hooks/live/useLiveBattleRelayRuntime';
 import { useLiveBattleSpectatorState } from '@/hooks/live/useLiveBattleSpectatorState';
-import { isLiveBattleStageStatus } from '@/services/liveBattleSpectatorService';
+import {
+  deriveLiveBattlePowerVisualState,
+  isLiveBattleStageStatus,
+} from '@/services/liveBattleSpectatorService';
+import {
+  activateLiveBattleGlove,
+  LiveBattleServiceError,
+} from '@/services/liveBattleService';
 import type { LiveGiftEvent } from '@/types/liveGifts';
 import { LiveHostProductManager } from '@/components/live/commerce/LiveHostProductManager';
 import { LiveHostPurchaseFeed } from '@/components/live/commerce/LiveHostPurchaseFeed';
@@ -322,6 +330,71 @@ export default function LiveBroadcasterScreen() {
     streamId ?? null,
     Boolean(user?.id && live && sessionIsCanonicalLive),
   );
+  const [glovePending, setGlovePending] = useState(false);
+  const [gloveError, setGloveError] = useState<string | null>(null);
+  const gloveAttemptRef = useRef<{ battleId: string; key: string } | null>(null);
+  const gloveInFlightRef = useRef(false);
+  const projectedBattle = battleProjection.state;
+  const projectedLocalPower = projectedBattle
+    ? deriveLiveBattlePowerVisualState(
+      projectedBattle,
+      projectedBattle.localBattleSide,
+      battleProjection.clockAnchor,
+    )
+    : null;
+  const projectedLocalX3Active = projectedLocalPower?.activeBoost === 'glove_x3';
+  useEffect(() => {
+    if (
+      !projectedBattle
+      || projectedBattle.status !== 'active'
+      || projectedLocalX3Active
+    ) {
+      gloveAttemptRef.current = null;
+      gloveInFlightRef.current = false;
+      setGlovePending(false);
+      if (!projectedBattle || projectedBattle.status !== 'active') setGloveError(null);
+    }
+  }, [projectedBattle?.battleId, projectedBattle?.status, projectedLocalX3Active]);
+  const handleActivateBattleGlove = useCallback(async () => {
+    const state = battleProjection.state;
+    if (
+      !state
+      || state.status !== 'active'
+      || state.localHostUserId !== user?.id
+      || gloveInFlightRef.current
+      || gloveAttemptRef.current !== null
+    ) return;
+    const usesRemaining = state.localBattleSide === 'challenger'
+      ? state.challengerGloveUsesRemaining
+      : state.opponentGloveUsesRemaining;
+    const x3Active = deriveLiveBattlePowerVisualState(
+      state,
+      state.localBattleSide,
+      battleProjection.clockAnchor,
+    ).activeBoost === 'glove_x3';
+    if (usesRemaining < 1 || x3Active) return;
+
+    const attempt = { battleId: state.battleId, key: `live-battle-glove:${randomUUID()}` };
+    gloveAttemptRef.current = attempt;
+    gloveInFlightRef.current = true;
+    setGlovePending(true);
+    setGloveError(null);
+    try {
+      await activateLiveBattleGlove({
+        battleId: attempt.battleId,
+        idempotencyKey: attempt.key,
+      });
+      await battleProjection.reconcile();
+    } catch (error) {
+      if (gloveAttemptRef.current === attempt) gloveAttemptRef.current = null;
+      setGloveError(error instanceof LiveBattleServiceError
+        ? 'No se pudo activar el guante. El estado Battle fue actualizado.'
+        : 'No se pudo activar el guante. Inténtalo nuevamente.');
+    } finally {
+      gloveInFlightRef.current = false;
+      setGlovePending(false);
+    }
+  }, [battleProjection, user?.id]);
   const battleStageVisible = Boolean(
     battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status),
   );
@@ -946,6 +1019,11 @@ export default function LiveBroadcasterScreen() {
           opponentSurface={RtcSurfaceView && remoteUids.includes(battleState.opponentHostAgoraUid)
             ? <RtcSurfaceView canvas={{ uid: battleState.opponentHostAgoraUid }} style={styles.battleVideo} />
             : null}
+          onActivateGlove={battleState.localHostUserId === user?.id
+            ? () => void handleActivateBattleGlove()
+            : undefined}
+          glovePending={glovePending}
+          gloveError={gloveError}
         />
       ) : RtcSurfaceView && localVideoReady && !isCameraOff ? (
         <RtcSurfaceView canvas={{ uid: 0 }} style={styles.videoStream} />

@@ -43,6 +43,7 @@ const publicRow = (overrides = {}) => ({
   session_id: '20000000-0000-4000-8000-000000000001',
   battle_id: '30000000-0000-4000-8000-000000000001',
   opponent_session_id: '20000000-0000-4000-8000-000000000002',
+  local_battle_side: 'challenger',
   local_host_user_id: '10000000-0000-4000-8000-000000000001',
   opponent_host_user_id: '10000000-0000-4000-8000-000000000002',
   local_host_agora_uid: 1001,
@@ -86,7 +87,12 @@ const publicRow = (overrides = {}) => ({
 test('F4B is the only migration after F4A and adds no UI, Edge Function, wallet or ledger authority', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
     .filter(name => name > '20260829225002_live_battles_lb4_f4a_directed_gifts.sql');
-  assert.deepEqual(names, [migrationName, powerEngineMigrationName, powerProjectionMigrationName]);
+  assert.deepEqual(names, [
+    migrationName,
+    powerEngineMigrationName,
+    powerProjectionMigrationName,
+    '20260830190436_live_battles_lb4_f4d_c_visual_realtime.sql',
+  ]);
   assert.doesNotMatch(migration, /edge function|agora-token|create table[^;]*(wallet|ledger|escrow)/i);
   assert.doesNotMatch(migration, /rosas?|guante|\bx2\b|\bx3\b|power.?up|probabil/i);
 });

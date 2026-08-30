@@ -222,13 +222,13 @@ test('timer remains server-anchored with one one-second interval and cleanup', (
   assert.doesNotMatch(stageSource, /Date\.now\(|\brpc\(|poll|setTimeout/i);
 });
 
-test('illustrative Figma scores and rounds are replaced by an accessible neutral state', () => {
+test('illustrative Figma scores and rounds are replaced by the accessible canonical projection', () => {
   assert.doesNotMatch(stageSource, /12,480|11,920|RONDA\s*1/i);
-  assert.match(stageSource, /accessibilityLabel="Puntuación todavía no disponible"/);
-  assert.ok((stageSource.match(/>—<\/Text>/g) ?? []).length >= 2);
-  assert.match(stageSource, />BATTLE<\/Text>/);
-  assert.doesNotMatch(stageSource, /winner|loser|ganador|perdedor|gift|regalo/i);
-  assert.doesNotMatch(stageSource, /live_gift|financial|ledger|\bpoints?\b|\bpuntos?\b/i);
+  assert.match(stageSource, /accessibilityLabel=\{`Marcador \$\{competitive\.localScore\} a \$\{competitive\.rivalScore\}`\}/);
+  assert.match(stageSource, /competitive\.localRoseProgressUnits/);
+  assert.match(stageSource, /competitive\.rivalRoseProgressUnits/);
+  assert.match(stageSource, /terminalLabel/);
+  assert.doesNotMatch(stageSource, /live_gift|financial|ledger/i);
 });
 
 test('watch closes and fully hides commerce during Battle while retaining normal LIVE commerce', () => {
@@ -279,10 +279,10 @@ test('Battle controls and close action meet the forty-four pixel touch target', 
   assert.match(broadcastSource, /engagementAction: \{ width: 44, minHeight: 48/);
 });
 
-test('only the approved client files are required and no migration was added', async () => {
+test('the canonical-side migration is the only latest schema addition', async () => {
   const migrationNames = await readdir(new URL('../supabase/migrations/', import.meta.url));
   assert.equal(
     migrationNames.filter(name => name.endsWith('.sql')).sort().at(-1),
-    '20260830162244_live_battles_lb4_f4d_b_power_projection.sql',
+    '20260830190436_live_battles_lb4_f4d_c_visual_realtime.sql',
   );
 });

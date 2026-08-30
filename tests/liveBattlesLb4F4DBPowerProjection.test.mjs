@@ -35,6 +35,7 @@ const row = (overrides = {}) => ({
   session_id: '20000000-0000-4000-8000-000000000001',
   battle_id: '30000000-0000-4000-8000-000000000001',
   opponent_session_id: '20000000-0000-4000-8000-000000000002',
+  local_battle_side: 'challenger',
   local_host_user_id: '10000000-0000-4000-8000-000000000001',
   opponent_host_user_id: '10000000-0000-4000-8000-000000000002',
   local_host_agora_uid: 1001,
@@ -78,7 +79,10 @@ const row = (overrides = {}) => ({
 test('F4D-B is the only migration after F4D-A and does not add UI or internal Realtime tables', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
     .filter(name => name > '20260830053531_live_battles_lb4_f4d_a_power_engine.sql');
-  assert.deepEqual(names, [migrationName]);
+  assert.deepEqual(names, [
+    migrationName,
+    '20260830190436_live_battles_lb4_f4d_c_visual_realtime.sql',
+  ]);
   assert.doesNotMatch(migration, /alter publication|atomic_ledger_transfer|ledger_entries/);
   assert.doesNotMatch(migration, /create table public\./i);
 });

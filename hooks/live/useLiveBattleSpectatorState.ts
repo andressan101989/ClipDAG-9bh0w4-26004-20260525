@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import {
   subscribeToLiveBattlePublicState,
@@ -15,6 +15,7 @@ export function useLiveBattleSpectatorState(
   enabled: boolean,
 ) {
   const generationRef = useRef(0);
+  const reconcileRef = useRef<() => Promise<void>>(async () => undefined);
   const [state, setState] = useState<LiveBattlePublicState | null>(null);
   const [clockAnchor, setClockAnchor] = useState<LiveBattleServerClockAnchor | null>(null);
   const [profiles, setProfiles] = useState<Map<string, LiveBattlePublicProfile>>(new Map());
@@ -26,6 +27,7 @@ export function useLiveBattleSpectatorState(
     setClockAnchor(null);
     setProfiles(new Map());
     setErrorCode(null);
+    reconcileRef.current = async () => undefined;
     if (!enabled || !sessionId) return;
 
     let subscription;
@@ -44,6 +46,7 @@ export function useLiveBattleSpectatorState(
           if (generation === generationRef.current) setClockAnchor(anchor);
         },
       );
+      reconcileRef.current = subscription.reconcile;
     } catch (error) {
       const code = error && typeof error === 'object' && 'code' in error
         && typeof (error as { code?: unknown }).code === 'string'
@@ -64,6 +67,7 @@ export function useLiveBattleSpectatorState(
 
     return () => {
       generationRef.current += 1;
+      reconcileRef.current = async () => undefined;
       appStateSubscription.remove();
       void subscription.unsubscribe().catch(() => undefined);
     };
@@ -86,10 +90,13 @@ export function useLiveBattleSpectatorState(
       });
   }, [state]);
 
+  const reconcile = useCallback(() => reconcileRef.current(), []);
+
   return {
     state,
     clockAnchor,
     errorCode,
+    reconcile,
     localHostProfile: state ? profiles.get(state.localHostUserId) ?? null : null,
     opponentHostProfile: state ? profiles.get(state.opponentHostUserId) ?? null : null,
   };

@@ -44,6 +44,7 @@ const row = (overrides = {}) => ({
   session_id: SESSION,
   battle_id: BATTLE_A,
   opponent_session_id: OTHER_SESSION,
+  local_battle_side: 'challenger',
   local_host_user_id: HOST,
   opponent_host_user_id: OPPONENT,
   local_host_agora_uid: 1758552870,
@@ -206,11 +207,16 @@ test('snapshot and exact-session Realtime are monotonic, replace Battles, and cl
   harness.emit('UPDATE', { new: row({ version: 2 }) });
   assert.equal(values.length, beforeDuplicate);
 
-  harness.emit('UPDATE', { new: row({ version: 4, status: 'active', started_at: '2026-08-26T12:00:03.000Z', scheduled_end_at: '2026-08-26T12:05:03.000Z', updated_at: '2026-08-26T12:00:03.000Z' }) });
+  const active = row({ version: 4, status: 'active', started_at: '2026-08-26T12:00:03.000Z', scheduled_end_at: '2026-08-26T12:05:03.000Z', updated_at: '2026-08-26T12:00:03.000Z' });
+  harness.setSnapshot(active);
+  harness.emit('UPDATE', { new: active });
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(values.at(-1).version, 4);
 
   const replacement = row({ battle_id: BATTLE_B, version: 1, updated_at: '2026-08-26T12:06:00.000Z' });
+  harness.setSnapshot(replacement);
   harness.emit('UPDATE', { new: replacement });
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(values.at(-1).battleId, BATTLE_B);
   harness.setSnapshot(null);
   harness.emit('DELETE', { old: { session_id: SESSION } });
@@ -222,17 +228,17 @@ test('snapshot and exact-session Realtime are monotonic, replace Battles, and cl
   assert.equal(harness.inspect().removeCalls, 1);
 });
 
-test('stage closes on terminal status and video identity never comes from arrival order', () => {
+test('stage preserves terminal status and video identity never comes from arrival order', () => {
   const { service } = loadService();
   assert.equal(service.isLiveBattleStageStatus('countdown'), true);
   assert.equal(service.isLiveBattleStageStatus('active'), true);
-  assert.equal(service.isLiveBattleStageStatus('completed'), false);
-  assert.equal(service.isLiveBattleStageStatus('cancelled'), false);
+  assert.equal(service.isLiveBattleStageStatus('completed'), true);
+  assert.equal(service.isLiveBattleStageStatus('cancelled'), true);
   assert.match(stageSource, /flexDirection: 'row'/);
   assert.match(stageSource, /Conectando…/);
   assert.match(stageSource, /localSurface/);
   assert.match(stageSource, /opponentSurface/);
-  assert.doesNotMatch(stageSource, /score|winner|gift/i);
+  assert.match(stageSource, /localScore|rivalScore|GANADOR/);
   assert.match(watchSource, /remoteUids\.includes\(battleState\.localHostAgoraUid\)/);
   assert.match(watchSource, /remoteUids\.includes\(battleState\.opponentHostAgoraUid\)/);
   assert.match(broadcastSource, /remoteUids\.includes\(battleState\.opponentHostAgoraUid\)/);

@@ -20,6 +20,7 @@ export const LIVE_BATTLE_PUBLIC_OUTCOMES = [
 export type LiveBattlePublicOutcome = typeof LIVE_BATTLE_PUBLIC_OUTCOMES[number];
 
 export type LiveBattlePowerSide = 'challenger' | 'opponent';
+export type LiveBattleLocalSide = LiveBattlePowerSide;
 export type LiveBattlePowerBoostKind = 'rose_x2' | 'glove_x3';
 
 export type LiveBattlePowerWindow = {
@@ -31,6 +32,7 @@ export type LiveBattlePublicState = {
   sessionId: string;
   battleId: string;
   opponentSessionId: string;
+  localBattleSide: LiveBattleLocalSide;
   localHostUserId: string;
   opponentHostUserId: string;
   localHostAgoraUid: number;
@@ -70,6 +72,7 @@ export type LiveBattleServerClockAnchor = {
   serverEpochMsAtAnchor: number;
   monotonicMsAtAnchor: number;
   roundTripMs: number;
+  projectionServerClockAt?: string;
 };
 
 export type LiveBattlePublicSnapshot = {
@@ -82,6 +85,7 @@ type LiveBattlePublicStateRow = {
   session_id: unknown;
   battle_id: unknown;
   opponent_session_id: unknown;
+  local_battle_side: unknown;
   local_host_user_id: unknown;
   opponent_host_user_id: unknown;
   local_host_agora_uid: unknown;
@@ -214,6 +218,7 @@ export function createLiveBattleServerClockAnchor(
   serverNow: string,
   requestStartedAt: number | null,
   responseReceivedAt: number | null,
+  projectionServerClockAt: string | null = null,
 ): LiveBattleServerClockAnchor | null {
   const serverEpochMs = Date.parse(serverNow);
   if (
@@ -225,11 +230,15 @@ export function createLiveBattleServerClockAnchor(
     responseReceivedAt < requestStartedAt
   ) return null;
   const roundTripMs = responseReceivedAt - requestStartedAt;
-  return {
+  const anchor: LiveBattleServerClockAnchor = {
     serverEpochMsAtAnchor: serverEpochMs + roundTripMs / 2,
     monotonicMsAtAnchor: responseReceivedAt,
     roundTripMs,
   };
+  if (projectionServerClockAt !== null) {
+    anchor.projectionServerClockAt = projectionServerClockAt;
+  }
+  return anchor;
 }
 
 export function estimateLiveBattleServerNow(
@@ -250,6 +259,61 @@ export type LiveBattlePowerVisualState = {
   activeBoost: LiveBattlePowerBoostKind | null;
   remainingMs: number;
 };
+
+export type LiveBattleLocalCompetitiveState = {
+  localSide: LiveBattleLocalSide;
+  rivalSide: LiveBattlePowerSide;
+  localScore: number;
+  rivalScore: number;
+  localRoseProgressUnits: number;
+  rivalRoseProgressUnits: number;
+  localRoseActivationsRemaining: number;
+  rivalRoseActivationsRemaining: number;
+  localGloveUsesRemaining: number;
+  rivalGloveUsesRemaining: number;
+  localResult: 'pending' | 'won' | 'lost' | 'tie' | 'cancelled';
+};
+
+export function deriveLiveBattleLocalCompetitiveState(
+  state: LiveBattlePublicState,
+): LiveBattleLocalCompetitiveState {
+  const localIsChallenger = state.localBattleSide === 'challenger';
+  const winningSide = state.outcome === 'challenger' || state.outcome === 'opponent'
+    ? state.outcome
+    : null;
+  const localResult = state.outcome === 'pending'
+    ? 'pending'
+    : state.outcome === 'tie'
+      ? 'tie'
+      : state.outcome === 'cancelled'
+        ? 'cancelled'
+        : winningSide === state.localBattleSide ? 'won' : 'lost';
+  return {
+    localSide: state.localBattleSide,
+    rivalSide: localIsChallenger ? 'opponent' : 'challenger',
+    localScore: localIsChallenger ? state.challengerScore : state.opponentScore,
+    rivalScore: localIsChallenger ? state.opponentScore : state.challengerScore,
+    localRoseProgressUnits: localIsChallenger
+      ? state.challengerRoseProgressUnits
+      : state.opponentRoseProgressUnits,
+    rivalRoseProgressUnits: localIsChallenger
+      ? state.opponentRoseProgressUnits
+      : state.challengerRoseProgressUnits,
+    localRoseActivationsRemaining: localIsChallenger
+      ? state.challengerRoseActivationsRemaining
+      : state.opponentRoseActivationsRemaining,
+    rivalRoseActivationsRemaining: localIsChallenger
+      ? state.opponentRoseActivationsRemaining
+      : state.challengerRoseActivationsRemaining,
+    localGloveUsesRemaining: localIsChallenger
+      ? state.challengerGloveUsesRemaining
+      : state.opponentGloveUsesRemaining,
+    rivalGloveUsesRemaining: localIsChallenger
+      ? state.opponentGloveUsesRemaining
+      : state.challengerGloveUsesRemaining,
+    localResult,
+  };
+}
 
 export function deriveLiveBattlePowerVisualState(
   state: LiveBattlePublicState,
@@ -314,6 +378,10 @@ export function parseLiveBattlePublicState(value: unknown): LiveBattlePublicStat
   const row = value as LiveBattlePublicStateRow;
   const sessionId = requiredUuid(row.session_id, 'session_id');
   const opponentSessionId = requiredUuid(row.opponent_session_id, 'opponent_session_id');
+  if (row.local_battle_side !== 'challenger' && row.local_battle_side !== 'opponent') {
+    throw new LiveBattleSpectatorError('live_battle_public_invalid_local_battle_side');
+  }
+  const localBattleSide = row.local_battle_side;
   const localHostUserId = requiredUuid(row.local_host_user_id, 'local_host_user_id');
   const opponentHostUserId = requiredUuid(row.opponent_host_user_id, 'opponent_host_user_id');
   if (sessionId === opponentSessionId) {
@@ -446,6 +514,7 @@ export function parseLiveBattlePublicState(value: unknown): LiveBattlePublicStat
     sessionId,
     battleId: requiredUuid(row.battle_id, 'battle_id'),
     opponentSessionId,
+    localBattleSide,
     localHostUserId,
     opponentHostUserId,
     localHostAgoraUid: requiredAgoraUid(row.local_host_agora_uid, 'local_host_agora_uid'),
@@ -538,6 +607,7 @@ export async function getLiveBattlePublicSnapshot(
       envelope.serverNow,
       requestStartedAt,
       responseReceivedAt,
+      envelope.state?.serverClockAt ?? null,
     ),
   };
 }
@@ -592,18 +662,10 @@ export function subscribeToLiveBattlePublicState(
     }
   };
 
-  const handleUpsert = (payload: { new?: unknown }) => {
+  const handleMutation = () => {
     if (disposed) return;
     mutationSequence += 1;
-    try {
-      const next = parseLiveBattlePublicState(payload.new);
-      if (next.sessionId !== sessionId) {
-        throw new LiveBattleSpectatorError('live_battle_public_session_mismatch');
-      }
-      publish(next);
-    } catch (error) {
-      onError?.(normalizeError(error));
-    }
+    void reconcile();
   };
 
   const handleDelete = (payload: { old?: unknown }) => {
@@ -619,8 +681,7 @@ export function subscribeToLiveBattlePublicState(
       return;
     }
     if (removedSessionId !== sessionId) return;
-    mutationSequence += 1;
-    void reconcile();
+    handleMutation();
   };
 
   const channel = client
@@ -630,13 +691,13 @@ export function subscribeToLiveBattlePublicState(
       schema: 'public',
       table: 'live_battle_public_states',
       filter: `session_id=eq.${sessionId}`,
-    }, handleUpsert)
+    }, handleMutation)
     .on('postgres_changes', {
       event: 'UPDATE',
       schema: 'public',
       table: 'live_battle_public_states',
       filter: `session_id=eq.${sessionId}`,
-    }, handleUpsert)
+    }, handleMutation)
     .on('postgres_changes', {
       event: 'DELETE',
       schema: 'public',
@@ -666,5 +727,6 @@ export function subscribeToLiveBattlePublicState(
 }
 
 export function isLiveBattleStageStatus(status: LiveBattlePublicStatus): boolean {
-  return status === 'countdown' || status === 'active';
+  return status === 'countdown' || status === 'active'
+    || status === 'completed' || status === 'cancelled';
 }

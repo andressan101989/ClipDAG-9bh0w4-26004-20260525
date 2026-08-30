@@ -45,6 +45,7 @@ const row = (overrides = {}) => ({
   session_id: SESSION,
   battle_id: BATTLE_A,
   opponent_session_id: OTHER_SESSION,
+  local_battle_side: 'challenger',
   local_host_user_id: HOST,
   opponent_host_user_id: OPPONENT,
   local_host_agora_uid: 1758552870,
@@ -266,6 +267,7 @@ test('DELETE reconciliation cannot clear a newer Battle and a late initial snaps
   const newerA = row({ version: 5, updated_at: '2026-08-26T12:00:05.000Z' });
   harness.emit('UPDATE', { new: newerA });
   harness.resolveRpc(0, envelope(row({ version: 3 })));
+  harness.resolveRpc(1, envelope(newerA));
   await settle();
   assert.equal(values.at(-1).version, 5);
 
@@ -276,7 +278,8 @@ test('DELETE reconciliation cannot clear a newer Battle and a late initial snaps
     updated_at: '2026-08-26T12:01:00.000Z',
   });
   harness.emit('INSERT', { new: battleB });
-  harness.resolveRpc(1, envelope(null));
+  harness.resolveRpc(2, envelope(null));
+  harness.resolveRpc(3, envelope(battleB));
   await settle();
   assert.equal(values.at(-1).battleId, BATTLE_B);
 
@@ -305,7 +308,7 @@ test('stage and hook use one authoritative timer, one AppState listener, and pre
   assert.match(stageSource, /clearInterval\(timer\)/);
   assert.doesNotMatch(stageSource, /Date\.now\(|setInterval\([\s\S]{0,100}250/);
   assert.match(stageSource, /estimateLiveBattleServerNow\(clockAnchor, monotonicNow\)/);
-  assert.match(stageSource, /if \(serverNow === null\) return '--:--'/);
+  assert.match(stageSource, /secondsUntil\([\s\S]*serverNow/);
   assert.match(stageSource, /flexDirection: 'row'/);
   assert.equal((hookSource.match(/AppState\.addEventListener/g) ?? []).length, 1);
   assert.match(hookSource, /appStateSubscription\.remove\(\)/);
@@ -313,7 +316,8 @@ test('stage and hook use one authoritative timer, one AppState listener, and pre
   assert.doesNotMatch(hookSource, /setInterval|setTimeout/);
   assert.match(watchSource, /clockAnchor=\{battleProjection\.clockAnchor\}/);
   assert.match(broadcastSource, /clockAnchor=\{battleProjection\.clockAnchor\}/);
-  assert.doesNotMatch(stageSource + hookSource, /score|winner|directed.?gift|transition.*rpc/i);
+  assert.match(stageSource, /localScore|rivalScore|GANADOR/);
+  assert.doesNotMatch(stageSource + hookSource, /directed.?gift|transition.*rpc/i);
 });
 
 test('stage runtime arms one one-second timer and its unmount cleanup clears it', () => {
@@ -340,11 +344,30 @@ test('stage runtime arms one one-second timer and its unmount cleanup clears it'
       react,
       'react/jsx-runtime': { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) },
       'react-native': {
-        Image: 'Image', Text: 'Text', View: 'View',
+        ActivityIndicator: 'ActivityIndicator', Image: 'Image', Pressable: 'Pressable',
+        Text: 'Text', View: 'View',
         StyleSheet: { absoluteFillObject: {}, create: value => value },
       },
       '@expo/vector-icons': { MaterialIcons: 'MaterialIcons' },
+      '@/constants/theme': {
+        Colors: new Proxy({}, { get: () => '#fff' }),
+        FontSize: new Proxy({}, { get: () => 12 }),
+        FontWeight: new Proxy({}, { get: () => '700' }),
+        Radius: new Proxy({}, { get: () => 12 }),
+        Spacing: new Proxy({}, { get: () => 8 }),
+      },
       '@/services/liveBattleSpectatorService': {
+        deriveLiveBattleLocalCompetitiveState: () => ({
+          localSide: 'challenger', rivalSide: 'opponent',
+          localScore: 0, rivalScore: 0,
+          localRoseProgressUnits: 0, rivalRoseProgressUnits: 0,
+          localRoseActivationsRemaining: 1, rivalRoseActivationsRemaining: 1,
+          localGloveUsesRemaining: 1, rivalGloveUsesRemaining: 1,
+          localResult: 'pending',
+        }),
+        deriveLiveBattlePowerVisualState: () => ({
+          multiplier: 1, activeBoost: null, remainingMs: 0,
+        }),
         estimateLiveBattleServerNow: () => Date.parse(SERVER_NOW),
         readLiveBattleMonotonicNow: () => 5_000,
       },
