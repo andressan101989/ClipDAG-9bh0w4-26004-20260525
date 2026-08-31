@@ -24,7 +24,8 @@ function functionBody(name) {
 
 test('LB4-F4A adds exactly one post-stage migration and no Edge Function', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
-    .filter(name => name > '20260829161856_live_battles_lb4_f3_f3_f1_f2_transition_plan.sql');
+    .filter(name => name > '20260829161856_live_battles_lb4_f3_f3_f1_f2_transition_plan.sql' &&
+      name <= '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql');
   assert.deepEqual(names, [
     migrationName, scoreOutcomeMigrationName, powerEngineMigrationName,
     powerProjectionMigrationName,

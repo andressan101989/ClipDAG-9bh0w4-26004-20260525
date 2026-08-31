@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+const read = async path => (await readFile(
+  new URL(`../${path}`, import.meta.url), 'utf8'
+)).replaceAll('\r\n', '\n');
 const migrationName = '20260824025639_live_battles_lb2_state_machine.sql';
 const correctionName = '20260824034049_live_battles_lb2_f1_session_liveness.sql';
 const migration = await read(`supabase/migrations/${migrationName}`);

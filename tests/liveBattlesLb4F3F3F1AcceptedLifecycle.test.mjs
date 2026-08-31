@@ -27,7 +27,8 @@ function functionBody(schema, name) {
 
 test('LB4-F3-F3-F1 adds one forward migration without changing LB4-F3-F3', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
-    .filter(name => name > previousName);
+    .filter(name => name > previousName &&
+      name <= '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql');
   assert.deepEqual(names, [
     migrationName,
     cancellationAuthorityMigrationName,

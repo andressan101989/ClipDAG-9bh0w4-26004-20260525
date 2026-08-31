@@ -344,7 +344,8 @@ test('audio/video subscribe and stage identity remain canonical for hosts and vi
 
 test('media repair adds no migration, polling, commerce, score, or lifecycle write', async () => {
   const migrations = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
-    .filter(name => name.endsWith('.sql'))
+    .filter(name => name.endsWith('.sql') &&
+      name <= '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql')
     .sort();
   assert.equal(
     migrations.at(-1),

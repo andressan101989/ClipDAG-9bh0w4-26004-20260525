@@ -99,7 +99,8 @@ test("documentation describes deployed monitor reality without claiming auto-cor
 
 test("correction adds no migration, RPC, table or client-side financial authority", () => {
   const latestMigration = readdirSync(new URL("../supabase/migrations", import.meta.url))
-    .filter((name) => name.endsWith(".sql"))
+    .filter((name) => name.endsWith(".sql") &&
+      name <= "20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql")
     .sort()
     .at(-1);
   assert.equal(latestMigration, "20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql");

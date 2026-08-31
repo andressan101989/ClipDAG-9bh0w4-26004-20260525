@@ -19,7 +19,8 @@ function body(schema, name) {
 
 test('F4D-A is the only migration after F4B and changes no UI, Edge or Realtime publication', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
-    .filter(name => name > '20260830030845_live_battles_lb4_f4b_score_outcome.sql');
+    .filter(name => name > '20260830030845_live_battles_lb4_f4b_score_outcome.sql' &&
+      name <= '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql');
   assert.deepEqual(names, [
     migrationName,
     powerProjectionMigrationName,

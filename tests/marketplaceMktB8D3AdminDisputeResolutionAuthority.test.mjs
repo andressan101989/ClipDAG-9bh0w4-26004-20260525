@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const migration = readFileSync("supabase/migrations/20260816010000_marketplace_admin_dispute_resolution_authority.sql", "utf8");
-const core = readFileSync("supabase/migrations/20260810180000_marketplace_post_settlement_reversal_authority.sql", "utf8");
+const normalizedRead = (path) => readFileSync(path, "utf8").replaceAll("\r\n", "\n");
+const migration = normalizedRead("supabase/migrations/20260816010000_marketplace_admin_dispute_resolution_authority.sql");
+const core = normalizedRead("supabase/migrations/20260810180000_marketplace_post_settlement_reversal_authority.sql");
 const api = readFileSync("apps/admin-web/src/lib/adminApi.ts", "utf8");
 const proof = readFileSync("scripts/prove-marketplace-admin-operations-core.mjs", "utf8");
 

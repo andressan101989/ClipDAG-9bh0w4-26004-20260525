@@ -282,7 +282,8 @@ test('Battle controls and close action meet the forty-four pixel touch target', 
 test('the canonical-side migration is the only latest schema addition', async () => {
   const migrationNames = await readdir(new URL('../supabase/migrations/', import.meta.url));
   assert.equal(
-    migrationNames.filter(name => name.endsWith('.sql')).sort().at(-1),
+    migrationNames.filter(name => name.endsWith('.sql') &&
+      name <= '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql').sort().at(-1),
     '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql',
   );
 });

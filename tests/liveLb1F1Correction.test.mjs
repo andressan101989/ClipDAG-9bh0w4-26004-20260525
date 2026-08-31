@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const read = path => readFile(new URL(`../${path}`,import.meta.url),'utf8');
+const read = async path => (await readFile(
+  new URL(`../${path}`,import.meta.url),'utf8'
+)).replaceAll('\r\n', '\n');
 const original = await read('supabase/migrations/20260823223420_live_lb1_canonical_authority.sql');
 const correction = await read('supabase/migrations/20260824014644_live_lb1_fix_agora_uid_lint.sql');
 const harness = await read('scripts/prove-live-lb1-f1-concurrency.mjs');

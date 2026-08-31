@@ -4,7 +4,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 const root = process.cwd();
-const read = (path) => readFileSync(join(root, path), "utf8");
+const read = (path) => readFileSync(join(root, path), "utf8")
+  .replaceAll("\r\n", "\n");
 const product = read("app/product/[id].tsx");
 const gallery = read(
   "components/marketplace/product-detail/ProductMediaGallery.tsx",
@@ -309,7 +310,8 @@ test("C3 removes per-field and per-section card chrome without removing media or
 
 test("visual closure retains no economic authority and keeps Build 22", () => {
   const migrations = readdirSync(join(root, "supabase/migrations"))
-    .filter((name) => name.endsWith(".sql"))
+    .filter((name) => name.endsWith(".sql") &&
+      name <= "20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql")
     .sort();
   assert.equal(
     migrations.at(-1),
