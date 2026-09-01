@@ -6,6 +6,7 @@ import test from "node:test";
 const migrationName =
   "20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql";
 const migrationPath = `supabase/migrations/${migrationName}`;
+const parentSha = "63a1b5fa1bd59c9ed63a7535ff0e58763b163729";
 const sql = readFileSync(migrationPath, "utf8");
 const concurrencyProof = readFileSync(
   "scripts/prove-live-battle-rematch-concurrency.mjs",
@@ -236,8 +237,37 @@ test("new RPC execution is granted only to authenticated", () => {
   }
 });
 
-test("migration never targets Edge Functions, manifests, or the realtime schema", () => {
+test("F5-A changes no Agora, Media Relay, Creator Recovery, Edge Function, manifest, or realtime schema", () => {
+  const result = spawnSync(
+    "git",
+    ["diff", "--name-only", `${parentSha}..HEAD`, "--"],
+    { encoding: "utf8", windowsHide: true },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const changedPaths = result.stdout.trim().split(/\r?\n/).filter(Boolean);
+  const protectedExactPaths = new Set([
+    "hooks/useAgoraEngine.native.ts",
+    "hooks/useAgoraEngine.ts",
+    "hooks/live/useLiveBattleRelayRuntime.native.ts",
+    "hooks/live/useLiveBattleRelayRuntime.ts",
+    "services/agoraService.native.ts",
+    "services/agoraService.ts",
+    "services/LiveBattleRelayService.native.ts",
+    "services/LiveBattleRelayService.ts",
+    "services/LiveBattleRuntimeController.ts",
+    "modules/creator/sessions/CreatorRecoveryManager.ts",
+    "hooks/useCreatorSession.ts",
+    "package.json",
+    "package-lock.json",
+  ]);
+  const protectedChanges = changedPaths.filter((path) =>
+    path.startsWith("supabase/functions/") || protectedExactPaths.has(path));
+  assert.deepEqual(protectedChanges, []);
   assert.doesNotMatch(sql, /supabase\/functions|package(?:-lock)?\.json/i);
+  assert.doesNotMatch(
+    sql,
+    /create\s+or\s+replace\s+function\s+private\.live_agora_uid\s*\(/i,
+  );
   assert.doesNotMatch(sql, /\b(create|alter|drop)\s+(table|function|schema)\s+realtime\./i);
 });
 

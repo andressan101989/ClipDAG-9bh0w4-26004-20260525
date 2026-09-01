@@ -279,11 +279,14 @@ test('Battle controls and close action meet the forty-four pixel touch target', 
   assert.match(broadcastSource, /engagementAction: \{ width: 44, minHeight: 48/);
 });
 
-test('the canonical-side migration is the only latest schema addition', async () => {
+test('the canonical-side migration remains present at the audited F5-A frontier', async () => {
   const migrationNames = await readdir(new URL('../supabase/migrations/', import.meta.url));
-  assert.equal(
-    migrationNames.filter(name => name.endsWith('.sql') &&
-      name <= '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql').sort().at(-1),
+  const sqlMigrations = migrationNames.filter(name => name.endsWith('.sql')).sort();
+  assert.ok(sqlMigrations.includes(
     '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql',
+  ));
+  assert.equal(
+    sqlMigrations.at(-1),
+    '20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql',
   );
 });

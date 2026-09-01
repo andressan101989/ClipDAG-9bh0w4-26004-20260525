@@ -78,11 +78,11 @@ const row = (overrides = {}) => ({
 
 test('F4D-B is the only migration after F4D-A and does not add UI or internal Realtime tables', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
-    .filter(name => name > '20260830053531_live_battles_lb4_f4d_a_power_engine.sql' &&
-      name <= '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql');
+    .filter(name => name > '20260830053531_live_battles_lb4_f4d_a_power_engine.sql');
   assert.deepEqual(names, [
     migrationName,
     '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql',
+    '20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql',
   ]);
   assert.doesNotMatch(migration, /alter publication|atomic_ledger_transfer|ledger_entries/);
   assert.doesNotMatch(migration, /create table public\./i);

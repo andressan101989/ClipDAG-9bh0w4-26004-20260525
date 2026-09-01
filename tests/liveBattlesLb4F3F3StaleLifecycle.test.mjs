@@ -28,8 +28,7 @@ function functionBody(schema, name) {
 
 test('LB4-F3-F3 adds one migration and leaves every deployed migration byte-identical', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
-    .filter(name => name > previousName &&
-      name <= '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql');
+    .filter(name => name > previousName);
   assert.deepEqual(names, [
     migrationName,
     acceptedLifecycleMigrationName,
@@ -40,6 +39,7 @@ test('LB4-F3-F3 adds one migration and leaves every deployed migration byte-iden
     powerEngineMigrationName,
     powerProjectionMigrationName,
     visualRealtimeMigrationName,
+    '20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql',
   ]);
   const previous = (await read(`supabase/migrations/${previousName}`)).replaceAll('\r\n', '\n');
   assert.equal(createHash('sha256').update(previous).digest('hex'),
