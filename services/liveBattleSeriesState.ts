@@ -69,8 +69,7 @@ export function deriveLiveBattleSeriesClientState(
   pendingTransitionBattleId: string | null,
   hasError: boolean,
 ): LiveBattleSeriesClientState {
-  if (hasError) return 'error';
-  if (!state || !state.series) return 'loading';
+  if (!state || !state.series) return hasError ? 'error' : 'loading';
   if (pendingTransitionBattleId && pendingTransitionBattleId !== state.battleId) {
     return 'transitioning';
   }
@@ -109,6 +108,68 @@ export function deriveLiveBattleSeriesClientState(
     return 'round_active';
   }
   return 'round_finished';
+}
+
+export function shouldClearLiveBattleSeriesError(
+  previous: LiveBattleSeriesStateInput | null,
+  next: LiveBattleSeriesStateInput | null,
+): boolean {
+  if (!next?.series) return false;
+  if (!previous) return true;
+  if (previous.battleId === next.battleId) {
+    return previous.series === null || previous.series.id === next.series.id;
+  }
+  return isCanonicalNextLiveBattle(previous, next);
+}
+
+export function isLiveBattleSeriesTerminal(
+  state: LiveBattleSeriesStateInput | null,
+): boolean {
+  return state?.series?.status === 'completed' || state?.series?.status === 'cancelled';
+}
+
+export function canLeaveLiveBattleSeries(
+  state: LiveBattleSeriesStateInput | null,
+  actorUserId: string | null | undefined,
+): boolean {
+  return isLiveBattleSeriesParticipant(state, actorUserId)
+    && !isLiveBattleSeriesTerminal(state);
+}
+
+export const LIVE_BATTLE_SERIES_LEAVE_TIMEOUT_MS = 1_500;
+
+export type LiveBattleSeriesHostLeaveResult =
+  | 'skipped'
+  | 'completed'
+  | 'rejected'
+  | 'timed_out';
+
+export async function leaveLiveBattleSeriesBeforeHostEnd(input: {
+  reason: string;
+  leaveSeries: () => Promise<unknown> | null;
+  timeoutMs?: number;
+  onFailure?: (code: 'rejected' | 'timed_out') => void;
+}): Promise<LiveBattleSeriesHostLeaveResult> {
+  if (input.reason !== 'host_ended') return 'skipped';
+  const flight = input.leaveSeries();
+  if (!flight) return 'skipped';
+
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const result = await Promise.race<LiveBattleSeriesHostLeaveResult>([
+    Promise.resolve(flight).then(
+      () => 'completed' as const,
+      () => 'rejected' as const,
+    ),
+    new Promise<'timed_out'>(resolve => {
+      timeout = setTimeout(
+        () => resolve('timed_out'),
+        Math.max(1, input.timeoutMs ?? LIVE_BATTLE_SERIES_LEAVE_TIMEOUT_MS),
+      );
+    }),
+  ]);
+  if (timeout !== null) clearTimeout(timeout);
+  if (result === 'rejected' || result === 'timed_out') input.onFailure?.(result);
+  return result;
 }
 
 export type LiveBattleSeriesTransitionCandidate = {

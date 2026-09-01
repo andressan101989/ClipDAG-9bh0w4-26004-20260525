@@ -20,11 +20,13 @@ import {
   type LiveBattleSeriesErrorCode,
 } from '@/services/liveBattleSeriesService';
 import {
+  canLeaveLiveBattleSeries,
   deriveLiveBattleSeriesClientState,
   isCanonicalRematchTransitionCandidate,
   isLiveBattleSeriesParticipant,
   LiveBattleSeriesSingleFlight,
   LiveBattleSeriesTransitionGate,
+  shouldClearLiveBattleSeriesError,
   type LiveBattleSeriesActionPhase,
 } from '@/services/liveBattleSeriesState';
 
@@ -57,6 +59,7 @@ export function useLiveBattleSpectatorState(
   const transitionGateRef = useRef(new LiveBattleSeriesTransitionGate());
   const idempotencyRef = useRef<{ battleId: string; key: string } | null>(null);
   const singleFlightRef = useRef(new LiveBattleSeriesSingleFlight());
+  const leaveSingleFlightRef = useRef(new LiveBattleSeriesSingleFlight());
   const [state, setState] = useState<LiveBattlePublicState | null>(null);
   const [clockAnchor, setClockAnchor] = useState<LiveBattleServerClockAnchor | null>(null);
   const [profiles, setProfiles] = useState<Map<string, LiveBattlePublicProfile>>(new Map());
@@ -73,6 +76,7 @@ export function useLiveBattleSpectatorState(
     transitionGateRef.current = new LiveBattleSeriesTransitionGate();
     idempotencyRef.current = null;
     singleFlightRef.current = new LiveBattleSeriesSingleFlight();
+    leaveSingleFlightRef.current = new LiveBattleSeriesSingleFlight();
     setState(null);
     setClockAnchor(null);
     setProfiles(new Map());
@@ -96,6 +100,7 @@ export function useLiveBattleSpectatorState(
           stateRef.current = next;
           setState(next);
           setErrorCode(null);
+          if (shouldClearLiveBattleSeriesError(previous, next)) setSeriesError(null);
           logSeries(event, {
             battleId: redactedId(next?.battleId),
             seriesId: redactedId(next?.series?.id),
@@ -104,7 +109,6 @@ export function useLiveBattleSpectatorState(
           if (previous && next && previous.battleId !== next.battleId) {
             setPendingTransitionBattleId(null);
             idempotencyRef.current = null;
-            setSeriesError(null);
           }
           if (
             previous?.series
@@ -207,7 +211,6 @@ export function useLiveBattleSpectatorState(
     const flight = singleFlightRef.current.run(async () => {
       if (generation === generationRef.current) {
         setActionPhase(phase);
-        setSeriesError(null);
       }
       logSeries(startEvent, { battleId: redactedId(stateRef.current?.battleId) });
       try {
@@ -304,12 +307,13 @@ export function useLiveBattleSpectatorState(
   const rejectRematch = useCallback(() => respondRematch('reject'), [respondRematch]);
   const leaveSeries = useCallback((): Promise<unknown> | null => {
     const current = stateRef.current;
-    if (!current?.series || !isLiveBattleSeriesParticipant(current, actorUserId)) return null;
+    const seriesId = current?.series?.id;
+    if (!seriesId || !canLeaveLiveBattleSeries(current, actorUserId)) return null;
     const generation = generationRef.current;
-    return singleFlightRef.current.run(async () => {
+    return leaveSingleFlightRef.current.run(async () => {
       if (generation === generationRef.current) setActionPhase('leaving');
       try {
-        return await leaveLiveBattleSeries(current.series!.id);
+        return await leaveLiveBattleSeries(seriesId);
       } catch (error) {
         const code = seriesErrorCode(error);
         if (generation === generationRef.current) setSeriesError(code);

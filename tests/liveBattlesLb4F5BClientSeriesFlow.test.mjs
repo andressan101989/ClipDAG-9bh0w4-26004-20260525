@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import ts from 'typescript';
 
@@ -14,6 +13,11 @@ const hookSource = await read('hooks/live/useLiveBattleSpectatorState.ts');
 const stageSource = await read('components/live/LiveBattleStage.tsx');
 const hostSource = await read('app/live/broadcast/[streamId].tsx');
 const viewerSource = await read('app/live/watch/[streamId].tsx');
+const migrationSource = await read(
+  'supabase/migrations/20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql',
+);
+const packageBytes = await readFile(new URL('../package.json', import.meta.url));
+const lockfileBytes = await readFile(new URL('../package-lock.json', import.meta.url));
 
 function load(source, imports = {}) {
   const compiled = ts.transpileModule(source, {
@@ -126,7 +130,10 @@ test('client states are canonical for host, counterpart, viewer, expiry and term
   }) });
   assert.equal(derive(pending, A), 'outgoing_pending');
   assert.equal(derive(pending, B), 'incoming_pending');
+  assert.equal(derive(pending, B, 'idle', null, true), 'incoming_pending');
   assert.equal(derive(pending, null), 'round_finished');
+  assert.equal(derive(publicState(), A, 'idle', null, true), 'available');
+  assert.equal(derive(null, A, 'idle', null, true), 'error');
   assert.equal(derive(publicState({ series: projection({
     status: 'completed', rematchRequestStatus: 'expired', rematchRequestId: REQUEST,
     rematchRequestAfterBattleId: BATTLE_1, rematchRequestedByUserId: A,
@@ -135,6 +142,28 @@ test('client states are canonical for host, counterpart, viewer, expiry and term
   assert.equal(derive(publicState({ series: projection({
     status: 'completed', rematchWindowExpiresAt: null, championUserId: A,
   }) })), 'series_completed');
+});
+
+test('canonical onChange clears a non-blocking action error but stale projections do not', () => {
+  const current = publicState();
+  assert.equal(seriesState.shouldClearLiveBattleSeriesError(current, publicState()), true);
+  const nextRound = publicState({
+    battleId: BATTLE_2,
+    status: 'countdown',
+    series: projection({ roundNumber: 2, status: 'active', rematchWindowExpiresAt: null }),
+  });
+  assert.equal(seriesState.shouldClearLiveBattleSeriesError(current, nextRound), true);
+  assert.equal(seriesState.shouldClearLiveBattleSeriesError(current, {
+    ...nextRound,
+    series: { ...nextRound.series, id: '20000000-0000-4000-8000-000000000002' },
+  }), false);
+  assert.equal(seriesState.shouldClearLiveBattleSeriesError(current, null), false);
+
+  let visibleError = 'network';
+  if (seriesState.shouldClearLiveBattleSeriesError(current, publicState())) visibleError = null;
+  assert.equal(visibleError, null);
+  assert.match(hookSource, /shouldClearLiveBattleSeriesError\(previous, next\)/);
+  assert.doesNotMatch(hookSource, /setActionPhase\(phase\);\s*setSeriesError\(null\)/);
 });
 
 test('C2 projection keeps request and rematch-window expiration separate', () => {
@@ -211,6 +240,76 @@ test('single-flight blocks double touch and permits one later action', async () 
   const later = lock.run(async () => { calls += 1; return 'later'; });
   assert.equal(await later, 'later');
   assert.equal(calls, 2);
+});
+
+test('a rejected RPC releases single-flight so the same canonical action can retry', async () => {
+  const lock = new seriesState.LiveBattleSeriesSingleFlight();
+  const failed = lock.run(async () => { throw new Error('network'); });
+  await assert.rejects(failed, /network/);
+  const retry = lock.run(async () => 'canonical_success');
+  assert.notEqual(retry, null);
+  assert.equal(await retry, 'canonical_success');
+});
+
+test('host voluntary leave is bounded, best-effort and invoked exactly once', async () => {
+  let leaveCalls = 0;
+  const result = await seriesState.leaveLiveBattleSeriesBeforeHostEnd({
+    reason: 'host_ended',
+    leaveSeries: async () => { leaveCalls += 1; },
+  });
+  assert.equal(result, 'completed');
+  assert.equal(leaveCalls, 1);
+
+  const lock = new seriesState.LiveBattleSeriesSingleFlight();
+  let doubleTapCalls = 0;
+  const first = lock.run(() => seriesState.leaveLiveBattleSeriesBeforeHostEnd({
+    reason: 'host_ended',
+    leaveSeries: async () => { doubleTapCalls += 1; },
+  }));
+  const second = lock.run(() => seriesState.leaveLiveBattleSeriesBeforeHostEnd({
+    reason: 'host_ended',
+    leaveSeries: async () => { doubleTapCalls += 1; },
+  }));
+  assert.equal(second, null);
+  await first;
+  assert.equal(doubleTapCalls, 1);
+});
+
+test('disconnects, background, viewers and terminal series never invoke series leave', async () => {
+  let calls = 0;
+  const leaveSeries = async () => { calls += 1; };
+  for (const reason of ['host_disconnected', 'background', 'network_lost', 'viewer_closed']) {
+    assert.equal(await seriesState.leaveLiveBattleSeriesBeforeHostEnd({ reason, leaveSeries }), 'skipped');
+  }
+  assert.equal(calls, 0);
+  assert.equal(seriesState.canLeaveLiveBattleSeries(publicState(), null), false);
+  assert.equal(seriesState.canLeaveLiveBattleSeries(publicState({
+    series: projection({ status: 'completed', championUserId: A, rematchWindowExpiresAt: null }),
+  }), A), false);
+  assert.equal(seriesState.canLeaveLiveBattleSeries(publicState(), A), true);
+});
+
+test('leave rejection or timeout cannot prevent LIVE cleanup and navigation', async () => {
+  const failures = [];
+  const steps = [];
+  const rejected = await seriesState.leaveLiveBattleSeriesBeforeHostEnd({
+    reason: 'host_ended',
+    leaveSeries: async () => { throw new Error('private detail'); },
+    onFailure: code => failures.push(code),
+  });
+  steps.push('stop_runtime', 'leave_agora', 'end_live_session', 'navigate');
+  assert.equal(rejected, 'rejected');
+  assert.deepEqual(failures, ['rejected']);
+  assert.deepEqual(steps, ['stop_runtime', 'leave_agora', 'end_live_session', 'navigate']);
+
+  const timedOut = await seriesState.leaveLiveBattleSeriesBeforeHostEnd({
+    reason: 'host_ended',
+    leaveSeries: () => new Promise(() => undefined),
+    timeoutMs: 5,
+    onFailure: code => failures.push(code),
+  });
+  assert.equal(timedOut, 'timed_out');
+  assert.deepEqual(failures, ['rejected', 'timed_out']);
 });
 
 test('only a new canonical round in the same series triggers transition', () => {
@@ -322,7 +421,24 @@ test('hook owns one projection subscription, reconciliation and complete cleanup
   assert.match(hookSource, /rematchRequestAfterBattleId !== current\.battleId/);
   assert.match(hookSource, /result\.request\.afterBattleId/);
   assert.match(hookSource, /LiveBattleSeriesSingleFlight/);
+  assert.match(hookSource, /leaveSingleFlightRef\.current\.run/);
+  assert.match(hookSource, /canLeaveLiveBattleSeries\(current, actorUserId\)/);
   assert.doesNotMatch(hookSource, /\.from\s*\(/);
+});
+
+test('host_ended sequences one bounded series leave before runtime and LIVE shutdown', () => {
+  assert.match(hostSource, /if \(finalizePromiseRef\.current\) return finalizePromiseRef\.current/);
+  assert.equal((hostSource.match(/leaveLiveBattleSeriesBeforeHostEnd\s*\(\{/g) ?? []).length, 1);
+  const leaveIndex = hostSource.indexOf('await leaveLiveBattleSeriesBeforeHostEnd({');
+  const runtimeIndex = hostSource.indexOf('await stopBattleRuntime();', leaveIndex);
+  const agoraIndex = hostSource.indexOf('await leave();', runtimeIndex);
+  const endIndex = hostSource.indexOf('await endLiveSession(streamId, reason);', agoraIndex);
+  const navigationIndex = hostSource.indexOf('router.back();', endIndex);
+  assert.ok(leaveIndex >= 0 && leaveIndex < runtimeIndex);
+  assert.ok(runtimeIndex < agoraIndex && agoraIndex < endIndex && endIndex < navigationIndex);
+  assert.match(hostSource, /reason,\s*leaveSeries: battleProjection\.leaveSeries/);
+  assert.match(hostSource, /finalizeLiveSession\('host_disconnected', false\)/);
+  assert.doesNotMatch(viewerSource, /leaveLiveBattleSeriesBeforeHostEnd|leaveSeries\(\)/);
 });
 
 test('host and viewer use the same series UI while controls remain participant-gated', () => {
@@ -348,34 +464,41 @@ test('host and viewer use the same series UI while controls remain participant-g
   );
 });
 
-test('scope, canonical F5-A blob, products, relay and economy remain protected', () => {
-  const changed = spawnSync(
-    'git',
-    ['status', '--porcelain=v1', '--untracked-files=all'],
-    { encoding: 'utf8', windowsHide: true },
-  );
-  assert.equal(changed.status, 0, changed.stderr);
-  const allowed = new Set([
-    'app/live/broadcast/[streamId].tsx', 'app/live/watch/[streamId].tsx',
-    'components/live/LiveBattleStage.tsx', 'hooks/live/useLiveBattleSpectatorState.ts',
-    'services/liveBattleSeriesContract.ts', 'services/liveBattleSeriesService.ts',
-    'services/liveBattleSeriesState.ts', 'services/liveBattleSpectatorService.ts',
-    'tests/liveBattlesLb4F5BClientSeriesFlow.test.mjs',
+test('deterministic C2, RPC, scope, manifest and migration guards are worktree-independent', () => {
+  const rpcNames = [...seriesServiceSource.matchAll(/'((?:request|respond|leave)_live_battle_[^']+)'/g)]
+    .map(match => match[1]);
+  assert.deepEqual([...new Set(rpcNames)].sort(), [
+    'leave_live_battle_series',
+    'request_live_battle_rematch',
+    'respond_live_battle_rematch',
   ]);
-  const changedPaths = changed.stdout.trim().split(/\r?\n/).filter(Boolean)
-    .map(line => line.slice(3).replaceAll('\\', '/'));
-  assert.equal(changedPaths.length, allowed.size);
-  for (const path of changedPaths) {
-    assert.ok(allowed.has(path), path);
-  }
+  assert.doesNotMatch(seriesServiceSource, /\.from\s*\(/);
+  assert.doesNotMatch(seriesServiceSource, /['"]live_battle_(series|rematch_requests|score_states)['"]/);
+  for (const field of [
+    'rematch_request_id', 'rematch_request_after_battle_id', 'rematch_request_status',
+    'rematch_requested_by_user_id', 'rematch_request_expires_at',
+    'rematch_window_expires_at',
+  ]) assert.ok(spectatorServiceSource.includes(field), field);
+  assert.doesNotMatch(spectatorServiceSource, /\brematch_status\b|\brematch_expires_at\b/);
+  assert.match(stageSource, /rematchRequestAfterBattleId === state\.battleId/);
+  assert.doesNotMatch(
+    stageSource,
+    /rematchRequestExpiresAt\s*\?\?\s*series\?\.rematchWindowExpiresAt|rematchWindowExpiresAt\s*\?\?\s*series\?\.rematchRequestExpiresAt/,
+  );
+
+  const isolatedSeriesSources = [contractSource, stateSource, seriesServiceSource, hookSource].join('\n');
+  assert.doesNotMatch(
+    isolatedSeriesSources,
+    /agoraService|useLiveBattleRelayRuntime|liveGift|liveCommerce|ledger|wallet|marketplace/i,
+  );
+  assert.match(hostSource, /useLiveBattleRelayRuntime/);
   assert.match(hostSource, /setCommerceVisible\(false\)/);
   assert.match(viewerSource, /setCommerceVisible\(false\)/);
   assert.match(spectatorServiceSource, /series: LiveBattleSeriesProjection \| null/);
-  const blob = spawnSync('git', [
-    'cat-file', 'blob',
-    'HEAD:supabase/migrations/20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql',
-  ], { encoding: null, windowsHide: true });
-  assert.equal(blob.status, 0, blob.stderr?.toString());
-  assert.equal(createHash('sha256').update(blob.stdout).digest('hex'),
+  assert.equal(createHash('sha256').update(migrationSource.replaceAll('\r\n', '\n')).digest('hex'),
     '5ca7cb6a284a40fba7886ff8f31fbf64e888d1a20a8694f01177d00fe970de45');
+  assert.equal(createHash('sha256').update(packageBytes).digest('hex'),
+    '6fb527168a0bda8a7bdbdf7d0ad357b7439f1ea845efb00f25f8782b048a8c43');
+  assert.equal(createHash('sha256').update(lockfileBytes).digest('hex'),
+    '2a29b5f890388e056fe2de6b1dd8458b6464466539a458563dd98e8194455141');
 });

@@ -54,6 +54,7 @@ import {
   activateLiveBattleGlove,
   LiveBattleServiceError,
 } from '@/services/liveBattleService';
+import { leaveLiveBattleSeriesBeforeHostEnd } from '@/services/liveBattleSeriesState';
 import type { LiveGiftEvent } from '@/types/liveGifts';
 import { LiveHostProductManager } from '@/components/live/commerce/LiveHostProductManager';
 import { LiveHostPurchaseFeed } from '@/components/live/commerce/LiveHostPurchaseFeed';
@@ -650,10 +651,17 @@ export default function LiveBroadcasterScreen() {
 
     endedRef.current = true;
     liveRef.current = false;
-    setSessionIsCanonicalLive(false);
     clearLiveTimers();
 
     finalizePromiseRef.current = (async () => {
+      await leaveLiveBattleSeriesBeforeHostEnd({
+        reason,
+        leaveSeries: battleProjection.leaveSeries,
+        onFailure: code => {
+          console.warn('[LIVE-BATTLE-SERIES] error', { event: 'terminal', code });
+        },
+      });
+      if (mountedRef.current) setSessionIsCanonicalLive(false);
       await stopBattleRuntime();
 
       try {
@@ -671,7 +679,14 @@ export default function LiveBroadcasterScreen() {
     })();
 
     return finalizePromiseRef.current;
-  }, [streamId, leave, router, clearLiveTimers, stopBattleRuntime]);
+  }, [
+    streamId,
+    leave,
+    router,
+    clearLiveTimers,
+    stopBattleRuntime,
+    battleProjection.leaveSeries,
+  ]);
 
   const endBroadcast = useCallback(async () => {
     await finalizeLiveSession('host_ended', true);
