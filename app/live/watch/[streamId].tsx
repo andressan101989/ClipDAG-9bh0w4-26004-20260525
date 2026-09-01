@@ -264,6 +264,7 @@ export default function LiveWatchScreen() {
   const battleProjection = useLiveBattleSpectatorState(
     streamId ?? null,
     Boolean(user?.id && session?.status === 'live'),
+    user?.id ?? null,
   );
   const battleStageVisible = Boolean(
     battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status),
@@ -911,6 +912,13 @@ export default function LiveWatchScreen() {
           opponentSurface={RtcSurfaceView && remoteUids.includes(battleState.opponentHostAgoraUid)
             ? <RtcSurfaceView canvas={{ uid: battleState.opponentHostAgoraUid }} style={styles.battleVideo} />
             : null}
+          actorUserId={user?.id ?? null}
+          seriesClientState={battleProjection.clientState}
+          seriesActionPending={battleProjection.seriesActionPending}
+          seriesErrorMessage={battleProjection.seriesErrorMessage}
+          onRequestRematch={battleProjection.requestRematch}
+          onAcceptRematch={battleProjection.acceptRematch}
+          onRejectRematch={battleProjection.rejectRematch}
         />
       ) : RtcSurfaceView && remoteUid !== undefined ? (
         <RtcSurfaceView canvas={{ uid: remoteUid }} style={styles.videoStream} />

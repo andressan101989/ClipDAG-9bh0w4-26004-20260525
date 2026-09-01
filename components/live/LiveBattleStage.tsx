@@ -18,6 +18,7 @@ import {
   type LiveBattlePublicState,
   type LiveBattleServerClockAnchor,
 } from '@/services/liveBattleSpectatorService';
+import type { LiveBattleSeriesClientState } from '@/services/liveBattleSeriesState';
 
 type HostIdentity = {
   username: string;
@@ -36,6 +37,13 @@ type LiveBattleStageProps = {
   onActivateGlove?: () => void;
   glovePending?: boolean;
   gloveError?: string | null;
+  actorUserId?: string | null;
+  seriesClientState?: LiveBattleSeriesClientState;
+  seriesActionPending?: boolean;
+  seriesErrorMessage?: string | null;
+  onRequestRematch?: () => Promise<unknown> | null;
+  onAcceptRematch?: () => Promise<unknown> | null;
+  onRejectRematch?: () => Promise<unknown> | null;
 };
 
 function secondsUntil(value: string | null, now: number | null): number | null {
@@ -110,6 +118,13 @@ export function LiveBattleStage({
   onActivateGlove,
   glovePending = false,
   gloveError = null,
+  actorUserId = null,
+  seriesClientState = 'loading',
+  seriesActionPending = false,
+  seriesErrorMessage = null,
+  onRequestRematch,
+  onAcceptRematch,
+  onRejectRematch,
 }: LiveBattleStageProps) {
   const [monotonicNow, setMonotonicNow] = useState<number | null>(
     () => clockAnchor ? readLiveBattleMonotonicNow() : null,
@@ -165,6 +180,46 @@ export function LiveBattleStage({
     || localX3Active
     || battleSeconds === null
     || battleSeconds < 1;
+  const series = state.series;
+  const isParticipant = Boolean(
+    actorUserId
+    && (actorUserId === state.localHostUserId || actorUserId === state.opponentHostUserId),
+  );
+  const localSeriesWins = series
+    ? competitive.localSide === 'challenger' ? series.challengerWins : series.opponentWins
+    : 0;
+  const rivalSeriesWins = series
+    ? competitive.localSide === 'challenger' ? series.opponentWins : series.challengerWins
+    : 0;
+  const hasCurrentRematchRequest = Boolean(
+    series?.rematchRequestId
+    && series.rematchRequestAfterBattleId === state.battleId
+    && series.rematchRequestStatus,
+  );
+  const requestSeconds = secondsUntil(
+    hasCurrentRematchRequest ? series?.rematchRequestExpiresAt ?? null : null,
+    serverNow,
+  );
+  const windowSeconds = secondsUntil(series?.rematchWindowExpiresAt ?? null, serverNow);
+  const requestDeadlineElapsed = requestSeconds === 0;
+  const windowDeadlineElapsed = windowSeconds === 0;
+  const roundResult = competitive.localResult === 'tie'
+    ? 'EMPATE'
+    : competitive.localResult === 'won' ? 'GANASTE' : 'PERDISTE';
+  const seriesTerminal = seriesClientState === 'series_abandoned'
+    ? 'SERIE ABANDONADA'
+    : series?.status === 'completed'
+    ? series.championUserId === null
+      ? 'SERIE EMPATADA'
+      : series.championUserId === state.localHostUserId
+        ? `CAMPEÓN: @${localHost.username}`
+        : `CAMPEÓN: @${opponentHost.username}`
+    : series?.status === 'cancelled' ? 'SERIE ABANDONADA' : null;
+
+  const runSeriesAction = (action: (() => Promise<unknown> | null) | undefined) => {
+    const flight = action?.();
+    void flight?.catch(() => undefined);
+  };
 
   return (
     <View style={styles.root} accessibilityLabel="Battle LIVE de dos anfitriones">
@@ -243,9 +298,89 @@ export function LiveBattleStage({
           </View>
         ) : null}
         {state.status === 'completed' ? (
-          <Text style={styles.terminalDetail}>
-            {competitive.localResult === 'tie' ? 'Puntuación igualada' : localWon ? 'Victoria local' : rivalWon ? 'Victoria rival' : ''}
-          </Text>
+          <View style={styles.seriesArea}>
+            <Text style={styles.roundResult}>{roundResult}</Text>
+            {series ? (
+              <>
+                <Text style={styles.roundLabel}>RONDA {series.roundNumber} DE {series.maxRounds}</Text>
+                <Text
+                  style={styles.seriesScore}
+                  accessibilityLabel={`Serie ${localSeriesWins} a ${rivalSeriesWins}, ${series.ties} empates`}
+                >
+                  {localSeriesWins} — {rivalSeriesWins} · EMPATES {series.ties}
+                </Text>
+                {seriesTerminal ? <Text style={styles.seriesTerminal}>{seriesTerminal}</Text> : null}
+                {seriesClientState === 'outgoing_pending' && !requestDeadlineElapsed ? (
+                  <Text style={styles.seriesNotice}>SOLICITUD ENVIADA · {clock(requestSeconds)}</Text>
+                ) : null}
+                {seriesClientState === 'incoming_pending' && !requestDeadlineElapsed ? (
+                  <Text style={styles.seriesNotice}>QUIERE REVANCHA · {clock(requestSeconds)}</Text>
+                ) : null}
+                {seriesClientState === 'requesting' ? (
+                  <Text style={styles.seriesNotice}>ENVIANDO SOLICITUD…</Text>
+                ) : null}
+                {seriesClientState === 'accepting' || seriesClientState === 'transitioning' ? (
+                  <Text style={styles.seriesNotice}>PREPARANDO SIGUIENTE RONDA…</Text>
+                ) : null}
+                {seriesClientState === 'rejected' ? (
+                  <Text style={styles.seriesNotice}>REVANCHA RECHAZADA</Text>
+                ) : null}
+                {seriesClientState === 'expired' || (hasCurrentRematchRequest && requestDeadlineElapsed) ? (
+                  <Text style={styles.seriesNotice}>SOLICITUD EXPIRADA</Text>
+                ) : null}
+                {!hasCurrentRematchRequest && windowDeadlineElapsed && !seriesTerminal ? (
+                  <Text style={styles.seriesNotice}>VENTANA DE REVANCHA FINALIZADA</Text>
+                ) : null}
+                {!isParticipant && !seriesTerminal ? (
+                  <Text style={styles.seriesNotice}>
+                    {hasCurrentRematchRequest
+                      && series.rematchRequestStatus === 'pending'
+                      && !requestDeadlineElapsed
+                      ? `REVANCHA PENDIENTE · ${clock(requestSeconds)}`
+                      : 'ESPERANDO DECISIÓN DE LOS HOSTS'}
+                  </Text>
+                ) : null}
+                {isParticipant && seriesClientState === 'available' && !windowDeadlineElapsed ? (
+                  <Pressable
+                    style={[styles.rematchButton, seriesActionPending && styles.disabled]}
+                    disabled={seriesActionPending}
+                    onPress={() => runSeriesAction(onRequestRematch)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Solicitar revancha"
+                  >
+                    <Text style={styles.rematchButtonText}>REVANCHA</Text>
+                  </Pressable>
+                ) : null}
+                {isParticipant && seriesClientState === 'incoming_pending' && !requestDeadlineElapsed ? (
+                  <View style={styles.rematchActions}>
+                    <Pressable
+                      style={[styles.acceptButton, seriesActionPending && styles.disabled]}
+                      disabled={seriesActionPending}
+                      onPress={() => runSeriesAction(onAcceptRematch)}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.rematchButtonText}>ACEPTAR</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.rejectButton, seriesActionPending && styles.disabled]}
+                      disabled={seriesActionPending}
+                      onPress={() => runSeriesAction(onRejectRematch)}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.rejectButtonText}>RECHAZAR</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+                {seriesErrorMessage ? (
+                  <Text style={styles.seriesError} accessibilityRole="alert">{seriesErrorMessage}</Text>
+                ) : null}
+              </>
+            ) : (
+              <Text style={styles.terminalDetail}>
+                {competitive.localResult === 'tie' ? 'Puntuación igualada' : localWon ? 'Victoria local' : rivalWon ? 'Victoria rival' : ''}
+              </Text>
+            )}
+          </View>
         ) : null}
       </View>
     </View>
@@ -305,5 +440,18 @@ const styles = StyleSheet.create({
   gloveButtonText: { color: Colors.textOnBrand, fontSize: FontSize.xs, fontWeight: FontWeight.extrabold },
   gloveError: { color: Colors.error, fontSize: 9, lineHeight: 11, textAlign: 'center' },
   terminalDetail: { color: Colors.textSecondary, fontSize: 9, lineHeight: 11, textAlign: 'center' },
+  seriesArea: { alignItems: 'center', gap: 3, paddingTop: Spacing.xs },
+  roundResult: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.extrabold },
+  roundLabel: { color: Colors.textSecondary, fontSize: 10, fontWeight: FontWeight.bold },
+  seriesScore: { color: Colors.textPrimary, fontSize: FontSize.xs, fontWeight: FontWeight.extrabold, fontVariant: ['tabular-nums'] },
+  seriesTerminal: { color: Colors.warning, fontSize: FontSize.xs, fontWeight: FontWeight.extrabold },
+  seriesNotice: { color: Colors.textSecondary, fontSize: 10, fontWeight: FontWeight.bold, textAlign: 'center' },
+  rematchButton: { minHeight: 44, minWidth: 150, alignItems: 'center', justifyContent: 'center', paddingHorizontal: Spacing.md, borderRadius: Radius.full, backgroundColor: Colors.primary },
+  rematchActions: { flexDirection: 'row', gap: Spacing.sm, paddingTop: 2 },
+  acceptButton: { minHeight: 44, minWidth: 112, alignItems: 'center', justifyContent: 'center', borderRadius: Radius.full, backgroundColor: Colors.primary },
+  rejectButton: { minHeight: 44, minWidth: 112, alignItems: 'center', justifyContent: 'center', borderRadius: Radius.full, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.borderHighlight },
+  rematchButtonText: { color: Colors.textOnBrand, fontSize: FontSize.xs, fontWeight: FontWeight.extrabold },
+  rejectButtonText: { color: Colors.textPrimary, fontSize: FontSize.xs, fontWeight: FontWeight.extrabold },
+  seriesError: { color: Colors.error, fontSize: 9, lineHeight: 11, textAlign: 'center' },
   disabled: { opacity: 0.45 },
 });

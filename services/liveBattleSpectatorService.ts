@@ -1,4 +1,5 @@
 import { getSupabaseClient } from '@/template';
+import type { LiveBattleSeriesProjection } from './liveBattleSeriesContract';
 
 export const LIVE_BATTLE_PUBLIC_STATUSES = [
   'countdown',
@@ -66,6 +67,7 @@ export type LiveBattlePublicState = {
   powerVersion: number;
   powerUpdatedAt: string;
   serverClockAt: string;
+  series: LiveBattleSeriesProjection | null;
 };
 
 export type LiveBattleServerClockAnchor = {
@@ -123,6 +125,24 @@ type LiveBattlePublicStateRow = {
   power_version: unknown;
   power_updated_at: unknown;
   server_clock_at: unknown;
+  series_id?: unknown;
+  series_format?: unknown;
+  round_number?: unknown;
+  series_max_rounds?: unknown;
+  series_wins_required?: unknown;
+  challenger_series_wins?: unknown;
+  opponent_series_wins?: unknown;
+  series_ties?: unknown;
+  series_rounds_completed?: unknown;
+  series_status?: unknown;
+  series_champion_user_id?: unknown;
+  series_version?: unknown;
+  rematch_request_id?: unknown;
+  rematch_request_after_battle_id?: unknown;
+  rematch_request_status?: unknown;
+  rematch_requested_by_user_id?: unknown;
+  rematch_request_expires_at?: unknown;
+  rematch_window_expires_at?: unknown;
 };
 
 export type LiveBattleSpectatorSubscription = {
@@ -139,6 +159,21 @@ export class LiveBattleSpectatorError extends Error {
 
 const PUBLIC_STATUS_SET = new Set<string>(LIVE_BATTLE_PUBLIC_STATUSES);
 const PUBLIC_OUTCOME_SET = new Set<string>(LIVE_BATTLE_PUBLIC_OUTCOMES);
+const SERIES_FORMAT_SET = new Set<string>(['single', 'best_of_5']);
+const SERIES_STATUS_SET = new Set<string>([
+  'active',
+  'awaiting_rematch',
+  'rematch_pending',
+  'completed',
+  'cancelled',
+]);
+const REMATCH_STATUS_SET = new Set<string>([
+  'pending',
+  'accepted',
+  'rejected',
+  'expired',
+  'cancelled',
+]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_AGORA_UID = 2_147_483_647;
 
@@ -207,6 +242,145 @@ function powerWindow(
     throw new LiveBattleSpectatorError('live_battle_public_invalid_' + field);
   }
   return { startsAt, expiresAt };
+}
+
+export function parseLiveBattleSeriesProjection(
+  row: LiveBattlePublicStateRow,
+  battleId: string,
+  participantIds: readonly string[],
+): LiveBattleSeriesProjection | null {
+  const values = [
+    row.series_id,
+    row.series_format,
+    row.round_number,
+    row.series_max_rounds,
+    row.series_wins_required,
+    row.challenger_series_wins,
+    row.opponent_series_wins,
+    row.series_ties,
+    row.series_rounds_completed,
+    row.series_status,
+    row.series_champion_user_id,
+    row.series_version,
+    row.rematch_request_id,
+    row.rematch_request_after_battle_id,
+    row.rematch_request_status,
+    row.rematch_requested_by_user_id,
+    row.rematch_request_expires_at,
+    row.rematch_window_expires_at,
+  ];
+  if (values.every(value => value === undefined)) return null;
+
+  const seriesId = requiredUuid(row.series_id, 'series_id');
+  if (typeof row.series_format !== 'string' || !SERIES_FORMAT_SET.has(row.series_format)) {
+    throw new LiveBattleSpectatorError('live_battle_public_invalid_series_format');
+  }
+  if (typeof row.series_status !== 'string' || !SERIES_STATUS_SET.has(row.series_status)) {
+    throw new LiveBattleSpectatorError('live_battle_public_invalid_series_status');
+  }
+  const format = row.series_format as LiveBattleSeriesProjection['format'];
+  const status = row.series_status as LiveBattleSeriesProjection['status'];
+  const roundNumber = nonnegativeSafeInteger(row.round_number, 'round_number');
+  const maxRounds = nonnegativeSafeInteger(row.series_max_rounds, 'series_max_rounds');
+  const winsRequired = nonnegativeSafeInteger(row.series_wins_required, 'series_wins_required');
+  const challengerWins = nonnegativeSafeInteger(
+    row.challenger_series_wins,
+    'challenger_series_wins',
+  );
+  const opponentWins = nonnegativeSafeInteger(
+    row.opponent_series_wins,
+    'opponent_series_wins',
+  );
+  const ties = nonnegativeSafeInteger(row.series_ties, 'series_ties');
+  const roundsCompleted = nonnegativeSafeInteger(
+    row.series_rounds_completed,
+    'series_rounds_completed',
+  );
+  const championUserId = nullableUuid(
+    row.series_champion_user_id,
+    'series_champion_user_id',
+  );
+  const rematchRequestId = nullableUuid(row.rematch_request_id, 'rematch_request_id');
+  const rematchRequestAfterBattleId = nullableUuid(
+    row.rematch_request_after_battle_id,
+    'rematch_request_after_battle_id',
+  );
+  const rematchRequestStatus = row.rematch_request_status === null
+    ? null
+    : typeof row.rematch_request_status === 'string'
+      && REMATCH_STATUS_SET.has(row.rematch_request_status)
+      ? row.rematch_request_status as LiveBattleSeriesProjection['rematchRequestStatus']
+      : (() => {
+          throw new LiveBattleSpectatorError('live_battle_public_invalid_rematch_request_status');
+        })();
+  const rematchRequestedByUserId = nullableUuid(
+    row.rematch_requested_by_user_id,
+    'rematch_requested_by_user_id',
+  );
+  const rematchRequestExpiresAt = timestamp(
+    row.rematch_request_expires_at,
+    'rematch_request_expires_at',
+    false,
+  );
+  const rematchWindowExpiresAt = timestamp(
+    row.rematch_window_expires_at,
+    'rematch_window_expires_at',
+    false,
+  );
+  const requestValues = [
+    rematchRequestId,
+    rematchRequestAfterBattleId,
+    rematchRequestStatus,
+    rematchRequestedByUserId,
+    rematchRequestExpiresAt,
+  ];
+  const hasRequest = requestValues.every(value => value !== null);
+  const hasPartialRequest = requestValues.some(value => value !== null) && !hasRequest;
+  const requestIsCurrent = hasRequest && rematchRequestAfterBattleId === battleId;
+  const expectedFormat = format === 'single'
+    ? { maxRounds: 1, winsRequired: 1 }
+    : { maxRounds: 5, winsRequired: 3 };
+  const terminal = status === 'completed' || status === 'cancelled';
+
+  if (
+    roundNumber < 1 ||
+    roundNumber > maxRounds ||
+    maxRounds !== expectedFormat.maxRounds ||
+    winsRequired !== expectedFormat.winsRequired ||
+    challengerWins > winsRequired ||
+    opponentWins > winsRequired ||
+    challengerWins + opponentWins + ties !== roundsCompleted ||
+    roundsCompleted > maxRounds ||
+    (championUserId !== null && !participantIds.includes(championUserId)) ||
+    (!terminal && championUserId !== null) ||
+    hasPartialRequest ||
+    (rematchRequestedByUserId !== null && !participantIds.includes(rematchRequestedByUserId)) ||
+    ((status === 'awaiting_rematch' || status === 'rematch_pending')
+      !== (rematchWindowExpiresAt !== null))
+  ) {
+    throw new LiveBattleSpectatorError('live_battle_public_invalid_series');
+  }
+
+  return {
+    id: seriesId,
+    format,
+    roundNumber,
+    maxRounds: maxRounds as 1 | 5,
+    winsRequired: winsRequired as 1 | 3,
+    challengerWins,
+    opponentWins,
+    ties,
+    roundsCompleted,
+    status,
+    championUserId,
+    version: requiredVersion(row.series_version),
+    rematchRequestId: requestIsCurrent ? rematchRequestId : null,
+    rematchRequestAfterBattleId: requestIsCurrent ? rematchRequestAfterBattleId : null,
+    rematchRequestStatus: requestIsCurrent ? rematchRequestStatus : null,
+    rematchRequestedByUserId: requestIsCurrent ? rematchRequestedByUserId : null,
+    rematchRequestExpiresAt: requestIsCurrent ? rematchRequestExpiresAt : null,
+    rematchWindowExpiresAt,
+  };
 }
 
 export function readLiveBattleMonotonicNow(): number | null {
@@ -384,6 +558,7 @@ export function parseLiveBattlePublicState(value: unknown): LiveBattlePublicStat
   const localBattleSide = row.local_battle_side;
   const localHostUserId = requiredUuid(row.local_host_user_id, 'local_host_user_id');
   const opponentHostUserId = requiredUuid(row.opponent_host_user_id, 'opponent_host_user_id');
+  const battleId = requiredUuid(row.battle_id, 'battle_id');
   if (sessionId === opponentSessionId) {
     throw new LiveBattleSpectatorError('live_battle_public_same_session');
   }
@@ -510,9 +685,20 @@ export function parseLiveBattlePublicState(value: unknown): LiveBattlePublicStat
     throw new LiveBattleSpectatorError('live_battle_public_invalid_power_state');
   }
 
+  let series: LiveBattleSeriesProjection | null;
+  try {
+    series = parseLiveBattleSeriesProjection(
+      row,
+      battleId,
+      [localHostUserId, opponentHostUserId],
+    );
+  } catch {
+    throw new LiveBattleSpectatorError('live_battle_public_invalid_series');
+  }
+
   return {
     sessionId,
-    battleId: requiredUuid(row.battle_id, 'battle_id'),
+    battleId,
     opponentSessionId,
     localBattleSide,
     localHostUserId,
@@ -548,6 +734,7 @@ export function parseLiveBattlePublicState(value: unknown): LiveBattlePublicStat
     powerVersion: nonnegativeSafeInteger(row.power_version, 'power_version'),
     powerUpdatedAt: timestamp(row.power_updated_at, 'power_updated_at', true) as string,
     serverClockAt: timestamp(row.server_clock_at, 'server_clock_at', true) as string,
+    series,
   };
 }
 

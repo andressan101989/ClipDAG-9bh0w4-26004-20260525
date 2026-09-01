@@ -331,7 +331,15 @@ export default function LiveBroadcasterScreen() {
   const battleProjection = useLiveBattleSpectatorState(
     streamId ?? null,
     Boolean(user?.id && live && sessionIsCanonicalLive),
+    user?.id ?? null,
   );
+  const seriesTransitionRef = useRef<string | null>(null);
+  useEffect(() => {
+    const nextBattleId = battleProjection.transitionBattleId;
+    if (!nextBattleId || seriesTransitionRef.current === nextBattleId) return;
+    seriesTransitionRef.current = nextBattleId;
+    void battleRuntime.reconcile();
+  }, [battleProjection.transitionBattleId, battleRuntime.reconcile]);
   const [glovePending, setGlovePending] = useState(false);
   const [gloveError, setGloveError] = useState<string | null>(null);
   const gloveAttemptRef = useRef<{ battleId: string; key: string } | null>(null);
@@ -1031,6 +1039,13 @@ export default function LiveBroadcasterScreen() {
             : undefined}
           glovePending={glovePending}
           gloveError={gloveError}
+          actorUserId={user?.id ?? null}
+          seriesClientState={battleProjection.clientState}
+          seriesActionPending={battleProjection.seriesActionPending}
+          seriesErrorMessage={battleProjection.seriesErrorMessage}
+          onRequestRematch={battleProjection.requestRematch}
+          onAcceptRematch={battleProjection.acceptRematch}
+          onRejectRematch={battleProjection.rejectRematch}
         />
       ) : RtcSurfaceView && localVideoReady && !isCameraOff ? (
         <RtcSurfaceView canvas={{ uid: 0 }} style={styles.videoStream} />
