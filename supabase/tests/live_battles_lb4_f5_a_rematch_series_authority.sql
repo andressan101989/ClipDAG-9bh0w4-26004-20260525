@@ -151,6 +151,28 @@ begin
 end;
 $$;
 
+do $$
+declare
+  v_battle uuid := ((select payload from f5_initial)->>'id')::uuid;
+begin
+  if exists (
+    select 1 from public.live_battle_public_states
+    where battle_id = v_battle and (
+      rematch_request_id is not null or
+      rematch_request_after_battle_id is not null or
+      rematch_request_status is not null or
+      rematch_request_expires_at is not null
+    )
+  ) or not exists (
+    select 1 from public.live_battle_public_states as projection
+    join public.live_battle_series as series on series.id = projection.series_id
+    where projection.battle_id = v_battle
+      and projection.rematch_window_expires_at = series.rematch_window_expires_at
+      and projection.rematch_window_expires_at is not null
+  ) then raise exception 'f5a_round_one_projection_without_request_invalid'; end if;
+end;
+$$;
+
 create temp table f5_request_one as
 select public.request_live_battle_rematch(
   ((select payload from f5_initial)->>'id')::uuid,
@@ -169,6 +191,16 @@ begin
      or (select count(*) from public.live_battle_rematch_requests
          where series_id = ((select payload from f5_request_one)->>'series_id')::uuid) <> 1
   then raise exception 'f5a_request_idempotency_failed'; end if;
+  if not exists (
+    select 1 from public.live_battle_public_states as projection
+    join public.live_battle_rematch_requests as request
+      on request.id = projection.rematch_request_id
+    where projection.battle_id = ((select payload from f5_initial)->>'id')::uuid
+      and projection.rematch_request_after_battle_id = projection.battle_id
+      and projection.rematch_request_status = 'pending'
+      and projection.rematch_request_expires_at = request.expires_at
+      and projection.rematch_window_expires_at is not null
+  ) then raise exception 'f5a_round_one_request_anchor_invalid'; end if;
 end;
 $$;
 
@@ -221,8 +253,20 @@ begin
   then raise exception 'f5a_fresh_round_state_invalid'; end if;
   if (select count(*) from public.live_battle_public_states
       where battle_id = v_round_two and series_id = v_series
-        and round_number = 2 and series_status = 'active') <> 2
+        and round_number = 2 and series_status = 'active'
+        and rematch_request_id is null
+        and rematch_request_after_battle_id is null
+        and rematch_request_status is null
+        and rematch_request_expires_at is null
+        and rematch_window_expires_at is null) <> 2
   then raise exception 'f5a_projection_orientation_invalid'; end if;
+  if exists (
+    select 1 from public.live_battle_public_states
+    where battle_id = v_round_two and (
+      rematch_request_id = ((select payload from f5_request_one)->>'id')::uuid or
+      rematch_request_after_battle_id = ((select payload from f5_initial)->>'id')::uuid
+    )
+  ) then raise exception 'f5a_round_two_projection_leaked_round_one_request'; end if;
 end;
 $$;
 
@@ -237,6 +281,22 @@ begin
     where id = v_series and challenger_wins = 1 and opponent_wins = 1
       and rounds_completed = 2 and status = 'awaiting_rematch'
   ) then raise exception 'f5a_authoritative_aggregate_invalid'; end if;
+  if exists (
+    select 1 from public.live_battle_public_states
+    where battle_id = v_round_two and (
+      rematch_request_id is not null or
+      rematch_request_after_battle_id is not null or
+      rematch_request_status is not null or
+      rematch_request_expires_at is not null
+    )
+  ) then raise exception 'f5a_round_two_projection_leaked_round_one_request'; end if;
+  if not exists (
+    select 1 from public.live_battle_public_states as projection
+    join public.live_battle_series as series on series.id = projection.series_id
+    where projection.battle_id = v_round_two
+      and projection.rematch_window_expires_at = series.rematch_window_expires_at
+      and projection.rematch_window_expires_at is not null
+  ) then raise exception 'f5a_round_two_window_invalid'; end if;
 end;
 $$;
 
@@ -255,10 +315,59 @@ end;
 $$;
 
 select pg_catalog.set_config('request.jwt.claim.sub', pg_temp.f5_user(1)::text, true);
-create temp table f5_reject_request as
+create temp table f5_request_two as
 select public.request_live_battle_rematch(
   ((select payload from f5_accept)->'battle'->>'id')::uuid,
   'f5a30000-0000-4000-8000-000000000002'::uuid
+) as payload;
+
+do $$
+begin
+  if not exists (
+    select 1 from public.live_battle_public_states as projection
+    join public.live_battle_rematch_requests as request
+      on request.id = projection.rematch_request_id
+    where projection.battle_id = ((select payload from f5_accept)->'battle'->>'id')::uuid
+      and projection.rematch_request_after_battle_id = projection.battle_id
+      and projection.rematch_request_status = 'pending'
+      and projection.rematch_request_expires_at = request.expires_at
+      and projection.rematch_window_expires_at is not null
+  ) then raise exception 'f5a_round_two_request_anchor_invalid'; end if;
+end;
+$$;
+
+select pg_catalog.set_config('request.jwt.claim.sub', pg_temp.f5_user(2)::text, true);
+create temp table f5_accept_two as
+select public.respond_live_battle_rematch(
+  ((select payload from f5_request_two)->>'id')::uuid, 'accept'
+) as payload;
+
+do $$
+declare
+  v_round_three uuid := ((select payload from f5_accept_two)->'battle'->>'id')::uuid;
+begin
+  if (select count(*) from public.live_battles
+      where series_id = ((select payload from f5_request_one)->>'series_id')::uuid
+        and round_number = 3 and id = v_round_three) <> 1
+  then raise exception 'f5a_round_three_creation_invalid'; end if;
+  if exists (
+    select 1 from public.live_battle_public_states
+    where battle_id = v_round_three and (
+      rematch_request_id is not null or
+      rematch_request_after_battle_id is not null or
+      rematch_request_status is not null or
+      rematch_request_expires_at is not null
+    )
+  ) then raise exception 'f5a_round_three_projection_leaked_historical_request'; end if;
+  perform pg_temp.finish_round(v_round_three, 'challenger', pg_temp.f5_user(1));
+end;
+$$;
+
+select pg_catalog.set_config('request.jwt.claim.sub', pg_temp.f5_user(1)::text, true);
+create temp table f5_reject_request as
+select public.request_live_battle_rematch(
+  ((select payload from f5_accept_two)->'battle'->>'id')::uuid,
+  'f5a30000-0000-4000-8000-000000000003'::uuid
 ) as payload;
 select pg_catalog.set_config('request.jwt.claim.sub', pg_temp.f5_user(2)::text, true);
 select public.respond_live_battle_rematch(
@@ -270,9 +379,18 @@ begin
   if not exists (
     select 1 from public.live_battle_series
     where id = ((select payload from f5_request_one)->>'series_id')::uuid
-      and status = 'completed' and champion_user_id is null
+      and status = 'completed' and champion_user_id = pg_temp.f5_user(1)
       and completed_at is not null
   ) then raise exception 'f5a_reject_series_result_invalid'; end if;
+  if not exists (
+    select 1 from public.live_battle_public_states
+    where battle_id = ((select payload from f5_accept_two)->'battle'->>'id')::uuid
+      and rematch_request_id = ((select payload from f5_reject_request)->>'id')::uuid
+      and rematch_request_after_battle_id = battle_id
+      and rematch_request_status = 'rejected'
+      and rematch_request_expires_at is not null
+      and rematch_window_expires_at is null
+  ) then raise exception 'f5a_rejected_request_projection_invalid'; end if;
 end;
 $$;
 
@@ -345,6 +463,14 @@ begin
     select 1 from public.live_battle_series
     where id = ((select payload from f5_expiring_request)->>'series_id')::uuid
       and status = 'completed' and completed_at is not null
+  ) or not exists (
+    select 1 from public.live_battle_public_states
+    where battle_id = ((select payload from f5_expiry_initial)->>'id')::uuid
+      and rematch_request_id = ((select payload from f5_expiring_request)->>'id')::uuid
+      and rematch_request_after_battle_id = battle_id
+      and rematch_request_status = 'expired'
+      and rematch_request_expires_at is not null
+      and rematch_window_expires_at is null
   ) then raise exception 'f5a_expiry_reconciliation_invalid'; end if;
 end;
 $$;
@@ -375,6 +501,13 @@ begin
     select 1 from public.live_battle_rematch_requests
     where id = ((select payload from f5_leave_request)->>'id')::uuid
       and status = 'cancelled'
+  ) or not exists (
+    select 1 from public.live_battle_public_states
+    where battle_id = ((select payload from f5_leave_initial)->>'id')::uuid
+      and rematch_request_id = ((select payload from f5_leave_request)->>'id')::uuid
+      and rematch_request_after_battle_id = battle_id
+      and rematch_request_status = 'cancelled'
+      and rematch_window_expires_at is null
   ) or exists (
     select 1 from public.live_sessions
     where id in (pg_temp.f5_session(9), pg_temp.f5_session(10))

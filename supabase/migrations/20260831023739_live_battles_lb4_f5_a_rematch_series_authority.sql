@@ -126,6 +126,9 @@ create index live_battle_rematch_requests_due_idx
   where status = 'pending';
 create index live_battle_rematch_requests_series_created_idx
   on public.live_battle_rematch_requests (series_id, created_at desc, id);
+create index live_battle_rematch_requests_series_battle_created_idx
+  on public.live_battle_rematch_requests
+  (series_id, after_battle_id, created_at desc, id desc);
 create index live_battle_rematch_requests_after_battle_idx
   on public.live_battle_rematch_requests (after_battle_id);
 
@@ -206,9 +209,11 @@ alter table public.live_battle_public_states
   add column series_champion_user_id uuid,
   add column series_version bigint,
   add column rematch_request_id uuid,
-  add column rematch_status text,
+  add column rematch_request_after_battle_id uuid,
+  add column rematch_request_status text,
   add column rematch_requested_by_user_id uuid,
-  add column rematch_expires_at timestamptz;
+  add column rematch_request_expires_at timestamptz,
+  add column rematch_window_expires_at timestamptz;
 
 update public.live_battle_public_states as projection
 set series_id = series.id,
@@ -224,12 +229,37 @@ set series_id = series.id,
     series_champion_user_id = series.champion_user_id,
     series_version = series.version,
     rematch_request_id = null,
-    rematch_status = 'none',
+    rematch_request_after_battle_id = null,
+    rematch_request_status = null,
     rematch_requested_by_user_id = null,
-    rematch_expires_at = series.rematch_window_expires_at
+    rematch_request_expires_at = null,
+    rematch_window_expires_at = series.rematch_window_expires_at
 from public.live_battles as battle
 join public.live_battle_series as series on series.id = battle.series_id
 where battle.id = projection.battle_id;
+
+create or replace function private.clear_stale_live_battle_rematch_projection()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+  if tg_op = 'UPDATE' and new.battle_id is distinct from old.battle_id then
+    new.rematch_request_id := null;
+    new.rematch_request_after_battle_id := null;
+    new.rematch_request_status := null;
+    new.rematch_requested_by_user_id := null;
+    new.rematch_request_expires_at := null;
+    new.rematch_window_expires_at := null;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger live_battle_public_states_clear_stale_rematch
+before update on public.live_battle_public_states
+for each row execute function private.clear_stale_live_battle_rematch_projection();
 
 alter table public.live_battle_public_states
   add constraint live_battle_public_states_series_format_check
@@ -239,9 +269,24 @@ alter table public.live_battle_public_states
       'active', 'awaiting_rematch', 'rematch_pending', 'completed', 'cancelled'
     )
   ),
-  add constraint live_battle_public_states_rematch_status_check check (
-    rematch_status is null or rematch_status in (
-      'none', 'pending', 'accepted', 'rejected', 'expired', 'cancelled'
+  add constraint live_battle_public_states_rematch_request_status_check check (
+    rematch_request_status is null or rematch_request_status in (
+      'pending', 'accepted', 'rejected', 'expired', 'cancelled'
+    )
+  ),
+  add constraint live_battle_public_states_rematch_request_shape_check check (
+    (
+      rematch_request_id is null and
+      rematch_request_after_battle_id is null and
+      rematch_request_status is null and
+      rematch_requested_by_user_id is null and
+      rematch_request_expires_at is null
+    ) or (
+      rematch_request_id is not null and
+      rematch_request_after_battle_id = battle_id and
+      rematch_request_status is not null and
+      rematch_requested_by_user_id is not null and
+      rematch_request_expires_at is not null
     )
   ),
   add constraint live_battle_public_states_series_counters_check check (
@@ -252,7 +297,7 @@ alter table public.live_battle_public_states
       series_ties >= 0 and series_rounds_completed >= 0 and
       series_rounds_completed <= series_max_rounds and
       series_format is not null and series_status is not null and
-      series_version is not null and rematch_status is not null
+      series_version is not null
     )
   );
 
@@ -330,17 +375,10 @@ set search_path = ''
 as $$
 declare
   v_series public.live_battle_series%rowtype;
-  v_request public.live_battle_rematch_requests%rowtype;
 begin
   select series.* into strict v_series
   from public.live_battle_series as series
   where series.id = p_series_id;
-
-  select request.* into v_request
-  from public.live_battle_rematch_requests as request
-  where request.series_id = p_series_id
-  order by request.created_at desc, request.id desc
-  limit 1;
 
   update public.live_battle_public_states as projection
   set series_id = v_series.id,
@@ -355,24 +393,35 @@ begin
       series_status = v_series.status,
       series_champion_user_id = v_series.champion_user_id,
       series_version = v_series.version,
-      rematch_request_id = v_request.id,
-      rematch_status = coalesce(v_request.status, 'none'),
-      rematch_requested_by_user_id = v_request.requested_by_user_id,
-      rematch_expires_at = coalesce(v_request.expires_at,
-        v_series.rematch_window_expires_at),
+      rematch_request_id = request.id,
+      rematch_request_after_battle_id = request.after_battle_id,
+      rematch_request_status = request.status,
+      rematch_requested_by_user_id = request.requested_by_user_id,
+      rematch_request_expires_at = request.expires_at,
+      rematch_window_expires_at = v_series.rematch_window_expires_at,
       server_clock_at = p_server_clock_at,
       projection_version = projection.projection_version + 1
   from public.live_battles as battle
+  left join lateral (
+    select candidate.id, candidate.after_battle_id, candidate.status,
+      candidate.requested_by_user_id, candidate.expires_at
+    from public.live_battle_rematch_requests as candidate
+    where candidate.series_id = p_series_id
+      and candidate.after_battle_id = battle.id
+    order by candidate.created_at desc, candidate.id desc
+    limit 1
+  ) as request on true
   where battle.id = projection.battle_id
     and battle.series_id = p_series_id
     and (
       projection.series_version is distinct from v_series.version or
       projection.series_status is distinct from v_series.status or
-      projection.rematch_request_id is distinct from v_request.id or
-      projection.rematch_status is distinct from coalesce(v_request.status, 'none') or
-      projection.rematch_expires_at is distinct from coalesce(
-        v_request.expires_at, v_series.rematch_window_expires_at
-      )
+      projection.rematch_request_id is distinct from request.id or
+      projection.rematch_request_after_battle_id is distinct from request.after_battle_id or
+      projection.rematch_request_status is distinct from request.status or
+      projection.rematch_requested_by_user_id is distinct from request.requested_by_user_id or
+      projection.rematch_request_expires_at is distinct from request.expires_at or
+      projection.rematch_window_expires_at is distinct from v_series.rematch_window_expires_at
     );
 end;
 $$;
@@ -1281,9 +1330,12 @@ as $$
         'series_champion_user_id', public_state.series_champion_user_id,
         'series_version', public_state.series_version,
         'rematch_request_id', public_state.rematch_request_id,
-        'rematch_status', public_state.rematch_status,
+        'rematch_request_after_battle_id',
+          public_state.rematch_request_after_battle_id,
+        'rematch_request_status', public_state.rematch_request_status,
         'rematch_requested_by_user_id', public_state.rematch_requested_by_user_id,
-        'rematch_expires_at', public_state.rematch_expires_at
+        'rematch_request_expires_at', public_state.rematch_request_expires_at,
+        'rematch_window_expires_at', public_state.rematch_window_expires_at
       )
       from public.live_battle_public_states as public_state
       where public_state.session_id = p_session_id
@@ -1332,6 +1384,8 @@ alter table public.live_battle_series owner to postgres;
 alter table public.live_battle_rematch_requests owner to postgres;
 
 alter function private.validate_live_battle_rematch_request() owner to postgres;
+alter function private.clear_stale_live_battle_rematch_projection()
+  owner to postgres;
 alter function private.live_battle_series_champion(uuid, uuid, smallint, smallint)
   owner to postgres;
 alter function private.sync_live_battle_series_projection_locked(uuid, timestamptz)
@@ -1358,6 +1412,8 @@ alter function public.create_live_battle_invite(uuid, uuid, uuid) owner to postg
 alter function public.get_live_battle_public_snapshot(uuid) owner to postgres;
 
 revoke all on function private.validate_live_battle_rematch_request()
+  from public, anon, authenticated, service_role;
+revoke all on function private.clear_stale_live_battle_rematch_projection()
   from public, anon, authenticated, service_role;
 revoke all on function private.live_battle_series_champion(uuid, uuid, smallint, smallint)
   from public, anon, authenticated, service_role;

@@ -28,10 +28,11 @@ test("F5-A is the sole migration after F4D-C", () => {
 test("all previously deployed migrations remain byte-unmodified", () => {
   const result = spawnSync(
     "git",
-    ["diff", "--quiet", "HEAD", "--", "supabase/migrations"],
+    ["diff", "--name-only", parentSha, "--", "supabase/migrations"],
     { encoding: "utf8", windowsHide: true },
   );
   assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.stdout.trim().split(/\r?\n/).filter(Boolean), [migrationPath]);
 });
 
 test("series schema encodes single and best-of-five limits", () => {
@@ -65,6 +66,7 @@ test("new foreign-key access paths have full indexes", () => {
     "live_battle_series_opponent_session_idx",
     "live_battle_series_champion_idx",
     "live_battle_rematch_requests_series_created_idx",
+    "live_battle_rematch_requests_series_battle_created_idx",
     "live_battle_rematch_requests_after_battle_idx",
   ]) has(new RegExp(`create index ${name}`, "i"));
 });
@@ -199,8 +201,20 @@ test("public projection carries all sanitized series and rematch fields", () => 
     "series_wins_required", "challenger_series_wins", "opponent_series_wins",
     "series_ties", "series_rounds_completed", "series_status",
     "series_champion_user_id", "series_version", "rematch_request_id",
-    "rematch_status", "rematch_requested_by_user_id", "rematch_expires_at",
+    "rematch_request_after_battle_id", "rematch_request_status",
+    "rematch_requested_by_user_id", "rematch_request_expires_at",
+    "rematch_window_expires_at",
   ]) has(new RegExp(`'${field}'`, "i"));
+});
+
+test("public rematch request is scoped to the projected Battle with separate deadlines", () => {
+  const body = sql.match(/create or replace function private\.sync_live_battle_series_projection_locked[\s\S]*?\n\$\$;/i)?.[0] ?? "";
+  assert.match(body, /candidate\.series_id = p_series_id/i);
+  assert.match(body, /candidate\.after_battle_id = battle\.id/i);
+  assert.match(body, /order by candidate\.created_at desc, candidate\.id desc/i);
+  assert.match(body, /rematch_request_expires_at = request\.expires_at/i);
+  assert.match(body, /rematch_window_expires_at = v_series\.rematch_window_expires_at/i);
+  assert.doesNotMatch(body, /rematch_(request_)?expires_at\s*=\s*coalesce\s*\(/i);
 });
 
 test("projection updates both session orientations atomically in the existing table", () => {

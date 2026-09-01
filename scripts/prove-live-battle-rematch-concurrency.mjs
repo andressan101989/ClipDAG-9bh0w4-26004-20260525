@@ -147,6 +147,24 @@ try {
     [requestOne.series_id],
   );
   assert.equal(nextCount.rows[0].count, 1, "concurrent accept duplicated round two");
+  const projection = await admin.query(
+    `select rematch_request_id, rematch_request_after_battle_id,
+            rematch_request_status, rematch_request_expires_at,
+            rematch_window_expires_at
+     from public.live_battle_public_states
+     where battle_id=$1`,
+    [nextA.id],
+  );
+  assert.equal(projection.rowCount, 2, "round two projection orientations missing");
+  for (const row of projection.rows) {
+    assert.deepEqual(row, {
+      rematch_request_id: null,
+      rematch_request_after_battle_id: null,
+      rematch_request_status: null,
+      rematch_request_expires_at: null,
+      rematch_window_expires_at: null,
+    }, "round two projection leaked the accepted round one request");
+  }
   const fresh = await admin.query(
     `select
        (select count(*)::int from public.live_battle_score_states
@@ -156,6 +174,37 @@ try {
     [nextA.id],
   );
   assert.deepEqual(fresh.rows[0], { score: 1, power: 2 });
+
+  await admin.query(
+    `insert into public.live_battle_rematch_requests (
+       series_id, after_battle_id, requested_by_user_id, status,
+       idempotency_key, expires_at, responded_by_user_id, responded_at,
+       created_at, updated_at
+     )
+     select $1, $2, $3, 'rejected', gen_random_uuid(),
+       statement_timestamp() + interval '30 seconds', $4, statement_timestamp(),
+       statement_timestamp(), statement_timestamp()
+     from generate_series(1, 2000)`,
+    [requestOne.series_id, battleId, challenger, opponent],
+  );
+  await admin.query("analyze public.live_battle_rematch_requests");
+  await admin.query("set enable_seqscan=off");
+  const plan = await admin.query(
+    `explain (format json, costs true)
+     select candidate.id, candidate.after_battle_id, candidate.status,
+            candidate.requested_by_user_id, candidate.expires_at
+     from public.live_battle_rematch_requests as candidate
+     where candidate.series_id=$1 and candidate.after_battle_id=$2
+     order by candidate.created_at desc, candidate.id desc
+     limit 1`,
+    [requestOne.series_id, battleId],
+  );
+  await admin.query("set enable_seqscan=on");
+  assert.match(
+    JSON.stringify(plan.rows[0]["QUERY PLAN"]),
+    /live_battle_rematch_requests_series_battle_created_idx/,
+    "current-Battle projection lookup cannot use its composite index",
+  );
 
   const financialAfter = await admin.query(`
     select
@@ -172,6 +221,9 @@ try {
       round_two_rows: nextCount.rows[0].count,
       fresh_score_states: fresh.rows[0].score,
       fresh_power_states: fresh.rows[0].power,
+      round_two_projection_anchored: true,
+      indexed_history_rows: 2000,
+      projection_index_used: true,
       financial_rows_unchanged: true,
     })}\n`,
   );
