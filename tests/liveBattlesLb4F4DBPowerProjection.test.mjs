@@ -83,6 +83,7 @@ test('F4D-B is the only migration after F4D-A and does not add UI or internal Re
     migrationName,
     '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql',
     '20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql',
+    '20260901201459_live_battles_lb4_f5_a_c3_active_series_leave.sql',
   ]);
   assert.doesNotMatch(migration, /alter publication|atomic_ledger_transfer|ledger_entries/);
   assert.doesNotMatch(migration, /create table public\./i);

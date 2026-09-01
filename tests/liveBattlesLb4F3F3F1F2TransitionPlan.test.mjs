@@ -32,6 +32,7 @@ test('LB4-F3-F3-F1-F2 is the only forward migration and preserves F1-F1 byte sem
     powerProjectionMigrationName,
     visualRealtimeMigrationName,
     '20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql',
+    '20260901201459_live_battles_lb4_f5_a_c3_active_series_leave.sql',
   ]);
   const previous = (await read(`supabase/migrations/${previousName}`)).replaceAll('\r\n', '\n');
   assert.equal(createHash('sha256').update(previous).digest('hex'),

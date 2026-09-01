@@ -25,6 +25,7 @@ test('F4D-A is the only migration after F4B and changes no UI, Edge or Realtime 
     powerProjectionMigrationName,
     '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql',
     '20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql',
+    '20260901201459_live_battles_lb4_f5_a_c3_active_series_leave.sql',
   ]);
   assert.doesNotMatch(migration, /alter publication|create policy/i);
   assert.doesNotMatch(migration, /atomic_ledger_transfer\s*\(|financial_transactions|ledger_entries/);
