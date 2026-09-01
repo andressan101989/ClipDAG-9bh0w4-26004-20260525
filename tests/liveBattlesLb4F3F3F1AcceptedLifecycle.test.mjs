@@ -39,6 +39,7 @@ test('LB4-F3-F3-F1 adds one forward migration without changing LB4-F3-F3', async
     visualRealtimeMigrationName,
     '20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql',
     '20260901201459_live_battles_lb4_f5_a_c3_active_series_leave.sql',
+    '20260901211549_live_battles_lb4_f5_a_c3_c1_bounded_leave_retry.sql',
   ]);
   const previous = (await read(`supabase/migrations/${previousName}`)).replaceAll('\r\n', '\n');
   assert.equal(createHash('sha256').update(previous).digest('hex'),

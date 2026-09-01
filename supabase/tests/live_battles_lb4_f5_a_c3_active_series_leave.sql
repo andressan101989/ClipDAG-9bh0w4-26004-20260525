@@ -209,11 +209,25 @@ begin
         (select opponent_session_id from public.live_battles where id = v_case.battle_id)
       ) and status <> 'live'
     ) then raise exception 'c3_active_leave_ended_live_%', v_case.case_id; end if;
-    if exists (
-      select 1 from public.live_battle_public_states
-      where battle_id = v_case.battle_id
-        and (status <> 'cancelled' or outcome <> 'cancelled' or series_status <> 'cancelled')
-    ) then raise exception 'c3_active_leave_projection_stale_%', v_case.case_id; end if;
+    if v_case.initial_status in ('pending', 'accepted') then
+      if (select count(*) from public.live_battle_public_states
+          where battle_id = v_case.battle_id) <> 0
+      then raise exception 'c3_active_leave_projection_count_%', v_case.case_id; end if;
+    else
+      if (select count(*) from public.live_battle_public_states
+          where battle_id = v_case.battle_id) <> 2
+      then raise exception 'c3_active_leave_projection_count_%', v_case.case_id; end if;
+      if (select count(*) from public.live_battle_public_states
+          where battle_id = v_case.battle_id
+            and series_id = v_case.series_id
+            and status = 'cancelled'
+            and outcome = 'cancelled'
+            and series_status = 'cancelled'
+            and winner_user_id is null
+            and series_champion_user_id is null
+            and rematch_request_id is null) <> 2
+      then raise exception 'c3_active_leave_projection_stale_%', v_case.case_id; end if;
+    end if;
 
     select count(*), max(series.version), max(series.completed_at)
     into v_events, v_series_version, v_completed_at
