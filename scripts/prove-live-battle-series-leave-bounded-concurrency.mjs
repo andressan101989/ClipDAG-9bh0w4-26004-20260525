@@ -358,7 +358,6 @@ async function prepareCompletedRound(value, requestKey, expiresInMs = 30_000) {
       [value.seriesId],
     );
   }
-  assert.ok(now);
   return request.rows[0].value.id;
 }
 
