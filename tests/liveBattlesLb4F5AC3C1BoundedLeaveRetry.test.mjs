@@ -11,8 +11,8 @@ const c3 = await read('supabase/migrations/20260901201459_live_battles_lb4_f5_a_
 const c3Proof = await read('supabase/tests/live_battles_lb4_f5_a_c3_active_series_leave.sql');
 const proof = await read('supabase/tests/live_battles_lb4_f5_a_c3_c1_bounded_leave_retry.sql');
 const concurrency = await read('scripts/prove-live-battle-series-leave-bounded-concurrency.mjs');
-const packageBytes = await readFile(new URL('../package.json', import.meta.url));
-const lockBytes = await readFile(new URL('../package-lock.json', import.meta.url));
+const packageText = await read('package.json');
+const lockText = await read('package-lock.json');
 
 const leave = migration.match(
   /create or replace function public\.leave_live_battle_series[\s\S]*?\n\$\$;/i,
@@ -105,9 +105,12 @@ test('real harness proves active blocking, elapsed budget and retry recovery', (
 });
 
 test('real harness crosses a future scheduled deadline while the Battle is locked', () => {
-  assert.match(concurrency, /createActiveCase\('deadline-cross', 450\)/);
+  assert.match(concurrency, /pg_catalog\.clock_timestamp\(\) \+ interval '500 milliseconds'/);
   assert.match(concurrency, /waitForLeaveActive/);
-  assert.match(concurrency, /const waitMs = 520/);
+  assert.match(concurrency, /pg_catalog\.pg_sleep_until/);
+  assert.match(concurrency, /queryStartBeforeScheduledEnd/);
+  assert.match(concurrency, /scheduledEndBeforeBlockerRelease/);
+  assert.match(concurrency, /blockerReleaseWithin750ms/);
   assert.match(concurrency, /winnerPreserved/);
   assert.match(concurrency, /terminalEvents/);
 });
@@ -128,8 +131,11 @@ test('economic evidence is derived from linked rows and exact balance deltas', (
   for (const marker of [
     'live_gift_transactions', 'live_battle_score_events', 'financial_transactions',
     'ledger_entries', 'financial_transaction_id', 'idempotency_key',
-    'ownerBalance', 'platformBalance',
+    'ownerBalance', 'accountBalance', 'platformAccountId',
   ]) assert.match(concurrency, new RegExp(marker));
+  assert.match(concurrency, /assert\.equal\(createdLedger\.length, 3\)/);
+  assert.match(concurrency, /entry_type === 'debit'/);
+  assert.match(concurrency, /entry_type === 'credit'/);
   assert.match(concurrency, /assert\.deepEqual\(await economySnapshot\(giftFirst\), economyAfterGift\)/);
   assert.match(concurrency, /assert\.deepEqual\(await economySnapshot\(leaveFirst\), leaveBaseline\)/);
 });
@@ -145,8 +151,8 @@ test('F5-A, C3 and manifests remain protected', () => {
     '5ca7cb6a284a40fba7886ff8f31fbf64e888d1a20a8694f01177d00fe970de45');
   assert.equal(createHash('sha256').update(c3.replaceAll('\r\n', '\n')).digest('hex'),
     '64b94397de5a7f31449f6a025eb458a41b35f0e936b23eeb79ae379e0b7751bd');
-  assert.equal(createHash('sha256').update(packageBytes).digest('hex'),
-    '6fb527168a0bda8a7bdbdf7d0ad357b7439f1ea845efb00f25f8782b048a8c43');
-  assert.equal(createHash('sha256').update(lockBytes).digest('hex'),
-    '2a29b5f890388e056fe2de6b1dd8458b6464466539a458563dd98e8194455141');
+  assert.equal(createHash('sha256').update(packageText.replaceAll('\r\n', '\n'), 'utf8').digest('hex'),
+    '67b0b13e81b3b4d89fa068205636a6c6c55abe52856d5256beb0d39bcc50f3c0');
+  assert.equal(createHash('sha256').update(lockText.replaceAll('\r\n', '\n'), 'utf8').digest('hex'),
+    '9563f6480ec75a028a4580025d68884aca731c7836320ee148785156b0c40bf4');
 });

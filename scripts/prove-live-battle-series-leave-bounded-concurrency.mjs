@@ -23,6 +23,7 @@ const makeClient = (applicationName) => new Client({
   connectionString,
   ssl: false,
   application_name: applicationName,
+  query_timeout: 1_500,
 });
 const admin = makeClient('c3c1-admin');
 const first = makeClient('c3c1-first');
@@ -31,12 +32,47 @@ const blocker = makeClient('c3c1-blocker');
 const observer = makeClient('c3c1-observer');
 const senderClient = makeClient('c3c1-sender');
 const clients = [admin, first, second, blocker, observer, senderClient];
+const platformAccountId = 'c3c1c1c1-0000-4000-8000-000000000001';
 
 const evidence = {
   iterationsPerRace: iterations,
   raceResults: {},
+  tableLockMatrix: [],
+  rejectionWhitelist: {},
   infrastructureErrors: { deadlocks: 0, unexpectedBusy: 0, queryCanceled: 0, timeouts: 0 },
 };
+
+const lockClosure = [
+  ['auth.users', 'ROW SHARE'],
+  ['public.live_sessions', 'ROW SHARE'],
+  ['public.live_battles', 'ROW EXCLUSIVE'],
+  ['public.live_battle_score_states', 'ROW EXCLUSIVE'],
+  ['public.live_battle_series', 'ROW EXCLUSIVE'],
+  ['public.live_battle_rematch_requests', 'ROW EXCLUSIVE'],
+  ['public.live_battle_public_states', 'ROW EXCLUSIVE'],
+  ['public.live_battle_events', 'ROW EXCLUSIVE'],
+  ['public.live_battle_rule_sets', 'ACCESS SHARE'],
+  ['public.live_battle_power_states', 'ROW EXCLUSIVE'],
+  ['public.live_battle_boost_events', 'ACCESS SHARE'],
+  ['public.live_gift_transactions', 'ACCESS SHARE'],
+  ['public.live_battle_score_events', 'ACCESS SHARE'],
+];
+
+const rejectionWhitelist = {
+  dualLeave: new Set(),
+  leaveVsCancel: new Set(['55000|live_battle_state_changed']),
+  leaveVsCompletion: new Set(['55000|live_battle_state_changed']),
+  giftFirst: new Set(),
+  leaveFirst: new Set(['P0001|live_battle_gift_not_active']),
+  acceptVsLeave: new Set([
+    '55000|live_battle_rematch_request_not_pending',
+    '55000|live_battle_rematch_series_not_open',
+  ]),
+  betweenRoundsVsDue: new Set(),
+};
+evidence.rejectionWhitelist = Object.fromEntries(
+  Object.entries(rejectionWhitelist).map(([name, values]) => [name, [...values]]),
+);
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const token = () => randomUUID().replaceAll('-', '');
@@ -55,33 +91,6 @@ async function claim(client, actor) {
 async function operator(client) {
   await client.query('reset role');
   await client.query("select set_config('request.jwt.claim.sub','',false)");
-}
-
-async function installDisposableLeavePause() {
-  await admin.query(`
-    create or replace function private.c3c1_disposable_pause_cancel()
-    returns trigger language plpgsql set search_path = '' as $$
-    begin
-      if pg_catalog.current_setting('c3c1.pause_leave', true) = 'on' then
-        perform pg_catalog.pg_sleep(0.075);
-      end if;
-      return new;
-    end;
-    $$;
-    drop trigger if exists c3c1_disposable_pause_cancel on public.live_battles;
-    create trigger c3c1_disposable_pause_cancel
-      before update of status on public.live_battles
-      for each row
-      when (old.status is distinct from new.status and new.status = 'cancelled')
-      execute function private.c3c1_disposable_pause_cancel()
-  `);
-}
-
-async function removeDisposableLeavePause() {
-  await admin.query(`
-    drop trigger if exists c3c1_disposable_pause_cancel on public.live_battles;
-    drop function if exists private.c3c1_disposable_pause_cancel()
-  `);
 }
 
 async function addUser(id, label) {
@@ -176,9 +185,21 @@ async function stateSnapshot(value) {
        'score_events',(select coalesce(jsonb_agg(to_jsonb(e) order by e.created_at,e.id),'[]'::jsonb)
          from public.live_battle_score_events e where e.battle_id=$1),
        'financial',(select coalesce(jsonb_agg(to_jsonb(f) order by f.created_at,f.id),'[]'::jsonb)
-         from public.financial_transactions f where f.reference_type='live_battle' and f.reference_id=$1::text)
+         from public.financial_transactions f where f.reference_type='live_battle' and f.reference_id=$1::text),
+       'sessions',(select coalesce(jsonb_agg(to_jsonb(s) order by s.id),'[]'::jsonb)
+         from public.live_sessions s where s.id in ($3::uuid,$4::uuid)),
+       'ledger',(select coalesce(jsonb_agg(to_jsonb(e) order by e.created_at,e.id),'[]'::jsonb)
+         from public.ledger_entries e
+         where e.metadata->>'fin_txn_id' in (
+           select f.id::text from public.financial_transactions f
+           where f.reference_type='live_battle' and f.reference_id=$1::text)),
+       'accounts',(select coalesce(jsonb_agg(to_jsonb(a) order by a.id),'[]'::jsonb)
+         from public.ledger_accounts a
+         where a.owner_id in ($5::uuid,$6::uuid,$7::uuid)
+            or (a.owner_id is null and a.account_type='platform'))
      ) value`,
-    [value.battleId, value.seriesId],
+    [value.battleId, value.seriesId, value.challengerSession,
+      value.opponentSession, value.sender, value.challenger, value.opponent],
   );
   return result.rows[0].value;
 }
@@ -199,7 +220,7 @@ async function economySnapshot(value) {
        union select account_id from entries
        union select id from public.ledger_accounts
          where owner_id in ($2::uuid,$3::uuid)
-            or account_type in ('platform','treasury')
+       union select $4::uuid
      )
      select jsonb_build_object(
        'gifts',(select coalesce(jsonb_agg(to_jsonb(g) order by g.created_at,g.id),'[]'::jsonb) from gifts g),
@@ -210,7 +231,7 @@ async function economySnapshot(value) {
        'accounts',(select coalesce(jsonb_agg(to_jsonb(a) order by a.id),'[]'::jsonb)
          from public.ledger_accounts a where a.id in (select id from involved_accounts))
      ) value`,
-    [value.battleId, value.sender, value.challenger],
+    [value.battleId, value.sender, value.challenger, platformAccountId],
   );
   return result.rows[0].value;
 }
@@ -267,19 +288,73 @@ async function waitForQueryActive(applicationName, queryFragment, timeoutMs = 40
   const deadline = performance.now() + timeoutMs;
   while (performance.now() < deadline) {
     const active = await admin.query(
-      `select count(*)::int n from pg_catalog.pg_stat_activity
+      `select pid, query_start, wait_event_type, wait_event
+       from pg_catalog.pg_stat_activity
        where application_name=$1 and state='active'
-         and query like ('%' || $2 || '%')`,
+         and query like ('%' || $2 || '%')
+       order by query_start desc limit 1`,
       [applicationName, queryFragment],
     );
-    if (active.rows[0].n > 0) return;
+    if (active.rowCount === 1) return active.rows[0];
     await delay(5);
   }
   assert.fail(`${queryFragment} never became observably active`);
 }
 
 async function waitForLeaveActive(timeoutMs = 400) {
-  await waitForQueryActive('c3c1-first', 'leave_live_battle_series', timeoutMs);
+  return waitForQueryActive('c3c1-first', 'leave_live_battle_series', timeoutMs);
+}
+
+async function observeOverlap(firstApp, firstFragment, secondApp, secondFragment) {
+  const [left, right] = await Promise.all([
+    waitForQueryActive(firstApp, firstFragment, 650),
+    waitForQueryActive(secondApp, secondFragment, 650),
+  ]);
+  assert.notEqual(left.pid, right.pid);
+  return {
+    firstPid: left.pid,
+    secondPid: right.pid,
+    firstQueryStart: left.query_start,
+    secondQueryStart: right.query_start,
+  };
+}
+
+function inspectScenarioResults(scenario, results) {
+  const whitelist = rejectionWhitelist[scenario];
+  assert.ok(whitelist, `missing whitelist for ${scenario}`);
+  let fulfilled = 0;
+  let domainRejected = 0;
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      fulfilled += 1;
+      continue;
+    }
+    const exact = `${result.reason?.code ?? ''}|${result.reason?.message ?? ''}`;
+    assert.ok(whitelist.has(exact), `${scenario} unexpected rejection ${exact}`);
+    domainRejected += 1;
+  }
+  inspectInfrastructure(results);
+  return { fulfilled, domainRejected };
+}
+
+async function releaseBarrier() {
+  await blocker.query('commit');
+  const released = await blocker.query('select pg_catalog.clock_timestamp() released_at');
+  return released.rows[0].released_at;
+}
+
+async function lockBattleBarrier(value) {
+  await operator(blocker);
+  await blocker.query('begin');
+  await blocker.query(
+    'select id from public.live_battles where id=$1 for update',
+    [value.battleId],
+  );
+}
+
+function recordOverlap(stat, overlap, blockerReleaseAt) {
+  stat.overlapsObserved += 1;
+  if (stat.samples.length < 2) stat.samples.push({ ...overlap, blockerReleaseAt });
 }
 
 async function tryIndependentScopeLocks(value) {
@@ -382,10 +457,45 @@ function ownerBalance(snapshot, ownerId) {
   return Number(account?.balance ?? 0);
 }
 
-function platformBalance(snapshot) {
-  return snapshot.accounts
-    .filter((row) => ['platform', 'treasury'].includes(row.account_type))
-    .reduce((sum, row) => sum + Number(row.balance), 0);
+function accountBalance(snapshot, accountId) {
+  return Number(snapshot.accounts.find((row) => row.id === accountId)?.balance ?? 0);
+}
+
+async function waitForReleasedPartialLocks(pid, timeoutMs = 500) {
+  const deadline = performance.now() + timeoutMs;
+  while (performance.now() < deadline) {
+    const sampled = await observer.query(
+      `select activity.wait_event,
+              count(lock.*) filter (
+                where lock.granted and lock.relation is not null
+              )::int granted_closure_locks,
+              coalesce(jsonb_agg(jsonb_build_object(
+                'relation',namespace.nspname||'.'||relation.relname,
+                'mode',lock.mode,'type',lock.locktype
+              )) filter (
+                where lock.granted and lock.relation is not null
+              ),'[]'::jsonb) granted_locks
+       from pg_catalog.pg_stat_activity activity
+       left join pg_catalog.pg_locks lock on lock.pid=activity.pid
+       left join pg_catalog.pg_class relation on relation.oid=lock.relation
+       left join pg_catalog.pg_namespace namespace on namespace.oid=relation.relnamespace
+       where activity.pid=$1
+         and (lock.relation is null or
+           namespace.nspname||'.'||relation.relname=any($2::text[]))
+       group by activity.wait_event`,
+      [pid, lockClosure.map(([relation]) => relation)],
+    );
+    if (sampled.rowCount === 1 && sampled.rows[0].wait_event === 'PgSleep') {
+      assert.equal(
+        sampled.rows[0].granted_closure_locks,
+        0,
+        `partial locks retained: ${JSON.stringify(sampled.rows[0].granted_locks)}`,
+      );
+      return true;
+    }
+    await delay(2);
+  }
+  assert.fail(`failed to sample released subtransaction locks for pid ${pid}`);
 }
 
 async function runBudgetExhaustion() {
@@ -422,25 +532,82 @@ async function runBudgetExhaustion() {
   };
 }
 
+async function runTableLockMatrix() {
+  for (const [relation, requestedMode] of lockClosure) {
+    const value = await createActiveCase(`table-${relation.replaceAll('.', '-')}`);
+    const before = await stateSnapshot(value);
+    await operator(blocker);
+    await operator(observer);
+    await blocker.query('begin');
+    await blocker.query(`lock table ${relation} in access exclusive mode`);
+    await claim(first, value.challenger);
+    const started = performance.now();
+    const leavePromise = first.query(
+      'select public.leave_live_battle_series($1) value', [value.seriesId],
+    );
+    const active = await waitForLeaveActive(650);
+    await waitForReleasedPartialLocks(active.pid);
+    const settled = await Promise.allSettled([leavePromise]);
+    const elapsedMs = performance.now() - started;
+    assert.equal(settled[0].status, 'rejected');
+    assert.equal(settled[0].reason.code, '55P03');
+    assert.equal(settled[0].reason.message, 'live_battle_series_leave_busy');
+    assert.ok(elapsedMs >= 650 && elapsedMs < 1_500, `${relation} busy ${elapsedMs}`);
+    await blocker.query('rollback');
+    assert.deepEqual(await stateSnapshot(value), before);
+    const retry = await first.query(
+      'select public.leave_live_battle_series($1) value', [value.seriesId],
+    );
+    assert.equal(retry.rows[0].value.status, 'cancelled');
+    evidence.tableLockMatrix.push({
+      relation, requestedMode, blockerMode: 'ACCESS EXCLUSIVE',
+      sqlstate: settled[0].reason.code,
+      message: settled[0].reason.message,
+      elapsedMs: Math.round(elapsedMs), partialLocksReleased: true,
+      invariantSnapshot: true, retryStatus: retry.rows[0].value.status,
+    });
+  }
+}
+
 async function runDeadlineCrossing() {
-  const value = await createActiveCase('deadline-cross', 450);
+  const value = await createActiveCase('deadline-cross');
   const gift = await sendGift(value, `deadline-${token()}`);
   const giftId = gift.rows[0].transaction_id;
   const beforeBlock = await economySnapshot(value);
+  const scheduled = await admin.query(
+    `with timing as (
+       select pg_catalog.clock_timestamp() + interval '500 milliseconds' end_at
+     )
+     update public.live_battles
+     set accepted_at=timing.end_at-interval '304 seconds',
+         countdown_started_at=timing.end_at-interval '303 seconds',
+         scheduled_start_at=timing.end_at-interval '300 seconds',
+         started_at=timing.end_at-interval '300 seconds',
+         scheduled_end_at=timing.end_at,
+         updated_at=pg_catalog.clock_timestamp()
+     from timing where id=$1 returning scheduled_end_at`,
+    [value.battleId],
+  );
+  const scheduledEndAt = scheduled.rows[0].scheduled_end_at;
   await operator(blocker);
   await blocker.query('begin');
   await blocker.query('select id from public.live_battles where id=$1 for update', [value.battleId]);
   await claim(first, value.challenger);
-  const started = performance.now();
   const leavePromise = first.query(
     'select public.leave_live_battle_series($1) value', [value.seriesId],
   );
-  await waitForLeaveActive();
-  const waitMs = 520 - (performance.now() - started);
-  if (waitMs > 0) await delay(waitMs);
-  await blocker.query('commit');
+  const active = await waitForLeaveActive(650);
+  const queryStart = active.query_start;
+  await blocker.query(
+    `select pg_catalog.pg_sleep_until($1::timestamptz + interval '50 milliseconds')`,
+    [scheduledEndAt],
+  );
+  const blockerReleaseAt = await releaseBarrier();
   const leave = await leavePromise;
-  const elapsedMs = performance.now() - started;
+  const budgetEndsAt = new Date(new Date(queryStart).getTime() + 750);
+  assert.ok(new Date(queryStart) < new Date(scheduledEndAt));
+  assert.ok(new Date(scheduledEndAt) < new Date(blockerReleaseAt));
+  assert.ok(new Date(blockerReleaseAt) < budgetEndsAt);
   assert.equal(leave.rows[0].value.status, 'completed');
   const final = await summary(value);
   assert.equal(final.battle_status, 'completed');
@@ -450,7 +617,13 @@ async function runDeadlineCrossing() {
   assert.equal(final.terminal_events, 1);
   assert.deepEqual(await economySnapshot(value), beforeBlock);
   evidence.deadlineCrossing = {
-    elapsedMs: Math.round(elapsedMs), giftId, battleStatus: final.battle_status,
+    queryStart, scheduledEndAt, blockerReleaseAt, budgetEndsAt,
+    inequalities: {
+      queryStartBeforeScheduledEnd: true,
+      scheduledEndBeforeBlockerRelease: true,
+      blockerReleaseWithin750ms: true,
+    },
+    giftId, battleStatus: final.battle_status,
     scoreOutcome: final.outcome, winnerPreserved: final.winner === value.challenger,
     terminalEvents: final.terminal_events,
   };
@@ -460,56 +633,82 @@ async function runRepeatedRaces() {
   const stats = Object.fromEntries([
     'dualLeave','leaveVsCancel','leaveVsCompletion','giftFirst',
     'leaveFirst','acceptVsLeave','betweenRoundsVsDue',
-  ].map((name) => [name, { iterations: 0, fulfilled: 0, domainRejected: 0 }]));
+  ].map((name) => [name, {
+    iterations: 0, fulfilled: 0, domainRejected: 0,
+    overlapsObserved: 0, samples: [],
+  }]));
 
   for (let iteration = 0; iteration < iterations; iteration += 1) {
     const dual = await createActiveCase(`dual-${iteration}`);
     await Promise.all([claim(first, dual.challenger), claim(second, dual.opponent)]);
-    const dualResults = await Promise.allSettled([
+    await lockBattleBarrier(dual);
+    const dualPromises = [
       first.query('select public.leave_live_battle_series($1)', [dual.seriesId]),
       second.query('select public.leave_live_battle_series($1)', [dual.seriesId]),
-    ]);
-    inspectInfrastructure(dualResults);
-    assert.equal(dualResults.filter((item) => item.status === 'fulfilled').length, 2);
+    ];
+    const dualOverlap = await observeOverlap(
+      'c3c1-first', 'leave_live_battle_series',
+      'c3c1-second', 'leave_live_battle_series',
+    );
+    const dualRelease = await releaseBarrier();
+    const dualResults = await Promise.allSettled(dualPromises);
+    const dualCounts = inspectScenarioResults('dualLeave', dualResults);
+    assert.equal(dualCounts.fulfilled, 2);
     const dualFinal = await summary(dual);
     assert.equal(dualFinal.terminal_events, 1);
     assert.equal(dualFinal.series_status, 'cancelled');
     stats.dualLeave.iterations += 1;
-    stats.dualLeave.fulfilled += 2;
+    stats.dualLeave.fulfilled += dualCounts.fulfilled;
+    stats.dualLeave.domainRejected += dualCounts.domainRejected;
+    recordOverlap(stats.dualLeave, dualOverlap, dualRelease);
 
     const cancel = await createActiveCase(`cancel-${iteration}`);
     await Promise.all([claim(first, cancel.challenger), claim(second, cancel.opponent)]);
-    const cancelResults = await Promise.allSettled([
+    await lockBattleBarrier(cancel);
+    const cancelPromises = [
       first.query('select public.leave_live_battle_series($1)', [cancel.seriesId]),
       second.query('select public.cancel_live_battle($1)', [cancel.battleId]),
-    ]);
-    inspectInfrastructure(cancelResults);
-    assert.equal(cancelResults.filter((item) => item.status === 'fulfilled').length, 2);
+    ];
+    const cancelOverlap = await observeOverlap(
+      'c3c1-first', 'leave_live_battle_series',
+      'c3c1-second', 'cancel_live_battle',
+    );
+    const cancelRelease = await releaseBarrier();
+    const cancelResults = await Promise.allSettled(cancelPromises);
+    const cancelCounts = inspectScenarioResults('leaveVsCancel', cancelResults);
     assert.equal((await summary(cancel)).terminal_events, 1);
     stats.leaveVsCancel.iterations += 1;
-    stats.leaveVsCancel.fulfilled += 2;
+    stats.leaveVsCancel.fulfilled += cancelCounts.fulfilled;
+    stats.leaveVsCancel.domainRejected += cancelCounts.domainRejected;
+    recordOverlap(stats.leaveVsCancel, cancelOverlap, cancelRelease);
 
     const completion = await createActiveCase(`completion-${iteration}`);
     await makeElapsed(completion);
     await Promise.all([claim(first, completion.challenger), claim(second, completion.opponent)]);
-    const completionResults = await Promise.allSettled([
+    await lockBattleBarrier(completion);
+    const completionPromises = [
       first.query('select public.leave_live_battle_series($1)', [completion.seriesId]),
       second.query('select public.complete_live_battle($1)', [completion.battleId]),
-    ]);
-    inspectInfrastructure(completionResults);
+    ];
+    const completionOverlap = await observeOverlap(
+      'c3c1-first', 'leave_live_battle_series',
+      'c3c1-second', 'complete_live_battle',
+    );
+    const completionRelease = await releaseBarrier();
+    const completionResults = await Promise.allSettled(completionPromises);
+    const completionCounts = inspectScenarioResults('leaveVsCompletion', completionResults);
     const completionFinal = await summary(completion);
     assert.equal(completionFinal.battle_status, 'completed');
     assert.equal(completionFinal.terminal_events, 1);
     stats.leaveVsCompletion.iterations += 1;
-    stats.leaveVsCompletion.fulfilled += completionResults.filter((item) => item.status === 'fulfilled').length;
-    stats.leaveVsCompletion.domainRejected += completionResults.filter((item) => item.status === 'rejected').length;
+    stats.leaveVsCompletion.fulfilled += completionCounts.fulfilled;
+    stats.leaveVsCompletion.domainRejected += completionCounts.domainRejected;
+    recordOverlap(stats.leaveVsCompletion, completionOverlap, completionRelease);
 
     const giftFirst = await createActiveCase(`gift-first-${iteration}`);
     const giftBefore = await economySnapshot(giftFirst);
     await Promise.all([claim(first, giftFirst.challenger), claim(senderClient, giftFirst.sender)]);
-    await operator(blocker);
-    await blocker.query('begin');
-    await blocker.query('select id from public.live_battles where id=$1 for update', [giftFirst.battleId]);
+    await lockBattleBarrier(giftFirst);
     const giftKey = `gift-first-${iteration}-${token()}`;
     const queuedGift = senderClient.query(
       'select * from public.send_live_battle_gift($1,$2,$3,$4)',
@@ -519,27 +718,78 @@ async function runRepeatedRaces() {
     const queuedLeave = first.query(
       'select public.leave_live_battle_series($1)', [giftFirst.seriesId],
     );
-    await waitForLeaveActive();
-    await blocker.query('commit');
-    const giftResult = await queuedGift;
+    const giftOverlap = await observeOverlap(
+      'c3c1-sender', 'send_live_battle_gift',
+      'c3c1-first', 'leave_live_battle_series',
+    );
+    const giftRelease = await releaseBarrier();
+    const giftResults = await Promise.allSettled([queuedGift, queuedLeave]);
+    const giftCounts = inspectScenarioResults('giftFirst', giftResults);
+    assert.equal(giftCounts.fulfilled, 2);
+    const giftResult = giftResults[0].value;
     const economyAfterGift = await economySnapshot(giftFirst);
-    const leaveResult = await Promise.allSettled([queuedLeave]);
-    inspectInfrastructure(leaveResult);
-    assert.equal(leaveResult[0].status, 'fulfilled');
     assert.deepEqual(await economySnapshot(giftFirst), economyAfterGift);
     assert.equal(economyAfterGift.gifts.length, giftBefore.gifts.length + 1);
     assert.equal(economyAfterGift.score_events.length, giftBefore.score_events.length + 1);
     assert.equal(economyAfterGift.financial.length, giftBefore.financial.length + 1);
-    assert.ok(economyAfterGift.ledger.length >= giftBefore.ledger.length + 2);
-    assert.equal(economyAfterGift.gifts.at(-1).id, giftResult.rows[0].transaction_id);
-    const createdGift = economyAfterGift.gifts.at(-1);
-    const createdFinancial = economyAfterGift.financial.at(-1);
+    assert.equal(economyAfterGift.ledger.length, giftBefore.ledger.length + 3);
+    const createdGift = economyAfterGift.gifts.find(
+      (row) => !giftBefore.gifts.some((before) => before.id === row.id),
+    );
+    const createdFinancial = economyAfterGift.financial.find(
+      (row) => !giftBefore.financial.some((before) => before.id === row.id),
+    );
+    const createdScore = economyAfterGift.score_events.find(
+      (row) => !giftBefore.score_events.some((before) => before.id === row.id),
+    );
+    assert.equal(createdGift.id, giftResult.rows[0].transaction_id);
     const createdLedger = economyAfterGift.ledger.filter(
       (row) => row.metadata?.fin_txn_id === createdFinancial.id,
     );
     assert.equal(createdGift.idempotency_key, giftKey);
     assert.equal(createdGift.financial_transaction_id, createdFinancial.id);
-    assert.ok(createdLedger.length >= 2);
+    assert.equal(createdScore.gift_transaction_id, createdGift.id);
+    assert.equal(createdScore.battle_id, giftFirst.battleId);
+    assert.equal(createdScore.target_user_id, giftFirst.challenger);
+    assert.equal(Number(createdScore.base_points), Number(createdGift.amount_coins));
+    assert.equal(Number(createdScore.multiplier), 1);
+    assert.equal(Number(createdScore.awarded_points), Number(createdGift.amount_coins));
+    assert.equal(createdFinancial.operation_type, 'live_gift');
+    assert.equal(createdFinancial.reference_type, 'live_battle');
+    assert.equal(createdFinancial.reference_id, giftFirst.battleId);
+    assert.equal(
+      createdFinancial.idempotency_key,
+      `live_battle:${giftFirst.battleId}:${giftKey}`,
+    );
+    assert.equal(createdFinancial.status, 'completed');
+    assert.equal(createdFinancial.currency, 'BDAG');
+    assert.equal(Number(createdFinancial.amount), Number(createdGift.amount_coins));
+    assert.equal(Number(createdFinancial.fee_amount), Number(createdGift.platform_fee_coins));
+    assert.equal(createdLedger.length, 3);
+    assert.equal(new Set(createdLedger.map((row) => row.txn_id)).size, 1);
+    const senderAccount = economyAfterGift.accounts.find(
+      (row) => row.owner_id === giftFirst.sender && row.account_type === 'user',
+    );
+    const creatorAccount = economyAfterGift.accounts.find(
+      (row) => row.owner_id === giftFirst.challenger && row.account_type === 'user',
+    );
+    const debit = createdLedger.find((row) => row.entry_type === 'debit');
+    const creatorCredit = createdLedger.find(
+      (row) => row.entry_type === 'credit' && row.account_id === creatorAccount.id,
+    );
+    const platformCredit = createdLedger.find(
+      (row) => row.entry_type === 'credit' && row.account_id === platformAccountId,
+    );
+    assert.equal(createdFinancial.from_account_id, senderAccount.id);
+    assert.equal(createdFinancial.to_account_id, creatorAccount.id);
+    assert.equal(debit.account_id, senderAccount.id);
+    assert.equal(Number(debit.amount), Number(createdGift.amount_coins));
+    assert.equal(Number(creatorCredit.amount), Number(createdGift.creator_amount_coins));
+    assert.equal(Number(platformCredit.amount), Number(createdGift.platform_fee_coins));
+    assert.equal(
+      Number(creatorCredit.amount) + Number(platformCredit.amount) - Number(debit.amount),
+      0,
+    );
     assert.equal(
       ownerBalance(economyAfterGift, giftFirst.sender) - ownerBalance(giftBefore, giftFirst.sender),
       -Number(createdGift.amount_coins),
@@ -549,44 +799,68 @@ async function runRepeatedRaces() {
       Number(createdGift.creator_amount_coins),
     );
     assert.equal(
-      platformBalance(economyAfterGift) - platformBalance(giftBefore),
+      accountBalance(economyAfterGift, platformAccountId)
+        - accountBalance(giftBefore, platformAccountId),
       Number(createdGift.platform_fee_coins),
     );
     stats.giftFirst.iterations += 1;
-    stats.giftFirst.fulfilled += 2;
+    stats.giftFirst.fulfilled += giftCounts.fulfilled;
+    stats.giftFirst.domainRejected += giftCounts.domainRejected;
+    recordOverlap(stats.giftFirst, giftOverlap, giftRelease);
 
     const leaveFirst = await createActiveCase(`leave-first-${iteration}`);
     const leaveBaseline = await economySnapshot(leaveFirst);
     await Promise.all([claim(first, leaveFirst.challenger), claim(senderClient, leaveFirst.sender)]);
-    await first.query("select set_config('c3c1.pause_leave','on',false)");
+    const giftGate = 1_000_000 + iteration;
+    await operator(observer);
+    await observer.query('select pg_catalog.pg_advisory_lock($1)', [giftGate]);
+    await lockBattleBarrier(leaveFirst);
+    const lateGift = senderClient.query(
+      `with barrier as materialized (
+         select pg_catalog.pg_advisory_xact_lock($5) gate
+       )
+       select gift.* from barrier
+       cross join lateral public.send_live_battle_gift($1,$2,$3,$4) gift`,
+      [leaveFirst.battleId, leaveFirst.challenger, 'lb4_c3_c1_concurrent',
+        `leave-first-${iteration}-${token()}`, giftGate],
+    );
+    await waitForQueryActive('c3c1-sender', 'send_live_battle_gift', 650);
     const firstLeave = first.query(
       'select public.leave_live_battle_series($1)', [leaveFirst.seriesId],
     );
-    await waitForLeaveActive();
-    await delay(10);
-    const lateGift = senderClient.query(
-      'select * from public.send_live_battle_gift($1,$2,$3,$4)',
-      [leaveFirst.battleId, leaveFirst.challenger, 'lb4_c3_c1_concurrent', `leave-first-${iteration}-${token()}`],
+    const leaveFirstOverlap = await observeOverlap(
+      'c3c1-first', 'leave_live_battle_series',
+      'c3c1-sender', 'send_live_battle_gift',
     );
+    const leaveFirstRelease = await releaseBarrier();
+    const leaveCompleted = await firstLeave;
+    await observer.query('select pg_catalog.pg_advisory_unlock($1)', [giftGate]);
     const leaveFirstResults = await Promise.allSettled([firstLeave, lateGift]);
-    await first.query("select set_config('c3c1.pause_leave','off',false)");
-    inspectInfrastructure(leaveFirstResults);
+    const leaveFirstCounts = inspectScenarioResults('leaveFirst', leaveFirstResults);
+    assert.ok(leaveCompleted.rows[0]);
     assert.equal(leaveFirstResults[0].status, 'fulfilled');
     assert.equal(leaveFirstResults[1].status, 'rejected');
-    assert.match(leaveFirstResults[1].reason.message, /live_battle_gift_not_active/);
     assert.deepEqual(await economySnapshot(leaveFirst), leaveBaseline);
     stats.leaveFirst.iterations += 1;
-    stats.leaveFirst.fulfilled += 1;
-    stats.leaveFirst.domainRejected += 1;
+    stats.leaveFirst.fulfilled += leaveFirstCounts.fulfilled;
+    stats.leaveFirst.domainRejected += leaveFirstCounts.domainRejected;
+    recordOverlap(stats.leaveFirst, leaveFirstOverlap, leaveFirstRelease);
 
     const accept = await createActiveCase(`accept-${iteration}`);
     const requestId = await prepareCompletedRound(accept, randomUUID());
     await Promise.all([claim(first, accept.challenger), claim(second, accept.opponent)]);
-    const acceptResults = await Promise.allSettled([
+    await lockBattleBarrier(accept);
+    const acceptPromises = [
       first.query('select public.leave_live_battle_series($1)', [accept.seriesId]),
       second.query("select public.respond_live_battle_rematch($1,'accept')", [requestId]),
-    ]);
-    inspectInfrastructure(acceptResults);
+    ];
+    const acceptOverlap = await observeOverlap(
+      'c3c1-first', 'leave_live_battle_series',
+      'c3c1-second', 'respond_live_battle_rematch',
+    );
+    const acceptRelease = await releaseBarrier();
+    const acceptResults = await Promise.allSettled(acceptPromises);
+    const acceptCounts = inspectScenarioResults('acceptVsLeave', acceptResults);
     const acceptFinal = await summary(accept);
     assert.equal(acceptFinal.pending_requests, 0);
     assert.ok(acceptFinal.round_two_rows <= 1);
@@ -597,23 +871,38 @@ async function runRepeatedRaces() {
     );
     assert.equal(open.rows[0].n, 0);
     stats.acceptVsLeave.iterations += 1;
-    stats.acceptVsLeave.fulfilled += acceptResults.filter((item) => item.status === 'fulfilled').length;
-    stats.acceptVsLeave.domainRejected += acceptResults.filter((item) => item.status === 'rejected').length;
+    stats.acceptVsLeave.fulfilled += acceptCounts.fulfilled;
+    stats.acceptVsLeave.domainRejected += acceptCounts.domainRejected;
+    recordOverlap(stats.acceptVsLeave, acceptOverlap, acceptRelease);
 
     const due = await createActiveCase(`due-${iteration}`);
     await prepareCompletedRound(due, randomUUID(), -1);
     await claim(first, due.challenger);
     await operator(second);
-    const dueResults = await Promise.allSettled([
+    await operator(blocker);
+    await blocker.query('begin');
+    await blocker.query('lock table public.live_battle_series in access exclusive mode');
+    const duePromises = [
       first.query('select public.leave_live_battle_series($1)', [due.seriesId]),
       second.query('select private.reconcile_due_live_battle_series(100)'),
-    ]);
-    inspectInfrastructure(dueResults);
+    ];
+    const dueOverlap = await observeOverlap(
+      'c3c1-first', 'leave_live_battle_series',
+      'c3c1-second', 'reconcile_due_live_battle_series',
+    );
+    const dueRelease = await releaseBarrier();
+    const dueResults = await Promise.allSettled(duePromises);
+    const dueCounts = inspectScenarioResults('betweenRoundsVsDue', dueResults);
     assert.equal((await summary(due)).series_status, 'completed');
     assert.equal((await summary(due)).pending_requests, 0);
     stats.betweenRoundsVsDue.iterations += 1;
-    stats.betweenRoundsVsDue.fulfilled += dueResults.filter((item) => item.status === 'fulfilled').length;
-    stats.betweenRoundsVsDue.domainRejected += dueResults.filter((item) => item.status === 'rejected').length;
+    stats.betweenRoundsVsDue.fulfilled += dueCounts.fulfilled;
+    stats.betweenRoundsVsDue.domainRejected += dueCounts.domainRejected;
+    recordOverlap(stats.betweenRoundsVsDue, dueOverlap, dueRelease);
+  }
+  for (const [scenario, stat] of Object.entries(stats)) {
+    assert.equal(stat.iterations, iterations, `${scenario} iterations`);
+    assert.equal(stat.overlapsObserved, iterations, `${scenario} observable overlaps`);
   }
   evidence.raceResults = stats;
 }
@@ -621,13 +910,19 @@ async function runRepeatedRaces() {
 await Promise.all(clients.map((client) => client.connect()));
 try {
   await Promise.all(clients.map(configure));
-  await installDisposableLeavePause();
+  await admin.query(
+    `insert into public.ledger_accounts(id,owner_id,account_type,balance,currency)
+     values($1,null,'platform',0,'BDAG')
+     on conflict (id) do nothing`,
+    [platformAccountId],
+  );
   await admin.query(
     `insert into public.gift_catalog(id,emoji,label,cost_coins,active,enabled)
-     values('lb4_c3_c1_concurrent','C1','C3-C1 concurrency',9,true,true)
-     on conflict (id) do nothing`,
+     values('lb4_c3_c1_concurrent','C1','C3-C1 concurrency',10,true,true)
+     on conflict (id) do update set cost_coins=excluded.cost_coins`,
   );
   await runBudgetExhaustion();
+  await runTableLockMatrix();
   await runDeadlineCrossing();
   await runRepeatedRaces();
   const duplicateTerminal = await admin.query(
@@ -650,8 +945,10 @@ try {
     scoreWithoutGift: orphanScores.rows[0].n,
     infrastructureErrors: evidence.infrastructureErrors,
   };
+} catch (error) {
+  console.error('LB4_C3_C1_C1_HARNESS_FAILURE', error);
+  throw error;
 } finally {
-  await removeDisposableLeavePause().catch(() => undefined);
   await Promise.allSettled(clients.map(async (client) => {
     const closed = await Promise.race([
       client.end().then(() => true),

@@ -16,8 +16,8 @@ const viewerSource = await read('app/live/watch/[streamId].tsx');
 const migrationSource = await read(
   'supabase/migrations/20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql',
 );
-const packageBytes = await readFile(new URL('../package.json', import.meta.url));
-const lockfileBytes = await readFile(new URL('../package-lock.json', import.meta.url));
+const packageText = await read('package.json');
+const lockfileText = await read('package-lock.json');
 
 function load(source, imports = {}) {
   const compiled = ts.transpileModule(source, {
@@ -497,8 +497,8 @@ test('deterministic C2, RPC, scope, manifest and migration guards are worktree-i
   assert.match(spectatorServiceSource, /series: LiveBattleSeriesProjection \| null/);
   assert.equal(createHash('sha256').update(migrationSource.replaceAll('\r\n', '\n')).digest('hex'),
     '5ca7cb6a284a40fba7886ff8f31fbf64e888d1a20a8694f01177d00fe970de45');
-  assert.equal(createHash('sha256').update(packageBytes).digest('hex'),
-    '6fb527168a0bda8a7bdbdf7d0ad357b7439f1ea845efb00f25f8782b048a8c43');
-  assert.equal(createHash('sha256').update(lockfileBytes).digest('hex'),
-    '2a29b5f890388e056fe2de6b1dd8458b6464466539a458563dd98e8194455141');
+  assert.equal(createHash('sha256').update(packageText.replaceAll('\r\n', '\n'), 'utf8').digest('hex'),
+    '67b0b13e81b3b4d89fa068205636a6c6c55abe52856d5256beb0d39bcc50f3c0');
+  assert.equal(createHash('sha256').update(lockfileText.replaceAll('\r\n', '\n'), 'utf8').digest('hex'),
+    '9563f6480ec75a028a4580025d68884aca731c7836320ee148785156b0c40bf4');
 });
