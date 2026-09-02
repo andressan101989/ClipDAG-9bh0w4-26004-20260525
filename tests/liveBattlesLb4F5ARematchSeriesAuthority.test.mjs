@@ -11,6 +11,8 @@ const c3c1MigrationName =
   "20260901211549_live_battles_lb4_f5_a_c3_c1_bounded_leave_retry.sql";
 const c3c1c1MigrationName =
   "20260901231742_live_battles_lb4_f5_a_c3_c1_c1_strict_leave_lock_budget.sql";
+const c3c1c1c1MigrationName =
+  "20260902025229_live_battles_lb4_f5_a_c3_c1_c1_c1_lock_mode_boundary.sql";
 const migrationPath = `supabase/migrations/${migrationName}`;
 const parentSha = "63a1b5fa1bd59c9ed63a7535ff0e58763b163729";
 const c2Sha = "3e4b3920b6a54136026cf7264c43c2ef97b76cb4";
@@ -22,7 +24,7 @@ const concurrencyProof = readFileSync(
 
 const has = (pattern, message) => assert.match(sql, pattern, message);
 
-test("F5-A and its C3/C3-C1/C3-C1-C1 corrections are the exact ordered migrations after F4D-C", () => {
+test("F5-A and its C3 correction chain are the exact ordered migrations after F4D-C", () => {
   const lb4 = readdirSync("supabase/migrations")
     .filter((name) => name.includes("live_battles_lb4_"))
     .sort();
@@ -31,6 +33,7 @@ test("F5-A and its C3/C3-C1/C3-C1-C1 corrections are the exact ordered migration
   );
   assert.deepEqual(lb4.slice(f4dc + 1), [
     migrationName, c3MigrationName, c3c1MigrationName, c3c1c1MigrationName,
+    c3c1c1c1MigrationName,
   ]);
 });
 

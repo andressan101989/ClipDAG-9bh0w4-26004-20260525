@@ -57,7 +57,7 @@ begin
     'lock table public.live_battle_rematch_requests in row exclusive mode nowait',
     'lock table public.live_battle_public_states in row exclusive mode nowait',
     'lock table public.live_battle_events in row exclusive mode nowait',
-    'lock table public.live_battle_rule_sets in access share mode nowait',
+    'lock table public.live_battle_rule_sets in row share mode nowait',
     'lock table public.live_battle_power_states in row exclusive mode nowait',
     'lock table public.live_battle_boost_events in access share mode nowait',
     'lock table public.live_gift_transactions in access share mode nowait',

@@ -53,12 +53,13 @@ const lockClosure = [
   ['public.live_battle_score_events', 'access share'],
 ];
 
-test('C3-C1-C1 is the single append-only migration after the protected chain', () => {
-  assert.deepEqual(migrationNames.slice(-4), [
+test('C3-C1-C1 remains in the explicit append-only correction chain', () => {
+  assert.deepEqual(migrationNames.slice(-5), [
     '20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql',
     '20260901201459_live_battles_lb4_f5_a_c3_active_series_leave.sql',
     '20260901211549_live_battles_lb4_f5_a_c3_c1_bounded_leave_retry.sql',
     migrationName,
+    '20260902025229_live_battles_lb4_f5_a_c3_c1_c1_c1_lock_mode_boundary.sql',
   ]);
   assert.match(migration, /^begin;/i);
   assert.match(migration, /commit;\s*$/i);
@@ -128,7 +129,8 @@ test('proof checks definitions and real ACL privileges then rolls back', () => {
 
 test('table-lock matrix proves exact busy rejection, invariance and recovery', () => {
   assert.match(harness, /async function runTableLockMatrix/);
-  assert.match(harness, /lock table \$\{relation\} in access exclusive mode/);
+  assert.match(harness, /blockerModeByRequestedMode/);
+  assert.match(harness, /lock table \$\{relation\} in \$\{blockerMode\} mode/);
   assert.match(harness, /waitForReleasedPartialLocks/);
   assert.match(harness, /reason\.code, '55P03'/);
   assert.match(harness, /reason\.message, 'live_battle_series_leave_busy'/);

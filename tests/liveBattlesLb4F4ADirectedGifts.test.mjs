@@ -33,6 +33,7 @@ test('LB4-F4A adds exactly one post-stage migration and no Edge Function', async
     '20260901201459_live_battles_lb4_f5_a_c3_active_series_leave.sql',
     '20260901211549_live_battles_lb4_f5_a_c3_c1_bounded_leave_retry.sql',
     '20260901231742_live_battles_lb4_f5_a_c3_c1_c1_strict_leave_lock_budget.sql',
+    '20260902025229_live_battles_lb4_f5_a_c3_c1_c1_c1_lock_mode_boundary.sql',
   ]);
   assert.doesNotMatch(migration, /edge function|agora-token|supabase\.functions/i);
 });

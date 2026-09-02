@@ -38,6 +38,8 @@ const evidence = {
   iterationsPerRace: iterations,
   raceResults: {},
   tableLockMatrix: [],
+  nonParticipant: null,
+  legacyRuleSetGap: null,
   rejectionWhitelist: {},
   infrastructureErrors: { deadlocks: 0, unexpectedBusy: 0, queryCanceled: 0, timeouts: 0 },
 };
@@ -51,12 +53,18 @@ const lockClosure = [
   ['public.live_battle_rematch_requests', 'ROW EXCLUSIVE'],
   ['public.live_battle_public_states', 'ROW EXCLUSIVE'],
   ['public.live_battle_events', 'ROW EXCLUSIVE'],
-  ['public.live_battle_rule_sets', 'ACCESS SHARE'],
+  ['public.live_battle_rule_sets', 'ROW SHARE'],
   ['public.live_battle_power_states', 'ROW EXCLUSIVE'],
   ['public.live_battle_boost_events', 'ACCESS SHARE'],
   ['public.live_gift_transactions', 'ACCESS SHARE'],
   ['public.live_battle_score_events', 'ACCESS SHARE'],
 ];
+
+const blockerModeByRequestedMode = new Map([
+  ['ACCESS SHARE', 'ACCESS EXCLUSIVE'],
+  ['ROW SHARE', 'EXCLUSIVE'],
+  ['ROW EXCLUSIVE', 'SHARE'],
+]);
 
 const rejectionWhitelist = {
   dualLeave: new Set(),
@@ -534,12 +542,14 @@ async function runBudgetExhaustion() {
 
 async function runTableLockMatrix() {
   for (const [relation, requestedMode] of lockClosure) {
+    const blockerMode = blockerModeByRequestedMode.get(requestedMode);
+    assert.ok(blockerMode, `missing blocker mode for ${requestedMode}`);
     const value = await createActiveCase(`table-${relation.replaceAll('.', '-')}`);
     const before = await stateSnapshot(value);
     await operator(blocker);
     await operator(observer);
     await blocker.query('begin');
-    await blocker.query(`lock table ${relation} in access exclusive mode`);
+    await blocker.query(`lock table ${relation} in ${blockerMode} mode`);
     await claim(first, value.challenger);
     const started = performance.now();
     const leavePromise = first.query(
@@ -552,6 +562,8 @@ async function runTableLockMatrix() {
     assert.equal(settled[0].status, 'rejected');
     assert.equal(settled[0].reason.code, '55P03');
     assert.equal(settled[0].reason.message, 'live_battle_series_leave_busy');
+    assert.notEqual(settled[0].reason.code, '57014');
+    assert.doesNotMatch(settled[0].reason.message, /deadlock|query canceled/i);
     assert.ok(elapsedMs >= 650 && elapsedMs < 1_500, `${relation} busy ${elapsedMs}`);
     await blocker.query('rollback');
     assert.deepEqual(await stateSnapshot(value), before);
@@ -560,13 +572,105 @@ async function runTableLockMatrix() {
     );
     assert.equal(retry.rows[0].value.status, 'cancelled');
     evidence.tableLockMatrix.push({
-      relation, requestedMode, blockerMode: 'ACCESS EXCLUSIVE',
+      relation, requestedMode, blockerMode,
       sqlstate: settled[0].reason.code,
       message: settled[0].reason.message,
       elapsedMs: Math.round(elapsedMs), partialLocksReleased: true,
       invariantSnapshot: true, retryStatus: retry.rows[0].value.status,
     });
   }
+}
+
+async function runLegacyRuleSetGapProbe() {
+  const value = await createActiveCase('legacy-rule-set-gap');
+  const before = await stateSnapshot(value);
+  await operator(blocker);
+  await blocker.query('begin');
+  await blocker.query('lock table public.live_battle_rule_sets in exclusive mode');
+  await claim(first, value.challenger);
+  const started = performance.now();
+  const leavePromise = first.query(
+    'select public.leave_live_battle_series($1) value', [value.seriesId],
+  );
+  const active = await waitForLeaveActive(650);
+  await delay(825);
+  const escaped = await observer.query(
+    `select activity.state,activity.wait_event_type,activity.wait_event,
+            lock.mode,lock.granted
+     from pg_catalog.pg_stat_activity activity
+     join pg_catalog.pg_locks lock on lock.pid=activity.pid
+     join pg_catalog.pg_class relation on relation.oid=lock.relation
+     join pg_catalog.pg_namespace namespace on namespace.oid=relation.relnamespace
+     where activity.pid=$1 and namespace.nspname='public'
+       and relation.relname='live_battle_rule_sets'
+       and lock.mode='RowShareLock' and not lock.granted`,
+    [active.pid],
+  );
+  const observedAtMs = performance.now() - started;
+  assert.equal(escaped.rowCount, 1);
+  assert.equal(escaped.rows[0].state, 'active');
+  assert.equal(escaped.rows[0].wait_event_type, 'Lock');
+  assert.equal(escaped.rows[0].mode, 'RowShareLock');
+  assert.equal(escaped.rows[0].granted, false);
+  assert.ok(observedAtMs > 750 && observedAtMs < 1_500);
+  await blocker.query('rollback');
+  const settled = await Promise.allSettled([leavePromise]);
+  assert.equal(settled[0].status, 'rejected');
+  assert.equal(settled[0].reason.code, '55P03');
+  assert.equal(settled[0].reason.message, 'live_battle_series_leave_busy');
+  assert.deepEqual(await stateSnapshot(value), before);
+  evidence.legacyRuleSetGap = {
+    requestedImplicitMode: escaped.rows[0].mode,
+    blockerMode: 'EXCLUSIVE',
+    observedAtMs: Math.round(observedAtMs),
+    activePast750ms: true,
+    sqlstateAfterRelease: settled[0].reason.code,
+    messageAfterRelease: settled[0].reason.message,
+    invariantSnapshot: true,
+  };
+}
+
+async function runEarlyNonParticipantRejection() {
+  const value = await createActiveCase('non-participant');
+  const before = await stateSnapshot(value);
+  await operator(blocker);
+  await blocker.query('begin');
+  await blocker.query(
+    'select id from public.live_battles where id=$1 for update',
+    [value.battleId],
+  );
+
+  await claim(first, value.sender);
+  const started = performance.now();
+  const settled = await Promise.allSettled([
+    first.query(
+      'select public.leave_live_battle_series($1) value',
+      [value.seriesId],
+    ),
+  ]);
+  const elapsedMs = performance.now() - started;
+  assert.equal(settled[0].status, 'rejected');
+  assert.equal(settled[0].reason.code, '42501');
+  assert.equal(settled[0].reason.message, 'live_battle_series_not_participant');
+  assert.notEqual(settled[0].reason.message, 'live_battle_series_leave_busy');
+  assert.ok(elapsedMs < 500, `non-participant rejection elapsed ${elapsedMs}`);
+  assert.deepEqual(await stateSnapshot(value), before);
+
+  await blocker.query('rollback');
+  await claim(first, value.challenger);
+  const retry = await first.query(
+    'select public.leave_live_battle_series($1) value',
+    [value.seriesId],
+  );
+  assert.equal(retry.rows[0].value.status, 'cancelled');
+  evidence.nonParticipant = {
+    blockedHostRow: `public.live_battles:${value.battleId}`,
+    sqlstate: settled[0].reason.code,
+    message: settled[0].reason.message,
+    elapsedMs: Math.round(elapsedMs),
+    invariantSnapshot: true,
+    legitimateRetryStatus: retry.rows[0].value.status,
+  };
 }
 
 async function runDeadlineCrossing() {
@@ -708,6 +812,9 @@ async function runRepeatedRaces() {
     const giftFirst = await createActiveCase(`gift-first-${iteration}`);
     const giftBefore = await economySnapshot(giftFirst);
     await Promise.all([claim(first, giftFirst.challenger), claim(senderClient, giftFirst.sender)]);
+    const giftFirstGate = 2_000_000 + iteration;
+    await operator(observer);
+    await observer.query('select pg_catalog.pg_advisory_lock($1)', [giftFirstGate]);
     await lockBattleBarrier(giftFirst);
     const giftKey = `gift-first-${iteration}-${token()}`;
     const queuedGift = senderClient.query(
@@ -716,13 +823,19 @@ async function runRepeatedRaces() {
     );
     await waitForQueryActive('c3c1-sender', 'send_live_battle_gift');
     const queuedLeave = first.query(
-      'select public.leave_live_battle_series($1)', [giftFirst.seriesId],
+      `with barrier as materialized (
+         select pg_catalog.pg_advisory_xact_lock($2) gate
+       )
+       select public.leave_live_battle_series($1) from barrier`,
+      [giftFirst.seriesId, giftFirstGate],
     );
     const giftOverlap = await observeOverlap(
       'c3c1-sender', 'send_live_battle_gift',
       'c3c1-first', 'leave_live_battle_series',
     );
     const giftRelease = await releaseBarrier();
+    await queuedGift;
+    await observer.query('select pg_catalog.pg_advisory_unlock($1)', [giftFirstGate]);
     const giftResults = await Promise.allSettled([queuedGift, queuedLeave]);
     const giftCounts = inspectScenarioResults('giftFirst', giftResults);
     assert.equal(giftCounts.fulfilled, 2);
@@ -921,10 +1034,15 @@ try {
      values('lb4_c3_c1_concurrent','C1','C3-C1 concurrency',10,true,true)
      on conflict (id) do update set cost_coins=excluded.cost_coins`,
   );
-  await runBudgetExhaustion();
-  await runTableLockMatrix();
-  await runDeadlineCrossing();
-  await runRepeatedRaces();
+  if (process.env.LB4_F5_A_C3_C1_PROBE_LEGACY_RULE_SET_GAP === 'true') {
+    await runLegacyRuleSetGapProbe();
+  } else {
+    await runBudgetExhaustion();
+    await runTableLockMatrix();
+    await runEarlyNonParticipantRejection();
+    await runDeadlineCrossing();
+    await runRepeatedRaces();
+  }
   const duplicateTerminal = await admin.query(
     `select count(*)::int n from (
        select battle_id from public.live_battle_events
