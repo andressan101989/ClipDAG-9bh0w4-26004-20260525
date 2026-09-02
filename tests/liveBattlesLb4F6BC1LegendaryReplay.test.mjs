@@ -9,6 +9,7 @@ import ts from 'typescript';
 const root = new URL('../', import.meta.url);
 const read = relative => readFile(new URL(relative, root), 'utf8');
 const temp = await mkdtemp(path.join(tmpdir(), 'clipdag-f6bc1-'));
+const TEST_NOW = Date.parse('2026-09-02T12:00:01.000Z');
 after(() => rm(temp, { recursive: true, force: true }));
 
 async function compilePureModule(relative) {
@@ -92,6 +93,7 @@ test('the base defect is reproduced and legendary 33 is replayed once after capa
     fetchPage: sourceFrom([row(event33)]),
     enqueue: replayRow => queueOutcome(queue, replayRow),
     logger: (marker, code) => logs.push([marker, code]),
+    now: () => TEST_NOW,
   });
   coordinator.request(row(event33, true).cursor);
   assert.equal(queue.snapshot().pending.some(item => item.event.eventId === event33.eventId), false);
@@ -128,6 +130,7 @@ test('multiple recovered legendary gifts retain durable order across repeated ca
       if (result.status === 'accepted') accepted.push(replayRow.event.eventId);
       return result;
     },
+    now: () => TEST_NOW,
   });
   coordinator.request({ ...recovered[0].cursor, inclusive: true });
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -144,6 +147,7 @@ test('replay cancellation fences an async late page and releases all bounded sta
   const coordinator = new GiftPresentationReplayCoordinator({
     fetchPage: () => new Promise(resolve => { resolvePage = resolve; }),
     enqueue: () => { enqueueCount += 1; return { status: 'accepted' }; },
+    now: () => TEST_NOW,
   });
   const event = legendary(33);
   coordinator.request(row(event, true).cursor);
@@ -165,6 +169,7 @@ test('network retry and memory are explicitly bounded without permanent polling'
       throw new Error('offline');
     },
     enqueue: () => ({ status: 'accepted' }),
+    now: () => TEST_NOW,
   });
   coordinator.request(row(legendary(33), true).cursor);
   await coordinator.notifyCapacityAvailable();
@@ -188,6 +193,7 @@ test('out-of-order and repeated durable pages are sorted and deduplicated', asyn
       if (result.status === 'accepted') accepted.push(replayRow.event.eventId);
       return result;
     },
+    now: () => TEST_NOW,
   });
   coordinator.request(row(events[0], true).cursor);
   await coordinator.notifyCapacityAvailable();

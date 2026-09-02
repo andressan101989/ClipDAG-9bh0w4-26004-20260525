@@ -16,7 +16,7 @@ import {
   type GiftPresentationEntry,
 } from '@/components/live/gifts/giftPresentationQueue';
 import {
-  GIFT_REPLAY_MAX_AGE_MS,
+  createInitialGiftReplayCursor,
   GiftPresentationReplayCoordinator,
 } from '@/components/live/gifts/giftPresentationReplay';
 import { getSupabaseClient } from '@/template';
@@ -50,7 +50,8 @@ export function useLiveGiftAnimations(sessionId?: string | null) {
   const reducedMotionRef = useRef(false);
   const replayRef = useRef<GiftPresentationReplayCoordinator | null>(null);
   const lastAcknowledgedCursorRef = useRef<GiftReplayCursor | null>(null);
-  const realtimeSubscribedRef = useRef(false);
+  const sessionStartCursorRef = useRef<GiftReplayCursor | null>(null);
+  const sessionCursorIdentityRef = useRef<string | null>(null);
   const sessionIdRef = useRef(sessionId);
   const enqueueRef = useRef<(event: LiveGiftPresentationEvent, replay?: boolean) => GiftEnqueueOutcome>(
     () => outcome('cancelled'),
@@ -58,6 +59,12 @@ export function useLiveGiftAnimations(sessionId?: string | null) {
   const [activeGift, setActiveGiftState] = useState<GiftPresentationEntry | null>(null);
   const [floatingGifts, setFloatingGifts] = useState<GiftPresentationEntry[]>([]);
   const [reducedMotion, setReducedMotion] = useState(false);
+
+  if ((sessionId ?? null) !== sessionCursorIdentityRef.current) {
+    sessionCursorIdentityRef.current = sessionId ?? null;
+    sessionStartCursorRef.current = sessionId ? createInitialGiftReplayCursor() : null;
+  }
+  sessionIdRef.current = sessionId;
 
   const setManagedTimeout = useCallback((fn: () => void, delayMs: number) => {
     const timer = setTimeout(() => {
@@ -162,7 +169,6 @@ export function useLiveGiftAnimations(sessionId?: string | null) {
     activeRef.current = null;
     compactRef.current = [];
     lastAcknowledgedCursorRef.current = null;
-    realtimeSubscribedRef.current = false;
     if (mountedRef.current) {
       setActiveGiftState(null);
       setFloatingGifts([]);
@@ -170,15 +176,12 @@ export function useLiveGiftAnimations(sessionId?: string | null) {
   }, []);
 
   useEffect(() => {
-    sessionIdRef.current = sessionId;
     resetGiftAnimations();
     if (!sessionId) return;
 
     const replaySessionId = sessionId;
     const fetchPage = async (cursor: GiftReplayCursor, limit: number): Promise<readonly GiftReplayRow[]> => {
       if (!mountedRef.current || sessionIdRef.current !== replaySessionId) return [];
-      const lowerBound = new Date(Date.now() - GIFT_REPLAY_MAX_AGE_MS).toISOString();
-      if (cursor.createdAt < lowerBound) return [];
       const escapedId = cursor.eventId.replace(/[^0-9a-f-]/gi, '');
       const idOperator = cursor.inclusive ? 'gte' : 'gt';
       const { data, error } = await getSupabaseClient()
@@ -214,11 +217,9 @@ export function useLiveGiftAnimations(sessionId?: string | null) {
   }, [resetGiftAnimations, sessionId]);
 
   const notifyGiftRealtimeSubscribed = useCallback(() => {
-    if (!realtimeSubscribedRef.current) {
-      realtimeSubscribedRef.current = true;
-      return;
-    }
-    void replayRef.current?.notifyReconnect(lastAcknowledgedCursorRef.current);
+    void replayRef.current?.notifyReconnect(
+      lastAcknowledgedCursorRef.current ?? sessionStartCursorRef.current,
+    );
   }, []);
 
   useEffect(() => {
