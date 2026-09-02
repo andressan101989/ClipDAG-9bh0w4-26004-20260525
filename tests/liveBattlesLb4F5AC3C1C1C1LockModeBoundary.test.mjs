@@ -48,13 +48,14 @@ const lockClosure = [
   ['public.live_battle_score_events', 'access share'],
 ];
 
-test('C3-C1-C1-C1 is the sole append-only boundary after the protected chain', () => {
-  assert.deepEqual(migrationNames.slice(-5), [
+test('C3-C1-C1-C1 remains in the append-only chain before F6-A', () => {
+  assert.deepEqual(migrationNames.slice(-6), [
     '20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql',
     '20260901201459_live_battles_lb4_f5_a_c3_active_series_leave.sql',
     '20260901211549_live_battles_lb4_f5_a_c3_c1_bounded_leave_retry.sql',
     '20260901231742_live_battles_lb4_f5_a_c3_c1_c1_strict_leave_lock_budget.sql',
     migrationName,
+    '20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql',
   ]);
   assert.match(migration, /^begin;/i);
   assert.match(migration, /commit;\s*$/i);

@@ -106,7 +106,7 @@ test("correction adds no migration, RPC, table or client-side financial authorit
   assert.ok(migrationNames.includes(visualRealtimeMigrationName));
   assert.equal(
     migrationNames.at(-1),
-    "20260902025229_live_battles_lb4_f5_a_c3_c1_c1_c1_lock_mode_boundary.sql",
+    "20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql",
   );
   assert.doesNotMatch(monitor, /create (table|function)|atomic_ledger_transfer/i);
   assert.equal((monitor.match(/admin\.rpc\('ledger_debit'/g) ?? []).length, 1);

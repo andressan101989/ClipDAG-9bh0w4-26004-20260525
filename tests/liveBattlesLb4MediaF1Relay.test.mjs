@@ -348,7 +348,7 @@ test('media repair adds no migration, polling, commerce, score, or lifecycle wri
     .sort();
   assert.equal(
     migrations.at(-1),
-    '20260902025229_live_battles_lb4_f5_a_c3_c1_c1_c1_lock_mode_boundary.sql',
+    '20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql',
   );
   const combined = `${relaySource}\n${controllerSource}\n${runtimeHookSource}`;
   assert.doesNotMatch(combined, /setInterval|polling|live_battle_transition|send_live_gift/);

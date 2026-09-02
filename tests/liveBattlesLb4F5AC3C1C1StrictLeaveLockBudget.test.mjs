@@ -54,12 +54,13 @@ const lockClosure = [
 ];
 
 test('C3-C1-C1 remains in the explicit append-only correction chain', () => {
-  assert.deepEqual(migrationNames.slice(-5), [
+  assert.deepEqual(migrationNames.slice(-6), [
     '20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql',
     '20260901201459_live_battles_lb4_f5_a_c3_active_series_leave.sql',
     '20260901211549_live_battles_lb4_f5_a_c3_c1_bounded_leave_retry.sql',
     migrationName,
     '20260902025229_live_battles_lb4_f5_a_c3_c1_c1_c1_lock_mode_boundary.sql',
+    '20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql',
   ]);
   assert.match(migration, /^begin;/i);
   assert.match(migration, /commit;\s*$/i);

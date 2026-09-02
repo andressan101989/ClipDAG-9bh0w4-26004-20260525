@@ -44,6 +44,7 @@ test('LB4-F3-F3 adds one migration and leaves every deployed migration byte-iden
     '20260901211549_live_battles_lb4_f5_a_c3_c1_bounded_leave_retry.sql',
     '20260901231742_live_battles_lb4_f5_a_c3_c1_c1_strict_leave_lock_budget.sql',
     '20260902025229_live_battles_lb4_f5_a_c3_c1_c1_c1_lock_mode_boundary.sql',
+    '20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql',
   ]);
   const previous = (await read(`supabase/migrations/${previousName}`)).replaceAll('\r\n', '\n');
   assert.equal(createHash('sha256').update(previous).digest('hex'),

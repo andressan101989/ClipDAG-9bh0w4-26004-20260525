@@ -314,7 +314,7 @@ test("visual closure retains no economic authority and keeps Build 22", () => {
     .sort();
   assert.equal(
     migrations.at(-1),
-    "20260902025229_live_battles_lb4_f5_a_c3_c1_c1_c1_lock_mode_boundary.sql",
+    "20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql",
   );
   assert.ok(migrations.includes("20260822221008_marketplace_post_settlement_delivery_ack_r2a_f1.sql"));
   assert.ok(migrations.includes("20260822165852_marketplace_post_settlement_returns_r2a.sql"));
