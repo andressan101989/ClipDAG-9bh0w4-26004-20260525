@@ -18,6 +18,23 @@ export type LiveGiftPresentationEvent = Readonly<{
   createdAt: number;
 }>;
 
+export type GiftEnqueueOutcome = Readonly<{
+  status: 'accepted' | 'combined' | 'duplicate' | 'stale' | 'wrong_session' | 'backpressure' | 'cancelled';
+}>;
+
+export type GiftReplayCursor = Readonly<{
+  createdAt: string;
+  eventId: string;
+  inclusive: boolean;
+}>;
+
+export type GiftReplayRow = Readonly<{
+  cursor: GiftReplayCursor;
+  event: LiveGiftPresentationEvent;
+}>;
+
+export const MAX_SEEN_REACTION_EVENT_IDS = 512;
+
 export type LiveGiftRealtimeRow = {
   id?: unknown;
   session_id?: unknown;
@@ -49,6 +66,31 @@ export function isGiftPresentationEventFresh(event: LiveGiftPresentationEvent, n
   return Number.isFinite(event.createdAt)
     && now - event.createdAt <= MAX_GIFT_EVENT_AGE_MS
     && event.createdAt - now <= 5_000;
+}
+
+export function shouldAcknowledgeGiftOutcome(outcome: GiftEnqueueOutcome): boolean {
+  return outcome.status !== 'backpressure' && outcome.status !== 'cancelled';
+}
+
+export function rememberSeenReactionEvent(seen: Set<string>, eventId: string): void {
+  if (!eventId || seen.has(eventId)) return;
+  seen.add(eventId);
+  while (seen.size > MAX_SEEN_REACTION_EVENT_IDS) {
+    const oldest = seen.values().next().value;
+    if (typeof oldest !== 'string') break;
+    seen.delete(oldest);
+  }
+}
+
+export function giftReplayCursorForEvent(
+  event: LiveGiftPresentationEvent,
+  inclusive: boolean,
+): GiftReplayCursor {
+  return Object.freeze({
+    createdAt: new Date(event.createdAt).toISOString(),
+    eventId: event.eventId,
+    inclusive,
+  });
 }
 
 export function liveGiftEventFromPayload(

@@ -39,7 +39,11 @@ import {
   type LiveHostControlAction,
 } from '@/services/liveSessionService';
 import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
-import { liveGiftEventFromPayload } from '@/components/live/gifts/giftPresentationContract';
+import {
+  liveGiftEventFromPayload,
+  rememberSeenReactionEvent,
+  shouldAcknowledgeGiftOutcome,
+} from '@/components/live/gifts/giftPresentationContract';
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
 import { LiveSessionHeader } from '@/components/live/LiveSessionHeader';
 import { LiveBattleStage } from '@/components/live/LiveBattleStage';
@@ -249,7 +253,13 @@ export default function LiveBroadcasterScreen() {
     productId: string;
     height: number;
   } | null>(null);
-  const { activeGift, floatingGifts, reducedMotion, enqueueGift } = useLiveGiftAnimations(streamId);
+  const {
+    activeGift,
+    floatingGifts,
+    reducedMotion,
+    enqueueGift,
+    notifyGiftRealtimeSubscribed,
+  } = useLiveGiftAnimations(streamId);
 
   const handleProductRailLayout = useCallback((height: number) => {
     if (!featuredProductId || !Number.isFinite(height) || height <= 0) return;
@@ -797,21 +807,26 @@ export default function LiveBroadcasterScreen() {
           const row = payload.new as any;
           if (row?.event_type !== 'reaction') return;
           if (seenReactionEventIdsRef.current.has(row.id)) return;
-          seenReactionEventIdsRef.current.add(row.id);
           const giftEvent = liveGiftEventFromPayload(row, streamId);
           if (giftEvent) {
-            enqueueGift(giftEvent);
+            const enqueueOutcome = enqueueGift(giftEvent);
+            if (shouldAcknowledgeGiftOutcome(enqueueOutcome)) {
+              rememberSeenReactionEvent(seenReactionEventIdsRef.current, row.id);
+            }
             return;
           }
+          rememberSeenReactionEvent(seenReactionEventIdsRef.current, row.id);
           addFloatingReaction(row?.payload?.emoji || '\u2764\uFE0F', row?.payload?.username);
         },
       )
-      .subscribe();
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') notifyGiftRealtimeSubscribed();
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [live, streamId, supabase, addFloatingReaction, enqueueGift]);
+  }, [live, streamId, supabase, addFloatingReaction, enqueueGift, notifyGiftRealtimeSubscribed]);
 
   useEffect(() => {
     if (!live) return;
@@ -886,7 +901,7 @@ export default function LiveBroadcasterScreen() {
     const username = user.username || user.email?.split('@')[0] || 'host';
     try {
       const data = await emitLiveReaction(streamId, emoji);
-      if (data?.id) seenReactionEventIdsRef.current.add(data.id);
+      if (data?.id) rememberSeenReactionEvent(seenReactionEventIdsRef.current, data.id);
       addFloatingReaction(emoji, username);
     } catch (err: any) {
       console.warn('[LiveBroadcast] reaction failed', err?.message ?? err);

@@ -217,7 +217,8 @@ test('shared layer preserves interaction, accessibility, Battle and one event so
   assert.match(layer, /useSafeAreaInsets/);
   assert.match(hook, /AccessibilityInfo\.isReduceMotionEnabled/);
   assert.match(hook, /reduceMotionChanged/);
-  assert.match(hook, /legendary_capacity/);
+  assert.match(hook, /\[LIVE-GIFT-PRESENTATION\] \$\{marker\}/);
+  assert.match(hook, /notifyCapacityAvailable/);
   assert.doesNotMatch(hook, /setInterval/);
   assert.match(rendererSource, /accessibilityElementsHidden/);
   assert.match(rendererSource, /useNativeDriver:\s*true/);

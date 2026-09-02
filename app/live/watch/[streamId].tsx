@@ -25,7 +25,11 @@ import { fetchGiftCatalog, fetchWalletBalance, sendLiveGift, type GiftCatalogIte
 import { LiveGiftButton } from '@/components/live/gifts/LiveGiftButton';
 import { LiveGiftSheet } from '@/components/live/gifts/LiveGiftSheet';
 import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
-import { liveGiftEventFromPayload } from '@/components/live/gifts/giftPresentationContract';
+import {
+  liveGiftEventFromPayload,
+  rememberSeenReactionEvent,
+  shouldAcknowledgeGiftOutcome,
+} from '@/components/live/gifts/giftPresentationContract';
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
 import { LiveSessionHeader } from '@/components/live/LiveSessionHeader';
 import { LiveBattleStage } from '@/components/live/LiveBattleStage';
@@ -209,7 +213,13 @@ export default function LiveWatchScreen() {
   const [commerceVisible, setCommerceVisible] = useState(false);
   const [commerceProductId, setCommerceProductId] = useState<string | null>(null);
   const [liveProducts, setLiveProducts] = useState<LiveSessionProduct[]>([]);
-  const { activeGift, floatingGifts, reducedMotion, enqueueGift } = useLiveGiftAnimations(streamId);
+  const {
+    activeGift,
+    floatingGifts,
+    reducedMotion,
+    enqueueGift,
+    notifyGiftRealtimeSubscribed,
+  } = useLiveGiftAnimations(streamId);
 
   const refreshLiveProducts = useCallback(async () => {
     if (!streamId) return;
@@ -509,21 +519,26 @@ export default function LiveWatchScreen() {
           const row = payload.new as any;
           if (row?.event_type !== 'reaction') return;
           if (seenReactionEventIdsRef.current.has(row.id)) return;
-          seenReactionEventIdsRef.current.add(row.id);
           const giftEvent = liveGiftEventFromPayload(row, streamId);
           if (giftEvent) {
-            enqueueGift(giftEvent);
+            const enqueueOutcome = enqueueGift(giftEvent);
+            if (shouldAcknowledgeGiftOutcome(enqueueOutcome)) {
+              rememberSeenReactionEvent(seenReactionEventIdsRef.current, row.id);
+            }
             return;
           }
+          rememberSeenReactionEvent(seenReactionEventIdsRef.current, row.id);
           addFloatingReaction(row?.payload?.emoji || '\u2764\uFE0F', row?.payload?.username);
         },
       )
-      .subscribe();
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') notifyGiftRealtimeSubscribed();
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session?.status, streamId, supabase, addFloatingReaction, enqueueGift]);
+  }, [session?.status, streamId, supabase, addFloatingReaction, enqueueGift, notifyGiftRealtimeSubscribed]);
 
   // ── Poll: session status + viewer count + messages ──────────────────────
   const poll = useCallback(async () => {
@@ -766,7 +781,7 @@ export default function LiveWatchScreen() {
     const username = getDisplayUsername(user);
     try {
       const data = await emitLiveReaction(streamId, emoji);
-      if (data?.id) seenReactionEventIdsRef.current.add(data.id);
+      if (data?.id) rememberSeenReactionEvent(seenReactionEventIdsRef.current, data.id);
       addFloatingReaction(emoji, username);
     } catch (err: any) {
       console.warn('[LiveWatch] reaction failed', err?.message ?? err);
