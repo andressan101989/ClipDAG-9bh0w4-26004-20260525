@@ -39,6 +39,7 @@ import {
   type LiveHostControlAction,
 } from '@/services/liveSessionService';
 import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
+import { liveGiftEventFromPayload } from '@/components/live/gifts/giftPresentationContract';
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
 import { LiveSessionHeader } from '@/components/live/LiveSessionHeader';
 import { LiveBattleStage } from '@/components/live/LiveBattleStage';
@@ -55,7 +56,6 @@ import {
   LiveBattleServiceError,
 } from '@/services/liveBattleService';
 import { leaveLiveBattleSeriesBeforeHostEnd } from '@/services/liveBattleSeriesState';
-import type { LiveGiftEvent } from '@/types/liveGifts';
 import { LiveHostProductManager } from '@/components/live/commerce/LiveHostProductManager';
 import { LiveHostPurchaseFeed } from '@/components/live/commerce/LiveHostPurchaseFeed';
 import { LiveProductRail } from '@/components/live/shop/LiveProductRail';
@@ -162,32 +162,6 @@ type FloatingReaction = {
 
 type HostActionPanel = 'requests' | 'gifts' | 'participants' | 'moderation' | null;
 
-function liveGiftEventFromPayload(row: any, streamId: string): LiveGiftEvent | null {
-  const payload = row?.payload ?? {};
-  if (row?.event_type !== 'reaction' || payload?.gift_real !== true) return null;
-  const transactionId = String(payload.transaction_id ?? row.id ?? '');
-  const giftId = String(payload.gift_id ?? '');
-  if (!transactionId || !giftId) return null;
-  return {
-    eventId: row.id ?? null,
-    transactionId,
-    sessionId: String(payload.session_id ?? row.session_id ?? streamId),
-    senderUserId: row.actor_user_id ?? payload.sender_user_id ?? null,
-    senderUsername: payload.username ?? payload.sender_username ?? null,
-    senderAvatarUrl: payload.avatar_url ?? payload.sender_avatar_url ?? null,
-    giftId,
-    giftName: String(payload.gift_name ?? payload.label ?? giftId),
-    icon: String(payload.icon ?? payload.emoji ?? '\uD83C\uDF81'),
-    amountBdag: Number(payload.amount_bdag ?? payload.amount_coins ?? 0),
-    category: payload.category ?? 'basic',
-    animationType: payload.animation_type ?? 'floating',
-    animationAsset: payload.animation_asset ?? null,
-    durationMs: Number(payload.duration_ms ?? 1800),
-    priority: Number(payload.priority ?? 0),
-    createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
-  };
-}
-
 function getCohostTimerText(participant: LiveParticipant) {
   if (!participant.floor_started_at) return null;
   if (participant.floor_duration_seconds === null || participant.floor_duration_seconds === undefined) return null;
@@ -275,7 +249,7 @@ export default function LiveBroadcasterScreen() {
     productId: string;
     height: number;
   } | null>(null);
-  const { activeGift, floatingGifts, enqueueGift } = useLiveGiftAnimations(streamId);
+  const { activeGift, floatingGifts, reducedMotion, enqueueGift } = useLiveGiftAnimations(streamId);
 
   const handleProductRailLayout = useCallback((height: number) => {
     if (!featuredProductId || !Number.isFinite(height) || height <= 0) return;
@@ -1156,7 +1130,7 @@ export default function LiveBroadcasterScreen() {
         </View>
       ) : null}
 
-      <LiveGiftOverlay activeGift={activeGift} floatingGifts={floatingGifts} />
+      <LiveGiftOverlay activeGift={activeGift} floatingGifts={floatingGifts} reducedMotion={reducedMotion} />
 
       {hostActionPanel === 'requests' ? (
         <View style={[styles.requestPanel, { bottom: productOverlayClearance }, battleState && { bottom: battlePanelsBottom }]}>
@@ -1293,7 +1267,7 @@ export default function LiveBroadcasterScreen() {
             <Text style={styles.giftActivityTitle}>Regalos del LIVE</Text>
             <Text style={styles.giftActivityText} numberOfLines={2}>
               {activeGift || floatingGifts[0]
-                ? `${(activeGift ?? floatingGifts[0]).senderUsername || 'Alguien'} envió ${(activeGift ?? floatingGifts[0]).giftName}`
+                ? `${(activeGift ?? floatingGifts[0]).event.senderDisplayName} envió ${(activeGift ?? floatingGifts[0]).event.label}`
                 : 'Los regalos recibidos aparecerán aquí y sobre el video.'}
             </Text>
           </View>

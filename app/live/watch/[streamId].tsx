@@ -25,13 +25,13 @@ import { fetchGiftCatalog, fetchWalletBalance, sendLiveGift, type GiftCatalogIte
 import { LiveGiftButton } from '@/components/live/gifts/LiveGiftButton';
 import { LiveGiftSheet } from '@/components/live/gifts/LiveGiftSheet';
 import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
+import { liveGiftEventFromPayload } from '@/components/live/gifts/giftPresentationContract';
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
 import { LiveSessionHeader } from '@/components/live/LiveSessionHeader';
 import { LiveBattleStage } from '@/components/live/LiveBattleStage';
 import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
 import { useLiveBattleSpectatorState } from '@/hooks/live/useLiveBattleSpectatorState';
 import { isLiveBattleStageStatus } from '@/services/liveBattleSpectatorService';
-import type { LiveGiftEvent } from '@/types/liveGifts';
 import { LiveCommerceButton } from '@/components/live/commerce/LiveCommerceButton';
 import { LiveProductRail } from '@/components/live/shop/LiveProductRail';
 import { LiveViewerCommerce } from '@/components/live/commerce/LiveViewerCommerce';
@@ -143,32 +143,6 @@ async function attachMessageAvatars(supabase: ReturnType<typeof getSupabaseClien
   }));
 }
 
-function liveGiftEventFromPayload(row: any, streamId: string): LiveGiftEvent | null {
-  const payload = row?.payload ?? {};
-  if (row?.event_type !== 'reaction' || payload?.gift_real !== true) return null;
-  const transactionId = String(payload.transaction_id ?? row.id ?? '');
-  const giftId = String(payload.gift_id ?? '');
-  if (!transactionId || !giftId) return null;
-  return {
-    eventId: row.id ?? null,
-    transactionId,
-    sessionId: String(payload.session_id ?? row.session_id ?? streamId),
-    senderUserId: row.actor_user_id ?? payload.sender_user_id ?? null,
-    senderUsername: payload.username ?? payload.sender_username ?? null,
-    senderAvatarUrl: payload.avatar_url ?? payload.sender_avatar_url ?? null,
-    giftId,
-    giftName: String(payload.gift_name ?? payload.label ?? giftId),
-    icon: String(payload.icon ?? payload.emoji ?? '\uD83C\uDF81'),
-    amountBdag: Number(payload.amount_bdag ?? payload.amount_coins ?? 0),
-    category: payload.category ?? 'basic',
-    animationType: payload.animation_type ?? 'floating',
-    animationAsset: payload.animation_asset ?? null,
-    durationMs: Number(payload.duration_ms ?? 1800),
-    priority: Number(payload.priority ?? 0),
-    createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
-  };
-}
-
 function FloatingReactionBubble({ reaction, bottom }: { reaction: FloatingReaction; bottom: number }) {
   const progress = useRef(new Animated.Value(0)).current;
 
@@ -235,7 +209,7 @@ export default function LiveWatchScreen() {
   const [commerceVisible, setCommerceVisible] = useState(false);
   const [commerceProductId, setCommerceProductId] = useState<string | null>(null);
   const [liveProducts, setLiveProducts] = useState<LiveSessionProduct[]>([]);
-  const { activeGift, floatingGifts, enqueueGift } = useLiveGiftAnimations(streamId);
+  const { activeGift, floatingGifts, reducedMotion, enqueueGift } = useLiveGiftAnimations(streamId);
 
   const refreshLiveProducts = useCallback(async () => {
     if (!streamId) return;
@@ -961,7 +935,7 @@ export default function LiveWatchScreen() {
         />
       ))}
 
-      <LiveGiftOverlay activeGift={activeGift} floatingGifts={floatingGifts} />
+      <LiveGiftOverlay activeGift={activeGift} floatingGifts={floatingGifts} reducedMotion={reducedMotion} />
 
       {hostInvite ? (
         <View style={[styles.hostInvitePanel, { top: insets.top + 154 }]}>
