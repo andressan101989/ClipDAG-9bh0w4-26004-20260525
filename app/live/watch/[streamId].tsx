@@ -21,7 +21,7 @@ import { getSupabaseClient } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
 import { useAgoraEngine } from '@/hooks/useAgoraEngine';
 import { RtcSurfaceView, useridToAgoraUid } from '@/services/agoraService';
-import { fetchGiftCatalog, fetchWalletBalance, sendLiveGift, type GiftCatalogItem } from '@/services/liveGiftsService';
+import { fetchGiftCatalog, fetchWalletBalance, sendLiveGiftForContext, type GiftCatalogItem } from '@/services/liveGiftsService';
 import { LiveGiftButton } from '@/components/live/gifts/LiveGiftButton';
 import { LiveGiftSheet } from '@/components/live/gifts/LiveGiftSheet';
 import { LiveGiftOverlay } from '@/components/live/gifts/LiveGiftOverlay';
@@ -250,6 +250,9 @@ export default function LiveWatchScreen() {
     Boolean(user?.id && session?.status === 'live'),
     user?.id ?? null,
   );
+  const battleState = battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status)
+    ? battleProjection.state
+    : null;
   const battleStageVisible = Boolean(
     battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status),
   );
@@ -282,6 +285,7 @@ export default function LiveWatchScreen() {
   const seenReactionEventIdsRef = useRef<Set<string>>(new Set());
   const lastReactionAtRef = useRef(0);
   const sendingGiftRef = useRef(false);
+  const pendingGiftAttemptRef = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
   const giftFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -798,10 +802,25 @@ export default function LiveWatchScreen() {
     sendingGiftRef.current = true;
     setSendingGiftId(gift.id);
 
-    const idempotencyKey = `${streamId}:${user.id}:${gift.id}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    const battleContext = battleState
+      ? { battleId: battleState.battleId, targetUserId: battleState.localHostUserId }
+      : null;
+    const fingerprint = `${streamId}:${battleContext?.battleId ?? 'live'}:${battleContext?.targetUserId ?? 'session-host'}:${gift.id}`;
+    if (pendingGiftAttemptRef.current?.fingerprint !== fingerprint) {
+      pendingGiftAttemptRef.current = {
+        fingerprint,
+        idempotencyKey: `${streamId}:${user.id}:${gift.id}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+      };
+    }
+    const idempotencyKey = pendingGiftAttemptRef.current.idempotencyKey;
 
     try {
-      const result = await sendLiveGift({ sessionId: streamId, giftId: gift.id, idempotencyKey });
+      const result = await sendLiveGiftForContext({
+        sessionId: streamId,
+        giftId: gift.id,
+        idempotencyKey,
+        battle: battleContext,
+      });
 
       if (!result.success) {
         showGiftFeedback(/insufficient balance/i.test(result.error ?? '') ? 'Saldo insuficiente' : 'No se pudo enviar el regalo');
@@ -810,8 +829,11 @@ export default function LiveWatchScreen() {
       }
 
       if (typeof result.new_sender_balance === 'number') setWalletBalance(result.new_sender_balance);
+      pendingGiftAttemptRef.current = null;
       setWalletBalanceError(null);
+      setGiftSheetVisible(false);
       showGiftFeedback(`${gift.name} enviado`);
+      if (battleContext) void battleProjection.reconcile();
     } catch (err: any) {
       console.warn('[LiveWatch] send gift failed', err?.message ?? err);
       showGiftFeedback('No se pudo enviar el regalo');
@@ -819,7 +841,7 @@ export default function LiveWatchScreen() {
       sendingGiftRef.current = false;
       setSendingGiftId(null);
     }
-  }, [streamId, user, giftsEnabled, walletBalance, showGiftFeedback]);
+  }, [streamId, user, giftsEnabled, walletBalance, showGiftFeedback, battleState, battleProjection.reconcile]);
 
   const shareLive = useCallback(async () => {
     try {
@@ -859,9 +881,6 @@ export default function LiveWatchScreen() {
     );
   }
 
-  const battleState = battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status)
-    ? battleProjection.state
-    : null;
   const canonicalHostUid = useridToAgoraUid(session.hostId);
   const remoteUid = remoteUids.includes(canonicalHostUid) ? canonicalHostUid : remoteUids[0];
   const battleHostUid = battleState?.localHostAgoraUid;
@@ -951,6 +970,13 @@ export default function LiveWatchScreen() {
       ))}
 
       <LiveGiftOverlay activeGift={activeGift} floatingGifts={floatingGifts} reducedMotion={reducedMotion} />
+
+      {giftFeedback && !giftSheetVisible ? (
+        <View pointerEvents="none" style={[styles.giftConfirmation, { top: insets.top + 74 }]}>
+          <MaterialIcons name="check-circle" size={18} color="#fff" />
+          <Text style={styles.giftConfirmationText}>{giftFeedback}</Text>
+        </View>
+      ) : null}
 
       {hostInvite ? (
         <View style={[styles.hostInvitePanel, { top: insets.top + 154 }]}>
@@ -1240,6 +1266,21 @@ const styles = StyleSheet.create({
 
   errorBanner: { marginHorizontal: Spacing.md, backgroundColor: 'rgba(255,45,85,0.15)', borderRadius: Radius.sm, padding: Spacing.xs },
   errorText: { color: Colors.secondary, fontSize: 11, textAlign: 'center' },
+  giftConfirmation: {
+    position: 'absolute',
+    alignSelf: 'center',
+    zIndex: 18,
+    elevation: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: '82%',
+    borderRadius: Radius.full,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(18,145,82,0.94)',
+  },
+  giftConfirmationText: { color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
   floatingReaction: { position: 'absolute', zIndex: 16, alignItems: 'center', marginLeft: -18 },
   floatingReactionEmoji: { fontSize: 31, textShadowColor: 'rgba(0,0,0,0.45)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
 

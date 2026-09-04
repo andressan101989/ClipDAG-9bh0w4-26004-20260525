@@ -44,6 +44,16 @@ export interface GiftCatalogRow {
 export type GiftCatalogItem = LiveGiftDefinition;
 export type SendLiveGiftResult = LiveGiftSendResult;
 
+export type SendLiveGiftForContextInput = {
+  sessionId: string;
+  giftId: string;
+  idempotencyKey: string;
+  battle: {
+    battleId: string;
+    targetUserId: string;
+  } | null;
+};
+
 const supabase = () => getSupabaseClient();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -194,6 +204,29 @@ function mapBattleGiftError(message?: string): string {
   if (code.includes('live_battle_gift_idempotency_conflict')) return 'Reintento de regalo incompatible';
   if (code.includes('insufficient balance')) return 'Saldo BDAG insuficiente';
   return 'No se pudo enviar el regalo Battle';
+}
+
+/**
+ * Selects the existing server authority for the viewer's canonical context.
+ * The optional Battle data contains identities only; neither price nor score
+ * can be supplied or calculated by this client-side router.
+ */
+export function sendLiveGiftForContext(
+  input: SendLiveGiftForContextInput,
+): Promise<LiveGiftSendResult> {
+  if (input.battle) {
+    return sendLiveBattleGift({
+      battleId: input.battle.battleId,
+      targetUserId: input.battle.targetUserId,
+      giftId: input.giftId,
+      idempotencyKey: input.idempotencyKey,
+    });
+  }
+  return sendLiveGift({
+    sessionId: input.sessionId,
+    giftId: input.giftId,
+    idempotencyKey: input.idempotencyKey,
+  });
 }
 
 /**
