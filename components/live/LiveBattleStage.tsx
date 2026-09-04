@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
+import { LiveBattleViewerHUD } from '@/components/live/LiveBattleViewerHUD';
 import {
   deriveLiveBattleLocalCompetitiveState,
   deriveLiveBattlePowerVisualState,
@@ -44,6 +45,7 @@ type LiveBattleStageProps = {
   onRequestRematch?: () => Promise<unknown> | null;
   onAcceptRematch?: () => Promise<unknown> | null;
   onRejectRematch?: () => Promise<unknown> | null;
+  viewerMode?: boolean;
 };
 
 function secondsUntil(value: string | null, now: number | null): number | null {
@@ -125,6 +127,7 @@ export function LiveBattleStage({
   onRequestRematch,
   onAcceptRematch,
   onRejectRematch,
+  viewerMode = false,
 }: LiveBattleStageProps) {
   const [monotonicNow, setMonotonicNow] = useState<number | null>(
     () => clockAnchor ? readLiveBattleMonotonicNow() : null,
@@ -228,6 +231,22 @@ export function LiveBattleStage({
         <HostPanel identity={opponentHost} label="Rival" surface={opponentSurface} side="opponent" />
       </View>
       <View style={styles.centerDivider} pointerEvents="none" />
+      {viewerMode ? (
+        <LiveBattleViewerHUD
+          top={topInset + 64}
+          localName={localHost.username}
+          rivalName={opponentHost.username}
+          localScore={competitive.localScore}
+          rivalScore={competitive.rivalScore}
+          timer={clock(battleSeconds)}
+          status={timerLabel}
+          localRoseProgress={competitive.localRoseProgressUnits}
+          rivalRoseProgress={competitive.rivalRoseProgressUnits}
+          roseTarget={state.roseTargetUnits}
+          localBoost={boostLabel(localPower)}
+          rivalBoost={boostLabel(rivalPower)}
+        />
+      ) : (
       <View style={[styles.battlePanel, { top: topInset + 64 }]}>
         <Text style={styles.battleTitle}>LIVE BATTLE</Text>
         <View style={styles.identityRow}>
@@ -383,6 +402,7 @@ export function LiveBattleStage({
           </View>
         ) : null}
       </View>
+      )}
     </View>
   );
 }

@@ -33,6 +33,19 @@ import {
 import { LiveChatMessageItem } from '@/components/live/LiveChatMessageItem';
 import { LiveSessionHeader } from '@/components/live/LiveSessionHeader';
 import { LiveBattleStage } from '@/components/live/LiveBattleStage';
+import {
+  BattleViewerHeader,
+  ViewerActionRail,
+  ViewerBottomBar,
+} from '@/components/live/LiveBattleViewerChrome';
+import {
+  LiveHostInvitationCard,
+  type LiveHostInvitationVisualState,
+} from '@/components/live/LiveHostInvitationCard';
+import {
+  LiveHostInvitationActionGate,
+  resolveHostInviteExpiresAt,
+} from '@/components/live/liveHostInvitationContract';
 import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
 import { useLiveBattleSpectatorState } from '@/hooks/live/useLiveBattleSpectatorState';
 import { isLiveBattleStageStatus } from '@/services/liveBattleSpectatorService';
@@ -112,10 +125,20 @@ type LiveParticipant = {
 
 type HostInviteEvent = {
   id: string;
+  createdAt: string;
+  expiresAt: number;
   payload?: {
     username?: string;
   } | null;
 };
+
+const HOST_INVITE_TERMINAL_EVENTS = new Set([
+  'host_invite_response',
+  'presence_leave',
+  'presence_enter',
+  'reject_join',
+  'remove_cohost',
+]);
 
 type FloatingReaction = {
   id: string;
@@ -201,6 +224,7 @@ export default function LiveWatchScreen() {
   const [composerHeight, setComposerHeight] = useState(72);
   const [floorSecondsRemaining, setFloorSecondsRemaining] = useState<number | null>(null);
   const [hostInvite, setHostInvite] = useState<HostInviteEvent | null>(null);
+  const [hostInviteAction, setHostInviteAction] = useState<LiveHostInvitationVisualState>('idle');
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
   const [giftCatalog, setGiftCatalog] = useState<GiftCatalogItem[]>([]);
   const [giftsEnabled, setGiftsEnabled] = useState(false);
@@ -282,6 +306,7 @@ export default function LiveWatchScreen() {
   const timerExpiredHandledRef = useRef(false);
   const lastPromotionKeyRef = useRef<string | null>(null);
   const seenHostInviteIdsRef = useRef<Set<string>>(new Set());
+  const hostInviteGateRef = useRef(new LiveHostInvitationActionGate());
   const seenReactionEventIdsRef = useRef<Set<string>>(new Set());
   const lastReactionAtRef = useRef(0);
   const sendingGiftRef = useRef(false);
@@ -497,11 +522,31 @@ export default function LiveWatchScreen() {
         payload => {
           const row = payload.new as any;
           if (row?.target_user_id !== user.id) return;
-          if (row?.event_type !== 'host_invite') return;
+          if (row?.event_type !== 'host_invite') {
+            if (HOST_INVITE_TERMINAL_EVENTS.has(row?.event_type)) {
+              setHostInvite(current => {
+                if (!current) return null;
+                const terminalAt = Date.parse(row?.created_at ?? '');
+                const inviteAt = Date.parse(current.createdAt);
+                return Number.isFinite(terminalAt) && terminalAt >= inviteAt ? null : current;
+              });
+              setHostInviteAction('idle');
+            }
+            return;
+          }
           if (seenHostInviteIdsRef.current.has(row.id)) return;
           seenHostInviteIdsRef.current.add(row.id);
           if (isStructuredCohost || requestSent) return;
-          setHostInvite({ id: row.id, payload: row.payload });
+          const createdAt = typeof row.created_at === 'string' ? row.created_at : new Date().toISOString();
+          setGiftSheetVisible(false);
+          setCommerceVisible(false);
+          setHostInviteAction('idle');
+          setHostInvite({
+            id: row.id,
+            createdAt,
+            expiresAt: resolveHostInviteExpiresAt(createdAt),
+            payload: row.payload,
+          });
         },
       )
       .subscribe();
@@ -510,6 +555,12 @@ export default function LiveWatchScreen() {
       supabase.removeChannel(channel);
     };
   }, [session?.status, streamId, user?.id, supabase, isStructuredCohost, requestSent]);
+
+  useEffect(() => {
+    if (session?.status === 'live' && !isStructuredCohost && !requestSent) return;
+    setHostInvite(null);
+    setHostInviteAction('idle');
+  }, [isStructuredCohost, requestSent, session?.status]);
 
   useEffect(() => {
     if (session?.status !== 'live' || !streamId) return;
@@ -755,26 +806,42 @@ export default function LiveWatchScreen() {
   const acceptHostInvite = useCallback(async () => {
     if (!streamId || !hostInvite) return;
     const invite = hostInvite;
-    setHostInvite(null);
-    try {
-      const data = await respondToLiveHostInvite(streamId, invite.id, true);
-      if (data) setParticipantRow(data as LiveParticipant);
-    } catch (err: any) {
-      console.warn('[LiveWatch] accept invite failed', err?.message ?? err);
+    setHostInviteAction('accepting');
+    const outcome = await hostInviteGateRef.current.run(invite.id, 'accept', () =>
+      respondToLiveHostInvite(streamId, invite.id, true)
+    );
+    if (outcome.status === 'ignored') return;
+    if (outcome.status === 'succeeded') {
+      if (outcome.value) setParticipantRow(outcome.value as LiveParticipant);
+      setHostInvite(current => current?.id === invite.id ? null : current);
+    } else {
+      console.warn('[LiveWatch] accept invite failed');
       Alert.alert('No se pudo aceptar la invitación');
     }
+    setHostInviteAction('idle');
   }, [streamId, hostInvite]);
 
   const rejectHostInvite = useCallback(async () => {
     if (!streamId || !hostInvite) return;
     const invite = hostInvite;
-    setHostInvite(null);
-    try {
-      await respondToLiveHostInvite(streamId, invite.id, false);
-    } catch (err: any) {
-      console.warn('[LiveWatch] reject invite failed', err?.message ?? err);
+    setHostInviteAction('rejecting');
+    const outcome = await hostInviteGateRef.current.run(invite.id, 'reject', () =>
+      respondToLiveHostInvite(streamId, invite.id, false)
+    );
+    if (outcome.status === 'ignored') return;
+    if (outcome.status === 'succeeded') {
+      setHostInvite(current => current?.id === invite.id ? null : current);
+    } else {
+      console.warn('[LiveWatch] reject invite failed');
+      Alert.alert('No se pudo rechazar la invitación');
     }
+    setHostInviteAction('idle');
   }, [streamId, hostInvite]);
+
+  const expireHostInvite = useCallback(() => {
+    setHostInvite(null);
+    setHostInviteAction('idle');
+  }, []);
 
   const sendReaction = useCallback(async (emoji: string) => {
     if (!streamId || !user?.id) return;
@@ -855,6 +922,18 @@ export default function LiveWatchScreen() {
     }
   }, [session?.title]);
 
+  const openBattleMoreOptions = useCallback(() => {
+    const unavailable = requestSent || promotedToPublisher || isStructuredCohost || !user;
+    if (unavailable) {
+      Alert.alert('Más opciones', requestSent ? 'Tu solicitud para unirte está pendiente.' : 'No hay más acciones disponibles ahora.');
+      return;
+    }
+    Alert.alert('Más opciones', 'Puedes solicitar participar con cámara y micrófono.', [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Solicitar unirme', onPress: () => { void requestToJoin(); } },
+    ]);
+  }, [isStructuredCohost, promotedToPublisher, requestSent, requestToJoin, user]);
+
   const formatLiveDuration = (seconds: number) =>
     `${Math.floor(seconds / 3600).toString().padStart(2, '0')}:${Math.floor((seconds % 3600) / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
 
@@ -927,6 +1006,7 @@ export default function LiveWatchScreen() {
           onRequestRematch={battleProjection.requestRematch}
           onAcceptRematch={battleProjection.acceptRematch}
           onRejectRematch={battleProjection.rejectRematch}
+          viewerMode
         />
       ) : RtcSurfaceView && remoteUid !== undefined ? (
         <RtcSurfaceView canvas={{ uid: remoteUid }} style={styles.videoStream} />
@@ -945,9 +1025,29 @@ export default function LiveWatchScreen() {
 
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <LinearGradient colors={['rgba(0,0,0,0.45)', 'transparent']} style={styles.topShade} pointerEvents="none" />
-      <LinearGradient colors={['transparent', 'rgba(0,0,0,0.58)']} style={styles.bottomShade} pointerEvents="none" />
+      <LinearGradient
+        colors={battleState ? ['transparent', 'rgba(3,4,9,0.34)', 'rgba(3,4,9,0.92)'] : ['transparent', 'rgba(0,0,0,0.58)']}
+        style={[styles.bottomShade, battleState && styles.battleChatGradient]}
+        pointerEvents="none"
+      />
 
-      <View style={[styles.header,{top:insets.top+8,height:undefined,paddingHorizontal:0,backgroundColor:'transparent',borderWidth:0}]}><LiveSessionHeader hostName={session.hostUsername} viewerCount={session.viewerCount} elapsed={formatLiveDuration(watchSeconds)} onClose={()=>router.back()} battleMode={Boolean(battleState)}/></View>
+      <View style={[styles.header, { top: insets.top + 8, height: undefined, paddingHorizontal: 0, backgroundColor: 'transparent', borderWidth: 0 }]}>
+        {battleState ? (
+          <BattleViewerHeader
+            hostName={battleProjection.localHostProfile?.username ?? session.hostUsername}
+            avatarUrl={battleProjection.localHostProfile?.avatarUrl ?? null}
+            viewerCount={session.viewerCount}
+            onClose={() => router.back()}
+          />
+        ) : (
+          <LiveSessionHeader
+            hostName={session.hostUsername}
+            viewerCount={session.viewerCount}
+            elapsed={formatLiveDuration(watchSeconds)}
+            onClose={() => router.back()}
+          />
+        )}
+      </View>
 
       {!battleState ? <View style={[styles.titleBlock, { top: insets.top + 88 }]}>
         <Text style={styles.streamTitle} numberOfLines={2}>{session.title}</Text>
@@ -975,29 +1075,6 @@ export default function LiveWatchScreen() {
         <View pointerEvents="none" style={[styles.giftConfirmation, { top: insets.top + 74 }]}>
           <MaterialIcons name="check-circle" size={18} color="#fff" />
           <Text style={styles.giftConfirmationText}>{giftFeedback}</Text>
-        </View>
-      ) : null}
-
-      {hostInvite ? (
-        <View style={[styles.hostInvitePanel, { top: insets.top + 154 }]}>
-          <MaterialIcons name="person-add-alt-1" size={17} color="#fff" />
-          <Text style={styles.hostInviteText} numberOfLines={1}>El anfitrión quiere subirte</Text>
-          <Pressable
-            style={[styles.hostInviteBtn, styles.hostInviteRejectBtn]}
-            onPress={rejectHostInvite}
-            hitSlop={6}
-            accessibilityLabel="Rechazar invitación del anfitrión"
-          >
-            <MaterialIcons name="close" size={16} color="#fff" />
-          </Pressable>
-          <Pressable
-            style={[styles.hostInviteBtn, styles.hostInviteAcceptBtn]}
-            onPress={acceptHostInvite}
-            hitSlop={6}
-            accessibilityLabel="Aceptar invitación del anfitrión"
-          >
-            <MaterialIcons name="check" size={16} color="#fff" />
-          </Pressable>
         </View>
       ) : null}
 
@@ -1037,6 +1114,13 @@ export default function LiveWatchScreen() {
         </View>
       ) : null}
 
+      {battleState ? (
+        <ViewerActionRail
+          onReact={() => sendReaction('\u2764\uFE0F')}
+          onShare={shareLive}
+          onMore={openBattleMoreOptions}
+        />
+      ) : (
       <View style={[styles.actionRail, battleState && styles.battleActionRail]}>
         {!battleState && !featuredLiveProduct?<LiveCommerceButton
           count={liveProducts.length}
@@ -1090,6 +1174,7 @@ export default function LiveWatchScreen() {
           {battleState ? <Text style={styles.battleActionLabel}>Cámara</Text> : null}
         </Pressable>
       </View>
+      )}
       {!battleState && featuredLiveProduct ? (
         <LiveProductRail
           product={featuredLiveProduct}
@@ -1171,6 +1256,29 @@ export default function LiveWatchScreen() {
         />
       ) : null}
 
+      {battleState ? (
+      <View
+        style={[styles.viewerInputRow, { bottom: composerBottom + 8 }]}
+        onLayout={event => {
+          const nextHeight = event.nativeEvent.layout.height;
+          setComposerHeight(current => Math.abs(current - nextHeight) < 1 ? current : nextHeight);
+        }}
+      >
+        <ViewerBottomBar
+          value={chatInput}
+          sending={sending}
+          editable={Boolean(user)}
+          giftsDisabled={!user || session.status !== 'live' || !giftsEnabled || walletBalanceLoading}
+          inputRef={inputRef}
+          onChangeText={setChatInput}
+          onSubmit={sendMessage}
+          onOpenGifts={() => {
+            setCommerceVisible(false);
+            setGiftSheetVisible(true);
+          }}
+        />
+      </View>
+      ) : (
       <View
         style={[styles.inputRow, battleState && styles.battleInputRow, { bottom: composerBottom + 8 }]}
         onLayout={event => {
@@ -1207,6 +1315,18 @@ export default function LiveWatchScreen() {
           {sending ? <ActivityIndicator size="small" color="#fff" /> : <MaterialIcons name="send" size={18} color="#fff" />}
         </Pressable>
       </View>
+      )}
+
+      <LiveHostInvitationCard
+        visible={Boolean(hostInvite)}
+        expiresAt={hostInvite?.expiresAt ?? null}
+        action={hostInviteAction}
+        reducedMotion={reducedMotion}
+        onAccept={acceptHostInvite}
+        onReject={rejectHostInvite}
+        onExpire={expireHostInvite}
+        returnFocusRef={inputRef}
+      />
     </SafeAreaView>
   );
 }
@@ -1228,6 +1348,7 @@ const styles = StyleSheet.create({
 
   topShade: { position: 'absolute', top: 0, left: 0, right: 0, height: 170, zIndex: 2 },
   bottomShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 320, zIndex: 2 },
+  battleChatGradient: { height: 360 },
   header: {
     position: 'absolute',
     left: 12,
@@ -1290,26 +1411,6 @@ const styles = StyleSheet.create({
   battleActionRail: { top: undefined, bottom: 108, gap: 8, alignItems: 'center' },
   battleActionButton: { width: 48, height: 48, borderRadius: 24, gap: 1, backgroundColor: 'rgba(9,10,18,0.74)', borderColor: 'rgba(255,255,255,0.12)' },
   battleActionLabel: { color: '#FFF', fontSize: 8, lineHeight: 10, fontWeight: FontWeight.semibold },
-  hostInvitePanel: {
-    position: 'absolute',
-    left: 16,
-    right: 84,
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingLeft: 13,
-    paddingRight: 6,
-    backgroundColor: 'rgba(0,0,0,0.56)',
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.14)',
-    zIndex: 12,
-  },
-  hostInviteText: { flex: 1, color: '#fff', fontSize: 12, fontWeight: FontWeight.semibold },
-  hostInviteBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
-  hostInviteRejectBtn: { backgroundColor: 'rgba(255,255,255,0.16)' },
-  hostInviteAcceptBtn: { backgroundColor: Colors.primary },
   cohostStatusPanel: { position: 'absolute', left: 16, flexDirection: 'row', alignItems: 'center', gap: 7, zIndex: 10 },
   cohostSelfBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.42)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
   cohostSelfBtnActive: { backgroundColor: 'rgba(124,92,255,0.76)' },
@@ -1339,6 +1440,7 @@ const styles = StyleSheet.create({
   battleChatList: { width: '100%', maxHeight: 154, marginLeft: 4 },
 
   inputRow: { position: 'absolute', left: 12, right: 12, minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 20, elevation: 20 },
+  viewerInputRow: { position: 'absolute', left: 12, right: 12, minHeight: 54, zIndex: 20, elevation: 20 },
   input: { flex: 1, height: 58, backgroundColor: 'rgba(255,255,255,0.10)', borderRadius: Radius.full, paddingHorizontal: 18, color: '#fff', fontSize: FontSize.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
   battleInputRow: { minHeight: 50, paddingHorizontal: 0, borderRadius: 25, backgroundColor: 'rgba(9,10,18,0.82)' },
   battleInput: { height: 50, backgroundColor: 'transparent', borderWidth: 0 },
