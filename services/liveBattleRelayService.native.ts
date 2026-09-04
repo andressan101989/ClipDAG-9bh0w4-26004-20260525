@@ -252,6 +252,64 @@ export class LiveBattleRelayService {
     return promise;
   }
 
+  transition(battleId: string): Promise<LiveBattleRelaySnapshot> {
+    if (this.disposed) return Promise.reject(new LiveBattleRelayError('battle_relay_disposed'));
+    if (!this.activeBattleId) return this.start(battleId);
+    if (this.pendingStart?.battleId === battleId) return this.pendingStart.promise;
+    if (this.activeBattleId === battleId
+      && (this.snapshot.state === 'connecting' || this.snapshot.state === 'running')) {
+      return Promise.resolve(this.getSnapshot());
+    }
+
+    const generation = ++this.generation;
+    const promise = this.enqueue(async () => {
+      this.assertCurrent(generation);
+      this.setState('authorizing', battleId);
+      const credentials = await this.requestCredentials(battleId);
+      this.assertCurrent(generation);
+      this.installHandler(generation, battleId);
+      const relay = credentials.battleRelay;
+      this.setState('connecting', battleId, null, null);
+      this.logger('update', {
+        battle: shortId(battleId),
+        route: `${shortId(relay.source.liveSessionId)}->${shortId(relay.destination.liveSessionId)}`,
+        sourceUid: relay.source.uid,
+        destinationUid: relay.destination.uid,
+      });
+      const result = this.engine.startOrUpdateChannelMediaRelay(configurationFrom(credentials));
+      this.logger('update_result', { battle: shortId(battleId), result });
+      if (typeof result !== 'number' || result !== 0) {
+        this.unregisterOwnHandler();
+        try { this.engine.stopChannelMediaRelay(); } catch { /* fail closed */ }
+        this.activeBattleId = null;
+        const relayCode = typeof result === 'number' ? result : -1;
+        this.setState('failed', battleId, 'battle_relay_agora_start_failed', relayCode);
+        throw new LiveBattleRelayError('battle_relay_agora_start_failed', undefined, relayCode);
+      }
+      this.activeBattleId = battleId;
+      return this.getSnapshot();
+    }).catch(error => {
+      if (generation === this.generation && this.activeBattleId && this.activeBattleId !== battleId) {
+        this.unregisterOwnHandler();
+        try { this.engine.stopChannelMediaRelay(); } catch { /* fail closed */ }
+        this.activeBattleId = null;
+      }
+      if (error instanceof LiveBattleRelayError
+        && error.code !== 'battle_relay_operation_superseded'
+        && generation === this.generation
+        && this.snapshot.state !== 'failed') {
+        this.setState('failed', battleId, error.code, error.relayCode ?? null);
+      }
+      throw error;
+    });
+    this.pendingStart = { battleId, promise };
+    void promise.then(
+      () => { if (this.pendingStart?.promise === promise) this.pendingStart = null; },
+      () => { if (this.pendingStart?.promise === promise) this.pendingStart = null; },
+    );
+    return promise;
+  }
+
   stop(): Promise<LiveBattleRelaySnapshot> {
     if (this.disposed) return Promise.resolve(this.getSnapshot());
     if (this.pendingStop) return this.pendingStop;

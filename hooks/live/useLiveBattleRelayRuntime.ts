@@ -4,11 +4,17 @@ import type {
   LiveBattleRuntimeContext,
   LiveBattleRuntimeSnapshot,
 } from '@/services/liveBattleRuntimeController';
+import type {
+  LiveBattlePublicState,
+  LiveBattleServerClockAnchor,
+} from '@/services/liveBattleSpectatorService';
 
 type UseLiveBattleRelayRuntimeParams = LiveBattleRuntimeContext & {
   getEngine: () => unknown;
   registerBeforeEngineRelease: (listener: (engine: unknown) => void) => () => void;
   reconnectEpoch: number;
+  publicBattleState: LiveBattlePublicState | null;
+  publicClockAnchor: LiveBattleServerClockAnchor | null;
 };
 
 /** Web fallback: it never requests Battle tokens and never claims relay support. */

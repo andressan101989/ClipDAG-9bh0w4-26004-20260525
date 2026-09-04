@@ -28,6 +28,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 import {
   authorizeBattleRelay,
   BattleRelayAuthorizationError,
+  type BattleRelayProjection,
   type BattleRelaySession,
 } from './battleRelayAuthorization.ts';
 
@@ -407,6 +408,34 @@ serve(async (req) => {
         return jsonError('battle relay unavailable', 500);
       }
 
+      let relayProjection: BattleRelayProjection | null = null;
+      if (battleRecord.status === 'completed') {
+        const projectionSessionId = battleRecord.challenger_user_id === user.id
+          ? battleRecord.challenger_session_id
+          : battleRecord.opponent_user_id === user.id
+            ? battleRecord.opponent_session_id
+            : null;
+        if (!isUuid(projectionSessionId)) return jsonError('battle relay not found', 404);
+        const { data: projectionEnvelope, error: projectionError } = await userScoped.rpc(
+          'get_live_battle_public_snapshot',
+          { p_session_id: projectionSessionId },
+        );
+        if (projectionError) {
+          console.error('agora-token battle projection RPC failed', { code: 'unexpected_rpc_error' });
+          return jsonError('battle relay unavailable', 500);
+        }
+        const envelope = Array.isArray(projectionEnvelope)
+          ? projectionEnvelope[0]
+          : projectionEnvelope;
+        const projectedState = envelope && typeof envelope === 'object' && !Array.isArray(envelope)
+          ? (envelope as { state?: unknown }).state
+          : null;
+        if (!projectedState || typeof projectedState !== 'object' || Array.isArray(projectedState)) {
+          return jsonError('battle relay not authorized', 409);
+        }
+        relayProjection = projectedState as BattleRelayProjection;
+      }
+
       const { data: sessions, error: sessionsError } = await admin
         .from('live_sessions')
         .select('id, host_id, status, ended_at')
@@ -417,7 +446,13 @@ serve(async (req) => {
       let authorization;
       const requestNow = new Date();
       try {
-        authorization = authorizeBattleRelay(user.id, battle, sessions ?? [], requestNow);
+        authorization = authorizeBattleRelay(
+          user.id,
+          battle,
+          sessions ?? [],
+          requestNow,
+          relayProjection,
+        );
       } catch (error) {
         if (error instanceof BattleRelayAuthorizationError) {
           const message = error.status === 404 ? 'battle relay not found' : 'battle relay not authorized';

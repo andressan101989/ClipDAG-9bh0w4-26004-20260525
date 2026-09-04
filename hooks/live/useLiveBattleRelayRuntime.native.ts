@@ -14,11 +14,19 @@ import {
   type LiveBattleRuntimeContext,
   type LiveBattleRuntimeSnapshot,
 } from '@/services/liveBattleRuntimeController';
+import {
+  getLiveBattlePublicSnapshot,
+  getLiveBattleRelaySessionPairAuthority,
+  type LiveBattlePublicState,
+  type LiveBattleServerClockAnchor,
+} from '@/services/liveBattleSpectatorService';
 
 type UseLiveBattleRelayRuntimeParams = LiveBattleRuntimeContext & {
   getEngine: () => unknown;
   registerBeforeEngineRelease: (listener: (engine: unknown) => void) => () => void;
   reconnectEpoch: number;
+  publicBattleState: LiveBattlePublicState | null;
+  publicClockAnchor: LiveBattleServerClockAnchor | null;
 };
 
 export function useLiveBattleRelayRuntime({
@@ -26,12 +34,15 @@ export function useLiveBattleRelayRuntime({
   hostUserId,
   isCanonicalHost,
   isSessionLive,
+  isOpponentSessionLive,
   engineReady,
   joined,
   isForeground,
   getEngine,
   registerBeforeEngineRelease,
   reconnectEpoch,
+  publicBattleState,
+  publicClockAnchor,
 }: UseLiveBattleRelayRuntimeParams) {
   const controllerRef = useRef<LiveBattleRuntimeController | null>(null);
   const actionFlightRef = useRef(false);
@@ -62,7 +73,11 @@ export function useLiveBattleRelayRuntime({
   useEffect(() => {
     if (!engine) return;
     const relay = new LiveBattleRelayService(engine);
-    const controller = new LiveBattleRuntimeController({ relay });
+    const controller = new LiveBattleRuntimeController({
+      relay,
+      readPublicAuthority: getLiveBattlePublicSnapshot,
+      validateSessionPair: getLiveBattleRelaySessionPairAuthority,
+    });
     controllerRef.current = controller;
     const unsubscribeSnapshot = controller.subscribe(setSnapshot);
     const unregisterReleaseGuard = registerBeforeEngineRelease(() => {
@@ -86,6 +101,7 @@ export function useLiveBattleRelayRuntime({
       hostUserId,
       isCanonicalHost,
       isSessionLive,
+      isOpponentSessionLive,
       engineReady,
       joined,
       isForeground,
@@ -97,9 +113,14 @@ export function useLiveBattleRelayRuntime({
     isCanonicalHost,
     isForeground,
     isSessionLive,
+    isOpponentSessionLive,
     joined,
     liveSessionId,
   ]);
+
+  useEffect(() => {
+    controllerRef.current?.updatePublicAuthority(publicBattleState, publicClockAnchor);
+  }, [publicBattleState, publicClockAnchor]);
 
   useEffect(() => {
     if (reconnectEpoch <= lastReconnectEpochRef.current) return;

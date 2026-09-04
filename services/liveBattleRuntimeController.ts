@@ -8,12 +8,24 @@ import {
   type LiveBattleSubscription,
 } from './liveBattleService';
 import type { LiveBattleRelaySnapshot } from './liveBattleRelayContract';
+import {
+  getLiveBattleRelayDecisionDeadline,
+  resolveLiveBattleRelayPolicy,
+  type LiveBattleRelayDecision,
+} from './liveBattlePostRoundRelayPolicy';
+import type {
+  LiveBattlePublicSnapshot,
+  LiveBattlePublicState,
+  LiveBattleRelaySessionPairAuthority,
+  LiveBattleServerClockAnchor,
+} from './liveBattleSpectatorService';
 
 export type LiveBattleRuntimeContext = {
   liveSessionId: string | null;
   hostUserId: string | null;
   isCanonicalHost: boolean;
   isSessionLive: boolean;
+  isOpponentSessionLive?: boolean;
   engineReady: boolean;
   joined: boolean;
   isForeground: boolean;
@@ -38,6 +50,7 @@ export type LiveBattleRuntimeListener = (snapshot: LiveBattleRuntimeSnapshot) =>
 
 export type LiveBattleRuntimeRelay = {
   start: (battleId: string) => Promise<unknown>;
+  transition: (battleId: string) => Promise<unknown>;
   stop: () => Promise<unknown>;
   stopImmediately: () => void;
   dispose: () => Promise<void>;
@@ -54,7 +67,12 @@ export type LiveBattleRuntimeDependencies = {
     onError: () => void,
   ) => LiveBattleSubscription;
   relay: LiveBattleRuntimeRelay;
+  readPublicAuthority?: (sessionId: string) => Promise<LiveBattlePublicSnapshot>;
+  validateSessionPair?: (
+    state: LiveBattlePublicState,
+  ) => Promise<LiveBattleRelaySessionPairAuthority>;
   now?: () => number;
+  monotonicNow?: () => number | null;
   setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
 };
@@ -74,6 +92,7 @@ const EMPTY_CONTEXT: LiveBattleRuntimeContext = {
   hostUserId: null,
   isCanonicalHost: false,
   isSessionLive: false,
+  isOpponentSessionLive: true,
   engineReady: false,
   joined: false,
   isForeground: false,
@@ -84,6 +103,7 @@ function contextIsEligible(context: LiveBattleRuntimeContext): boolean {
     && isLiveBattleUuid(context.hostUserId)
     && context.isCanonicalHost
     && context.isSessionLive
+    && context.isOpponentSessionLive !== false
     && context.engineReady
     && context.joined
     && context.isForeground;
@@ -119,6 +139,12 @@ export class LiveBattleRuntimeController {
   private refreshFlight: Promise<void> | null = null;
   private refreshQueued = false;
   private relayBattleId: string | null = null;
+  private relaySeriesId: string | null = null;
+  private relayRoundNumber: number | null = null;
+  private relayDecision: LiveBattleRelayDecision = 'stop_terminal';
+  private publicState: LiveBattlePublicState | null = null;
+  private publicClockAnchor: LiveBattleServerClockAnchor | null = null;
+  private authorityServerNowMs: number | null = null;
   private relayOperationPossible = false;
   private attemptedRelayVersion: string | null = null;
   private readonly observedVersions = new Map<string, number>();
@@ -130,6 +156,7 @@ export class LiveBattleRuntimeController {
   private deadlineBackoffStep = 0;
   private deadlineBackoffReason: 'none' | 'deadline' | 'error' = 'none';
   private readonly now: () => number;
+  private readonly monotonicNow: () => number | null;
   private readonly setTimer: NonNullable<LiveBattleRuntimeDependencies['setTimer']>;
   private readonly clearTimer: NonNullable<LiveBattleRuntimeDependencies['clearTimer']>;
   private relayUnsubscribe: (() => void) | null = null;
@@ -140,6 +167,10 @@ export class LiveBattleRuntimeController {
     this.reconcile = dependencies.reconcile ?? getLiveBattleState;
     this.createSubscription = dependencies.subscribe ?? subscribeToLiveBattlesForSession;
     this.now = dependencies.now ?? Date.now;
+    this.monotonicNow = dependencies.monotonicNow ?? (() => {
+      const value = globalThis.performance?.now?.();
+      return typeof value === 'number' && Number.isFinite(value) ? value : null;
+    });
     this.setTimer = dependencies.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
     this.clearTimer = dependencies.clearTimer ?? (timer => clearTimeout(timer));
     this.relayUnsubscribe = dependencies.relay.subscribe(relay => this.handleRelaySnapshot(relay));
@@ -148,7 +179,7 @@ export class LiveBattleRuntimeController {
   private handleRelaySnapshot(relay: LiveBattleRelaySnapshot): void {
     if (this.disposed || !relay.battleId) return;
     const battle = this.snapshot.battle;
-    if (!battle || battle.id !== relay.battleId || !RELAY_STATUSES.has(battle.status)) return;
+    if (!battle || battle.id !== relay.battleId || this.relayDecision === 'stop_terminal') return;
     if (relay.state === 'running') {
       this.relayBattleId = relay.battleId;
       this.publish({
@@ -167,7 +198,8 @@ export class LiveBattleRuntimeController {
     }
     if (relay.state === 'authorizing' || relay.state === 'connecting') {
       this.publish({
-        status: 'observing', battleId: battle.id, version: battle.version,
+        status: this.relayDecision === 'transitioning_to_next_round' ? 'relaying' : 'observing',
+        battleId: battle.id, version: battle.version,
         errorCode: null, battle,
       });
     }
@@ -198,6 +230,27 @@ export class LiveBattleRuntimeController {
 
   async waitForIdle(): Promise<void> {
     while (this.refreshFlight) await this.refreshFlight;
+  }
+
+  updatePublicAuthority(
+    state: LiveBattlePublicState | null,
+    clockAnchor: LiveBattleServerClockAnchor | null,
+  ): void {
+    if (this.disposed) return;
+    this.publicState = state;
+    this.publicClockAnchor = clockAnchor;
+    if (state && state.battleId === this.relayBattleId) {
+      this.captureRelaySeriesAuthority(state.battleId);
+    }
+    const battle = this.snapshot.battle;
+    if (!battle || !this.isEligible()) return;
+    const seriesStatus = state?.series?.status ?? null;
+    const shouldReevaluate = battle.status === 'completed'
+      || battle.status === 'cancelled'
+      || state?.battleId !== battle.id
+      || seriesStatus === 'completed'
+      || seriesStatus === 'cancelled';
+    if (shouldReevaluate) this.requestRefresh();
   }
 
   async reconcileNow(): Promise<void> {
@@ -257,6 +310,12 @@ export class LiveBattleRuntimeController {
       this.refreshQueued = false;
       this.observedVersions.clear();
       this.attemptedRelayVersion = null;
+      this.publicState = null;
+      this.publicClockAnchor = null;
+      this.authorityServerNowMs = null;
+      this.relaySeriesId = null;
+      this.relayRoundNumber = null;
+      this.relayDecision = 'stop_terminal';
       this.resetDeadlineScheduler();
       this.replaceSubscription(context.liveSessionId as string);
       this.requestRefresh();
@@ -390,11 +449,17 @@ export class LiveBattleRuntimeController {
     reconciledByServer = false,
   ): Promise<void> {
     this.scheduleDeadline(battle, generation, reconciledByServer);
+    if (battle.status === 'completed' && battle.endedAt !== null) {
+      await this.applyCompletedBattle(battle, generation);
+      return;
+    }
     if (!RELAY_STATUSES.has(battle.status) || battle.endedAt !== null) {
       await this.stopRelay('observing', battle.id, battle.version, battle);
       return;
     }
     if (this.relayBattleId === battle.id) {
+      this.captureRelaySeriesAuthority(battle.id);
+      this.relayDecision = 'relaying_active_round';
       this.publish({
         status: 'relaying', battleId: battle.id, version: battle.version, errorCode: null, battle,
       });
@@ -402,6 +467,12 @@ export class LiveBattleRuntimeController {
     }
 
     if (this.relayBattleId && this.relayBattleId !== battle.id) {
+      const decision = await this.resolveAuthorityDecision(battle, generation);
+      if (!this.isCurrent(generation)) return;
+      if (decision === 'transitioning_to_next_round') {
+        await this.transitionRelay(battle, generation);
+        return;
+      }
       await this.stopRelay('observing');
       if (!this.isCurrent(generation)) return;
     }
@@ -409,6 +480,7 @@ export class LiveBattleRuntimeController {
     if (this.attemptedRelayVersion === attemptKey) return;
     this.attemptedRelayVersion = attemptKey;
     this.relayOperationPossible = true;
+    this.relayDecision = 'relaying_active_round';
     this.publish({
       status: 'observing', battleId: battle.id, version: battle.version,
       errorCode: null, battle,
@@ -416,6 +488,7 @@ export class LiveBattleRuntimeController {
     try {
       await this.dependencies.relay.start(battle.id);
       if (!this.isCurrent(generation)) return;
+      this.captureRelaySeriesAuthority(battle.id);
       const relay = this.dependencies.relay.getSnapshot();
       if (relay.battleId === battle.id && relay.state === 'running') {
         this.handleRelaySnapshot(relay);
@@ -429,6 +502,176 @@ export class LiveBattleRuntimeController {
         errorCode: 'live_battle_relay_failed', battle,
       });
     }
+  }
+
+  private estimateServerNow(): number | null {
+    const anchor = this.publicClockAnchor;
+    const monotonicNow = this.monotonicNow();
+    if (
+      !anchor
+      || monotonicNow === null
+      || !Number.isFinite(monotonicNow)
+      || monotonicNow < anchor.monotonicMsAtAnchor
+    ) return null;
+    return anchor.serverEpochMsAtAnchor + monotonicNow - anchor.monotonicMsAtAnchor;
+  }
+
+  private captureRelaySeriesAuthority(battleId: string): void {
+    const state = this.publicState;
+    if (!state || state.battleId !== battleId || !state.series) return;
+    this.relaySeriesId = state.series.id;
+    this.relayRoundNumber = state.series.roundNumber;
+  }
+
+  private async readAuthority(
+    battle: LiveBattle,
+    generation: number,
+  ): Promise<{
+    state: LiveBattlePublicState;
+    sessionPair: LiveBattleRelaySessionPairAuthority;
+    serverNowMs: number;
+  } | null> {
+    const sessionId = this.context.liveSessionId;
+    const readPublicAuthority = this.dependencies.readPublicAuthority;
+    const validateSessionPair = this.dependencies.validateSessionPair;
+    if (!sessionId || !readPublicAuthority || !validateSessionPair) return null;
+    try {
+      const snapshot = await readPublicAuthority(sessionId);
+      if (!this.isCurrent(generation) || !snapshot.state) return null;
+      this.publicState = snapshot.state;
+      this.publicClockAnchor = snapshot.clockAnchor;
+      const sessionPair = await validateSessionPair(snapshot.state);
+      if (!this.isCurrent(generation)) return null;
+      const serverNowMs = Date.parse(snapshot.serverNow);
+      if (!Number.isFinite(serverNowMs) || snapshot.state.battleId !== battle.id) return null;
+      this.authorityServerNowMs = serverNowMs;
+      return { state: snapshot.state, sessionPair, serverNowMs };
+    } catch {
+      return null;
+    }
+  }
+
+  private async resolveAuthorityDecision(
+    battle: LiveBattle,
+    generation: number,
+  ): Promise<LiveBattleRelayDecision> {
+    const authority = await this.readAuthority(battle, generation);
+    if (!authority) return 'stop_terminal';
+    return resolveLiveBattleRelayPolicy({
+      battle,
+      projection: authority.state,
+      clockAnchor: this.publicClockAnchor,
+      serverNowMs: authority.serverNowMs,
+      relayBattleId: this.relayBattleId,
+      relaySeriesId: this.relaySeriesId,
+      relayRoundNumber: this.relayRoundNumber,
+      sessionPair: authority.sessionPair,
+      localSessionId: this.context.liveSessionId,
+      localHostUserId: this.context.hostUserId,
+      eligible: this.isEligible(),
+    });
+  }
+
+  private async applyCompletedBattle(
+    battle: LiveBattle,
+    generation: number,
+  ): Promise<void> {
+    const decision = await this.resolveAuthorityDecision(battle, generation);
+    if (!this.isCurrent(generation)) return;
+    if (decision !== 'holding_for_rematch') {
+      await this.stopRelay('observing', battle.id, battle.version, battle);
+      return;
+    }
+    this.relayDecision = decision;
+    this.captureRelaySeriesAuthority(battle.id);
+    this.schedulePostRoundDeadline(battle, generation);
+    if (this.relayBattleId !== battle.id) {
+      const attemptKey = `${battle.id}:${battle.version}:post-round`;
+      if (this.attemptedRelayVersion !== attemptKey) {
+        this.attemptedRelayVersion = attemptKey;
+        this.relayOperationPossible = true;
+        try {
+          await this.dependencies.relay.start(battle.id);
+          if (!this.isCurrent(generation)) return;
+          this.relayBattleId = battle.id;
+        } catch {
+          if (!this.isCurrent(generation)) return;
+          this.relayBattleId = null;
+          this.relayOperationPossible = false;
+          this.publish({
+            status: 'failed', battleId: battle.id, version: battle.version,
+            errorCode: 'live_battle_relay_failed', battle,
+          });
+          return;
+        }
+      }
+    }
+    this.publish({
+      status: 'relaying', battleId: battle.id, version: battle.version,
+      errorCode: null, battle,
+    });
+  }
+
+  private async transitionRelay(
+    battle: LiveBattle,
+    generation: number,
+  ): Promise<void> {
+    const attemptKey = `${battle.id}:${battle.version}:transition`;
+    if (this.attemptedRelayVersion === attemptKey) return;
+    this.attemptedRelayVersion = attemptKey;
+    this.relayOperationPossible = true;
+    this.relayDecision = 'transitioning_to_next_round';
+    this.publish({
+      status: 'relaying', battleId: battle.id, version: battle.version,
+      errorCode: null, battle,
+    });
+    try {
+      await this.dependencies.relay.transition(battle.id);
+      if (!this.isCurrent(generation)) return;
+      this.relayBattleId = battle.id;
+      this.captureRelaySeriesAuthority(battle.id);
+      this.relayDecision = 'relaying_active_round';
+      const relay = this.dependencies.relay.getSnapshot();
+      if (relay.battleId === battle.id && relay.state === 'running') {
+        this.handleRelaySnapshot(relay);
+      }
+    } catch {
+      if (!this.isCurrent(generation)) return;
+      this.relayBattleId = null;
+      this.relayOperationPossible = false;
+      this.relayDecision = 'stop_terminal';
+      this.publish({
+        status: 'failed', battleId: battle.id, version: battle.version,
+        errorCode: 'live_battle_relay_failed', battle,
+      });
+    }
+  }
+
+  private schedulePostRoundDeadline(battle: LiveBattle, generation: number): void {
+    const state = this.publicState;
+    if (!state || state.battleId !== battle.id) return;
+    const timestamp = getLiveBattleRelayDecisionDeadline(state);
+    const serverNow = this.estimateServerNow() ?? this.authorityServerNowMs;
+    if (!timestamp || serverNow === null) {
+      this.clearDeadlineTimer();
+      this.scheduledDeadlineKey = null;
+      return;
+    }
+    const deadline = Date.parse(timestamp);
+    if (!Number.isFinite(deadline)) return;
+    const deadlineKey = `post-round:${battle.id}:${state.series?.version ?? 0}:${timestamp}`;
+    if (this.scheduledDeadlineKey === deadlineKey) return;
+    this.clearDeadlineTimer();
+    this.scheduledDeadlineKey = deadlineKey;
+    let timer: ReturnType<typeof setTimeout>;
+    timer = this.setTimer(() => {
+      if (this.deadlineTimer !== timer) return;
+      this.deadlineTimer = null;
+      this.scheduledDeadlineKey = null;
+      if (!this.isCurrent(generation) || this.snapshot.battleId !== battle.id) return;
+      this.requestRefresh();
+    }, Math.max(0, deadline - serverNow + DEADLINE_CLOCK_TOLERANCE_MS));
+    this.deadlineTimer = timer;
   }
 
   private clearDeadlineTimer(): void {
@@ -615,6 +858,9 @@ export class LiveBattleRuntimeController {
       this.relayBattleId = null;
       this.relayOperationPossible = false;
     }
+    this.relaySeriesId = null;
+    this.relayRoundNumber = null;
+    this.relayDecision = 'stop_terminal';
     if (!this.disposed) this.publish({ status, battleId, version, errorCode: null, battle });
   }
 
@@ -654,8 +900,12 @@ export class LiveBattleRuntimeController {
   retryRelayAfterReconnect(): Promise<void> {
     if (this.reconnectRetryFlight) return this.reconnectRetryFlight;
     const battle = this.snapshot.battle;
-    if (this.disposed || !this.isEligible() || !battle
-      || !RELAY_STATUSES.has(battle.status) || battle.endedAt !== null) {
+    const relayMayRestart = battle
+      && (
+        (RELAY_STATUSES.has(battle.status) && battle.endedAt === null)
+        || (battle.status === 'completed' && this.relayDecision === 'holding_for_rematch')
+      );
+    if (this.disposed || !this.isEligible() || !battle || !relayMayRestart) {
       return Promise.resolve();
     }
     const generation = this.generation;
@@ -679,6 +929,9 @@ export class LiveBattleRuntimeController {
     this.removeSubscription();
     this.dependencies.relay.stopImmediately();
     this.relayBattleId = null;
+    this.relaySeriesId = null;
+    this.relayRoundNumber = null;
+    this.relayDecision = 'stop_terminal';
     this.relayOperationPossible = false;
     this.publish({ status: 'idle', battleId: null, version: null, errorCode: null, battle: null });
   }

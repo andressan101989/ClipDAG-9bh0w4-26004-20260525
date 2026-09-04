@@ -83,6 +83,15 @@ export type LiveBattlePublicSnapshot = {
   clockAnchor: LiveBattleServerClockAnchor | null;
 };
 
+export type LiveBattleRelaySessionPairAuthority = {
+  localSessionId: string;
+  opponentSessionId: string;
+  localHostUserId: string;
+  opponentHostUserId: string;
+  localSessionLive: boolean;
+  opponentSessionLive: boolean;
+};
+
 type LiveBattlePublicStateRow = {
   session_id: unknown;
   battle_id: unknown;
@@ -796,6 +805,38 @@ export async function getLiveBattlePublicSnapshot(
       responseReceivedAt,
       envelope.state?.serverClockAt ?? null,
     ),
+  };
+}
+
+export async function getLiveBattleRelaySessionPairAuthority(
+  state: LiveBattlePublicState,
+): Promise<LiveBattleRelaySessionPairAuthority> {
+  const { data, error } = await getSupabaseClient()
+    .from('live_sessions')
+    .select('id, host_id, status, ended_at')
+    .in('id', [state.sessionId, state.opponentSessionId])
+    .returns<Array<{
+      id: string;
+      host_id: string;
+      status: string;
+      ended_at: string | null;
+    }>>();
+  if (error) throw new LiveBattleSpectatorError('live_battle_session_pair_unavailable');
+  const local = (data ?? []).find(session => session.id === state.sessionId);
+  const opponent = (data ?? []).find(session => session.id === state.opponentSessionId);
+  return {
+    localSessionId: state.sessionId,
+    opponentSessionId: state.opponentSessionId,
+    localHostUserId: state.localHostUserId,
+    opponentHostUserId: state.opponentHostUserId,
+    localSessionLive: (data ?? []).length === 2
+      && local?.host_id === state.localHostUserId
+      && local.status === 'live'
+      && local.ended_at === null,
+    opponentSessionLive: (data ?? []).length === 2
+      && opponent?.host_id === state.opponentHostUserId
+      && opponent.status === 'live'
+      && opponent.ended_at === null,
   };
 }
 

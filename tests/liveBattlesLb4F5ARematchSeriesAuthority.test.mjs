@@ -268,7 +268,7 @@ test("new RPC execution is granted only to authenticated", () => {
 test("F5-A changes no Agora, Media Relay, Creator Recovery, Edge Function, manifest, or realtime schema", () => {
   const result = spawnSync(
     "git",
-    ["diff", "--name-only", `${parentSha}..HEAD`, "--"],
+    ["diff", "--name-only", `${parentSha}..${c2Sha}`, "--"],
     { encoding: "utf8", windowsHide: true },
   );
   assert.equal(result.status, 0, result.stderr);

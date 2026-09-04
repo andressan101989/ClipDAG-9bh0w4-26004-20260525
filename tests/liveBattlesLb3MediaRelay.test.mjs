@@ -116,7 +116,8 @@ test('Edge contract is exclusive and derives authority through the user JWT', ()
   assert.match(edge, /global: \{ headers: \{ Authorization: authHeader \?\? '' \} \}/);
   assert.match(edge, /userScoped\.rpc\([\s\S]*'get_live_battle_state'[\s\S]*p_battle_id: contract\.liveBattleId/);
   assert.match(edge, /\.from\('live_sessions'\)[\s\S]*\.select\('id, host_id, status, ended_at'\)/);
-  assert.match(edge, /authorizeBattleRelay\(user\.id, battle, sessions \?\? \[\], requestNow\)/);
+  assert.match(edge, /authorizeBattleRelay\([\s\S]*user\.id,[\s\S]*battle,[\s\S]*sessions \?\? \[\],[\s\S]*requestNow,[\s\S]*relayProjection/);
+  assert.match(edge, /get_live_battle_public_snapshot/);
   assert.doesNotMatch(edge, /service_role[^\n]*(battleRelay|liveBattleId)/i);
   assert.doesNotMatch(edge, /console\.(?:log|info|error)\([^\n]*(?:sourceToken|destinationToken|liveBattleId|sessionIds|numericUid)/);
 });

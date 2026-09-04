@@ -5,6 +5,7 @@ import ts from 'typescript';
 
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const controllerSource = await read('services/liveBattleRuntimeController.ts');
+const postRoundRelayPolicySource = await read('services/liveBattlePostRoundRelayPolicy.ts');
 const serviceSource = await read('services/liveBattleService.ts');
 const componentSource = await read('components/live/LiveBattleHostControls.tsx');
 const nativeHookSource = await read('hooks/live/useLiveBattleRelayRuntime.native.ts');
@@ -35,6 +36,7 @@ function loadTypeScript(source, imports = {}) {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const postRoundRelayPolicyModule = loadTypeScript(postRoundRelayPolicySource);
 const controllerModule = loadTypeScript(controllerSource, {
   './liveBattleService': {
     getLiveBattleState: async () => { throw new Error('inject reconcile'); },
@@ -42,6 +44,7 @@ const controllerModule = loadTypeScript(controllerSource, {
     isLiveBattleUuid: value => typeof value === 'string' && UUID.test(value),
     subscribeToLiveBattlesForSession: () => { throw new Error('inject subscription'); },
   },
+  './liveBattlePostRoundRelayPolicy': postRoundRelayPolicyModule,
 });
 
 const HOST = '10000000-0000-4000-8000-000000000001';

@@ -289,7 +289,8 @@ test('Edge accepts only a Battle id and derives source zero plus destination hos
   assert.match(edgeSource, /const destinationRelayUid = numericUid/);
   assert.match(edgeSource, /channelName: authorization\.sourceSessionId[\s\S]*uid: sourceRelayUid/);
   assert.match(edgeSource, /channelName: authorization\.destinationSessionId[\s\S]*uid: destinationRelayUid/);
-  assert.match(edgeSource, /authorizeBattleRelay\(user\.id, battle, sessions \?\? \[\], requestNow\)/);
+  assert.match(edgeSource, /authorizeBattleRelay\([\s\S]*user\.id,[\s\S]*battle,[\s\S]*sessions \?\? \[\],[\s\S]*requestNow,[\s\S]*relayProjection/);
+  assert.match(edgeSource, /get_live_battle_public_snapshot/);
   assert.match(
     authorizationSource,
     /sourceSessionId: isChallenger \? challengerSessionId : opponentSessionId/,

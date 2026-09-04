@@ -5,6 +5,7 @@ import ts from 'typescript';
 
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const controllerSource = await read('services/liveBattleRuntimeController.ts');
+const postRoundPolicySource = await read('services/liveBattlePostRoundRelayPolicy.ts');
 const battleServiceSource = await read('services/liveBattleService.ts');
 const relaySource = await read('services/liveBattleRelayService.native.ts');
 const runtimeHookSource = await read('hooks/live/useLiveBattleRelayRuntime.native.ts');
@@ -37,6 +38,7 @@ function loadTypeScript(source, imports = {}) {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const postRoundPolicyModule = loadTypeScript(postRoundPolicySource);
 const controllerModule = loadTypeScript(controllerSource, {
   './liveBattleService': {
     getLiveBattleState: async () => { throw new Error('dependency not injected'); },
@@ -44,6 +46,7 @@ const controllerModule = loadTypeScript(controllerSource, {
     isLiveBattleUuid: value => typeof value === 'string' && UUID.test(value),
     subscribeToLiveBattlesForSession: () => { throw new Error('dependency not injected'); },
   },
+  './liveBattlePostRoundRelayPolicy': postRoundPolicyModule,
 });
 
 const HOST = '10000000-0000-4000-8000-000000000001';

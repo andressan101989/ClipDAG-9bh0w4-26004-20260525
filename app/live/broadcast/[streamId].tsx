@@ -230,6 +230,7 @@ export default function LiveBroadcasterScreen() {
   const [title, setTitle]           = useState('');
   const [live, setLive]             = useState(false);
   const [sessionIsCanonicalLive, setSessionIsCanonicalLive] = useState(false);
+  const [battleOpponentSessionIsLive, setBattleOpponentSessionIsLive] = useState(true);
   const [isForeground, setIsForeground] = useState(AppState.currentState === 'active');
   const [starting, setStarting]     = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
@@ -301,23 +302,28 @@ export default function LiveBroadcasterScreen() {
     liveRequestedRole: 'host',
   });
 
+  const battleProjection = useLiveBattleSpectatorState(
+    streamId ?? null,
+    Boolean(user?.id && live && sessionIsCanonicalLive),
+    user?.id ?? null,
+  );
+  const battleOpponentSessionId = battleProjection.state?.opponentSessionId ?? null;
+  const battleOpponentHostUserId = battleProjection.state?.opponentHostUserId ?? null;
   const battleRuntime = useLiveBattleRelayRuntime({
     liveSessionId: streamId ?? null,
     hostUserId: user?.id ?? null,
     isCanonicalHost: sessionIsCanonicalLive,
     isSessionLive: live && sessionIsCanonicalLive,
+    isOpponentSessionLive: battleOpponentSessionIsLive,
     engineReady,
     joined,
     isForeground,
     getEngine,
     registerBeforeEngineRelease,
     reconnectEpoch,
+    publicBattleState: battleProjection.state,
+    publicClockAnchor: battleProjection.clockAnchor,
   });
-  const battleProjection = useLiveBattleSpectatorState(
-    streamId ?? null,
-    Boolean(user?.id && live && sessionIsCanonicalLive),
-    user?.id ?? null,
-  );
   const seriesTransitionRef = useRef<string | null>(null);
   useEffect(() => {
     const nextBattleId = battleProjection.transitionBattleId;
@@ -531,13 +537,28 @@ export default function LiveBroadcasterScreen() {
   const poll = useCallback(async () => {
     if (!streamId) return;
     try {
-      const { data: sData } = await supabase
-        .from('live_sessions').select('viewer_count, status, host_id, ended_at').eq('id', streamId).single();
+      const sessionIds = battleOpponentSessionId
+        ? [streamId, battleOpponentSessionId]
+        : [streamId];
+      const { data: sessionRows } = await supabase
+        .from('live_sessions')
+        .select('id, viewer_count, status, host_id, ended_at')
+        .in('id', sessionIds);
+      const sData = sessionRows?.find(row => row.id === streamId);
       if (sData && mountedRef.current) setViewerCount(sData.viewer_count ?? 0);
       const canonicalLive = sData?.status === 'live'
         && sData.ended_at === null
         && sData.host_id === user?.id;
       if (mountedRef.current) setSessionIsCanonicalLive(canonicalLive);
+      const opponentSession = battleOpponentSessionId
+        ? sessionRows?.find(row => row.id === battleOpponentSessionId)
+        : null;
+      const opponentIsCanonicalLive = !battleOpponentSessionId || (
+        opponentSession?.status === 'live'
+        && opponentSession.ended_at === null
+        && opponentSession.host_id === battleOpponentHostUserId
+      );
+      if (mountedRef.current) setBattleOpponentSessionIsLive(opponentIsCanonicalLive);
       if (!canonicalLive) void stopBattleRuntime();
       if (sData?.status === 'ended') {
         clearLiveTimers();
@@ -565,7 +586,16 @@ export default function LiveBroadcasterScreen() {
         scrollToLatest(true);
       }
     } catch { /* Controlled polling retries on the next interval. */ }
-  }, [streamId, supabase, scrollToLatest, user, clearLiveTimers, stopBattleRuntime]);
+  }, [
+    streamId,
+    supabase,
+    scrollToLatest,
+    user,
+    clearLiveTimers,
+    stopBattleRuntime,
+    battleOpponentHostUserId,
+    battleOpponentSessionId,
+  ]);
 
   useEffect(() => {
     if (!live) return;
