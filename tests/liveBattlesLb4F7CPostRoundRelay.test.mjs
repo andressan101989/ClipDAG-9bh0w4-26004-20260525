@@ -126,8 +126,9 @@ function createHarness() {
   const timers = [];
   let relaySnapshot = { state: 'idle', battleId: null, errorCode: null, relayCode: null };
   const relay = {
-    startCalls: [], transitionCalls: [], stopCalls: 0, immediateStopCalls: 0,
+    startCalls: [], refreshCalls: [], transitionCalls: [], stopCalls: 0, immediateStopCalls: 0,
     async start(battleId) { this.startCalls.push(battleId); relaySnapshot = { state: 'running', battleId, errorCode: null, relayCode: 0 }; return relaySnapshot; },
+    async refreshCredentials(battleId) { this.refreshCalls.push(battleId); return relaySnapshot; },
     async transition(battleId) { this.transitionCalls.push(battleId); relaySnapshot = { state: 'running', battleId, errorCode: null, relayCode: 0 }; return relaySnapshot; },
     async stop() { this.stopCalls += 1; relaySnapshot = { state: 'idle', battleId: null, errorCode: null, relayCode: null }; return relaySnapshot; },
     stopImmediately() { this.immediateStopCalls += 1; }, async dispose() {},
@@ -396,6 +397,219 @@ test('Agora authorization permits only the authoritative unexpired post-round wi
       error => error.code === (actor === VIEWER ? 'battle_relay_not_found' : 'battle_relay_not_authorized'),
     );
   }
+});
+
+test('completed round renews the same relay because the active token cannot cover rematch', async () => {
+  const roundStart = new Date('2026-09-04T12:00:03.000Z');
+  const active = rawAuthorizationBattle({ status: 'active', ended_at: null });
+  const initialTtl = authorization.calculateBattleRelayExpiresIn(active, roundStart);
+  const initialExpiry = new Date(roundStart.getTime() + initialTtl * 1_000).toISOString();
+  assert.equal(initialExpiry, '2026-09-04T12:05:18.000Z');
+  assert.ok(Date.parse(initialExpiry) < Date.parse(WINDOW));
+
+  const postRoundNow = new Date('2026-09-04T12:05:04.000Z');
+  const renewed = authorization.authorizeBattleRelay(
+    HOST,
+    rawAuthorizationBattle(),
+    liveSessions,
+    postRoundNow,
+    rawProjection(),
+  );
+  assert.ok(postRoundNow.getTime() + renewed.expiresIn * 1_000 > Date.parse(WINDOW));
+
+  const harness = createHarness();
+  await harness.activate();
+  harness.setBattle(rawBattle({
+    status: 'completed', endedAt: '2026-09-04T12:05:03.000Z', version: 2,
+  }));
+  harness.setProjection(projection());
+  harness.emit({ battleId: BATTLE_A, version: 2 });
+  await harness.settle();
+  assert.deepEqual(harness.relay.refreshCalls, [BATTLE_A]);
+  assert.equal(harness.relay.stopCalls, 0);
+  assert.equal(harness.controller.getSnapshot().status, 'relaying');
+  await harness.controller.dispose();
+});
+
+test('same completed authority refreshes once and a changed deadline refreshes once more', async () => {
+  const harness = createHarness();
+  await harness.activate();
+  harness.setBattle(rawBattle({
+    status: 'completed', endedAt: '2026-09-04T12:05:03.000Z', version: 2,
+  }));
+  harness.publishProjection(projection());
+  harness.emit({ battleId: BATTLE_A, version: 2 });
+  await harness.settle();
+  harness.publishProjection(projection());
+  await harness.settle();
+  assert.deepEqual(harness.relay.refreshCalls, [BATTLE_A]);
+
+  harness.publishProjection(projection({
+    series: series({ version: 3, rematchWindowExpiresAt: '2026-09-04T12:05:40.000Z' }),
+  }));
+  await harness.settle();
+  assert.deepEqual(harness.relay.refreshCalls, [BATTLE_A, BATTLE_A]);
+  assert.equal(harness.relay.stopCalls, 0);
+  await harness.controller.dispose();
+});
+
+test('one transient authority failure uses one bounded retry then fails closed', async () => {
+  const harness = createHarness();
+  await harness.activate();
+  harness.setBattle(rawBattle({
+    status: 'completed', endedAt: '2026-09-04T12:05:03.000Z', version: 2,
+  }));
+  harness.setProjection(projection());
+  harness.emit({ battleId: BATTLE_A, version: 2 });
+  await harness.settle();
+  assert.deepEqual(harness.relay.refreshCalls, [BATTLE_A]);
+
+  harness.dependencies.readPublicAuthority = async () => { throw new Error('temporary'); };
+  harness.publishProjection(projection({ series: series({ version: 3 }) }));
+  await harness.settle();
+  assert.equal(harness.controller.getSnapshot().status, 'relaying');
+  assert.equal(harness.relay.stopCalls, 0);
+  const retry = [...harness.timers].reverse().find(timer => !timer.cancelled);
+  assert.ok(retry);
+  assert.ok(retry.delayMs >= 0 && retry.delayMs <= 1_000);
+  retry.cancelled = true;
+  retry.callback();
+  await harness.settle();
+  assert.equal(harness.relay.stopCalls, 1);
+  assert.equal(harness.controller.getSnapshot().status, 'observing');
+  assert.equal(harness.timers.filter(timer => !timer.cancelled).length, 0);
+  await harness.controller.dispose();
+});
+
+test('runtime refresh failure stops once and never reports false relaying', async () => {
+  const harness = createHarness();
+  await harness.activate();
+  harness.relay.refreshCredentials = async battleId => {
+    harness.relay.refreshCalls.push(battleId);
+    throw new Error('refresh rejected');
+  };
+  harness.setBattle(rawBattle({
+    status: 'completed', endedAt: '2026-09-04T12:05:03.000Z', version: 2,
+  }));
+  harness.setProjection(projection());
+  harness.emit({ battleId: BATTLE_A, version: 2 });
+  await harness.settle();
+  assert.deepEqual(harness.relay.refreshCalls, [BATTLE_A]);
+  assert.equal(harness.relay.stopCalls, 1);
+  assert.equal(harness.controller.getSnapshot().status, 'failed');
+  assert.equal(
+    harness.controller.getSnapshot().errorCode,
+    'live_battle_relay_credential_refresh_failed',
+  );
+  await harness.controller.dispose();
+});
+
+test('native same-battle refresh is single-flight and never publishes idle or connecting', async () => {
+  let requests = 0;
+  const engine = new MockEngine();
+  const service = new relayModule.LiveBattleRelayService(engine, {
+    requestCredentials: async battleId => { requests += 1; return credentials(battleId); },
+    logger: () => undefined,
+  });
+  await service.start(BATTLE_A);
+  engine.emit(states.RelayStateRunning);
+  const statesSeen = [];
+  const unsubscribe = service.subscribe(snapshot => statesSeen.push(snapshot.state));
+  const first = service.refreshCredentials(BATTLE_A);
+  const duplicate = service.refreshCredentials(BATTLE_A);
+  assert.strictEqual(first, duplicate);
+  await first;
+  engine.emit(states.RelayStateConnecting);
+  assert.equal(service.getSnapshot().state, 'running');
+  engine.emit(states.RelayStateRunning);
+  assert.equal(requests, 2);
+  assert.equal(engine.configurations.length, 2);
+  assert.equal(engine.stopCount, 0);
+  assert.equal(engine.handlers.size, 1);
+  assert.equal(statesSeen.includes('idle'), false);
+  assert.equal(statesSeen.includes('connecting'), false);
+  unsubscribe();
+  await service.dispose();
+});
+
+test('native refresh rejection fails closed once for credentials and Agora update errors', async () => {
+  for (const failure of ['credentials', 'native']) {
+    let requests = 0;
+    const engine = new MockEngine();
+    const service = new relayModule.LiveBattleRelayService(engine, {
+      requestCredentials: async battleId => {
+        requests += 1;
+        if (failure === 'credentials' && requests === 2) throw new Error('unavailable');
+        return credentials(battleId);
+      },
+      logger: () => undefined,
+    });
+    await service.start(BATTLE_A);
+    engine.emit(states.RelayStateRunning);
+    if (failure === 'native') engine.nextResult = -17;
+    await assert.rejects(
+      () => service.refreshCredentials(BATTLE_A),
+      error => error.code === 'battle_relay_credential_refresh_failed',
+    );
+    assert.equal(engine.stopCount, 1);
+    assert.equal(service.getSnapshot().state, 'failed');
+    assert.equal(service.getSnapshot().errorCode, 'battle_relay_credential_refresh_failed');
+    await service.dispose();
+    assert.equal(engine.stopCount, 1);
+  }
+});
+
+test('late refresh is fenced by teardown and a next-round transition supersedes it', async () => {
+  let resolveRefresh;
+  let requestNumber = 0;
+  const engine = new MockEngine();
+  const service = new relayModule.LiveBattleRelayService(engine, {
+    requestCredentials: async battleId => {
+      requestNumber += 1;
+      if (requestNumber === 2) {
+        return new Promise(resolve => { resolveRefresh = () => resolve(credentials(battleId)); });
+      }
+      return credentials(battleId);
+    },
+    logger: () => undefined,
+  });
+  await service.start(BATTLE_A);
+  engine.emit(states.RelayStateRunning);
+  const refresh = service.refreshCredentials(BATTLE_A);
+  await new Promise(resolve => setImmediate(resolve));
+  const transition = service.transition(BATTLE_B);
+  resolveRefresh();
+  await assert.rejects(refresh, error => error.code === 'battle_relay_operation_superseded');
+  await transition;
+  assert.equal(engine.configurations.length, 2);
+  assert.equal(engine.stopCount, 0);
+  assert.equal(service.getSnapshot().battleId, BATTLE_B);
+  await service.dispose();
+
+  let resolveLate;
+  requestNumber = 0;
+  const teardownEngine = new MockEngine();
+  const teardownService = new relayModule.LiveBattleRelayService(teardownEngine, {
+    requestCredentials: async battleId => {
+      requestNumber += 1;
+      if (requestNumber === 2) {
+        return new Promise(resolve => { resolveLate = () => resolve(credentials(battleId)); });
+      }
+      return credentials(battleId);
+    },
+    logger: () => undefined,
+  });
+  await teardownService.start(BATTLE_A);
+  teardownEngine.emit(states.RelayStateRunning);
+  const late = teardownService.refreshCredentials(BATTLE_A);
+  await new Promise(resolve => setImmediate(resolve));
+  teardownService.stopImmediately();
+  resolveLate();
+  await assert.rejects(late, error => error.code === 'battle_relay_operation_superseded');
+  assert.equal(teardownEngine.configurations.length, 1);
+  assert.equal(teardownEngine.stopCount, 1);
+  assert.equal(teardownService.getSnapshot().state, 'idle');
+  await teardownService.dispose();
 });
 
 test('wiring reuses the public projection and adds no polling, schema, or economy writes', async () => {

@@ -88,7 +88,9 @@ export class LiveBattleRelayService {
   private generation = 0;
   private queue: Promise<void> = Promise.resolve();
   private pendingStart: { battleId: string; promise: Promise<LiveBattleRelaySnapshot> } | null = null;
+  private pendingRefresh: { battleId: string; promise: Promise<LiveBattleRelaySnapshot> } | null = null;
   private pendingStop: Promise<LiveBattleRelaySnapshot> | null = null;
+  private preserveRunningDuringRefreshBattleId: string | null = null;
   private disposeFlight: Promise<void> | null = null;
   private disposed = false;
   private readonly logger: (event: string, data: Record<string, unknown>) => void;
@@ -154,16 +156,21 @@ export class LiveBattleRelayService {
         if (generation !== this.generation || this.disposed || this.handler !== handler) return;
         this.logger('state', { battle: shortId(battleId), state, code });
         if (state === ChannelMediaRelayState.RelayStateIdle) {
+          this.preserveRunningDuringRefreshBattleId = null;
           this.activeBattleId = null;
           this.setState('failed', battleId, 'battle_relay_stopped', code);
           this.unregisterOwnHandler();
         } else if (state === ChannelMediaRelayState.RelayStateConnecting) {
+          if (this.preserveRunningDuringRefreshBattleId === battleId
+            && this.snapshot.state === 'running') return;
           this.setState('connecting', battleId, null, code);
         } else if (state === ChannelMediaRelayState.RelayStateRunning
           && code === ChannelMediaRelayError.RelayOk) {
+          this.preserveRunningDuringRefreshBattleId = null;
           this.setState('running', battleId, null, code);
         } else if (state === ChannelMediaRelayState.RelayStateFailure
           || code !== ChannelMediaRelayError.RelayOk) {
+          this.preserveRunningDuringRefreshBattleId = null;
           this.setState('failed', battleId, relayFailureCode(code), code);
         }
       },
@@ -186,6 +193,7 @@ export class LiveBattleRelayService {
       return this.setState('idle', null, null, null);
     }
     const battleId = this.activeBattleId ?? this.snapshot.battleId;
+    this.preserveRunningDuringRefreshBattleId = null;
     this.setState('stopping', battleId);
     this.unregisterOwnHandler();
     const result = this.engine.stopChannelMediaRelay();
@@ -207,6 +215,7 @@ export class LiveBattleRelayService {
     }
 
     const generation = ++this.generation;
+    this.preserveRunningDuringRefreshBattleId = null;
     const promise = this.enqueue(async () => {
       this.assertCurrent(generation);
       if (this.activeBattleId && this.activeBattleId !== battleId) {
@@ -262,6 +271,7 @@ export class LiveBattleRelayService {
     }
 
     const generation = ++this.generation;
+    this.preserveRunningDuringRefreshBattleId = null;
     const promise = this.enqueue(async () => {
       this.assertCurrent(generation);
       this.setState('authorizing', battleId);
@@ -310,6 +320,75 @@ export class LiveBattleRelayService {
     return promise;
   }
 
+  refreshCredentials(battleId: string): Promise<LiveBattleRelaySnapshot> {
+    if (this.disposed) return Promise.reject(new LiveBattleRelayError('battle_relay_disposed'));
+    if (this.pendingRefresh?.battleId === battleId) return this.pendingRefresh.promise;
+    if (this.activeBattleId !== battleId
+      || !this.handler
+      || (this.snapshot.state !== 'connecting' && this.snapshot.state !== 'running')) {
+      return Promise.reject(new LiveBattleRelayError('battle_relay_refresh_not_active'));
+    }
+
+    const generation = this.generation;
+    const promise = this.enqueue(async () => {
+      this.assertCurrent(generation);
+      if (this.activeBattleId !== battleId || !this.handler) {
+        throw new LiveBattleRelayError('battle_relay_refresh_not_active');
+      }
+      const preserveRunning = this.snapshot.state === 'running';
+      const credentials = await this.requestCredentials(battleId);
+      this.assertCurrent(generation);
+      if (this.activeBattleId !== battleId) {
+        throw new LiveBattleRelayError('battle_relay_operation_superseded');
+      }
+      this.installHandler(generation, battleId);
+      if (preserveRunning) this.preserveRunningDuringRefreshBattleId = battleId;
+      const relay = credentials.battleRelay;
+      this.logger('refresh', {
+        battle: shortId(battleId),
+        route: `${shortId(relay.source.liveSessionId)}->${shortId(relay.destination.liveSessionId)}`,
+        sourceUid: relay.source.uid,
+        destinationUid: relay.destination.uid,
+      });
+      const result = this.engine.startOrUpdateChannelMediaRelay(configurationFrom(credentials));
+      this.logger('refresh_result', { battle: shortId(battleId), result });
+      if (typeof result !== 'number' || result !== 0) {
+        throw new LiveBattleRelayError(
+          'battle_relay_credential_refresh_failed',
+          undefined,
+          typeof result === 'number' ? result : -1,
+        );
+      }
+      return this.getSnapshot();
+    }).catch(error => {
+      if (generation !== this.generation || this.disposed) throw error;
+      this.preserveRunningDuringRefreshBattleId = null;
+      this.unregisterOwnHandler();
+      if (this.activeBattleId === battleId) {
+        try { this.engine.stopChannelMediaRelay(); } catch { /* fail closed */ }
+      }
+      this.activeBattleId = null;
+      const relayCode = error instanceof LiveBattleRelayError ? error.relayCode ?? null : null;
+      this.setState(
+        'failed',
+        battleId,
+        'battle_relay_credential_refresh_failed',
+        relayCode,
+      );
+      throw new LiveBattleRelayError(
+        'battle_relay_credential_refresh_failed',
+        undefined,
+        relayCode ?? undefined,
+      );
+    });
+    this.pendingRefresh = { battleId, promise };
+    void promise.then(
+      () => { if (this.pendingRefresh?.promise === promise) this.pendingRefresh = null; },
+      () => { if (this.pendingRefresh?.promise === promise) this.pendingRefresh = null; },
+    );
+    return promise;
+  }
+
   stop(): Promise<LiveBattleRelaySnapshot> {
     if (this.disposed) return Promise.resolve(this.getSnapshot());
     if (this.pendingStop) return this.pendingStop;
@@ -333,7 +412,9 @@ export class LiveBattleRelayService {
     if (this.disposed) return;
     this.generation += 1;
     this.pendingStart = null;
+    this.pendingRefresh = null;
     this.pendingStop = null;
+    this.preserveRunningDuringRefreshBattleId = null;
     this.unregisterOwnHandler();
     if (this.activeBattleId) {
       try { this.engine.stopChannelMediaRelay(); } catch { /* LIVE teardown must continue */ }
@@ -355,6 +436,7 @@ export class LiveBattleRelayService {
         }
       } finally {
         this.unregisterOwnHandler();
+        this.preserveRunningDuringRefreshBattleId = null;
         this.activeBattleId = null;
         this.listeners.clear();
         this.snapshot = {

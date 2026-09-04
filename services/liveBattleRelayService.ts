@@ -35,6 +35,10 @@ export class LiveBattleRelayService {
     return Promise.reject(new LiveBattleRelayError('battle_relay_native_unavailable'));
   }
 
+  refreshCredentials(_battleId: string): Promise<LiveBattleRelaySnapshot> {
+    return Promise.reject(new LiveBattleRelayError('battle_relay_native_unavailable'));
+  }
+
   stop(): Promise<LiveBattleRelaySnapshot> {
     return Promise.resolve(this.getSnapshot());
   }
