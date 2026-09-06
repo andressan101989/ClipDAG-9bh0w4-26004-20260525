@@ -2,10 +2,10 @@
  * modules/realtime/ConnectionManager.ts — v2 Production
  *
  * Real implementation:
- *   - Real ping via Supabase user_presence upsert with latency measurement
+ *   - Read-only authenticated ping with latency measurement
  *   - Network health score based on RTT + consecutive failures
  *   - Reconnect validation: confirms connection before declaring healthy
- *   - Realtime connectivity check via lightweight presence upsert
+ *   - Connectivity check without database heartbeat writes
  *   - Circuit breaker prevents reconnect storms
  *   - Background/foreground lifecycle handled
  *   - No throw — all errors handled gracefully
@@ -30,7 +30,6 @@ export interface ConnectionHealth {
 }
 
 const HEARTBEAT_INTERVAL_MS   = 20_000;
-const HEARTBEAT_FAST_INTERVAL = 5_000;  // after failure, ping faster
 const HEARTBEAT_TIMEOUT_MS    = 8_000;
 const MAX_RECONNECT_DELAY_MS  = 30_000;
 const BASE_RECONNECT_DELAY_MS = 1_000;
@@ -148,7 +147,7 @@ class ConnectionManagerImpl {
   reportNetworkChange(type: NetworkType): void {
     const prev = this._networkType;
     this._networkType = type;
-    EventBus.emit('app:network_changed', { type });
+    EventBus.emit('app:network_changed');
 
     if (type === 'offline') {
       this._stopHeartbeat();
@@ -173,12 +172,7 @@ class ConnectionManagerImpl {
 
       // Upsert presence — lightweight write proves DB connectivity
       const { error } = await Promise.race([
-        supabase.from('user_presence').upsert({
-          user_id:    this._userId,
-          status:     'online',
-          activity:   null,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'user_id' }),
+        supabase.from('user_profiles').select('id').eq('id', this._userId).maybeSingle(),
         new Promise<{ error: Error }>(resolve =>
           setTimeout(() => resolve({ error: new Error('ping timeout') }), HEARTBEAT_TIMEOUT_MS),
         ),
@@ -236,7 +230,8 @@ class ConnectionManagerImpl {
     // Ping immediately to validate
     await this._beat();
 
-    if (this._state === 'connected') {
+    const stateAfterBeat = this._state as ConnectionState;
+    if (stateAfterBeat === 'connected') {
       // Start normal interval heartbeat again
       this._startHeartbeat(HEARTBEAT_INTERVAL_MS);
     } else {

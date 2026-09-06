@@ -14,8 +14,8 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import { timeAgo } from '@/services/mockData';
 import type { Conversation } from '@/contexts/MessagesContext';
 
-function ConversationItem({ conv, currentUserId, onPress }: {
-  conv: Conversation; currentUserId: string; onPress: () => void;
+function ConversationItem({ conv, currentUserId, online, onPress }: {
+  conv: Conversation; currentUserId: string; online: boolean; onPress: () => void;
 }) {
   const isLastMine = conv.lastMessage?.senderId === currentUserId;
   const hasUnread = (conv.unreadCount || 0) > 0;
@@ -27,7 +27,7 @@ function ConversationItem({ conv, currentUserId, onPress }: {
     >
       <View style={styles.convAvatar}>
         <Avatar uri={conv.otherUserAvatar} username={conv.otherUsername} size={50} showBorder={hasUnread} />
-        {hasUnread ? (
+        {online ? (
           <View style={styles.onlineDot} />
         ) : null}
       </View>
@@ -63,7 +63,7 @@ export default function MessagesScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
-  const { conversations, isLoading } = useMessages();
+  const { conversations, isLoading, presenceByUser } = useMessages();
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -113,6 +113,7 @@ export default function MessagesScreen() {
             <ConversationItem
               conv={item}
               currentUserId={user?.id || ''}
+              online={presenceByUser[item.partnerId] === 'online'}
               onPress={() => router.push(`/chat/${item.otherUserId}`)}
             />
           )}

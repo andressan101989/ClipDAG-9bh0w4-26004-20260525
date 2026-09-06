@@ -9,10 +9,19 @@ export function useMessages() {
     conversations: [],
     messages: {},
     isLoading: false,
+    hasOlderMessages: {},
+    isLoadingOlder: {},
+    presenceByUser: {},
+    typingByUser: {},
     sendMessage: async () => {},
+    retryMessage: async () => {},
     markConversationRead: async () => {},
     loadConversation: async () => {},
+    loadOlderMessages: async () => {},
     refreshConversations: async () => {},
+    activateConversation: async () => {},
+    deactivateConversation: () => {},
+    setConversationTyping: () => {},
   };
   return ctx;
 }

@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, FlatList, Pressable, TextInput, StyleSheet,
   KeyboardAvoidingView, Keyboard, Platform, ActivityIndicator, Modal,
-  ScrollView, NativeSyntheticEvent,
+  NativeSyntheticEvent,
 } from 'react-native';
 import { Image } from '@/components/ui/SafeImage';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
@@ -13,10 +13,8 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useMessages } from '@/hooks/useMessages';
 import { useAuth } from '@/hooks/useAuth';
-import { usePolling } from '@/hooks/usePolling';
 import { useWallet } from '@/hooks/useWallet';
-import { getSupabaseClient } from '@/template';
-import { useAlert } from '@/template';
+import { getSupabaseClient, useAlert } from '@/template';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { timeAgo } from '@/services/mockData';
@@ -214,7 +212,11 @@ export default function ChatScreen() {
   const { user } = useAuth();
   const walletData = useWallet();
   const balance = walletData?.balance ?? 0;
-  const { messages, conversations, sendMessage, loadConversation, markConversationRead } = useMessages();
+  const {
+    messages, conversations, sendMessage, retryMessage, loadConversation, loadOlderMessages,
+    hasOlderMessages, isLoadingOlder, presenceByUser, typingByUser,
+    activateConversation, deactivateConversation, setConversationTyping,
+  } = useMessages();
   const { showAlert } = useAlert();
   const supabase = getSupabaseClient();
 
@@ -225,7 +227,8 @@ export default function ChatScreen() {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [composerHeight, setComposerHeight] = useState(72);
   const flatListRef = useRef<FlatList>(null);
-  const pollKey = `chat:${partnerId ?? 'unknown'}`;
+  const previousMessageCountRef = useRef(0);
+  const isSendingRef = useRef(false);
 
   // Premium DM state
   const [premiumConfig,   setPremiumConfig]   = useState<{ enabled: boolean; price_bdag: number; welcome_message: string } | null>(null);
@@ -234,14 +237,22 @@ export default function ChatScreen() {
   const [pendingPayment,  setPendingPayment]  = useState<{ payment_id: string; message_id: string; amount: number; creator_earning: number } | null>(null);
 
   const conversation = conversations.find(c => c.partnerId === partnerId);
-  const chatMessages = messages[partnerId || ''] || [];
+  const chatMessages = useMemo(() => messages[partnerId || ''] || [], [messages, partnerId]);
 
   useFocusEffect(
     useCallback(() => {
       if (!partnerId) return undefined;
       setActiveMessageChat(partnerId);
-      return () => clearActiveMessageChat(partnerId);
-    }, [partnerId]),
+      const activation = activateConversation(partnerId);
+      void Promise.all([activation, loadConversation(partnerId)]).catch(error => {
+        console.warn('[ChatScreen] conversation activation failed', error);
+      });
+      return () => {
+        setConversationTyping(partnerId, false);
+        deactivateConversation(partnerId);
+        clearActiveMessageChat(partnerId);
+      };
+    }, [activateConversation, deactivateConversation, loadConversation, partnerId, setConversationTyping]),
   );
 
   // ── Load partner's premium DM config + my subscription status ──────────────
@@ -269,7 +280,7 @@ export default function ChatScreen() {
       }
     };
     load();
-  }, [partnerId, user?.id]);
+  }, [partnerId, user?.id, supabase]);
 
   // ── Load pending premium payment (for creator view — show "Cobrar" bar) ────
   useEffect(() => {
@@ -294,20 +305,7 @@ export default function ChatScreen() {
       }
     };
     if (partnerId) load();
-  }, [partnerId, user?.id, chatMessages.length]);
-
-  // ── Poll via usePolling (pauses in background, no timer accumulation) ──
-  usePolling({
-    key:        pollKey,
-    intervalMs: 30_000,
-    fn:         useCallback(() => { if (partnerId) loadConversation(partnerId); }, [partnerId, loadConversation]),
-  });
-
-  useEffect(() => {
-    if (!partnerId) return;
-    loadConversation(partnerId);
-    markConversationRead(partnerId);
-  }, [partnerId]);
+  }, [partnerId, user?.id, chatMessages.length, supabase]);
 
   const scrollToLatest = useCallback((animated = true) => {
     requestAnimationFrame(() => {
@@ -346,35 +344,37 @@ export default function ChatScreen() {
 
   useEffect(() => {
     if (chatMessages.length === 0) return;
-    scrollToLatest(true);
-  }, [chatMessages.length, keyboardHeight, inputHeight, composerHeight, scrollToLatest]);
+    const grew = chatMessages.length > previousMessageCountRef.current;
+    previousMessageCountRef.current = chatMessages.length;
+    if (grew && !isLoadingOlder[partnerId || '']) scrollToLatest(true);
+  }, [chatMessages.length, isLoadingOlder, partnerId, keyboardHeight, inputHeight, composerHeight, scrollToLatest]);
 
   // ── Send regular message ──────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
-    if (!text.trim() || !partnerId || isSending) return;
-    setIsSending(true);
-    await sendMessage(partnerId, text.trim());
-    setText('');
-    setInputHeight(INPUT_MIN_HEIGHT);
-    setIsSending(false);
-    scrollToLatest(true);
+    if (!text.trim() || !partnerId || isSendingRef.current) return;
+    isSendingRef.current = true; setIsSending(true);
+    setConversationTyping(partnerId, false);
+    try {
+      await sendMessage(partnerId, text.trim());
+      setText(''); setInputHeight(INPUT_MIN_HEIGHT);
+      scrollToLatest(true);
 
-    // If creator responds to held premium DM, auto-release if there's a pending payment
-    if (pendingPayment && user?.id) {
-      const { data } = await supabase.rpc('release_premium_dm', {
-        p_creator_id: user.id,
-        p_message_id: pendingPayment.message_id,
-      });
-      if (data?.success) {
-        walletData?.fullSync?.();
-        setPendingPayment(null);
-        showAlert(
-          '¡Pago liberado!',
-          `+${Number(data.creator_earned ?? pendingPayment.creator_earning).toFixed(2)} BDAG en tu wallet`
-        );
+      // Release only after the reply is durably accepted by the chat server.
+      if (pendingPayment && user?.id) {
+        const { data } = await supabase.rpc('release_premium_dm', {
+          p_creator_id: user.id, p_message_id: pendingPayment.message_id,
+        });
+        if (data?.success) {
+          walletData?.fullSync?.(); setPendingPayment(null);
+          showAlert('¡Pago liberado!', `+${Number(data.creator_earned ?? pendingPayment.creator_earning).toFixed(2)} BDAG en tu wallet`);
+        }
       }
+    } catch {
+      showAlert('Mensaje no enviado', 'Toca el indicador de error para reintentar.');
+    } finally {
+      isSendingRef.current = false; setIsSending(false);
     }
-  }, [text, partnerId, isSending, sendMessage, pendingPayment, user?.id, supabase, walletData, showAlert, scrollToLatest]);
+  }, [text, partnerId, sendMessage, pendingPayment, user?.id, supabase, walletData, showAlert, scrollToLatest, setConversationTyping]);
 
   // ── Send premium DM ───────────────────────────────────────────────────────
   const handleSendPremiumDM = useCallback(async (messageText: string, amount: number) => {
@@ -424,14 +424,19 @@ export default function ChatScreen() {
     if (result.canceled || !result.assets[0] || !user) return;
 
     setIsUploading(true);
-    const asset = result.assets[0];
-    const mimeType = asset.mimeType || detectMimeType(asset.uri, 'image/jpeg');
-    const ext = mimeType.includes('png') ? 'png' : 'jpg';
-    const fileName = `${user.id}/chat_${Date.now()}.${ext}`;
-    const url = await uploadFileFromUri(supabase, asset.uri, 'images', fileName, mimeType, asset.base64);
-    setIsUploading(false);
-    if (url && partnerId) await sendMessage(partnerId, '📷 Imagen', url, 'image');
-    else showAlert('Error', 'No se pudo enviar la imagen');
+    try {
+      const asset = result.assets[0];
+      const mimeType = asset.mimeType || detectMimeType(asset.uri, 'image/jpeg');
+      const ext = mimeType.includes('png') ? 'png' : 'jpg';
+      const fileName = `${user.id}/chat_${Date.now()}.${ext}`;
+      const url = await uploadFileFromUri(supabase, asset.uri, 'images', fileName, mimeType, asset.base64);
+      if (url && partnerId) await sendMessage(partnerId, '📷 Imagen', url, 'image');
+      else showAlert('Error', 'No se pudo enviar la imagen');
+    } catch {
+      showAlert('Mensaje no enviado', 'La imagen quedó marcada para reintentar.');
+    } finally {
+      setIsUploading(false);
+    }
   }, [user, supabase, partnerId, sendMessage, showAlert]);
 
   // ── Render message ────────────────────────────────────────────────────────
@@ -493,16 +498,31 @@ export default function ChatScreen() {
         </View>
 
         {isMine ? (
-          <MaterialCommunityIcons
-            name={item.read ? 'check-all' : 'check'}
-            size={12}
-            color={item.read ? Colors.primary : Colors.textSubtle}
-            style={{ alignSelf: 'flex-end', marginBottom: 6 }}
-          />
+          item.deliveryStatus === 'failed' ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Reintentar mensaje"
+              hitSlop={8}
+              onPress={() => item.clientMessageId && partnerId
+                ? retryMessage(partnerId, item.clientMessageId).catch(() => showAlert('Mensaje no enviado', 'No se pudo reintentar.'))
+                : undefined}
+              style={styles.deliveryIcon}
+            >
+              <MaterialCommunityIcons name="alert-circle-outline" size={15} color={Colors.error} />
+            </Pressable>
+          ) : (
+            <MaterialCommunityIcons
+              name={item.deliveryStatus === 'pending' ? 'clock-outline'
+                : item.deliveryStatus === 'sent' ? 'check' : 'check-all'}
+              size={13}
+              color={item.deliveryStatus === 'read' ? Colors.primary : Colors.textSubtle}
+              style={styles.deliveryIcon}
+            />
+          )
         ) : null}
       </View>
     );
-  }, [user, chatMessages, conversation]);
+  }, [user, chatMessages, conversation, partnerId, retryMessage, showAlert]);
 
   const partnerName   = conversation?.partnerUsername || 'Usuario';
   const partnerAvatar = conversation?.partnerAvatar;
@@ -539,14 +559,16 @@ export default function ChatScreen() {
                 </View>
               ) : null}
             </View>
-            {subStatus?.isSubscribed ? (
-              <SubscriberBadge plan={subStatus.planName} />
-            ) : (
+            {typingByUser[partnerId || ''] ? (
+              <Text style={styles.typingText}>Escribiendo…</Text>
+            ) : presenceByUser[partnerId || ''] === 'online' ? (
               <View style={styles.onlineRow}>
                 <View style={styles.onlineDot} />
                 <Text style={styles.onlineText}>En línea</Text>
               </View>
-            )}
+            ) : subStatus?.isSubscribed ? (
+              <SubscriberBadge plan={subStatus.planName} />
+            ) : null}
           </View>
         </Pressable>
 
@@ -630,11 +652,20 @@ export default function ChatScreen() {
             keyExtractor={item => item.id}
             renderItem={renderMessage}
             contentContainerStyle={styles.messagesList}
+            ListHeaderComponent={isLoadingOlder[partnerId || '']
+              ? <ActivityIndicator size="small" color={Colors.primary} />
+              : hasOlderMessages[partnerId || ''] ? <View style={{ height: 8 }} /> : null}
             ListFooterComponent={<View style={{ height: 12 }} />}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
-            onContentSizeChange={() => scrollToLatest(false)}
             onLayout={() => scrollToLatest(false)}
+            maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+            scrollEventThrottle={100}
+            onScroll={event => {
+              if (event.nativeEvent.contentOffset.y <= 24 && hasOlderMessages[partnerId || '']) {
+                void loadOlderMessages(partnerId || '');
+              }
+            }}
           />
         )}
         </View>
@@ -664,7 +695,10 @@ export default function ChatScreen() {
           <TextInput
             style={[styles.input, { height: inputHeight }]}
             value={text}
-            onChangeText={setText}
+            onChangeText={value => {
+              setText(value);
+              if (partnerId) setConversationTyping(partnerId, value.trim().length > 0);
+            }}
             placeholder="Escribe un mensaje..."
             placeholderTextColor={Colors.textSubtle}
             multiline
@@ -738,6 +772,7 @@ const styles = StyleSheet.create({
   onlineRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   onlineDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.accent },
   onlineText: { color: Colors.accent, fontSize: FontSize.xs },
+  typingText: { color: Colors.primary, fontSize: FontSize.xs },
   headerActions: { flexDirection: 'row', gap: Spacing.xs },
   headerActionBtn: {
     width: 36, height: 36, borderRadius: 18,
@@ -797,6 +832,7 @@ const styles = StyleSheet.create({
   msgTextMine: { color: '#fff', fontSize: FontSize.sm, lineHeight: 20 },
   msgTime: { color: Colors.textSubtle, fontSize: 10, alignSelf: 'flex-end' },
   msgTimeMine: { color: 'rgba(255,255,255,0.6)', fontSize: 10, alignSelf: 'flex-end' },
+  deliveryIcon: { alignSelf: 'flex-end', marginBottom: 6 },
 
   // Input bar
   inputBar: {

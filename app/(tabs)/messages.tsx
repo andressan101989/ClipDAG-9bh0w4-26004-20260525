@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, FlatList, Pressable, TextInput, StyleSheet,
-  ActivityIndicator, RefreshControl, Modal, ScrollView,
+  ActivityIndicator, RefreshControl, Modal,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
@@ -13,8 +13,7 @@ import { useMessages } from '@/hooks/useMessages';
 import { useNotifications } from '@/hooks/useNotifications';
 import { useAuth } from '@/hooks/useAuth';
 import { useWallet } from '@/hooks/useWallet';
-import { useAlert } from '@/template';
-import { getSupabaseClient } from '@/template';
+import { getSupabaseClient, useAlert } from '@/template';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { timeAgo } from '@/services/mockData';
@@ -171,7 +170,7 @@ export default function MessagesScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
-  const { conversations, unreadTotal, isLoading, refreshConversations } = useMessages();
+  const { conversations, unreadTotal, isLoading, refreshConversations, presenceByUser } = useMessages();
   const { unreadCount: notifCount } = useNotifications();
   const { showAlert } = useAlert();
   const walletData = useWallet();
@@ -486,9 +485,9 @@ export default function MessagesScreen() {
                     <View style={[styles.onlineDot, { backgroundColor: PREMIUM_COLOR }]}>
                       <MaterialIcons name="star" size={7} color="#fff" />
                     </View>
-                  ) : (
+                  ) : presenceByUser[item.partnerId] === 'online' ? (
                     <View style={styles.onlineDot} />
-                  )}
+                  ) : null}
                 </View>
 
                 {/* Conversation info */}

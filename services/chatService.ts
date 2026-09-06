@@ -5,6 +5,7 @@ import type {
   ChatConversationPageRow,
   ChatCursor,
   ChatMessageRow,
+  ChatMessageWithReceiptRow,
   ChatMessageReceiptRow,
   ChatMessageType,
 } from '@/services/chatContract';
@@ -70,14 +71,25 @@ export async function fetchChatConversations(
 export async function fetchRecentChatMessages(
   conversationId: string,
   cursor?: ChatCursor,
-): Promise<ChatMessageRow[]> {
-  const { data, error } = await client().rpc('chat_get_recent_messages', {
+): Promise<ChatMessageWithReceiptRow[]> {
+  const { data, error } = await client().rpc('chat_get_recent_messages_v2', {
     p_conversation_id: conversationId,
     p_limit: PAGE_SIZE,
     p_before_created_at: cursor?.createdAt ?? null,
     p_before_id: cursor?.id ?? null,
   });
-  return assertData((data ?? null) as ChatMessageRow[] | null, error);
+  return assertData((data ?? null) as ChatMessageWithReceiptRow[] | null, error);
+}
+
+export async function acknowledgePendingChatDeliveries(limit = 100): Promise<number> {
+  const { data, error } = await client().rpc('chat_acknowledge_pending_deliveries', { p_limit: limit });
+  return Number(assertData(data as number | null, error));
+}
+
+export async function acknowledgeChatReads(messageIds: string[]): Promise<number> {
+  if (messageIds.length === 0) return 0;
+  const { data, error } = await client().rpc('chat_acknowledge_read_batch', { p_message_ids: messageIds });
+  return Number(assertData(data as number | null, error));
 }
 
 export async function fetchChatUserProfile(userId: string): Promise<{
@@ -115,6 +127,7 @@ export function subscribeToChatChanges(input: {
   onMessage: (row: ChatMessageRow) => void;
   onReceipt: (row: ChatMessageReceiptRow) => void;
   onReconcile: () => void;
+  onSubscribed?: () => void;
 }): () => void {
   const supabase = client();
   let active = true;
@@ -137,7 +150,10 @@ export function subscribeToChatChanges(input: {
       event: '*', schema: 'public', table: 'chat_conversation_members', filter: `user_id=eq.${input.userId}`,
     }, () => { if (active) input.onReconcile(); })
     .subscribe(status => {
-      if (active && status === 'SUBSCRIBED') input.onReconcile();
+      if (active && status === 'SUBSCRIBED') {
+        input.onSubscribed?.();
+        input.onReconcile();
+      }
     });
 
   return () => {

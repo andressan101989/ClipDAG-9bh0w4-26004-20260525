@@ -46,3 +46,11 @@ export type ChatMessageReceiptRow = {
   legacy_delivered: boolean;
   legacy_read: boolean;
 };
+
+export type ChatMessageWithReceiptRow = ChatMessageRow & {
+  delivered_at: string | null;
+  read_at: string | null;
+  legacy_delivered: boolean;
+  legacy_read: boolean;
+  delivery_status: Extract<ChatDeliveryStatus, 'sent' | 'delivered' | 'read'>;
+};
