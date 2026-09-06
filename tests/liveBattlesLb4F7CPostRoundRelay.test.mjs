@@ -93,7 +93,7 @@ const series = (overrides = {}) => ({
 const projection = (overrides = {}) => ({
   sessionId: SESSION, battleId: BATTLE_A, opponentSessionId: OTHER_SESSION,
   localBattleSide: 'challenger', localHostUserId: HOST, opponentHostUserId: OPPONENT,
-  status: 'completed', endedAt: '2026-09-04T12:05:03.000Z', series: series(),
+  status: 'completed', version: 2, endedAt: '2026-09-04T12:05:03.000Z', series: series(),
   ...overrides,
 });
 
@@ -496,11 +496,8 @@ test('runtime refresh failure stops once and never reports false relaying', asyn
   await harness.settle();
   assert.deepEqual(harness.relay.refreshCalls, [BATTLE_A]);
   assert.equal(harness.relay.stopCalls, 1);
-  assert.equal(harness.controller.getSnapshot().status, 'failed');
-  assert.equal(
-    harness.controller.getSnapshot().errorCode,
-    'live_battle_relay_credential_refresh_failed',
-  );
+  assert.equal(harness.controller.getSnapshot().status, 'observing');
+  assert.equal(harness.controller.getSnapshot().errorCode, null);
   await harness.controller.dispose();
 });
 
@@ -518,10 +515,15 @@ test('native same-battle refresh is single-flight and never publishes idle or co
   const first = service.refreshCredentials(BATTLE_A);
   const duplicate = service.refreshCredentials(BATTLE_A);
   assert.strictEqual(first, duplicate);
-  await first;
+  await new Promise(resolve => setImmediate(resolve));
+  let settled = false;
+  void first.finally(() => { settled = true; });
+  await Promise.resolve();
+  assert.equal(settled, false);
   engine.emit(states.RelayStateConnecting);
-  assert.equal(service.getSnapshot().state, 'running');
+  assert.equal(service.getSnapshot().state, 'recovering');
   engine.emit(states.RelayStateRunning);
+  await first;
   assert.equal(requests, 2);
   assert.equal(engine.configurations.length, 2);
   assert.equal(engine.stopCount, 0);
@@ -539,9 +541,10 @@ test('native refresh rejection fails closed once for credentials and Agora updat
     const service = new relayModule.LiveBattleRelayService(engine, {
       requestCredentials: async battleId => {
         requests += 1;
-        if (failure === 'credentials' && requests === 2) throw new Error('unavailable');
+        if (failure === 'credentials' && requests >= 2) throw new Error('unavailable');
         return credentials(battleId);
       },
+      wait: async () => undefined,
       logger: () => undefined,
     });
     await service.start(BATTLE_A);

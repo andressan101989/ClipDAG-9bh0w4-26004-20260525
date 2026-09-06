@@ -112,7 +112,6 @@ export class LiveBattleRelayService {
   private generation = 0;
   private queue: Promise<void> = Promise.resolve();
   private pendingStart: { battleId: string; promise: Promise<LiveBattleRelaySnapshot> } | null = null;
-  private pendingRefresh: { battleId: string; promise: Promise<LiveBattleRelaySnapshot> } | null = null;
   private pendingStop: Promise<LiveBattleRelaySnapshot> | null = null;
   private recoveryFlight: { battleId: string; promise: Promise<LiveBattleRelaySnapshot> } | null = null;
   private runningConfirmation: {
@@ -258,7 +257,7 @@ export class LiveBattleRelayService {
       if (this.credentialRefreshTimer !== timer) return;
       this.credentialRefreshTimer = null;
       if (generation !== this.generation || this.activeBattleId !== battleId || this.disposed) return;
-      void this.recoverCredentials(battleId, 'scheduled');
+      void this.recoverCredentials(battleId, 'scheduled').catch(() => undefined);
     }, delayMs);
     this.credentialRefreshTimer = timer;
   }
@@ -271,6 +270,9 @@ export class LiveBattleRelayService {
 
   private waitForRunning(battleId: string, generation: number): Promise<void> {
     this.rejectRunningConfirmation('battle_relay_operation_superseded');
+    this.logger('confirmation_waiting', {
+      battle: shortId(battleId), generation, reason: 'running_ok_required',
+    });
     return new Promise<void>((resolve, reject) => {
       let timer: LiveBattleRelayTimer;
       const finish = (operation: () => void) => {
@@ -280,7 +282,12 @@ export class LiveBattleRelayService {
         operation();
       };
       timer = this.setTimer(
-        () => finish(() => reject(new LiveBattleRelayError('battle_relay_recovery_timeout'))),
+        () => finish(() => {
+          this.logger('confirmation_timeout', {
+            battle: shortId(battleId), generation, reason: 'running_ok_not_received',
+          });
+          reject(new LiveBattleRelayError('battle_relay_recovery_timeout'));
+        }),
         RELAY_RECOVERY_CONFIRM_TIMEOUT_MS,
       );
       this.runningConfirmation = {
@@ -293,10 +300,9 @@ export class LiveBattleRelayService {
 
   private recoverCredentials(
     battleId: string,
-    reason: 'scheduled' | 'source_token_expired' | 'destination_token_expired',
+    reason: 'requested' | 'scheduled' | 'source_token_expired' | 'destination_token_expired',
   ): Promise<LiveBattleRelaySnapshot> {
     if (this.recoveryFlight?.battleId === battleId) return this.recoveryFlight.promise;
-    if (this.pendingRefresh?.battleId === battleId) return this.pendingRefresh.promise;
     if (this.disposed || this.activeBattleId !== battleId || !this.handler) {
       return Promise.reject(new LiveBattleRelayError('battle_relay_refresh_not_active'));
     }
@@ -307,6 +313,7 @@ export class LiveBattleRelayService {
     this.logger('refresh_started', { battle: shortId(battleId), generation, reason });
     const promise = (async () => {
       let lastError: unknown;
+      let relayStoppedForRecovery = false;
       for (let attempt = 0; attempt < RELAY_RECOVERY_MAX_ATTEMPTS; attempt += 1) {
         if (attempt > 0) await this.wait(RELAY_RECOVERY_BACKOFF_MS[attempt]);
         this.assertCurrent(generation);
@@ -332,7 +339,10 @@ export class LiveBattleRelayService {
             this.rejectRunningConfirmation('battle_relay_recovery_restart');
             await confirmation.catch(() => undefined);
             this.unregisterOwnHandler();
-            try { this.engine.stopChannelMediaRelay(); } catch { /* restart continues */ }
+            if (!relayStoppedForRecovery) {
+              try { this.engine.stopChannelMediaRelay(); } catch { /* restart continues */ }
+              relayStoppedForRecovery = true;
+            }
             this.installHandler(generation, battleId);
             const restarted = this.waitForRunning(battleId, generation);
             this.logger('restart_requested', {
@@ -343,6 +353,7 @@ export class LiveBattleRelayService {
               this.rejectRunningConfirmation('battle_relay_credential_refresh_failed');
               await restarted;
             }
+            relayStoppedForRecovery = false;
             await restarted;
           } else {
             await confirmation;
@@ -359,13 +370,22 @@ export class LiveBattleRelayService {
       }
       this.assertCurrent(generation);
       this.unregisterOwnHandler();
-      try { this.engine.stopChannelMediaRelay(); } catch { /* fail closed */ }
+      if (!relayStoppedForRecovery) {
+        try { this.engine.stopChannelMediaRelay(); } catch { /* fail closed */ }
+      }
       this.activeBattleId = null;
       this.logger('recovery_failed', {
         battle: shortId(battleId), generation, reason, attempts: RELAY_RECOVERY_MAX_ATTEMPTS,
       });
       const relayCode = lastError instanceof LiveBattleRelayError ? lastError.relayCode ?? null : null;
-      return this.setState('failed', battleId, 'battle_relay_recovery_failed', relayCode);
+      const finalCode = reason === 'requested'
+        ? 'battle_relay_credential_refresh_failed'
+        : 'battle_relay_recovery_failed';
+      this.setState('failed', battleId, finalCode, relayCode);
+      this.logger('confirmed_refresh_failed', {
+        battle: shortId(battleId), generation, reason, attempts: RELAY_RECOVERY_MAX_ATTEMPTS,
+      });
+      throw new LiveBattleRelayError(finalCode, undefined, relayCode ?? undefined);
     })();
     this.recoveryFlight = { battleId, promise };
     void promise.then(
@@ -409,10 +429,6 @@ export class LiveBattleRelayService {
         this.logger('state', { battle: shortId(battleId), state, code });
         if (tokenExpired && this.activeBattleId === battleId) {
           this.nativeRunning = false;
-          if (this.pendingRefresh?.battleId === battleId) {
-            this.dependencies.onRecoveryStart?.();
-            this.setState('recovering', battleId, null, code);
-          }
           if (this.runningConfirmation) {
             this.runningConfirmation.reject(new LiveBattleRelayError(failure, undefined, code));
           }
@@ -450,7 +466,13 @@ export class LiveBattleRelayService {
           && code === ChannelMediaRelayError.RelayOk) {
           this.preserveRunningDuringRefreshBattleId = null;
           this.setState('running', battleId, null, code);
-          this.runningConfirmation?.resolve();
+          const confirmation = this.runningConfirmation;
+          if (confirmation?.battleId === battleId && confirmation.generation === generation) {
+            this.logger('confirmation_running', {
+              battle: shortId(battleId), generation, reason: 'running_ok_confirmed',
+            });
+            confirmation.resolve();
+          }
           this.scheduleCredentialRefresh(battleId, generation);
         } else if (state === ChannelMediaRelayState.RelayStateFailure
           || code !== ChannelMediaRelayError.RelayOk) {
@@ -500,6 +522,8 @@ export class LiveBattleRelayService {
     }
 
     const generation = ++this.generation;
+    this.clearCredentialRefreshTimer();
+    this.rejectRunningConfirmation('battle_relay_operation_superseded');
     this.preserveRunningDuringRefreshBattleId = null;
     const promise = this.enqueue(async () => {
       this.assertCurrent(generation);
@@ -563,6 +587,8 @@ export class LiveBattleRelayService {
     }
 
     const generation = ++this.generation;
+    this.clearCredentialRefreshTimer();
+    this.rejectRunningConfirmation('battle_relay_operation_superseded');
     this.preserveRunningDuringRefreshBattleId = null;
     const promise = this.enqueue(async () => {
       this.assertCurrent(generation);
@@ -632,80 +658,12 @@ export class LiveBattleRelayService {
   refreshCredentials(battleId: string): Promise<LiveBattleRelaySnapshot> {
     if (this.disposed) return Promise.reject(new LiveBattleRelayError('battle_relay_disposed'));
     if (this.recoveryFlight?.battleId === battleId) return this.recoveryFlight.promise;
-    if (this.pendingRefresh?.battleId === battleId) return this.pendingRefresh.promise;
     if (this.activeBattleId !== battleId
       || !this.handler
       || (this.snapshot.state !== 'connecting' && this.snapshot.state !== 'running')) {
       return Promise.reject(new LiveBattleRelayError('battle_relay_refresh_not_active'));
     }
-
-    const generation = this.generation;
-    this.clearCredentialRefreshTimer();
-    const promise = this.enqueue(async () => {
-      this.assertCurrent(generation);
-      if (this.activeBattleId !== battleId || !this.handler) {
-        throw new LiveBattleRelayError('battle_relay_refresh_not_active');
-      }
-      const preserveRunning = this.snapshot.state === 'running';
-      const authorizedAt = this.now();
-      const credentials = await this.requestCredentials(battleId);
-      this.assertCurrent(generation);
-      if (this.activeBattleId !== battleId) {
-        throw new LiveBattleRelayError('battle_relay_operation_superseded');
-      }
-      if (this.canReuse(credentials)) {
-        this.logger('refresh_reused', { battle: shortId(battleId) });
-        return this.getSnapshot();
-      }
-      this.installHandler(generation, battleId);
-      if (preserveRunning) this.preserveRunningDuringRefreshBattleId = battleId;
-      if (this.nativeRunning) this.dependencies.onReconfigure?.();
-      this.nativeRunning = false;
-      this.rememberTransport(credentials, authorizedAt);
-      const relay = credentials.battleRelay;
-      this.logger('refresh', {
-        battle: shortId(battleId),
-        route: `${shortId(relay.source.liveSessionId)}->${shortId(relay.destination.liveSessionId)}`,
-        sourceUid: relay.source.uid,
-        destinationUid: relay.destination.uid,
-      });
-      const result = this.engine.startOrUpdateChannelMediaRelay(configurationFrom(credentials));
-      this.logger('refresh_result', { battle: shortId(battleId), result });
-      if (typeof result !== 'number' || result !== 0) {
-        throw new LiveBattleRelayError(
-          'battle_relay_credential_refresh_failed',
-          undefined,
-          typeof result === 'number' ? result : -1,
-        );
-      }
-      return this.getSnapshot();
-    }).catch(error => {
-      if (generation !== this.generation || this.disposed) throw error;
-      this.preserveRunningDuringRefreshBattleId = null;
-      this.unregisterOwnHandler();
-      if (this.activeBattleId === battleId) {
-        try { this.engine.stopChannelMediaRelay(); } catch { /* fail closed */ }
-      }
-      this.activeBattleId = null;
-      const relayCode = error instanceof LiveBattleRelayError ? error.relayCode ?? null : null;
-      this.setState(
-        'failed',
-        battleId,
-        'battle_relay_credential_refresh_failed',
-        relayCode,
-      );
-      throw new LiveBattleRelayError(
-        'battle_relay_credential_refresh_failed',
-        undefined,
-        relayCode ?? undefined,
-      );
-    });
-    this.pendingRefresh = { battleId, promise };
-    void promise.then(
-      () => { if (this.pendingRefresh?.promise === promise) this.pendingRefresh = null; },
-      () => { if (this.pendingRefresh?.promise === promise) this.pendingRefresh = null; },
-    );
-    return promise;
+    return this.recoverCredentials(battleId, 'requested');
   }
 
   stop(): Promise<LiveBattleRelaySnapshot> {
@@ -733,7 +691,6 @@ export class LiveBattleRelayService {
     if (this.disposed) return;
     this.generation += 1;
     this.pendingStart = null;
-    this.pendingRefresh = null;
     this.recoveryFlight = null;
     this.pendingStop = null;
     this.preserveRunningDuringRefreshBattleId = null;

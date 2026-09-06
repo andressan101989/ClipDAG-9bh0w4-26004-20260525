@@ -148,7 +148,7 @@ test('transport or authority read failure alone never fabricates a terminal Batt
 });
 test('native runtime connects terminal authority to the current UI owner and blocks obsolete-session callbacks',()=>{
   const runner=hooks();let dependency;const closed=[];class Controller{constructor(d){dependency=d;}subscribe(){return()=>{};}updateContext(){}updatePublicAuthority(){}dispose(){}}
-  const hook=load(read('hooks/live/useLiveBattleRelayRuntime.native.ts'),{'react':runner.react,'@/services/liveBattleRelayService':{LiveBattleRelayService:class{}},'@/services/liveBattleRuntimeController':{LiveBattleRuntimeController:Controller},'@/services/liveBattleService':{},'@/services/liveBattleSpectatorService':{}}).useLiveBattleRelayRuntime;
+  const hook=load(read('hooks/live/useLiveBattleRelayRuntime.native.ts'),{'react':runner.react,'@/services/liveBattleRelayService':{LiveBattleRelayService:class{}},'@/services/liveBattleRuntimeController':{LiveBattleRuntimeController:Controller},'@/services/liveBattleService':{},'@/services/liveBattleSeriesService':{},'@/services/liveBattleSpectatorService':{}}).useLiveBattleRelayRuntime;
   const engine={},props={liveSessionId:IDs[2],joined:true,getEngine:()=>engine,registerBeforeEngineRelease:()=>()=>{},reconnectEpoch:0,confirmTerminalBattle:id=>closed.push(id)};
   try{runner.render(()=>hook(props));dependency.onTerminalAuthority(IDs[4]);assert.deepEqual(closed,[IDs[4]]);props.liveSessionId=IDs[3];runner.render(()=>hook(props));dependency.onTerminalAuthority(IDs[4]);assert.deepEqual(closed,[IDs[4]]);}finally{runner.unmount();dependency.onTerminalAuthority(IDs[4]);assert.deepEqual(closed,[IDs[4]]);}
 });

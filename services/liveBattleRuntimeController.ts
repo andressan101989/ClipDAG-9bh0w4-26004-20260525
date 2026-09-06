@@ -9,6 +9,7 @@ import {
   type LiveBattleSubscription,
 } from './liveBattleService';
 import type { LiveBattleRelaySnapshot } from './liveBattleRelayContract';
+import type { LiveBattleSeries, LiveBattleSeriesProjection } from './liveBattleSeriesContract';
 import {
   getLiveBattleRelayDecisionDeadline,
   resolveLiveBattleRelayPolicy,
@@ -65,6 +66,7 @@ export type LiveBattleRuntimeDependencies = {
   discover?: (sessionId: string) => Promise<LiveBattle[]>;
   reconcile?: (battleId: string) => Promise<LiveBattle>;
   terminateAfterRelayFailure?: (battleId: string) => Promise<LiveBattle>;
+  leaveSeriesAfterRelayFailure?: (seriesId: string) => Promise<LiveBattleSeries>;
   subscribe?: (
     sessionId: string,
     onSignal: (signal: LiveBattleSessionSignal) => void,
@@ -95,6 +97,7 @@ type LiveBattleAuthorityRead =
 const RELAY_STATUSES = new Set(['countdown', 'active']);
 const TERMINAL_STATUSES = new Set(['completed', 'rejected', 'cancelled', 'expired']);
 const DEADLINE_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000] as const;
+const POST_ROUND_EXIT_RETRY_DELAYS_MS = [0, 500, 1_500] as const;
 const DEADLINE_CHECKPOINT_MS = {
   pending: 10_000,
   countdown: 1_000,
@@ -191,6 +194,10 @@ export class LiveBattleRuntimeController {
   private relayFailureAttempts = 0;
   private pendingDeadlineAuthorityKey: string | null = null;
   private lastRematchLogKey: string | null = null;
+  private postRoundExitFlight: { key: string; promise: Promise<void> } | null = null;
+  private postRoundExitRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private postRoundExitRetryRelease: (() => void) | null = null;
+  private postRoundLocalFailClosedKey: string | null = null;
 
   constructor(private readonly dependencies: LiveBattleRuntimeDependencies) {
     this.discover = dependencies.discover ?? getOpenLiveBattlesForSession;
@@ -244,7 +251,7 @@ export class LiveBattleRuntimeController {
         status: 'failed', battleId: battle.id, version: battle.version,
         errorCode: 'live_battle_relay_failed', battle,
       });
-      void this.terminateCanonicalAfterRelayFailure(battle, relay.errorCode);
+      void this.handleDefinitiveRelayFailure(battle, relay.errorCode);
       return;
     }
     if (relay.state === 'recovering') {
@@ -316,6 +323,7 @@ export class LiveBattleRuntimeController {
     }
     this.publicState = state;
     this.publicClockAnchor = clockAnchor;
+    if (this.postRoundExitRetryTimer) this.cancelPostRoundExitRetry();
     if (state && state.battleId === this.relayBattleId) {
       this.captureRelaySeriesAuthority(state.battleId);
     }
@@ -551,6 +559,11 @@ export class LiveBattleRuntimeController {
     generation: number,
     reconciledByServer = false,
   ): Promise<void> {
+    if (this.postRoundLocalFailClosedKey
+      && !this.postRoundLocalFailClosedKey.startsWith(`${battle.id}:`)) {
+      this.postRoundLocalFailClosedKey = null;
+      this.cancelPostRoundExitRetry();
+    }
     if (typeof __DEV__ !== 'undefined' && __DEV__) console.info('[LIVE-BATTLE-RUNTIME] authoritative_battle', {
       controller: this.runtimeId, battle: battle.id.slice(-8), status: battle.status,
       version: battle.version, challengerSession: battle.challengerSessionId.slice(-8),
@@ -579,7 +592,7 @@ export class LiveBattleRuntimeController {
         status: 'failed', battleId: battle.id, version: battle.version,
         errorCode: 'live_battle_relay_failed', battle,
       });
-      void this.terminateCanonicalAfterRelayFailure(battle, relaySnapshot.errorCode);
+      void this.handleDefinitiveRelayFailure(battle, relaySnapshot.errorCode);
       return;
     }
     if (this.relayBattleId === battle.id) {
@@ -743,6 +756,13 @@ export class LiveBattleRuntimeController {
       await this.stopRelay('observing', battle.id, battle.version, battle);
       return;
     }
+    const series = authority.state.series;
+    const localFailClosedKey = series ? `${battle.id}:${series.id}` : null;
+    if (localFailClosedKey && this.postRoundLocalFailClosedKey === localFailClosedKey) {
+      this.dependencies.onTerminalAuthority?.(battle.id);
+      await this.exitPostRoundAfterRelayFailure(battle, authority.state, generation);
+      return;
+    }
     const refreshKey = `${battle.id}:${battle.version}:${deadlineText}`;
     this.lastValidatedPostRoundAuthority = { battleId: battle.id, key: refreshKey, deadlineMs };
     this.postRoundAuthorityRetryUsed = false;
@@ -792,17 +812,11 @@ export class LiveBattleRuntimeController {
           this.postRoundCredentialRefreshKey = null;
         }
         this.resetDeadlineScheduler();
-        await this.dependencies.relay.stop().catch(() => undefined);
-        this.relayBattleId = null;
-        this.relaySeriesId = null;
-        this.relayRoundNumber = null;
-        this.relayDecision = 'stop_terminal';
-        this.relayOperationPossible = false;
-        this.lastValidatedPostRoundAuthority = null;
         this.publish({
           status: 'failed', battleId: battle.id, version: battle.version,
           errorCode: 'live_battle_relay_credential_refresh_failed', battle,
         });
+        await this.exitPostRoundAfterRelayFailure(battle, authority.state, generation);
         return;
       }
     }
@@ -1097,6 +1111,186 @@ export class LiveBattleRuntimeController {
     this.scheduleRefreshRetry(generation);
   }
 
+  private cancelPostRoundExitRetry(): void {
+    if (this.postRoundExitRetryTimer) this.clearTimer(this.postRoundExitRetryTimer);
+    this.postRoundExitRetryTimer = null;
+    const release = this.postRoundExitRetryRelease;
+    this.postRoundExitRetryRelease = null;
+    release?.();
+  }
+
+  private waitForPostRoundExitRetry(delayMs: number): Promise<void> {
+    this.cancelPostRoundExitRetry();
+    return new Promise(resolve => {
+      let timer: ReturnType<typeof setTimeout>;
+      const release = () => {
+        if (this.postRoundExitRetryTimer !== timer) return;
+        this.postRoundExitRetryTimer = null;
+        this.postRoundExitRetryRelease = null;
+        resolve();
+      };
+      timer = this.setTimer(release, delayMs);
+      this.postRoundExitRetryTimer = timer;
+      this.postRoundExitRetryRelease = release;
+    });
+  }
+
+  private postRoundExitStillCurrent(
+    battle: LiveBattle,
+    series: LiveBattleSeriesProjection,
+    generation: number,
+  ): boolean {
+    if (!this.isCurrent(generation)) return false;
+    const currentBattle = this.snapshot.battle;
+    const current = this.publicState;
+    return currentBattle?.id === battle.id
+      && currentBattle.version === battle.version
+      && current?.battleId === battle.id
+      && current.version === battle.version
+      && current.series?.id === series.id
+      && current.series.version === series.version
+      && (current.series.status === 'awaiting_rematch' || current.series.status === 'rematch_pending');
+  }
+
+  private async readPostRoundExitAuthority(
+    battle: LiveBattle,
+    series: LiveBattleSeriesProjection,
+    generation: number,
+  ): Promise<'open' | 'terminal' | 'superseded' | 'unavailable'> {
+    const sessionId = this.context.liveSessionId;
+    const read = this.dependencies.readPublicAuthority;
+    if (!sessionId || !read) return 'unavailable';
+    try {
+      const snapshot = await read(sessionId);
+      if (!this.isCurrent(generation)) return 'superseded';
+      this.publicState = snapshot.state;
+      this.publicClockAnchor = snapshot.clockAnchor;
+      const serverNowMs = Date.parse(snapshot.serverNow);
+      if (Number.isFinite(serverNowMs)) this.authorityServerNowMs = serverNowMs;
+      const current = snapshot.state;
+      if (!current || current.series?.id !== series.id) return 'superseded';
+      if (current.battleId !== battle.id) return 'superseded';
+      if (current.series.status === 'completed' || current.series.status === 'cancelled') {
+        return 'terminal';
+      }
+      if (current.version !== battle.version
+        || current.series.version !== series.version) return 'superseded';
+      return current.status === 'completed'
+        && (current.series.status === 'awaiting_rematch' || current.series.status === 'rematch_pending')
+        ? 'open'
+        : 'superseded';
+    } catch {
+      return 'unavailable';
+    }
+  }
+
+  private async finishPostRoundExit(
+    battle: LiveBattle,
+    series: LiveBattleSeriesProjection,
+    generation: number,
+    localFailClosed: boolean,
+  ): Promise<void> {
+    if (!this.isCurrent(generation)) return;
+    if (!localFailClosed) {
+      const current = this.publicState;
+      if (!current || current.series?.id !== series.id
+        || (current.series.status !== 'completed' && current.series.status !== 'cancelled')) return;
+      this.logRematch('terminal_authority_confirmed', battle, {
+        series: series.id.slice(-8), seriesVersion: current.series.version,
+      });
+    } else {
+      this.postRoundLocalFailClosedKey = `${battle.id}:${series.id}`;
+      this.logRematch('local_fail_closed', battle, {
+        series: series.id.slice(-8), seriesVersion: series.version,
+      });
+    }
+    // F10-C ordering: suppress the Stage before relay.stop clears the remote UID.
+    this.dependencies.onTerminalAuthority?.(battle.id);
+    await this.stopRelay('observing', battle.id, battle.version, battle);
+    this.logRematch('exit_to_live', battle, {
+      reason: localFailClosed ? 'relay_failure_local_fail_closed' : 'relay_failure_series_terminal',
+    });
+  }
+
+  private exitPostRoundAfterRelayFailure(
+    battle: LiveBattle,
+    state: LiveBattlePublicState,
+    generation: number,
+  ): Promise<void> {
+    const series = state.series;
+    if (!series || state.battleId !== battle.id || state.version !== battle.version
+      || (series.status !== 'awaiting_rematch' && series.status !== 'rematch_pending')) {
+      return Promise.resolve();
+    }
+    const key = `${battle.id}:${battle.version}:${series.id}:${series.version}`;
+    if (this.postRoundExitFlight?.key === key) return this.postRoundExitFlight.promise;
+    if (this.postRoundExitFlight) return this.postRoundExitFlight.promise;
+    this.logRematch('relay_failure_exit_started', battle, {
+      series: series.id.slice(-8), seriesVersion: series.version,
+    });
+    const leave = this.dependencies.leaveSeriesAfterRelayFailure;
+    const promise = (async () => {
+      if (!leave) {
+        if (this.postRoundExitStillCurrent(battle, series, generation)) {
+          await this.finishPostRoundExit(battle, series, generation, true);
+        }
+        return;
+      }
+      let leaveSettled = false;
+      for (let attempt = 0; attempt < POST_ROUND_EXIT_RETRY_DELAYS_MS.length; attempt += 1) {
+        if (attempt > 0) await this.waitForPostRoundExitRetry(POST_ROUND_EXIT_RETRY_DELAYS_MS[attempt]);
+        if (!this.postRoundExitStillCurrent(battle, series, generation)) return;
+        const before = await this.readPostRoundExitAuthority(battle, series, generation);
+        if (before === 'terminal') {
+          await this.finishPostRoundExit(battle, series, generation, false);
+          return;
+        }
+        if (before === 'superseded') return;
+        if (before === 'open' && leave && !leaveSettled) {
+          try {
+            this.logRematch('series_leave_requested', battle, {
+              series: series.id.slice(-8), seriesVersion: series.version, attempt: attempt + 1,
+            });
+            const result = await leave(series.id);
+            if (!this.isCurrent(generation)) return;
+            leaveSettled = result.status === 'completed' || result.status === 'cancelled';
+          } catch (error) {
+            if (!this.isCurrent(generation)) return;
+            const code = error && typeof error === 'object'
+              && typeof (error as { code?: unknown }).code === 'string'
+              ? (error as { code: string }).code
+              : 'unknown';
+            if (code === 'series_closed' || code === 'stale_state') leaveSettled = true;
+            else if (code !== 'network') break;
+          }
+        }
+        const after = await this.readPostRoundExitAuthority(battle, series, generation);
+        if (after === 'terminal') {
+          await this.finishPostRoundExit(battle, series, generation, false);
+          return;
+        }
+        if (after === 'superseded') return;
+      }
+      if (this.postRoundExitStillCurrent(battle, series, generation)) {
+        await this.finishPostRoundExit(battle, series, generation, true);
+      }
+    })().finally(() => {
+      this.cancelPostRoundExitRetry();
+      if (this.postRoundExitFlight?.promise === promise) this.postRoundExitFlight = null;
+    });
+    this.postRoundExitFlight = { key, promise };
+    return promise;
+  }
+
+  private handleDefinitiveRelayFailure(battle: LiveBattle, reason: string | null): Promise<void> {
+    const state = this.publicState;
+    if (battle.status === 'completed' && state?.battleId === battle.id && state.series
+      && (state.series.status === 'awaiting_rematch' || state.series.status === 'rematch_pending')) {
+      return this.exitPostRoundAfterRelayFailure(battle, state, this.generation);
+    }
+    return this.terminateCanonicalAfterRelayFailure(battle, reason);
+  }
+
   private logDeadline(event: string, battle: LiveBattle, extra: Record<string, unknown>): void {
     if (typeof __DEV__ === 'undefined' || !__DEV__) return;
     console.info(`[LIVE-BATTLE-DEADLINE] ${event}`, {
@@ -1168,6 +1362,7 @@ export class LiveBattleRuntimeController {
     if (this.disposed) return Promise.resolve();
     this.suspended = true;
     this.generation += 1;
+    this.cancelPostRoundExitRetry();
     this.refreshQueued = false;
     this.resetDeadlineScheduler();
     this.removeSubscription();
@@ -1181,6 +1376,7 @@ export class LiveBattleRuntimeController {
 
   private invalidateAndStop(status: LiveBattleRuntimeStatus): void {
     this.generation += 1;
+    this.cancelPostRoundExitRetry();
     this.relayFailureFlight = null;
     this.refreshQueued = false;
     this.resetDeadlineScheduler();
@@ -1192,6 +1388,7 @@ export class LiveBattleRuntimeController {
     if (this.disposed) return;
     this.suspended = true;
     this.generation += 1;
+    this.cancelPostRoundExitRetry();
     this.refreshQueued = false;
     this.resetDeadlineScheduler();
     this.removeSubscription();
@@ -1225,6 +1422,7 @@ export class LiveBattleRuntimeController {
     if (this.disposed) return;
     this.suspended = true;
     this.generation += 1;
+    this.cancelPostRoundExitRetry();
     this.refreshQueued = false;
     this.resetDeadlineScheduler();
     this.removeSubscription();

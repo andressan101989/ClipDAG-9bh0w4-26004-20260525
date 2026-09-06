@@ -14,6 +14,7 @@ import {
   type LiveBattleRuntimeContext,
   type LiveBattleRuntimeSnapshot,
 } from '@/services/liveBattleRuntimeController';
+import { leaveLiveBattleSeries } from '@/services/liveBattleSeriesService';
 import {
   getLiveBattlePublicSnapshot,
   getLiveBattleRelaySessionPairAuthority,
@@ -120,6 +121,7 @@ export function useLiveBattleRelayRuntime({
     });
     const controller = new LiveBattleRuntimeController({
       relay,
+      leaveSeriesAfterRelayFailure: leaveLiveBattleSeries,
       onTerminalAuthority: battleId => {
         const bridge = videoBridgeRef.current;
         if (bridgeActive && mountedRef.current && bridge.liveSessionId === ownedSessionId) {

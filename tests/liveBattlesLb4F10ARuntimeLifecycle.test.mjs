@@ -84,7 +84,7 @@ function hookHarness() {
   const runner=hooks(), calls={created:0,disposed:0,authorities:[],contexts:[]}, engine={}, guards=new Set();
   const register=fn=>{guards.add(fn);return()=>guards.delete(fn);};
   class FakeController{constructor(){calls.created++;}subscribe(fn){calls.publish=fn;return()=>{};}updateContext(c){calls.contexts.push(c);}updatePublicAuthority(p){calls.authorities.push(p);}handleEngineRelease(){}async dispose(){calls.disposed++;}async reconcileNow(){} }
-  const hook=load(read('hooks/live/useLiveBattleRelayRuntime.native.ts'),{'react':runner.react,'@/services/liveBattleRelayService':{LiveBattleRelayService:class{}},'@/services/liveBattleService':{},'@/services/liveBattleRuntimeController':{LiveBattleRuntimeController:FakeController},'@/services/liveBattleSpectatorService':{}}).useLiveBattleRelayRuntime;
+  const hook=load(read('hooks/live/useLiveBattleRelayRuntime.native.ts'),{'react':runner.react,'@/services/liveBattleRelayService':{LiveBattleRelayService:class{}},'@/services/liveBattleService':{},'@/services/liveBattleRuntimeController':{LiveBattleRuntimeController:FakeController},'@/services/liveBattleSeriesService':{},'@/services/liveBattleSpectatorService':{}}).useLiveBattleRelayRuntime;
   const props={...context(),getEngine:()=>engine,registerBeforeEngineRelease:register,reconnectEpoch:0,publicBattleState:projection(),publicClockAnchor:anchor};
   return {runner,calls,guards,props,render:()=>runner.render(()=>hook(props))};
 }

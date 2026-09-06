@@ -59,6 +59,8 @@ const BACKEND_ERROR_MAP: Readonly<Record<string, LiveBattleSeriesErrorCode>> = {
   live_battle_rematch_request_not_found: 'stale_state',
   live_battle_series_not_found: 'stale_state',
   live_battle_series_not_between_rounds: 'stale_state',
+  live_battle_series_leave_state_invalid: 'stale_state',
+  live_battle_series_leave_busy: 'network',
   live_battle_rematch_sessions_not_live: 'session_expired',
 };
 

@@ -56,7 +56,7 @@ test('short post-round credentials cannot cover the next full round',async()=>{
   const h=relayHarness();try{h.set({ttl:45});await h.relay.start('one');h.running();h.set({ttl:318});await h.relay.transition('two');assert.equal(h.calls.length,2);}finally{await h.relay.dispose();}
 });
 test('a sufficient recent refresh avoids a second native reconfiguration on transition',async()=>{
-  const h=relayHarness();try{h.set({ttl:15});await h.relay.start('one');h.running();h.set({ttl:360});await h.relay.refreshCredentials('one');h.running();h.set({ttl:300});await h.relay.transition('two');assert.equal(h.calls.length,2);assert.equal(h.relay.getSnapshot().state,'running');}finally{await h.relay.dispose();}
+  const h=relayHarness();try{h.set({ttl:15});await h.relay.start('one');h.running();h.set({ttl:360});const refresh=h.relay.refreshCredentials('one');await new Promise(resolve=>setImmediate(resolve));h.running();await refresh;h.set({ttl:300});await h.relay.transition('two');assert.equal(h.calls.length,2);assert.equal(h.relay.getSnapshot().state,'running');}finally{await h.relay.dispose();}
 });
 test('reuse does not reset the expiry or retain an obsolete logical callback',async()=>{
   const h=relayHarness();try{await h.relay.start('one');h.running();const old=[...h.handlers][0];h.set({ttl:300});await h.relay.transition('two');old.onChannelMediaRelayStateChanged(0,0);assert.equal(h.relay.getSnapshot().battleId,'two');h.running();h.set({ttl:300,clock:60000});await h.relay.transition('three');assert.equal(h.calls.length,2);}finally{await h.relay.dispose();}
@@ -134,8 +134,8 @@ test('both screen render gates execute the same authority-aware predicate',()=>{
 test('the real relay signals the existing UID owner and terminal stop overrides reconfiguration',async()=>{
   const video=await videoHarness(),h=relayHarness();let stops=0;
   h.relay.engine.stopChannelMediaRelay=()=>{stops++;return 0;};
-  h.relay.setVisualContinuityHandlers({onReconfigure:()=>video.render().beginRemoteVideoTransition(42),onStopped:()=>video.render().clearRemoteVideoTransition(42)});
-  try{await h.relay.start('one');h.running();await h.relay.refreshCredentials('one');video.handler.onUserOffline({},42,0);assert.deepEqual(video.render().remoteUids,[42]);await Promise.all([h.relay.stop(),h.relay.stop()]);assert.equal(stops,1);assert.deepEqual(video.render().remoteUids,[]);assert.equal(video.timers.size,0);assert.equal(video.render().joined,true);}finally{await h.relay.dispose();video.unmount();}
+  h.relay.setVisualContinuityHandlers({onReconfigure:()=>video.render().beginRemoteVideoTransition(42),onRecoveryStart:()=>video.render().beginRemoteVideoTransition(42),onStopped:()=>video.render().clearRemoteVideoTransition(42)});
+  try{await h.relay.start('one');h.running();const refresh=h.relay.refreshCredentials('one');await new Promise(resolve=>setImmediate(resolve));h.running();await refresh;video.handler.onUserOffline({},42,0);assert.deepEqual(video.render().remoteUids,[42]);await Promise.all([h.relay.stop(),h.relay.stop()]);assert.equal(stops,1);assert.deepEqual(video.render().remoteUids,[]);assert.equal(video.timers.size,0);assert.equal(video.render().joined,true);}finally{await h.relay.dispose();video.unmount();}
 });
 
 const policy=load(read('services/liveBattlePostRoundRelayPolicy.ts'));
@@ -163,7 +163,7 @@ test('deadline only requests authority; terminal series stops once, advances UI 
 test('series-only authority change refreshes the existing public projection without recreating runtime',async()=>{
   const runner=hooks();let publish,reconciles=0,created=0;const engine={};const guards=new Set();
   class C{constructor(){created++;}subscribe(f){publish=f;return()=>{};}updateContext(){}updatePublicAuthority(){}dispose(){} }
-  const hook=load(read('hooks/live/useLiveBattleRelayRuntime.native.ts'),{'react':runner.react,'@/services/liveBattleRelayService':{LiveBattleRelayService:class{}},'@/services/liveBattleRuntimeController':{LiveBattleRuntimeController:C},'@/services/liveBattleService':{},'@/services/liveBattleSpectatorService':{}}).useLiveBattleRelayRuntime;
+  const hook=load(read('hooks/live/useLiveBattleRelayRuntime.native.ts'),{'react':runner.react,'@/services/liveBattleRelayService':{LiveBattleRelayService:class{}},'@/services/liveBattleRuntimeController':{LiveBattleRuntimeController:C},'@/services/liveBattleService':{},'@/services/liveBattleSeriesService':{},'@/services/liveBattleSpectatorService':{}}).useLiveBattleRelayRuntime;
   const props={joined:true,getEngine:()=>engine,registerBeforeEngineRelease:f=>(guards.add(f),()=>guards.delete(f)),reconnectEpoch:0,reconcilePublicAuthority:async()=>{reconciles++;}};
   try{runner.render(()=>hook(props));const snapshot={battleId:IDs[4],version:4,status:'relaying',battle:{status:'completed'},publicAuthorityKey:'series:2'};publish(snapshot);runner.render(()=>hook(props));await Promise.resolve();assert.equal(reconciles,1);publish({...snapshot,publicAuthorityKey:'series:3'});runner.render(()=>hook(props));await Promise.resolve();assert.equal(reconciles,2);assert.equal(created,1);assert.equal(guards.size,1);runner.render(()=>hook(props));assert.equal(reconciles,2);}finally{runner.unmount();assert.equal(guards.size,0);}
 });
@@ -194,7 +194,7 @@ test('terminal null projection clears the last canonical rival without allowing 
   const runner=hooks(),cleared=[];let handlers;const engine={};
   class Relay{setVisualContinuityHandlers(value){handlers=value;}}
   class Controller{subscribe(){return()=>{};}updateContext(){}updatePublicAuthority(){}dispose(){handlers.onStopped();}}
-  const hook=load(read('hooks/live/useLiveBattleRelayRuntime.native.ts'),{'react':runner.react,'@/services/liveBattleRelayService':{LiveBattleRelayService:Relay},'@/services/liveBattleRuntimeController':{LiveBattleRuntimeController:Controller},'@/services/liveBattleService':{},'@/services/liveBattleSpectatorService':{}}).useLiveBattleRelayRuntime;
+  const hook=load(read('hooks/live/useLiveBattleRelayRuntime.native.ts'),{'react':runner.react,'@/services/liveBattleRelayService':{LiveBattleRelayService:Relay},'@/services/liveBattleRuntimeController':{LiveBattleRuntimeController:Controller},'@/services/liveBattleService':{},'@/services/liveBattleSeriesService':{},'@/services/liveBattleSpectatorService':{}}).useLiveBattleRelayRuntime;
   const props={liveSessionId:'session-a',joined:true,getEngine:()=>engine,registerBeforeEngineRelease:()=>()=>{},reconnectEpoch:0,publicBattleState:{opponentHostAgoraUid:42},clearRemoteVideoTransition:uid=>cleared.push(uid)};
   try{runner.render(()=>hook(props));props.publicBattleState=null;runner.render(()=>hook(props));handlers.onStopped();assert.deepEqual(cleared,[42]);props.liveSessionId='session-b';props.publicBattleState={opponentHostAgoraUid:99};runner.render(()=>hook(props));handlers.onStopped();assert.deepEqual(cleared,[42]);}finally{runner.unmount();assert.deepEqual(cleared,[42]);}
 });
