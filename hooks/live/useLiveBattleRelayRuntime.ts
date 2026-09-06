@@ -16,6 +16,7 @@ type UseLiveBattleRelayRuntimeParams = LiveBattleRuntimeContext & {
   publicBattleState: LiveBattlePublicState | null;
   publicClockAnchor: LiveBattleServerClockAnchor | null;
   reconcilePublicAuthority?: () => Promise<void>;
+  confirmTerminalBattle?: (battleId: string) => void;
   beginRemoteVideoTransition?: (uid: number) => void;
   clearRemoteVideoTransition?: (uid?: number) => void;
 };

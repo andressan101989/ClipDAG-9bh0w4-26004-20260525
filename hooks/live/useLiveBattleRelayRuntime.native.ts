@@ -28,6 +28,7 @@ type UseLiveBattleRelayRuntimeParams = LiveBattleRuntimeContext & {
   publicBattleState: LiveBattlePublicState | null;
   publicClockAnchor: LiveBattleServerClockAnchor | null;
   reconcilePublicAuthority?: () => Promise<void>;
+  confirmTerminalBattle?: (battleId: string) => void;
   beginRemoteVideoTransition?: (uid: number) => void;
   clearRemoteVideoTransition?: (uid?: number) => void;
 };
@@ -47,6 +48,7 @@ export function useLiveBattleRelayRuntime({
   publicBattleState,
   publicClockAnchor,
   reconcilePublicAuthority,
+  confirmTerminalBattle,
   beginRemoteVideoTransition,
   clearRemoteVideoTransition,
 }: UseLiveBattleRelayRuntimeParams) {
@@ -56,9 +58,9 @@ export function useLiveBattleRelayRuntime({
   const actionsEnabledRef = useRef(false);
   const mountedRef = useRef(true);
   const lastReconnectEpochRef = useRef(reconnectEpoch);
-  const videoBridgeRef = useRef({ beginRemoteVideoTransition, clearRemoteVideoTransition, publicBattleState,
+  const videoBridgeRef = useRef({ beginRemoteVideoTransition, clearRemoteVideoTransition, publicBattleState, confirmTerminalBattle,
     liveSessionId, lastOpponentUid: publicBattleState?.opponentHostAgoraUid });
-  videoBridgeRef.current = { beginRemoteVideoTransition, clearRemoteVideoTransition, publicBattleState,
+  videoBridgeRef.current = { beginRemoteVideoTransition, clearRemoteVideoTransition, publicBattleState, confirmTerminalBattle,
     liveSessionId, lastOpponentUid: publicBattleState?.opponentHostAgoraUid
       ?? (videoBridgeRef.current.liveSessionId === liveSessionId ? videoBridgeRef.current.lastOpponentUid : undefined) };
   const [snapshot, setSnapshot] = useState<LiveBattleRuntimeSnapshot>({
@@ -108,6 +110,12 @@ export function useLiveBattleRelayRuntime({
     });
     const controller = new LiveBattleRuntimeController({
       relay,
+      onTerminalAuthority: battleId => {
+        const bridge = videoBridgeRef.current;
+        if (bridgeActive && mountedRef.current && bridge.liveSessionId === ownedSessionId) {
+          bridge.confirmTerminalBattle?.(battleId);
+        }
+      },
       readPublicAuthority: getLiveBattlePublicSnapshot,
       validateSessionPair: getLiveBattleRelaySessionPairAuthority,
     });

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import {
   subscribeToLiveBattlePublicState,
+  isLiveBattleStageStatus,
+  getLiveBattlePostRoundDeadline,
   type LiveBattlePublicState,
   type LiveBattleServerClockAnchor,
 } from '@/services/liveBattleSpectatorService';
@@ -51,7 +53,13 @@ export function useLiveBattleSpectatorState(
   sessionId: string | null | undefined,
   enabled: boolean,
   actorUserId: string | null | undefined = null,
+  runtimeManaged = false,
 ) {
+  const terminalBattleIdRef = useRef<string | null>(null);
+  const terminalSessionRef = useRef(sessionId);
+  const [terminalBattleId, setTerminalBattleId] = useState<string | null>(null);
+  const latestServerEpochRef = useRef<number | null>(null);
+  const decisionReadKeyRef = useRef<string | null>(null);
   const generationRef = useRef(0);
   const reconcileRef = useRef<() => Promise<void>>(async () => undefined);
   const stateRef = useRef<LiveBattlePublicState | null>(null);
@@ -69,9 +77,31 @@ export function useLiveBattleSpectatorState(
   const [pendingTransitionBattleId, setPendingTransitionBattleId] = useState<string | null>(null);
   const [transitionBattleId, setTransitionBattleId] = useState<string | null>(null);
 
+  const confirmTerminalBattle = useCallback((battleId: string) => {
+    if ((stateRef.current && stateRef.current.battleId !== battleId)
+      || terminalBattleIdRef.current === battleId) return;
+    terminalBattleIdRef.current = battleId;
+    setTerminalBattleId(battleId);
+    logSeries('terminal', { battleId: redactedId(battleId), reason: 'validated_authority' });
+  }, []);
+  const confirmServerDeadline = useCallback((current: LiveBattlePublicState | null, serverEpoch: number | null) => {
+    if (!current || current.status !== 'completed' || serverEpoch === null) return;
+    const deadline = getLiveBattlePostRoundDeadline(current);
+    if (deadline && Number.isFinite(Date.parse(deadline)) && serverEpoch >= Date.parse(deadline)) {
+      confirmTerminalBattle(current.battleId);
+    }
+  }, [confirmTerminalBattle]);
+
   useEffect(() => {
     const generation = ++generationRef.current;
     stateRef.current = null;
+    if (terminalSessionRef.current !== sessionId) {
+      terminalSessionRef.current = sessionId;
+      terminalBattleIdRef.current = null;
+      setTerminalBattleId(null);
+    }
+    latestServerEpochRef.current = null;
+    decisionReadKeyRef.current = null;
     firstProjectionRef.current = true;
     transitionGateRef.current = new LiveBattleSeriesTransitionGate();
     idempotencyRef.current = null;
@@ -98,7 +128,14 @@ export function useLiveBattleSpectatorState(
           const event = firstProjectionRef.current ? 'hydrate' : 'realtime';
           firstProjectionRef.current = false;
           stateRef.current = next;
+          if (next && next.battleId !== terminalBattleIdRef.current
+            && (next.status === 'countdown' || next.status === 'active')) {
+            terminalBattleIdRef.current = null;
+            setTerminalBattleId(null);
+          }
           setState(next);
+          if (next && !isLiveBattleStageStatus(next.status, next)) confirmTerminalBattle(next.battleId);
+          confirmServerDeadline(next, latestServerEpochRef.current);
           setErrorCode(null);
           if (shouldClearLiveBattleSeriesError(previous, next)) setSeriesError(null);
           logSeries(event, {
@@ -140,7 +177,14 @@ export function useLiveBattleSpectatorState(
           logSeries('error', { code: error.code });
         },
         anchor => {
-          if (generation === generationRef.current) setClockAnchor(anchor);
+          if (generation !== generationRef.current) return;
+          // The render clock adds half RTT. Terminal authority uses the server's
+          // actual response timestamp, without that client-side estimate.
+          const serverEpoch = anchor && Number.isFinite(anchor.roundTripMs) && anchor.roundTripMs >= 0
+            ? anchor.serverEpochMsAtAnchor - anchor.roundTripMs / 2 : null;
+          latestServerEpochRef.current = serverEpoch;
+          setClockAnchor(anchor);
+          confirmServerDeadline(stateRef.current, serverEpoch);
         },
       );
       reconcileRef.current = subscription.reconcile;
@@ -200,6 +244,20 @@ export function useLiveBattleSpectatorState(
   }, [state]);
 
   const reconcile = useCallback(() => reconcileRef.current(), []);
+
+  const checkDecisionDeadline = useCallback((estimatedServerNow: number | null) => {
+    // Reuse the Stage clock. Its estimate can request one fresh snapshot per
+    // authority anchor, but only the returned server timestamp can close Stage.
+    const current = stateRef.current;
+    if (runtimeManaged || !current || current.battleId === terminalBattleIdRef.current
+      || estimatedServerNow === null || !Number.isFinite(estimatedServerNow)) return;
+    const deadline = getLiveBattlePostRoundDeadline(current);
+    if (!deadline || !Number.isFinite(Date.parse(deadline)) || estimatedServerNow < Date.parse(deadline)) return;
+    const key = `${current.battleId}:${current.series?.version}:${deadline}:${latestServerEpochRef.current}`;
+    if (decisionReadKeyRef.current === key) return;
+    decisionReadKeyRef.current = key;
+    void reconcileRef.current().catch(() => undefined);
+  }, [runtimeManaged]);
 
   const runAction = useCallback(<T,>(
     phase: Exclude<LiveBattleSeriesActionPhase, 'idle' | 'leaving'>,
@@ -345,7 +403,7 @@ export function useLiveBattleSpectatorState(
   }, [sessionId, state?.battleId, state?.status, state?.version, clientState, actorUserId]);
 
   return {
-    state, clockAnchor, errorCode, reconcile,
+    state, clockAnchor, errorCode, reconcile, terminalBattleId, confirmTerminalBattle, checkDecisionDeadline,
     localHostProfile: state ? profiles.get(state.localHostUserId) ?? null : null,
     opponentHostProfile: state ? profiles.get(state.opponentHostUserId) ?? null : null,
     clientState,

@@ -954,7 +954,8 @@ export function subscribeToLiveBattlePublicState(
   };
 }
 
-export function isLiveBattleStageStatus(status: LiveBattlePublicStatus, state?: LiveBattlePublicState): boolean {
+export function isLiveBattleStageStatus(status: LiveBattlePublicStatus, state?: LiveBattlePublicState, terminalBattleId?: string | null): boolean {
+  if (terminalBattleId && state?.battleId === terminalBattleId) return false;
   // Only confirmed projection authority closes the Stage, never a local clock.
   // Keep the one-argument status predicate compatible with existing consumers.
   if (state) {
@@ -967,4 +968,20 @@ export function isLiveBattleStageStatus(status: LiveBattlePublicStatus, state?: 
   }
   return status === 'countdown' || status === 'active'
     || status === 'completed' || status === 'cancelled';
+}
+
+export function getLiveBattleVideoAuthority(state: LiveBattlePublicState | null, terminalBattleId?: string | null) {
+  return state && isLiveBattleStageStatus(state.status, state, terminalBattleId)
+    ? { scopeKey: `${state.sessionId}:${state.battleId}`, remoteUid: state.opponentHostAgoraUid }
+    : null;
+}
+
+/** Public post-round decision horizon; no transport or local-clock authority. */
+export function getLiveBattlePostRoundDeadline(state: LiveBattlePublicState): string | null {
+  const series = state.series;
+  if (state.status !== 'completed' || !series) return null;
+  if (series.status === 'awaiting_rematch') return series.rematchWindowExpiresAt;
+  if (series.status !== 'rematch_pending' || series.rematchRequestStatus !== 'pending') return null;
+  const window = series.rematchWindowExpiresAt, request = series.rematchRequestExpiresAt;
+  return window && request && Date.parse(window) < Date.parse(request) ? window : request ?? window;
 }

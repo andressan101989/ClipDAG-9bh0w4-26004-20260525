@@ -50,7 +50,7 @@ import {
 } from '@/components/live/liveHostInvitationContract';
 import { useLiveGiftAnimations } from '@/hooks/live/useLiveGiftAnimations';
 import { useLiveBattleSpectatorState } from '@/hooks/live/useLiveBattleSpectatorState';
-import { isLiveBattleStageStatus } from '@/services/liveBattleSpectatorService';
+import { isLiveBattleStageStatus, getLiveBattleVideoAuthority } from '@/services/liveBattleSpectatorService';
 import { LiveCommerceButton } from '@/components/live/commerce/LiveCommerceButton';
 import { LiveProductRail } from '@/components/live/shop/LiveProductRail';
 import { LiveViewerCommerce } from '@/components/live/commerce/LiveViewerCommerce';
@@ -259,6 +259,11 @@ export default function LiveWatchScreen() {
     return () => { clearInterval(timer); void supabase.removeChannel(channel); };
   }, [refreshLiveProducts, session?.status, streamId, supabase]);
 
+  const battleProjection = useLiveBattleSpectatorState(
+    streamId ?? null,
+    Boolean(user?.id && session?.status === 'live'),
+    user?.id ?? null,
+  );
   const agora = useAgoraEngine({
     channelName: session?.status === 'live' ? streamId ?? null : null,
     uid: myUid,
@@ -266,17 +271,14 @@ export default function LiveWatchScreen() {
     profile: 'live-broadcasting',
     liveSessionId: session?.status === 'live' ? streamId : undefined,
     liveRequestedRole: 'viewer',
+    remoteVideoAuthority: getLiveBattleVideoAuthority(battleProjection.state, battleProjection.terminalBattleId),
   });
   const {
     engineReady, joined, remoteUids, error, join, leave, promoteToPublisher,
     isMuted, isCameraOff, toggleMute, toggleCamera,
   } = agora;
-  const battleProjection = useLiveBattleSpectatorState(
-    streamId ?? null,
-    Boolean(user?.id && session?.status === 'live'),
-    user?.id ?? null,
-  );
-  const battleState = battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status, battleProjection.state)
+
+  const battleState = battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status, battleProjection.state, battleProjection.terminalBattleId)
     ? battleProjection.state
     : null;
   const likeBatcherRef = useRef<LiveBattleLikeBatcher | null>(null);
@@ -289,7 +291,7 @@ export default function LiveWatchScreen() {
     return () => { likeBatcherRef.current = null; batcher?.close(); };
   }, [streamId, user?.id, battleState?.battleId, battleProjection.reconcile]);
   const battleStageVisible = Boolean(
-    battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status, battleProjection.state),
+    battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status, battleProjection.state, battleProjection.terminalBattleId),
   );
   useEffect(() => {
     if (!battleStageVisible) return;
@@ -999,6 +1001,7 @@ export default function LiveWatchScreen() {
 
       {battleState ? (
         <LiveBattleStage
+          onDecisionClockTick={battleProjection.checkDecisionDeadline}
           state={battleState}
           clockAnchor={battleProjection.clockAnchor}
           topInset={insets.top}

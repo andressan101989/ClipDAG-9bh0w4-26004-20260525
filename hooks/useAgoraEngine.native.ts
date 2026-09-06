@@ -21,6 +21,10 @@ export type AgoraProfile = 'communication' | 'live-broadcasting';
 // Diagnostic-only logging for the "stuck on Conectando..." investigation.
 // Keep normal lifecycle events out of Metro's error channel.
 function logAgora(event: string, data?: Record<string, unknown>) {
+  if (event.startsWith('video:')) {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) console.info(`[LIVE-BATTLE-VIDEO] ${event.slice(6)}`, data);
+    return;
+  }
   console.log(`[AGORA-DEBUG] ${event}`, data ? JSON.stringify(data) : '');
 }
 
@@ -45,12 +49,20 @@ const ACTIVE_CONNECTION_FATAL_ERROR_CODES = new Set([110]);
 // including 0.5 s scheduling tolerance; never conceal a lasting disconnect.
 export const REMOTE_VIDEO_TRANSITION_GRACE_MS = 1_500;
 
+type RemoteVideoAuthority = { scopeKey: string; remoteUid: number };
+function logVideo(event: string, uid: number, scope?: string, reason?: string): void {
+  logAgora(`video:${event}`, {
+    uid, scope: scope?.slice(-8) ?? null, reason, durationMs: REMOTE_VIDEO_TRANSITION_GRACE_MS,
+  });
+}
+
 export function classifyAgoraError(code: number, joined: boolean): 'join_fatal' | 'connection_fatal' | 'connection_warning' {
   if (!joined) return 'join_fatal';
   return ACTIVE_CONNECTION_FATAL_ERROR_CODES.has(code) ? 'connection_fatal' : 'connection_warning';
 }
 
 interface UseAgoraEngineParams {
+  remoteVideoAuthority?: RemoteVideoAuthority | null;
   channelName: string | null;
   uid: number;
   role: AgoraRole;
@@ -140,6 +152,7 @@ export function useAgoraEngine({
   callId,
   liveSessionId,
   liveRequestedRole,
+  remoteVideoAuthority,
 }: UseAgoraEngineParams) {
   const engineRef   = useRef<any>(null);
   const beforeReleaseListenersRef = useRef(new Set<(engine: any) => void>());
@@ -154,10 +167,10 @@ export function useAgoraEngine({
   const joinGenerationRef = useRef(0);
   const configuredJoinKeyRef = useRef<string | null>(null);
   const joinConfigRef = useRef({
-    channelName, uid, role, profile, enableVideo, callId, liveSessionId, liveRequestedRole,
+    channelName, uid, role, profile, enableVideo, callId, liveSessionId, liveRequestedRole, remoteVideoAuthority,
   });
   joinConfigRef.current = {
-    channelName, uid, role, profile, enableVideo, callId, liveSessionId, liveRequestedRole,
+    channelName, uid, role, profile, enableVideo, callId, liveSessionId, liveRequestedRole, remoteVideoAuthority,
   };
   const joinKey = channelName ? `${channelName}:${uid}` : null;
 
@@ -185,6 +198,7 @@ export function useAgoraEngine({
     const transition = remoteVideoTransitionRef.current;
     remoteVideoTransitionRef.current = null;
     if (transition?.timer) clearTimeout(transition.timer);
+    if (transition) logVideo('transition_clear', transition.uid, joinConfigRef.current.remoteVideoAuthority?.scopeKey);
     if (mountedRef.current && removeUid !== undefined) {
       setRemoteUids(prev => prev.filter(uid => uid !== removeUid));
     }
@@ -201,13 +215,31 @@ export function useAgoraEngine({
       generation: joinGenerationRef.current,
     };
     remoteVideoTransitionRef.current = transition;
+    logVideo('transition_begin', remoteUid, joinConfigRef.current.remoteVideoAuthority?.scopeKey);
     transition.timer = setTimeout(() => {
       if (remoteVideoTransitionRef.current !== transition) return;
       remoteVideoTransitionRef.current = null;
+      logVideo('transition_expired', remoteUid, joinConfigRef.current.remoteVideoAuthority?.scopeKey);
       if (mountedRef.current && transition.generation === joinGenerationRef.current
         && transition.pendingRemoval) setRemoteUids(prev => prev.filter(uid => uid !== remoteUid));
     }, REMOTE_VIDEO_TRANSITION_GRACE_MS);
   }, [clearRemoteVideoTransition]);
+
+  const previousVideoAuthorityRef = useRef(remoteVideoAuthority);
+  useEffect(() => {
+    const previous = previousVideoAuthorityRef.current;
+    previousVideoAuthorityRef.current = remoteVideoAuthority;
+    if (previous?.scopeKey === remoteVideoAuthority?.scopeKey
+      && previous?.remoteUid === remoteVideoAuthority?.remoteUid) return;
+    const pending = remoteVideoTransitionRef.current?.pendingRemoval;
+    const samePeer = previous && remoteVideoAuthority && previous.remoteUid === remoteVideoAuthority.remoteUid;
+    clearRemoteVideoTransition(samePeer ? undefined : previous?.remoteUid);
+    // A new authorized round resets the old timer without dropping the same surface.
+    if (samePeer && pending) {
+      beginRemoteVideoTransition(remoteVideoAuthority.remoteUid);
+      if (remoteVideoTransitionRef.current) remoteVideoTransitionRef.current.pendingRemoval = true;
+    }
+  }, [remoteVideoAuthority?.scopeKey, remoteVideoAuthority?.remoteUid, beginRemoteVideoTransition, clearRemoteVideoTransition]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -466,7 +498,10 @@ export function useAgoraEngine({
         onUserJoined: (_conn: any, remoteUid: number) => {
           logAgora('onUserJoined', { joinKey: safeJoinKey, remoteUid });
           if (!isCurrentConnection()) return;
-          if (remoteVideoTransitionRef.current?.uid === remoteUid) clearRemoteVideoTransition();
+          if (remoteVideoTransitionRef.current?.uid === remoteUid) {
+            logVideo('transition_join_cancel', remoteUid, joinConfigRef.current.remoteVideoAuthority?.scopeKey);
+            clearRemoteVideoTransition();
+          }
           setRemoteUids(prev => prev.includes(remoteUid) ? prev : [...prev, remoteUid]);
         },
         onUserOffline: (_conn: any, remoteUid: number, reason: any) => {
@@ -475,9 +510,23 @@ export function useAgoraEngine({
           const transition = remoteVideoTransitionRef.current;
           if (reason === 0 && transition?.uid === remoteUid && performance.now() < transition.deadline) {
             transition.pendingRemoval = true;
+            logAgora('video:offline_deferred', { uid: remoteUid, reason: 'local_reconfigure' });
             return;
           }
           if (transition?.uid === remoteUid) clearRemoteVideoTransition();
+          // Incoming relay events belong to the other host's SDK operation. They
+          // need not overlap our outgoing refresh. Start the bounded grace at
+          // the incoming offline edge for this authoritative, visible peer only.
+          const authority = joinConfigRef.current.remoteVideoAuthority;
+          if (reason === 0 && authority?.remoteUid === remoteUid) {
+            beginRemoteVideoTransition(remoteUid);
+            const incoming = remoteVideoTransitionRef.current;
+            if (incoming?.uid === remoteUid) {
+              incoming.pendingRemoval = true;
+              logVideo('offline_deferred', remoteUid, authority.scopeKey, 'incoming_peer');
+              return;
+            }
+          }
           setRemoteUids(prev => prev.filter(u => u !== remoteUid));
         },
         onError: (code: number, msg?: string) => {

@@ -103,6 +103,10 @@ export function getLiveBattleRelayDecisionDeadline(
   const series = state.series;
   if (!series) return null;
   if (series.status === 'rematch_pending' && series.rematchRequestStatus === 'pending') {
+    if (series.rematchWindowExpiresAt && series.rematchRequestExpiresAt
+      && Date.parse(series.rematchWindowExpiresAt) < Date.parse(series.rematchRequestExpiresAt)) {
+      return series.rematchWindowExpiresAt;
+    }
     return series.rematchRequestExpiresAt ?? series.rematchWindowExpiresAt;
   }
   if (series.status === 'awaiting_rematch') return series.rematchWindowExpiresAt;

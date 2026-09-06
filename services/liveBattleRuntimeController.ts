@@ -69,6 +69,7 @@ export type LiveBattleRuntimeDependencies = {
     onError: () => void,
   ) => LiveBattleSubscription;
   relay: LiveBattleRuntimeRelay;
+  onTerminalAuthority?: (battleId: string) => void;
   readPublicAuthority?: (sessionId: string) => Promise<LiveBattlePublicSnapshot>;
   validateSessionPair?: (
     state: LiveBattlePublicState,
@@ -541,6 +542,7 @@ export class LiveBattleRuntimeController {
       return;
     }
     if (!RELAY_STATUSES.has(battle.status) || battle.endedAt !== null) {
+      if (TERMINAL_STATUSES.has(battle.status)) this.dependencies.onTerminalAuthority?.(battle.id);
       await this.stopRelay('observing', battle.id, battle.version, battle);
       return;
     }
@@ -691,6 +693,9 @@ export class LiveBattleRuntimeController {
       eligible: this.isEligible(),
     });
     if (decision !== 'holding_for_rematch') {
+      // This is a validated server decision, unlike transport failure or a local
+      // deadline tick. Publish UI suppression before the relay clears its peer.
+      this.dependencies.onTerminalAuthority?.(battle.id);
       await this.stopRelay('observing', battle.id, battle.version, battle);
       return;
     }

@@ -11,6 +11,7 @@ export type AgoraProfile = 'communication' | 'live-broadcasting';
 export type LiveRequestedRole = 'host' | 'viewer' | 'cohost';
 
 interface UseAgoraEngineParams {
+  remoteVideoAuthority?: { scopeKey: string; remoteUid: number } | null;
   channelName: string | null;
   uid: number;
   role: AgoraRole;

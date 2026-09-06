@@ -46,6 +46,7 @@ type LiveBattleStageProps = {
   onAcceptRematch?: () => Promise<unknown> | null;
   onRejectRematch?: () => Promise<unknown> | null;
   viewerMode?: boolean;
+  onDecisionClockTick?: (estimatedServerNow: number | null) => void;
 };
 
 function secondsUntil(value: string | null, now: number | null): number | null {
@@ -128,6 +129,7 @@ export function LiveBattleStage({
   onAcceptRematch,
   onRejectRematch,
   viewerMode = false,
+  onDecisionClockTick,
 }: LiveBattleStageProps) {
   const [monotonicNow, setMonotonicNow] = useState<number | null>(
     () => clockAnchor ? readLiveBattleMonotonicNow() : null,
@@ -143,6 +145,7 @@ export function LiveBattleStage({
   }, [clockAnchor]);
 
   const serverNow = estimateLiveBattleServerNow(clockAnchor, monotonicNow);
+  useEffect(() => { onDecisionClockTick?.(serverNow); }, [onDecisionClockTick, serverNow]);
   const competitive = useMemo(
     () => deriveLiveBattleLocalCompetitiveState(state),
     [state],

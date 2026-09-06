@@ -54,6 +54,7 @@ import { useLiveBattleSpectatorState } from '@/hooks/live/useLiveBattleSpectator
 import {
   deriveLiveBattlePowerVisualState,
   isLiveBattleStageStatus,
+  getLiveBattleVideoAuthority,
 } from '@/services/liveBattleSpectatorService';
 import {
   activateLiveBattleGlove,
@@ -288,6 +289,12 @@ export default function LiveBroadcasterScreen() {
     return () => { clearInterval(timer); void getSupabaseClient().removeChannel(channel); };
   }, [live, refreshLiveProducts, streamId]);
 
+  const battleProjection = useLiveBattleSpectatorState(
+    streamId ?? null,
+    Boolean(user?.id && live && sessionIsCanonicalLive),
+    user?.id ?? null,
+    true,
+  );
   const {
     engineReady, joined, error,
     remoteUids, isMuted, isCameraOff, localVideoReady, reconnectEpoch,
@@ -300,13 +307,10 @@ export default function LiveBroadcasterScreen() {
     profile: 'live-broadcasting',
     liveSessionId: live ? streamId : undefined,
     liveRequestedRole: 'host',
+    remoteVideoAuthority: getLiveBattleVideoAuthority(battleProjection.state, battleProjection.terminalBattleId),
   });
 
-  const battleProjection = useLiveBattleSpectatorState(
-    streamId ?? null,
-    Boolean(user?.id && live && sessionIsCanonicalLive),
-    user?.id ?? null,
-  );
+
   const battleOpponentSessionId = battleProjection.state?.opponentSessionId ?? null;
   const battleOpponentHostUserId = battleProjection.state?.opponentHostUserId ?? null;
   const battleRuntime = useLiveBattleRelayRuntime({
@@ -326,6 +330,7 @@ export default function LiveBroadcasterScreen() {
     publicBattleState: battleProjection.state,
     publicClockAnchor: battleProjection.clockAnchor,
     reconcilePublicAuthority: battleProjection.reconcile,
+    confirmTerminalBattle: battleProjection.confirmTerminalBattle,
   });
   const seriesTransitionRef = useRef<string | null>(null);
   useEffect(() => {
@@ -400,7 +405,7 @@ export default function LiveBroadcasterScreen() {
     }
   }, [battleProjection, user?.id]);
   const battleStageVisible = Boolean(
-    battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status, battleProjection.state),
+    battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status, battleProjection.state, battleProjection.terminalBattleId),
   );
   useEffect(() => {
     if (!battleStageVisible) return;
@@ -1008,7 +1013,7 @@ export default function LiveBroadcasterScreen() {
     p.status === 'active' &&
     p.user_id !== user?.id
   );
-  const battleState = battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status, battleProjection.state)
+  const battleState = battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status, battleProjection.state, battleProjection.terminalBattleId)
     ? battleProjection.state
     : null;
   const battleOpponentUid = battleState?.opponentHostAgoraUid;
@@ -1056,6 +1061,7 @@ export default function LiveBroadcasterScreen() {
 
       {battleState ? (
         <LiveBattleStage
+          onDecisionClockTick={battleProjection.checkDecisionDeadline}
           state={battleState}
           clockAnchor={battleProjection.clockAnchor}
           topInset={insets.top}
