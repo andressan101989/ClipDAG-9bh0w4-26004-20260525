@@ -869,7 +869,7 @@ export default function LiveWatchScreen() {
     sendingGiftRef.current = true;
     setSendingGiftId(gift.id);
 
-    const battleContext = battleState
+    const battleContext = battleState?.status === 'active'
       ? { battleId: battleState.battleId, targetUserId: battleState.localHostUserId }
       : null;
     const fingerprint = `${streamId}:${battleContext?.battleId ?? 'live'}:${battleContext?.targetUserId ?? 'session-host'}:${gift.id}`;
@@ -890,7 +890,7 @@ export default function LiveWatchScreen() {
       });
 
       if (!result.success) {
-        showGiftFeedback(/insufficient balance/i.test(result.error ?? '') ? 'Saldo insuficiente' : 'No se pudo enviar el regalo');
+        showGiftFeedback(battleContext ? (result.error || 'No se pudo enviar el regalo') : /insufficient balance/i.test(result.error ?? '') ? 'Saldo insuficiente' : 'No se pudo enviar el regalo');
         console.warn('[LiveWatch] send gift failed', result.error);
         return;
       }

@@ -225,8 +225,8 @@ export function LiveBattleStage({
   };
 
   return (
-    <View style={styles.root} accessibilityLabel="Battle LIVE de dos anfitriones">
-      <View style={styles.panels}>
+    <View style={styles.root} pointerEvents="box-none" accessibilityLabel="Battle LIVE de dos anfitriones">
+      <View style={styles.panels} pointerEvents="none">
         <HostPanel identity={localHost} label={localLabel} surface={localSurface} side="local" />
         <HostPanel identity={opponentHost} label="Rival" surface={opponentSurface} side="opponent" />
       </View>
@@ -247,14 +247,15 @@ export function LiveBattleStage({
           rivalBoost={boostLabel(rivalPower)}
         />
       ) : (
-      <View style={[styles.battlePanel, { top: topInset + 64 }]}>
-        <Text style={styles.battleTitle}>LIVE BATTLE</Text>
-        <View style={styles.identityRow}>
+      <View style={[styles.battlePanel, { top: topInset + 64 }]} pointerEvents="box-none">
+        <Text style={styles.battleTitle} pointerEvents="none">LIVE BATTLE</Text>
+        <View style={styles.identityRow} pointerEvents="none">
           <Text style={[styles.hostName, styles.localName]} numberOfLines={1}>@{localHost.username}</Text>
           <Text style={[styles.hostName, styles.opponentName]} numberOfLines={1}>@{opponentHost.username}</Text>
         </View>
         <View
           style={styles.balanceRow}
+          pointerEvents="none"
           accessible
           accessibilityLabel={`Marcador ${competitive.localScore} a ${competitive.rivalScore}`}
         >
@@ -268,7 +269,7 @@ export function LiveBattleStage({
             <View style={styles.vsContent}><Text style={styles.vsText}>VS</Text></View>
           </View>
         </View>
-        <View style={styles.powerRow}>
+        <View style={styles.powerRow} pointerEvents="none">
           <View style={styles.sidePower}>
             <Text style={styles.progressText}>
               🌹 {competitive.localRoseProgressUnits}/{state.roseTargetUnits} · {competitive.localRoseActivationsRemaining} act.
@@ -282,7 +283,7 @@ export function LiveBattleStage({
             <PowerBadge power={rivalPower} />
           </View>
         </View>
-        <View style={styles.statusRow}>
+        <View style={styles.statusRow} pointerEvents="none">
           <View style={styles.gloveSummary}>
             <Text style={styles.gloveText}>🥊 {competitive.localGloveUsesRemaining}</Text>
           </View>
@@ -297,7 +298,7 @@ export function LiveBattleStage({
           </View>
         </View>
         {onActivateGlove && state.status === 'active' ? (
-          <View style={styles.gloveActionRow}>
+          <View style={styles.gloveActionRow} pointerEvents="box-none">
             <Pressable
               style={[styles.gloveButton, gloveDisabled && styles.disabled]}
               onPress={onActivateGlove}
@@ -317,7 +318,7 @@ export function LiveBattleStage({
           </View>
         ) : null}
         {state.status === 'completed' ? (
-          <View style={styles.seriesArea}>
+          <View style={styles.seriesArea} pointerEvents="box-none">
             <Text style={styles.roundResult}>{roundResult}</Text>
             {series ? (
               <>
@@ -371,7 +372,7 @@ export function LiveBattleStage({
                   </Pressable>
                 ) : null}
                 {isParticipant && seriesClientState === 'incoming_pending' && !requestDeadlineElapsed ? (
-                  <View style={styles.rematchActions}>
+                  <View style={styles.rematchActions} pointerEvents="box-none">
                     <Pressable
                       style={[styles.acceptButton, seriesActionPending && styles.disabled]}
                       disabled={seriesActionPending}
@@ -408,7 +409,7 @@ export function LiveBattleStage({
 }
 
 const styles = StyleSheet.create({
-  root: { ...StyleSheet.absoluteFillObject, backgroundColor: Colors.bg },
+  root: { ...StyleSheet.absoluteFillObject, backgroundColor: Colors.bg, zIndex: 3 },
   panels: { flex: 1, flexDirection: 'row' },
   panel: { flex: 1, overflow: 'hidden', backgroundColor: Colors.surface },
   localPanel: { borderTopWidth: 2, borderTopColor: Colors.blue },
