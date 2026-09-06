@@ -1,0 +1,286 @@
+TAP version 13
+# Subtest: viewer Battle uses the dedicated Figma HUD over exactly two canonical surfaces
+ok 1 - viewer Battle uses the dedicated Figma HUD over exactly two canonical surfaces
+  ---
+  duration_ms: 2.4614
+  type: 'test'
+  ...
+# Subtest: Battle viewer chrome matches the required header, rail, chat and gift CTA contract
+ok 2 - Battle viewer chrome matches the required header, rail, chat and gift CTA contract
+  ---
+  duration_ms: 1.0374
+  type: 'test'
+  ...
+# Subtest: commerce remains structurally excluded from Battle
+ok 3 - commerce remains structurally excluded from Battle
+  ---
+  duration_ms: 0.645
+  type: 'test'
+  ...
+# Subtest: F7-A gift authority, single flight and modal success/error behavior stay intact
+ok 4 - F7-A gift authority, single flight and modal success/error behavior stay intact
+  ---
+  duration_ms: 0.9209
+  type: 'test'
+  ...
+# Subtest: large invitation is modal, accessible, blocks background and restores focus
+ok 5 - large invitation is modal, accessible, blocks background and restores focus
+  ---
+  duration_ms: 0.3
+  type: 'test'
+  ...
+# Subtest: invitation expiry and action gate are deterministic and single-flight
+ok 6 - invitation expiry and action gate are deterministic and single-flight
+  ---
+  duration_ms: 73.9981
+  type: 'test'
+  ...
+# Subtest: watch consumes one invitation subscription and closes on success, terminal event or expiry
+ok 7 - watch consumes one invitation subscription and closes on success, terminal event or expiry
+  ---
+  duration_ms: 0.3951
+  type: 'test'
+  ...
+# Subtest: reduced motion and bounded invitation countdown clean up without polling
+ok 8 - reduced motion and bounded invitation countdown clean up without polling
+  ---
+  duration_ms: 0.2095
+  type: 'test'
+  ...
+# Subtest: protected manifests and deployed migrations remain LF-identical
+ok 9 - protected manifests and deployed migrations remain LF-identical
+  ---
+  duration_ms: 34.2746
+  type: 'test'
+  ...
+# Subtest: rematch and glove stage is above both full-screen keyboard dismiss layers
+ok 10 - rematch and glove stage is above both full-screen keyboard dismiss layers
+  ---
+  duration_ms: 82.7067
+  type: 'test'
+  ...
+# Subtest: full-screen stage passes empty-area touches through
+ok 11 - full-screen stage passes empty-area touches through
+  ---
+  duration_ms: 0.8929
+  type: 'test'
+  ...
+# Subtest: visual panels and video surfaces cannot intercept control touches
+ok 12 - visual panels and video surfaces cannot intercept control touches
+  ---
+  duration_ms: 1.9505
+  type: 'test'
+  ...
+# Subtest: real rematch, accept, reject and glove handlers remain reachable
+ok 13 - real rematch, accept, reject and glove handlers remain reachable
+  ---
+  duration_ms: 5.8459
+  type: 'test'
+  ...
+# Subtest: localized stacking preserves header, chat and composer priority
+ok 14 - localized stacking preserves header, chat and composer priority
+  ---
+  duration_ms: 165.0964
+  type: 'test'
+  ...
+# Subtest: active round invokes exactly send_live_battle_gift
+ok 15 - active round invokes exactly send_live_battle_gift
+  ---
+  duration_ms: 2.5806
+  type: 'test'
+  ...
+# Subtest: countdown invokes exactly send_live_gift
+ok 16 - countdown invokes exactly send_live_gift
+  ---
+  duration_ms: 1.6893
+  type: 'test'
+  ...
+# Subtest: completed postround invokes exactly send_live_gift
+ok 17 - completed postround invokes exactly send_live_gift
+  ---
+  duration_ms: 0.4247
+  type: 'test'
+  ...
+# Subtest: completed rematch window invokes exactly send_live_gift
+ok 18 - completed rematch window invokes exactly send_live_gift
+  ---
+  duration_ms: 0.5148
+  type: 'test'
+  ...
+# Subtest: ordinary LIVE invokes exactly send_live_gift
+ok 19 - ordinary LIVE invokes exactly send_live_gift
+  ---
+  duration_ms: 0.6418
+  type: 'test'
+  ...
+# Subtest: known Battle errors display service-normalized safe messages
+ok 20 - known Battle errors display service-normalized safe messages
+  ---
+  duration_ms: 1.5391
+  type: 'test'
+  ...
+# Subtest: unknown RPC errors and exceptions never reach visible feedback
+ok 21 - unknown RPC errors and exceptions never reach visible feedback
+  ---
+  duration_ms: 1.9872
+  type: 'test'
+  ...
+# Subtest: double taps stay single-flight and failed retries retain their key
+ok 22 - double taps stay single-flight and failed retries retain their key
+  ---
+  duration_ms: 0.9683
+  type: 'test'
+  ...
+# Subtest: economic authority, gross score, multipliers and roses remain byte-identical
+ok 23 - economic authority, gross score, multipliers and roses remain byte-identical
+  ---
+  duration_ms: 2.9559
+  type: 'test'
+  ...
+# Subtest: Battle gift control has no visible Regalos text
+ok 24 - Battle gift control has no visible Regalos text
+  ---
+  duration_ms: 134.8549
+  type: 'test'
+  ...
+# Subtest: rail uses favorite, ios-share and more-horiz without visible labels
+ok 25 - rail uses favorite, ios-share and more-horiz without visible labels
+  ---
+  duration_ms: 34.3203
+  type: 'test'
+  ...
+# Subtest: Battle gift is compact circular, at least 44px, and matches canonical LIVE button
+ok 26 - Battle gift is compact circular, at least 44px, and matches canonical LIVE button
+  ---
+  duration_ms: 22.6656
+  type: 'test'
+  ...
+# Subtest: LIVE gift accessibility, pressed and disabled semantics
+ok 27 - LIVE gift accessibility, pressed and disabled semantics
+  ---
+  duration_ms: 20.8224
+  type: 'test'
+  ...
+# Subtest: Battle gift accessibility, pressed and disabled semantics
+ok 28 - Battle gift accessibility, pressed and disabled semantics
+  ---
+  duration_ms: 19.5586
+  type: 'test'
+  ...
+# Subtest: rail touch targets and callbacks remain intact
+ok 29 - rail touch targets and callbacks remain intact
+  ---
+  duration_ms: 21.489
+  type: 'test'
+  ...
+# Subtest: LIVE opens once, closes only after authoritative success, updates balance and confirms
+ok 30 - LIVE opens once, closes only after authoritative success, updates balance and confirms
+  ---
+  duration_ms: 28.8804
+  type: 'test'
+  ...
+# Subtest: Battle opens once, closes only after authoritative success, updates balance and confirms
+ok 31 - Battle opens once, closes only after authoritative success, updates balance and confirms
+  ---
+  duration_ms: 15.1807
+  type: 'test'
+  ...
+# Subtest: false keeps sheet open without success feedback or reconciliation
+ok 32 - false keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 19.3278
+  type: 'test'
+  ...
+# Subtest: exception keeps sheet open without success feedback or reconciliation
+ok 33 - exception keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 15.0449
+  type: 'test'
+  ...
+# Subtest: insufficient keeps sheet open without success feedback or reconciliation
+ok 34 - insufficient keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 10.8194
+  type: 'test'
+  ...
+# Subtest: disabled keeps sheet open without success feedback or reconciliation
+ok 35 - disabled keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 9.3135
+  type: 'test'
+  ...
+# Subtest: balance unavailable keeps sheet open without success feedback or reconciliation
+ok 36 - balance unavailable keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 9.5815
+  type: 'test'
+  ...
+# Subtest: Battle normalized keeps sheet open without success feedback or reconciliation
+ok 37 - Battle normalized keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 8.663
+  type: 'test'
+  ...
+# Subtest: double press has one RPC and key; spinner clears after completion
+ok 38 - double press has one RPC and key; spinner clears after completion
+  ---
+  duration_ms: 26.5986
+  type: 'test'
+  ...
+# Subtest: ambiguous retry preserves its key across manual close and reopen
+ok 39 - ambiguous retry preserves its key across manual close and reopen
+  ---
+  duration_ms: 14.4265
+  type: 'test'
+  ...
+# Subtest: two separate open/select/send cycles create exactly two keys
+ok 40 - two separate open/select/send cycles create exactly two keys
+  ---
+  duration_ms: 18.0477
+  type: 'test'
+  ...
+# Subtest: in-flight unmount (throws=false) cannot update UI or reconcile
+ok 41 - in-flight unmount (throws=false) cannot update UI or reconcile
+  ---
+  duration_ms: 16.0182
+  type: 'test'
+  ...
+# Subtest: in-flight unmount (throws=true) cannot update UI or reconcile
+ok 42 - in-flight unmount (throws=true) cannot update UI or reconcile
+  ---
+  duration_ms: 10.5747
+  type: 'test'
+  ...
+# Subtest: sheet selection requires send, disables cards/send and shows spinner while in flight
+ok 43 - sheet selection requires send, disables cards/send and shows spinner while in flight
+  ---
+  duration_ms: 26.1599
+  type: 'test'
+  ...
+# Subtest: X, backdrop and Android back close manually without sending
+ok 44 - X, backdrop and Android back close manually without sending
+  ---
+  duration_ms: 16.7803
+  type: 'test'
+  ...
+# Subtest: hidden sheet resets selection, so second gift requires reopening and selecting
+ok 45 - hidden sheet resets selection, so second gift requires reopening and selecting
+  ---
+  duration_ms: 13.4578
+  type: 'test'
+  ...
+# Subtest: gift animations remain server-event driven through the existing single overlay
+ok 46 - gift animations remain server-event driven through the existing single overlay
+  ---
+  duration_ms: 0.6125
+  type: 'test'
+  ...
+1..46
+# tests 46
+# suites 0
+# pass 46
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1355.6541

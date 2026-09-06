@@ -1,0 +1,311 @@
+TAP version 13
+# Subtest: Battle gift control has no visible Regalos text
+not ok 1 - Battle gift control has no visible Regalos text
+  ---
+  duration_ms: 84.9386
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f9-b\\tests\\liveBattlesLb4F9BSpectatorControls.test.mjs:39:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    'Regalos' !== ''
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: ''
+  actual: 'Regalos'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f9-b/tests/liveBattlesLb4F9BSpectatorControls.test.mjs:41:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1106:25)
+    Test.start (node:internal/test_runner/test:1003:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17)
+  ...
+# Subtest: rail uses favorite, ios-share and more-horiz without visible labels
+not ok 2 - rail uses favorite, ios-share and more-horiz without visible labels
+  ---
+  duration_ms: 21.3362
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f9-b\\tests\\liveBattlesLb4F9BSpectatorControls.test.mjs:43:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + 'Reaccionar Compartir Más opciones'
+    - ''
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: ''
+  actual: 'Reaccionar Compartir Más opciones'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f9-b/tests/liveBattlesLb4F9BSpectatorControls.test.mjs:46:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1106:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+    Test.postRun (node:internal/test_runner/test:1235:19)
+    Test.run (node:internal/test_runner/test:1163:12)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3)
+  ...
+# Subtest: Battle gift is compact circular, at least 44px, and matches canonical LIVE button
+not ok 3 - Battle gift is compact circular, at least 44px, and matches canonical LIVE button
+  ---
+  duration_ms: 26.0066
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f9-b\\tests\\liveBattlesLb4F9BSpectatorControls.test.mjs:50:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+
+      assert.ok(a.width >= 44 && a.height >= 44)
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f9-b/tests/liveBattlesLb4F9BSpectatorControls.test.mjs:54:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1106:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+    Test.postRun (node:internal/test_runner/test:1235:19)
+    Test.run (node:internal/test_runner/test:1163:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: LIVE gift accessibility, pressed and disabled semantics
+not ok 4 - LIVE gift accessibility, pressed and disabled semantics
+  ---
+  duration_ms: 18.5893
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f9-b\\tests\\liveBattlesLb4F9BSpectatorControls.test.mjs:56:36'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + undefined
+    - 'Abre el selector de regalos'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'Abre el selector de regalos'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f9-b/tests/liveBattlesLb4F9BSpectatorControls.test.mjs:60:163)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1106:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+    Test.postRun (node:internal/test_runner/test:1235:19)
+    Test.run (node:internal/test_runner/test:1163:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: Battle gift accessibility, pressed and disabled semantics
+not ok 5 - Battle gift accessibility, pressed and disabled semantics
+  ---
+  duration_ms: 14.4253
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f9-b\\tests\\liveBattlesLb4F9BSpectatorControls.test.mjs:56:36'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    'Regalos' !== ''
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: ''
+  actual: 'Regalos'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f9-b/tests/liveBattlesLb4F9BSpectatorControls.test.mjs:60:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1106:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+    Test.postRun (node:internal/test_runner/test:1235:19)
+    Test.run (node:internal/test_runner/test:1163:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: rail touch targets and callbacks remain intact
+ok 6 - rail touch targets and callbacks remain intact
+  ---
+  duration_ms: 12.8178
+  type: 'test'
+  ...
+# Subtest: LIVE opens once, closes only after authoritative success, updates balance and confirms
+ok 7 - LIVE opens once, closes only after authoritative success, updates balance and confirms
+  ---
+  duration_ms: 20.9932
+  type: 'test'
+  ...
+# Subtest: Battle opens once, closes only after authoritative success, updates balance and confirms
+ok 8 - Battle opens once, closes only after authoritative success, updates balance and confirms
+  ---
+  duration_ms: 10.6951
+  type: 'test'
+  ...
+# Subtest: false keeps sheet open without success feedback or reconciliation
+ok 9 - false keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 9.3337
+  type: 'test'
+  ...
+# Subtest: exception keeps sheet open without success feedback or reconciliation
+ok 10 - exception keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 12.7785
+  type: 'test'
+  ...
+# Subtest: insufficient keeps sheet open without success feedback or reconciliation
+ok 11 - insufficient keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 8.1438
+  type: 'test'
+  ...
+# Subtest: disabled keeps sheet open without success feedback or reconciliation
+ok 12 - disabled keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 8.1792
+  type: 'test'
+  ...
+# Subtest: balance unavailable keeps sheet open without success feedback or reconciliation
+ok 13 - balance unavailable keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 8.4302
+  type: 'test'
+  ...
+# Subtest: Battle normalized keeps sheet open without success feedback or reconciliation
+ok 14 - Battle normalized keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 8.6549
+  type: 'test'
+  ...
+# Subtest: double press has one RPC and key; spinner clears after completion
+ok 15 - double press has one RPC and key; spinner clears after completion
+  ---
+  duration_ms: 18.6275
+  type: 'test'
+  ...
+# Subtest: ambiguous retry preserves its key across manual close and reopen
+ok 16 - ambiguous retry preserves its key across manual close and reopen
+  ---
+  duration_ms: 15.6023
+  type: 'test'
+  ...
+# Subtest: two separate open/select/send cycles create exactly two keys
+ok 17 - two separate open/select/send cycles create exactly two keys
+  ---
+  duration_ms: 14.16
+  type: 'test'
+  ...
+# Subtest: in-flight unmount (throws=false) cannot update UI or reconcile
+not ok 18 - in-flight unmount (throws=false) cannot update UI or reconcile
+  ---
+  duration_ms: 8.4749
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f9-b\\tests\\liveBattlesLb4F9BSpectatorControls.test.mjs:121:35'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+      [
+        'spinner:rose',
+        'rpc',
+    +   'balance',
+    +   'visible:false',
+    +   'feedback',
+    +   'reconcile',
+    +   'spinner:null'
+      ]
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 'spinner:rose'
+    1: 'rpc'
+  actual:
+    0: 'spinner:rose'
+    1: 'rpc'
+    2: 'balance'
+    3: 'visible:false'
+    4: 'feedback'
+    5: 'reconcile'
+    6: 'spinner:null'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f9-b/tests/liveBattlesLb4F9BSpectatorControls.test.mjs:123:80)
+    async Test.run (node:internal/test_runner/test:1113:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: in-flight unmount (throws=true) cannot update UI or reconcile
+not ok 19 - in-flight unmount (throws=true) cannot update UI or reconcile
+  ---
+  duration_ms: 7.7118
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f9-b\\tests\\liveBattlesLb4F9BSpectatorControls.test.mjs:121:35'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+      [
+        'spinner:rose',
+        'rpc',
+    +   'feedback',
+    +   'spinner:null'
+      ]
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 'spinner:rose'
+    1: 'rpc'
+  actual:
+    0: 'spinner:rose'
+    1: 'rpc'
+    2: 'feedback'
+    3: 'spinner:null'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f9-b/tests/liveBattlesLb4F9BSpectatorControls.test.mjs:123:80)
+    async Test.run (node:internal/test_runner/test:1113:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: sheet selection requires send, disables cards/send and shows spinner while in flight
+ok 20 - sheet selection requires send, disables cards/send and shows spinner while in flight
+  ---
+  duration_ms: 18.3536
+  type: 'test'
+  ...
+# Subtest: X, backdrop and Android back close manually without sending
+ok 21 - X, backdrop and Android back close manually without sending
+  ---
+  duration_ms: 18.8092
+  type: 'test'
+  ...
+# Subtest: hidden sheet resets selection, so second gift requires reopening and selecting
+ok 22 - hidden sheet resets selection, so second gift requires reopening and selecting
+  ---
+  duration_ms: 14.3054
+  type: 'test'
+  ...
+# Subtest: gift animations remain server-event driven through the existing single overlay
+ok 23 - gift animations remain server-event driven through the existing single overlay
+  ---
+  duration_ms: 0.5397
+  type: 'test'
+  ...
+1..23
+# tests 23
+# suites 0
+# pass 16
+# fail 7
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1079.7347

@@ -54,9 +54,10 @@ test('viewer Battle uses the dedicated Figma HUD over exactly two canonical surf
 });
 
 test('Battle viewer chrome matches the required header, rail, chat and gift CTA contract', () => {
-  for (const label of ['LIVE', 'Reaccionar', 'Compartir', 'Más opciones', 'Regalos', 'Escribe un comentario']) {
+  for (const label of ['LIVE', 'Reaccionar', 'Compartir', 'Más opciones', 'Escribe un comentario']) {
     assert.match(viewerChromeSource, new RegExp(label));
   }
+  assert.match(viewerChromeSource, /<LiveGiftButton onPress=\{onOpenGifts\} disabled=\{giftsDisabled\}/);
   assert.match(viewerChromeSource, /minHeight: 48/);
   assert.match(viewerChromeSource, /width: 48, height: 48/);
   assert.match(watchSource, /battleState \? \([\s\S]*<BattleViewerHeader/);

@@ -16,6 +16,8 @@ export function LiveGiftButton({ onPress, disabled = false }: LiveGiftButtonProp
       hitSlop={8}
       accessibilityRole="button"
       accessibilityLabel="Abrir regalos"
+      accessibilityHint="Abre el selector de regalos"
+      accessibilityState={{ disabled }}
     >
       <MaterialIcons name="card-giftcard" size={20} color="#fff" />
     </Pressable>

@@ -877,7 +877,7 @@ export default function LiveWatchScreen() {
   }, [streamId, user, supabase, addFloatingReaction, battleState]);
 
   const sendRealGift = useCallback(async (gift: GiftCatalogItem) => {
-    if (!streamId || !user?.id) return;
+    if (!mountedRef.current || !streamId || !user?.id) return;
     if (!giftsEnabled) { showGiftFeedback('Regalos no disponibles'); return; }
     if (sendingGiftRef.current) return;
     if (walletBalance === null) { showGiftFeedback('Saldo no disponible'); return; }
@@ -905,7 +905,7 @@ export default function LiveWatchScreen() {
         idempotencyKey,
         battle: battleContext,
       });
-
+      if (!mountedRef.current) return;
       if (!result.success) {
         showGiftFeedback(battleContext ? (result.error || 'No se pudo enviar el regalo') : /insufficient balance/i.test(result.error ?? '') ? 'Saldo insuficiente' : 'No se pudo enviar el regalo');
         console.warn('[LiveWatch] send gift failed', result.error);
@@ -920,10 +920,10 @@ export default function LiveWatchScreen() {
       if (battleContext) void battleProjection.reconcile();
     } catch (err: any) {
       console.warn('[LiveWatch] send gift failed', err?.message ?? err);
-      showGiftFeedback('No se pudo enviar el regalo');
+      if (mountedRef.current) showGiftFeedback('No se pudo enviar el regalo');
     } finally {
       sendingGiftRef.current = false;
-      setSendingGiftId(null);
+      if (mountedRef.current) setSendingGiftId(null);
     }
   }, [streamId, user, giftsEnabled, walletBalance, showGiftFeedback, battleState, battleProjection.reconcile]);
 

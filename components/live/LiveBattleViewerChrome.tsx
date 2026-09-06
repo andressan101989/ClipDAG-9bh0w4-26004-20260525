@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
+import { LiveGiftButton } from './gifts/LiveGiftButton';
 
 type BattleViewerHeaderProps = {
   hostName: string;
@@ -64,7 +65,6 @@ function RailAction({ icon, label, onPress }: { icon: keyof typeof MaterialIcons
       accessibilityLabel={label}
     >
       <MaterialIcons name={icon} size={23} color="#FFF" />
-      <Text style={styles.railLabel} maxFontSizeMultiplier={1.15}>{label}</Text>
     </Pressable>
   );
 }
@@ -128,18 +128,7 @@ export function ViewerBottomBar({
           {sending ? <ActivityIndicator size="small" color="#FFF" /> : <MaterialIcons name="send" size={18} color="#FFF" />}
         </Pressable>
       </View>
-      <Pressable
-        style={({ pressed }) => [styles.giftButton, pressed && !giftsDisabled && styles.pressed, giftsDisabled && styles.disabled]}
-        onPress={onOpenGifts}
-        disabled={giftsDisabled}
-        accessibilityRole="button"
-        accessibilityLabel="Regalos"
-        accessibilityHint="Abre el selector de regalos"
-        accessibilityState={{ disabled: giftsDisabled }}
-      >
-        <MaterialIcons name="card-giftcard" size={20} color="#FFF" />
-        <Text style={styles.giftText} maxFontSizeMultiplier={1.2}>Regalos</Text>
-      </Pressable>
+      <LiveGiftButton onPress={onOpenGifts} disabled={giftsDisabled} />
     </View>
   );
 }
@@ -169,13 +158,10 @@ const styles = StyleSheet.create({
   closeTarget: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22 },
   rail: { position: 'absolute', right: 12, bottom: 110, gap: 8, zIndex: 10 },
   railButton: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center', gap: 1, borderRadius: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', backgroundColor: 'rgba(9,10,18,0.74)' },
-  railLabel: { position: 'absolute', width: 66, top: 49, right: -9, color: '#FFF', fontSize: 8, lineHeight: 10, fontWeight: '700', textAlign: 'center' },
   bottomBar: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 8 },
   composer: { flex: 1, height: 46, flexDirection: 'row', alignItems: 'center', borderRadius: 23, borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)', backgroundColor: 'rgba(9,10,18,0.82)' },
   input: { flex: 1, height: 46, paddingLeft: 16, paddingRight: 4, color: '#FFF', fontSize: 13 },
   sendButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22 },
-  giftButton: { minWidth: 116, minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 15, borderRadius: 24, backgroundColor: '#7D3BED' },
-  giftText: { color: '#FFF', fontSize: 14, lineHeight: 18, fontWeight: '900' },
   pressed: { transform: [{ scale: 0.96 }], opacity: 0.9 },
   disabled: { opacity: 0.45 },
 });

@@ -1,0 +1,2836 @@
+TAP version 13
+# Subtest: LB2-F1 is the only forward correction and deployed migrations are byte-identical
+ok 1 - LB2-F1 is the only forward correction and deployed migrations are byte-identical
+  ---
+  duration_ms: 14.5453
+  type: 'test'
+  ...
+# Subtest: session pair helper validates existence ownership status ended_at and distinct sessions
+ok 2 - session pair helper validates existence ownership status ended_at and distinct sessions
+  ---
+  duration_ms: 2.542
+  type: 'test'
+  ...
+# Subtest: create accept and countdown start reject non-live session pairs after canonical locks
+ok 3 - create accept and countdown start reject non-live session pairs after canonical locks
+  ---
+  duration_ms: 1.5183
+  type: 'test'
+  ...
+# Subtest: elapsed countdown activates only while both authoritative sessions remain live
+ok 4 - elapsed countdown activates only while both authoritative sessions remain live
+  ---
+  duration_ms: 0.9244
+  type: 'test'
+  ...
+# Subtest: correction preserves closed ACL and does not alter schema policy finance Agora or UI
+ok 5 - correction preserves closed ACL and does not alter schema policy finance Agora or UI
+  ---
+  duration_ms: 1.1988
+  type: 'test'
+  ...
+# Subtest: multiconnection proof covers the LB2-F1 races and cleans every fixture
+ok 6 - multiconnection proof covers the LB2-F1 races and cleans every fixture
+  ---
+  duration_ms: 0.6859
+  type: 'test'
+  ...
+# Subtest: LB2 adds exactly one forward migration without changing deployed LB1 migrations
+ok 7 - LB2 adds exactly one forward migration without changing deployed LB1 migrations
+  ---
+  duration_ms: 13.1004
+  type: 'test'
+  ...
+# Subtest: schema is normalized, timestamp constrained, and contains no Battle scoring or finance
+ok 8 - schema is normalized, timestamp constrained, and contains no Battle scoring or finance
+  ---
+  duration_ms: 1.7395
+  type: 'test'
+  ...
+# Subtest: state machine contains only the authorized transitions and terminal states never reactivate
+ok 9 - state machine contains only the authorized transitions and terminal states never reactivate
+  ---
+  duration_ms: 0.6443
+  type: 'test'
+  ...
+# Subtest: server authority derives actor, clocks, sessions and participant reservation
+ok 10 - server authority derives actor, clocks, sessions and participant reservation
+  ---
+  duration_ms: 1.3782
+  type: 'test'
+  ...
+# Subtest: RLS grants ACL and Realtime expose participant reads only
+ok 11 - RLS grants ACL and Realtime expose participant reads only
+  ---
+  duration_ms: 0.8375
+  type: 'test'
+  ...
+# Subtest: typed service stays isolated from screens and owns idempotent Realtime cleanup
+ok 12 - typed service stays isolated from screens and owns idempotent Realtime cleanup
+  ---
+  duration_ms: 0.5198
+  type: 'test'
+  ...
+# Subtest: disposable proof uses independent backends, barriers, negative ACL and full cleanup
+ok 13 - disposable proof uses independent backends, barriers, negative ACL and full cleanup
+  ---
+  duration_ms: 0.5914
+  type: 'test'
+  ...
+# Subtest: LB3 contains no migration, schema, finance, screen, or Battle scoring change
+ok 14 - LB3 contains no migration, schema, finance, screen, or Battle scoring change
+  ---
+  duration_ms: 42.5442
+  type: 'test'
+  ...
+# Subtest: Edge contract is exclusive and derives authority through the user JWT
+ok 15 - Edge contract is exclusive and derives authority through the user JWT
+  ---
+  duration_ms: 2.3864
+  type: 'test'
+  ...
+# Subtest: server authorization permits only participant-directed countdown or active relays
+ok 16 - server authorization permits only participant-directed countdown or active relays
+  ---
+  duration_ms: 7.3003
+  type: 'test'
+  ...
+# Subtest: Battle relay TTL follows the canonical deadline with grace and a hard cap
+ok 17 - Battle relay TTL follows the canonical deadline with grace and a hard cap
+  ---
+  duration_ms: 1.0892
+  type: 'test'
+  ...
+# Subtest: server authorization rejects every session authority failure
+ok 18 - server authorization rejects every session authority failure
+  ---
+  duration_ms: 1.1017
+  type: 'test'
+  ...
+# Subtest: Edge mints two minimally privileged tokens with a server-derived Battle TTL
+ok 19 - Edge mints two minimally privileged tokens with a server-derived Battle TTL
+  ---
+  duration_ms: 1.8705
+  type: 'test'
+  ...
+# Subtest: legacy call, group, LIVE, and channelName contracts remain present
+ok 20 - legacy call, group, LIVE, and channelName contracts remain present
+  ---
+  duration_ms: 0.5332
+  type: 'test'
+  ...
+# Subtest: Edge handler denies missing/invalid JWT, hidden Battles, third parties, and mixed authority
+ok 21 - Edge handler denies missing/invalid JWT, hidden Battles, third parties, and mixed authority
+  ---
+  duration_ms: 1340.3922
+  type: 'test'
+  ...
+# Subtest: unexpected Battle RPC failures are sanitized 500 responses and never mint tokens
+ok 22 - unexpected Battle RPC failures are sanitized 500 responses and never mint tokens
+  ---
+  duration_ms: 2017.0897
+  type: 'test'
+  ...
+# Subtest: Edge handler authorizes countdown/active with deadline-bound minimal tokens
+ok 23 - Edge handler authorizes countdown/active with deadline-bound minimal tokens
+  ---
+  duration_ms: 110.1088
+  type: 'test'
+  ...
+# Subtest: Edge handler denies every stale Battle/session state after canonical reconciliation
+ok 24 - Edge handler denies every stale Battle/session state after canonical reconciliation
+  ---
+  duration_ms: 702.7133
+  type: 'test'
+  ...
+# Subtest: existing runtime contracts cannot obtain Battle credentials
+ok 25 - existing runtime contracts cannot obtain Battle credentials
+  ---
+  duration_ms: 278.4766
+  type: 'test'
+  ...
+# Subtest: client requests only liveBattleId and validates the complete credential contract
+ok 26 - client requests only liveBattleId and validates the complete credential contract
+  ---
+  duration_ms: 73.7266
+  type: 'test'
+  ...
+# Subtest: native service builds the 4.6.2 relay configuration and start is idempotent
+ok 27 - native service builds the 4.6.2 relay configuration and start is idempotent
+  ---
+  duration_ms: 62.023
+  type: 'test'
+  ...
+# Subtest: different Battle stops first, stale callbacks cannot revive it, and stop is idempotent
+ok 28 - different Battle stops first, stale callbacks cannot revive it, and stop is idempotent
+  ---
+  duration_ms: 43.3098
+  type: 'test'
+  ...
+# Subtest: relay callbacks and negative Agora returns map to stable failure states
+ok 29 - relay callbacks and negative Agora returns map to stable failure states
+  ---
+  duration_ms: 51.89
+  type: 'test'
+  ...
+# Subtest: dispose unregisters only its own handler and never leaves or releases the LIVE engine
+ok 30 - dispose unregisters only its own handler and never leaves or releases the LIVE engine
+  ---
+  duration_ms: 91.6202
+  type: 'test'
+  ...
+# Subtest: installed SDK API and web fallback are explicit and safe
+ok 31 - installed SDK API and web fallback are explicit and safe
+  ---
+  duration_ms: 26.1243
+  type: 'test'
+  ...
+# Subtest: pending and accepted Battles never start relay
+ok 32 - pending and accepted Battles never start relay
+  ---
+  duration_ms: 9.9769
+  type: 'test'
+  ...
+# Subtest: countdown starts once and an active update keeps the same relay
+ok 33 - countdown starts once and an active update keeps the same relay
+  ---
+  duration_ms: 12.0148
+  type: 'test'
+  ...
+# Subtest: viewer and cohost contexts perform no discovery, token request, or relay start
+ok 34 - viewer and cohost contexts perform no discovery, token request, or relay start
+  ---
+  duration_ms: 0.8328
+  type: 'test'
+  ...
+# Subtest: terminal transition and ended LIVE stop relay exactly once
+ok 35 - terminal transition and ended LIVE stop relay exactly once
+  ---
+  duration_ms: 9.4014
+  type: 'test'
+  ...
+# Subtest: background stops relay and foreground performs a fresh authoritative reconciliation
+ok 36 - background stops relay and foreground performs a fresh authoritative reconciliation
+  ---
+  duration_ms: 1.7551
+  type: 'test'
+  ...
+# Subtest: engine reconnect performs one controlled relay restart per reconnect flight
+ok 37 - engine reconnect performs one controlled relay restart per reconnect flight
+  ---
+  duration_ms: 1.0623
+  type: 'test'
+  ...
+# Subtest: Battle switch stops the old relay before starting the new one
+ok 38 - Battle switch stops the old relay before starting the new one
+  ---
+  duration_ms: 2.0768
+  type: 'test'
+  ...
+# Subtest: duplicate, stale, and out-of-order Realtime events cannot duplicate or revive relay
+ok 39 - duplicate, stale, and out-of-order Realtime events cannot duplicate or revive relay
+  ---
+  duration_ms: 1.2263
+  type: 'test'
+  ...
+# Subtest: a delayed reconciliation after stop cannot revive relay
+ok 40 - a delayed reconciliation after stop cannot revive relay
+  ---
+  duration_ms: 1.6308
+  type: 'test'
+  ...
+# Subtest: a delayed relay authorization promise cannot revive a stopped runtime
+ok 41 - a delayed relay authorization promise cannot revive a stopped runtime
+  ---
+  duration_ms: 6.1585
+  type: 'test'
+  ...
+# Subtest: token or Agora failure is isolated from the LIVE lifecycle
+ok 42 - token or Agora failure is isolated from the LIVE lifecycle
+  ---
+  duration_ms: 3.2917
+  type: 'test'
+  ...
+# Subtest: multiple non-terminal Battles and Realtime failure fail closed
+ok 43 - multiple non-terminal Battles and Realtime failure fail closed
+  ---
+  duration_ms: 5.557
+  type: 'test'
+  ...
+# Subtest: engine release and dispose synchronously invalidate relay and clean only owned resources
+ok 44 - engine release and dispose synchronously invalidate relay and clean only owned resources
+  ---
+  duration_ms: 21.151
+  type: 'test'
+  ...
+# Subtest: LB4-F1 wiring is host-only, filtered, canonical, and contains no direct Battle writes
+ok 45 - LB4-F1 wiring is host-only, filtered, canonical, and contains no direct Battle writes
+  ---
+  duration_ms: 2.0438
+  type: 'test'
+  ...
+# Subtest: engine owner invokes the relay guard before leave/release and runtime never creates another engine
+ok 46 - engine owner invokes the relay guard before leave/release and runtime never creates another engine
+  ---
+  duration_ms: 1.8523
+  type: 'test'
+  ...
+# Subtest: web remains explicitly unsupported without token requests or retry loops
+ok 47 - web remains explicitly unsupported without token requests or retry loops
+  ---
+  duration_ms: 0.2218
+  type: 'test'
+  ...
+# Subtest: runtime exposes one observable authoritative snapshot without a second subscription
+ok 48 - runtime exposes one observable authoritative snapshot without a second subscription
+  ---
+  duration_ms: 10.1309
+  type: 'test'
+  ...
+# Subtest: pending, countdown, and active deadlines only wake server reconciliation
+ok 49 - pending, countdown, and active deadlines only wake server reconciliation
+  ---
+  duration_ms: 37.6669
+  type: 'test'
+  ...
+# Subtest: a clock ten minutes ahead keeps reconciling past three attempts until pending expires
+ok 50 - a clock ten minutes ahead keeps reconciling past three attempts until pending expires
+  ---
+  duration_ms: 2.9115
+  type: 'test'
+  ...
+# Subtest: deadline backoff grows to fifteen seconds and never permanently exhausts
+ok 51 - deadline backoff grows to fifteen seconds and never permanently exhausts
+  ---
+  duration_ms: 1.977
+  type: 'test'
+  ...
+# Subtest: countdown and active clock skew reconcile after more than three unchanged responses
+ok 52 - countdown and active clock skew reconcile after more than three unchanged responses
+  ---
+  duration_ms: 2.5227
+  type: 'test'
+  ...
+# Subtest: pending checkpoints reconcile a clock ten minutes behind within thirty seconds
+ok 53 - pending checkpoints reconcile a clock ten minutes behind within thirty seconds
+  ---
+  duration_ms: 1.3602
+  type: 'test'
+  ...
+# Subtest: countdown checkpoints reconcile a clock ten minutes behind within three seconds
+ok 54 - countdown checkpoints reconcile a clock ten minutes behind within three seconds
+  ---
+  duration_ms: 1.3222
+  type: 'test'
+  ...
+# Subtest: active checkpoints reconcile a clock ten minutes behind every thirty seconds
+ok 55 - active checkpoints reconcile a clock ten minutes behind every thirty seconds
+  ---
+  duration_ms: 1.2674
+  type: 'test'
+  ...
+# Subtest: correct clocks use the nearer deadline or the state checkpoint budget
+ok 56 - correct clocks use the nearer deadline or the state checkpoint budget
+  ---
+  duration_ms: 24.0303
+  type: 'test'
+  ...
+# Subtest: background cancels checkpoints and foreground performs one immediate reconciliation
+ok 57 - background cancels checkpoints and foreground performs one immediate reconciliation
+  ---
+  duration_ms: 1.2939
+  type: 'test'
+  ...
+# Subtest: deadline reconciliation keeps one RPC in flight and recovers from a network error
+ok 58 - deadline reconciliation keeps one RPC in flight and recovers from a network error
+  ---
+  duration_ms: 7.0433
+  type: 'test'
+  ...
+# Subtest: network failure schedules controlled backoff and recovers without remounting
+ok 59 - network failure schedules controlled backoff and recovers without remounting
+  ---
+  duration_ms: 1.7599
+  type: 'test'
+  ...
+# Subtest: network recovery before the apparent deadline returns to checkpoint mode
+ok 60 - network recovery before the apparent deadline returns to checkpoint mode
+  ---
+  duration_ms: 2.6413
+  type: 'test'
+  ...
+# Subtest: a delayed deadline response cannot rearm after lifecycle invalidation
+ok 61 - a delayed deadline response cannot rearm after lifecycle invalidation
+  ---
+  duration_ms: 1.1808
+  type: 'test'
+  ...
+# Subtest: authority loss, ended LIVE, Battle replacement, and dispose cancel owned timers
+ok 62 - authority loss, ended LIVE, Battle replacement, and dispose cancel owned timers
+  ---
+  duration_ms: 2.8096
+  type: 'test'
+  ...
+# Subtest: an obsolete deadline cannot affect a replacement Battle
+ok 63 - an obsolete deadline cannot affect a replacement Battle
+  ---
+  duration_ms: 2.0609
+  type: 'test'
+  ...
+# Subtest: authoritative action results are monotonic and never start relay before countdown
+ok 64 - authoritative action results are monotonic and never start relay before countdown
+  ---
+  duration_ms: 1.1106
+  type: 'test'
+  ...
+# Subtest: a terminal authoritative result remains visible and stops only the relay
+ok 65 - a terminal authoritative result remains visible and stops only the relay
+  ---
+  duration_ms: 0.5511
+  type: 'test'
+  ...
+# Subtest: selector uses existing LIVE/profile projection and excludes self and ended sessions
+ok 66 - selector uses existing LIVE/profile projection and excludes self and ended sessions
+  ---
+  duration_ms: 0.8053
+  type: 'test'
+  ...
+# Subtest: UI action matrix is host-only and sends only canonical RPC arguments
+ok 67 - UI action matrix is host-only and sends only canonical RPC arguments
+  ---
+  duration_ms: 0.9149
+  type: 'test'
+  ...
+# Subtest: double taps, late completions, and failures are contained by the existing runtime hook
+ok 68 - double taps, late completions, and failures are contained by the existing runtime hook
+  ---
+  duration_ms: 0.6156
+  type: 'test'
+  ...
+# Subtest: presentation uses server timestamps and contains no second transition timer or viewer wiring
+ok 69 - presentation uses server timestamps and contains no second transition timer or viewer wiring
+  ---
+  duration_ms: 0.6567
+  type: 'test'
+  ...
+# Subtest: corrective migration exposes one invoker-only, read-only, RLS-respecting snapshot RPC
+ok 70 - corrective migration exposes one invoker-only, read-only, RLS-respecting snapshot RPC
+  ---
+  duration_ms: 2.4695
+  type: 'test'
+  ...
+# Subtest: snapshot envelope is strict and the clock anchor uses server time plus half RTT
+ok 71 - snapshot envelope is strict and the clock anchor uses server time plus half RTT
+  ---
+  duration_ms: 438.6917
+  type: 'test'
+  ...
+# Subtest: device clocks at zero, plus ten, and minus ten minutes produce the same Battle time
+ok 72 - device clocks at zero, plus ten, and minus ten minutes produce the same Battle time
+  ---
+  duration_ms: 123.2767
+  type: 'test'
+  ...
+# Subtest: Realtime registers filtered INSERT/UPDATE and unfiltered PK-only DELETE reconciliation
+ok 73 - Realtime registers filtered INSERT/UPDATE and unfiltered PK-only DELETE reconciliation
+  ---
+  duration_ms: 210.0269
+  type: 'test'
+  ...
+# Subtest: DELETE reconciliation cannot clear a newer Battle and a late initial snapshot cannot regress Realtime
+ok 74 - DELETE reconciliation cannot clear a newer Battle and a late initial snapshot cannot regress Realtime
+  ---
+  duration_ms: 114.8249
+  type: 'test'
+  ...
+# Subtest: snapshot RPC is canonical, cleanup is idempotent, and no callback survives disposal
+ok 75 - snapshot RPC is canonical, cleanup is idempotent, and no callback survives disposal
+  ---
+  duration_ms: 121.9624
+  type: 'test'
+  ...
+# Subtest: stage and hook use one authoritative timer, one AppState listener, and preserve the prototype layout
+ok 76 - stage and hook use one authoritative timer, one AppState listener, and preserve the prototype layout
+  ---
+  duration_ms: 1.2922
+  type: 'test'
+  ...
+# Subtest: stage runtime arms one one-second timer and its unmount cleanup clears it
+ok 77 - stage runtime arms one one-second timer and its unmount cleanup clears it
+  ---
+  duration_ms: 129.1599
+  type: 'test'
+  ...
+# Subtest: snapshot migration freezes exactly fourteen explicit public keys
+ok 78 - snapshot migration freezes exactly fourteen explicit public keys
+  ---
+  duration_ms: 3.4736
+  type: 'test'
+  ...
+# Subtest: initial snapshot starts only after SUBSCRIBED and first visible state is current
+ok 79 - initial snapshot starts only after SUBSCRIBED and first visible state is current
+  ---
+  duration_ms: 465.0063
+  type: 'test'
+  ...
+# Subtest: Realtime UPDATE wins over an older post-SUBSCRIBED snapshot
+ok 80 - Realtime UPDATE wins over an older post-SUBSCRIBED snapshot
+  ---
+  duration_ms: 110.9236
+  type: 'test'
+  ...
+# Subtest: each re-SUBSCRIBED reconciles missed changes and channel errors preserve state
+ok 81 - each re-SUBSCRIBED reconciles missed changes and channel errors preserve state
+  ---
+  duration_ms: 186.388
+  type: 'test'
+  ...
+# Subtest: null snapshots respect intervening mutations and clear only when still authoritative
+ok 82 - null snapshots respect intervening mutations and clear only when still authoritative
+  ---
+  duration_ms: 140.208
+  type: 'test'
+  ...
+# Subtest: PK-only DELETE behavior and DELETE-to-new-Battle race remain closed
+ok 83 - PK-only DELETE behavior and DELETE-to-new-Battle race remain closed
+  ---
+  duration_ms: 159.4502
+  type: 'test'
+  ...
+# Subtest: cleanup is idempotent and late subscribe or snapshot callbacks are inert
+ok 84 - cleanup is idempotent and late subscribe or snapshot callbacks are inert
+  ---
+  duration_ms: 114.2725
+  type: 'test'
+  ...
+# Subtest: service retains one channel and exactly three required handlers without polling
+ok 85 - service retains one channel and exactly three required handlers without polling
+  ---
+  duration_ms: 0.8726
+  type: 'test'
+  ...
+# Subtest: LB4-F3-F3-F1 adds one forward migration without changing LB4-F3-F3
+ok 86 - LB4-F3-F3-F1 adds one forward migration without changing LB4-F3-F3
+  ---
+  duration_ms: 10.1598
+  type: 'test'
+  ...
+# Subtest: accepted cancellation authority is closed to two exact system reasons
+ok 87 - accepted cancellation authority is closed to two exact system reasons
+  ---
+  duration_ms: 1.0959
+  type: 'test'
+  ...
+# Subtest: locked reconciliation checks session liveness before the exact 30 second deadline
+ok 88 - locked reconciliation checks session liveness before the exact 30 second deadline
+  ---
+  duration_ms: 0.6749
+  type: 'test'
+  ...
+# Subtest: bounded cron reconciler includes accepted and preserves one clock and SKIP LOCKED
+ok 89 - bounded cron reconciler includes accepted and preserves one clock and SKIP LOCKED
+  ---
+  duration_ms: 1.4063
+  type: 'test'
+  ...
+# Subtest: pair busy reconciles accepted before deciding and still blocks current accepted
+ok 90 - pair busy reconciles accepted before deciding and still blocks current accepted
+  ---
+  duration_ms: 0.3816
+  type: 'test'
+  ...
+# Subtest: participant busy locks only blocking statuses and fails closed above one hundred
+ok 91 - participant busy locks only blocking statuses and fails closed above one hundred
+  ---
+  duration_ms: 0.7212
+  type: 'test'
+  ...
+# Subtest: accepted deadline index is partial and the existing cron contract is only verified
+ok 92 - accepted deadline index is partial and the existing cron contract is only verified
+  ---
+  duration_ms: 0.5106
+  type: 'test'
+  ...
+# Subtest: owners and private ACL remain exact without UI Agora or economic changes
+ok 93 - owners and private ACL remain exact without UI Agora or economic changes
+  ---
+  duration_ms: 1.4737
+  type: 'test'
+  ...
+# Subtest: physical proof covers deadlines, busy decisions, pending lock exclusion and cleanup
+ok 94 - physical proof covers deadlines, busy decisions, pending lock exclusion and cleanup
+  ---
+  duration_ms: 0.633
+  type: 'test'
+  ...
+# Subtest: LB4-F3-F3-F1-F1 is the only forward migration and preserves the deployed predecessor
+ok 95 - LB4-F3-F3-F1-F1 is the only forward migration and preserves the deployed predecessor
+  ---
+  duration_ms: 13.4892
+  type: 'test'
+  ...
+# Subtest: manual cancellation reasons require the exact non-null participant actor
+ok 96 - manual cancellation reasons require the exact non-null participant actor
+  ---
+  duration_ms: 0.7057
+  type: 'test'
+  ...
+# Subtest: null actor authority is limited to the three exact state and reason combinations
+ok 97 - null actor authority is limited to the three exact state and reason combinations
+  ---
+  duration_ms: 0.2885
+  type: 'test'
+  ...
+# Subtest: accepted reconciliation keeps liveness priority and uses the sargable deadline
+ok 98 - accepted reconciliation keeps liveness priority and uses the sargable deadline
+  ---
+  duration_ms: 0.3589
+  type: 'test'
+  ...
+# Subtest: bounded due reconciliation uses one clock, the accepted index key, and unchanged locking
+ok 99 - bounded due reconciliation uses one clock, the accepted index key, and unchanged locking
+  ---
+  duration_ms: 1.1818
+  type: 'test'
+  ...
+# Subtest: correction replaces only three private functions and preserves cron, index, UI, Agora and economy
+ok 100 - correction replaces only three private functions and preserves cron, index, UI, Agora and economy
+  ---
+  duration_ms: 0.5789
+  type: 'test'
+  ...
+# Subtest: all three private functions restore exact ownership, search path and client-denied ACL
+ok 101 - all three private functions restore exact ownership, search path and client-denied ACL
+  ---
+  duration_ms: 1.2365
+  type: 'test'
+  ...
+# Subtest: physical proof covers the full actor matrix, exact errors, deadline plan and rollback cleanup
+ok 102 - physical proof covers the full actor matrix, exact errors, deadline plan and rollback cleanup
+  ---
+  duration_ms: 0.757
+  type: 'test'
+  ...
+# Subtest: LB4-F3-F3-F1-F2 is the only forward migration and preserves F1-F1 byte semantics
+ok 103 - LB4-F3-F3-F1-F2 is the only forward migration and preserves F1-F1 byte semantics
+  ---
+  duration_ms: 77.9009
+  type: 'test'
+  ...
+# Subtest: every non-cancellation transition uses closed binary actor and reason authority
+ok 104 - every non-cancellation transition uses closed binary actor and reason authority
+  ---
+  duration_ms: 0.8699
+  type: 'test'
+  ...
+# Subtest: accepted to countdown explicitly rejects a null actor before membership and reason checks
+ok 105 - accepted to countdown explicitly rejects a null actor before membership and reason checks
+  ---
+  duration_ms: 0.4324
+  type: 'test'
+  ...
+# Subtest: the five cancellation authorities from F1-F1 remain exact and closed
+ok 106 - the five cancellation authorities from F1-F1 remain exact and closed
+  ---
+  duration_ms: 0.5552
+  type: 'test'
+  ...
+# Subtest: due reconciliation has five exclusive materialized branches and only UNION ALL
+ok 107 - due reconciliation has five exclusive materialized branches and only UNION ALL
+  ---
+  duration_ms: 0.6967
+  type: 'test'
+  ...
+# Subtest: due reconciliation preserves one clock, global ordering, bounded SKIP LOCKED and canonical transitions
+ok 108 - due reconciliation preserves one clock, global ordering, bounded SKIP LOCKED and canonical transitions
+  ---
+  duration_ms: 0.4423
+  type: 'test'
+  ...
+# Subtest: correction replaces only the two private functions and preserves cron indexes public RPC UI Agora and economy
+ok 109 - correction replaces only the two private functions and preserves cron indexes public RPC UI Agora and economy
+  ---
+  duration_ms: 0.8434
+  type: 'test'
+  ...
+# Subtest: both replaced functions restore exact owner search path and client-denied ACL
+ok 110 - both replaced functions restore exact owner search path and client-denied ACL
+  ---
+  duration_ms: 1.2812
+  type: 'test'
+  ...
+# Subtest: physical proof covers the complete authority matrix full plan and rollback cleanup
+ok 111 - physical proof covers the complete authority matrix full plan and rollback cleanup
+  ---
+  duration_ms: 1.0023
+  type: 'test'
+  ...
+# Subtest: LB4-F3-F3 adds one migration and leaves every deployed migration byte-identical
+ok 112 - LB4-F3-F3 adds one migration and leaves every deployed migration byte-identical
+  ---
+  duration_ms: 10.2058
+  type: 'test'
+  ...
+# Subtest: bounded private reconciler uses one authoritative clock and SKIP LOCKED ordering
+ok 113 - bounded private reconciler uses one authoritative clock and SKIP LOCKED ordering
+  ---
+  duration_ms: 2.1139
+  type: 'test'
+  ...
+# Subtest: reconciler ACL is postgres-only and cron is singular, active, bounded, and replace-safe
+ok 114 - reconciler ACL is postgres-only and cron is singular, active, bounded, and replace-safe
+  ---
+  duration_ms: 0.6394
+  type: 'test'
+  ...
+# Subtest: same-pair invite always reconciles an open row before deciding idempotence or pair_busy
+ok 115 - same-pair invite always reconciles an open row before deciding idempotence or pair_busy
+  ---
+  duration_ms: 0.4725
+  type: 'test'
+  ...
+# Subtest: acceptance reconciles participant conflicts under deterministic bounded locks before busy
+ok 116 - acceptance reconciles participant conflicts under deterministic bounded locks before busy
+  ---
+  duration_ms: 0.7745
+  type: 'test'
+  ...
+# Subtest: migration preserves Battle machinery and excludes UI Agora gifts and finance
+ok 117 - migration preserves Battle machinery and excludes UI Agora gifts and finance
+  ---
+  duration_ms: 0.552
+  type: 'test'
+  ...
+# Subtest: physical proof covers canonical completion, idempotence, busy paths, limits, ACL, cron, projection, and rollback
+ok 118 - physical proof covers canonical completion, idempotence, busy paths, limits, ACL, cron, projection, and rollback
+  ---
+  duration_ms: 0.593
+  type: 'test'
+  ...
+# Subtest: migration creates one sanitized symmetric projection and one private trigger authority
+ok 119 - migration creates one sanitized symmetric projection and one private trigger authority
+  ---
+  duration_ms: 2.5463
+  type: 'test'
+  ...
+# Subtest: RLS, grants, observable LIVE policy and exact Realtime publication are least privilege
+ok 120 - RLS, grants, observable LIVE policy and exact Realtime publication are least privilege
+  ---
+  duration_ms: 0.7068
+  type: 'test'
+  ...
+# Subtest: strict parser accepts the canonical contract and rejects forged identities and timelines
+ok 121 - strict parser accepts the canonical contract and rejects forged identities and timelines
+  ---
+  duration_ms: 359.0275
+  type: 'test'
+  ...
+# Subtest: snapshot and exact-session Realtime are monotonic, replace Battles, and clean up once
+ok 122 - snapshot and exact-session Realtime are monotonic, replace Battles, and clean up once
+  ---
+  duration_ms: 106.5144
+  type: 'test'
+  ...
+# Subtest: stage preserves terminal status and video identity never comes from arrival order
+ok 123 - stage preserves terminal status and video identity never comes from arrival order
+  ---
+  duration_ms: 96.4658
+  type: 'test'
+  ...
+# Subtest: LB4-F4A adds exactly one post-stage migration and no Edge Function
+ok 124 - LB4-F4A adds exactly one post-stage migration and no Edge Function
+  ---
+  duration_ms: 30.4707
+  type: 'test'
+  ...
+# Subtest: schema attribution preserves normal gifts and adds indexed Battle idempotency
+ok 125 - schema attribution preserves normal gifts and adds indexed Battle idempotency
+  ---
+  duration_ms: 3.1931
+  type: 'test'
+  ...
+# Subtest: RPC derives every financial value and identity server-side under the Battle lock
+ok 126 - RPC derives every financial value and identity server-side under the Battle lock
+  ---
+  duration_ms: 2.2765
+  type: 'test'
+  ...
+# Subtest: RPC idempotency returns the original gift and rejects contradictory payloads
+ok 127 - RPC idempotency returns the original gift and rejects contradictory payloads
+  ---
+  duration_ms: 0.4911
+  type: 'test'
+  ...
+# Subtest: ACL exposes only the directed-gift RPC to authenticated clients
+ok 128 - ACL exposes only the directed-gift RPC to authenticated clients
+  ---
+  duration_ms: 0.6998
+  type: 'test'
+  ...
+# Subtest: one economic gift projects once into each LIVE without financial internals
+ok 129 - one economic gift projects once into each LIVE without financial internals
+  ---
+  duration_ms: 0.9242
+  type: 'test'
+  ...
+# Subtest: client contract calls only the dedicated RPC with four identities
+ok 130 - client contract calls only the dedicated RPC with four identities
+  ---
+  duration_ms: 2.4784
+  type: 'test'
+  ...
+# Subtest: physical rollback proof covers economic, authorization, deadline, event, and cleanup cases
+ok 131 - physical rollback proof covers economic, authorization, deadline, event, and cleanup cases
+  ---
+  duration_ms: 0.8771
+  type: 'test'
+  ...
+# Subtest: two-connection proof is localhost-only and covers retry plus deadline serialization
+ok 132 - two-connection proof is localhost-only and covers retry plus deadline serialization
+  ---
+  duration_ms: 0.5903
+  type: 'test'
+  ...
+# Subtest: F4B is the only migration after F4A and adds no UI, Edge Function, wallet or ledger authority
+ok 133 - F4B is the only migration after F4A and adds no UI, Edge Function, wallet or ledger authority
+  ---
+  duration_ms: 40.244
+  type: 'test'
+  ...
+# Subtest: immutable score facts are one-to-one with confirmed Battle gifts and reserve the F4D contract
+ok 134 - immutable score facts are one-to-one with confirmed Battle gifts and reserve the F4D contract
+  ---
+  duration_ms: 1.7307
+  type: 'test'
+  ...
+# Subtest: server-only aggregate has independent version and closed outcome/winner constraints
+ok 135 - server-only aggregate has independent version and closed outcome/winner constraints
+  ---
+  duration_ms: 0.3531
+  type: 'test'
+  ...
+# Subtest: new score tables are RLS-isolated, client-ungranted and absent from Realtime
+ok 136 - new score tables are RLS-isolated, client-ungranted and absent from Realtime
+  ---
+  duration_ms: 2.4999
+  type: 'test'
+  ...
+# Subtest: gift RPC preserves one real transfer and records exactly one score fact under the Battle lock
+ok 137 - gift RPC preserves one real transfer and records exactly one score fact under the Battle lock
+  ---
+  duration_ms: 2.0883
+  type: 'test'
+  ...
+# Subtest: retry verifies the original score fact without incrementing score twice
+ok 138 - retry verifies the original score fact without incrementing score twice
+  ---
+  duration_ms: 0.7326
+  type: 'test'
+  ...
+# Subtest: terminal lifecycle remains the sole closer and computes result from immutable facts
+ok 139 - terminal lifecycle remains the sole closer and computes result from immutable facts
+  ---
+  duration_ms: 0.6653
+  type: 'test'
+  ...
+# Subtest: gift and public close RPCs share Battle-first locking
+ok 140 - gift and public close RPCs share Battle-first locking
+  ---
+  duration_ms: 0.4294
+  type: 'test'
+  ...
+# Subtest: existing public projection and snapshot expand by exactly seven sanitized keys
+ok 141 - existing public projection and snapshot expand by exactly seven sanitized keys
+  ---
+  duration_ms: 6.0697
+  type: 'test'
+  ...
+# Subtest: strict spectator contract consumes projection_version and rejects impossible outcomes
+ok 142 - strict spectator contract consumes projection_version and rejects impossible outcomes
+  ---
+  duration_ms: 418.9046
+  type: 'test'
+  ...
+# Subtest: backfill is deterministic and never creates gifts, money or false non-tie winners
+ok 143 - backfill is deterministic and never creates gifts, money or false non-tie winners
+  ---
+  duration_ms: 0.5637
+  type: 'test'
+  ...
+# Subtest: physical proof covers score, result, rollback, security and mandatory cleanup
+ok 144 - physical proof covers score, result, rollback, security and mandatory cleanup
+  ---
+  duration_ms: 0.7177
+  type: 'test'
+  ...
+# Subtest: real concurrency proof is disposable-only and covers retry, opposite sides, close and deadline races
+ok 145 - real concurrency proof is disposable-only and covers retry, opposite sides, close and deadline races
+  ---
+  duration_ms: 0.5331
+  type: 'test'
+  ...
+# Subtest: F4D-A is the only migration after F4B and changes no UI, Edge or Realtime publication
+ok 146 - F4D-A is the only migration after F4B and changes no UI, Edge or Realtime publication
+  ---
+  duration_ms: 44.6215
+  type: 'test'
+  ...
+# Subtest: rules v1 and v2 are immutable and v2 exactly matches approved defaults
+ok 147 - rules v1 and v2 are immutable and v2 exactly matches approved defaults
+  ---
+  duration_ms: 0.401
+  type: 'test'
+  ...
+# Subtest: every Battle is pinned once and historical Battles backfill to v1
+ok 148 - every Battle is pinned once and historical Battles backfill to v1
+  ---
+  duration_ms: 2.2597
+  type: 'test'
+  ...
+# Subtest: power state is one row per side and constrained by the pinned rule
+ok 149 - power state is one row per side and constrained by the pinned rule
+  ---
+  duration_ms: 6.8813
+  type: 'test'
+  ...
+# Subtest: boost history is immutable, typed, idempotent and deadline-bound
+ok 150 - boost history is immutable, typed, idempotent and deadline-bound
+  ---
+  duration_ms: 0.4461
+  type: 'test'
+  ...
+# Subtest: effective boost uses server timestamps and highest-only deterministic precedence
+ok 151 - effective boost uses server timestamps and highest-only deterministic precedence
+  ---
+  duration_ms: 0.3539
+  type: 'test'
+  ...
+# Subtest: rose activator scores with prior boost and opens one x2 afterward
+ok 152 - rose activator scores with prior boost and opens one x2 afterward
+  ---
+  duration_ms: 1.0183
+  type: 'test'
+  ...
+# Subtest: score facts capture pinned rule and multiplier without changing money
+ok 153 - score facts capture pinned rule and multiplier without changing money
+  ---
+  duration_ms: 0.3644
+  type: 'test'
+  ...
+# Subtest: glove RPC derives side from auth and consumes one fixed use idempotently
+ok 154 - glove RPC derives side from auth and consumes one fixed use idempotently
+  ---
+  duration_ms: 0.9885
+  type: 'test'
+  ...
+# Subtest: historical reconciliation validates stored boost facts and sums awarded points
+ok 155 - historical reconciliation validates stored boost facts and sums awarded points
+  ---
+  duration_ms: 4.8742
+  type: 'test'
+  ...
+# Subtest: all internal tables and helpers are denied to clients while glove is authenticated-only
+ok 156 - all internal tables and helpers are denied to clients while glove is authenticated-only
+  ---
+  duration_ms: 9.0694
+  type: 'test'
+  ...
+# Subtest: physical rollback proof covers products, concurrency boundaries and financial invariants
+ok 157 - physical rollback proof covers products, concurrency boundaries and financial invariants
+  ---
+  duration_ms: 1.7188
+  type: 'test'
+  ...
+# Subtest: disposable concurrency proof serializes threshold roses and glove retry
+ok 158 - disposable concurrency proof serializes threshold roses and glove retry
+  ---
+  duration_ms: 0.396
+  type: 'test'
+  ...
+# Subtest: F4D-B is the only migration after F4D-A and does not add UI or internal Realtime tables
+ok 159 - F4D-B is the only migration after F4D-A and does not add UI or internal Realtime tables
+  ---
+  duration_ms: 26.0976
+  type: 'test'
+  ...
+# Subtest: projection contains the complete sanitized power contract and frozen snapshot keys
+ok 160 - projection contains the complete sanitized power contract and frozen snapshot keys
+  ---
+  duration_ms: 1.2066
+  type: 'test'
+  ...
+# Subtest: only indexed per-Battle boost lookups feed the single public projection
+ok 161 - only indexed per-Battle boost lookups feed the single public projection
+  ---
+  duration_ms: 0.7511
+  type: 'test'
+  ...
+# Subtest: idempotent synchronization changes projection version only for material state
+ok 162 - idempotent synchronization changes projection version only for material state
+  ---
+  duration_ms: 0.4275
+  type: 'test'
+  ...
+# Subtest: strict parser accepts v2 and rejects unsafe or inconsistent power payloads
+ok 163 - strict parser accepts v2 and rejects unsafe or inconsistent power payloads
+  ---
+  duration_ms: 320.3832
+  type: 'test'
+  ...
+# Subtest: v1 compatibility requires explicit zero power state
+ok 164 - v1 compatibility requires explicit zero power state
+  ---
+  duration_ms: 128.2671
+  type: 'test'
+  ...
+# Subtest: visual helper uses authoritative anchor, x3 precedence and exact expiration
+ok 165 - visual helper uses authoritative anchor, x3 precedence and exact expiration
+  ---
+  duration_ms: 139.6751
+  type: 'test'
+  ...
+# Subtest: glove wrapper sends only Battle id and preserved idempotency key
+ok 166 - glove wrapper sends only Battle id and preserved idempotency key
+  ---
+  duration_ms: 62.2292
+  type: 'test'
+  ...
+# Subtest: migration preserves RLS, ACL and the existing Realtime publication boundary
+ok 167 - migration preserves RLS, ACL and the existing Realtime publication boundary
+  ---
+  duration_ms: 0.7555
+  type: 'test'
+  ...
+# Subtest: physical proof is rollback-only and checks RLS, v1 backfill and Realtime isolation
+ok 168 - physical proof is rollback-only and checks RLS, v1 backfill and Realtime isolation
+  ---
+  duration_ms: 0.6385
+  type: 'test'
+  ...
+# Subtest: migration stores and snapshots a constrained server-derived side for both rows
+ok 169 - migration stores and snapshots a constrained server-derived side for both rows
+  ---
+  duration_ms: 2.1921
+  type: 'test'
+  ...
+# Subtest: challenger and opponent map canonical scores and inventory to local and rival
+ok 170 - challenger and opponent map canonical scores and inventory to local and rival
+  ---
+  duration_ms: 394.6717
+  type: 'test'
+  ...
+# Subtest: initial snapshot and every Realtime mutation reconcile canonically; stale repeats lose
+ok 171 - initial snapshot and every Realtime mutation reconcile canonically; stale repeats lose
+  ---
+  duration_ms: 142.9745
+  type: 'test'
+  ...
+# Subtest: server clock drives x2/x3 activation, expiration, and terminal suppression
+ok 172 - server clock drives x2/x3 activation, expiration, and terminal suppression
+  ---
+  duration_ms: 75.0752
+  type: 'test'
+  ...
+# Subtest: progress covers 0/10 through 10/10 and completed winner/tie/cancelled outcomes
+ok 173 - progress covers 0/10 through 10/10 and completed winner/tie/cancelled outcomes
+  ---
+  duration_ms: 78.2128
+  type: 'test'
+  ...
+# Subtest: shared stage renders score, advantage, roses, x2/x3, gloves and terminal copy
+ok 174 - shared stage renders score, advantage, roses, x2/x3, gloves and terminal copy
+  ---
+  duration_ms: 0.793
+  type: 'test'
+  ...
+# Subtest: host glove guard prevents double touch and uses one stable key per in-flight attempt
+ok 175 - host glove guard prevents double touch and uses one stable key per in-flight attempt
+  ---
+  duration_ms: 1.2654
+  type: 'test'
+  ...
+# Subtest: roses remain five coins and multipliers remain Battle-points-only
+ok 176 - roses remain five coins and multipliers remain Battle-points-only
+  ---
+  duration_ms: 1.1465
+  type: 'test'
+  ...
+# Subtest: physical proof uses real authenticated/anon roles, rolls back and checks residue
+ok 177 - physical proof uses real authenticated/anon roles, rolls back and checks residue
+  ---
+  duration_ms: 0.7258
+  type: 'test'
+  ...
+# Subtest: public projection exposes request identity and separate request/window expirations
+ok 178 - public projection exposes request identity and separate request/window expirations
+  ---
+  duration_ms: 2.6669
+  type: 'test'
+  ...
+# Subtest: projection request lookup is scoped to the projected canonical Battle
+ok 179 - projection request lookup is scoped to the projected canonical Battle
+  ---
+  duration_ms: 1.2248
+  type: 'test'
+  ...
+# Subtest: round transition clears the prior request before strict projection checks
+ok 180 - round transition clears the prior request before strict projection checks
+  ---
+  duration_ms: 0.8547
+  type: 'test'
+  ...
+# Subtest: current-Battle request lookup has one purpose-built deterministic index
+ok 181 - current-Battle request lookup has one purpose-built deterministic index
+  ---
+  duration_ms: 1.1861
+  type: 'test'
+  ...
+# Subtest: rollback proof covers three rounds and rejects historical request leakage
+ok 182 - rollback proof covers three rounds and rejects historical request leakage
+  ---
+  duration_ms: 0.5669
+  type: 'test'
+  ...
+# Subtest: concurrency proof verifies projection anchoring and indexed lookup at volume
+ok 183 - concurrency proof verifies projection anchoring and indexed lookup at volume
+  ---
+  duration_ms: 0.6537
+  type: 'test'
+  ...
+# Subtest: C3 is append-only and replaces only leave_live_battle_series
+ok 184 - C3 is append-only and replaces only leave_live_battle_series
+  ---
+  duration_ms: 2.5845
+  type: 'test'
+  ...
+# Subtest: leave preserves security definer identity validation and closed ACL
+ok 185 - leave preserves security definer identity validation and closed ACL
+  ---
+  duration_ms: 1.1104
+  type: 'test'
+  ...
+# Subtest: the first series read is non-locking and canonical locks precede the Battle lock
+ok 186 - the first series read is non-locking and canonical locks precede the Battle lock
+  ---
+  duration_ms: 2.3694
+  type: 'test'
+  ...
+# Subtest: clock and reconciliation happen only after the latest Battle is locked
+ok 187 - clock and reconciliation happen only after the latest Battle is locked
+  ---
+  duration_ms: 0.3773
+  type: 'test'
+  ...
+# Subtest: active leave reuses transition authority before taking the explicit series lock
+ok 188 - active leave reuses transition authority before taking the explicit series lock
+  ---
+  duration_ms: 1.1515
+  type: 'test'
+  ...
+# Subtest: challenger and opponent cancellation reasons are exact
+ok 189 - challenger and opponent cancellation reasons are exact
+  ---
+  duration_ms: 0.4276
+  type: 'test'
+  ...
+# Subtest: active cancellation closes requests and demands a complete cancelled series
+ok 190 - active cancellation closes requests and demands a complete cancelled series
+  ---
+  duration_ms: 1.0738
+  type: 'test'
+  ...
+# Subtest: terminal and between-round behavior remains idempotent and score-preserving
+ok 191 - terminal and between-round behavior remains idempotent and score-preserving
+  ---
+  duration_ms: 0.5447
+  type: 'test'
+  ...
+# Subtest: proof covers both actors across every open Battle status
+ok 192 - proof covers both actors across every open Battle status
+  ---
+  duration_ms: 0.8954
+  type: 'test'
+  ...
+# Subtest: proof covers authorization, terminal routes and live-session preservation
+ok 193 - proof covers authorization, terminal routes and live-session preservation
+  ---
+  duration_ms: 0.4757
+  type: 'test'
+  ...
+# Subtest: proof protects gifts, financial rows, balances and score provenance
+ok 194 - proof protects gifts, financial rows, balances and score provenance
+  ---
+  duration_ms: 0.346
+  type: 'test'
+  ...
+# Subtest: real concurrency proof uses independent local-only connections and timeouts
+ok 195 - real concurrency proof uses independent local-only connections and timeouts
+  ---
+  duration_ms: 0.4487
+  type: 'test'
+  ...
+# Subtest: concurrency covers all five required races without accepting deadlocks
+ok 196 - concurrency covers all five required races without accepting deadlocks
+  ---
+  duration_ms: 0.4486
+  type: 'test'
+  ...
+# Subtest: C3 does not define a parallel authority or touch protected domains
+ok 197 - C3 does not define a parallel authority or touch protected domains
+  ---
+  duration_ms: 0.4606
+  type: 'test'
+  ...
+# Subtest: F5-A and manifests remain byte/logically protected
+ok 198 - F5-A and manifests remain byte/logically protected
+  ---
+  duration_ms: 17.248
+  type: 'test'
+  ...
+# Subtest: C3-C1 is append-only and defines one lock helper plus the existing RPC
+ok 199 - C3-C1 is append-only and defines one lock helper plus the existing RPC
+  ---
+  duration_ms: 4.8059
+  type: 'test'
+  ...
+# Subtest: the retry has a 750 ms deadline and a finite secondary attempt bound
+ok 200 - the retry has a 750 ms deadline and a finite secondary attempt bound
+  ---
+  duration_ms: 0.9611
+  type: 'test'
+  ...
+# Subtest: every pre-transition lock is NOWAIT and failed attempts release their subtransaction
+ok 201 - every pre-transition lock is NOWAIT and failed attempts release their subtransaction
+  ---
+  duration_ms: 2.1621
+  type: 'test'
+  ...
+# Subtest: busy failure is exact and no transaction or session lock_timeout is changed
+ok 202 - busy failure is exact and no transaction or session lock_timeout is changed
+  ---
+  duration_ms: 0.5985
+  type: 'test'
+  ...
+# Subtest: successful Battle lock precedes the authoritative clock and reconciliation
+ok 203 - successful Battle lock precedes the authoritative clock and reconciliation
+  ---
+  duration_ms: 0.3785
+  type: 'test'
+  ...
+# Subtest: C3 lifecycle semantics and Battle to score to series authority are preserved
+ok 204 - C3 lifecycle semantics and Battle to score to series authority are preserved
+  ---
+  duration_ms: 1.0877
+  type: 'test'
+  ...
+# Subtest: helper is not a lifecycle authority and is closed to every client role
+ok 205 - helper is not a lifecycle authority and is closed to every client role
+  ---
+  duration_ms: 1.0692
+  type: 'test'
+  ...
+# Subtest: C3 proof now enforces exact zero or two public projections
+ok 206 - C3 proof now enforces exact zero or two public projections
+  ---
+  duration_ms: 1.1822
+  type: 'test'
+  ...
+# Subtest: real harness proves active blocking, elapsed budget and retry recovery
+ok 207 - real harness proves active blocking, elapsed budget and retry recovery
+  ---
+  duration_ms: 0.7317
+  type: 'test'
+  ...
+# Subtest: real harness crosses a future scheduled deadline while the Battle is locked
+ok 208 - real harness crosses a future scheduled deadline while the Battle is locked
+  ---
+  duration_ms: 0.5576
+  type: 'test'
+  ...
+# Subtest: seven races execute at least twenty iterations and reject infrastructure failures
+ok 209 - seven races execute at least twenty iterations and reject infrastructure failures
+  ---
+  duration_ms: 0.6009
+  type: 'test'
+  ...
+# Subtest: economic evidence is derived from linked rows and exact balance deltas
+ok 210 - economic evidence is derived from linked rows and exact balance deltas
+  ---
+  duration_ms: 0.4356
+  type: 'test'
+  ...
+# Subtest: C3-C1 does not touch protected product domains
+ok 211 - C3-C1 does not touch protected product domains
+  ---
+  duration_ms: 0.4291
+  type: 'test'
+  ...
+# Subtest: F5-A, C3 and manifests remain protected
+ok 212 - F5-A, C3 and manifests remain protected
+  ---
+  duration_ms: 23.9337
+  type: 'test'
+  ...
+# Subtest: C3-C1-C1-C1 remains in the append-only chain before F6-A and F8-A
+ok 213 - C3-C1-C1-C1 remains in the append-only chain before F6-A and F8-A
+  ---
+  duration_ms: 3.6426
+  type: 'test'
+  ...
+# Subtest: rule set prelock is ROW SHARE and the obsolete boundary is rejected
+ok 214 - rule set prelock is ROW SHARE and the obsolete boundary is rejected
+  ---
+  duration_ms: 0.5937
+  type: 'test'
+  ...
+# Subtest: all thirteen prelocks remain mode-specific, NOWAIT and globally ordered
+ok 215 - all thirteen prelocks remain mode-specific, NOWAIT and globally ordered
+  ---
+  duration_ms: 0.7368
+  type: 'test'
+  ...
+# Subtest: participant authorization follows table prelocks and precedes every row lock
+ok 216 - participant authorization follows table prelocks and precedes every row lock
+  ---
+  duration_ms: 0.6941
+  type: 'test'
+  ...
+# Subtest: security identities, narrow retry capture and ACL remain unchanged
+ok 217 - security identities, narrow retry capture and ACL remain unchanged
+  ---
+  duration_ms: 4.7939
+  type: 'test'
+  ...
+# Subtest: proof checks ROW SHARE, early authorization, real ACL and rolls back
+ok 218 - proof checks ROW SHARE, early authorization, real ACL and rolls back
+  ---
+  duration_ms: 0.337
+  type: 'test'
+  ...
+# Subtest: harness uses minimum incompatible blockers for every lock frontier
+ok 219 - harness uses minimum incompatible blockers for every lock frontier
+  ---
+  duration_ms: 0.918
+  type: 'test'
+  ...
+# Subtest: non-participant is rejected before a blocked host Battle row
+ok 220 - non-participant is rejected before a blocked host Battle row
+  ---
+  duration_ms: 2.8509
+  type: 'test'
+  ...
+# Subtest: protected migrations and manifests remain byte-logically canonical
+ok 221 - protected migrations and manifests remain byte-logically canonical
+  ---
+  duration_ms: 19.3366
+  type: 'test'
+  ...
+# Subtest: correction remains outside product, Realtime and financial authority
+ok 222 - correction remains outside product, Realtime and financial authority
+  ---
+  duration_ms: 0.7917
+  type: 'test'
+  ...
+# Subtest: C3-C1-C1 remains in the explicit append-only correction chain
+ok 223 - C3-C1-C1 remains in the explicit append-only correction chain
+  ---
+  duration_ms: 5.3062
+  type: 'test'
+  ...
+# Subtest: all thirteen table locks are NOWAIT, mode-specific and globally ordered
+ok 224 - all thirteen table locks are NOWAIT, mode-specific and globally ordered
+  ---
+  duration_ms: 0.6937
+  type: 'test'
+  ...
+# Subtest: row locks complete the canonical users to sessions to Battle scope
+ok 225 - row locks complete the canonical users to sessions to Battle scope
+  ---
+  duration_ms: 1.6264
+  type: 'test'
+  ...
+# Subtest: lock acquisition remains bounded to 750 ms, 128 attempts and 10 ms backoff
+ok 226 - lock acquisition remains bounded to 750 ms, 128 attempts and 10 ms backoff
+  ---
+  duration_ms: 1.2817
+  type: 'test'
+  ...
+# Subtest: security identity, empty search paths and closed ACL are explicit
+ok 227 - security identity, empty search paths and closed ACL are explicit
+  ---
+  duration_ms: 1.3082
+  type: 'test'
+  ...
+# Subtest: proof checks definitions and real ACL privileges then rolls back
+ok 228 - proof checks definitions and real ACL privileges then rolls back
+  ---
+  duration_ms: 0.375
+  type: 'test'
+  ...
+# Subtest: table-lock matrix proves exact busy rejection, invariance and recovery
+ok 229 - table-lock matrix proves exact busy rejection, invariance and recovery
+  ---
+  duration_ms: 0.3709
+  type: 'test'
+  ...
+# Subtest: deadline crossing uses PostgreSQL timestamps and preserves terminal truth
+ok 230 - deadline crossing uses PostgreSQL timestamps and preserves terminal truth
+  ---
+  duration_ms: 0.328
+  type: 'test'
+  ...
+# Subtest: seven races require twenty observable overlaps and exact rejection whitelists
+ok 231 - seven races require twenty observable overlaps and exact rejection whitelists
+  ---
+  duration_ms: 0.5191
+  type: 'test'
+  ...
+# Subtest: economic evidence is linked, balanced and exact in both orderings
+ok 232 - economic evidence is linked, balanced and exact in both orderings
+  ---
+  duration_ms: 0.8858
+  type: 'test'
+  ...
+# Subtest: protected migrations and manifests use canonical LF hashes
+ok 233 - protected migrations and manifests use canonical LF hashes
+  ---
+  duration_ms: 22.0127
+  type: 'test'
+  ...
+# Subtest: migration stays outside product, Realtime and financial authority
+ok 234 - migration stays outside product, Realtime and financial authority
+  ---
+  duration_ms: 0.7539
+  type: 'test'
+  ...
+# Subtest: F5-A and its C3 correction chain are the exact ordered migrations after F4D-C
+ok 235 - F5-A and its C3 correction chain are the exact ordered migrations after F4D-C
+  ---
+  duration_ms: 9.5196
+  type: 'test'
+  ...
+# Subtest: all previously deployed migrations remain byte-unmodified
+ok 236 - all previously deployed migrations remain byte-unmodified
+  ---
+  duration_ms: 158.8231
+  type: 'test'
+  ...
+# Subtest: series schema encodes single and best-of-five limits
+ok 237 - series schema encodes single and best-of-five limits
+  ---
+  duration_ms: 2.1824
+  type: 'test'
+  ...
+# Subtest: series counters and terminal timestamps are constrained
+ok 238 - series counters and terminal timestamps are constrained
+  ---
+  duration_ms: 0.474
+  type: 'test'
+  ...
+# Subtest: only one open series can exist for an unordered host pair
+ok 239 - only one open series can exist for an unordered host pair
+  ---
+  duration_ms: 1.9119
+  type: 'test'
+  ...
+# Subtest: rematch requests enforce idempotency and one pending request per round
+ok 240 - rematch requests enforce idempotency and one pending request per round
+  ---
+  duration_ms: 1.1092
+  type: 'test'
+  ...
+# Subtest: new foreign-key access paths have full indexes
+ok 241 - new foreign-key access paths have full indexes
+  ---
+  duration_ms: 0.8323
+  type: 'test'
+  ...
+# Subtest: cross-table request validation binds participants and Battle series
+ok 242 - cross-table request validation binds participants and Battle series
+  ---
+  duration_ms: 0.3168
+  type: 'test'
+  ...
+# Subtest: internal tables have RLS and no direct grants
+ok 243 - internal tables have RLS and no direct grants
+  ---
+  duration_ms: 1.0382
+  type: 'test'
+  ...
+# Subtest: internal tables are explicitly excluded from publication
+ok 244 - internal tables are explicitly excluded from publication
+  ---
+  duration_ms: 1.2873
+  type: 'test'
+  ...
+# Subtest: historical Battles are backfilled without touching financial tables
+ok 245 - historical Battles are backfilled without touching financial tables
+  ---
+  duration_ms: 3.0484
+  type: 'test'
+  ...
+# Subtest: Battle series linkage is mandatory, unique, and capped at round five
+ok 246 - Battle series linkage is mandatory, unique, and capped at round five
+  ---
+  duration_ms: 0.547
+  type: 'test'
+  ...
+# Subtest: initial invite keeps its public signature and creates best-of-five round one
+ok 247 - initial invite keeps its public signature and creates best-of-five round one
+  ---
+  duration_ms: 0.6058
+  type: 'test'
+  ...
+# Subtest: initial invite preserves canonical locks, liveness, idempotency, and errors
+ok 248 - initial invite preserves canonical locks, liveness, idempotency, and errors
+  ---
+  duration_ms: 0.2715
+  type: 'test'
+  ...
+# Subtest: series aggregation trusts only Battles and score states
+ok 249 - series aggregation trusts only Battles and score states
+  ---
+  duration_ms: 0.61
+  type: 'test'
+  ...
+# Subtest: series aggregation handles challenger, opponent, ties, cancellation, 3 wins, and round 5
+ok 250 - series aggregation handles challenger, opponent, ties, cancellation, 3 wins, and round 5
+  ---
+  duration_ms: 0.5121
+  type: 'test'
+  ...
+# Subtest: material score finalization triggers idempotent series rebuild
+ok 251 - material score finalization triggers idempotent series rebuild
+  ---
+  duration_ms: 0.3533
+  type: 'test'
+  ...
+# Subtest: request RPC validates actor, latest completed round, live hosts and 30-second window
+ok 252 - request RPC validates actor, latest completed round, live hosts and 30-second window
+  ---
+  duration_ms: 0.3974
+  type: 'test'
+  ...
+# Subtest: request RPC serializes concurrent callers and returns existing requests
+ok 253 - request RPC serializes concurrent callers and returns existing requests
+  ---
+  duration_ms: 1.0876
+  type: 'test'
+  ...
+# Subtest: response RPC accepts only exact decisions from the counterpart
+ok 254 - response RPC accepts only exact decisions from the counterpart
+  ---
+  duration_ms: 0.3172
+  type: 'test'
+  ...
+# Subtest: accept creates one direct-countdown next round with three auditable events
+ok 255 - accept creates one direct-countdown next round with three auditable events
+  ---
+  duration_ms: 0.79
+  type: 'test'
+  ...
+# Subtest: double accept returns the already-created next round
+ok 256 - double accept returns the already-created next round
+  ---
+  duration_ms: 0.7839
+  type: 'test'
+  ...
+# Subtest: fresh rounds receive current rules and rely on existing score/power initialization
+ok 257 - fresh rounds receive current rules and rely on existing score/power initialization
+  ---
+  duration_ms: 0.6376
+  type: 'test'
+  ...
+# Subtest: reject and leave complete with accumulated authoritative result
+ok 258 - reject and leave complete with accumulated authoritative result
+  ---
+  duration_ms: 0.533
+  type: 'test'
+  ...
+# Subtest: expiry is bounded, idempotent, and uses SKIP LOCKED
+ok 259 - expiry is bounded, idempotent, and uses SKIP LOCKED
+  ---
+  duration_ms: 0.424
+  type: 'test'
+  ...
+# Subtest: public projection carries all sanitized series and rematch fields
+ok 260 - public projection carries all sanitized series and rematch fields
+  ---
+  duration_ms: 1.9184
+  type: 'test'
+  ...
+# Subtest: public rematch request is scoped to the projected Battle with separate deadlines
+ok 261 - public rematch request is scoped to the projected Battle with separate deadlines
+  ---
+  duration_ms: 0.7263
+  type: 'test'
+  ...
+# Subtest: projection updates both session orientations atomically in the existing table
+ok 262 - projection updates both session orientations atomically in the existing table
+  ---
+  duration_ms: 0.7217
+  type: 'test'
+  ...
+# Subtest: snapshot preserves canonical local side and contains no financial fields
+ok 263 - snapshot preserves canonical local side and contains no financial fields
+  ---
+  duration_ms: 0.9695
+  type: 'test'
+  ...
+# Subtest: RPCs use empty search paths and schema-qualified references
+ok 264 - RPCs use empty search paths and schema-qualified references
+  ---
+  duration_ms: 1.3029
+  type: 'test'
+  ...
+# Subtest: new RPC execution is granted only to authenticated
+ok 265 - new RPC execution is granted only to authenticated
+  ---
+  duration_ms: 1.8144
+  type: 'test'
+  ...
+# Subtest: F5-A changes no Agora, Media Relay, Creator Recovery, Edge Function, manifest, or realtime schema
+ok 266 - F5-A changes no Agora, Media Relay, Creator Recovery, Edge Function, manifest, or realtime schema
+  ---
+  duration_ms: 173.1293
+  type: 'test'
+  ...
+# Subtest: migration is transactionally closed
+ok 267 - migration is transactionally closed
+  ---
+  duration_ms: 0.3708
+  type: 'test'
+  ...
+# Subtest: concurrency proof uses separate local PostgreSQL connections
+ok 268 - concurrency proof uses separate local PostgreSQL connections
+  ---
+  duration_ms: 0.3333
+  type: 'test'
+  ...
+# Subtest: F5-B strictly parses the exact request and best-of-five series JSON
+ok 269 - F5-B strictly parses the exact request and best-of-five series JSON
+  ---
+  duration_ms: 8.8056
+  type: 'test'
+  ...
+# Subtest: client states are canonical for host, counterpart, viewer, expiry and terminal series
+ok 270 - client states are canonical for host, counterpart, viewer, expiry and terminal series
+  ---
+  duration_ms: 1.8008
+  type: 'test'
+  ...
+# Subtest: canonical onChange clears a non-blocking action error but stale projections do not
+ok 271 - canonical onChange clears a non-blocking action error but stale projections do not
+  ---
+  duration_ms: 1.0294
+  type: 'test'
+  ...
+# Subtest: C2 projection keeps request and rematch-window expiration separate
+ok 272 - C2 projection keeps request and rematch-window expiration separate
+  ---
+  duration_ms: 2.4201
+  type: 'test'
+  ...
+# Subtest: a request anchored to round one is discarded when hydrating round two
+ok 273 - a request anchored to round one is discarded when hydrating round two
+  ---
+  duration_ms: 0.699
+  type: 'test'
+  ...
+# Subtest: single-flight blocks double touch and permits one later action
+ok 274 - single-flight blocks double touch and permits one later action
+  ---
+  duration_ms: 2.5199
+  type: 'test'
+  ...
+# Subtest: a rejected RPC releases single-flight so the same canonical action can retry
+ok 275 - a rejected RPC releases single-flight so the same canonical action can retry
+  ---
+  duration_ms: 3.2528
+  type: 'test'
+  ...
+# Subtest: host voluntary leave is bounded, best-effort and invoked exactly once
+ok 276 - host voluntary leave is bounded, best-effort and invoked exactly once
+  ---
+  duration_ms: 2.5349
+  type: 'test'
+  ...
+# Subtest: disconnects, background, viewers and terminal series never invoke series leave
+ok 277 - disconnects, background, viewers and terminal series never invoke series leave
+  ---
+  duration_ms: 7.5811
+  type: 'test'
+  ...
+# Subtest: leave rejection or timeout cannot prevent LIVE cleanup and navigation
+ok 278 - leave rejection or timeout cannot prevent LIVE cleanup and navigation
+  ---
+  duration_ms: 27.2966
+  type: 'test'
+  ...
+# Subtest: only a new canonical round in the same series triggers transition
+ok 279 - only a new canonical round in the same series triggers transition
+  ---
+  duration_ms: 0.5348
+  type: 'test'
+  ...
+# Subtest: RPC and Realtime candidates transition once and stale callbacks are ignored
+ok 280 - RPC and Realtime candidates transition once and stale callbacks are ignored
+  ---
+  duration_ms: 0.5741
+  type: 'test'
+  ...
+# Subtest: service consumes only the three authoritative RPCs and never internal tables
+ok 281 - service consumes only the three authoritative RPCs and never internal tables
+  ---
+  duration_ms: 0.347
+  type: 'test'
+  ...
+# Subtest: RPC responses are validated, idempotent accept returns one canonical round
+ok 282 - RPC responses are validated, idempotent accept returns one canonical round
+  ---
+  duration_ms: 63.2082
+  type: 'test'
+  ...
+# Subtest: hook owns one projection subscription, reconciliation and complete cleanup
+ok 283 - hook owns one projection subscription, reconciliation and complete cleanup
+  ---
+  duration_ms: 0.6177
+  type: 'test'
+  ...
+# Subtest: host_ended sequences one bounded series leave before runtime and LIVE shutdown
+ok 284 - host_ended sequences one bounded series leave before runtime and LIVE shutdown
+  ---
+  duration_ms: 0.9955
+  type: 'test'
+  ...
+# Subtest: host and viewer use the same series UI while controls remain participant-gated
+ok 285 - host and viewer use the same series UI while controls remain participant-gated
+  ---
+  duration_ms: 0.8358
+  type: 'test'
+  ...
+# Subtest: deterministic C2, RPC, scope, manifest and migration guards are worktree-independent
+ok 286 - deterministic C2, RPC, scope, manifest and migration guards are worktree-independent
+  ---
+  duration_ms: 29.5239
+  type: 'test'
+  ...
+# Subtest: F6-A remains the append-only catalog predecessor to the F8-A commission migration
+ok 287 - F6-A remains the append-only catalog predecessor to the F8-A commission migration
+  ---
+  duration_ms: 22.7053
+  type: 'test'
+  ...
+# Subtest: catalog adds exactly 88 active original gifts with stable ASCII identifiers
+ok 288 - catalog adds exactly 88 active original gifts with stable ASCII identifiers
+  ---
+  duration_ms: 2.9685
+  type: 'test'
+  ...
+# Subtest: 101 total, 100 active and sports_car as the only inactive row are explicit invariants
+ok 289 - 101 total, 100 active and sports_car as the only inactive row are explicit invariants
+  ---
+  duration_ms: 1.5545
+  type: 'test'
+  ...
+# Subtest: all active price ranges satisfy the required distribution
+ok 290 - all active price ranges satisfy the required distribution
+  ---
+  duration_ms: 1.5631
+  type: 'test'
+  ...
+# Subtest: categories, animation families and deterministic order stay within the existing contract
+ok 291 - categories, animation families and deterministic order stay within the existing contract
+  ---
+  duration_ms: 1.1629
+  type: 'test'
+  ...
+# Subtest: new identities contain no TikTok branding, remote assets or executable markup
+ok 292 - new identities contain no TikTok branding, remote assets or executable markup
+  ---
+  duration_ms: 1.1343
+  type: 'test'
+  ...
+# Subtest: server remains the sole price authority and the client cannot supply a price
+ok 293 - server remains the sole price authority and the client cannot supply a price
+  ---
+  duration_ms: 1.8076
+  type: 'test'
+  ...
+# Subtest: x2/x3 modify Battle points only and x3 wins without x6
+ok 294 - x2/x3 modify Battle points only and x3 wins without x6
+  ---
+  duration_ms: 3.9694
+  type: 'test'
+  ...
+# Subtest: only the canonical rose gift advances rose progress
+ok 295 - only the canonical rose gift advances rose progress
+  ---
+  duration_ms: 17.5922
+  type: 'test'
+  ...
+# Subtest: catalog UI stays dynamic, virtualized, stable and excludes inactive gifts
+ok 296 - catalog UI stays dynamic, virtualized, stable and excludes inactive gifts
+  ---
+  duration_ms: 2.3089
+  type: 'test'
+  ...
+# Subtest: historical replacement, F5 chain and manifests remain LF-canonical
+ok 297 - historical replacement, F5 chain and manifests remain LF-canonical
+  ---
+  duration_ms: 22.1799
+  type: 'test'
+  ...
+# Subtest: migration cannot touch economy, historical gifts, F5 or Realtime
+ok 298 - migration cannot touch economy, historical gifts, F5 or Realtime
+  ---
+  duration_ms: 0.5099
+  type: 'test'
+  ...
+# Subtest: the base defect is reproduced and legendary 33 is replayed once after capacity frees
+ok 299 - the base defect is reproduced and legendary 33 is replayed once after capacity frees
+  ---
+  duration_ms: 45.1796
+  type: 'test'
+  ...
+# Subtest: multiple recovered legendary gifts retain durable order across repeated capacity release
+ok 300 - multiple recovered legendary gifts retain durable order across repeated capacity release
+  ---
+  duration_ms: 4.5892
+  type: 'test'
+  ...
+# Subtest: replay cancellation fences an async late page and releases all bounded state
+ok 301 - replay cancellation fences an async late page and releases all bounded state
+  ---
+  duration_ms: 1.4042
+  type: 'test'
+  ...
+# Subtest: network retry and memory are explicitly bounded without permanent polling
+ok 302 - network retry and memory are explicitly bounded without permanent polling
+  ---
+  duration_ms: 93.6985
+  type: 'test'
+  ...
+# Subtest: out-of-order and repeated durable pages are sorted and deduplicated
+ok 303 - out-of-order and repeated durable pages are sorted and deduplicated
+  ---
+  duration_ms: 1.0794
+  type: 'test'
+  ...
+# Subtest: host and viewer share acknowledgement-after-enqueue and reconnect behavior
+ok 304 - host and viewer share acknowledgement-after-enqueue and reconnect behavior
+  ---
+  duration_ms: 18.4449
+  type: 'test'
+  ...
+# Subtest: durable query is scoped, paginated, cursor ordered, read-only, and lifecycle guarded
+ok 305 - durable query is scoped, paginated, cursor ordered, read-only, and lifecycle guarded
+  ---
+  duration_ms: 4.3779
+  type: 'test'
+  ...
+# Subtest: canonical F4-A gift payload still normalizes for visual replay
+ok 306 - canonical F4-A gift payload still normalizes for visual replay
+  ---
+  duration_ms: 0.7451
+  type: 'test'
+  ...
+# Subtest: reaction acknowledgement memory is bounded deterministically
+ok 307 - reaction acknowledgement memory is bounded deterministically
+  ---
+  duration_ms: 1.0993
+  type: 'test'
+  ...
+# Subtest: protected financial, database, manifests, and F6-A migration files remain outside C1
+ok 308 - protected financial, database, manifests, and F6-A migration files remain outside C1
+  ---
+  duration_ms: 4.3777
+  type: 'test'
+  ...
+# Subtest: C2: a request arriving during a short fetch forces another fetch
+ok 309 - C2: a request arriving during a short fetch forces another fetch
+  ---
+  duration_ms: 41.4714
+  type: 'test'
+  ...
+# Subtest: C2: page-budget exhaustion schedules one continuation and reaches row 65+
+ok 310 - C2: page-budget exhaustion schedules one continuation and reaches row 65+
+  ---
+  duration_ms: 8.7831
+  type: 'test'
+  ...
+# Subtest: C2: initial session cursor closes first-subscribe gap and deduplicates Realtime race
+ok 311 - C2: initial session cursor closes first-subscribe gap and deduplicates Realtime race
+  ---
+  duration_ms: 7.0853
+  type: 'test'
+  ...
+# Subtest: C2: an old cursor is clamped and recent rows still replay
+ok 312 - C2: an old cursor is clamped and recent rows still replay
+  ---
+  duration_ms: 1.5053
+  type: 'test'
+  ...
+# Subtest: C2: a full non-advancing source stops and network exhaustion never polls
+ok 313 - C2: a full non-advancing source stops and network exhaustion never polls
+  ---
+  duration_ms: 253.3584
+  type: 'test'
+  ...
+# Subtest: C2: lifecycle fences late work and each session owns fresh replay state
+ok 314 - C2: lifecycle fences late work and each session owns fresh replay state
+  ---
+  duration_ms: 14.8736
+  type: 'test'
+  ...
+# Subtest: resolver covers every price tier with bounded duration and particles
+ok 315 - resolver covers every price tier with bounded duration and particles
+  ---
+  duration_ms: 4.4863
+  type: 'test'
+  ...
+# Subtest: resolver honors known families, legacy catalog types, categories and safe fallback
+ok 316 - resolver honors known families, legacy catalog types, categories and safe fallback
+  ---
+  duration_ms: 2.3696
+  type: 'test'
+  ...
+# Subtest: normalizer rejects malformed authority snapshots and applies safe visual fallbacks
+ok 317 - normalizer rejects malformed authority snapshots and applies safe visual fallbacks
+  ---
+  duration_ms: 0.9546
+  type: 'test'
+  ...
+# Subtest: queue is deterministic, prioritized, bounded and deduplicated
+ok 318 - queue is deterministic, prioritized, bounded and deduplicated
+  ---
+  duration_ms: 1.1679
+  type: 'test'
+  ...
+# Subtest: legendary presentation evicts a lower tier, is not interrupted, and advances cleanly
+ok 319 - legendary presentation evicts a lower tier, is not interrupted, and advances cleanly
+  ---
+  duration_ms: 0.6076
+  type: 'test'
+  ...
+# Subtest: full legendary queue reports bounded backpressure and permits a later retry
+ok 320 - full legendary queue reports bounded backpressure and permits a later retry
+  ---
+  duration_ms: 0.4064
+  type: 'test'
+  ...
+# Subtest: combos are visual-only and require matching gift, sender and receiver inside the window
+ok 321 - combos are visual-only and require matching gift, sender and receiver inside the window
+  ---
+  duration_ms: 0.816
+  type: 'test'
+  ...
+# Subtest: cancel clears work and ignores late events without state resurrection
+ok 322 - cancel clears work and ignores late events without state resurrection
+  ---
+  duration_ms: 0.7377
+  type: 'test'
+  ...
+# Subtest: all 100 active catalog gifts are resolved without production ID branches
+ok 323 - all 100 active catalog gifts are resolved without production ID branches
+  ---
+  duration_ms: 14.6714
+  type: 'test'
+  ...
+# Subtest: shared layer preserves interaction, accessibility, Battle and one event source per screen
+ok 324 - shared layer preserves interaction, accessibility, Battle and one event source per screen
+  ---
+  duration_ms: 10.6472
+  type: 'test'
+  ...
+# Subtest: visual engine has no database, scoring, boost, or financial authority
+ok 325 - visual engine has no database, scoring, boost, or financial authority
+  ---
+  duration_ms: 4.5625
+  type: 'test'
+  ...
+# Subtest: protected manifests and deployed F6-A migration remain byte-equivalent after LF normalization
+ok 326 - protected manifests and deployed F6-A migration remain byte-equivalent after LF normalization
+  ---
+  duration_ms: 27.7634
+  type: 'test'
+  ...
+# Subtest: active Battle context invokes only the directed Battle RPC with no client price or score
+ok 327 - active Battle context invokes only the directed Battle RPC with no client price or score
+  ---
+  duration_ms: 98.6834
+  type: 'test'
+  ...
+# Subtest: ordinary LIVE context preserves the original live gift authority
+ok 328 - ordinary LIVE context preserves the original live gift authority
+  ---
+  duration_ms: 63.1685
+  type: 'test'
+  ...
+# Subtest: viewer connects the canonical Battle projection to the shared service router
+ok 329 - viewer connects the canonical Battle projection to the shared service router
+  ---
+  duration_ms: 1.6936
+  type: 'test'
+  ...
+# Subtest: successful send closes the native modal, confirms outside it, and reconciles authority
+ok 330 - successful send closes the native modal, confirms outside it, and reconciles authority
+  ---
+  duration_ms: 1.3504
+  type: 'test'
+  ...
+# Subtest: single-flight blocks double taps and ambiguous retries reuse one idempotency key
+ok 331 - single-flight blocks double taps and ambiguous retries reuse one idempotency key
+  ---
+  duration_ms: 0.6504
+  type: 'test'
+  ...
+# Subtest: a production-shaped rose event normalizes and presents exactly once
+ok 332 - a production-shaped rose event normalizes and presents exactly once
+  ---
+  duration_ms: 3.793
+  type: 'test'
+  ...
+# Subtest: server contract links gift, score, rose power, projection and two-session visual events
+ok 333 - server contract links gift, score, rose power, projection and two-session visual events
+  ---
+  duration_ms: 1.321
+  type: 'test'
+  ...
+# Subtest: protected manifests and deployed migrations remain LF-identical
+ok 334 - protected manifests and deployed migrations remain LF-identical
+  ---
+  duration_ms: 65.9095
+  type: 'test'
+  ...
+# Subtest: viewer Battle uses the dedicated Figma HUD over exactly two canonical surfaces
+ok 335 - viewer Battle uses the dedicated Figma HUD over exactly two canonical surfaces
+  ---
+  duration_ms: 2.7688
+  type: 'test'
+  ...
+# Subtest: Battle viewer chrome matches the required header, rail, chat and gift CTA contract
+ok 336 - Battle viewer chrome matches the required header, rail, chat and gift CTA contract
+  ---
+  duration_ms: 1.0925
+  type: 'test'
+  ...
+# Subtest: commerce remains structurally excluded from Battle
+ok 337 - commerce remains structurally excluded from Battle
+  ---
+  duration_ms: 0.8602
+  type: 'test'
+  ...
+# Subtest: F7-A gift authority, single flight and modal success/error behavior stay intact
+ok 338 - F7-A gift authority, single flight and modal success/error behavior stay intact
+  ---
+  duration_ms: 1.2928
+  type: 'test'
+  ...
+# Subtest: large invitation is modal, accessible, blocks background and restores focus
+ok 339 - large invitation is modal, accessible, blocks background and restores focus
+  ---
+  duration_ms: 0.7523
+  type: 'test'
+  ...
+# Subtest: invitation expiry and action gate are deterministic and single-flight
+ok 340 - invitation expiry and action gate are deterministic and single-flight
+  ---
+  duration_ms: 122.4249
+  type: 'test'
+  ...
+# Subtest: watch consumes one invitation subscription and closes on success, terminal event or expiry
+ok 341 - watch consumes one invitation subscription and closes on success, terminal event or expiry
+  ---
+  duration_ms: 0.4311
+  type: 'test'
+  ...
+# Subtest: reduced motion and bounded invitation countdown clean up without polling
+ok 342 - reduced motion and bounded invitation countdown clean up without polling
+  ---
+  duration_ms: 0.2951
+  type: 'test'
+  ...
+# Subtest: protected manifests and deployed migrations remain LF-identical
+ok 343 - protected manifests and deployed migrations remain LF-identical
+  ---
+  duration_ms: 45.6237
+  type: 'test'
+  ...
+# Subtest: policy holds completed rounds only for a current, live, unexpired open series
+ok 344 - policy holds completed rounds only for a current, live, unexpired open series
+  ---
+  duration_ms: 3.1666
+  type: 'test'
+  ...
+# Subtest: countdown and active relay; the next round in the same series is an atomic transition
+ok 345 - countdown and active relay; the next round in the same series is an atomic transition
+  ---
+  duration_ms: 0.5081
+  type: 'test'
+  ...
+# Subtest: completed + awaiting_rematch retains relay and schedules one authoritative deadline
+ok 346 - completed + awaiting_rematch retains relay and schedules one authoritative deadline
+  ---
+  duration_ms: 29.5682
+  type: 'test'
+  ...
+# Subtest: rematch_pending retains relay; reject and terminal series stop exactly once
+ok 347 - rematch_pending retains relay; reject and terminal series stop exactly once
+  ---
+  duration_ms: 4.4786
+  type: 'test'
+  ...
+# Subtest: deadline expiry reconciles once and stops an expired retained relay
+ok 348 - deadline expiry reconciles once and stops an expired retained relay
+  ---
+  duration_ms: 2.1761
+  type: 'test'
+  ...
+# Subtest: accepted rematch changes battle through relay.transition without idle or stop
+ok 349 - accepted rematch changes battle through relay.transition without idle or stop
+  ---
+  duration_ms: 4.446
+  type: 'test'
+  ...
+# Subtest: reconnect restores a held relay only while authority remains open
+ok 350 - reconnect restores a held relay only while authority remains open
+  ---
+  duration_ms: 17.1874
+  type: 'test'
+  ...
+# Subtest: session invalidation prevents delayed authority from reviving relay
+ok 351 - session invalidation prevents delayed authority from reviving relay
+  ---
+  duration_ms: 1.368
+  type: 'test'
+  ...
+# Subtest: the existing host session poll fails closed when the opponent LIVE ends
+ok 352 - the existing host session poll fails closed when the opponent LIVE ends
+  ---
+  duration_ms: 1.1597
+  type: 'test'
+  ...
+# Subtest: native relay atomically updates the route for the next round
+ok 353 - native relay atomically updates the route for the next round
+  ---
+  duration_ms: 2.5241
+  type: 'test'
+  ...
+# Subtest: a failed atomic update stops the retained relay once and cannot leave old media orphaned
+ok 354 - a failed atomic update stops the retained relay once and cannot leave old media orphaned
+  ---
+  duration_ms: 1.5918
+  type: 'test'
+  ...
+# Subtest: Agora authorization permits only the authoritative unexpired post-round window
+ok 355 - Agora authorization permits only the authoritative unexpired post-round window
+  ---
+  duration_ms: 2.853
+  type: 'test'
+  ...
+# Subtest: completed round renews the same relay because the active token cannot cover rematch
+ok 356 - completed round renews the same relay because the active token cannot cover rematch
+  ---
+  duration_ms: 6.3597
+  type: 'test'
+  ...
+# Subtest: same completed authority refreshes once and a changed deadline refreshes once more
+ok 357 - same completed authority refreshes once and a changed deadline refreshes once more
+  ---
+  duration_ms: 7.429
+  type: 'test'
+  ...
+# Subtest: one transient authority failure uses one bounded retry then fails closed
+ok 358 - one transient authority failure uses one bounded retry then fails closed
+  ---
+  duration_ms: 8.9289
+  type: 'test'
+  ...
+# Subtest: runtime refresh failure stops once and never reports false relaying
+ok 359 - runtime refresh failure stops once and never reports false relaying
+  ---
+  duration_ms: 4.3195
+  type: 'test'
+  ...
+# Subtest: native same-battle refresh is single-flight and never publishes idle or connecting
+ok 360 - native same-battle refresh is single-flight and never publishes idle or connecting
+  ---
+  duration_ms: 1.99
+  type: 'test'
+  ...
+# Subtest: native refresh rejection fails closed once for credentials and Agora update errors
+ok 361 - native refresh rejection fails closed once for credentials and Agora update errors
+  ---
+  duration_ms: 1.0644
+  type: 'test'
+  ...
+# Subtest: late refresh is fenced by teardown and a next-round transition supersedes it
+ok 362 - late refresh is fenced by teardown and a next-round transition supersedes it
+  ---
+  duration_ms: 8.1996
+  type: 'test'
+  ...
+# Subtest: wiring reuses the public projection and adds no polling, schema, or economy writes
+ok 363 - wiring reuses the public projection and adds no polling, schema, or economy writes
+  ---
+  duration_ms: 3.7524
+  type: 'test'
+  ...
+# Subtest: C1 LIVE replay query is isolated from Battle within the actual WHERE clause
+ok 364 - C1 LIVE replay query is isolated from Battle within the actual WHERE clause
+  ---
+  duration_ms: 6.7032
+  type: 'test'
+  ...
+# Subtest: C1 authenticated bounded key and lock precede replay, which precedes mutable authority
+ok 365 - C1 authenticated bounded key and lock precede replay, which precedes mutable authority
+  ---
+  duration_ms: 4.3013
+  type: 'test'
+  ...
+# Subtest: C1 both RPCs verify canonical real journal after transfer and before gift insertion
+ok 366 - C1 both RPCs verify canonical real journal after transfer and before gift insertion
+  ---
+  duration_ms: 11.727
+  type: 'test'
+  ...
+# Subtest: approved 3500 bps half-up examples are exact
+ok 367 - approved 3500 bps half-up examples are exact
+  ---
+  duration_ms: 0.552
+  type: 'test'
+  ...
+# Subtest: LIVE and Battle use one canonical commission helper
+ok 368 - LIVE and Battle use one canonical commission helper
+  ---
+  duration_ms: 16.3334
+  type: 'test'
+  ...
+# Subtest: migration implements bigint-safe 3500 bps half-up split once
+ok 369 - migration implements bigint-safe 3500 bps half-up split once
+  ---
+  duration_ms: 0.706
+  type: 'test'
+  ...
+# Subtest: all catalog-range amounts preserve the approved split invariants
+ok 370 - all catalog-range amounts preserve the approved split invariants
+  ---
+  duration_ms: 16.9637
+  type: 'test'
+  ...
+# Subtest: public RPC signatures and the canonical atomic journal remain single-path
+ok 371 - public RPC signatures and the canonical atomic journal remain single-path
+  ---
+  duration_ms: 22.4635
+  type: 'test'
+  ...
+# Subtest: idempotency remains before money movement and Battle replay scores one gift
+ok 372 - idempotency remains before money movement and Battle replay scores one gift
+  ---
+  duration_ms: 17.2535
+  type: 'test'
+  ...
+# Subtest: Battle scoring stays gross and rose/power authority is not redefined
+ok 373 - Battle scoring stays gross and rose/power authority is not redefined
+  ---
+  duration_ms: 5.0825
+  type: 'test'
+  ...
+# Subtest: security remains definer-only at the public boundary with least privilege
+ok 374 - security remains definer-only at the public boundary with least privilege
+  ---
+  duration_ms: 14.021
+  type: 'test'
+  ...
+# Subtest: migration is forward-only policy activation without historical backfill
+ok 375 - migration is forward-only policy activation without historical backfill
+  ---
+  duration_ms: 0.6213
+  type: 'test'
+  ...
+# Subtest: protected manifests and deployed migrations remain byte-identical after LF normalization
+ok 376 - protected manifests and deployed migrations remain byte-identical after LF normalization
+  ---
+  duration_ms: 81.2305
+  type: 'test'
+  ...
+# Subtest: disposable SQL proof covers LIVE, Battle, zero-fee, failure and rollback
+ok 377 - disposable SQL proof covers LIVE, Battle, zero-fee, failure and rollback
+  ---
+  duration_ms: 1.4136
+  type: 'test'
+  ...
+# Subtest: real concurrency harness is local-only and verifies idempotency and balance locking
+ok 378 - real concurrency harness is local-only and verifies idempotency and balance locking
+  ---
+  duration_ms: 0.6027
+  type: 'test'
+  ...
+# Subtest: rematch and glove stage is above both full-screen keyboard dismiss layers
+ok 379 - rematch and glove stage is above both full-screen keyboard dismiss layers
+  ---
+  duration_ms: 191.9361
+  type: 'test'
+  ...
+# Subtest: full-screen stage passes empty-area touches through
+ok 380 - full-screen stage passes empty-area touches through
+  ---
+  duration_ms: 1.2955
+  type: 'test'
+  ...
+# Subtest: visual panels and video surfaces cannot intercept control touches
+ok 381 - visual panels and video surfaces cannot intercept control touches
+  ---
+  duration_ms: 3.0241
+  type: 'test'
+  ...
+# Subtest: real rematch, accept, reject and glove handlers remain reachable
+ok 382 - real rematch, accept, reject and glove handlers remain reachable
+  ---
+  duration_ms: 24.9783
+  type: 'test'
+  ...
+# Subtest: localized stacking preserves header, chat and composer priority
+ok 383 - localized stacking preserves header, chat and composer priority
+  ---
+  duration_ms: 325.4883
+  type: 'test'
+  ...
+# Subtest: active round invokes exactly send_live_battle_gift
+ok 384 - active round invokes exactly send_live_battle_gift
+  ---
+  duration_ms: 3.062
+  type: 'test'
+  ...
+# Subtest: countdown invokes exactly send_live_gift
+ok 385 - countdown invokes exactly send_live_gift
+  ---
+  duration_ms: 2.4263
+  type: 'test'
+  ...
+# Subtest: completed postround invokes exactly send_live_gift
+ok 386 - completed postround invokes exactly send_live_gift
+  ---
+  duration_ms: 0.5676
+  type: 'test'
+  ...
+# Subtest: completed rematch window invokes exactly send_live_gift
+ok 387 - completed rematch window invokes exactly send_live_gift
+  ---
+  duration_ms: 0.7644
+  type: 'test'
+  ...
+# Subtest: ordinary LIVE invokes exactly send_live_gift
+ok 388 - ordinary LIVE invokes exactly send_live_gift
+  ---
+  duration_ms: 0.8855
+  type: 'test'
+  ...
+# Subtest: known Battle errors display service-normalized safe messages
+ok 389 - known Battle errors display service-normalized safe messages
+  ---
+  duration_ms: 2.4041
+  type: 'test'
+  ...
+# Subtest: unknown RPC errors and exceptions never reach visible feedback
+ok 390 - unknown RPC errors and exceptions never reach visible feedback
+  ---
+  duration_ms: 2.2423
+  type: 'test'
+  ...
+# Subtest: double taps stay single-flight and failed retries retain their key
+ok 391 - double taps stay single-flight and failed retries retain their key
+  ---
+  duration_ms: 0.8439
+  type: 'test'
+  ...
+# Subtest: economic authority, gross score, multipliers and roses remain byte-identical
+ok 392 - economic authority, gross score, multipliers and roses remain byte-identical
+  ---
+  duration_ms: 1.6639
+  type: 'test'
+  ...
+# Subtest: zero receipts cannot persist: table enforces strictly positive quantities and points
+ok 393 - zero receipts cannot persist: table enforces strictly positive quantities and points
+  ---
+  duration_ms: 2.6852
+  type: 'test'
+  ...
+# Subtest: post-cap and other zero outcomes return before the only journal insert and reconciliation
+ok 394 - post-cap and other zero outcomes return before the only journal insert and reconciliation
+  ---
+  duration_ms: 0.6844
+  type: 'test'
+  ...
+# Subtest: receipt 0/5 permanently stops scoring and clears queue/timers
+ok 395 - receipt 0/5 permanently stops scoring and clears queue/timers
+  ---
+  duration_ms: 312.1061
+  type: 'test'
+  ...
+# Subtest: receipt 2/5 permanently stops scoring and clears queue/timers
+ok 396 - receipt 2/5 permanently stops scoring and clears queue/timers
+  ---
+  duration_ms: 28.9292
+  type: 'test'
+  ...
+# Subtest: terminal rejection discards queued work and disables future add
+ok 397 - terminal rejection discards queued work and disables future add
+  ---
+  duration_ms: 20.4287
+  type: 'test'
+  ...
+# Subtest: ambiguous mounted failure retries the identical key/count with backoff
+ok 398 - ambiguous mounted failure retries the identical key/count with backoff
+  ---
+  duration_ms: 61.9791
+  type: 'test'
+  ...
+# Subtest: ambiguous failure followed by close cancels all retries and handles
+ok 399 - ambiguous failure followed by close cancels all retries and handles
+  ---
+  duration_ms: 51.2045
+  type: 'test'
+  ...
+# Subtest: close in flight (reject=false) cannot send queued batches or notify UI
+ok 400 - close in flight (reject=false) cannot send queued batches or notify UI
+  ---
+  duration_ms: 36.3033
+  type: 'test'
+  ...
+# Subtest: close in flight (reject=true) cannot send queued batches or notify UI
+ok 401 - close in flight (reject=true) cannot send queued batches or notify UI
+  ---
+  duration_ms: 23.7956
+  type: 'test'
+  ...
+# Subtest: close flushes at most one bounded pending batch, without follow-up timers
+ok 402 - close flushes at most one bounded pending batch, without follow-up timers
+  ---
+  duration_ms: 17.9476
+  type: 'test'
+  ...
+# Subtest: exact cap allows at most one subsequent zero response
+ok 403 - exact cap allows at most one subsequent zero response
+  ---
+  duration_ms: 30.096
+  type: 'test'
+  ...
+# Subtest: actual heart callback keeps immediate animation after scoring is disabled
+ok 404 - actual heart callback keeps immediate animation after scoring is disabled
+  ---
+  duration_ms: 227.0714
+  type: 'test'
+  ...
+# Subtest: new rule: gift 1 coins produces 10 base points
+ok 405 - new rule: gift 1 coins produces 10 base points
+  ---
+  duration_ms: 2.5338
+  type: 'test'
+  ...
+# Subtest: new rule: gift 5 coins produces 50 base points
+ok 406 - new rule: gift 5 coins produces 50 base points
+  ---
+  duration_ms: 0.6316
+  type: 'test'
+  ...
+# Subtest: likes have a server-authoritative competitive journal
+ok 407 - likes have a server-authoritative competitive journal
+  ---
+  duration_ms: 0.3849
+  type: 'test'
+  ...
+# Subtest: per-viewer cap is checked under the canonical Battle lock
+ok 408 - per-viewer cap is checked under the canonical Battle lock
+  ---
+  duration_ms: 0.4668
+  type: 'test'
+  ...
+# Subtest: like replay precedes mutable active-state validation
+ok 409 - like replay precedes mutable active-state validation
+  ---
+  duration_ms: 0.4169
+  type: 'test'
+  ...
+# Subtest: canonical reconciliation includes likes before deciding the winner
+ok 410 - canonical reconciliation includes likes before deciding the winner
+  ---
+  duration_ms: 0.2204
+  type: 'test'
+  ...
+# Subtest: rapid hearts batch with strict payload bounds and new keys after success
+ok 411 - rapid hearts batch with strict payload bounds and new keys after success
+  ---
+  duration_ms: 279.7777
+  type: 'test'
+  ...
+# Subtest: ambiguous failure preserves count and key; in-flight double flush cannot duplicate
+ok 412 - ambiguous failure preserves count and key; in-flight double flush cannot duplicate
+  ---
+  duration_ms: 44.1386
+  type: 'test'
+  ...
+# Subtest: closed context drains its original batch without updating the unmounted screen
+ok 413 - closed context drains its original batch without updating the unmounted screen
+  ---
+  duration_ms: 25.9735
+  type: 'test'
+  ...
+# Subtest: terminal authorization rejection stops retries without surfacing intrusive feedback
+ok 414 - terminal authorization rejection stops retries without surfacing intrusive feedback
+  ---
+  duration_ms: 17.2274
+  type: 'test'
+  ...
+# Subtest: Battle heart animates immediately before either network confirmation or batch transport
+ok 415 - Battle heart animates immediately before either network confirmation or batch transport
+  ---
+  duration_ms: 13.4514
+  type: 'test'
+  ...
+# Subtest: ordinary LIVE preserves visual reactions without requesting points
+ok 416 - ordinary LIVE preserves visual reactions without requesting points
+  ---
+  duration_ms: 5.9321
+  type: 'test'
+  ...
+# Subtest: countdown preserves visual reactions without requesting points
+ok 417 - countdown preserves visual reactions without requesting points
+  ---
+  duration_ms: 7.6375
+  type: 'test'
+  ...
+# Subtest: postround preserves visual reactions without requesting points
+ok 418 - postround preserves visual reactions without requesting points
+  ---
+  duration_ms: 15.7993
+  type: 'test'
+  ...
+# Subtest: local host preserves visual reactions without requesting points
+ok 419 - local host preserves visual reactions without requesting points
+  ---
+  duration_ms: 24.8769
+  type: 'test'
+  ...
+# Subtest: opponent host preserves visual reactions without requesting points
+ok 420 - opponent host preserves visual reactions without requesting points
+  ---
+  duration_ms: 18.9209
+  type: 'test'
+  ...
+# Subtest: cap exhaustion cannot disable animations or calculate competitive points in React Native
+ok 421 - cap exhaustion cannot disable animations or calculate competitive points in React Native
+  ---
+  duration_ms: 0.9049
+  type: 'test'
+  ...
+# Subtest: effect remount creates a live queue after cleanup instead of reusing a closed one
+ok 422 - effect remount creates a live queue after cleanup instead of reusing a closed one
+  ---
+  duration_ms: 10.8373
+  type: 'test'
+  ...
+# Subtest: Battle gift control has no visible Regalos text
+ok 423 - Battle gift control has no visible Regalos text
+  ---
+  duration_ms: 206.7913
+  type: 'test'
+  ...
+# Subtest: rail uses favorite, ios-share and more-horiz without visible labels
+ok 424 - rail uses favorite, ios-share and more-horiz without visible labels
+  ---
+  duration_ms: 76.6945
+  type: 'test'
+  ...
+# Subtest: Battle gift is compact circular, at least 44px, and matches canonical LIVE button
+ok 425 - Battle gift is compact circular, at least 44px, and matches canonical LIVE button
+  ---
+  duration_ms: 103.405
+  type: 'test'
+  ...
+# Subtest: LIVE gift accessibility, pressed and disabled semantics
+ok 426 - LIVE gift accessibility, pressed and disabled semantics
+  ---
+  duration_ms: 47.562
+  type: 'test'
+  ...
+# Subtest: Battle gift accessibility, pressed and disabled semantics
+ok 427 - Battle gift accessibility, pressed and disabled semantics
+  ---
+  duration_ms: 37.3611
+  type: 'test'
+  ...
+# Subtest: rail touch targets and callbacks remain intact
+ok 428 - rail touch targets and callbacks remain intact
+  ---
+  duration_ms: 51.6446
+  type: 'test'
+  ...
+# Subtest: LIVE opens once, closes only after authoritative success, updates balance and confirms
+ok 429 - LIVE opens once, closes only after authoritative success, updates balance and confirms
+  ---
+  duration_ms: 45.6311
+  type: 'test'
+  ...
+# Subtest: Battle opens once, closes only after authoritative success, updates balance and confirms
+ok 430 - Battle opens once, closes only after authoritative success, updates balance and confirms
+  ---
+  duration_ms: 22.0641
+  type: 'test'
+  ...
+# Subtest: false keeps sheet open without success feedback or reconciliation
+ok 431 - false keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 34.0963
+  type: 'test'
+  ...
+# Subtest: exception keeps sheet open without success feedback or reconciliation
+ok 432 - exception keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 22.2153
+  type: 'test'
+  ...
+# Subtest: insufficient keeps sheet open without success feedback or reconciliation
+ok 433 - insufficient keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 18.4274
+  type: 'test'
+  ...
+# Subtest: disabled keeps sheet open without success feedback or reconciliation
+ok 434 - disabled keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 16.5235
+  type: 'test'
+  ...
+# Subtest: balance unavailable keeps sheet open without success feedback or reconciliation
+ok 435 - balance unavailable keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 15.323
+  type: 'test'
+  ...
+# Subtest: Battle normalized keeps sheet open without success feedback or reconciliation
+ok 436 - Battle normalized keeps sheet open without success feedback or reconciliation
+  ---
+  duration_ms: 14.2681
+  type: 'test'
+  ...
+# Subtest: double press has one RPC and key; spinner clears after completion
+ok 437 - double press has one RPC and key; spinner clears after completion
+  ---
+  duration_ms: 34.3515
+  type: 'test'
+  ...
+# Subtest: ambiguous retry preserves its key across manual close and reopen
+ok 438 - ambiguous retry preserves its key across manual close and reopen
+  ---
+  duration_ms: 27.6184
+  type: 'test'
+  ...
+# Subtest: manual close during flight neither clears key nor creates a send or false confirmation
+ok 439 - manual close during flight neither clears key nor creates a send or false confirmation
+  ---
+  duration_ms: 25.3765
+  type: 'test'
+  ...
+# Subtest: stale send callback after unmount is a no-op
+ok 440 - stale send callback after unmount is a no-op
+  ---
+  duration_ms: 12.0623
+  type: 'test'
+  ...
+# Subtest: two separate open/select/send cycles create exactly two keys
+ok 441 - two separate open/select/send cycles create exactly two keys
+  ---
+  duration_ms: 15.2654
+  type: 'test'
+  ...
+# Subtest: in-flight unmount (throws=false) cannot update UI or reconcile
+ok 442 - in-flight unmount (throws=false) cannot update UI or reconcile
+  ---
+  duration_ms: 11.7551
+  type: 'test'
+  ...
+# Subtest: in-flight unmount (throws=true) cannot update UI or reconcile
+ok 443 - in-flight unmount (throws=true) cannot update UI or reconcile
+  ---
+  duration_ms: 12.6081
+  type: 'test'
+  ...
+# Subtest: sheet selection requires send, disables cards/send and shows spinner while in flight
+ok 444 - sheet selection requires send, disables cards/send and shows spinner while in flight
+  ---
+  duration_ms: 33.9093
+  type: 'test'
+  ...
+# Subtest: X, backdrop and Android back close manually without sending
+ok 445 - X, backdrop and Android back close manually without sending
+  ---
+  duration_ms: 21.4911
+  type: 'test'
+  ...
+# Subtest: hidden sheet resets selection, so second gift requires reopening and selecting
+ok 446 - hidden sheet resets selection, so second gift requires reopening and selecting
+  ---
+  duration_ms: 20.8305
+  type: 'test'
+  ...
+# Subtest: gift animations remain server-event driven through the existing single overlay
+ok 447 - gift animations remain server-event driven through the existing single overlay
+  ---
+  duration_ms: 0.6437
+  type: 'test'
+  ...
+# Subtest: 4.6.2 configures both authoritative directions with source UID zero
+ok 448 - 4.6.2 configures both authoritative directions with source UID zero
+  ---
+  duration_ms: 22.2722
+  type: 'test'
+  ...
+# Subtest: return zero is only connecting; official Running and RelayOk make media available
+ok 449 - return zero is only connecting; official Running and RelayOk make media available
+  ---
+  duration_ms: 1.9144
+  type: 'test'
+  ...
+# Subtest: same route is idempotent; Battle replacement and cleanup are ordered and stale-safe
+ok 450 - same route is idempotent; Battle replacement and cleanup are ordered and stale-safe
+  ---
+  duration_ms: 0.9821
+  type: 'test'
+  ...
+# Subtest: Agora failures are canonical and diagnostic logs contain no credentials
+ok 451 - Agora failures are canonical and diagnostic logs contain no credentials
+  ---
+  duration_ms: 1.4241
+  type: 'test'
+  ...
+# Subtest: an unexpected Agora idle callback cannot leave the runtime claiming relay success
+ok 452 - an unexpected Agora idle callback cannot leave the runtime claiming relay success
+  ---
+  duration_ms: 1.2341
+  type: 'test'
+  ...
+# Subtest: Edge accepts only a Battle id and derives source zero plus destination host UID
+ok 453 - Edge accepts only a Battle id and derives source zero plus destination host UID
+  ---
+  duration_ms: 1.741
+  type: 'test'
+  ...
+# Subtest: runtime gates relay on joined broadcaster, retries once per reconnect, and owns cleanup
+ok 454 - runtime gates relay on joined broadcaster, retries once per reconnect, and owns cleanup
+  ---
+  duration_ms: 0.9608
+  type: 'test'
+  ...
+# Subtest: audio/video subscribe and stage identity remain canonical for hosts and viewers
+ok 455 - audio/video subscribe and stage identity remain canonical for hosts and viewers
+  ---
+  duration_ms: 1.3001
+  type: 'test'
+  ...
+# Subtest: media repair adds no migration, polling, commerce, score, or lifecycle write
+ok 456 - media repair adds no migration, polling, commerce, score, or lifecycle write
+  ---
+  duration_ms: 8.0488
+  type: 'test'
+  ...
+# Subtest: Battle stage keeps exactly two equal, edge-to-edge video surfaces
+ok 457 - Battle stage keeps exactly two equal, edge-to-edge video surfaces
+  ---
+  duration_ms: 8.0337
+  type: 'test'
+  ...
+# Subtest: sanitized host identities align to their canonical sides
+ok 458 - sanitized host identities align to their canonical sides
+  ---
+  duration_ms: 4.2135
+  type: 'test'
+  ...
+# Subtest: watch and broadcast expose only their two canonical Battle surfaces
+ok 459 - watch and broadcast expose only their two canonical Battle surfaces
+  ---
+  duration_ms: 10.7016
+  type: 'test'
+  ...
+# Subtest: additional cohost strips are structurally excluded during Battle and return afterward
+ok 460 - additional cohost strips are structurally excluded during Battle and return afterward
+  ---
+  duration_ms: 8.5339
+  type: 'test'
+  ...
+# Subtest: Battle broadcast layout is pure, composer-based, and independent of products
+ok 461 - Battle broadcast layout is pure, composer-based, and independent of products
+  ---
+  duration_ms: 69.5441
+  type: 'test'
+  ...
+# Subtest: broadcast Battle chat, panels, rail, and composer use Battle-specific positioning
+ok 462 - broadcast Battle chat, panels, rail, and composer use Battle-specific positioning
+  ---
+  duration_ms: 16.5702
+  type: 'test'
+  ...
+# Subtest: watch Battle chat and composer stay above the keyboard using composer clearance
+ok 463 - watch Battle chat and composer stay above the keyboard using composer clearance
+  ---
+  duration_ms: 3.2008
+  type: 'test'
+  ...
+# Subtest: timer remains server-anchored with one one-second interval and cleanup
+ok 464 - timer remains server-anchored with one one-second interval and cleanup
+  ---
+  duration_ms: 0.7097
+  type: 'test'
+  ...
+# Subtest: illustrative Figma scores and rounds are replaced by the accessible canonical projection
+ok 465 - illustrative Figma scores and rounds are replaced by the accessible canonical projection
+  ---
+  duration_ms: 0.4133
+  type: 'test'
+  ...
+# Subtest: watch closes and fully hides commerce during Battle while retaining normal LIVE commerce
+ok 466 - watch closes and fully hides commerce during Battle while retaining normal LIVE commerce
+  ---
+  duration_ms: 4.8055
+  type: 'test'
+  ...
+# Subtest: broadcast closes and hides product controls, CTA, feed, and manager during Battle
+ok 467 - broadcast closes and hides product controls, CTA, feed, and manager during Battle
+  ---
+  duration_ms: 13.554
+  type: 'test'
+  ...
+# Subtest: watch reuses existing gift, reaction, share, and camera-request flows
+ok 468 - watch reuses existing gift, reaction, share, and camera-request flows
+  ---
+  duration_ms: 0.9729
+  type: 'test'
+  ...
+# Subtest: broadcast never adds a self-gift action and retains host controls
+ok 469 - broadcast never adds a self-gift action and retains host controls
+  ---
+  duration_ms: 0.4404
+  type: 'test'
+  ...
+# Subtest: Battle controls and close action meet the forty-four pixel touch target
+ok 470 - Battle controls and close action meet the forty-four pixel touch target
+  ---
+  duration_ms: 0.2226
+  type: 'test'
+  ...
+# Subtest: the canonical-side migration remains present at the audited F5-A frontier
+ok 471 - the canonical-side migration remains present at the audited F5-A frontier
+  ---
+  duration_ms: 10.8613
+  type: 'test'
+  ...
+1..471
+# tests 471
+# suites 0
+# pass 471
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 8072.4047

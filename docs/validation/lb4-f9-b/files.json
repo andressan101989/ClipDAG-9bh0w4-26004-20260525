@@ -1,0 +1,33 @@
+{
+  "base": "b3bde1c1b92f749515bc4c142949abb12c361df9",
+  "files": [
+    "app/live/watch/[streamId].tsx",
+    "components/live/LiveBattleViewerChrome.tsx",
+    "components/live/gifts/LiveGiftButton.tsx",
+    "docs/validation/lb4-f9-b/README.md",
+    "docs/validation/lb4-f9-b/battles.tap",
+    "docs/validation/lb4-f9-b/c1.tap",
+    "docs/validation/lb4-f9-b/f8.tap",
+    "docs/validation/lb4-f9-b/f9-a.tap",
+    "docs/validation/lb4-f9-b/f9-b.tap",
+    "docs/validation/lb4-f9-b/files.json",
+    "docs/validation/lb4-f9-b/finance.tap",
+    "docs/validation/lb4-f9-b/gifts.tap",
+    "docs/validation/lb4-f9-b/global.tap",
+    "docs/validation/lb4-f9-b/initial-green.tap",
+    "docs/validation/lb4-f9-b/migration-lf-hash.json",
+    "docs/validation/lb4-f9-b/protected-lf-hashes.json",
+    "docs/validation/lb4-f9-b/reactions.tap",
+    "docs/validation/lb4-f9-b/red-initial-harness.tap",
+    "docs/validation/lb4-f9-b/red.tap",
+    "docs/validation/lb4-f9-b/regression.mjs",
+    "docs/validation/lb4-f9-b/runtime.tap",
+    "docs/validation/lb4-f9-b/suites.json",
+    "docs/validation/lb4-f9-b/typescript-comparison.json",
+    "docs/validation/lb4-f9-b/typescript.txt",
+    "docs/validation/lb4-f9-b/viewer-ui.tap",
+    "tests/liveBattlesLb4F7BViewerUi.test.mjs",
+    "tests/liveBattlesLb4F8BPhysicalUxFixes.test.mjs",
+    "tests/liveBattlesLb4F9BSpectatorControls.test.mjs"
+  ]
+}

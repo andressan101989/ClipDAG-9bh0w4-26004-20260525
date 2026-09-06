@@ -101,7 +101,7 @@ function harness(status, rpcResult) {
   let reconciles = 0;
   const env = {
     streamId: sessionId, user: { id: userId }, giftsEnabled: true, walletBalance: 100,
-    sendingGiftRef: { current: false }, pendingGiftAttemptRef: { current: null },
+    sendingGiftRef: { current: false }, pendingGiftAttemptRef: { current: null }, mountedRef: { current: true },
     battleState: status === null ? null : { status, battleId, localHostUserId: userId },
     setSendingGiftId() {}, setWalletBalance() {}, setWalletBalanceError() {}, setGiftSheetVisible() {},
     showGiftFeedback: message => feedback.push(message),
