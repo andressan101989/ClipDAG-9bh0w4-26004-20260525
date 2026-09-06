@@ -1,0 +1,164 @@
+TAP version 13
+# Subtest: new rule: gift 1 coins produces 10 base points
+not ok 1 - new rule: gift 1 coins produces 10 base points
+  ---
+  duration_ms: 3.4896
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f9-a\\tests\\liveBattlesLb4F9AScoring.test.mjs:17:52'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    1 !== 10
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 10
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f9-a/tests/liveBattlesLb4F9AScoring.test.mjs:21:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1106:25)
+    Test.start (node:internal/test_runner/test:1003:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17)
+  ...
+# Subtest: new rule: gift 5 coins produces 50 base points
+not ok 2 - new rule: gift 5 coins produces 50 base points
+  ---
+  duration_ms: 0.4497
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f9-a\\tests\\liveBattlesLb4F9AScoring.test.mjs:17:52'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    5 !== 50
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 50
+  actual: 5
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f9-a/tests/liveBattlesLb4F9AScoring.test.mjs:21:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1106:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+    Test.postRun (node:internal/test_runner/test:1235:19)
+    Test.run (node:internal/test_runner/test:1163:12)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3)
+  ...
+# Subtest: likes have a server-authoritative competitive journal
+not ok 3 - likes have a server-authoritative competitive journal
+  ---
+  duration_ms: 0.4693
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f9-a\\tests\\liveBattlesLb4F9AScoring.test.mjs:24:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The input did not match the regular expression /insert into public\.live_battle_like_score_events/. Input:
+
+    ''
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual: ''
+  operator: 'match'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f9-a/tests/liveBattlesLb4F9AScoring.test.mjs:25:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1106:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+    Test.postRun (node:internal/test_runner/test:1235:19)
+    Test.run (node:internal/test_runner/test:1163:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: per-viewer cap is checked under the canonical Battle lock
+not ok 4 - per-viewer cap is checked under the canonical Battle lock
+  ---
+  duration_ms: 0.303
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f9-a\\tests\\liveBattlesLb4F9AScoring.test.mjs:29:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The input did not match the regular expression /for update;/. Input:
+
+    ''
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual: ''
+  operator: 'match'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f9-a/tests/liveBattlesLb4F9AScoring.test.mjs:30:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1106:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+    Test.postRun (node:internal/test_runner/test:1235:19)
+    Test.run (node:internal/test_runner/test:1163:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: like replay precedes mutable active-state validation
+not ok 5 - like replay precedes mutable active-state validation
+  ---
+  duration_ms: 5.6772
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f9-a\\tests\\liveBattlesLb4F9AScoring.test.mjs:34:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+
+      assert.ok(likes.includes('v_existing.id') && likes.indexOf('v_existing.id') < likes.indexOf("v_battle.status = 'active'"))
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f9-a/tests/liveBattlesLb4F9AScoring.test.mjs:35:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1106:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+    Test.postRun (node:internal/test_runner/test:1235:19)
+    Test.run (node:internal/test_runner/test:1163:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: canonical reconciliation includes likes before deciding the winner
+not ok 6 - canonical reconciliation includes likes before deciding the winner
+  ---
+  duration_ms: 0.4856
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f9-a\\tests\\liveBattlesLb4F9AScoring.test.mjs:38:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+
+      assert.ok(reconcile.includes('public.live_battle_like_score_events'))
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f9-a/tests/liveBattlesLb4F9AScoring.test.mjs:39:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1106:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+    Test.postRun (node:internal/test_runner/test:1235:19)
+    Test.run (node:internal/test_runner/test:1163:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+1..6
+# tests 6
+# suites 0
+# pass 0
+# fail 6
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 398.4586

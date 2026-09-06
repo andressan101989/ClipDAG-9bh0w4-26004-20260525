@@ -626,8 +626,9 @@ test('wiring reuses the public projection and adds no polling, schema, or econom
   assert.match(broadcastSource, /remoteUids\.includes\(battleState\.opponentHostAgoraUid\)/);
   assert.match(stageSource, /state\.series/);
   const migrations = (await readdir(new URL('../supabase/migrations/', import.meta.url))).filter(name => name.endsWith('.sql')).sort();
-  assert.deepEqual(migrations.slice(-2), [
+  assert.deepEqual(migrations.slice(-3), [
     '20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql',
     '20260905230823_live_gift_platform_commission_35.sql',
+    '20260906053652_live_battle_gift_like_scoring.sql',
   ]);
 });

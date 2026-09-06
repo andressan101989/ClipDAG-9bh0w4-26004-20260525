@@ -1,0 +1,88 @@
+SET
+BEGIN
+UPDATE 1
+SELECT 1
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+DO
+INSERT 0 3
+INSERT 0 3
+INSERT 0 2
+INSERT 0 3
+INSERT 0 0
+INSERT 0 1
+INSERT 0 1
+              set_config
+--------------------------------------
+ f8a10000-0000-4000-8000-000000000001
+(1 row)
+
+SELECT 1
+SELECT 1
+DO
+SELECT 1
+SELECT 1
+DO
+SELECT 1
+DO
+SELECT 1
+DO
+DO
+DO
+CREATE TABLE
+CREATE FUNCTION
+CREATE FUNCTION
+ c1_case
+---------
+
+(1 row)
+
+ c1_case
+---------
+
+(1 row)
+
+ c1_case
+---------
+
+(1 row)
+
+ c1_case
+---------
+
+
+
+
+
+
+(6 rows)
+
+ c1_case
+---------
+
+(1 row)
+
+ c1_case
+---------
+
+(1 row)
+
+           name           | passed |                 detail
+--------------------------+--------+-----------------------------------------
+ battle_x2_gross_score    | t      | all assertions passed; case rolled back
+ conflicts_and_key_format | t      | all assertions passed; case rolled back
+ cross_context            | t      | all assertions passed; case rolled back
+ platform_absent_battle   | t      | all assertions passed; case rolled back
+ platform_absent_live     | t      | all assertions passed; case rolled back
+ platform_currency_battle | t      | all assertions passed; case rolled back
+ platform_currency_live   | t      | all assertions passed; case rolled back
+ platform_owned_battle    | t      | all assertions passed; case rolled back
+ platform_owned_live      | t      | all assertions passed; case rolled back
+ private_verifier_acl     | t      | all assertions passed; case rolled back
+ replay_closed_inactive   | t      | all assertions passed; case rolled back
+(11 rows)
+
+DO
+ROLLBACK

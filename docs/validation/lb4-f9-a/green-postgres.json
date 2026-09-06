@@ -1,0 +1,115 @@
+{
+  "passed": 27,
+  "failed": 0,
+  "cases": [
+    {
+      "name": "migration preserves existing Battle rule, money and score facts",
+      "passed": true
+    },
+    {
+      "name": "heart x1: score/ledger/rose contract",
+      "passed": true
+    },
+    {
+      "name": "heart x2: score/ledger/rose contract",
+      "passed": true
+    },
+    {
+      "name": "heart x3: score/ledger/rose contract",
+      "passed": true
+    },
+    {
+      "name": "brillo_suave x1: score/ledger/rose contract",
+      "passed": true
+    },
+    {
+      "name": "brillo_suave x2: score/ledger/rose contract",
+      "passed": true
+    },
+    {
+      "name": "brillo_suave x3: score/ledger/rose contract",
+      "passed": true
+    },
+    {
+      "name": "rose x1: score/ledger/rose contract",
+      "passed": true
+    },
+    {
+      "name": "rose x2: score/ledger/rose contract",
+      "passed": true
+    },
+    {
+      "name": "rose x3: score/ledger/rose contract",
+      "passed": true
+    },
+    {
+      "name": "fire x1: score/ledger/rose contract",
+      "passed": true
+    },
+    {
+      "name": "fire x2: score/ledger/rose contract",
+      "passed": true
+    },
+    {
+      "name": "fire x3: score/ledger/rose contract",
+      "passed": true
+    },
+    {
+      "name": "old pinned v2 gifts keep original points and free likes disabled",
+      "passed": true
+    },
+    {
+      "name": "1 likes: exact free points, no money/rose/boost",
+      "passed": true
+    },
+    {
+      "name": "10 likes: exact free points, no money/rose/boost",
+      "passed": true
+    },
+    {
+      "name": "20 likes: exact free points, no money/rose/boost",
+      "passed": true
+    },
+    {
+      "name": "20 cap, remainder, cross-side cap and independent viewers",
+      "passed": true
+    },
+    {
+      "name": "same-key concurrency and payload conflict fail closed",
+      "passed": true
+    },
+    {
+      "name": "different-key concurrency never exceeds cap; gift+like totals reconstruct",
+      "passed": true
+    },
+    {
+      "name": "host, unauthenticated, wrong session and invalid counts cannot score",
+      "passed": true
+    },
+    {
+      "name": "both session targets are authoritative; membership is mandatory",
+      "passed": true
+    },
+    {
+      "name": "countdown and active-before-start give zero; ordinary LIVE remains visual",
+      "passed": true
+    },
+    {
+      "name": "x2 and x3 do not multiply likes or advance roses",
+      "passed": true
+    },
+    {
+      "name": "finalization includes likes; replay survives closure and new attempts score zero",
+      "passed": true
+    },
+    {
+      "name": "authoritative start and deadline checked after waiting for Battle lock",
+      "passed": true
+    },
+    {
+      "name": "table mutations/reads and anon RPC are denied; immutable receipts",
+      "passed": true
+    }
+  ],
+  "cleanup": "Destroy clipdag-lb4-f9-proof after all local validation; no production connection accepted"
+}

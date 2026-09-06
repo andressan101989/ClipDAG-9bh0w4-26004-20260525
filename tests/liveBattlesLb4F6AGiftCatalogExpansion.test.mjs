@@ -66,9 +66,10 @@ const rangeCounts = rows => [
 test('F6-A remains the append-only catalog predecessor to the F8-A commission migration', async () => {
   const names = (await readdir(new URL('../supabase/migrations', import.meta.url)))
     .filter(name => name.endsWith('.sql')).sort();
-  assert.deepEqual(names.slice(-2), [
+  assert.deepEqual(names.slice(-3), [
     migrationName,
     '20260905230823_live_gift_platform_commission_35.sql',
+    '20260906053652_live_battle_gift_like_scoring.sql',
   ]);
   assert.match(migration, /^begin;/i);
   assert.match(migration, /commit;\s*$/i);

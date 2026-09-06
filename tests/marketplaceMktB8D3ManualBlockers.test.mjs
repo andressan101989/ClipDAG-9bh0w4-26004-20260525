@@ -163,9 +163,10 @@ test("B8D-3 manual-blocker corrective stays intact with Build 22", () => {
   const migrations = readdirSync(join(root, "supabase/migrations"))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.deepEqual(migrations.slice(-2), [
+  assert.deepEqual(migrations.slice(-3), [
     "20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql",
     "20260905230823_live_gift_platform_commission_35.sql",
+    "20260906053652_live_battle_gift_like_scoring.sql",
   ]);
   assert.ok(migrations.includes("20260822221008_marketplace_post_settlement_delivery_ack_r2a_f1.sql"));
   assert.ok(migrations.includes("20260822165852_marketplace_post_settlement_returns_r2a.sql"));

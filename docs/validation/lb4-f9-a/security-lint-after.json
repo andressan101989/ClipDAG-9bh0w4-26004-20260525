@@ -1,0 +1,729 @@
+{
+  "functions": [
+    {
+      "signature": "activate_live_battle_glove(uuid,text)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": true,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "cancel_live_battle(uuid)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": true,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "complete_live_battle(uuid)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": true,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "create_live_battle_invite(uuid,uuid,uuid)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": true,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "get_live_battle_public_snapshot(uuid)",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": true,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "get_live_battle_state(uuid)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": true,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "leave_live_battle_series(uuid)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": true,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "live_emit_reaction(uuid,text)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": true,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.advance_live_battle_rose_mission_locked(uuid,uuid,uuid,timestamp with time zone)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.clear_stale_live_battle_rematch_projection()",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "46753"
+    },
+    {
+      "signature": "private.current_live_battle_rule_set_id()",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.get_live_battle_power_projection(uuid,timestamp with time zone)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.initialize_live_battle_power_states_trigger()",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "45634"
+    },
+    {
+      "signature": "private.initialize_live_battle_power_states(uuid)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.live_battle_lock_sessions(uuid,uuid)",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.live_battle_lock_users(uuid,uuid)",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.live_battle_reconcile_locked(uuid,timestamp with time zone)",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.live_battle_rematch_to_json(live_battle_rematch_requests)",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.live_battle_score_event_contract_is_valid(live_battle_score_events,live_gift_transactions,live_battles)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.live_battle_series_champion(uuid,uuid,smallint,smallint)",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.live_battle_series_score_finalized_trigger()",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "45680"
+    },
+    {
+      "signature": "private.live_battle_series_to_json(live_battle_series)",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.live_battle_series_try_lock_scope_strict(uuid)",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.live_battle_series_try_lock_scope(uuid,uuid,uuid,uuid,uuid)",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.live_battle_session_pair_is_live(uuid,uuid,uuid,uuid)",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.live_battle_to_json(live_battles)",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.live_battle_transition(uuid,text,text,uuid,text,timestamp with time zone)",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.rebuild_live_battle_series_locked(uuid,timestamp with time zone)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.reconcile_due_live_battle_series(integer)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.reconcile_due_live_battles(integer)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.reconcile_live_battle_score_locked(uuid,timestamp with time zone)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.reconcile_live_battle_series_locked(uuid,timestamp with time zone)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.record_live_battle_score_locked(uuid,uuid,timestamp with time zone)",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.reject_live_battle_boost_event_mutation()",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "45701"
+    },
+    {
+      "signature": "private.reject_live_battle_like_mutation()",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "51331"
+    },
+    {
+      "signature": "private.reject_live_battle_rule_set_change()",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "45634"
+    },
+    {
+      "signature": "private.reject_live_battle_rule_set_mutation()",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "46777"
+    },
+    {
+      "signature": "private.reject_live_battle_score_event_mutation()",
+      "prosecdef": false,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "45654"
+    },
+    {
+      "signature": "private.resolve_live_battle_effective_boost_locked(uuid,text,timestamp with time zone)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.sync_live_battle_competitive_projection_locked(uuid,timestamp with time zone)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.sync_live_battle_power_state_trigger()",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "45614"
+    },
+    {
+      "signature": "private.sync_live_battle_public_competitive_states()",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "45634"
+    },
+    {
+      "signature": "private.sync_live_battle_public_local_side()",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "46753"
+    },
+    {
+      "signature": "private.sync_live_battle_public_states()",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "45634"
+    },
+    {
+      "signature": "private.sync_live_battle_series_projection_locked(uuid,timestamp with time zone)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "private.validate_live_battle_boost_event()",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "45701"
+    },
+    {
+      "signature": "private.validate_live_battle_like_event()",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "51331"
+    },
+    {
+      "signature": "private.validate_live_battle_power_state()",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "45614"
+    },
+    {
+      "signature": "private.validate_live_battle_rematch_request()",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": false,
+      "service_role": false,
+      "public": false,
+      "relid": "51229"
+    },
+    {
+      "signature": "request_live_battle_rematch(uuid,uuid)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": true,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "respond_live_battle_invite(uuid,boolean)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": true,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "respond_live_battle_rematch(uuid,text)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": true,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "send_live_battle_gift(uuid,uuid,text,text)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": true,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "send_live_battle_likes(uuid,uuid,integer,text)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": true,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    },
+    {
+      "signature": "start_live_battle(uuid)",
+      "prosecdef": true,
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "owner": "postgres",
+      "anon": false,
+      "authenticated": true,
+      "service_role": false,
+      "public": false,
+      "relid": "0"
+    }
+  ],
+  "tables": [
+    {
+      "relname": "live_battle_like_score_events",
+      "relrowsecurity": true,
+      "anon": false,
+      "authenticated": false,
+      "service_role": false
+    }
+  ],
+  "lint": []
+}

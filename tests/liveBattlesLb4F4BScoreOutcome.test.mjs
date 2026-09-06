@@ -99,6 +99,7 @@ test('F4B is the only migration after F4A and adds no UI, Edge Function, wallet 
     '20260902025229_live_battles_lb4_f5_a_c3_c1_c1_c1_lock_mode_boundary.sql',
     '20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql',
     '20260905230823_live_gift_platform_commission_35.sql',
+    '20260906053652_live_battle_gift_like_scoring.sql',
   ]);
   assert.doesNotMatch(migration, /edge function|agora-token|create table[^;]*(wallet|ledger|escrow)/i);
   assert.doesNotMatch(migration, /rosas?|guante|\bx2\b|\bx3\b|power.?up|probabil/i);

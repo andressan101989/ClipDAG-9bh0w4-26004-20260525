@@ -1,0 +1,373 @@
+{
+  "advisors": {
+    "before": 88,
+    "after": 88,
+    "beforeLevels": {
+      "WARN": 88
+    },
+    "afterLevels": {
+      "WARN": 88
+    },
+    "added": []
+  },
+  "lint": [
+    {
+      "function": "public.pin_live_session_product",
+      "issues": [
+        {
+          "level": "warning",
+          "message": "unused variable \"v\"",
+          "sqlState": "00000"
+        },
+        {
+          "level": "warning extra",
+          "message": "never read variable \"c\"",
+          "sqlState": "00000"
+        }
+      ]
+    },
+    {
+      "function": "public.check_velocity_limit",
+      "issues": [
+        {
+          "level": "warning extra",
+          "message": "never read variable \"v_window_start\"",
+          "sqlState": "00000"
+        }
+      ]
+    },
+    {
+      "function": "public.cancel_unpublished_exclusive_content",
+      "issues": [
+        {
+          "level": "error",
+          "message": "relation \"public.exclusive_content\" does not exist",
+          "statement": {
+            "lineNumber": "6",
+            "text": "SQL statement"
+          },
+          "query": {
+            "position": "13",
+            "text": "delete from public.exclusive_content e\n  where e.id = p_content_id\n    and e.creator_id = auth.uid()\n    and e.created_at > now() - interval '15 minutes'\n    and not exists (\n      select 1 from public.content_purchases p where p.content_id = e.id\n    )"
+          },
+          "sqlState": "42P01"
+        }
+      ]
+    },
+    {
+      "function": "public.set_my_marketplace_product_media_v2",
+      "issues": [
+        {
+          "level": "warning",
+          "message": "target type is different type than source type",
+          "statement": {
+            "lineNumber": "3",
+            "text": "statement block"
+          },
+          "hint": "The input expression type does not have an assignment cast to the target type.",
+          "detail": "cast \"text\" value to \"text[]\" type",
+          "context": "during statement block local variable \"urls\" initialization on line 2",
+          "sqlState": "42804"
+        }
+      ]
+    },
+    {
+      "function": "public.configure_marketplace_product_variants_mkt_a2_original",
+      "issues": [
+        {
+          "level": "warning",
+          "message": "unused variable \"v_value_id\"",
+          "sqlState": "00000"
+        }
+      ]
+    },
+    {
+      "function": "public.wake_call_push_dispatcher",
+      "issues": [
+        {
+          "level": "error",
+          "message": "schema \"net\" does not exist",
+          "statement": {
+            "lineNumber": "19",
+            "text": "SQL statement"
+          },
+          "query": {
+            "position": "8",
+            "text": "select net.http_post(\n    url := rtrim(v_project_url, '/') || '/functions/v1/dispatch-call-push-deliveries',\n    headers := jsonb_build_object(\n      'Content-Type', 'application/json',\n      'apikey', v_publishable_key,\n      'Authorization', 'Bearer ' || v_publishable_key,\n      'x-call-dispatch-secret', v_dispatch_secret\n    ),\n    body := '{\"source\":\"call_push_deliveries\"}'::jsonb,\n    timeout_milliseconds := 10000\n  )"
+          },
+          "sqlState": "3F000"
+        }
+      ]
+    },
+    {
+      "function": "public.wake_stale_media_cleanup",
+      "issues": [
+        {
+          "level": "error",
+          "message": "schema \"net\" does not exist",
+          "statement": {
+            "lineNumber": "8",
+            "text": "RETURN"
+          },
+          "query": {
+            "position": "1",
+            "text": "net.http_post(\n    url:=rtrim(v_url,'/')||'/functions/v1/cleanup-stale-media-uploads',\n    headers:=jsonb_build_object('Content-Type','application/json','apikey',v_key,'X-Cleanup-Secret',v_secret),\n    body:='{}'::jsonb,timeout_milliseconds:=50000\n  )"
+          },
+          "sqlState": "3F000"
+        }
+      ]
+    },
+    {
+      "function": "public.ensure_ledger_account",
+      "issues": [
+        {
+          "level": "warning extra",
+          "message": "never read variable \"v_balance\"",
+          "sqlState": "00000"
+        }
+      ]
+    },
+    {
+      "function": "public.expire_stale_calls",
+      "issues": [
+        {
+          "level": "warning",
+          "message": "target type is different type than source type",
+          "statement": {
+            "lineNumber": "3",
+            "text": "statement block"
+          },
+          "hint": "The input expression type does not have an assignment cast to the target type.",
+          "detail": "cast \"text\" value to \"uuid[]\" type",
+          "context": "during statement block local variable \"v_ids\" initialization on line 2",
+          "sqlState": "42804"
+        }
+      ]
+    },
+    {
+      "function": "public.fetch_my_live_product_candidates",
+      "issues": [
+        {
+          "level": "warning",
+          "message": "routine is marked as STABLE, but expression is VOLATILE",
+          "statement": {
+            "lineNumber": "12",
+            "text": "SQL statement"
+          },
+          "hint": "When you fix this issue, please, recheck other functions that uses this function.",
+          "detail": "there is a risk of unwanted behave",
+          "sqlState": "00000"
+        }
+      ]
+    },
+    {
+      "function": "public.get_marketplace_admin_creator_detail",
+      "issues": [
+        {
+          "level": "warning",
+          "message": "routine is marked as STABLE, but expression is VOLATILE",
+          "statement": {
+            "lineNumber": "3",
+            "text": "statement block"
+          },
+          "hint": "When you fix this issue, please, recheck other functions that uses this function.",
+          "detail": "there is a risk of unwanted behave",
+          "context": "during statement block local variable \"v_end\" initialization on line 2",
+          "sqlState": "00000"
+        }
+      ]
+    },
+    {
+      "function": "public.get_my_marketplace_creator_commerce_analytics",
+      "issues": [
+        {
+          "level": "warning",
+          "message": "routine is marked as STABLE, but expression is VOLATILE",
+          "statement": {
+            "lineNumber": "7",
+            "text": "statement block"
+          },
+          "hint": "When you fix this issue, please, recheck other functions that uses this function.",
+          "detail": "there is a risk of unwanted behave",
+          "context": "during statement block local variable \"v_end\" initialization on line 4",
+          "sqlState": "00000"
+        }
+      ]
+    },
+    {
+      "function": "public.pay_marketplace_checkout_with_bdag_canonical_internal",
+      "issues": [
+        {
+          "level": "warning",
+          "message": "target type is different type than source type",
+          "statement": {
+            "lineNumber": "6",
+            "text": "statement block"
+          },
+          "hint": "The input expression type does not have an assignment cast to the target type.",
+          "detail": "cast \"text\" value to \"uuid[]\" type",
+          "context": "during statement block local variable \"v_products\" initialization on line 5",
+          "sqlState": "42804"
+        },
+        {
+          "level": "warning extra",
+          "message": "never read variable \"v_escrow_balance\"",
+          "sqlState": "00000"
+        }
+      ]
+    },
+    {
+      "function": "public.request_withdrawal_from_ledger",
+      "issues": [
+        {
+          "level": "warning extra",
+          "message": "never read variable \"v_idm_id\"",
+          "sqlState": "00000"
+        }
+      ]
+    },
+    {
+      "function": "public.search_marketplace_admin_creators_v2",
+      "issues": [
+        {
+          "level": "warning",
+          "message": "routine is marked as STABLE, but expression is VOLATILE",
+          "statement": {
+            "lineNumber": "3",
+            "text": "statement block"
+          },
+          "hint": "When you fix this issue, please, recheck other functions that uses this function.",
+          "detail": "there is a risk of unwanted behave",
+          "context": "during statement block local variable \"v_end\" initialization on line 2",
+          "sqlState": "00000"
+        }
+      ]
+    },
+    {
+      "function": "public.unpin_live_session_product",
+      "issues": [
+        {
+          "level": "warning extra",
+          "message": "never read variable \"c\"",
+          "sqlState": "00000"
+        }
+      ]
+    },
+    {
+      "function": "public.upsert_my_marketplace_shipping_profile",
+      "issues": [
+        {
+          "level": "warning",
+          "message": "target type is different type than source type",
+          "statement": {
+            "lineNumber": "4",
+            "text": "statement block"
+          },
+          "hint": "The input expression type does not have an assignment cast to the target type.",
+          "detail": "cast \"text\" value to \"uuid[]\" type",
+          "context": "during statement block local variable \"kept_ids\" initialization on line 3",
+          "sqlState": "42804"
+        }
+      ]
+    },
+    {
+      "function": "public.wake_bdag_monitor",
+      "issues": [
+        {
+          "level": "error",
+          "message": "schema \"net\" does not exist",
+          "statement": {
+            "lineNumber": "8",
+            "text": "RETURN"
+          },
+          "query": {
+            "position": "1",
+            "text": "net.http_post(\n    url := rtrim(v_url, '/') || '/functions/v1/bdag-monitor',\n    headers := jsonb_build_object('Content-Type','application/json','apikey',v_key,'X-Monitor-Secret',v_secret),\n    body := '{\"source\":\"cron\"}'::jsonb,\n    timeout_milliseconds := 50000\n  )"
+          },
+          "sqlState": "3F000"
+        }
+      ]
+    },
+    {
+      "function": "public.wake_incoming_call_dispatcher",
+      "issues": [
+        {
+          "level": "error",
+          "message": "schema \"net\" does not exist",
+          "statement": {
+            "lineNumber": "40",
+            "text": "SQL statement"
+          },
+          "query": {
+            "position": "8",
+            "text": "select net.http_post(\n    url := rtrim(v_project_url, '/') || '/functions/v1/dispatch-incoming-call-deliveries',\n    headers := jsonb_build_object(\n      'Content-Type', 'application/json',\n      'apikey', v_publishable_key,\n      'Authorization', 'Bearer ' || v_publishable_key,\n      'x-call-dispatch-secret', v_dispatch_secret\n    ),\n    body := jsonb_build_object(\n      'source', 'start_call',\n      'call_id', p_call_id,\n      'lease_id', v_lease_id\n    ),\n    timeout_milliseconds := 10000\n  )"
+          },
+          "sqlState": "3F000"
+        }
+      ]
+    },
+    {
+      "function": "public.wake_incoming_call_dispatcher_if_needed",
+      "issues": [
+        {
+          "level": "error",
+          "message": "schema \"net\" does not exist",
+          "statement": {
+            "lineNumber": "44",
+            "text": "SQL statement"
+          },
+          "query": {
+            "position": "8",
+            "text": "select net.http_post(\n    url := rtrim(v_project_url, '/') || '/functions/v1/dispatch-incoming-call-deliveries',\n    headers := jsonb_build_object(\n      'Content-Type', 'application/json', 'apikey', v_publishable_key,\n      'Authorization', 'Bearer ' || v_publishable_key,\n      'x-call-dispatch-secret', v_dispatch_secret\n    ),\n    body := jsonb_build_object('source', 'watchdog', 'lease_id', v_lease_id),\n    timeout_milliseconds := 10000\n  )"
+          },
+          "sqlState": "3F000"
+        }
+      ]
+    },
+    {
+      "function": "public.wake_message_push_dispatcher",
+      "issues": [
+        {
+          "level": "error",
+          "message": "schema \"net\" does not exist",
+          "statement": {
+            "lineNumber": "21",
+            "text": "SQL statement"
+          },
+          "query": {
+            "position": "8",
+            "text": "select net.http_post(\n    url := rtrim(v_project_url, '/') || '/functions/v1/' || v_function,\n    headers := jsonb_build_object(\n      'Content-Type', 'application/json',\n      'apikey', v_publishable_key,\n      'Authorization', 'Bearer ' || v_publishable_key,\n      'x-message-dispatch-secret', v_dispatch_secret\n    ),\n    body := jsonb_build_object('source', case when p_receipts then 'receipt_backstop' else 'message_outbox' end),\n    timeout_milliseconds := 10000\n  )"
+          },
+          "sqlState": "3F000"
+        }
+      ]
+    },
+    {
+      "function": "public.feature_live_session_product",
+      "issues": [
+        {
+          "level": "warning extra",
+          "message": "never read variable \"c\"",
+          "sqlState": "00000"
+        }
+      ]
+    },
+    {
+      "function": "public.get_marketplace_admin_creator_commerce_overview",
+      "issues": [
+        {
+          "level": "warning",
+          "message": "routine is marked as STABLE, but expression is VOLATILE",
+          "statement": {
+            "lineNumber": "3",
+            "text": "statement block"
+          },
+          "hint": "When you fix this issue, please, recheck other functions that uses this function.",
+          "detail": "there is a risk of unwanted behave",
+          "context": "during statement block local variable \"v_end\" initialization on line 2",
+          "sqlState": "00000"
+        }
+      ]
+    }
+  ]
+}

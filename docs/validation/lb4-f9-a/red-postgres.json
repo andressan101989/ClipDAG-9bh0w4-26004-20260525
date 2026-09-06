@@ -1,0 +1,38 @@
+[
+  {
+    "case": "heart",
+    "expected": 10,
+    "actual": 1,
+    "passed": false
+  },
+  {
+    "case": "rose",
+    "expected": 50,
+    "actual": 5,
+    "passed": false
+  },
+  {
+    "case": "like score",
+    "expected": true,
+    "actual": false,
+    "passed": false
+  },
+  {
+    "case": "viewer cap",
+    "expected": true,
+    "actual": false,
+    "passed": false
+  },
+  {
+    "case": "like idempotency",
+    "expected": true,
+    "actual": false,
+    "passed": false
+  },
+  {
+    "case": "combined reconciliation",
+    "expected": true,
+    "actual": false,
+    "passed": false
+  }
+]

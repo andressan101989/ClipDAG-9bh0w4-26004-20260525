@@ -42,6 +42,7 @@ test('LB4-F3-F3-F1-F1 is the only forward migration and preserves the deployed p
     '20260902025229_live_battles_lb4_f5_a_c3_c1_c1_c1_lock_mode_boundary.sql',
     '20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql',
     '20260905230823_live_gift_platform_commission_35.sql',
+    '20260906053652_live_battle_gift_like_scoring.sql',
   ]);
   const previous = (await read(`supabase/migrations/${previousName}`)).replaceAll('\r\n', '\n');
   assert.equal(createHash('sha256').update(previous).digest('hex'),

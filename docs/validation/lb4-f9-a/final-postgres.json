@@ -1,0 +1,12 @@
+{
+  "gifts": "66",
+  "financial_transactions": "66",
+  "ledger_entries": "193",
+  "gift_score_events": "66",
+  "like_batch_receipts": "25",
+  "accepted_likes": "120",
+  "like_points": "600",
+  "max_likes_per_viewer_battle": "20",
+  "score_reconstruction_mismatches": "0",
+  "projection_mismatches": "0"
+}

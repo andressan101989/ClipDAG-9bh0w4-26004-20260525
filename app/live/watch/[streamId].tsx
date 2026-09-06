@@ -6,6 +6,8 @@
  */
 /* eslint-disable react-hooks/exhaustive-deps -- existing LIVE lifecycle effects intentionally use stable refs */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { LiveBattleLikeBatcher } from '@/services/liveBattleLikeBatcher';
+import { sendLiveBattleLikes } from '@/services/liveBattleLikesService';
 import {
   View, Text, Pressable, StyleSheet, FlatList, TextInput,
   Keyboard, Platform, ActivityIndicator, Dimensions,
@@ -277,6 +279,15 @@ export default function LiveWatchScreen() {
   const battleState = battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status)
     ? battleProjection.state
     : null;
+  const likeBatcherRef = useRef<LiveBattleLikeBatcher | null>(null);
+  useEffect(() => {
+    const batcher = streamId && user?.id && battleState?.battleId ? new LiveBattleLikeBatcher(
+      batch => sendLiveBattleLikes(streamId, battleState.battleId, user.id, batch),
+      () => { void battleProjection.reconcile(); },
+    ) : null;
+    likeBatcherRef.current = batcher;
+    return () => { likeBatcherRef.current = null; batcher?.close(); };
+  }, [streamId, user?.id, battleState?.battleId, battleProjection.reconcile]);
   const battleStageVisible = Boolean(
     battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status),
   );
@@ -845,6 +856,12 @@ export default function LiveWatchScreen() {
 
   const sendReaction = useCallback(async (emoji: string) => {
     if (!streamId || !user?.id) return;
+    const scoreable = emoji === '❤️' && battleState?.status === 'active'
+      && user.id !== battleState.localHostUserId && user.id !== battleState.opponentHostUserId;
+    if (scoreable) {
+      addFloatingReaction(emoji, getDisplayUsername(user));
+      likeBatcherRef.current?.add();
+    }
     const now = Date.now();
     if (now - lastReactionAtRef.current < 600) return;
     lastReactionAtRef.current = now;
@@ -853,11 +870,11 @@ export default function LiveWatchScreen() {
     try {
       const data = await emitLiveReaction(streamId, emoji);
       if (data?.id) rememberSeenReactionEvent(seenReactionEventIdsRef.current, data.id);
-      addFloatingReaction(emoji, username);
+      if (!scoreable) addFloatingReaction(emoji, username);
     } catch (err: any) {
       console.warn('[LiveWatch] reaction failed', err?.message ?? err);
     }
-  }, [streamId, user, supabase, addFloatingReaction]);
+  }, [streamId, user, supabase, addFloatingReaction, battleState]);
 
   const sendRealGift = useCallback(async (gift: GiftCatalogItem) => {
     if (!streamId || !user?.id) return;

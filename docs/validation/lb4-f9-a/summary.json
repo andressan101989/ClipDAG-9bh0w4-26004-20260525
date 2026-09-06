@@ -1,0 +1,82 @@
+{
+  "base": "b7c55571628c8af2ac2c846a8f7a1e5f16bd566d",
+  "branch": "codex/lb4-f9-a-gift-like-scoring",
+  "migration": "supabase/migrations/20260906053652_live_battle_gift_like_scoring.sql",
+  "migrationLF": "090c86a9d120b4d00ab93ee595460621fbd67ae4eff3a3a56135a3d0ea68cd5e",
+  "suites": [
+    {
+      "name": "focal",
+      "tests": 18,
+      "pass": 18,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    {
+      "name": "f8",
+      "tests": 29,
+      "pass": 29,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    {
+      "name": "reactions",
+      "tests": 14,
+      "pass": 14,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    {
+      "name": "runtime",
+      "tests": 91,
+      "pass": 91,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    {
+      "name": "battles",
+      "tests": 434,
+      "pass": 434,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    {
+      "name": "finance",
+      "tests": 98,
+      "pass": 98,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    {
+      "name": "global",
+      "tests": 1576,
+      "pass": 1576,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    }
+  ],
+  "postgres": 27,
+  "c1RollbackProof": "PASS (11 named cases plus base assertions)",
+  "advisors": {
+    "historical": 88,
+    "new": 0
+  },
+  "dbLint": {
+    "historical": 25,
+    "new": 0
+  },
+  "protectedFiles": 212
+}

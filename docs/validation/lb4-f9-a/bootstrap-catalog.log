@@ -1,0 +1,16 @@
+SET
+INSERT 0 5
+UPDATE 5
+INSERT 0 7
+BEGIN
+ALTER TABLE
+INSERT 0 1
+UPDATE 1
+COMMIT
+NOTICE:  column "category" of relation "gift_catalog" already exists, skipping
+NOTICE:  column "animation_type" of relation "gift_catalog" already exists, skipping
+NOTICE:  column "animation_asset" of relation "gift_catalog" already exists, skipping
+NOTICE:  column "duration_ms" of relation "gift_catalog" already exists, skipping
+NOTICE:  column "priority" of relation "gift_catalog" already exists, skipping
+NOTICE:  column "enabled" of relation "gift_catalog" already exists, skipping
+NOTICE:  column "display_order" of relation "gift_catalog" already exists, skipping

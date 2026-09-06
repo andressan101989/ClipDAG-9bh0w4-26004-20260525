@@ -1,0 +1,6 @@
+{
+  "container": "clipdag-lb4-f9-proof",
+  "schemaSHA256": "0d038bd8832b334772aeb84adebb4b12bd3f1aa860a1fcebd3fab5fe1dff6c61",
+  "source": "C1 sanitized F4D schema fixture; no production access",
+  "image": "public.ecr.aws/supabase/postgres:17.6.1.165"
+}

@@ -183,9 +183,10 @@ test("Refinement preserves hardened commerce contracts across later authorized c
   assert.ok(
     migrations.includes("20260811033000_marketplace_production_hardening.sql"),
   );
-  assert.deepEqual(migrations.slice(-2), [
+  assert.deepEqual(migrations.slice(-3), [
     "20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql",
     "20260905230823_live_gift_platform_commission_35.sql",
+    "20260906053652_live_battle_gift_like_scoring.sql",
   ]);
   assert.ok(migrations.includes("20260822221008_marketplace_post_settlement_delivery_ack_r2a_f1.sql"));
   assert.ok(migrations.includes("20260822165852_marketplace_post_settlement_returns_r2a.sql"));

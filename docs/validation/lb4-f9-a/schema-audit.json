@@ -1,0 +1,1124 @@
+{
+  "source": "Local sanitized fixture after F9-A; historical definitions referenced in audit.md",
+  "tables": [
+    {
+      "table": "public.live_battle_score_events",
+      "columns": [
+        {
+          "attname": "id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "battle_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "gift_transaction_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "target_user_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "base_points",
+          "type": "bigint",
+          "attnotnull": true
+        },
+        {
+          "attname": "multiplier",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "awarded_points",
+          "type": "bigint",
+          "attnotnull": true
+        },
+        {
+          "attname": "boost_id",
+          "type": "uuid",
+          "attnotnull": false
+        },
+        {
+          "attname": "rule_version",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "created_at",
+          "type": "timestamp with time zone",
+          "attnotnull": true
+        }
+      ],
+      "constraints": [
+        {
+          "conname": "live_battle_score_events_awarded_points_check",
+          "definition": "CHECK ((awarded_points = (base_points * multiplier)))"
+        },
+        {
+          "conname": "live_battle_score_events_base_points_check",
+          "definition": "CHECK ((base_points >= 0))"
+        },
+        {
+          "conname": "live_battle_score_events_battle_id_fkey",
+          "definition": "FOREIGN KEY (battle_id) REFERENCES live_battles(id) ON DELETE CASCADE"
+        },
+        {
+          "conname": "live_battle_score_events_boost_contract_check",
+          "definition": "CHECK ((((multiplier = 1) AND (boost_id IS NULL)) OR ((multiplier = ANY (ARRAY[2, 3])) AND (boost_id IS NOT NULL))))"
+        },
+        {
+          "conname": "live_battle_score_events_boost_fkey",
+          "definition": "FOREIGN KEY (boost_id) REFERENCES live_battle_boost_events(id) ON DELETE RESTRICT"
+        },
+        {
+          "conname": "live_battle_score_events_gift_transaction_id_fkey",
+          "definition": "FOREIGN KEY (gift_transaction_id) REFERENCES live_gift_transactions(id) ON DELETE RESTRICT"
+        },
+        {
+          "conname": "live_battle_score_events_gift_transaction_id_key",
+          "definition": "UNIQUE (gift_transaction_id)"
+        },
+        {
+          "conname": "live_battle_score_events_multiplier_check",
+          "definition": "CHECK ((multiplier = ANY (ARRAY[1, 2, 3])))"
+        },
+        {
+          "conname": "live_battle_score_events_pkey",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "conname": "live_battle_score_events_target_user_id_fkey",
+          "definition": "FOREIGN KEY (target_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+        }
+      ],
+      "triggers": [
+        {
+          "tgname": "live_battle_score_events_immutable",
+          "definition": "CREATE TRIGGER live_battle_score_events_immutable BEFORE DELETE OR UPDATE ON public.live_battle_score_events FOR EACH ROW EXECUTE FUNCTION private.reject_live_battle_score_event_mutation()"
+        }
+      ]
+    },
+    {
+      "table": "public.live_battle_score_states",
+      "columns": [
+        {
+          "attname": "battle_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "challenger_score",
+          "type": "bigint",
+          "attnotnull": true
+        },
+        {
+          "attname": "opponent_score",
+          "type": "bigint",
+          "attnotnull": true
+        },
+        {
+          "attname": "score_version",
+          "type": "bigint",
+          "attnotnull": true
+        },
+        {
+          "attname": "outcome",
+          "type": "text",
+          "attnotnull": true
+        },
+        {
+          "attname": "winner_user_id",
+          "type": "uuid",
+          "attnotnull": false
+        },
+        {
+          "attname": "finalized_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "updated_at",
+          "type": "timestamp with time zone",
+          "attnotnull": true
+        }
+      ],
+      "constraints": [
+        {
+          "conname": "live_battle_score_states_battle_id_fkey",
+          "definition": "FOREIGN KEY (battle_id) REFERENCES live_battles(id) ON DELETE CASCADE"
+        },
+        {
+          "conname": "live_battle_score_states_finalization_check",
+          "definition": "CHECK ((((outcome = 'pending'::text) AND (winner_user_id IS NULL) AND (finalized_at IS NULL)) OR ((outcome = ANY (ARRAY['challenger'::text, 'opponent'::text])) AND (winner_user_id IS NOT NULL) AND (finalized_at IS NOT NULL)) OR ((outcome = ANY (ARRAY['tie'::text, 'cancelled'::text])) AND (winner_user_id IS NULL) AND (finalized_at IS NOT NULL))))"
+        },
+        {
+          "conname": "live_battle_score_states_outcome_check",
+          "definition": "CHECK ((outcome = ANY (ARRAY['pending'::text, 'challenger'::text, 'opponent'::text, 'tie'::text, 'cancelled'::text])))"
+        },
+        {
+          "conname": "live_battle_score_states_pkey",
+          "definition": "PRIMARY KEY (battle_id)"
+        },
+        {
+          "conname": "live_battle_score_states_result_check",
+          "definition": "CHECK (((outcome = ANY (ARRAY['pending'::text, 'cancelled'::text])) OR ((outcome = 'challenger'::text) AND (challenger_score > opponent_score)) OR ((outcome = 'opponent'::text) AND (opponent_score > challenger_score)) OR ((outcome = 'tie'::text) AND (challenger_score = opponent_score))))"
+        },
+        {
+          "conname": "live_battle_score_states_scores_check",
+          "definition": "CHECK (((challenger_score >= 0) AND (opponent_score >= 0)))"
+        },
+        {
+          "conname": "live_battle_score_states_version_check",
+          "definition": "CHECK ((score_version >= 0))"
+        },
+        {
+          "conname": "live_battle_score_states_winner_user_id_fkey",
+          "definition": "FOREIGN KEY (winner_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+        }
+      ],
+      "triggers": [
+        {
+          "tgname": "live_battle_score_states_rebuild_series",
+          "definition": "CREATE TRIGGER live_battle_score_states_rebuild_series AFTER INSERT OR UPDATE ON public.live_battle_score_states FOR EACH ROW EXECUTE FUNCTION private.live_battle_series_score_finalized_trigger()"
+        }
+      ]
+    },
+    {
+      "table": "public.live_battle_rule_sets",
+      "columns": [
+        {
+          "attname": "id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "rule_version",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "rose_gift_id",
+          "type": "text",
+          "attnotnull": false
+        },
+        {
+          "attname": "rose_target_units",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "rose_multiplier",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "rose_duration_seconds",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "rose_activation_limit_per_side",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "glove_multiplier",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "glove_duration_seconds",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "glove_uses_per_side",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "glove_acquisition_mode",
+          "type": "text",
+          "attnotnull": true
+        },
+        {
+          "attname": "created_at",
+          "type": "timestamp with time zone",
+          "attnotnull": true
+        },
+        {
+          "attname": "gift_points_per_coin",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "like_points",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "max_scoreable_likes_per_viewer",
+          "type": "integer",
+          "attnotnull": true
+        }
+      ],
+      "constraints": [
+        {
+          "conname": "live_battle_rule_sets_bounds_check",
+          "definition": "CHECK (((rose_target_units >= 0) AND (rose_target_units <= 100000) AND ((rose_duration_seconds >= 0) AND (rose_duration_seconds <= 3600)) AND ((rose_activation_limit_per_side >= 0) AND (rose_activation_limit_per_side <= 100)) AND ((glove_duration_seconds >= 0) AND (glove_duration_seconds <= 3600)) AND ((glove_uses_per_side >= 0) AND (glove_uses_per_side <= 100))))"
+        },
+        {
+          "conname": "live_battle_rule_sets_contract_check",
+          "definition": "CHECK ((((glove_acquisition_mode = 'disabled'::text) AND (rose_gift_id IS NULL) AND (rose_target_units = 0) AND (rose_multiplier = 1) AND (rose_duration_seconds = 0) AND (rose_activation_limit_per_side = 0) AND (glove_multiplier = 1) AND (glove_duration_seconds = 0) AND (glove_uses_per_side = 0)) OR ((glove_acquisition_mode = 'fixed_battle_grant'::text) AND (rose_gift_id IS NOT NULL) AND (rose_target_units > 0) AND (rose_multiplier = 2) AND (rose_duration_seconds > 0) AND (rose_activation_limit_per_side = 1) AND (glove_multiplier = 3) AND (glove_duration_seconds > 0) AND (glove_uses_per_side = 1))))"
+        },
+        {
+          "conname": "live_battle_rule_sets_id_version_key",
+          "definition": "UNIQUE (id, rule_version)"
+        },
+        {
+          "conname": "live_battle_rule_sets_pkey",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "conname": "live_battle_rule_sets_rose_gift_id_fkey",
+          "definition": "FOREIGN KEY (rose_gift_id) REFERENCES gift_catalog(id) ON DELETE RESTRICT"
+        },
+        {
+          "conname": "live_battle_rule_sets_rule_version_key",
+          "definition": "UNIQUE (rule_version)"
+        },
+        {
+          "conname": "live_battle_rule_sets_scoring_check",
+          "definition": "CHECK ((((gift_points_per_coin >= 1) AND (gift_points_per_coin <= 1000)) AND ((like_points >= 0) AND (like_points <= 1000)) AND ((max_scoreable_likes_per_viewer >= 0) AND (max_scoreable_likes_per_viewer <= 1000)) AND ((like_points = 0) = (max_scoreable_likes_per_viewer = 0))))"
+        },
+        {
+          "conname": "live_battle_rule_sets_version_check",
+          "definition": "CHECK ((rule_version > 0))"
+        }
+      ],
+      "triggers": [
+        {
+          "tgname": "live_battle_rule_sets_immutable",
+          "definition": "CREATE TRIGGER live_battle_rule_sets_immutable BEFORE DELETE OR UPDATE ON public.live_battle_rule_sets FOR EACH ROW EXECUTE FUNCTION private.reject_live_battle_rule_set_mutation()"
+        }
+      ]
+    },
+    {
+      "table": "public.live_battle_current_rule_set",
+      "columns": [
+        {
+          "attname": "singleton",
+          "type": "boolean",
+          "attnotnull": true
+        },
+        {
+          "attname": "rule_set_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "updated_at",
+          "type": "timestamp with time zone",
+          "attnotnull": true
+        }
+      ],
+      "constraints": [
+        {
+          "conname": "live_battle_current_rule_set_pkey",
+          "definition": "PRIMARY KEY (singleton)"
+        },
+        {
+          "conname": "live_battle_current_rule_set_rule_set_id_fkey",
+          "definition": "FOREIGN KEY (rule_set_id) REFERENCES live_battle_rule_sets(id) ON DELETE RESTRICT"
+        },
+        {
+          "conname": "live_battle_current_rule_set_rule_set_id_key",
+          "definition": "UNIQUE (rule_set_id)"
+        },
+        {
+          "conname": "live_battle_current_rule_set_singleton_check",
+          "definition": "CHECK (singleton)"
+        }
+      ],
+      "triggers": []
+    },
+    {
+      "table": "public.live_battle_public_states",
+      "columns": [
+        {
+          "attname": "session_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "battle_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "opponent_session_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "local_host_user_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "opponent_host_user_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "local_host_agora_uid",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "opponent_host_agora_uid",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "status",
+          "type": "text",
+          "attnotnull": true
+        },
+        {
+          "attname": "version",
+          "type": "bigint",
+          "attnotnull": true
+        },
+        {
+          "attname": "scheduled_start_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "started_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "scheduled_end_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "ended_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "updated_at",
+          "type": "timestamp with time zone",
+          "attnotnull": true
+        },
+        {
+          "attname": "challenger_score",
+          "type": "bigint",
+          "attnotnull": true
+        },
+        {
+          "attname": "opponent_score",
+          "type": "bigint",
+          "attnotnull": true
+        },
+        {
+          "attname": "score_version",
+          "type": "bigint",
+          "attnotnull": true
+        },
+        {
+          "attname": "outcome",
+          "type": "text",
+          "attnotnull": true
+        },
+        {
+          "attname": "winner_user_id",
+          "type": "uuid",
+          "attnotnull": false
+        },
+        {
+          "attname": "score_updated_at",
+          "type": "timestamp with time zone",
+          "attnotnull": true
+        },
+        {
+          "attname": "projection_version",
+          "type": "bigint",
+          "attnotnull": true
+        },
+        {
+          "attname": "boost_rule_version",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "rose_target_units",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "challenger_rose_progress_units",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "opponent_rose_progress_units",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "challenger_rose_activations_remaining",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "opponent_rose_activations_remaining",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "challenger_glove_uses_remaining",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "opponent_glove_uses_remaining",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "challenger_x2_starts_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "challenger_x2_expires_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "opponent_x2_starts_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "opponent_x2_expires_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "challenger_x3_starts_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "challenger_x3_expires_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "opponent_x3_starts_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "opponent_x3_expires_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "power_version",
+          "type": "bigint",
+          "attnotnull": true
+        },
+        {
+          "attname": "power_updated_at",
+          "type": "timestamp with time zone",
+          "attnotnull": true
+        },
+        {
+          "attname": "server_clock_at",
+          "type": "timestamp with time zone",
+          "attnotnull": true
+        },
+        {
+          "attname": "local_battle_side",
+          "type": "text",
+          "attnotnull": true
+        },
+        {
+          "attname": "series_id",
+          "type": "uuid",
+          "attnotnull": false
+        },
+        {
+          "attname": "series_format",
+          "type": "text",
+          "attnotnull": false
+        },
+        {
+          "attname": "round_number",
+          "type": "smallint",
+          "attnotnull": false
+        },
+        {
+          "attname": "series_max_rounds",
+          "type": "smallint",
+          "attnotnull": false
+        },
+        {
+          "attname": "series_wins_required",
+          "type": "smallint",
+          "attnotnull": false
+        },
+        {
+          "attname": "challenger_series_wins",
+          "type": "smallint",
+          "attnotnull": false
+        },
+        {
+          "attname": "opponent_series_wins",
+          "type": "smallint",
+          "attnotnull": false
+        },
+        {
+          "attname": "series_ties",
+          "type": "smallint",
+          "attnotnull": false
+        },
+        {
+          "attname": "series_rounds_completed",
+          "type": "smallint",
+          "attnotnull": false
+        },
+        {
+          "attname": "series_status",
+          "type": "text",
+          "attnotnull": false
+        },
+        {
+          "attname": "series_champion_user_id",
+          "type": "uuid",
+          "attnotnull": false
+        },
+        {
+          "attname": "series_version",
+          "type": "bigint",
+          "attnotnull": false
+        },
+        {
+          "attname": "rematch_request_id",
+          "type": "uuid",
+          "attnotnull": false
+        },
+        {
+          "attname": "rematch_request_after_battle_id",
+          "type": "uuid",
+          "attnotnull": false
+        },
+        {
+          "attname": "rematch_request_status",
+          "type": "text",
+          "attnotnull": false
+        },
+        {
+          "attname": "rematch_requested_by_user_id",
+          "type": "uuid",
+          "attnotnull": false
+        },
+        {
+          "attname": "rematch_request_expires_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "rematch_window_expires_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        }
+      ],
+      "constraints": [
+        {
+          "conname": "live_battle_public_states_battle_id_fkey",
+          "definition": "FOREIGN KEY (battle_id) REFERENCES live_battles(id) ON DELETE CASCADE"
+        },
+        {
+          "conname": "live_battle_public_states_challenger_x2_window_check",
+          "definition": "CHECK ((((challenger_x2_starts_at IS NULL) AND (challenger_x2_expires_at IS NULL)) OR ((challenger_x2_starts_at IS NOT NULL) AND (challenger_x2_expires_at > challenger_x2_starts_at) AND ((scheduled_end_at IS NULL) OR (challenger_x2_expires_at <= scheduled_end_at)))))"
+        },
+        {
+          "conname": "live_battle_public_states_challenger_x3_window_check",
+          "definition": "CHECK ((((challenger_x3_starts_at IS NULL) AND (challenger_x3_expires_at IS NULL)) OR ((challenger_x3_starts_at IS NOT NULL) AND (challenger_x3_expires_at > challenger_x3_starts_at) AND ((scheduled_end_at IS NULL) OR (challenger_x3_expires_at <= scheduled_end_at)))))"
+        },
+        {
+          "conname": "live_battle_public_states_distinct_hosts_check",
+          "definition": "CHECK ((local_host_user_id <> opponent_host_user_id))"
+        },
+        {
+          "conname": "live_battle_public_states_distinct_sessions_check",
+          "definition": "CHECK ((session_id <> opponent_session_id))"
+        },
+        {
+          "conname": "live_battle_public_states_local_side_check",
+          "definition": "CHECK ((local_battle_side = ANY (ARRAY['challenger'::text, 'opponent'::text])))"
+        },
+        {
+          "conname": "live_battle_public_states_local_uid_check",
+          "definition": "CHECK (((local_host_agora_uid >= 1) AND (local_host_agora_uid <= 2147483647)))"
+        },
+        {
+          "conname": "live_battle_public_states_opponent_session_id_fkey",
+          "definition": "FOREIGN KEY (opponent_session_id) REFERENCES live_sessions(id) ON DELETE CASCADE"
+        },
+        {
+          "conname": "live_battle_public_states_opponent_uid_check",
+          "definition": "CHECK (((opponent_host_agora_uid >= 1) AND (opponent_host_agora_uid <= 2147483647)))"
+        },
+        {
+          "conname": "live_battle_public_states_opponent_x2_window_check",
+          "definition": "CHECK ((((opponent_x2_starts_at IS NULL) AND (opponent_x2_expires_at IS NULL)) OR ((opponent_x2_starts_at IS NOT NULL) AND (opponent_x2_expires_at > opponent_x2_starts_at) AND ((scheduled_end_at IS NULL) OR (opponent_x2_expires_at <= scheduled_end_at)))))"
+        },
+        {
+          "conname": "live_battle_public_states_opponent_x3_window_check",
+          "definition": "CHECK ((((opponent_x3_starts_at IS NULL) AND (opponent_x3_expires_at IS NULL)) OR ((opponent_x3_starts_at IS NOT NULL) AND (opponent_x3_expires_at > opponent_x3_starts_at) AND ((scheduled_end_at IS NULL) OR (opponent_x3_expires_at <= scheduled_end_at)))))"
+        },
+        {
+          "conname": "live_battle_public_states_outcome_check",
+          "definition": "CHECK ((outcome = ANY (ARRAY['pending'::text, 'challenger'::text, 'opponent'::text, 'tie'::text, 'cancelled'::text])))"
+        },
+        {
+          "conname": "live_battle_public_states_pkey",
+          "definition": "PRIMARY KEY (session_id)"
+        },
+        {
+          "conname": "live_battle_public_states_power_values_check",
+          "definition": "CHECK (((boost_rule_version > 0) AND (rose_target_units >= 0) AND ((challenger_rose_progress_units >= 0) AND (challenger_rose_progress_units <= rose_target_units)) AND ((opponent_rose_progress_units >= 0) AND (opponent_rose_progress_units <= rose_target_units)) AND (challenger_rose_activations_remaining >= 0) AND (opponent_rose_activations_remaining >= 0) AND (challenger_glove_uses_remaining >= 0) AND (opponent_glove_uses_remaining >= 0) AND (power_version >= 0)))"
+        },
+        {
+          "conname": "live_battle_public_states_projection_version_check",
+          "definition": "CHECK ((projection_version >= 1))"
+        },
+        {
+          "conname": "live_battle_public_states_rematch_request_shape_check",
+          "definition": "CHECK ((((rematch_request_id IS NULL) AND (rematch_request_after_battle_id IS NULL) AND (rematch_request_status IS NULL) AND (rematch_requested_by_user_id IS NULL) AND (rematch_request_expires_at IS NULL)) OR ((rematch_request_id IS NOT NULL) AND (rematch_request_after_battle_id = battle_id) AND (rematch_request_status IS NOT NULL) AND (rematch_requested_by_user_id IS NOT NULL) AND (rematch_request_expires_at IS NOT NULL))))"
+        },
+        {
+          "conname": "live_battle_public_states_rematch_request_status_check",
+          "definition": "CHECK (((rematch_request_status IS NULL) OR (rematch_request_status = ANY (ARRAY['pending'::text, 'accepted'::text, 'rejected'::text, 'expired'::text, 'cancelled'::text]))))"
+        },
+        {
+          "conname": "live_battle_public_states_result_check",
+          "definition": "CHECK (((outcome = ANY (ARRAY['pending'::text, 'cancelled'::text])) OR ((outcome = 'challenger'::text) AND (challenger_score > opponent_score)) OR ((outcome = 'opponent'::text) AND (opponent_score > challenger_score)) OR ((outcome = 'tie'::text) AND (challenger_score = opponent_score))))"
+        },
+        {
+          "conname": "live_battle_public_states_score_version_check",
+          "definition": "CHECK ((score_version >= 0))"
+        },
+        {
+          "conname": "live_battle_public_states_scores_check",
+          "definition": "CHECK (((challenger_score >= 0) AND (opponent_score >= 0)))"
+        },
+        {
+          "conname": "live_battle_public_states_series_counters_check",
+          "definition": "CHECK (((series_id IS NULL) OR (((round_number >= 1) AND (round_number <= 5)) AND (series_max_rounds = ANY (ARRAY[1, 5])) AND (series_wins_required = ANY (ARRAY[1, 3])) AND (challenger_series_wins >= 0) AND (opponent_series_wins >= 0) AND (series_ties >= 0) AND (series_rounds_completed >= 0) AND (series_rounds_completed <= series_max_rounds) AND (series_format IS NOT NULL) AND (series_status IS NOT NULL) AND (series_version IS NOT NULL))))"
+        },
+        {
+          "conname": "live_battle_public_states_series_format_check",
+          "definition": "CHECK (((series_format IS NULL) OR (series_format = ANY (ARRAY['single'::text, 'best_of_5'::text]))))"
+        },
+        {
+          "conname": "live_battle_public_states_series_status_check",
+          "definition": "CHECK (((series_status IS NULL) OR (series_status = ANY (ARRAY['active'::text, 'awaiting_rematch'::text, 'rematch_pending'::text, 'completed'::text, 'cancelled'::text]))))"
+        },
+        {
+          "conname": "live_battle_public_states_session_id_fkey",
+          "definition": "FOREIGN KEY (session_id) REFERENCES live_sessions(id) ON DELETE CASCADE"
+        },
+        {
+          "conname": "live_battle_public_states_status_check",
+          "definition": "CHECK ((status = ANY (ARRAY['countdown'::text, 'active'::text, 'completed'::text, 'cancelled'::text])))"
+        },
+        {
+          "conname": "live_battle_public_states_terminal_power_check",
+          "definition": "CHECK (((status <> ALL (ARRAY['completed'::text, 'cancelled'::text])) OR ((challenger_glove_uses_remaining = 0) AND (opponent_glove_uses_remaining = 0))))"
+        },
+        {
+          "conname": "live_battle_public_states_terminal_timestamp_check",
+          "definition": "CHECK ((((status = ANY (ARRAY['countdown'::text, 'active'::text])) AND (ended_at IS NULL)) OR ((status = ANY (ARRAY['completed'::text, 'cancelled'::text])) AND (ended_at IS NOT NULL))))"
+        },
+        {
+          "conname": "live_battle_public_states_v1_power_check",
+          "definition": "CHECK (((boost_rule_version <> 1) OR ((rose_target_units = 0) AND (challenger_rose_progress_units = 0) AND (opponent_rose_progress_units = 0) AND (challenger_rose_activations_remaining = 0) AND (opponent_rose_activations_remaining = 0) AND (challenger_glove_uses_remaining = 0) AND (opponent_glove_uses_remaining = 0) AND (challenger_x2_starts_at IS NULL) AND (challenger_x2_expires_at IS NULL) AND (opponent_x2_starts_at IS NULL) AND (opponent_x2_expires_at IS NULL) AND (challenger_x3_starts_at IS NULL) AND (challenger_x3_expires_at IS NULL) AND (opponent_x3_starts_at IS NULL) AND (opponent_x3_expires_at IS NULL))))"
+        },
+        {
+          "conname": "live_battle_public_states_version_check",
+          "definition": "CHECK ((version >= 1))"
+        },
+        {
+          "conname": "live_battle_public_states_winner_check",
+          "definition": "CHECK ((((outcome = ANY (ARRAY['pending'::text, 'tie'::text, 'cancelled'::text])) AND (winner_user_id IS NULL)) OR ((outcome = ANY (ARRAY['challenger'::text, 'opponent'::text])) AND ((winner_user_id = local_host_user_id) OR (winner_user_id = opponent_host_user_id)))))"
+        }
+      ],
+      "triggers": [
+        {
+          "tgname": "live_battle_public_states_clear_stale_rematch",
+          "definition": "CREATE TRIGGER live_battle_public_states_clear_stale_rematch BEFORE UPDATE ON public.live_battle_public_states FOR EACH ROW EXECUTE FUNCTION private.clear_stale_live_battle_rematch_projection()"
+        },
+        {
+          "tgname": "live_battle_public_states_sync_local_side",
+          "definition": "CREATE TRIGGER live_battle_public_states_sync_local_side BEFORE INSERT OR UPDATE ON public.live_battle_public_states FOR EACH ROW EXECUTE FUNCTION private.sync_live_battle_public_local_side()"
+        }
+      ]
+    },
+    {
+      "table": "public.live_battles",
+      "columns": [
+        {
+          "attname": "id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "challenger_user_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "opponent_user_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "challenger_session_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "opponent_session_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "status",
+          "type": "text",
+          "attnotnull": true
+        },
+        {
+          "attname": "invite_expires_at",
+          "type": "timestamp with time zone",
+          "attnotnull": true
+        },
+        {
+          "attname": "accepted_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "countdown_started_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "scheduled_start_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "started_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "scheduled_end_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "ended_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "last_transition_actor_id",
+          "type": "uuid",
+          "attnotnull": false
+        },
+        {
+          "attname": "last_transition_reason",
+          "type": "text",
+          "attnotnull": true
+        },
+        {
+          "attname": "version",
+          "type": "bigint",
+          "attnotnull": true
+        },
+        {
+          "attname": "created_at",
+          "type": "timestamp with time zone",
+          "attnotnull": true
+        },
+        {
+          "attname": "updated_at",
+          "type": "timestamp with time zone",
+          "attnotnull": true
+        },
+        {
+          "attname": "battle_rule_set_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "series_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "round_number",
+          "type": "smallint",
+          "attnotnull": true
+        }
+      ],
+      "constraints": [
+        {
+          "conname": "live_battles_challenger_session_id_fkey",
+          "definition": "FOREIGN KEY (challenger_session_id) REFERENCES live_sessions(id) ON DELETE RESTRICT"
+        },
+        {
+          "conname": "live_battles_challenger_user_id_fkey",
+          "definition": "FOREIGN KEY (challenger_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+        },
+        {
+          "conname": "live_battles_distinct_sessions_check",
+          "definition": "CHECK ((challenger_session_id <> opponent_session_id))"
+        },
+        {
+          "conname": "live_battles_distinct_users_check",
+          "definition": "CHECK ((challenger_user_id <> opponent_user_id))"
+        },
+        {
+          "conname": "live_battles_invite_window_check",
+          "definition": "CHECK ((invite_expires_at > created_at))"
+        },
+        {
+          "conname": "live_battles_last_transition_actor_id_fkey",
+          "definition": "FOREIGN KEY (last_transition_actor_id) REFERENCES auth.users(id) ON DELETE SET NULL"
+        },
+        {
+          "conname": "live_battles_opponent_session_id_fkey",
+          "definition": "FOREIGN KEY (opponent_session_id) REFERENCES live_sessions(id) ON DELETE RESTRICT"
+        },
+        {
+          "conname": "live_battles_opponent_user_id_fkey",
+          "definition": "FOREIGN KEY (opponent_user_id) REFERENCES auth.users(id) ON DELETE RESTRICT"
+        },
+        {
+          "conname": "live_battles_pkey",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "conname": "live_battles_round_number_check",
+          "definition": "CHECK (((round_number >= 1) AND (round_number <= 5)))"
+        },
+        {
+          "conname": "live_battles_rule_set_fkey",
+          "definition": "FOREIGN KEY (battle_rule_set_id) REFERENCES live_battle_rule_sets(id) ON DELETE RESTRICT"
+        },
+        {
+          "conname": "live_battles_series_fkey",
+          "definition": "FOREIGN KEY (series_id) REFERENCES live_battle_series(id) ON DELETE RESTRICT"
+        },
+        {
+          "conname": "live_battles_series_round_key",
+          "definition": "UNIQUE (series_id, round_number)"
+        },
+        {
+          "conname": "live_battles_status_check",
+          "definition": "CHECK ((status = ANY (ARRAY['pending'::text, 'accepted'::text, 'countdown'::text, 'active'::text, 'completed'::text, 'rejected'::text, 'cancelled'::text, 'expired'::text])))"
+        },
+        {
+          "conname": "live_battles_status_timestamps_check",
+          "definition": "CHECK ((((status = 'pending'::text) AND (accepted_at IS NULL) AND (countdown_started_at IS NULL) AND (started_at IS NULL) AND (ended_at IS NULL)) OR ((status = 'accepted'::text) AND (accepted_at IS NOT NULL) AND (countdown_started_at IS NULL) AND (started_at IS NULL) AND (ended_at IS NULL)) OR ((status = 'countdown'::text) AND (accepted_at IS NOT NULL) AND (countdown_started_at IS NOT NULL) AND (scheduled_start_at IS NOT NULL) AND (started_at IS NULL) AND (ended_at IS NULL)) OR ((status = 'active'::text) AND (accepted_at IS NOT NULL) AND (countdown_started_at IS NOT NULL) AND (scheduled_start_at IS NOT NULL) AND (started_at IS NOT NULL) AND (scheduled_end_at IS NOT NULL) AND (ended_at IS NULL)) OR ((status = 'completed'::text) AND (accepted_at IS NOT NULL) AND (countdown_started_at IS NOT NULL) AND (scheduled_start_at IS NOT NULL) AND (started_at IS NOT NULL) AND (scheduled_end_at IS NOT NULL) AND (ended_at IS NOT NULL)) OR ((status = ANY (ARRAY['rejected'::text, 'expired'::text])) AND (accepted_at IS NULL) AND (countdown_started_at IS NULL) AND (started_at IS NULL) AND (ended_at IS NOT NULL)) OR ((status = 'cancelled'::text) AND (ended_at IS NOT NULL))))"
+        },
+        {
+          "conname": "live_battles_timeline_prefix_check",
+          "definition": "CHECK ((((accepted_at IS NOT NULL) OR ((countdown_started_at IS NULL) AND (scheduled_start_at IS NULL) AND (started_at IS NULL) AND (scheduled_end_at IS NULL))) AND ((countdown_started_at IS NOT NULL) OR ((scheduled_start_at IS NULL) AND (started_at IS NULL) AND (scheduled_end_at IS NULL))) AND ((started_at IS NOT NULL) OR (scheduled_end_at IS NULL)) AND ((scheduled_start_at IS NULL) OR (countdown_started_at IS NOT NULL)) AND ((countdown_started_at IS NULL) OR (scheduled_start_at = (countdown_started_at + '00:00:03'::interval))) AND ((started_at IS NULL) OR (started_at = scheduled_start_at)) AND ((scheduled_end_at IS NULL) OR (scheduled_end_at = (started_at + '00:05:00'::interval)))))"
+        },
+        {
+          "conname": "live_battles_updated_order_check",
+          "definition": "CHECK ((updated_at >= created_at))"
+        },
+        {
+          "conname": "live_battles_version_check",
+          "definition": "CHECK ((version >= 1))"
+        }
+      ],
+      "triggers": [
+        {
+          "tgname": "live_battles_initialize_power_states",
+          "definition": "CREATE TRIGGER live_battles_initialize_power_states AFTER INSERT ON public.live_battles FOR EACH ROW EXECUTE FUNCTION private.initialize_live_battle_power_states_trigger()"
+        },
+        {
+          "tgname": "live_battles_rule_set_immutable",
+          "definition": "CREATE TRIGGER live_battles_rule_set_immutable BEFORE UPDATE OF battle_rule_set_id ON public.live_battles FOR EACH ROW EXECUTE FUNCTION private.reject_live_battle_rule_set_change()"
+        },
+        {
+          "tgname": "live_battles_sync_public_states",
+          "definition": "CREATE TRIGGER live_battles_sync_public_states AFTER INSERT OR DELETE OR UPDATE ON public.live_battles FOR EACH ROW EXECUTE FUNCTION private.sync_live_battle_public_competitive_states()"
+        },
+        {
+          "tgname": "live_battles_sync_series_public_states",
+          "definition": "CREATE TRIGGER live_battles_sync_series_public_states AFTER INSERT OR DELETE OR UPDATE ON public.live_battles FOR EACH ROW EXECUTE FUNCTION private.sync_live_battle_public_states()"
+        }
+      ]
+    },
+    {
+      "table": "public.live_sessions",
+      "columns": [
+        {
+          "attname": "id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "host_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "title",
+          "type": "text",
+          "attnotnull": true
+        },
+        {
+          "attname": "status",
+          "type": "text",
+          "attnotnull": true
+        },
+        {
+          "attname": "viewer_count",
+          "type": "integer",
+          "attnotnull": true
+        },
+        {
+          "attname": "started_at",
+          "type": "timestamp with time zone",
+          "attnotnull": true
+        },
+        {
+          "attname": "ended_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "created_at",
+          "type": "timestamp with time zone",
+          "attnotnull": true
+        },
+        {
+          "attname": "last_heartbeat_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "host_disconnected_at",
+          "type": "timestamp with time zone",
+          "attnotnull": false
+        },
+        {
+          "attname": "end_reason",
+          "type": "text",
+          "attnotnull": false
+        }
+      ],
+      "constraints": [
+        {
+          "conname": "live_sessions_host_id_fkey",
+          "definition": "FOREIGN KEY (host_id) REFERENCES user_profiles(id)"
+        },
+        {
+          "conname": "live_sessions_pkey",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "conname": "live_sessions_status_check",
+          "definition": "CHECK ((status = ANY (ARRAY['live'::text, 'ended'::text])))"
+        }
+      ],
+      "triggers": []
+    },
+    {
+      "table": "public.live_control_events",
+      "columns": [
+        {
+          "attname": "id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "session_id",
+          "type": "uuid",
+          "attnotnull": true
+        },
+        {
+          "attname": "target_user_id",
+          "type": "uuid",
+          "attnotnull": false
+        },
+        {
+          "attname": "actor_user_id",
+          "type": "uuid",
+          "attnotnull": false
+        },
+        {
+          "attname": "event_type",
+          "type": "text",
+          "attnotnull": true
+        },
+        {
+          "attname": "payload",
+          "type": "jsonb",
+          "attnotnull": true
+        },
+        {
+          "attname": "created_at",
+          "type": "timestamp with time zone",
+          "attnotnull": true
+        }
+      ],
+      "constraints": [
+        {
+          "conname": "live_control_events_actor_user_id_fkey",
+          "definition": "FOREIGN KEY (actor_user_id) REFERENCES auth.users(id) ON DELETE CASCADE"
+        },
+        {
+          "conname": "live_control_events_event_type_check",
+          "definition": "CHECK ((event_type = ANY (ARRAY['presence_enter'::text, 'presence_leave'::text, 'request_join'::text, 'host_invite'::text, 'host_invite_response'::text, 'approve_join'::text, 'reject_join'::text, 'mute'::text, 'unmute'::text, 'lock_mic'::text, 'unlock_mic'::text, 'grant_floor'::text, 'revoke_floor'::text, 'remove_cohost'::text, 'timer_start'::text, 'timer_stop'::text, 'reaction'::text])))"
+        },
+        {
+          "conname": "live_control_events_pkey",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "conname": "live_control_events_session_id_fkey",
+          "definition": "FOREIGN KEY (session_id) REFERENCES live_sessions(id) ON DELETE CASCADE"
+        },
+        {
+          "conname": "live_control_events_target_user_id_fkey",
+          "definition": "FOREIGN KEY (target_user_id) REFERENCES auth.users(id) ON DELETE CASCADE"
+        }
+      ],
+      "triggers": []
+    }
+  ]
+}
