@@ -347,10 +347,10 @@ test('media repair adds no migration, polling, commerce, score, or lifecycle wri
   const migrations = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
     .filter(name => name.endsWith('.sql'))
     .sort();
-  assert.equal(
-    migrations.at(-1),
+  assert.deepEqual(migrations.slice(-2), [
     '20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql',
-  );
+    '20260905230823_live_gift_platform_commission_35.sql',
+  ]);
   const combined = `${relaySource}\n${controllerSource}\n${runtimeHookSource}`;
   assert.doesNotMatch(combined, /setInterval|polling|live_battle_transition|send_live_gift/);
   assert.doesNotMatch(combined, /financial_transactions|ledger_entries|wallet|marketplace/i);

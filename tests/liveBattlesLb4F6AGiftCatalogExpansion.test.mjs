@@ -63,10 +63,13 @@ const rangeCounts = rows => [
   rows.filter(gift => gift.cost >= 10000 && gift.cost <= 34999).length,
 ];
 
-test('F6-A is the sole official append-only migration after the protected F5 chain', async () => {
+test('F6-A remains the append-only catalog predecessor to the F8-A commission migration', async () => {
   const names = (await readdir(new URL('../supabase/migrations', import.meta.url)))
     .filter(name => name.endsWith('.sql')).sort();
-  assert.equal(names.at(-1), migrationName);
+  assert.deepEqual(names.slice(-2), [
+    migrationName,
+    '20260905230823_live_gift_platform_commission_35.sql',
+  ]);
   assert.match(migration, /^begin;/i);
   assert.match(migration, /commit;\s*$/i);
   assert.equal((migration.match(/insert into public\.gift_catalog/gi) ?? []).length, 1);

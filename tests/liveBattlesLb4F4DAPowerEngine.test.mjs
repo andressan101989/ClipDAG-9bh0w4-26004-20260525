@@ -30,6 +30,7 @@ test('F4D-A is the only migration after F4B and changes no UI, Edge or Realtime 
     '20260901231742_live_battles_lb4_f5_a_c3_c1_c1_strict_leave_lock_budget.sql',
     '20260902025229_live_battles_lb4_f5_a_c3_c1_c1_c1_lock_mode_boundary.sql',
     '20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql',
+    '20260905230823_live_gift_platform_commission_35.sql',
   ]);
   assert.doesNotMatch(migration, /alter publication|create policy/i);
   assert.doesNotMatch(migration, /atomic_ledger_transfer\s*\(|financial_transactions|ledger_entries/);

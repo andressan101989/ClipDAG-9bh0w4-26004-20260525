@@ -285,8 +285,8 @@ test('the canonical-side migration remains present at the audited F5-A frontier'
   assert.ok(sqlMigrations.includes(
     '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql',
   ));
-  assert.equal(
-    sqlMigrations.at(-1),
+  assert.deepEqual(sqlMigrations.slice(-2), [
     '20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql',
-  );
+    '20260905230823_live_gift_platform_commission_35.sql',
+  ]);
 });

@@ -312,10 +312,10 @@ test("visual closure retains no economic authority and keeps Build 22", () => {
   const migrations = readdirSync(join(root, "supabase/migrations"))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(
-    migrations.at(-1),
+  assert.deepEqual(migrations.slice(-2), [
     "20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql",
-  );
+    "20260905230823_live_gift_platform_commission_35.sql",
+  ]);
   assert.ok(migrations.includes("20260822221008_marketplace_post_settlement_delivery_ack_r2a_f1.sql"));
   assert.ok(migrations.includes("20260822165852_marketplace_post_settlement_returns_r2a.sql"));
   assert.ok(migrations.includes("20260822154610_marketplace_seller_dispute_awareness_r1c_f1c1.sql"));
