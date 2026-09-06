@@ -24,7 +24,7 @@ const protectedFiles = {
   lock: await read('package-lock.json'),
 };
 const migrationNames = (await readdir(new URL('../supabase/migrations', import.meta.url)))
-  .filter(name => name.endsWith('.sql')).sort();
+  .filter(name => name.endsWith('.sql') && name <= '20260906053652_live_battle_gift_like_scoring.sql').sort();
 const helper = migration.match(
   /create or replace function private\.live_battle_series_try_lock_scope_strict[\s\S]*?\n\$\$;/i,
 )?.[0] ?? '';

@@ -1,34 +1,55 @@
 import React, {
-  createContext, useState, useCallback, useEffect, useContext, useRef, ReactNode,
+  createContext, useState, useCallback, useEffect, useContext, useRef, type ReactNode,
 } from 'react';
-import { getSupabaseClient } from '@/template';
+import * as Notifications from 'expo-notifications';
 import { AuthContext } from './AuthContext';
 import { PollingManager } from '@/modules/realtime/PollingManager';
-import * as Notifications from 'expo-notifications';
+import {
+  acknowledgeChatDelivery,
+  createChatClientMessageId,
+  fetchChatConversations,
+  fetchChatUserProfile,
+  fetchRecentChatMessages,
+  getOrCreateDirectConversation,
+  markChatConversationRead,
+  sendChatMessage,
+  subscribeToChatChanges,
+} from '@/services/chatService';
+import type {
+  ChatDeliveryStatus, ChatMessageReceiptRow, ChatMessageRow,
+} from '@/services/chatContract';
 
 export interface Message {
   id: string;
+  conversationId?: string;
+  clientMessageId?: string;
   senderId: string;
   recipientId: string;
   text: string;
   mediaUrl?: string;
-  mediaType: 'text' | 'image' | 'video';
+  mediaType: 'text' | 'image' | 'video' | 'premium_dm';
   read: boolean;
+  deliveryStatus?: ChatDeliveryStatus;
   createdAt: string;
 }
 
 export interface Conversation {
+  id: string;
+  conversationId?: string;
   partnerId: string;
   partnerUsername: string;
   partnerAvatar: string;
   lastMessage: string;
   lastMessageAt: string;
   unreadCount: number;
+  otherUserId?: string;
+  otherUsername?: string;
+  otherUserAvatar?: string;
 }
 
 interface MessagesContextType {
   conversations: Conversation[];
-  messages: Record<string, Message[]>;    // keyed by partnerId
+  messages: Record<string, Message[]>;
   unreadTotal: number;
   isLoading: boolean;
   sendMessage: (recipientId: string, text: string, mediaUrl?: string, mediaType?: string) => Promise<void>;
@@ -39,357 +60,250 @@ interface MessagesContextType {
 
 export const MessagesContext = createContext<MessagesContextType | undefined>(undefined);
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-function mapMessage(row: Record<string, unknown>): Message {
+function mapMessage(row: ChatMessageRow): Message {
   return {
-    id: row.id as string,
-    senderId: row.sender_id as string,
-    recipientId: row.recipient_id as string,
-    text: (row.text as string) || '',
-    mediaUrl: (row.media_url as string) || undefined,
-    mediaType: ((row.media_type as string) || 'text') as Message['mediaType'],
+    id: row.id,
+    conversationId: row.conversation_id,
+    clientMessageId: row.client_message_id,
+    senderId: row.sender_id,
+    recipientId: row.recipient_id,
+    text: row.text || '',
+    mediaUrl: row.media_url || undefined,
+    mediaType: (['image', 'video', 'premium_dm'].includes(row.message_type) ? row.message_type : 'text') as Message['mediaType'],
     read: Boolean(row.read),
-    createdAt: (row.created_at as string) || new Date().toISOString(),
+    deliveryStatus: row.read ? 'read' : 'sent',
+    createdAt: row.created_at,
   };
 }
 
-export function MessagesProvider({ children }: { children: ReactNode }) {
-  // Guard getSupabaseClient() in a ref — same pattern as FeedContext/AuthContext.
-  // Calling it directly in the provider body throws when the backend is unavailable,
-  // which crashes the entire React tree ("TypeError: undefined is not a function").
-  const supabaseRef = useRef<ReturnType<typeof getSupabaseClient> | null>(null);
-  const supabaseOk  = useRef(true);
-  if (!supabaseRef.current) {
-    try { supabaseRef.current = getSupabaseClient(); }
-    catch (e) { console.warn('[MessagesContext] getSupabaseClient failed:', e); supabaseOk.current = false; }
+function mergeMessage(current: Message[], incoming: Message): Message[] {
+  const duplicateIndex = current.findIndex(message => message.id === incoming.id
+    || (incoming.clientMessageId && message.clientMessageId === incoming.clientMessageId));
+  if (duplicateIndex < 0) {
+    return [...current, incoming].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
   }
+  const next = [...current];
+  next[duplicateIndex] = incoming;
+  return next;
+}
+
+function receiptStatus(receipt: ChatMessageReceiptRow): ChatDeliveryStatus {
+  if (receipt.read_at || receipt.legacy_read) return 'read';
+  if (receipt.delivered_at || receipt.legacy_delivered) return 'delivered';
+  return 'sent';
+}
+
+export function MessagesProvider({ children }: { children: ReactNode }) {
   const authCtx = useContext(AuthContext);
   const user = authCtx?.user;
-
+  const activeUserRef = useRef<string | null>(user?.id ?? null);
+  const conversationIdsRef = useRef(new Map<string, string>());
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
   const [isLoading, setIsLoading] = useState(false);
-  // Polling key unique per user to prevent cross-user leaks on re-login
 
-  // ── Fetch conversations (latest message per partner) ─────────────────────
+  activeUserRef.current = user?.id ?? null;
+
   const fetchConversations = useCallback(async () => {
-    if (!user) return;
-    const supabase = supabaseRef.current;
-    if (!supabase || !supabaseOk.current) return;
+    const userId = user?.id;
+    if (!userId) return;
     try {
-      const { data, error } = await supabase
-        .from('messages')
-        .select(`
-          id, sender_id, recipient_id, text, media_type, read, created_at,
-          sender:user_profiles!messages_sender_id_fkey(username, avatar_url),
-          recipient:user_profiles!messages_recipient_id_fkey(username, avatar_url)
-        `)
-        .or(`sender_id.eq.${user.id},recipient_id.eq.${user.id}`)
-        .order('created_at', { ascending: false });
-
-      if (error || !data) return;
-
-      // Group by conversation partner
-      const convMap = new Map<string, Conversation>();
-      for (const row of data) {
-        const r = row as Record<string, unknown>;
-        const senderId = r.sender_id as string;
-        const recipientId = r.recipient_id as string;
-        const partnerId = senderId === user.id ? recipientId : senderId;
-
-        if (convMap.has(partnerId)) continue; // already have latest
-
-        const senderProfile = r.sender as Record<string, string> | null;
-        const recipientProfile = r.recipient as Record<string, string> | null;
-        const partnerProfile = senderId === user.id ? recipientProfile : senderProfile;
-
-        const isUnread = !Boolean(r.read) && recipientId === user.id;
-
-        convMap.set(partnerId, {
-          partnerId,
-          partnerUsername: partnerProfile?.username || 'Usuario',
-          partnerAvatar: partnerProfile?.avatar_url || '',
-          lastMessage: (r.text as string) || '',
-          lastMessageAt: (r.created_at as string) || '',
-          unreadCount: isUnread ? 1 : 0,
-        });
-      }
-
-      // Count unread per partner properly
-      const unreadCounts = new Map<string, number>();
-      for (const row of data) {
-        const r = row as Record<string, unknown>;
-        if ((r.recipient_id as string) === user.id && !Boolean(r.read)) {
-          const pid = r.sender_id as string;
-          unreadCounts.set(pid, (unreadCounts.get(pid) || 0) + 1);
-        }
-      }
-
-      const convList = Array.from(convMap.values()).map(c => ({
-        ...c,
-        unreadCount: unreadCounts.get(c.partnerId) || 0,
+      const rows = await fetchChatConversations();
+      if (activeUserRef.current !== userId) return;
+      setConversations(rows.map(row => {
+        conversationIdsRef.current.set(row.other_user_id, row.conversation_id);
+        return {
+          id: row.conversation_id,
+          conversationId: row.conversation_id,
+          partnerId: row.other_user_id,
+          partnerUsername: row.other_username || 'Usuario',
+          partnerAvatar: row.other_avatar_url || '',
+          lastMessage: row.last_message?.text || '',
+          lastMessageAt: row.last_message?.created_at || row.last_activity_at,
+          unreadCount: Number(row.unread_count) || 0,
+          otherUserId: row.other_user_id,
+          otherUsername: row.other_username || 'Usuario',
+          otherUserAvatar: row.other_avatar_url || '',
+        };
       }));
-
-      convList.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
-      setConversations(convList);
-    } catch (_) {}
-  }, [user]);
+    } catch (error) {
+      console.warn('[MessagesContext] conversation refresh failed', error);
+    }
+  }, [user?.id]);
 
   const refreshConversations = useCallback(async () => {
     setIsLoading(true);
     await fetchConversations();
-    setIsLoading(false);
-  }, [fetchConversations]);
+    if (activeUserRef.current === user?.id) setIsLoading(false);
+  }, [fetchConversations, user?.id]);
 
-  // ── Load messages with a specific user ──────────────────────────────────
   const loadConversation = useCallback(async (partnerId: string) => {
-    if (!user) return;
-    const supabase = supabaseRef.current;
-    if (!supabase || !supabaseOk.current) return;
+    const userId = user?.id;
+    if (!userId) return;
     try {
-      const [messagesResult, profileResult] = await Promise.all([
-        supabase
-          .from('messages')
-          .select('*')
-          .or(
-            `and(sender_id.eq.${user.id},recipient_id.eq.${partnerId}),and(sender_id.eq.${partnerId},recipient_id.eq.${user.id})`
-          )
-          .order('created_at', { ascending: true })
-          .limit(100),
-        // fetchConversations() only derives entries from existing message
-        // rows, so a brand-new chat (no messages sent yet) has no
-        // `conversations` entry at all — partnerAvatar/partnerUsername would
-        // be blank until the first message. Fetch the partner's profile
-        // directly here so the chat screen always has it.
-        supabase
-          .from('user_profiles')
-          .select('username, avatar_url')
-          .eq('id', partnerId)
-          .maybeSingle(),
+      const conversationId = conversationIdsRef.current.get(partnerId)
+        ?? await getOrCreateDirectConversation(partnerId);
+      conversationIdsRef.current.set(partnerId, conversationId);
+      const [rows, profile] = await Promise.all([
+        fetchRecentChatMessages(conversationId),
+        fetchChatUserProfile(partnerId),
       ]);
-
-      const { data, error } = messagesResult;
-      if (!error && data) {
-        setMessages(prev => ({
-          ...prev,
-          [partnerId]: data.map(r => mapMessage(r as Record<string, unknown>)),
-        }));
-      }
-
-      const partnerProfile = profileResult.data;
-      if (partnerProfile) {
-        setConversations(prev => {
-          const idx = prev.findIndex(c => c.partnerId === partnerId);
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = {
-              ...next[idx],
-              partnerUsername: partnerProfile.username || next[idx].partnerUsername,
-              partnerAvatar:   partnerProfile.avatar_url || next[idx].partnerAvatar,
-            };
-            return next;
-          }
-          // No conversation row yet (zero messages so far) — seed one so
-          // the chat header/avatar show correctly before anyone has sent
-          // anything.
-          return [
-            ...prev,
-            {
-              partnerId,
-              partnerUsername: partnerProfile.username || 'Usuario',
-              partnerAvatar:   partnerProfile.avatar_url || '',
-              lastMessage:     '',
-              lastMessageAt:   new Date(0).toISOString(),
-              unreadCount:     0,
-            },
-          ];
-        });
-      }
-    } catch (_) {}
-  }, [user]);
-
-  // ── Send a message ───────────────────────────────────────────────────────
-  const sendMessage = useCallback(async (
-    recipientId: string,
-    text: string,
-    mediaUrl?: string,
-    mediaType: string = 'text'
-  ) => {
-    if (!user || !text.trim()) return;
-    const supabase = supabaseRef.current;
-    if (!supabase || !supabaseOk.current) return;
-    const optimistic: Message = {
-      id: `opt_${Date.now()}`,
-      senderId: user.id,
-      recipientId,
-      text: text.trim(),
-      mediaUrl,
-      mediaType: mediaType as Message['mediaType'],
-      read: false,
-      createdAt: new Date().toISOString(),
-    };
-    // Optimistic insert
-    setMessages(prev => ({
-      ...prev,
-      [recipientId]: [...(prev[recipientId] || []), optimistic],
-    }));
-    // Update conversation preview
-    setConversations(prev => {
-      const idx = prev.findIndex(c => c.partnerId === recipientId);
-      const updated = { lastMessage: text.trim(), lastMessageAt: optimistic.createdAt };
-      if (idx >= 0) {
-        const conv = [...prev];
-        conv[idx] = { ...conv[idx], ...updated };
-        return conv;
-      }
-      return prev;
-    });
-
-    try {
-      const { data, error } = await supabase.from('messages').insert({
-        sender_id: user.id,
-        recipient_id: recipientId,
-        text: text.trim(),
-        media_url: mediaUrl || '',
-        media_type: mediaType,
-        read: false,
-      }).select().single();
-
-      if (!error && data) {
-        // Replace optimistic with real
-        setMessages(prev => ({
-          ...prev,
-          [recipientId]: (prev[recipientId] || []).map(m =>
-            m.id === optimistic.id ? mapMessage(data as Record<string, unknown>) : m
-          ),
-        }));
-      }
-    } catch (_) {}
-  }, [user]);
-
-  // ── Mark conversation as read ─────────────────────────────────────────────
-  const markConversationRead = useCallback(async (partnerId: string) => {
-    if (!user) return;
-    const supabase = supabaseRef.current;
-    if (!supabase || !supabaseOk.current) return;
-    try {
-      await supabase
-        .from('messages')
-        .update({ read: true })
-        .eq('recipient_id', user.id)
-        .eq('sender_id', partnerId)
-        .eq('read', false);
-
-      setConversations(prev =>
-        prev.map(c => c.partnerId === partnerId ? { ...c, unreadCount: 0 } : c)
-      );
-      setMessages(prev => ({
-        ...prev,
-        [partnerId]: (prev[partnerId] || []).map(m =>
-          m.recipientId === user.id ? { ...m, read: true } : m
-        ),
-      }));
-    } catch (_) {}
-  }, [user]);
-
-  // ── Realtime: deliver incoming messages instantly ─────────────────────────
-  // Previously this context had no Supabase Realtime subscription at all —
-  // new messages only ever appeared via the 3s/4s polling loops (usePolling
-  // in app/chat/[userId].tsx, PollingManager below), so a recipient with the
-  // chat open could wait up to ~3s to see a message that had already arrived
-  // in the database. This subscribes to INSERTs addressed to the current
-  // user and appends them to local state immediately — polling remains as a
-  // redundant fallback (its periodic full-refetch naturally reconciles/dedupes
-  // against whatever realtime already inserted).
-  useEffect(() => {
-    const supabase = supabaseRef.current;
-    if (!user?.id || !supabase || !supabaseOk.current) return;
-
-    const channel = supabase
-      .channel(`messages:recipient:${user.id}`)
-      .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'messages', filter: `recipient_id=eq.${user.id}`,
-      }, (payload: any) => {
-        const msg = mapMessage(payload.new as Record<string, unknown>);
-        const partnerId = msg.senderId;
-
-        setMessages(prev => {
-          const existing = prev[partnerId] || [];
-          if (existing.some(m => m.id === msg.id)) return prev; // already delivered
-          return { ...prev, [partnerId]: [...existing, msg] };
-        });
-
-        setConversations(prev => {
-          const idx = prev.findIndex(c => c.partnerId === partnerId);
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = {
-              ...next[idx],
-              lastMessage:   msg.text,
-              lastMessageAt: msg.createdAt,
-              unreadCount:   next[idx].unreadCount + 1,
-            };
-            return next;
-          }
-          // First-ever message from this partner — no conversation row yet.
-          // Seed one now, then fill in username/avatar once fetched so the
-          // list doesn't show "Usuario" until the next full refresh.
-          supabase.from('user_profiles').select('username, avatar_url').eq('id', partnerId).maybeSingle()
-            .then(({ data }) => {
-              if (!data) return;
-              setConversations(p => p.map(c => c.partnerId === partnerId
-                ? { ...c, partnerUsername: data.username || c.partnerUsername, partnerAvatar: data.avatar_url || c.partnerAvatar }
-                : c));
-            });
-          return [
-            ...prev,
-            {
-              partnerId,
-              partnerUsername: 'Usuario',
-              partnerAvatar:   '',
-              lastMessage:     msg.text,
-              lastMessageAt:   msg.createdAt,
-              unreadCount:     1,
-            },
-          ];
-        });
-      })
-      .subscribe();
-
-    return () => { channel.unsubscribe(); };
-  }, [user?.id]);
-
-  // ── Deferred polling — starts only after user auth, NOT on startup ────────
-  // Uses PollingManager instead of raw setInterval:
-  //   • Centralized scheduling (one master timer, not N independent intervals)
-  //   • Auto-pauses when app backgrounds (battery friendly)
-  //   • Auto-resumes on foreground with immediate run
-  useEffect(() => {
-    if (!user) {
-      PollingManager.unregister('messages_conversations');
-      return;
-    }
-    console.log('[BOOT] MessagesProvider — user ready, starting deferred poll');
-    const initDelay = setTimeout(() => {
-      PollingManager.register({
-        key:             'messages_conversations',
-        intervalMs:      4_000,
-        fn:              fetchConversations,
-        runImmediately:  true,
-        backgroundFactor: 0, // pause when app is in background
+      if (activeUserRef.current !== userId) return;
+      const ordered = rows.map(mapMessage).reverse();
+      setMessages(previous => ({ ...previous, [partnerId]: ordered }));
+      const incoming = rows.filter(row => row.recipient_id === userId && !row.read);
+      void Promise.all(incoming.map(row => acknowledgeChatDelivery(row.id))).catch(error => {
+        console.warn('[MessagesContext] delivery acknowledgement failed', error);
       });
-    }, 2000);
-    return () => {
-      clearTimeout(initDelay);
-      PollingManager.unregister('messages_conversations');
-    };
+      setConversations(previous => {
+        const existing = previous.find(item => item.partnerId === partnerId);
+        if (existing) {
+          return previous.map(item => item.partnerId === partnerId ? {
+            ...item, id: conversationId, conversationId,
+            partnerUsername: profile?.username || item.partnerUsername,
+            partnerAvatar: profile?.avatar_url || item.partnerAvatar,
+          } : item);
+        }
+        return [...previous, {
+          id: conversationId,
+          conversationId,
+          partnerId,
+          partnerUsername: profile?.username || 'Usuario',
+          partnerAvatar: profile?.avatar_url || '',
+          lastMessage: ordered.at(-1)?.text || '',
+          lastMessageAt: ordered.at(-1)?.createdAt || new Date(0).toISOString(),
+          unreadCount: incoming.length,
+          otherUserId: partnerId,
+          otherUsername: profile?.username || 'Usuario',
+          otherUserAvatar: profile?.avatar_url || '',
+        }];
+      });
+    } catch (error) {
+      console.warn('[MessagesContext] conversation load failed', error);
+    }
   }, [user?.id]);
 
-  const unreadTotal = conversations.reduce((s, c) => s + c.unreadCount, 0);
-  const applicationBadgeCount = user?.id ? unreadTotal : 0;
+  const sendMessage = useCallback(async (
+    recipientId: string, text: string, mediaUrl?: string, mediaType: string = 'text',
+  ) => {
+    const userId = user?.id;
+    const normalizedText = text.trim();
+    if (!userId || !normalizedText || !['text', 'image', 'video'].includes(mediaType)) return;
+    const clientMessageId = createChatClientMessageId();
+    const optimistic: Message = {
+      id: `opt_${clientMessageId}`, clientMessageId, senderId: userId, recipientId,
+      text: normalizedText, mediaUrl, mediaType: mediaType as Message['mediaType'], read: false,
+      deliveryStatus: 'pending', createdAt: new Date().toISOString(),
+    };
+    setMessages(previous => ({
+      ...previous, [recipientId]: mergeMessage(previous[recipientId] || [], optimistic),
+    }));
+
+    try {
+      const conversationId = conversationIdsRef.current.get(recipientId)
+        ?? await getOrCreateDirectConversation(recipientId);
+      conversationIdsRef.current.set(recipientId, conversationId);
+      const row = await sendChatMessage({
+        conversationId, clientMessageId, text: normalizedText,
+        messageType: mediaType as 'text' | 'image' | 'video', mediaUrl,
+      });
+      if (activeUserRef.current !== userId) return;
+      setMessages(previous => ({
+        ...previous,
+        [recipientId]: mergeMessage(previous[recipientId] || [], mapMessage(row)),
+      }));
+      await fetchConversations();
+    } catch (error) {
+      if (activeUserRef.current === userId) {
+        setMessages(previous => ({
+          ...previous,
+          [recipientId]: (previous[recipientId] || []).map(message =>
+            message.clientMessageId === clientMessageId
+              ? { ...message, deliveryStatus: 'failed' }
+              : message),
+        }));
+      }
+      console.warn('[MessagesContext] message send failed', error);
+    }
+  }, [fetchConversations, user?.id]);
+
+  const markConversationRead = useCallback(async (partnerId: string) => {
+    const userId = user?.id;
+    if (!userId) return;
+    try {
+      const conversationId = conversationIdsRef.current.get(partnerId)
+        ?? await getOrCreateDirectConversation(partnerId);
+      conversationIdsRef.current.set(partnerId, conversationId);
+      await markChatConversationRead(conversationId);
+      if (activeUserRef.current !== userId) return;
+      setConversations(previous => previous.map(conversation =>
+        conversation.partnerId === partnerId ? { ...conversation, unreadCount: 0 } : conversation));
+      setMessages(previous => ({
+        ...previous,
+        [partnerId]: (previous[partnerId] || []).map(message =>
+          message.recipientId === userId ? { ...message, read: true, deliveryStatus: 'read' } : message),
+      }));
+    } catch (error) {
+      console.warn('[MessagesContext] mark read failed', error);
+    }
+  }, [user?.id]);
 
   useEffect(() => {
-    Notifications.setBadgeCountAsync(applicationBadgeCount).catch(() => {});
+    const userId = user?.id;
+    const ownedConversationIds = conversationIdsRef.current;
+    setConversations([]);
+    setMessages({});
+    setIsLoading(Boolean(userId));
+    conversationIdsRef.current.clear();
+    PollingManager.unregister('messages_conversations');
+    if (!userId) return;
+
+    let active = true;
+    const reconcile = () => { if (active && activeUserRef.current === userId) void fetchConversations(); };
+    const unsubscribe = subscribeToChatChanges({
+      userId,
+      onMessage: row => {
+        if (!active || activeUserRef.current !== userId) return;
+        if (row.sender_id !== userId && row.recipient_id !== userId) return;
+        const partnerId = row.sender_id === userId ? row.recipient_id : row.sender_id;
+        conversationIdsRef.current.set(partnerId, row.conversation_id);
+        setMessages(previous => ({
+          ...previous,
+          [partnerId]: mergeMessage(previous[partnerId] || [], mapMessage(row)),
+        }));
+        if (row.recipient_id === userId) void acknowledgeChatDelivery(row.id).catch(() => undefined);
+        reconcile();
+      },
+      onReceipt: receipt => {
+        const deliveryStatus = receiptStatus(receipt);
+        setMessages(previous => Object.fromEntries(Object.entries(previous).map(([partnerId, rows]) => [
+          partnerId,
+          rows.map(message => message.id === receipt.message_id
+            ? { ...message, read: deliveryStatus === 'read', deliveryStatus }
+            : message),
+        ])));
+      },
+      onReconcile: reconcile,
+    });
+    void fetchConversations().finally(() => {
+      if (active && activeUserRef.current === userId) setIsLoading(false);
+    });
+    PollingManager.register({
+      key: 'messages_conversations', intervalMs: 30_000,
+      fn: fetchConversations, runImmediately: false, backgroundFactor: 0,
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+      PollingManager.unregister('messages_conversations');
+      ownedConversationIds.clear();
+    };
+  }, [fetchConversations, user?.id]);
+
+  const unreadTotal = conversations.reduce((total, conversation) => total + conversation.unreadCount, 0);
+  const applicationBadgeCount = user?.id ? unreadTotal : 0;
+  useEffect(() => {
+    Notifications.setBadgeCountAsync(applicationBadgeCount).catch(() => undefined);
   }, [applicationBadgeCount]);
 
   return (

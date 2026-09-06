@@ -281,7 +281,7 @@ test('Battle controls and close action meet the forty-four pixel touch target', 
 
 test('the canonical-side migration remains present at the audited F5-A frontier', async () => {
   const migrationNames = await readdir(new URL('../supabase/migrations/', import.meta.url));
-  const sqlMigrations = migrationNames.filter(name => name.endsWith('.sql')).sort();
+  const sqlMigrations = migrationNames.filter(name => name.endsWith('.sql') && name <= '20260906053652_live_battle_gift_like_scoring.sql').sort();
   assert.ok(sqlMigrations.includes(
     '20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql',
   ));

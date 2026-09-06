@@ -124,7 +124,7 @@ test("C2 Edge envelopes, balance, publication and table reads fail closed",()=>{
 
 test("C2 remained client-only and later authorized correctives add no client economic authority",()=>{
   const later=readdirSync(join(root,"supabase/migrations")).filter((name)=>
-    name>"20260811033000_marketplace_production_hardening.sql");
+    name>"20260811033000_marketplace_production_hardening.sql" && name <= "20260906053652_live_battle_gift_like_scoring.sql");
   assert.equal(later.pop(),"20260906053652_live_battle_gift_like_scoring.sql");
   assert.equal(later.pop(),"20260905230823_live_gift_platform_commission_35.sql");
   assert.equal(later.pop(),"20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql");

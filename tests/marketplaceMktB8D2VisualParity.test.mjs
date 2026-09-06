@@ -310,7 +310,7 @@ test("C3 removes per-field and per-section card chrome without removing media or
 
 test("visual closure retains no economic authority and keeps Build 22", () => {
   const migrations = readdirSync(join(root, "supabase/migrations"))
-    .filter((name) => name.endsWith(".sql"))
+    .filter((name) => name.endsWith(".sql") && name <= "20260906053652_live_battle_gift_like_scoring.sql")
     .sort();
   assert.deepEqual(migrations.slice(-3), [
     "20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql",

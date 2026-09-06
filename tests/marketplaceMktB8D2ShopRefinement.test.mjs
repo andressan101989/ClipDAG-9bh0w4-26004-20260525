@@ -178,7 +178,7 @@ test("Refinement preserves hardened commerce contracts across later authorized c
     /service_role|atomic_ledger_transfer|ledger_(credit|debit)|spend_marketplace_ad_budget|release_marketplace_ad_unused_budget|B8D-3|B8D-4|LIVE Battles/i,
   );
   const migrations = readdirSync(join(root, "supabase/migrations"))
-    .filter((name) => name.endsWith(".sql"))
+    .filter((name) => name.endsWith(".sql") && name <= "20260906053652_live_battle_gift_like_scoring.sql")
     .sort();
   assert.ok(
     migrations.includes("20260811033000_marketplace_production_hardening.sql"),

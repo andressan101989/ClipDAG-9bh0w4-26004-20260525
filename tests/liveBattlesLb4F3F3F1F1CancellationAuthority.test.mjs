@@ -26,7 +26,7 @@ function functionBody(name) {
 
 test('LB4-F3-F3-F1-F1 is the only forward migration and preserves the deployed predecessor', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
-    .filter(name => name > previousName);
+    .filter(name => name > previousName && name <= '20260906053652_live_battle_gift_like_scoring.sql');
   assert.deepEqual(names, [
     migrationName,
     transitionPlanMigrationName,

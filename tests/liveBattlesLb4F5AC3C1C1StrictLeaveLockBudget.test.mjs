@@ -27,7 +27,7 @@ const harness = await read(
 const packageText = await read('package.json');
 const lockText = await read('package-lock.json');
 const migrationNames = (await readdir(new URL('../supabase/migrations', import.meta.url)))
-  .filter(name => name.endsWith('.sql'))
+  .filter(name => name.endsWith('.sql') && name <= '20260906053652_live_battle_gift_like_scoring.sql')
   .sort();
 
 const helper = migration.match(

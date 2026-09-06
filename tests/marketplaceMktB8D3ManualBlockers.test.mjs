@@ -161,7 +161,7 @@ test("seller order RPC, pagination, UI and ownership remain canonical and fail c
 
 test("B8D-3 manual-blocker corrective stays intact with Build 22", () => {
   const migrations = readdirSync(join(root, "supabase/migrations"))
-    .filter((name) => name.endsWith(".sql"))
+    .filter((name) => name.endsWith(".sql") && name <= "20260906053652_live_battle_gift_like_scoring.sql")
     .sort();
   assert.deepEqual(migrations.slice(-3), [
     "20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql",

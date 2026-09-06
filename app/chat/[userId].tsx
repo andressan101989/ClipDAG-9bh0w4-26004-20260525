@@ -299,7 +299,7 @@ export default function ChatScreen() {
   // ── Poll via usePolling (pauses in background, no timer accumulation) ──
   usePolling({
     key:        pollKey,
-    intervalMs: 3_000,
+    intervalMs: 30_000,
     fn:         useCallback(() => { if (partnerId) loadConversation(partnerId); }, [partnerId, loadConversation]),
   });
 

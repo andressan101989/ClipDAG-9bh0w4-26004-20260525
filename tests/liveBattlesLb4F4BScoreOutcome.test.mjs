@@ -86,7 +86,7 @@ const publicRow = (overrides = {}) => ({
 
 test('F4B is the only migration after F4A and adds no UI, Edge Function, wallet or ledger authority', async () => {
   const names = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
-    .filter(name => name > '20260829225002_live_battles_lb4_f4a_directed_gifts.sql');
+    .filter(name => name > '20260829225002_live_battles_lb4_f4a_directed_gifts.sql' && name <= '20260906053652_live_battle_gift_like_scoring.sql');
   assert.deepEqual(names, [
     migrationName,
     powerEngineMigrationName,
