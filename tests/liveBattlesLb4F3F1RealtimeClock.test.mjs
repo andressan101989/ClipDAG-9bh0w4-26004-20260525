@@ -350,6 +350,7 @@ test('stage runtime arms one one-second timer and its unmount cleanup clears it'
       },
       '@expo/vector-icons': { MaterialIcons: 'MaterialIcons' },
       '@/components/live/LiveBattleViewerHUD': { LiveBattleViewerHUD: 'LiveBattleViewerHUD' },
+      '@/hooks/live/useRemoteVideoPresentationGrace': { useRemoteVideoPresentationGrace: surface => surface },
       '@/constants/theme': {
         Colors: new Proxy({}, { get: () => '#fff' }),
         FontSize: new Proxy({}, { get: () => 12 }),

@@ -88,7 +88,7 @@ function renderedStage(screen,state,uids){
   const react={createElement:element,Fragment:'Fragment',useState:v=>[typeof v==='function'?v():v,()=>{}],useMemo:fn=>fn(),useEffect(){}};
   const rn={...Object.fromEntries(['ActivityIndicator','Image','Pressable','Text','View'].map(x=>[x,x])),StyleSheet:{create:x=>x,absoluteFillObject:{}}};
   const theme=Object.fromEntries(['Colors','FontSize','FontWeight','Radius','Spacing'].map(k=>[k,new Proxy({},{get:()=>8})]));
-  const Stage=load(read('components/live/LiveBattleStage.tsx'),{'react':react,'react-native':rn,'@expo/vector-icons':{MaterialIcons:'Icon'},'@/constants/theme':theme,'@/components/live/LiveBattleViewerHUD':{LiveBattleViewerHUD:()=>null},'@/services/liveBattleSpectatorService':spectator}).LiveBattleStage;
+  const Stage=load(read('components/live/LiveBattleStage.tsx'),{'react':react,'react-native':rn,'@expo/vector-icons':{MaterialIcons:'Icon'},'@/constants/theme':theme,'@/components/live/LiveBattleViewerHUD':{LiveBattleViewerHUD:()=>null},'@/hooks/live/useRemoteVideoPresentationGrace':{useRemoteVideoPresentationGrace:surface=>surface},'@/services/liveBattleSpectatorService':spectator}).LiveBattleStage;
   const props={React:react,LiveBattleStage:Stage,battleState:state,battleProjection:{clockAnchor:null,clientState:'available'},insets:{top:0},user:{id:'host',username:'host'},session:{hostUsername:'host'},RtcSurfaceView:'NativeVideo',localVideoReady:true,isCameraOff:false,remoteUids:uids,styles:{battleVideo:{}},glovePending:false,gloveError:null,handleActivateBattleGlove(){}};
   return load('export const tree='+stage.getText(f),{},props).tree;
 }

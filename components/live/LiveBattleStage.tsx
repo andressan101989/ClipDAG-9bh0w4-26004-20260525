@@ -10,6 +10,7 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { LiveBattleViewerHUD } from '@/components/live/LiveBattleViewerHUD';
+import { useRemoteVideoPresentationGrace } from '@/hooks/live/useRemoteVideoPresentationGrace';
 import {
   deriveLiveBattleLocalCompetitiveState,
   deriveLiveBattlePowerVisualState,
@@ -131,6 +132,20 @@ export function LiveBattleStage({
   viewerMode = false,
   onDecisionClockTick,
 }: LiveBattleStageProps) {
+  const videoPresentationScope = {
+    battleId: state.battleId,
+    roundNumber: state.series?.roundNumber ?? null,
+    enabled: true,
+  };
+  const presentedLocalSurface = useRemoteVideoPresentationGrace(localSurface, {
+    ...videoPresentationScope,
+    opponentId: state.localHostUserId,
+    enabled: viewerMode,
+  });
+  const presentedOpponentSurface = useRemoteVideoPresentationGrace(opponentSurface, {
+    ...videoPresentationScope,
+    opponentId: state.opponentHostUserId,
+  });
   const [monotonicNow, setMonotonicNow] = useState<number | null>(
     () => clockAnchor ? readLiveBattleMonotonicNow() : null,
   );
@@ -230,8 +245,8 @@ export function LiveBattleStage({
   return (
     <View style={styles.root} pointerEvents="box-none" accessibilityLabel="Battle LIVE de dos anfitriones">
       <View style={styles.panels} pointerEvents="none">
-        <HostPanel identity={localHost} label={localLabel} surface={localSurface} side="local" />
-        <HostPanel identity={opponentHost} label="Rival" surface={opponentSurface} side="opponent" />
+        <HostPanel identity={localHost} label={localLabel} surface={presentedLocalSurface} side="local" />
+        <HostPanel identity={opponentHost} label="Rival" surface={presentedOpponentSurface} side="opponent" />
       </View>
       <View style={styles.centerDivider} pointerEvents="none" />
       {viewerMode ? (
