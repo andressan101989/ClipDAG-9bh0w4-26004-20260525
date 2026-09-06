@@ -1,0 +1,20 @@
+{
+  "typescript": {
+    "base": 237,
+    "c1": 237,
+    "added": [],
+    "removed": []
+  },
+  "lint": {
+    "base": 25,
+    "c1": 25,
+    "baseLevels": {
+      "warning": 11,
+      "warning extra": 7,
+      "error": 7
+    },
+    "added": [],
+    "removed": [],
+    "c1Functions": []
+  }
+}

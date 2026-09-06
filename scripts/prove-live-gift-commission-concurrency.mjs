@@ -83,7 +83,7 @@ async function snapshot() {
     (select balance::int from public.ledger_accounts where owner_id=$1 and account_type='user') sender,
     (select balance::int from public.ledger_accounts where owner_id=$3 and account_type='user') creator,
     (select balance::int from public.ledger_accounts where owner_id is null and account_type='platform') platform`,
-  [users[0], `${fixturePrefix}%`, users[1]]);
+  [users[0], `%${fixturePrefix}%`, users[1]]);
   return result.rows[0];
 }
 
@@ -166,6 +166,42 @@ try {
     (select rose_progress_units::int from public.live_battle_power_states where battle_id=$1 and side='challenger') roses`, [battle]);
   assert.deepEqual(battleEvidence.rows[0], { gifts: 1, score_events: 1, score: 5, roses: 1 });
   evidence.sameKeyBattle = { results: 2, ...battleEvidence.rows[0], creatorNet: 3, platformFee: 2 };
+
+  // Reuse precisely the Battle sender/key in normal LIVE, then retry BOTH.
+  const crossKey = `${fixturePrefix}battle-same`;
+  const crossLive = await first.query(liveSql, [sessions[0], 'rose', crossKey]);
+  assert.notEqual(crossLive.rows[0].transaction_id, sameBattle[0].rows[0].transaction_id);
+  const beforeRetries = await snapshot();
+  const retries = await Promise.all([
+    first.query(liveSql, [sessions[0], 'rose', crossKey]),
+    second.query(battleSql, [battle, users[1], 'rose', crossKey]),
+  ]);
+  assert.equal(retries[0].rows[0].transaction_id, crossLive.rows[0].transaction_id);
+  assert.equal(retries[1].rows[0].transaction_id, sameBattle[0].rows[0].transaction_id);
+  assert.deepEqual(await snapshot(), beforeRetries);
+  const crossJournal = await admin.query(`select g.battle_id is null normal_live,
+    count(e.id)::int entries, sum(case when e.entry_type='debit' then -e.amount else e.amount end)::int signed_sum,
+    count(*) filter(where a.owner_id is null and a.account_type='platform' and a.currency='BDAG'
+      and e.entry_type='credit' and e.amount=2)::int canonical_platform_credits
+    from public.live_gift_transactions g join public.financial_transactions f on f.id=g.financial_transaction_id
+    join public.ledger_entries e on e.metadata->>'fin_txn_id'=f.id::text
+    join public.ledger_accounts a on a.id=e.account_id
+    where g.sender_user_id=$1 and g.idempotency_key=$2 group by g.id order by normal_live`, [users[0], crossKey]);
+  assert.deepEqual(crossJournal.rows, [false,true].map(normal_live => ({normal_live,entries:3,signed_sum:0,canonical_platform_credits:1})));
+  evidence.crossContext = { gifts: 2, financial: 2, entries: 6, distinctIds: true, retriesUnchanged: true, journals: crossJournal.rows };
+
+  await admin.query("update public.live_sessions set status='ended',ended_at=clock_timestamp() where id=$1", [sessions[0]]);
+  await admin.query("update public.gift_catalog set active=false,enabled=false where id='rose'");
+  try {
+    const replay = await first.query(liveSql, [sessions[0], 'rose', crossKey]);
+    assert.equal(replay.rows[0].transaction_id, crossLive.rows[0].transaction_id);
+    assert.equal(Number(replay.rows[0].new_sender_balance), beforeRetries.sender);
+    assert.deepEqual(await snapshot(), beforeRetries);
+    evidence.closedReplay = { sameId: true, currentCanonicalBalance: beforeRetries.sender, addedGifts: 0, addedFinancial: 0, addedEntries: 0 };
+  } finally {
+    await admin.query("update public.gift_catalog set active=true,enabled=true where id='rose'");
+    await admin.query("update public.live_sessions set status='live',ended_at=null where id=$1", [sessions[0]]);
+  }
 
   await admin.query("update public.ledger_accounts set balance=5 where owner_id=$1 and account_type='user'", [users[0]]);
   const limited = await Promise.allSettled([

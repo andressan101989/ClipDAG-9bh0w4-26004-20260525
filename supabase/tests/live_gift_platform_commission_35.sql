@@ -92,7 +92,7 @@ insert into public.ledger_accounts (
 ) values (
   'f8a50000-0000-4000-8000-000000000001'::uuid,
   null, 'platform', 0, 'BDAG'
-);
+) on conflict do nothing;
 
 insert into public.live_battle_series (
   id, challenger_user_id, opponent_user_id,
@@ -397,5 +397,186 @@ begin
   end if;
 end;
 $$;
+
+-- Every C1 case gets its own PL/pgSQL subtransaction, including successful
+-- cases. This permits collecting every red failure without leaving fixtures.
+create temp table c1_results (name text, passed boolean, detail text);
+create function pg_temp.c1_economy() returns jsonb language sql as $$
+select pg_catalog.jsonb_build_object(
+  'gifts', (select pg_catalog.jsonb_agg(g order by g.id) from public.live_gift_transactions g),
+  'financial', (select pg_catalog.jsonb_agg(f order by f.id) from public.financial_transactions f),
+  'ledger', (select pg_catalog.jsonb_agg(e order by e.id) from public.ledger_entries e),
+  'accounts', (select pg_catalog.jsonb_agg(a order by a.id) from public.ledger_accounts a),
+  'score', (select pg_catalog.jsonb_agg(s order by s.battle_id) from public.live_battle_score_states s),
+  'events', (select pg_catalog.jsonb_agg(e order by e.id) from public.live_battle_score_events e),
+  'power', (select pg_catalog.jsonb_agg(p order by p.battle_id,p.side) from public.live_battle_power_states p),
+  'boost', (select pg_catalog.jsonb_agg(b order by b.id) from public.live_battle_boost_events b),
+  'idempotency', (select pg_catalog.jsonb_agg(i order by i.id) from public.idempotency_keys i)
+);
+$$;
+create function pg_temp.c1_case(p_name text, p_sql text) returns void language plpgsql as $$
+begin
+  begin
+    execute p_sql;
+    raise exception using errcode='ZX001', message='case_rollback';
+  exception
+    when sqlstate 'ZX001' then
+      insert into c1_results values(p_name,true,'all assertions passed; case rolled back');
+    when others then
+      insert into c1_results values(p_name,false,sqlstate || ': ' || sqlerrm);
+  end;
+end;
+$$;
+
+select pg_temp.c1_case('cross_context', $case$
+do $body$
+declare b record; l record; retry record; before_retry jsonb; ids uuid[];
+begin
+  select * into strict b from public.send_live_battle_gift(
+    pg_temp.f8_battle(),pg_temp.f8_user(2),'rose','f8-c1-cross');
+  select * into strict l from public.send_live_gift(pg_temp.f8_session(2),'rose','f8-c1-cross');
+  if l.transaction_id = b.transaction_id then
+    raise exception 'LIVE returned Battle ID: expected 2 gifts/2 financial/6 entries, got 1/1/3';
+  end if;
+  select pg_catalog.array_agg(financial_transaction_id) into ids
+    from public.live_gift_transactions where sender_user_id=pg_temp.f8_user(1) and idempotency_key='f8-c1-cross';
+  if pg_catalog.cardinality(ids) <> 2 or ids[1]=ids[2]
+    or (select count(*) from public.financial_transactions where id=any(ids))<>2
+    or (select count(*) from public.ledger_entries where (metadata->>'fin_txn_id')::uuid=any(ids))<>6
+    or exists(select 1 from public.ledger_entries where (metadata->>'fin_txn_id')::uuid=any(ids)
+      group by metadata->>'fin_txn_id' having sum(case when entry_type='debit' then -amount else amount end)<>0)
+    or not exists(select 1 from public.live_gift_transactions where id=l.transaction_id and battle_id is null)
+  then raise exception 'c1_cross_context_journal_invalid'; end if;
+  before_retry:=pg_temp.c1_economy();
+  select * into strict retry from public.send_live_gift(pg_temp.f8_session(2),'rose','f8-c1-cross');
+  if retry.transaction_id<>l.transaction_id then raise exception 'c1_live_retry_wrong_id'; end if;
+  select * into strict retry from public.send_live_battle_gift(pg_temp.f8_battle(),pg_temp.f8_user(2),'rose','f8-c1-cross');
+  if retry.transaction_id<>b.transaction_id or pg_temp.c1_economy()<>before_retry then raise exception 'c1_retry_moved_value'; end if;
+end $body$;
+$case$);
+
+select pg_temp.c1_case('replay_closed_inactive', $case$
+do $body$
+declare r record; before_retry jsonb;
+begin
+  update public.live_sessions set status='ended', ended_at=clock_timestamp() where id=pg_temp.f8_session(2);
+  update public.gift_catalog set active=false,enabled=false where id='rose';
+  before_retry:=pg_temp.c1_economy();
+  select * into strict r from public.send_live_gift(pg_temp.f8_session(2),'rose','f8-live-rose');
+  if r.transaction_id<>(select transaction_id from f8_live_result)
+    or r.new_sender_balance<>(select balance from public.ledger_accounts where owner_id=pg_temp.f8_user(1) and account_type='user' and currency='BDAG')
+    or pg_temp.c1_economy()<>before_retry then raise exception 'c1_closed_replay_moved_value'; end if;
+end $body$;
+$case$);
+
+select pg_temp.c1_case('conflicts_and_key_format', $case$
+do $body$
+declare before_request jsonb; v_session uuid; v_gift text; k text;
+begin
+  before_request:=pg_temp.c1_economy();
+  for v_session,v_gift in select * from (values(pg_temp.f8_session(3),'rose'),(pg_temp.f8_session(2),'heart')) t(s,g) loop
+    begin
+      perform public.send_live_gift(v_session,v_gift,'f8-live-rose');
+      raise exception 'c1_conflict_allowed';
+    exception when sqlstate '22023' then
+      if sqlerrm<>'live_gift_idempotency_conflict' then raise; end if;
+    end;
+  end loop;
+  foreach k in array array[null::text,'','   ',repeat('k',201)] loop
+    begin
+      perform public.send_live_gift(pg_temp.f8_session(2),'rose',k);
+      raise exception 'c1_invalid_key_allowed';
+    exception when sqlstate '22023' then null;
+    end;
+  end loop;
+  if pg_temp.c1_economy()<>before_request then raise exception 'c1_conflict_moved_value'; end if;
+  perform public.send_live_gift(pg_temp.f8_session(2),'rose',repeat('k',200));
+end $body$;
+$case$);
+
+-- Absence, a user-owned platform account, and a wrong-currency platform
+-- account must all reject in BOTH RPCs. Fixture mutations also roll back.
+select pg_temp.c1_case('platform_' || mode || '_' || context, pg_catalog.format($case$
+do $body$
+declare before_request jsonb; r record; returned_fee numeric; actual_credits bigint;
+begin
+  update public.ledger_accounts set account_type='escrow'
+    where owner_id is null and account_type='platform';
+  if %1$L='owned' then
+    insert into public.ledger_accounts(owner_id,account_type,balance,currency) values(pg_temp.f8_user(3),'platform',0,'BDAG');
+  elsif %1$L='currency' then
+    insert into public.ledger_accounts(owner_id,account_type,balance,currency) values(null,'platform',0,'USD');
+  end if;
+  before_request:=pg_temp.c1_economy();
+  begin
+    if %2$L='live' then
+      select * into strict r from public.send_live_gift(pg_temp.f8_session(2),'rose','f8-c1-platform');
+    else
+      select * into strict r from public.send_live_battle_gift(pg_temp.f8_battle(),pg_temp.f8_user(2),'rose','f8-c1-platform');
+    end if;
+  exception when sqlstate '55000' then
+    if sqlerrm<>'live_gift_journal_invalid' then raise; end if;
+    if pg_temp.c1_economy()<>before_request then raise exception 'c1_fail_closed_partial_state'; end if;
+    return;
+  end;
+  select (i.response_body->>'fee_collected')::numeric into returned_fee from public.idempotency_keys i
+    where user_id=pg_temp.f8_user(1) and idempotency_key like '%%f8-c1-platform';
+  select count(*) into actual_credits from public.ledger_entries e join public.ledger_accounts a on a.id=e.account_id
+    where e.metadata->>'fin_txn_id'=(select financial_transaction_id::text from public.live_gift_transactions where id=r.transaction_id)
+      and a.owner_id is null and a.account_type='platform' and a.currency='BDAG' and e.entry_type='credit' and e.amount=2;
+  raise exception 'fee_collected=%% canonical_platform_credits=%%; request incorrectly succeeded',returned_fee,actual_credits;
+end $body$;
+$case$,mode,context))
+from (values('absent'),('owned'),('currency')) m(mode)
+cross join (values('live'),('battle')) c(context);
+
+select pg_temp.c1_case('battle_x2_gross_score', $case$
+do $body$
+declare r record; before_sender numeric; before_creator numeric; before_platform numeric; before_score bigint; before_roses integer; f uuid;
+begin
+  insert into public.live_battle_boost_events(battle_id,side,kind,multiplier,starts_at,expires_at,
+    source_score_event_id,rule_set_id,rule_version)
+  select pg_temp.f8_battle(),'challenger','rose_x2',2,t.now_at,t.now_at+interval '30 seconds',
+    e.id,b.battle_rule_set_id,2
+  from public.live_battle_score_events e join public.live_battles b on b.id=e.battle_id
+  cross join (select clock_timestamp() now_at) t
+  where e.gift_transaction_id=(select transaction_id from f8_battle_result);
+  select balance into strict before_sender from public.ledger_accounts where owner_id=pg_temp.f8_user(1) and account_type='user' and currency='BDAG';
+  select balance into strict before_creator from public.ledger_accounts where owner_id=pg_temp.f8_user(2) and account_type='user' and currency='BDAG';
+  select balance into strict before_platform from public.ledger_accounts where owner_id is null and account_type='platform' and currency='BDAG';
+  select challenger_score into strict before_score from public.live_battle_score_states where battle_id=pg_temp.f8_battle();
+  select rose_progress_units into strict before_roses from public.live_battle_power_states where battle_id=pg_temp.f8_battle() and side='challenger';
+  select * into strict r from public.send_live_battle_gift(pg_temp.f8_battle(),pg_temp.f8_user(2),'rose','f8-c1-x2');
+  select financial_transaction_id into strict f from public.live_gift_transactions where id=r.transaction_id;
+  if (select balance from public.ledger_accounts where owner_id=pg_temp.f8_user(1) and account_type='user')<>before_sender-5
+    or (select balance from public.ledger_accounts where owner_id=pg_temp.f8_user(2) and account_type='user')<>before_creator+3
+    or (select balance from public.ledger_accounts where owner_id is null and account_type='platform')<>before_platform+2
+    or (select challenger_score from public.live_battle_score_states where battle_id=pg_temp.f8_battle())<>before_score+10
+    or (select rose_progress_units from public.live_battle_power_states where battle_id=pg_temp.f8_battle() and side='challenger')<>before_roses+1
+    or not exists(select 1 from public.live_battle_score_events where gift_transaction_id=r.transaction_id and base_points=5 and multiplier=2 and awarded_points=10)
+    or (select count(*) from public.ledger_entries where metadata->>'fin_txn_id'=f::text)<>3
+    or (select sum(case when entry_type='debit' then -amount else amount end) from public.ledger_entries where metadata->>'fin_txn_id'=f::text)<>0
+  then raise exception 'c1_x2_economy_score_roses_invalid'; end if;
+end $body$;
+$case$);
+
+select pg_temp.c1_case('private_verifier_acl', $case$
+do $body$
+declare role_name text; signature text:='private.verify_live_gift_journal(uuid,uuid,uuid,bigint,bigint,bigint,text,text,uuid)';
+begin
+  foreach role_name in array array['public','anon','authenticated','service_role'] loop
+    if pg_catalog.has_function_privilege(role_name,signature,'execute') then raise exception 'c1_private_acl_invalid'; end if;
+  end loop;
+  if not exists(select 1 from pg_catalog.pg_proc where oid=signature::regprocedure
+    and proowner='postgres'::regrole and not prosecdef and proconfig=array['search_path=""']) then
+    raise exception 'c1_private_owner_search_path_invalid';
+  end if;
+end $body$;
+$case$);
+
+select name,passed,detail from c1_results order by name;
+do $$ begin
+  if exists(select 1 from c1_results where not passed) then raise exception 'c1_postconditions_failed'; end if;
+end $$;
 
 rollback;

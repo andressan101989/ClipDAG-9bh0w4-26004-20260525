@@ -57,6 +57,63 @@ const lfHash = content => createHash('sha256')
   .update(content.replace(/\r\n/g, '\n'))
   .digest('hex');
 
+const sqlCode = body => body.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').toLowerCase();
+
+test('C1 LIVE replay query is isolated from Battle within the actual WHERE clause', () => {
+  const live = sqlCode(latestFunctionBody('send_live_gift'));
+  const replay = live.match(/from public\.live_gift_transactions as gift (where [^;]+);/)[1];
+  assert.ok(replay.includes('and gift.battle_id is null'), 'LIVE replay must exclude Battle');
+  assert.ok(replay.includes('gift.sender_user_id = v_sender'));
+  assert.ok(replay.includes('gift.idempotency_key = p_idempotency_key'));
+});
+
+test('C1 authenticated bounded key and lock precede replay, which precedes mutable authority', () => {
+  const live = sqlCode(latestFunctionBody('send_live_gift'));
+  const replay = live.indexOf('from public.live_gift_transactions as gift');
+  const returned = live.indexOf('return;', replay);
+  assert.ok(live.indexOf('auth.uid()') < replay);
+  assert.ok(live.indexOf('pg_advisory_xact_lock(') < replay);
+  assert.ok(returned < live.indexOf('from public.live_sessions as session'), 'replay before session lookup');
+  assert.ok(returned < live.indexOf('from public.gift_catalog as catalog'), 'replay before catalog lookup');
+  const keyLimit = live.indexOf('pg_catalog.length(p_idempotency_key) > 200');
+  assert.ok(keyLimit >= 0 && keyLimit < live.indexOf('pg_advisory_xact_lock('));
+});
+
+test('C1 both RPCs verify canonical real journal after transfer and before gift insertion', () => {
+  for (const name of ['send_live_gift', 'send_live_battle_gift']) {
+    const body = sqlCode(latestFunctionBody(name));
+    const verify = body.indexOf('perform private.verify_live_gift_journal(');
+    assert.ok(verify > body.indexOf('public.atomic_ledger_transfer('), `${name}: verify after transfer`);
+    assert.ok(verify < body.indexOf('insert into public.live_gift_transactions'), `${name}: verify before gift`);
+    assert.equal(body.split('perform private.verify_live_gift_journal(').length - 1, 1);
+  }
+  const helper = sqlCode(f8.match(/create or replace function private\.verify_live_gift_journal\([\s\S]*?\n\$\$;/)?.[0] ?? '');
+  assert.ok(helper.includes("account.owner_id is null and account.account_type = 'platform' and account.currency = 'bdag'"));
+  assert.ok(helper.includes('from public.ledger_entries as entry'));
+  assert.ok(helper.includes('from public.financial_transactions as financial'));
+  assert.ok(helper.includes("entry.account_id = v_platform_account and entry.entry_type = 'credit' and entry.amount = p_fee"));
+  assert.ok(helper.includes('v_signed_sum is distinct from 0'));
+  assert.ok(helper.includes('entry.amount <= 0'));
+  assert.ok(helper.includes("security invoker set search_path = ''"));
+  assert.ok(!helper.includes('limit 1'));
+  for (const required of [
+    "where account.owner_id = p_sender and account.account_type = 'user' and account.currency = 'bdag'",
+    "where account.owner_id = p_receiver and account.account_type = 'user' and account.currency = 'bdag'",
+    'financial.from_account_id = v_sender_account', 'financial.to_account_id = v_creator_account',
+    'financial.initiated_by = p_sender', 'financial.amount = p_gross and financial.fee_amount = p_fee',
+    "financial.currency = 'bdag' and financial.status = 'completed'", "financial.operation_type = 'live_gift'",
+    'financial.idempotency_key = p_idempotency_key', 'financial.reference_type = p_reference_type',
+    'financial.reference_id = p_reference_id::text', "entry.metadata ->> 'fin_txn_id' = p_financial_id::text",
+    'v_entries <> (case when p_fee > 0 then 3 else 2 end)', 'v_debits <> 1 or v_creator_credits <> 1',
+    'v_platform_credits <> (case when p_fee > 0 then 1 else 0 end)', 'v_invalid_entries <> 0',
+  ]) assert.ok(helper.includes(required), required);
+  assert.match(f8, /revoke all on function private\.verify_live_gift_journal\(uuid, uuid, uuid, bigint, bigint, bigint, text, text, uuid\)\s+from public, anon, authenticated, service_role;/);
+  assert.match(f8, /alter function private\.verify_live_gift_journal\(uuid, uuid, uuid, bigint, bigint, bigint, text, text, uuid\) owner to postgres;/);
+  assert.deepEqual([...sqlCode(f8).matchAll(/create or replace function ([\w.]+)\(/g)].map(m=>m[1]), [
+    'private.live_gift_commission_split','private.verify_live_gift_journal','public.send_live_gift','public.send_live_battle_gift',
+  ]);
+});
+
 test('approved 3500 bps half-up examples are exact', () => {
   assert.deepEqual([1, 5, 10, 20, 100].map(gross => [gross, ...Object.values(split(gross))]), [
     [1, 0, 1],
@@ -107,6 +164,8 @@ test('public RPC signatures and the canonical atomic journal remain single-path'
     assert.match(body, /fee_collected/);
     assert.match(body, /live_gift_commission_v1_3500bps_half_up/);
     assert.doesNotMatch(body, /p_(?:price|cost|fee|commission|platform_account)/i);
+    assert.doesNotMatch(sqlCode(body), /\b(?:ledger_debit|ledger_credit|transfer_bdag_internal|ensure_ledger_account)\s*\(/);
+    assert.doesNotMatch(sqlCode(body), /\b(?:insert into|update|delete from) public\.(?:ledger_accounts|ledger_entries|financial_transactions)\b/);
   }
 });
 
@@ -172,6 +231,11 @@ test('disposable SQL proof covers LIVE, Battle, zero-fee, failure and rollback',
     'f8_insufficient_balance_moved_value',
     'f8_function_acl_invalid',
     'f8_exact_operation_cardinality_invalid',
+    'c1_cross_context_journal_invalid',
+    'c1_closed_replay_moved_value',
+    'c1_fail_closed_partial_state',
+    'c1_x2_economy_score_roses_invalid',
+    'c1_private_owner_search_path_invalid',
   ]) assert.match(proof, new RegExp(marker));
   assert.match(proof, /platform_fee_coins = 2[\s\S]*creator_amount_coins = 3/);
   assert.match(proof, /base_points = 5 and multiplier = 1 and awarded_points = 5/);

@@ -1,0 +1,72 @@
+[
+  {
+    "file": "package.json",
+    "expected": "67b0b13e81b3b4d89fa068205636a6c6c55abe52856d5256beb0d39bcc50f3c0",
+    "actual": "67b0b13e81b3b4d89fa068205636a6c6c55abe52856d5256beb0d39bcc50f3c0",
+    "unchanged": true
+  },
+  {
+    "file": "package-lock.json",
+    "expected": "9563f6480ec75a028a4580025d68884aca731c7836320ee148785156b0c40bf4",
+    "actual": "9563f6480ec75a028a4580025d68884aca731c7836320ee148785156b0c40bf4",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260830053531_live_battles_lb4_f4d_a_power_engine.sql",
+    "expected": "3803e2fbcd23e7c63f5cff45e1ff5994b61011f3e3fdf89fa0166bd6efb3ab25",
+    "actual": "3803e2fbcd23e7c63f5cff45e1ff5994b61011f3e3fdf89fa0166bd6efb3ab25",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260830162244_live_battles_lb4_f4d_b_power_projection.sql",
+    "expected": "60955601e14619f34e71c0ccc782a109530e76cbe63f14cacb1db6b34f660dd6",
+    "actual": "60955601e14619f34e71c0ccc782a109530e76cbe63f14cacb1db6b34f660dd6",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql",
+    "expected": "f5cd23b73c943ce15c5dddbbf35ed9200e0ae8ef10af883d08ecd67c7a423d17",
+    "actual": "f5cd23b73c943ce15c5dddbbf35ed9200e0ae8ef10af883d08ecd67c7a423d17",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql",
+    "expected": "5ca7cb6a284a40fba7886ff8f31fbf64e888d1a20a8694f01177d00fe970de45",
+    "actual": "5ca7cb6a284a40fba7886ff8f31fbf64e888d1a20a8694f01177d00fe970de45",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260901201459_live_battles_lb4_f5_a_c3_active_series_leave.sql",
+    "expected": "64b94397de5a7f31449f6a025eb458a41b35f0e936b23eeb79ae379e0b7751bd",
+    "actual": "64b94397de5a7f31449f6a025eb458a41b35f0e936b23eeb79ae379e0b7751bd",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260901211549_live_battles_lb4_f5_a_c3_c1_bounded_leave_retry.sql",
+    "expected": "1da58dbf6ab85c5953c227d6cc2b2904bc4346a58ff5ca58054b010000bb5237",
+    "actual": "1da58dbf6ab85c5953c227d6cc2b2904bc4346a58ff5ca58054b010000bb5237",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260901231742_live_battles_lb4_f5_a_c3_c1_c1_strict_leave_lock_budget.sql",
+    "expected": "dc1e075772ae152cd27cba7707efa263fe7ab3510e32a1bed2aa95278fae96f9",
+    "actual": "dc1e075772ae152cd27cba7707efa263fe7ab3510e32a1bed2aa95278fae96f9",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260902025229_live_battles_lb4_f5_a_c3_c1_c1_c1_lock_mode_boundary.sql",
+    "expected": "38e169c397438bedb9f80deb7fbd231aca30fe19c5a4d2af87e88a684d25f663",
+    "actual": "38e169c397438bedb9f80deb7fbd231aca30fe19c5a4d2af87e88a684d25f663",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql",
+    "expected": "8adfe6b93e1164dd53242523a3e5b3096e71f5e1ab8869d49c7e2e628c629dbf",
+    "actual": "8adfe6b93e1164dd53242523a3e5b3096e71f5e1ab8869d49c7e2e628c629dbf",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260905230823_live_gift_platform_commission_35.sql",
+    "actual": "63a1baa0a7ae9c29c55caa08ffc3a3bb1fa1f9ab5d806d3094ebc295a3058d89"
+  }
+]

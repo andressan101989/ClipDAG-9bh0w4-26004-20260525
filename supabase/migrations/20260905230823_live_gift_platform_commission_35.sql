@@ -37,6 +37,106 @@ begin
 end;
 $$;
 
+-- Verify persisted accounting evidence; the transfer response is not a receipt.
+-- Invoker-only: reachable solely through the postgres-owned gift RPCs.
+create or replace function private.verify_live_gift_journal(
+  p_financial_id uuid,
+  p_sender uuid,
+  p_receiver uuid,
+  p_gross bigint,
+  p_fee bigint,
+  p_creator_net bigint,
+  p_idempotency_key text,
+  p_reference_type text,
+  p_reference_id uuid
+)
+returns void
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_sender_account uuid;
+  v_creator_account uuid;
+  v_platform_account uuid;
+  v_entries bigint;
+  v_debits bigint;
+  v_creator_credits bigint;
+  v_platform_credits bigint;
+  v_invalid_entries bigint;
+  v_journals bigint;
+  v_signed_sum numeric;
+begin
+  if p_financial_id is null or p_sender is null or p_receiver is null
+     or p_sender = p_receiver or p_gross is null or p_gross <= 0
+     or p_fee is null or p_fee < 0 or p_creator_net is null or p_creator_net <= 0
+     or p_gross::numeric <> p_fee::numeric + p_creator_net::numeric
+     or p_idempotency_key is null or p_reference_id is null
+     or p_reference_type is null or p_reference_type not in ('live_session', 'live_battle') then
+    raise exception using errcode = '55000', message = 'live_gift_journal_invalid';
+  end if;
+
+  select account.id into strict v_sender_account
+  from public.ledger_accounts as account
+  where account.owner_id = p_sender and account.account_type = 'user' and account.currency = 'BDAG';
+  select account.id into strict v_creator_account
+  from public.ledger_accounts as account
+  where account.owner_id = p_receiver and account.account_type = 'user' and account.currency = 'BDAG';
+  if p_fee > 0 then
+    select account.id into strict v_platform_account
+    from public.ledger_accounts as account
+    where account.owner_id is null and account.account_type = 'platform' and account.currency = 'BDAG';
+  end if;
+
+  if not exists (
+    select 1 from public.financial_transactions as financial
+    where financial.id = p_financial_id
+      and financial.from_account_id = v_sender_account
+      and financial.to_account_id = v_creator_account
+      and financial.initiated_by = p_sender
+      and financial.amount = p_gross and financial.fee_amount = p_fee
+      and financial.currency = 'BDAG' and financial.status = 'completed'
+      and financial.operation_type = 'live_gift'
+      and financial.idempotency_key = p_idempotency_key
+      and financial.reference_type = p_reference_type
+      and financial.reference_id = p_reference_id::text
+  ) then
+    raise exception using errcode = '55000', message = 'live_gift_journal_invalid';
+  end if;
+
+  select pg_catalog.count(*),
+    pg_catalog.count(*) filter (where entry.account_id = v_sender_account and entry.entry_type = 'debit' and entry.amount = p_gross),
+    pg_catalog.count(*) filter (where entry.account_id = v_creator_account and entry.entry_type = 'credit' and entry.amount = p_creator_net),
+    pg_catalog.count(*) filter (where entry.account_id = v_platform_account and entry.entry_type = 'credit' and entry.amount = p_fee),
+    pg_catalog.count(*) filter (where entry.amount is null or entry.amount <= 0 or entry.entry_type is null or entry.entry_type not in ('debit', 'credit')),
+    pg_catalog.count(distinct entry.txn_id),
+    pg_catalog.sum(case when entry.entry_type = 'debit' then -entry.amount else entry.amount end)
+  into v_entries, v_debits, v_creator_credits, v_platform_credits,
+       v_invalid_entries, v_journals, v_signed_sum
+  from public.ledger_entries as entry
+  where entry.metadata ->> 'fin_txn_id' = p_financial_id::text;
+
+  if v_entries <> (case when p_fee > 0 then 3 else 2 end)
+     or v_debits <> 1 or v_creator_credits <> 1
+     or v_platform_credits <> (case when p_fee > 0 then 1 else 0 end)
+     or v_invalid_entries <> 0 or v_journals <> 1
+     or v_signed_sum is distinct from 0
+     or exists (
+       select 1 from public.ledger_entries as extra
+       where extra.txn_id in (
+         select entry.txn_id from public.ledger_entries as entry
+         where entry.metadata ->> 'fin_txn_id' = p_financial_id::text
+       ) and (extra.metadata ->> 'fin_txn_id') is distinct from p_financial_id::text
+     ) then
+    raise exception using errcode = '55000', message = 'live_gift_journal_invalid';
+  end if;
+exception
+  when no_data_found or too_many_rows then
+    raise exception using errcode = '55000', message = 'live_gift_journal_invalid';
+end;
+$$;
+
+
 create or replace function public.send_live_gift(
   p_session_id uuid,
   p_gift_id text,
@@ -82,8 +182,49 @@ begin
   end if;
 
   if p_idempotency_key is null
-     or pg_catalog.length(pg_catalog.btrim(p_idempotency_key)) = 0 then
+     or pg_catalog.length(pg_catalog.btrim(p_idempotency_key)) = 0
+     or pg_catalog.length(p_idempotency_key) > 200 then
     raise exception 'idempotency_key required' using errcode = '22023';
+  end if;
+
+  -- Serialize only retries that share the sender/key.  The ledger core also
+  -- scopes idempotency this way, so a concurrent retry cannot race past the
+  -- canonical gift row after the financial journal commits.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      'live_gift:' || v_sender::text || ':' || p_idempotency_key,
+      0
+    )
+  );
+
+  select gift.id, gift.gift_id, gift.emoji, gift.amount_coins,
+         gift.creator_amount_coins, gift.receiver_user_id, gift.session_id
+    into v_existing_id, v_existing_gift_id, v_existing_emoji,
+         v_existing_amount, v_existing_creator_amount, v_existing_receiver,
+         v_existing_session
+  from public.live_gift_transactions as gift
+  where gift.sender_user_id = v_sender
+    and gift.idempotency_key = p_idempotency_key
+    and gift.battle_id is null
+  order by gift.created_at desc, gift.id desc
+  limit 1;
+
+  if found then
+    if v_existing_session is distinct from p_session_id
+       or v_existing_gift_id is distinct from p_gift_id then
+      raise exception using
+        errcode = '22023', message = 'live_gift_idempotency_conflict';
+    end if;
+    select account.balance into v_sender_balance
+    from public.ledger_accounts as account
+    where account.owner_id = v_sender and account.account_type = 'user'
+      and account.currency = 'BDAG';
+
+    return query select
+      v_existing_id, v_existing_gift_id, v_existing_emoji,
+      v_existing_amount, v_existing_creator_amount,
+      coalesce(v_sender_balance, 0), v_existing_receiver;
+    return;
   end if;
 
   select session.status, session.host_id into v_status, v_receiver
@@ -109,44 +250,6 @@ begin
     raise exception 'gift not found or inactive' using errcode = 'P0002';
   end if;
 
-  -- Serialize only retries that share the sender/key.  The ledger core also
-  -- scopes idempotency this way, so a concurrent retry cannot race past the
-  -- canonical gift row after the financial journal commits.
-  perform pg_catalog.pg_advisory_xact_lock(
-    pg_catalog.hashtextextended(
-      'live_gift:' || v_sender::text || ':' || p_idempotency_key,
-      0
-    )
-  );
-
-  select gift.id, gift.gift_id, gift.emoji, gift.amount_coins,
-         gift.creator_amount_coins, gift.receiver_user_id, gift.session_id
-    into v_existing_id, v_existing_gift_id, v_existing_emoji,
-         v_existing_amount, v_existing_creator_amount, v_existing_receiver,
-         v_existing_session
-  from public.live_gift_transactions as gift
-  where gift.sender_user_id = v_sender
-    and gift.idempotency_key = p_idempotency_key
-  order by gift.created_at desc, gift.id desc
-  limit 1;
-
-  if found then
-    if v_existing_session is distinct from p_session_id
-       or v_existing_gift_id is distinct from p_gift_id then
-      raise exception using
-        errcode = '22023', message = 'live_gift_idempotency_conflict';
-    end if;
-    select account.balance into v_sender_balance
-    from public.ledger_accounts as account
-    where account.owner_id = v_sender and account.account_type = 'user';
-
-    return query select
-      v_existing_id, v_existing_gift_id, v_existing_emoji,
-      v_existing_amount, v_existing_creator_amount,
-      coalesce(v_sender_balance, 0), v_existing_receiver;
-    return;
-  end if;
-
   select split.platform_fee_amount::integer,
          split.creator_net_amount::integer
     into strict v_fee, v_creator_amount
@@ -170,6 +273,12 @@ begin
     raise exception using
       errcode = '55000', message = 'live_gift_financial_result_invalid';
   end if;
+
+  perform private.verify_live_gift_journal(
+    v_fin_txn_id, v_sender, v_receiver, v_gift_cost::bigint,
+    v_fee::bigint, v_creator_amount::bigint,
+    p_idempotency_key, 'live_session', p_session_id
+  );
 
   insert into public.live_gift_transactions (
     session_id, sender_user_id, receiver_user_id, gift_id, emoji,
@@ -259,7 +368,8 @@ begin
     );
     select account.balance into v_sender_balance
     from public.ledger_accounts as account
-    where account.owner_id = v_sender and account.account_type = 'user';
+    where account.owner_id = v_sender and account.account_type = 'user'
+      and account.currency = 'BDAG';
     return query select
       v_existing.id, v_existing.battle_id, v_existing.session_id,
       v_existing.gift_id, v_existing.emoji, v_existing.amount_coins,
@@ -324,6 +434,12 @@ begin
       errcode = '55000', message = 'live_battle_gift_financial_result_invalid';
   end if;
 
+  perform private.verify_live_gift_journal(
+    v_financial_transaction_id, v_sender, p_target_user_id, v_gift.cost_coins::bigint,
+    v_fee::bigint, v_creator_amount::bigint,
+    v_ledger_idempotency_key, 'live_battle', p_battle_id
+  );
+
   insert into public.live_gift_transactions (
     session_id, sender_user_id, receiver_user_id, gift_id, emoji,
     amount_coins, platform_fee_coins, creator_amount_coins, idempotency_key,
@@ -344,6 +460,10 @@ begin
     p_target_user_id;
 end;
 $$;
+
+alter function private.verify_live_gift_journal(uuid, uuid, uuid, bigint, bigint, bigint, text, text, uuid) owner to postgres;
+revoke all on function private.verify_live_gift_journal(uuid, uuid, uuid, bigint, bigint, bigint, text, text, uuid)
+  from public, anon, authenticated, service_role;
 
 alter function private.live_gift_commission_split(bigint) owner to postgres;
 alter function public.send_live_gift(uuid, text, text) owner to postgres;

@@ -1,0 +1,19 @@
+{
+  "baseBranch": "codex/lb4-f8-a-live-battle-commission",
+  "baseLocal": "f86a97b370e3b8b34e554c22e541b352bfc6b766",
+  "baseUpstream": "f86a97b370e3b8b34e554c22e541b352bfc6b766",
+  "baseOrigin": "f86a97b370e3b8b34e554c22e541b352bfc6b766",
+  "baseLsRemote": "f86a97b370e3b8b34e554c22e541b352bfc6b766",
+  "baseWorktreeClean": true,
+  "newBranch": "codex/lb4-f8-a-c1-idempotency-ledger-integrity",
+  "newWorktreeStartedAtExactBaseClean": true,
+  "integrationLocalOriginAndLsRemote": "9616f7ce5998017233b15d9eeb39740112e4bec6",
+  "productionCheck": {
+    "tool": "Supabase MCP list_migrations (read only)",
+    "projectName": "ClipDag",
+    "migration": "20260905230823_live_gift_platform_commission_35.sql",
+    "applied": false,
+    "latestRecordedVersion": "20260902141502",
+    "beforeImplementation": true
+  }
+}
