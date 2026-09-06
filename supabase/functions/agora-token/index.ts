@@ -469,6 +469,9 @@ serve(async (req) => {
       const sourceRelayUid = 0;
       const destinationRelayUid = numericUid;
       const issuedAtSec = Math.floor(requestNow.getTime() / 1000);
+      const relayExpiresAt = new Date(
+        (issuedAtSec + authorization.expiresIn) * 1000,
+      ).toISOString();
       const [sourceToken, destinationToken] = await Promise.all([
         buildToken({
           appId: AGORA_APP_ID,
@@ -505,14 +508,17 @@ serve(async (req) => {
             channel: authorization.sourceSessionId,
             uid: sourceRelayUid,
             token: sourceToken,
+            expiresAt: relayExpiresAt,
           },
           destination: {
             liveSessionId: authorization.destinationSessionId,
             channel: authorization.destinationSessionId,
             uid: destinationRelayUid,
             token: destinationToken,
+            expiresAt: relayExpiresAt,
           },
           expiresIn: authorization.expiresIn,
+          issuedAt: new Date(issuedAtSec * 1000).toISOString(),
         },
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

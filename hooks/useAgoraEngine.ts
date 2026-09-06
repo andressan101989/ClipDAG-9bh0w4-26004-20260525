@@ -37,7 +37,7 @@ export function useAgoraEngine(_params: UseAgoraEngineParams) {
     speakerOn:   false,
     localVideoReady: false,
     getEngine:   () => null,
-    beginRemoteVideoTransition: (_uid: number) => undefined,
+    beginRemoteVideoTransition: (_uid: number, _durationMs?: number) => undefined,
     clearRemoteVideoTransition: (_uid?: number) => undefined,
     registerBeforeEngineRelease: (_listener: (engine: unknown) => void) => () => undefined,
     join:        async () => {},

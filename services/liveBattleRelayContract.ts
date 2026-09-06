@@ -4,6 +4,7 @@ export type LiveBattleRelayState =
   | 'idle'
   | 'authorizing'
   | 'connecting'
+  | 'recovering'
   | 'running'
   | 'stopping'
   | 'failed';
@@ -13,6 +14,7 @@ export interface LiveBattleRelayEndpoint {
   channel: string;
   uid: number;
   token: string;
+  expiresAt?: string;
 }
 
 export interface LiveBattleRelayCredentials {
@@ -22,6 +24,7 @@ export interface LiveBattleRelayCredentials {
     source: LiveBattleRelayEndpoint;
     destination: LiveBattleRelayEndpoint;
     expiresIn: number;
+    issuedAt?: string;
   };
 }
 
@@ -64,7 +67,17 @@ function parseEndpoint(value: unknown, kind: 'source' | 'destination'): LiveBatt
     || endpoint.token.length === 0) {
     throw new LiveBattleRelayError('battle_relay_invalid_response');
   }
-  return endpoint as unknown as LiveBattleRelayEndpoint;
+  const expiresAt = endpoint.expiresAt === undefined
+    ? null
+    : typeof endpoint.expiresAt === 'string' && Number.isFinite(Date.parse(endpoint.expiresAt))
+      ? endpoint.expiresAt
+      : null;
+  if (endpoint.expiresAt !== undefined && expiresAt === null) {
+    throw new LiveBattleRelayError('battle_relay_invalid_response');
+  }
+  return expiresAt === null
+    ? endpoint as unknown as LiveBattleRelayEndpoint
+    : { ...(endpoint as unknown as LiveBattleRelayEndpoint), expiresAt };
 }
 
 export function parseLiveBattleRelayCredentials(
@@ -86,12 +99,24 @@ export function parseLiveBattleRelayCredentials(
   const relay = relayValue as Record<string, unknown>;
   const source = parseEndpoint(relay.source, 'source');
   const destination = parseEndpoint(relay.destination, 'destination');
+  const issuedAt = relay.issuedAt === undefined
+    ? null
+    : typeof relay.issuedAt === 'string' && Number.isFinite(Date.parse(relay.issuedAt))
+      ? relay.issuedAt
+      : null;
   if (relay.battleId !== expectedBattleId
     || source.liveSessionId === destination.liveSessionId
     || source.channel === destination.channel
     || !Number.isSafeInteger(relay.expiresIn)
     || Number(relay.expiresIn) <= 0
-    || Number(relay.expiresIn) > 360) {
+    || Number(relay.expiresIn) > 360
+    || (relay.issuedAt !== undefined && issuedAt === null)
+    || ((source.expiresAt !== undefined || destination.expiresAt !== undefined) && issuedAt === null)
+    || (issuedAt !== null && (
+      source.expiresAt === undefined || destination.expiresAt === undefined
+      || Date.parse(source.expiresAt) <= Date.parse(issuedAt)
+      || Date.parse(destination.expiresAt) <= Date.parse(issuedAt)
+    ))) {
     throw new LiveBattleRelayError('battle_relay_invalid_response');
   }
   return {
@@ -101,6 +126,7 @@ export function parseLiveBattleRelayCredentials(
       source,
       destination,
       expiresIn: Number(relay.expiresIn),
+      ...(issuedAt === null ? {} : { issuedAt }),
     },
   };
 }

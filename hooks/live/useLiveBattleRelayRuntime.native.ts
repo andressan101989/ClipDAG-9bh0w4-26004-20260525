@@ -29,7 +29,7 @@ type UseLiveBattleRelayRuntimeParams = LiveBattleRuntimeContext & {
   publicClockAnchor: LiveBattleServerClockAnchor | null;
   reconcilePublicAuthority?: () => Promise<void>;
   confirmTerminalBattle?: (battleId: string) => void;
-  beginRemoteVideoTransition?: (uid: number) => void;
+  beginRemoteVideoTransition?: (uid: number, durationMs?: number) => void;
   clearRemoteVideoTransition?: (uid?: number) => void;
 };
 
@@ -98,6 +98,16 @@ export function useLiveBattleRelayRuntime({
         if (uid !== undefined) {
           protectedUid = uid;
           bridge.beginRemoteVideoTransition?.(uid);
+        }
+      },
+      onRecoveryStart: () => {
+        if (!bridgeActive || !mountedRef.current) return;
+        const bridge = videoBridgeRef.current;
+        if (bridge.liveSessionId !== ownedSessionId) return;
+        const uid = bridge.publicBattleState?.opponentHostAgoraUid;
+        if (uid !== undefined) {
+          protectedUid = uid;
+          bridge.beginRemoteVideoTransition?.(uid, 20_000);
         }
       },
       onStopped: () => {

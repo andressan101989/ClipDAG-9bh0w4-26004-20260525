@@ -48,11 +48,12 @@ const ACTIVE_CONNECTION_FATAL_ERROR_CODES = new Set([110]);
 // Observed relay reconfiguration takes <1 s. Bound retention to 1.5 s,
 // including 0.5 s scheduling tolerance; never conceal a lasting disconnect.
 export const REMOTE_VIDEO_TRANSITION_GRACE_MS = 1_500;
+export const REMOTE_VIDEO_RELAY_RECOVERY_GRACE_MS = 20_000;
 
 type RemoteVideoAuthority = { scopeKey: string; remoteUid: number };
-function logVideo(event: string, uid: number, scope?: string, reason?: string): void {
+function logVideo(event: string, uid: number, scope?: string, reason?: string, durationMs = REMOTE_VIDEO_TRANSITION_GRACE_MS): void {
   logAgora(`video:${event}`, {
-    uid, scope: scope?.slice(-8) ?? null, reason, durationMs: REMOTE_VIDEO_TRANSITION_GRACE_MS,
+    uid, scope: scope?.slice(-8) ?? null, reason, durationMs,
   });
 }
 
@@ -192,7 +193,7 @@ export function useAgoraEngine({
 
   const remoteVideoTransitionRef = useRef<{
     uid: number; deadline: number; pendingRemoval: boolean;
-    timer: ReturnType<typeof setTimeout> | null; generation: number;
+    timer: ReturnType<typeof setTimeout> | null; generation: number; durationMs: number;
   } | null>(null);
   const clearRemoteVideoTransition = useCallback((removeUid?: number) => {
     const transition = remoteVideoTransitionRef.current;
@@ -203,26 +204,31 @@ export function useAgoraEngine({
       setRemoteUids(prev => prev.filter(uid => uid !== removeUid));
     }
   }, []);
-  const beginRemoteVideoTransition = useCallback((remoteUid: number) => {
+  const beginRemoteVideoTransition = useCallback((remoteUid: number, requestedDurationMs = REMOTE_VIDEO_TRANSITION_GRACE_MS) => {
     if (!mountedRef.current || !joinedKeyRef.current || reconnectingRef.current) return;
+    const durationMs = requestedDurationMs === REMOTE_VIDEO_RELAY_RECOVERY_GRACE_MS
+      ? REMOTE_VIDEO_RELAY_RECOVERY_GRACE_MS
+      : REMOTE_VIDEO_TRANSITION_GRACE_MS;
     // A repeated signal cannot extend an existing bounded window.
-    if (remoteVideoTransitionRef.current?.uid === remoteUid) return;
+    if (remoteVideoTransitionRef.current?.uid === remoteUid
+      && remoteVideoTransitionRef.current.durationMs >= durationMs) return;
     const previous = remoteVideoTransitionRef.current;
-    clearRemoteVideoTransition(previous?.pendingRemoval ? previous.uid : undefined);
+    const pendingRemoval = previous?.uid === remoteUid && previous.pendingRemoval;
+    clearRemoteVideoTransition(previous?.uid !== remoteUid && previous?.pendingRemoval ? previous.uid : undefined);
     const transition = {
-      uid: remoteUid, deadline: performance.now() + REMOTE_VIDEO_TRANSITION_GRACE_MS,
-      pendingRemoval: false, timer: null as ReturnType<typeof setTimeout> | null,
-      generation: joinGenerationRef.current,
+      uid: remoteUid, deadline: performance.now() + durationMs,
+      pendingRemoval, timer: null as ReturnType<typeof setTimeout> | null,
+      generation: joinGenerationRef.current, durationMs,
     };
     remoteVideoTransitionRef.current = transition;
-    logVideo('transition_begin', remoteUid, joinConfigRef.current.remoteVideoAuthority?.scopeKey);
+    logVideo('transition_begin', remoteUid, joinConfigRef.current.remoteVideoAuthority?.scopeKey, requestedDurationMs === REMOTE_VIDEO_RELAY_RECOVERY_GRACE_MS ? 'relay_recovery' : undefined, durationMs);
     transition.timer = setTimeout(() => {
       if (remoteVideoTransitionRef.current !== transition) return;
       remoteVideoTransitionRef.current = null;
-      logVideo('transition_expired', remoteUid, joinConfigRef.current.remoteVideoAuthority?.scopeKey);
+      logVideo('transition_expired', remoteUid, joinConfigRef.current.remoteVideoAuthority?.scopeKey, undefined, durationMs);
       if (mountedRef.current && transition.generation === joinGenerationRef.current
         && transition.pendingRemoval) setRemoteUids(prev => prev.filter(uid => uid !== remoteUid));
-    }, REMOTE_VIDEO_TRANSITION_GRACE_MS);
+    }, durationMs);
   }, [clearRemoteVideoTransition]);
 
   const previousVideoAuthorityRef = useRef(remoteVideoAuthority);
@@ -411,6 +417,33 @@ export function useAgoraEngine({
       }
       engineRef.current = engine;
 
+      let tokenRenewalFlight: Promise<void> | null = null;
+      const renewCurrentToken = (reason: 'will_expire' | 'expired') => {
+        if (tokenRenewalFlight) return tokenRenewalFlight;
+        tokenRenewalFlight = (async () => {
+          logAgora('token refresh started', { joinKey: safeJoinKey, reason });
+          const fresh = await fetchAgoraToken(resource);
+          if (!isCurrentConnection() || engineRef.current !== engine) return;
+          if (fresh.channel !== config.channelName || fresh.uid !== config.uid) {
+            throw new Error('Agora token refresh authority mismatch');
+          }
+          const result = engine.renewToken(fresh.token);
+          if (typeof result === 'number' && result < 0) {
+            throw new Error(`Agora renewToken failed (${result})`);
+          }
+          logAgora('token refresh applied', { joinKey: safeJoinKey, reason });
+        })().catch(() => {
+          if (isCurrentConnection() && mountedRef.current) {
+            setError('No se pudo renovar la credencial del LIVE.');
+            setErrorCode('agora_token_refresh_failed');
+          }
+          logAgora('token refresh failed', { joinKey: safeJoinKey, reason });
+        }).finally(() => {
+          tokenRenewalFlight = null;
+        });
+        return tokenRenewalFlight;
+      };
+
       engine.initialize({
         appId: resolvedAppId,
         channelProfile: config.profile === 'live-broadcasting'
@@ -494,6 +527,14 @@ export function useAgoraEngine({
             || state === ConnectionStateType.ConnectionStateFailed) {
             reconnectingRef.current = false;
           }
+        },
+        onTokenPrivilegeWillExpire: (_connection: any, _token: string) => {
+          if (!isCurrentConnection()) return;
+          void renewCurrentToken('will_expire');
+        },
+        onRequestToken: (_connection: any) => {
+          if (!isCurrentConnection()) return;
+          void renewCurrentToken('expired');
         },
         onUserJoined: (_conn: any, remoteUid: number) => {
           logAgora('onUserJoined', { joinKey: safeJoinKey, remoteUid });

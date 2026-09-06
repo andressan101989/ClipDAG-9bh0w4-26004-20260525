@@ -1,4 +1,5 @@
 import {
+  cancelLiveBattle,
   getLiveBattleState,
   getOpenLiveBattlesForSession,
   isLiveBattleUuid,
@@ -63,6 +64,7 @@ export type LiveBattleRuntimeRelay = {
 export type LiveBattleRuntimeDependencies = {
   discover?: (sessionId: string) => Promise<LiveBattle[]>;
   reconcile?: (battleId: string) => Promise<LiveBattle>;
+  terminateAfterRelayFailure?: (battleId: string) => Promise<LiveBattle>;
   subscribe?: (
     sessionId: string,
     onSignal: (signal: LiveBattleSessionSignal) => void,
@@ -184,6 +186,11 @@ export class LiveBattleRuntimeController {
   private readonly clearTimer: NonNullable<LiveBattleRuntimeDependencies['clearTimer']>;
   private relayUnsubscribe: (() => void) | null = null;
   private reconnectRetryFlight: Promise<void> | null = null;
+  private relayFailureFlight: Promise<void> | null = null;
+  private relayFailureKey: string | null = null;
+  private relayFailureAttempts = 0;
+  private pendingDeadlineAuthorityKey: string | null = null;
+  private lastRematchLogKey: string | null = null;
 
   constructor(private readonly dependencies: LiveBattleRuntimeDependencies) {
     this.discover = dependencies.discover ?? getOpenLiveBattlesForSession;
@@ -222,6 +229,8 @@ export class LiveBattleRuntimeController {
     const battle = this.snapshot.battle;
     if (!battle || battle.id !== relay.battleId || this.relayDecision === 'stop_terminal') return;
     if (relay.state === 'running') {
+      this.relayFailureKey = null;
+      this.relayFailureAttempts = 0;
       this.relayBattleId = relay.battleId;
       this.publish({
         status: 'relaying', battleId: battle.id, version: battle.version,
@@ -234,6 +243,14 @@ export class LiveBattleRuntimeController {
       this.publish({
         status: 'failed', battleId: battle.id, version: battle.version,
         errorCode: 'live_battle_relay_failed', battle,
+      });
+      void this.terminateCanonicalAfterRelayFailure(battle, relay.errorCode);
+      return;
+    }
+    if (relay.state === 'recovering') {
+      this.publish({
+        status: 'relaying', battleId: battle.id, version: battle.version,
+        errorCode: null, battle,
       });
       return;
     }
@@ -304,6 +321,9 @@ export class LiveBattleRuntimeController {
     }
     const battle = this.snapshot.battle;
     if (!contextIsEligible(this.context)) return;
+    if (battle && RELAY_STATUSES.has(battle.status) && battle.endedAt === null) {
+      this.scheduleDeadline(battle, this.generation);
+    }
     if (state && (state.sessionId !== this.context.liveSessionId
       || state.localHostUserId !== this.context.hostUserId)) {
       void this.failClosed('live_battle_host_authority_changed');
@@ -537,6 +557,13 @@ export class LiveBattleRuntimeController {
       opponentSession: battle.opponentSessionId.slice(-8), reconciledByServer,
     });
     this.scheduleDeadline(battle, generation, reconciledByServer);
+    const authorityKey = `${battle.id}:${battle.version}:${this.getDeadlineTimestamp(battle) ?? ''}`;
+    if (reconciledByServer && this.pendingDeadlineAuthorityKey
+      && (battle.status === 'completed' || battle.status === 'cancelled'
+        || battle.status === 'expired' || authorityKey !== this.pendingDeadlineAuthorityKey)) {
+      this.logDeadline('authority_confirmed', battle, { result: battle.status });
+      this.pendingDeadlineAuthorityKey = null;
+    }
     if (battle.status === 'completed' && battle.endedAt !== null) {
       await this.applyCompletedBattle(battle, generation);
       return;
@@ -544,6 +571,15 @@ export class LiveBattleRuntimeController {
     if (!RELAY_STATUSES.has(battle.status) || battle.endedAt !== null) {
       if (TERMINAL_STATUSES.has(battle.status)) this.dependencies.onTerminalAuthority?.(battle.id);
       await this.stopRelay('observing', battle.id, battle.version, battle);
+      return;
+    }
+    const relaySnapshot = this.dependencies.relay.getSnapshot();
+    if (relaySnapshot.battleId === battle.id && relaySnapshot.state === 'failed') {
+      this.publish({
+        status: 'failed', battleId: battle.id, version: battle.version,
+        errorCode: 'live_battle_relay_failed', battle,
+      });
+      void this.terminateCanonicalAfterRelayFailure(battle, relaySnapshot.errorCode);
       return;
     }
     if (this.relayBattleId === battle.id) {
@@ -695,8 +731,10 @@ export class LiveBattleRuntimeController {
     if (decision !== 'holding_for_rematch') {
       // This is a validated server decision, unlike transport failure or a local
       // deadline tick. Publish UI suppression before the relay clears its peer.
+      this.logRematch('window_expired', battle, { reason: decision });
       this.dependencies.onTerminalAuthority?.(battle.id);
       await this.stopRelay('observing', battle.id, battle.version, battle);
+      this.logRematch('exit_to_live', battle, { reason: decision });
       return;
     }
     const deadlineText = getLiveBattleRelayDecisionDeadline(authority.state);
@@ -709,6 +747,11 @@ export class LiveBattleRuntimeController {
     this.lastValidatedPostRoundAuthority = { battleId: battle.id, key: refreshKey, deadlineMs };
     this.postRoundAuthorityRetryUsed = false;
     this.relayDecision = decision;
+    const rematchLogKey = `${battle.id}:${authority.state.series?.version ?? 0}:${deadlineText}`;
+    if (this.lastRematchLogKey !== rematchLogKey) {
+      this.lastRematchLogKey = rematchLogKey;
+      this.logRematch('window_open', battle, { deadline: deadlineText });
+    }
     this.trace('post_round');
     this.captureRelaySeriesAuthority(battle.id);
     this.schedulePostRoundDeadline(battle, generation);
@@ -918,7 +961,11 @@ export class LiveBattleRuntimeController {
     reconciledByServer = false,
   ): void {
     const timestamp = this.getDeadlineTimestamp(battle);
-    const deadlineKey = `${battle.id}:${battle.version}:${battle.status}:${timestamp ?? ''}`;
+    const deadlineKey = `${battle.id}:${battle.version}:${timestamp ?? ''}`;
+    const anchorKey = this.publicClockAnchor
+      ? `${this.publicClockAnchor.serverEpochMsAtAnchor}:${this.publicClockAnchor.monotonicMsAtAnchor}`
+      : 'local';
+    const scheduleKey = `${deadlineKey}:${anchorKey}`;
     if (this.deadlineWakeKey !== deadlineKey) {
       this.deadlineWakeKey = deadlineKey;
       this.deadlineBackoffStep = 0;
@@ -935,7 +982,8 @@ export class LiveBattleRuntimeController {
       this.scheduledDeadlineKey = null;
       return;
     }
-    const remaining = deadline - this.now() + DEADLINE_CLOCK_TOLERANCE_MS;
+    const schedulingNow = this.estimateServerNow() ?? this.authorityServerNowMs ?? this.now();
+    const remaining = deadline - schedulingNow + DEADLINE_CLOCK_TOLERANCE_MS;
     let returnedToCheckpointMode = false;
     if (reconciledByServer) {
       if (remaining <= 0) {
@@ -947,13 +995,13 @@ export class LiveBattleRuntimeController {
         returnedToCheckpointMode = true;
       }
     }
-    if (returnedToCheckpointMode && this.scheduledDeadlineKey === deadlineKey) {
+    if (returnedToCheckpointMode && this.scheduledDeadlineKey === scheduleKey) {
       this.clearDeadlineTimer();
       this.scheduledDeadlineKey = null;
     }
-    if (this.scheduledDeadlineKey === deadlineKey) return;
+    if (this.scheduledDeadlineKey === scheduleKey) return;
     this.clearDeadlineTimer();
-    this.scheduledDeadlineKey = deadlineKey;
+    this.scheduledDeadlineKey = scheduleKey;
     const checkpointDelay = this.getDeadlineCheckpointDelay(battle);
     if (checkpointDelay === null) return;
     const delay = this.deadlineBackoffStep > 0
@@ -968,9 +1016,15 @@ export class LiveBattleRuntimeController {
       if (!this.isCurrent(generation)) return;
       if (this.snapshot.battleId !== battleId || this.snapshot.version !== version) return;
       this.scheduledDeadlineKey = null;
-      const deadlineReached = deadline - this.now() + DEADLINE_CLOCK_TOLERANCE_MS <= 0;
+      const currentServerNow = this.estimateServerNow() ?? this.authorityServerNowMs ?? this.now();
+      const deadlineReached = deadline - currentServerNow + DEADLINE_CLOCK_TOLERANCE_MS <= 0;
       if (deadlineReached || this.deadlineBackoffStep > 0) {
-        if (deadlineReached) this.deadlineBackoffReason = 'deadline';
+        if (deadlineReached) {
+          this.deadlineBackoffReason = 'deadline';
+          this.pendingDeadlineAuthorityKey = deadlineKey;
+          this.logDeadline('reached', battle, { deadline: timestamp });
+          this.logDeadline('reconcile_requested', battle, { deadline: timestamp });
+        }
         this.deadlineBackoffStep = Math.min(
           this.deadlineBackoffStep + 1,
           DEADLINE_RETRY_DELAYS_MS.length,
@@ -989,7 +1043,7 @@ export class LiveBattleRuntimeController {
     }
     const deadline = battle ? this.getDeadlineTimestamp(battle) : null;
     if (battle && deadline && battleBelongsToHostSession(battle, this.context)) {
-      const deadlineKey = `${battle.id}:${battle.version}:${battle.status}:${deadline}`;
+      const deadlineKey = `${battle.id}:${battle.version}:${deadline}`;
       if (this.deadlineWakeKey !== deadlineKey) {
         this.deadlineWakeKey = deadlineKey;
         this.deadlineBackoffStep = 0;
@@ -1043,6 +1097,50 @@ export class LiveBattleRuntimeController {
     this.scheduleRefreshRetry(generation);
   }
 
+  private logDeadline(event: string, battle: LiveBattle, extra: Record<string, unknown>): void {
+    if (typeof __DEV__ === 'undefined' || !__DEV__) return;
+    console.info(`[LIVE-BATTLE-DEADLINE] ${event}`, {
+      battle: battle.id.slice(-8), version: battle.version, generation: this.generation, ...extra,
+    });
+  }
+
+  private logRematch(event: string, battle: LiveBattle, extra: Record<string, unknown>): void {
+    if (typeof __DEV__ === 'undefined' || !__DEV__) return;
+    console.info(`[LIVE-BATTLE-REMATCH] ${event}`, {
+      battle: battle.id.slice(-8), version: battle.version, generation: this.generation, ...extra,
+    });
+  }
+
+  private terminateCanonicalAfterRelayFailure(battle: LiveBattle, reason: string | null): Promise<void> {
+    const key = `${battle.id}:${battle.version}`;
+    if (this.relayFailureFlight) return this.relayFailureFlight;
+    if (this.relayFailureKey !== key) {
+      this.relayFailureKey = key;
+      this.relayFailureAttempts = 0;
+    }
+    if (this.relayFailureAttempts >= 3) return Promise.resolve();
+    const generation = this.generation;
+    this.relayFailureAttempts += 1;
+    const terminate = this.dependencies.terminateAfterRelayFailure ?? cancelLiveBattle;
+    this.relayFailureFlight = (async () => {
+      try {
+        let current = await this.reconcile(battle.id);
+        if (!this.isCurrent(generation) || current.id !== battle.id) return;
+        if (RELAY_STATUSES.has(current.status) && current.endedAt === null) {
+          current = await terminate(current.id);
+          if (!this.isCurrent(generation) || current.id !== battle.id) return;
+        }
+        this.logRematch('exit_to_live', current, { reason: reason ?? 'relay_recovery_failed' });
+        await this.applyBattle(current, generation, true);
+      } catch {
+        if (this.isCurrent(generation)) this.handleReconcileFailure(generation);
+      }
+    })().finally(() => {
+      this.relayFailureFlight = null;
+    });
+    return this.relayFailureFlight;
+  }
+
   private async stopRelay(
     status: LiveBattleRuntimeStatus = 'idle',
     battleId: string | null = null,
@@ -1061,6 +1159,8 @@ export class LiveBattleRuntimeController {
     this.postRoundCredentialRefreshKey = null;
     this.lastValidatedPostRoundAuthority = null;
     this.postRoundAuthorityRetryUsed = false;
+    this.pendingDeadlineAuthorityKey = null;
+    this.lastRematchLogKey = null;
     if (!this.disposed) this.publish({ status, battleId, version, errorCode: null, battle });
   }
 
@@ -1081,6 +1181,7 @@ export class LiveBattleRuntimeController {
 
   private invalidateAndStop(status: LiveBattleRuntimeStatus): void {
     this.generation += 1;
+    this.relayFailureFlight = null;
     this.refreshQueued = false;
     this.resetDeadlineScheduler();
     this.removeSubscription();
