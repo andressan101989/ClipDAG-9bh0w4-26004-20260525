@@ -1,0 +1,184 @@
+TAP version 13
+# Subtest: C1 LIVE replay query is isolated from Battle within the actual WHERE clause
+ok 1 - C1 LIVE replay query is isolated from Battle within the actual WHERE clause
+  ---
+  duration_ms: 3.2163
+  type: 'test'
+  ...
+# Subtest: C1 authenticated bounded key and lock precede replay, which precedes mutable authority
+ok 2 - C1 authenticated bounded key and lock precede replay, which precedes mutable authority
+  ---
+  duration_ms: 1.9243
+  type: 'test'
+  ...
+# Subtest: C1 both RPCs verify canonical real journal after transfer and before gift insertion
+ok 3 - C1 both RPCs verify canonical real journal after transfer and before gift insertion
+  ---
+  duration_ms: 5.4311
+  type: 'test'
+  ...
+# Subtest: approved 3500 bps half-up examples are exact
+ok 4 - approved 3500 bps half-up examples are exact
+  ---
+  duration_ms: 0.3153
+  type: 'test'
+  ...
+# Subtest: LIVE and Battle use one canonical commission helper
+ok 5 - LIVE and Battle use one canonical commission helper
+  ---
+  duration_ms: 4.8036
+  type: 'test'
+  ...
+# Subtest: migration implements bigint-safe 3500 bps half-up split once
+ok 6 - migration implements bigint-safe 3500 bps half-up split once
+  ---
+  duration_ms: 0.4376
+  type: 'test'
+  ...
+# Subtest: all catalog-range amounts preserve the approved split invariants
+ok 7 - all catalog-range amounts preserve the approved split invariants
+  ---
+  duration_ms: 5.992
+  type: 'test'
+  ...
+# Subtest: public RPC signatures and the canonical atomic journal remain single-path
+ok 8 - public RPC signatures and the canonical atomic journal remain single-path
+  ---
+  duration_ms: 4.3458
+  type: 'test'
+  ...
+# Subtest: idempotency remains before money movement and Battle replay scores one gift
+ok 9 - idempotency remains before money movement and Battle replay scores one gift
+  ---
+  duration_ms: 3.3959
+  type: 'test'
+  ...
+# Subtest: Battle scoring stays gross and rose/power authority is not redefined
+ok 10 - Battle scoring stays gross and rose/power authority is not redefined
+  ---
+  duration_ms: 1.8225
+  type: 'test'
+  ...
+# Subtest: security remains definer-only at the public boundary with least privilege
+ok 11 - security remains definer-only at the public boundary with least privilege
+  ---
+  duration_ms: 3.7703
+  type: 'test'
+  ...
+# Subtest: migration is forward-only policy activation without historical backfill
+ok 12 - migration is forward-only policy activation without historical backfill
+  ---
+  duration_ms: 0.2832
+  type: 'test'
+  ...
+# Subtest: protected manifests and deployed migrations remain byte-identical after LF normalization
+ok 13 - protected manifests and deployed migrations remain byte-identical after LF normalization
+  ---
+  duration_ms: 21.0246
+  type: 'test'
+  ...
+# Subtest: disposable SQL proof covers LIVE, Battle, zero-fee, failure and rollback
+ok 14 - disposable SQL proof covers LIVE, Battle, zero-fee, failure and rollback
+  ---
+  duration_ms: 0.4721
+  type: 'test'
+  ...
+# Subtest: real concurrency harness is local-only and verifies idempotency and balance locking
+ok 15 - real concurrency harness is local-only and verifies idempotency and balance locking
+  ---
+  duration_ms: 0.1731
+  type: 'test'
+  ...
+# Subtest: rematch and glove stage is above both full-screen keyboard dismiss layers
+ok 16 - rematch and glove stage is above both full-screen keyboard dismiss layers
+  ---
+  duration_ms: 51.7387
+  type: 'test'
+  ...
+# Subtest: full-screen stage passes empty-area touches through
+ok 17 - full-screen stage passes empty-area touches through
+  ---
+  duration_ms: 0.5825
+  type: 'test'
+  ...
+# Subtest: visual panels and video surfaces cannot intercept control touches
+ok 18 - visual panels and video surfaces cannot intercept control touches
+  ---
+  duration_ms: 1.8279
+  type: 'test'
+  ...
+# Subtest: real rematch, accept, reject and glove handlers remain reachable
+ok 19 - real rematch, accept, reject and glove handlers remain reachable
+  ---
+  duration_ms: 4.3837
+  type: 'test'
+  ...
+# Subtest: localized stacking preserves header, chat and composer priority
+ok 20 - localized stacking preserves header, chat and composer priority
+  ---
+  duration_ms: 90.5104
+  type: 'test'
+  ...
+# Subtest: active round invokes exactly send_live_battle_gift
+ok 21 - active round invokes exactly send_live_battle_gift
+  ---
+  duration_ms: 1.2893
+  type: 'test'
+  ...
+# Subtest: countdown invokes exactly send_live_gift
+ok 22 - countdown invokes exactly send_live_gift
+  ---
+  duration_ms: 0.729
+  type: 'test'
+  ...
+# Subtest: completed postround invokes exactly send_live_gift
+ok 23 - completed postround invokes exactly send_live_gift
+  ---
+  duration_ms: 0.2362
+  type: 'test'
+  ...
+# Subtest: completed rematch window invokes exactly send_live_gift
+ok 24 - completed rematch window invokes exactly send_live_gift
+  ---
+  duration_ms: 0.2512
+  type: 'test'
+  ...
+# Subtest: ordinary LIVE invokes exactly send_live_gift
+ok 25 - ordinary LIVE invokes exactly send_live_gift
+  ---
+  duration_ms: 0.3393
+  type: 'test'
+  ...
+# Subtest: known Battle errors display service-normalized safe messages
+ok 26 - known Battle errors display service-normalized safe messages
+  ---
+  duration_ms: 0.8301
+  type: 'test'
+  ...
+# Subtest: unknown RPC errors and exceptions never reach visible feedback
+ok 27 - unknown RPC errors and exceptions never reach visible feedback
+  ---
+  duration_ms: 0.9749
+  type: 'test'
+  ...
+# Subtest: double taps stay single-flight and failed retries retain their key
+ok 28 - double taps stay single-flight and failed retries retain their key
+  ---
+  duration_ms: 0.3856
+  type: 'test'
+  ...
+# Subtest: economic authority, gross score, multipliers and roses remain byte-identical
+ok 29 - economic authority, gross score, multipliers and roses remain byte-identical
+  ---
+  duration_ms: 1.0565
+  type: 'test'
+  ...
+1..29
+# tests 29
+# suites 0
+# pass 29
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 806.8108

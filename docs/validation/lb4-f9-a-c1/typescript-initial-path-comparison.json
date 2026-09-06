@@ -1,0 +1,12 @@
+{
+  "exitCode": 2,
+  "historical": 237,
+  "current": 237,
+  "added": [
+    "hooks/useVideoActions.ts(24,35): error TS2345: Argument of type 'SecurityAction' is not assignable to parameter of type 'import(\"C:/Users/andre/ClipDAG-lb4-f9-a-c1/modules/core/SecurityManager\").SecurityAction'.\n  Type '\"send_gift\"' is not assignable to type 'SecurityAction'.\n"
+  ],
+  "removed": [
+    "hooks/useVideoActions.ts(24,35): error TS2345: Argument of type 'SecurityAction' is not assignable to parameter of type 'import(\"C:/Users/andre/ClipDAG-lb4-f9-a/modules/core/SecurityManager\").SecurityAction'.\n  Type '\"send_gift\"' is not assignable to type 'SecurityAction'.\n"
+  ],
+  "exactNormalizedOutputMatch": false
+}

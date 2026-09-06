@@ -1,0 +1,24 @@
+{
+  "base": "adb741677a8d80f9bb9d54ba3a0572c22cd4964e",
+  "before": {
+    "rows": 20,
+    "likes": 20,
+    "points": 100
+  },
+  "after": {
+    "rows": 1020,
+    "likes": 20,
+    "points": 100
+  },
+  "closed": {
+    "rows": 1000,
+    "likes": 0,
+    "points": 0
+  },
+  "expectedAfter": {
+    "rows": 20,
+    "likes": 20,
+    "points": 100
+  },
+  "expectedClosedRows": 0
+}

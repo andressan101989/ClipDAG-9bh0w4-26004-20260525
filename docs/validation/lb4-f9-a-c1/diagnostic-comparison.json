@@ -1,0 +1,19 @@
+{
+  "advisors": {
+    "historical": 88,
+    "current": 88,
+    "added": [],
+    "removed": []
+  },
+  "lint": {
+    "historical": 25,
+    "current": 25,
+    "added": [],
+    "removed": [],
+    "historicalLevels": {
+      "warning extra": 7,
+      "error": 7,
+      "warning": 11
+    }
+  }
+}

@@ -10,6 +10,7 @@ export class LiveBattleLikeBatcher {
   private attempt: LikeBatch | null = null;
   private running = false;
   private closed = false;
+  private disabled = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private retryDelay = 1000;
   constructor(
@@ -19,39 +20,63 @@ export class LiveBattleLikeBatcher {
   ) {}
 
   add(): void {
-    if (this.closed) return;
+    if (this.closed || this.disabled) return;
     this.queued += 1;
     this.schedule(BATCH_DELAY_MS);
   }
 
   private schedule(delay: number): void {
-    if (this.timer || this.running) return;
+    if (this.closed || this.disabled || this.timer || this.running) return;
     this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, delay);
   }
 
   async flush(): Promise<void> {
-    if (this.running) return;
+    if (this.closed || this.disabled) return;
+    await this.flushAttempt();
+  }
+
+  private cancelTimer(): void {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+  }
+
+  private disable(): void {
+    this.disabled = true;
+    this.attempt = null;
+    this.queued = 0;
+    this.cancelTimer();
+  }
+
+  private async flushAttempt(final = false): Promise<void> {
+    if (this.running || this.disabled || (this.closed && !final)) return;
+    this.cancelTimer();
     if (!this.attempt && this.queued) {
       const count = Math.min(BATCH_SIZE, this.queued);
       this.queued -= count;
       this.attempt = { count, idempotencyKey: this.key() };
     }
+    // Closing permits only this one bounded attempt, never a drain loop.
+    if (final) this.queued = 0;
     if (!this.attempt) return;
     this.running = true;
     let retry = false;
     try {
-      await this.send(this.attempt);
+      const attempt = this.attempt;
+      const receipt = await this.send(attempt);
       this.attempt = null;
       this.retryDelay = 1000;
+      if (receipt.accepted_count < attempt.count) this.disable();
       if (!this.closed) this.confirmed();
     } catch (error) {
       // Preserve the whole attempt on ambiguous failure, including its key.
-      if (error instanceof LikeBatchRejectedError) this.attempt = null;
-      else retry = true;
+      if (error instanceof LikeBatchRejectedError) this.disable();
+      else if (!this.closed && !this.disabled) retry = true;
     } finally {
       this.running = false;
-      if (this.attempt || this.queued) {
+      if (this.closed || this.disabled) {
+        this.attempt = null;
+        this.queued = 0;
+        this.cancelTimer();
+      } else if (this.attempt || this.queued) {
         this.schedule(retry ? this.retryDelay : BATCH_DELAY_MS);
         if (retry) this.retryDelay = Math.min(10000, this.retryDelay * 2);
       }
@@ -59,9 +84,14 @@ export class LiveBattleLikeBatcher {
   }
 
   close(): void {
+    if (this.closed) return;
     this.closed = true;
-    // Drain already accepted taps using their original session/Battle context.
-    // Late fresh batches receive zero points from the authoritative deadline check.
-    void this.flush();
+    this.cancelTimer();
+    if (this.running) {
+      this.queued = 0;
+      return;
+    }
+    // One immediate best-effort flush; no timers or retries after unmount.
+    void this.flushAttempt(true);
   }
 }

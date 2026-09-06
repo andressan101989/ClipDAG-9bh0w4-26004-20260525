@@ -1,0 +1,255 @@
+CREATE EXTENSION
+CREATE EXTENSION
+DROP SCHEMA
+DROP SCHEMA
+DROP SCHEMA
+DROP SCHEMA
+NOTICE:  extension "pg_cron" already exists, skipping
+NOTICE:  extension "plpgsql_check" already exists, skipping
+NOTICE:  drop cascades to 200 other objects
+DETAIL:  drop cascades to type aal_level
+drop cascades to type code_challenge_method
+drop cascades to type factor_status
+drop cascades to type factor_type
+drop cascades to type oauth_authorization_status
+drop cascades to type oauth_client_type
+drop cascades to type oauth_registration_type
+drop cascades to type oauth_response_type
+drop cascades to type one_time_token_type
+drop cascades to function email()
+drop cascades to function jwt()
+drop cascades to function role()
+drop cascades to function uid()
+drop cascades to function marketplace_creator_content_visible(uuid,uuid)
+drop cascades to policy Admins can manage all reports on table reports
+drop cascades to policy Authenticated users can create rooms on table group_call_rooms
+drop cascades to policy Authenticated users can insert gifts on table gifts
+drop cascades to policy Host can update own room on table group_call_rooms
+drop cascades to policy app_wallet_ledger_entries_select_own on table app_wallet_ledger_entries
+drop cascades to policy app_wallets_select_own on table app_wallets
+drop cascades to policy blocked_users_delete_own on table blocked_users
+drop cascades to policy blocked_users_insert_own on table blocked_users
+drop cascades to policy blocked_users_select_own on table blocked_users
+drop cascades to policy call_devices_insert_own on table call_devices
+drop cascades to policy call_devices_select_own on table call_devices
+drop cascades to policy call_devices_update_own on table call_devices
+drop cascades to policy calls_insert_caller on table calls
+drop cascades to policy calls_select_participant on table calls
+drop cascades to policy calls_update_participant on table calls
+drop cascades to policy comment_likes_delete_own on table comment_likes
+drop cascades to policy comment_likes_insert_own on table comment_likes
+drop cascades to policy comments_delete_own on table comments
+drop cascades to policy comments_insert_own on table comments
+drop cascades to policy deposit_confirmations_select_own on table deposit_confirmations
+drop cascades to policy financial_transactions_select_participant on table financial_transactions
+drop cascades to policy follows_delete_own on table follows
+drop cascades to policy follows_insert_own on table follows
+drop cascades to policy ledger_accounts_select_own on table ledger_accounts
+drop cascades to policy likes_delete_own on table likes
+drop cascades to policy likes_insert_own on table likes
+drop cascades to policy live_battle_events_read_participant on table live_battle_events
+drop cascades to policy live_battles_read_participant on table live_battles
+drop cascades to policy live_control_events_read_authorized on table live_control_events
+drop cascades to policy live_gift_transactions_read_participant on table live_gift_transactions
+drop cascades to policy live_host_purchase_events_read on table live_commerce_host_purchase_events
+drop cascades to policy live_messages_read_authorized on table live_messages
+drop cascades to policy live_participants_read_authorized on table live_participants
+drop cascades to policy marketplace_ad_campaigns_seller_read on table marketplace_ad_campaigns
+drop cascades to policy marketplace_ad_events_seller_read on table marketplace_ad_financial_events
+drop cascades to policy marketplace_allocations_seller_read on table marketplace_payment_allocations
+drop cascades to policy marketplace_assignments_read_public_or_owned on table marketplace_variant_option_values
+drop cascades to policy marketplace_checkout_buyer_read on table marketplace_checkout_sessions
+drop cascades to policy marketplace_inventory_levels_read_owned on table marketplace_inventory_levels
+drop cascades to policy marketplace_inventory_movements_read_owned on table marketplace_inventory_movements
+drop cascades to policy marketplace_option_values_read_public_or_owned on table marketplace_product_option_values
+drop cascades to policy marketplace_options_read_public_or_owned on table marketplace_product_options
+drop cascades to policy marketplace_order_events_participant_read on table marketplace_order_events
+drop cascades to policy marketplace_order_items_buyer_read on table marketplace_order_items
+drop cascades to policy marketplace_orders_buyer_read on table marketplace_orders
+drop cascades to policy marketplace_payments_buyer_read on table marketplace_payments
+drop cascades to policy marketplace_promotions_owner_read on table marketplace_product_promotions
+drop cascades to policy marketplace_reservations_buyer_read on table marketplace_inventory_reservations
+drop cascades to policy marketplace_sellers_read_own_or_admin on table marketplace_sellers
+drop cascades to policy marketplace_shipments_participant_read on table marketplace_order_shipments
+drop cascades to policy marketplace_shipping_buyer_read on table marketplace_checkout_shipping_addresses
+drop cascades to policy marketplace_stores_read_public_or_owned on table marketplace_stores
+drop cascades to policy marketplace_variants_read_public_or_owned on table marketplace_product_variants
+drop cascades to policy media_asset_links_owner_read on table media_asset_links
+drop cascades to policy media_assets_owner_read on table media_assets
+drop cascades to policy messages_insert_own on table messages
+drop cascades to policy messages_select_participant on table messages
+drop cascades to policy messages_update_recipient on table messages
+drop cascades to policy notifications_insert_as_self on table notifications
+drop cascades to policy notifications_select_own on table notifications
+drop cascades to policy notifications_update_own on table notifications
+drop cascades to policy product_saves_delete_owned on table product_saves
+drop cascades to policy product_saves_insert_owned on table product_saves
+drop cascades to policy product_saves_read_owned on table product_saves
+drop cascades to policy products_read_public_or_owned on table products
+drop cascades to policy reports_insert_own on table reports
+drop cascades to policy reports_select_own on table reports
+drop cascades to policy stories_delete_owned on table stories
+drop cascades to policy stories_insert_owned on table stories
+drop cascades to policy stories_read_active_or_owned on table stories
+drop cascades to policy story_views_insert_owned on table story_views
+drop cascades to policy story_views_read_owned on table story_views
+drop cascades to policy user_profiles_insert_self on table user_profiles
+drop cascades to policy user_profiles_update_self on table user_profiles
+drop cascades to policy video_asset_links_select_own on table video_asset_links
+drop cascades to policy video_assets_select_own on table video_assets
+drop cascades to policy video_saves_delete_own on table video_saves
+drop cascades to policy video_saves_insert_own on table video_saves
+drop cascades to policy video_saves_select_own on table video_saves
+drop cascades to policy videos_delete_own on table videos
+drop cascades to policy videos_insert_own on table videos
+drop cascades to policy videos_update_own on table videos
+drop cascades to policy withdrawal_requests_select_own on table withdrawal_requests
+drop cascades to table audit_log_entries
+drop cascades to table custom_oauth_providers
+drop cascades to table flow_state
+and 100 other objects (see server log for list)
+NOTICE:  drop cascades to 550 other objects
+DETAIL:  drop cascades to table live_battle_power_states
+drop cascades to function private.advance_live_battle_rose_mission_locked(uuid,uuid,uuid,timestamp with time zone)
+drop cascades to table live_battles
+drop cascades to function private.live_battle_reconcile_locked(uuid,timestamp with time zone)
+drop cascades to function private.live_battle_to_json(live_battles)
+drop cascades to function private.live_battle_transition(uuid,text,text,uuid,text,timestamp with time zone)
+drop cascades to function private.live_battle_series_try_lock_scope(uuid,uuid,uuid,uuid,uuid)
+drop cascades to function private.live_battle_series_try_lock_scope_strict(uuid)
+drop cascades to table live_battle_score_events
+drop cascades to table live_gift_transactions
+drop cascades to function private.live_battle_score_event_contract_is_valid(live_battle_score_events,live_gift_transactions,live_battles)
+drop cascades to table live_battle_score_states
+drop cascades to function private.reconcile_live_battle_score_locked(uuid,timestamp with time zone)
+drop cascades to function private.record_live_battle_score_locked(uuid,uuid,timestamp with time zone)
+drop cascades to table live_battle_boost_events
+drop cascades to function private.resolve_live_battle_effective_boost_locked(uuid,text,timestamp with time zone)
+drop cascades to function accept_call(uuid,uuid)
+drop cascades to function acquire_incoming_call_dispatch_lease(uuid,integer)
+drop cascades to function acquire_incoming_watchdog_lease(integer)
+drop cascades to function activate_live_battle_glove(uuid,text)
+drop cascades to function activate_marketplace_ad_campaign(uuid,uuid)
+drop cascades to function add_my_marketplace_creator_showcase_product(uuid,uuid)
+drop cascades to function adjust_marketplace_variant_inventory(uuid,integer,text,uuid)
+drop cascades to function admin_moderate_marketplace_product(uuid,text,text,uuid)
+drop cascades to function admin_moderate_marketplace_seller(uuid,text,text,uuid)
+drop cascades to function admin_resolve_marketplace_dispute(uuid,text,text,text,uuid)
+drop cascades to function apply_marketplace_order_item_creator_allocations(uuid,jsonb,uuid)
+drop cascades to table marketplace_sellers
+drop cascades to function apply_marketplace_seller(text,text)
+drop cascades to function approve_marketplace_seller(uuid)
+drop cascades to function archive_marketplace_product_variant(uuid,uuid)
+drop cascades to function atomic_ledger_transfer(uuid,uuid,numeric,numeric,text,text,text,uuid,text)
+drop cascades to function call_push_deliveries_wake_dispatcher()
+drop cascades to function cancel_call(uuid)
+drop cascades to function cancel_live_battle(uuid)
+drop cascades to function cancel_marketplace_checkout_reservation(uuid)
+drop cascades to function cancel_unpublished_exclusive_content(uuid)
+drop cascades to function check_velocity_limit(uuid,text,numeric,integer,numeric,integer)
+drop cascades to function checkpoint_marketplace_ad_eligibility(uuid)
+drop cascades to function claim_call_push_delivery(uuid,uuid,text,text)
+drop cascades to function claim_foreground_call_presentation(uuid,uuid)
+drop cascades to function claim_incoming_call_deliveries(uuid,uuid,integer)
+drop cascades to function claim_message_push_deliveries(integer)
+drop cascades to function claim_message_push_receipts(integer)
+drop cascades to function claim_pending_call_push_deliveries(text,integer)
+drop cascades to function cleanup_stale_media_upload_records(integer)
+drop cascades to function clear_invalid_message_expo_token(uuid,text)
+drop cascades to function close_stale_live_sessions()
+drop cascades to function close_unprocessable_incoming_call_presentations(integer)
+drop cascades to function complete_live_battle(uuid)
+drop cascades to function complete_withdrawal_settlement(uuid,text,integer,bigint,jsonb)
+drop cascades to function configure_marketplace_product_variants(uuid,jsonb,jsonb,uuid)
+drop cascades to function configure_marketplace_product_variants_mkt_a2_original(uuid,jsonb,jsonb,uuid)
+drop cascades to function confirm_marketplace_order_delivery_and_release(uuid,uuid,uuid)
+drop cascades to function confirm_marketplace_return_received(uuid,text,uuid)
+drop cascades to function confirm_marketplace_return_shipment(uuid,text,uuid)
+drop cascades to function create_carousel_post(text,text,uuid[])
+drop cascades to function create_carousel_post(text,text,text,text,text[])
+drop cascades to function create_carousel_post(text,text,text,text,text[],uuid[])
+drop cascades to function create_live_battle_invite(uuid,uuid,uuid)
+drop cascades to function create_live_marketplace_checkout_reservation(uuid,uuid,uuid,integer,jsonb,uuid)
+drop cascades to function create_marketplace_ad_campaign_draft(uuid,text,numeric,timestamp with time zone,timestamp with time zone,uuid)
+drop cascades to function create_marketplace_checkout_reservation(jsonb,jsonb,uuid)
+drop cascades to function create_marketplace_creator_checkout_reservation(jsonb,jsonb,uuid)
+drop cascades to function create_marketplace_creator_commerce_attribution(uuid,uuid,uuid,text,uuid,uuid)
+drop cascades to function create_marketplace_creator_content_attribution(uuid,uuid,uuid)
+drop cascades to function create_marketplace_creator_live_attribution(uuid,uuid,uuid)
+drop cascades to function create_marketplace_creator_showcase_attribution(uuid,uuid,uuid)
+drop cascades to function create_marketplace_product(uuid,uuid,text,text,numeric,text,numeric,uuid[],integer,text[])
+drop cascades to function create_marketplace_product_draft(uuid,uuid,text,text,numeric,text,numeric,uuid[],integer,text[])
+drop cascades to function create_marketplace_product_promotion(uuid,uuid,text,numeric,timestamp with time zone,timestamp with time zone,uuid)
+drop cascades to function create_marketplace_store(text,text,text)
+drop cascades to function create_or_resume_marketplace_product_draft(uuid,uuid,uuid)
+drop cascades to function create_photo_post_with_media(text,text,uuid)
+drop cascades to function create_photo_story_with_media(uuid)
+drop cascades to function create_photo_story_with_media(text[],uuid[])
+drop cascades to function create_product_with_media(text,text,numeric,text,uuid[],integer,text[])
+drop cascades to function create_product_with_media(text,text,numeric,text,text[],uuid[],integer,text[])
+drop cascades to function credit_deposit_to_ledger(uuid,numeric,text,text,uuid)
+drop cascades to function deactivate_call_device(text)
+drop cascades to function delete_stream_video_post(uuid)
+drop cascades to function emit_live_gift_control_event()
+drop cascades to function end_call(uuid,text)
+drop cascades to function end_live_session(uuid,text)
+drop cascades to function end_marketplace_product_promotion(uuid)
+drop cascades to function enforce_new_withdrawal_stablecoin_matrix()
+drop cascades to function enqueue_call_terminal_deliveries(uuid,text,text,text,uuid)
+drop cascades to function enqueue_message_push()
+drop cascades to function ensure_ledger_account(uuid)
+drop cascades to function ensure_marketplace_ads_account(text)
+drop cascades to function ensure_marketplace_escrow_account()
+drop cascades to function ensure_marketplace_platform_account()
+drop cascades to function ensure_marketplace_return_escrow_account()
+drop cascades to function evaluate_my_marketplace_product_publication(uuid)
+drop cascades to function expire_marketplace_checkout_reservations(integer)
+drop cascades to function expire_stale_calls()
+drop cascades to function feature_live_session_product(uuid,uuid,uuid)
+drop cascades to function fetch_live_session_products(uuid)
+drop cascades to function fetch_marketplace_ad_config()
+drop cascades to function fetch_marketplace_product_detail(uuid)
+and 450 other objects (see server log for list)
+NOTICE:  drop cascades to 30 other objects
+DETAIL:  drop cascades to function private.current_live_battle_rule_set_id()
+drop cascades to function private.initialize_live_battle_power_states(uuid)
+drop cascades to function private.initialize_live_battle_power_states_trigger()
+drop cascades to function private.live_agora_uid(uuid)
+drop cascades to function private.live_battle_lock_sessions(uuid,uuid)
+drop cascades to function private.live_battle_lock_users(uuid,uuid)
+drop cascades to function private.live_battle_session_pair_is_live(uuid,uuid,uuid,uuid)
+drop cascades to function private.reconcile_due_live_battles(integer)
+drop cascades to function private.reject_live_battle_boost_event_mutation()
+drop cascades to function private.reject_live_battle_rule_set_change()
+drop cascades to function private.reject_live_battle_rule_set_mutation()
+drop cascades to function private.reject_live_battle_score_event_mutation()
+drop cascades to function private.sync_live_battle_public_competitive_states()
+drop cascades to function private.validate_live_battle_boost_event()
+drop cascades to function private.validate_live_battle_power_state()
+drop cascades to function private.get_live_battle_power_projection(uuid,timestamp with time zone)
+drop cascades to function private.sync_live_battle_competitive_projection_locked(uuid,timestamp with time zone)
+drop cascades to function private.sync_live_battle_power_state_trigger()
+drop cascades to function private.sync_live_battle_public_local_side()
+drop cascades to function private.clear_stale_live_battle_rematch_projection()
+drop cascades to function private.validate_live_battle_rematch_request()
+drop cascades to function private.live_battle_series_champion(uuid,uuid,smallint,smallint)
+drop cascades to function private.sync_live_battle_series_projection_locked(uuid,timestamp with time zone)
+drop cascades to function private.live_battle_series_score_finalized_trigger()
+drop cascades to function private.reconcile_due_live_battle_series(integer)
+drop cascades to function private.sync_live_battle_public_states()
+drop cascades to function private.live_gift_commission_split(bigint)
+drop cascades to function private.verify_live_gift_journal(uuid,uuid,uuid,bigint,bigint,bigint,text,text,uuid)
+drop cascades to function private.reject_live_battle_like_mutation()
+drop cascades to function private.validate_live_battle_like_event()
+NOTICE:  drop cascades to 11 other objects
+DETAIL:  drop cascades to function fixture_ops.fixture_financial_exposure()
+drop cascades to function fixture_ops.fixture_financial_exposure(text,text)
+drop cascades to function fixture_ops.is_business_purchase_event(uuid)
+drop cascades to function fixture_ops.is_fixture(text,uuid)
+drop cascades to function fixture_ops.neutralize_marketplace_fixture_run(text,text,text)
+drop cascades to function fixture_ops.register_fixture_run_descendants(text,text)
+drop cascades to function fixture_ops.register_fixture_run_roots(text,text,text)
+drop cascades to table fixture_ops.fixture_cleanup_audits
+drop cascades to table fixture_ops.fixture_financial_cleanup
+drop cascades to table fixture_ops.fixture_runs
+drop cascades to table fixture_ops.internal_test_fixture_registry

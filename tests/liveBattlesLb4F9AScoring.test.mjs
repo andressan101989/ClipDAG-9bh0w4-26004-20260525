@@ -53,7 +53,7 @@ function loadBatcher() {
 test('rapid hearts batch with strict payload bounds and new keys after success', async () => {
   const { LiveBattleLikeBatcher, timers } = loadBatcher();
   const calls = []; let key = 0, confirmations = 0;
-  const queue = new LiveBattleLikeBatcher(async batch => { calls.push({ ...batch }); return { accepted_count: 0, awarded_points: 0 }; }, () => confirmations++, () => `key-${++key}`);
+  const queue = new LiveBattleLikeBatcher(async batch => { calls.push({ ...batch }); return { accepted_count: batch.count, awarded_points: batch.count * 5 }; }, () => confirmations++, () => `key-${++key}`);
   for (let i = 0; i < 21; i++) queue.add();
   assert.equal(calls.length, 0);
   assert.equal(timers.size, 1);
@@ -65,7 +65,7 @@ test('rapid hearts batch with strict payload bounds and new keys after success',
 test('ambiguous failure preserves count and key; in-flight double flush cannot duplicate', async () => {
   const { LiveBattleLikeBatcher } = loadBatcher();
   const calls = []; let fail = true, release;
-  const queue = new LiveBattleLikeBatcher(async batch => { calls.push({ ...batch }); if (fail) throw Error('network'); await new Promise(resolve => { release = resolve; }); }, () => {});
+  const queue = new LiveBattleLikeBatcher(async batch => { calls.push({ ...batch }); if (fail) throw Error('network'); await new Promise(resolve => { release = resolve; }); return { accepted_count: batch.count, awarded_points: batch.count * 5 }; }, () => {});
   queue.add(); queue.add(); await queue.flush();
   fail = false;
   const flight = queue.flush(); await queue.flush();
@@ -76,7 +76,7 @@ test('ambiguous failure preserves count and key; in-flight double flush cannot d
 test('closed context drains its original batch without updating the unmounted screen', async () => {
   const { LiveBattleLikeBatcher } = loadBatcher();
   const calls = []; let confirmed = 0;
-  const queue = new LiveBattleLikeBatcher(async batch => calls.push(batch), () => confirmed++);
+  const queue = new LiveBattleLikeBatcher(async batch => { calls.push(batch); return { accepted_count: batch.count, awarded_points: batch.count * 5 }; }, () => confirmed++);
   queue.add(); queue.close(); queue.add();
   await Promise.resolve(); await Promise.resolve();
   assert.equal(calls.length, 1); assert.equal(calls[0].count, 1); assert.equal(confirmed, 0);

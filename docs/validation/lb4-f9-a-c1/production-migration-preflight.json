@@ -1,0 +1,13 @@
+{
+  "projectRef": "aewwdlvbwpczqyvkwvvj",
+  "tool": "Supabase list_migrations (read-only metadata)",
+  "checkedAt": "2026-09-06T06:25:51.302Z",
+  "migrationCount": 210,
+  "last": {
+    "version": "20260905230823",
+    "name": "live_gift_platform_commission_35"
+  },
+  "f9Applied": false,
+  "productionSQL": false,
+  "productionWrites": false
+}

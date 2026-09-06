@@ -1,0 +1,84 @@
+{
+  "passed": 18,
+  "failed": 0,
+  "skipped": 0,
+  "cases": [
+    {
+      "name": "20 individual positives + 1000 unique over-cap requests: exactly 20 rows/20 likes/100 points",
+      "passed": true
+    },
+    {
+      "name": "1000 unique closed attempts persist no rows, points or side effects",
+      "passed": true
+    },
+    {
+      "name": "1000 unique deadline attempts persist no rows, points or side effects",
+      "passed": true
+    },
+    {
+      "name": "1000 unique historical attempts persist no rows, points or side effects",
+      "passed": true
+    },
+    {
+      "name": "1000 unique host attempts persist no rows, points or side effects",
+      "passed": true
+    },
+    {
+      "name": "1000 unique nonparticipant attempts persist no rows, points or side effects",
+      "passed": true
+    },
+    {
+      "name": "1000 unique countdown attempts persist no rows, points or side effects",
+      "passed": true
+    },
+    {
+      "name": "partial 18+5 accepts 2 in one positive row; positive replay survives close; payload conflict",
+      "passed": true
+    },
+    {
+      "name": "heart x1: money/commission intact; likes stay +5 and winner uses combined journal",
+      "passed": true
+    },
+    {
+      "name": "heart x2: money/commission intact; likes stay +5 and winner uses combined journal",
+      "passed": true
+    },
+    {
+      "name": "heart x3: money/commission intact; likes stay +5 and winner uses combined journal",
+      "passed": true
+    },
+    {
+      "name": "rose x1: money/commission intact; likes stay +5 and winner uses combined journal",
+      "passed": true
+    },
+    {
+      "name": "rose x2: money/commission intact; likes stay +5 and winner uses combined journal",
+      "passed": true
+    },
+    {
+      "name": "rose x3: money/commission intact; likes stay +5 and winner uses combined journal",
+      "passed": true
+    },
+    {
+      "name": "positive constraints, ACL, RLS, owner/search_path and direct mutations",
+      "passed": true
+    },
+    {
+      "name": "real same-key concurrency returns one positive receipt; distinct keys stay bounded",
+      "passed": true
+    },
+    {
+      "name": "concurrent gifts+likes reconcile deterministically; viewers have independent quotas",
+      "passed": true
+    },
+    {
+      "name": "waiting request checks deadline after canonical lock and leaves no receipt",
+      "passed": true
+    }
+  ],
+  "maximumRowsPerViewerBattle": 20,
+  "maximumLikes": 20,
+  "maximumPoints": 100,
+  "zeroReceiptRows": 0,
+  "rollback": "Every sequential case and all concurrent connections end with ROLLBACK; committed shared fixtures destroyed with container and volumes"
+}

@@ -1,0 +1,11 @@
+{
+  "container": "clipdag-lb4-f9-proof",
+  "verifiedContainerId": "6e9f975fea3a51fd8ee9fb241bfad5cca719cd0082eb39bd6de0e71e4516100b",
+  "mountsBeforeRemoval": [],
+  "command": "docker rm -f -v clipdag-lb4-f9-proof",
+  "destroyed": true,
+  "volumesRemoved": true,
+  "temporaryCredentialRemoved": true,
+  "remainingMatchingContainers": 0,
+  "productionTouched": false
+}

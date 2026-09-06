@@ -31,7 +31,11 @@ set rule_set_id = (select id from public.live_battle_rule_sets where rule_versio
 where singleton;
 
 -- A distinct journal preserves the NOT NULL/UNIQUE gift FK of the paid journal.
--- Zero-accepted batches are receipts too: a confirmed retry never changes its result.
+-- Persist positive receipts only: at least one consumed like per row bounds the
+-- journal to max_scoreable_likes_per_viewer rows per actor/Battle (20 in v3).
+-- Zero responses change no competitive state and need no durable idempotency:
+-- consumed quota only increases and a closed Battle never reopens. A pre-start
+-- visual attempt may later become eligible; it has no previously awarded points.
 create table public.live_battle_like_score_events (
   id uuid primary key default pg_catalog.gen_random_uuid(),
   battle_id uuid not null references public.live_battles(id) on delete restrict,
@@ -39,9 +43,9 @@ create table public.live_battle_like_score_events (
   target_user_id uuid not null references auth.users(id) on delete restrict,
   session_id uuid not null references public.live_sessions(id) on delete restrict,
   requested_count integer not null check (requested_count between 1 and 64),
-  accepted_count integer not null check (accepted_count between 0 and requested_count),
-  like_points integer not null check (like_points between 0 and 1000),
-  awarded_points bigint not null check (awarded_points = accepted_count::bigint * like_points),
+  accepted_count integer not null check (accepted_count between 1 and requested_count),
+  like_points integer not null check (like_points between 1 and 1000),
+  awarded_points bigint not null check (awarded_points > 0 and awarded_points = accepted_count::bigint * like_points),
   rule_set_id uuid not null,
   rule_version integer not null,
   idempotency_key text not null check (idempotency_key ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$'),
@@ -154,8 +158,14 @@ begin
   v_now := pg_catalog.clock_timestamp();
   if v_battle.status = 'active' and v_session.status = 'live'
      and v_now >= v_battle.scheduled_start_at and v_now < v_battle.scheduled_end_at
+     and v_rules.like_points > 0
      and v_actor not in (v_battle.challenger_user_id, v_battle.opponent_user_id) then
     v_accepted := least(p_count::bigint, greatest(0, v_rules.max_scoreable_likes_per_viewer - v_used))::integer;
+  end if;
+  -- Terminal zero response: no journal row, projection write or reconciliation.
+  if v_accepted = 0 then
+    return query select 0, 0::bigint;
+    return;
   end if;
   insert into public.live_battle_like_score_events (
     battle_id, actor_user_id, target_user_id, session_id, requested_count, accepted_count,

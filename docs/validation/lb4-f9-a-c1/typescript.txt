@@ -1,0 +1,284 @@
+app/(tabs)/messages.tsx(214,41): error TS7006: Parameter 'c' implicitly has an 'any' type.
+app/(tabs)/notifications.tsx(72,42): error TS7006: Parameter 'c' implicitly has an 'any' type.
+app/(tabs)/search.tsx(148,28): error TS2352: Conversion of type '{ id: any; user_id: any; caption: any; thumbnail_url: any; likes_count: any; created_at: any; user_profiles: { username: any; avatar_url: any; }[]; }[] | null' to type 'DbVideo[]' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Type '{ id: any; user_id: any; caption: any; thumbnail_url: any; likes_count: any; created_at: any; user_profiles: { username: any; avatar_url: any; }[]; }[]' is not comparable to type 'DbVideo[]'.
+    Type '{ id: any; user_id: any; caption: any; thumbnail_url: any; likes_count: any; created_at: any; user_profiles: { username: any; avatar_url: any; }[]; }' is not comparable to type 'DbVideo'.
+      Types of property 'user_profiles' are incompatible.
+        Type '{ username: any; avatar_url: any; }[]' is missing the following properties from type '{ username: string; avatar_url: string | null; }': username, avatar_url
+app/(tabs)/search.tsx(168,26): error TS2352: Conversion of type '{ id: any; user_id: any; caption: any; thumbnail_url: any; likes_count: any; created_at: any; user_profiles: { username: any; avatar_url: any; }[]; }[] | null' to type 'DbVideo[]' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Type '{ id: any; user_id: any; caption: any; thumbnail_url: any; likes_count: any; created_at: any; user_profiles: { username: any; avatar_url: any; }[]; }[]' is not comparable to type 'DbVideo[]'.
+    Type '{ id: any; user_id: any; caption: any; thumbnail_url: any; likes_count: any; created_at: any; user_profiles: { username: any; avatar_url: any; }[]; }' is not comparable to type 'DbVideo'.
+      Types of property 'user_profiles' are incompatible.
+        Type '{ username: any; avatar_url: any; }[]' is missing the following properties from type '{ username: string; avatar_url: string | null; }': username, avatar_url
+app/(tabs)/search.tsx(203,25): error TS2352: Conversion of type '{ id: any; user_id: any; caption: any; thumbnail_url: any; likes_count: any; created_at: any; user_profiles: { username: any; avatar_url: any; }[]; }[] | null' to type 'DbVideo[]' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Type '{ id: any; user_id: any; caption: any; thumbnail_url: any; likes_count: any; created_at: any; user_profiles: { username: any; avatar_url: any; }[]; }[]' is not comparable to type 'DbVideo[]'.
+    Type '{ id: any; user_id: any; caption: any; thumbnail_url: any; likes_count: any; created_at: any; user_profiles: { username: any; avatar_url: any; }[]; }' is not comparable to type 'DbVideo'.
+      Types of property 'user_profiles' are incompatible.
+        Type '{ username: any; avatar_url: any; }[]' is missing the following properties from type '{ username: string; avatar_url: string | null; }': username, avatar_url
+app/ai-avatar.native.tsx(221,22): error TS2345: Argument of type '{ videoUrl: string; thumbnailUrl: string; caption: string; music: string; username: any; userAvatar: any; }' is not assignable to parameter of type 'AddVideoInput'.
+  Property 'userId' is missing in type '{ videoUrl: string; thumbnailUrl: string; caption: string; music: string; username: any; userAvatar: any; }' but required in type 'Omit<Video, "id" | "comments" | "likes" | "isLiked" | "shares" | "createdAt">'.
+app/ai-avatar.tsx(100,5): error TS7006: Parameter 'p' implicitly has an 'any' type.
+app/ai-avatar.tsx(316,22): error TS2345: Argument of type '{ videoUrl: string; thumbnailUrl: string; caption: string; music: string; username: any; userAvatar: any; }' is not assignable to parameter of type 'AddVideoInput'.
+  Property 'userId' is missing in type '{ videoUrl: string; thumbnailUrl: string; caption: string; music: string; username: any; userAvatar: any; }' but required in type 'Omit<Video, "id" | "comments" | "likes" | "isLiked" | "shares" | "createdAt">'.
+app/ai-avatar.web.tsx(158,22): error TS2345: Argument of type '{ videoUrl: string; thumbnailUrl: string; caption: string; music: string; username: any; userAvatar: any; }' is not assignable to parameter of type 'AddVideoInput'.
+  Property 'userId' is missing in type '{ videoUrl: string; thumbnailUrl: string; caption: string; music: string; username: any; userAvatar: any; }' but required in type 'Omit<Video, "id" | "comments" | "likes" | "isLiked" | "shares" | "createdAt">'.
+app/battle/[roomId].tsx(131,35): error TS2339: Property 'subscribe' does not exist on type 'PresenceManagerImpl'.
+app/battle/[roomId].tsx(131,58): error TS7006: Parameter 'record' implicitly has an 'any' type.
+app/battle/[roomId].tsx(138,21): error TS2551: Property 'fetchPresence' does not exist on type 'PresenceManagerImpl'. Did you mean 'getPresence'?
+app/chat/[userId].tsx(236,43): error TS7006: Parameter 'c' implicitly has an 'any' type.
+app/chat/[userId].tsx(443,23): error TS2367: This comparison appears to be unintentional because the types '"video" | "image" | "text"' and '"premium_dm"' have no overlap.
+app/debug.tsx(144,52): error TS2339: Property 'forceReleasedCount' does not exist on type 'LeakReport'.
+app/debug.tsx(144,86): error TS2339: Property 'forceReleasedCount' does not exist on type 'LeakReport'.
+app/debug.tsx(240,22): error TS2339: Property 'surface' does not exist on type '{ id: string; fps: number; dropRate: string; avgMs: string; }'.
+app/debug.tsx(241,24): error TS2339: Property 'surface' does not exist on type '{ id: string; fps: number; dropRate: string; avgMs: string; }'.
+app/debug.tsx(242,27): error TS2339: Property 'currentFPS' does not exist on type '{ id: string; fps: number; dropRate: string; avgMs: string; }'.
+app/debug.tsx(256,42): error TS2339: Property 'getStats' does not exist on type 'StreamingBufferManagerImpl'.
+app/debug.tsx(272,66): error TS2339: Property 'activeBufferCount' does not exist on type 'StreamingBufferManagerImpl'.
+app/debug.tsx(273,66): error TS2339: Property 'getTotalStallRate' does not exist on type 'StreamingBufferManagerImpl'.
+app/debug.tsx(274,43): error TS2339: Property 'getTotalStallRate' does not exist on type 'StreamingBufferManagerImpl'.
+app/debug.tsx(275,22): error TS7006: Parameter 'b' implicitly has an 'any' type.
+app/deepar-module-test.tsx(69,62): error TS2353: Object literal may only specify known properties, and 'size' does not exist in type 'InfoOptions'.
+app/deepar-module-test.tsx(72,57): error TS2339: Property 'size' does not exist on type 'FileInfo'.
+  Property 'size' does not exist on type '{ exists: false; uri: string; isDirectory: false; }'.
+app/messages.tsx(20,40): error TS2339: Property 'senderId' does not exist on type 'string'.
+app/messages.tsx(29,27): error TS2339: Property 'otherUserAvatar' does not exist on type 'Conversation'.
+app/messages.tsx(29,59): error TS2339: Property 'otherUsername' does not exist on type 'Conversation'.
+app/messages.tsx(37,20): error TS2339: Property 'otherUsername' does not exist on type 'Conversation'.
+app/messages.tsx(40,32): error TS2339: Property 'createdAt' does not exist on type 'string'.
+app/messages.tsx(40,69): error TS2339: Property 'createdAt' does not exist on type 'string'.
+app/messages.tsx(49,32): error TS2339: Property 'text' does not exist on type 'string'.
+app/messages.tsx(49,59): error TS2339: Property 'mediaType' does not exist on type 'string'.
+app/my-content.tsx(88,19): error TS2339: Property 'savedVideoIds' does not exist on type 'FeedContextType'.
+app/my-subscriptions.tsx(449,34): error TS2322: Type '"compass"' is not assignable to type '"public" | "error" | "store" | "payment" | "timeline" | "note" | "title" | "description" | "feed" | "terminal" | "map" | "filter" | "campaign" | "key" | "attribution" | "payments" | ... 2218 more ... | undefined'.
+app/privacy-policy.tsx(108,14): error TS2322: Type '{ children: string; style: { marginTop: number; }; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; }'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & { children: ReactNode; }'.
+app/privacy-policy.tsx(135,14): error TS2322: Type '{ children: string; style: { marginTop: number; }; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; }'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & { children: ReactNode; }'.
+app/privacy-policy.tsx(169,14): error TS2322: Type '{ children: (string | Element)[]; style: { marginTop: number; }; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; }'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & { children: ReactNode; }'.
+app/privacy-policy.tsx(249,14): error TS2322: Type '{ children: string; style: { marginTop: number; }; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; }'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & { children: ReactNode; }'.
+app/privacy-policy.tsx(276,14): error TS2322: Type '{ children: string; style: { marginTop: number; }; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; }'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & { children: ReactNode; }'.
+app/privacy-policy.tsx(310,14): error TS2322: Type '{ children: (string | Element)[]; style: { marginTop: number; }; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; }'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & { children: ReactNode; }'.
+app/terms-of-service.tsx(106,14): error TS2322: Type '{ children: string; style: { marginTop: number; }; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; }'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & { children: ReactNode; }'.
+app/terms-of-service.tsx(137,14): error TS2322: Type '{ children: string; style: { marginTop: number; }; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; }'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & { children: ReactNode; }'.
+app/terms-of-service.tsx(150,14): error TS2322: Type '{ children: (string | Element)[]; style: { marginTop: number; }; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; }'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & { children: ReactNode; }'.
+app/terms-of-service.tsx(176,14): error TS2322: Type '{ children: string; style: { marginTop: number; }; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; }'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & { children: ReactNode; }'.
+app/terms-of-service.tsx(255,14): error TS2322: Type '{ children: string; style: { marginTop: number; }; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; }'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & { children: ReactNode; }'.
+app/terms-of-service.tsx(285,14): error TS2322: Type '{ children: string; style: { marginTop: number; }; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; }'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & { children: ReactNode; }'.
+app/terms-of-service.tsx(297,14): error TS2322: Type '{ children: (string | Element)[]; style: { marginTop: number; }; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; }'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & { children: ReactNode; }'.
+app/terms-of-service.tsx(319,14): error TS2322: Type '{ children: string; style: { marginTop: number; }; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; }'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & { children: ReactNode; }'.
+apps/admin-web/src/App.tsx(1,41): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/auth/AdminRoute.tsx(1,34): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/layout/AdminShell.tsx(2,46): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/lib/adminApi.ts(194,482): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+apps/admin-web/src/lib/adminApi.ts(194,780): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+apps/admin-web/src/lib/adminApi.ts(194,1220): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+apps/admin-web/src/lib/supabase.ts(3,25): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+apps/admin-web/src/lib/supabase.ts(4,29): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+apps/admin-web/src/main.tsx(2,28): error TS7016: Could not find a declaration file for module 'react-dom/client'. 'C:/Users/andre/ClipDAG-lb4-integration/node_modules/react-dom/client.js' implicitly has an 'any' type.
+  Try `npm i --save-dev @types/react-dom` if it exists or add a new declaration (.d.ts) file containing `declare module 'react-dom/client';`
+apps/admin-web/src/main.tsx(3,31): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/pages/LoginPage.tsx(2,26): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/pages/MarketplaceDisputeDetailPage.tsx(2,33): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/pages/MarketplaceDisputesPage.tsx(2,38): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/pages/MarketplaceIntelligencePages.tsx(2,50): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/pages/MarketplaceOrderDetailPage.tsx(2,32): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/pages/MarketplaceOrdersPage.tsx(2,38): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/pages/MarketplaceProductDetailPage.tsx(2,33): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/pages/MarketplaceProductsPage.tsx(2,38): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/pages/MarketplaceSellerDetailPage.tsx(2,33): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/pages/MarketplaceSellersPage.tsx(2,38): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/tests/adminUx.test.tsx(1,40): error TS2307: Cannot find module '@testing-library/react' or its corresponding type declarations.
+apps/admin-web/src/tests/adminUx.test.tsx(2,23): error TS2307: Cannot find module '@testing-library/user-event' or its corresponding type declarations.
+apps/admin-web/src/tests/adminUx.test.tsx(3,45): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/tests/adminUx.test.tsx(4,54): error TS2307: Cannot find module 'vitest' or its corresponding type declarations.
+apps/admin-web/src/tests/adminWeb.test.tsx(1,49): error TS2307: Cannot find module '@testing-library/react' or its corresponding type declarations.
+apps/admin-web/src/tests/adminWeb.test.tsx(2,23): error TS2307: Cannot find module '@testing-library/user-event' or its corresponding type declarations.
+apps/admin-web/src/tests/adminWeb.test.tsx(3,43): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/tests/adminWeb.test.tsx(4,50): error TS2307: Cannot find module 'vitest' or its corresponding type declarations.
+apps/admin-web/src/tests/adminWeb.test.tsx(16,33): error TS7006: Parameter 'importOriginal' implicitly has an 'any' type.
+apps/admin-web/src/tests/adminWeb.test.tsx(16,72): error TS2347: Untyped function calls may not accept type arguments.
+apps/admin-web/src/tests/disputeEvidenceR1C.test.tsx(1,41): error TS2307: Cannot find module '@testing-library/react' or its corresponding type declarations.
+apps/admin-web/src/tests/disputeEvidenceR1C.test.tsx(2,23): error TS2307: Cannot find module '@testing-library/user-event' or its corresponding type declarations.
+apps/admin-web/src/tests/disputeEvidenceR1C.test.tsx(3,45): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/tests/disputeEvidenceR1C.test.tsx(4,54): error TS2307: Cannot find module 'vitest' or its corresponding type declarations.
+apps/admin-web/src/tests/disputeEvidenceR1C.test.tsx(24,68): error TS7006: Parameter '_name' implicitly has an 'any' type.
+apps/admin-web/src/tests/disputeEvidenceR1C.test.tsx(24,75): error TS7006: Parameter 'input' implicitly has an 'any' type.
+apps/admin-web/src/tests/intelligenceWeb.test.tsx(1,32): error TS2307: Cannot find module '@testing-library/react' or its corresponding type declarations.
+apps/admin-web/src/tests/intelligenceWeb.test.tsx(2,30): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/tests/intelligenceWeb.test.tsx(3,54): error TS2307: Cannot find module 'vitest' or its corresponding type declarations.
+apps/admin-web/src/tests/intelligenceWeb.test.tsx(22,47): error TS7006: Parameter 'importOriginal' implicitly has an 'any' type.
+apps/admin-web/src/tests/intelligenceWeb.test.tsx(23,26): error TS2347: Untyped function calls may not accept type arguments.
+apps/admin-web/src/tests/operationsClosure.test.tsx(1,52): error TS2307: Cannot find module '@testing-library/react' or its corresponding type declarations.
+apps/admin-web/src/tests/operationsClosure.test.tsx(2,23): error TS2307: Cannot find module '@testing-library/user-event' or its corresponding type declarations.
+apps/admin-web/src/tests/operationsClosure.test.tsx(3,54): error TS2307: Cannot find module 'vitest' or its corresponding type declarations.
+apps/admin-web/src/tests/operationsWeb.test.tsx(1,39): error TS2307: Cannot find module '@testing-library/react' or its corresponding type declarations.
+apps/admin-web/src/tests/operationsWeb.test.tsx(2,23): error TS2307: Cannot find module '@testing-library/user-event' or its corresponding type declarations.
+apps/admin-web/src/tests/operationsWeb.test.tsx(3,43): error TS2307: Cannot find module 'react-router-dom' or its corresponding type declarations.
+apps/admin-web/src/tests/operationsWeb.test.tsx(4,50): error TS2307: Cannot find module 'vitest' or its corresponding type declarations.
+apps/admin-web/src/tests/operationsWeb.test.tsx(12,33): error TS7006: Parameter 'importOriginal' implicitly has an 'any' type.
+apps/admin-web/src/tests/operationsWeb.test.tsx(12,72): error TS2347: Untyped function calls may not accept type arguments.
+apps/admin-web/vite.config.ts(1,30): error TS2307: Cannot find module 'vitest/config' or its corresponding type declarations.
+apps/admin-web/vite.config.ts(2,19): error TS2307: Cannot find module '@vitejs/plugin-react' or its corresponding type declarations.
+background/CacheWorker.ts(72,25): error TS2339: Property 'emergencyCleanup' does not exist on type 'MediaCleanupManagerImpl'.
+background/CacheWorker.ts(90,31): error TS2339: Property 'evictOlderThan' does not exist on type 'IntelligentCacheManagerImpl'.
+background/CleanupWorker.ts(88,27): error TS2339: Property 'activeUploads' does not exist on type 'MediaState'.
+background/CleanupWorker.ts(101,40): error TS2353: Object literal may only specify known properties, and 'activeUploads' does not exist in type 'Partial<MediaState>'.
+background/RealtimeWorker.ts(47,35): error TS2339: Property 'heartbeat' does not exist on type 'PresenceManagerImpl'.
+background/RealtimeWorker.ts(85,25): error TS2339: Property 'recoverAll' does not exist on type 'SessionRecoveryImpl'.
+background/RealtimeWorker.ts(95,29): error TS2339: Property 'recoverAll' does not exist on type 'SessionRecoveryImpl'.
+background/RealtimeWorker.ts(96,22): error TS2339: Property 'wakeAll' does not exist on type 'PollingManagerImpl'.
+background/UploadWorker.ts(53,17): error TS2345: Argument of type '"upload:queued"' is not assignable to parameter of type 'keyof AppEvents'.
+background/UploadWorker.ts(80,32): error TS2551: Property 'dequeue' does not exist on type 'UploadQueueImpl'. Did you mean 'enqueue'?
+background/UploadWorker.ts(97,9): error TS2353: Object literal may only specify known properties, and 'activeUploads' does not exist in type 'Partial<MediaState>'.
+background/UploadWorker.ts(98,36): error TS2339: Property 'activeUploads' does not exist on type 'MediaState'.
+background/UploadWorker.ts(106,11): error TS2353: Object literal may only specify known properties, and 'activeUploads' does not exist in type 'Partial<MediaState>'.
+background/UploadWorker.ts(107,38): error TS2339: Property 'activeUploads' does not exist on type 'MediaState'.
+background/UploadWorker.ts(116,56): error TS2339: Property 'activeUploads' does not exist on type 'MediaState'.
+background/UploadWorker.ts(118,29): error TS2353: Object literal may only specify known properties, and 'activeUploads' does not exist in type 'Partial<MediaState>'.
+background/UploadWorker.ts(129,56): error TS2339: Property 'activeUploads' does not exist on type 'MediaState'.
+background/UploadWorker.ts(131,29): error TS2353: Object literal may only specify known properties, and 'activeUploads' does not exist in type 'Partial<MediaState>'.
+components/feature/ARFaceOverlay.tsx(60,17): error TS2323: Cannot redeclare exported variable 'ARDebugOverlay'.
+components/feature/ARFaceOverlay.tsx(810,10): error TS2323: Cannot redeclare exported variable 'ARDebugOverlay'.
+components/feature/ARFaceOverlay.tsx(810,10): error TS2484: Export declaration conflicts with exported declaration of 'ARDebugOverlay'.
+components/feature/LiveCameraPreview.tsx(279,28): error TS2551: Property 'sessionId' does not exist on type 'StartSessionResult'. Did you mean 'session'?
+components/feature/LiveCameraPreview.tsx(283,17): error TS2339: Property 'onViewerCountChange' does not exist on type 'StartSessionResult'.
+components/feature/LiveCameraPreview.tsx(283,37): error TS7006: Parameter 'c' implicitly has an 'any' type.
+components/feature/LiveCameraPreview.tsx(284,17): error TS2339: Property 'onHealthChange' does not exist on type 'StartSessionResult'.
+components/feature/LiveCameraPreview.tsx(284,33): error TS7006: Parameter 'score' implicitly has an 'any' type.
+components/feature/LiveCameraPreview.tsx(284,40): error TS7006: Parameter '_' implicitly has an 'any' type.
+components/feature/LiveCameraPreview.tsx(285,17): error TS2339: Property 'onQualityChange' does not exist on type 'StartSessionResult'.
+components/feature/LiveCameraPreview.tsx(285,33): error TS7006: Parameter 'p' implicitly has an 'any' type.
+components/feature/LiveCameraPreview.tsx(286,17): error TS2339: Property 'onRecovery' does not exist on type 'StartSessionResult'.
+components/feature/LiveCameraPreview.tsx(286,28): error TS7006: Parameter 'attempt' implicitly has an 'any' type.
+components/feature/LiveCameraPreview.tsx(302,30): error TS2551: Property 'sessionId' does not exist on type 'StartSessionResult'. Did you mean 'session'?
+components/feature/LiveCameraPreview.tsx(303,34): error TS2551: Property 'sessionId' does not exist on type 'StartSessionResult'. Did you mean 'session'?
+components/feature/LiveCameraPreview.tsx(304,29): error TS2551: Property 'sessionId' does not exist on type 'StartSessionResult'. Did you mean 'session'?
+components/feature/LiveCameraPreview.tsx(308,94): error TS2551: Property 'sessionId' does not exist on type 'StartSessionResult'. Did you mean 'session'?
+components/feature/StoryViewer.native.tsx(36,65): error TS7006: Parameter 'p' implicitly has an 'any' type.
+components/feature/studio/AvatarsTab.tsx(156,22): error TS2345: Argument of type '{ videoUrl: string; thumbnailUrl: string; caption: string; music: string; username: string; userAvatar: string; }' is not assignable to parameter of type 'AddVideoInput'.
+  Property 'userId' is missing in type '{ videoUrl: string; thumbnailUrl: string; caption: string; music: string; username: string; userAvatar: string; }' but required in type 'Omit<Video, "id" | "comments" | "likes" | "isLiked" | "shares" | "createdAt">'.
+components/feature/studio/camera/CameraCore.tsx(272,38): error TS2345: Argument of type '"thermal:state_changed"' is not assignable to parameter of type 'keyof AppEvents'.
+components/feature/studio/camera/CameraCore.tsx(309,37): error TS2345: Argument of type '"memory:pressure_changed"' is not assignable to parameter of type 'keyof AppEvents'.
+components/feature/studio/camera/CameraCore.tsx(678,35): error TS2322: Type '"auto-awesome"' is not assignable to type '"symbol" | "function" | "store" | "timeline" | "note" | "city" | "map" | "filter" | "at" | "key" | "message" | "video" | "sort" | "blur" | "camera" | "microphone" | "timer" | "animation" | ... 7430 more ... | undefined'.
+components/feature/studio/EffectsTab.tsx(283,22): error TS2345: Argument of type '{ videoUrl: string; thumbnailUrl: string; caption: string; music: string; username: string; userAvatar: string; }' is not assignable to parameter of type 'AddVideoInput'.
+  Property 'userId' is missing in type '{ videoUrl: string; thumbnailUrl: string; caption: string; music: string; username: string; userAvatar: string; }' but required in type 'Omit<Video, "id" | "comments" | "likes" | "isLiked" | "shares" | "createdAt">'.
+components/feature/studio/VideosTab.tsx(324,22): error TS2345: Argument of type '{ videoUrl: string; thumbnailUrl: string; caption: string; music: string; username: string; userAvatar: string; }' is not assignable to parameter of type 'AddVideoInput'.
+  Property 'userId' is missing in type '{ videoUrl: string; thumbnailUrl: string; caption: string; music: string; username: string; userAvatar: string; }' but required in type 'Omit<Video, "id" | "comments" | "likes" | "isLiked" | "shares" | "createdAt">'.
+contexts/AuthContext.tsx(141,11): error TS2741: Property 'isAdmin' is missing in type '{ id: string; email: string; username: string; displayName: string; avatar: string; bio: string; profession: string; website: string; location: string; followers: number; following: number; dagBalance: number; walletAddress: null; totalLikes: number; }' but required in type 'AppUser'.
+contexts/AuthContext.tsx(425,32): error TS2339: Property 'catch' does not exist on type 'PostgrestBuilder<any, any, false>'.
+hooks/core/useGPU.ts(52,24): error TS2345: Argument of type 'GPURenderSlot | null' is not assignable to parameter of type 'GPURenderSlot'.
+  Type 'null' is not assignable to type 'GPURenderSlot'.
+hooks/core/useGPU.ts(53,5): error TS2322: Type 'GPURenderSlot | null' is not assignable to type 'GPURenderSlot'.
+  Type 'null' is not assignable to type 'GPURenderSlot'.
+hooks/core/usePowerTier.ts(16,27): error TS2344: Type 'PowerTierConfig' does not satisfy the constraint '(...args: any) => any'.
+  Type 'PowerTierConfig' provides no match for the signature '(...args: any): any'.
+hooks/gaming/useBattle.ts(76,25): error TS2339: Property 'registerMultiplayerSession' does not exist on type 'PresenceManagerImpl'.
+hooks/gaming/useBattle.ts(114,50): error TS2554: Expected 1 arguments, but got 2.
+hooks/gaming/useBattle.ts(192,25): error TS2339: Property 'unregisterMultiplayerSession' does not exist on type 'PresenceManagerImpl'.
+hooks/gaming/useBattle.ts(222,21): error TS2339: Property 'unregisterMultiplayerSession' does not exist on type 'PresenceManagerImpl'.
+hooks/navigation/useNavigationTelemetry.ts(36,17): error TS2339: Property 'recordScreenView' does not exist on type 'DiagnosticsImpl'.
+hooks/streaming/useLiveStream.ts(94,21): error TS2339: Property 'request' does not exist on type 'ResourceManagerImpl'.
+hooks/streaming/useLiveStream.ts(95,21): error TS2339: Property 'request' does not exist on type 'ResourceManagerImpl'.
+hooks/streaming/useLiveStream.ts(99,43): error TS2345: Argument of type '"stream"' is not assignable to parameter of type 'SessionType'.
+hooks/streaming/useLiveStream.ts(134,21): error TS2551: Property 'registerStreamSession' does not exist on type 'PresenceManagerImpl'. Did you mean 'registerSession'?
+hooks/streaming/useLiveStream.ts(206,27): error TS2339: Property 'unregisterStreamSession' does not exist on type 'PresenceManagerImpl'.
+hooks/useBlockDAG.ts(155,29): error TS2345: Argument of type '(prev: DAGTransaction[]) => (DAGTransaction | { id: string; txHash: string; status: string; metadata?: Record<string, unknown> | undefined; description: string; ... 4 more ...; to: string; })[]' is not assignable to parameter of type 'SetStateAction<DAGTransaction[]>'.
+  Type '(prev: DAGTransaction[]) => (DAGTransaction | { id: string; txHash: string; status: string; metadata?: Record<string, unknown> | undefined; description: string; ... 4 more ...; to: string; })[]' is not assignable to type '(prevState: DAGTransaction[]) => DAGTransaction[]'.
+    Type '(DAGTransaction | { id: string; txHash: string; status: string; metadata?: Record<string, unknown> | undefined; description: string; amount: number; type: TransactionType; timestamp: string; from: string; to: string; })[]' is not assignable to type 'DAGTransaction[]'.
+      Type 'DAGTransaction | { id: string; txHash: string; status: string; metadata?: Record<string, unknown> | undefined; description: string; amount: number; type: TransactionType; timestamp: string; from: string; to: string; }' is not assignable to type 'DAGTransaction'.
+        Type '{ id: string; txHash: string; status: string; metadata?: Record<string, unknown> | undefined; description: string; amount: number; type: TransactionType; timestamp: string; from: string; to: string; }' is not assignable to type 'DAGTransaction'.
+          Types of property 'status' are incompatible.
+            Type 'string' is not assignable to type 'TransactionStatus'.
+hooks/useCreatorSession.ts(178,39): error TS2345: Argument of type 'string' is not assignable to parameter of type '"error" | "state" | "network" | "navigation" | "user_action" | "lifecycle"'.
+hooks/usePolling.ts(40,17): error TS2322: Type 'void | Promise<void>' is not assignable to type 'Promise<void>'.
+  Type 'void' is not assignable to type 'Promise<void>'.
+hooks/useVideoActions.ts(24,35): error TS2345: Argument of type 'SecurityAction' is not assignable to parameter of type 'import("C:/Users/andre/ClipDAG-lb4-f9-a-c1/modules/core/SecurityManager").SecurityAction'.
+  Type '"send_gift"' is not assignable to type 'SecurityAction'.
+hooks/useVideoActions.ts(30,39): error TS2345: Argument of type 'string' is not assignable to parameter of type '"error" | "state" | "network" | "navigation" | "user_action" | "lifecycle"'.
+modules/calls/CallManager.ts(105,42): error TS2345: Argument of type '"socket"' is not assignable to parameter of type 'LeakResourceType'.
+modules/calls/CallManager.ts(107,19): error TS2345: Argument of type '"call:ringing_out"' is not assignable to parameter of type 'keyof AppEvents'.
+modules/calls/CallManager.ts(113,23): error TS2345: Argument of type '"call:missed"' is not assignable to parameter of type 'keyof AppEvents'.
+modules/calls/CallManager.ts(149,42): error TS2345: Argument of type '"socket"' is not assignable to parameter of type 'LeakResourceType'.
+modules/calls/CallManager.ts(151,72): error TS2561: Object literal may only specify known properties, but 'callId' does not exist in type '{ callerId: string; callType: "voice" | "video"; roomId: string; }'. Did you mean to write 'callerId'?
+modules/calls/CallManager.ts(250,23): error TS2345: Argument of type '"call:track_received"' is not assignable to parameter of type 'keyof AppEvents'.
+modules/calls/CallManager.ts(261,23): error TS2345: Argument of type '"call:error"' is not assignable to parameter of type 'keyof AppEvents'.
+modules/calls/CallManager.ts(296,23): error TS2345: Argument of type '"call:connected"' is not assignable to parameter of type 'keyof AppEvents'.
+modules/calls/CallManager.ts(300,23): error TS2345: Argument of type '"call:reconnecting"' is not assignable to parameter of type 'keyof AppEvents'.
+modules/calls/CallManager.ts(304,23): error TS2345: Argument of type '"call:failed"' is not assignable to parameter of type 'keyof AppEvents'.
+modules/calls/CallManager.ts(334,35): error TS2353: Object literal may only specify known properties, and 'status' does not exist in type '{ callId: string; duration: number; }'.
+modules/calls/index.ts(5,50): error TS2724: '"./CallManager"' has no exported member named 'CallManagerAPI'. Did you mean 'CallManager'?
+modules/core/GPUManager.ts(118,43): error TS2345: Argument of type '"render_session"' is not assignable to parameter of type 'LeakResourceType'.
+modules/core/index.ts(5,15): error TS2724: '"./EventBus"' has no exported member named 'AppEvent'. Did you mean 'AppEvents'?
+modules/core/index.ts(5,25): error TS2305: Module '"./EventBus"' has no exported member 'EventMap'.
+modules/core/index.ts(7,10): error TS2305: Module '"./PerformanceMonitor"' has no exported member 'PerformanceMonitor'.
+modules/core/index.ts(9,10): error TS2724: '"./RetryStrategy"' has no exported member named 'RetryStrategy'. Did you mean 'RetryStrategyType'?
+modules/core/ProductionStabilityMode.ts(261,29): error TS2339: Property 'setThermalPressure' does not exist on type 'ResourceSchedulerImpl'.
+modules/core/ProductionStabilityMode.ts(271,31): error TS2339: Property 'cleanup' does not exist on type 'MediaCleanupManagerImpl'.
+modules/core/ProductionStabilityMode.ts(275,29): error TS2339: Property 'setThermalPressure' does not exist on type 'ResourceSchedulerImpl'.
+modules/core/ProductionStabilityMode.ts(284,31): error TS2339: Property 'emergencyCleanup' does not exist on type 'MediaCleanupManagerImpl'.
+modules/core/ProductionStabilityMode.ts(289,29): error TS2339: Property 'setThermalPressure' does not exist on type 'ResourceSchedulerImpl'.
+modules/core/ProductionStabilityMode.ts(299,29): error TS2339: Property 'setThermalPressure' does not exist on type 'ResourceSchedulerImpl'.
+modules/core/RenderIsolationManager.ts(240,31): error TS2339: Property 'releaseByHolder' does not exist on type 'ResourceManagerImpl'.
+modules/creator/exports/ExportManager.ts(137,23): error TS2339: Property 'add' does not exist on type 'UploadQueueImpl'.
+modules/creator/exports/ExportManager.ts(142,26): error TS7006: Parameter 'pct' implicitly has an 'any' type.
+modules/creator/exports/ExportManager.ts(143,26): error TS7006: Parameter 'url' implicitly has an 'any' type.
+modules/creator/exports/ExportManager.ts(144,26): error TS7006: Parameter 'err' implicitly has an 'any' type.
+modules/creator/sessions/CreatorSessionManager.ts(107,26): error TS2339: Property 'pausePreview' does not exist on type 'CameraControllerImpl'.
+modules/media/UploadQueue.ts(202,11): error TS2551: Property 'onProgress' does not exist on type 'UploadState'. Did you mean 'progress'?
+modules/media/UploadQueue.ts(204,12): error TS2551: Property 'onProgress' does not exist on type 'UploadState'. Did you mean 'progress'?
+modules/media/UploadRecoveryManager.ts(180,25): error TS2339: Property 'add' does not exist on type 'UploadQueueImpl'.
+modules/media/UploadRecoveryManager.ts(187,23): error TS7006: Parameter 'pct' implicitly has an 'any' type.
+modules/realtime/ConnectionManager.ts(151,42): error TS2554: Expected 1 arguments, but got 2.
+modules/realtime/ConnectionManager.ts(239,9): error TS2367: This comparison appears to be unintentional because the types '"error" | "connecting" | "disconnected"' and '"connected"' have no overlap.
+modules/realtime/index.ts(8,15): error TS2305: Module '"./PresenceManager"' has no exported member 'PresenceStatus'.
+modules/realtime/index.ts(8,31): error TS2305: Module '"./PresenceManager"' has no exported member 'PresenceRecord'.
+modules/realtime/RTCManager.ts(127,42): error TS2345: Argument of type '"socket"' is not assignable to parameter of type 'LeakResourceType'.
+modules/realtime/RTCManager.ts(353,38): error TS2345: Argument of type '"thermal:state_changed"' is not assignable to parameter of type 'keyof AppEvents'.
+modules/realtime/RTCManager.ts(594,84): error TS2345: Argument of type '{ rttMs: number; packetLossPct: number; bitrateKbps: number; }' is not assignable to parameter of type '{ rttMs: number; packetLossPct: number; bitrateKbps: number; qualityLevel: string; }'.
+  Property 'qualityLevel' is missing in type '{ rttMs: number; packetLossPct: number; bitrateKbps: number; }' but required in type '{ rttMs: number; packetLossPct: number; bitrateKbps: number; qualityLevel: string; }'.
+modules/realtime/SignalingManager.ts(179,37): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+modules/realtime/SignalingManager.ts(209,12): error TS2551: Property 'catch' does not exist on type 'PostgrestFilterBuilder<any, any, any, null, "signaling_messages", unknown, "DELETE">'. Did you mean 'match'?
+modules/sessions/SessionOrchestrator.ts(107,42): error TS2345: Argument of type '"socket"' is not assignable to parameter of type 'LeakResourceType'.
+modules/streaming/LiveOrchestrator.ts(92,23): error TS2551: Property 'registerStreamSession' does not exist on type 'PresenceManagerImpl'. Did you mean 'registerSession'?
+modules/streaming/LiveOrchestrator.ts(250,23): error TS2339: Property 'unregisterStreamSession' does not exist on type 'PresenceManagerImpl'.
+modules/streaming/StreamSessionManager.ts(124,28): error TS2339: Property 'adaptStream' does not exist on type 'AdaptiveBitrateManagerImpl'.
+modules/streaming/StreamSessionManager.ts(307,37): error TS2345: Argument of type '"socket"' is not assignable to parameter of type 'LeakResourceType'.
+services/financial/ledgerClient.ts(67,42): error TS2339: Property 'functions' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/ledgerClient.ts(93,6): error TS2339: Property 'from' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/ledgerClient.ts(128,6): error TS2339: Property 'from' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/ledgerClient.ts(140,6): error TS2339: Property 'from' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/ledgerClient.ts(172,6): error TS2339: Property 'from' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/ledgerClient.ts(184,6): error TS2339: Property 'from' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/ledgerClient.ts(200,6): error TS2339: Property 'from' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/ledgerClient.ts(306,42): error TS2339: Property 'functions' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/ledgerClient.ts(367,42): error TS2339: Property 'functions' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/ledgerClient.ts(408,42): error TS2339: Property 'functions' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/ledgerClient.ts(429,42): error TS2339: Property 'functions' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/ledgerClient.ts(456,6): error TS2339: Property 'from' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/ledgerClient.ts(465,6): error TS2339: Property 'from' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/premiumDmClient.ts(24,35): error TS2339: Property 'from' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/premiumDmClient.ts(34,41): error TS2339: Property 'auth' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/premiumDmClient.ts(37,36): error TS2339: Property 'from' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/premiumDmClient.ts(54,42): error TS2339: Property 'functions' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/premiumDmClient.ts(70,42): error TS2339: Property 'functions' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financial/premiumDmClient.ts(84,42): error TS2339: Property 'rpc' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financialApi.ts(63,42): error TS2339: Property 'functions' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financialApi.ts(217,6): error TS2339: Property 'from' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/financialApi.ts(226,6): error TS2339: Property 'from' does not exist on type '() => SupabaseClient<any, "public", "public", any, any>'.
+services/stressTestRunner.ts(898,39): error TS2339: Property 'surface' does not exist on type '{ id: string; fps: number; dropRate: string; avgMs: string; }'.
+services/stressTestRunner.ts(900,24): error TS2339: Property 'surface' does not exist on type '{ id: string; fps: number; dropRate: string; avgMs: string; }'.
+services/stressTestRunner.ts(900,38): error TS2339: Property 'currentFPS' does not exist on type '{ id: string; fps: number; dropRate: string; avgMs: string; }'.
+services/stressTestRunner.ts(900,80): error TS2339: Property 'avgFrameTimeMs' does not exist on type '{ id: string; fps: number; dropRate: string; avgMs: string; }'.
