@@ -1,0 +1,256 @@
+TAP version 13
+# Subtest: LB4-F4A adds exactly one post-stage migration and no Edge Function
+ok 1 - LB4-F4A adds exactly one post-stage migration and no Edge Function
+  ---
+  duration_ms: 11.4696
+  type: 'test'
+  ...
+# Subtest: schema attribution preserves normal gifts and adds indexed Battle idempotency
+ok 2 - schema attribution preserves normal gifts and adds indexed Battle idempotency
+  ---
+  duration_ms: 2.2198
+  type: 'test'
+  ...
+# Subtest: RPC derives every financial value and identity server-side under the Battle lock
+ok 3 - RPC derives every financial value and identity server-side under the Battle lock
+  ---
+  duration_ms: 2.1134
+  type: 'test'
+  ...
+# Subtest: RPC idempotency returns the original gift and rejects contradictory payloads
+ok 4 - RPC idempotency returns the original gift and rejects contradictory payloads
+  ---
+  duration_ms: 0.8405
+  type: 'test'
+  ...
+# Subtest: ACL exposes only the directed-gift RPC to authenticated clients
+ok 5 - ACL exposes only the directed-gift RPC to authenticated clients
+  ---
+  duration_ms: 1.2304
+  type: 'test'
+  ...
+# Subtest: one economic gift projects once into each LIVE without financial internals
+ok 6 - one economic gift projects once into each LIVE without financial internals
+  ---
+  duration_ms: 1.0953
+  type: 'test'
+  ...
+# Subtest: client contract calls only the dedicated RPC with four identities
+ok 7 - client contract calls only the dedicated RPC with four identities
+  ---
+  duration_ms: 2.8287
+  type: 'test'
+  ...
+# Subtest: physical rollback proof covers economic, authorization, deadline, event, and cleanup cases
+ok 8 - physical rollback proof covers economic, authorization, deadline, event, and cleanup cases
+  ---
+  duration_ms: 1.3544
+  type: 'test'
+  ...
+# Subtest: two-connection proof is localhost-only and covers retry plus deadline serialization
+ok 9 - two-connection proof is localhost-only and covers retry plus deadline serialization
+  ---
+  duration_ms: 1.0104
+  type: 'test'
+  ...
+# Subtest: F6-A remains the append-only catalog predecessor to the F8-A commission migration
+ok 10 - F6-A remains the append-only catalog predecessor to the F8-A commission migration
+  ---
+  duration_ms: 14.5275
+  type: 'test'
+  ...
+# Subtest: catalog adds exactly 88 active original gifts with stable ASCII identifiers
+ok 11 - catalog adds exactly 88 active original gifts with stable ASCII identifiers
+  ---
+  duration_ms: 1.2483
+  type: 'test'
+  ...
+# Subtest: 101 total, 100 active and sports_car as the only inactive row are explicit invariants
+ok 12 - 101 total, 100 active and sports_car as the only inactive row are explicit invariants
+  ---
+  duration_ms: 1.9335
+  type: 'test'
+  ...
+# Subtest: all active price ranges satisfy the required distribution
+ok 13 - all active price ranges satisfy the required distribution
+  ---
+  duration_ms: 0.761
+  type: 'test'
+  ...
+# Subtest: categories, animation families and deterministic order stay within the existing contract
+ok 14 - categories, animation families and deterministic order stay within the existing contract
+  ---
+  duration_ms: 0.9443
+  type: 'test'
+  ...
+# Subtest: new identities contain no TikTok branding, remote assets or executable markup
+ok 15 - new identities contain no TikTok branding, remote assets or executable markup
+  ---
+  duration_ms: 0.5778
+  type: 'test'
+  ...
+# Subtest: server remains the sole price authority and the client cannot supply a price
+ok 16 - server remains the sole price authority and the client cannot supply a price
+  ---
+  duration_ms: 0.8773
+  type: 'test'
+  ...
+# Subtest: x2/x3 modify Battle points only and x3 wins without x6
+ok 17 - x2/x3 modify Battle points only and x3 wins without x6
+  ---
+  duration_ms: 0.7866
+  type: 'test'
+  ...
+# Subtest: only the canonical rose gift advances rose progress
+ok 18 - only the canonical rose gift advances rose progress
+  ---
+  duration_ms: 0.8162
+  type: 'test'
+  ...
+# Subtest: catalog UI stays dynamic, virtualized, stable and excludes inactive gifts
+ok 19 - catalog UI stays dynamic, virtualized, stable and excludes inactive gifts
+  ---
+  duration_ms: 1.1162
+  type: 'test'
+  ...
+# Subtest: historical replacement, F5 chain and manifests remain LF-canonical
+ok 20 - historical replacement, F5 chain and manifests remain LF-canonical
+  ---
+  duration_ms: 19.5981
+  type: 'test'
+  ...
+# Subtest: migration cannot touch economy, historical gifts, F5 or Realtime
+ok 21 - migration cannot touch economy, historical gifts, F5 or Realtime
+  ---
+  duration_ms: 0.6439
+  type: 'test'
+  ...
+# Subtest: resolver covers every price tier with bounded duration and particles
+ok 22 - resolver covers every price tier with bounded duration and particles
+  ---
+  duration_ms: 2.9877
+  type: 'test'
+  ...
+# Subtest: resolver honors known families, legacy catalog types, categories and safe fallback
+ok 23 - resolver honors known families, legacy catalog types, categories and safe fallback
+  ---
+  duration_ms: 1.8535
+  type: 'test'
+  ...
+# Subtest: normalizer rejects malformed authority snapshots and applies safe visual fallbacks
+ok 24 - normalizer rejects malformed authority snapshots and applies safe visual fallbacks
+  ---
+  duration_ms: 1.2315
+  type: 'test'
+  ...
+# Subtest: queue is deterministic, prioritized, bounded and deduplicated
+ok 25 - queue is deterministic, prioritized, bounded and deduplicated
+  ---
+  duration_ms: 1.022
+  type: 'test'
+  ...
+# Subtest: legendary presentation evicts a lower tier, is not interrupted, and advances cleanly
+ok 26 - legendary presentation evicts a lower tier, is not interrupted, and advances cleanly
+  ---
+  duration_ms: 0.5869
+  type: 'test'
+  ...
+# Subtest: full legendary queue reports bounded backpressure and permits a later retry
+ok 27 - full legendary queue reports bounded backpressure and permits a later retry
+  ---
+  duration_ms: 0.3461
+  type: 'test'
+  ...
+# Subtest: combos are visual-only and require matching gift, sender and receiver inside the window
+ok 28 - combos are visual-only and require matching gift, sender and receiver inside the window
+  ---
+  duration_ms: 0.8438
+  type: 'test'
+  ...
+# Subtest: cancel clears work and ignores late events without state resurrection
+ok 29 - cancel clears work and ignores late events without state resurrection
+  ---
+  duration_ms: 0.6418
+  type: 'test'
+  ...
+# Subtest: all 100 active catalog gifts are resolved without production ID branches
+ok 30 - all 100 active catalog gifts are resolved without production ID branches
+  ---
+  duration_ms: 18.0063
+  type: 'test'
+  ...
+# Subtest: shared layer preserves interaction, accessibility, Battle and one event source per screen
+ok 31 - shared layer preserves interaction, accessibility, Battle and one event source per screen
+  ---
+  duration_ms: 7.0718
+  type: 'test'
+  ...
+# Subtest: visual engine has no database, scoring, boost, or financial authority
+ok 32 - visual engine has no database, scoring, boost, or financial authority
+  ---
+  duration_ms: 3.6734
+  type: 'test'
+  ...
+# Subtest: protected manifests and deployed F6-A migration remain byte-equivalent after LF normalization
+ok 33 - protected manifests and deployed F6-A migration remain byte-equivalent after LF normalization
+  ---
+  duration_ms: 28.7515
+  type: 'test'
+  ...
+# Subtest: active Battle context invokes only the directed Battle RPC with no client price or score
+ok 34 - active Battle context invokes only the directed Battle RPC with no client price or score
+  ---
+  duration_ms: 57.1478
+  type: 'test'
+  ...
+# Subtest: ordinary LIVE context preserves the original live gift authority
+ok 35 - ordinary LIVE context preserves the original live gift authority
+  ---
+  duration_ms: 44.8535
+  type: 'test'
+  ...
+# Subtest: viewer connects the canonical Battle projection to the shared service router
+ok 36 - viewer connects the canonical Battle projection to the shared service router
+  ---
+  duration_ms: 1.3443
+  type: 'test'
+  ...
+# Subtest: successful send closes the native modal, confirms outside it, and reconciles authority
+ok 37 - successful send closes the native modal, confirms outside it, and reconciles authority
+  ---
+  duration_ms: 0.831
+  type: 'test'
+  ...
+# Subtest: single-flight blocks double taps and ambiguous retries reuse one idempotency key
+ok 38 - single-flight blocks double taps and ambiguous retries reuse one idempotency key
+  ---
+  duration_ms: 0.633
+  type: 'test'
+  ...
+# Subtest: a production-shaped rose event normalizes and presents exactly once
+ok 39 - a production-shaped rose event normalizes and presents exactly once
+  ---
+  duration_ms: 3.956
+  type: 'test'
+  ...
+# Subtest: server contract links gift, score, rose power, projection and two-session visual events
+ok 40 - server contract links gift, score, rose power, projection and two-session visual events
+  ---
+  duration_ms: 1.2771
+  type: 'test'
+  ...
+# Subtest: protected manifests and deployed migrations remain LF-identical
+ok 41 - protected manifests and deployed migrations remain LF-identical
+  ---
+  duration_ms: 44.1578
+  type: 'test'
+  ...
+1..41
+# tests 41
+# suites 0
+# pass 41
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1550.9131

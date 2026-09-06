@@ -27,6 +27,7 @@ type UseLiveBattleRelayRuntimeParams = LiveBattleRuntimeContext & {
   reconnectEpoch: number;
   publicBattleState: LiveBattlePublicState | null;
   publicClockAnchor: LiveBattleServerClockAnchor | null;
+  reconcilePublicAuthority?: () => Promise<void>;
 };
 
 export function useLiveBattleRelayRuntime({
@@ -43,6 +44,7 @@ export function useLiveBattleRelayRuntime({
   reconnectEpoch,
   publicBattleState,
   publicClockAnchor,
+  reconcilePublicAuthority,
 }: UseLiveBattleRelayRuntimeParams) {
   const controllerRef = useRef<LiveBattleRuntimeController | null>(null);
   const actionFlightRef = useRef(false);
@@ -89,7 +91,6 @@ export function useLiveBattleRelayRuntime({
       actionFlightRef.current = false;
       unsubscribeSnapshot();
       unregisterReleaseGuard();
-      controller.handleEngineRelease();
       if (controllerRef.current === controller) controllerRef.current = null;
       void controller.dispose();
     };
@@ -120,7 +121,8 @@ export function useLiveBattleRelayRuntime({
 
   useEffect(() => {
     controllerRef.current?.updatePublicAuthority(publicBattleState, publicClockAnchor);
-  }, [publicBattleState, publicClockAnchor]);
+  }, [engine, publicBattleState, publicClockAnchor, liveSessionId, hostUserId,
+    isCanonicalHost, isSessionLive, isOpponentSessionLive, engineReady, joined, isForeground]);
 
   useEffect(() => {
     if (reconnectEpoch <= lastReconnectEpochRef.current) return;
@@ -131,6 +133,13 @@ export function useLiveBattleRelayRuntime({
   const stop = useCallback(async () => {
     await controllerRef.current?.stop();
   }, []);
+
+  useEffect(() => {
+    if (!snapshot.battle || !mountedRef.current) return;
+    // Refresh the same public authority used by Stage when the host RPC advances.
+    // Lifecycle changes reuse the existing projection subscription.
+    void reconcilePublicAuthority?.().catch(() => undefined);
+  }, [snapshot.battleId, snapshot.version, snapshot.battle?.status, reconcilePublicAuthority]);
 
   const runAction = useCallback(async (
     operation: () => Promise<LiveBattle>,

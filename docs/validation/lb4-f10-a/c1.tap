@@ -1,0 +1,82 @@
+TAP version 13
+# Subtest: zero receipts cannot persist: table enforces strictly positive quantities and points
+ok 1 - zero receipts cannot persist: table enforces strictly positive quantities and points
+  ---
+  duration_ms: 2.2575
+  type: 'test'
+  ...
+# Subtest: post-cap and other zero outcomes return before the only journal insert and reconciliation
+ok 2 - post-cap and other zero outcomes return before the only journal insert and reconciliation
+  ---
+  duration_ms: 0.6069
+  type: 'test'
+  ...
+# Subtest: receipt 0/5 permanently stops scoring and clears queue/timers
+ok 3 - receipt 0/5 permanently stops scoring and clears queue/timers
+  ---
+  duration_ms: 186.0677
+  type: 'test'
+  ...
+# Subtest: receipt 2/5 permanently stops scoring and clears queue/timers
+ok 4 - receipt 2/5 permanently stops scoring and clears queue/timers
+  ---
+  duration_ms: 37.0097
+  type: 'test'
+  ...
+# Subtest: terminal rejection discards queued work and disables future add
+ok 5 - terminal rejection discards queued work and disables future add
+  ---
+  duration_ms: 25.3606
+  type: 'test'
+  ...
+# Subtest: ambiguous mounted failure retries the identical key/count with backoff
+ok 6 - ambiguous mounted failure retries the identical key/count with backoff
+  ---
+  duration_ms: 19.2212
+  type: 'test'
+  ...
+# Subtest: ambiguous failure followed by close cancels all retries and handles
+ok 7 - ambiguous failure followed by close cancels all retries and handles
+  ---
+  duration_ms: 12.5838
+  type: 'test'
+  ...
+# Subtest: close in flight (reject=false) cannot send queued batches or notify UI
+ok 8 - close in flight (reject=false) cannot send queued batches or notify UI
+  ---
+  duration_ms: 16.5071
+  type: 'test'
+  ...
+# Subtest: close in flight (reject=true) cannot send queued batches or notify UI
+ok 9 - close in flight (reject=true) cannot send queued batches or notify UI
+  ---
+  duration_ms: 14.0605
+  type: 'test'
+  ...
+# Subtest: close flushes at most one bounded pending batch, without follow-up timers
+ok 10 - close flushes at most one bounded pending batch, without follow-up timers
+  ---
+  duration_ms: 13.9935
+  type: 'test'
+  ...
+# Subtest: exact cap allows at most one subsequent zero response
+ok 11 - exact cap allows at most one subsequent zero response
+  ---
+  duration_ms: 18.7982
+  type: 'test'
+  ...
+# Subtest: actual heart callback keeps immediate animation after scoring is disabled
+ok 12 - actual heart callback keeps immediate animation after scoring is disabled
+  ---
+  duration_ms: 93.3583
+  type: 'test'
+  ...
+1..12
+# tests 12
+# suites 0
+# pass 12
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1361.0997

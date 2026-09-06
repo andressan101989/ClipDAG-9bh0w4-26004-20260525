@@ -1,0 +1,2855 @@
+TAP version 13
+# Subtest: public active authority wakes a runtime whose initial discovery was empty
+ok 1 - public active authority wakes a runtime whose initial discovery was empty
+  ---
+  duration_ms: 51.9501
+  type: 'test'
+  ...
+# Subtest: public completed authority rehydrates the result when open discovery has no rows
+ok 2 - public completed authority rehydrates the result when open discovery has no rows
+  ---
+  duration_ms: 5.8625
+  type: 'test'
+  ...
+# Subtest: public version advance reconciles an existing pending round without a local action
+ok 3 - public version advance reconciles an existing pending round without a local action
+  ---
+  duration_ms: 3.0917
+  type: 'test'
+  ...
+# Subtest: fresh public authority recovers a subscription-suspended eligible runtime
+ok 4 - fresh public authority recovers a subscription-suspended eligible runtime
+  ---
+  duration_ms: 3.9793
+  type: 'test'
+  ...
+# Subtest: duplicate public and realtime signals start only one relay
+ok 5 - duplicate public and realtime signals start only one relay
+  ---
+  duration_ms: 3.6569
+  type: 'test'
+  ...
+# Subtest: both hosts reconcile the same authoritative pair from remote signals
+ok 6 - both hosts reconcile the same authoritative pair from remote signals
+  ---
+  duration_ms: 4.3302
+  type: 'test'
+  ...
+# Subtest: a mismatched session is rejected rather than relinked to the active Battle
+ok 7 - a mismatched session is rejected rather than relinked to the active Battle
+  ---
+  duration_ms: 3.012
+  type: 'test'
+  ...
+# Subtest: late subscription error from an obsolete session cannot suspend the new subscription
+ok 8 - late subscription error from an obsolete session cannot suspend the new subscription
+  ---
+  duration_ms: 3.4291
+  type: 'test'
+  ...
+# Subtest: authoritative completion holds post-round and stops on terminal decision without ending LIVE
+ok 9 - authoritative completion holds post-round and stops on terminal decision without ending LIVE
+  ---
+  duration_ms: 7.1523
+  type: 'test'
+  ...
+# Subtest: cleanup removes timers, subscriptions and listeners and ignores a late reconciliation
+ok 10 - cleanup removes timers, subscriptions and listeners and ignores a late reconciliation
+  ---
+  duration_ms: 6.113
+  type: 'test'
+  ...
+# Subtest: public authority received before join is delivered when the native controller is created
+ok 11 - public authority received before join is delivered when the native controller is created
+  ---
+  duration_ms: 72.6926
+  type: 'test'
+  ...
+# Subtest: stable engine callbacks do not recreate an eligible controller during public clock updates
+ok 12 - stable engine callbacks do not recreate an eligible controller during public clock updates
+  ---
+  duration_ms: 46.1664
+  type: 'test'
+  ...
+# Subtest: context recovery reapplies the current projection even if its object identity is unchanged
+ok 13 - context recovery reapplies the current projection even if its object identity is unchanged
+  ---
+  duration_ms: 31.7602
+  type: 'test'
+  ...
+# Subtest: authoritative runtime completion refreshes the UI snapshot without relying on a second realtime delivery
+ok 14 - authoritative runtime completion refreshes the UI snapshot without relying on a second realtime delivery
+  ---
+  duration_ms: 35.8691
+  type: 'test'
+  ...
+# Subtest: a failed LIVE authority read does not masquerade as an ended session or clear the Battle
+ok 15 - a failed LIVE authority read does not masquerade as an ended session or clear the Battle
+  ---
+  duration_ms: 121.9693
+  type: 'test'
+  ...
+# Subtest: an obsolete poll response cannot mutate the authority of the current session pair
+ok 16 - an obsolete poll response cannot mutate the authority of the current session pair
+  ---
+  duration_ms: 91.4772
+  type: 'test'
+  ...
+# Subtest: both authorized hosts get rematch availability while viewers get only the result
+ok 17 - both authorized hosts get rematch availability while viewers get only the result
+  ---
+  duration_ms: 0.6983
+  type: 'test'
+  ...
+# Subtest: double rematch tap has one flight and one accepted next-round transition
+ok 18 - double rematch tap has one flight and one accepted next-round transition
+  ---
+  duration_ms: 0.7486
+  type: 'test'
+  ...
+# Subtest: reject and expiry are derived from authoritative decisions, never inferred as an accepted rematch
+ok 19 - reject and expiry are derived from authoritative decisions, never inferred as an accepted rematch
+  ---
+  duration_ms: 0.4321
+  type: 'test'
+  ...
+# Subtest: pending and accepted Battles never start relay
+ok 20 - pending and accepted Battles never start relay
+  ---
+  duration_ms: 20.2414
+  type: 'test'
+  ...
+# Subtest: countdown starts once and an active update keeps the same relay
+ok 21 - countdown starts once and an active update keeps the same relay
+  ---
+  duration_ms: 45.2916
+  type: 'test'
+  ...
+# Subtest: viewer and cohost contexts perform no discovery, token request, or relay start
+ok 22 - viewer and cohost contexts perform no discovery, token request, or relay start
+  ---
+  duration_ms: 1.6564
+  type: 'test'
+  ...
+# Subtest: terminal transition and ended LIVE stop relay exactly once
+ok 23 - terminal transition and ended LIVE stop relay exactly once
+  ---
+  duration_ms: 25.8222
+  type: 'test'
+  ...
+# Subtest: background stops relay and foreground performs a fresh authoritative reconciliation
+ok 24 - background stops relay and foreground performs a fresh authoritative reconciliation
+  ---
+  duration_ms: 8.1291
+  type: 'test'
+  ...
+# Subtest: engine reconnect performs one controlled relay restart per reconnect flight
+ok 25 - engine reconnect performs one controlled relay restart per reconnect flight
+  ---
+  duration_ms: 2.4122
+  type: 'test'
+  ...
+# Subtest: Battle switch stops the old relay before starting the new one
+ok 26 - Battle switch stops the old relay before starting the new one
+  ---
+  duration_ms: 6.3135
+  type: 'test'
+  ...
+# Subtest: duplicate, stale, and out-of-order Realtime events cannot duplicate or revive relay
+ok 27 - duplicate, stale, and out-of-order Realtime events cannot duplicate or revive relay
+  ---
+  duration_ms: 2.2429
+  type: 'test'
+  ...
+# Subtest: a delayed reconciliation after stop cannot revive relay
+ok 28 - a delayed reconciliation after stop cannot revive relay
+  ---
+  duration_ms: 2.5297
+  type: 'test'
+  ...
+# Subtest: a delayed relay authorization promise cannot revive a stopped runtime
+ok 29 - a delayed relay authorization promise cannot revive a stopped runtime
+  ---
+  duration_ms: 4.9212
+  type: 'test'
+  ...
+# Subtest: token or Agora failure is isolated from the LIVE lifecycle
+ok 30 - token or Agora failure is isolated from the LIVE lifecycle
+  ---
+  duration_ms: 1.504
+  type: 'test'
+  ...
+# Subtest: multiple non-terminal Battles and Realtime failure fail closed
+ok 31 - multiple non-terminal Battles and Realtime failure fail closed
+  ---
+  duration_ms: 3.2886
+  type: 'test'
+  ...
+# Subtest: engine release and dispose synchronously invalidate relay and clean only owned resources
+ok 32 - engine release and dispose synchronously invalidate relay and clean only owned resources
+  ---
+  duration_ms: 1.9574
+  type: 'test'
+  ...
+# Subtest: LB4-F1 wiring is host-only, filtered, canonical, and contains no direct Battle writes
+ok 33 - LB4-F1 wiring is host-only, filtered, canonical, and contains no direct Battle writes
+  ---
+  duration_ms: 2.1704
+  type: 'test'
+  ...
+# Subtest: engine owner invokes the relay guard before leave/release and runtime never creates another engine
+ok 34 - engine owner invokes the relay guard before leave/release and runtime never creates another engine
+  ---
+  duration_ms: 1.8918
+  type: 'test'
+  ...
+# Subtest: web remains explicitly unsupported without token requests or retry loops
+ok 35 - web remains explicitly unsupported without token requests or retry loops
+  ---
+  duration_ms: 0.3711
+  type: 'test'
+  ...
+# Subtest: LB4-F3-F3-F1 adds one forward migration without changing LB4-F3-F3
+ok 36 - LB4-F3-F3-F1 adds one forward migration without changing LB4-F3-F3
+  ---
+  duration_ms: 30.2794
+  type: 'test'
+  ...
+# Subtest: accepted cancellation authority is closed to two exact system reasons
+ok 37 - accepted cancellation authority is closed to two exact system reasons
+  ---
+  duration_ms: 1.6537
+  type: 'test'
+  ...
+# Subtest: locked reconciliation checks session liveness before the exact 30 second deadline
+ok 38 - locked reconciliation checks session liveness before the exact 30 second deadline
+  ---
+  duration_ms: 1.1554
+  type: 'test'
+  ...
+# Subtest: bounded cron reconciler includes accepted and preserves one clock and SKIP LOCKED
+ok 39 - bounded cron reconciler includes accepted and preserves one clock and SKIP LOCKED
+  ---
+  duration_ms: 2.3236
+  type: 'test'
+  ...
+# Subtest: pair busy reconciles accepted before deciding and still blocks current accepted
+ok 40 - pair busy reconciles accepted before deciding and still blocks current accepted
+  ---
+  duration_ms: 0.7406
+  type: 'test'
+  ...
+# Subtest: participant busy locks only blocking statuses and fails closed above one hundred
+ok 41 - participant busy locks only blocking statuses and fails closed above one hundred
+  ---
+  duration_ms: 1.724
+  type: 'test'
+  ...
+# Subtest: accepted deadline index is partial and the existing cron contract is only verified
+ok 42 - accepted deadline index is partial and the existing cron contract is only verified
+  ---
+  duration_ms: 0.8738
+  type: 'test'
+  ...
+# Subtest: owners and private ACL remain exact without UI Agora or economic changes
+ok 43 - owners and private ACL remain exact without UI Agora or economic changes
+  ---
+  duration_ms: 6.921
+  type: 'test'
+  ...
+# Subtest: physical proof covers deadlines, busy decisions, pending lock exclusion and cleanup
+ok 44 - physical proof covers deadlines, busy decisions, pending lock exclusion and cleanup
+  ---
+  duration_ms: 1.367
+  type: 'test'
+  ...
+# Subtest: LB4-F3-F3-F1-F1 is the only forward migration and preserves the deployed predecessor
+ok 45 - LB4-F3-F3-F1-F1 is the only forward migration and preserves the deployed predecessor
+  ---
+  duration_ms: 32.3195
+  type: 'test'
+  ...
+# Subtest: manual cancellation reasons require the exact non-null participant actor
+ok 46 - manual cancellation reasons require the exact non-null participant actor
+  ---
+  duration_ms: 1.5877
+  type: 'test'
+  ...
+# Subtest: null actor authority is limited to the three exact state and reason combinations
+ok 47 - null actor authority is limited to the three exact state and reason combinations
+  ---
+  duration_ms: 1.1805
+  type: 'test'
+  ...
+# Subtest: accepted reconciliation keeps liveness priority and uses the sargable deadline
+ok 48 - accepted reconciliation keeps liveness priority and uses the sargable deadline
+  ---
+  duration_ms: 1.4409
+  type: 'test'
+  ...
+# Subtest: bounded due reconciliation uses one clock, the accepted index key, and unchanged locking
+ok 49 - bounded due reconciliation uses one clock, the accepted index key, and unchanged locking
+  ---
+  duration_ms: 1.8881
+  type: 'test'
+  ...
+# Subtest: correction replaces only three private functions and preserves cron, index, UI, Agora and economy
+ok 50 - correction replaces only three private functions and preserves cron, index, UI, Agora and economy
+  ---
+  duration_ms: 3.0511
+  type: 'test'
+  ...
+# Subtest: all three private functions restore exact ownership, search path and client-denied ACL
+ok 51 - all three private functions restore exact ownership, search path and client-denied ACL
+  ---
+  duration_ms: 2.2427
+  type: 'test'
+  ...
+# Subtest: physical proof covers the full actor matrix, exact errors, deadline plan and rollback cleanup
+ok 52 - physical proof covers the full actor matrix, exact errors, deadline plan and rollback cleanup
+  ---
+  duration_ms: 1.2632
+  type: 'test'
+  ...
+# Subtest: LB4-F3-F3-F1-F2 is the only forward migration and preserves F1-F1 byte semantics
+ok 53 - LB4-F3-F3-F1-F2 is the only forward migration and preserves F1-F1 byte semantics
+  ---
+  duration_ms: 21.5309
+  type: 'test'
+  ...
+# Subtest: every non-cancellation transition uses closed binary actor and reason authority
+ok 54 - every non-cancellation transition uses closed binary actor and reason authority
+  ---
+  duration_ms: 1.2229
+  type: 'test'
+  ...
+# Subtest: accepted to countdown explicitly rejects a null actor before membership and reason checks
+ok 55 - accepted to countdown explicitly rejects a null actor before membership and reason checks
+  ---
+  duration_ms: 0.6829
+  type: 'test'
+  ...
+# Subtest: the five cancellation authorities from F1-F1 remain exact and closed
+ok 56 - the five cancellation authorities from F1-F1 remain exact and closed
+  ---
+  duration_ms: 0.7542
+  type: 'test'
+  ...
+# Subtest: due reconciliation has five exclusive materialized branches and only UNION ALL
+ok 57 - due reconciliation has five exclusive materialized branches and only UNION ALL
+  ---
+  duration_ms: 1.1223
+  type: 'test'
+  ...
+# Subtest: due reconciliation preserves one clock, global ordering, bounded SKIP LOCKED and canonical transitions
+ok 58 - due reconciliation preserves one clock, global ordering, bounded SKIP LOCKED and canonical transitions
+  ---
+  duration_ms: 0.7123
+  type: 'test'
+  ...
+# Subtest: correction replaces only the two private functions and preserves cron indexes public RPC UI Agora and economy
+ok 59 - correction replaces only the two private functions and preserves cron indexes public RPC UI Agora and economy
+  ---
+  duration_ms: 0.9883
+  type: 'test'
+  ...
+# Subtest: both replaced functions restore exact owner search path and client-denied ACL
+ok 60 - both replaced functions restore exact owner search path and client-denied ACL
+  ---
+  duration_ms: 1.8191
+  type: 'test'
+  ...
+# Subtest: physical proof covers the complete authority matrix full plan and rollback cleanup
+ok 61 - physical proof covers the complete authority matrix full plan and rollback cleanup
+  ---
+  duration_ms: 1.4922
+  type: 'test'
+  ...
+# Subtest: LB4-F3-F3 adds one migration and leaves every deployed migration byte-identical
+ok 62 - LB4-F3-F3 adds one migration and leaves every deployed migration byte-identical
+  ---
+  duration_ms: 19.7233
+  type: 'test'
+  ...
+# Subtest: bounded private reconciler uses one authoritative clock and SKIP LOCKED ordering
+ok 63 - bounded private reconciler uses one authoritative clock and SKIP LOCKED ordering
+  ---
+  duration_ms: 4.9693
+  type: 'test'
+  ...
+# Subtest: reconciler ACL is postgres-only and cron is singular, active, bounded, and replace-safe
+ok 64 - reconciler ACL is postgres-only and cron is singular, active, bounded, and replace-safe
+  ---
+  duration_ms: 2.2717
+  type: 'test'
+  ...
+# Subtest: same-pair invite always reconciles an open row before deciding idempotence or pair_busy
+ok 65 - same-pair invite always reconciles an open row before deciding idempotence or pair_busy
+  ---
+  duration_ms: 0.8758
+  type: 'test'
+  ...
+# Subtest: acceptance reconciles participant conflicts under deterministic bounded locks before busy
+ok 66 - acceptance reconciles participant conflicts under deterministic bounded locks before busy
+  ---
+  duration_ms: 1.283
+  type: 'test'
+  ...
+# Subtest: migration preserves Battle machinery and excludes UI Agora gifts and finance
+ok 67 - migration preserves Battle machinery and excludes UI Agora gifts and finance
+  ---
+  duration_ms: 0.9641
+  type: 'test'
+  ...
+# Subtest: physical proof covers canonical completion, idempotence, busy paths, limits, ACL, cron, projection, and rollback
+ok 68 - physical proof covers canonical completion, idempotence, busy paths, limits, ACL, cron, projection, and rollback
+  ---
+  duration_ms: 1.3359
+  type: 'test'
+  ...
+# Subtest: F5-B strictly parses the exact request and best-of-five series JSON
+ok 69 - F5-B strictly parses the exact request and best-of-five series JSON
+  ---
+  duration_ms: 13.3646
+  type: 'test'
+  ...
+# Subtest: client states are canonical for host, counterpart, viewer, expiry and terminal series
+ok 70 - client states are canonical for host, counterpart, viewer, expiry and terminal series
+  ---
+  duration_ms: 1.3665
+  type: 'test'
+  ...
+# Subtest: canonical onChange clears a non-blocking action error but stale projections do not
+ok 71 - canonical onChange clears a non-blocking action error but stale projections do not
+  ---
+  duration_ms: 1.2731
+  type: 'test'
+  ...
+# Subtest: C2 projection keeps request and rematch-window expiration separate
+ok 72 - C2 projection keeps request and rematch-window expiration separate
+  ---
+  duration_ms: 1.9604
+  type: 'test'
+  ...
+# Subtest: a request anchored to round one is discarded when hydrating round two
+ok 73 - a request anchored to round one is discarded when hydrating round two
+  ---
+  duration_ms: 0.9595
+  type: 'test'
+  ...
+# Subtest: single-flight blocks double touch and permits one later action
+ok 74 - single-flight blocks double touch and permits one later action
+  ---
+  duration_ms: 1.2431
+  type: 'test'
+  ...
+# Subtest: a rejected RPC releases single-flight so the same canonical action can retry
+ok 75 - a rejected RPC releases single-flight so the same canonical action can retry
+  ---
+  duration_ms: 4.4315
+  type: 'test'
+  ...
+# Subtest: host voluntary leave is bounded, best-effort and invoked exactly once
+ok 76 - host voluntary leave is bounded, best-effort and invoked exactly once
+  ---
+  duration_ms: 5.1416
+  type: 'test'
+  ...
+# Subtest: disconnects, background, viewers and terminal series never invoke series leave
+ok 77 - disconnects, background, viewers and terminal series never invoke series leave
+  ---
+  duration_ms: 1.3475
+  type: 'test'
+  ...
+# Subtest: leave rejection or timeout cannot prevent LIVE cleanup and navigation
+ok 78 - leave rejection or timeout cannot prevent LIVE cleanup and navigation
+  ---
+  duration_ms: 35.9698
+  type: 'test'
+  ...
+# Subtest: only a new canonical round in the same series triggers transition
+ok 79 - only a new canonical round in the same series triggers transition
+  ---
+  duration_ms: 0.63
+  type: 'test'
+  ...
+# Subtest: RPC and Realtime candidates transition once and stale callbacks are ignored
+ok 80 - RPC and Realtime candidates transition once and stale callbacks are ignored
+  ---
+  duration_ms: 0.6786
+  type: 'test'
+  ...
+# Subtest: service consumes only the three authoritative RPCs and never internal tables
+ok 81 - service consumes only the three authoritative RPCs and never internal tables
+  ---
+  duration_ms: 1.0292
+  type: 'test'
+  ...
+# Subtest: RPC responses are validated, idempotent accept returns one canonical round
+ok 82 - RPC responses are validated, idempotent accept returns one canonical round
+  ---
+  duration_ms: 89.1795
+  type: 'test'
+  ...
+# Subtest: hook owns one projection subscription, reconciliation and complete cleanup
+ok 83 - hook owns one projection subscription, reconciliation and complete cleanup
+  ---
+  duration_ms: 0.6753
+  type: 'test'
+  ...
+# Subtest: host_ended sequences one bounded series leave before runtime and LIVE shutdown
+ok 84 - host_ended sequences one bounded series leave before runtime and LIVE shutdown
+  ---
+  duration_ms: 0.827
+  type: 'test'
+  ...
+# Subtest: host and viewer use the same series UI while controls remain participant-gated
+ok 85 - host and viewer use the same series UI while controls remain participant-gated
+  ---
+  duration_ms: 0.6266
+  type: 'test'
+  ...
+# Subtest: deterministic C2, RPC, scope, manifest and migration guards are worktree-independent
+ok 86 - deterministic C2, RPC, scope, manifest and migration guards are worktree-independent
+  ---
+  duration_ms: 30.9995
+  type: 'test'
+  ...
+# Subtest: policy holds completed rounds only for a current, live, unexpired open series
+ok 87 - policy holds completed rounds only for a current, live, unexpired open series
+  ---
+  duration_ms: 6.5356
+  type: 'test'
+  ...
+# Subtest: countdown and active relay; the next round in the same series is an atomic transition
+ok 88 - countdown and active relay; the next round in the same series is an atomic transition
+  ---
+  duration_ms: 0.7732
+  type: 'test'
+  ...
+# Subtest: completed + awaiting_rematch retains relay and schedules one authoritative deadline
+ok 89 - completed + awaiting_rematch retains relay and schedules one authoritative deadline
+  ---
+  duration_ms: 19.5506
+  type: 'test'
+  ...
+# Subtest: rematch_pending retains relay; reject and terminal series stop exactly once
+ok 90 - rematch_pending retains relay; reject and terminal series stop exactly once
+  ---
+  duration_ms: 10.8651
+  type: 'test'
+  ...
+# Subtest: deadline expiry reconciles once and stops an expired retained relay
+ok 91 - deadline expiry reconciles once and stops an expired retained relay
+  ---
+  duration_ms: 2.9569
+  type: 'test'
+  ...
+# Subtest: accepted rematch changes battle through relay.transition without idle or stop
+ok 92 - accepted rematch changes battle through relay.transition without idle or stop
+  ---
+  duration_ms: 3.2391
+  type: 'test'
+  ...
+# Subtest: reconnect restores a held relay only while authority remains open
+ok 93 - reconnect restores a held relay only while authority remains open
+  ---
+  duration_ms: 3.8432
+  type: 'test'
+  ...
+# Subtest: session invalidation prevents delayed authority from reviving relay
+ok 94 - session invalidation prevents delayed authority from reviving relay
+  ---
+  duration_ms: 2.3992
+  type: 'test'
+  ...
+# Subtest: the existing host session poll fails closed when the opponent LIVE ends
+ok 95 - the existing host session poll fails closed when the opponent LIVE ends
+  ---
+  duration_ms: 2.0418
+  type: 'test'
+  ...
+# Subtest: native relay atomically updates the route for the next round
+ok 96 - native relay atomically updates the route for the next round
+  ---
+  duration_ms: 4.1577
+  type: 'test'
+  ...
+# Subtest: a failed atomic update stops the retained relay once and cannot leave old media orphaned
+ok 97 - a failed atomic update stops the retained relay once and cannot leave old media orphaned
+  ---
+  duration_ms: 1.5389
+  type: 'test'
+  ...
+# Subtest: Agora authorization permits only the authoritative unexpired post-round window
+ok 98 - Agora authorization permits only the authoritative unexpired post-round window
+  ---
+  duration_ms: 1.531
+  type: 'test'
+  ...
+# Subtest: completed round renews the same relay because the active token cannot cover rematch
+ok 99 - completed round renews the same relay because the active token cannot cover rematch
+  ---
+  duration_ms: 4.6067
+  type: 'test'
+  ...
+# Subtest: same completed authority refreshes once and a changed deadline refreshes once more
+ok 100 - same completed authority refreshes once and a changed deadline refreshes once more
+  ---
+  duration_ms: 2.5559
+  type: 'test'
+  ...
+# Subtest: one transient authority failure uses one bounded retry then fails closed
+ok 101 - one transient authority failure uses one bounded retry then fails closed
+  ---
+  duration_ms: 2.4405
+  type: 'test'
+  ...
+# Subtest: runtime refresh failure stops once and never reports false relaying
+ok 102 - runtime refresh failure stops once and never reports false relaying
+  ---
+  duration_ms: 1.4132
+  type: 'test'
+  ...
+# Subtest: native same-battle refresh is single-flight and never publishes idle or connecting
+ok 103 - native same-battle refresh is single-flight and never publishes idle or connecting
+  ---
+  duration_ms: 1.5438
+  type: 'test'
+  ...
+# Subtest: native refresh rejection fails closed once for credentials and Agora update errors
+ok 104 - native refresh rejection fails closed once for credentials and Agora update errors
+  ---
+  duration_ms: 1.0362
+  type: 'test'
+  ...
+# Subtest: late refresh is fenced by teardown and a next-round transition supersedes it
+ok 105 - late refresh is fenced by teardown and a next-round transition supersedes it
+  ---
+  duration_ms: 2.878
+  type: 'test'
+  ...
+# Subtest: wiring reuses the public projection and adds no polling, schema, or economy writes
+ok 106 - wiring reuses the public projection and adds no polling, schema, or economy writes
+  ---
+  duration_ms: 2.6898
+  type: 'test'
+  ...
+# Subtest: rematch and glove stage is above both full-screen keyboard dismiss layers
+ok 107 - rematch and glove stage is above both full-screen keyboard dismiss layers
+  ---
+  duration_ms: 233.5729
+  type: 'test'
+  ...
+# Subtest: full-screen stage passes empty-area touches through
+ok 108 - full-screen stage passes empty-area touches through
+  ---
+  duration_ms: 2.4017
+  type: 'test'
+  ...
+# Subtest: visual panels and video surfaces cannot intercept control touches
+ok 109 - visual panels and video surfaces cannot intercept control touches
+  ---
+  duration_ms: 5.3058
+  type: 'test'
+  ...
+# Subtest: real rematch, accept, reject and glove handlers remain reachable
+ok 110 - real rematch, accept, reject and glove handlers remain reachable
+  ---
+  duration_ms: 11.7355
+  type: 'test'
+  ...
+# Subtest: localized stacking preserves header, chat and composer priority
+ok 111 - localized stacking preserves header, chat and composer priority
+  ---
+  duration_ms: 286.3429
+  type: 'test'
+  ...
+# Subtest: active round invokes exactly send_live_battle_gift
+ok 112 - active round invokes exactly send_live_battle_gift
+  ---
+  duration_ms: 2.2538
+  type: 'test'
+  ...
+# Subtest: countdown invokes exactly send_live_gift
+ok 113 - countdown invokes exactly send_live_gift
+  ---
+  duration_ms: 1.3594
+  type: 'test'
+  ...
+# Subtest: completed postround invokes exactly send_live_gift
+ok 114 - completed postround invokes exactly send_live_gift
+  ---
+  duration_ms: 0.4237
+  type: 'test'
+  ...
+# Subtest: completed rematch window invokes exactly send_live_gift
+ok 115 - completed rematch window invokes exactly send_live_gift
+  ---
+  duration_ms: 0.5844
+  type: 'test'
+  ...
+# Subtest: ordinary LIVE invokes exactly send_live_gift
+ok 116 - ordinary LIVE invokes exactly send_live_gift
+  ---
+  duration_ms: 0.6273
+  type: 'test'
+  ...
+# Subtest: known Battle errors display service-normalized safe messages
+ok 117 - known Battle errors display service-normalized safe messages
+  ---
+  duration_ms: 1.3407
+  type: 'test'
+  ...
+# Subtest: unknown RPC errors and exceptions never reach visible feedback
+ok 118 - unknown RPC errors and exceptions never reach visible feedback
+  ---
+  duration_ms: 2.1315
+  type: 'test'
+  ...
+# Subtest: double taps stay single-flight and failed retries retain their key
+ok 119 - double taps stay single-flight and failed retries retain their key
+  ---
+  duration_ms: 0.8508
+  type: 'test'
+  ...
+# Subtest: economic authority, gross score, multipliers and roses remain byte-identical
+ok 120 - economic authority, gross score, multipliers and roses remain byte-identical
+  ---
+  duration_ms: 2.6355
+  type: 'test'
+  ...
+# Subtest: 4.6.2 configures both authoritative directions with source UID zero
+ok 121 - 4.6.2 configures both authoritative directions with source UID zero
+  ---
+  duration_ms: 26.4523
+  type: 'test'
+  ...
+# Subtest: return zero is only connecting; official Running and RelayOk make media available
+ok 122 - return zero is only connecting; official Running and RelayOk make media available
+  ---
+  duration_ms: 2.0293
+  type: 'test'
+  ...
+# Subtest: same route is idempotent; Battle replacement and cleanup are ordered and stale-safe
+ok 123 - same route is idempotent; Battle replacement and cleanup are ordered and stale-safe
+  ---
+  duration_ms: 1.5633
+  type: 'test'
+  ...
+# Subtest: Agora failures are canonical and diagnostic logs contain no credentials
+ok 124 - Agora failures are canonical and diagnostic logs contain no credentials
+  ---
+  duration_ms: 1.8331
+  type: 'test'
+  ...
+# Subtest: an unexpected Agora idle callback cannot leave the runtime claiming relay success
+ok 125 - an unexpected Agora idle callback cannot leave the runtime claiming relay success
+  ---
+  duration_ms: 1.1327
+  type: 'test'
+  ...
+# Subtest: Edge accepts only a Battle id and derives source zero plus destination host UID
+ok 126 - Edge accepts only a Battle id and derives source zero plus destination host UID
+  ---
+  duration_ms: 4.2489
+  type: 'test'
+  ...
+# Subtest: runtime gates relay on joined broadcaster, retries once per reconnect, and owns cleanup
+ok 127 - runtime gates relay on joined broadcaster, retries once per reconnect, and owns cleanup
+  ---
+  duration_ms: 2.5855
+  type: 'test'
+  ...
+# Subtest: audio/video subscribe and stage identity remain canonical for hosts and viewers
+ok 128 - audio/video subscribe and stage identity remain canonical for hosts and viewers
+  ---
+  duration_ms: 6.3202
+  type: 'test'
+  ...
+# Subtest: media repair adds no migration, polling, commerce, score, or lifecycle write
+not ok 129 - media repair adds no migration, polling, commerce, score, or lifecycle write
+  ---
+  duration_ms: 31.0727
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f10-a\\tests\\liveBattlesLb4MediaF1Relay.test.mjs:346:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The input was expected to not match the regular expression /\bscore\b|winner|loser/i. Input:
+
+    'import {\r\n' +
+      '  ChannelMediaRelayError,\r\n' +
+      '  ChannelMediaRelayState,\r\n' +
+      '  type ChannelMediaRelayConfiguration,\r\n' +
+      '  type IRtcEngine,\r\n' +
+      '  type IRtcEngineEventHandler,\r\n' +
+      "} from 'react-native-agora';\r\n" +
+      'import {\r\n' +
+      '  LiveBattleRelayError,\r\n' +
+      '  type LiveBattleRelayCredentials,\r\n' +
+      '  type LiveBattleRelaySnapshot,\r\n' +
+      '  requestLiveBattleRelayCredentials,\r\n' +
+      "} from './liveBattleRelayContract';\r\n" +
+      '\r\n' +
+      'export type LiveBattleRelayListener = (snapshot: LiveBattleRelaySnapshot) => void;\r\n' +
+      '\r\n' +
+      'type RelayEngine = Pick<\r\n' +
+      '  IRtcEngine,\r\n' +
+      "  'registerEventHandler'\r\n" +
+      "  | 'unregisterEventHandler'\r\n" +
+      "  | 'startOrUpdateChannelMediaRelay'\r\n" +
+      "  | 'stopChannelMediaRelay'\r\n" +
+      '>;\r\n' +
+      '\r\n' +
+      'type RelayDependencies = {\r\n' +
+      '  requestCredentials?: (battleId: string) => Promise<LiveBattleRelayCredentials>;\r\n' +
+      '  logger?: (event: string, data: Record<string, unknown>) => void;\r\n' +
+      '};\r\n' +
+      '\r\n' +
+      'function shortId(value: string): string {\r\n' +
+      '  return value.slice(-8);\r\n' +
+      '}\r\n' +
+      '\r\n' +
+      'function defaultRelayLogger(event: string, data: Record<string, unknown>): void {\n' +
+      "  if (typeof __DEV__ !== 'undefined' && __DEV__) console.info(`[LIVE-BATTLE-RELAY] ${event}`, data);\n" +
+      '}\r\n' +
+      '\r\n' +
+      'function relayFailureCode(code: number): string {\r\n' +
+      '  if (code === ChannelMediaRelayError.RelayErrorSrcTokenExpired\r\n' +
+      '    || code === ChannelMediaRelayError.RelayErrorDestTokenExpired) {\r\n' +
+      "    return 'battle_relay_token_expired';\r\n" +
+      '  }\r\n' +
+      '  if (code === ChannelMediaRelayError.RelayErrorFailedJoinSrc\r\n' +
+      '    || code === ChannelMediaRelayError.RelayErrorFailedJoinDest) {\r\n' +
+      "    return 'battle_relay_channel_join_failed';\r\n" +
+      '  }\r\n' +
+      '  if (code === ChannelMediaRelayError.RelayErrorServerNoResponse) {\r\n' +
+      "    return 'battle_relay_service_unavailable';\r\n" +
+      '  }\r\n' +
+      '  if (code === ChannelMediaRelayError.RelayErrorServerConnectionLost) {\r\n' +
+      "    return 'battle_relay_connection_lost';\r\n" +
+      '  }\r\n' +
+      '  if (code === ChannelMediaRelayError.RelayErrorFailedPacketReceivedFromSrc\r\n' +
+      '    || code === ChannelMediaRelayError.RelayErrorFailedPacketSentToDest) {\r\n' +
+      "    return 'battle_relay_transport_failed';\r\n" +
+      '  }\r\n' +
+      "  return 'battle_relay_agora_state_failure';\r\n" +
+      '}\r\n' +
+      '\r\n' +
+      'function configurationFrom(credentials: LiveBattleRelayCredentials): ChannelMediaRelayConfiguration {\r\n' +
+      '  const relay = credentials.battleRelay;\r\n' +
+      '  return {\r\n' +
+      '    srcInfo: {\r\n' +
+      '      channelName: relay.source.channel,\r\n' +
+      '      uid: relay.source.uid,\r\n' +
+      '      token: relay.source.token,\r\n' +
+      '    },\r\n' +
+      '    destInfos: [{\r\n' +
+      '      channelName: relay.destination.channel,\r\n' +
+      '      uid: relay.destination.uid,\r\n' +
+      '      token: relay.destination.token,\r\n' +
+      '    }],\r\n' +
+      '    destCount: 1,\r\n' +
+      '  };\r\n' +
+      '}\r\n' +
+      '\r\n' +
+      'export class LiveBattleRelayService {\r\n' +
+      '  private snapshot: LiveBattleRelaySnapshot = {\r\n' +
+      "    state: 'idle',\r\n" +
+      '    battleId: null,\r\n' +
+      '    errorCode: null,\r\n' +
+      '    relayCode: null,\r\n' +
+      '  };\r\n' +
+      '  private readonly listeners = new Set<LiveBattleRelayListener>();\r\n' +
+      '  private readonly requestCredentials: (battleId: string) => Promise<LiveBattleRelayCredentials>;\r\n' +
+      '  private handler: IRtcEngineEventHandler | null = null;\r\n' +
+      '  private activeBattleId: string | null = null;\r\n' +
+      '  private generation = 0;\r\n' +
+      '  private queue: Promise<void> = Promise.resolve();\r\n' +
+      '  private pendingStart: { battleId: string; promise: Promise<LiveBattleRelaySnapshot> } | null = null;\r\n' +
+      '  private pendingRefresh: { battleId: string; promise: Promise<LiveBattleRelaySnapshot> } | null = null;\r\n' +
+      '  private pendingStop: Promise<LiveBattleRelaySnapshot> | null = null;\r\n' +
+      '  private preserveRunningDuringRefreshBattleId: string | null = null;\r\n' +
+      '  private disposeFlight: Promise<void> | null = null;\r\n' +
+      '  private disposed = false;\r\n' +
+      '  private readonly logger: (event: string, data: Record<string, unknown>) => void;\r\n' +
+      '\r\n' +
+      '  constructor(\r\n' +
+      '    private readonly engine: RelayEngine,\r\n' +
+      '    dependencies: RelayDependencies = {},\r\n' +
+      '  ) {\r\n' +
+      '    this.requestCredentials = dependencies.requestCredentials ?? requestLiveBattleRelayCredentials;\r\n' +
+      '    this.logger = dependencies.logger ?? defaultRelayLogger;\r\n' +
+      '  }\r\n' +
+      '\r\n' +
+      '  getSnapshot(): LiveBattleRelaySnapshot {\r\n' +
+      '    return { ...this.snapshot };\r\n' +
+      '  }\r\n' +
+      '\r\n' +
+      '  subscribe(listener: LiveBattleRelayListener): () => void {\r\n' +
+      '    if (this.disposed) return () => undefined;\r\n' +
+      '    this.listeners.add(listener);\r\n' +
+      '    listener(this.getSnapshot());\r\n' +
+      '    let subscribed = true;\r\n' +
+      '    return () => {\r\n' +
+      '      if (!subscribed) return;\r\n' +
+      '      subscribed = false;\r\n' +
+      '      this.listeners.delete(listener);\r\n' +
+      '    };\r\n' +
+      '  }\r\n' +
+      '\r\n' +
+      '  private publish(next: LiveBattleRelaySnapshot): LiveBattleRelaySnapshot {\r\n' +
+      '    this.snapshot = next;\r\n' +
+      '    for (const listener of this.listeners) {\r\n' +
+      '      try { listener(this.getSnapshot()); } catch { /* one observer cannot break relay state */ }\r\n' +
+      '    }\r\n' +
+      '    return this.getSnapshot();\r\n' +
+      '  }\r\n' +
+      '\r\n' +
+      '  private setState(\r\n' +
+      "    state: LiveBattleRelaySnapshot['state'],\r\n" +
+      '    battleId: string | null,\r\n' +
+      '    errorCode: string | null = null,\r\n' +
+      '    relayCode: number | null = null,\r\n' +
+      '  ): LiveBattleRelaySnapshot {\r\n' +
+      '    return this.publish({ state, battleId, errorCode, relayCode });\r\n' +
+      '  }\r\n' +
+      '\r\n' +
+      '  private enqueue<T>(operation: () => Promise<T>): Promise<T> {\r\n' +
+      '    const result = this.queue.then(operation, operation);\r\n' +
+      '    this.queue = result.then(() => undefined, () => undefined);\r\n' +
+      '    return result;\r\n' +
+      '  }\r\n' +
+      '\r\n' +
+      '  private unregisterOwnHandler(): void {\r\n' +
+      '    const handler = this.handler;\r\n' +
+      '    this.handler = null;\r\n' +
+      '    if (!handler) return;\r\n' +
+      '    try { this.engine.unregisterEventHandler(handler); } catch { /* teardown is best-effort */ }\r\n' +
+      '  }\r\n' +
+      '\r\n' +
+      '  private installHandler(generation: number, battleId: string): void {\r\n' +
+      '    this.unregisterOwnHandler();\r\n' +
+      '    const handler: IRtcEngineEventHandler = {\r\n' +
+      '      onChannelMediaRelayStateChanged: (state, code) => {\r\n' +
+      '        if (generation !== this.generation || this.disposed || this.handler !== handler) return;\r\n' +
+      "        this.logger('state', { battle: shortId(battleId), state, code });\r\n" +
+      '        if (state === ChannelMediaRelayState.RelayStateIdle) {\r\n' +
+      '          this.preserveRunningDuringRefreshBattleId = null;\r\n' +
+      '          this.activeBattleId = null;\r\n' +
+      "          this.setState('failed', battleId, 'battle_relay_stopped', code);\r\n" +
+      '          this.unregisterOwnHandler();\r\n' +
+      '        } else if (state === ChannelMediaRelayState.RelayStateConnecting) {\r\n' +
+      '          if (this.preserveRunningDuringRefreshBattleId === battleId\r\n' +
+      "            && this.snapshot.state === 'running') return;\r\n" +
+      "          this.setState('connecting', battleId, null, code);\r\n" +
+      '        } else if (state === ChannelMediaRelayState.RelayStateRunning\r\n' +
+      '          && code === ChannelMediaRelayError.RelayOk) {\r\n' +
+      '          this.preserveRunningDuringRefreshBattleId = null;\r\n' +
+      "          this.setState('running', battleId, null, code);\r\n" +
+      '        } else if (state === ChannelMediaRelayState.RelayStateFailure\r\n' +
+      '          || code !== ChannelMediaRelayError.RelayOk) {\r\n' +
+      '          this.preserveRunningDuringRefreshBattleId = null;\r\n' +
+      "          this.setState('failed', battleId, relayFailureCode(code), code);\r\n" +
+      '        }\r\n' +
+      '      },\r\n' +
+      '    };\r\n' +
+      '    if (!this.engine.registerEventHandler(handler)) {\r\n' +
+      "      throw new LiveBattleRelayError('battle_relay_listener_registration_failed');\r\n" +
+      '    }\r\n' +
+      '    this.handler = handler;\r\n' +
+      '  }\r\n' +
+      '\r\n' +
+      '  private assertCurrent(generation: number): void {\r\n' +
+      '    if (generation !== this.generation || this.disposed) {\r\n' +
+      "      throw new LiveBattleRelayError('battle_relay_operation_superseded');\r\n" +
+      '    }\r\n' +
+      '  }\r\n' +
+      '\r\n' +
+      '  private async stopLocked(generation: number): Promise<LiveBattleRelaySnapshot> {\r\n' +
+      '    this.assertCurrent(generation);\r\n' +
+      '    if (!this.activeBattleId && !this.handler) {\r\n' +
+      "      return this.setState('idle', null, null, null);\r\n" +
+      '    }\r\n' +
+      '    const battleId = this.activeBattleId ?? this.snapshot.battleId;\r\n' +
+      '    this.preserveRunningDuringRefreshBattleId = null;\r\n' +
+      "    this.setState('stopping', battleId);\r\n" +
+      '    this.unregisterOwnHandler();\r\n' +
+      '    const result = this.engine.stopChannelMediaRelay();\r\n' +
+      "    this.logger('stop_result', { battle: battleId ? shortId(battleId) : null, result });\r\n" +
+      '    if (result < 0) {\r\n' +
+      "      throw new LiveBattleRelayError('battle_relay_agora_stop_failed', undefined, result);\r\n" +
+      '    }\r\n' +
+      '    this.assertCurrent(generation);\r\n' +
+      '    this.activeBattleId = null;\r\n' +
+      "    return this.setState('idle', null, null, null);\r\n" +
+      '  }\r\n' +
+      '\r\n' +
+      '  start(battleId: string): Promise<LiveBattleRelaySnapshot> {\r\n' +
+      "    if (this.disposed) return Promise.reject(new LiveBattleRelayError('battle_relay_disposed'));\r\n" +
+      '    if (this.pendingStart?.battleId === battleId) return this.pendingStart.promise;\r\n' +
+      '    if (this.activeBattleId === battleId\r\n' +
+      "      && (this.snapshot.state === 'connecting' || this.snapshot.state === 'running')) {\r\n" +
+      '      return Promise.resolve(this.getSnapshot());\r\n' +
+      '    }\r\n' +
+      '\r\n' +
+      '    const generation = ++this.generation;\r\n' +
+      '    this.preserveRunningDuringRefreshBattleId = null;\r\n' +
+      '    const promise = this.enqueue(async () => {\r\n' +
+      '      this.assertCurrent(generation);\r\n' +
+      '      if (this.activeBattleId && this.activeBattleId !== battleId) {\r\n' +
+      '        await this.stopLocked(generation);\r\n' +
+      '      }\r\n' +
+      "      this.setState('authorizing', battleId);\n" +
+      "      this.logger('start_requested', { battle: shortId(battleId) });\n" +
+      '      const credentials = await this.requestCredentials(battleId);\n' +
+      '      this.assertCurrent(generation);\n' +
+      "      this.logger('authorized', { battle: shortId(battleId) });\n" +
+      '      this.installHandler(generation, battleId);\r\n' +
+      '      this.activeBattleId = battleId;\r\n' +
+      '      const relay = credentials.battleRelay;\r\n' +
+      "      this.setState('connecting', battleId, null, null);\r\n" +
+      "      this.logger('start', {\r\n" +
+      '        battle: shortId(battleId),\r\n' +
+      '        route: `${shortId(relay.source.liveSessionId)}->${shortId(relay.destination.liveSessionId)}`,\r\n' +
+      '        sourceUid: relay.source.uid,\r\n' +
+      '        destinationUid: relay.destination.uid,\r\n' +
+      '      });\r\n' +
+      '      const result = this.engine.startOrUpdateChannelMediaRelay(configurationFrom(credentials));\r\n' +
+      "      this.logger('start_result', { battle: shortId(battleId), result });\r\n" +
+      "      if (typeof result !== 'number' || result !== 0) {\r\n" +
+      '        this.unregisterOwnHandler();\r\n' +
+      '        this.activeBattleId = null;\r\n' +
+      "        const relayCode = typeof result === 'number' ? result : -1;\r\n" +
+      "        this.setState('failed', battleId, 'battle_relay_agora_start_failed', relayCode);\r\n" +
+      "        throw new LiveBattleRelayError('battle_relay_agora_start_failed', undefined, relayCode);\r\n" +
+      '      }\r\n' +
+      '      re'... 59504 more characters
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual: |-
+    import {
+      ChannelMediaRelayError,
+      ChannelMediaRelayState,
+      type ChannelMediaRelayConfiguration,
+      type IRtcEngine,
+      type IRtcEngineEventHandler,
+    } from 'react-native-agora';
+    import {
+      LiveBattleRelayError,
+      type LiveBattleRelayCredentials,
+      type LiveBattleRelaySnapshot,
+      requestLiveBattleRelayCredentials,
+    } from './liveBattleRelayContract';
+
+    export type LiveBattleRelayListener = (snapshot: LiveBattleRelaySnapshot) => void;
+
+    type RelayEngine = Pick<
+      IRtcEngine,
+      'registerEventHandler'
+      | 'unregisterEventHandler'
+      | 'startOrUpdateChannelMediaRelay'
+      | 'stopChannelMediaRelay'
+    >;
+
+    type RelayDependencies = {
+      requestCredentials?: (battleId: string) => Promise<LiveBattleRelayCredentials>;
+      logger?: (event: string, data: Record<string, unknown>) => void;
+    };
+
+    function shortId(value: string): string {
+      return value.slice(-8);
+    }
+
+    function defaultRelayLogger(event: string, data: Record<string, unknown>): void {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) console.info(`[LIVE-BATTLE-RELAY] ${event}`, data);
+    }
+
+    function relayFailureCode(code: number): string {
+      if (code === ChannelMediaRelayError.RelayErrorSrcTokenExpired
+        || code === ChannelMediaRelayError.RelayErrorDestTokenExpired) {
+        return 'battle_relay_token_expired';
+      }
+      if (code === ChannelMediaRelayError.RelayErrorFailedJoinSrc
+        || code === ChannelMediaRelayError.RelayErrorFailedJoinDest) {
+        return 'battle_relay_channel_join_failed';
+      }
+      if (code === ChannelMediaRelayError.RelayErrorServerNoResponse) {
+        return 'battle_relay_service_unavailable';
+      }
+      if (code === ChannelMediaRelayError.RelayErrorServerConnectionLost) {
+        return 'battle_relay_connection_lost';
+      }
+      if (code === ChannelMediaRelayError.RelayErrorFailedPacketReceivedFromSrc
+        || code === ChannelMediaRelayError.RelayErrorFailedPacketSentToDest) {
+        return 'battle_relay_transport_failed';
+      }
+      return 'battle_relay_agora_state_failure';
+    }
+
+    function configurationFrom(credentials: LiveBattleRelayCredentials): ChannelMediaRelayConfiguration {
+      const relay = credentials.battleRelay;
+      return {
+        srcInfo: {
+          channelName: relay.source.channel,
+          uid: relay.source.uid,
+          token: relay.source.token,
+        },
+        destInfos: [{
+          channelName: relay.destination.channel,
+          uid: relay.destination.uid,
+          token: relay.destination.token,
+        }],
+        destCount: 1,
+      };
+    }
+
+    export class LiveBattleRelayService {
+      private snapshot: LiveBattleRelaySnapshot = {
+        state: 'idle',
+        battleId: null,
+        errorCode: null,
+        relayCode: null,
+      };
+      private readonly listeners = new Set<LiveBattleRelayListener>();
+      private readonly requestCredentials: (battleId: string) => Promise<LiveBattleRelayCredentials>;
+      private handler: IRtcEngineEventHandler | null = null;
+      private activeBattleId: string | null = null;
+      private generation = 0;
+      private queue: Promise<void> = Promise.resolve();
+      private pendingStart: { battleId: string; promise: Promise<LiveBattleRelaySnapshot> } | null = null;
+      private pendingRefresh: { battleId: string; promise: Promise<LiveBattleRelaySnapshot> } | null = null;
+      private pendingStop: Promise<LiveBattleRelaySnapshot> | null = null;
+      private preserveRunningDuringRefreshBattleId: string | null = null;
+      private disposeFlight: Promise<void> | null = null;
+      private disposed = false;
+      private readonly logger: (event: string, data: Record<string, unknown>) => void;
+
+      constructor(
+        private readonly engine: RelayEngine,
+        dependencies: RelayDependencies = {},
+      ) {
+        this.requestCredentials = dependencies.requestCredentials ?? requestLiveBattleRelayCredentials;
+        this.logger = dependencies.logger ?? defaultRelayLogger;
+      }
+
+      getSnapshot(): LiveBattleRelaySnapshot {
+        return { ...this.snapshot };
+      }
+
+      subscribe(listener: LiveBattleRelayListener): () => void {
+        if (this.disposed) return () => undefined;
+        this.listeners.add(listener);
+        listener(this.getSnapshot());
+        let subscribed = true;
+        return () => {
+          if (!subscribed) return;
+          subscribed = false;
+          this.listeners.delete(listener);
+        };
+      }
+
+      private publish(next: LiveBattleRelaySnapshot): LiveBattleRelaySnapshot {
+        this.snapshot = next;
+        for (const listener of this.listeners) {
+          try { listener(this.getSnapshot()); } catch { /* one observer cannot break relay state */ }
+        }
+        return this.getSnapshot();
+      }
+
+      private setState(
+        state: LiveBattleRelaySnapshot['state'],
+        battleId: string | null,
+        errorCode: string | null = null,
+        relayCode: number | null = null,
+      ): LiveBattleRelaySnapshot {
+        return this.publish({ state, battleId, errorCode, relayCode });
+      }
+
+      private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+        const result = this.queue.then(operation, operation);
+        this.queue = result.then(() => undefined, () => undefined);
+        return result;
+      }
+
+      private unregisterOwnHandler(): void {
+        const handler = this.handler;
+        this.handler = null;
+        if (!handler) return;
+        try { this.engine.unregisterEventHandler(handler); } catch { /* teardown is best-effort */ }
+      }
+
+      private installHandler(generation: number, battleId: string): void {
+        this.unregisterOwnHandler();
+        const handler: IRtcEngineEventHandler = {
+          onChannelMediaRelayStateChanged: (state, code) => {
+            if (generation !== this.generation || this.disposed || this.handler !== handler) return;
+            this.logger('state', { battle: shortId(battleId), state, code });
+            if (state === ChannelMediaRelayState.RelayStateIdle) {
+              this.preserveRunningDuringRefreshBattleId = null;
+              this.activeBattleId = null;
+              this.setState('failed', battleId, 'battle_relay_stopped', code);
+              this.unregisterOwnHandler();
+            } else if (state === ChannelMediaRelayState.RelayStateConnecting) {
+              if (this.preserveRunningDuringRefreshBattleId === battleId
+                && this.snapshot.state === 'running') return;
+              this.setState('connecting', battleId, null, code);
+            } else if (state === ChannelMediaRelayState.RelayStateRunning
+              && code === ChannelMediaRelayError.RelayOk) {
+              this.preserveRunningDuringRefreshBattleId = null;
+              this.setState('running', battleId, null, code);
+            } else if (state === ChannelMediaRelayState.RelayStateFailure
+              || code !== ChannelMediaRelayError.RelayOk) {
+              this.preserveRunningDuringRefreshBattleId = null;
+              this.setState('failed', battleId, relayFailureCode(code), code);
+            }
+          },
+        };
+        if (!this.engine.registerEventHandler(handler)) {
+          throw new LiveBattleRelayError('battle_relay_listener_registration_failed');
+        }
+        this.handler = handler;
+      }
+
+      private assertCurrent(generation: number): void {
+        if (generation !== this.generation || this.disposed) {
+          throw new LiveBattleRelayError('battle_relay_operation_superseded');
+        }
+      }
+
+      private async stopLocked(generation: number): Promise<LiveBattleRelaySnapshot> {
+        this.assertCurrent(generation);
+        if (!this.activeBattleId && !this.handler) {
+          return this.setState('idle', null, null, null);
+        }
+        const battleId = this.activeBattleId ?? this.snapshot.battleId;
+        this.preserveRunningDuringRefreshBattleId = null;
+        this.setState('stopping', battleId);
+        this.unregisterOwnHandler();
+        const result = this.engine.stopChannelMediaRelay();
+        this.logger('stop_result', { battle: battleId ? shortId(battleId) : null, result });
+        if (result < 0) {
+          throw new LiveBattleRelayError('battle_relay_agora_stop_failed', undefined, result);
+        }
+        this.assertCurrent(generation);
+        this.activeBattleId = null;
+        return this.setState('idle', null, null, null);
+      }
+
+      start(battleId: string): Promise<LiveBattleRelaySnapshot> {
+        if (this.disposed) return Promise.reject(new LiveBattleRelayError('battle_relay_disposed'));
+        if (this.pendingStart?.battleId === battleId) return this.pendingStart.promise;
+        if (this.activeBattleId === battleId
+          && (this.snapshot.state === 'connecting' || this.snapshot.state === 'running')) {
+          return Promise.resolve(this.getSnapshot());
+        }
+
+        const generation = ++this.generation;
+        this.preserveRunningDuringRefreshBattleId = null;
+        const promise = this.enqueue(async () => {
+          this.assertCurrent(generation);
+          if (this.activeBattleId && this.activeBattleId !== battleId) {
+            await this.stopLocked(generation);
+          }
+          this.setState('authorizing', battleId);
+          this.logger('start_requested', { battle: shortId(battleId) });
+          const credentials = await this.requestCredentials(battleId);
+          this.assertCurrent(generation);
+          this.logger('authorized', { battle: shortId(battleId) });
+          this.installHandler(generation, battleId);
+          this.activeBattleId = battleId;
+          const relay = credentials.battleRelay;
+          this.setState('connecting', battleId, null, null);
+          this.logger('start', {
+            battle: shortId(battleId),
+            route: `${shortId(relay.source.liveSessionId)}->${shortId(relay.destination.liveSessionId)}`,
+            sourceUid: relay.source.uid,
+            destinationUid: relay.destination.uid,
+          });
+          const result = this.engine.startOrUpdateChannelMediaRelay(configurationFrom(credentials));
+          this.logger('start_result', { battle: shortId(battleId), result });
+          if (typeof result !== 'number' || result !== 0) {
+            this.unregisterOwnHandler();
+            this.activeBattleId = null;
+            const relayCode = typeof result === 'number' ? result : -1;
+            this.setState('failed', battleId, 'battle_relay_agora_start_failed', relayCode);
+            throw new LiveBattleRelayError('battle_relay_agora_start_failed', undefined, relayCode);
+          }
+          return this.getSnapshot();
+        }).catch(error => {
+          if (error instanceof LiveBattleRelayError
+            && error.code !== 'battle_relay_operation_superseded'
+            && generation === this.generation
+            && this.snapshot.state !== 'failed') {
+            this.setState('failed', battleId, error.code, error.relayCode ?? null);
+          }
+          throw error;
+        });
+        this.pendingStart = { battleId, promise };
+        void promise.then(
+          () => { if (this.pendingStart?.promise === promise) this.pendingStart = null; },
+          () => { if (this.pendingStart?.promise === promise) this.pendingStart = null; },
+        );
+        return promise;
+      }
+
+      transition(battleId: string): Promise<LiveBattleRelaySnapshot> {
+        if (this.disposed) return Promise.reject(new LiveBattleRelayError('battle_relay_disposed'));
+        if (!this.activeBattleId) return this.start(battleId);
+        if (this.pendingStart?.battleId === battleId) return this.pendingStart.promise;
+        if (this.activeBattleId === battleId
+          && (this.snapshot.state === 'connecting' || this.snapshot.state === 'running')) {
+          return Promise.resolve(this.getSnapshot());
+        }
+
+        const generation = ++this.generation;
+        this.preserveRunningDuringRefreshBattleId = null;
+        const promise = this.enqueue(async () => {
+          this.assertCurrent(generation);
+          this.setState('authorizing', battleId);
+          const credentials = await this.requestCredentials(battleId);
+          this.assertCurrent(generation);
+          this.installHandler(generation, battleId);
+          const relay = credentials.battleRelay;
+          this.setState('connecting', battleId, null, null);
+          this.logger('update', {
+            battle: shortId(battleId),
+            route: `${shortId(relay.source.liveSessionId)}->${shortId(relay.destination.liveSessionId)}`,
+            sourceUid: relay.source.uid,
+            destinationUid: relay.destination.uid,
+          });
+          const result = this.engine.startOrUpdateChannelMediaRelay(configurationFrom(credentials));
+          this.logger('update_result', { battle: shortId(battleId), result });
+          if (typeof result !== 'number' || result !== 0) {
+            this.unregisterOwnHandler();
+            try { this.engine.stopChannelMediaRelay(); } catch { /* fail closed */ }
+            this.activeBattleId = null;
+            const relayCode = typeof result === 'number' ? result : -1;
+            this.setState('failed', battleId, 'battle_relay_agora_start_failed', relayCode);
+            throw new LiveBattleRelayError('battle_relay_agora_start_failed', undefined, relayCode);
+          }
+          this.activeBattleId = battleId;
+          return this.getSnapshot();
+        }).catch(error => {
+          if (generation === this.generation && this.activeBattleId && this.activeBattleId !== battleId) {
+            this.unregisterOwnHandler();
+            try { this.engine.stopChannelMediaRelay(); } catch { /* fail closed */ }
+            this.activeBattleId = null;
+          }
+          if (error instanceof LiveBattleRelayError
+            && error.code !== 'battle_relay_operation_superseded'
+            && generation === this.generation
+            && this.snapshot.state !== 'failed') {
+            this.setState('failed', battleId, error.code, error.relayCode ?? null);
+          }
+          throw error;
+        });
+        this.pendingStart = { battleId, promise };
+        void promise.then(
+          () => { if (this.pendingStart?.promise === promise) this.pendingStart = null; },
+          () => { if (this.pendingStart?.promise === promise) this.pendingStart = null; },
+        );
+        return promise;
+      }
+
+      refreshCredentials(battleId: string): Promise<LiveBattleRelaySnapshot> {
+        if (this.disposed) return Promise.reject(new LiveBattleRelayError('battle_relay_disposed'));
+        if (this.pendingRefresh?.battleId === battleId) return this.pendingRefresh.promise;
+        if (this.activeBattleId !== battleId
+          || !this.handler
+          || (this.snapshot.state !== 'connecting' && this.snapshot.state !== 'running')) {
+          return Promise.reject(new LiveBattleRelayError('battle_relay_refresh_not_active'));
+        }
+
+        const generation = this.generation;
+        const promise = this.enqueue(async () => {
+          this.assertCurrent(generation);
+          if (this.activeBattleId !== battleId || !this.handler) {
+            throw new LiveBattleRelayError('battle_relay_refresh_not_active');
+          }
+          const preserveRunning = this.snapshot.state === 'running';
+          const credentials = await this.requestCredentials(battleId);
+          this.assertCurrent(generation);
+          if (this.activeBattleId !== battleId) {
+            throw new LiveBattleRelayError('battle_relay_operation_superseded');
+          }
+          this.installHandler(generation, battleId);
+          if (preserveRunning) this.preserveRunningDuringRefreshBattleId = battleId;
+          const relay = credentials.battleRelay;
+          this.logger('refresh', {
+            battle: shortId(battleId),
+            route: `${shortId(relay.source.liveSessionId)}->${shortId(relay.destination.liveSessionId)}`,
+            sourceUid: relay.source.uid,
+            destinationUid: relay.destination.uid,
+          });
+          const result = this.engine.startOrUpdateChannelMediaRelay(configurationFrom(credentials));
+          this.logger('refresh_result', { battle: shortId(battleId), result });
+          if (typeof result !== 'number' || result !== 0) {
+            throw new LiveBattleRelayError(
+              'battle_relay_credential_refresh_failed',
+              undefined,
+              typeof result === 'number' ? result : -1,
+            );
+          }
+          return this.getSnapshot();
+        }).catch(error => {
+          if (generation !== this.generation || this.disposed) throw error;
+          this.preserveRunningDuringRefreshBattleId = null;
+          this.unregisterOwnHandler();
+          if (this.activeBattleId === battleId) {
+            try { this.engine.stopChannelMediaRelay(); } catch { /* fail closed */ }
+          }
+          this.activeBattleId = null;
+          const relayCode = error instanceof LiveBattleRelayError ? error.relayCode ?? null : null;
+          this.setState(
+            'failed',
+            battleId,
+            'battle_relay_credential_refresh_failed',
+            relayCode,
+          );
+          throw new LiveBattleRelayError(
+            'battle_relay_credential_refresh_failed',
+            undefined,
+            relayCode ?? undefined,
+          );
+        });
+        this.pendingRefresh = { battleId, promise };
+        void promise.then(
+          () => { if (this.pendingRefresh?.promise === promise) this.pendingRefresh = null; },
+          () => { if (this.pendingRefresh?.promise === promise) this.pendingRefresh = null; },
+        );
+        return promise;
+      }
+
+      stop(): Promise<LiveBattleRelaySnapshot> {
+        if (this.disposed) return Promise.resolve(this.getSnapshot());
+        if (this.pendingStop) return this.pendingStop;
+        const generation = ++this.generation;
+        const promise = this.enqueue(() => this.stopLocked(generation)).catch(error => {
+          if (error instanceof LiveBattleRelayError && generation === this.generation) {
+            this.setState('failed', this.activeBattleId, error.code, error.relayCode ?? null);
+          }
+          throw error;
+        });
+        this.pendingStop = promise;
+        void promise.then(
+          () => { if (this.pendingStop === promise) this.pendingStop = null; },
+          () => { if (this.pendingStop === promise) this.pendingStop = null; },
+        );
+        return promise;
+      }
+
+      /** Stops relay synchronously before the owning LIVE engine leaves/releases. */
+      stopImmediately(): void {
+        if (this.disposed) return;
+        this.generation += 1;
+        this.pendingStart = null;
+        this.pendingRefresh = null;
+        this.pendingStop = null;
+        this.preserveRunningDuringRefreshBattleId = null;
+        this.unregisterOwnHandler();
+        if (this.activeBattleId) {
+          try { this.engine.stopChannelMediaRelay(); } catch { /* LIVE teardown must continue */ }
+        }
+        this.activeBattleId = null;
+        this.setState('idle', null, null, null);
+      }
+
+      dispose(): Promise<void> {
+        if (this.disposeFlight) return this.disposeFlight;
+        const generation = ++this.generation;
+        this.disposed = true;
+        this.disposeFlight = this.enqueue(async () => {
+          try {
+            if (this.activeBattleId || this.handler) {
+              this.disposed = false;
+              await this.stopLocked(generation);
+              this.disposed = true;
+            }
+          } finally {
+            this.unregisterOwnHandler();
+            this.preserveRunningDuringRefreshBattleId = null;
+            this.activeBattleId = null;
+            this.listeners.clear();
+            this.snapshot = {
+              state: 'idle', battleId: null, errorCode: null, relayCode: null,
+            };
+            this.disposed = true;
+          }
+        });
+        return this.disposeFlight;
+      }
+    }
+
+    export { configurationFrom as buildLiveBattleRelayConfiguration };
+    export { relayFailureCode as classifyLiveBattleRelayFailure };
+    export type {
+      LiveBattleRelayCredentials,
+      LiveBattleRelaySnapshot,
+      LiveBattleRelayState,
+    } from './liveBattleRelayContract';
+
+    import {
+      getLiveBattleState,
+      getOpenLiveBattlesForSession,
+      isLiveBattleUuid,
+      subscribeToLiveBattlesForSession,
+      type LiveBattle,
+      type LiveBattleSessionSignal,
+      type LiveBattleSubscription,
+    } from './liveBattleService';
+    import type { LiveBattleRelaySnapshot } from './liveBattleRelayContract';
+    import {
+      getLiveBattleRelayDecisionDeadline,
+      resolveLiveBattleRelayPolicy,
+      type LiveBattleRelayDecision,
+    } from './liveBattlePostRoundRelayPolicy';
+    import type {
+      LiveBattlePublicSnapshot,
+      LiveBattlePublicState,
+      LiveBattleRelaySessionPairAuthority,
+      LiveBattleServerClockAnchor,
+    } from './liveBattleSpectatorService';
+
+    export type LiveBattleRuntimeContext = {
+      liveSessionId: string | null;
+      hostUserId: string | null;
+      isCanonicalHost: boolean;
+      isSessionLive: boolean;
+      isOpponentSessionLive?: boolean;
+      engineReady: boolean;
+      joined: boolean;
+      isForeground: boolean;
+    };
+
+    export type LiveBattleRuntimeStatus =
+      | 'idle'
+      | 'observing'
+      | 'relaying'
+      | 'failed'
+      | 'disposed';
+
+    export type LiveBattleRuntimeSnapshot = {
+      status: LiveBattleRuntimeStatus;
+      battleId: string | null;
+      version: number | null;
+      errorCode: string | null;
+      battle: LiveBattle | null;
+    };
+
+    export type LiveBattleRuntimeListener = (snapshot: LiveBattleRuntimeSnapshot) => void;
+
+    export type LiveBattleRuntimeRelay = {
+      start: (battleId: string) => Promise<unknown>;
+      refreshCredentials: (battleId: string) => Promise<unknown>;
+      transition: (battleId: string) => Promise<unknown>;
+      stop: () => Promise<unknown>;
+      stopImmediately: () => void;
+      dispose: () => Promise<void>;
+      getSnapshot: () => LiveBattleRelaySnapshot;
+      subscribe: (listener: (snapshot: LiveBattleRelaySnapshot) => void) => () => void;
+    };
+
+    export type LiveBattleRuntimeDependencies = {
+      discover?: (sessionId: string) => Promise<LiveBattle[]>;
+      reconcile?: (battleId: string) => Promise<LiveBattle>;
+      subscribe?: (
+        sessionId: string,
+        onSignal: (signal: LiveBattleSessionSignal) => void,
+        onError: () => void,
+      ) => LiveBattleSubscription;
+      relay: LiveBattleRuntimeRelay;
+      readPublicAuthority?: (sessionId: string) => Promise<LiveBattlePublicSnapshot>;
+      validateSessionPair?: (
+        state: LiveBattlePublicState,
+      ) => Promise<LiveBattleRelaySessionPairAuthority>;
+      now?: () => number;
+      monotonicNow?: () => number | null;
+      setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+      clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
+    };
+
+    type LiveBattleAuthorityRead =
+      | {
+          status: 'validated';
+          state: LiveBattlePublicState;
+          sessionPair: LiveBattleRelaySessionPairAuthority;
+          serverNowMs: number;
+        }
+      | { status: 'invalid' }
+      | { status: 'unavailable' };
+
+    const RELAY_STATUSES = new Set(['countdown', 'active']);
+    const TERMINAL_STATUSES = new Set(['completed', 'rejected', 'cancelled', 'expired']);
+    const DEADLINE_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000] as const;
+    const DEADLINE_CHECKPOINT_MS = {
+      pending: 10_000,
+      countdown: 1_000,
+      active: 30_000,
+    } as const;
+    const DEADLINE_CLOCK_TOLERANCE_MS = 25;
+    let runtimeSequence = 0;
+
+    const EMPTY_CONTEXT: LiveBattleRuntimeContext = {
+      liveSessionId: null,
+      hostUserId: null,
+      isCanonicalHost: false,
+      isSessionLive: false,
+      isOpponentSessionLive: true,
+      engineReady: false,
+      joined: false,
+      isForeground: false,
+    };
+
+    function contextIsEligible(context: LiveBattleRuntimeContext): boolean {
+      return isLiveBattleUuid(context.liveSessionId)
+        && isLiveBattleUuid(context.hostUserId)
+        && context.isCanonicalHost
+        && context.isSessionLive
+        && context.isOpponentSessionLive !== false
+        && context.engineReady
+        && context.joined
+        && context.isForeground;
+    }
+
+    function battleBelongsToHostSession(
+      battle: LiveBattle,
+      context: LiveBattleRuntimeContext,
+    ): boolean {
+      return (
+        (battle.challengerSessionId === context.liveSessionId
+          && battle.challengerUserId === context.hostUserId)
+        || (battle.opponentSessionId === context.liveSessionId
+          && battle.opponentUserId === context.hostUserId)
+      );
+    }
+
+    export class LiveBattleRuntimeController {
+      private readonly runtimeId = ++runtimeSequence;
+      private readonly discover: (sessionId: string) => Promise<LiveBattle[]>;
+      private readonly reconcile: (battleId: string) => Promise<LiveBattle>;
+      private readonly createSubscription: NonNullable<LiveBattleRuntimeDependencies['subscribe']>;
+      private context = EMPTY_CONTEXT;
+      private snapshot: LiveBattleRuntimeSnapshot = {
+        status: 'idle',
+        battleId: null,
+        version: null,
+        errorCode: null,
+        battle: null,
+      };
+      private readonly listeners = new Set<LiveBattleRuntimeListener>();
+      private subscription: LiveBattleSubscription | null = null;
+      private subscriptionGeneration = 0;
+      private generation = 0;
+      private refreshFlight: Promise<void> | null = null;
+      private refreshQueued = false;
+      private relayBattleId: string | null = null;
+      private relaySeriesId: string | null = null;
+      private relayRoundNumber: number | null = null;
+      private relayDecision: LiveBattleRelayDecision = 'stop_terminal';
+      private publicState: LiveBattlePublicState | null = null;
+      private publicClockAnchor: LiveBattleServerClockAnchor | null = null;
+      private authorityServerNowMs: number | null = null;
+      private postRoundCredentialRefreshKey: string | null = null;
+      private lastValidatedPostRoundAuthority: {
+        battleId: string;
+        key: string;
+        deadlineMs: number;
+      } | null = null;
+      private postRoundAuthorityRetryUsed = false;
+      private relayOperationPossible = false;
+      private attemptedRelayVersion: string | null = null;
+      private readonly observedVersions = new Map<string, number>();
+      private suspended = false;
+      private disposed = false;
+      private deadlineTimer: ReturnType<typeof setTimeout> | null = null;
+      private scheduledDeadlineKey: string | null = null;
+      private deadlineWakeKey: string | null = null;
+      private deadlineBackoffStep = 0;
+      private deadlineBackoffReason: 'none' | 'deadline' | 'error' = 'none';
+      private readonly now: () => number;
+      private readonly monotonicNow: () => number | null;
+      private readonly setTimer: NonNullable<LiveBattleRuntimeDependencies['setTimer']>;
+      private readonly clearTimer: NonNullable<LiveBattleRuntimeDependencies['clearTimer']>;
+      private relayUnsubscribe: (() => void) | null = null;
+      private reconnectRetryFlight: Promise<void> | null = null;
+
+      constructor(private readonly dependencies: LiveBattleRuntimeDependencies) {
+        this.discover = dependencies.discover ?? getOpenLiveBattlesForSession;
+        this.reconcile = dependencies.reconcile ?? getLiveBattleState;
+        this.createSubscription = dependencies.subscribe ?? subscribeToLiveBattlesForSession;
+        this.now = dependencies.now ?? Date.now;
+        this.monotonicNow = dependencies.monotonicNow ?? (() => {
+          const value = globalThis.performance?.now?.();
+          return typeof value === 'number' && Number.isFinite(value) ? value : null;
+        });
+        this.setTimer = dependencies.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
+        this.clearTimer = dependencies.clearTimer ?? (timer => clearTimeout(timer));
+        this.relayUnsubscribe = dependencies.relay.subscribe(relay => this.handleRelaySnapshot(relay));
+        this.trace('controller_created');
+      }
+
+      private trace(event: string): void {
+        if (typeof __DEV__ === 'undefined' || !__DEV__) return;
+        const battle = this.snapshot.battle;
+        console.info(`[LIVE-BATTLE-RUNTIME] ${event}`, {
+          controller: this.runtimeId, session: this.context.liveSessionId?.slice(-8) ?? null,
+          battle: battle?.id.slice(-8) ?? null, status: battle?.status ?? null,
+          version: battle?.version ?? null, runtimeStatus: this.snapshot.status,
+          validSession: isLiveBattleUuid(this.context.liveSessionId),
+          validHost: isLiveBattleUuid(this.context.hostUserId),
+          canonicalHost: this.context.isCanonicalHost, sessionLive: this.context.isSessionLive,
+          opponentSessionLive: this.context.isOpponentSessionLive !== false,
+          engineReady: this.context.engineReady, joined: this.context.joined,
+          foreground: this.context.isForeground, suspended: this.suspended,
+          eligible: this.isEligible(), decision: this.relayDecision,
+        });
+      }
+
+      private handleRelaySnapshot(relay: LiveBattleRelaySnapshot): void {
+        if (this.disposed || !relay.battleId) return;
+        const battle = this.snapshot.battle;
+        if (!battle || battle.id !== relay.battleId || this.relayDecision === 'stop_terminal') return;
+        if (relay.state === 'running') {
+          this.relayBattleId = relay.battleId;
+          this.publish({
+            status: 'relaying', battleId: battle.id, version: battle.version,
+            errorCode: null, battle,
+          });
+          return;
+        }
+        if (relay.state === 'failed') {
+          this.relayBattleId = null;
+          this.publish({
+            status: 'failed', battleId: battle.id, version: battle.version,
+            errorCode: 'live_battle_relay_failed', battle,
+          });
+          return;
+        }
+        if (relay.state === 'authorizing' || relay.state === 'connecting') {
+          this.publish({
+            status: this.relayDecision === 'transitioning_to_next_round' ? 'relaying' : 'observing',
+            battleId: battle.id, version: battle.version,
+            errorCode: null, battle,
+          });
+        }
+      }
+
+      getSnapshot(): LiveBattleRuntimeSnapshot {
+        return { ...this.snapshot, battle: this.snapshot.battle ? { ...this.snapshot.battle } : null };
+      }
+
+      subscribe(listener: LiveBattleRuntimeListener): () => void {
+        if (this.disposed) return () => undefined;
+        this.listeners.add(listener);
+        listener(this.getSnapshot());
+        let active = true;
+        return () => {
+          if (!active) return;
+          active = false;
+          this.listeners.delete(listener);
+        };
+      }
+
+      private publish(next: LiveBattleRuntimeSnapshot): void {
+        this.snapshot = next;
+        for (const listener of this.listeners) {
+          try { listener(this.getSnapshot()); } catch { /* observers cannot alter authority */ }
+        }
+      }
+
+      async waitForIdle(): Promise<void> {
+        while (this.refreshFlight) await this.refreshFlight;
+      }
+
+      updatePublicAuthority(
+        state: LiveBattlePublicState | null,
+        clockAnchor: LiveBattleServerClockAnchor | null,
+      ): void {
+        if (this.disposed) return;
+        this.publicState = state;
+        this.publicClockAnchor = clockAnchor;
+        if (state && state.battleId === this.relayBattleId) {
+          this.captureRelaySeriesAuthority(state.battleId);
+        }
+        const battle = this.snapshot.battle;
+        if (!contextIsEligible(this.context)) return;
+        if (state && (state.sessionId !== this.context.liveSessionId
+          || state.localHostUserId !== this.context.hostUserId)) {
+          void this.failClosed('live_battle_host_authority_changed');
+          return;
+        }
+        const seriesStatus = state?.series?.status ?? null;
+        const shouldReevaluate = Boolean(state && (!battle || this.suspended
+          || state.battleId !== battle.id || state.version > battle.version
+          || state.status !== battle.status))
+          || battle?.status === 'completed'
+          || battle?.status === 'cancelled'
+          || (battle !== null && state?.battleId !== battle.id)
+          || seriesStatus === 'completed'
+          || seriesStatus === 'cancelled';
+        // A projection is a reconciliation signal, never a substitute for the host RPC.
+        if (shouldReevaluate) void this.reconcileNow();
+      }
+
+      async reconcileNow(): Promise<void> {
+        if (this.disposed || !contextIsEligible(this.context)) return;
+        if (this.suspended) {
+          this.suspended = false;
+          this.generation += 1;
+          this.refreshQueued = false;
+          this.replaceSubscription(this.context.liveSessionId as string);
+        }
+        this.clearDeadlineTimer();
+        this.scheduledDeadlineKey = null;
+        this.requestRefresh();
+        await this.waitForIdle();
+      }
+
+      async applyAuthoritativeBattle(battle: LiveBattle): Promise<void> {
+        if (this.disposed || !this.isEligible()) return;
+        const generation = this.generation;
+        if (!battleBelongsToHostSession(battle, this.context)) {
+          await this.failClosed('live_battle_host_authority_changed');
+          return;
+        }
+        const observed = this.observedVersions.get(battle.id) ?? 0;
+        if (battle.version < observed) {
+          this.requestRefresh();
+          await this.waitForIdle();
+          return;
+        }
+        this.observedVersions.set(battle.id, battle.version);
+        await this.applyBattle(battle, generation);
+      }
+
+      dismissTerminalBattle(): void {
+        const battle = this.snapshot.battle;
+        if (this.disposed || !battle || !TERMINAL_STATUSES.has(battle.status)) return;
+        this.resetDeadlineScheduler();
+        this.publish({ status: 'observing', battleId: null, version: null, errorCode: null, battle: null });
+      }
+
+      updateContext(context: LiveBattleRuntimeContext): void {
+        if (this.disposed) return;
+        const previous = this.context;
+        this.context = context;
+        if (JSON.stringify(previous) !== JSON.stringify(context)) this.trace('context');
+        if (contextIsEligible(previous) !== contextIsEligible(context)) this.trace('eligibility_changed');
+        if (!contextIsEligible(context)) {
+          this.suspended = true;
+          this.invalidateAndStop('idle');
+          return;
+        }
+
+        const authorityChanged = previous.liveSessionId !== context.liveSessionId
+          || previous.hostUserId !== context.hostUserId
+          || !contextIsEligible(previous);
+        if (authorityChanged) {
+          this.suspended = false;
+          this.generation += 1;
+          this.refreshQueued = false;
+          this.observedVersions.clear();
+          this.attemptedRelayVersion = null;
+          this.publicState = null;
+          this.publicClockAnchor = null;
+          this.authorityServerNowMs = null;
+          this.postRoundCredentialRefreshKey = null;
+          this.lastValidatedPostRoundAuthority = null;
+          this.postRoundAuthorityRetryUsed = false;
+          this.relaySeriesId = null;
+          this.relayRoundNumber = null;
+          this.relayDecision = 'stop_terminal';
+          this.resetDeadlineScheduler();
+          this.replaceSubscription(context.liveSessionId as string);
+          this.requestRefresh();
+          return;
+        }
+
+        if (this.suspended) return;
+
+        if (!this.subscription) {
+          this.replaceSubscription(context.liveSessionId as string);
+          this.requestRefresh();
+        }
+      }
+
+      private replaceSubscription(sessionId: string): void {
+        this.removeSubscription();
+        const subscriptionGeneration = this.subscriptionGeneration;
+        try {
+          this.subscription = this.createSubscription(
+            sessionId,
+            signal => {
+              if (subscriptionGeneration === this.subscriptionGeneration) this.handleRealtimeSignal(signal);
+            },
+            () => {
+              if (subscriptionGeneration === this.subscriptionGeneration) void this.failClosed('live_battle_realtime_unavailable');
+            },
+          );
+          this.publish({ status: 'observing', battleId: null, version: null, errorCode: null, battle: null });
+        } catch {
+          this.failClosed('live_battle_realtime_unavailable');
+        }
+      }
+
+      private removeSubscription(): void {
+        this.subscriptionGeneration += 1;
+        const subscription = this.subscription;
+        this.subscription = null;
+        if (subscription) void subscription.unsubscribe().catch(() => undefined);
+      }
+
+      private handleRealtimeSignal(signal: LiveBattleSessionSignal): void {
+        if (this.disposed || !this.isEligible()) return;
+        if (!isLiveBattleUuid(signal.battleId) || !Number.isSafeInteger(signal.version)) {
+          this.failClosed('live_battle_invalid_response');
+          return;
+        }
+        const observed = this.observedVersions.get(signal.battleId) ?? 0;
+        if (signal.version <= observed) return;
+        this.observedVersions.set(signal.battleId, signal.version);
+        this.trace('realtime_signal');
+        this.requestRefresh();
+      }
+
+      private requestRefresh(): void {
+        if (this.disposed || !this.isEligible()) return;
+        this.refreshQueued = true;
+        if (this.refreshFlight) return;
+        const generation = this.generation;
+        this.refreshFlight = (async () => {
+          while (this.refreshQueued && generation === this.generation && !this.disposed) {
+            this.refreshQueued = false;
+            await this.refreshOnce(generation);
+          }
+        })().finally(() => {
+          this.refreshFlight = null;
+          if (this.refreshQueued && !this.disposed) this.requestRefresh();
+        });
+      }
+
+      private isCurrent(generation: number): boolean {
+        return !this.disposed
+          && generation === this.generation
+          && this.isEligible();
+      }
+
+      private isEligible(): boolean {
+        return !this.suspended && contextIsEligible(this.context);
+      }
+
+      private async refreshOnce(generation: number): Promise<void> {
+        const sessionId = this.context.liveSessionId;
+        if (!sessionId) return;
+        this.trace('reconcile_start');
+        try {
+          const candidates = await this.discover(sessionId);
+          if (!this.isCurrent(generation)) return;
+          if (candidates.length > 1) {
+            await this.failClosed('live_battle_multiple_open');
+            return;
+          }
+          if (candidates.length === 0) {
+            const currentBattleId = this.publicState?.sessionId === sessionId
+              ? this.publicState.battleId : this.snapshot.battleId;
+            if (currentBattleId && isLiveBattleUuid(currentBattleId)) {
+              const current = await this.reconcile(currentBattleId);
+              if (!this.isCurrent(generation)) return;
+              if (!battleBelongsToHostSession(current, this.context)) {
+                await this.failClosed('live_battle_host_authority_changed');
+                return;
+              }
+              await this.applyBattle(current, generation, true);
+              return;
+            }
+            this.resetDeadlineScheduler();
+            await this.stopRelay('observing');
+            return;
+          }
+
+          const battle = await this.reconcile(candidates[0].id);
+          if (!this.isCurrent(generation)) return;
+          if (!battleBelongsToHostSession(battle, this.context)) {
+            await this.failClosed('live_battle_host_authority_changed');
+            return;
+          }
+
+          const observedVersion = this.observedVersions.get(battle.id) ?? 0;
+          if (battle.version < observedVersion) return;
+          this.observedVersions.set(battle.id, battle.version);
+          await this.applyBattle(battle, generation, true);
+        } catch (error) {
+          if (!this.isCurrent(generation)) return;
+          const candidate = error && typeof error === 'object'
+            ? error as { code?: unknown; message?: unknown }
+            : null;
+          if (
+            candidate?.code === 'live_battle_not_found'
+            && candidate.message === 'live_battle_not_found'
+          ) {
+            this.resetDeadlineScheduler();
+            await this.stopRelay('observing');
+            return;
+          }
+          this.handleReconcileFailure(generation);
+        }
+      }
+
+      private async applyBattle(
+        battle: LiveBattle,
+        generation: number,
+        reconciledByServer = false,
+      ): Promise<void> {
+        if (typeof __DEV__ !== 'undefined' && __DEV__) console.info('[LIVE-BATTLE-RUNTIME] authoritative_battle', {
+          controller: this.runtimeId, battle: battle.id.slice(-8), status: battle.status,
+          version: battle.version, challengerSession: battle.challengerSessionId.slice(-8),
+          opponentSession: battle.opponentSessionId.slice(-8), reconciledByServer,
+        });
+        this.scheduleDeadline(battle, generation, reconciledByServer);
+        if (battle.status === 'completed' && battle.endedAt !== null) {
+          await this.applyCompletedBattle(battle, generation);
+          return;
+        }
+        if (!RELAY_STATUSES.has(battle.status) || battle.endedAt !== null) {
+          await this.stopRelay('observing', battle.id, battle.version, battle);
+          return;
+        }
+        if (this.relayBattleId === battle.id) {
+          this.captureRelaySeriesAuthority(battle.id);
+          this.relayDecision = 'relaying_active_round';
+          this.postRoundCredentialRefreshKey = null;
+          this.lastValidatedPostRoundAuthority = null;
+          this.postRoundAuthorityRetryUsed = false;
+          this.publish({
+            status: 'relaying', battleId: battle.id, version: battle.version, errorCode: null, battle,
+          });
+          return;
+        }
+
+        if (this.relayBattleId && this.relayBattleId !== battle.id) {
+          const decision = await this.resolveAuthorityDecision(battle, generation);
+          if (!this.isCurrent(generation)) return;
+          if (decision === 'transitioning_to_next_round') {
+            await this.transitionRelay(battle, generation);
+            return;
+          }
+          await this.stopRelay('observing');
+          if (!this.isCurrent(generation)) return;
+        }
+        const attemptKey = `${battle.id}:${battle.version}`;
+        if (this.attemptedRelayVersion === attemptKey) return;
+        this.attemptedRelayVersion = attemptKey;
+        this.relayOperationPossible = true;
+        this.relayDecision = 'relaying_active_round';
+        this.publish({
+          status: 'observing', battleId: battle.id, version: battle.version,
+          errorCode: null, battle,
+        });
+        try {
+          this.trace('relay_start_requested');
+          await this.dependencies.relay.start(battle.id);
+          if (!this.isCurrent(generation)) return;
+          this.captureRelaySeriesAuthority(battle.id);
+          const relay = this.dependencies.relay.getSnapshot();
+          if (relay.battleId === battle.id && relay.state === 'running') {
+            this.handleRelaySnapshot(relay);
+          }
+        } catch {
+          if (!this.isCurrent(generation)) return;
+          this.relayBattleId = null;
+          this.relayOperationPossible = false;
+          this.publish({
+            status: 'failed', battleId: battle.id, version: battle.version,
+            errorCode: 'live_battle_relay_failed', battle,
+          });
+        }
+      }
+
+      private estimateServerNow(): number | null {
+        const anchor = this.publicClockAnchor;
+        const monotonicNow = this.monotonicNow();
+        if (
+          !anchor
+          || monotonicNow === null
+          || !Number.isFinite(monotonicNow)
+          || monotonicNow < anchor.monotonicMsAtAnchor
+        ) return null;
+        return anchor.serverEpochMsAtAnchor + monotonicNow - anchor.monotonicMsAtAnchor;
+      }
+
+      private captureRelaySeriesAuthority(battleId: string): void {
+        const state = this.publicState;
+        if (!state || state.battleId !== battleId || !state.series) return;
+        this.relaySeriesId = state.series.id;
+        this.relayRoundNumber = state.series.roundNumber;
+      }
+
+      private async readAuthority(
+        battle: LiveBattle,
+        generation: number,
+      ): Promise<LiveBattleAuthorityRead> {
+        const sessionId = this.context.liveSessionId;
+        const readPublicAuthority = this.dependencies.readPublicAuthority;
+        const validateSessionPair = this.dependencies.validateSessionPair;
+        if (!sessionId || !readPublicAuthority || !validateSessionPair) return { status: 'invalid' };
+        try {
+          const snapshot = await readPublicAuthority(sessionId);
+          if (!this.isCurrent(generation)) return { status: 'invalid' };
+          if (!snapshot.state) return { status: 'invalid' };
+          this.publicState = snapshot.state;
+          this.publicClockAnchor = snapshot.clockAnchor;
+          const sessionPair = await validateSessionPair(snapshot.state);
+          if (!this.isCurrent(generation)) return { status: 'invalid' };
+          const serverNowMs = Date.parse(snapshot.serverNow);
+          if (!Number.isFinite(serverNowMs) || snapshot.state.battleId !== battle.id) {
+            return { status: 'invalid' };
+          }
+          this.authorityServerNowMs = serverNowMs;
+          return { status: 'validated', state: snapshot.state, sessionPair, serverNowMs };
+        } catch {
+          return { status: 'unavailable' };
+        }
+      }
+
+      private async resolveAuthorityDecision(
+        battle: LiveBattle,
+        generation: number,
+      ): Promise<LiveBattleRelayDecision> {
+        const authority = await this.readAuthority(battle, generation);
+        if (authority.status !== 'validated') return 'stop_terminal';
+        return resolveLiveBattleRelayPolicy({
+          battle,
+          projection: authority.state,
+          clockAnchor: this.publicClockAnchor,
+          serverNowMs: authority.serverNowMs,
+          relayBattleId: this.relayBattleId,
+          relaySeriesId: this.relaySeriesId,
+          relayRoundNumber: this.relayRoundNumber,
+          sessionPair: authority.sessionPair,
+          localSessionId: this.context.liveSessionId,
+          localHostUserId: this.context.hostUserId,
+          eligible: this.isEligible(),
+        });
+      }
+
+      private async applyCompletedBattle(
+        battle: LiveBattle,
+        generation: number,
+      ): Promise<void> {
+        const authority = await this.readAuthority(battle, generation);
+        if (!this.isCurrent(generation)) return;
+        if (authority.status === 'unavailable') {
+          if (this.holdForOneBoundedAuthorityRetry(battle, generation)) return;
+          await this.stopRelay('observing', battle.id, battle.version, battle);
+          return;
+        }
+        if (authority.status !== 'validated') {
+          await this.stopRelay('observing', battle.id, battle.version, battle);
+          return;
+        }
+        const decision = resolveLiveBattleRelayPolicy({
+          battle,
+          projection: authority.state,
+          clockAnchor: this.publicClockAnchor,
+          serverNowMs: authority.serverNowMs,
+          relayBattleId: this.relayBattleId,
+          relaySeriesId: this.relaySeriesId,
+          relayRoundNumber: this.relayRoundNumber,
+          sessionPair: authority.sessionPair,
+          localSessionId: this.context.liveSessionId,
+          localHostUserId: this.context.hostUserId,
+          eligible: this.isEligible(),
+        });
+        if (decision !== 'holding_for_rematch') {
+          await this.stopRelay('observing', battle.id, battle.version, battle);
+          return;
+        }
+        const deadlineText = getLiveBattleRelayDecisionDeadline(authority.state);
+        const deadlineMs = deadlineText ? Date.parse(deadlineText) : Number.NaN;
+        if (!deadlineText || !Number.isFinite(deadlineMs) || authority.serverNowMs >= deadlineMs) {
+          await this.stopRelay('observing', battle.id, battle.version, battle);
+          return;
+        }
+        const refreshKey = `${battle.id}:${battle.version}:${deadlineText}`;
+        this.lastValidatedPostRoundAuthority = { battleId: battle.id, key: refreshKey, deadlineMs };
+        this.postRoundAuthorityRetryUsed = false;
+        this.relayDecision = decision;
+        this.trace('post_round');
+        this.captureRelaySeriesAuthority(battle.id);
+        this.schedulePostRoundDeadline(battle, generation);
+        if (this.relayBattleId !== battle.id) {
+          const attemptKey = `${battle.id}:${battle.version}:post-round`;
+          if (this.attemptedRelayVersion !== attemptKey) {
+            this.attemptedRelayVersion = attemptKey;
+            this.relayOperationPossible = true;
+            try {
+              this.trace('relay_start_requested');
+              await this.dependencies.relay.start(battle.id);
+              if (!this.isCurrent(generation)) return;
+              this.relayBattleId = battle.id;
+              this.postRoundCredentialRefreshKey = refreshKey;
+            } catch {
+              if (!this.isCurrent(generation)) return;
+              this.relayBattleId = null;
+              this.relayOperationPossible = false;
+              this.publish({
+                status: 'failed', battleId: battle.id, version: battle.version,
+                errorCode: 'live_battle_relay_failed', battle,
+              });
+              return;
+            }
+          }
+        } else if (this.postRoundCredentialRefreshKey !== refreshKey) {
+          this.postRoundCredentialRefreshKey = refreshKey;
+          this.publish({
+            status: 'relaying', battleId: battle.id, version: battle.version,
+            errorCode: null, battle,
+          });
+          try {
+            await this.dependencies.relay.refreshCredentials(battle.id);
+            if (!this.isCurrent(generation)) return;
+          } catch {
+            if (!this.isCurrent(generation)) return;
+            if (this.postRoundCredentialRefreshKey === refreshKey) {
+              this.postRoundCredentialRefreshKey = null;
+            }
+            this.resetDeadlineScheduler();
+            await this.dependencies.relay.stop().catch(() => undefined);
+            this.relayBattleId = null;
+            this.relaySeriesId = null;
+            this.relayRoundNumber = null;
+            this.relayDecision = 'stop_terminal';
+            this.relayOperationPossible = false;
+            this.lastValidatedPostRoundAuthority = null;
+            this.publish({
+              status: 'failed', battleId: battle.id, version: battle.version,
+              errorCode: 'live_battle_relay_credential_refresh_failed', battle,
+            });
+            return;
+          }
+        }
+        this.publish({
+          status: 'relaying', battleId: battle.id, version: battle.version,
+          errorCode: null, battle,
+        });
+      }
+
+      private holdForOneBoundedAuthorityRetry(
+        battle: LiveBattle,
+        generation: number,
+      ): boolean {
+        const validated = this.lastValidatedPostRoundAuthority;
+        const serverNow = this.estimateServerNow();
+        if (
+          !validated
+          || validated.battleId !== battle.id
+          || this.postRoundCredentialRefreshKey !== validated.key
+          || this.postRoundAuthorityRetryUsed
+          || serverNow === null
+          || serverNow >= validated.deadlineMs
+          || this.relayBattleId !== battle.id
+        ) return false;
+        this.postRoundAuthorityRetryUsed = true;
+        this.relayDecision = 'holding_for_rematch';
+        this.publish({
+          status: 'relaying', battleId: battle.id, version: battle.version,
+          errorCode: null, battle,
+        });
+        this.clearDeadlineTimer();
+        const retryKey = `post-round-authority-retry:${validated.key}`;
+        this.scheduledDeadlineKey = retryKey;
+        let timer: ReturnType<typeof setTimeout>;
+        timer = this.setTimer(() => {
+          if (this.deadlineTimer !== timer) return;
+          this.deadlineTimer = null;
+          this.scheduledDeadlineKey = null;
+          if (!this.isCurrent(generation) || this.snapshot.battleId !== battle.id) return;
+          this.requestRefresh();
+        }, Math.max(0, Math.min(1_000, validated.deadlineMs - serverNow)));
+        this.deadlineTimer = timer;
+        return true;
+      }
+
+      private async transitionRelay(
+        battle: LiveBattle,
+        generation: number,
+      ): Promise<void> {
+        const attemptKey = `${battle.id}:${battle.version}:transition`;
+        if (this.attemptedRelayVersion === attemptKey) return;
+        this.attemptedRelayVersion = attemptKey;
+        this.relayOperationPossible = true;
+        this.relayDecision = 'transitioning_to_next_round';
+        this.publish({
+          status: 'relaying', battleId: battle.id, version: battle.version,
+          errorCode: null, battle,
+        });
+        try {
+          await this.dependencies.relay.transition(battle.id);
+          if (!this.isCurrent(generation)) return;
+          this.relayBattleId = battle.id;
+          this.captureRelaySeriesAuthority(battle.id);
+          this.relayDecision = 'relaying_active_round';
+          this.postRoundCredentialRefreshKey = null;
+          this.lastValidatedPostRoundAuthority = null;
+          this.postRoundAuthorityRetryUsed = false;
+          const relay = this.dependencies.relay.getSnapshot();
+          if (relay.battleId === battle.id && relay.state === 'running') {
+            this.handleRelaySnapshot(relay);
+          }
+        } catch {
+          if (!this.isCurrent(generation)) return;
+          this.relayBattleId = null;
+          this.relayOperationPossible = false;
+          this.relayDecision = 'stop_terminal';
+          this.publish({
+            status: 'failed', battleId: battle.id, version: battle.version,
+            errorCode: 'live_battle_relay_failed', battle,
+          });
+        }
+      }
+
+      private schedulePostRoundDeadline(battle: LiveBattle, generation: number): void {
+        const state = this.publicState;
+        if (!state || state.battleId !== battle.id) return;
+        const timestamp = getLiveBattleRelayDecisionDeadline(state);
+        const serverNow = this.estimateServerNow() ?? this.authorityServerNowMs;
+        if (!timestamp || serverNow === null) {
+          this.clearDeadlineTimer();
+          this.scheduledDeadlineKey = null;
+          return;
+        }
+        const deadline = Date.parse(timestamp);
+        if (!Number.isFinite(deadline)) return;
+        const deadlineKey = `post-round:${battle.id}:${state.series?.version ?? 0}:${timestamp}`;
+        if (this.scheduledDeadlineKey === deadlineKey) return;
+        this.clearDeadlineTimer();
+        this.scheduledDeadlineKey = deadlineKey;
+        let timer: ReturnType<typeof setTimeout>;
+        timer = this.setTimer(() => {
+          if (this.deadlineTimer !== timer) return;
+          this.deadlineTimer = null;
+          this.scheduledDeadlineKey = null;
+          if (!this.isCurrent(generation) || this.snapshot.battleId !== battle.id) return;
+          this.requestRefresh();
+        }, Math.max(0, deadline - serverNow + DEADLINE_CLOCK_TOLERANCE_MS));
+        this.deadlineTimer = timer;
+      }
+
+      private clearDeadlineTimer(): void {
+        if (!this.deadlineTimer) return;
+        this.clearTimer(this.deadlineTimer);
+        this.deadlineTimer = null;
+      }
+
+      private resetDeadlineScheduler(): void {
+        this.clearDeadlineTimer();
+        this.scheduledDeadlineKey = null;
+        this.deadlineWakeKey = null;
+        this.deadlineBackoffStep = 0;
+        this.deadlineBackoffReason = 'none';
+      }
+
+      private getDeadlineTimestamp(battle: LiveBattle): string | null {
+        return battle.status === 'pending'
+          ? battle.inviteExpiresAt
+          : battle.status === 'countdown'
+            ? battle.scheduledStartAt
+            : battle.status === 'active'
+              ? battle.scheduledEndAt
+              : null;
+      }
+
+      private getBackoffDelay(): number {
+        const index = Math.max(
+          0,
+          Math.min(this.deadlineBackoffStep - 1, DEADLINE_RETRY_DELAYS_MS.length - 1),
+        );
+        return DEADLINE_RETRY_DELAYS_MS[index];
+      }
+
+      private getDeadlineCheckpointDelay(battle: LiveBattle): number | null {
+        return battle.status === 'pending'
+          ? DEADLINE_CHECKPOINT_MS.pending
+          : battle.status === 'countdown'
+            ? DEADLINE_CHECKPOINT_MS.countdown
+            : battle.status === 'active'
+              ? DEADLINE_CHECKPOINT_MS.active
+              : null;
+      }
+
+      private scheduleDeadline(
+        battle: LiveBattle,
+        generation: number,
+        reconciledByServer = false,
+      ): void {
+        const timestamp = this.getDeadlineTimestamp(battle);
+        const deadlineKey = `${battle.id}:${battle.version}:${battle.status}:${timestamp ?? ''}`;
+        if (this.deadlineWakeKey !== deadlineKey) {
+          this.deadlineWakeKey = deadlineKey;
+          this.deadlineBackoffStep = 0;
+          this.deadlineBackoffReason = 'none';
+        }
+        if (!timestamp) {
+          this.clearDeadlineTimer();
+          this.scheduledDeadlineKey = null;
+          return;
+        }
+        const deadline = Date.parse(timestamp);
+        if (!Number.isFinite(deadline)) {
+          this.clearDeadlineTimer();
+          this.scheduledDeadlineKey = null;
+          return;
+        }
+        const remaining = deadline - this.now() + DEADLINE_CLOCK_TOLERANCE_MS;
+        let returnedToCheckpointMode = false;
+        if (reconciledByServer) {
+          if (remaining <= 0) {
+            this.deadlineBackoffReason = 'deadline';
+            this.deadlineBackoffStep = Math.max(1, this.deadlineBackoffStep);
+          } else if (this.deadlineBackoffReason !== 'none') {
+            this.deadlineBackoffReason = 'none';
+            this.deadlineBackoffStep = 0;
+            returnedToCheckpointMode = true;
+          }
+        }
+        if (returnedToCheckpointMode && this.scheduledDeadlineKey === deadlineKey) {
+          this.clearDeadlineTimer();
+          this.scheduledDeadlineKey = null;
+        }
+        if (this.scheduledDeadlineKey === deadlineKey) return;
+        this.clearDeadlineTimer();
+        this.scheduledDeadlineKey = deadlineKey;
+        const checkpointDelay = this.getDeadlineCheckpointDelay(battle);
+        if (checkpointDelay === null) return;
+        const delay = this.deadlineBackoffStep > 0
+          ? this.getBackoffDelay()
+          : Math.max(0, Math.min(remaining, checkpointDelay));
+        const battleId = battle.id;
+        const version = battle.version;
+        let timer: ReturnType<typeof setTimeout>;
+        timer = this.setTimer(() => {
+          if (this.deadlineTimer !== timer) return;
+          this.deadlineTimer = null;
+          if (!this.isCurrent(generation)) return;
+          if (this.snapshot.battleId !== battleId || this.snapshot.version !== version) return;
+          this.scheduledDeadlineKey = null;
+          const deadlineReached = deadline - this.now() + DEADLINE_CLOCK_TOLERANCE_MS <= 0;
+          if (deadlineReached || this.deadlineBackoffStep > 0) {
+            if (deadlineReached) this.deadlineBackoffReason = 'deadline';
+            this.deadlineBackoffStep = Math.min(
+              this.deadlineBackoffStep + 1,
+              DEADLINE_RETRY_DELAYS_MS.length,
+            );
+          }
+          this.requestRefresh();
+        }, delay);
+        this.deadlineTimer = timer;
+      }
+
+      private scheduleRefreshRetry(generation: number): void {
+        const battle = this.snapshot.battle;
+        if (battle && TERMINAL_STATUSES.has(battle.status)) {
+          this.resetDeadlineScheduler();
+          return;
+        }
+        const deadline = battle ? this.getDeadlineTimestamp(battle) : null;
+        if (battle && deadline && battleBelongsToHostSession(battle, this.context)) {
+          const deadlineKey = `${battle.id}:${battle.version}:${battle.status}:${deadline}`;
+          if (this.deadlineWakeKey !== deadlineKey) {
+            this.deadlineWakeKey = deadlineKey;
+            this.deadlineBackoffStep = 0;
+            this.deadlineBackoffReason = 'none';
+          }
+          if (this.deadlineBackoffReason === 'none') this.deadlineBackoffReason = 'error';
+          this.deadlineBackoffStep = Math.max(1, this.deadlineBackoffStep);
+          this.clearDeadlineTimer();
+          this.scheduledDeadlineKey = null;
+          this.scheduleDeadline(battle, generation);
+          return;
+        }
+
+        const retryKey = `refresh:${this.context.liveSessionId ?? ''}`;
+        if (this.deadlineWakeKey !== retryKey) {
+          this.deadlineWakeKey = retryKey;
+          this.deadlineBackoffStep = 1;
+          this.deadlineBackoffReason = 'error';
+        } else {
+          this.deadlineBackoffReason = 'error';
+          this.deadlineBackoffStep = Math.max(1, this.deadlineBackoffStep);
+        }
+        this.clearDeadlineTimer();
+        this.scheduledDeadlineKey = retryKey;
+        let timer: ReturnType<typeof setTimeout>;
+        timer = this.setTimer(() => {
+          if (this.deadlineTimer !== timer) return;
+          this.deadlineTimer = null;
+          if (!this.isCurrent(generation) || this.deadlineWakeKey !== retryKey) return;
+          this.scheduledDeadlineKey = null;
+          this.deadlineBackoffStep = Math.min(
+            this.deadlineBackoffStep + 1,
+            DEADLINE_RETRY_DELAYS_MS.length,
+          );
+          this.requestRefresh();
+        }, this.getBackoffDelay());
+        this.deadlineTimer = timer;
+      }
+
+      private handleReconcileFailure(generation: number): void {
+        if (!this.isCurrent(generation)) return;
+        this.trace('reconcile_failed');
+        const battle = this.snapshot.battle;
+        this.publish({
+          status: 'failed',
+          battleId: battle?.id ?? null,
+          version: battle?.version ?? null,
+          errorCode: 'live_battle_reconcile_failed',
+          battle,
+        });
+        this.scheduleRefreshRetry(generation);
+      }
+
+      private async stopRelay(
+        status: LiveBattleRuntimeStatus = 'idle',
+        battleId: string | null = null,
+        version: number | null = null,
+        battle: LiveBattle | null = null,
+      ): Promise<void> {
+        this.attemptedRelayVersion = null;
+        if (this.relayOperationPossible) {
+          await this.dependencies.relay.stop().catch(() => undefined);
+          this.relayBattleId = null;
+          this.relayOperationPossible = false;
+        }
+        this.relaySeriesId = null;
+        this.relayRoundNumber = null;
+        this.relayDecision = 'stop_terminal';
+        this.postRoundCredentialRefreshKey = null;
+        this.lastValidatedPostRoundAuthority = null;
+        this.postRoundAuthorityRetryUsed = false;
+        if (!this.disposed) this.publish({ status, battleId, version, errorCode: null, battle });
+      }
+
+      private failClosed(errorCode: string): Promise<void> {
+        if (this.disposed) return Promise.resolve();
+        this.suspended = true;
+        this.generation += 1;
+        this.refreshQueued = false;
+        this.resetDeadlineScheduler();
+        this.removeSubscription();
+        this.publish({ status: 'failed', battleId: null, version: null, errorCode, battle: null });
+        return this.stopRelay('failed').then(() => {
+          if (!this.disposed) {
+            this.publish({ status: 'failed', battleId: null, version: null, errorCode, battle: null });
+          }
+        });
+      }
+
+      private invalidateAndStop(status: LiveBattleRuntimeStatus): void {
+        this.generation += 1;
+        this.refreshQueued = false;
+        this.resetDeadlineScheduler();
+        this.removeSubscription();
+        void this.stopRelay(status);
+      }
+
+      async stop(): Promise<void> {
+        if (this.disposed) return;
+        this.suspended = true;
+        this.generation += 1;
+        this.refreshQueued = false;
+        this.resetDeadlineScheduler();
+        this.removeSubscription();
+        await this.stopRelay('idle');
+      }
+
+      retryRelayAfterReconnect(): Promise<void> {
+        if (this.reconnectRetryFlight) return this.reconnectRetryFlight;
+        const battle = this.snapshot.battle;
+        const relayMayRestart = battle
+          && (
+            (RELAY_STATUSES.has(battle.status) && battle.endedAt === null)
+            || (battle.status === 'completed' && this.relayDecision === 'holding_for_rematch')
+          );
+        if (this.disposed || !this.isEligible() || !battle || !relayMayRestart) {
+          return Promise.resolve();
+        }
+        const generation = this.generation;
+        this.reconnectRetryFlight = (async () => {
+          await this.stopRelay('observing', battle.id, battle.version, battle);
+          if (!this.isCurrent(generation)) return;
+          this.requestRefresh();
+          await this.waitForIdle();
+        })().finally(() => {
+          this.reconnectRetryFlight = null;
+        });
+        return this.reconnectRetryFlight;
+      }
+
+      handleEngineRelease(): void {
+        if (this.disposed) return;
+        this.suspended = true;
+        this.generation += 1;
+        this.refreshQueued = false;
+        this.resetDeadlineScheduler();
+        this.removeSubscription();
+        this.dependencies.relay.stopImmediately();
+        this.relayBattleId = null;
+        this.relaySeriesId = null;
+        this.relayRoundNumber = null;
+        this.relayDecision = 'stop_terminal';
+        this.postRoundCredentialRefreshKey = null;
+        this.lastValidatedPostRoundAuthority = null;
+        this.postRoundAuthorityRetryUsed = false;
+        this.relayOperationPossible = false;
+        this.publish({ status: 'idle', battleId: null, version: null, errorCode: null, battle: null });
+      }
+
+      async dispose(): Promise<void> {
+        if (this.disposed) return;
+        this.trace('controller_disposed');
+        this.handleEngineRelease();
+        this.disposed = true;
+        this.relayUnsubscribe?.();
+        this.relayUnsubscribe = null;
+        await this.dependencies.relay.dispose().catch(() => undefined);
+        this.listeners.clear();
+        this.snapshot = { status: 'disposed', battleId: null, version: null, errorCode: null, battle: null };
+      }
+    }
+
+    import { useCallback, useEffect, useRef, useState } from 'react';
+    import type { IRtcEngine } from 'react-native-agora';
+    import { LiveBattleRelayService } from '@/services/liveBattleRelayService';
+    import {
+      cancelLiveBattle,
+      createLiveBattleInvite,
+      respondLiveBattleInvite,
+      startLiveBattle,
+      type LiveBattle,
+      type LiveBattleInviteDecision,
+    } from '@/services/liveBattleService';
+    import {
+      LiveBattleRuntimeController,
+      type LiveBattleRuntimeContext,
+      type LiveBattleRuntimeSnapshot,
+    } from '@/services/liveBattleRuntimeController';
+    import {
+      getLiveBattlePublicSnapshot,
+      getLiveBattleRelaySessionPairAuthority,
+      type LiveBattlePublicState,
+      type LiveBattleServerClockAnchor,
+    } from '@/services/liveBattleSpectatorService';
+
+    type UseLiveBattleRelayRuntimeParams = LiveBattleRuntimeContext & {
+      getEngine: () => unknown;
+      registerBeforeEngineRelease: (listener: (engine: unknown) => void) => () => void;
+      reconnectEpoch: number;
+      publicBattleState: LiveBattlePublicState | null;
+      publicClockAnchor: LiveBattleServerClockAnchor | null;
+      reconcilePublicAuthority?: () => Promise<void>;
+    };
+
+    export function useLiveBattleRelayRuntime({
+      liveSessionId,
+      hostUserId,
+      isCanonicalHost,
+      isSessionLive,
+      isOpponentSessionLive,
+      engineReady,
+      joined,
+      isForeground,
+      getEngine,
+      registerBeforeEngineRelease,
+      reconnectEpoch,
+      publicBattleState,
+      publicClockAnchor,
+      reconcilePublicAuthority,
+    }: UseLiveBattleRelayRuntimeParams) {
+      const controllerRef = useRef<LiveBattleRuntimeController | null>(null);
+      const actionFlightRef = useRef(false);
+      const actionGenerationRef = useRef(0);
+      const actionsEnabledRef = useRef(false);
+      const mountedRef = useRef(true);
+      const lastReconnectEpochRef = useRef(reconnectEpoch);
+      const [snapshot, setSnapshot] = useState<LiveBattleRuntimeSnapshot>({
+        status: 'idle', battleId: null, version: null, errorCode: null, battle: null,
+      });
+      const [actionPending, setActionPending] = useState(false);
+      const [actionError, setActionError] = useState<string | null>(null);
+      const engine = joined ? getEngine() as IRtcEngine | null : null;
+      actionsEnabledRef.current = isCanonicalHost
+        && isSessionLive
+        && engineReady
+        && joined
+        && isForeground;
+
+      useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+          mountedRef.current = false;
+          actionGenerationRef.current += 1;
+        };
+      }, []);
+
+      useEffect(() => {
+        if (!engine) return;
+        const relay = new LiveBattleRelayService(engine);
+        const controller = new LiveBattleRuntimeController({
+          relay,
+          readPublicAuthority: getLiveBattlePublicSnapshot,
+          validateSessionPair: getLiveBattleRelaySessionPairAuthority,
+        });
+        controllerRef.current = controller;
+        const unsubscribeSnapshot = controller.subscribe(setSnapshot);
+        const unregisterReleaseGuard = registerBeforeEngineRelease(() => {
+          controller.handleEngineRelease();
+        });
+
+        return () => {
+          actionGenerationRef.current += 1;
+          actionFlightRef.current = false;
+          unsubscribeSnapshot();
+          unregisterReleaseGuard();
+          if (controllerRef.current === controller) controllerRef.current = null;
+          void controller.dispose();
+        };
+      }, [engine, registerBeforeEngineRelease]);
+
+      useEffect(() => {
+        controllerRef.current?.updateContext({
+          liveSessionId,
+          hostUserId,
+          isCanonicalHost,
+          isSessionLive,
+          isOpponentSessionLive,
+          engineReady,
+          joined,
+          isForeground,
+        });
+      }, [
+        engine,
+        engineReady,
+        hostUserId,
+        isCanonicalHost,
+        isForeground,
+        isSessionLive,
+        isOpponentSessionLive,
+        joined,
+        liveSessionId,
+      ]);
+
+      useEffect(() => {
+        controllerRef.current?.updatePublicAuthority(publicBattleState, publicClockAnchor);
+      }, [engine, publicBattleState, publicClockAnchor, liveSessionId, hostUserId,
+        isCanonicalHost, isSessionLive, isOpponentSessionLive, engineReady, joined, isForeground]);
+
+      useEffect(() => {
+        if (reconnectEpoch <= lastReconnectEpochRef.current) return;
+        lastReconnectEpochRef.current = reconnectEpoch;
+        void controllerRef.current?.retryRelayAfterReconnect();
+      }, [reconnectEpoch]);
+
+      const stop = useCallback(async () => {
+        await controllerRef.current?.stop();
+      }, []);
+
+      useEffect(() => {
+        if (!snapshot.battle || !mountedRef.current) return;
+        // Refresh the same public authority used by Stage when the host RPC advances.
+        // This is a lifecycle signal, not another score or display timer.
+        void reconcilePublicAuthority?.().catch(() => undefined);
+      }, [snapshot.battleId, snapshot.version, snapshot.battle?.status, reconcilePublicAuthority]);
+
+      const runAction = useCallback(async (
+        operation: () => Promise<LiveBattle>,
+      ): Promise<LiveBattle | null> => {
+        if (actionFlightRef.current || !actionsEnabledRef.current) return null;
+        const controller = controllerRef.current;
+        if (!controller) return null;
+        actionFlightRef.current = true;
+        const generation = ++actionGenerationRef.current;
+        if (mountedRef.current) {
+          setActionPending(true);
+          setActionError(null);
+        }
+        try {
+          const battle = await operation();
+          if (!mountedRef.current || generation !== actionGenerationRef.current) return null;
+          await controller.applyAuthoritativeBattle(battle);
+          return battle;
+        } catch (error) {
+          if (mountedRef.current && generation === actionGenerationRef.current) {
+            const code = error && typeof error === 'object' && 'code' in error
+              && typeof (error as { code?: unknown }).code === 'string'
+              ? (error as { code: string }).code
+              : 'live_battle_unknown';
+            setActionError(code);
+            await controller.reconcileNow().catch(() => undefined);
+          }
+          return null;
+        } finally {
+          if (generation === actionGenerationRef.current) {
+            actionFlightRef.current = false;
+            if (mountedRef.current) setActionPending(false);
+          }
+        }
+      }, []);
+
+      const invite = useCallback((input: {
+        opponentUserId: string;
+        challengerSessionId: string;
+        opponentSessionId: string;
+      }) => runAction(() => createLiveBattleInvite(input)), [runAction]);
+
+      const respond = useCallback((battleId: string, decision: LiveBattleInviteDecision) =>
+        runAction(() => respondLiveBattleInvite(battleId, decision)), [runAction]);
+
+      const start = useCallback((battleId: string) =>
+        runAction(() => startLiveBattle(battleId)), [runAction]);
+
+      const cancel = useCallback((battleId: string) =>
+        runAction(() => cancelLiveBattle(battleId)), [runAction]);
+
+      const reconcile = useCallback(async () => {
+        await controllerRef.current?.reconcileNow();
+      }, []);
+
+      const clearActionError = useCallback(() => setActionError(null), []);
+      const dismissTerminalBattle = useCallback(() => {
+        controllerRef.current?.dismissTerminalBattle();
+      }, []);
+
+      return {
+        stop,
+        supported: true as const,
+        snapshot,
+        actionPending,
+        actionError,
+        invite,
+        respond,
+        start,
+        cancel,
+        reconcile,
+        clearActionError,
+        dismissTerminalBattle,
+      };
+    }
+
+  operator: 'doesNotMatch'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f10-a/tests/liveBattlesLb4MediaF1Relay.test.mjs:358:10)
+    async Test.run (node:internal/test_runner/test:1113:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+1..129
+# tests 129
+# suites 0
+# pass 128
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3328.4382

@@ -97,6 +97,7 @@ const DEADLINE_CHECKPOINT_MS = {
   active: 30_000,
 } as const;
 const DEADLINE_CLOCK_TOLERANCE_MS = 25;
+let runtimeSequence = 0;
 
 const EMPTY_CONTEXT: LiveBattleRuntimeContext = {
   liveSessionId: null,
@@ -133,6 +134,7 @@ function battleBelongsToHostSession(
 }
 
 export class LiveBattleRuntimeController {
+  private readonly runtimeId = ++runtimeSequence;
   private readonly discover: (sessionId: string) => Promise<LiveBattle[]>;
   private readonly reconcile: (battleId: string) => Promise<LiveBattle>;
   private readonly createSubscription: NonNullable<LiveBattleRuntimeDependencies['subscribe']>;
@@ -146,6 +148,7 @@ export class LiveBattleRuntimeController {
   };
   private readonly listeners = new Set<LiveBattleRuntimeListener>();
   private subscription: LiveBattleSubscription | null = null;
+  private subscriptionGeneration = 0;
   private generation = 0;
   private refreshFlight: Promise<void> | null = null;
   private refreshQueued = false;
@@ -192,6 +195,24 @@ export class LiveBattleRuntimeController {
     this.setTimer = dependencies.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
     this.clearTimer = dependencies.clearTimer ?? (timer => clearTimeout(timer));
     this.relayUnsubscribe = dependencies.relay.subscribe(relay => this.handleRelaySnapshot(relay));
+    this.trace('controller_created');
+  }
+
+  private trace(event: string): void {
+    if (typeof __DEV__ === 'undefined' || !__DEV__) return;
+    const battle = this.snapshot.battle;
+    console.info(`[LIVE-BATTLE-RUNTIME] ${event}`, {
+      controller: this.runtimeId, session: this.context.liveSessionId?.slice(-8) ?? null,
+      battle: battle?.id.slice(-8) ?? null, status: battle?.status ?? null,
+      version: battle?.version ?? null, runtimeStatus: this.snapshot.status,
+      validSession: isLiveBattleUuid(this.context.liveSessionId),
+      validHost: isLiveBattleUuid(this.context.hostUserId),
+      canonicalHost: this.context.isCanonicalHost, sessionLive: this.context.isSessionLive,
+      opponentSessionLive: this.context.isOpponentSessionLive !== false,
+      engineReady: this.context.engineReady, joined: this.context.joined,
+      foreground: this.context.isForeground, suspended: this.suspended,
+      eligible: this.isEligible(), decision: this.relayDecision,
+    });
   }
 
   private handleRelaySnapshot(relay: LiveBattleRelaySnapshot): void {
@@ -240,7 +261,10 @@ export class LiveBattleRuntimeController {
   }
 
   private publish(next: LiveBattleRuntimeSnapshot): void {
+    const previous = this.snapshot;
     this.snapshot = next;
+    if (previous.battleId !== next.battleId || previous.version !== next.version
+      || previous.status !== next.status) this.trace('reconcile_result');
     for (const listener of this.listeners) {
       try { listener(this.getSnapshot()); } catch { /* observers cannot alter authority */ }
     }
@@ -255,20 +279,38 @@ export class LiveBattleRuntimeController {
     clockAnchor: LiveBattleServerClockAnchor | null,
   ): void {
     if (this.disposed) return;
+    if (typeof __DEV__ !== 'undefined' && __DEV__ && (this.publicState?.battleId !== state?.battleId
+      || this.publicState?.projectionVersion !== state?.projectionVersion)) {
+      console.info('[LIVE-BATTLE-RUNTIME] public_authority', {
+        controller: this.runtimeId, battle: state?.battleId.slice(-8) ?? null,
+        session: state?.sessionId.slice(-8) ?? null, opponentSession: state?.opponentSessionId.slice(-8) ?? null,
+        status: state?.status ?? null, version: state?.version ?? null,
+        projectionVersion: state?.projectionVersion ?? null,
+      });
+    }
     this.publicState = state;
     this.publicClockAnchor = clockAnchor;
     if (state && state.battleId === this.relayBattleId) {
       this.captureRelaySeriesAuthority(state.battleId);
     }
     const battle = this.snapshot.battle;
-    if (!battle || !this.isEligible()) return;
+    if (!contextIsEligible(this.context)) return;
+    if (state && (state.sessionId !== this.context.liveSessionId
+      || state.localHostUserId !== this.context.hostUserId)) {
+      void this.failClosed('live_battle_host_authority_changed');
+      return;
+    }
     const seriesStatus = state?.series?.status ?? null;
-    const shouldReevaluate = battle.status === 'completed'
-      || battle.status === 'cancelled'
-      || state?.battleId !== battle.id
+    const shouldReevaluate = Boolean(state && (!battle || this.suspended
+      || state.battleId !== battle.id || state.version > battle.version
+      || state.status !== battle.status))
+      || battle?.status === 'completed'
+      || battle?.status === 'cancelled'
+      || (battle !== null && state?.battleId !== battle.id)
       || seriesStatus === 'completed'
       || seriesStatus === 'cancelled';
-    if (shouldReevaluate) this.requestRefresh();
+    // A projection is a reconciliation signal, never a substitute for the host RPC.
+    if (shouldReevaluate) void this.reconcileNow();
   }
 
   async reconcileNow(): Promise<void> {
@@ -313,6 +355,8 @@ export class LiveBattleRuntimeController {
     if (this.disposed) return;
     const previous = this.context;
     this.context = context;
+    if (JSON.stringify(previous) !== JSON.stringify(context)) this.trace('context');
+    if (contextIsEligible(previous) !== contextIsEligible(context)) this.trace('eligibility_changed');
     if (!contextIsEligible(context)) {
       this.suspended = true;
       this.invalidateAndStop('idle');
@@ -353,11 +397,16 @@ export class LiveBattleRuntimeController {
 
   private replaceSubscription(sessionId: string): void {
     this.removeSubscription();
+    const subscriptionGeneration = this.subscriptionGeneration;
     try {
       this.subscription = this.createSubscription(
         sessionId,
-        signal => this.handleRealtimeSignal(signal),
-        () => this.failClosed('live_battle_realtime_unavailable'),
+        signal => {
+          if (subscriptionGeneration === this.subscriptionGeneration) this.handleRealtimeSignal(signal);
+        },
+        () => {
+          if (subscriptionGeneration === this.subscriptionGeneration) void this.failClosed('live_battle_realtime_unavailable');
+        },
       );
       this.publish({ status: 'observing', battleId: null, version: null, errorCode: null, battle: null });
     } catch {
@@ -366,6 +415,7 @@ export class LiveBattleRuntimeController {
   }
 
   private removeSubscription(): void {
+    this.subscriptionGeneration += 1;
     const subscription = this.subscription;
     this.subscription = null;
     if (subscription) void subscription.unsubscribe().catch(() => undefined);
@@ -380,6 +430,7 @@ export class LiveBattleRuntimeController {
     const observed = this.observedVersions.get(signal.battleId) ?? 0;
     if (signal.version <= observed) return;
     this.observedVersions.set(signal.battleId, signal.version);
+    this.trace('realtime_signal');
     this.requestRefresh();
   }
 
@@ -412,6 +463,7 @@ export class LiveBattleRuntimeController {
   private async refreshOnce(generation: number): Promise<void> {
     const sessionId = this.context.liveSessionId;
     if (!sessionId) return;
+    this.trace('reconcile_start');
     try {
       const candidates = await this.discover(sessionId);
       if (!this.isCurrent(generation)) return;
@@ -420,7 +472,8 @@ export class LiveBattleRuntimeController {
         return;
       }
       if (candidates.length === 0) {
-        const currentBattleId = this.snapshot.battleId;
+        const currentBattleId = this.publicState?.sessionId === sessionId
+          ? this.publicState.battleId : this.snapshot.battleId;
         if (currentBattleId && isLiveBattleUuid(currentBattleId)) {
           const current = await this.reconcile(currentBattleId);
           if (!this.isCurrent(generation)) return;
@@ -469,6 +522,11 @@ export class LiveBattleRuntimeController {
     generation: number,
     reconciledByServer = false,
   ): Promise<void> {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) console.info('[LIVE-BATTLE-RUNTIME] authoritative_battle', {
+      controller: this.runtimeId, battle: battle.id.slice(-8), status: battle.status,
+      version: battle.version, challengerSession: battle.challengerSessionId.slice(-8),
+      opponentSession: battle.opponentSessionId.slice(-8), reconciledByServer,
+    });
     this.scheduleDeadline(battle, generation, reconciledByServer);
     if (battle.status === 'completed' && battle.endedAt !== null) {
       await this.applyCompletedBattle(battle, generation);
@@ -510,6 +568,7 @@ export class LiveBattleRuntimeController {
       errorCode: null, battle,
     });
     try {
+      this.trace('relay_start_requested');
       await this.dependencies.relay.start(battle.id);
       if (!this.isCurrent(generation)) return;
       this.captureRelaySeriesAuthority(battle.id);
@@ -637,6 +696,7 @@ export class LiveBattleRuntimeController {
     this.lastValidatedPostRoundAuthority = { battleId: battle.id, key: refreshKey, deadlineMs };
     this.postRoundAuthorityRetryUsed = false;
     this.relayDecision = decision;
+    this.trace('post_round');
     this.captureRelaySeriesAuthority(battle.id);
     this.schedulePostRoundDeadline(battle, generation);
     if (this.relayBattleId !== battle.id) {
@@ -645,6 +705,7 @@ export class LiveBattleRuntimeController {
         this.attemptedRelayVersion = attemptKey;
         this.relayOperationPossible = true;
         try {
+          this.trace('relay_start_requested');
           await this.dependencies.relay.start(battle.id);
           if (!this.isCurrent(generation)) return;
           this.relayBattleId = battle.id;
@@ -957,6 +1018,7 @@ export class LiveBattleRuntimeController {
 
   private handleReconcileFailure(generation: number): void {
     if (!this.isCurrent(generation)) return;
+    this.trace('reconcile_failed');
     const battle = this.snapshot.battle;
     this.publish({
       status: 'failed',
@@ -1066,6 +1128,7 @@ export class LiveBattleRuntimeController {
 
   async dispose(): Promise<void> {
     if (this.disposed) return;
+    this.trace('controller_disposed');
     this.handleEngineRelease();
     this.disposed = true;
     this.relayUnsubscribe?.();

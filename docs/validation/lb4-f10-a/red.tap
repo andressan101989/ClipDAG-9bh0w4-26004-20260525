@@ -1,0 +1,329 @@
+TAP version 13
+# Subtest: public active authority wakes a runtime whose initial discovery was empty
+not ok 1 - public active authority wakes a runtime whose initial discovery was empty
+  ---
+  duration_ms: 18.4344
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f10-a\\tests\\liveBattlesLb4F10ARuntimeLifecycle.test.mjs:45:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+    + []
+    - [
+    -   '30000000-0000-4000-8000-000000000001'
+    - ]
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: '30000000-0000-4000-8000-000000000001'
+  actual:
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f10-a/tests/liveBattlesLb4F10ARuntimeLifecycle.test.mjs:46:124)
+    async Test.run (node:internal/test_runner/test:1113:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3)
+  ...
+# Subtest: public completed authority rehydrates the result when open discovery has no rows
+not ok 2 - public completed authority rehydrates the result when open discovery has no rows
+  ---
+  duration_ms: 3.4207
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f10-a\\tests\\liveBattlesLb4F10ARuntimeLifecycle.test.mjs:48:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + undefined
+    - 'completed'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'completed'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f10-a/tests/liveBattlesLb4F10ARuntimeLifecycle.test.mjs:49:267)
+    async Test.run (node:internal/test_runner/test:1113:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: public version advance reconciles an existing pending round without a local action
+not ok 3 - public version advance reconciles an existing pending round without a local action
+  ---
+  duration_ms: 3.0935
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f10-a\\tests\\liveBattlesLb4F10ARuntimeLifecycle.test.mjs:51:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+    + []
+    - [
+    -   '30000000-0000-4000-8000-000000000001'
+    - ]
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: '30000000-0000-4000-8000-000000000001'
+  actual:
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f10-a/tests/liveBattlesLb4F10ARuntimeLifecycle.test.mjs:52:223)
+    async Test.run (node:internal/test_runner/test:1113:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: fresh public authority recovers a subscription-suspended eligible runtime
+not ok 4 - fresh public authority recovers a subscription-suspended eligible runtime
+  ---
+  duration_ms: 2.5782
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f10-a\\tests\\liveBattlesLb4F10ARuntimeLifecycle.test.mjs:54:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+    + []
+    - [
+    -   '30000000-0000-4000-8000-000000000001'
+    - ]
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: '30000000-0000-4000-8000-000000000001'
+  actual:
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f10-a/tests/liveBattlesLb4F10ARuntimeLifecycle.test.mjs:55:148)
+    async Test.run (node:internal/test_runner/test:1113:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: duplicate public and realtime signals start only one relay
+ok 5 - duplicate public and realtime signals start only one relay
+  ---
+  duration_ms: 4.5148
+  type: 'test'
+  ...
+# Subtest: both hosts reconcile the same authoritative pair from remote signals
+ok 6 - both hosts reconcile the same authoritative pair from remote signals
+  ---
+  duration_ms: 2.2423
+  type: 'test'
+  ...
+# Subtest: a mismatched session is rejected rather than relinked to the active Battle
+ok 7 - a mismatched session is rejected rather than relinked to the active Battle
+  ---
+  duration_ms: 1.0643
+  type: 'test'
+  ...
+# Subtest: late subscription error from an obsolete session cannot suspend the new subscription
+not ok 8 - late subscription error from an obsolete session cannot suspend the new subscription
+  ---
+  duration_ms: 1.506
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f10-a\\tests\\liveBattlesLb4F10ARuntimeLifecycle.test.mjs:66:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+    + []
+    - [
+    -   '30000000-0000-4000-8000-000000000001'
+    - ]
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: '30000000-0000-4000-8000-000000000001'
+  actual:
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f10-a/tests/liveBattlesLb4F10ARuntimeLifecycle.test.mjs:67:231)
+    async Test.run (node:internal/test_runner/test:1113:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: authoritative completion holds post-round and stops on terminal decision without ending LIVE
+ok 9 - authoritative completion holds post-round and stops on terminal decision without ending LIVE
+  ---
+  duration_ms: 3.3359
+  type: 'test'
+  ...
+# Subtest: cleanup removes timers, subscriptions and listeners and ignores a late reconciliation
+ok 10 - cleanup removes timers, subscriptions and listeners and ignores a late reconciliation
+  ---
+  duration_ms: 1.3314
+  type: 'test'
+  ...
+# Subtest: public authority received before join is delivered when the native controller is created
+not ok 11 - public authority received before join is delivered when the native controller is created
+  ---
+  duration_ms: 35.8881
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f10-a\\tests\\liveBattlesLb4F10ARuntimeLifecycle.test.mjs:91:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + undefined
+    - {
+    -   battleId: '30000000-0000-4000-8000-000000000001',
+    -   localHostUserId: '10000000-0000-4000-8000-000000000001',
+    -   opponentHostUserId: '10000000-0000-4000-8000-000000000002',
+    -   opponentSessionId: '20000000-0000-4000-8000-000000000002',
+    -   projectionVersion: 3,
+    -   series: null,
+    -   sessionId: '20000000-0000-4000-8000-000000000001',
+    -   status: 'active',
+    -   version: 3
+    - }
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    sessionId: '20000000-0000-4000-8000-000000000001'
+    battleId: '30000000-0000-4000-8000-000000000001'
+    localHostUserId: '10000000-0000-4000-8000-000000000001'
+    opponentHostUserId: '10000000-0000-4000-8000-000000000002'
+    opponentSessionId: '20000000-0000-4000-8000-000000000002'
+    status: 'active'
+    version: 3
+    projectionVersion: 3
+    series: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f10-a/tests/liveBattlesLb4F10ARuntimeLifecycle.test.mjs:92:99)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1106:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+    Test.postRun (node:internal/test_runner/test:1235:19)
+    Test.run (node:internal/test_runner/test:1163:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: stable engine callbacks do not recreate an eligible controller during public clock updates
+ok 12 - stable engine callbacks do not recreate an eligible controller during public clock updates
+  ---
+  duration_ms: 25.3752
+  type: 'test'
+  ...
+# Subtest: context recovery reapplies the current projection even if its object identity is unchanged
+not ok 13 - context recovery reapplies the current projection even if its object identity is unchanged
+  ---
+  duration_ms: 33.9051
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f10-a\\tests\\liveBattlesLb4F10ARuntimeLifecycle.test.mjs:97:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+
+      assert.ok(h.calls.authorities.length>n)
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f10-a/tests/liveBattlesLb4F10ARuntimeLifecycle.test.mjs:98:157)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1106:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+    Test.postRun (node:internal/test_runner/test:1235:19)
+    Test.run (node:internal/test_runner/test:1163:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: a failed LIVE authority read does not masquerade as an ended session or clear the Battle
+not ok 14 - a failed LIVE authority read does not masquerade as an ended session or clear the Battle
+  ---
+  duration_ms: 93.615
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f10-a\\tests\\liveBattlesLb4F10ARuntimeLifecycle.test.mjs:107:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+    + [
+    +   false,
+    +   false,
+    +   'stop'
+    + ]
+    - []
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual:
+    0: false
+    1: false
+    2: 'stop'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f10-a/tests/liveBattlesLb4F10ARuntimeLifecycle.test.mjs:110:23)
+    async Test.run (node:internal/test_runner/test:1113:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: an obsolete poll response cannot mutate the authority of the current session pair
+not ok 15 - an obsolete poll response cannot mutate the authority of the current session pair
+  ---
+  duration_ms: 54.615
+  type: 'test'
+  location: 'C:\\Users\\andre\\ClipDAG-lb4-f10-a\\tests\\liveBattlesLb4F10ARuntimeLifecycle.test.mjs:112:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+    + [
+    +   false,
+    +   false,
+    +   'stop'
+    + ]
+    - []
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual:
+    0: false
+    1: false
+    2: 'stop'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/andre/ClipDAG-lb4-f10-a/tests/liveBattlesLb4F10ARuntimeLifecycle.test.mjs:115:103)
+    async Test.run (node:internal/test_runner/test:1113:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+  ...
+# Subtest: both authorized hosts get rematch availability while viewers get only the result
+ok 16 - both authorized hosts get rematch availability while viewers get only the result
+  ---
+  duration_ms: 0.3886
+  type: 'test'
+  ...
+# Subtest: double rematch tap has one flight and one accepted next-round transition
+ok 17 - double rematch tap has one flight and one accepted next-round transition
+  ---
+  duration_ms: 0.5201
+  type: 'test'
+  ...
+# Subtest: reject and expiry are derived from authoritative decisions, never inferred as an accepted rematch
+ok 18 - reject and expiry are derived from authoritative decisions, never inferred as an accepted rematch
+  ---
+  duration_ms: 0.225
+  type: 'test'
+  ...
+1..18
+# tests 18
+# suites 0
+# pass 9
+# fail 9
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1596.675

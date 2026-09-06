@@ -40,7 +40,7 @@ function redactedId(value: string | null | undefined): string | null {
 }
 
 function logSeries(event: LiveBattleSeriesLogEvent, data: Record<string, unknown>): void {
-  console.info(`[LIVE-BATTLE-SERIES] ${event}`, data);
+  if (typeof __DEV__ !== 'undefined' && __DEV__) console.info(`[LIVE-BATTLE-SERIES] ${event}`, data);
 }
 
 function seriesErrorCode(error: unknown): LiveBattleSeriesErrorCode {
@@ -333,6 +333,16 @@ export function useLiveBattleSpectatorState(
     pendingTransitionBattleId,
     seriesError !== null,
   ), [actionPhase, actorUserId, pendingTransitionBattleId, seriesError, state]);
+
+  useEffect(() => {
+    if (typeof __DEV__ === 'undefined' || !__DEV__) return;
+    console.info('[LIVE-BATTLE-RUNTIME] rematch_available', {
+      session: sessionId?.slice(-8) ?? null, battle: state?.battleId.slice(-8) ?? null,
+      status: state?.status ?? null, version: state?.version ?? null,
+      clientState, available: clientState === 'available',
+      participant: isLiveBattleSeriesParticipant(state, actorUserId),
+    });
+  }, [sessionId, state?.battleId, state?.status, state?.version, clientState, actorUserId]);
 
   return {
     state, clockAnchor, errorCode, reconcile,

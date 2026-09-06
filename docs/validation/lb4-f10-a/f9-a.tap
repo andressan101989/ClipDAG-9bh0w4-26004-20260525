@@ -1,0 +1,118 @@
+TAP version 13
+# Subtest: new rule: gift 1 coins produces 10 base points
+ok 1 - new rule: gift 1 coins produces 10 base points
+  ---
+  duration_ms: 5.0107
+  type: 'test'
+  ...
+# Subtest: new rule: gift 5 coins produces 50 base points
+ok 2 - new rule: gift 5 coins produces 50 base points
+  ---
+  duration_ms: 0.4938
+  type: 'test'
+  ...
+# Subtest: likes have a server-authoritative competitive journal
+ok 3 - likes have a server-authoritative competitive journal
+  ---
+  duration_ms: 0.6703
+  type: 'test'
+  ...
+# Subtest: per-viewer cap is checked under the canonical Battle lock
+ok 4 - per-viewer cap is checked under the canonical Battle lock
+  ---
+  duration_ms: 0.5311
+  type: 'test'
+  ...
+# Subtest: like replay precedes mutable active-state validation
+ok 5 - like replay precedes mutable active-state validation
+  ---
+  duration_ms: 0.6986
+  type: 'test'
+  ...
+# Subtest: canonical reconciliation includes likes before deciding the winner
+ok 6 - canonical reconciliation includes likes before deciding the winner
+  ---
+  duration_ms: 0.5744
+  type: 'test'
+  ...
+# Subtest: rapid hearts batch with strict payload bounds and new keys after success
+ok 7 - rapid hearts batch with strict payload bounds and new keys after success
+  ---
+  duration_ms: 155.2835
+  type: 'test'
+  ...
+# Subtest: ambiguous failure preserves count and key; in-flight double flush cannot duplicate
+ok 8 - ambiguous failure preserves count and key; in-flight double flush cannot duplicate
+  ---
+  duration_ms: 35.8411
+  type: 'test'
+  ...
+# Subtest: closed context drains its original batch without updating the unmounted screen
+ok 9 - closed context drains its original batch without updating the unmounted screen
+  ---
+  duration_ms: 26.8903
+  type: 'test'
+  ...
+# Subtest: terminal authorization rejection stops retries without surfacing intrusive feedback
+ok 10 - terminal authorization rejection stops retries without surfacing intrusive feedback
+  ---
+  duration_ms: 19.7245
+  type: 'test'
+  ...
+# Subtest: Battle heart animates immediately before either network confirmation or batch transport
+ok 11 - Battle heart animates immediately before either network confirmation or batch transport
+  ---
+  duration_ms: 10.299
+  type: 'test'
+  ...
+# Subtest: ordinary LIVE preserves visual reactions without requesting points
+ok 12 - ordinary LIVE preserves visual reactions without requesting points
+  ---
+  duration_ms: 5.8672
+  type: 'test'
+  ...
+# Subtest: countdown preserves visual reactions without requesting points
+ok 13 - countdown preserves visual reactions without requesting points
+  ---
+  duration_ms: 5.1491
+  type: 'test'
+  ...
+# Subtest: postround preserves visual reactions without requesting points
+ok 14 - postround preserves visual reactions without requesting points
+  ---
+  duration_ms: 4.9507
+  type: 'test'
+  ...
+# Subtest: local host preserves visual reactions without requesting points
+ok 15 - local host preserves visual reactions without requesting points
+  ---
+  duration_ms: 5.8557
+  type: 'test'
+  ...
+# Subtest: opponent host preserves visual reactions without requesting points
+ok 16 - opponent host preserves visual reactions without requesting points
+  ---
+  duration_ms: 4.8428
+  type: 'test'
+  ...
+# Subtest: cap exhaustion cannot disable animations or calculate competitive points in React Native
+ok 17 - cap exhaustion cannot disable animations or calculate competitive points in React Native
+  ---
+  duration_ms: 0.7828
+  type: 'test'
+  ...
+# Subtest: effect remount creates a live queue after cleanup instead of reusing a closed one
+ok 18 - effect remount creates a live queue after cleanup instead of reusing a closed one
+  ---
+  duration_ms: 7.4229
+  type: 'test'
+  ...
+1..18
+# tests 18
+# suites 0
+# pass 18
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1599.8414

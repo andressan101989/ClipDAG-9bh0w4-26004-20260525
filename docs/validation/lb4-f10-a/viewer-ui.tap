@@ -1,0 +1,154 @@
+TAP version 13
+# Subtest: viewer Battle uses the dedicated Figma HUD over exactly two canonical surfaces
+ok 1 - viewer Battle uses the dedicated Figma HUD over exactly two canonical surfaces
+  ---
+  duration_ms: 2.6664
+  type: 'test'
+  ...
+# Subtest: Battle viewer chrome matches the required header, rail, chat and gift CTA contract
+ok 2 - Battle viewer chrome matches the required header, rail, chat and gift CTA contract
+  ---
+  duration_ms: 1.0044
+  type: 'test'
+  ...
+# Subtest: commerce remains structurally excluded from Battle
+ok 3 - commerce remains structurally excluded from Battle
+  ---
+  duration_ms: 0.7665
+  type: 'test'
+  ...
+# Subtest: F7-A gift authority, single flight and modal success/error behavior stay intact
+ok 4 - F7-A gift authority, single flight and modal success/error behavior stay intact
+  ---
+  duration_ms: 1.1732
+  type: 'test'
+  ...
+# Subtest: large invitation is modal, accessible, blocks background and restores focus
+ok 5 - large invitation is modal, accessible, blocks background and restores focus
+  ---
+  duration_ms: 0.4665
+  type: 'test'
+  ...
+# Subtest: invitation expiry and action gate are deterministic and single-flight
+ok 6 - invitation expiry and action gate are deterministic and single-flight
+  ---
+  duration_ms: 122.205
+  type: 'test'
+  ...
+# Subtest: watch consumes one invitation subscription and closes on success, terminal event or expiry
+ok 7 - watch consumes one invitation subscription and closes on success, terminal event or expiry
+  ---
+  duration_ms: 0.4472
+  type: 'test'
+  ...
+# Subtest: reduced motion and bounded invitation countdown clean up without polling
+ok 8 - reduced motion and bounded invitation countdown clean up without polling
+  ---
+  duration_ms: 0.3261
+  type: 'test'
+  ...
+# Subtest: protected manifests and deployed migrations remain LF-identical
+ok 9 - protected manifests and deployed migrations remain LF-identical
+  ---
+  duration_ms: 42.1559
+  type: 'test'
+  ...
+# Subtest: Battle stage keeps exactly two equal, edge-to-edge video surfaces
+ok 10 - Battle stage keeps exactly two equal, edge-to-edge video surfaces
+  ---
+  duration_ms: 7.8713
+  type: 'test'
+  ...
+# Subtest: sanitized host identities align to their canonical sides
+ok 11 - sanitized host identities align to their canonical sides
+  ---
+  duration_ms: 3.8194
+  type: 'test'
+  ...
+# Subtest: watch and broadcast expose only their two canonical Battle surfaces
+ok 12 - watch and broadcast expose only their two canonical Battle surfaces
+  ---
+  duration_ms: 8.4115
+  type: 'test'
+  ...
+# Subtest: additional cohost strips are structurally excluded during Battle and return afterward
+ok 13 - additional cohost strips are structurally excluded during Battle and return afterward
+  ---
+  duration_ms: 9.0944
+  type: 'test'
+  ...
+# Subtest: Battle broadcast layout is pure, composer-based, and independent of products
+ok 14 - Battle broadcast layout is pure, composer-based, and independent of products
+  ---
+  duration_ms: 88.9581
+  type: 'test'
+  ...
+# Subtest: broadcast Battle chat, panels, rail, and composer use Battle-specific positioning
+ok 15 - broadcast Battle chat, panels, rail, and composer use Battle-specific positioning
+  ---
+  duration_ms: 21.5676
+  type: 'test'
+  ...
+# Subtest: watch Battle chat and composer stay above the keyboard using composer clearance
+ok 16 - watch Battle chat and composer stay above the keyboard using composer clearance
+  ---
+  duration_ms: 6.9963
+  type: 'test'
+  ...
+# Subtest: timer remains server-anchored with one one-second interval and cleanup
+ok 17 - timer remains server-anchored with one one-second interval and cleanup
+  ---
+  duration_ms: 1.3246
+  type: 'test'
+  ...
+# Subtest: illustrative Figma scores and rounds are replaced by the accessible canonical projection
+ok 18 - illustrative Figma scores and rounds are replaced by the accessible canonical projection
+  ---
+  duration_ms: 0.6291
+  type: 'test'
+  ...
+# Subtest: watch closes and fully hides commerce during Battle while retaining normal LIVE commerce
+ok 19 - watch closes and fully hides commerce during Battle while retaining normal LIVE commerce
+  ---
+  duration_ms: 7.3077
+  type: 'test'
+  ...
+# Subtest: broadcast closes and hides product controls, CTA, feed, and manager during Battle
+ok 20 - broadcast closes and hides product controls, CTA, feed, and manager during Battle
+  ---
+  duration_ms: 10.5791
+  type: 'test'
+  ...
+# Subtest: watch reuses existing gift, reaction, share, and camera-request flows
+ok 21 - watch reuses existing gift, reaction, share, and camera-request flows
+  ---
+  duration_ms: 0.9828
+  type: 'test'
+  ...
+# Subtest: broadcast never adds a self-gift action and retains host controls
+ok 22 - broadcast never adds a self-gift action and retains host controls
+  ---
+  duration_ms: 0.5966
+  type: 'test'
+  ...
+# Subtest: Battle controls and close action meet the forty-four pixel touch target
+ok 23 - Battle controls and close action meet the forty-four pixel touch target
+  ---
+  duration_ms: 0.255
+  type: 'test'
+  ...
+# Subtest: the canonical-side migration remains present at the audited F5-A frontier
+ok 24 - the canonical-side migration remains present at the audited F5-A frontier
+  ---
+  duration_ms: 13.8313
+  type: 'test'
+  ...
+1..24
+# tests 24
+# suites 0
+# pass 24
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1395.754

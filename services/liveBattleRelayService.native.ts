@@ -32,7 +32,7 @@ function shortId(value: string): string {
 }
 
 function defaultRelayLogger(event: string, data: Record<string, unknown>): void {
-  console.info(`[LIVE-BATTLE-RELAY] ${event}`, data);
+  if (typeof __DEV__ !== 'undefined' && __DEV__) console.info(`[LIVE-BATTLE-RELAY] ${event}`, data);
 }
 
 function relayFailureCode(code: number): string {
@@ -222,8 +222,10 @@ export class LiveBattleRelayService {
         await this.stopLocked(generation);
       }
       this.setState('authorizing', battleId);
+      this.logger('start_requested', { battle: shortId(battleId) });
       const credentials = await this.requestCredentials(battleId);
       this.assertCurrent(generation);
+      this.logger('authorized', { battle: shortId(battleId) });
       this.installHandler(generation, battleId);
       this.activeBattleId = battleId;
       const relay = credentials.battleRelay;
@@ -245,6 +247,9 @@ export class LiveBattleRelayService {
       }
       return this.getSnapshot();
     }).catch(error => {
+      if (generation === this.generation && !this.disposed) this.logger('start_failed', {
+        battle: shortId(battleId), state: this.snapshot.state,
+      });
       if (error instanceof LiveBattleRelayError
         && error.code !== 'battle_relay_operation_superseded'
         && generation === this.generation

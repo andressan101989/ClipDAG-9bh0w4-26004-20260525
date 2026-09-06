@@ -1,0 +1,424 @@
+TAP version 13
+# Subtest: runtime exposes one observable authoritative snapshot without a second subscription
+ok 1 - runtime exposes one observable authoritative snapshot without a second subscription
+  ---
+  duration_ms: 13.8107
+  type: 'test'
+  ...
+# Subtest: pending, countdown, and active deadlines only wake server reconciliation
+ok 2 - pending, countdown, and active deadlines only wake server reconciliation
+  ---
+  duration_ms: 25.9826
+  type: 'test'
+  ...
+# Subtest: a clock ten minutes ahead keeps reconciling past three attempts until pending expires
+ok 3 - a clock ten minutes ahead keeps reconciling past three attempts until pending expires
+  ---
+  duration_ms: 4.0435
+  type: 'test'
+  ...
+# Subtest: deadline backoff grows to fifteen seconds and never permanently exhausts
+ok 4 - deadline backoff grows to fifteen seconds and never permanently exhausts
+  ---
+  duration_ms: 3.7074
+  type: 'test'
+  ...
+# Subtest: countdown and active clock skew reconcile after more than three unchanged responses
+ok 5 - countdown and active clock skew reconcile after more than three unchanged responses
+  ---
+  duration_ms: 4.1274
+  type: 'test'
+  ...
+# Subtest: pending checkpoints reconcile a clock ten minutes behind within thirty seconds
+ok 6 - pending checkpoints reconcile a clock ten minutes behind within thirty seconds
+  ---
+  duration_ms: 2.7046
+  type: 'test'
+  ...
+# Subtest: countdown checkpoints reconcile a clock ten minutes behind within three seconds
+ok 7 - countdown checkpoints reconcile a clock ten minutes behind within three seconds
+  ---
+  duration_ms: 2.4553
+  type: 'test'
+  ...
+# Subtest: active checkpoints reconcile a clock ten minutes behind every thirty seconds
+ok 8 - active checkpoints reconcile a clock ten minutes behind every thirty seconds
+  ---
+  duration_ms: 2.4202
+  type: 'test'
+  ...
+# Subtest: correct clocks use the nearer deadline or the state checkpoint budget
+ok 9 - correct clocks use the nearer deadline or the state checkpoint budget
+  ---
+  duration_ms: 4.372
+  type: 'test'
+  ...
+# Subtest: background cancels checkpoints and foreground performs one immediate reconciliation
+ok 10 - background cancels checkpoints and foreground performs one immediate reconciliation
+  ---
+  duration_ms: 1.3171
+  type: 'test'
+  ...
+# Subtest: deadline reconciliation keeps one RPC in flight and recovers from a network error
+ok 11 - deadline reconciliation keeps one RPC in flight and recovers from a network error
+  ---
+  duration_ms: 14.0826
+  type: 'test'
+  ...
+# Subtest: network failure schedules controlled backoff and recovers without remounting
+ok 12 - network failure schedules controlled backoff and recovers without remounting
+  ---
+  duration_ms: 3.7714
+  type: 'test'
+  ...
+# Subtest: network recovery before the apparent deadline returns to checkpoint mode
+ok 13 - network recovery before the apparent deadline returns to checkpoint mode
+  ---
+  duration_ms: 4.6454
+  type: 'test'
+  ...
+# Subtest: a delayed deadline response cannot rearm after lifecycle invalidation
+ok 14 - a delayed deadline response cannot rearm after lifecycle invalidation
+  ---
+  duration_ms: 2.2824
+  type: 'test'
+  ...
+# Subtest: authority loss, ended LIVE, Battle replacement, and dispose cancel owned timers
+ok 15 - authority loss, ended LIVE, Battle replacement, and dispose cancel owned timers
+  ---
+  duration_ms: 2.5752
+  type: 'test'
+  ...
+# Subtest: an obsolete deadline cannot affect a replacement Battle
+ok 16 - an obsolete deadline cannot affect a replacement Battle
+  ---
+  duration_ms: 2.7177
+  type: 'test'
+  ...
+# Subtest: authoritative action results are monotonic and never start relay before countdown
+ok 17 - authoritative action results are monotonic and never start relay before countdown
+  ---
+  duration_ms: 1.3508
+  type: 'test'
+  ...
+# Subtest: a terminal authoritative result remains visible and stops only the relay
+ok 18 - a terminal authoritative result remains visible and stops only the relay
+  ---
+  duration_ms: 0.8625
+  type: 'test'
+  ...
+# Subtest: selector uses existing LIVE/profile projection and excludes self and ended sessions
+ok 19 - selector uses existing LIVE/profile projection and excludes self and ended sessions
+  ---
+  duration_ms: 1.0585
+  type: 'test'
+  ...
+# Subtest: UI action matrix is host-only and sends only canonical RPC arguments
+ok 20 - UI action matrix is host-only and sends only canonical RPC arguments
+  ---
+  duration_ms: 1.5166
+  type: 'test'
+  ...
+# Subtest: double taps, late completions, and failures are contained by the existing runtime hook
+ok 21 - double taps, late completions, and failures are contained by the existing runtime hook
+  ---
+  duration_ms: 1.5298
+  type: 'test'
+  ...
+# Subtest: presentation uses server timestamps and contains no second transition timer or viewer wiring
+ok 22 - presentation uses server timestamps and contains no second transition timer or viewer wiring
+  ---
+  duration_ms: 1.9403
+  type: 'test'
+  ...
+# Subtest: F5-B strictly parses the exact request and best-of-five series JSON
+ok 23 - F5-B strictly parses the exact request and best-of-five series JSON
+  ---
+  duration_ms: 13.3544
+  type: 'test'
+  ...
+# Subtest: client states are canonical for host, counterpart, viewer, expiry and terminal series
+ok 24 - client states are canonical for host, counterpart, viewer, expiry and terminal series
+  ---
+  duration_ms: 2.9545
+  type: 'test'
+  ...
+# Subtest: canonical onChange clears a non-blocking action error but stale projections do not
+ok 25 - canonical onChange clears a non-blocking action error but stale projections do not
+  ---
+  duration_ms: 1.2328
+  type: 'test'
+  ...
+# Subtest: C2 projection keeps request and rematch-window expiration separate
+ok 26 - C2 projection keeps request and rematch-window expiration separate
+  ---
+  duration_ms: 12.7407
+  type: 'test'
+  ...
+# Subtest: a request anchored to round one is discarded when hydrating round two
+ok 27 - a request anchored to round one is discarded when hydrating round two
+  ---
+  duration_ms: 1.157
+  type: 'test'
+  ...
+# Subtest: single-flight blocks double touch and permits one later action
+ok 28 - single-flight blocks double touch and permits one later action
+  ---
+  duration_ms: 1.3803
+  type: 'test'
+  ...
+# Subtest: a rejected RPC releases single-flight so the same canonical action can retry
+ok 29 - a rejected RPC releases single-flight so the same canonical action can retry
+  ---
+  duration_ms: 7.9667
+  type: 'test'
+  ...
+# Subtest: host voluntary leave is bounded, best-effort and invoked exactly once
+ok 30 - host voluntary leave is bounded, best-effort and invoked exactly once
+  ---
+  duration_ms: 1.5964
+  type: 'test'
+  ...
+# Subtest: disconnects, background, viewers and terminal series never invoke series leave
+ok 31 - disconnects, background, viewers and terminal series never invoke series leave
+  ---
+  duration_ms: 0.8491
+  type: 'test'
+  ...
+# Subtest: leave rejection or timeout cannot prevent LIVE cleanup and navigation
+ok 32 - leave rejection or timeout cannot prevent LIVE cleanup and navigation
+  ---
+  duration_ms: 22.1364
+  type: 'test'
+  ...
+# Subtest: only a new canonical round in the same series triggers transition
+ok 33 - only a new canonical round in the same series triggers transition
+  ---
+  duration_ms: 0.6116
+  type: 'test'
+  ...
+# Subtest: RPC and Realtime candidates transition once and stale callbacks are ignored
+ok 34 - RPC and Realtime candidates transition once and stale callbacks are ignored
+  ---
+  duration_ms: 0.6324
+  type: 'test'
+  ...
+# Subtest: service consumes only the three authoritative RPCs and never internal tables
+ok 35 - service consumes only the three authoritative RPCs and never internal tables
+  ---
+  duration_ms: 0.5577
+  type: 'test'
+  ...
+# Subtest: RPC responses are validated, idempotent accept returns one canonical round
+ok 36 - RPC responses are validated, idempotent accept returns one canonical round
+  ---
+  duration_ms: 54.7497
+  type: 'test'
+  ...
+# Subtest: hook owns one projection subscription, reconciliation and complete cleanup
+ok 37 - hook owns one projection subscription, reconciliation and complete cleanup
+  ---
+  duration_ms: 0.7244
+  type: 'test'
+  ...
+# Subtest: host_ended sequences one bounded series leave before runtime and LIVE shutdown
+ok 38 - host_ended sequences one bounded series leave before runtime and LIVE shutdown
+  ---
+  duration_ms: 1.0968
+  type: 'test'
+  ...
+# Subtest: host and viewer use the same series UI while controls remain participant-gated
+ok 39 - host and viewer use the same series UI while controls remain participant-gated
+  ---
+  duration_ms: 0.8544
+  type: 'test'
+  ...
+# Subtest: deterministic C2, RPC, scope, manifest and migration guards are worktree-independent
+ok 40 - deterministic C2, RPC, scope, manifest and migration guards are worktree-independent
+  ---
+  duration_ms: 26.0594
+  type: 'test'
+  ...
+# Subtest: rematch and glove stage is above both full-screen keyboard dismiss layers
+ok 41 - rematch and glove stage is above both full-screen keyboard dismiss layers
+  ---
+  duration_ms: 209.4681
+  type: 'test'
+  ...
+# Subtest: full-screen stage passes empty-area touches through
+ok 42 - full-screen stage passes empty-area touches through
+  ---
+  duration_ms: 1.9393
+  type: 'test'
+  ...
+# Subtest: visual panels and video surfaces cannot intercept control touches
+ok 43 - visual panels and video surfaces cannot intercept control touches
+  ---
+  duration_ms: 5.1158
+  type: 'test'
+  ...
+# Subtest: real rematch, accept, reject and glove handlers remain reachable
+ok 44 - real rematch, accept, reject and glove handlers remain reachable
+  ---
+  duration_ms: 10.5245
+  type: 'test'
+  ...
+# Subtest: localized stacking preserves header, chat and composer priority
+ok 45 - localized stacking preserves header, chat and composer priority
+  ---
+  duration_ms: 260.8172
+  type: 'test'
+  ...
+# Subtest: active round invokes exactly send_live_battle_gift
+ok 46 - active round invokes exactly send_live_battle_gift
+  ---
+  duration_ms: 5.4743
+  type: 'test'
+  ...
+# Subtest: countdown invokes exactly send_live_gift
+ok 47 - countdown invokes exactly send_live_gift
+  ---
+  duration_ms: 3.1969
+  type: 'test'
+  ...
+# Subtest: completed postround invokes exactly send_live_gift
+ok 48 - completed postround invokes exactly send_live_gift
+  ---
+  duration_ms: 0.9538
+  type: 'test'
+  ...
+# Subtest: completed rematch window invokes exactly send_live_gift
+ok 49 - completed rematch window invokes exactly send_live_gift
+  ---
+  duration_ms: 1.0728
+  type: 'test'
+  ...
+# Subtest: ordinary LIVE invokes exactly send_live_gift
+ok 50 - ordinary LIVE invokes exactly send_live_gift
+  ---
+  duration_ms: 1.297
+  type: 'test'
+  ...
+# Subtest: known Battle errors display service-normalized safe messages
+ok 51 - known Battle errors display service-normalized safe messages
+  ---
+  duration_ms: 3.2207
+  type: 'test'
+  ...
+# Subtest: unknown RPC errors and exceptions never reach visible feedback
+ok 52 - unknown RPC errors and exceptions never reach visible feedback
+  ---
+  duration_ms: 3.44
+  type: 'test'
+  ...
+# Subtest: double taps stay single-flight and failed retries retain their key
+ok 53 - double taps stay single-flight and failed retries retain their key
+  ---
+  duration_ms: 1.3853
+  type: 'test'
+  ...
+# Subtest: economic authority, gross score, multipliers and roses remain byte-identical
+ok 54 - economic authority, gross score, multipliers and roses remain byte-identical
+  ---
+  duration_ms: 3.3254
+  type: 'test'
+  ...
+# Subtest: Battle stage keeps exactly two equal, edge-to-edge video surfaces
+ok 55 - Battle stage keeps exactly two equal, edge-to-edge video surfaces
+  ---
+  duration_ms: 13.6415
+  type: 'test'
+  ...
+# Subtest: sanitized host identities align to their canonical sides
+ok 56 - sanitized host identities align to their canonical sides
+  ---
+  duration_ms: 6.0849
+  type: 'test'
+  ...
+# Subtest: watch and broadcast expose only their two canonical Battle surfaces
+ok 57 - watch and broadcast expose only their two canonical Battle surfaces
+  ---
+  duration_ms: 16.5661
+  type: 'test'
+  ...
+# Subtest: additional cohost strips are structurally excluded during Battle and return afterward
+ok 58 - additional cohost strips are structurally excluded during Battle and return afterward
+  ---
+  duration_ms: 13.9759
+  type: 'test'
+  ...
+# Subtest: Battle broadcast layout is pure, composer-based, and independent of products
+ok 59 - Battle broadcast layout is pure, composer-based, and independent of products
+  ---
+  duration_ms: 150.5348
+  type: 'test'
+  ...
+# Subtest: broadcast Battle chat, panels, rail, and composer use Battle-specific positioning
+ok 60 - broadcast Battle chat, panels, rail, and composer use Battle-specific positioning
+  ---
+  duration_ms: 48.6244
+  type: 'test'
+  ...
+# Subtest: watch Battle chat and composer stay above the keyboard using composer clearance
+ok 61 - watch Battle chat and composer stay above the keyboard using composer clearance
+  ---
+  duration_ms: 9.8027
+  type: 'test'
+  ...
+# Subtest: timer remains server-anchored with one one-second interval and cleanup
+ok 62 - timer remains server-anchored with one one-second interval and cleanup
+  ---
+  duration_ms: 1.2938
+  type: 'test'
+  ...
+# Subtest: illustrative Figma scores and rounds are replaced by the accessible canonical projection
+ok 63 - illustrative Figma scores and rounds are replaced by the accessible canonical projection
+  ---
+  duration_ms: 1.6862
+  type: 'test'
+  ...
+# Subtest: watch closes and fully hides commerce during Battle while retaining normal LIVE commerce
+ok 64 - watch closes and fully hides commerce during Battle while retaining normal LIVE commerce
+  ---
+  duration_ms: 13.749
+  type: 'test'
+  ...
+# Subtest: broadcast closes and hides product controls, CTA, feed, and manager during Battle
+ok 65 - broadcast closes and hides product controls, CTA, feed, and manager during Battle
+  ---
+  duration_ms: 39.668
+  type: 'test'
+  ...
+# Subtest: watch reuses existing gift, reaction, share, and camera-request flows
+ok 66 - watch reuses existing gift, reaction, share, and camera-request flows
+  ---
+  duration_ms: 1.4299
+  type: 'test'
+  ...
+# Subtest: broadcast never adds a self-gift action and retains host controls
+ok 67 - broadcast never adds a self-gift action and retains host controls
+  ---
+  duration_ms: 0.7681
+  type: 'test'
+  ...
+# Subtest: Battle controls and close action meet the forty-four pixel touch target
+ok 68 - Battle controls and close action meet the forty-four pixel touch target
+  ---
+  duration_ms: 0.3627
+  type: 'test'
+  ...
+# Subtest: the canonical-side migration remains present at the audited F5-A frontier
+ok 69 - the canonical-side migration remains present at the audited F5-A frontier
+  ---
+  duration_ms: 28.9684
+  type: 'test'
+  ...
+1..69
+# tests 69
+# suites 0
+# pass 69
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2433.5112

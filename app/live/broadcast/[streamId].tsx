@@ -323,6 +323,7 @@ export default function LiveBroadcasterScreen() {
     reconnectEpoch,
     publicBattleState: battleProjection.state,
     publicClockAnchor: battleProjection.clockAnchor,
+    reconcilePublicAuthority: battleProjection.reconcile,
   });
   const seriesTransitionRef = useRef<string | null>(null);
   useEffect(() => {
@@ -533,17 +534,19 @@ export default function LiveBroadcasterScreen() {
     return () => clearInterval(timer);
   }, [live, participants]);
 
-  // ── Poll: viewer count + comments ────────────────────────────────────────
+  const pollGenerationRef = useRef(0); // Invalidate reads for an obsolete session pair.
   const poll = useCallback(async () => {
     if (!streamId) return;
+    const generation = pollGenerationRef.current;
     try {
       const sessionIds = battleOpponentSessionId
         ? [streamId, battleOpponentSessionId]
         : [streamId];
-      const { data: sessionRows } = await supabase
+      const { data: sessionRows, error: sessionReadError } = await supabase
         .from('live_sessions')
         .select('id, viewer_count, status, host_id, ended_at')
         .in('id', sessionIds);
+      if (!mountedRef.current || generation !== pollGenerationRef.current || sessionReadError) return;
       const sData = sessionRows?.find(row => row.id === streamId);
       if (sData && mountedRef.current) setViewerCount(sData.viewer_count ?? 0);
       const canonicalLive = sData?.status === 'live'
@@ -581,6 +584,7 @@ export default function LiveBroadcasterScreen() {
           message: m.message, createdAt: m.created_at,
         }));
         const messagesWithAvatars = await attachMessageAvatars(supabase, newMsgs, user);
+        if (!mountedRef.current || generation !== pollGenerationRef.current) return;
         lastMsgRef.current = mData[mData.length - 1].created_at;
         setMessages(prev => mergeMessages(prev, messagesWithAvatars));
         scrollToLatest(true);
@@ -601,7 +605,7 @@ export default function LiveBroadcasterScreen() {
     if (!live) return;
     pollRef.current = setInterval(poll, POLL_INTERVAL_MS);
     poll();
-    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+    return () => { pollGenerationRef.current += 1; if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
   }, [live, poll]);
 
   const loadParticipants = useCallback(async () => {

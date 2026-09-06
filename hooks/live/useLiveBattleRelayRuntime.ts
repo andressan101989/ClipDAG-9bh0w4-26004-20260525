@@ -15,6 +15,7 @@ type UseLiveBattleRelayRuntimeParams = LiveBattleRuntimeContext & {
   reconnectEpoch: number;
   publicBattleState: LiveBattlePublicState | null;
   publicClockAnchor: LiveBattleServerClockAnchor | null;
+  reconcilePublicAuthority?: () => Promise<void>;
 };
 
 /** Web fallback: it never requests Battle tokens and never claims relay support. */

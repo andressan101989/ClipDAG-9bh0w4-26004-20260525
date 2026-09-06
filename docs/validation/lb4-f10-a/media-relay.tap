@@ -1,0 +1,292 @@
+TAP version 13
+# Subtest: LB3 contains no migration, schema, finance, screen, or Battle scoring change
+ok 1 - LB3 contains no migration, schema, finance, screen, or Battle scoring change
+  ---
+  duration_ms: 20.6422
+  type: 'test'
+  ...
+# Subtest: Edge contract is exclusive and derives authority through the user JWT
+ok 2 - Edge contract is exclusive and derives authority through the user JWT
+  ---
+  duration_ms: 1.3686
+  type: 'test'
+  ...
+# Subtest: server authorization permits only participant-directed countdown or active relays
+ok 3 - server authorization permits only participant-directed countdown or active relays
+  ---
+  duration_ms: 5.993
+  type: 'test'
+  ...
+# Subtest: Battle relay TTL follows the canonical deadline with grace and a hard cap
+ok 4 - Battle relay TTL follows the canonical deadline with grace and a hard cap
+  ---
+  duration_ms: 1.2434
+  type: 'test'
+  ...
+# Subtest: server authorization rejects every session authority failure
+ok 5 - server authorization rejects every session authority failure
+  ---
+  duration_ms: 1.0549
+  type: 'test'
+  ...
+# Subtest: Edge mints two minimally privileged tokens with a server-derived Battle TTL
+ok 6 - Edge mints two minimally privileged tokens with a server-derived Battle TTL
+  ---
+  duration_ms: 1.4807
+  type: 'test'
+  ...
+# Subtest: legacy call, group, LIVE, and channelName contracts remain present
+ok 7 - legacy call, group, LIVE, and channelName contracts remain present
+  ---
+  duration_ms: 0.7019
+  type: 'test'
+  ...
+# Subtest: Edge handler denies missing/invalid JWT, hidden Battles, third parties, and mixed authority
+ok 8 - Edge handler denies missing/invalid JWT, hidden Battles, third parties, and mixed authority
+  ---
+  duration_ms: 833.1304
+  type: 'test'
+  ...
+# Subtest: unexpected Battle RPC failures are sanitized 500 responses and never mint tokens
+ok 9 - unexpected Battle RPC failures are sanitized 500 responses and never mint tokens
+  ---
+  duration_ms: 1120.8665
+  type: 'test'
+  ...
+# Subtest: Edge handler authorizes countdown/active with deadline-bound minimal tokens
+ok 10 - Edge handler authorizes countdown/active with deadline-bound minimal tokens
+  ---
+  duration_ms: 94.6388
+  type: 'test'
+  ...
+# Subtest: Edge handler denies every stale Battle/session state after canonical reconciliation
+ok 11 - Edge handler denies every stale Battle/session state after canonical reconciliation
+  ---
+  duration_ms: 574.2436
+  type: 'test'
+  ...
+# Subtest: existing runtime contracts cannot obtain Battle credentials
+ok 12 - existing runtime contracts cannot obtain Battle credentials
+  ---
+  duration_ms: 249.034
+  type: 'test'
+  ...
+# Subtest: client requests only liveBattleId and validates the complete credential contract
+ok 13 - client requests only liveBattleId and validates the complete credential contract
+  ---
+  duration_ms: 82.2342
+  type: 'test'
+  ...
+# Subtest: native service builds the 4.6.2 relay configuration and start is idempotent
+ok 14 - native service builds the 4.6.2 relay configuration and start is idempotent
+  ---
+  duration_ms: 61.6427
+  type: 'test'
+  ...
+# Subtest: different Battle stops first, stale callbacks cannot revive it, and stop is idempotent
+ok 15 - different Battle stops first, stale callbacks cannot revive it, and stop is idempotent
+  ---
+  duration_ms: 42.4847
+  type: 'test'
+  ...
+# Subtest: relay callbacks and negative Agora returns map to stable failure states
+ok 16 - relay callbacks and negative Agora returns map to stable failure states
+  ---
+  duration_ms: 33.4122
+  type: 'test'
+  ...
+# Subtest: dispose unregisters only its own handler and never leaves or releases the LIVE engine
+ok 17 - dispose unregisters only its own handler and never leaves or releases the LIVE engine
+  ---
+  duration_ms: 36.9272
+  type: 'test'
+  ...
+# Subtest: installed SDK API and web fallback are explicit and safe
+ok 18 - installed SDK API and web fallback are explicit and safe
+  ---
+  duration_ms: 4.6545
+  type: 'test'
+  ...
+# Subtest: policy holds completed rounds only for a current, live, unexpired open series
+ok 19 - policy holds completed rounds only for a current, live, unexpired open series
+  ---
+  duration_ms: 3.3621
+  type: 'test'
+  ...
+# Subtest: countdown and active relay; the next round in the same series is an atomic transition
+ok 20 - countdown and active relay; the next round in the same series is an atomic transition
+  ---
+  duration_ms: 0.697
+  type: 'test'
+  ...
+# Subtest: completed + awaiting_rematch retains relay and schedules one authoritative deadline
+ok 21 - completed + awaiting_rematch retains relay and schedules one authoritative deadline
+  ---
+  duration_ms: 17.4823
+  type: 'test'
+  ...
+# Subtest: rematch_pending retains relay; reject and terminal series stop exactly once
+ok 22 - rematch_pending retains relay; reject and terminal series stop exactly once
+  ---
+  duration_ms: 3.8912
+  type: 'test'
+  ...
+# Subtest: deadline expiry reconciles once and stops an expired retained relay
+ok 23 - deadline expiry reconciles once and stops an expired retained relay
+  ---
+  duration_ms: 2.5118
+  type: 'test'
+  ...
+# Subtest: accepted rematch changes battle through relay.transition without idle or stop
+ok 24 - accepted rematch changes battle through relay.transition without idle or stop
+  ---
+  duration_ms: 3.3397
+  type: 'test'
+  ...
+# Subtest: reconnect restores a held relay only while authority remains open
+ok 25 - reconnect restores a held relay only while authority remains open
+  ---
+  duration_ms: 3.0772
+  type: 'test'
+  ...
+# Subtest: session invalidation prevents delayed authority from reviving relay
+ok 26 - session invalidation prevents delayed authority from reviving relay
+  ---
+  duration_ms: 1.8854
+  type: 'test'
+  ...
+# Subtest: the existing host session poll fails closed when the opponent LIVE ends
+ok 27 - the existing host session poll fails closed when the opponent LIVE ends
+  ---
+  duration_ms: 1.2426
+  type: 'test'
+  ...
+# Subtest: native relay atomically updates the route for the next round
+ok 28 - native relay atomically updates the route for the next round
+  ---
+  duration_ms: 3.1628
+  type: 'test'
+  ...
+# Subtest: a failed atomic update stops the retained relay once and cannot leave old media orphaned
+ok 29 - a failed atomic update stops the retained relay once and cannot leave old media orphaned
+  ---
+  duration_ms: 2.3591
+  type: 'test'
+  ...
+# Subtest: Agora authorization permits only the authoritative unexpired post-round window
+ok 30 - Agora authorization permits only the authoritative unexpired post-round window
+  ---
+  duration_ms: 2.5623
+  type: 'test'
+  ...
+# Subtest: completed round renews the same relay because the active token cannot cover rematch
+ok 31 - completed round renews the same relay because the active token cannot cover rematch
+  ---
+  duration_ms: 5.6137
+  type: 'test'
+  ...
+# Subtest: same completed authority refreshes once and a changed deadline refreshes once more
+ok 32 - same completed authority refreshes once and a changed deadline refreshes once more
+  ---
+  duration_ms: 2.6103
+  type: 'test'
+  ...
+# Subtest: one transient authority failure uses one bounded retry then fails closed
+ok 33 - one transient authority failure uses one bounded retry then fails closed
+  ---
+  duration_ms: 2.7495
+  type: 'test'
+  ...
+# Subtest: runtime refresh failure stops once and never reports false relaying
+ok 34 - runtime refresh failure stops once and never reports false relaying
+  ---
+  duration_ms: 1.3514
+  type: 'test'
+  ...
+# Subtest: native same-battle refresh is single-flight and never publishes idle or connecting
+ok 35 - native same-battle refresh is single-flight and never publishes idle or connecting
+  ---
+  duration_ms: 1.0931
+  type: 'test'
+  ...
+# Subtest: native refresh rejection fails closed once for credentials and Agora update errors
+ok 36 - native refresh rejection fails closed once for credentials and Agora update errors
+  ---
+  duration_ms: 1.0908
+  type: 'test'
+  ...
+# Subtest: late refresh is fenced by teardown and a next-round transition supersedes it
+ok 37 - late refresh is fenced by teardown and a next-round transition supersedes it
+  ---
+  duration_ms: 3.9671
+  type: 'test'
+  ...
+# Subtest: wiring reuses the public projection and adds no polling, schema, or economy writes
+ok 38 - wiring reuses the public projection and adds no polling, schema, or economy writes
+  ---
+  duration_ms: 3.1923
+  type: 'test'
+  ...
+# Subtest: 4.6.2 configures both authoritative directions with source UID zero
+ok 39 - 4.6.2 configures both authoritative directions with source UID zero
+  ---
+  duration_ms: 13.4897
+  type: 'test'
+  ...
+# Subtest: return zero is only connecting; official Running and RelayOk make media available
+ok 40 - return zero is only connecting; official Running and RelayOk make media available
+  ---
+  duration_ms: 1.8902
+  type: 'test'
+  ...
+# Subtest: same route is idempotent; Battle replacement and cleanup are ordered and stale-safe
+ok 41 - same route is idempotent; Battle replacement and cleanup are ordered and stale-safe
+  ---
+  duration_ms: 1.4868
+  type: 'test'
+  ...
+# Subtest: Agora failures are canonical and diagnostic logs contain no credentials
+ok 42 - Agora failures are canonical and diagnostic logs contain no credentials
+  ---
+  duration_ms: 1.5166
+  type: 'test'
+  ...
+# Subtest: an unexpected Agora idle callback cannot leave the runtime claiming relay success
+ok 43 - an unexpected Agora idle callback cannot leave the runtime claiming relay success
+  ---
+  duration_ms: 2.0602
+  type: 'test'
+  ...
+# Subtest: Edge accepts only a Battle id and derives source zero plus destination host UID
+ok 44 - Edge accepts only a Battle id and derives source zero plus destination host UID
+  ---
+  duration_ms: 1.9362
+  type: 'test'
+  ...
+# Subtest: runtime gates relay on joined broadcaster, retries once per reconnect, and owns cleanup
+ok 45 - runtime gates relay on joined broadcaster, retries once per reconnect, and owns cleanup
+  ---
+  duration_ms: 1.2679
+  type: 'test'
+  ...
+# Subtest: audio/video subscribe and stage identity remain canonical for hosts and viewers
+ok 46 - audio/video subscribe and stage identity remain canonical for hosts and viewers
+  ---
+  duration_ms: 1.617
+  type: 'test'
+  ...
+# Subtest: media repair adds no migration, polling, commerce, score, or lifecycle write
+ok 47 - media repair adds no migration, polling, commerce, score, or lifecycle write
+  ---
+  duration_ms: 12.8049
+  type: 'test'
+  ...
+1..47
+# tests 47
+# suites 0
+# pass 47
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4558.0524
