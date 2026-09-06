@@ -1,0 +1,316 @@
+TAP version 13
+# Subtest: corrective migration exposes one invoker-only, read-only, RLS-respecting snapshot RPC
+ok 1 - corrective migration exposes one invoker-only, read-only, RLS-respecting snapshot RPC
+  ---
+  duration_ms: 2.2027
+  type: 'test'
+  ...
+# Subtest: snapshot envelope is strict and the clock anchor uses server time plus half RTT
+ok 2 - snapshot envelope is strict and the clock anchor uses server time plus half RTT
+  ---
+  duration_ms: 308.2922
+  type: 'test'
+  ...
+# Subtest: device clocks at zero, plus ten, and minus ten minutes produce the same Battle time
+ok 3 - device clocks at zero, plus ten, and minus ten minutes produce the same Battle time
+  ---
+  duration_ms: 102.6229
+  type: 'test'
+  ...
+# Subtest: Realtime registers filtered INSERT/UPDATE and unfiltered PK-only DELETE reconciliation
+ok 4 - Realtime registers filtered INSERT/UPDATE and unfiltered PK-only DELETE reconciliation
+  ---
+  duration_ms: 117.054
+  type: 'test'
+  ...
+# Subtest: DELETE reconciliation cannot clear a newer Battle and a late initial snapshot cannot regress Realtime
+ok 5 - DELETE reconciliation cannot clear a newer Battle and a late initial snapshot cannot regress Realtime
+  ---
+  duration_ms: 118.873
+  type: 'test'
+  ...
+# Subtest: snapshot RPC is canonical, cleanup is idempotent, and no callback survives disposal
+ok 6 - snapshot RPC is canonical, cleanup is idempotent, and no callback survives disposal
+  ---
+  duration_ms: 152.2688
+  type: 'test'
+  ...
+# Subtest: stage and hook use one authoritative timer, one AppState listener, and preserve the prototype layout
+ok 7 - stage and hook use one authoritative timer, one AppState listener, and preserve the prototype layout
+  ---
+  duration_ms: 2.0771
+  type: 'test'
+  ...
+# Subtest: stage runtime arms one one-second timer and its unmount cleanup clears it
+ok 8 - stage runtime arms one one-second timer and its unmount cleanup clears it
+  ---
+  duration_ms: 81.2803
+  type: 'test'
+  ...
+# Subtest: snapshot migration freezes exactly fourteen explicit public keys
+ok 9 - snapshot migration freezes exactly fourteen explicit public keys
+  ---
+  duration_ms: 3.3104
+  type: 'test'
+  ...
+# Subtest: initial snapshot starts only after SUBSCRIBED and first visible state is current
+ok 10 - initial snapshot starts only after SUBSCRIBED and first visible state is current
+  ---
+  duration_ms: 298.427
+  type: 'test'
+  ...
+# Subtest: Realtime UPDATE wins over an older post-SUBSCRIBED snapshot
+ok 11 - Realtime UPDATE wins over an older post-SUBSCRIBED snapshot
+  ---
+  duration_ms: 190.4155
+  type: 'test'
+  ...
+# Subtest: each re-SUBSCRIBED reconciles missed changes and channel errors preserve state
+ok 12 - each re-SUBSCRIBED reconciles missed changes and channel errors preserve state
+  ---
+  duration_ms: 110.9615
+  type: 'test'
+  ...
+# Subtest: null snapshots respect intervening mutations and clear only when still authoritative
+ok 13 - null snapshots respect intervening mutations and clear only when still authoritative
+  ---
+  duration_ms: 107.2069
+  type: 'test'
+  ...
+# Subtest: PK-only DELETE behavior and DELETE-to-new-Battle race remain closed
+ok 14 - PK-only DELETE behavior and DELETE-to-new-Battle race remain closed
+  ---
+  duration_ms: 92.7665
+  type: 'test'
+  ...
+# Subtest: cleanup is idempotent and late subscribe or snapshot callbacks are inert
+ok 15 - cleanup is idempotent and late subscribe or snapshot callbacks are inert
+  ---
+  duration_ms: 85.7646
+  type: 'test'
+  ...
+# Subtest: service retains one channel and exactly three required handlers without polling
+ok 16 - service retains one channel and exactly three required handlers without polling
+  ---
+  duration_ms: 0.5586
+  type: 'test'
+  ...
+# Subtest: migration creates one sanitized symmetric projection and one private trigger authority
+ok 17 - migration creates one sanitized symmetric projection and one private trigger authority
+  ---
+  duration_ms: 1.9747
+  type: 'test'
+  ...
+# Subtest: RLS, grants, observable LIVE policy and exact Realtime publication are least privilege
+ok 18 - RLS, grants, observable LIVE policy and exact Realtime publication are least privilege
+  ---
+  duration_ms: 0.5754
+  type: 'test'
+  ...
+# Subtest: strict parser accepts the canonical contract and rejects forged identities and timelines
+ok 19 - strict parser accepts the canonical contract and rejects forged identities and timelines
+  ---
+  duration_ms: 323.0023
+  type: 'test'
+  ...
+# Subtest: snapshot and exact-session Realtime are monotonic, replace Battles, and clean up once
+ok 20 - snapshot and exact-session Realtime are monotonic, replace Battles, and clean up once
+  ---
+  duration_ms: 116.8177
+  type: 'test'
+  ...
+# Subtest: stage preserves terminal status and video identity never comes from arrival order
+ok 21 - stage preserves terminal status and video identity never comes from arrival order
+  ---
+  duration_ms: 160.5186
+  type: 'test'
+  ...
+# Subtest: F4D-B is the only migration after F4D-A and does not add UI or internal Realtime tables
+ok 22 - F4D-B is the only migration after F4D-A and does not add UI or internal Realtime tables
+  ---
+  duration_ms: 10.855
+  type: 'test'
+  ...
+# Subtest: projection contains the complete sanitized power contract and frozen snapshot keys
+ok 23 - projection contains the complete sanitized power contract and frozen snapshot keys
+  ---
+  duration_ms: 1.6147
+  type: 'test'
+  ...
+# Subtest: only indexed per-Battle boost lookups feed the single public projection
+ok 24 - only indexed per-Battle boost lookups feed the single public projection
+  ---
+  duration_ms: 2.0032
+  type: 'test'
+  ...
+# Subtest: idempotent synchronization changes projection version only for material state
+ok 25 - idempotent synchronization changes projection version only for material state
+  ---
+  duration_ms: 0.5212
+  type: 'test'
+  ...
+# Subtest: strict parser accepts v2 and rejects unsafe or inconsistent power payloads
+ok 26 - strict parser accepts v2 and rejects unsafe or inconsistent power payloads
+  ---
+  duration_ms: 310.7781
+  type: 'test'
+  ...
+# Subtest: v1 compatibility requires explicit zero power state
+ok 27 - v1 compatibility requires explicit zero power state
+  ---
+  duration_ms: 192.9789
+  type: 'test'
+  ...
+# Subtest: visual helper uses authoritative anchor, x3 precedence and exact expiration
+ok 28 - visual helper uses authoritative anchor, x3 precedence and exact expiration
+  ---
+  duration_ms: 124.1192
+  type: 'test'
+  ...
+# Subtest: glove wrapper sends only Battle id and preserved idempotency key
+ok 29 - glove wrapper sends only Battle id and preserved idempotency key
+  ---
+  duration_ms: 97.8948
+  type: 'test'
+  ...
+# Subtest: migration preserves RLS, ACL and the existing Realtime publication boundary
+ok 30 - migration preserves RLS, ACL and the existing Realtime publication boundary
+  ---
+  duration_ms: 0.8085
+  type: 'test'
+  ...
+# Subtest: physical proof is rollback-only and checks RLS, v1 backfill and Realtime isolation
+ok 31 - physical proof is rollback-only and checks RLS, v1 backfill and Realtime isolation
+  ---
+  duration_ms: 0.8411
+  type: 'test'
+  ...
+# Subtest: migration stores and snapshots a constrained server-derived side for both rows
+ok 32 - migration stores and snapshots a constrained server-derived side for both rows
+  ---
+  duration_ms: 2.0738
+  type: 'test'
+  ...
+# Subtest: challenger and opponent map canonical scores and inventory to local and rival
+ok 33 - challenger and opponent map canonical scores and inventory to local and rival
+  ---
+  duration_ms: 389.1732
+  type: 'test'
+  ...
+# Subtest: initial snapshot and every Realtime mutation reconcile canonically; stale repeats lose
+ok 34 - initial snapshot and every Realtime mutation reconcile canonically; stale repeats lose
+  ---
+  duration_ms: 139.9132
+  type: 'test'
+  ...
+# Subtest: server clock drives x2/x3 activation, expiration, and terminal suppression
+ok 35 - server clock drives x2/x3 activation, expiration, and terminal suppression
+  ---
+  duration_ms: 85.6259
+  type: 'test'
+  ...
+# Subtest: progress covers 0/10 through 10/10 and completed winner/tie/cancelled outcomes
+ok 36 - progress covers 0/10 through 10/10 and completed winner/tie/cancelled outcomes
+  ---
+  duration_ms: 64.3747
+  type: 'test'
+  ...
+# Subtest: shared stage renders score, advantage, roses, x2/x3, gloves and terminal copy
+ok 37 - shared stage renders score, advantage, roses, x2/x3, gloves and terminal copy
+  ---
+  duration_ms: 0.8669
+  type: 'test'
+  ...
+# Subtest: host glove guard prevents double touch and uses one stable key per in-flight attempt
+ok 38 - host glove guard prevents double touch and uses one stable key per in-flight attempt
+  ---
+  duration_ms: 1.3577
+  type: 'test'
+  ...
+# Subtest: roses remain five coins and multipliers remain Battle-points-only
+ok 39 - roses remain five coins and multipliers remain Battle-points-only
+  ---
+  duration_ms: 1.1715
+  type: 'test'
+  ...
+# Subtest: physical proof uses real authenticated/anon roles, rolls back and checks residue
+ok 40 - physical proof uses real authenticated/anon roles, rolls back and checks residue
+  ---
+  duration_ms: 0.8417
+  type: 'test'
+  ...
+# Subtest: public projection exposes request identity and separate request/window expirations
+ok 41 - public projection exposes request identity and separate request/window expirations
+  ---
+  duration_ms: 2.4195
+  type: 'test'
+  ...
+# Subtest: projection request lookup is scoped to the projected canonical Battle
+ok 42 - projection request lookup is scoped to the projected canonical Battle
+  ---
+  duration_ms: 1.1385
+  type: 'test'
+  ...
+# Subtest: round transition clears the prior request before strict projection checks
+ok 43 - round transition clears the prior request before strict projection checks
+  ---
+  duration_ms: 1.0095
+  type: 'test'
+  ...
+# Subtest: current-Battle request lookup has one purpose-built deterministic index
+ok 44 - current-Battle request lookup has one purpose-built deterministic index
+  ---
+  duration_ms: 0.4911
+  type: 'test'
+  ...
+# Subtest: rollback proof covers three rounds and rejects historical request leakage
+ok 45 - rollback proof covers three rounds and rejects historical request leakage
+  ---
+  duration_ms: 0.4531
+  type: 'test'
+  ...
+# Subtest: concurrency proof verifies projection anchoring and indexed lookup at volume
+ok 46 - concurrency proof verifies projection anchoring and indexed lookup at volume
+  ---
+  duration_ms: 0.4332
+  type: 'test'
+  ...
+# Subtest: checkout snapshot keeps a ready selected-variant image first
+ok 47 - checkout snapshot keeps a ready selected-variant image first
+  ---
+  duration_ms: 1.4534
+  type: 'test'
+  ...
+# Subtest: checkout snapshot falls back to the canonical public product cover
+ok 48 - checkout snapshot falls back to the canonical public product cover
+  ---
+  duration_ms: 0.2343
+  type: 'test'
+  ...
+# Subtest: checkout reservation still succeeds with a null image snapshot
+ok 49 - checkout reservation still succeeds with a null image snapshot
+  ---
+  duration_ms: 0.3572
+  type: 'test'
+  ...
+# Subtest: replacement preserves the authoritative reservation and security contract
+ok 50 - replacement preserves the authoritative reservation and security contract
+  ---
+  duration_ms: 1.4474
+  type: 'test'
+  ...
+# Subtest: image correction introduces no parallel RPC, backfill, or financial mutation
+ok 51 - image correction introduces no parallel RPC, backfill, or financial mutation
+  ---
+  duration_ms: 0.4135
+  type: 'test'
+  ...
+1..51
+# tests 51
+# suites 0
+# pass 51
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1870.8891

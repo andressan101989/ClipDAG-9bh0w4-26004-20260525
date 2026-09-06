@@ -41,6 +41,10 @@ function shortStoredJoinKey(joinKey: string | null): string | null {
 // hook must not terminate an established backend call for a warning.
 const ACTIVE_CONNECTION_FATAL_ERROR_CODES = new Set([110]);
 
+// Observed relay reconfiguration takes <1 s. Bound retention to 1.5 s,
+// including 0.5 s scheduling tolerance; never conceal a lasting disconnect.
+export const REMOTE_VIDEO_TRANSITION_GRACE_MS = 1_500;
+
 export function classifyAgoraError(code: number, joined: boolean): 'join_fatal' | 'connection_fatal' | 'connection_warning' {
   if (!joined) return 'join_fatal';
   return ACTIVE_CONNECTION_FATAL_ERROR_CODES.has(code) ? 'connection_fatal' : 'connection_warning';
@@ -173,9 +177,41 @@ export function useAgoraEngine({
   const reconnectingRef = useRef(false);
   const [reconnectEpoch, setReconnectEpoch] = useState(0);
 
+  const remoteVideoTransitionRef = useRef<{
+    uid: number; deadline: number; pendingRemoval: boolean;
+    timer: ReturnType<typeof setTimeout> | null; generation: number;
+  } | null>(null);
+  const clearRemoteVideoTransition = useCallback((removeUid?: number) => {
+    const transition = remoteVideoTransitionRef.current;
+    remoteVideoTransitionRef.current = null;
+    if (transition?.timer) clearTimeout(transition.timer);
+    if (mountedRef.current && removeUid !== undefined) {
+      setRemoteUids(prev => prev.filter(uid => uid !== removeUid));
+    }
+  }, []);
+  const beginRemoteVideoTransition = useCallback((remoteUid: number) => {
+    if (!mountedRef.current || !joinedKeyRef.current || reconnectingRef.current) return;
+    // A repeated signal cannot extend an existing bounded window.
+    if (remoteVideoTransitionRef.current?.uid === remoteUid) return;
+    const previous = remoteVideoTransitionRef.current;
+    clearRemoteVideoTransition(previous?.pendingRemoval ? previous.uid : undefined);
+    const transition = {
+      uid: remoteUid, deadline: performance.now() + REMOTE_VIDEO_TRANSITION_GRACE_MS,
+      pendingRemoval: false, timer: null as ReturnType<typeof setTimeout> | null,
+      generation: joinGenerationRef.current,
+    };
+    remoteVideoTransitionRef.current = transition;
+    transition.timer = setTimeout(() => {
+      if (remoteVideoTransitionRef.current !== transition) return;
+      remoteVideoTransitionRef.current = null;
+      if (mountedRef.current && transition.generation === joinGenerationRef.current
+        && transition.pendingRemoval) setRemoteUids(prev => prev.filter(uid => uid !== remoteUid));
+    }, REMOTE_VIDEO_TRANSITION_GRACE_MS);
+  }, [clearRemoteVideoTransition]);
+
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    return () => { mountedRef.current = false; clearRemoteVideoTransition(); };
   }, []);
 
   const clearJoinTimeout = useCallback(() => {
@@ -191,6 +227,7 @@ export function useAgoraEngine({
     const handlers = ownedHandlers ?? (ownsCurrentEngine ? handlersRef.current : null);
     try {
       if (ownsCurrentEngine) {
+        clearRemoteVideoTransition(remoteVideoTransitionRef.current?.uid);
         for (const listener of beforeReleaseListenersRef.current) {
           try { listener(engine); } catch { /* one guard cannot block LIVE teardown */ }
         }
@@ -408,11 +445,13 @@ export function useAgoraEngine({
           }
         },
         onConnectionStateChanged: (connection: any, state: any, reason: any) => {
+          if (!isCurrentAttempt() && !isCurrentConnection()) return;
           logAgora('onConnectionStateChanged', {
             joinKey: safeJoinKey,
             state, reason,
           });
           if (state === ConnectionStateType.ConnectionStateReconnecting) {
+            clearRemoteVideoTransition(remoteVideoTransitionRef.current?.uid);
             reconnectingRef.current = true;
           } else if (state === ConnectionStateType.ConnectionStateConnected) {
             if (reconnectingRef.current && mountedRef.current) {
@@ -426,12 +465,19 @@ export function useAgoraEngine({
         },
         onUserJoined: (_conn: any, remoteUid: number) => {
           logAgora('onUserJoined', { joinKey: safeJoinKey, remoteUid });
-          if (!mountedRef.current) return;
+          if (!isCurrentConnection()) return;
+          if (remoteVideoTransitionRef.current?.uid === remoteUid) clearRemoteVideoTransition();
           setRemoteUids(prev => prev.includes(remoteUid) ? prev : [...prev, remoteUid]);
         },
         onUserOffline: (_conn: any, remoteUid: number, reason: any) => {
           logAgora('onUserOffline', { joinKey: safeJoinKey, remoteUid, reason });
-          if (!mountedRef.current) return;
+          if (!isCurrentConnection()) return;
+          const transition = remoteVideoTransitionRef.current;
+          if (reason === 0 && transition?.uid === remoteUid && performance.now() < transition.deadline) {
+            transition.pendingRemoval = true;
+            return;
+          }
+          if (transition?.uid === remoteUid) clearRemoteVideoTransition();
           setRemoteUids(prev => prev.filter(u => u !== remoteUid));
         },
         onError: (code: number, msg?: string) => {
@@ -712,6 +758,7 @@ export function useAgoraEngine({
     localVideoReady,
     reconnectEpoch,
     getEngine, registerBeforeEngineRelease,
+    beginRemoteVideoTransition, clearRemoteVideoTransition,
     join, leave,
     toggleMute, toggleCamera, switchCamera, toggleSpeaker, promoteToPublisher, demoteToAudience,
   };

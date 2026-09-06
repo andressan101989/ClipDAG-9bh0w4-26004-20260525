@@ -16,6 +16,8 @@ type UseLiveBattleRelayRuntimeParams = LiveBattleRuntimeContext & {
   publicBattleState: LiveBattlePublicState | null;
   publicClockAnchor: LiveBattleServerClockAnchor | null;
   reconcilePublicAuthority?: () => Promise<void>;
+  beginRemoteVideoTransition?: (uid: number) => void;
+  clearRemoteVideoTransition?: (uid?: number) => void;
 };
 
 /** Web fallback: it never requests Battle tokens and never claims relay support. */

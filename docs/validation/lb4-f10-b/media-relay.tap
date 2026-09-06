@@ -1,0 +1,544 @@
+TAP version 13
+# Subtest: LB3 contains no migration, schema, finance, screen, or Battle scoring change
+ok 1 - LB3 contains no migration, schema, finance, screen, or Battle scoring change
+  ---
+  duration_ms: 10.3832
+  type: 'test'
+  ...
+# Subtest: Edge contract is exclusive and derives authority through the user JWT
+ok 2 - Edge contract is exclusive and derives authority through the user JWT
+  ---
+  duration_ms: 1.2167
+  type: 'test'
+  ...
+# Subtest: server authorization permits only participant-directed countdown or active relays
+ok 3 - server authorization permits only participant-directed countdown or active relays
+  ---
+  duration_ms: 3.6818
+  type: 'test'
+  ...
+# Subtest: Battle relay TTL follows the canonical deadline with grace and a hard cap
+ok 4 - Battle relay TTL follows the canonical deadline with grace and a hard cap
+  ---
+  duration_ms: 0.7484
+  type: 'test'
+  ...
+# Subtest: server authorization rejects every session authority failure
+ok 5 - server authorization rejects every session authority failure
+  ---
+  duration_ms: 2.7211
+  type: 'test'
+  ...
+# Subtest: Edge mints two minimally privileged tokens with a server-derived Battle TTL
+ok 6 - Edge mints two minimally privileged tokens with a server-derived Battle TTL
+  ---
+  duration_ms: 1.1638
+  type: 'test'
+  ...
+# Subtest: legacy call, group, LIVE, and channelName contracts remain present
+ok 7 - legacy call, group, LIVE, and channelName contracts remain present
+  ---
+  duration_ms: 0.4653
+  type: 'test'
+  ...
+# Subtest: Edge handler denies missing/invalid JWT, hidden Battles, third parties, and mixed authority
+ok 8 - Edge handler denies missing/invalid JWT, hidden Battles, third parties, and mixed authority
+  ---
+  duration_ms: 775.5442
+  type: 'test'
+  ...
+# Subtest: unexpected Battle RPC failures are sanitized 500 responses and never mint tokens
+ok 9 - unexpected Battle RPC failures are sanitized 500 responses and never mint tokens
+  ---
+  duration_ms: 787.2532
+  type: 'test'
+  ...
+# Subtest: Edge handler authorizes countdown/active with deadline-bound minimal tokens
+ok 10 - Edge handler authorizes countdown/active with deadline-bound minimal tokens
+  ---
+  duration_ms: 60.4673
+  type: 'test'
+  ...
+# Subtest: Edge handler denies every stale Battle/session state after canonical reconciliation
+ok 11 - Edge handler denies every stale Battle/session state after canonical reconciliation
+  ---
+  duration_ms: 311.4177
+  type: 'test'
+  ...
+# Subtest: existing runtime contracts cannot obtain Battle credentials
+ok 12 - existing runtime contracts cannot obtain Battle credentials
+  ---
+  duration_ms: 104.7175
+  type: 'test'
+  ...
+# Subtest: client requests only liveBattleId and validates the complete credential contract
+ok 13 - client requests only liveBattleId and validates the complete credential contract
+  ---
+  duration_ms: 40.5099
+  type: 'test'
+  ...
+# Subtest: native service builds the 4.6.2 relay configuration and start is idempotent
+ok 14 - native service builds the 4.6.2 relay configuration and start is idempotent
+  ---
+  duration_ms: 30.7129
+  type: 'test'
+  ...
+# Subtest: different Battle stops first, stale callbacks cannot revive it, and stop is idempotent
+ok 15 - different Battle stops first, stale callbacks cannot revive it, and stop is idempotent
+  ---
+  duration_ms: 32.8515
+  type: 'test'
+  ...
+# Subtest: relay callbacks and negative Agora returns map to stable failure states
+ok 16 - relay callbacks and negative Agora returns map to stable failure states
+  ---
+  duration_ms: 52.5816
+  type: 'test'
+  ...
+# Subtest: dispose unregisters only its own handler and never leaves or releases the LIVE engine
+ok 17 - dispose unregisters only its own handler and never leaves or releases the LIVE engine
+  ---
+  duration_ms: 23.7465
+  type: 'test'
+  ...
+# Subtest: installed SDK API and web fallback are explicit and safe
+ok 18 - installed SDK API and web fallback are explicit and safe
+  ---
+  duration_ms: 2.7258
+  type: 'test'
+  ...
+# Subtest: RED terminal authority removes the completed Stage for both screens
+ok 19 - RED terminal authority removes the completed Stage for both screens
+  ---
+  duration_ms: 2.2829
+  type: 'test'
+  ...
+# Subtest: RED controlled relay update retains the expected remote surface on offline reason zero
+ok 20 - RED controlled relay update retains the expected remote surface on offline reason zero
+  ---
+  duration_ms: 50.6791
+  type: 'test'
+  ...
+# Subtest: RED freshly authorized same route reuses sufficient active credentials across logical Battles
+ok 21 - RED freshly authorized same route reuses sufficient active credentials across logical Battles
+  ---
+  duration_ms: 119.3089
+  type: 'test'
+  ...
+# Subtest: initial and duplicate starts have one SDK call and one native handler
+ok 22 - initial and duplicate starts have one SDK call and one native handler
+  ---
+  duration_ms: 78.4032
+  type: 'test'
+  ...
+# Subtest: channel requires native reauthorization
+ok 23 - channel requires native reauthorization
+  ---
+  duration_ms: 46.103
+  type: 'test'
+  ...
+# Subtest: uid requires native reauthorization
+ok 24 - uid requires native reauthorization
+  ---
+  duration_ms: 56.6078
+  type: 'test'
+  ...
+# Subtest: near expiry requires native reauthorization
+ok 25 - near expiry requires native reauthorization
+  ---
+  duration_ms: 35.4041
+  type: 'test'
+  ...
+# Subtest: expired requires native reauthorization
+ok 26 - expired requires native reauthorization
+  ---
+  duration_ms: 36.3407
+  type: 'test'
+  ...
+# Subtest: disconnected requires native reauthorization
+ok 27 - disconnected requires native reauthorization
+  ---
+  duration_ms: 44.5029
+  type: 'test'
+  ...
+# Subtest: a reconnect followed by connected invalidates the previous credential reuse
+ok 28 - a reconnect followed by connected invalidates the previous credential reuse
+  ---
+  duration_ms: 34.3425
+  type: 'test'
+  ...
+# Subtest: short post-round credentials cannot cover the next full round
+ok 29 - short post-round credentials cannot cover the next full round
+  ---
+  duration_ms: 42.4766
+  type: 'test'
+  ...
+# Subtest: a sufficient recent refresh avoids a second native reconfiguration on transition
+ok 30 - a sufficient recent refresh avoids a second native reconfiguration on transition
+  ---
+  duration_ms: 23.9157
+  type: 'test'
+  ...
+# Subtest: reuse does not reset the expiry or retain an obsolete logical callback
+ok 31 - reuse does not reset the expiry or retain an obsolete logical callback
+  ---
+  duration_ms: 48.7682
+  type: 'test'
+  ...
+# Subtest: relay development events never contain credentials or full canonical identifiers
+ok 32 - relay development events never contain credentials or full canonical identifiers
+  ---
+  duration_ms: 29.9554
+  type: 'test'
+  ...
+# Subtest: controlled offline/rejoin preserves the real hook UID and cancels all grace handles
+ok 33 - controlled offline/rejoin preserves the real hook UID and cancels all grace handles
+  ---
+  duration_ms: 40.1814
+  type: 'test'
+  ...
+# Subtest: a missing peer expires after exactly the bounded grace interval
+ok 34 - a missing peer expires after exactly the bounded grace interval
+  ---
+  duration_ms: 35.3575
+  type: 'test'
+  ...
+# Subtest: duplicate transition signals cannot extend a missing peer indefinitely
+ok 35 - duplicate transition signals cannot extend a missing peer indefinitely
+  ---
+  duration_ms: 44.661
+  type: 'test'
+  ...
+# Subtest: other UID is removed immediately
+ok 36 - other UID is removed immediately
+  ---
+  duration_ms: 51.2347
+  type: 'test'
+  ...
+# Subtest: real reason is removed immediately
+ok 37 - real reason is removed immediately
+  ---
+  duration_ms: 40.7009
+  type: 'test'
+  ...
+# Subtest: outside transition is removed immediately
+ok 38 - outside transition is removed immediately
+  ---
+  duration_ms: 32.8192
+  type: 'test'
+  ...
+# Subtest: terminal cleanup overrides grace without leaving or releasing the main LIVE
+ok 39 - terminal cleanup overrides grace without leaving or releasing the main LIVE
+  ---
+  duration_ms: 31.382
+  type: 'test'
+  ...
+# Subtest: session change cancels grace and obsolete callbacks cannot remove a new peer
+ok 40 - session change cancels grace and obsolete callbacks cannot remove a new peer
+  ---
+  duration_ms: 36.6238
+  type: 'test'
+  ...
+# Subtest: unmount and engine release leave zero timer/listener handles
+ok 41 - unmount and engine release leave zero timer/listener handles
+  ---
+  duration_ms: 28.2572
+  type: 'test'
+  ...
+# Subtest: obsolete connection-state callbacks cannot clear a new session transition
+ok 42 - obsolete connection-state callbacks cannot clear a new session transition
+  ---
+  duration_ms: 35.7561
+  type: 'test'
+  ...
+# Subtest: awaiting_rematch stays visible while canonical authority permits it even at local zero
+ok 43 - awaiting_rematch stays visible while canonical authority permits it even at local zero
+  ---
+  duration_ms: 0.1416
+  type: 'test'
+  ...
+# Subtest: rematch_pending stays visible while canonical authority permits it even at local zero
+ok 44 - rematch_pending stays visible while canonical authority permits it even at local zero
+  ---
+  duration_ms: 0.0563
+  type: 'test'
+  ...
+# Subtest: series completed hides the Stage
+ok 45 - series completed hides the Stage
+  ---
+  duration_ms: 0.0957
+  type: 'test'
+  ...
+# Subtest: series cancelled hides the Stage
+ok 46 - series cancelled hides the Stage
+  ---
+  duration_ms: 0.0527
+  type: 'test'
+  ...
+# Subtest: canonical request expired hides the Stage
+ok 47 - canonical request expired hides the Stage
+  ---
+  duration_ms: 0.0832
+  type: 'test'
+  ...
+# Subtest: canonical request rejected hides the Stage
+ok 48 - canonical request rejected hides the Stage
+  ---
+  duration_ms: 0.0504
+  type: 'test'
+  ...
+# Subtest: canonical request cancelled hides the Stage
+ok 49 - canonical request cancelled hides the Stage
+  ---
+  duration_ms: 0.0462
+  type: 'test'
+  ...
+# Subtest: late completed-round projection cannot resurrect expired authority; a later Battle can start
+ok 50 - late completed-round projection cannot resurrect expired authority; a later Battle can start
+  ---
+  duration_ms: 0.1711
+  type: 'test'
+  ...
+# Subtest: both screen render gates execute the same authority-aware predicate
+ok 51 - both screen render gates execute the same authority-aware predicate
+  ---
+  duration_ms: 62.8842
+  type: 'test'
+  ...
+# Subtest: the real relay signals the existing UID owner and terminal stop overrides reconfiguration
+ok 52 - the real relay signals the existing UID owner and terminal stop overrides reconfiguration
+  ---
+  duration_ms: 76.6117
+  type: 'test'
+  ...
+# Subtest: deadline only requests authority; terminal series stops once, advances UI authority key and cancels timers
+ok 53 - deadline only requests authority; terminal series stops once, advances UI authority key and cancels timers
+  ---
+  duration_ms: 62.0023
+  type: 'test'
+  ...
+# Subtest: series-only authority change refreshes the existing public projection without recreating runtime
+ok 54 - series-only authority change refreshes the existing public projection without recreating runtime
+  ---
+  duration_ms: 13.1625
+  type: 'test'
+  ...
+# Subtest: existing rematch single-flight and transition gate reject duplicate taps and duplicate next rounds
+ok 55 - existing rematch single-flight and transition gate reject duplicate taps and duplicate next rounds
+  ---
+  duration_ms: 13.8012
+  type: 'test'
+  ...
+# Subtest: stop cancels an authorization in flight; its late result cannot revive relay or visual grace
+ok 56 - stop cancels an authorization in flight; its late result cannot revive relay or visual grace
+  ---
+  duration_ms: 24.6226
+  type: 'test'
+  ...
+# Subtest: SDK failure while awaiting new authority prevents reuse of the previously running route
+ok 57 - SDK failure while awaiting new authority prevents reuse of the previously running route
+  ---
+  duration_ms: 24.314
+  type: 'test'
+  ...
+# Subtest: a throwing SDK update stops the previous transport and invalidates visual retention
+ok 58 - a throwing SDK update stops the previous transport and invalidates visual retention
+  ---
+  duration_ms: 27.8375
+  type: 'test'
+  ...
+# Subtest: terminal host/viewer render branches contain only the ordinary LIVE surface
+ok 59 - terminal host/viewer render branches contain only the ordinary LIVE surface
+  ---
+  duration_ms: 42.9872
+  type: 'test'
+  ...
+# Subtest: terminal null projection clears the last canonical rival without allowing old owners to touch a new session
+ok 60 - terminal null projection clears the last canonical rival without allowing old owners to touch a new session
+  ---
+  duration_ms: 12.1108
+  type: 'test'
+  ...
+# Subtest: policy holds completed rounds only for a current, live, unexpired open series
+ok 61 - policy holds completed rounds only for a current, live, unexpired open series
+  ---
+  duration_ms: 2.9833
+  type: 'test'
+  ...
+# Subtest: countdown and active relay; the next round in the same series is an atomic transition
+ok 62 - countdown and active relay; the next round in the same series is an atomic transition
+  ---
+  duration_ms: 0.7212
+  type: 'test'
+  ...
+# Subtest: completed + awaiting_rematch retains relay and schedules one authoritative deadline
+ok 63 - completed + awaiting_rematch retains relay and schedules one authoritative deadline
+  ---
+  duration_ms: 15.4052
+  type: 'test'
+  ...
+# Subtest: rematch_pending retains relay; reject and terminal series stop exactly once
+ok 64 - rematch_pending retains relay; reject and terminal series stop exactly once
+  ---
+  duration_ms: 10.6871
+  type: 'test'
+  ...
+# Subtest: deadline expiry reconciles once and stops an expired retained relay
+ok 65 - deadline expiry reconciles once and stops an expired retained relay
+  ---
+  duration_ms: 3.1757
+  type: 'test'
+  ...
+# Subtest: accepted rematch changes battle through relay.transition without idle or stop
+ok 66 - accepted rematch changes battle through relay.transition without idle or stop
+  ---
+  duration_ms: 2.7551
+  type: 'test'
+  ...
+# Subtest: reconnect restores a held relay only while authority remains open
+ok 67 - reconnect restores a held relay only while authority remains open
+  ---
+  duration_ms: 2.6086
+  type: 'test'
+  ...
+# Subtest: session invalidation prevents delayed authority from reviving relay
+ok 68 - session invalidation prevents delayed authority from reviving relay
+  ---
+  duration_ms: 1.5134
+  type: 'test'
+  ...
+# Subtest: the existing host session poll fails closed when the opponent LIVE ends
+ok 69 - the existing host session poll fails closed when the opponent LIVE ends
+  ---
+  duration_ms: 1.1237
+  type: 'test'
+  ...
+# Subtest: native relay atomically updates the route for the next round
+ok 70 - native relay atomically updates the route for the next round
+  ---
+  duration_ms: 2.9863
+  type: 'test'
+  ...
+# Subtest: a failed atomic update stops the retained relay once and cannot leave old media orphaned
+ok 71 - a failed atomic update stops the retained relay once and cannot leave old media orphaned
+  ---
+  duration_ms: 1.7911
+  type: 'test'
+  ...
+# Subtest: Agora authorization permits only the authoritative unexpired post-round window
+ok 72 - Agora authorization permits only the authoritative unexpired post-round window
+  ---
+  duration_ms: 1.9663
+  type: 'test'
+  ...
+# Subtest: completed round renews the same relay because the active token cannot cover rematch
+ok 73 - completed round renews the same relay because the active token cannot cover rematch
+  ---
+  duration_ms: 4.8579
+  type: 'test'
+  ...
+# Subtest: same completed authority refreshes once and a changed deadline refreshes once more
+ok 74 - same completed authority refreshes once and a changed deadline refreshes once more
+  ---
+  duration_ms: 4.2243
+  type: 'test'
+  ...
+# Subtest: one transient authority failure uses one bounded retry then fails closed
+ok 75 - one transient authority failure uses one bounded retry then fails closed
+  ---
+  duration_ms: 3.4585
+  type: 'test'
+  ...
+# Subtest: runtime refresh failure stops once and never reports false relaying
+ok 76 - runtime refresh failure stops once and never reports false relaying
+  ---
+  duration_ms: 1.3248
+  type: 'test'
+  ...
+# Subtest: native same-battle refresh is single-flight and never publishes idle or connecting
+ok 77 - native same-battle refresh is single-flight and never publishes idle or connecting
+  ---
+  duration_ms: 1.3296
+  type: 'test'
+  ...
+# Subtest: native refresh rejection fails closed once for credentials and Agora update errors
+ok 78 - native refresh rejection fails closed once for credentials and Agora update errors
+  ---
+  duration_ms: 1.1711
+  type: 'test'
+  ...
+# Subtest: late refresh is fenced by teardown and a next-round transition supersedes it
+ok 79 - late refresh is fenced by teardown and a next-round transition supersedes it
+  ---
+  duration_ms: 2.9816
+  type: 'test'
+  ...
+# Subtest: wiring reuses the public projection and adds no polling, schema, or economy writes
+ok 80 - wiring reuses the public projection and adds no polling, schema, or economy writes
+  ---
+  duration_ms: 4.9054
+  type: 'test'
+  ...
+# Subtest: 4.6.2 configures both authoritative directions with source UID zero
+ok 81 - 4.6.2 configures both authoritative directions with source UID zero
+  ---
+  duration_ms: 19.1407
+  type: 'test'
+  ...
+# Subtest: return zero is only connecting; official Running and RelayOk make media available
+ok 82 - return zero is only connecting; official Running and RelayOk make media available
+  ---
+  duration_ms: 2.9748
+  type: 'test'
+  ...
+# Subtest: same route is idempotent; Battle replacement and cleanup are ordered and stale-safe
+ok 83 - same route is idempotent; Battle replacement and cleanup are ordered and stale-safe
+  ---
+  duration_ms: 10.2545
+  type: 'test'
+  ...
+# Subtest: Agora failures are canonical and diagnostic logs contain no credentials
+ok 84 - Agora failures are canonical and diagnostic logs contain no credentials
+  ---
+  duration_ms: 1.0197
+  type: 'test'
+  ...
+# Subtest: an unexpected Agora idle callback cannot leave the runtime claiming relay success
+ok 85 - an unexpected Agora idle callback cannot leave the runtime claiming relay success
+  ---
+  duration_ms: 0.6079
+  type: 'test'
+  ...
+# Subtest: Edge accepts only a Battle id and derives source zero plus destination host UID
+ok 86 - Edge accepts only a Battle id and derives source zero plus destination host UID
+  ---
+  duration_ms: 5.3285
+  type: 'test'
+  ...
+# Subtest: runtime gates relay on joined broadcaster, retries once per reconnect, and owns cleanup
+ok 87 - runtime gates relay on joined broadcaster, retries once per reconnect, and owns cleanup
+  ---
+  duration_ms: 4.8716
+  type: 'test'
+  ...
+# Subtest: audio/video subscribe and stage identity remain canonical for hosts and viewers
+ok 88 - audio/video subscribe and stage identity remain canonical for hosts and viewers
+  ---
+  duration_ms: 1.4467
+  type: 'test'
+  ...
+# Subtest: media repair adds no migration, polling, commerce, score, or lifecycle write
+ok 89 - media repair adds no migration, polling, commerce, score, or lifecycle write
+  ---
+  duration_ms: 5.0376
+  type: 'test'
+  ...
+1..89
+# tests 89
+# suites 0
+# pass 89
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3198.4124

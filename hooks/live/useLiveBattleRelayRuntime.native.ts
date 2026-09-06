@@ -28,6 +28,8 @@ type UseLiveBattleRelayRuntimeParams = LiveBattleRuntimeContext & {
   publicBattleState: LiveBattlePublicState | null;
   publicClockAnchor: LiveBattleServerClockAnchor | null;
   reconcilePublicAuthority?: () => Promise<void>;
+  beginRemoteVideoTransition?: (uid: number) => void;
+  clearRemoteVideoTransition?: (uid?: number) => void;
 };
 
 export function useLiveBattleRelayRuntime({
@@ -45,6 +47,8 @@ export function useLiveBattleRelayRuntime({
   publicBattleState,
   publicClockAnchor,
   reconcilePublicAuthority,
+  beginRemoteVideoTransition,
+  clearRemoteVideoTransition,
 }: UseLiveBattleRelayRuntimeParams) {
   const controllerRef = useRef<LiveBattleRuntimeController | null>(null);
   const actionFlightRef = useRef(false);
@@ -52,6 +56,11 @@ export function useLiveBattleRelayRuntime({
   const actionsEnabledRef = useRef(false);
   const mountedRef = useRef(true);
   const lastReconnectEpochRef = useRef(reconnectEpoch);
+  const videoBridgeRef = useRef({ beginRemoteVideoTransition, clearRemoteVideoTransition, publicBattleState,
+    liveSessionId, lastOpponentUid: publicBattleState?.opponentHostAgoraUid });
+  videoBridgeRef.current = { beginRemoteVideoTransition, clearRemoteVideoTransition, publicBattleState,
+    liveSessionId, lastOpponentUid: publicBattleState?.opponentHostAgoraUid
+      ?? (videoBridgeRef.current.liveSessionId === liveSessionId ? videoBridgeRef.current.lastOpponentUid : undefined) };
   const [snapshot, setSnapshot] = useState<LiveBattleRuntimeSnapshot>({
     status: 'idle', battleId: null, version: null, errorCode: null, battle: null,
   });
@@ -74,7 +83,29 @@ export function useLiveBattleRelayRuntime({
 
   useEffect(() => {
     if (!engine) return;
+    const ownedSessionId = liveSessionId;
+    let bridgeActive = true;
+    let protectedUid: number | undefined;
     const relay = new LiveBattleRelayService(engine);
+    relay.setVisualContinuityHandlers?.({
+      onReconfigure: () => {
+        if (!bridgeActive || !mountedRef.current) return;
+        const bridge = videoBridgeRef.current;
+        if (bridge.liveSessionId !== ownedSessionId) return;
+        const uid = bridge.publicBattleState?.opponentHostAgoraUid;
+        if (uid !== undefined) {
+          protectedUid = uid;
+          bridge.beginRemoteVideoTransition?.(uid);
+        }
+      },
+      onStopped: () => {
+        if (!bridgeActive) return;
+        const bridge = videoBridgeRef.current;
+        if (bridge.liveSessionId !== ownedSessionId) return;
+        bridge.clearRemoteVideoTransition?.(protectedUid ?? bridge.lastOpponentUid);
+        protectedUid = undefined;
+      },
+    });
     const controller = new LiveBattleRuntimeController({
       relay,
       readPublicAuthority: getLiveBattlePublicSnapshot,
@@ -87,6 +118,11 @@ export function useLiveBattleRelayRuntime({
     });
 
     return () => {
+      const bridge = videoBridgeRef.current;
+      if (bridge.liveSessionId === ownedSessionId) {
+        bridge.clearRemoteVideoTransition?.(protectedUid ?? bridge.lastOpponentUid);
+      }
+      bridgeActive = false;
       actionGenerationRef.current += 1;
       actionFlightRef.current = false;
       unsubscribeSnapshot();
@@ -139,7 +175,8 @@ export function useLiveBattleRelayRuntime({
     // Refresh the same public authority used by Stage when the host RPC advances.
     // Lifecycle changes reuse the existing projection subscription.
     void reconcilePublicAuthority?.().catch(() => undefined);
-  }, [snapshot.battleId, snapshot.version, snapshot.battle?.status, reconcilePublicAuthority]);
+  }, [snapshot.battleId, snapshot.version, snapshot.battle?.status, snapshot.status,
+    snapshot.publicAuthorityKey, reconcilePublicAuthority]);
 
   const runAction = useCallback(async (
     operation: () => Promise<LiveBattle>,

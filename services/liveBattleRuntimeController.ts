@@ -39,6 +39,7 @@ export type LiveBattleRuntimeStatus =
   | 'disposed';
 
 export type LiveBattleRuntimeSnapshot = {
+  publicAuthorityKey?: string;
   status: LiveBattleRuntimeStatus;
   battleId: string | null;
   version: number | null;
@@ -262,6 +263,13 @@ export class LiveBattleRuntimeController {
 
   private publish(next: LiveBattleRuntimeSnapshot): void {
     const previous = this.snapshot;
+    if (this.publicState?.battleId === next.battleId) {
+      const series = this.publicState.series;
+      next = { ...next, publicAuthorityKey: JSON.stringify([
+        this.publicState.projectionVersion, series?.version, series?.status,
+        series?.rematchRequestStatus, series?.rematchWindowExpiresAt, series?.rematchRequestExpiresAt,
+      ]) };
+    }
     this.snapshot = next;
     if (previous.battleId !== next.battleId || previous.version !== next.version
       || previous.status !== next.status) this.trace('reconcile_result');

@@ -1,0 +1,611 @@
+TAP version 13
+# Subtest: all nine exact internal financial signatures receive a fixed search path
+ok 1 - all nine exact internal financial signatures receive a fixed search path
+  ---
+  duration_ms: 3.7376
+  type: 'test'
+  ...
+# Subtest: all nine internal financial functions are service-role only
+ok 2 - all nine internal financial functions are service-role only
+  ---
+  duration_ms: 3.2408
+  type: 'test'
+  ...
+# Subtest: withdrawal refund is explicitly closed to authenticated and anon
+ok 3 - withdrawal refund is explicitly closed to authenticated and anon
+  ---
+  duration_ms: 0.4509
+  type: 'test'
+  ...
+# Subtest: nonexistent financial function names are never versioned
+ok 4 - nonexistent financial function names are never versioned
+  ---
+  duration_ms: 0.7153
+  type: 'test'
+  ...
+# Subtest: financial hardening migrations contain no business or ledger mutation
+ok 5 - financial hardening migrations contain no business or ledger mutation
+  ---
+  duration_ms: 1.0396
+  type: 'test'
+  ...
+# Subtest: buyer allocation policy is removed while seller policy remains
+ok 6 - buyer allocation policy is removed while seller policy remains
+  ---
+  duration_ms: 0.7082
+  type: 'test'
+  ...
+# Subtest: wallet balance RPC denies public and anon while preserving authenticated and service role
+ok 7 - wallet balance RPC denies public and anon while preserving authenticated and service role
+  ---
+  duration_ms: 0.5965
+  type: 'test'
+  ...
+# Subtest: settlement dispute parser accepts every canonical payment state
+ok 8 - settlement dispute parser accepts every canonical payment state
+  ---
+  duration_ms: 1.5255
+  type: 'test'
+  ...
+# Subtest: settlement dispute parser rejects stale or unknown payment states
+ok 9 - settlement dispute parser rejects stale or unknown payment states
+  ---
+  duration_ms: 1.6135
+  type: 'test'
+  ...
+# Subtest: settlement dispute parser accepts every canonical allocation state
+ok 10 - settlement dispute parser accepts every canonical allocation state
+  ---
+  duration_ms: 0.9375
+  type: 'test'
+  ...
+# Subtest: settlement dispute parser rejects unknown allocation states
+ok 11 - settlement dispute parser rejects unknown allocation states
+  ---
+  duration_ms: 0.514
+  type: 'test'
+  ...
+# Subtest: settlement source enumerates only production payment and allocation states
+ok 12 - settlement source enumerates only production payment and allocation states
+  ---
+  duration_ms: 0.5227
+  type: 'test'
+  ...
+# Subtest: checkout parser accepts every canonical Marketplace order state
+ok 13 - checkout parser accepts every canonical Marketplace order state
+  ---
+  duration_ms: 2.8769
+  type: 'test'
+  ...
+# Subtest: checkout parser rejects unknown Marketplace order states
+ok 14 - checkout parser rejects unknown Marketplace order states
+  ---
+  duration_ms: 0.6067
+  type: 'test'
+  ...
+# Subtest: checkout parser accepts every canonical Marketplace payment state
+ok 15 - checkout parser accepts every canonical Marketplace payment state
+  ---
+  duration_ms: 0.5695
+  type: 'test'
+  ...
+# Subtest: checkout parser rejects unknown Marketplace payment states
+ok 16 - checkout parser rejects unknown Marketplace payment states
+  ---
+  duration_ms: 0.4468
+  type: 'test'
+  ...
+# Subtest: order service exposes strict order and payment types and enum parsers
+ok 17 - order service exposes strict order and payment types and enum parsers
+  ---
+  duration_ms: 0.4002
+  type: 'test'
+  ...
+# Subtest: all exact financial RPC signatures become service-role only
+ok 18 - all exact financial RPC signatures become service-role only
+  ---
+  duration_ms: 3.7202
+  type: 'test'
+  ...
+# Subtest: ensure_ledger_account is not granted to a client role
+ok 19 - ensure_ledger_account is not granted to a client role
+  ---
+  duration_ms: 0.6616
+  type: 'test'
+  ...
+# Subtest: the ACL migration does not redefine financial logic
+ok 20 - the ACL migration does not redefine financial logic
+  ---
+  duration_ms: 2.5487
+  type: 'test'
+  ...
+# Subtest: LB4-F4A adds exactly one post-stage migration and no Edge Function
+ok 21 - LB4-F4A adds exactly one post-stage migration and no Edge Function
+  ---
+  duration_ms: 11.1705
+  type: 'test'
+  ...
+# Subtest: schema attribution preserves normal gifts and adds indexed Battle idempotency
+ok 22 - schema attribution preserves normal gifts and adds indexed Battle idempotency
+  ---
+  duration_ms: 1.5483
+  type: 'test'
+  ...
+# Subtest: RPC derives every financial value and identity server-side under the Battle lock
+ok 23 - RPC derives every financial value and identity server-side under the Battle lock
+  ---
+  duration_ms: 1.3492
+  type: 'test'
+  ...
+# Subtest: RPC idempotency returns the original gift and rejects contradictory payloads
+ok 24 - RPC idempotency returns the original gift and rejects contradictory payloads
+  ---
+  duration_ms: 0.497
+  type: 'test'
+  ...
+# Subtest: ACL exposes only the directed-gift RPC to authenticated clients
+ok 25 - ACL exposes only the directed-gift RPC to authenticated clients
+  ---
+  duration_ms: 0.8716
+  type: 'test'
+  ...
+# Subtest: one economic gift projects once into each LIVE without financial internals
+ok 26 - one economic gift projects once into each LIVE without financial internals
+  ---
+  duration_ms: 0.7581
+  type: 'test'
+  ...
+# Subtest: client contract calls only the dedicated RPC with four identities
+ok 27 - client contract calls only the dedicated RPC with four identities
+  ---
+  duration_ms: 0.6672
+  type: 'test'
+  ...
+# Subtest: physical rollback proof covers economic, authorization, deadline, event, and cleanup cases
+ok 28 - physical rollback proof covers economic, authorization, deadline, event, and cleanup cases
+  ---
+  duration_ms: 2.56
+  type: 'test'
+  ...
+# Subtest: two-connection proof is localhost-only and covers retry plus deadline serialization
+ok 29 - two-connection proof is localhost-only and covers retry plus deadline serialization
+  ---
+  duration_ms: 0.7469
+  type: 'test'
+  ...
+# Subtest: F6-A remains the append-only catalog predecessor to the F8-A commission migration
+ok 30 - F6-A remains the append-only catalog predecessor to the F8-A commission migration
+  ---
+  duration_ms: 12.5809
+  type: 'test'
+  ...
+# Subtest: catalog adds exactly 88 active original gifts with stable ASCII identifiers
+ok 31 - catalog adds exactly 88 active original gifts with stable ASCII identifiers
+  ---
+  duration_ms: 1.4382
+  type: 'test'
+  ...
+# Subtest: 101 total, 100 active and sports_car as the only inactive row are explicit invariants
+ok 32 - 101 total, 100 active and sports_car as the only inactive row are explicit invariants
+  ---
+  duration_ms: 2.0404
+  type: 'test'
+  ...
+# Subtest: all active price ranges satisfy the required distribution
+ok 33 - all active price ranges satisfy the required distribution
+  ---
+  duration_ms: 0.9635
+  type: 'test'
+  ...
+# Subtest: categories, animation families and deterministic order stay within the existing contract
+ok 34 - categories, animation families and deterministic order stay within the existing contract
+  ---
+  duration_ms: 1.0049
+  type: 'test'
+  ...
+# Subtest: new identities contain no TikTok branding, remote assets or executable markup
+ok 35 - new identities contain no TikTok branding, remote assets or executable markup
+  ---
+  duration_ms: 0.6415
+  type: 'test'
+  ...
+# Subtest: server remains the sole price authority and the client cannot supply a price
+ok 36 - server remains the sole price authority and the client cannot supply a price
+  ---
+  duration_ms: 1.0936
+  type: 'test'
+  ...
+# Subtest: x2/x3 modify Battle points only and x3 wins without x6
+ok 37 - x2/x3 modify Battle points only and x3 wins without x6
+  ---
+  duration_ms: 0.7966
+  type: 'test'
+  ...
+# Subtest: only the canonical rose gift advances rose progress
+ok 38 - only the canonical rose gift advances rose progress
+  ---
+  duration_ms: 0.9789
+  type: 'test'
+  ...
+# Subtest: catalog UI stays dynamic, virtualized, stable and excludes inactive gifts
+ok 39 - catalog UI stays dynamic, virtualized, stable and excludes inactive gifts
+  ---
+  duration_ms: 1.0656
+  type: 'test'
+  ...
+# Subtest: historical replacement, F5 chain and manifests remain LF-canonical
+ok 40 - historical replacement, F5 chain and manifests remain LF-canonical
+  ---
+  duration_ms: 27.3489
+  type: 'test'
+  ...
+# Subtest: migration cannot touch economy, historical gifts, F5 or Realtime
+ok 41 - migration cannot touch economy, historical gifts, F5 or Realtime
+  ---
+  duration_ms: 1.7359
+  type: 'test'
+  ...
+# Subtest: resolver covers every price tier with bounded duration and particles
+ok 42 - resolver covers every price tier with bounded duration and particles
+  ---
+  duration_ms: 3.047
+  type: 'test'
+  ...
+# Subtest: resolver honors known families, legacy catalog types, categories and safe fallback
+ok 43 - resolver honors known families, legacy catalog types, categories and safe fallback
+  ---
+  duration_ms: 1.6537
+  type: 'test'
+  ...
+# Subtest: normalizer rejects malformed authority snapshots and applies safe visual fallbacks
+ok 44 - normalizer rejects malformed authority snapshots and applies safe visual fallbacks
+  ---
+  duration_ms: 0.6737
+  type: 'test'
+  ...
+# Subtest: queue is deterministic, prioritized, bounded and deduplicated
+ok 45 - queue is deterministic, prioritized, bounded and deduplicated
+  ---
+  duration_ms: 1.2004
+  type: 'test'
+  ...
+# Subtest: legendary presentation evicts a lower tier, is not interrupted, and advances cleanly
+ok 46 - legendary presentation evicts a lower tier, is not interrupted, and advances cleanly
+  ---
+  duration_ms: 1.0251
+  type: 'test'
+  ...
+# Subtest: full legendary queue reports bounded backpressure and permits a later retry
+ok 47 - full legendary queue reports bounded backpressure and permits a later retry
+  ---
+  duration_ms: 0.657
+  type: 'test'
+  ...
+# Subtest: combos are visual-only and require matching gift, sender and receiver inside the window
+ok 48 - combos are visual-only and require matching gift, sender and receiver inside the window
+  ---
+  duration_ms: 0.9037
+  type: 'test'
+  ...
+# Subtest: cancel clears work and ignores late events without state resurrection
+ok 49 - cancel clears work and ignores late events without state resurrection
+  ---
+  duration_ms: 1.1145
+  type: 'test'
+  ...
+# Subtest: all 100 active catalog gifts are resolved without production ID branches
+ok 50 - all 100 active catalog gifts are resolved without production ID branches
+  ---
+  duration_ms: 19.7717
+  type: 'test'
+  ...
+# Subtest: shared layer preserves interaction, accessibility, Battle and one event source per screen
+ok 51 - shared layer preserves interaction, accessibility, Battle and one event source per screen
+  ---
+  duration_ms: 7.2041
+  type: 'test'
+  ...
+# Subtest: visual engine has no database, scoring, boost, or financial authority
+ok 52 - visual engine has no database, scoring, boost, or financial authority
+  ---
+  duration_ms: 3.488
+  type: 'test'
+  ...
+# Subtest: protected manifests and deployed F6-A migration remain byte-equivalent after LF normalization
+ok 53 - protected manifests and deployed F6-A migration remain byte-equivalent after LF normalization
+  ---
+  duration_ms: 27.3711
+  type: 'test'
+  ...
+# Subtest: active Battle context invokes only the directed Battle RPC with no client price or score
+ok 54 - active Battle context invokes only the directed Battle RPC with no client price or score
+  ---
+  duration_ms: 68.1584
+  type: 'test'
+  ...
+# Subtest: ordinary LIVE context preserves the original live gift authority
+ok 55 - ordinary LIVE context preserves the original live gift authority
+  ---
+  duration_ms: 38.7541
+  type: 'test'
+  ...
+# Subtest: viewer connects the canonical Battle projection to the shared service router
+ok 56 - viewer connects the canonical Battle projection to the shared service router
+  ---
+  duration_ms: 1.198
+  type: 'test'
+  ...
+# Subtest: successful send closes the native modal, confirms outside it, and reconciles authority
+ok 57 - successful send closes the native modal, confirms outside it, and reconciles authority
+  ---
+  duration_ms: 0.8744
+  type: 'test'
+  ...
+# Subtest: single-flight blocks double taps and ambiguous retries reuse one idempotency key
+ok 58 - single-flight blocks double taps and ambiguous retries reuse one idempotency key
+  ---
+  duration_ms: 0.5946
+  type: 'test'
+  ...
+# Subtest: a production-shaped rose event normalizes and presents exactly once
+ok 59 - a production-shaped rose event normalizes and presents exactly once
+  ---
+  duration_ms: 3.5495
+  type: 'test'
+  ...
+# Subtest: server contract links gift, score, rose power, projection and two-session visual events
+ok 60 - server contract links gift, score, rose power, projection and two-session visual events
+  ---
+  duration_ms: 1.2436
+  type: 'test'
+  ...
+# Subtest: protected manifests and deployed migrations remain LF-identical
+ok 61 - protected manifests and deployed migrations remain LF-identical
+  ---
+  duration_ms: 31.2359
+  type: 'test'
+  ...
+# Subtest: ads uses isolated prepaid accounts
+ok 62 - ads uses isolated prepaid accounts
+  ---
+  duration_ms: 2.9273
+  type: 'test'
+  ...
+# Subtest: funding is atomic, locked and idempotent
+ok 63 - funding is atomic, locked and idempotent
+  ---
+  duration_ms: 1.8602
+  type: 'test'
+  ...
+# Subtest: spend is internal, exact and bounded
+ok 64 - spend is internal, exact and bounded
+  ---
+  duration_ms: 0.3955
+  type: 'test'
+  ...
+# Subtest: release is terminal, idempotent and zeroes remaining
+ok 65 - release is terminal, idempotent and zeroes remaining
+  ---
+  duration_ms: 0.3399
+  type: 'test'
+  ...
+# Subtest: financial events are immutable and reconciled
+ok 66 - financial events are immutable and reconciled
+  ---
+  duration_ms: 0.3332
+  type: 'test'
+  ...
+# Subtest: reconciliation proves directional accounts and event transaction identity
+ok 67 - reconciliation proves directional accounts and event transaction identity
+  ---
+  duration_ms: 0.3861
+  type: 'test'
+  ...
+# Subtest: reconciliation audits transaction orphans and real campaign accounting
+ok 68 - reconciliation audits transaction orphans and real campaign accounting
+  ---
+  duration_ms: 0.4302
+  type: 'test'
+  ...
+# Subtest: pause and resume never move ledger funds
+ok 69 - pause and resume never move ledger funds
+  ---
+  duration_ms: 0.3923
+  type: 'test'
+  ...
+# (node:6356) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/andre/ClipDAG-lb4-f10-b/services/marketplaceOrderPresentation.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to C:\\Users\\andre\\ClipDAG-lb4-f10-b\\package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: dispute resolution and financial event labels are explicit
+ok 70 - dispute resolution and financial event labels are explicit
+  ---
+  duration_ms: 3.5482
+  type: 'test'
+  ...
+# Subtest: seller passes canonical settlement context to the existing timeline
+ok 71 - seller passes canonical settlement context to the existing timeline
+  ---
+  duration_ms: 0.5357
+  type: 'test'
+  ...
+# Subtest: derived release requires canonical completed settlement and released allocation
+ok 72 - derived release requires canonical completed settlement and released allocation
+  ---
+  duration_ms: 3.6411
+  type: 'test'
+  ...
+# Subtest: raw release event prevents a duplicate derived financial row
+ok 73 - raw release event prevents a duplicate derived financial row
+  ---
+  duration_ms: 0.557
+  type: 'test'
+  ...
+# Subtest: timeline copies and stably sorts raw and derived items chronologically
+ok 74 - timeline copies and stably sorts raw and derived items chronologically
+  ---
+  duration_ms: 0.8947
+  type: 'test'
+  ...
+# Subtest: event context preserves existing timeline callers and avoids false resolutions
+ok 75 - event context preserves existing timeline callers and avoids false resolutions
+  ---
+  duration_ms: 0.4235
+  type: 'test'
+  ...
+# Subtest: seller shipped state remains read-only and existing detail sections remain visible
+ok 76 - seller shipped state remains read-only and existing detail sections remain visible
+  ---
+  duration_ms: 0.6872
+  type: 'test'
+  ...
+# Subtest: scope stays presentation-only
+ok 77 - scope stays presentation-only
+  ---
+  duration_ms: 0.4668
+  type: 'test'
+  ...
+# walletAssetContracts: PASS
+# Subtest: tests\\walletAssetContracts.test.mjs
+ok 9 - tests\\walletAssetContracts.test.mjs
+  ---
+  duration_ms: 162.4987
+  type: 'test'
+  ...
+# walletConnectDeepLink: PASS
+# Subtest: tests\\walletConnectDeepLink.test.mjs
+ok 10 - tests\\walletConnectDeepLink.test.mjs
+  ---
+  duration_ms: 167.2534
+  type: 'test'
+  ...
+# walletConnectHook: PASS
+# Subtest: tests\\walletConnectHook.test.mjs
+ok 11 - tests\\walletConnectHook.test.mjs
+  ---
+  duration_ms: 165.6758
+  type: 'test'
+  ...
+# walletConnectProvider: PASS
+# Subtest: tests\\walletConnectProvider.test.mjs
+ok 12 - tests\\walletConnectProvider.test.mjs
+  ---
+  duration_ms: 171.7993
+  type: 'test'
+  ...
+# walletConnectReturnRoute: PASS
+# Subtest: tests\\walletConnectReturnRoute.test.mjs
+ok 13 - tests\\walletConnectReturnRoute.test.mjs
+  ---
+  duration_ms: 247.8382
+  type: 'test'
+  ...
+# walletDepositFlow: PASS
+# Subtest: tests\\walletDepositFlow.test.mjs
+ok 14 - tests\\walletDepositFlow.test.mjs
+  ---
+  duration_ms: 208.733
+  type: 'test'
+  ...
+# walletStablecoinRegistry: PASS
+# Subtest: tests\\walletStablecoinRegistry.test.mjs
+ok 15 - tests\\walletStablecoinRegistry.test.mjs
+  ---
+  duration_ms: 230.7614
+  type: 'test'
+  ...
+# walletTransactionEncoding: PASS
+# Subtest: tests\\walletTransactionEncoding.test.mjs
+ok 16 - tests\\walletTransactionEncoding.test.mjs
+  ---
+  duration_ms: 1285.3501
+  type: 'test'
+  ...
+# Subtest: deposit is a positive user-perspective credit
+ok 86 - deposit is a positive user-perspective credit
+  ---
+  duration_ms: 5.1771
+  type: 'test'
+  ...
+# Subtest: withdrawal is a negative user-perspective debit
+ok 87 - withdrawal is a negative user-perspective debit
+  ---
+  duration_ms: 0.4274
+  type: 'test'
+  ...
+# Subtest: the same transfer has opposite semantics for sender and receiver
+ok 88 - the same transfer has opposite semantics for sender and receiver
+  ---
+  duration_ms: 1.7769
+  type: 'test'
+  ...
+# Subtest: Marketplace buyer capture is a negative purchase
+ok 89 - Marketplace buyer capture is a negative purchase
+  ---
+  duration_ms: 1.0345
+  type: 'test'
+  ...
+# Subtest: Marketplace seller settlement is a positive sale credit
+ok 90 - Marketplace seller settlement is a positive sale credit
+  ---
+  duration_ms: 0.3679
+  type: 'test'
+  ...
+# Subtest: Marketplace buyer refund is positive and never inferred from order total
+ok 91 - Marketplace buyer refund is positive and never inferred from order total
+  ---
+  duration_ms: 0.6836
+  type: 'test'
+  ...
+# Subtest: a user-paid fee remains a negative canonical debit
+ok 92 - a user-paid fee remains a negative canonical debit
+  ---
+  duration_ms: 0.3926
+  type: 'test'
+  ...
+# Subtest: seller reversal is a negative Marketplace adjustment
+ok 93 - seller reversal is a negative Marketplace adjustment
+  ---
+  duration_ms: 0.4112
+  type: 'test'
+  ...
+# Subtest: unknown operation keeps canonical direction without a fake specific label
+ok 94 - unknown operation keeps canonical direction without a fake specific label
+  ---
+  duration_ms: 1.6011
+  type: 'test'
+  ...
+# Subtest: missing or ambiguous account direction fails closed
+ok 95 - missing or ambiguous account direction fails closed
+  ---
+  duration_ms: 1.4518
+  type: 'test'
+  ...
+# Subtest: presentation does not mutate canonical ledger amounts or rows
+ok 96 - presentation does not mutate canonical ledger amounts or rows
+  ---
+  duration_ms: 0.4126
+  type: 'test'
+  ...
+# Subtest: Wallet history uses participant direction and never text matching for signs
+ok 97 - Wallet history uses participant direction and never text matching for signs
+  ---
+  duration_ms: 32.1984
+  type: 'test'
+  ...
+# walletWithdrawalConfirmation: PASS
+# Subtest: tests\\walletWithdrawalConfirmation.test.mjs
+ok 18 - tests\\walletWithdrawalConfirmation.test.mjs
+  ---
+  duration_ms: 240.4006
+  type: 'test'
+  ...
+1..98
+# tests 98
+# suites 0
+# pass 98
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1867.319

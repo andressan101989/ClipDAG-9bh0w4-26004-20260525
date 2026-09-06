@@ -276,7 +276,7 @@ export default function LiveWatchScreen() {
     Boolean(user?.id && session?.status === 'live'),
     user?.id ?? null,
   );
-  const battleState = battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status)
+  const battleState = battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status, battleProjection.state)
     ? battleProjection.state
     : null;
   const likeBatcherRef = useRef<LiveBattleLikeBatcher | null>(null);
@@ -289,7 +289,7 @@ export default function LiveWatchScreen() {
     return () => { likeBatcherRef.current = null; batcher?.close(); };
   }, [streamId, user?.id, battleState?.battleId, battleProjection.reconcile]);
   const battleStageVisible = Boolean(
-    battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status),
+    battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status, battleProjection.state),
   );
   useEffect(() => {
     if (!battleStageVisible) return;

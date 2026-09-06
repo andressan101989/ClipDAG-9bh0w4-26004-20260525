@@ -292,7 +292,7 @@ export default function LiveBroadcasterScreen() {
     engineReady, joined, error,
     remoteUids, isMuted, isCameraOff, localVideoReady, reconnectEpoch,
     join, leave, toggleMute, toggleCamera, switchCamera,
-    getEngine, registerBeforeEngineRelease,
+    getEngine, registerBeforeEngineRelease, beginRemoteVideoTransition, clearRemoteVideoTransition,
   } = useAgoraEngine({
     channelName: live ? streamId ?? null : null,
     uid: myUid,
@@ -320,6 +320,8 @@ export default function LiveBroadcasterScreen() {
     isForeground,
     getEngine,
     registerBeforeEngineRelease,
+    beginRemoteVideoTransition,
+    clearRemoteVideoTransition,
     reconnectEpoch,
     publicBattleState: battleProjection.state,
     publicClockAnchor: battleProjection.clockAnchor,
@@ -398,7 +400,7 @@ export default function LiveBroadcasterScreen() {
     }
   }, [battleProjection, user?.id]);
   const battleStageVisible = Boolean(
-    battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status),
+    battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status, battleProjection.state),
   );
   useEffect(() => {
     if (!battleStageVisible) return;
@@ -1006,7 +1008,7 @@ export default function LiveBroadcasterScreen() {
     p.status === 'active' &&
     p.user_id !== user?.id
   );
-  const battleState = battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status)
+  const battleState = battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status, battleProjection.state)
     ? battleProjection.state
     : null;
   const battleOpponentUid = battleState?.opponentHostAgoraUid;

@@ -25,7 +25,21 @@ type RelayEngine = Pick<
 type RelayDependencies = {
   requestCredentials?: (battleId: string) => Promise<LiveBattleRelayCredentials>;
   logger?: (event: string, data: Record<string, unknown>) => void;
+  now?: () => number;
+  onReconfigure?: () => void;
+  onStopped?: () => void;
 };
+
+export const RELAY_CREDENTIAL_REUSE_MARGIN_MS = 10_000;
+type ActiveTransport = {
+  identity: string; authorizedAt: number; expiresAt: number;
+};
+// No tokens are retained or compared. The canonical session pair is part of identity.
+function transportIdentity(credentials: LiveBattleRelayCredentials): string {
+  const { source, destination } = credentials.battleRelay;
+  return JSON.stringify([credentials.appId, source.liveSessionId, source.channel, source.uid,
+    destination.liveSessionId, destination.channel, destination.uid]);
+}
 
 function shortId(value: string): string {
   return value.slice(-8);
@@ -93,14 +107,18 @@ export class LiveBattleRelayService {
   private preserveRunningDuringRefreshBattleId: string | null = null;
   private disposeFlight: Promise<void> | null = null;
   private disposed = false;
+  private activeTransport: ActiveTransport | null = null;
+  private nativeRunning = false;
+  private readonly now: () => number;
   private readonly logger: (event: string, data: Record<string, unknown>) => void;
 
   constructor(
     private readonly engine: RelayEngine,
-    dependencies: RelayDependencies = {},
+    private readonly dependencies: RelayDependencies = {},
   ) {
     this.requestCredentials = dependencies.requestCredentials ?? requestLiveBattleRelayCredentials;
     this.logger = dependencies.logger ?? defaultRelayLogger;
+    this.now = dependencies.now ?? (() => performance.now());
   }
 
   getSnapshot(): LiveBattleRelaySnapshot {
@@ -133,7 +151,38 @@ export class LiveBattleRelayService {
     errorCode: string | null = null,
     relayCode: number | null = null,
   ): LiveBattleRelaySnapshot {
+    if (state === 'failed' || state === 'idle' || state === 'stopping') this.invalidateTransport();
     return this.publish({ state, battleId, errorCode, relayCode });
+  }
+
+  setVisualContinuityHandlers(handlers: Pick<RelayDependencies, 'onReconfigure' | 'onStopped'>): void {
+    if (this.disposed || this.activeBattleId) return;
+    this.dependencies.onReconfigure = handlers.onReconfigure;
+    this.dependencies.onStopped = handlers.onStopped;
+  }
+
+  private invalidateTransport(): void {
+    this.activeTransport = null;
+    this.nativeRunning = false;
+    this.dependencies.onStopped?.();
+  }
+
+  private canReuse(credentials: LiveBattleRelayCredentials): boolean {
+    const engine = this.engine as RelayEngine & { getConnectionState?: () => number };
+    let connected = false;
+    try { connected = engine.getConnectionState?.() === 3; } catch { /* fail closed */ }
+    return connected && this.nativeRunning && this.activeTransport !== null
+      && this.activeTransport.identity === transportIdentity(credentials)
+      // Fresh server authorization supplies the required horizon, including the
+      // canonical round/countdown or rematch window. Never guess a round length.
+      && this.activeTransport.expiresAt >= this.now()
+        + credentials.battleRelay.expiresIn * 1_000 + RELAY_CREDENTIAL_REUSE_MARGIN_MS;
+  }
+
+  private rememberTransport(credentials: LiveBattleRelayCredentials, authorizedAt: number): void {
+    this.activeTransport = { identity: transportIdentity(credentials), authorizedAt,
+      // Start at request time and subtract server whole-second rounding.
+      expiresAt: authorizedAt + credentials.battleRelay.expiresIn * 1_000 - 1_000 };
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
@@ -152,8 +201,20 @@ export class LiveBattleRelayService {
   private installHandler(generation: number, battleId: string): void {
     this.unregisterOwnHandler();
     const handler: IRtcEngineEventHandler = {
+      onConnectionStateChanged: (_connection, state) => {
+        if (this.handler !== handler || this.disposed) return;
+        // This existing relay listener only invalidates credentials; UID ownership
+        // and connection recovery remain in the engine hook/runtime.
+        if (state !== 3) this.invalidateTransport();
+      },
       onChannelMediaRelayStateChanged: (state, code) => {
-        if (generation !== this.generation || this.disposed || this.handler !== handler) return;
+        if (this.disposed || this.handler !== handler) return;
+        this.nativeRunning = state === ChannelMediaRelayState.RelayStateRunning
+          && code === ChannelMediaRelayError.RelayOk;
+        if (state === ChannelMediaRelayState.RelayStateFailure || code !== ChannelMediaRelayError.RelayOk) {
+          this.invalidateTransport();
+        }
+        if (generation !== this.generation) return;
         this.logger('state', { battle: shortId(battleId), state, code });
         if (state === ChannelMediaRelayState.RelayStateIdle) {
           this.preserveRunningDuringRefreshBattleId = null;
@@ -223,6 +284,7 @@ export class LiveBattleRelayService {
       }
       this.setState('authorizing', battleId);
       this.logger('start_requested', { battle: shortId(battleId) });
+      const authorizedAt = this.now();
       const credentials = await this.requestCredentials(battleId);
       this.assertCurrent(generation);
       this.logger('authorized', { battle: shortId(battleId) });
@@ -236,6 +298,7 @@ export class LiveBattleRelayService {
         sourceUid: relay.source.uid,
         destinationUid: relay.destination.uid,
       });
+      this.rememberTransport(credentials, authorizedAt);
       const result = this.engine.startOrUpdateChannelMediaRelay(configurationFrom(credentials));
       this.logger('start_result', { battle: shortId(battleId), result });
       if (typeof result !== 'number' || result !== 0) {
@@ -279,12 +342,26 @@ export class LiveBattleRelayService {
     this.preserveRunningDuringRefreshBattleId = null;
     const promise = this.enqueue(async () => {
       this.assertCurrent(generation);
-      this.setState('authorizing', battleId);
+      const wasRunning = this.nativeRunning;
+      const previousBattleId = this.activeBattleId;
+      const authorizedAt = this.now();
       const credentials = await this.requestCredentials(battleId);
       this.assertCurrent(generation);
+      const reuse = this.canReuse(credentials);
       this.installHandler(generation, battleId);
+      if (reuse) {
+        this.activeBattleId = battleId;
+        this.logger('transition_reused', { previousBattle: previousBattleId ? shortId(previousBattleId) : null,
+          battle: shortId(battleId), route: `${shortId(credentials.battleRelay.source.liveSessionId)}->${shortId(credentials.battleRelay.destination.liveSessionId)}` });
+        return this.setState('running', battleId);
+      }
       const relay = credentials.battleRelay;
-      this.setState('connecting', battleId, null, null);
+      const continuesRunning = wasRunning && this.nativeRunning;
+      if (continuesRunning) this.dependencies.onReconfigure?.();
+      this.nativeRunning = false;
+      this.rememberTransport(credentials, authorizedAt);
+      if (continuesRunning) this.preserveRunningDuringRefreshBattleId = battleId;
+      this.setState(continuesRunning ? 'running' : 'connecting', battleId, null, null);
       this.logger('update', {
         battle: shortId(battleId),
         route: `${shortId(relay.source.liveSessionId)}->${shortId(relay.destination.liveSessionId)}`,
@@ -308,6 +385,9 @@ export class LiveBattleRelayService {
         this.unregisterOwnHandler();
         try { this.engine.stopChannelMediaRelay(); } catch { /* fail closed */ }
         this.activeBattleId = null;
+      }
+      if (generation === this.generation && !(error instanceof LiveBattleRelayError)) {
+        this.setState('failed', battleId, 'battle_relay_agora_start_failed');
       }
       if (error instanceof LiveBattleRelayError
         && error.code !== 'battle_relay_operation_superseded'
@@ -341,13 +421,21 @@ export class LiveBattleRelayService {
         throw new LiveBattleRelayError('battle_relay_refresh_not_active');
       }
       const preserveRunning = this.snapshot.state === 'running';
+      const authorizedAt = this.now();
       const credentials = await this.requestCredentials(battleId);
       this.assertCurrent(generation);
       if (this.activeBattleId !== battleId) {
         throw new LiveBattleRelayError('battle_relay_operation_superseded');
       }
+      if (this.canReuse(credentials)) {
+        this.logger('refresh_reused', { battle: shortId(battleId) });
+        return this.getSnapshot();
+      }
       this.installHandler(generation, battleId);
       if (preserveRunning) this.preserveRunningDuringRefreshBattleId = battleId;
+      if (this.nativeRunning) this.dependencies.onReconfigure?.();
+      this.nativeRunning = false;
+      this.rememberTransport(credentials, authorizedAt);
       const relay = credentials.battleRelay;
       this.logger('refresh', {
         battle: shortId(battleId),
@@ -395,6 +483,7 @@ export class LiveBattleRelayService {
   }
 
   stop(): Promise<LiveBattleRelaySnapshot> {
+    this.invalidateTransport();
     if (this.disposed) return Promise.resolve(this.getSnapshot());
     if (this.pendingStop) return this.pendingStop;
     const generation = ++this.generation;
@@ -414,6 +503,7 @@ export class LiveBattleRelayService {
 
   /** Stops relay synchronously before the owning LIVE engine leaves/releases. */
   stopImmediately(): void {
+    this.invalidateTransport();
     if (this.disposed) return;
     this.generation += 1;
     this.pendingStart = null;
@@ -429,6 +519,7 @@ export class LiveBattleRelayService {
   }
 
   dispose(): Promise<void> {
+    this.invalidateTransport();
     if (this.disposeFlight) return this.disposeFlight;
     const generation = ++this.generation;
     this.disposed = true;

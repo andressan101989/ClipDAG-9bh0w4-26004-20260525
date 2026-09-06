@@ -1,0 +1,1280 @@
+[
+  {
+    "file": "package.json",
+    "expected": "67b0b13e81b3b4d89fa068205636a6c6c55abe52856d5256beb0d39bcc50f3c0",
+    "actual": "67b0b13e81b3b4d89fa068205636a6c6c55abe52856d5256beb0d39bcc50f3c0",
+    "unchanged": true
+  },
+  {
+    "file": "package-lock.json",
+    "expected": "9563f6480ec75a028a4580025d68884aca731c7836320ee148785156b0c40bf4",
+    "actual": "9563f6480ec75a028a4580025d68884aca731c7836320ee148785156b0c40bf4",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260703152201_create_calls_table.sql",
+    "expected": "39f932d547dd571bffcef440a5ce10be46c71aa856e8f2445d1196ce4e72d202",
+    "actual": "39f932d547dd571bffcef440a5ce10be46c71aa856e8f2445d1196ce4e72d202",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260703160000_add_realtime_publications.sql",
+    "expected": "6db3d637df58c6afbbde1283ee909df53193ba71cc8459c03f56864a2cf665a7",
+    "actual": "6db3d637df58c6afbbde1283ee909df53193ba71cc8459c03f56864a2cf665a7",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260703170000_comment_likes_function.sql",
+    "expected": "a6bf8aa64409b73ed2e1c46fb79ecb8a073ca0850bfde11cc2d03355db974b7b",
+    "actual": "a6bf8aa64409b73ed2e1c46fb79ecb8a073ca0850bfde11cc2d03355db974b7b",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260703212533_migration_to_supabase.sql",
+    "expected": "83f357bc6d042262a6e5141ae0a38fe5dd9d989d763ebeda7a2037c5f126177e",
+    "actual": "83f357bc6d042262a6e5141ae0a38fe5dd9d989d763ebeda7a2037c5f126177e",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260703215405_functions_export_schema.sql",
+    "expected": "a13b0e901883997c8ca82820699ba74a40730ec1bc4c02fbcf08716c4dcb0c39",
+    "actual": "a13b0e901883997c8ca82820699ba74a40730ec1bc4c02fbcf08716c4dcb0c39",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260703215452_functions_export.sql",
+    "expected": "ad66fb4676c3baa6e4ffe74ecf204275df4efbe531ee62fb97fad02cc45b3202",
+    "actual": "ad66fb4676c3baa6e4ffe74ecf204275df4efbe531ee62fb97fad02cc45b3202",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260703221054_increment_comment_likes.sql",
+    "expected": "b1880022d10f7280e765d6853f03f6b18c5d38c51ad7b7fb99a0dd7edb4f8ed6",
+    "actual": "b1880022d10f7280e765d6853f03f6b18c5d38c51ad7b7fb99a0dd7edb4f8ed6",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260704002314_add_realtime_publications.sql",
+    "expected": "5bd79fdf1318a450357b08f2b8a374540508befb43e69b485651387dced40729",
+    "actual": "5bd79fdf1318a450357b08f2b8a374540508befb43e69b485651387dced40729",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260704010000_live_db_audit_fixes.sql",
+    "expected": "578826954456f47d7451bde8fd8f0b24f77ce54e3dd66821d6374f89cb9fd791",
+    "actual": "578826954456f47d7451bde8fd8f0b24f77ce54e3dd66821d6374f89cb9fd791",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260704020000_storage_buckets.sql",
+    "expected": "c6765053d41eb22a62db7217ef2bff8ecbb1dea6415844644152752a8e5ae01e",
+    "actual": "c6765053d41eb22a62db7217ef2bff8ecbb1dea6415844644152752a8e5ae01e",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260704030000_system_fixes.sql",
+    "expected": "c699519d61d3626e70b300fa2fe6fdbdefe6b849084e566c310652a4ded01dd0",
+    "actual": "c699519d61d3626e70b300fa2fe6fdbdefe6b849084e566c310652a4ded01dd0",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260704205544_seed_system_ledger_accounts.sql",
+    "expected": "09418b16bbd74a07d14d6ecf426644261def0af12c81d3d6f4d930336a6928cf",
+    "actual": "09418b16bbd74a07d14d6ecf426644261def0af12c81d3d6f4d930336a6928cf",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260704205628_create_avatars_bucket.sql",
+    "expected": "d796b62c6db030ef1ad2aeef6976226bb61cd7479be8ca5db611e7e6af417ca1",
+    "actual": "d796b62c6db030ef1ad2aeef6976226bb61cd7479be8ca5db611e7e6af417ca1",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260704210740_create_images_videos_buckets.sql",
+    "expected": "d2d5e6dc7055306f0212cd419b143e868cb0a4f6554c9ec276b702efe6acf73d",
+    "actual": "d2d5e6dc7055306f0212cd419b143e868cb0a4f6554c9ec276b702efe6acf73d",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260704210749_fix_follow_unfollow_idempotency.sql",
+    "expected": "5b215132348c96f9902845d51e4537123e35201245b963e32b60fadab34fc897",
+    "actual": "5b215132348c96f9902845d51e4537123e35201245b963e32b60fadab34fc897",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260704210911_create_increment_video_counter.sql",
+    "expected": "ca6a81f1da4dccbf61428f3aac8294c29f01691fd9eefccbdb8697ca016461b4",
+    "actual": "ca6a81f1da4dccbf61428f3aac8294c29f01691fd9eefccbdb8697ca016461b4",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260704211229_add_admin_reports_policy.sql",
+    "expected": "714bb04320eee18eec3309254c801edaaaf813854d1d5e4b53fe6e8dfad4e72f",
+    "actual": "714bb04320eee18eec3309254c801edaaaf813854d1d5e4b53fe6e8dfad4e72f",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260704211244_create_blockchain_settlements.sql",
+    "expected": "e72c0255fb5c4ada658de552065e503eda411801e8dbe8623938e27a42184357",
+    "actual": "e72c0255fb5c4ada658de552065e503eda411801e8dbe8623938e27a42184357",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260704221918_revoke_financial_rpc_execute.sql",
+    "expected": "5d5c69b3553bb6460d98b6f21d44199fd892c52462cc51b7169657654eef47f0",
+    "actual": "5d5c69b3553bb6460d98b6f21d44199fd892c52462cc51b7169657654eef47f0",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260704221924_ledger_accounts_system_unique_constraint.sql",
+    "expected": "2e54663c1c4ee28d7dea87974a25d1d5a8460164f57c599484e40a48a99a9054",
+    "actual": "2e54663c1c4ee28d7dea87974a25d1d5a8460164f57c599484e40a48a99a9054",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260704221955_create_core_beta_tables.sql",
+    "expected": "0b1d53ccde4973302c7e7be32d1cd088d81b5dc93d723829bab38acb1df54e46",
+    "actual": "0b1d53ccde4973302c7e7be32d1cd088d81b5dc93d723829bab38acb1df54e46",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260705000000_call_type_and_live_viewer_count.sql",
+    "expected": "3f01b409dd43683bcdad06a1f95a5ae68b701e178dbba5e09035043d57f9f440",
+    "actual": "3f01b409dd43683bcdad06a1f95a5ae68b701e178dbba5e09035043d57f9f440",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260705004617_add_refund_withdrawal_to_ledger.sql",
+    "expected": "e3ef4fdd4ffabcf7e6ffc903bfd7d8ee3b5f36b3a88677ae71c1523595bb7407",
+    "actual": "e3ef4fdd4ffabcf7e6ffc903bfd7d8ee3b5f36b3a88677ae71c1523595bb7407",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260705145242_add_call_type_to_calls.sql",
+    "expected": "062cc8a8ebb3cbb14779aea2f943b7e68e4aa5dead504bd793816780d44e1668",
+    "actual": "062cc8a8ebb3cbb14779aea2f943b7e68e4aa5dead504bd793816780d44e1668",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260705184732_create_live_streaming_tables.sql",
+    "expected": "30556fe32261d19f0788f197e56fa362b739ed6fbf8daa6f849ff2adcbc4915d",
+    "actual": "30556fe32261d19f0788f197e56fa362b739ed6fbf8daa6f849ff2adcbc4915d",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260705185442_create_increment_live_viewer_count.sql",
+    "expected": "0f8df050abf7050a3e06725f2336f2a22d4c88048583eb6d2c1700e540b7463d",
+    "actual": "0f8df050abf7050a3e06725f2336f2a22d4c88048583eb6d2c1700e540b7463d",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260705192818_create_agora_debug_log_table.sql",
+    "expected": "3b00492e947a43b35f6c63ba20acca752c8c59b039a657a04276ee832b73294f",
+    "actual": "3b00492e947a43b35f6c63ba20acca752c8c59b039a657a04276ee832b73294f",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260706024445_create_gifts_table.sql",
+    "expected": "be1eaa3368b888b05c1133f1dd0238f2cac81c803cf774865e56238de09cba03",
+    "actual": "be1eaa3368b888b05c1133f1dd0238f2cac81c803cf774865e56238de09cba03",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260707014901_create_group_call_rooms_table.sql",
+    "expected": "caf05e2db4c792c7f5abbe5bb40788bd28fdc497dcc909239781228b1bc5d22f",
+    "actual": "caf05e2db4c792c7f5abbe5bb40788bd28fdc497dcc909239781228b1bc5d22f",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260710043250_create_live_participants_table.sql",
+    "expected": "c6fc4c61476fd15f084a32c0cb1e57a1ea787accef0133627c5a8f7f1a9a86b4",
+    "actual": "c6fc4c61476fd15f084a32c0cb1e57a1ea787accef0133627c5a8f7f1a9a86b4",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260710120000_live_participants_controls.sql",
+    "expected": "489ecef55e8ef0d2dde410eecbd9f116c5d70859e8655586b7473e9beb1a36ad",
+    "actual": "489ecef55e8ef0d2dde410eecbd9f116c5d70859e8655586b7473e9beb1a36ad",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260710150000_live_gift_economy.sql",
+    "expected": "936f59d1bd7b655b293c97a71b2564760f34050fc5dd4dfafbce0389f99de154",
+    "actual": "936f59d1bd7b655b293c97a71b2564760f34050fc5dd4dfafbce0389f99de154",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260711041318_live_gift_economy.sql",
+    "expected": "550f57f7a14760f3601c180396b037f47a25e1dacc8735f5bea48df0d81a1d00",
+    "actual": "550f57f7a14760f3601c180396b037f47a25e1dacc8735f5bea48df0d81a1d00",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260711044428_live_gifts_use_bdag_wallet.sql",
+    "expected": "a8108c5bbca7a208164c29452dcca00aca52a46a1591a301f00cd3f952caea9d",
+    "actual": "a8108c5bbca7a208164c29452dcca00aca52a46a1591a301f00cd3f952caea9d",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260711050221_add_get_bdag_wallet_balance.sql",
+    "expected": "0e8c2a5565e83c16f6a5a5e489f8328c1a10aeed9f2a00123ad2271fe721271f",
+    "actual": "0e8c2a5565e83c16f6a5a5e489f8328c1a10aeed9f2a00123ad2271fe721271f",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260711090000_live_gifts_use_bdag_wallet.sql",
+    "expected": "1063318898835daf0e42ef309f768807c21621336da4cecd9ef501e0c4d24674",
+    "actual": "1063318898835daf0e42ef309f768807c21621336da4cecd9ef501e0c4d24674",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260711120000_add_get_bdag_wallet_balance.sql",
+    "expected": "65e9261b3b5fbccd071f2a5c64dbd60e9d02551341dd699d6926fb47cc6e5f95",
+    "actual": "65e9261b3b5fbccd071f2a5c64dbd60e9d02551341dd699d6926fb47cc6e5f95",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260711180000_live_gift_premium_catalog.sql",
+    "expected": "128f10ce88e98bc4f20023b8f971f672d6195dcee39aa482311d290222828816",
+    "actual": "128f10ce88e98bc4f20023b8f971f672d6195dcee39aa482311d290222828816",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260711193000_replace_sports_car_with_private_jet.sql",
+    "expected": "3e66c4b10bfeb9260e33bbaffb06b113f639e7fb5a491a923019c3b79d92ec3e",
+    "actual": "3e66c4b10bfeb9260e33bbaffb06b113f639e7fb5a491a923019c3b79d92ec3e",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260711210000_live_session_liveness.sql",
+    "expected": "ff31bb979d1d55d9b331656df7f8e96a690f9ac59ac37ec98e4fcd4cabbe27fa",
+    "actual": "ff31bb979d1d55d9b331656df7f8e96a690f9ac59ac37ec98e4fcd4cabbe27fa",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260711213000_fix_start_live_session.sql",
+    "expected": "46e3c567f492c83b96f64783b85285870a3999e6762d1f614ea0713db1c54774",
+    "actual": "46e3c567f492c83b96f64783b85285870a3999e6762d1f614ea0713db1c54774",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260712130000_authoritative_call_sessions.sql",
+    "expected": "a891b309ab7bb9a2315c137806566df4c50003e9d8ec3eff2994b5f3ee1ffb41",
+    "actual": "a891b309ab7bb9a2315c137806566df4c50003e9d8ec3eff2994b5f3ee1ffb41",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260712143000_fix_authoritative_call_races.sql",
+    "expected": "2b9246a6dfd0ee441b26a191ccdf7105fdfb3aee76160868847ea64f1e801018",
+    "actual": "2b9246a6dfd0ee441b26a191ccdf7105fdfb3aee76160868847ea64f1e801018",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260712170000_call_push_deliveries.sql",
+    "expected": "e4f4ba5611137e9dfa073eb9c2b036d62ce341301c24aa83cfc422aeb283eb81",
+    "actual": "e4f4ba5611137e9dfa073eb9c2b036d62ce341301c24aa83cfc422aeb283eb81",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260712190000_call_push_deliveries_apns_voip.sql",
+    "expected": "21fcd7a29df53556edd28fd6e9da3453393fde5311e3277a5dd2f65eceafa700",
+    "actual": "21fcd7a29df53556edd28fd6e9da3453393fde5311e3277a5dd2f65eceafa700",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260713050000_fix_call_device_token_transfer.sql",
+    "expected": "ea5256fe87141cc4fb1085affd7528b8aed1cf3660af58127f3b4913581ebcff",
+    "actual": "ea5256fe87141cc4fb1085affd7528b8aed1cf3660af58127f3b4913581ebcff",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260713140000_terminal_call_push_outbox.sql",
+    "expected": "c9992368644922ffb48376ad438f4d253e5380068aed06e3d4e0c500a94ae256",
+    "actual": "c9992368644922ffb48376ad438f4d253e5380068aed06e3d4e0c500a94ae256",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260715090000_foreground_call_presentation_arbitration.sql",
+    "expected": "4e2e00787d6ce1d4ba2071c55996706f6b64012c8ef5b3e5e9d3abe520c5794f",
+    "actual": "4e2e00787d6ce1d4ba2071c55996706f6b64012c8ef5b3e5e9d3abe520c5794f",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260719090000_incoming_call_watchdog_history_retention.sql",
+    "expected": "602db13d0a8593a4228a3764e9321e3276cb766d9dc8ae755baf5461f5f1a228",
+    "actual": "602db13d0a8593a4228a3764e9321e3276cb766d9dc8ae755baf5461f5f1a228",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260721090000_release_foreground_call_presentation_to_callkit.sql",
+    "expected": "8582a04d60a90162f25c59175c20cb091f4fef0c8ae05753c80153763da496cc",
+    "actual": "8582a04d60a90162f25c59175c20cb091f4fef0c8ae05753c80153763da496cc",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260721120000_terminal_voip_activation_cutoff.sql",
+    "expected": "4c8f00b2692b010ae7c5d01648a826c14a9b479b4c05359186136eeead4c19ab",
+    "actual": "4c8f00b2692b010ae7c5d01648a826c14a9b479b4c05359186136eeead4c19ab",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260722090000_authoritative_call_liveness.sql",
+    "expected": "262f3e30a5df60f91752fc8c5d58426e1923ee3c9fd7ca1e01be962aa0abcfea",
+    "actual": "262f3e30a5df60f91752fc8c5d58426e1923ee3c9fd7ca1e01be962aa0abcfea",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260724120000_repair_call_device_registration.sql",
+    "expected": "d21d7f073e9b12e60f2078c53c80cad55bdb78a8eb1a03f3b83b9ffa2887eaca",
+    "actual": "d21d7f073e9b12e60f2078c53c80cad55bdb78a8eb1a03f3b83b9ffa2887eaca",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260725120000_message_push_notifications.sql",
+    "expected": "087380ce707f4f6b1f6a08bafd6f067269e7fef448efa34e54e5e74a3656f4dc",
+    "actual": "087380ce707f4f6b1f6a08bafd6f067269e7fef448efa34e54e5e74a3656f4dc",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260725143000_message_push_privacy_preferences.sql",
+    "expected": "b017291ea82f6294a325af83f0a25b121c16256913607aaca774426cf51919cc",
+    "actual": "b017291ea82f6294a325af83f0a25b121c16256913607aaca774426cf51919cc",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260725220000_stablecoin_withdrawal_settlement.sql",
+    "expected": "e655e6546e7c3b0d2de225a94c78e51c2a3b80c89038b5feeff6579930bdabb8",
+    "actual": "e655e6546e7c3b0d2de225a94c78e51c2a3b80c89038b5feeff6579930bdabb8",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260725223000_fix_withdrawal_completion_financial_status.sql",
+    "expected": "95dad02902b744a22d0beac9f54385e003a20556d2b6427726614e5bb6ff4a86",
+    "actual": "95dad02902b744a22d0beac9f54385e003a20556d2b6427726614e5bb6ff4a86",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260726083000_harden_financial_rpc_execute_privileges.sql",
+    "expected": "f83c9f9833987d6ccaffdaf19ca8e424131e6400697a3c696b2cbd2dee984e3c",
+    "actual": "f83c9f9833987d6ccaffdaf19ca8e424131e6400697a3c696b2cbd2dee984e3c",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260726090000_media_asset_foundation.sql",
+    "expected": "f198bc3b0b18c37add242959b22e77fde97185608ff048bd694942a8baa63fe7",
+    "actual": "f198bc3b0b18c37add242959b22e77fde97185608ff048bd694942a8baa63fe7",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260726100000_create_stories_schema.sql",
+    "expected": "767f0e62003c53cadf5ed75c145648824e1650b5d7d63e34501d55ede2a10a6d",
+    "actual": "767f0e62003c53cadf5ed75c145648824e1650b5d7d63e34501d55ede2a10a6d",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260726101000_create_product_catalog_schema.sql",
+    "expected": "11eeb4828aa4e379b14018ca908d25c05eeb68e29263b661a87aa6f6054b4454",
+    "actual": "11eeb4828aa4e379b14018ca908d25c05eeb68e29263b661a87aa6f6054b4454",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260726102000_create_carousel_post_rpc.sql",
+    "expected": "1808a35921f5192371b5cd425aa75ed03e928f95cfe1f30f891a0e408b951d06",
+    "actual": "1808a35921f5192371b5cd425aa75ed03e928f95cfe1f30f891a0e408b951d06",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260726103000_harden_media_entity_linking.sql",
+    "expected": "828815f13eaece4b954897ddde0f26702759540e80c48cb2803ee62b61485da1",
+    "actual": "828815f13eaece4b954897ddde0f26702759540e80c48cb2803ee62b61485da1",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260726104000_atomic_media_entities_and_cleanup.sql",
+    "expected": "d041ef039d155928fc9882a4a8a2b7bc872b84c67a727e8bb7dbeb45ed576ed2",
+    "actual": "d041ef039d155928fc9882a4a8a2b7bc872b84c67a727e8bb7dbeb45ed576ed2",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260726105000_media_public_urls_and_safe_links.sql",
+    "expected": "04bc9e56c405726182e82d78b91fe1123b1726703c54a783f2a2e721e2f27913",
+    "actual": "04bc9e56c405726182e82d78b91fe1123b1726703c54a783f2a2e721e2f27913",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260726106000_serialize_media_asset_linking_and_deletion.sql",
+    "expected": "c955baab18b16b02c60976791789dc9bc7d757793e543a12aa0166d8c395c8a8",
+    "actual": "c955baab18b16b02c60976791789dc9bc7d757793e543a12aa0166d8c395c8a8",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260726110000_create_cloudflare_stream_video_assets.sql",
+    "expected": "b1ca07dd49aea3c3c1a13791a4142b3ac338cf7379b76f174dca94440dbfc693",
+    "actual": "b1ca07dd49aea3c3c1a13791a4142b3ac338cf7379b76f174dca94440dbfc693",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260726111000_harden_cloudflare_stream_upload_reservation.sql",
+    "expected": "b643319a23ff01f8bd10328abbdcdad1fa0af87caa2512f6f4ea0c382c7ec118",
+    "actual": "b643319a23ff01f8bd10328abbdcdad1fa0af87caa2512f6f4ea0c382c7ec118",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260726112000_enforce_cloudflare_stream_ready_invariants.sql",
+    "expected": "612f95ca03c3c0473b2dbbcd914c5d6414bb34b30e17de4fbf0abdfd261d2039",
+    "actual": "612f95ca03c3c0473b2dbbcd914c5d6414bb34b30e17de4fbf0abdfd261d2039",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260726113000_publish_cloudflare_stream_video_posts.sql",
+    "expected": "3c73baa32bb4859d0c14fdf2f18cf6ada3cd07b5050dc40854bad9260e048269",
+    "actual": "3c73baa32bb4859d0c14fdf2f18cf6ada3cd07b5050dc40854bad9260e048269",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260727100000_marketplace_mkt_a1_seller_store_product_foundation.sql",
+    "expected": "092874ec14548c073e5154433903977f4c7ef7d588f4382ee22b8a844924472c",
+    "actual": "092874ec14548c073e5154433903977f4c7ef7d588f4382ee22b8a844924472c",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260727110000_fix_marketplace_seller_restore.sql",
+    "expected": "ff9111ce98e138b231d30dbacf0ffd22a706af9cba1ba098fb50afab882c90f6",
+    "actual": "ff9111ce98e138b231d30dbacf0ffd22a706af9cba1ba098fb50afab882c90f6",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260727120000_marketplace_mkt_a2_variants_inventory.sql",
+    "expected": "cafd4db45ed85f7e1d408cbf49ea42eaa0c4cc6a4ce9f143322502ec8ec421fe",
+    "actual": "cafd4db45ed85f7e1d408cbf49ea42eaa0c4cc6a4ce9f143322502ec8ec421fe",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260727121000_fix_mkt_a2_existing_inventory_contract.sql",
+    "expected": "77a39f8d7597559f578d7fb129d4d57c664f811ec840706694fbdfc425e79475",
+    "actual": "77a39f8d7597559f578d7fb129d4d57c664f811ec840706694fbdfc425e79475",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260727122000_fix_mkt_a2_configuration_idempotency.sql",
+    "expected": "4d510f9fe5f1a9e022d534220085229775243855d89fdef6028379f552d090c9",
+    "actual": "4d510f9fe5f1a9e022d534220085229775243855d89fdef6028379f552d090c9",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260730100000_add_marketplace_variant_product_draft_creation.sql",
+    "expected": "c22c1edbb2282c07932dcfc4eb8f218d572513c3fbc71aba6e8d5654be403f36",
+    "actual": "c22c1edbb2282c07932dcfc4eb8f218d572513c3fbc71aba6e8d5654be403f36",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260731223000_marketplace_mkt_a3b_orders_reservations.sql",
+    "expected": "d285875143b1a98bbe6ff092988a82b805840a97ae317e4dee5a37a3f7ab047b",
+    "actual": "d285875143b1a98bbe6ff092988a82b805840a97ae317e4dee5a37a3f7ab047b",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260801032000_fix_marketplace_checkout_reservation_runtime.sql",
+    "expected": "71640b9ed9befd5709bee0779a8f4c32ab4f34896106f335772e74a663571079",
+    "actual": "71640b9ed9befd5709bee0779a8f4c32ab4f34896106f335772e74a663571079",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260801043000_marketplace_mkt_a3c_bdag_payment.sql",
+    "expected": "dfb4ab2841caf050ce587288d862f0a61d89edff262ea9eccbd283dbca5688e6",
+    "actual": "dfb4ab2841caf050ce587288d862f0a61d89edff262ea9eccbd283dbca5688e6",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260801054500_marketplace_mkt_a3d1_order_fulfillment.sql",
+    "expected": "d4367257f8244f769086cf3b0fbdefdd800509537c9c677b25033d3770f01fc3",
+    "actual": "d4367257f8244f769086cf3b0fbdefdd800509537c9c677b25033d3770f01fc3",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260801062000_fix_marketplace_fulfillment_access.sql",
+    "expected": "a5229602a9ebd8e30038ffb4f7f42bdbe518a92f31fd7976efbc042cd8c95bd9",
+    "actual": "a5229602a9ebd8e30038ffb4f7f42bdbe518a92f31fd7976efbc042cd8c95bd9",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260801062100_sanitize_marketplace_buyer_shipment.sql",
+    "expected": "a3922b8d511ce3bc7204d3d8bfc21c7d5a2e6611f1e46753f458a94bc35fc8dc",
+    "actual": "a3922b8d511ce3bc7204d3d8bfc21c7d5a2e6611f1e46753f458a94bc35fc8dc",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260802040000_marketplace_mkt_a3d2_delivery_settlement.sql",
+    "expected": "b05d7927fd54e576dfc5fd7fee22fb39a02d08f0df20cfdd28ecf52c0bd91392",
+    "actual": "b05d7927fd54e576dfc5fd7fee22fb39a02d08f0df20cfdd28ecf52c0bd91392",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260802043000_fix_marketplace_settlement_reconciliation.sql",
+    "expected": "107915e20a728ca4db3cfb6700a67ffec4e65e2218ced7f6e4f0a0bdbd7f0d02",
+    "actual": "107915e20a728ca4db3cfb6700a67ffec4e65e2218ced7f6e4f0a0bdbd7f0d02",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260802050000_harden_marketplace_settlement_reconciliation.sql",
+    "expected": "618f690a4c2fde5f66d3eef1f31303e6f198f1efbd9e6a03120fb63493aed642",
+    "actual": "618f690a4c2fde5f66d3eef1f31303e6f198f1efbd9e6a03120fb63493aed642",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260802150000_marketplace_mkt_a4a_live_commerce.sql",
+    "expected": "e84140408262de80ad8c229370c934eb8694f14da8adb785bc5e3a9791b4b60c",
+    "actual": "e84140408262de80ad8c229370c934eb8694f14da8adb785bc5e3a9791b4b60c",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260802163000_fix_marketplace_mkt_a4a_live_commerce.sql",
+    "expected": "89161a455395f23dbf1558abc3467a032dbee127566ab8460a6c13979da28d24",
+    "actual": "89161a455395f23dbf1558abc3467a032dbee127566ab8460a6c13979da28d24",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260802170000_fix_marketplace_payment_fulfillment_reconciliation.sql",
+    "expected": "48faab5dd1f2e026172cc2e7fe4d775a6642bb710bc77722bf917a95d60fb6ef",
+    "actual": "48faab5dd1f2e026172cc2e7fe4d775a6642bb710bc77722bf917a95d60fb6ef",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803010000_marketplace_mkt_a4b_live_affiliate_commissions.sql",
+    "expected": "1bdff0e61713aae6205e90d722d1955428885e40bd1465169e346c737ff1eb35",
+    "actual": "1bdff0e61713aae6205e90d722d1955428885e40bd1465169e346c737ff1eb35",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803013000_marketplace_mkt_a4b_creator_settlement.sql",
+    "expected": "d09019a1784b23a583e26aff5b38a208ee0975d09545d096128bd04beadf9ebd",
+    "actual": "d09019a1784b23a583e26aff5b38a208ee0975d09545d096128bd04beadf9ebd",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803020000_harden_mkt_a4b_live_commerce.sql",
+    "expected": "0fa5fa44a257fc600c4f111f6d0df879d23079cc21fd6883fd866c9c5364c663",
+    "actual": "0fa5fa44a257fc600c4f111f6d0df879d23079cc21fd6883fd866c9c5364c663",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803023000_fix_mkt_a4b_affiliate_pin_lifecycle.sql",
+    "expected": "7d49e3bb7a439f7075d887c353ca0798f68121969319c525a0eba928246137b3",
+    "actual": "7d49e3bb7a439f7075d887c353ca0798f68121969319c525a0eba928246137b3",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803023100_fix_mkt_a4b_candidate_grouping.sql",
+    "expected": "8bf1e63ca994f7d09ead50ae02c16abbb79ab111706a6b460da9e4e7aa776942",
+    "actual": "8bf1e63ca994f7d09ead50ae02c16abbb79ab111706a6b460da9e4e7aa776942",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803024500_fix_mkt_a4b_offer_precedence.sql",
+    "expected": "e06b99397e2b654ac618a741695cea40f57f8bba6c9aae9a87ef525e08258165",
+    "actual": "e06b99397e2b654ac618a741695cea40f57f8bba6c9aae9a87ef525e08258165",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803024600_fix_mkt_a4b_pin_resolver_record.sql",
+    "expected": "980c15913fd60a7d8131768b555a0dcdab118388e482aa4bbda8ce74bc11ef53",
+    "actual": "980c15913fd60a7d8131768b555a0dcdab118388e482aa4bbda8ce74bc11ef53",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803030000_fix_mkt_a4b_live_product_readiness.sql",
+    "expected": "6a9c48427bd1e147177fab12f0607d59b82541318c0c3249ff5d34ae3da83e53",
+    "actual": "6a9c48427bd1e147177fab12f0607d59b82541318c0c3249ff5d34ae3da83e53",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803120000_marketplace_fixture_hygiene.sql",
+    "expected": "f7efa833292c7a29d9b8017abb758d71ee920f65a9aa9cd94cdeed2199af4468",
+    "actual": "f7efa833292c7a29d9b8017abb758d71ee920f65a9aa9cd94cdeed2199af4468",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803123000_remote_fixture_lifecycle.sql",
+    "expected": "24888fdcd66daf9f1ac77f8f7c9c3bdaf1f7c789049480498f63d16bbeb49674",
+    "actual": "24888fdcd66daf9f1ac77f8f7c9c3bdaf1f7c789049480498f63d16bbeb49674",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803124500_fixture_cleanup_validation.sql",
+    "expected": "f7f30275fe837915c224b735b467a5e200d54e9b857fa5e2d48ac4700c8c2ebe",
+    "actual": "f7f30275fe837915c224b735b467a5e200d54e9b857fa5e2d48ac4700c8c2ebe",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803130000_exclude_registered_fixtures_from_public_catalog.sql",
+    "expected": "7f4e9748161abbe2e36389a8decc1963562b94075bae551552e95d2a0d3034de",
+    "actual": "7f4e9748161abbe2e36389a8decc1963562b94075bae551552e95d2a0d3034de",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803131500_neutralize_marketplace_fixture_financials.sql",
+    "expected": "669711e0e4d61f77b7f897a41ef69d834cd446bc385487de2624fa2bf5f007c3",
+    "actual": "669711e0e4d61f77b7f897a41ef69d834cd446bc385487de2624fa2bf5f007c3",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803131600_exclude_marketplace_fixtures_from_business_analytics.sql",
+    "expected": "d84e14829e4133873faa53b7a51e294bd27181d8118e918f0bc0c15b08a48ec4",
+    "actual": "d84e14829e4133873faa53b7a51e294bd27181d8118e918f0bc0c15b08a48ec4",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803131700_finalize_remote_marketplace_fixture_runs.sql",
+    "expected": "1f28d73ae41622232cdc00ad4501ca4a9633f824f1639a9d58df9fa1695f5297",
+    "actual": "1f28d73ae41622232cdc00ad4501ca4a9633f824f1639a9d58df9fa1695f5297",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803131800_fix_fixture_run_ledger_validation_alias.sql",
+    "expected": "17a16696faa9b0c523e1778359cdf8782ebf53af239ae8f16945cf9aea3ed484",
+    "actual": "17a16696faa9b0c523e1778359cdf8782ebf53af239ae8f16945cf9aea3ed484",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803131900_harden_remote_fixture_finalization.sql",
+    "expected": "cd05ded5c3bbc420f90d604f4531fd8b5c42c0889575949dd8b5feb5b8fd5829",
+    "actual": "cd05ded5c3bbc420f90d604f4531fd8b5c42c0889575949dd8b5feb5b8fd5829",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260803133000_fix_fixture_policy_runtime_permissions.sql",
+    "expected": "be2cb372084d81f70e9d61dc50de1cb25a69f4612ff2b387f83bc0cb0ef0aae9",
+    "actual": "be2cb372084d81f70e9d61dc50de1cb25a69f4612ff2b387f83bc0cb0ef0aae9",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260804100000_marketplace_automatic_settlement_policy.sql",
+    "expected": "e482c977a5b2d8b0f80c5c22289f0dbb8673ed14ef336cd4b1f8244a037c2dff",
+    "actual": "e482c977a5b2d8b0f80c5c22289f0dbb8673ed14ef336cd4b1f8244a037c2dff",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260804110000_marketplace_affiliate_offer_management.sql",
+    "expected": "4fc641184a38f1901937e0d9fd4471857de3b8436fddad02781870c0930da876",
+    "actual": "4fc641184a38f1901937e0d9fd4471857de3b8436fddad02781870c0930da876",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260804120000_marketplace_shipping_disputes_scheduler.sql",
+    "expected": "5d42f88f9388d38acdab8b57c59449673b523a7cf2a6e819470b2736a52690c1",
+    "actual": "5d42f88f9388d38acdab8b57c59449673b523a7cf2a6e819470b2736a52690c1",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260804121000_pay_frozen_marketplace_shipping.sql",
+    "expected": "7ed7a4a4b4a26102822af9cfb7f00a9a43717a6e5fcf95c46691fd0ee44a6591",
+    "actual": "7ed7a4a4b4a26102822af9cfb7f00a9a43717a6e5fcf95c46691fd0ee44a6591",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260804122000_fix_marketplace_settlement_cron_claim.sql",
+    "expected": "24a6c8ea1cd13a89c056a1f89aeab6dffc8f4033fe90e4d40ecf5f8df0c7ac2c",
+    "actual": "24a6c8ea1cd13a89c056a1f89aeab6dffc8f4033fe90e4d40ecf5f8df0c7ac2c",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260805100000_unblock_marketplace_product_publication.sql",
+    "expected": "6457e6361c9334b0601037ec748fd60ef4dc0834c8eb495b1da11dec60516d07",
+    "actual": "6457e6361c9334b0601037ec748fd60ef4dc0834c8eb495b1da11dec60516d07",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260805101000_allow_seller_private_product_configuration_read.sql",
+    "expected": "286489d095bb45d3bbc59a962683923d7b310faf3e7c6927cfac71498bde2656",
+    "actual": "286489d095bb45d3bbc59a962683923d7b310faf3e7c6927cfac71498bde2656",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260805102000_restore_seller_product_list.sql",
+    "expected": "5a9cdc633b45b2e2e44e30d168e5a5da3d85837b5b836c3e1d978cdc2f48c721",
+    "actual": "5a9cdc633b45b2e2e44e30d168e5a5da3d85837b5b836c3e1d978cdc2f48c721",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260806100000_held_marketplace_dispute_refunds.sql",
+    "expected": "b3177d1aee24782c0a57b12d5e2068c6aa87a2a2dabe737fb3e0bb7a7765c9f2",
+    "actual": "b3177d1aee24782c0a57b12d5e2068c6aa87a2a2dabe737fb3e0bb7a7765c9f2",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260806101000_allow_marketplace_payment_refund_transition.sql",
+    "expected": "fd93a44f592ea9c3e2492c80fdbdce03664bdb8837d516bec48ebc77c8e25d42",
+    "actual": "fd93a44f592ea9c3e2492c80fdbdce03664bdb8837d516bec48ebc77c8e25d42",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260806102000_allow_dispute_resolution_order_event.sql",
+    "expected": "df81235348b29d464a8468dbda5466594aadccd03a287ee6da922719ad3ad06a",
+    "actual": "df81235348b29d464a8468dbda5466594aadccd03a287ee6da922719ad3ad06a",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260806103000_expose_marketplace_dispute_outcome.sql",
+    "expected": "d2da99a549cbc2a0e5b45a4dbdedc171c8a38a98176bd03fe9f0a0699e4f87c4",
+    "actual": "d2da99a549cbc2a0e5b45a4dbdedc171c8a38a98176bd03fe9f0a0699e4f87c4",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260806110000_fix_dispute_review_release_semantics.sql",
+    "expected": "3733806e14b15ad076cc4f8d0a229d905b15adc2659973752ade41067520c202",
+    "actual": "3733806e14b15ad076cc4f8d0a229d905b15adc2659973752ade41067520c202",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260806111000_record_marketplace_settlement_release_actor.sql",
+    "expected": "b99ac27eb233113c30f6039a5cf08e95925268cbea47ef1773dc0e10d9c02965",
+    "actual": "b99ac27eb233113c30f6039a5cf08e95925268cbea47ef1773dc0e10d9c02965",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260806112000_allow_authorized_dispute_settlement_release.sql",
+    "expected": "b00847d6d487aea2d2f45c1bdb8a417b3e66217adc0d0d24f91f6d40fe54adde",
+    "actual": "b00847d6d487aea2d2f45c1bdb8a417b3e66217adc0d0d24f91f6d40fe54adde",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260806120000_enforce_explicit_marketplace_shipping.sql",
+    "expected": "2e277d4a1c68904521e45d160c52a52aa27b3b2fb4a8536b8b78e5c6a22ba213",
+    "actual": "2e277d4a1c68904521e45d160c52a52aa27b3b2fb4a8536b8b78e5c6a22ba213",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260807100000_complete_marketplace_shipping_quote_lifecycle.sql",
+    "expected": "bad94b333236e5b6d1da30d27511a5c2349d2d43153a2f2e16838fe293724368",
+    "actual": "bad94b333236e5b6d1da30d27511a5c2349d2d43153a2f2e16838fe293724368",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260807110000_allow_empty_marketplace_shipping_destinations.sql",
+    "expected": "1737a7e64a7198b78247097a86b0d9b7c948f5ac0bbfb63149f2291276dc8a12",
+    "actual": "1737a7e64a7198b78247097a86b0d9b7c948f5ac0bbfb63149f2291276dc8a12",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260807120000_preserve_marketplace_shipping_statuses.sql",
+    "expected": "4a7a71c0c9808dbe8f70e644854d67d09827591fbcb993c0eafe69d48aa9391d",
+    "actual": "4a7a71c0c9808dbe8f70e644854d67d09827591fbcb993c0eafe69d48aa9391d",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260808100000_archive_historical_marketplace_shipping_rules.sql",
+    "expected": "60c635a34dad4e1772ef99e847ed6d194599174ec31f24ae4eef78c8cb155919",
+    "actual": "60c635a34dad4e1772ef99e847ed6d194599174ec31f24ae4eef78c8cb155919",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260808110000_marketplace_product_publishing_v2.sql",
+    "expected": "a46df0583b741910eba960e74e93e7100ef6c5cbf81cabf9e013110dda801f18",
+    "actual": "a46df0583b741910eba960e74e93e7100ef6c5cbf81cabf9e013110dda801f18",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260808120000_add_seller_product_readiness_projection.sql",
+    "expected": "0fc0c0f8c5556ca2368978262a8213671974fc0e2ef5f6456152cdf74e463a0e",
+    "actual": "0fc0c0f8c5556ca2368978262a8213671974fc0e2ef5f6456152cdf74e463a0e",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260808130000_persist_marketplace_product_editor_state.sql",
+    "expected": "1bf6334535ee2427e1347c106aa2e4bfab94b570066404f58854fc5039fa9dc4",
+    "actual": "1bf6334535ee2427e1347c106aa2e4bfab94b570066404f58854fc5039fa9dc4",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260808150000_expose_public_marketplace_product_media.sql",
+    "expected": "5776c5836d2afddb71e8508195db904ebe376d302a2a1ed81bd415bd4172cfb3",
+    "actual": "5776c5836d2afddb71e8508195db904ebe376d302a2a1ed81bd415bd4172cfb3",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260808170000_marketplace_commerce_analytics_foundation.sql",
+    "expected": "65a102095c381d482abdeda86fae2043ea26fb1a92da64742eb812fcc48294fd",
+    "actual": "65a102095c381d482abdeda86fae2043ea26fb1a92da64742eb812fcc48294fd",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260808171000_marketplace_analytics_anonymous_sessions.sql",
+    "expected": "9b983524d712c1f66bf8650e0742148644146c933d81c6b34034e24cfbce2290",
+    "actual": "9b983524d712c1f66bf8650e0742148644146c933d81c6b34034e24cfbce2290",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260808172000_marketplace_variant_analytics_projection.sql",
+    "expected": "ac566939aef86256740e13fb8702fc52b53093d5add5c9d2df45d7cfc802c457",
+    "actual": "ac566939aef86256740e13fb8702fc52b53093d5add5c9d2df45d7cfc802c457",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260809120000_harden_marketplace_analytics_semantics.sql",
+    "expected": "64e7cfb615993a9d242bf4d83d094ff25337d2036e7585682d38b937f19541da",
+    "actual": "64e7cfb615993a9d242bf4d83d094ff25337d2036e7585682d38b937f19541da",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260809190000_marketplace_promotions_engine_v1.sql",
+    "expected": "bd63c00aebbf1f9e9398e2ce9de64ac1d6fc8be6caa772ac1274b91b5e23cd82",
+    "actual": "bd63c00aebbf1f9e9398e2ce9de64ac1d6fc8be6caa772ac1274b91b5e23cd82",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260809200000_harden_marketplace_promotion_snapshots.sql",
+    "expected": "0ba457f5b13316ea486f974da45f6bdc7eebe7372343227da3d69d6add7b5314",
+    "actual": "0ba457f5b13316ea486f974da45f6bdc7eebe7372343227da3d69d6add7b5314",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260809210000_finalize_marketplace_promotion_idempotency.sql",
+    "expected": "aaa5d63929cd89e0fc4422625ef46afa102e5173ad492d5b4d04d4d168fc8e19",
+    "actual": "aaa5d63929cd89e0fc4422625ef46afa102e5173ad492d5b4d04d4d168fc8e19",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260810100000_marketplace_ads_financial_authority.sql",
+    "expected": "da7e249ab498879bfd115e875f9f224349e8f51a978fe71ed91abaa51bac21a0",
+    "actual": "da7e249ab498879bfd115e875f9f224349e8f51a978fe71ed91abaa51bac21a0",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260810110000_harden_marketplace_ads_reconciliation.sql",
+    "expected": "20b4d163f845b3615cbda2fb811e43be835099d88660f9db007716d8cde97143",
+    "actual": "20b4d163f845b3615cbda2fb811e43be835099d88660f9db007716d8cde97143",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260810120000_complete_marketplace_ads_financial_audit.sql",
+    "expected": "3f3d4323b5c0d7ccd956653de84a7422e35223daa737dc593ac345b69c43ad09",
+    "actual": "3f3d4323b5c0d7ccd956653de84a7422e35223daa737dc593ac345b69c43ad09",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260810130000_marketplace_ads_delivery_eligibility_clock.sql",
+    "expected": "7eb72f90c230d73b86319eab699838b42cb89fbdb9ab3e608ff0a7acb1d88f0e",
+    "actual": "7eb72f90c230d73b86319eab699838b42cb89fbdb9ab3e608ff0a7acb1d88f0e",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260810140000_complete_marketplace_ads_eligibility_transitions.sql",
+    "expected": "baab083516ca0920840e78edb7972e0ce385c952945d6fc21bffe376d7a738eb",
+    "actual": "baab083516ca0920840e78edb7972e0ce385c952945d6fc21bffe376d7a738eb",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260810150000_expiry_safe_marketplace_ads_finalization.sql",
+    "expected": "38524cac8f5b96dceaf848e5bcd7b1b2f1500614be97a5ef975e9aeed9131889",
+    "actual": "38524cac8f5b96dceaf848e5bcd7b1b2f1500614be97a5ef975e9aeed9131889",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260810160000_marketplace_ads_delivery_events_attribution.sql",
+    "expected": "2e286576bf349faa2b475f3cfd49569e50170ae9eb99de150ec0b44a1f1c2ea4",
+    "actual": "2e286576bf349faa2b475f3cfd49569e50170ae9eb99de150ec0b44a1f1c2ea4",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260810170000_harden_marketplace_ads_delivery_attribution.sql",
+    "expected": "cf5ee73492cb275e5a70e817d8bf3d0adf4558264b3220913afa0db84c083e50",
+    "actual": "cf5ee73492cb275e5a70e817d8bf3d0adf4558264b3220913afa0db84c083e50",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260810180000_marketplace_post_settlement_reversal_authority.sql",
+    "expected": "7572f0f3b5446f9c438baccb9384666ea59fd301ce72f183d06cd7962e36b7f7",
+    "actual": "7572f0f3b5446f9c438baccb9384666ea59fd301ce72f183d06cd7962e36b7f7",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811010000_marketplace_multi_creator_allocation_authority.sql",
+    "expected": "73ce07a7185a954d9087625591b6418a71672a9c9b71ebf53686c34e8b416d75",
+    "actual": "73ce07a7185a954d9087625591b6418a71672a9c9b71ebf53686c34e8b416d75",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811020000_marketplace_creator_commerce_authority.sql",
+    "expected": "7fb7112a3cf3e18faab85d3717bfafc1a7d7d7041e824c33807c40f53bb5d68e",
+    "actual": "7fb7112a3cf3e18faab85d3717bfafc1a7d7d7041e824c33807c40f53bb5d68e",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811021000_marketplace_creator_commerce_reconciliation_scope.sql",
+    "expected": "e5d3af53c697b3d192dbacaedd31c55c9ddcec9a0cbe9dfb61c33764db84ef03",
+    "actual": "e5d3af53c697b3d192dbacaedd31c55c9ddcec9a0cbe9dfb61c33764db84ef03",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811022000_marketplace_creator_product_showcase.sql",
+    "expected": "916da8d83d3f598ec98134b2d3ee29da4ba7f926798225ad935603d3e31e0abd",
+    "actual": "916da8d83d3f598ec98134b2d3ee29da4ba7f926798225ad935603d3e31e0abd",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811023000_harden_marketplace_creator_showcase_capacity.sql",
+    "expected": "69b85293111430f64137834e9c3f486a15a13f68a26a7954242fa79a16580387",
+    "actual": "69b85293111430f64137834e9c3f486a15a13f68a26a7954242fa79a16580387",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811024000_marketplace_creator_content_product_tags.sql",
+    "expected": "edee99338d89d7560a1838c1189feb7d7bb4dab12875bb113ae82186dc7d3d22",
+    "actual": "edee99338d89d7560a1838c1189feb7d7bb4dab12875bb113ae82186dc7d3d22",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811025000_marketplace_creator_commerce_analytics.sql",
+    "expected": "7cec07a63985bcbd2dc0c2fded2aca99a74fd5bfa9918e39fbd774d8cc64a6e4",
+    "actual": "7cec07a63985bcbd2dc0c2fded2aca99a74fd5bfa9918e39fbd774d8cc64a6e4",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811025100_scope_marketplace_creator_analytics_history.sql",
+    "expected": "76688315f425a1b460be0ca52086ecb124299fac3c9aeb1ffac54fe60a053d3c",
+    "actual": "76688315f425a1b460be0ca52086ecb124299fac3c9aeb1ffac54fe60a053d3c",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811026000_marketplace_live_creator_commerce_v2.sql",
+    "expected": "dd4ddb94218de1715095dd148be339ee15886bdbc0b0c0919098264fa6bd7f1a",
+    "actual": "dd4ddb94218de1715095dd148be339ee15886bdbc0b0c0919098264fa6bd7f1a",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811027000_marketplace_admin_identity_hardening.sql",
+    "expected": "3b403f09a104fe8a365678f53512932648bd8daa3cdfb13a7749e4984ee00bff",
+    "actual": "3b403f09a104fe8a365678f53512932648bd8daa3cdfb13a7749e4984ee00bff",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811028000_marketplace_admin_web_foundation.sql",
+    "expected": "7296e25bdec68fda0e2013952cded97ae3e5d30129ec798265d71bacdb213723",
+    "actual": "7296e25bdec68fda0e2013952cded97ae3e5d30129ec798265d71bacdb213723",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811029000_marketplace_admin_operations_core.sql",
+    "expected": "286586411ed91434692ad0503e804036b712820e8b0aaa043d7a9a6018bd3d39",
+    "actual": "286586411ed91434692ad0503e804036b712820e8b0aaa043d7a9a6018bd3d39",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811030000_marketplace_admin_operations_closure.sql",
+    "expected": "bc7acdaae0f7320fdcea3b66c5e6d9934215590b15d20be23aded4a6ea2f8027",
+    "actual": "bc7acdaae0f7320fdcea3b66c5e6d9934215590b15d20be23aded4a6ea2f8027",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811031000_marketplace_admin_intelligence_ops.sql",
+    "expected": "0ec2b2fb97d57a74110c1c38c4917bd4d94d32956030ff1bd82d0cf3e2787f75",
+    "actual": "0ec2b2fb97d57a74110c1c38c4917bd4d94d32956030ff1bd82d0cf3e2787f75",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811032000_marketplace_admin_intelligence_closure.sql",
+    "expected": "b1d77e0707976dbe87f6d0a48ff17d3aae92d38f1b34364e7e000c0f9fbab293",
+    "actual": "b1d77e0707976dbe87f6d0a48ff17d3aae92d38f1b34364e7e000c0f9fbab293",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811033000_marketplace_production_hardening.sql",
+    "expected": "e15a9745a2ff820ccd120aaef6818fa1b7fa15f645cd9e2bf54667fa3fb05162",
+    "actual": "e15a9745a2ff820ccd120aaef6818fa1b7fa15f645cd9e2bf54667fa3fb05162",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260811034000_marketplace_verified_reviews_branding.sql",
+    "expected": "714a154fc2f011c965abf78324395bca4d154305da635864e053197f7957daad",
+    "actual": "714a154fc2f011c965abf78324395bca4d154305da635864e053197f7957daad",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260816010000_marketplace_admin_dispute_resolution_authority.sql",
+    "expected": "c8ac6e6e103a2189bdb8524888436d8c7337c18ef52d7e9fd92023722c4dd015",
+    "actual": "c8ac6e6e103a2189bdb8524888436d8c7337c18ef52d7e9fd92023722c4dd015",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260816020000_marketplace_buyer_purchase_history.sql",
+    "expected": "60cf9bd3ce90f3c3fb29db02a776ff95092a55d2167e58f41158abfc0157aca1",
+    "actual": "60cf9bd3ce90f3c3fb29db02a776ff95092a55d2167e58f41158abfc0157aca1",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260816021000_fix_marketplace_buyer_purchase_history_paid_evidence.sql",
+    "expected": "9dccfe2739b618c9a3e8fb80d04294fe47e28c9a5716431f84f90908313a68fd",
+    "actual": "9dccfe2739b618c9a3e8fb80d04294fe47e28c9a5716431f84f90908313a68fd",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260816022000_marketplace_seller_purchase_history.sql",
+    "expected": "9f5858773a513488222b0c9f5e4e2a51d75de6723ef05bed5131fba4e3786cab",
+    "actual": "9f5858773a513488222b0c9f5e4e2a51d75de6723ef05bed5131fba4e3786cab",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260817011224_harden_financial_security_definer_functions.sql",
+    "expected": "282abc255d001ed4492e70701b156ce5f32c697ed05632daac437decdb4d90ad",
+    "actual": "282abc255d001ed4492e70701b156ce5f32c697ed05632daac437decdb4d90ad",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260817011718_harden_buyer_financial_exposure.sql",
+    "expected": "0c9baf5dae7cbc0f88ad367548183c105c24d3c4371d1dd80960c8126db37a39",
+    "actual": "0c9baf5dae7cbc0f88ad367548183c105c24d3c4371d1dd80960c8126db37a39",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260820010000_fix_marketplace_checkout_order_image_snapshot.sql",
+    "expected": "6c56c4cb0762b903493c0daa9ccba7dd08f2f5f51c4454980d0a315764983ca6",
+    "actual": "6c56c4cb0762b903493c0daa9ccba7dd08f2f5f51c4454980d0a315764983ca6",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260821010000_marketplace_buyer_dispute_evidence_r1a.sql",
+    "expected": "4286cdf7c57c8ab0f9e6075213e523fd45b047b713bf891b0f1221f6f177861b",
+    "actual": "4286cdf7c57c8ab0f9e6075213e523fd45b047b713bf891b0f1221f6f177861b",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260821020000_marketplace_seller_dispute_defense_r1b.sql",
+    "expected": "bac9c2d28077b8838dd2c76295986e44cf12d0d5971693d52477946cf999a327",
+    "actual": "bac9c2d28077b8838dd2c76295986e44cf12d0d5971693d52477946cf999a327",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260822010000_marketplace_admin_dispute_evidence_r1c.sql",
+    "expected": "08e3a459c48493907f8e461752cddb1dfc4179c911e2f6ea1f85510e9d22195f",
+    "actual": "08e3a459c48493907f8e461752cddb1dfc4179c911e2f6ea1f85510e9d22195f",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260822020000_marketplace_post_reject_release_r1c_f1.sql",
+    "expected": "2c77cf9d7cfdbe31b5902e5941898b046e8749718cca2ef88656c88729648880",
+    "actual": "2c77cf9d7cfdbe31b5902e5941898b046e8749718cca2ef88656c88729648880",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260822030000_marketplace_admin_settlement_reconciliation_r1c_f1a.sql",
+    "expected": "2d5b30e38538c3632b1eace7f9a77f43ec0d1f5ccff183ad0a7c648137f422b0",
+    "actual": "2d5b30e38538c3632b1eace7f9a77f43ec0d1f5ccff183ad0a7c648137f422b0",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260822040000_marketplace_admin_release_readback_r1c_f1b.sql",
+    "expected": "e3624b394a987e8273b7f08f4ead1ef2d37c19c15ec3acdd61f765b06c7f1612",
+    "actual": "e3624b394a987e8273b7f08f4ead1ef2d37c19c15ec3acdd61f765b06c7f1612",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260822154610_marketplace_seller_dispute_awareness_r1c_f1c1.sql",
+    "expected": "14e5038be50b33081ee4e83f53e5419f47933dd6784404746c5e12bc2a2f9f86",
+    "actual": "14e5038be50b33081ee4e83f53e5419f47933dd6784404746c5e12bc2a2f9f86",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260822165852_marketplace_post_settlement_returns_r2a.sql",
+    "expected": "8e3a614536174ac772c8742655212d46ff660584f25a00a8b936703ba6bc2a12",
+    "actual": "8e3a614536174ac772c8742655212d46ff660584f25a00a8b936703ba6bc2a12",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260822221008_marketplace_post_settlement_delivery_ack_r2a_f1.sql",
+    "expected": "a43592901ab565b3d699051bbb5c84fb9f520afbaa45143eba06e9371aeb7deb",
+    "actual": "a43592901ab565b3d699051bbb5c84fb9f520afbaa45143eba06e9371aeb7deb",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260822231419_marketplace_seller_return_awareness_r2a_f2.sql",
+    "expected": "60063179910dec71e0bfe68fc4ca2e2a52e9684d1e49e735b20fa877d04574ad",
+    "actual": "60063179910dec71e0bfe68fc4ca2e2a52e9684d1e49e735b20fa877d04574ad",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260823010220_marketplace_return_reverse_escrow_r2b1.sql",
+    "expected": "322d9560d1f479776c7f63db85ac0b4305c2aee0e21c8dca9c7c4885b87b6d81",
+    "actual": "322d9560d1f479776c7f63db85ac0b4305c2aee0e21c8dca9c7c4885b87b6d81",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260823023725_marketplace_return_shipping_r2b2.sql",
+    "expected": "7907c114fa05dcd174fad9cacb5040899962bb92bb39bbef31bba6fa476c4da4",
+    "actual": "7907c114fa05dcd174fad9cacb5040899962bb92bb39bbef31bba6fa476c4da4",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260823042737_marketplace_return_label_and_keep_item_refund_r2b3.sql",
+    "expected": "ef22d080ca8187a82033a3eb0185eb3b86d938269f3d972996dd34d698a8e19d",
+    "actual": "ef22d080ca8187a82033a3eb0185eb3b86d938269f3d972996dd34d698a8e19d",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260823043212_marketplace_return_legacy_shipment_reconciliation_r2b3_f1.sql",
+    "expected": "0678f24a115d3d2b6a99c29d5601d29d4aaaf059c41fadbd6dc2fda088df6224",
+    "actual": "0678f24a115d3d2b6a99c29d5601d29d4aaaf059c41fadbd6dc2fda088df6224",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260823055013_marketplace_return_received_refund_r2b4.sql",
+    "expected": "3ea57140584f8f0e93455a957b8ec661b0319227122c275e494dfb116e851556",
+    "actual": "3ea57140584f8f0e93455a957b8ec661b0319227122c275e494dfb116e851556",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260823161526_marketplace_return_seller_attention_r2b4_f1.sql",
+    "expected": "a0fbd0852c3fc7ddb91e03695d67805aa3d9a687f5b82f44e7068c2f13d56784",
+    "actual": "a0fbd0852c3fc7ddb91e03695d67805aa3d9a687f5b82f44e7068c2f13d56784",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260823175849_marketplace_refund_reconciliation_r2b4_f3.sql",
+    "expected": "1d5e576cdee0426140bc9a82ba727a4377041fcbd169b4a3cddfa08c0836ff3c",
+    "actual": "1d5e576cdee0426140bc9a82ba727a4377041fcbd169b4a3cddfa08c0836ff3c",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260823223420_live_lb1_canonical_authority.sql",
+    "expected": "3bf38a499b3e57f159ec3e937ea67c95ac09c7b8f99a36113ece827b0b7c8d1b",
+    "actual": "3bf38a499b3e57f159ec3e937ea67c95ac09c7b8f99a36113ece827b0b7c8d1b",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260824014644_live_lb1_fix_agora_uid_lint.sql",
+    "expected": "f959c6d026793fea8e3a1f671c3b89e4ad677e809de6965e9d64c99ee9cec6ea",
+    "actual": "f959c6d026793fea8e3a1f671c3b89e4ad677e809de6965e9d64c99ee9cec6ea",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260824025639_live_battles_lb2_state_machine.sql",
+    "expected": "81740478f548a0866725b08c5f8853cb2f6cc3ce497bc5d2ca64bd5678898e56",
+    "actual": "81740478f548a0866725b08c5f8853cb2f6cc3ce497bc5d2ca64bd5678898e56",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260824034049_live_battles_lb2_f1_session_liveness.sql",
+    "expected": "3b7a30a2e4a2f843d25cab688dc066e2e5920111f03f0db5b4626e50ae8137af",
+    "actual": "3b7a30a2e4a2f843d25cab688dc066e2e5920111f03f0db5b4626e50ae8137af",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260826043828_live_battles_lb4_f3_spectator_projection.sql",
+    "expected": "dec7f9c3d925bdc0b842c69013231fe40d034ef061ab5ac3ea1962cb8f1131d9",
+    "actual": "dec7f9c3d925bdc0b842c69013231fe40d034ef061ab5ac3ea1962cb8f1131d9",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260826115337_live_battles_lb4_f3_f1_realtime_delete_clock.sql",
+    "expected": "860685ff6982ec2a5b32e1a81713fde8809baac058c33b8d76688972730ef795",
+    "actual": "860685ff6982ec2a5b32e1a81713fde8809baac058c33b8d76688972730ef795",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260827012913_live_battles_lb4_f3_f2_snapshot_contract.sql",
+    "expected": "9cf43c3d095e5cc86a15b91bbf284327184e1ec8e136fc3718889eea248fad1b",
+    "actual": "9cf43c3d095e5cc86a15b91bbf284327184e1ec8e136fc3718889eea248fad1b",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260829054911_live_battles_lb4_f3_f3_stale_lifecycle.sql",
+    "expected": "073857375cde4a7fb641d565a033809fc32b1431f319dc510e5070d9ecdf32d9",
+    "actual": "073857375cde4a7fb641d565a033809fc32b1431f319dc510e5070d9ecdf32d9",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260829142317_live_battles_lb4_f3_f3_f1_accepted_lifecycle.sql",
+    "expected": "024989d6a5f16be79e5725dfd3f375d334340c234ee7d536ec7ec0ad60b85f43",
+    "actual": "024989d6a5f16be79e5725dfd3f375d334340c234ee7d536ec7ec0ad60b85f43",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260829150940_live_battles_lb4_f3_f3_f1_f1_cancellation_authority.sql",
+    "expected": "e1300f80737631582cf389ecb4feee66f8f9c94cad29f87299404f801dacdcfb",
+    "actual": "e1300f80737631582cf389ecb4feee66f8f9c94cad29f87299404f801dacdcfb",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260829161856_live_battles_lb4_f3_f3_f1_f2_transition_plan.sql",
+    "expected": "c52cca7fc67fcf1ede791faa1edd00e49a4166d351c46ff98adf839a1a35122c",
+    "actual": "c52cca7fc67fcf1ede791faa1edd00e49a4166d351c46ff98adf839a1a35122c",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260829225002_live_battles_lb4_f4a_directed_gifts.sql",
+    "expected": "0c05c90f5b6d59594ae90f842ce660f2eb27e85ef73527d05dfc289de10b3edc",
+    "actual": "0c05c90f5b6d59594ae90f842ce660f2eb27e85ef73527d05dfc289de10b3edc",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260830030845_live_battles_lb4_f4b_score_outcome.sql",
+    "expected": "d648e27afd9da4f19fd53cb5d29e3cffe9797dceaee52fe8908381a3039019ef",
+    "actual": "d648e27afd9da4f19fd53cb5d29e3cffe9797dceaee52fe8908381a3039019ef",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260830053531_live_battles_lb4_f4d_a_power_engine.sql",
+    "expected": "3803e2fbcd23e7c63f5cff45e1ff5994b61011f3e3fdf89fa0166bd6efb3ab25",
+    "actual": "3803e2fbcd23e7c63f5cff45e1ff5994b61011f3e3fdf89fa0166bd6efb3ab25",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260830162244_live_battles_lb4_f4d_b_power_projection.sql",
+    "expected": "60955601e14619f34e71c0ccc782a109530e76cbe63f14cacb1db6b34f660dd6",
+    "actual": "60955601e14619f34e71c0ccc782a109530e76cbe63f14cacb1db6b34f660dd6",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql",
+    "expected": "f5cd23b73c943ce15c5dddbbf35ed9200e0ae8ef10af883d08ecd67c7a423d17",
+    "actual": "f5cd23b73c943ce15c5dddbbf35ed9200e0ae8ef10af883d08ecd67c7a423d17",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260831023739_live_battles_lb4_f5_a_rematch_series_authority.sql",
+    "expected": "5ca7cb6a284a40fba7886ff8f31fbf64e888d1a20a8694f01177d00fe970de45",
+    "actual": "5ca7cb6a284a40fba7886ff8f31fbf64e888d1a20a8694f01177d00fe970de45",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260901201459_live_battles_lb4_f5_a_c3_active_series_leave.sql",
+    "expected": "64b94397de5a7f31449f6a025eb458a41b35f0e936b23eeb79ae379e0b7751bd",
+    "actual": "64b94397de5a7f31449f6a025eb458a41b35f0e936b23eeb79ae379e0b7751bd",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260901211549_live_battles_lb4_f5_a_c3_c1_bounded_leave_retry.sql",
+    "expected": "1da58dbf6ab85c5953c227d6cc2b2904bc4346a58ff5ca58054b010000bb5237",
+    "actual": "1da58dbf6ab85c5953c227d6cc2b2904bc4346a58ff5ca58054b010000bb5237",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260901231742_live_battles_lb4_f5_a_c3_c1_c1_strict_leave_lock_budget.sql",
+    "expected": "dc1e075772ae152cd27cba7707efa263fe7ab3510e32a1bed2aa95278fae96f9",
+    "actual": "dc1e075772ae152cd27cba7707efa263fe7ab3510e32a1bed2aa95278fae96f9",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260902025229_live_battles_lb4_f5_a_c3_c1_c1_c1_lock_mode_boundary.sql",
+    "expected": "38e169c397438bedb9f80deb7fbd231aca30fe19c5a4d2af87e88a684d25f663",
+    "actual": "38e169c397438bedb9f80deb7fbd231aca30fe19c5a4d2af87e88a684d25f663",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql",
+    "expected": "8adfe6b93e1164dd53242523a3e5b3096e71f5e1ab8869d49c7e2e628c629dbf",
+    "actual": "8adfe6b93e1164dd53242523a3e5b3096e71f5e1ab8869d49c7e2e628c629dbf",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260905230823_live_gift_platform_commission_35.sql",
+    "expected": "63a1baa0a7ae9c29c55caa08ffc3a3bb1fa1f9ab5d806d3094ebc295a3058d89",
+    "actual": "63a1baa0a7ae9c29c55caa08ffc3a3bb1fa1f9ab5d806d3094ebc295a3058d89",
+    "unchanged": true
+  },
+  {
+    "file": "supabase/migrations/20260906053652_live_battle_gift_like_scoring.sql",
+    "expected": "f13de76bb393f7c6e0784badffe9f33c11d7093e689b1dda9e1f4f4d5037a160",
+    "actual": "f13de76bb393f7c6e0784badffe9f33c11d7093e689b1dda9e1f4f4d5037a160",
+    "unchanged": true
+  }
+]

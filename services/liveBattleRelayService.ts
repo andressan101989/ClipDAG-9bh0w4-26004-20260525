@@ -18,6 +18,10 @@ export class LiveBattleRelayService {
     void engine;
   }
 
+  setVisualContinuityHandlers(_handlers: { onReconfigure?: () => void; onStopped?: () => void }): void {
+    // Non-native platforms have no relay or native video transition.
+  }
+
   getSnapshot(): LiveBattleRelaySnapshot {
     return { ...IDLE_SNAPSHOT };
   }

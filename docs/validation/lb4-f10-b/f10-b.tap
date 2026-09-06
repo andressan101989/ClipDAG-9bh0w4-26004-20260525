@@ -1,0 +1,262 @@
+TAP version 13
+# Subtest: RED terminal authority removes the completed Stage for both screens
+ok 1 - RED terminal authority removes the completed Stage for both screens
+  ---
+  duration_ms: 1.344
+  type: 'test'
+  ...
+# Subtest: RED controlled relay update retains the expected remote surface on offline reason zero
+ok 2 - RED controlled relay update retains the expected remote surface on offline reason zero
+  ---
+  duration_ms: 24.9794
+  type: 'test'
+  ...
+# Subtest: RED freshly authorized same route reuses sufficient active credentials across logical Battles
+ok 3 - RED freshly authorized same route reuses sufficient active credentials across logical Battles
+  ---
+  duration_ms: 53.823
+  type: 'test'
+  ...
+# Subtest: initial and duplicate starts have one SDK call and one native handler
+ok 4 - initial and duplicate starts have one SDK call and one native handler
+  ---
+  duration_ms: 39.9921
+  type: 'test'
+  ...
+# Subtest: channel requires native reauthorization
+ok 5 - channel requires native reauthorization
+  ---
+  duration_ms: 33.8527
+  type: 'test'
+  ...
+# Subtest: uid requires native reauthorization
+ok 6 - uid requires native reauthorization
+  ---
+  duration_ms: 34.5183
+  type: 'test'
+  ...
+# Subtest: near expiry requires native reauthorization
+ok 7 - near expiry requires native reauthorization
+  ---
+  duration_ms: 31.1066
+  type: 'test'
+  ...
+# Subtest: expired requires native reauthorization
+ok 8 - expired requires native reauthorization
+  ---
+  duration_ms: 25.449
+  type: 'test'
+  ...
+# Subtest: disconnected requires native reauthorization
+ok 9 - disconnected requires native reauthorization
+  ---
+  duration_ms: 29.5871
+  type: 'test'
+  ...
+# Subtest: a reconnect followed by connected invalidates the previous credential reuse
+ok 10 - a reconnect followed by connected invalidates the previous credential reuse
+  ---
+  duration_ms: 29.2257
+  type: 'test'
+  ...
+# Subtest: short post-round credentials cannot cover the next full round
+ok 11 - short post-round credentials cannot cover the next full round
+  ---
+  duration_ms: 21.6409
+  type: 'test'
+  ...
+# Subtest: a sufficient recent refresh avoids a second native reconfiguration on transition
+ok 12 - a sufficient recent refresh avoids a second native reconfiguration on transition
+  ---
+  duration_ms: 19.3833
+  type: 'test'
+  ...
+# Subtest: reuse does not reset the expiry or retain an obsolete logical callback
+ok 13 - reuse does not reset the expiry or retain an obsolete logical callback
+  ---
+  duration_ms: 53.258
+  type: 'test'
+  ...
+# Subtest: relay development events never contain credentials or full canonical identifiers
+ok 14 - relay development events never contain credentials or full canonical identifiers
+  ---
+  duration_ms: 28.3835
+  type: 'test'
+  ...
+# Subtest: controlled offline/rejoin preserves the real hook UID and cancels all grace handles
+ok 15 - controlled offline/rejoin preserves the real hook UID and cancels all grace handles
+  ---
+  duration_ms: 37.5495
+  type: 'test'
+  ...
+# Subtest: a missing peer expires after exactly the bounded grace interval
+ok 16 - a missing peer expires after exactly the bounded grace interval
+  ---
+  duration_ms: 35.3959
+  type: 'test'
+  ...
+# Subtest: duplicate transition signals cannot extend a missing peer indefinitely
+ok 17 - duplicate transition signals cannot extend a missing peer indefinitely
+  ---
+  duration_ms: 28.893
+  type: 'test'
+  ...
+# Subtest: other UID is removed immediately
+ok 18 - other UID is removed immediately
+  ---
+  duration_ms: 27.0667
+  type: 'test'
+  ...
+# Subtest: real reason is removed immediately
+ok 19 - real reason is removed immediately
+  ---
+  duration_ms: 31.6427
+  type: 'test'
+  ...
+# Subtest: outside transition is removed immediately
+ok 20 - outside transition is removed immediately
+  ---
+  duration_ms: 26.3046
+  type: 'test'
+  ...
+# Subtest: terminal cleanup overrides grace without leaving or releasing the main LIVE
+ok 21 - terminal cleanup overrides grace without leaving or releasing the main LIVE
+  ---
+  duration_ms: 28.5294
+  type: 'test'
+  ...
+# Subtest: session change cancels grace and obsolete callbacks cannot remove a new peer
+ok 22 - session change cancels grace and obsolete callbacks cannot remove a new peer
+  ---
+  duration_ms: 30.8643
+  type: 'test'
+  ...
+# Subtest: unmount and engine release leave zero timer/listener handles
+ok 23 - unmount and engine release leave zero timer/listener handles
+  ---
+  duration_ms: 36.8118
+  type: 'test'
+  ...
+# Subtest: obsolete connection-state callbacks cannot clear a new session transition
+ok 24 - obsolete connection-state callbacks cannot clear a new session transition
+  ---
+  duration_ms: 26.0293
+  type: 'test'
+  ...
+# Subtest: awaiting_rematch stays visible while canonical authority permits it even at local zero
+ok 25 - awaiting_rematch stays visible while canonical authority permits it even at local zero
+  ---
+  duration_ms: 0.1346
+  type: 'test'
+  ...
+# Subtest: rematch_pending stays visible while canonical authority permits it even at local zero
+ok 26 - rematch_pending stays visible while canonical authority permits it even at local zero
+  ---
+  duration_ms: 0.0576
+  type: 'test'
+  ...
+# Subtest: series completed hides the Stage
+ok 27 - series completed hides the Stage
+  ---
+  duration_ms: 0.0897
+  type: 'test'
+  ...
+# Subtest: series cancelled hides the Stage
+ok 28 - series cancelled hides the Stage
+  ---
+  duration_ms: 0.0472
+  type: 'test'
+  ...
+# Subtest: canonical request expired hides the Stage
+ok 29 - canonical request expired hides the Stage
+  ---
+  duration_ms: 0.0817
+  type: 'test'
+  ...
+# Subtest: canonical request rejected hides the Stage
+ok 30 - canonical request rejected hides the Stage
+  ---
+  duration_ms: 0.05
+  type: 'test'
+  ...
+# Subtest: canonical request cancelled hides the Stage
+ok 31 - canonical request cancelled hides the Stage
+  ---
+  duration_ms: 0.0455
+  type: 'test'
+  ...
+# Subtest: late completed-round projection cannot resurrect expired authority; a later Battle can start
+ok 32 - late completed-round projection cannot resurrect expired authority; a later Battle can start
+  ---
+  duration_ms: 0.1509
+  type: 'test'
+  ...
+# Subtest: both screen render gates execute the same authority-aware predicate
+ok 33 - both screen render gates execute the same authority-aware predicate
+  ---
+  duration_ms: 46.8207
+  type: 'test'
+  ...
+# Subtest: the real relay signals the existing UID owner and terminal stop overrides reconfiguration
+ok 34 - the real relay signals the existing UID owner and terminal stop overrides reconfiguration
+  ---
+  duration_ms: 44.7813
+  type: 'test'
+  ...
+# Subtest: deadline only requests authority; terminal series stops once, advances UI authority key and cancels timers
+ok 35 - deadline only requests authority; terminal series stops once, advances UI authority key and cancels timers
+  ---
+  duration_ms: 55.5881
+  type: 'test'
+  ...
+# Subtest: series-only authority change refreshes the existing public projection without recreating runtime
+ok 36 - series-only authority change refreshes the existing public projection without recreating runtime
+  ---
+  duration_ms: 11.6856
+  type: 'test'
+  ...
+# Subtest: existing rematch single-flight and transition gate reject duplicate taps and duplicate next rounds
+ok 37 - existing rematch single-flight and transition gate reject duplicate taps and duplicate next rounds
+  ---
+  duration_ms: 8.58
+  type: 'test'
+  ...
+# Subtest: stop cancels an authorization in flight; its late result cannot revive relay or visual grace
+ok 38 - stop cancels an authorization in flight; its late result cannot revive relay or visual grace
+  ---
+  duration_ms: 20.7208
+  type: 'test'
+  ...
+# Subtest: SDK failure while awaiting new authority prevents reuse of the previously running route
+ok 39 - SDK failure while awaiting new authority prevents reuse of the previously running route
+  ---
+  duration_ms: 18.452
+  type: 'test'
+  ...
+# Subtest: a throwing SDK update stops the previous transport and invalidates visual retention
+ok 40 - a throwing SDK update stops the previous transport and invalidates visual retention
+  ---
+  duration_ms: 18.328
+  type: 'test'
+  ...
+# Subtest: terminal host/viewer render branches contain only the ordinary LIVE surface
+ok 41 - terminal host/viewer render branches contain only the ordinary LIVE surface
+  ---
+  duration_ms: 40.323
+  type: 'test'
+  ...
+# Subtest: terminal null projection clears the last canonical rival without allowing old owners to touch a new session
+ok 42 - terminal null projection clears the last canonical rival without allowing old owners to touch a new session
+  ---
+  duration_ms: 8.9183
+  type: 'test'
+  ...
+1..42
+# tests 42
+# suites 0
+# pass 42
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1729.9126

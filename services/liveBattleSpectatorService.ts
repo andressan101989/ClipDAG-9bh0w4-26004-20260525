@@ -954,7 +954,17 @@ export function subscribeToLiveBattlePublicState(
   };
 }
 
-export function isLiveBattleStageStatus(status: LiveBattlePublicStatus): boolean {
+export function isLiveBattleStageStatus(status: LiveBattlePublicStatus, state?: LiveBattlePublicState): boolean {
+  // Only confirmed projection authority closes the Stage, never a local clock.
+  // Keep the one-argument status predicate compatible with existing consumers.
+  if (state) {
+    if (status === 'cancelled') return false;
+    const series = state.series;
+    if (series?.status === 'completed' || series?.status === 'cancelled') return false;
+    if (series?.rematchRequestStatus === 'rejected'
+      || series?.rematchRequestStatus === 'expired'
+      || series?.rematchRequestStatus === 'cancelled') return false;
+  }
   return status === 'countdown' || status === 'active'
     || status === 'completed' || status === 'cancelled';
 }

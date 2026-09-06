@@ -1,0 +1,160 @@
+TAP version 13
+# Subtest: public active authority wakes a runtime whose initial discovery was empty
+ok 1 - public active authority wakes a runtime whose initial discovery was empty
+  ---
+  duration_ms: 13.916
+  type: 'test'
+  ...
+# Subtest: public completed authority rehydrates the result when open discovery has no rows
+ok 2 - public completed authority rehydrates the result when open discovery has no rows
+  ---
+  duration_ms: 1.8729
+  type: 'test'
+  ...
+# Subtest: public version advance reconciles an existing pending round without a local action
+ok 3 - public version advance reconciles an existing pending round without a local action
+  ---
+  duration_ms: 0.9631
+  type: 'test'
+  ...
+# Subtest: fresh public authority recovers a subscription-suspended eligible runtime
+ok 4 - fresh public authority recovers a subscription-suspended eligible runtime
+  ---
+  duration_ms: 0.9471
+  type: 'test'
+  ...
+# Subtest: duplicate public and realtime signals start only one relay
+ok 5 - duplicate public and realtime signals start only one relay
+  ---
+  duration_ms: 0.874
+  type: 'test'
+  ...
+# Subtest: both hosts reconcile the same authoritative pair from remote signals
+ok 6 - both hosts reconcile the same authoritative pair from remote signals
+  ---
+  duration_ms: 1.1115
+  type: 'test'
+  ...
+# Subtest: a mismatched session is rejected rather than relinked to the active Battle
+ok 7 - a mismatched session is rejected rather than relinked to the active Battle
+  ---
+  duration_ms: 0.9198
+  type: 'test'
+  ...
+# Subtest: late subscription error from an obsolete session cannot suspend the new subscription
+ok 8 - late subscription error from an obsolete session cannot suspend the new subscription
+  ---
+  duration_ms: 1.0979
+  type: 'test'
+  ...
+# Subtest: authoritative completion holds post-round and stops on terminal decision without ending LIVE
+ok 9 - authoritative completion holds post-round and stops on terminal decision without ending LIVE
+  ---
+  duration_ms: 1.423
+  type: 'test'
+  ...
+# Subtest: cleanup removes timers, subscriptions and listeners and ignores a late reconciliation
+ok 10 - cleanup removes timers, subscriptions and listeners and ignores a late reconciliation
+  ---
+  duration_ms: 1.0788
+  type: 'test'
+  ...
+# Subtest: public authority received before join is delivered when the native controller is created
+ok 11 - public authority received before join is delivered when the native controller is created
+  ---
+  duration_ms: 19.7516
+  type: 'test'
+  ...
+# Subtest: stable engine callbacks do not recreate an eligible controller during public clock updates
+ok 12 - stable engine callbacks do not recreate an eligible controller during public clock updates
+  ---
+  duration_ms: 16.7922
+  type: 'test'
+  ...
+# Subtest: context recovery reapplies the current projection even if its object identity is unchanged
+ok 13 - context recovery reapplies the current projection even if its object identity is unchanged
+  ---
+  duration_ms: 16.1543
+  type: 'test'
+  ...
+# Subtest: authoritative runtime completion refreshes the UI snapshot without relying on a second realtime delivery
+ok 14 - authoritative runtime completion refreshes the UI snapshot without relying on a second realtime delivery
+  ---
+  duration_ms: 14.5427
+  type: 'test'
+  ...
+# Subtest: a failed LIVE authority read does not masquerade as an ended session or clear the Battle
+ok 15 - a failed LIVE authority read does not masquerade as an ended session or clear the Battle
+  ---
+  duration_ms: 52.5732
+  type: 'test'
+  ...
+# Subtest: an obsolete poll response cannot mutate the authority of the current session pair
+ok 16 - an obsolete poll response cannot mutate the authority of the current session pair
+  ---
+  duration_ms: 32.5275
+  type: 'test'
+  ...
+# Subtest: both authorized hosts get rematch availability while viewers get only the result
+ok 17 - both authorized hosts get rematch availability while viewers get only the result
+  ---
+  duration_ms: 0.2865
+  type: 'test'
+  ...
+# Subtest: double rematch tap has one flight and one accepted next-round transition
+ok 18 - double rematch tap has one flight and one accepted next-round transition
+  ---
+  duration_ms: 0.3175
+  type: 'test'
+  ...
+# Subtest: reject and expiry are derived from authoritative decisions, never inferred as an accepted rematch
+ok 19 - reject and expiry are derived from authoritative decisions, never inferred as an accepted rematch
+  ---
+  duration_ms: 0.1693
+  type: 'test'
+  ...
+# Subtest: missing remote UID retains both panels and the authoritative countdown/active Stage
+ok 20 - missing remote UID retains both panels and the authoritative countdown/active Stage
+  ---
+  duration_ms: 74.1472
+  type: 'test'
+  ...
+# Subtest: clock expiry alone neither removes Stage nor fabricates a completed round
+ok 21 - clock expiry alone neither removes Stage nor fabricates a completed round
+  ---
+  duration_ms: 85.3291
+  type: 'test'
+  ...
+# Subtest: post-round renders result and real rematch handler for both hosts with touch-safe ancestry
+ok 22 - post-round renders result and real rematch handler for both hosts with touch-safe ancestry
+  ---
+  duration_ms: 109.3945
+  type: 'test'
+  ...
+# Subtest: viewer result has no host rematch or glove controls and pending host request is disabled
+ok 23 - viewer result has no host rematch or glove controls and pending host request is disabled
+  ---
+  duration_ms: 46.0213
+  type: 'test'
+  ...
+# Subtest: unmounted controller ignores a late authority response and creates no relay or timers
+ok 24 - unmounted controller ignores a late authority response and creates no relay or timers
+  ---
+  duration_ms: 11.3946
+  type: 'test'
+  ...
+# Subtest: development runtime diagnostics abbreviate identifiers and are silent in production
+ok 25 - development runtime diagnostics abbreviate identifiers and are silent in production
+  ---
+  duration_ms: 84.8059
+  type: 'test'
+  ...
+1..25
+# tests 25
+# suites 0
+# pass 25
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1373.5519
