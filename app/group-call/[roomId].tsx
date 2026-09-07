@@ -21,6 +21,11 @@ import { useAuth } from '@/hooks/useAuth';
 import { useAgoraEngine } from '@/hooks/useAgoraEngine';
 import { RtcSurfaceView, useridToAgoraUid, isAgoraAvailable } from '@/services/agoraService';
 import { useSafeCallScreenExit } from '@/hooks/useSafeCallScreenExit';
+import {
+  getGroupCallParticipants,
+  joinGroupCall,
+  leaveGroupCall,
+} from '@/services/callSessionService';
 
 const MAX_PARTICIPANTS = 6;
 
@@ -32,13 +37,19 @@ interface Participant {
 }
 
 export default function GroupCallScreen() {
-  const { roomId, creatorId } = useLocalSearchParams<{ roomId: string; creatorId?: string }>();
+  const { roomId, creatorId, conversationId, callType = 'video' } = useLocalSearchParams<{
+    roomId: string; creatorId?: string; conversationId?: string; callType?: 'audio' | 'video';
+  }>();
   const insets   = useSafeAreaInsets();
   const { user } = useAuth();
   const supabase = getSupabaseClient();
 
   const myUid = user?.id ? useridToAgoraUid(user.id) : 0;
   const isCreator = !!user?.id && !!creatorId && user.id === creatorId;
+  const isCanonicalChatCall = Boolean(conversationId);
+  const [authorizedChannel, setAuthorizedChannel] = useState<string | null>(
+    isCanonicalChatCall ? null : (roomId ?? null),
+  );
 
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [showList, setShowList]         = useState(false);
@@ -55,30 +66,66 @@ export default function GroupCallScreen() {
     joined, error, remoteUids,
     isMuted, isCameraOff, localVideoReady, speakerOn,
     join, leave, toggleMute, toggleCamera, switchCamera, toggleSpeaker,
-  } = useAgoraEngine({ channelName: roomId ?? null, uid: myUid, role: 'publisher', profile: 'communication' });
+  } = useAgoraEngine({
+    channelName: authorizedChannel,
+    uid: myUid,
+    role: 'publisher',
+    profile: 'communication',
+    enableVideo: callType !== 'audio',
+    callId: isCanonicalChatCall ? roomId : undefined,
+  });
 
   const leaveRoom = useCallback(async () => {
     if (endedRef.current) return;
     endedRef.current = true;
     await leave();
-    try {
-      await presenceRef.current?.untrack();
-      presenceRef.current?.unsubscribe();
-    } catch { /* ignore */ }
+    if (isCanonicalChatCall && roomId) {
+      await leaveGroupCall(roomId).catch(() => {});
+    } else {
+      try {
+        await presenceRef.current?.untrack();
+        presenceRef.current?.unsubscribe();
+      } catch { /* ignore */ }
+    }
     terminalConfirmedRef.current = true;
     if (mountedRef.current) await exitCallScreenSafely('group_call_ended', true);
-  }, [exitCallScreenSafely, leave, terminalConfirmedRef]);
+  }, [exitCallScreenSafely, isCanonicalChatCall, leave, roomId, terminalConfirmedRef]);
 
   useEffect(() => {
     if (!roomId || !user?.id) return;
 
-    if (isCreator) {
+    if (!isCanonicalChatCall && isCreator) {
       supabase
         .from('group_call_rooms')
         .upsert({ id: roomId, host_id: user.id, status: 'active' })
         .then(({ error }) => {
           if (error) console.warn('[GROUP-CALL] room upsert failed', error);
         });
+    }
+
+    if (isCanonicalChatCall) {
+      let stale = false;
+      void joinGroupCall(roomId).then(session => {
+        if (!stale && mountedRef.current) {
+          setAuthorizedChannel(session.channelName);
+        }
+      }).catch(error => {
+        if (!stale && mountedRef.current) {
+          Alert.alert('Llamada no disponible', error instanceof Error ? error.message : 'No puedes unirte.');
+          void leaveRoom();
+        }
+      });
+      const callChannel = supabase.channel(`chat-group-call:${roomId}`)
+        .on('postgres_changes', {
+          event: 'UPDATE', schema: 'public', table: 'calls', filter: `id=eq.${roomId}`,
+        }, (payload: any) => {
+          if (payload.new?.status !== 'accepted') void leaveRoom();
+        })
+        .subscribe();
+      return () => {
+        stale = true;
+        void callChannel.unsubscribe();
+      };
     }
 
     const roomChannel = supabase.channel(`group-room:${roomId}`)
@@ -91,12 +138,40 @@ export default function GroupCallScreen() {
       .subscribe();
 
     return () => { roomChannel.unsubscribe(); };
-  }, [roomId, user?.id, isCreator, leaveRoom, supabase]);
+  }, [isCanonicalChatCall, isCreator, join, leaveRoom, roomId, supabase, user?.id]);
+
+  useEffect(() => {
+    if (isCanonicalChatCall && authorizedChannel) void join();
+  }, [authorizedChannel, isCanonicalChatCall, join]);
 
   // ── Presence: gate join at MAX_PARTICIPANTS, map uid → username/avatar ────
   useEffect(() => {
     mountedRef.current = true;
     if (!roomId || !user?.id) return;
+
+    if (isCanonicalChatCall) {
+      const refresh = async () => {
+        const rows = await getGroupCallParticipants(roomId).catch(() => []);
+        if (!mountedRef.current) return;
+        setParticipants(rows.filter(row => row.state === 'joined').map(row => ({
+          uid: useridToAgoraUid(row.userId),
+          userId: row.userId,
+          username: row.username || 'Usuario',
+          avatar: row.avatarUrl || '',
+        })));
+      };
+      void refresh();
+      const channel = supabase.channel(`chat-call-participants:${roomId}`)
+        .on('postgres_changes', {
+          event: '*', schema: 'public', table: 'call_participants', filter: `call_id=eq.${roomId}`,
+        }, () => { void refresh(); })
+        .subscribe();
+      presenceRef.current = channel;
+      return () => {
+        mountedRef.current = false;
+        void channel.unsubscribe();
+      };
+    }
 
     const channel = supabase.channel(`group-call:${roomId}`, {
       config: { presence: { key: String(myUid) } },
@@ -131,7 +206,7 @@ export default function GroupCallScreen() {
       mountedRef.current = false;
       channel.unsubscribe();
     };
-  }, [join, myUid, roomId, supabase, user?.avatar, user?.email, user?.id, user?.username]);
+  }, [isCanonicalChatCall, join, myUid, roomId, supabase, user?.avatar, user?.email, user?.id, user?.username]);
 
   // ── Duration timer ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -153,22 +228,23 @@ export default function GroupCallScreen() {
 
   // ── Leave ─────────────────────────────────────────────────────────────────
   const handleEndCall = useCallback(async () => {
-    if (isCreator && roomId) {
+    if (!isCanonicalChatCall && isCreator && roomId) {
       await supabase
         .from('group_call_rooms')
         .update({ status: 'ended', ended_at: new Date().toISOString() })
         .eq('id', roomId);
     }
     await leaveRoom();
-  }, [isCreator, roomId, leaveRoom, supabase]);
+  }, [isCanonicalChatCall, isCreator, roomId, leaveRoom, supabase]);
 
   useEffect(() => () => {
     if (!endedRef.current) {
       endedRef.current = true;
       leave();
+      if (isCanonicalChatCall && roomId) void leaveGroupCall(roomId).catch(() => {});
       try { presenceRef.current?.untrack(); presenceRef.current?.unsubscribe(); } catch { /* ignore */ }
     }
-  }, [leave]);
+  }, [isCanonicalChatCall, leave, roomId]);
 
   const fmt = (s: number) =>
     `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
@@ -273,8 +349,8 @@ export default function GroupCallScreen() {
           onToggleSpeaker={toggleSpeaker}
           onHangup={handleEndCall}
           onSwitchCamera={switchCamera}
-          showCamera
-          showSwitchCamera
+          showCamera={callType !== 'audio'}
+          showSwitchCamera={callType !== 'audio'}
         />
       </View>
 

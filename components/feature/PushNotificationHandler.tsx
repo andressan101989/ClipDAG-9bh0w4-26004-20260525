@@ -75,11 +75,13 @@ interface BannerData {
 type CallRow = {
   id: string;
   caller_id: string;
-  callee_id: string;
+  callee_id: string | null;
   channel_name: string;
   status: string;
   call_type: string;
   expires_at: string | null;
+  call_scope?: 'direct' | 'group';
+  conversation_id?: string | null;
 };
 
 function toStringRecord(data: Notifications.NotificationContent['data']): Record<string, string> | null {
@@ -161,11 +163,33 @@ export function PushNotificationHandler() {
     const supabase = getSupabaseClient();
     const { data: call, error } = await supabase
       .from('calls')
-      .select('id, caller_id, callee_id, channel_name, status, call_type, expires_at')
+      .select('id, caller_id, callee_id, channel_name, status, call_type, expires_at, call_scope, conversation_id')
       .eq('id', callId)
       .maybeSingle<CallRow>();
 
-    if (error || !call || call.callee_id !== user.id) {
+    if (error || !call) {
+      showAlert('Llamada', 'Esta llamada ya termino.');
+      return;
+    }
+
+    if (call.call_scope === 'group') {
+      if (call.status !== 'accepted' || !call.conversation_id) {
+        showAlert('Llamada', 'Esta llamada ya termino.');
+        return;
+      }
+      router.push({
+        pathname: '/group-call/[roomId]',
+        params: {
+          roomId: call.id,
+          conversationId: call.conversation_id,
+          callType: call.call_type === 'audio' ? 'audio' : 'video',
+          creatorId: call.caller_id,
+        },
+      } as any);
+      return;
+    }
+
+    if (call.callee_id !== user.id) {
       showAlert('Llamada', 'Esta llamada ya termino.');
       return;
     }
@@ -200,7 +224,7 @@ export function PushNotificationHandler() {
       callType: call.call_type === 'audio' ? 'audio' : 'video',
       expiresAt: call.expires_at ?? undefined,
     });
-  }, [presentIncomingCall, showAlert, user?.id]);
+  }, [presentIncomingCall, router, showAlert, user?.id]);
 
   const handleNotificationData = useCallback(async (
     notificationId: string,

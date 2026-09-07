@@ -33,6 +33,25 @@ export interface CallTransitionResult {
   status: string;
 }
 
+export interface GroupCallSession {
+  callId: string;
+  conversationId: string;
+  callerId: string;
+  channelName: string;
+  callType: CallType;
+  status: string;
+  createdAt?: string;
+}
+
+export interface GroupCallParticipant {
+  userId: string;
+  state: 'invited' | 'ringing' | 'joined' | 'declined' | 'left';
+  joinedAt: string | null;
+  leftAt: string | null;
+  username: string | null;
+  avatarUrl: string | null;
+}
+
 export interface DeviceDeactivationResult {
   deviceId: string;
   active: boolean;
@@ -212,4 +231,67 @@ export async function deactivateCallDevice(installationId: string): Promise<Devi
   if (error) throw new Error(error.message || 'No se pudo desactivar dispositivo');
   const row = firstRow<any>(data);
   return row?.device_id ? { deviceId: row.device_id, active: Boolean(row.active) } : null;
+}
+
+function mapGroupCall(row: any): GroupCallSession {
+  return {
+    callId: row.call_id,
+    conversationId: row.conversation_id,
+    callerId: row.caller_id ?? '',
+    channelName: row.channel_name,
+    callType: row.call_type === 'audio' ? 'audio' : 'video',
+    status: row.status,
+    createdAt: row.created_at,
+  };
+}
+
+export async function startGroupCall(params: {
+  conversationId: string; callType: CallType; idempotencyKey: string;
+}): Promise<GroupCallSession> {
+  const { data, error } = await getSupabaseClient().rpc('start_group_call', {
+    p_conversation_id: params.conversationId,
+    p_call_type: params.callType,
+    p_idempotency_key: params.idempotencyKey,
+  });
+  if (error) throw new Error(error.message || 'No se pudo iniciar la llamada grupal');
+  const row = firstRow<any>(data);
+  if (!row?.call_id || !row?.channel_name) throw new Error('Respuesta invÃ¡lida al iniciar llamada grupal');
+  return mapGroupCall(row);
+}
+
+export async function joinGroupCall(callId: string): Promise<GroupCallSession> {
+  const { data, error } = await getSupabaseClient().rpc('join_group_call', { p_call_id: callId });
+  if (error) throw new Error(error.message || 'No se pudo unir a la llamada grupal');
+  const row = firstRow<any>(data);
+  if (!row?.call_id || !row?.channel_name) throw new Error('Respuesta invÃ¡lida al unir llamada grupal');
+  return mapGroupCall(row);
+}
+
+export async function declineGroupCall(callId: string): Promise<void> {
+  const { error } = await getSupabaseClient().rpc('decline_group_call', { p_call_id: callId });
+  if (error) throw new Error(error.message || 'No se pudo rechazar la llamada grupal');
+}
+
+export async function leaveGroupCall(callId: string): Promise<CallTransitionResult> {
+  const { data, error } = await getSupabaseClient().rpc('leave_group_call', { p_call_id: callId });
+  if (error) throw new Error(error.message || 'No se pudo salir de la llamada grupal');
+  const row = firstRow<any>(data);
+  if (!row?.call_id) throw new Error('Respuesta invÃ¡lida al salir de la llamada grupal');
+  return mapTransition(row);
+}
+
+export async function getActiveGroupCall(conversationId: string): Promise<GroupCallSession | null> {
+  const { data, error } = await getSupabaseClient().rpc('get_group_call_state', { p_conversation_id: conversationId });
+  if (error) throw new Error(error.message || 'No se pudo consultar la llamada grupal');
+  const row = firstRow<any>(data);
+  return row?.call_id ? mapGroupCall(row) : null;
+}
+
+export async function getGroupCallParticipants(callId: string): Promise<GroupCallParticipant[]> {
+  const { data, error } = await getSupabaseClient().rpc('get_call_participants', { p_call_id: callId });
+  if (error) throw new Error(error.message || 'No se pudieron consultar participantes');
+  return (data ?? []).map((row: any) => ({
+    userId: row.user_id, state: row.state, joinedAt: row.joined_at,
+    leftAt: row.left_at, username: row.username, avatarUrl: row.avatar_url,
+  }));
 }

@@ -105,10 +105,12 @@ type RequestContract =
 
 type AuthorizedCall = {
   caller_id: string;
-  callee_id: string;
+  callee_id: string | null;
   channel_name: string;
   status: string;
   expires_at: string | null;
+  call_scope?: 'direct' | 'group';
+  conversation_id?: string | null;
 };
 
 function parseRequestContract(body: AgoraTokenRequest): RequestContract | null {
@@ -537,7 +539,7 @@ serve(async (req) => {
       // and publisher privileges use the same server-side policy as new_call.
       let callQuery = admin
         .from('calls')
-        .select('caller_id, callee_id, channel_name, status, expires_at');
+        .select('caller_id, callee_id, channel_name, status, expires_at, call_scope, conversation_id');
       callQuery = contract.kind === 'new_call'
         ? callQuery.eq('id', contract.callId)
         : callQuery.eq('channel_name', contract.channelName);
@@ -575,6 +577,31 @@ serve(async (req) => {
           });
         }
       } else {
+        if (call.call_scope === 'group') {
+          if (contract.kind !== 'new_call') {
+            return jsonError('call not found', 404);
+          }
+          const userScoped = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+            global: { headers: { Authorization: authHeader ?? '' } },
+            auth: { persistSession: false, autoRefreshToken: false },
+          });
+          const { data: authorizationRows, error: authorizationError } = await userScoped.rpc(
+            'authorize_group_call_token',
+            { p_call_id: contract.callId },
+          );
+          const authorization = Array.isArray(authorizationRows) ? authorizationRows[0] : authorizationRows;
+          if (authorizationError || !authorization || typeof authorization !== 'object') {
+            return jsonError('group call not authorized', 403);
+          }
+          const authorized = authorization as { channel_name?: unknown };
+          if (!isNonEmptyString(authorized.channel_name)
+            || authorized.channel_name.trim() !== call.channel_name.trim()) {
+            return jsonError('group call authorization mismatch', 409);
+          }
+          authorizedChannel = call.channel_name.trim();
+          observedContract = 'new_group';
+          observedParticipantKind = 'guest';
+        } else {
         const isCaller = call.caller_id === user.id;
         const isCallee = call.callee_id === user.id;
         if (!isCaller && !isCallee) {
@@ -596,6 +623,7 @@ serve(async (req) => {
         }
         if (!isNonEmptyString(call.channel_name)) throw new Error('authorized call channel missing');
         authorizedChannel = call.channel_name.trim();
+        }
       }
     } else if (contract.kind === 'new_group') {
       // Group calls intentionally allow any authenticated holder of an active

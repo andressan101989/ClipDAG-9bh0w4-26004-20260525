@@ -16,11 +16,13 @@ type EventType = 'incoming_call' | 'call_cancelled' | 'call_ended'
 type CallRow = {
   id: string
   caller_id: string
-  callee_id: string
+  callee_id: string | null
   status: string
   call_type: 'audio' | 'video'
   expires_at: string | null
   caller_device_id: string | null
+  call_scope?: 'direct' | 'group'
+  conversation_id?: string | null
 }
 
 type ProfileRow = {
@@ -227,7 +229,7 @@ async function sendExpoNotifications(
     .filter(device => device.id !== call.caller_device_id)
     // Incoming calls on iOS have a single presentation authority:
     // D4D/PushKit. Expo remains the incoming transport for Android only.
-    .filter(device => eventType !== 'incoming_call' || device.platform !== 'ios')
+    .filter(device => call.call_scope === 'group' || eventType !== 'incoming_call' || device.platform !== 'ios')
 
   const toSend: { device: ExpoDeviceRow; deliveryId: string }[] = []
 
@@ -371,17 +373,21 @@ async function sendApnsVoipNotifications(
   call: CallRow,
   eventType: EventType,
   callerName: string,
+  recipientId: string,
 ): Promise<ChannelSummary> {
   const summary = createSummary()
 
   if (eventType !== 'incoming_call') {
     return summary
   }
+  // Group calls use ordinary private Expo notifications on both platforms.
+  // CallKit's 1:1 answer handoff is intentionally reserved for direct calls.
+  if (call.call_scope === 'group') return summary
 
   const { data: devices, error: devicesError } = await admin
     .from('call_devices')
     .select('id, voip_push_token')
-    .eq('user_id', call.callee_id)
+    .eq('user_id', recipientId)
     .eq('platform', 'ios')
     .eq('active', true)
     .not('voip_push_token', 'is', null)
@@ -591,7 +597,7 @@ serve(async (req) => {
 
     const { data: call, error: callError } = await admin
       .from('calls')
-      .select('id, caller_id, callee_id, status, call_type, expires_at, caller_device_id')
+      .select('id, caller_id, callee_id, status, call_type, expires_at, caller_device_id, call_scope, conversation_id')
       .eq('id', call_id)
       .maybeSingle<CallRow>()
 
@@ -602,7 +608,7 @@ serve(async (req) => {
       if (requesterId !== call.caller_id) {
         return json({ success: false, error: 'only caller can send incoming_call' }, 403)
       }
-      if (call.status !== 'ringing') {
+      if (call.status !== (call.call_scope === 'group' ? 'accepted' : 'ringing')) {
         return json({ success: false, error: 'call is not ringing', status: call.status }, 409)
       }
       if (call.expires_at && new Date(call.expires_at).getTime() <= Date.now()) {
@@ -616,9 +622,47 @@ serve(async (req) => {
       }
     }
 
+    if (call.call_scope === 'group' && event_type === 'incoming_call') {
+      const { data: members, error: membersError } = await admin
+        .from('call_participants')
+        .select('user_id, state')
+        .eq('call_id', call.id)
+        .in('state', ['invited', 'ringing'])
+      if (membersError) return json({ success: false, error: membersError.message }, 500)
+      const { data: activeMembers, error: activeMembersError } = await admin
+        .from('chat_conversation_members')
+        .select('user_id')
+        .eq('conversation_id', call.conversation_id)
+        .eq('is_active', true)
+      if (activeMembersError) return json({ success: false, error: activeMembersError.message }, 500)
+      const activeMemberIds = new Set((activeMembers ?? []).map(member => member.user_id))
+      const { data: callerProfile } = await admin
+        .from('user_profiles')
+        .select('username, display_name, avatar_url')
+        .eq('id', call.caller_id)
+        .maybeSingle<ProfileRow>()
+      const callerName = getCallerName(callerProfile ?? null)
+      const totals = { sent: 0, skipped: 0, failed: 0, device_count: 0 }
+      for (const member of members ?? []) {
+        if (!activeMemberIds.has(member.user_id) || member.user_id === call.caller_id) continue
+        const [expoSettled, apnsSettled] = await Promise.allSettled([
+          sendExpoNotifications(admin, call, event_type, member.user_id, callerProfile ?? null),
+          sendApnsVoipNotifications(admin, call, event_type, callerName, member.user_id),
+        ])
+        const expoResult = settledChannelResult(expoSettled, { summary: createSummary(), deviceCount: 0 })
+        const apnsResult = settledChannelResult(apnsSettled, createSummary())
+        totals.sent += expoResult.summary.sent + apnsResult.sent
+        totals.skipped += expoResult.summary.skipped + apnsResult.skipped
+        totals.failed += expoResult.summary.failed + apnsResult.failed
+        totals.device_count += expoResult.deviceCount
+      }
+      return json({ success: true, ...totals, group: true })
+    }
+
     const recipientId = event_type === 'incoming_call'
       ? call.callee_id
       : (requesterId === call.caller_id ? call.callee_id : call.caller_id)
+    if (!recipientId) return json({ success: false, error: 'call recipient unavailable' }, 409)
 
     const { data: callerProfile } = await admin
       .from('user_profiles')
@@ -632,7 +676,7 @@ serve(async (req) => {
 
     const [expoSettled, apnsSettled] = await Promise.allSettled([
       sendExpoNotifications(admin, call, event_type, recipientId, callerProfile ?? null),
-      sendApnsVoipNotifications(admin, call, event_type, callerName),
+      sendApnsVoipNotifications(admin, call, event_type, callerName, recipientId),
     ])
 
     const expoResult = settledChannelResult(expoSettled, expoFallback, expoFallback.summary)

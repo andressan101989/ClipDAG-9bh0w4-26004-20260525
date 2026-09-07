@@ -21,7 +21,9 @@ import { AppState, Platform, Vibration } from 'react-native';
 import { useRootNavigationState, useRouter } from 'expo-router';
 import { getSupabaseClient, useAlert } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
-import { startCall, timeoutCall } from '@/services/callSessionService';
+import {
+  declineGroupCall, joinGroupCall, startCall, timeoutCall,
+} from '@/services/callSessionService';
 import {
   startIncomingRingtone,
   stopAllCallSounds,
@@ -57,6 +59,8 @@ export interface IncomingCall {
   channelName:  string;
   callType:     CallType;
   expiresAt?:    string;
+  callScope?:    'direct' | 'group';
+  conversationId?: string;
 }
 
 interface AgoraCallContextType {
@@ -518,6 +522,58 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     };
   }, [user?.id, clearRingTimeout, updateCallStatus, handleIncomingCallRow]);
 
+  useEffect(() => {
+    const supabase = supabaseRef.current;
+    if (!user?.id || !supabase) return;
+    let stale = false;
+    const presentGroupCall = async (participant: { call_id?: string; state?: string }) => {
+      if (!participant.call_id || participant.state !== 'ringing') return;
+      const { data: call } = await supabase.from('calls')
+        .select('id,caller_id,channel_name,call_type,status,conversation_id')
+        .eq('id', participant.call_id).eq('call_scope', 'group').eq('status', 'accepted').maybeSingle();
+      if (!call || stale) return;
+      const [{ data: caller }, { data: conversation }] = await Promise.all([
+        supabase.from('user_profiles')
+          .select('username,display_name,avatar_url').eq('id', call.caller_id).maybeSingle(),
+        supabase.from('chat_conversations')
+          .select('group_name,group_avatar_url').eq('id', call.conversation_id).maybeSingle(),
+      ]);
+      if (stale) return;
+      presentIncomingCall({
+        callId: call.id,
+        callerId: call.caller_id,
+        callerName: conversation?.group_name || caller?.display_name || caller?.username || 'Grupo',
+        callerAvatar: conversation?.group_avatar_url || caller?.avatar_url || '',
+        channelName: call.channel_name,
+        callType: call.call_type === 'audio' ? 'audio' : 'video',
+        callScope: 'group',
+        conversationId: call.conversation_id,
+      });
+      clearRingTimeout();
+      ringTimeoutRef.current = setTimeout(() => {
+        void declineGroupCall(call.id).catch(() => {});
+        setIncomingCall(current =>
+          current && current.callId === call.id && current.callScope === 'group' ? null : current);
+      }, RING_TIMEOUT_MS);
+    };
+    const channel = supabase.channel(`calls:group-member:${user.id}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'call_participants', filter: `user_id=eq.${user.id}`,
+      }, payload => {
+        const row = payload.new as { call_id?: string; state?: string };
+        if (row.state === 'ringing') void presentGroupCall(row);
+        else if (row.call_id) setIncomingCall(current =>
+          current && current.callId === row.call_id && current.callScope === 'group' ? null : current);
+      }).subscribe(async status => {
+        if (status !== 'SUBSCRIBED') return;
+        const { data } = await supabase.from('call_participants')
+          .select('call_id,state').eq('user_id', user.id).eq('state', 'ringing')
+          .order('ringing_at', { ascending: false }).limit(1).maybeSingle();
+        if (data) void presentGroupCall(data);
+      });
+    return () => { stale = true; void channel.unsubscribe(); };
+  }, [clearRingTimeout, presentIncomingCall, user?.id]);
+
   // ── Caller: watch my own outgoing calls for a reject ──────────────────────
   useEffect(() => {
     const supabase = supabaseRef.current;
@@ -641,6 +697,23 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     incomingActionFlightRef.current.add(call.callId);
 
     try {
+      if (call.callScope === 'group' && call.conversationId) {
+        const joined = await joinGroupCall(call.callId);
+        clearRingTimeout();
+        await stopAllCallSounds();
+        Vibration.cancel();
+        setIncomingCall(null);
+        router.push({
+          pathname: '/group-call/[roomId]',
+          params: {
+            roomId: joined.callId,
+            conversationId: call.conversationId,
+            callType: joined.callType,
+            creatorId: call.callerId,
+          },
+        } as any);
+        return;
+      }
       const result = await reconcileIncomingCallAcceptance({
         eventId: `modal:${call.callId}`,
         callId: call.callId,
@@ -686,7 +759,8 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     if (incomingActionFlightRef.current.has(call.callId)) return;
     incomingActionFlightRef.current.add(call.callId);
     try {
-      await rejectCallSingleFlight(call.callId, 'user_rejected');
+      if (call.callScope === 'group') await declineGroupCall(call.callId);
+      else await rejectCallSingleFlight(call.callId, 'user_rejected');
       clearRingTimeout();
       stopIncomingAlerts(call.callId);
       dismissPresentedCallNotifications(call.callId).catch(() => {});
