@@ -265,6 +265,14 @@ export default function LiveWatchScreen() {
     streamId ?? null,
     Boolean(user?.id && session?.status === 'live'),
   );
+  const battleStageVisible = Boolean(
+    battleProjection.state && isLiveBattleStageStatus(battleProjection.state.status),
+  );
+  useEffect(() => {
+    if (!battleStageVisible) return;
+    setCommerceVisible(false);
+    setCommerceProductId(null);
+  }, [battleStageVisible]);
   const demoteToAudience = (agora as any).demoteToAudience as undefined | (() => Promise<boolean>);
 
   const requestSent = participantRow?.role === 'requested';
@@ -888,6 +896,7 @@ export default function LiveWatchScreen() {
         <LiveBattleStage
           state={battleState}
           clockAnchor={battleProjection.clockAnchor}
+          topInset={insets.top}
           localHost={{
             username: battleProjection.localHostProfile?.username ?? session.hostUsername,
             avatarUrl: battleProjection.localHostProfile?.avatarUrl ?? null,
@@ -922,15 +931,15 @@ export default function LiveWatchScreen() {
       <LinearGradient colors={['rgba(0,0,0,0.45)', 'transparent']} style={styles.topShade} pointerEvents="none" />
       <LinearGradient colors={['transparent', 'rgba(0,0,0,0.58)']} style={styles.bottomShade} pointerEvents="none" />
 
-      <View style={[styles.header,{top:insets.top+8,height:undefined,paddingHorizontal:0,backgroundColor:'transparent',borderWidth:0}]}><LiveSessionHeader hostName={session.hostUsername} viewerCount={session.viewerCount} elapsed={formatLiveDuration(watchSeconds)} onClose={()=>router.back()}/></View>
+      <View style={[styles.header,{top:insets.top+8,height:undefined,paddingHorizontal:0,backgroundColor:'transparent',borderWidth:0}]}><LiveSessionHeader hostName={session.hostUsername} viewerCount={session.viewerCount} elapsed={formatLiveDuration(watchSeconds)} onClose={()=>router.back()} battleMode={Boolean(battleState)}/></View>
 
-      <View style={[styles.titleBlock, { top: insets.top + 88 }]}>
+      {!battleState ? <View style={[styles.titleBlock, { top: insets.top + 88 }]}>
         <Text style={styles.streamTitle} numberOfLines={2}>{session.title}</Text>
         <View style={styles.conversationChip}>
           <MaterialIcons name="chat-bubble-outline" size={14} color="#fff" />
           <Text style={styles.conversationText}>Conversación</Text>
         </View>
-      </View>
+      </View> : null}
 
       {error ? (
         <View style={styles.errorBanner}><Text style={styles.errorText}>{error}</Text></View>
@@ -1005,8 +1014,8 @@ export default function LiveWatchScreen() {
         </View>
       ) : null}
 
-      <View style={styles.actionRail}>
-        {!featuredLiveProduct?<LiveCommerceButton
+      <View style={[styles.actionRail, battleState && styles.battleActionRail]}>
+        {!battleState && !featuredLiveProduct?<LiveCommerceButton
           count={liveProducts.length}
           onPress={() => {
             setGiftSheetVisible(false);
@@ -1016,31 +1025,49 @@ export default function LiveWatchScreen() {
           }}
         />:null}
         <Pressable
-          style={styles.actionButton}
+          style={[styles.actionButton, battleState && styles.battleActionButton]}
           onPress={() => sendReaction('\u2764\uFE0F')}
           hitSlop={6}
           accessibilityLabel="Enviar reacción"
         >
           <MaterialIcons name="favorite" size={25} color="#fff" />
+          {battleState ? <Text style={styles.battleActionLabel}>Me gusta</Text> : null}
         </Pressable>
+        {battleState ? (
+          <Pressable
+            style={[styles.actionButton, styles.battleActionButton]}
+            onPress={() => {
+              setCommerceVisible(false);
+              setGiftSheetVisible(true);
+            }}
+            disabled={!user || session.status !== 'live' || !giftsEnabled || walletBalanceLoading}
+            accessibilityRole="button"
+            accessibilityLabel="Abrir regalos"
+          >
+            <MaterialIcons name="card-giftcard" size={23} color="#fff" />
+            <Text style={styles.battleActionLabel}>Regalo</Text>
+          </Pressable>
+        ) : null}
         <Pressable
-          style={styles.actionButton}
+          style={[styles.actionButton, battleState && styles.battleActionButton]}
           onPress={shareLive}
           hitSlop={6}
           accessibilityLabel="Compartir live"
         >
           <MaterialIcons name="ios-share" size={24} color="#fff" />
+          {battleState ? <Text style={styles.battleActionLabel}>Compartir</Text> : null}
         </Pressable>
         <Pressable
-          style={[styles.actionButton, requestDisabled && styles.actionButtonDisabled]}
+          style={[styles.actionButton, battleState && styles.battleActionButton, requestDisabled && styles.actionButtonDisabled]}
           onPress={() => requestToJoin()}
           disabled={requestDisabled}
           accessibilityLabel={wasRemoved ? 'Volver a solicitar subir al live' : 'Solicitar subir al live'}
         >
           <MaterialIcons name={requestIcon} size={24} color="#fff" />
+          {battleState ? <Text style={styles.battleActionLabel}>Cámara</Text> : null}
         </Pressable>
       </View>
-      {featuredLiveProduct ? (
+      {!battleState && featuredLiveProduct ? (
         <LiveProductRail
           product={featuredLiveProduct}
           productCount={liveProducts.length}
@@ -1059,7 +1086,7 @@ export default function LiveWatchScreen() {
         />
       ) : null}
 
-      {coHostUids.length > 0 && RtcSurfaceView ? (
+      {!battleState && coHostUids.length > 0 && RtcSurfaceView ? (
         <View style={styles.coHostStrip}>
           {coHostUids.slice(0, 2).map(uid => (
             <View key={uid} style={styles.coHostTile}>
@@ -1071,7 +1098,7 @@ export default function LiveWatchScreen() {
         </View>
       ) : null}
 
-      <View style={[styles.bottomSection, { bottom: composerClearance + 86 }]}>
+      <View style={[styles.bottomSection, battleState && styles.battleBottomSection, { bottom: battleState ? composerClearance + 8 : composerClearance + 86 }]}>
         <FlatList
           ref={chatRef}
           data={messages}
@@ -1086,7 +1113,7 @@ export default function LiveWatchScreen() {
               isHost={item.userId === session.hostId}
             />
           )}
-          style={styles.chatList}
+          style={[styles.chatList, battleState && styles.battleChatList]}
           contentContainerStyle={{ gap: 6, paddingVertical: 8, paddingHorizontal: Spacing.md }}
           ListFooterComponent={<View style={{ height: 8 }} />}
           keyboardShouldPersistTaps="handled"
@@ -1108,7 +1135,7 @@ export default function LiveWatchScreen() {
         onClose={() => setGiftSheetVisible(false)}
       />
 
-      {streamId ? (
+      {!battleState && streamId ? (
         <LiveViewerCommerce
           visible={commerceVisible}
           sessionId={streamId}
@@ -1122,7 +1149,7 @@ export default function LiveWatchScreen() {
       ) : null}
 
       <View
-        style={[styles.inputRow, { bottom: composerBottom + 8 }]}
+        style={[styles.inputRow, battleState && styles.battleInputRow, { bottom: composerBottom + 8 }]}
         onLayout={event => {
           const nextHeight = event.nativeEvent.layout.height;
           setComposerHeight(current =>
@@ -1136,7 +1163,7 @@ export default function LiveWatchScreen() {
         />
         <TextInput
           ref={inputRef}
-          style={styles.input}
+          style={[styles.input, battleState && styles.battleInput]}
           value={chatInput}
           onChangeText={setChatInput}
           placeholder="Mensaje..."
@@ -1222,6 +1249,9 @@ const styles = StyleSheet.create({
   actionRail: { position: 'absolute', right: 12, top: SCREEN_HEIGHT * 0.28, gap: 12, zIndex: 9 },
   actionButton: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.14)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
   actionButtonDisabled: { opacity: 0.6 },
+  battleActionRail: { top: undefined, bottom: 108, gap: 8, alignItems: 'center' },
+  battleActionButton: { width: 48, height: 48, borderRadius: 24, gap: 1, backgroundColor: 'rgba(9,10,18,0.74)', borderColor: 'rgba(255,255,255,0.12)' },
+  battleActionLabel: { color: '#FFF', fontSize: 8, lineHeight: 10, fontWeight: FontWeight.semibold },
   hostInvitePanel: {
     position: 'absolute',
     left: 16,
@@ -1261,15 +1291,19 @@ const styles = StyleSheet.create({
     maxHeight: 360,
     zIndex: 7,
   },
+  battleBottomSection: { right: 76, maxHeight: 154 },
   chatList: {
     flex: 1,
     maxHeight: SCREEN_HEIGHT * 0.34,
     width: SCREEN_WIDTH * 0.56,
     marginLeft: 12,
   },
+  battleChatList: { width: '100%', maxHeight: 154, marginLeft: 4 },
 
   inputRow: { position: 'absolute', left: 12, right: 12, minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 20, elevation: 20 },
   input: { flex: 1, height: 58, backgroundColor: 'rgba(255,255,255,0.10)', borderRadius: Radius.full, paddingHorizontal: 18, color: '#fff', fontSize: FontSize.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  battleInputRow: { minHeight: 50, paddingHorizontal: 0, borderRadius: 25, backgroundColor: 'rgba(9,10,18,0.82)' },
+  battleInput: { height: 50, backgroundColor: 'transparent', borderWidth: 0 },
   sendBtn: { width: 46, height: 46, borderRadius: 23, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { opacity: 0.4 },
 });

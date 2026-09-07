@@ -21,6 +21,7 @@ type LiveBattleStageProps = {
   opponentSurface: ReactNode;
   localLabel?: string;
   clockAnchor: LiveBattleServerClockAnchor | null;
+  topInset?: number;
 };
 
 function secondsUntil(value: string | null, now: number): number | null {
@@ -38,13 +39,15 @@ function HostPanel({
   identity,
   label,
   surface,
+  side,
 }: {
   identity: HostIdentity;
   label: string;
   surface: ReactNode;
+  side: 'local' | 'opponent';
 }) {
   return (
-    <View style={styles.panel}>
+    <View style={[styles.panel, side === 'local' ? styles.localPanel : styles.opponentPanel]}>
       {surface ?? (
         <View style={styles.placeholder} accessibilityLabel={`${label} conectando`}>
           {identity.avatarUrl ? (
@@ -58,10 +61,6 @@ function HostPanel({
           <Text style={styles.connecting}>Conectando…</Text>
         </View>
       )}
-      <View style={styles.identity}>
-        <Text style={styles.name} numberOfLines={1}>@{identity.username}</Text>
-        <Text style={styles.label}>{label}</Text>
-      </View>
     </View>
   );
 }
@@ -74,6 +73,7 @@ export function LiveBattleStage({
   opponentSurface,
   localLabel = 'Anfitrión',
   clockAnchor,
+  topInset = 0,
 }: LiveBattleStageProps) {
   const [monotonicNow, setMonotonicNow] = useState<number | null>(
     () => clockAnchor ? readLiveBattleMonotonicNow() : null,
@@ -96,19 +96,45 @@ export function LiveBattleStage({
       serverNow,
     );
     if (remaining === null) return '--:--';
-    return state.status === 'countdown' && remaining > 0 ? String(remaining) : clock(remaining);
+    return clock(remaining);
   }, [clockAnchor, monotonicNow, state.scheduledEndAt, state.scheduledStartAt, state.status]);
 
   return (
     <View style={styles.root} accessibilityLabel="Battle LIVE de dos anfitriones">
       <View style={styles.panels}>
-        <HostPanel identity={localHost} label={localLabel} surface={localSurface} />
-        <HostPanel identity={opponentHost} label="Rival" surface={opponentSurface} />
+        <HostPanel identity={localHost} label={localLabel} surface={localSurface} side="local" />
+        <HostPanel identity={opponentHost} label="Rival" surface={opponentSurface} side="opponent" />
       </View>
-      <View style={styles.battleBadge}>
-        <MaterialIcons name="sports-mma" size={15} color="#FDF2F8" />
-        <Text style={styles.battleText}>BATTLE</Text>
-        <Text style={state.status === 'countdown' ? styles.countdown : styles.timer}>{timerText}</Text>
+      <View style={styles.centerDivider} pointerEvents="none" />
+      <View style={[styles.battlePanel, { top: topInset + 64 }]}>
+        <Text style={styles.battleTitle}>LIVE BATTLE</Text>
+        <View style={styles.identityRow}>
+          <Text style={[styles.hostName, styles.localName]} numberOfLines={1}>@{localHost.username}</Text>
+          <Text style={[styles.hostName, styles.opponentName]} numberOfLines={1}>@{opponentHost.username}</Text>
+        </View>
+        <View
+          style={styles.balanceRow}
+          accessible
+          accessibilityLabel="Puntuación todavía no disponible"
+        >
+          <View style={[styles.balanceSide, styles.localBalance]}>
+            <Text style={styles.neutralValue}>—</Text>
+          </View>
+          <View style={[styles.balanceSide, styles.opponentBalance]}>
+            <Text style={[styles.neutralValue, styles.opponentValue]}>—</Text>
+          </View>
+          <View style={styles.vsDiamond}>
+            <View style={styles.vsContent}>
+              <Text style={styles.vsText}>VS</Text>
+            </View>
+          </View>
+        </View>
+        <View style={styles.statusRow}>
+          <View style={styles.timerPill}>
+            <Text style={styles.timer}>{timerText}</Text>
+            <Text style={styles.statusLabel}>BATTLE</Text>
+          </View>
+        </View>
       </View>
     </View>
   );
@@ -116,18 +142,55 @@ export function LiveBattleStage({
 
 const styles = StyleSheet.create({
   root: { ...StyleSheet.absoluteFillObject, backgroundColor: '#050508' },
-  panels: { flex: 1, flexDirection: 'row', gap: 2 },
+  panels: { flex: 1, flexDirection: 'row' },
   panel: { flex: 1, overflow: 'hidden', backgroundColor: '#0D1017' },
+  localPanel: { borderTopWidth: 2, borderTopColor: '#086BFF' },
+  opponentPanel: { borderTopWidth: 2, borderTopColor: '#FF1F8C' },
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#151923' },
   avatar: { width: 54, height: 54, borderRadius: 27 },
   avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(168,85,247,0.3)' },
   avatarInitial: { color: '#F8FAFC', fontSize: 22, fontWeight: '700' },
   connecting: { color: 'rgba(255,255,255,0.76)', fontSize: 12, fontWeight: '600' },
-  identity: { position: 'absolute', left: 8, right: 8, bottom: 14, paddingHorizontal: 9, paddingVertical: 7, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.52)' },
-  name: { color: '#FFF', fontSize: 12, fontWeight: '700' },
-  label: { color: 'rgba(255,255,255,0.7)', fontSize: 10, marginTop: 1 },
-  battleBadge: { position: 'absolute', alignSelf: 'center', top: 104, minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, borderRadius: 17, backgroundColor: 'rgba(91,33,105,0.94)', borderWidth: 1, borderColor: 'rgba(244,114,182,0.72)' },
-  battleText: { color: '#FDF2F8', fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
-  countdown: { minWidth: 18, color: '#F9A8D4', fontSize: 20, fontWeight: '800', textAlign: 'center' },
-  timer: { color: '#FFF', fontSize: 12, fontWeight: '800' },
+  centerDivider: { position: 'absolute', top: 0, bottom: 0, left: '50%', width: 1, backgroundColor: 'rgba(255,255,255,0.24)' },
+  battlePanel: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    height: 122,
+    paddingTop: 10,
+    paddingHorizontal: 12,
+    borderRadius: 18,
+    backgroundColor: 'rgba(5,6,13,0.72)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  battleTitle: { color: '#EBF0FF', fontSize: 10, lineHeight: 12, fontWeight: '800', textAlign: 'center', letterSpacing: 0.25 },
+  identityRow: { height: 30, flexDirection: 'row', alignItems: 'center' },
+  hostName: { flex: 1, color: '#FFF', fontSize: 12, lineHeight: 16, fontWeight: '700' },
+  localName: { paddingRight: 12, textAlign: 'left' },
+  opponentName: { paddingLeft: 12, textAlign: 'right' },
+  balanceRow: { height: 32, flexDirection: 'row', alignItems: 'center' },
+  balanceSide: { flex: 1, height: 32, justifyContent: 'center', paddingHorizontal: 12 },
+  localBalance: { borderTopLeftRadius: 16, borderBottomLeftRadius: 16, backgroundColor: 'rgba(8,107,255,0.96)' },
+  opponentBalance: { borderTopRightRadius: 16, borderBottomRightRadius: 16, backgroundColor: 'rgba(255,31,140,0.96)' },
+  neutralValue: { color: '#FFF', fontSize: 15, lineHeight: 18, fontWeight: '800', textAlign: 'left' },
+  opponentValue: { textAlign: 'right' },
+  vsDiamond: {
+    position: 'absolute',
+    left: '50%',
+    marginLeft: -18,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0F111C',
+    transform: [{ rotate: '45deg' }],
+  },
+  vsContent: { transform: [{ rotate: '-45deg' }] },
+  vsText: { color: '#FFF', fontSize: 10, lineHeight: 12, fontWeight: '800' },
+  statusRow: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  timerPill: { height: 23, minWidth: 112, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(8,9,18,0.84)' },
+  timer: { minWidth: 39, color: '#FFF', fontSize: 12, lineHeight: 15, fontWeight: '800', textAlign: 'center', fontVariant: ['tabular-nums'] },
+  statusLabel: { color: '#C7CCDB', fontSize: 9, lineHeight: 11, fontWeight: '600' },
 });
