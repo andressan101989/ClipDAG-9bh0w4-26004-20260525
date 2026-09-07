@@ -557,7 +557,19 @@ export async function finalizeMediaUpload(
       };
     return data.data as MediaAssetDescriptor;
   } catch (error) {
-    throw asMediaClientError(error, "MEDIA_FINALIZE", { operationId });
+    const mediaError = asMediaClientError(error, "MEDIA_FINALIZE", {
+      operationId,
+    });
+    if (mediaError.code === "object_mismatch") {
+      console.warn("[MediaService] finalize mismatch", {
+        operationId: mediaError.operationId,
+        stage: mediaError.stage,
+        code: mediaError.code,
+        details: mediaError.details,
+        httpStatus: mediaError.httpStatus,
+      });
+    }
+    throw mediaError;
   }
 }
 export async function uploadMediaFromUri(

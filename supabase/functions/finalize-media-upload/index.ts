@@ -8,6 +8,51 @@ import {
 } from "../_shared/r2.ts";
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+export type ObjectMismatchCode =
+  | "object_size_mismatch"
+  | "object_content_type_mismatch"
+  | "object_size_and_content_type_mismatch";
+
+export function classifyObjectMismatch(
+  expectedSize: number,
+  actualSize: number,
+  expectedContentType: string,
+  actualContentType: string,
+): ObjectMismatchCode | null {
+  const sizeMismatch = actualSize !== expectedSize;
+  const contentTypeMismatch = actualContentType !== expectedContentType;
+  if (sizeMismatch && contentTypeMismatch)
+    return "object_size_and_content_type_mismatch";
+  if (sizeMismatch) return "object_size_mismatch";
+  if (contentTypeMismatch) return "object_content_type_mismatch";
+  return null;
+}
+
+export function objectMismatchDiagnostic(
+  expectedSize: number,
+  actualSize: number,
+  expectedContentType: string,
+  actualContentType: string,
+) {
+  const mismatchCode = classifyObjectMismatch(
+    expectedSize,
+    actualSize,
+    expectedContentType,
+    actualContentType,
+  );
+  if (!mismatchCode) return null;
+  return {
+    error: "object_mismatch",
+    mismatch_code: mismatchCode,
+    details: [
+      `expected_size=${expectedSize}`,
+      `actual_size=${actualSize}`,
+      `expected_type=${expectedContentType}`,
+      `actual_type=${actualContentType}`,
+    ].join(";"),
+  };
+}
+
 async function headWithRetry(bucket: string, key: string) {
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -59,15 +104,34 @@ Deno.serve(async (req) => {
     return json({ error: "invalid_status" }, 409);
   try {
     const head = await headWithRetry(a.bucket_name, a.object_key);
-    if (
-      Number(head.ContentLength) !== Number(a.size_bytes) ||
-      head.ContentType !== a.mime_type
-    ) {
+    const expectedSize = Number(a.size_bytes);
+    const actualSize = Number(head.ContentLength);
+    const expectedContentType = String(a.mime_type ?? "");
+    const actualContentType = String(head.ContentType ?? "");
+    const sizeMismatch = Number(head.ContentLength) !== Number(a.size_bytes);
+    const contentTypeMismatch = head.ContentType !== a.mime_type;
+    const mismatchDiagnostic =
+      sizeMismatch || contentTypeMismatch
+        ? objectMismatchDiagnostic(
+            expectedSize,
+            actualSize,
+            expectedContentType,
+            actualContentType,
+          )
+        : null;
+    if (mismatchDiagnostic) {
+      console.warn("[finalize-media-upload] object mismatch", {
+        mismatchCode: mismatchDiagnostic.mismatch_code,
+        expectedSize,
+        actualSize,
+        expectedContentType,
+        actualContentType,
+      });
       await db
         .from("media_assets")
         .update({
           status: "delete_pending",
-          error_code: "object_mismatch",
+          error_code: mismatchDiagnostic.mismatch_code,
           next_cleanup_attempt_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
@@ -92,7 +156,7 @@ Deno.serve(async (req) => {
           .update({ error_code: "object_mismatch_delete_retry" })
           .eq("id", a.id);
       }
-      return json({ error: "object_mismatch" }, 409);
+      return json(mismatchDiagnostic, 409);
     }
     if (
       a.purpose === "product_video" &&
