@@ -21,6 +21,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useAgoraEngine } from '@/hooks/useAgoraEngine';
 import { RtcSurfaceView, useridToAgoraUid, isAgoraAvailable } from '@/services/agoraService';
 import { useSafeCallScreenExit } from '@/hooks/useSafeCallScreenExit';
+import { useCallLiveness } from '@/hooks/useCallLiveness';
 import {
   getGroupCallParticipants,
   joinGroupCall,
@@ -73,6 +74,17 @@ export default function GroupCallScreen() {
     profile: 'communication',
     enableVideo: callType !== 'audio',
     callId: isCanonicalChatCall ? roomId : undefined,
+  });
+
+  useCallLiveness({
+    callId: isCanonicalChatCall ? (roomId ?? '') : '',
+    isCallee: false,
+    callStatus: isCanonicalChatCall ? 'accepted' : null,
+    answerHandoff: undefined,
+    joined: isCanonicalChatCall && joined,
+    connected: isCanonicalChatCall && joined,
+    terminal: !isCanonicalChatCall || endedRef.current,
+    pauseInBackground: true,
   });
 
   const leaveRoom = useCallback(async () => {
