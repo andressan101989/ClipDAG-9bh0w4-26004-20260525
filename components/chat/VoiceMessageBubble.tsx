@@ -61,11 +61,14 @@ export function VoiceMessageBubble({ messageId, assetId, durationMs, waveform, i
   const cycleSpeed = useCallback(() => {
     const next = nextVoiceSpeed(speed); setSpeed(next); player.setPlaybackRate(next, 'high');
   }, [player, speed]);
+  const selectSpeed = useCallback((next: ChatVoiceSpeed) => {
+    setSpeed(next); player.setPlaybackRate(next, 'high');
+  }, [player]);
   const progress = Math.max(0, Math.min(1, status.currentTime / Math.max(0.001, status.duration || durationMs / 1000)));
 
   return <View style={styles.container}>
     <Pressable accessibilityRole="button" accessibilityLabel={status.playing ? 'Pausar nota de voz' : 'Reproducir nota de voz'}
-      onPress={() => void toggle()} style={styles.play}>
+      onPress={() => void toggle()} onLongPress={cycleSpeed} style={styles.play}>
       {loading ? <ActivityIndicator size="small" color={isMine ? '#fff' : Colors.primary} />
         : <MaterialCommunityIcons name={failed ? 'reload' : status.playing ? 'pause' : 'play'} size={22} color={isMine ? '#fff' : Colors.primary} />}
     </Pressable>
@@ -79,19 +82,27 @@ export function VoiceMessageBubble({ messageId, assetId, durationMs, waveform, i
       }]} />)}
     </Pressable>
     <Text style={[styles.duration, isMine && styles.mine]}>{formatVoiceDuration(status.playing ? status.currentTime * 1000 : durationMs)}</Text>
-    <Pressable accessibilityRole="button" accessibilityLabel={`Velocidad ${speed}x`} onPress={cycleSpeed} style={styles.speed}>
-      <Text style={[styles.speedText, isMine && styles.mine]}>{speed}x</Text>
-    </Pressable>
+    <View style={styles.speedGroup}>
+      {([1, 1.5, 2] as ChatVoiceSpeed[]).map(option => (
+        <Pressable key={option} accessibilityRole="button" accessibilityLabel={`Velocidad ${option}x`}
+          onPress={() => selectSpeed(option)} style={[styles.speed, speed === option && styles.speedActive]}>
+          <Text style={[styles.speedText, isMine && styles.mine, speed === option && styles.speedTextActive]}>{option}x</Text>
+        </Pressable>
+      ))}
+    </View>
   </View>;
 }
 
 const styles = StyleSheet.create({
-  container: { width: 244, minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  play: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
+  container: { width: 270, minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  play: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#3A4056', alignItems: 'center', justifyContent: 'center' },
   waveform: { flex: 1, height: 28, flexDirection: 'row', alignItems: 'center', gap: 1 },
   bar: { flex: 1, minWidth: 1, borderRadius: 1 },
   duration: { minWidth: 30, color: Colors.textSubtle, fontSize: 10, fontVariant: ['tabular-nums'] },
-  speed: { minWidth: 30, height: 28, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center' },
-  speedText: { color: Colors.primary, fontSize: 10, fontWeight: '700' },
+  speedGroup: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  speed: { minWidth: 27, height: 24, paddingHorizontal: 4, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center' },
+  speedActive: { backgroundColor: '#4A20A2' },
+  speedText: { color: Colors.textSubtle, fontSize: 9, fontWeight: '700' },
+  speedTextActive: { color: '#FFFFFF' },
   mine: { color: '#fff' },
 });

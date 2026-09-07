@@ -166,10 +166,11 @@ const pm = StyleSheet.create({
 
 // ── Main Messages Screen ──────────────────────────────────────────────────────
 export default function MessagesScreen() {
+  // Approved Figma: 01 — Messages Inbox (FmwCrxtAV5k8jpLFr3RTgy, node 1:3).
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
-  const { conversations, unreadTotal, isLoading, refreshConversations, presenceByUser } = useMessages();
+  const { conversations, isLoading, refreshConversations, presenceByUser } = useMessages();
   const { unreadCount: notifCount } = useNotifications();
   const { showAlert } = useAlert();
   const walletData = useWallet();
@@ -177,7 +178,7 @@ export default function MessagesScreen() {
   const supabase = getSupabaseClient();
 
   const [search, setSearch] = useState('');
-  const [activeTab, setActiveTab] = useState<'all' | 'premium' | 'unread'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'direct' | 'group' | 'premium'>('all');
 
   // Premium DM modal
   const [premiumModal, setPremiumModal] = useState<{
@@ -211,7 +212,8 @@ export default function MessagesScreen() {
   // Filter conversations
   const filtered = conversations.filter(c => {
     if (search.trim() && !c.displayName.toLowerCase().includes(search.toLowerCase())) return false;
-    if (activeTab === 'unread' && c.unreadCount === 0) return false;
+    if (activeTab === 'direct' && c.conversationType !== 'direct') return false;
+    if (activeTab === 'group' && c.conversationType !== 'group') return false;
     if (activeTab === 'premium' && (c.conversationType !== 'direct' || !premiumDMs.some(p => p.sender_id === c.partnerId))) return false;
     return true;
   });
@@ -263,9 +265,10 @@ export default function MessagesScreen() {
   }, [user?.id, supabase, walletData, loadPremiumDMs, showAlert]);
 
   const TABS = [
-    { key: 'all' as const,     label: 'Todos',    icon: 'message-text-outline' },
-    { key: 'premium' as const, label: 'Premium',  icon: 'star-circle-outline' },
-    { key: 'unread' as const,  label: 'No leídos', icon: 'bell-badge-outline' },
+    { key: 'all' as const, label: 'Todos', icon: 'circle-outline' },
+    { key: 'direct' as const, label: 'Directos', icon: 'account-outline' },
+    { key: 'group' as const, label: 'Grupos', icon: 'account-group-outline' },
+    { key: 'premium' as const, label: 'Premium', icon: 'crown-outline' },
   ];
 
   return (
@@ -274,7 +277,13 @@ export default function MessagesScreen() {
 
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Mensajes</Text>
+        <View style={styles.headerBrand}>
+          <MaterialCommunityIcons name="chart-donut" size={25} color="#9B5CFF" />
+          <View>
+            <Text style={styles.headerTitle}>Mensajes</Text>
+            <Text style={styles.headerSubtitle}>Conecta. Comparte. Sé tú.</Text>
+          </View>
+        </View>
         <View style={styles.headerActions}>
           {notifCount > 0 ? (
             <Pressable onPress={() => router.push('/notifications')} hitSlop={8} style={styles.notifBtn}>
@@ -314,7 +323,7 @@ export default function MessagesScreen() {
           <Pressable onPress={() => setSearch('')} hitSlop={8}>
             <MaterialCommunityIcons name="close-circle" size={16} color={Colors.textSubtle} />
           </Pressable>
-        ) : null}
+        ) : <MaterialCommunityIcons name="filter-variant" size={18} color="#9298AD" />}
       </View>
 
       {/* ── Tab bar ─────────────────────────────────────────────────────── */}
@@ -328,12 +337,11 @@ export default function MessagesScreen() {
             <MaterialCommunityIcons
               name={t.icon as any}
               size={13}
-              color={activeTab === t.key ? (t.key === 'premium' ? PREMIUM_COLOR : Colors.primary) : Colors.textSubtle}
+              color={activeTab === t.key ? '#FFFFFF' : '#9298AD'}
             />
-            <Text style={[styles.tabText, activeTab === t.key && { color: t.key === 'premium' ? PREMIUM_COLOR : Colors.primary }]}>
+            <Text style={[styles.tabText, activeTab === t.key && styles.tabTextActive]}>
               {t.label}
               {t.key === 'premium' && premiumDMs.length > 0 ? ` (${premiumDMs.length})` : ''}
-              {t.key === 'unread' && unreadTotal > 0 ? ` (${unreadTotal})` : ''}
             </Text>
           </Pressable>
         ))}
@@ -471,7 +479,16 @@ export default function MessagesScreen() {
 
                 {/* Avatar with online dot */}
                 <View style={styles.avatarWrap}>
-                  <Avatar uri={item.avatar} username={item.displayName} size={54} />
+                  {item.conversationType === 'group' ? (
+                    <View style={styles.groupAvatarStack}>
+                      <View style={styles.groupAvatarBack}>
+                        <MaterialCommunityIcons name="account-group" size={18} color="#9298AD" />
+                      </View>
+                      <View style={styles.groupAvatarFront}>
+                        <Avatar uri={item.avatar} username={item.displayName} size={34} />
+                      </View>
+                    </View>
+                  ) : <Avatar uri={item.avatar} username={item.displayName} size={42} />}
                   {isPremium ? (
                     <View style={[styles.onlineDot, { backgroundColor: PREMIUM_COLOR }]}>
                       <MaterialIcons name="star" size={7} color="#fff" />
@@ -486,7 +503,7 @@ export default function MessagesScreen() {
                   <View style={styles.convTopRow}>
                     <View style={styles.convNameRow}>
                       <Text style={[styles.convName, hasUnread && styles.convNameBold]}>
-                        {item.conversationType === 'group' ? item.displayName : `@${item.displayName}`}
+                        {item.displayName}
                       </Text>
                       {isPremium ? (
                         <View style={styles.premiumChip}>
@@ -513,7 +530,7 @@ export default function MessagesScreen() {
                         <Text style={styles.unreadBadgeText}>{item.unreadCount > 9 ? '9+' : item.unreadCount}</Text>
                       </View>
                     ) : (
-                      <MaterialCommunityIcons name="check-all" size={16} color={isPremium ? PREMIUM_COLOR : Colors.primary} />
+                      <MaterialCommunityIcons name="check-all" size={16} color={isPremium ? PREMIUM_COLOR : '#5EDCFF'} />
                     )}
                   </View>
                 </View>
@@ -532,6 +549,17 @@ export default function MessagesScreen() {
         />
       )}
 
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Nuevo mensaje"
+        onPress={() => router.push('/new-message')}
+        style={[styles.fab, { bottom: 18 + insets.bottom }]}
+      >
+        <LinearGradient colors={['#9B5CFF', '#7C3AED']} style={styles.fabGradient}>
+          <MaterialCommunityIcons name="pencil-outline" size={22} color="#FFFFFF" />
+        </LinearGradient>
+      </Pressable>
+
       {/* Premium DM modal */}
       <PremiumDMModal
         visible={premiumModal.visible}
@@ -548,10 +576,12 @@ export default function MessagesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.bg },
+  container: { flex: 1, backgroundColor: '#080A12' },
 
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.md, paddingBottom: Spacing.md },
-  headerTitle: { fontSize: FontSize.xxl, fontWeight: FontWeight.bold, color: Colors.textPrimary },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 14, paddingBottom: 16 },
+  headerBrand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerTitle: { fontSize: 26, fontWeight: FontWeight.bold, color: '#F6F7FB' },
+  headerSubtitle: { color: '#9298AD', fontSize: 11, marginTop: 1 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   notifBtn: { position: 'relative', padding: 2 },
   notifBadge: { position: 'absolute', top: -2, right: -2, backgroundColor: Colors.secondary, borderRadius: Radius.full, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2, borderWidth: 1, borderColor: Colors.bg },
@@ -563,14 +593,15 @@ const styles = StyleSheet.create({
   newMsgBtn: { borderRadius: Radius.full, overflow: 'hidden' },
   newMsgBtnGrad: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
 
-  searchWrap: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.surfaceElevated, borderRadius: Radius.xl, paddingHorizontal: Spacing.md, paddingVertical: 11, marginHorizontal: Spacing.md, marginBottom: Spacing.sm, borderWidth: 1, borderColor: Colors.border },
-  searchInput: { flex: 1, color: Colors.textPrimary, fontSize: FontSize.sm },
+  searchWrap: { height: 46, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#141827', borderRadius: 14, paddingHorizontal: 14, marginHorizontal: 20, marginBottom: 12, borderWidth: 1, borderColor: '#23283A' },
+  searchInput: { flex: 1, color: '#F6F7FB', fontSize: 14 },
 
   // Tab bar
-  tabBar: { flexDirection: 'row', marginHorizontal: Spacing.md, marginBottom: Spacing.sm, backgroundColor: Colors.surfaceElevated, borderRadius: Radius.md, padding: 3, borderWidth: 1, borderColor: Colors.border },
-  tabBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 8, borderRadius: Radius.sm },
-  tabBtnActive: { backgroundColor: Colors.surface },
-  tabText: { color: Colors.textSubtle, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
+  tabBar: { flexDirection: 'row', gap: 8, marginHorizontal: 20, marginBottom: 14 },
+  tabBtn: { flex: 1, height: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: 17, backgroundColor: '#141827', borderWidth: 1, borderColor: '#23283A' },
+  tabBtnActive: { backgroundColor: '#381A7A', borderColor: '#9B5CFF' },
+  tabText: { color: '#9298AD', fontSize: 11, fontWeight: FontWeight.regular },
+  tabTextActive: { color: '#FFFFFF', fontWeight: FontWeight.semibold },
 
   // Premium banner
   premiumBanner: { marginHorizontal: Spacing.md, marginBottom: Spacing.sm, borderRadius: Radius.md, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,157,0,0.3)' },
@@ -602,24 +633,29 @@ const styles = StyleSheet.create({
   startChatBtnText: { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.bold },
 
   // Conversation item
-  convItem: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingHorizontal: Spacing.md, paddingVertical: 13 },
-  convItemUnread: { backgroundColor: Colors.primaryDim + '10' },
+  convItem: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 13, marginHorizontal: 16, marginBottom: 6, paddingHorizontal: 10, paddingVertical: 9, backgroundColor: '#0F121C', borderRadius: 14, borderWidth: 1, borderColor: '#23283A' },
+  convItemUnread: { backgroundColor: '#101421' },
   convItemPremium: { backgroundColor: 'rgba(255,157,0,0.05)' },
   premiumStripe: { position: 'absolute', left: 0, top: 8, bottom: 8, width: 3, backgroundColor: PREMIUM_COLOR, borderRadius: 2 },
   avatarWrap: { position: 'relative' },
-  onlineDot: { position: 'absolute', bottom: 2, right: 2, width: 12, height: 12, borderRadius: 6, backgroundColor: Colors.accent, borderWidth: 2, borderColor: Colors.bg, alignItems: 'center', justifyContent: 'center' },
+  groupAvatarStack: { width: 52, height: 42 },
+  groupAvatarBack: { position: 'absolute', left: 0, top: 2, width: 38, height: 38, borderRadius: 19, backgroundColor: '#171B29', borderWidth: 1, borderColor: '#9298AD', alignItems: 'center', justifyContent: 'center' },
+  groupAvatarFront: { position: 'absolute', left: 18, top: 4, width: 34, height: 34, borderRadius: 17, borderWidth: 1.5, borderColor: '#9B5CFF', overflow: 'hidden' },
+  onlineDot: { position: 'absolute', bottom: 0, right: 0, width: 12, height: 12, borderRadius: 6, backgroundColor: '#35E28A', borderWidth: 2, borderColor: '#0F121C', alignItems: 'center', justifyContent: 'center' },
   convInfo: { flex: 1, gap: 4 },
   convTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   convNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
-  convName: { color: Colors.textSecondary, fontSize: FontSize.md, fontWeight: FontWeight.medium },
+  convName: { color: '#F6F7FB', fontSize: 14, fontWeight: FontWeight.semibold },
   convNameBold: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
   premiumChip: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,157,0,0.15)', borderRadius: Radius.full, paddingHorizontal: 7, paddingVertical: 2 },
   premiumChipText: { color: PREMIUM_COLOR, fontSize: 9, fontWeight: FontWeight.bold },
-  convTime: { color: Colors.textSubtle, fontSize: FontSize.xs },
+  convTime: { color: '#9298AD', fontSize: 10 },
   convBottomRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  convLastMsg: { color: Colors.textSubtle, fontSize: FontSize.sm, flex: 1 },
+  convLastMsg: { color: '#9298AD', fontSize: 11, flex: 1 },
   convLastMsgBold: { color: Colors.textSecondary, fontWeight: FontWeight.medium },
-  unreadBadge: { backgroundColor: Colors.primary, borderRadius: Radius.full, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
+  unreadBadge: { backgroundColor: '#7C3AED', borderRadius: Radius.full, minWidth: 24, height: 24, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   unreadBadgeText: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
-  separator: { height: 1, backgroundColor: Colors.borderSubtle, marginLeft: 82 },
+  separator: { height: 0 },
+  fab: { position: 'absolute', right: 24, width: 48, height: 48, borderRadius: 24, overflow: 'hidden', zIndex: 20, elevation: 8 },
+  fabGradient: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });

@@ -231,6 +231,7 @@ const badge = StyleSheet.create({
 
 // ── Main chat screen ──────────────────────────────────────────────────────────
 export default function ChatScreen() {
+  // Approved Figma: 02 — Direct Conversation — Sofia (FmwCrxtAV5k8jpLFr3RTgy, node 1:112).
   const { userId: partnerId } = useLocalSearchParams<{ userId: string }>();
   const insets = useSafeAreaInsets();
   const router  = useRouter();
@@ -448,7 +449,7 @@ export default function ChatScreen() {
   }, [pendingPayment, user?.id, supabase, walletData, showAlert]);
 
   // ── Pick image ────────────────────────────────────────────────────────────
-  const handlePickImage = useCallback(async () => {
+  const handlePickImage = useCallback(async (mode?: 'normal' | 'one-time') => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { showAlert('Permiso denegado', 'Habilita el acceso a la galería'); return; }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -469,6 +470,10 @@ export default function ChatScreen() {
         showAlert('Mensaje no enviado', 'No se pudo enviar la imagen. Puedes intentarlo nuevamente.');
       } finally { setIsUploading(false); }
     };
+    if (mode) {
+      await sendSelectedImage(mode === 'one-time');
+      return;
+    }
     Alert.alert('Enviar foto', 'Elige cómo compartirla.', [
       { text: 'Cancelar', style: 'cancel' },
       { text: 'Normal', onPress: () => { void sendSelectedImage(false); } },
@@ -485,10 +490,8 @@ export default function ChatScreen() {
   useEffect(() => () => { voiceDraftSenderRef.current?.clear(); }, [partnerId, user?.id]);
 
   // ── Render message ────────────────────────────────────────────────────────
-  const renderMessage = useCallback(({ item, index }: { item: Message; index: number }) => {
+  const renderMessage = useCallback(({ item }: { item: Message }) => {
     const isMine   = item.senderId === user?.id;
-    const prevMsg  = chatMessages[index - 1];
-    const showAv   = !isMine && (!prevMsg || prevMsg.senderId !== item.senderId);
     const isImage  = item.mediaType === 'image' && Boolean(item.mediaUrl || item.mediaAssetId)
       && item.deliveryStatus !== 'pending' && item.deliveryStatus !== 'failed';
     const isOneTime = item.mediaType === 'one_time_image';
@@ -500,18 +503,12 @@ export default function ChatScreen() {
 
     return (
       <View style={[styles.msgRow, isMine && styles.msgRowMine]}>
-        {!isMine ? (
-          <View style={{ width: 30, alignSelf: 'flex-end', marginBottom: 4 }}>
-            {showAv ? (
-              <Avatar uri={conversation?.partnerAvatar} username={conversation?.partnerUsername} size={28} />
-            ) : null}
-          </View>
-        ) : null}
-
         <View style={[styles.bubble, isMine && styles.bubbleMine]}>
           {isMine ? (
             <LinearGradient
-              colors={isPremium ? [PREMIUM_COLOR, PREMIUM_COLOR2] : ['#7C5CFF', '#B44FFF']}
+              colors={item.deliveryStatus === 'failed'
+                ? ['#451B27', '#451B27']
+                : isPremium ? [PREMIUM_COLOR, PREMIUM_COLOR2] : ['#5222A8', '#6D28D9']}
               start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
               style={styles.bubbleMineGrad}
             >
@@ -524,9 +521,10 @@ export default function ChatScreen() {
               {isImage ? (
                 <PrivateChatImage assetId={item.mediaAssetId} legacyUrl={item.mediaUrl} />
               ) : null}
-              {isOneTime ? <View style={styles.oneTimeStatus}>
-                <MaterialCommunityIcons name="eye-outline" size={16} color="#fff" />
-                <Text style={styles.msgTextMine}>{oneTimeConsumed ? 'Foto abierta' : 'Foto · Ver una vez'}</Text>
+              {isOneTime ? <View style={[styles.oneTimeStatus, styles.oneTimeCard]}>
+                <MaterialCommunityIcons name="eye-off-outline" size={30} color="#F6F7FB" />
+                <View style={styles.oneTimeBadge}><Text style={styles.oneTimeBadgeText}>1</Text></View>
+                <Text style={styles.oneTimeLabel}>{oneTimeConsumed ? 'Foto abierta' : 'Foto de una sola vista'}</Text>
               </View> : null}
               {isVoice ? <VoiceMessageBubble messageId={item.id} assetId={item.mediaAssetId!}
                 durationMs={item.audioDurationMs!} waveform={item.audioWaveform!} isMine
@@ -534,6 +532,9 @@ export default function ChatScreen() {
               {item.mediaType === 'voice' && !isVoice ? <Text style={styles.msgTextMine}>Nota de voz</Text> : null}
               {item.text && item.text !== '📷 Imagen' && !isOneTime && !isVoice ? (
                 <Text style={styles.msgTextMine}>{item.text}</Text>
+              ) : null}
+              {item.deliveryStatus === 'failed' ? (
+                <MaterialCommunityIcons name="alert-circle-outline" size={16} color="#FF5263" style={styles.failedAlert} />
               ) : null}
               <Text style={styles.msgTimeMine}>{timeAgo(item.createdAt)}</Text>
             </LinearGradient>
@@ -552,9 +553,10 @@ export default function ChatScreen() {
                 accessibilityLabel={oneTimeConsumed ? 'Foto abierta' : 'Ver foto una vez'}
                 onPress={() => partnerId && openOneTimeMedia(partnerId, item.id).then(setOneTimeMediaUrl)
                   .catch(() => showAlert('Foto no disponible', 'Esta foto ya fue abierta o no tienes acceso.'))}
-                style={styles.oneTimeStatus}>
-                <MaterialCommunityIcons name="eye-outline" size={16} color={Colors.primary} />
-                <Text style={styles.msgText}>{oneTimeConsumed ? 'Foto abierta' : 'Foto · Ver una vez'}</Text>
+                style={[styles.oneTimeStatus, styles.oneTimeCard]}>
+                <MaterialCommunityIcons name="eye-off-outline" size={30} color="#F6F7FB" />
+                <View style={styles.oneTimeBadge}><Text style={styles.oneTimeBadgeText}>1</Text></View>
+                <Text style={styles.oneTimeLabel}>{oneTimeConsumed ? 'Foto abierta' : 'Foto de una sola vista'}</Text>
               </Pressable> : null}
               {isVoice ? <VoiceMessageBubble messageId={item.id} assetId={item.mediaAssetId!}
                 durationMs={item.audioDurationMs!} waveform={item.audioWaveform!} isMine={false}
@@ -574,7 +576,7 @@ export default function ChatScreen() {
             : undefined} /></View> : null}
       </View>
     );
-  }, [user, chatMessages, conversation, partnerId, retryMessage, openOneTimeMedia, showAlert, activeVoiceMessageId]);
+  }, [user, partnerId, retryMessage, openOneTimeMedia, showAlert, activeVoiceMessageId]);
 
   const partnerName   = conversation?.partnerUsername || 'Usuario';
   const partnerAvatar = conversation?.partnerAvatar;
@@ -595,7 +597,8 @@ export default function ChatScreen() {
 
         <Pressable style={styles.headerCenter} onPress={() => {}}>
           <View style={{ position: 'relative' }}>
-            <Avatar uri={partnerAvatar} username={partnerName} size={36} showBorder />
+            <Avatar uri={partnerAvatar} username={partnerName} size={46} showBorder />
+            {presenceByUser[partnerId || ''] === 'online' ? <View style={styles.avatarOnlineDot} /> : null}
             {subStatus?.isSubscribed ? (
               <View style={styles.subBadgeDot}>
                 <MaterialIcons name="star" size={8} color="#fff" />
@@ -604,7 +607,7 @@ export default function ChatScreen() {
           </View>
           <View style={styles.headerInfo}>
             <View style={styles.headerNameRow}>
-              <Text style={styles.headerName}>@{partnerName}</Text>
+              <Text style={styles.headerName}>{partnerName}</Text>
               {premiumEnabled ? (
                 <View style={styles.premiumHeaderBadge}>
                   <MaterialIcons name="star" size={9} color={PREMIUM_COLOR} />
@@ -627,10 +630,13 @@ export default function ChatScreen() {
 
         <View style={styles.headerActions}>
           <Pressable hitSlop={8} onPress={() => router.push(`/call/${partnerId}`)} style={styles.headerActionBtn}>
-            <MaterialCommunityIcons name="phone-outline" size={20} color={Colors.primary} />
+            <MaterialCommunityIcons name="phone-outline" size={21} color="#F6F7FB" />
           </Pressable>
           <Pressable hitSlop={8} onPress={() => router.push(`/video-call/${partnerId}`)} style={styles.headerActionBtn}>
-            <MaterialCommunityIcons name="video-outline" size={20} color={Colors.primary} />
+            <MaterialCommunityIcons name="video-outline" size={21} color="#F6F7FB" />
+          </Pressable>
+          <Pressable hitSlop={8} onPress={() => router.push(`/creator/${partnerId}` as any)} style={styles.headerActionBtn}>
+            <MaterialCommunityIcons name="dots-vertical" size={21} color="#9298AD" />
           </Pressable>
         </View>
       </View>
@@ -738,12 +744,27 @@ export default function ChatScreen() {
             );
           }}
         >
-          {/* Image picker */}
-          {!voiceRecording ? <Pressable onPress={handlePickImage} hitSlop={8} style={styles.inputAction} disabled={isUploading}>
-            {isUploading
-              ? <ActivityIndicator size="small" color={Colors.primary} />
-              : <MaterialCommunityIcons name="image-outline" size={22} color={Colors.textSecondary} />}
-          </Pressable> : null}
+          {!voiceRecording ? <>
+            <Pressable
+              accessibilityLabel={premiumEnabled ? 'Opciones Premium' : 'Adjuntar'}
+              onPress={() => premiumEnabled ? setPremiumSheetVis(true) : void handlePickImage()}
+              hitSlop={6}
+              style={[styles.inputAction, styles.plusAction]}
+              disabled={isUploading}
+            >
+              <MaterialCommunityIcons name="plus" size={21} color="#F6F7FB" />
+            </Pressable>
+            <Pressable accessibilityLabel="Enviar foto" onPress={() => void handlePickImage('normal')}
+              hitSlop={6} style={styles.inputAction} disabled={isUploading}>
+              {isUploading
+                ? <ActivityIndicator size="small" color="#9B5CFF" />
+                : <MaterialCommunityIcons name="image-outline" size={20} color="#9298AD" />}
+            </Pressable>
+            <Pressable accessibilityLabel="Enviar foto de una sola vista" onPress={() => void handlePickImage('one-time')}
+              hitSlop={6} style={styles.inputAction} disabled={isUploading}>
+              <MaterialCommunityIcons name="eye-off-outline" size={20} color="#9298AD" />
+            </Pressable>
+          </> : null}
 
           {!voiceRecording ? <TextInput
             style={[styles.input, { height: inputHeight }]}
@@ -752,7 +773,7 @@ export default function ChatScreen() {
               setText(value);
               if (partnerId) setConversationTyping(partnerId, value.trim().length > 0);
             }}
-            placeholder="Escribe un mensaje..."
+            placeholder="Escribe un mensaje…"
             placeholderTextColor={Colors.textSubtle}
             multiline
             onContentSizeChange={handleInputContentSizeChange}
@@ -762,14 +783,10 @@ export default function ChatScreen() {
             onSubmitEditing={handleSend}
           /> : null}
 
-          {/* Premium DM button (only when recipient has it enabled) */}
-          {premiumEnabled && !text.trim() && !voiceRecording ? (
-            <Pressable onPress={() => setPremiumSheetVis(true)} style={styles.premiumBtn} hitSlop={4}>
-              <LinearGradient colors={[PREMIUM_COLOR, PREMIUM_COLOR2]} style={styles.premiumBtnGrad}>
-                <MaterialIcons name="star" size={16} color="#fff" />
-              </LinearGradient>
-            </Pressable>
-          ) : null}
+          {!voiceRecording ? <Pressable accessibilityLabel="Agregar emoji" onPress={() => setText(value => `${value}😊`)}
+            hitSlop={6} style={styles.emojiAction}>
+            <MaterialCommunityIcons name="emoticon-happy-outline" size={21} color="#F4C95D" />
+          </Pressable> : null}
 
           {text.trim() && !voiceRecording ? <Pressable
             onPress={handleSend}
@@ -815,31 +832,30 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.bg },
+  container: { flex: 1, backgroundColor: '#080A12' },
 
   // Header
   header: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
-    paddingHorizontal: Spacing.md, paddingBottom: Spacing.md,
-    borderBottomWidth: 1, borderBottomColor: Colors.border,
+    minHeight: 64, paddingHorizontal: 16, paddingBottom: 8,
+    borderBottomWidth: 1, borderBottomColor: '#23283A',
   },
   backBtn: { padding: 4 },
   headerCenter:   { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   headerInfo:     { flex: 1, gap: 3 },
   headerNameRow:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  headerName:     { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.semibold },
+  headerName:     { color: '#F6F7FB', fontSize: 19, fontWeight: FontWeight.bold },
   premiumHeaderBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,157,0,0.15)', borderRadius: Radius.full, paddingHorizontal: 6, paddingVertical: 2 },
   premiumHeaderBadgeText: { color: PREMIUM_COLOR, fontSize: 9, fontWeight: FontWeight.bold },
   onlineRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   onlineDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.accent },
-  onlineText: { color: Colors.accent, fontSize: FontSize.xs },
-  typingText: { color: Colors.primary, fontSize: FontSize.xs },
-  headerActions: { flexDirection: 'row', gap: Spacing.xs },
+  onlineText: { color: '#9298AD', fontSize: 11 },
+  typingText: { color: '#9B5CFF', fontSize: 11 },
+  avatarOnlineDot: { position: 'absolute', right: 1, bottom: 1, width: 11, height: 11, borderRadius: 6, backgroundColor: '#35E28A', borderWidth: 2, borderColor: '#080A12' },
+  headerActions: { flexDirection: 'row', gap: 2 },
   headerActionBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: Colors.primaryDim,
+    width: 34, height: 36,
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: Colors.primary + '33',
   },
   subBadgeDot: {
     position: 'absolute', bottom: -2, right: -2,
@@ -875,20 +891,24 @@ const styles = StyleSheet.create({
   startPremiumBtnText: { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.bold },
 
   // Messages list
-  messagesList: { paddingHorizontal: Spacing.md, paddingTop: Spacing.md, gap: 8 },
+  messagesList: { paddingHorizontal: 20, paddingTop: 14, gap: 8 },
   msgRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
   msgRowMine: { flexDirection: 'row-reverse' },
-  bubble: { maxWidth: '75%' },
+  bubble: { maxWidth: '82%' },
   bubbleMine: { borderRadius: Radius.lg, overflow: 'hidden' },
-  bubbleMineGrad: { paddingHorizontal: 14, paddingVertical: 10, gap: 4, borderRadius: Radius.lg, borderBottomRightRadius: 4 },
+  bubbleMineGrad: { paddingHorizontal: 16, paddingVertical: 10, gap: 4, borderRadius: 16 },
   bubbleTheirsInner: {
-    backgroundColor: Colors.surfaceElevated, borderRadius: Radius.lg, borderBottomLeftRadius: 4,
-    paddingHorizontal: 14, paddingVertical: 10, gap: 4, borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: '#1A1E2B', borderRadius: 16,
+    paddingHorizontal: 16, paddingVertical: 10, gap: 4,
   },
   premiumBubble: { borderColor: 'rgba(255,157,0,0.4)', backgroundColor: 'rgba(255,157,0,0.08)' },
   premiumMsgHeader: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   premiumMsgLabel: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
-  oneTimeStatus: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 28 },
+  oneTimeStatus: { position: 'relative', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  oneTimeCard: { width: 184, height: 92, borderRadius: 16, backgroundColor: '#1B1E29', borderWidth: 1, borderColor: '#23283A' },
+  oneTimeBadge: { position: 'absolute', right: 6, top: 6, width: 18, height: 18, borderRadius: 9, backgroundColor: '#F6F7FB', alignItems: 'center', justifyContent: 'center' },
+  oneTimeBadgeText: { color: '#080A12', fontSize: 9, fontWeight: FontWeight.bold },
+  oneTimeLabel: { color: '#F6F7FB', fontSize: 10 },
   oneTimeViewer: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
   oneTimeImage: { width: '100%', height: '100%' },
   oneTimeClose: { position: 'absolute', top: 52, right: 20, zIndex: 2, padding: 8 },
@@ -896,28 +916,27 @@ const styles = StyleSheet.create({
   msgTextMine: { color: '#fff', fontSize: FontSize.sm, lineHeight: 20 },
   msgTime: { color: Colors.textSubtle, fontSize: 10, alignSelf: 'flex-end' },
   msgTimeMine: { color: 'rgba(255,255,255,0.6)', fontSize: 10, alignSelf: 'flex-end' },
-  deliveryIcon: { alignSelf: 'flex-end', marginBottom: 6 },
+  deliveryIcon: { alignSelf: 'flex-end', marginBottom: 5 },
+  failedAlert: { position: 'absolute', right: 8, top: 9 },
 
   // Input bar
   inputBar: {
-    position: 'absolute', left: 0, right: 0,
-    flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.sm,
-    paddingHorizontal: 16, paddingTop: 8,
-    borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.bg,
+    position: 'absolute', left: 12, right: 12,
+    minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 2,
+    paddingHorizontal: 8, paddingVertical: 6,
+    borderWidth: 1, borderColor: '#23283A', backgroundColor: '#0E111A', borderRadius: 22,
     zIndex: 100,
     elevation: 24,
   },
-  inputAction: { width: 38, height: 42, alignItems: 'center', justifyContent: 'center' },
+  inputAction: { width: 30, height: 38, alignItems: 'center', justifyContent: 'center' },
+  plusAction: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#171B29', borderWidth: 1, borderColor: '#30364A' },
+  emojiAction: { width: 30, height: 38, alignItems: 'center', justifyContent: 'center' },
   input: {
-    flex: 1, minHeight: 44, maxHeight: 120,
-    backgroundColor: Colors.surfaceElevated, borderRadius: Radius.xl,
-    paddingHorizontal: 16, paddingVertical: 12,
-    color: Colors.textPrimary, fontSize: FontSize.sm,
-    borderWidth: 1, borderColor: Colors.border,
+    flex: 1, minHeight: 40, maxHeight: 120,
+    paddingHorizontal: 10, paddingVertical: 10,
+    color: '#F6F7FB', fontSize: 12,
     textAlignVertical: 'top',
   },
-  premiumBtn: { borderRadius: Radius.full, overflow: 'hidden' },
-  premiumBtnGrad: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   sendBtn: { borderRadius: Radius.full, overflow: 'hidden' },
-  sendBtnGrad: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  sendBtnGrad: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center' },
 });

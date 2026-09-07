@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from '@/components/ui/SafeImage';
-import { Colors, Radius } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
 import { getStandardChatImageAccess } from '@/services/chatMediaService';
 
 export function PrivateChatImage({ assetId, legacyUrl }: { assetId?: string; legacyUrl?: string }) {
@@ -11,4 +11,4 @@ export function PrivateChatImage({ assetId, legacyUrl }: { assetId?: string; leg
   if(url)return <Image source={{uri:url}} style={styles.image} contentFit="cover" transition={200}/>;
   return <Pressable disabled={!failed} accessibilityRole={failed?'button':undefined} accessibilityLabel={failed?'Reintentar cargar imagen':'Cargando imagen'} onPress={()=>setAttempt(value=>value+1)} style={[styles.image,styles.loading]}>{failed?<MaterialCommunityIcons name="image-refresh-outline" size={24} color={Colors.textSecondary}/>:<ActivityIndicator size="small" color={Colors.primary}/>}</Pressable>;
 }
-const styles=StyleSheet.create({image:{width:200,height:200,borderRadius:Radius.md},loading:{alignItems:'center',justifyContent:'center',backgroundColor:Colors.surface}});
+const styles=StyleSheet.create({image:{width:228,height:124,borderRadius:16},loading:{alignItems:'center',justifyContent:'center',backgroundColor:'#252A37'}});

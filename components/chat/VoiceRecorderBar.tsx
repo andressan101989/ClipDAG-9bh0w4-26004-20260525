@@ -158,7 +158,7 @@ export function VoiceRecorderBar({ identityKey, disabled, onSend, onError, onRec
   if (phase === 'idle') return (
     <Pressable accessibilityRole="button" accessibilityLabel="Grabar nota de voz"
       disabled={disabled} onPress={start} hitSlop={8} style={styles.micButton}>
-      <MaterialCommunityIcons name="microphone-outline" size={22} color={Colors.textSecondary} />
+      <MaterialCommunityIcons name="microphone" size={22} color="#FFFFFF" />
     </Pressable>
   );
 
@@ -180,7 +180,7 @@ export function VoiceRecorderBar({ identityKey, disabled, onSend, onError, onRec
 }
 
 const styles = StyleSheet.create({
-  micButton: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
+  micButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#9B5CFF', alignItems: 'center', justifyContent: 'center' },
   bar: { flex: 1, minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 7,
     backgroundColor: Colors.surfaceElevated, borderRadius: Radius.xl, paddingHorizontal: Spacing.sm },
   action: { width: 34, height: 40, alignItems: 'center', justifyContent: 'center' },
