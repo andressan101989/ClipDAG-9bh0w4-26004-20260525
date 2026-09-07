@@ -3,12 +3,16 @@ import {
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
 } from 'expo-audio';
-import { File } from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 import { getStandardChatVoiceAccess, uploadPrivateVoiceNote } from '@/services/chatMediaService';
 
 export const CHAT_VOICE_WAVEFORM_SAMPLES = 48;
 export const CHAT_VOICE_MAX_DURATION_MS = 3_600_000;
 export const CHAT_VOICE_SPEEDS = [1, 1.5, 2] as const;
+export const CHAT_VOICE_STABILITY_MAX_ATTEMPTS = 10;
+export const CHAT_VOICE_STABILITY_INTERVAL_MS = 100;
+
+let stableVoiceFileSequence = 0;
 
 export type ChatVoiceSpeed = typeof CHAT_VOICE_SPEEDS[number];
 export type ChatVoiceDraft = {
@@ -65,14 +69,18 @@ export class ChatVoiceRecorderLifecycle {
 export class ChatVoiceRecorderStopGate {
   private flight: Promise<void> | null = null;
 
-  stop(shouldStop: () => boolean, stopRecorder: () => Promise<void>): Promise<void> {
-    if (this.flight) return this.flight;
+  stop(
+    shouldStop: () => boolean,
+    stopRecorder: () => Promise<void>,
+    options: { bestEffort?: boolean } = {},
+  ): Promise<void> {
+    if (this.flight) return options.bestEffort ? this.flight.catch(() => undefined) : this.flight;
     if (!shouldStop()) return Promise.resolve();
-    const flight = stopRecorder().catch(() => undefined).finally(() => {
+    const flight = stopRecorder().finally(() => {
       if (this.flight === flight) this.flight = null;
     });
     this.flight = flight;
-    return flight;
+    return options.bestEffort ? flight.catch(() => undefined) : flight;
   }
 }
 
@@ -207,14 +215,112 @@ export async function restoreChatVoicePlaybackMode(): Promise<void> {
   });
 }
 
-export async function uploadChatVoiceDraft(draft: ChatVoiceDraft, signal?: AbortSignal): Promise<string> {
-  return uploadPrivateVoiceNote({
-    uri: draft.uri,
-    mimeType: draft.mimeType,
-    fileName: `voice-${Date.now()}.m4a`,
-    durationMs: draft.durationMs,
-    signal,
-  });
+export type StableChatVoiceFile = {
+  uri: string;
+  mimeType: 'audio/mp4';
+  fileName: string;
+  sizeBytes: number;
+  cleanup: () => void;
+};
+
+type ChatVoiceStabilizationOptions = {
+  maxAttempts?: number;
+  intervalMs?: number;
+  signal?: AbortSignal;
+  readSize?: (uri: string) => number;
+  sleep?: (milliseconds: number) => Promise<void>;
+  copyToStableFile?: (sourceUri: string, fileName: string) => StableChatVoiceFile;
+};
+
+type ChatVoiceUploadOptions = {
+  stabilization?: ChatVoiceStabilizationOptions;
+  upload?: typeof uploadPrivateVoiceNote;
+};
+
+function throwIfVoiceUploadAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error('chat_voice_upload_aborted');
+}
+
+function createStableVoiceCopy(sourceUri: string, fileName: string): StableChatVoiceFile {
+  const source = new File(sourceUri);
+  const stableFile = new File(Paths.cache, fileName);
+  const cleanup = () => {
+    try { if (stableFile.exists) stableFile.delete(); } catch { /* Best-effort owned cache cleanup. */ }
+  };
+  let sizeBytes = 0;
+  try {
+    source.copy(stableFile);
+    sizeBytes = stableFile.size;
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+  if (!Number.isFinite(sizeBytes) || sizeBytes < 1) {
+    cleanup();
+    throw new Error('chat_voice_file_not_stable');
+  }
+  return {
+    uri: stableFile.uri,
+    mimeType: 'audio/mp4',
+    fileName,
+    sizeBytes,
+    cleanup,
+  };
+}
+
+export async function prepareStableChatVoiceDraft(
+  draft: ChatVoiceDraft,
+  options: ChatVoiceStabilizationOptions = {},
+): Promise<StableChatVoiceFile> {
+  const maxAttempts = options.maxAttempts ?? CHAT_VOICE_STABILITY_MAX_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? CHAT_VOICE_STABILITY_INTERVAL_MS;
+  const readSize = options.readSize ?? ((uri: string) => new File(uri).size);
+  const sleep = options.sleep ?? ((milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds)));
+  const copyToStableFile = options.copyToStableFile ?? createStableVoiceCopy;
+  let previousPositiveSize: number | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    throwIfVoiceUploadAborted(options.signal);
+    let size = 0;
+    try { size = readSize(draft.uri); } catch { size = 0; }
+    if (Number.isFinite(size) && size > 0 && size === previousPositiveSize) {
+      const operationId = `voice-${Date.now()}-${++stableVoiceFileSequence}`;
+      const stable = copyToStableFile(draft.uri, `${operationId}.m4a`);
+      if (stable.sizeBytes < 1) {
+        stable.cleanup();
+        throw new Error('chat_voice_file_not_stable');
+      }
+      console.info('[ChatVoice]', {
+        stage: 'VOICE_FILE_STABLE', operationId, durationMs: draft.durationMs,
+        stableSize: stable.sizeBytes, mimeType: stable.mimeType, attempt,
+      });
+      return stable;
+    }
+    previousPositiveSize = Number.isFinite(size) && size > 0 ? size : null;
+    if (attempt < maxAttempts) await sleep(intervalMs);
+  }
+  throw new Error('chat_voice_file_not_stable');
+}
+
+export async function uploadChatVoiceDraft(
+  draft: ChatVoiceDraft,
+  signal?: AbortSignal,
+  options: ChatVoiceUploadOptions = {},
+): Promise<string> {
+  const stable = await prepareStableChatVoiceDraft(draft, { ...options.stabilization, signal });
+  try {
+    throwIfVoiceUploadAborted(signal);
+    return await (options.upload ?? uploadPrivateVoiceNote)({
+      uri: stable.uri,
+      mimeType: 'audio/mp4',
+      fileName: stable.fileName,
+      sizeBytes: stable.sizeBytes,
+      durationMs: draft.durationMs,
+      signal,
+    });
+  } finally {
+    stable.cleanup();
+  }
 }
 
 export function discardChatVoiceDraft(uri: string): void {

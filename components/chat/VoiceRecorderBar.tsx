@@ -38,24 +38,40 @@ export function VoiceRecorderBar({ identityKey, disabled, onSend, onError, onRec
   const operationRef = useRef(false);
   const stopGateRef = useRef(new ChatVoiceRecorderStopGate());
   const recorderActiveRef = useRef(false);
+  const recorderUriRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
 
   const restoreMode = useCallback(() => restoreChatVoicePlaybackMode().catch(() => undefined), []);
-  const stopRecorder = useCallback(() => stopGateRef.current.stop(
-    () => recorder.isRecording || recorderActiveRef.current,
-    () => recorder.stop().finally(() => {
+  const readRecorderUriSafely = useCallback(() => {
+    try { return recorder.uri ?? null; } catch { return null; }
+  }, [recorder]);
+  const stopRecorder = useCallback(async (cleanup = false) => {
+    try {
+      await stopGateRef.current.stop(
+        () => recorderActiveRef.current,
+        async () => {
+          await recorder.stop();
+          recorderUriRef.current = readRecorderUriSafely();
+          recorderActiveRef.current = false;
+        },
+        { bestEffort: cleanup },
+      );
+      if (cleanup) recorderActiveRef.current = false;
+    } catch (error) {
+      if (!cleanup) throw error;
       recorderActiveRef.current = false;
-    }),
-  ), [recorder]);
+    }
+  }, [readRecorderUriSafely, recorder]);
   const cleanupResources = useCallback(async () => {
-    await stopRecorder();
-    const initialUri = draftRef.current?.uri ?? recorder.uri;
-    if (initialUri) discardChatVoiceDraft(initialUri);
+    await stopRecorder(true);
+    const draftUri = draftRef.current?.uri ?? null;
+    const recorderUri = recorderUriRef.current;
+    if (draftUri) discardChatVoiceDraft(draftUri);
+    if (recorderUri && recorderUri !== draftUri) discardChatVoiceDraft(recorderUri);
     draftRef.current = null; levelsRef.current = [];
+    recorderUriRef.current = null;
     await restoreMode();
-    const lateUri = recorder.uri;
-    if (lateUri && lateUri !== initialUri) discardChatVoiceDraft(lateUri);
-  }, [recorder, restoreMode, stopRecorder]);
+  }, [restoreMode, stopRecorder]);
   const cleanupResourcesRef = useRef(cleanupResources);
   cleanupResourcesRef.current = cleanupResources;
   const lifecycleRef = useRef<ChatVoiceRecorderLifecycle | null>(null);
@@ -72,7 +88,7 @@ export function VoiceRecorderBar({ identityKey, disabled, onSend, onError, onRec
     try {
       await stopRecorder();
       await restoreMode();
-      const uri = recorder.uri;
+      const uri = recorderUriRef.current ?? readRecorderUriSafely();
       if (!lifecycle.isCurrent(generation) || !uri || durationMs < 1) {
         if (uri) discardChatVoiceDraft(uri);
         if (mountedRef.current && lifecycle.isCurrent(generation)) {
@@ -88,7 +104,7 @@ export function VoiceRecorderBar({ identityKey, disabled, onSend, onError, onRec
     } catch {
       await restoreMode(); setPhase('idle'); onError('No se pudo finalizar la grabación.'); return null;
     } finally { operationRef.current = false; }
-  }, [draft, lifecycle, onError, phase, recorder, restoreMode, status.durationMillis, stopRecorder]);
+  }, [draft, lifecycle, onError, phase, readRecorderUriSafely, restoreMode, status.durationMillis, stopRecorder]);
 
   const cancel = useCallback(async () => {
     const invalidated = lifecycle.invalidate();
@@ -107,7 +123,7 @@ export function VoiceRecorderBar({ identityKey, disabled, onSend, onError, onRec
         ensurePermission: ensureChatVoicePermission,
         enableRecordingMode: enableChatVoiceRecordingMode,
         prepare: () => recorder.prepareToRecordAsync(),
-        record: () => { recorder.record(); recorderActiveRef.current = true; },
+        record: () => { recorderUriRef.current = null; recorder.record(); recorderActiveRef.current = true; },
       });
       if (result === 'denied' && mountedRef.current) {
         onError('Activa el permiso del micrófono para grabar una nota de voz.');
@@ -145,14 +161,17 @@ export function VoiceRecorderBar({ identityKey, disabled, onSend, onError, onRec
   }, [phase, status.durationMillis, status.metering, stopToDraft]);
 
   useEffect(() => {
-    const unsubscribe = AppLifecycle.onBackground(() => { void cancel(); });
+    const unsubscribe = AppLifecycle.onBackground(() => { void cancel().catch(() => undefined); });
     return unsubscribe;
   }, [cancel]);
 
   useEffect(() => { onRecordingChange?.(phase !== 'idle'); }, [onRecordingChange, phase]);
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; void lifecycle.invalidate().cleanup; };
+    return () => {
+      mountedRef.current = false;
+      void lifecycle.invalidate().cleanup.catch(() => undefined);
+    };
   }, [identityKey, lifecycle]);
 
   if (phase === 'idle') return (

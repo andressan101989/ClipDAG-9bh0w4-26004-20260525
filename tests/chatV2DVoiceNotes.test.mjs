@@ -31,6 +31,16 @@ function loadReliability() {
 
 function loadService({ permission = { granted: true, canAskAgain: true }, requested = { granted: true }, upload, access } = {}) {
   const modes = []; let requestCount = 0; const deleted = [];
+  const fileSizes = new Map();
+  class MockFile {
+    constructor(...parts) {
+      this.uri = parts.join('/').replace('file:///cache/', 'file:///cache/');
+      this.exists = true;
+    }
+    get size() { return fileSizes.get(this.uri) ?? 256; }
+    copy(destination) { fileSizes.set(destination.uri, this.size); }
+    delete() { deleted.push(this.uri); this.exists = false; fileSizes.delete(this.uri); }
+  }
   const module = { exports: {} };
   const output = ts.transpileModule(serviceSource, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
@@ -41,7 +51,7 @@ function loadService({ permission = { granted: true, canAskAgain: true }, reques
       requestRecordingPermissionsAsync: async () => { requestCount += 1; return requested; },
       setAudioModeAsync: async mode => { modes.push(mode); },
     },
-    'expo-file-system': { File: class { constructor(uri) { this.uri = uri; this.exists = true; } delete() { deleted.push(this.uri); } } },
+    'expo-file-system': { File: MockFile, Paths: { cache: 'file:///cache' } },
     '@/services/chatMediaService': {
       uploadPrivateVoiceNote: upload ?? (async input => { loadService.lastUpload = input; return 'asset-1'; }),
       getStandardChatVoiceAccess: access ?? (async () => ({ url: 'https://signed.example/audio' })),
@@ -95,6 +105,7 @@ test('voice draft uploads through private voice_note authority', async () => {
   let input; const h = loadService({ upload: async value => { input = value; return 'voice-asset'; } });
   const id = await h.api.uploadChatVoiceDraft({ uri: 'file:///voice.m4a', mimeType: 'audio/mp4', durationMs: 1200, waveform: Array(48).fill(50) });
   assert.equal(id, 'voice-asset'); assert.equal(input.mimeType, 'audio/mp4'); assert.equal(input.durationMs, 1200);
+  assert.equal(input.sizeBytes, 256); assert.match(input.fileName, /\.m4a$/); assert.equal(input.uri.startsWith('file:\/\/\/cache\/'), true);
 });
 
 test('private voice helper rejects public or malformed upload results and invalid MIME', () => {
