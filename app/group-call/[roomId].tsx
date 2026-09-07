@@ -84,7 +84,6 @@ export default function GroupCallScreen() {
     joined: isCanonicalChatCall && joined,
     connected: isCanonicalChatCall && joined,
     terminal: !isCanonicalChatCall || endedRef.current,
-    pauseInBackground: true,
   });
 
   const leaveRoom = useCallback(async () => {

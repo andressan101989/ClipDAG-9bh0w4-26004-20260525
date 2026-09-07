@@ -17,12 +17,10 @@ type Params = {
   joined: boolean;
   connected: boolean;
   terminal: boolean;
-  pauseInBackground?: boolean;
 };
 
 export function useCallLiveness({
   callId, isCallee, callStatus, answerHandoff, joined, connected, terminal,
-  pauseInBackground = false,
 }: Params) {
   const handoffMarkedRef = useRef<string | null>(null);
   const joinMarkedRef = useRef<string | null>(null);
@@ -59,7 +57,6 @@ export function useCallLiveness({
   useEffect(() => {
     if (!callId || terminal || callStatus !== 'accepted' || !connected) return;
     let stopped = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
     const sendHeartbeat = () => {
       if (stopped || heartbeatFlightRef.current) return;
       const flight = heartbeatCall(callId);
@@ -69,28 +66,15 @@ export function useCallLiveness({
       };
       void flight.then(settled, settled);
     };
-    const stopTimer = () => {
-      if (timer !== null) clearInterval(timer);
-      timer = null;
-    };
-    const startTimer = () => {
-      if (stopped || timer) return;
-      sendHeartbeat();
-      timer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
-    };
-    if (!pauseInBackground || AppState.currentState === 'active') startTimer();
+    sendHeartbeat();
+    const timer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
     const appStateSubscription = AppState.addEventListener('change', state => {
-      if (!pauseInBackground) {
-        if (state === 'active') sendHeartbeat();
-        return;
-      }
-      if (state === 'active') startTimer();
-      else stopTimer();
+      if (state === 'active') sendHeartbeat();
     });
     return () => {
       stopped = true;
-      stopTimer();
+      clearInterval(timer);
       appStateSubscription.remove();
     };
-  }, [callId, callStatus, connected, pauseInBackground, terminal]);
+  }, [callId, callStatus, connected, terminal]);
 }

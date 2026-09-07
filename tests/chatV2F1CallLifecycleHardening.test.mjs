@@ -77,17 +77,18 @@ test('direct heartbeat authorization remains caller/callee based', () => {
 
 test('canonical group screen reuses the existing call liveness hook', () => {
   assert.match(groupScreen, /useCallLiveness\(\{/);
-  assert.match(groupScreen, /pauseInBackground:\s*true/);
+  assert.doesNotMatch(groupScreen, /pauseInBackground/);
   assert.match(groupScreen, /connected:\s*isCanonicalChatCall && joined/);
 });
 
-test('background stops the group heartbeat timer and foreground starts one timer', () => {
-  assert.match(livenessHook, /if \(state === 'active'\) startTimer\(\);\s*else stopTimer\(\);/);
-  assert.match(livenessHook, /if \(stopped \|\| timer\) return;/);
+test('background does not stop heartbeat and foreground requests immediate reconciliation', () => {
+  assert.match(livenessHook, /const timer = setInterval\(sendHeartbeat, HEARTBEAT_INTERVAL_MS\);/);
+  assert.match(livenessHook, /if \(state === 'active'\) sendHeartbeat\(\);/);
+  assert.doesNotMatch(livenessHook, /else stopTimer\(\)/);
 });
 
 test('unmount and terminal cleanup stop timers and remove AppState listener', () => {
-  assert.match(livenessHook, /stopped = true;\s*stopTimer\(\);\s*appStateSubscription\.remove\(\);/);
+  assert.match(livenessHook, /stopped = true;\s*clearInterval\(timer\);\s*appStateSubscription\.remove\(\);/);
   assert.match(livenessHook, /if \(!callId \|\| terminal \|\| callStatus !== 'accepted' \|\| !connected\) return;/);
 });
 
