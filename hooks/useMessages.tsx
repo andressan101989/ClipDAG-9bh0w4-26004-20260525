@@ -25,6 +25,15 @@ export function useMessages(): MessagesContextType {
     activateConversation: async () => {},
     deactivateConversation: () => {},
     setConversationTyping: () => {},
+    createGroup: async () => { throw new Error('messages_provider_unavailable'); },
+    loadConversationById: async () => {},
+    loadOlderConversationMessages: async () => {},
+    sendConversationMessage: async () => {},
+    sendConversationVoiceMessage: async () => {},
+    retryConversationMessage: async () => {},
+    markConversationReadById: async () => {},
+    activateConversationById: async () => {},
+    deactivateConversationById: () => {},
   };
   return ctx;
 }

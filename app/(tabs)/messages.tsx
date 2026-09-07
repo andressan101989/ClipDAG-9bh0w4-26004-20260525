@@ -211,7 +211,7 @@ export default function MessagesScreen() {
 
   // Filter conversations
   const filtered = conversations.filter(c => {
-    if (search.trim() && !c.partnerUsername.toLowerCase().includes(search.toLowerCase())) return false;
+    if (search.trim() && !c.displayName.toLowerCase().includes(search.toLowerCase())) return false;
     if (activeTab === 'unread' && c.unreadCount === 0) return false;
     return true;
   });
@@ -305,6 +305,9 @@ export default function MessagesScreen() {
             <LinearGradient colors={['#7C5CFF', '#FF2D78']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.newMsgBtnGrad}>
               <MaterialCommunityIcons name="pencil-outline" size={16} color="#fff" />
             </LinearGradient>
+          </Pressable>
+          <Pressable onPress={() => router.push('/chat/group/create' as any)} hitSlop={8} style={styles.salaBtn}>
+            <MaterialCommunityIcons name="account-multiple-plus-outline" size={20} color={Colors.textSecondary} />
           </Pressable>
         </View>
       </View>
@@ -451,7 +454,7 @@ export default function MessagesScreen() {
       ) : (
         <FlatList
           data={sortedConversations}
-          keyExtractor={item => item.partnerId}
+          keyExtractor={item => item.id}
           contentContainerStyle={{ paddingBottom: 100 + insets.bottom }}
           refreshControl={
             <RefreshControl
@@ -473,19 +476,19 @@ export default function MessagesScreen() {
                   hasUnread && styles.convItemUnread,
                   pressed && { backgroundColor: Colors.surfaceHighlight },
                 ]}
-                onPress={() => router.push(`/chat/${item.partnerId}`)}
+                onPress={() => router.push(item.conversationType === 'group' ? `/chat/group/${item.id}` as any : `/chat/${item.partnerId}`)}
               >
                 {/* Premium indicator stripe */}
                 {isPremium ? <View style={styles.premiumStripe} /> : null}
 
                 {/* Avatar with online dot */}
                 <View style={styles.avatarWrap}>
-                  <Avatar uri={item.partnerAvatar} username={item.partnerUsername} size={54} />
+                  <Avatar uri={item.avatar} username={item.displayName} size={54} />
                   {isPremium ? (
                     <View style={[styles.onlineDot, { backgroundColor: PREMIUM_COLOR }]}>
                       <MaterialIcons name="star" size={7} color="#fff" />
                     </View>
-                  ) : presenceByUser[item.partnerId] === 'online' ? (
+                  ) : item.partnerId && presenceByUser[item.partnerId] === 'online' ? (
                     <View style={styles.onlineDot} />
                   ) : null}
                 </View>
@@ -495,7 +498,7 @@ export default function MessagesScreen() {
                   <View style={styles.convTopRow}>
                     <View style={styles.convNameRow}>
                       <Text style={[styles.convName, hasUnread && styles.convNameBold]}>
-                        @{item.partnerUsername}
+                        {item.conversationType === 'group' ? item.displayName : `@${item.displayName}`}
                       </Text>
                       {isPremium ? (
                         <View style={styles.premiumChip}>

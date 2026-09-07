@@ -114,7 +114,7 @@ export default function MessagesScreen() {
               conv={item}
               currentUserId={user?.id || ''}
               online={presenceByUser[item.partnerId] === 'online'}
-              onPress={() => router.push(`/chat/${item.otherUserId}`)}
+              onPress={() => router.push(item.conversationType === 'group' ? `/chat/group/${item.id}` as any : `/chat/${item.otherUserId}`)}
             />
           )}
           ItemSeparatorComponent={() => <View style={styles.separator} />}

@@ -20,7 +20,8 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { timeAgo } from '@/services/mockData';
 import { detectMimeType } from '@/contexts/FeedContext';
-import { getStandardChatImageAccess, uploadPrivateChatImage } from '@/services/chatMediaService';
+import { uploadPrivateChatImage } from '@/services/chatMediaService';
+import { PrivateChatImage } from '@/components/chat/PrivateChatImage';
 import { ChatVoiceDraftSender, type ChatVoiceDraft } from '@/services/chatVoiceService';
 import { VoiceRecorderBar } from '@/components/chat/VoiceRecorderBar';
 import { VoiceMessageBubble } from '@/components/chat/VoiceMessageBubble';
@@ -35,28 +36,6 @@ const PREMIUM_COLOR2 = '#FF5A00';
 const INPUT_MIN_HEIGHT = 44;
 const INPUT_MAX_HEIGHT = 120;
 const ONE_TIME_CAPTURE_KEY = 'chat-one-time-media';
-
-function PrivateChatImage({ assetId, legacyUrl }: { assetId?: string; legacyUrl?: string }) {
-  const [url, setUrl] = useState(legacyUrl);
-  const [failed, setFailed] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    let active = true;
-    setFailed(false);
-    if (!assetId || legacyUrl) { setUrl(legacyUrl); return () => { active = false; }; }
-    setUrl(undefined);
-    void getStandardChatImageAccess(assetId).then(access => { if (active) setUrl(access.url); })
-      .catch(() => { if (active) setFailed(true); });
-    return () => { active = false; };
-  }, [assetId, legacyUrl, attempt]);
-  if (url) return <Image source={{ uri: url }} style={styles.msgImage} contentFit="cover" transition={200} />;
-  return <Pressable disabled={!failed} accessibilityRole={failed ? 'button' : undefined}
-    accessibilityLabel={failed ? 'Reintentar cargar imagen' : 'Cargando imagen'}
-    onPress={() => setAttempt(value => value + 1)} style={[styles.msgImage, styles.mediaLoading]}>
-    {failed ? <MaterialCommunityIcons name="image-refresh-outline" size={24} color={Colors.textSecondary} />
-      : <ActivityIndicator size="small" color={Colors.primary} />}
-  </Pressable>;
-}
 
 function OneTimeMediaViewer({ url, onClose }: { url: string | null; onClose: () => void }) {
   ScreenCapture.usePreventScreenCapture(ONE_TIME_CAPTURE_KEY);
@@ -287,7 +266,8 @@ export default function ChatScreen() {
   const [pendingPayment,  setPendingPayment]  = useState<{ payment_id: string; message_id: string; amount: number; creator_earning: number } | null>(null);
 
   const conversation = conversations.find(c => c.partnerId === partnerId);
-  const chatMessages = useMemo(() => messages[partnerId || ''] || [], [messages, partnerId]);
+  const conversationKey = conversations.find(item => item.partnerId === partnerId)?.conversationId || '';
+  const chatMessages = useMemo(() => messages[conversationKey] || [], [messages, conversationKey]);
 
   useFocusEffect(
     useCallback(() => {
@@ -398,8 +378,8 @@ export default function ChatScreen() {
     if (chatMessages.length === 0) return;
     const grew = chatMessages.length > previousMessageCountRef.current;
     previousMessageCountRef.current = chatMessages.length;
-    if (grew && !isLoadingOlder[partnerId || '']) scrollToLatest(true);
-  }, [chatMessages.length, isLoadingOlder, partnerId, keyboardHeight, inputHeight, composerHeight, scrollToLatest]);
+    if (grew && !isLoadingOlder[conversationKey]) scrollToLatest(true);
+  }, [chatMessages.length, conversationKey, isLoadingOlder, partnerId, keyboardHeight, inputHeight, composerHeight, scrollToLatest]);
 
   // ── Send regular message ──────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
@@ -743,9 +723,9 @@ export default function ChatScreen() {
             keyExtractor={item => item.id}
             renderItem={renderMessage}
             contentContainerStyle={styles.messagesList}
-            ListHeaderComponent={isLoadingOlder[partnerId || '']
+            ListHeaderComponent={isLoadingOlder[conversationKey]
               ? <ActivityIndicator size="small" color={Colors.primary} />
-              : hasOlderMessages[partnerId || ''] ? <View style={{ height: 8 }} /> : null}
+              : hasOlderMessages[conversationKey] ? <View style={{ height: 8 }} /> : null}
             ListFooterComponent={<View style={{ height: 12 }} />}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
@@ -753,7 +733,7 @@ export default function ChatScreen() {
             maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
             scrollEventThrottle={100}
             onScroll={event => {
-              if (event.nativeEvent.contentOffset.y <= 24 && hasOlderMessages[partnerId || '']) {
+              if (event.nativeEvent.contentOffset.y <= 24 && hasOlderMessages[conversationKey]) {
                 void loadOlderMessages(partnerId || '');
               }
             }}
@@ -926,8 +906,6 @@ const styles = StyleSheet.create({
   premiumBubble: { borderColor: 'rgba(255,157,0,0.4)', backgroundColor: 'rgba(255,157,0,0.08)' },
   premiumMsgHeader: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   premiumMsgLabel: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
-  msgImage: { width: 200, height: 200, borderRadius: Radius.md },
-  mediaLoading: { alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surface },
   oneTimeStatus: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 28 },
   oneTimeViewer: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
   oneTimeImage: { width: '100%', height: '100%' },
