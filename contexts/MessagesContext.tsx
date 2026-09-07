@@ -12,6 +12,7 @@ import {
 import { createChatTypingSession, type ChatTypingSession } from '@/services/chatTypingSession';
 import { ChatRetryCoordinator, isChatReadEligible, monotonicDeliveryStatus } from '@/services/chatReliability';
 import { openOneTimeChatImage } from '@/services/chatMediaService';
+import { acceptChatVoiceRetryOwnership } from '@/services/chatVoiceService';
 import type { ChatCursor, ChatDeliveryStatus, ChatMessageReceiptRow, ChatMessageRow, ChatMessageWithReceiptRow } from '@/services/chatContract';
 
 const MESSAGE_PAGE_SIZE = 50;
@@ -265,7 +266,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       audioDurationMs: input.durationMs, audioWaveform: input.waveform,
       read: false, deliveryStatus: 'pending', createdAt: new Date().toISOString() };
     setMessages(previous => ({ ...previous, [recipientId]: mergeChatMessage(previous[recipientId] || [], optimistic) }));
-    await transmitMessage(recipientId, optimistic);
+    await acceptChatVoiceRetryOwnership(optimistic, message => transmitMessage(recipientId, message));
   }, [transmitMessage, user?.id]);
 
   const openOneTimeMedia = useCallback(async (partnerId: string, messageId: string): Promise<string> => {

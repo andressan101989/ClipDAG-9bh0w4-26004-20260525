@@ -18,6 +18,142 @@ export type ChatVoiceDraft = {
   waveform: number[];
 };
 
+export type ChatVoiceMessageInput = {
+  mediaAssetId: string;
+  durationMs: number;
+  waveform: number[];
+};
+
+export class ChatVoiceRecorderLifecycle {
+  private generation = 0;
+  private cleanupFlight: Promise<void> | null = null;
+
+  constructor(private readonly cleanupResources: () => Promise<void>) {}
+
+  begin(): number {
+    this.generation += 1;
+    return this.generation;
+  }
+
+  isCurrent(generation: number): boolean {
+    return generation === this.generation;
+  }
+
+  snapshot(): number {
+    return this.generation;
+  }
+
+  waitForCleanup(): Promise<void> {
+    return this.cleanupFlight ?? Promise.resolve();
+  }
+
+  requestCleanup(): Promise<void> {
+    if (this.cleanupFlight) return this.cleanupFlight;
+    const flight = this.cleanupResources().finally(() => {
+      if (this.cleanupFlight === flight) this.cleanupFlight = null;
+    });
+    this.cleanupFlight = flight;
+    return flight;
+  }
+
+  invalidate(): { generation: number; cleanup: Promise<void> } {
+    this.generation += 1;
+    return { generation: this.generation, cleanup: this.requestCleanup() };
+  }
+}
+
+export class ChatVoiceRecorderStopGate {
+  private flight: Promise<void> | null = null;
+
+  stop(shouldStop: () => boolean, stopRecorder: () => Promise<void>): Promise<void> {
+    if (this.flight) return this.flight;
+    if (!shouldStop()) return Promise.resolve();
+    const flight = stopRecorder().catch(() => undefined).finally(() => {
+      if (this.flight === flight) this.flight = null;
+    });
+    this.flight = flight;
+    return flight;
+  }
+}
+
+export async function startChatVoiceRecorder(input: {
+  lifecycle: ChatVoiceRecorderLifecycle;
+  ensurePermission: () => Promise<boolean>;
+  enableRecordingMode: () => Promise<void>;
+  prepare: () => Promise<void>;
+  record: () => void;
+}): Promise<'started' | 'denied' | 'stale'> {
+  const generation = input.lifecycle.begin();
+  const stale = async () => {
+    if (input.lifecycle.isCurrent(generation)) return false;
+    await input.lifecycle.requestCleanup();
+    return true;
+  };
+  try {
+    await input.lifecycle.waitForCleanup();
+    if (await stale()) return 'stale';
+    if (!(await input.ensurePermission())) {
+      return input.lifecycle.isCurrent(generation) ? 'denied' : 'stale';
+    }
+    if (await stale()) return 'stale';
+    await input.enableRecordingMode();
+    if (await stale()) return 'stale';
+    await input.prepare();
+    if (await stale()) return 'stale';
+    input.record();
+    return input.lifecycle.isCurrent(generation) ? 'started' : 'stale';
+  } catch (error) {
+    await input.lifecycle.requestCleanup();
+    if (!input.lifecycle.isCurrent(generation)) return 'stale';
+    throw error;
+  }
+}
+
+export class ChatVoiceDraftSender {
+  private uploads = new Map<string, Promise<string>>();
+  private generation = 0;
+
+  constructor(private readonly upload: (draft: ChatVoiceDraft) => Promise<string> = uploadChatVoiceDraft) {}
+
+  async handoff<T>(draft: ChatVoiceDraft, accept: (input: ChatVoiceMessageInput) => Promise<T>): Promise<T> {
+    const generation = this.generation;
+    let upload = this.uploads.get(draft.uri);
+    if (!upload) {
+      upload = this.upload(draft);
+      this.uploads.set(draft.uri, upload);
+    }
+    let uploaded = false;
+    try {
+      const mediaAssetId = await upload;
+      uploaded = true;
+      if (generation !== this.generation) throw new Error('chat_voice_handoff_stale');
+      const result = await accept({ mediaAssetId, durationMs: draft.durationMs, waveform: draft.waveform });
+      this.uploads.delete(draft.uri);
+      return result;
+    } catch (error) {
+      if (!uploaded) this.uploads.delete(draft.uri);
+      throw error;
+    }
+  }
+
+  clear(): void {
+    this.generation += 1;
+    this.uploads.clear();
+  }
+}
+
+export async function acceptChatVoiceRetryOwnership<T>(
+  message: T,
+  transmit: (message: T) => Promise<void>,
+): Promise<{ message: T; transportFailed: boolean }> {
+  try {
+    await transmit(message);
+    return { message, transportFailed: false };
+  } catch {
+    return { message, transportFailed: true };
+  }
+}
+
 export function meteringToVoiceLevel(metering?: number): number {
   if (!Number.isFinite(metering)) return 0;
   const db = Math.max(-60, Math.min(0, Number(metering)));

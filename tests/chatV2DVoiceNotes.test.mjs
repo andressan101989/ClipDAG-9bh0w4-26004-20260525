@@ -13,6 +13,22 @@ const recorder = readFileSync('components/chat/VoiceRecorderBar.tsx', 'utf8');
 const bubble = readFileSync('components/chat/VoiceMessageBubble.tsx', 'utf8');
 const edge = readFileSync('supabase/functions/get-media-url/index.ts', 'utf8');
 
+function deferred() {
+  let resolve; let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+function loadReliability() {
+  const source = readFileSync('services/chatReliability.ts', 'utf8');
+  const module = { exports: {} };
+  const output = ts.transpileModule(source, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
+  } }).outputText;
+  Function('require', 'module', 'exports', output)(() => ({}), module, module.exports);
+  return module.exports;
+}
+
 function loadService({ permission = { granted: true, canAskAgain: true }, requested = { granted: true }, upload, access } = {}) {
   const modes = []; let requestCount = 0; const deleted = [];
   const module = { exports: {} };
@@ -96,7 +112,8 @@ test('signed voice playback reuses the CHAT media authorization endpoint', async
 
 test('cancel discards only the local cache file without creating an asset', () => {
   const h = loadService(); h.api.discardChatVoiceDraft('file:///draft.m4a'); assert.deepEqual(h.deleted, ['file:///draft.m4a']);
-  assert.match(recorder, /cancel[\s\S]*recorder\.stop\(\)[\s\S]*discardChatVoiceDraft/);
+  assert.match(recorder, /cleanupResources[\s\S]*stopRecorder\(\)[\s\S]*discardChatVoiceDraft/);
+  assert.match(recorder, /const cancel[\s\S]*lifecycle\.invalidate\(\)/);
 });
 
 test('recorder uses one expo-audio recorder with metering and bounded duration', () => {
@@ -108,7 +125,8 @@ test('recorder uses one expo-audio recorder with metering and bounded duration',
 
 test('recorder cleanup covers background, identity changes and unmount', () => {
   assert.match(recorder, /AppLifecycle\.onBackground\([\s\S]*cancel/);
-  assert.match(recorder, /generationRef\.current \+= 1[\s\S]*cancelRef\.current/);
+  assert.match(recorder, /lifecycle\.invalidate\(\)/);
+  assert.doesNotMatch(recorder, /const cancel[\s\S]{0,150}operationRef\.current\) return/);
   assert.match(recorder, /restoreChatVoicePlaybackMode/);
 });
 
@@ -179,7 +197,7 @@ test('idempotency compares voice duration waveform asset and message type', () =
 
 test('UI uses compact recorder and voice bubble without changing calls or Premium DM', () => {
   assert.match(screen, /VoiceRecorderBar/); assert.match(screen, /VoiceMessageBubble/);
-  assert.match(screen, /handleSendVoice[\s\S]*uploadChatVoiceDraft[\s\S]*sendVoiceMessage/);
+  assert.match(screen, /handleSendVoice[\s\S]*voiceDraftSenderRef\.current![\s\S]*sendVoiceMessage/);
   assert.ok(screen.includes('router.push(`/call/${partnerId}`)'));
   assert.ok(screen.includes('router.push(`/video-call/${partnerId}`)'));
   assert.match(screen, /send_premium_dm/);
@@ -187,4 +205,107 @@ test('UI uses compact recorder and voice bubble without changing calls or Premiu
 
 test('D migration changes no financial, marketplace, LIVE, Battle or Agora object', () => {
   assert.doesNotMatch(migration, /\b(wallet|ledger|escrow|gift|marketplace|live_battle|agora|premium_dm_payments)\b/i);
+});
+
+test('transport failure transfers the uploaded voice to one failed optimistic message', async () => {
+  const { api } = loadService();
+  let uploads = 0; let ids = 0; const logical = [];
+  const draft = { uri: 'file:///retry.m4a', mimeType: 'audio/mp4', durationMs: 1800, waveform: Array(48).fill(42) };
+  const sender = new api.ChatVoiceDraftSender(async () => { uploads += 1; return 'asset-stable'; });
+  const outcome = await sender.handoff(draft, async input => {
+    const message = { clientMessageId: `client-${++ids}`, ...input, deliveryStatus: 'pending' };
+    logical.push(message);
+    return api.acceptChatVoiceRetryOwnership(message, async current => {
+      current.deliveryStatus = 'failed';
+      throw new Error('network_lost');
+    });
+  });
+  assert.equal(outcome.transportFailed, true);
+  assert.equal(uploads, 1); assert.equal(ids, 1); assert.equal(logical.length, 1);
+  assert.equal(logical[0].deliveryStatus, 'failed');
+  assert.equal(logical[0].mediaAssetId, 'asset-stable');
+});
+
+test('canonical retry reuses client id asset duration waveform and performs no second upload', async () => {
+  const { api } = loadService(); const { ChatRetryCoordinator } = loadReliability();
+  let uploads = 0; let attempts = 0; const draft = {
+    uri: 'file:///same.m4a', mimeType: 'audio/mp4', durationMs: 2300, waveform: Array.from({ length: 48 }, (_, i) => i),
+  };
+  const sender = new api.ChatVoiceDraftSender(async () => { uploads += 1; return 'asset-one'; });
+  let failed;
+  await sender.handoff(draft, async input => {
+    failed = { clientMessageId: 'client-one', ...input, deliveryStatus: 'pending' };
+    return api.acceptChatVoiceRetryOwnership(failed, async current => {
+      attempts += 1; current.deliveryStatus = 'failed'; throw new Error('offline');
+    });
+  });
+  const original = structuredClone(failed); const retry = new ChatRetryCoordinator();
+  await retry.run(`user:partner:${failed.clientMessageId}`, async () => {
+    attempts += 1; failed.deliveryStatus = 'sent';
+  });
+  assert.equal(uploads, 1); assert.equal(attempts, 2);
+  assert.equal(failed.clientMessageId, original.clientMessageId);
+  assert.equal(failed.mediaAssetId, original.mediaAssetId);
+  assert.equal(failed.durationMs, original.durationMs);
+  assert.deepEqual(failed.waveform, original.waveform);
+});
+
+test('lost server response and retry converge on one canonical logical message', async () => {
+  const { api } = loadService(); const server = new Map(); let calls = 0;
+  const operation = { clientMessageId: 'client-lost-response', mediaAssetId: 'asset-lost-response',
+    durationMs: 3100, waveform: Array(48).fill(61), deliveryStatus: 'pending' };
+  const persist = async message => {
+    calls += 1;
+    if (!server.has(message.clientMessageId)) server.set(message.clientMessageId, 'message-canonical');
+    if (calls === 1) { message.deliveryStatus = 'failed'; throw new Error('response_lost'); }
+    message.id = server.get(message.clientMessageId); message.deliveryStatus = 'sent';
+  };
+  const first = await api.acceptChatVoiceRetryOwnership(operation, persist);
+  assert.equal(first.transportFailed, true); await persist(operation);
+  assert.equal(server.size, 1); assert.equal(operation.id, 'message-canonical'); assert.equal(operation.deliveryStatus, 'sent');
+});
+
+test('background while permission is pending fences startup and restores audio mode', async () => {
+  const { api } = loadService(); const permission = deferred(); let records = 0; let restores = 0;
+  const lifecycle = new api.ChatVoiceRecorderLifecycle(async () => { restores += 1; });
+  const startup = api.startChatVoiceRecorder({ lifecycle, ensurePermission: () => permission.promise,
+    enableRecordingMode: async () => undefined, prepare: async () => undefined, record: () => { records += 1; } });
+  const background = lifecycle.invalidate(); await background.cleanup; permission.resolve(true);
+  assert.equal(await startup, 'stale'); assert.equal(records, 0); assert.ok(restores >= 1);
+});
+
+test('background while prepare is pending never calls record', async () => {
+  const { api } = loadService(); const preparing = deferred(); let records = 0; let restores = 0; let prepareStarted = false;
+  const lifecycle = new api.ChatVoiceRecorderLifecycle(async () => { restores += 1; });
+  const startup = api.startChatVoiceRecorder({ lifecycle, ensurePermission: async () => true,
+    enableRecordingMode: async () => undefined, prepare: () => { prepareStarted = true; return preparing.promise; },
+    record: () => { records += 1; } });
+  while (!prepareStarted) await Promise.resolve();
+  const background = lifecycle.invalidate(); await background.cleanup; preparing.resolve();
+  assert.equal(await startup, 'stale'); assert.equal(records, 0); assert.ok(restores >= 1);
+});
+
+test('identity switch and unmount invalidate startup without stale state callbacks', async () => {
+  const { api } = loadService(); const permission = deferred(); let startedCallbacks = 0; let restores = 0;
+  const lifecycle = new api.ChatVoiceRecorderLifecycle(async () => { restores += 1; });
+  const startup = api.startChatVoiceRecorder({ lifecycle, ensurePermission: () => permission.promise,
+    enableRecordingMode: async () => undefined, prepare: async () => undefined, record: () => { startedCallbacks += 1; } });
+  const accountSwitch = lifecycle.invalidate(); const unmount = lifecycle.invalidate();
+  permission.resolve(true); await Promise.all([accountSwitch.cleanup, unmount.cleanup]);
+  assert.equal(await startup, 'stale'); assert.equal(startedCallbacks, 0); assert.ok(restores >= 1);
+});
+
+test('background during active recording stops exactly once and cleanup is single-flight', async () => {
+  const { api } = loadService(); let recording = false; let stops = 0; let restores = 0;
+  const stopDeferred = deferred(); const stopGate = new api.ChatVoiceRecorderStopGate();
+  const cleanup = async () => {
+    await stopGate.stop(() => recording, async () => { stops += 1; await stopDeferred.promise; recording = false; });
+    restores += 1;
+  };
+  const lifecycle = new api.ChatVoiceRecorderLifecycle(cleanup);
+  assert.equal(await api.startChatVoiceRecorder({ lifecycle, ensurePermission: async () => true,
+    enableRecordingMode: async () => undefined, prepare: async () => undefined, record: () => { recording = true; } }), 'started');
+  const background = lifecycle.invalidate(); const unmount = lifecycle.invalidate();
+  stopDeferred.resolve(); await Promise.all([background.cleanup, unmount.cleanup]);
+  assert.equal(stops, 1); assert.equal(recording, false); assert.equal(restores, 1);
 });

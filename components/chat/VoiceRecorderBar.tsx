@@ -6,6 +6,8 @@ import { AppLifecycle } from '@/modules/core/AppLifecycle';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import {
   CHAT_VOICE_MAX_DURATION_MS,
+  ChatVoiceRecorderLifecycle,
+  ChatVoiceRecorderStopGate,
   discardChatVoiceDraft,
   enableChatVoiceRecordingMode,
   ensureChatVoicePermission,
@@ -13,6 +15,7 @@ import {
   meteringToVoiceLevel,
   normalizeVoiceWaveform,
   restoreChatVoicePlaybackMode,
+  startChatVoiceRecorder,
   type ChatVoiceDraft,
 } from '@/services/chatVoiceService';
 
@@ -31,81 +34,107 @@ export function VoiceRecorderBar({ identityKey, disabled, onSend, onError, onRec
   const [draft, setDraft] = useState<ChatVoiceDraft | null>(null);
   const [levels, setLevels] = useState<number[]>([]);
   const levelsRef = useRef<number[]>([]);
+  const draftRef = useRef<ChatVoiceDraft | null>(null);
   const operationRef = useRef(false);
-  const generationRef = useRef(0);
+  const stopGateRef = useRef(new ChatVoiceRecorderStopGate());
+  const recorderActiveRef = useRef(false);
   const mountedRef = useRef(true);
-  const cancelRef = useRef<() => Promise<void>>(async () => undefined);
 
   const restoreMode = useCallback(() => restoreChatVoicePlaybackMode().catch(() => undefined), []);
+  const stopRecorder = useCallback(() => stopGateRef.current.stop(
+    () => recorder.isRecording || recorderActiveRef.current,
+    () => recorder.stop().finally(() => {
+      recorderActiveRef.current = false;
+    }),
+  ), [recorder]);
+  const cleanupResources = useCallback(async () => {
+    await stopRecorder();
+    const initialUri = draftRef.current?.uri ?? recorder.uri;
+    if (initialUri) discardChatVoiceDraft(initialUri);
+    draftRef.current = null; levelsRef.current = [];
+    await restoreMode();
+    const lateUri = recorder.uri;
+    if (lateUri && lateUri !== initialUri) discardChatVoiceDraft(lateUri);
+  }, [recorder, restoreMode, stopRecorder]);
+  const cleanupResourcesRef = useRef(cleanupResources);
+  cleanupResourcesRef.current = cleanupResources;
+  const lifecycleRef = useRef<ChatVoiceRecorderLifecycle | null>(null);
+  if (!lifecycleRef.current) {
+    lifecycleRef.current = new ChatVoiceRecorderLifecycle(() => cleanupResourcesRef.current());
+  }
+  const lifecycle = lifecycleRef.current;
 
   const stopToDraft = useCallback(async (): Promise<ChatVoiceDraft | null> => {
     if (operationRef.current || phase !== 'recording') return draft;
     operationRef.current = true;
-    const generation = generationRef.current;
+    const generation = lifecycle.snapshot();
     const durationMs = Math.min(CHAT_VOICE_MAX_DURATION_MS, Math.max(0, status.durationMillis));
     try {
-      await recorder.stop();
+      await stopRecorder();
       await restoreMode();
       const uri = recorder.uri;
-      if (generation !== generationRef.current || !uri || durationMs < 1) {
+      if (!lifecycle.isCurrent(generation) || !uri || durationMs < 1) {
         if (uri) discardChatVoiceDraft(uri);
-        if (mountedRef.current && generation === generationRef.current) {
+        if (mountedRef.current && lifecycle.isCurrent(generation)) {
           setPhase('idle'); onError('La grabación está vacía.');
         }
         return null;
       }
       const next = { uri, mimeType: 'audio/mp4' as const, durationMs,
         waveform: normalizeVoiceWaveform(levelsRef.current) };
+      draftRef.current = next;
       setDraft(next); setPhase('ready');
       return next;
     } catch {
       await restoreMode(); setPhase('idle'); onError('No se pudo finalizar la grabación.'); return null;
     } finally { operationRef.current = false; }
-  }, [draft, onError, phase, recorder, restoreMode, status.durationMillis]);
+  }, [draft, lifecycle, onError, phase, recorder, restoreMode, status.durationMillis, stopRecorder]);
 
   const cancel = useCallback(async () => {
-    if (operationRef.current) return;
-    operationRef.current = true; generationRef.current += 1;
-    try { if (recorder.isRecording) await recorder.stop(); } catch { /* already stopped */ }
-    const uri = draft?.uri ?? recorder.uri; if (uri) discardChatVoiceDraft(uri);
-    levelsRef.current = []; setLevels([]); setDraft(null); setPhase('idle');
-    await restoreMode(); operationRef.current = false;
-  }, [draft?.uri, recorder, restoreMode]);
-  cancelRef.current = cancel;
+    const invalidated = lifecycle.invalidate();
+    levelsRef.current = [];
+    if (mountedRef.current && lifecycle.isCurrent(invalidated.generation)) {
+      setLevels([]); setDraft(null); setPhase('idle');
+    }
+    await invalidated.cleanup;
+  }, [lifecycle]);
 
   const start = useCallback(async () => {
     if (disabled || operationRef.current || phase !== 'idle') return;
-    operationRef.current = true; const generation = ++generationRef.current;
+    operationRef.current = true;
     try {
-      if (!(await ensureChatVoicePermission())) { onError('Activa el permiso del micrófono para grabar una nota de voz.'); return; }
-      if (generation !== generationRef.current || !mountedRef.current) return;
-      await enableChatVoiceRecordingMode();
-      if (generation !== generationRef.current || !mountedRef.current) { await restoreMode(); return; }
-      await recorder.prepareToRecordAsync();
-      if (generation !== generationRef.current || !mountedRef.current) { await restoreMode(); return; }
-      levelsRef.current = []; setLevels([]); setDraft(null);
-      recorder.record(); setPhase('recording');
-    } catch { await restoreMode(); onError('No se pudo iniciar la grabación.'); }
+      const result = await startChatVoiceRecorder({ lifecycle,
+        ensurePermission: ensureChatVoicePermission,
+        enableRecordingMode: enableChatVoiceRecordingMode,
+        prepare: () => recorder.prepareToRecordAsync(),
+        record: () => { recorder.record(); recorderActiveRef.current = true; },
+      });
+      if (result === 'denied' && mountedRef.current) {
+        onError('Activa el permiso del micrófono para grabar una nota de voz.');
+      } else if (result === 'started' && mountedRef.current) {
+        draftRef.current = null; levelsRef.current = []; setLevels([]); setDraft(null); setPhase('recording');
+      }
+    } catch { if (mountedRef.current) onError('No se pudo iniciar la grabación.'); }
     finally { operationRef.current = false; }
-  }, [disabled, onError, phase, recorder, restoreMode]);
+  }, [disabled, lifecycle, onError, phase, recorder]);
 
   const send = useCallback(async () => {
     if (operationRef.current || phase === 'sending') return;
     const ready = phase === 'recording' ? await stopToDraft() : draft;
     if (!ready) return;
-    operationRef.current = true; const generation = generationRef.current; setPhase('sending');
+    operationRef.current = true; const generation = lifecycle.snapshot(); setPhase('sending');
     try {
       await onSend(ready); discardChatVoiceDraft(ready.uri);
-      if (mountedRef.current && generation === generationRef.current) {
-        levelsRef.current = []; setLevels([]); setDraft(null); setPhase('idle');
+      if (mountedRef.current && lifecycle.isCurrent(generation)) {
+        draftRef.current = null; levelsRef.current = []; setLevels([]); setDraft(null); setPhase('idle');
       }
     } catch {
-      if (mountedRef.current && generation === generationRef.current) {
+      if (mountedRef.current && lifecycle.isCurrent(generation)) {
         setPhase('ready'); onError('No se pudo enviar la nota de voz. Inténtalo nuevamente.');
       }
     }
     finally { operationRef.current = false; }
-  }, [draft, onError, onSend, phase, stopToDraft]);
+  }, [draft, lifecycle, onError, onSend, phase, stopToDraft]);
 
   useEffect(() => {
     if (phase !== 'recording') return;
@@ -123,8 +152,8 @@ export function VoiceRecorderBar({ identityKey, disabled, onSend, onError, onRec
   useEffect(() => { onRecordingChange?.(phase !== 'idle'); }, [onRecordingChange, phase]);
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; generationRef.current += 1; void cancelRef.current(); };
-  }, [identityKey]);
+    return () => { mountedRef.current = false; void lifecycle.invalidate().cleanup; };
+  }, [identityKey, lifecycle]);
 
   if (phase === 'idle') return (
     <Pressable accessibilityRole="button" accessibilityLabel="Grabar nota de voz"

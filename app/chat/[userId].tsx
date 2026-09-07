@@ -21,7 +21,7 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import { timeAgo } from '@/services/mockData';
 import { detectMimeType } from '@/contexts/FeedContext';
 import { getStandardChatImageAccess, uploadPrivateChatImage } from '@/services/chatMediaService';
-import { uploadChatVoiceDraft, type ChatVoiceDraft } from '@/services/chatVoiceService';
+import { ChatVoiceDraftSender, type ChatVoiceDraft } from '@/services/chatVoiceService';
 import { VoiceRecorderBar } from '@/components/chat/VoiceRecorderBar';
 import { VoiceMessageBubble } from '@/components/chat/VoiceMessageBubble';
 import type { Message } from '@/contexts/MessagesContext';
@@ -277,6 +277,8 @@ export default function ChatScreen() {
   const flatListRef = useRef<FlatList>(null);
   const previousMessageCountRef = useRef(0);
   const isSendingRef = useRef(false);
+  const voiceDraftSenderRef = useRef<ChatVoiceDraftSender | null>(null);
+  if (!voiceDraftSenderRef.current) voiceDraftSenderRef.current = new ChatVoiceDraftSender();
 
   // Premium DM state
   const [premiumConfig,   setPremiumConfig]   = useState<{ enabled: boolean; price_bdag: number; welcome_message: string } | null>(null);
@@ -495,12 +497,11 @@ export default function ChatScreen() {
 
   const handleSendVoice = useCallback(async (draft: ChatVoiceDraft) => {
     if (!user?.id || !partnerId) throw new Error('chat_voice_session_invalid');
-    const mediaAssetId = await uploadChatVoiceDraft(draft);
-    await sendVoiceMessage(partnerId, {
-      mediaAssetId, durationMs: draft.durationMs, waveform: draft.waveform,
-    });
+    await voiceDraftSenderRef.current!.handoff(draft, input => sendVoiceMessage(partnerId, input));
     scrollToLatest(true);
   }, [partnerId, scrollToLatest, sendVoiceMessage, user?.id]);
+
+  useEffect(() => () => { voiceDraftSenderRef.current?.clear(); }, [partnerId, user?.id]);
 
   // ── Render message ────────────────────────────────────────────────────────
   const renderMessage = useCallback(({ item, index }: { item: Message; index: number }) => {
