@@ -21,6 +21,9 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import { timeAgo } from '@/services/mockData';
 import { detectMimeType } from '@/contexts/FeedContext';
 import { getStandardChatImageAccess, uploadPrivateChatImage } from '@/services/chatMediaService';
+import { uploadChatVoiceDraft, type ChatVoiceDraft } from '@/services/chatVoiceService';
+import { VoiceRecorderBar } from '@/components/chat/VoiceRecorderBar';
+import { VoiceMessageBubble } from '@/components/chat/VoiceMessageBubble';
 import type { Message } from '@/contexts/MessagesContext';
 import {
   clearActiveMessageChat,
@@ -255,7 +258,7 @@ export default function ChatScreen() {
   const walletData = useWallet();
   const balance = walletData?.balance ?? 0;
   const {
-    messages, conversations, sendMessage, sendMediaMessage, openOneTimeMedia, retryMessage, loadConversation, loadOlderMessages,
+    messages, conversations, sendMessage, sendMediaMessage, sendVoiceMessage, openOneTimeMedia, retryMessage, loadConversation, loadOlderMessages,
     hasOlderMessages, isLoadingOlder, presenceByUser, typingByUser,
     activateConversation, deactivateConversation, setConversationTyping,
   } = useMessages();
@@ -269,6 +272,8 @@ export default function ChatScreen() {
   const [inputHeight,  setInputHeight]  = useState(INPUT_MIN_HEIGHT);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [composerHeight, setComposerHeight] = useState(72);
+  const [voiceRecording, setVoiceRecording] = useState(false);
+  const [activeVoiceMessageId, setActiveVoiceMessageId] = useState<string | null>(null);
   const flatListRef = useRef<FlatList>(null);
   const previousMessageCountRef = useRef(0);
   const isSendingRef = useRef(false);
@@ -292,6 +297,7 @@ export default function ChatScreen() {
       });
       return () => {
         setOneTimeMediaUrl(null);
+        setActiveVoiceMessageId(null);
         setConversationTyping(partnerId, false);
         deactivateConversation(partnerId);
         clearActiveMessageChat(partnerId);
@@ -487,6 +493,15 @@ export default function ChatScreen() {
     ]);
   }, [user, partnerId, sendMediaMessage, showAlert]);
 
+  const handleSendVoice = useCallback(async (draft: ChatVoiceDraft) => {
+    if (!user?.id || !partnerId) throw new Error('chat_voice_session_invalid');
+    const mediaAssetId = await uploadChatVoiceDraft(draft);
+    await sendVoiceMessage(partnerId, {
+      mediaAssetId, durationMs: draft.durationMs, waveform: draft.waveform,
+    });
+    scrollToLatest(true);
+  }, [partnerId, scrollToLatest, sendVoiceMessage, user?.id]);
+
   // ── Render message ────────────────────────────────────────────────────────
   const renderMessage = useCallback(({ item, index }: { item: Message; index: number }) => {
     const isMine   = item.senderId === user?.id;
@@ -495,6 +510,8 @@ export default function ChatScreen() {
     const isImage  = item.mediaType === 'image' && Boolean(item.mediaUrl || item.mediaAssetId)
       && item.deliveryStatus !== 'pending' && item.deliveryStatus !== 'failed';
     const isOneTime = item.mediaType === 'one_time_image';
+    const isVoice = item.mediaType === 'voice' && Boolean(item.mediaAssetId && item.audioDurationMs && item.audioWaveform?.length === 48)
+      && item.deliveryStatus !== 'pending' && item.deliveryStatus !== 'failed';
     const oneTimeConsumed = Boolean(item.mediaConsumedAt) || item.mediaAvailable === false;
     const canOpenOneTime = isOneTime && !isMine && !oneTimeConsumed;
     const isPremium = item.mediaType === 'premium_dm';
@@ -529,7 +546,11 @@ export default function ChatScreen() {
                 <MaterialCommunityIcons name="eye-outline" size={16} color="#fff" />
                 <Text style={styles.msgTextMine}>{oneTimeConsumed ? 'Foto abierta' : 'Foto · Ver una vez'}</Text>
               </View> : null}
-              {item.text && item.text !== '📷 Imagen' && !isOneTime ? (
+              {isVoice ? <VoiceMessageBubble messageId={item.id} assetId={item.mediaAssetId!}
+                durationMs={item.audioDurationMs!} waveform={item.audioWaveform!} isMine
+                activeMessageId={activeVoiceMessageId} onActivate={setActiveVoiceMessageId} /> : null}
+              {item.mediaType === 'voice' && !isVoice ? <Text style={styles.msgTextMine}>Nota de voz</Text> : null}
+              {item.text && item.text !== '📷 Imagen' && !isOneTime && !isVoice ? (
                 <Text style={styles.msgTextMine}>{item.text}</Text>
               ) : null}
               <Text style={styles.msgTimeMine}>{timeAgo(item.createdAt)}</Text>
@@ -553,7 +574,11 @@ export default function ChatScreen() {
                 <MaterialCommunityIcons name="eye-outline" size={16} color={Colors.primary} />
                 <Text style={styles.msgText}>{oneTimeConsumed ? 'Foto abierta' : 'Foto · Ver una vez'}</Text>
               </Pressable> : null}
-              {item.text && item.text !== '📷 Imagen' && !isOneTime ? (
+              {isVoice ? <VoiceMessageBubble messageId={item.id} assetId={item.mediaAssetId!}
+                durationMs={item.audioDurationMs!} waveform={item.audioWaveform!} isMine={false}
+                activeMessageId={activeVoiceMessageId} onActivate={setActiveVoiceMessageId} /> : null}
+              {item.mediaType === 'voice' && !isVoice ? <Text style={styles.msgText}>Nota de voz</Text> : null}
+              {item.text && item.text !== '📷 Imagen' && !isOneTime && !isVoice ? (
                 <Text style={styles.msgText}>{item.text}</Text>
               ) : null}
               <Text style={styles.msgTime}>{timeAgo(item.createdAt)}</Text>
@@ -586,7 +611,7 @@ export default function ChatScreen() {
         ) : null}
       </View>
     );
-  }, [user, chatMessages, conversation, partnerId, retryMessage, openOneTimeMedia, showAlert]);
+  }, [user, chatMessages, conversation, partnerId, retryMessage, openOneTimeMedia, showAlert, activeVoiceMessageId]);
 
   const partnerName   = conversation?.partnerUsername || 'Usuario';
   const partnerAvatar = conversation?.partnerAvatar;
@@ -751,13 +776,13 @@ export default function ChatScreen() {
           }}
         >
           {/* Image picker */}
-          <Pressable onPress={handlePickImage} hitSlop={8} style={styles.inputAction} disabled={isUploading}>
+          {!voiceRecording ? <Pressable onPress={handlePickImage} hitSlop={8} style={styles.inputAction} disabled={isUploading}>
             {isUploading
               ? <ActivityIndicator size="small" color={Colors.primary} />
               : <MaterialCommunityIcons name="image-outline" size={22} color={Colors.textSecondary} />}
-          </Pressable>
+          </Pressable> : null}
 
-          <TextInput
+          {!voiceRecording ? <TextInput
             style={[styles.input, { height: inputHeight }]}
             value={text}
             onChangeText={value => {
@@ -772,10 +797,10 @@ export default function ChatScreen() {
             maxLength={1000}
             returnKeyType="send"
             onSubmitEditing={handleSend}
-          />
+          /> : null}
 
           {/* Premium DM button (only when recipient has it enabled) */}
-          {premiumEnabled && !text.trim() ? (
+          {premiumEnabled && !text.trim() && !voiceRecording ? (
             <Pressable onPress={() => setPremiumSheetVis(true)} style={styles.premiumBtn} hitSlop={4}>
               <LinearGradient colors={[PREMIUM_COLOR, PREMIUM_COLOR2]} style={styles.premiumBtnGrad}>
                 <MaterialIcons name="star" size={16} color="#fff" />
@@ -783,7 +808,7 @@ export default function ChatScreen() {
             </Pressable>
           ) : null}
 
-          <Pressable
+          {text.trim() && !voiceRecording ? <Pressable
             onPress={handleSend}
             disabled={!text.trim() || isSending}
             style={styles.sendBtn}
@@ -799,7 +824,15 @@ export default function ChatScreen() {
                 ? <ActivityIndicator size="small" color="#fff" />
                 : <MaterialCommunityIcons name="send" size={18} color="#fff" />}
             </LinearGradient>
-          </Pressable>
+          </Pressable> : null}
+
+          {!text.trim() ? <VoiceRecorderBar
+            identityKey={`${user?.id || ''}:${partnerId || ''}`}
+            disabled={!user?.id || !partnerId || isUploading || isSending}
+            onRecordingChange={setVoiceRecording}
+            onSend={handleSendVoice}
+            onError={message => showAlert('Nota de voz', message)}
+          /> : null}
         </View>
       </View>
 

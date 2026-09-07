@@ -40,10 +40,12 @@ export async function sendChatMessage(input: {
   conversationId: string;
   clientMessageId: string;
   text: string;
-  messageType: Extract<ChatMessageType, 'text' | 'image' | 'video' | 'one_time_image'>;
+  messageType: Extract<ChatMessageType, 'text' | 'image' | 'video' | 'one_time_image' | 'voice'>;
   mediaUrl?: string;
   mediaAssetId?: string;
   replyToMessageId?: string;
+  audioDurationMs?: number;
+  audioWaveform?: number[];
 }): Promise<ChatMessageRow> {
   const { data, error } = await client().rpc('chat_send_message', {
     p_conversation_id: input.conversationId,
@@ -53,6 +55,8 @@ export async function sendChatMessage(input: {
     p_media_url: input.mediaUrl ?? null,
     p_media_asset_id: input.mediaAssetId ?? null,
     p_reply_to_message_id: input.replyToMessageId ?? null,
+    p_audio_duration_ms: input.audioDurationMs ?? null,
+    p_audio_waveform: input.audioWaveform ?? null,
   });
   return assertData(data as ChatMessageRow | null, error);
 }

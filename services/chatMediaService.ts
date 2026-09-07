@@ -2,6 +2,8 @@ import { getSupabaseClient } from '@/template';
 import { deleteMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
 
 export const CHAT_IMAGE_MAX_BYTES = 25_000_000;
+export const CHAT_VOICE_MAX_BYTES = 100_000_000;
+export const CHAT_VOICE_MIME_TYPES = ['audio/mp4', 'audio/aac', 'audio/x-m4a', 'audio/mpeg', 'audio/wav'] as const;
 export const CHAT_MEDIA_SIGNED_URL_TTL_SECONDS = 300;
 
 type ChatMediaAccessResponse = {
@@ -47,6 +49,35 @@ export async function uploadPrivateChatImage(input: {
   return asset.assetId;
 }
 
+export async function uploadPrivateVoiceNote(input: {
+  uri: string;
+  mimeType: string;
+  durationMs: number;
+  fileName?: string;
+  sizeBytes?: number;
+  signal?: AbortSignal;
+}): Promise<string> {
+  if (!CHAT_VOICE_MIME_TYPES.includes(input.mimeType as typeof CHAT_VOICE_MIME_TYPES[number])) {
+    throw new Error('chat_voice_mime_invalid');
+  }
+  if (!Number.isInteger(input.durationMs) || input.durationMs < 1 || input.durationMs > 3_600_000) {
+    throw new Error('chat_voice_duration_invalid');
+  }
+  if (input.sizeBytes != null && input.sizeBytes > CHAT_VOICE_MAX_BYTES) {
+    throw new Error('chat_voice_too_large');
+  }
+  const asset = await uploadMediaFromUri({
+    ...input,
+    purpose: 'voice_note',
+    visibility: 'private',
+  });
+  if (asset.visibility !== 'private' || asset.mediaKind !== 'audio'
+    || asset.purpose !== 'voice_note' || asset.url) {
+    throw new Error('chat_private_voice_contract_invalid');
+  }
+  return asset.assetId;
+}
+
 async function requestChatMediaAccess(assetId: string): Promise<ChatMediaAccess> {
   const { data, error } = await getSupabaseClient().functions.invoke<ChatMediaAccessResponse>(
     'get-media-url',
@@ -70,6 +101,17 @@ export function getStandardChatImageAccess(assetId: string): Promise<ChatMediaAc
   if (existing) return existing;
   const flight = requestChatMediaAccess(assetId).then(access => {
     if (access.consumptionPolicy !== 'standard') throw new Error('chat_media_policy_invalid');
+    return access;
+  }).finally(() => standardAccessFlights.delete(assetId));
+  standardAccessFlights.set(assetId, flight);
+  return flight;
+}
+
+export function getStandardChatVoiceAccess(assetId: string): Promise<ChatMediaAccess> {
+  const existing = standardAccessFlights.get(assetId);
+  if (existing) return existing;
+  const flight = requestChatMediaAccess(assetId).then(access => {
+    if (access.consumptionPolicy !== 'standard') throw new Error('chat_voice_policy_invalid');
     return access;
   }).finally(() => standardAccessFlights.delete(assetId));
   standardAccessFlights.set(assetId, flight);

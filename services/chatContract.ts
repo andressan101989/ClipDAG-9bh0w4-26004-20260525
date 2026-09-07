@@ -18,6 +18,7 @@ export type ChatMessageRow = {
   media_asset_id: string | null;
   consumption_policy: 'standard' | 'one_time';
   audio_duration_ms: number | null;
+  audio_waveform: number[] | null;
   read: boolean;
   deleted_at: string | null;
   created_at: string;

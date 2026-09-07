@@ -15,6 +15,7 @@ export function useMessages(): MessagesContextType {
     typingByUser: {},
     sendMessage: async () => {},
     sendMediaMessage: async () => {},
+    sendVoiceMessage: async () => {},
     openOneTimeMedia: async () => { throw new Error('messages_provider_unavailable'); },
     retryMessage: async () => {},
     markConversationRead: async () => {},

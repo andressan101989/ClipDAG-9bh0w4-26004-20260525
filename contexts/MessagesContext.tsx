@@ -18,8 +18,9 @@ const MESSAGE_PAGE_SIZE = 50;
 
 export interface Message {
   id: string; conversationId?: string; clientMessageId?: string; senderId: string; recipientId: string;
-  text: string; mediaUrl?: string; mediaType: 'text' | 'image' | 'video' | 'premium_dm' | 'one_time_image';
+  text: string; mediaUrl?: string; mediaType: 'text' | 'image' | 'video' | 'premium_dm' | 'one_time_image' | 'voice';
   mediaAssetId?: string; consumptionPolicy?: 'standard' | 'one_time'; mediaConsumedAt?: string;
+  audioDurationMs?: number; audioWaveform?: number[];
   mediaAvailable?: boolean; read: boolean;
   deliveryStatus?: ChatDeliveryStatus; createdAt: string;
 }
@@ -34,6 +35,7 @@ export interface MessagesContextType {
   presenceByUser: Record<string, 'online' | 'offline'>; typingByUser: Record<string, boolean>;
   sendMessage: (recipientId: string, text: string, mediaUrl?: string, mediaType?: string) => Promise<void>;
   sendMediaMessage: (recipientId: string, input: { text: string; mediaType: 'image' | 'one_time_image'; mediaAssetId: string }) => Promise<void>;
+  sendVoiceMessage: (recipientId: string, input: { mediaAssetId: string; durationMs: number; waveform: number[] }) => Promise<void>;
   openOneTimeMedia: (partnerId: string, messageId: string) => Promise<string>;
   retryMessage: (partnerId: string, clientMessageId: string) => Promise<void>;
   loadConversation: (partnerId: string) => Promise<void>; loadOlderMessages: (partnerId: string) => Promise<void>;
@@ -53,11 +55,13 @@ export function mapChatMessage(row: ChatMessageRow | ChatMessageWithReceiptRow):
     id: row.id, conversationId: row.conversation_id, clientMessageId: row.client_message_id,
     senderId: row.sender_id, recipientId: row.recipient_id, text: row.text || '',
     mediaUrl: row.media_url || undefined,
-    mediaType: (['image', 'video', 'premium_dm', 'one_time_image'].includes(row.message_type) ? row.message_type : 'text') as Message['mediaType'],
+    mediaType: (['image', 'video', 'premium_dm', 'one_time_image', 'voice'].includes(row.message_type) ? row.message_type : 'text') as Message['mediaType'],
     mediaAssetId: row.media_asset_id || undefined,
     consumptionPolicy: row.consumption_policy,
     mediaConsumedAt: 'media_consumed_at' in row ? row.media_consumed_at || undefined : undefined,
     mediaAvailable: 'media_available' in row ? row.media_available : undefined,
+    audioDurationMs: row.audio_duration_ms ?? undefined,
+    audioWaveform: row.audio_waveform ?? undefined,
     read: deliveryStatus === 'read', deliveryStatus, createdAt: row.created_at,
   };
 }
@@ -78,6 +82,14 @@ function receiptStatus(receipt: ChatMessageReceiptRow): Exclude<ChatDeliveryStat
   if (receipt.read_at || receipt.legacy_read) return 'read';
   if (receipt.delivered_at || receipt.legacy_delivered) return 'delivered';
   return 'sent';
+}
+
+function messagePreview(message: { text?: string | null; message_type?: string } | null | undefined): string {
+  if (message?.text) return message.text;
+  if (message?.message_type === 'voice') return 'Nota de voz';
+  if (message?.message_type === 'image' || message?.message_type === 'one_time_image') return 'Foto';
+  if (message?.message_type === 'video') return 'Video';
+  return '';
 }
 
 export function MessagesProvider({ children }: { children: ReactNode }) {
@@ -113,7 +125,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         conversationIdsRef.current.set(row.other_user_id, row.conversation_id);
         return { id: row.conversation_id, conversationId: row.conversation_id, partnerId: row.other_user_id,
           partnerUsername: row.other_username || 'Usuario', partnerAvatar: row.other_avatar_url || '',
-          lastMessage: row.last_message?.text || '', lastMessageAt: row.last_message?.created_at || row.last_activity_at,
+          lastMessage: messagePreview(row.last_message), lastMessageAt: row.last_message?.created_at || row.last_activity_at,
           unreadCount: Number(row.unread_count) || 0, otherUserId: row.other_user_id,
           otherUsername: row.other_username || 'Usuario', otherUserAvatar: row.other_avatar_url || '' };
       }));
@@ -163,7 +175,9 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         if (existing) return previous.map(item => item.partnerId === partnerId ? { ...item, id: conversationId, conversationId,
           partnerUsername: profile?.username || item.partnerUsername, partnerAvatar: profile?.avatar_url || item.partnerAvatar } : item);
         return [...previous, { id: conversationId, conversationId, partnerId, partnerUsername: profile?.username || 'Usuario',
-          partnerAvatar: profile?.avatar_url || '', lastMessage: ordered.at(-1)?.text || '',
+          partnerAvatar: profile?.avatar_url || '', lastMessage: messagePreview({
+            text: ordered.at(-1)?.text, message_type: ordered.at(-1)?.mediaType,
+          }),
           lastMessageAt: ordered.at(-1)?.createdAt || new Date(0).toISOString(), unreadCount: 0,
           otherUserId: partnerId, otherUsername: profile?.username || 'Usuario', otherUserAvatar: profile?.avatar_url || '' }];
       });
@@ -197,8 +211,9 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     try {
       const conversationId = await resolveConversation(partnerId);
       const row = await sendChatMessage({ conversationId, clientMessageId: message.clientMessageId, text: message.text,
-        messageType: message.mediaType as 'text' | 'image' | 'video' | 'one_time_image', mediaUrl: message.mediaUrl,
-        mediaAssetId: message.mediaAssetId });
+        messageType: message.mediaType as 'text' | 'image' | 'video' | 'one_time_image' | 'voice', mediaUrl: message.mediaUrl,
+        mediaAssetId: message.mediaAssetId, audioDurationMs: message.audioDurationMs,
+        audioWaveform: message.audioWaveform });
       if (activeUserRef.current !== userId || generation !== generationRef.current) return;
       setMessages(previous => ({ ...previous, [partnerId]: mergeChatMessage(previous[partnerId] || [], mapChatMessage(row)) }));
       await fetchConversations();
@@ -230,6 +245,24 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     const optimistic: Message = { id: `opt_${clientMessageId}`, clientMessageId, senderId: userId, recipientId,
       text: normalizedText, mediaType: input.mediaType, mediaAssetId: input.mediaAssetId,
       consumptionPolicy: input.mediaType === 'one_time_image' ? 'one_time' : 'standard', mediaAvailable: true,
+      read: false, deliveryStatus: 'pending', createdAt: new Date().toISOString() };
+    setMessages(previous => ({ ...previous, [recipientId]: mergeChatMessage(previous[recipientId] || [], optimistic) }));
+    await transmitMessage(recipientId, optimistic);
+  }, [transmitMessage, user?.id]);
+
+  const sendVoiceMessage = useCallback(async (recipientId: string, input: {
+    mediaAssetId: string; durationMs: number; waveform: number[];
+  }) => {
+    const userId = user?.id;
+    if (!userId || !recipientId || !input.mediaAssetId || !Number.isInteger(input.durationMs)
+      || input.durationMs < 1 || input.durationMs > 3_600_000 || input.waveform.length !== 48
+      || input.waveform.some(value => !Number.isInteger(value) || value < 0 || value > 100)) {
+      throw new Error('chat_voice_message_invalid');
+    }
+    const clientMessageId = createChatClientMessageId();
+    const optimistic: Message = { id: `opt_${clientMessageId}`, clientMessageId, senderId: userId, recipientId,
+      text: '', mediaType: 'voice', mediaAssetId: input.mediaAssetId, consumptionPolicy: 'standard', mediaAvailable: true,
+      audioDurationMs: input.durationMs, audioWaveform: input.waveform,
       read: false, deliveryStatus: 'pending', createdAt: new Date().toISOString() };
     setMessages(previous => ({ ...previous, [recipientId]: mergeChatMessage(previous[recipientId] || [], optimistic) }));
     await transmitMessage(recipientId, optimistic);
@@ -373,6 +406,6 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
   const applicationBadgeCount = user?.id ? unreadTotal : 0;
   useEffect(() => { Notifications.setBadgeCountAsync(applicationBadgeCount).catch(() => undefined); }, [applicationBadgeCount]);
   return <MessagesContext.Provider value={{ conversations, messages, unreadTotal, isLoading, hasOlderMessages, isLoadingOlder,
-    presenceByUser, typingByUser, sendMessage, sendMediaMessage, openOneTimeMedia, retryMessage, loadConversation, loadOlderMessages, markConversationRead,
+    presenceByUser, typingByUser, sendMessage, sendMediaMessage, sendVoiceMessage, openOneTimeMedia, retryMessage, loadConversation, loadOlderMessages, markConversationRead,
     refreshConversations, activateConversation, deactivateConversation, setConversationTyping }}>{children}</MessagesContext.Provider>;
 }
