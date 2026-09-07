@@ -13,6 +13,31 @@ export function monotonicDeliveryStatus(
   return rank[incoming] >= rank[current] ? incoming : current;
 }
 
+export function reduceRealtimeReceiptStatus(input: {
+  current?: ChatDeliveryStatus;
+  receipt: Exclude<ChatDeliveryStatus, 'pending' | 'failed'>;
+  conversationType?: 'direct' | 'group';
+  isMessageSender: boolean;
+}): { deliveryStatus: ChatDeliveryStatus | undefined; reconcileAggregate: boolean } {
+  if (input.conversationType === 'group' && input.isMessageSender) {
+    return { deliveryStatus: input.current, reconcileAggregate: true };
+  }
+  return {
+    deliveryStatus: monotonicDeliveryStatus(input.current, input.receipt),
+    reconcileAggregate: false,
+  };
+}
+
+export function mergeProjectedDeliveryStatus(input: {
+  current?: ChatDeliveryStatus;
+  projected?: ChatDeliveryStatus;
+  conversationType?: 'direct' | 'group';
+  recipientCount?: number;
+}): ChatDeliveryStatus | undefined {
+  const isGroupAggregate = input.conversationType === 'group' && input.recipientCount != null;
+  return isGroupAggregate ? input.projected : monotonicDeliveryStatus(input.current, input.projected);
+}
+
 export function isChatReadEligible(input: {
   authenticatedUserId: string | null;
   expectedUserId: string;

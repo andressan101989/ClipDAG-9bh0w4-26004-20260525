@@ -10,7 +10,7 @@ import {
   getOrCreateDirectConversation, sendChatMessage, subscribeToChatChanges, createChatGroup,
 } from '@/services/chatService';
 import { createChatTypingSession, type ChatTypingSession } from '@/services/chatTypingSession';
-import { ChatRetryCoordinator, isChatReadEligible, monotonicDeliveryStatus } from '@/services/chatReliability';
+import { ChatRetryCoordinator, isChatReadEligible, mergeProjectedDeliveryStatus, reduceRealtimeReceiptStatus } from '@/services/chatReliability';
 import { openOneTimeChatImage } from '@/services/chatMediaService';
 import { acceptChatVoiceRetryOwnership } from '@/services/chatVoiceService';
 import type { ChatCursor, ChatDeliveryStatus, ChatMessageReceiptRow, ChatMessageRow, ChatMessageWithReceiptRow } from '@/services/chatContract';
@@ -25,6 +25,7 @@ export interface Message {
   mediaAvailable?: boolean; read: boolean;
   deliveryStatus?: ChatDeliveryStatus; createdAt: string;
   senderUsername?: string; senderAvatar?: string; recipientCount?: number; deliveredCount?: number; readCount?: number;
+  conversationType?: 'direct' | 'group';
 }
 export interface Conversation {
   id: string; conversationId?: string; conversationType: 'direct' | 'group'; displayName: string; avatar: string;
@@ -78,6 +79,7 @@ export function mapChatMessage(row: ChatMessageRow | ChatMessageWithReceiptRow):
     read: deliveryStatus === 'read', deliveryStatus, createdAt: row.created_at,
     senderUsername: 'sender_username' in row ? row.sender_username || undefined : undefined,
     senderAvatar: 'sender_avatar_url' in row ? row.sender_avatar_url || undefined : undefined,
+    conversationType: 'conversation_type' in row ? row.conversation_type : undefined,
     recipientCount: 'recipient_count' in row ? Number(row.recipient_count) : undefined,
     deliveredCount: 'delivered_count' in row ? Number(row.delivered_count) : undefined,
     readCount: 'read_count' in row ? Number(row.read_count) : undefined,
@@ -89,7 +91,8 @@ export function mergeChatMessage(current: Message[], incoming: Message): Message
   if (index < 0) return [...current, incoming].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
   const next = [...current];
   const previous = next[index];
-  const deliveryStatus = monotonicDeliveryStatus(previous.deliveryStatus, incoming.deliveryStatus);
+  const deliveryStatus = mergeProjectedDeliveryStatus({ current: previous.deliveryStatus, projected: incoming.deliveryStatus,
+    conversationType: incoming.conversationType, recipientCount: incoming.recipientCount });
   next[index] = { ...previous, ...incoming, deliveryStatus, read: deliveryStatus === 'read' };
   return next.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }
@@ -496,13 +499,25 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       },
       onReceipt: receipt => {
         if (!active || activeUserRef.current !== userId || generation !== generationRef.current) return;
-        const deliveryStatus = receiptStatus(receipt);
+        const receiptDeliveryStatus = receiptStatus(receipt);
+        const currentMessage = Object.values(messagesRef.current).flat().find(message => message.id === receipt.message_id);
+        const conversation = currentMessage?.conversationId
+          ? conversationsRef.current.find(item => item.id === currentMessage.conversationId) : undefined;
+        const receiptDecision = reduceRealtimeReceiptStatus({ current: currentMessage?.deliveryStatus,
+          receipt: receiptDeliveryStatus, conversationType: currentMessage?.conversationType ?? conversation?.conversationType,
+          isMessageSender: currentMessage?.senderId === userId });
+        if (receiptDecision.reconcileAggregate) { reconcile(); return; }
+        // Direct receipts retain monotonicDeliveryStatus(message.deliveryStatus, deliveryStatus); group senders reconcile V3 instead.
         setMessages(previous => Object.fromEntries(Object.entries(previous).map(([partnerId, rows]) => [partnerId,
           rows.map(message => message.id === receipt.message_id
-            ? { ...message, deliveryStatus: monotonicDeliveryStatus(message.deliveryStatus, deliveryStatus),
+            ? { ...message, deliveryStatus: reduceRealtimeReceiptStatus({ current: message.deliveryStatus,
+                receipt: receiptDeliveryStatus, conversationType: message.conversationType ?? conversation?.conversationType,
+                isMessageSender: message.senderId === userId }).deliveryStatus,
               mediaConsumedAt: receipt.media_consumed_at || message.mediaConsumedAt,
               mediaAvailable: receipt.media_consumed_at ? false : message.mediaAvailable,
-              read: monotonicDeliveryStatus(message.deliveryStatus, deliveryStatus) === 'read' } : message)])));
+              read: reduceRealtimeReceiptStatus({ current: message.deliveryStatus,
+                receipt: receiptDeliveryStatus, conversationType: message.conversationType ?? conversation?.conversationType,
+                isMessageSender: message.senderId === userId }).deliveryStatus === 'read' } : message)])));
       }, onReconcile: reconcile, onSubscribed: reconcileDeliveries,
     });
     const foregroundUnsub = AppLifecycle.onForeground(() => {

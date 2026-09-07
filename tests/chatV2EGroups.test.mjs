@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import ts from 'typescript';
 
 const migration = readFileSync(new URL('../supabase/migrations/20260907043715_chat_v2_e_groups.sql', import.meta.url), 'utf8');
 const context = readFileSync(new URL('../contexts/MessagesContext.tsx', import.meta.url), 'utf8');
 const service = readFileSync(new URL('../services/chatService.ts', import.meta.url), 'utf8');
+
+function load(source) {
+  const module = { exports: {} };
+  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  Function('require', 'module', 'exports', output)(() => { throw new Error('unexpected import'); }, module, module.exports);
+  return module.exports;
+}
+const reliability = load(readFileSync(new URL('../services/chatReliability.ts', import.meta.url), 'utf8'));
 
 class GroupModel {
   constructor(owner, members) { this.members = new Map([[owner, 'owner'], ...members.map(id => [id, 'member'])]); this.owner = owner; this.rows = []; this.receipts = []; }
@@ -30,3 +39,43 @@ test('client uses one conversation-id keyed message store',()=>{assert.match(con
 test('group core operations extend the canonical chat service',()=>{for(const name of ['createChatGroup','addChatGroupMembers','removeChatGroupMember','setChatGroupAdmin','transferChatGroupOwnership','leaveChatGroup'])assert.match(service,new RegExp(`function ${name}`));});
 test('group projection returns aggregate receipt counts without N+1 client queries',()=>{assert.match(migration,/recipient_count bigint,delivered_count bigint,read_count bigint/);assert.match(migration,/cross join lateral/);});
 test('media authorization applies the membership history fence',()=>{assert.match(migration,/chat_authorize_media_access/);assert.match(migration,/chat_can_read_message\(v_message\.conversation_id,v_message\.created_at\)/);});
+
+test('partial group delivery keeps the sender aggregate sent', () => {
+  const decision = reliability.reduceRealtimeReceiptStatus({ current: 'sent', receipt: 'delivered', conversationType: 'group', isMessageSender: true });
+  assert.deepEqual(decision, { deliveryStatus: 'sent', reconcileAggregate: true });
+});
+
+test('all group deliveries promote only through the aggregate projection', () => {
+  assert.equal(reliability.mergeProjectedDeliveryStatus({ current: 'sent', projected: 'delivered', conversationType: 'group', recipientCount: 3 }), 'delivered');
+});
+
+test('partial group read cannot mark the sender aggregate read', () => {
+  const decision = reliability.reduceRealtimeReceiptStatus({ current: 'delivered', receipt: 'read', conversationType: 'group', isMessageSender: true });
+  assert.deepEqual(decision, { deliveryStatus: 'delivered', reconcileAggregate: true });
+});
+
+test('all group reads promote through the aggregate projection', () => {
+  assert.equal(reliability.mergeProjectedDeliveryStatus({ current: 'delivered', projected: 'read', conversationType: 'group', recipientCount: 3 }), 'read');
+});
+
+test('individual read racing an aggregate sent projection finishes sent', () => {
+  const receipt = reliability.reduceRealtimeReceiptStatus({ current: 'sent', receipt: 'read', conversationType: 'group', isMessageSender: true });
+  assert.equal(receipt.deliveryStatus, 'sent');
+  assert.equal(reliability.mergeProjectedDeliveryStatus({ current: receipt.deliveryStatus, projected: 'sent', conversationType: 'group', recipientCount: 3 }), 'sent');
+});
+
+test('direct individual receipts remain immediate and monotonic', () => {
+  const delivered = reliability.reduceRealtimeReceiptStatus({ current: 'sent', receipt: 'delivered', conversationType: 'direct', isMessageSender: true });
+  const read = reliability.reduceRealtimeReceiptStatus({ current: delivered.deliveryStatus, receipt: 'read', conversationType: 'direct', isMessageSender: true });
+  assert.equal(delivered.deliveryStatus, 'delivered'); assert.equal(read.deliveryStatus, 'read');
+  assert.equal(delivered.reconcileAggregate, false); assert.equal(read.reconcileAggregate, false);
+});
+
+test('group aggregate counters reject read while only one of three read', () => {
+  const group = new GroupModel('a', ['b', 'c', 'd']); const message = group.send('a', 'counter-case');
+  group.ack(message.id, 'b', true); group.ack(message.id, 'c'); group.ack(message.id, 'd');
+  const receipts = group.receipts.filter(row => row.message === message.id);
+  const projection = { recipientCount: receipts.length, readCount: receipts.filter(row => row.read).length,
+    deliveredCount: receipts.filter(row => row.delivered).length, deliveryStatus: group.aggregate(message.id) };
+  assert.deepEqual(projection, { recipientCount: 3, readCount: 1, deliveredCount: 3, deliveryStatus: 'delivered' });
+});
