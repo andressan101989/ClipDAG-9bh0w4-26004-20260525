@@ -5,6 +5,7 @@ import test from 'node:test';
 import ts from 'typescript';
 
 const BASE = '714cc8c83a8d4ef6ef0f831c8bacf6f1fba964de';
+const B1_HEAD = '9986908bcd5e626cd364f69c2434d053ba2d9cb1';
 const sharedSource = readFileSync('modules/realtime/PresenceManager.ts', 'utf8');
 const chatSource = readFileSync('services/chatPresenceService.ts', 'utf8');
 const contextSource = readFileSync('contexts/MessagesContext.tsx', 'utf8');
@@ -76,7 +77,7 @@ test('no non-CHAT consumer imports the CHAT presence service', () => {
 });
 
 test('B1 changes no Battle, LIVE, call, Agora, finance, or migration file', () => {
-  const changed = execFileSync('git', ['diff', '--name-only', BASE], { encoding: 'utf8' }).trim().split(/\r?\n/).filter(Boolean);
+  const changed = execFileSync('git', ['diff', '--name-only', BASE, B1_HEAD], { encoding: 'utf8' }).trim().split(/\r?\n/).filter(Boolean);
   assert.equal(changed.some(file => /^(app\/battle|app\/live|hooks\/(gaming|streaming)|modules\/(gaming|streaming)|.*Agora|.*agora|supabase\/migrations|services\/financial|.*wallet|.*ledger|.*marketplace)/.test(file)), false);
 });
 

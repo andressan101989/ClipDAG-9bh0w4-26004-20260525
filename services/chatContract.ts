@@ -45,6 +45,7 @@ export type ChatMessageReceiptRow = {
   read_at: string | null;
   legacy_delivered: boolean;
   legacy_read: boolean;
+  media_consumed_at: string | null;
 };
 
 export type ChatMessageWithReceiptRow = ChatMessageRow & {
@@ -53,4 +54,6 @@ export type ChatMessageWithReceiptRow = ChatMessageRow & {
   legacy_delivered: boolean;
   legacy_read: boolean;
   delivery_status: Extract<ChatDeliveryStatus, 'sent' | 'delivered' | 'read'>;
+  media_consumed_at: string | null;
+  media_available: boolean;
 };

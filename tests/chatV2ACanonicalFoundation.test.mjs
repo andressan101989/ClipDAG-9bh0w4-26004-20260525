@@ -252,7 +252,7 @@ test('the inbox reads a bounded canonical page instead of downloading all messag
 
 test('normal text and image sending remain wired through the existing chat screen', () => {
   assert.match(chatScreen, /sendMessage\(partnerId, text\.trim\(\)\)/);
-  assert.match(chatScreen, /sendMessage\(partnerId, '[^']*Imagen', url, 'image'\)/);
+  assert.match(chatScreen, /sendMediaMessage\(partnerId,[\s\S]*mediaType: oneTime \? 'one_time_image' : 'image'/);
   assert.match(context, /\['text', 'image', 'video'\]\.includes\(mediaType\)/);
 });
 

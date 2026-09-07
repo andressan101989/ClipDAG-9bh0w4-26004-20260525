@@ -1,7 +1,7 @@
 import { useContext } from 'react';
-import { MessagesContext } from '@/contexts/MessagesContext';
+import { MessagesContext, type MessagesContextType } from '@/contexts/MessagesContext';
 
-export function useMessages() {
+export function useMessages(): MessagesContextType {
   const ctx = useContext(MessagesContext);
   // Return safe defaults when provider is not mounted (isolation mode / startup)
   if (!ctx) return {
@@ -14,6 +14,8 @@ export function useMessages() {
     presenceByUser: {},
     typingByUser: {},
     sendMessage: async () => {},
+    sendMediaMessage: async () => {},
+    openOneTimeMedia: async () => { throw new Error('messages_provider_unavailable'); },
     retryMessage: async () => {},
     markConversationRead: async () => {},
     loadConversation: async () => {},

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, FlatList, Pressable, TextInput, StyleSheet,
-  KeyboardAvoidingView, Keyboard, Platform, ActivityIndicator, Modal,
+  KeyboardAvoidingView, Keyboard, Platform, ActivityIndicator, Modal, Alert,
   NativeSyntheticEvent,
 } from 'react-native';
 import { Image } from '@/components/ui/SafeImage';
@@ -11,6 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import * as ScreenCapture from 'expo-screen-capture';
 import { useMessages } from '@/hooks/useMessages';
 import { useAuth } from '@/hooks/useAuth';
 import { useWallet } from '@/hooks/useWallet';
@@ -18,7 +19,8 @@ import { getSupabaseClient, useAlert } from '@/template';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { timeAgo } from '@/services/mockData';
-import { uploadFileFromUri, detectMimeType } from '@/contexts/FeedContext';
+import { detectMimeType } from '@/contexts/FeedContext';
+import { getStandardChatImageAccess, uploadPrivateChatImage } from '@/services/chatMediaService';
 import type { Message } from '@/contexts/MessagesContext';
 import {
   clearActiveMessageChat,
@@ -29,6 +31,46 @@ const PREMIUM_COLOR  = '#FF9D00';
 const PREMIUM_COLOR2 = '#FF5A00';
 const INPUT_MIN_HEIGHT = 44;
 const INPUT_MAX_HEIGHT = 120;
+const ONE_TIME_CAPTURE_KEY = 'chat-one-time-media';
+
+function PrivateChatImage({ assetId, legacyUrl }: { assetId?: string; legacyUrl?: string }) {
+  const [url, setUrl] = useState(legacyUrl);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setFailed(false);
+    if (!assetId || legacyUrl) { setUrl(legacyUrl); return () => { active = false; }; }
+    setUrl(undefined);
+    void getStandardChatImageAccess(assetId).then(access => { if (active) setUrl(access.url); })
+      .catch(() => { if (active) setFailed(true); });
+    return () => { active = false; };
+  }, [assetId, legacyUrl, attempt]);
+  if (url) return <Image source={{ uri: url }} style={styles.msgImage} contentFit="cover" transition={200} />;
+  return <Pressable disabled={!failed} accessibilityRole={failed ? 'button' : undefined}
+    accessibilityLabel={failed ? 'Reintentar cargar imagen' : 'Cargando imagen'}
+    onPress={() => setAttempt(value => value + 1)} style={[styles.msgImage, styles.mediaLoading]}>
+    {failed ? <MaterialCommunityIcons name="image-refresh-outline" size={24} color={Colors.textSecondary} />
+      : <ActivityIndicator size="small" color={Colors.primary} />}
+  </Pressable>;
+}
+
+function OneTimeMediaViewer({ url, onClose }: { url: string | null; onClose: () => void }) {
+  ScreenCapture.usePreventScreenCapture(ONE_TIME_CAPTURE_KEY);
+  useEffect(() => {
+    if (!url) return undefined;
+    void ScreenCapture.enableAppSwitcherProtectionAsync(1).catch(() => undefined);
+    return () => { void ScreenCapture.disableAppSwitcherProtectionAsync().catch(() => undefined); };
+  }, [url]);
+  return <Modal visible={Boolean(url)} transparent animationType="fade" onRequestClose={onClose}>
+    <View style={styles.oneTimeViewer}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Cerrar foto" onPress={onClose} style={styles.oneTimeClose}>
+        <MaterialCommunityIcons name="close" size={28} color="#fff" />
+      </Pressable>
+      {url ? <Image source={{ uri: url }} style={styles.oneTimeImage} contentFit="contain" cachePolicy="none" /> : null}
+    </View>
+  </Modal>;
+}
 
 // ── Premium DM Sheet ──────────────────────────────────────────────────────────
 interface PremiumDMSheetProps {
@@ -213,7 +255,7 @@ export default function ChatScreen() {
   const walletData = useWallet();
   const balance = walletData?.balance ?? 0;
   const {
-    messages, conversations, sendMessage, retryMessage, loadConversation, loadOlderMessages,
+    messages, conversations, sendMessage, sendMediaMessage, openOneTimeMedia, retryMessage, loadConversation, loadOlderMessages,
     hasOlderMessages, isLoadingOlder, presenceByUser, typingByUser,
     activateConversation, deactivateConversation, setConversationTyping,
   } = useMessages();
@@ -223,6 +265,7 @@ export default function ChatScreen() {
   const [text,         setText]         = useState('');
   const [isSending,    setIsSending]    = useState(false);
   const [isUploading,  setIsUploading]  = useState(false);
+  const [oneTimeMediaUrl, setOneTimeMediaUrl] = useState<string | null>(null);
   const [inputHeight,  setInputHeight]  = useState(INPUT_MIN_HEIGHT);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [composerHeight, setComposerHeight] = useState(72);
@@ -248,6 +291,7 @@ export default function ChatScreen() {
         console.warn('[ChatScreen] conversation activation failed', error);
       });
       return () => {
+        setOneTimeMediaUrl(null);
         setConversationTyping(partnerId, false);
         deactivateConversation(partnerId);
         clearActiveMessageChat(partnerId);
@@ -419,32 +463,40 @@ export default function ChatScreen() {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { showAlert('Permiso denegado', 'Habilita el acceso a la galería'); return; }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7, base64: true,
+      mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7,
     });
     if (result.canceled || !result.assets[0] || !user) return;
-
-    setIsUploading(true);
-    try {
-      const asset = result.assets[0];
-      const mimeType = asset.mimeType || detectMimeType(asset.uri, 'image/jpeg');
-      const ext = mimeType.includes('png') ? 'png' : 'jpg';
-      const fileName = `${user.id}/chat_${Date.now()}.${ext}`;
-      const url = await uploadFileFromUri(supabase, asset.uri, 'images', fileName, mimeType, asset.base64);
-      if (url && partnerId) await sendMessage(partnerId, '📷 Imagen', url, 'image');
-      else showAlert('Error', 'No se pudo enviar la imagen');
-    } catch {
-      showAlert('Mensaje no enviado', 'La imagen quedó marcada para reintentar.');
-    } finally {
-      setIsUploading(false);
-    }
-  }, [user, supabase, partnerId, sendMessage, showAlert]);
+    const asset = result.assets[0];
+    const sendSelectedImage = async (oneTime: boolean) => {
+      if (!partnerId) return;
+      setIsUploading(true);
+      try {
+        const mimeType = asset.mimeType || detectMimeType(asset.uri, 'image/jpeg');
+        const mediaAssetId = await uploadPrivateChatImage({ uri: asset.uri, mimeType,
+          fileName: asset.fileName || undefined, sizeBytes: asset.fileSize });
+        await sendMediaMessage(partnerId, { text: oneTime ? 'Foto · Ver una vez' : '📷 Imagen',
+          mediaType: oneTime ? 'one_time_image' : 'image', mediaAssetId });
+      } catch {
+        showAlert('Mensaje no enviado', 'No se pudo enviar la imagen. Puedes intentarlo nuevamente.');
+      } finally { setIsUploading(false); }
+    };
+    Alert.alert('Enviar foto', 'Elige cómo compartirla.', [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Normal', onPress: () => { void sendSelectedImage(false); } },
+      { text: 'Ver una vez', onPress: () => { void sendSelectedImage(true); } },
+    ]);
+  }, [user, partnerId, sendMediaMessage, showAlert]);
 
   // ── Render message ────────────────────────────────────────────────────────
   const renderMessage = useCallback(({ item, index }: { item: Message; index: number }) => {
     const isMine   = item.senderId === user?.id;
     const prevMsg  = chatMessages[index - 1];
     const showAv   = !isMine && (!prevMsg || prevMsg.senderId !== item.senderId);
-    const isImage  = item.mediaType === 'image' && item.mediaUrl;
+    const isImage  = item.mediaType === 'image' && Boolean(item.mediaUrl || item.mediaAssetId)
+      && item.deliveryStatus !== 'pending' && item.deliveryStatus !== 'failed';
+    const isOneTime = item.mediaType === 'one_time_image';
+    const oneTimeConsumed = Boolean(item.mediaConsumedAt) || item.mediaAvailable === false;
+    const canOpenOneTime = isOneTime && !isMine && !oneTimeConsumed;
     const isPremium = item.mediaType === 'premium_dm';
 
     return (
@@ -471,9 +523,13 @@ export default function ChatScreen() {
                 </View>
               ) : null}
               {isImage ? (
-                <Image source={{ uri: item.mediaUrl }} style={styles.msgImage} contentFit="cover" transition={200} />
+                <PrivateChatImage assetId={item.mediaAssetId} legacyUrl={item.mediaUrl} />
               ) : null}
-              {item.text && item.text !== '📷 Imagen' ? (
+              {isOneTime ? <View style={styles.oneTimeStatus}>
+                <MaterialCommunityIcons name="eye-outline" size={16} color="#fff" />
+                <Text style={styles.msgTextMine}>{oneTimeConsumed ? 'Foto abierta' : 'Foto · Ver una vez'}</Text>
+              </View> : null}
+              {item.text && item.text !== '📷 Imagen' && !isOneTime ? (
                 <Text style={styles.msgTextMine}>{item.text}</Text>
               ) : null}
               <Text style={styles.msgTimeMine}>{timeAgo(item.createdAt)}</Text>
@@ -487,9 +543,17 @@ export default function ChatScreen() {
                 </View>
               ) : null}
               {isImage ? (
-                <Image source={{ uri: item.mediaUrl }} style={styles.msgImage} contentFit="cover" transition={200} />
+                <PrivateChatImage assetId={item.mediaAssetId} legacyUrl={item.mediaUrl} />
               ) : null}
-              {item.text && item.text !== '📷 Imagen' ? (
+              {isOneTime ? <Pressable disabled={!canOpenOneTime} accessibilityRole="button"
+                accessibilityLabel={oneTimeConsumed ? 'Foto abierta' : 'Ver foto una vez'}
+                onPress={() => partnerId && openOneTimeMedia(partnerId, item.id).then(setOneTimeMediaUrl)
+                  .catch(() => showAlert('Foto no disponible', 'Esta foto ya fue abierta o no tienes acceso.'))}
+                style={styles.oneTimeStatus}>
+                <MaterialCommunityIcons name="eye-outline" size={16} color={Colors.primary} />
+                <Text style={styles.msgText}>{oneTimeConsumed ? 'Foto abierta' : 'Foto · Ver una vez'}</Text>
+              </Pressable> : null}
+              {item.text && item.text !== '📷 Imagen' && !isOneTime ? (
                 <Text style={styles.msgText}>{item.text}</Text>
               ) : null}
               <Text style={styles.msgTime}>{timeAgo(item.createdAt)}</Text>
@@ -522,7 +586,7 @@ export default function ChatScreen() {
         ) : null}
       </View>
     );
-  }, [user, chatMessages, conversation, partnerId, retryMessage, showAlert]);
+  }, [user, chatMessages, conversation, partnerId, retryMessage, openOneTimeMedia, showAlert]);
 
   const partnerName   = conversation?.partnerUsername || 'Usuario';
   const partnerAvatar = conversation?.partnerAvatar;
@@ -533,6 +597,7 @@ export default function ChatScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar style="light" />
+      {oneTimeMediaUrl ? <OneTimeMediaViewer url={oneTimeMediaUrl} onClose={() => setOneTimeMediaUrl(null)} /> : null}
 
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <View style={styles.header}>
@@ -828,6 +893,11 @@ const styles = StyleSheet.create({
   premiumMsgHeader: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   premiumMsgLabel: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
   msgImage: { width: 200, height: 200, borderRadius: Radius.md },
+  mediaLoading: { alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surface },
+  oneTimeStatus: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 28 },
+  oneTimeViewer: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  oneTimeImage: { width: '100%', height: '100%' },
+  oneTimeClose: { position: 'absolute', top: 52, right: 20, zIndex: 2, padding: 8 },
   msgText: { color: Colors.textPrimary, fontSize: FontSize.sm, lineHeight: 20 },
   msgTextMine: { color: '#fff', fontSize: FontSize.sm, lineHeight: 20 },
   msgTime: { color: Colors.textSubtle, fontSize: 10, alignSelf: 'flex-end' },

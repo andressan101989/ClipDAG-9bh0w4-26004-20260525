@@ -188,7 +188,7 @@ test('typing session binds send identity to its private topic and listens only t
 test('receipt projection and stable compound cursor use one RPC', async () => {
   const h = serviceHarness(); const rows = await h.service.fetchRecentChatMessages('c1', { createdAt: 't', id: 'm1' });
   assert.equal(rows[0].delivery_status, 'delivered');
-  assert.deepEqual(h.calls[0], ['chat_get_recent_messages_v2', { p_conversation_id: 'c1', p_limit: 50, p_before_created_at: 't', p_before_id: 'm1' }]);
+  assert.deepEqual(h.calls[0], ['chat_get_recent_messages_v3', { p_conversation_id: 'c1', p_limit: 50, p_before_created_at: 't', p_before_id: 'm1' }]);
 });
 
 test('pending deliveries reconcile in one bounded batch', async () => {
@@ -348,7 +348,7 @@ test('typing UI is conversation-fenced and clears on close and background', () =
 test('calls, video calls, Premium DM, normal image and push navigation remain wired', () => {
   assert.match(screen, /router\.push\(`\/call\/\$\{partnerId\}`\)/);
   assert.match(screen, /router\.push\(`\/video-call\/\$\{partnerId\}`\)/);
-  assert.match(screen, /send_premium_dm/); assert.match(screen, /sendMessage\(partnerId, '[^']*Imagen', url, 'image'\)/);
+  assert.match(screen, /send_premium_dm/); assert.match(screen, /sendMediaMessage\(partnerId,[\s\S]*mediaType: oneTime \? 'one_time_image' : 'image'/);
   assert.match(readFileSync('services/messageNotificationPresentation.ts', 'utf8'), /setActiveMessageChat/);
 });
 

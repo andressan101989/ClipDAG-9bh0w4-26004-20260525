@@ -40,7 +40,7 @@ export async function sendChatMessage(input: {
   conversationId: string;
   clientMessageId: string;
   text: string;
-  messageType: Extract<ChatMessageType, 'text' | 'image' | 'video'>;
+  messageType: Extract<ChatMessageType, 'text' | 'image' | 'video' | 'one_time_image'>;
   mediaUrl?: string;
   mediaAssetId?: string;
   replyToMessageId?: string;
@@ -72,7 +72,7 @@ export async function fetchRecentChatMessages(
   conversationId: string,
   cursor?: ChatCursor,
 ): Promise<ChatMessageWithReceiptRow[]> {
-  const { data, error } = await client().rpc('chat_get_recent_messages_v2', {
+  const { data, error } = await client().rpc('chat_get_recent_messages_v3', {
     p_conversation_id: conversationId,
     p_limit: PAGE_SIZE,
     p_before_created_at: cursor?.createdAt ?? null,

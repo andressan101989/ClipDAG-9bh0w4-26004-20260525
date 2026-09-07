@@ -70,6 +70,27 @@ Deno.serve(async(req)=>{
   const {asset_id}=await req.json().catch(()=>({}));
   const {data:a}=await admin().from('media_assets').select('*').eq('id',asset_id).eq('status','ready').maybeSingle();
   if(!a) return corsJson({error:'not_found'},404);
+  if(a.purpose==='chat_image'){
+    const caller=authenticatedClient(req);
+    if(!caller)return corsJson({error:'unauthorized'},401);
+    let signedUrl:string;
+    try{signedUrl=await signGet(a.bucket_name,a.object_key);}
+    catch{return corsJson({error:'signed_access_unavailable'},503);}
+    const {data:access,error:accessError}=await caller.rpc('chat_authorize_media_access',{p_asset_id:a.id});
+    if(accessError){
+      const code=String(accessError.message??'');
+      if(code.includes('chat_media_already_consumed'))return corsJson({error:'already_consumed'},409);
+      if(code.includes('chat_media_not_found')||code.includes('chat_media_unavailable'))return corsJson({error:'not_found'},404);
+      return corsJson({error:'forbidden'},403);
+    }
+    const grant=Array.isArray(access)?access[0]:access;
+    if(!grant?.bucket_name||!grant?.object_key)return corsJson({error:'forbidden'},403);
+    if(grant.bucket_name!==a.bucket_name||grant.object_key!==a.object_key)return corsJson({error:'forbidden'},403);
+    return corsJson({success:true,data:{
+      assetId:a.id,url:signedUrl,expiresAt:new Date(Date.now()+300_000).toISOString(),
+      consumptionPolicy:grant.consumption_policy,consumedAt:grant.consumed_at??null,
+    }});
+  }
   if(a.visibility==='private'&&a.owner_id!==user.id
     &&!(await sellerMayReadBuyerDisputeEvidence(a.id,user.id))
     &&!(await returnParticipantMayReadLabel(a.id,user.id))

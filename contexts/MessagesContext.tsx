@@ -11,13 +11,16 @@ import {
 } from '@/services/chatService';
 import { createChatTypingSession, type ChatTypingSession } from '@/services/chatTypingSession';
 import { ChatRetryCoordinator, isChatReadEligible, monotonicDeliveryStatus } from '@/services/chatReliability';
+import { openOneTimeChatImage } from '@/services/chatMediaService';
 import type { ChatCursor, ChatDeliveryStatus, ChatMessageReceiptRow, ChatMessageRow, ChatMessageWithReceiptRow } from '@/services/chatContract';
 
 const MESSAGE_PAGE_SIZE = 50;
 
 export interface Message {
   id: string; conversationId?: string; clientMessageId?: string; senderId: string; recipientId: string;
-  text: string; mediaUrl?: string; mediaType: 'text' | 'image' | 'video' | 'premium_dm'; read: boolean;
+  text: string; mediaUrl?: string; mediaType: 'text' | 'image' | 'video' | 'premium_dm' | 'one_time_image';
+  mediaAssetId?: string; consumptionPolicy?: 'standard' | 'one_time'; mediaConsumedAt?: string;
+  mediaAvailable?: boolean; read: boolean;
   deliveryStatus?: ChatDeliveryStatus; createdAt: string;
 }
 export interface Conversation {
@@ -25,11 +28,13 @@ export interface Conversation {
   lastMessage: string; lastMessageAt: string; unreadCount: number; otherUserId?: string;
   otherUsername?: string; otherUserAvatar?: string;
 }
-interface MessagesContextType {
+export interface MessagesContextType {
   conversations: Conversation[]; messages: Record<string, Message[]>; unreadTotal: number; isLoading: boolean;
   hasOlderMessages: Record<string, boolean>; isLoadingOlder: Record<string, boolean>;
   presenceByUser: Record<string, 'online' | 'offline'>; typingByUser: Record<string, boolean>;
   sendMessage: (recipientId: string, text: string, mediaUrl?: string, mediaType?: string) => Promise<void>;
+  sendMediaMessage: (recipientId: string, input: { text: string; mediaType: 'image' | 'one_time_image'; mediaAssetId: string }) => Promise<void>;
+  openOneTimeMedia: (partnerId: string, messageId: string) => Promise<string>;
   retryMessage: (partnerId: string, clientMessageId: string) => Promise<void>;
   loadConversation: (partnerId: string) => Promise<void>; loadOlderMessages: (partnerId: string) => Promise<void>;
   markConversationRead: (partnerId: string) => Promise<void>; refreshConversations: () => Promise<void>;
@@ -48,7 +53,11 @@ export function mapChatMessage(row: ChatMessageRow | ChatMessageWithReceiptRow):
     id: row.id, conversationId: row.conversation_id, clientMessageId: row.client_message_id,
     senderId: row.sender_id, recipientId: row.recipient_id, text: row.text || '',
     mediaUrl: row.media_url || undefined,
-    mediaType: (['image', 'video', 'premium_dm'].includes(row.message_type) ? row.message_type : 'text') as Message['mediaType'],
+    mediaType: (['image', 'video', 'premium_dm', 'one_time_image'].includes(row.message_type) ? row.message_type : 'text') as Message['mediaType'],
+    mediaAssetId: row.media_asset_id || undefined,
+    consumptionPolicy: row.consumption_policy,
+    mediaConsumedAt: 'media_consumed_at' in row ? row.media_consumed_at || undefined : undefined,
+    mediaAvailable: 'media_available' in row ? row.media_available : undefined,
     read: deliveryStatus === 'read', deliveryStatus, createdAt: row.created_at,
   };
 }
@@ -77,6 +86,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
   const generationRef = useRef(0); const conversationIdsRef = useRef(new Map<string, string>());
   const cursorsRef = useRef(new Map<string, ChatCursor>()); const olderFlightRef = useRef(new Set<string>());
   const retryFlightRef = useRef(new ChatRetryCoordinator());
+  const mediaOpenFlightsRef = useRef(new Map<string, Promise<string>>());
   const activePartnerRef = useRef<string | null>(null); const focusedPartnerRef = useRef<string | null>(null);
   const typingSessionRef = useRef<ChatTypingSession | null>(null);
   const typingSessionFlightRef = useRef<Promise<ChatTypingSession> | null>(null);
@@ -187,7 +197,8 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     try {
       const conversationId = await resolveConversation(partnerId);
       const row = await sendChatMessage({ conversationId, clientMessageId: message.clientMessageId, text: message.text,
-        messageType: message.mediaType as 'text' | 'image' | 'video', mediaUrl: message.mediaUrl });
+        messageType: message.mediaType as 'text' | 'image' | 'video' | 'one_time_image', mediaUrl: message.mediaUrl,
+        mediaAssetId: message.mediaAssetId });
       if (activeUserRef.current !== userId || generation !== generationRef.current) return;
       setMessages(previous => ({ ...previous, [partnerId]: mergeChatMessage(previous[partnerId] || [], mapChatMessage(row)) }));
       await fetchConversations();
@@ -209,6 +220,38 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     setMessages(previous => ({ ...previous, [recipientId]: mergeChatMessage(previous[recipientId] || [], optimistic) }));
     await transmitMessage(recipientId, optimistic);
   }, [transmitMessage, user?.id]);
+
+  const sendMediaMessage = useCallback(async (recipientId: string, input: {
+    text: string; mediaType: 'image' | 'one_time_image'; mediaAssetId: string;
+  }) => {
+    const userId = user?.id; const normalizedText = input.text.trim();
+    if (!userId || !recipientId || !input.mediaAssetId || !normalizedText) throw new Error('chat_media_message_invalid');
+    const clientMessageId = createChatClientMessageId();
+    const optimistic: Message = { id: `opt_${clientMessageId}`, clientMessageId, senderId: userId, recipientId,
+      text: normalizedText, mediaType: input.mediaType, mediaAssetId: input.mediaAssetId,
+      consumptionPolicy: input.mediaType === 'one_time_image' ? 'one_time' : 'standard', mediaAvailable: true,
+      read: false, deliveryStatus: 'pending', createdAt: new Date().toISOString() };
+    setMessages(previous => ({ ...previous, [recipientId]: mergeChatMessage(previous[recipientId] || [], optimistic) }));
+    await transmitMessage(recipientId, optimistic);
+  }, [transmitMessage, user?.id]);
+
+  const openOneTimeMedia = useCallback(async (partnerId: string, messageId: string): Promise<string> => {
+    const userId = user?.id; const generation = generationRef.current;
+    const message = (messagesRef.current[partnerId] || []).find(item => item.id === messageId);
+    if (!userId || !message || message.recipientId !== userId || message.mediaType !== 'one_time_image'
+      || !message.mediaAssetId || message.mediaConsumedAt || message.mediaAvailable === false) {
+      throw new Error('chat_one_time_media_unavailable');
+    }
+    const key = `${userId}:${message.id}:${message.mediaAssetId}`;
+    const existing = mediaOpenFlightsRef.current.get(key); if (existing) return existing;
+    const flight = openOneTimeChatImage(message.mediaAssetId).then(access => {
+      if (activeUserRef.current !== userId || generation !== generationRef.current) throw new Error('chat_media_context_stale');
+      setMessages(previous => ({ ...previous, [partnerId]: (previous[partnerId] || []).map(item => item.id === message.id
+        ? { ...item, mediaConsumedAt: access.consumedAt || new Date().toISOString(), mediaAvailable: false } : item) }));
+      return access.url;
+    }).finally(() => mediaOpenFlightsRef.current.delete(key));
+    mediaOpenFlightsRef.current.set(key, flight); return flight;
+  }, [user?.id]);
 
   const retryMessage = useCallback(async (partnerId: string, clientMessageId: string) => {
     const key = `${user?.id || ''}:${partnerId}:${clientMessageId}`;
@@ -262,6 +305,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     setConversations([]); setMessages({}); setHasOlderMessages({}); setIsLoadingOlder({}); setPresenceByUser({}); setTypingByUser({});
     setIsLoading(Boolean(userId));
     conversationIdsRef.current.clear(); cursorsRef.current.clear(); retryFlightRef.current.clear(); olderFlightRef.current.clear();
+    mediaOpenFlightsRef.current.clear();
     activePartnerRef.current = null; focusedPartnerRef.current = null;
     void typingSessionRef.current?.dispose(); typingSessionRef.current = null; typingSessionFlightRef.current = null;
     PollingManager.unregister('messages_conversations'); if (!userId) return;
@@ -299,6 +343,8 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         setMessages(previous => Object.fromEntries(Object.entries(previous).map(([partnerId, rows]) => [partnerId,
           rows.map(message => message.id === receipt.message_id
             ? { ...message, deliveryStatus: monotonicDeliveryStatus(message.deliveryStatus, deliveryStatus),
+              mediaConsumedAt: receipt.media_consumed_at || message.mediaConsumedAt,
+              mediaAvailable: receipt.media_consumed_at ? false : message.mediaAvailable,
               read: monotonicDeliveryStatus(message.deliveryStatus, deliveryStatus) === 'read' } : message)])));
       }, onReconcile: reconcile, onSubscribed: reconcileDeliveries,
     });
@@ -327,6 +373,6 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
   const applicationBadgeCount = user?.id ? unreadTotal : 0;
   useEffect(() => { Notifications.setBadgeCountAsync(applicationBadgeCount).catch(() => undefined); }, [applicationBadgeCount]);
   return <MessagesContext.Provider value={{ conversations, messages, unreadTotal, isLoading, hasOlderMessages, isLoadingOlder,
-    presenceByUser, typingByUser, sendMessage, retryMessage, loadConversation, loadOlderMessages, markConversationRead,
+    presenceByUser, typingByUser, sendMessage, sendMediaMessage, openOneTimeMedia, retryMessage, loadConversation, loadOlderMessages, markConversationRead,
     refreshConversations, activateConversation, deactivateConversation, setConversationTyping }}>{children}</MessagesContext.Provider>;
 }
