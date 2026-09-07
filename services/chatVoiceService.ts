@@ -15,9 +15,10 @@ export const CHAT_VOICE_STABILITY_INTERVAL_MS = 100;
 let stableVoiceFileSequence = 0;
 
 export type ChatVoiceSpeed = typeof CHAT_VOICE_SPEEDS[number];
+export type ChatVoiceM4aMime = 'audio/mp4' | 'audio/x-m4a';
 export type ChatVoiceDraft = {
   uri: string;
-  mimeType: 'audio/mp4';
+  mimeType: ChatVoiceM4aMime;
   durationMs: number;
   waveform: number[];
 };
@@ -217,7 +218,8 @@ export async function restoreChatVoicePlaybackMode(): Promise<void> {
 
 export type StableChatVoiceFile = {
   uri: string;
-  mimeType: 'audio/mp4';
+  mimeType: ChatVoiceM4aMime;
+  detectedMimeType: string;
   fileName: string;
   sizeBytes: number;
   cleanup: () => void;
@@ -229,7 +231,11 @@ type ChatVoiceStabilizationOptions = {
   signal?: AbortSignal;
   readSize?: (uri: string) => number;
   sleep?: (milliseconds: number) => Promise<void>;
-  copyToStableFile?: (sourceUri: string, fileName: string) => StableChatVoiceFile;
+  copyToStableFile?: (
+    sourceUri: string,
+    fileName: string,
+    fallbackMimeType: ChatVoiceM4aMime,
+  ) => StableChatVoiceFile;
 };
 
 type ChatVoiceUploadOptions = {
@@ -241,16 +247,38 @@ function throwIfVoiceUploadAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new Error('chat_voice_upload_aborted');
 }
 
-function createStableVoiceCopy(sourceUri: string, fileName: string): StableChatVoiceFile {
+export function resolveChatVoiceMimeType(
+  detectedMimeType: string,
+  fallbackMimeType: ChatVoiceM4aMime,
+): ChatVoiceM4aMime {
+  if (detectedMimeType === 'audio/x-m4a' || detectedMimeType === 'audio/mp4') {
+    return detectedMimeType;
+  }
+  if (detectedMimeType === ''
+    && (fallbackMimeType === 'audio/x-m4a' || fallbackMimeType === 'audio/mp4')) {
+    return fallbackMimeType;
+  }
+  throw new Error('chat_voice_mime_unexpected');
+}
+
+function createStableVoiceCopy(
+  sourceUri: string,
+  fileName: string,
+  fallbackMimeType: ChatVoiceM4aMime,
+): StableChatVoiceFile {
   const source = new File(sourceUri);
   const stableFile = new File(Paths.cache, fileName);
   const cleanup = () => {
     try { if (stableFile.exists) stableFile.delete(); } catch { /* Best-effort owned cache cleanup. */ }
   };
   let sizeBytes = 0;
+  let detectedMimeType = '';
+  let mimeType: ChatVoiceM4aMime;
   try {
     source.copy(stableFile);
     sizeBytes = stableFile.size;
+    detectedMimeType = stableFile.type;
+    mimeType = resolveChatVoiceMimeType(detectedMimeType, fallbackMimeType);
   } catch (error) {
     cleanup();
     throw error;
@@ -261,7 +289,8 @@ function createStableVoiceCopy(sourceUri: string, fileName: string): StableChatV
   }
   return {
     uri: stableFile.uri,
-    mimeType: 'audio/mp4',
+    mimeType,
+    detectedMimeType,
     fileName,
     sizeBytes,
     cleanup,
@@ -285,14 +314,19 @@ export async function prepareStableChatVoiceDraft(
     try { size = readSize(draft.uri); } catch { size = 0; }
     if (Number.isFinite(size) && size > 0 && size === previousPositiveSize) {
       const operationId = `voice-${Date.now()}-${++stableVoiceFileSequence}`;
-      const stable = copyToStableFile(draft.uri, `${operationId}.m4a`);
+      const stable = copyToStableFile(
+        draft.uri,
+        `${operationId}.m4a`,
+        draft.mimeType,
+      );
       if (stable.sizeBytes < 1) {
         stable.cleanup();
         throw new Error('chat_voice_file_not_stable');
       }
       console.info('[ChatVoice]', {
         stage: 'VOICE_FILE_STABLE', operationId, durationMs: draft.durationMs,
-        stableSize: stable.sizeBytes, mimeType: stable.mimeType, attempt,
+        stableSize: stable.sizeBytes, detectedMimeType: stable.detectedMimeType,
+        mimeType: stable.mimeType, attempt,
       });
       return stable;
     }
@@ -312,7 +346,7 @@ export async function uploadChatVoiceDraft(
     throwIfVoiceUploadAborted(signal);
     return await (options.upload ?? uploadPrivateVoiceNote)({
       uri: stable.uri,
-      mimeType: 'audio/mp4',
+      mimeType: stable.mimeType,
       fileName: stable.fileName,
       sizeBytes: stable.sizeBytes,
       durationMs: draft.durationMs,

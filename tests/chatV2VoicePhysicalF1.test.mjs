@@ -78,7 +78,7 @@ test('mutable voice size must become positive and repeat before creating the sta
     sleep: async ms => { sleeps.push(ms); },
     copyToStableFile: (_uri, fileName) => {
       copied += 1;
-      return { uri: 'file:///cache/stable.m4a', mimeType: 'audio/mp4', fileName, sizeBytes: 240, cleanup() {} };
+      return { uri: 'file:///cache/stable.m4a', mimeType: 'audio/mp4', detectedMimeType: 'audio/mp4', fileName, sizeBytes: 240, cleanup() {} };
     },
   });
   assert.equal(copied, 1); assert.equal(stable.sizeBytes, 240); assert.equal(sleeps.length, 3);
@@ -99,7 +99,7 @@ test('stable URI and its exact size drive create-upload and the same File drives
     stabilization: {
       readSize: () => 512, sleep: async () => undefined,
       copyToStableFile: (_uri, fileName) => ({
-        uri: 'file:///cache/immutable-voice.m4a', mimeType: 'audio/mp4', fileName,
+        uri: 'file:///cache/immutable-voice.m4a', mimeType: 'audio/mp4', detectedMimeType: 'audio/mp4', fileName,
         sizeBytes: 512, cleanup: () => { cleaned += 1; },
       }),
     },
@@ -117,7 +117,7 @@ test('failed or cancelled upload cleans only its owned stable temp', async () =>
     stabilization: {
       readSize: () => 64, sleep: async () => undefined,
       copyToStableFile: (_uri, fileName) => ({
-        uri: 'file:///cache/owned.m4a', mimeType: 'audio/mp4', fileName,
+        uri: 'file:///cache/owned.m4a', mimeType: 'audio/mp4', detectedMimeType: 'audio/mp4', fileName,
         sizeBytes: 64, cleanup: () => { cleaned += 1; },
       }),
     },
@@ -126,8 +126,9 @@ test('failed or cancelled upload cleans only its owned stable temp', async () =>
   assert.equal(cleaned, 1);
 });
 
-test('voice contract remains audio/mp4, m4a, 48 samples and strict server mismatch validation', () => {
-  assert.match(serviceSource, /mimeType:\s*'audio\/mp4'/);
+test('voice contract keeps both M4A MIME values, m4a, 48 samples and strict server validation', () => {
+  assert.match(serviceSource, /'audio\/mp4' \| 'audio\/x-m4a'/);
+  assert.match(serviceSource, /mimeType:\s*stable\.mimeType/);
   assert.match(serviceSource, /`\$\{operationId\}\.m4a`/);
   assert.match(serviceSource, /CHAT_VOICE_WAVEFORM_SAMPLES = 48/);
   assert.match(mediaSource, /headers:\s*input\.headers[\s\S]*body:\s*input\.file/);

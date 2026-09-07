@@ -36,6 +36,7 @@ function loadService({ permission = { granted: true, canAskAgain: true }, reques
     constructor(...parts) {
       this.uri = parts.join('/').replace('file:///cache/', 'file:///cache/');
       this.exists = true;
+      this.type = '';
     }
     get size() { return fileSizes.get(this.uri) ?? 256; }
     copy(destination) { fileSizes.set(destination.uri, this.size); }

@@ -145,8 +145,8 @@ test('MediaService mismatch log contains no upload or authorization secrets', ()
   ]) assert.doesNotMatch(logBlock, new RegExp(forbidden, 'i'));
 });
 
-test('F1 voice contract remains audio/mp4, m4a, stable copy, and 48 samples', () => {
-  assert.match(voiceSource, /mimeType:\s*'audio\/mp4'/);
+test('F1 voice contract retains both M4A MIME values, stable copy, and 48 samples', () => {
+  assert.match(voiceSource, /'audio\/mp4' \| 'audio\/x-m4a'/);
   assert.match(voiceSource, /`\$\{operationId\}\.m4a`/);
   assert.match(voiceSource, /prepareStableChatVoiceDraft/);
   assert.match(voiceSource, /copyToStableFile/);
