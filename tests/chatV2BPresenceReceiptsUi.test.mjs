@@ -9,6 +9,7 @@ const screen = readFileSync('app/chat/[userId].tsx', 'utf8');
 const inbox = readFileSync('app/(tabs)/messages.tsx', 'utf8');
 const legacyInbox = readFileSync('app/messages.tsx', 'utf8');
 const presenceSource = readFileSync('services/chatPresenceService.ts', 'utf8');
+const deliveryIndicator = readFileSync('components/chat/MessageDeliveryIndicator.tsx', 'utf8');
 
 function load(source, imports = {}) {
   const module = { exports: {} };
@@ -284,8 +285,9 @@ test('Realtime channels are private and typing payload excludes message text', (
 });
 
 test('UI maps every delivery state and retry is accessible', () => {
-  for (const state of ['pending', 'sent', 'read', 'failed']) assert.match(screen, new RegExp(`deliveryStatus === '${state}'`));
-  assert.match(screen, /clock-outline/); assert.match(screen, /check-all/); assert.match(screen, /Reintentar mensaje/);
+  for (const state of ['pending', 'sent', 'read', 'failed']) assert.match(deliveryIndicator, new RegExp(`status === '${state}'`));
+  assert.match(deliveryIndicator, /clock-outline/); assert.match(deliveryIndicator, /check-all/); assert.match(deliveryIndicator, /Reintentar mensaje/);
+  assert.match(screen, /MessageDeliveryIndicator/);
   assert.match(screen, /retryMessage\(partnerId, item\.clientMessageId\)/);
 });
 

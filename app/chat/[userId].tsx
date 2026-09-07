@@ -25,10 +25,11 @@ import { PrivateChatImage } from '@/components/chat/PrivateChatImage';
 import { ChatVoiceDraftSender, type ChatVoiceDraft } from '@/services/chatVoiceService';
 import { VoiceRecorderBar } from '@/components/chat/VoiceRecorderBar';
 import { VoiceMessageBubble } from '@/components/chat/VoiceMessageBubble';
+import { MessageDeliveryIndicator } from '@/components/chat/MessageDeliveryIndicator';
 import type { Message } from '@/contexts/MessagesContext';
 import {
-  clearActiveMessageChat,
-  setActiveMessageChat,
+  clearActiveMessageConversation,
+  setActiveMessageConversation,
 } from '@/services/messageNotificationPresentation';
 
 const PREMIUM_COLOR  = '#FF9D00';
@@ -272,7 +273,7 @@ export default function ChatScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!partnerId) return undefined;
-      setActiveMessageChat(partnerId);
+      setActiveMessageConversation(conversationKey || null, partnerId);
       const activation = activateConversation(partnerId);
       void Promise.all([activation, loadConversation(partnerId)]).catch(error => {
         console.warn('[ChatScreen] conversation activation failed', error);
@@ -282,9 +283,9 @@ export default function ChatScreen() {
         setActiveVoiceMessageId(null);
         setConversationTyping(partnerId, false);
         deactivateConversation(partnerId);
-        clearActiveMessageChat(partnerId);
+        clearActiveMessageConversation(conversationKey || null, partnerId);
       };
-    }, [activateConversation, deactivateConversation, loadConversation, partnerId, setConversationTyping]),
+    }, [activateConversation, conversationKey, deactivateConversation, loadConversation, partnerId, setConversationTyping]),
   );
 
   // ── Load partner's premium DM config + my subscription status ──────────────
@@ -567,29 +568,10 @@ export default function ChatScreen() {
           )}
         </View>
 
-        {isMine ? (
-          item.deliveryStatus === 'failed' ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Reintentar mensaje"
-              hitSlop={8}
-              onPress={() => item.clientMessageId && partnerId
-                ? retryMessage(partnerId, item.clientMessageId).catch(() => showAlert('Mensaje no enviado', 'No se pudo reintentar.'))
-                : undefined}
-              style={styles.deliveryIcon}
-            >
-              <MaterialCommunityIcons name="alert-circle-outline" size={15} color={Colors.error} />
-            </Pressable>
-          ) : (
-            <MaterialCommunityIcons
-              name={item.deliveryStatus === 'pending' ? 'clock-outline'
-                : item.deliveryStatus === 'sent' ? 'check' : 'check-all'}
-              size={13}
-              color={item.deliveryStatus === 'read' ? Colors.primary : Colors.textSubtle}
-              style={styles.deliveryIcon}
-            />
-          )
-        ) : null}
+        {isMine ? <View style={styles.deliveryIcon}><MessageDeliveryIndicator status={item.deliveryStatus}
+          onRetry={() => item.clientMessageId && partnerId
+            ? void retryMessage(partnerId, item.clientMessageId).catch(() => showAlert('Mensaje no enviado', 'No se pudo reintentar.'))
+            : undefined} /></View> : null}
       </View>
     );
   }, [user, chatMessages, conversation, partnerId, retryMessage, openOneTimeMedia, showAlert, activeVoiceMessageId]);

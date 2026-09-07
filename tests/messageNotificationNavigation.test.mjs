@@ -12,9 +12,12 @@ test('build 17 receives foreground, response and cold-start notifications', () =
   assert.match(layout, /PushNotificationHandler/);
 });
 
-test('message taps open the exact sender chat', () => {
+test('message taps open the canonical direct or group conversation', () => {
   assert.match(handler, /case 'message':/);
   assert.match(handler, /router\.push\(`\/chat\/\$\{data\.from_user_id\}`/);
+  assert.match(handler, /router\.push\(`\/chat\/group\/\$\{data\.conversation_id\}`/);
+  assert.match(handler, /chat_conversation_members/);
+  assert.match(handler, /pendingMessageNavigationRef/);
   assert.match(handler, /typeof value === 'string'/);
 });
 

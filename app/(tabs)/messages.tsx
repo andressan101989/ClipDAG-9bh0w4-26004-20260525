@@ -17,7 +17,6 @@ import { getSupabaseClient, useAlert } from '@/template';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { timeAgo } from '@/services/mockData';
-import { generateUUID } from '@/services/agoraService';
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const PREMIUM_COLOR  = '#FF9D00';
@@ -213,16 +212,17 @@ export default function MessagesScreen() {
   const filtered = conversations.filter(c => {
     if (search.trim() && !c.displayName.toLowerCase().includes(search.toLowerCase())) return false;
     if (activeTab === 'unread' && c.unreadCount === 0) return false;
+    if (activeTab === 'premium' && (c.conversationType !== 'direct' || !premiumDMs.some(p => p.sender_id === c.partnerId))) return false;
     return true;
   });
 
   // Sort: premium DMs at top
   const sortedConversations = [...filtered].sort((a, b) => {
-    const aIsPremium = premiumDMs.some(p => p.sender_id === a.partnerId);
-    const bIsPremium = premiumDMs.some(p => p.sender_id === b.partnerId);
+    const aIsPremium = a.conversationType === 'direct' && premiumDMs.some(p => p.sender_id === a.partnerId);
+    const bIsPremium = b.conversationType === 'direct' && premiumDMs.some(p => p.sender_id === b.partnerId);
     if (aIsPremium && !bIsPremium) return -1;
     if (!aIsPremium && bIsPremium) return 1;
-    return 0;
+    return new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime();
   });
 
   // Send premium DM
@@ -288,19 +288,6 @@ export default function MessagesScreen() {
               <MaterialCommunityIcons name="bell-outline" size={22} color={Colors.textSecondary} />
             </Pressable>
           )}
-          <Pressable
-            onPress={() => {
-              if (!user?.id) return;
-              router.push({
-                pathname: '/group-call/[roomId]',
-                params: { roomId: generateUUID(), creatorId: user.id },
-              } as any);
-            }}
-            hitSlop={8}
-            style={styles.salaBtn}
-          >
-            <MaterialCommunityIcons name="account-group-outline" size={20} color={Colors.textSecondary} />
-          </Pressable>
           <Pressable onPress={() => router.push('/new-message')} hitSlop={8} style={styles.newMsgBtn}>
             <LinearGradient colors={['#7C5CFF', '#FF2D78']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.newMsgBtnGrad}>
               <MaterialCommunityIcons name="pencil-outline" size={16} color="#fff" />
@@ -466,7 +453,8 @@ export default function MessagesScreen() {
           }
           renderItem={({ item }) => {
             const hasUnread = item.unreadCount > 0;
-            const isPremium = premiumDMs.some(p => p.sender_id === item.partnerId || p.recipient_id === item.partnerId);
+            const isPremium = item.conversationType === 'direct'
+              && premiumDMs.some(p => p.sender_id === item.partnerId || p.recipient_id === item.partnerId);
             const premiumPayment = premiumDMs.find(p => p.sender_id === item.partnerId);
             return (
               <Pressable
@@ -488,7 +476,7 @@ export default function MessagesScreen() {
                     <View style={[styles.onlineDot, { backgroundColor: PREMIUM_COLOR }]}>
                       <MaterialIcons name="star" size={7} color="#fff" />
                     </View>
-                  ) : item.partnerId && presenceByUser[item.partnerId] === 'online' ? (
+                  ) : item.conversationType === 'direct' && item.partnerId && presenceByUser[item.partnerId] === 'online' ? (
                     <View style={styles.onlineDot} />
                   ) : null}
                 </View>

@@ -44,8 +44,12 @@ Notifications.setNotificationHandler({
 
     if (
       type === 'message' &&
-      typeof notification.request.content.data?.from_user_id === 'string' &&
-      isMessageChatCurrentlyVisible(notification.request.content.data.from_user_id)
+      isMessageChatCurrentlyVisible({
+        conversationId: typeof notification.request.content.data?.conversation_id === 'string'
+          ? notification.request.content.data.conversation_id : null,
+        senderId: typeof notification.request.content.data?.from_user_id === 'string'
+          ? notification.request.content.data.from_user_id : null,
+      })
     ) {
       return {
         shouldShowAlert: false,
@@ -112,7 +116,8 @@ function navigateToNotification(
       if (data.from_user_id) router.push(`/creator/${data.from_user_id}` as any);
       break;
     case 'message':
-      if (data.from_user_id) router.push(`/chat/${data.from_user_id}` as any);
+      if (data.conversation_type === 'group' && data.conversation_id) router.push(`/chat/group/${data.conversation_id}` as any);
+      else if (data.from_user_id) router.push(`/chat/${data.from_user_id}` as any);
       break;
     case 'group_call':
       if (data.roomId) router.push(`/group-call/${data.roomId}` as any);
@@ -139,6 +144,7 @@ export function PushNotificationHandler() {
   const slideAnim = useRef(new Animated.Value(-120)).current;
   const dismissRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handledResponsesRef = useRef<Set<string>>(new Set());
+  const pendingMessageNavigationRef = useRef<Record<string, string> | null>(null);
   const permissionPromptCheckedRef = useRef(false);
 
   const hideBanner = useCallback(() => {
@@ -226,6 +232,21 @@ export function PushNotificationHandler() {
     });
   }, [presentIncomingCall, router, showAlert, user?.id]);
 
+  const navigateToMessage = useCallback(async (data: Record<string, string>) => {
+    if (!user?.id) return;
+    if (data.conversation_type === 'group' && data.conversation_id) {
+      const { data: membership } = await getSupabaseClient().from('chat_conversation_members')
+        .select('conversation_id').eq('conversation_id', data.conversation_id)
+        .eq('user_id', user.id).eq('is_active', true).maybeSingle();
+      if (!membership) {
+        showAlert('Conversación no disponible', 'Ya no tienes acceso a este grupo.');
+        router.replace('/(tabs)/messages' as any);
+        return;
+      }
+    }
+    navigateToNotification(router, data);
+  }, [router, showAlert, user?.id]);
+
   const handleNotificationData = useCallback(async (
     notificationId: string,
     data: Record<string, string> | null,
@@ -243,8 +264,17 @@ export function PushNotificationHandler() {
       return;
     }
 
+    if (data?.type === 'message') {
+      if (!isAuthReady || !user?.id) {
+        pendingMessageNavigationRef.current = data;
+        return;
+      }
+      await navigateToMessage(data);
+      return;
+    }
+
     navigateToNotification(router, data);
-  }, [handleIncomingCallTap, isAuthReady, router]);
+  }, [handleIncomingCallTap, isAuthReady, navigateToMessage, router, user?.id]);
 
   useEffect(() => {
     setMessageNotificationAppState(AppState.currentState);
@@ -257,8 +287,10 @@ export function PushNotificationHandler() {
       if (receivedData?.type === 'incoming_call') return;
       if (
         receivedData?.type === 'message' &&
-        receivedData.from_user_id &&
-        isMessageChatCurrentlyVisible(receivedData.from_user_id)
+        isMessageChatCurrentlyVisible({
+          conversationId: receivedData.conversation_id,
+          senderId: receivedData.from_user_id,
+        })
       ) return;
 
       const { title, body, data } = notification.request.content;
@@ -293,6 +325,13 @@ export function PushNotificationHandler() {
       if (dismissRef.current) clearTimeout(dismissRef.current);
     };
   }, [handleNotificationData, showBanner]);
+
+  useEffect(() => {
+    if (!isAuthReady || !user?.id || !pendingMessageNavigationRef.current) return;
+    const data = pendingMessageNavigationRef.current;
+    pendingMessageNavigationRef.current = null;
+    void navigateToMessage(data);
+  }, [isAuthReady, navigateToMessage, user?.id]);
 
   useEffect(() => {
     if (!isAuthReady || !user?.id || permissionPromptCheckedRef.current) return;
@@ -344,7 +383,8 @@ export function PushNotificationHandler() {
         style={styles.banner}
         onPress={() => {
           hideBanner();
-          navigateToNotification(router, banner.data);
+          if (banner.data?.type === 'message') void navigateToMessage(banner.data);
+          else navigateToNotification(router, banner.data);
         }}
       >
         <View style={styles.iconWrap}>

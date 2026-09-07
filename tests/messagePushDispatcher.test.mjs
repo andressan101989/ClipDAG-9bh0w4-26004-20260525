@@ -28,18 +28,29 @@ test('payload contains string message navigation data and safe previews', () => 
   assert.match(dispatcher, /type: 'message'/);
   assert.match(dispatcher, /from_user_id: String\(message\.sender_id\)/);
   assert.match(dispatcher, /message_id: String\(message\.id\)/);
+  assert.match(dispatcher, /conversation_id: String\(message\.conversation_id\)/);
+  assert.match(dispatcher, /conversation_type: conversationType/);
   assert.match(dispatcher, /interruptionLevel: 'active'/);
-  assert.match(dispatcher, /Te envió una imagen/);
-  assert.match(dispatcher, /Te envió un video/);
-  assert.match(dispatcher, /Te envió un DM Premium/);
+  assert.match(dispatcher, /Foto/);
+  assert.match(dispatcher, /Video/);
+  assert.match(dispatcher, /DM Premium/);
   assert.match(shared, /compact\.length <= 120/);
   assert.doesNotMatch(dispatcher, /media_url/);
 });
 
-test('badge is calculated from authoritative unread messages', () => {
+test('badge is calculated from authoritative direct and group receipts', () => {
   assert.match(dispatcher, /count: 'exact', head: true/);
-  assert.match(dispatcher, /\.eq\('recipient_id', message\.recipient_id\)\.eq\('read', false\)/);
+  assert.match(dispatcher, /chat_message_receipts/);
+  assert.match(dispatcher, /\.eq\('user_id', device\.user_id\)\.is\('read_at', null\)/);
   assert.match(dispatcher, /badge: Math\.max/);
+});
+
+test('group delivery is revalidated at dispatch against active joined-at membership', () => {
+  assert.match(dispatcher, /conversation_type === 'group'/);
+  assert.match(dispatcher, /chat_conversation_members/);
+  assert.match(dispatcher, /membership\?\.is_active === true/);
+  assert.match(dispatcher, /new Date\(membership\.joined_at\).*new Date\(message\.created_at\)/s);
+  assert.match(dispatcher, /message\.sender_id === device\.user_id/);
 });
 
 test('attempt fencing, abandoned lock recovery and bounded retries exist', () => {

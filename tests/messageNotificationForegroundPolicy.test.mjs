@@ -27,29 +27,30 @@ async function loadPresentationService() {
 test('same active chat suppresses message presentation but background never does', async () => {
   const presentation = await loadPresentationService();
   presentation.setMessageNotificationAppState('active');
-  presentation.setActiveMessageChat('sender-a');
+  presentation.setActiveMessageConversation('conversation-a', 'sender-a');
+  assert.equal(presentation.isMessageChatCurrentlyVisible({ conversationId: 'conversation-a', senderId: 'sender-a' }), true);
+  assert.equal(presentation.isMessageChatCurrentlyVisible({ conversationId: 'conversation-b', senderId: 'sender-a' }), false);
   assert.equal(presentation.isMessageChatCurrentlyVisible('sender-a'), true);
-  assert.equal(presentation.isMessageChatCurrentlyVisible('sender-b'), false);
 
   presentation.setMessageNotificationAppState('background');
-  assert.equal(presentation.isMessageChatCurrentlyVisible('sender-a'), false);
+  assert.equal(presentation.isMessageChatCurrentlyVisible({ conversationId: 'conversation-a' }), false);
 });
 
 test('late cleanup for chat A cannot clear the active chat B', async () => {
   const presentation = await loadPresentationService();
   presentation.setMessageNotificationAppState('active');
-  presentation.setActiveMessageChat('chat-a');
-  presentation.setActiveMessageChat('chat-b');
-  presentation.clearActiveMessageChat('chat-a');
-  assert.equal(presentation.getActiveMessageChat(), 'chat-b');
-  presentation.clearActiveMessageChat('chat-b');
-  assert.equal(presentation.getActiveMessageChat(), null);
+  presentation.setActiveMessageConversation('chat-a');
+  presentation.setActiveMessageConversation('chat-b');
+  presentation.clearActiveMessageConversation('chat-a');
+  assert.equal(presentation.getActiveMessageConversation(), 'chat-b');
+  presentation.clearActiveMessageConversation('chat-b');
+  assert.equal(presentation.getActiveMessageConversation(), null);
 });
 
 test('focused chat owns ephemeral state and cleans it conditionally', () => {
   assert.match(chat, /useFocusEffect/);
-  assert.match(chat, /setActiveMessageChat\(partnerId\)/);
-  assert.match(chat, /clearActiveMessageChat\(partnerId\)/);
+  assert.match(chat, /setActiveMessageConversation\(conversationKey \|\| null, partnerId\)/);
+  assert.match(chat, /clearActiveMessageConversation\(conversationKey \|\| null, partnerId\)/);
 });
 
 test('foreground handler suppresses same-chat sound and custom banner', () => {
@@ -57,6 +58,7 @@ test('foreground handler suppresses same-chat sound and custom banner', () => {
   assert.match(handler, /shouldPlaySound: false/);
   assert.match(handler, /shouldSetBadge: false/);
   assert.match(handler, /receivedData\.from_user_id/);
+  assert.match(handler, /receivedData\.conversation_id/);
 });
 
 test('incoming calls retain their dedicated no-Expo-presentation policy', () => {
