@@ -500,6 +500,11 @@ export default function ChatScreen() {
     const oneTimeConsumed = Boolean(item.mediaConsumedAt) || item.mediaAvailable === false;
     const canOpenOneTime = isOneTime && !isMine && !oneTimeConsumed;
     const isPremium = item.mediaType === 'premium_dm';
+    const isCardMedia = isImage || isOneTime;
+    const handleRetry = () => item.clientMessageId && partnerId
+      ? void retryMessage(partnerId, item.clientMessageId)
+        .catch(() => showAlert('Mensaje no enviado', 'No se pudo reintentar.'))
+      : undefined;
 
     return (
       <View style={[styles.msgRow, isMine && styles.msgRowMine]}>
@@ -510,7 +515,7 @@ export default function ChatScreen() {
                 ? ['#451B27', '#451B27']
                 : isPremium ? [PREMIUM_COLOR, PREMIUM_COLOR2] : ['#5222A8', '#6D28D9']}
               start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-              style={styles.bubbleMineGrad}
+              style={[styles.bubbleMineGrad, isCardMedia && styles.mediaBubble]}
             >
               {isPremium ? (
                 <View style={styles.premiumMsgHeader}>
@@ -536,10 +541,13 @@ export default function ChatScreen() {
               {item.deliveryStatus === 'failed' ? (
                 <MaterialCommunityIcons name="alert-circle-outline" size={16} color="#FF5263" style={styles.failedAlert} />
               ) : null}
-              <Text style={styles.msgTimeMine}>{timeAgo(item.createdAt)}</Text>
+              <View style={[styles.messageMeta, isCardMedia && styles.mediaMeta]}>
+                <Text style={[styles.msgTimeMine, isCardMedia && styles.mediaTimeText]}>{timeAgo(item.createdAt)}</Text>
+                {item.deliveryStatus !== 'failed' ? <MessageDeliveryIndicator status={item.deliveryStatus} /> : null}
+              </View>
             </LinearGradient>
           ) : (
-            <View style={[styles.bubbleTheirsInner, isPremium && styles.premiumBubble]}>
+            <View style={[styles.bubbleTheirsInner, isPremium && styles.premiumBubble, isCardMedia && styles.mediaBubble]}>
               {isPremium ? (
                 <View style={styles.premiumMsgHeader}>
                   <MaterialIcons name="star" size={11} color={PREMIUM_COLOR} />
@@ -565,15 +573,14 @@ export default function ChatScreen() {
               {item.text && item.text !== '📷 Imagen' && !isOneTime && !isVoice ? (
                 <Text style={styles.msgText}>{item.text}</Text>
               ) : null}
-              <Text style={styles.msgTime}>{timeAgo(item.createdAt)}</Text>
+              <Text style={[styles.msgTime, isCardMedia && styles.mediaTime]}>{timeAgo(item.createdAt)}</Text>
             </View>
           )}
         </View>
 
-        {isMine ? <View style={styles.deliveryIcon}><MessageDeliveryIndicator status={item.deliveryStatus}
-          onRetry={() => item.clientMessageId && partnerId
-            ? void retryMessage(partnerId, item.clientMessageId).catch(() => showAlert('Mensaje no enviado', 'No se pudo reintentar.'))
-            : undefined} /></View> : null}
+        {isMine && item.deliveryStatus === 'failed'
+          ? <View style={styles.deliveryIcon}><MessageDeliveryIndicator status="failed" onRetry={handleRetry} /></View>
+          : null}
       </View>
     );
   }, [user, partnerId, retryMessage, openOneTimeMedia, showAlert, activeVoiceMessageId]);
@@ -901,6 +908,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#1A1E2B', borderRadius: 16,
     paddingHorizontal: 16, paddingVertical: 10, gap: 4,
   },
+  mediaBubble: { paddingHorizontal: 0, paddingVertical: 0, backgroundColor: 'transparent', overflow: 'hidden' },
   premiumBubble: { borderColor: 'rgba(255,157,0,0.4)', backgroundColor: 'rgba(255,157,0,0.08)' },
   premiumMsgHeader: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   premiumMsgLabel: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
@@ -916,6 +924,10 @@ const styles = StyleSheet.create({
   msgTextMine: { color: '#fff', fontSize: FontSize.sm, lineHeight: 20 },
   msgTime: { color: Colors.textSubtle, fontSize: 10, alignSelf: 'flex-end' },
   msgTimeMine: { color: 'rgba(255,255,255,0.6)', fontSize: 10, alignSelf: 'flex-end' },
+  messageMeta: { alignSelf: 'flex-end', flexDirection: 'row', alignItems: 'center', gap: 3 },
+  mediaMeta: { position: 'absolute', right: 8, bottom: 6 },
+  mediaTime: { position: 'absolute', right: 8, bottom: 6, color: '#FFFFFF' },
+  mediaTimeText: { color: '#FFFFFF' },
   deliveryIcon: { alignSelf: 'flex-end', marginBottom: 5 },
   failedAlert: { position: 'absolute', right: 8, top: 9 },
 
