@@ -3,7 +3,7 @@ import * as Notifications from 'expo-notifications';
 import { AuthContext } from './AuthContext';
 import { AppLifecycle } from '@/modules/core/AppLifecycle';
 import { PollingManager } from '@/modules/realtime/PollingManager';
-import { PresenceManager } from '@/modules/realtime/PresenceManager';
+import { ChatPresenceService } from '@/services/chatPresenceService';
 import {
   acknowledgeChatDelivery, acknowledgeChatReads, acknowledgePendingChatDeliveries, createChatClientMessageId,
   fetchChatConversations, fetchChatUserProfile, fetchRecentChatMessages,
@@ -97,8 +97,8 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       const rows = await fetchChatConversations(); if (activeUserRef.current !== userId) return;
       const partners = new Set(rows.map(row => row.other_user_id));
       const stale = [...watchedPartnersRef.current].filter(id => !partners.has(id));
-      if (stale.length) PresenceManager.unwatchUsers(stale);
-      PresenceManager.watchUsers([...partners]); watchedPartnersRef.current = partners;
+      if (stale.length) ChatPresenceService.unwatchUsers(stale);
+      ChatPresenceService.watchUsers([...partners]); watchedPartnersRef.current = partners;
       setConversations(rows.map(row => {
         conversationIdsRef.current.set(row.other_user_id, row.conversation_id);
         return { id: row.conversation_id, conversationId: row.conversation_id, partnerId: row.other_user_id,
@@ -265,6 +265,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     activePartnerRef.current = null; focusedPartnerRef.current = null;
     void typingSessionRef.current?.dispose(); typingSessionRef.current = null; typingSessionFlightRef.current = null;
     PollingManager.unregister('messages_conversations'); if (!userId) return;
+    ChatPresenceService.initialize(userId);
     let active = true;
     const reconcileDeliveries = () => acknowledgePendingChatDeliveries().then(count => { if (count > 0) void fetchConversations(); })
       .catch(error => console.warn('[MessagesContext] delivery reconciliation failed', error));
@@ -274,7 +275,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       const partner = activePartnerRef.current;
       if (partner) void loadConversation(partner).catch(error => console.warn('[MessagesContext] message reconciliation failed', error));
     };
-    const unsubscribePresence = PresenceManager.onPresenceChange(users => {
+    const unsubscribePresence = ChatPresenceService.onPresenceChange(users => {
       if (!active || activeUserRef.current !== userId || generation !== generationRef.current) return;
       setPresenceByUser(Object.fromEntries(users.map(item => [item.userId, item.presence?.status === 'online' ? 'online' : 'offline'])));
     });
@@ -316,8 +317,9 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     }, runImmediately: false, backgroundFactor: 0 });
     return () => {
       active = false; unsubscribe(); unsubscribePresence(); foregroundUnsub(); backgroundUnsub();
-      PollingManager.unregister('messages_conversations'); PresenceManager.unwatchUsers([...watchedPartnersRef.current]);
+      PollingManager.unregister('messages_conversations'); ChatPresenceService.unwatchUsers([...watchedPartnersRef.current]);
       watchedPartnersRef.current.clear(); ownedConversationIds.clear(); void typingSessionRef.current?.dispose(); typingSessionRef.current = null;
+      void ChatPresenceService.destroy();
     };
   }, [activateConversation, deactivateConversation, fetchConversations, loadConversation, markConversationRead, user?.id]);
 

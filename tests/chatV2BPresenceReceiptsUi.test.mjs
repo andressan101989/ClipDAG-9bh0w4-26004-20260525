@@ -8,7 +8,7 @@ const context = readFileSync('contexts/MessagesContext.tsx', 'utf8');
 const screen = readFileSync('app/chat/[userId].tsx', 'utf8');
 const inbox = readFileSync('app/(tabs)/messages.tsx', 'utf8');
 const legacyInbox = readFileSync('app/messages.tsx', 'utf8');
-const presenceSource = readFileSync('modules/realtime/PresenceManager.ts', 'utf8');
+const presenceSource = readFileSync('services/chatPresenceService.ts', 'utf8');
 
 function load(source, imports = {}) {
   const module = { exports: {} };
@@ -97,8 +97,8 @@ function presenceHarness() {
     onBackground(fn) { background.add(fn); return () => background.delete(fn); } };
   const manager = load(presenceSource, {
     'expo-crypto': { randomUUID: () => 'device-key' }, '@/template': { getSupabaseClient: () => supabase },
-    '../core/AppLifecycle': { AppLifecycle: lifecycle }, '../core/EventBus': { EventBus: { emit() {} } },
-  }).PresenceManager;
+    '@/modules/core/AppLifecycle': { AppLifecycle: lifecycle },
+  }).ChatPresenceService;
   return { manager, channels, foreground, background };
 }
 
@@ -205,12 +205,16 @@ test('presence tracks authenticated self only after subscription', async () => {
 
 test('presence sync treats either of two devices as online', async () => {
   const h = presenceHarness(); h.manager.initialize('me'); await tick(); await tick();
-  const states = []; const unsubscribe = h.manager.subscribe('partner', p => states.push(p.status));
+  const states = []; const unsubscribe = h.manager.onPresenceChange(users => {
+    const partner = users.find(item => item.userId === 'partner');
+    if (partner?.presence) states.push(partner.presence.status);
+  });
+  h.manager.watchUsers(['partner']);
   await tick();
   const watcher = h.channels.find(c => c.topic === 'chat-presence:partner');
   watcher.state = { one: [{ user_id: 'partner' }], two: [{ user_id: 'partner' }] }; watcher.emit('sync');
   watcher.state = { two: [{ user_id: 'partner' }] }; watcher.emit('leave'); assert.equal(states.at(-1), 'online');
-  watcher.state = {}; watcher.emit('leave'); assert.equal(states.at(-1), 'offline'); unsubscribe();
+  watcher.state = {}; watcher.emit('leave'); assert.equal(states.at(-1), 'offline'); unsubscribe(); h.manager.unwatchUsers(['partner']);
 });
 
 test('background untracks self and foreground creates a new tracked channel', async () => {
@@ -353,7 +357,7 @@ test('migration changes no financial, marketplace, LIVE, battle or Agora object'
   assert.doesNotMatch(migration, /(agora|live_battle|media_relay)/i);
 });
 
-test('no runtime component writes the removed user_presence table', () => {
+test('no CHAT runtime component writes the nonexistent user_presence table', () => {
   assert.doesNotMatch(presenceSource, /user_presence/);
   assert.doesNotMatch(readFileSync('modules/realtime/ConnectionManager.ts', 'utf8'), /user_presence/);
 });
