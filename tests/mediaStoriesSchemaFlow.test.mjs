@@ -9,7 +9,7 @@ const sql = await readFile(
   'utf8',
 );
 const hardening = await readFile(
-  new URL('supabase/migrations/20260908220749_stories_v2_b_canonical_contract_security_hardening.sql', root),
+  new URL('supabase/migrations/20260908225020_stories_v2_b_canonical_contract_security_hardening.sql', root),
   'utf8',
 );
 const context = await readFile(new URL('contexts/StoriesContext.tsx', root), 'utf8');

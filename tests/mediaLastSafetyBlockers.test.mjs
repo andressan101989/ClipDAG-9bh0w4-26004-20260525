@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const read = (path) => fs.readFileSync(path, 'utf8');
 const migration = read('supabase/migrations/20260726105000_media_public_urls_and_safe_links.sql');
-const storiesV2 = read('supabase/migrations/20260908220749_stories_v2_b_canonical_contract_security_hardening.sql');
+const storiesV2 = read('supabase/migrations/20260908225020_stories_v2_b_canonical_contract_security_hardening.sql');
 const finalize = read('supabase/functions/finalize-media-upload/index.ts');
 const remove = read('supabase/functions/delete-media-asset/index.ts');
 const upload = read('app/(tabs)/upload.tsx');
