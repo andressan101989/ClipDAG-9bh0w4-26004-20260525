@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform, Pressable,
-  StyleSheet, Text, TextInput, View,
+  StyleSheet, Text, TextInput, View, type NativeSyntheticEvent,
+  type TextInputContentSizeChangeEventData,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -27,6 +28,7 @@ import { clearActiveMessageConversation, setActiveMessageConversation } from '@/
 import { timeAgo } from '@/services/mockData';
 import { getSupabaseClient } from '@/template';
 
+const INPUT_MIN_HEIGHT = 42;
 const INPUT_MAX_HEIGHT = 112;
 
 export default function GroupChatScreen() {
@@ -42,7 +44,7 @@ export default function GroupChatScreen() {
   } = ctx;
   const conversation = conversations.find(item => item.id === conversationId);
   const [text, setText] = useState('');
-  const [inputHeight, setInputHeight] = useState(42);
+  const [inputHeight, setInputHeight] = useState(INPUT_MIN_HEIGHT);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [voiceRecording, setVoiceRecording] = useState(false);
@@ -70,15 +72,24 @@ export default function GroupChatScreen() {
   useEffect(() => {
     if (!conversationId) return undefined;
     let stale = false;
+    let cleanupFlight: Promise<unknown> | null = null;
+    const supabase = getSupabaseClient();
     const refresh = () => void getActiveGroupCall(conversationId).then(call => {
       if (!stale) setActiveCall(call);
     }).catch(() => { if (!stale) setActiveCall(null); });
     refresh();
-    const channel = getSupabaseClient().channel(`chat-group-call-entry:${conversationId}`)
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'calls', filter: `conversation_id=eq.${conversationId}`,
-      }, refresh).subscribe();
-    return () => { stale = true; void channel.unsubscribe(); };
+    // realtime-js 2.106.1 reuses channels by topic. A mount-scoped topic avoids
+    // reusing a joined channel while removeChannel completes during dev remounts.
+    const channel = supabase.channel(`chat-group-call-entry:${conversationId}:${generateUUID()}`);
+    channel.on('postgres_changes', {
+      event: '*', schema: 'public', table: 'calls', filter: `conversation_id=eq.${conversationId}`,
+    }, refresh);
+    channel.subscribe();
+    return () => {
+      stale = true;
+      cleanupFlight ??= supabase.removeChannel(channel).catch(() => undefined);
+      void cleanupFlight;
+    };
   }, [conversationId]);
 
   const openGroupCall = useCallback((call: GroupCallSession) => router.push({
@@ -102,10 +113,22 @@ export default function GroupChatScreen() {
     }
   }, [conversationId, openGroupCall]);
 
+  const handleInputContentSizeChange = useCallback((
+    event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
+  ) => {
+    const nextHeight = Math.min(
+      INPUT_MAX_HEIGHT,
+      Math.max(INPUT_MIN_HEIGHT, event.nativeEvent.contentSize.height),
+    );
+    setInputHeight(currentHeight => (
+      Math.abs(currentHeight - nextHeight) < 1 ? currentHeight : nextHeight
+    ));
+  }, []);
+
   const send = useCallback(async () => {
     const value = text.trim();
     if (!value || sending) return;
-    setSending(true); setText(''); setInputHeight(42);
+    setSending(true); setText(''); setInputHeight(INPUT_MIN_HEIGHT);
     try {
       await sendConversationMessage(conversationId, value);
     } catch (error) {
@@ -217,20 +240,21 @@ export default function GroupChatScreen() {
       {!voiceRecording ? <TextInput style={[styles.input, { height: inputHeight }]} value={text} onChangeText={setText}
         placeholder="Mensaje" placeholderTextColor={Colors.textSubtle} multiline maxLength={1000}
         scrollEnabled={inputHeight >= INPUT_MAX_HEIGHT}
-        onContentSizeChange={event => setInputHeight(Math.max(42, Math.min(INPUT_MAX_HEIGHT, event.nativeEvent.contentSize.height + 14)))}
+        onContentSizeChange={handleInputContentSizeChange}
       /> : null}
-      {text.trim() && !voiceRecording ? <Pressable accessibilityLabel="Enviar mensaje" onPress={() => void send()}
-        disabled={sending} style={styles.sendButton}>
-        {sending ? <ActivityIndicator size="small" color="#fff" />
-          : <MaterialCommunityIcons name="send" size={18} color="#fff" />}
-      </Pressable> : null}
-      {!text.trim() ? <VoiceRecorderBar identityKey={`${user?.id || ''}:${conversationId}`}
-        disabled={!user?.id || uploading || sending} onRecordingChange={setVoiceRecording}
-        onError={message => Alert.alert('Nota de voz', message)}
-        onSend={draft => voiceDraftSenderRef.current.handoff(
-          draft, input => sendConversationVoiceMessage(conversationId, input),
-        ).then(() => undefined)}
-      /> : null}
+      <View style={[styles.composerTrailing, voiceRecording ? styles.composerTrailingRecording : styles.composerTrailingIdle]}>
+        {text.trim() && !voiceRecording ? <Pressable accessibilityLabel="Enviar mensaje" onPress={() => void send()}
+          disabled={sending} style={styles.sendButton}>
+          {sending ? <ActivityIndicator size="small" color="#fff" />
+            : <MaterialCommunityIcons name="send" size={18} color="#fff" />}
+        </Pressable> : <VoiceRecorderBar identityKey={`${user?.id || ''}:${conversationId}`}
+          disabled={!user?.id || uploading || sending} onRecordingChange={setVoiceRecording}
+          onError={message => Alert.alert('Nota de voz', message)}
+          onSend={draft => voiceDraftSenderRef.current.handoff(
+            draft, input => sendConversationVoiceMessage(conversationId, input),
+          ).then(() => undefined)}
+        />}
+      </View>
     </View>
     <MessageReceiptSheet messageId={receiptId} visible={Boolean(receiptId)} onClose={() => setReceiptId(null)} />
   </KeyboardAvoidingView>;
@@ -266,8 +290,11 @@ const styles = StyleSheet.create({
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 6, paddingHorizontal: Spacing.sm,
     paddingTop: Spacing.sm, borderTopWidth: 1, borderTopColor: Colors.borderSubtle, backgroundColor: Colors.surface },
   composerAction: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
-  input: { flex: 1, minHeight: 42, maxHeight: INPUT_MAX_HEIGHT, color: Colors.textPrimary,
+  input: { flex: 1, minHeight: INPUT_MIN_HEIGHT, maxHeight: INPUT_MAX_HEIGHT, color: Colors.textPrimary,
     backgroundColor: Colors.surfaceElevated, borderRadius: Radius.xl, paddingHorizontal: 15, paddingVertical: 10,
     fontSize: FontSize.md, textAlignVertical: 'top' },
+  composerTrailing: { minHeight: 46, alignItems: 'center', justifyContent: 'flex-end' },
+  composerTrailingIdle: { width: 46 },
+  composerTrailingRecording: { flex: 1 },
   sendButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.primary },
 });
