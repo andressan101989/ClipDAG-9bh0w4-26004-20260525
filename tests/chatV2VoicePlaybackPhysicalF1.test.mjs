@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import ts from 'typescript';
 
-const bubbleSource = readFileSync('components/chat/VoiceMessageBubble.tsx', 'utf8');
+const normalizeEol = value => value.replace(/\r\n/g, '\n');
+
+const bubbleSource = normalizeEol(readFileSync('components/chat/VoiceMessageBubble.tsx', 'utf8'));
 const recorderSource = readFileSync('components/chat/VoiceRecorderBar.tsx', 'utf8');
 const voiceSource = readFileSync('services/chatVoiceService.ts', 'utf8');
 const chatMediaSource = readFileSync('services/chatMediaService.ts', 'utf8');
@@ -67,13 +69,17 @@ test('useAudioPlayer remains the sole native player disposal authority', () => {
   assert.match(expoAudioSource, /automatically releases when the component unmounts/);
 });
 
+test('source analysis treats LF and CRLF equivalently', () => {
+  assert.equal(normalizeEol('first\r\nsecond'), normalizeEol('first\nsecond'));
+});
+
 test('unmount cleanup contains no direct player pause call', () => {
-  const lifecycle = bubbleSource.slice(
-    bubbleSource.indexOf('useEffect(() => {\n    mountedRef.current = true'),
-    bubbleSource.indexOf('const isCurrentLifecycle'),
-  );
+  const lifecycleStart = bubbleSource.indexOf('useEffect(() => {\n    mountedRef.current = true');
+  const lifecycleEnd = bubbleSource.indexOf('const isCurrentLifecycle');
+  assert.ok(lifecycleStart >= 0 && lifecycleEnd > lifecycleStart);
+  const lifecycle = bubbleSource.slice(lifecycleStart, lifecycleEnd);
   assert.match(lifecycle, /mountedRef\.current = false/);
-  assert.doesNotMatch(lifecycle, /player\.pause\(\)/);
+  assert.doesNotMatch(lifecycle, /player\.(?:pause|play|seekTo|replace|setPlaybackRate)\(/);
   assert.doesNotMatch(bubbleSource, /useEffect\(\(\) => \(\) => \{ player\.pause\(\); \}/);
 });
 
