@@ -34,6 +34,12 @@ $$;
 
 revoke all on function private.story_can_view_owner(uuid)
   from public, anon, authenticated, service_role;
+-- The helper is outside PostgREST's exposed schemas, but the authenticated
+-- database role still needs schema USAGE and function EXECUTE while Postgres
+-- evaluates the stored RLS expression. This does not create an RPC endpoint.
+grant usage on schema private to authenticated;
+grant execute on function private.story_can_view_owner(uuid)
+  to authenticated;
 
 drop policy if exists stories_read_active_or_owned on public.stories;
 drop policy if exists stories_read_visible on public.stories;

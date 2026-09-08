@@ -53,6 +53,8 @@ test('Story reads are owner/follow scoped and close bidirectional blocks server-
   assert.match(migration, /create or replace function private\.story_can_view_owner\(p_owner_id uuid\)/i);
   assert.match(migration, /function private\.story_can_view_owner\(p_owner_id uuid\)[\s\S]*security definer[\s\S]*set search_path to ''/i);
   assert.match(migration, /revoke all on function private\.story_can_view_owner\(uuid\)\s+from public, anon, authenticated, service_role/i);
+  assert.match(migration, /grant usage on schema private to authenticated/i);
+  assert.match(migration, /grant execute on function private\.story_can_view_owner\(uuid\)\s+to authenticated/i);
   assert.match(migration, /from public\.follows f[\s\S]*f\.follower_id = \(select auth\.uid\(\)\)[\s\S]*f\.following_id = p_owner_id/i);
   assert.match(migration, /b\.blocker_id = \(select auth\.uid\(\)\) and b\.blocked_id = p_owner_id/i);
   assert.match(migration, /b\.blocker_id = p_owner_id and b\.blocked_id = \(select auth\.uid\(\)\)/i);
