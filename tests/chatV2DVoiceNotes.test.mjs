@@ -48,6 +48,11 @@ function loadService({ permission = { granted: true, canAskAgain: true }, reques
   } }).outputText;
   const imports = {
     'expo-audio': {
+      RecordingPresets: { HIGH_QUALITY: {
+        extension: '.m4a', sampleRate: 44100, numberOfChannels: 2, bitRate: 128000,
+        android: { outputFormat: 'mpeg4', audioEncoder: 'aac' },
+        ios: { outputFormat: 'aac ' }, web: { mimeType: 'audio/webm', bitsPerSecond: 128000 },
+      } },
       getRecordingPermissionsAsync: async () => permission,
       requestRecordingPermissionsAsync: async () => { requestCount += 1; return requested; },
       setAudioModeAsync: async mode => { modes.push(mode); },
@@ -144,13 +149,14 @@ test('recorder cleanup covers background, identity changes and unmount', () => {
 
 test('voice bubble supports play pause resume seek and completion reset', () => {
   assert.match(bubble, /player\.play\(\)/); assert.match(bubble, /player\.pause\(\)/);
-  assert.match(bubble, /player\.seekTo/); assert.match(bubble, /didJustFinish[\s\S]*seekTo\(0\)/);
+  assert.match(bubble, /player\.seekTo/); assert.match(bubble, /didJustFinish[\s\S]*seekSafely\(0, false\)/);
+  assert.match(bubble, /runPlayerCallSafely/);
   assert.match(bubble, /activeMessageId === messageId/);
 });
 
 test('playback rate uses high pitch correction for every supported speed', () => {
-  assert.match(bubble, /setPlaybackRate\(speed, 'high'\)/);
   assert.match(bubble, /setPlaybackRate\(next, 'high'\)/);
+  assert.match(bubble, /setPlaybackRateSafely\(speed\)/);
 });
 
 test('CHAT context carries voice metadata through optimistic send and retry', () => {

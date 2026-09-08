@@ -32,38 +32,101 @@ export function VoiceMessageBubble({ messageId, assetId, durationMs, waveform, i
   const [width, setWidth] = useState(1);
   const active = activeMessageId === messageId;
   const activeRef = useRef(activeMessageId); activeRef.current = activeMessageId;
+  const mountedRef = useRef(false);
+  const lifecycleGenerationRef = useRef(0);
 
-  useEffect(() => { if (!active && status.playing) player.pause(); }, [active, player, status.playing]);
+  useEffect(() => {
+    mountedRef.current = true;
+    lifecycleGenerationRef.current += 1;
+    return () => {
+      mountedRef.current = false;
+      lifecycleGenerationRef.current += 1;
+    };
+  }, []);
+
+  const isCurrentLifecycle = useCallback((generation: number) => (
+    mountedRef.current && lifecycleGenerationRef.current === generation
+  ), []);
+  const runPlayerCallSafely = useCallback((operation: () => void, reportFailure = true) => {
+    if (!mountedRef.current) return false;
+    try {
+      operation();
+      return true;
+    } catch {
+      if (reportFailure && mountedRef.current) setFailed(true);
+      return false;
+    }
+  }, []);
+  const pauseSafely = useCallback((reportFailure = true) => (
+    runPlayerCallSafely(() => player.pause(), reportFailure)
+  ), [player, runPlayerCallSafely]);
+  const replaceSafely = useCallback((uri: string) => (
+    runPlayerCallSafely(() => player.replace({ uri }))
+  ), [player, runPlayerCallSafely]);
+  const playSafely = useCallback(() => (
+    runPlayerCallSafely(() => player.play())
+  ), [player, runPlayerCallSafely]);
+  const setPlaybackRateSafely = useCallback((next: ChatVoiceSpeed) => (
+    runPlayerCallSafely(() => player.setPlaybackRate(next, 'high'))
+  ), [player, runPlayerCallSafely]);
+  const seekSafely = useCallback(async (seconds: number, reportFailure = true) => {
+    const generation = lifecycleGenerationRef.current;
+    if (!isCurrentLifecycle(generation)) return false;
+    try {
+      await player.seekTo(seconds);
+      return isCurrentLifecycle(generation);
+    } catch {
+      if (reportFailure && isCurrentLifecycle(generation)) setFailed(true);
+      return false;
+    }
+  }, [isCurrentLifecycle, player]);
+
+  useEffect(() => {
+    if (!active && status.playing) pauseSafely(false);
+  }, [active, pauseSafely, status.playing]);
   useEffect(() => {
     if (!status.didJustFinish) return;
-    player.pause(); void player.seekTo(0);
-  }, [player, status.didJustFinish]);
-  useEffect(() => () => { player.pause(); }, [player]);
+    pauseSafely(false);
+    void seekSafely(0, false);
+  }, [pauseSafely, seekSafely, status.didJustFinish]);
 
   const toggle = useCallback(async () => {
-    if (status.playing) { player.pause(); return; }
+    const generation = lifecycleGenerationRef.current;
+    if (!isCurrentLifecycle(generation)) return;
+    if (status.playing) { pauseSafely(); return; }
     activeRef.current = messageId; onActivate(messageId);
     try {
       setFailed(false);
       if (loadedAsset !== assetId) {
         setLoading(true);
         const url = await getChatVoicePlaybackUrl(assetId);
-        if (activeRef.current !== messageId) return;
-        player.replace({ uri: url }); setLoadedAsset(assetId);
+        if (!isCurrentLifecycle(generation) || activeRef.current !== messageId) return;
+        if (!replaceSafely(url)) return;
+        if (!isCurrentLifecycle(generation)) return;
+        setLoadedAsset(assetId);
       }
-      if (activeRef.current !== messageId) return;
+      if (!isCurrentLifecycle(generation) || activeRef.current !== messageId) return;
       await restoreChatVoicePlaybackMode();
-      player.setPlaybackRate(speed, 'high'); player.play();
-    } catch { setFailed(true); }
-    finally { setLoading(false); }
-  }, [assetId, loadedAsset, messageId, onActivate, player, speed, status.playing]);
+      if (!isCurrentLifecycle(generation) || activeRef.current !== messageId) return;
+      if (!setPlaybackRateSafely(speed)) return;
+      playSafely();
+    } catch {
+      if (isCurrentLifecycle(generation)) setFailed(true);
+    } finally {
+      if (isCurrentLifecycle(generation)) setLoading(false);
+    }
+  }, [assetId, isCurrentLifecycle, loadedAsset, messageId, onActivate, pauseSafely,
+    playSafely, replaceSafely, setPlaybackRateSafely, speed, status.playing]);
 
   const cycleSpeed = useCallback(() => {
-    const next = nextVoiceSpeed(speed); setSpeed(next); player.setPlaybackRate(next, 'high');
-  }, [player, speed]);
+    const next = nextVoiceSpeed(speed);
+    setSpeed(next);
+    setPlaybackRateSafely(next);
+  }, [setPlaybackRateSafely, speed]);
   const selectSpeed = useCallback((next: ChatVoiceSpeed) => {
-    setSpeed(next); player.setPlaybackRate(next, 'high');
-  }, [player]);
+    setSpeed(next);
+    setPlaybackRateSafely(next);
+  }, [setPlaybackRateSafely]);
   const progress = Math.max(0, Math.min(1, status.currentTime / Math.max(0.001, status.duration || durationMs / 1000)));
 
   return <View style={styles.container}>
@@ -74,7 +137,11 @@ export function VoiceMessageBubble({ messageId, assetId, durationMs, waveform, i
     </Pressable>
     <Pressable accessibilityRole="adjustable" accessibilityLabel="Progreso de nota de voz"
       onLayout={event => setWidth(Math.max(1, event.nativeEvent.layout.width))}
-      onPress={event => { onActivate(messageId); void player.seekTo((event.nativeEvent.locationX / width) * (durationMs / 1000)); }}
+      onPress={event => {
+        activeRef.current = messageId;
+        onActivate(messageId);
+        void seekSafely((event.nativeEvent.locationX / width) * (durationMs / 1000));
+      }}
       style={styles.waveform}>
       {waveform.map((level, index) => <View key={index} style={[styles.bar, {
         height: 3 + level * 0.16,

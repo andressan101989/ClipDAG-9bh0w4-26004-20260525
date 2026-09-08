@@ -14,6 +14,7 @@ import { getSupabaseClient } from '@/template';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { timeAgo } from '@/services/mockData';
+import { TAB_BAR_HEIGHT } from './_layout';
 
 // ── Main Messages Screen ──────────────────────────────────────────────────────
 export default function MessagesScreen() {
@@ -250,7 +251,7 @@ export default function MessagesScreen() {
         accessibilityRole="button"
         accessibilityLabel="Nuevo mensaje"
         onPress={() => router.push('/new-message')}
-        style={[styles.fab, { bottom: 18 + insets.bottom }]}
+        style={[styles.fab, { bottom: TAB_BAR_HEIGHT + 14 }]}
       >
         <LinearGradient colors={['#9B5CFF', '#7C3AED']} style={styles.fabGradient}>
           <MaterialCommunityIcons name="pencil-outline" size={22} color="#FFFFFF" />

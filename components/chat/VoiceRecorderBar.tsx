@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { RecordingPresets, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
+import { useAudioRecorder, useAudioRecorderState } from 'expo-audio';
 import { AppLifecycle } from '@/modules/core/AppLifecycle';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import {
   CHAT_VOICE_MAX_DURATION_MS,
+  CHAT_VOICE_RECORDING_OPTIONS,
   ChatVoiceRecorderLifecycle,
   ChatVoiceRecorderStopGate,
   discardChatVoiceDraft,
@@ -28,7 +29,7 @@ type Props = {
 };
 
 export function VoiceRecorderBar({ identityKey, disabled, onSend, onError, onRecordingChange }: Props) {
-  const recorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
+  const recorder = useAudioRecorder({ ...CHAT_VOICE_RECORDING_OPTIONS, isMeteringEnabled: true });
   const status = useAudioRecorderState(recorder, 100);
   const [phase, setPhase] = useState<'idle' | 'recording' | 'ready' | 'sending'>('idle');
   const [draft, setDraft] = useState<ChatVoiceDraft | null>(null);
@@ -83,6 +84,7 @@ export function VoiceRecorderBar({ identityKey, disabled, onSend, onError, onRec
   const stopToDraft = useCallback(async (): Promise<ChatVoiceDraft | null> => {
     if (operationRef.current || phase !== 'recording') return draft;
     operationRef.current = true;
+    const stopStartedAt = Date.now();
     const generation = lifecycle.snapshot();
     const durationMs = Math.min(CHAT_VOICE_MAX_DURATION_MS, Math.max(0, status.durationMillis));
     try {
@@ -98,6 +100,10 @@ export function VoiceRecorderBar({ identityKey, disabled, onSend, onError, onRec
       }
       const next = { uri, mimeType: 'audio/mp4' as const, durationMs,
         waveform: normalizeVoiceWaveform(levelsRef.current) };
+      console.info('[ChatVoice]', {
+        stage: 'VOICE_STOP_TO_DRAFT_TIMING',
+        stop_to_draft_ms: Math.max(0, Date.now() - stopStartedAt),
+      });
       draftRef.current = next;
       setDraft(next); setPhase('ready');
       return next;

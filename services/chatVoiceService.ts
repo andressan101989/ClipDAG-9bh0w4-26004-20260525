@@ -1,7 +1,9 @@
 import {
   getRecordingPermissionsAsync,
+  RecordingPresets,
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
+  type RecordingOptions,
 } from 'expo-audio';
 import { File, Paths } from 'expo-file-system';
 import { getStandardChatVoiceAccess, uploadPrivateVoiceNote } from '@/services/chatMediaService';
@@ -11,8 +13,18 @@ export const CHAT_VOICE_MAX_DURATION_MS = 3_600_000;
 export const CHAT_VOICE_SPEEDS = [1, 1.5, 2] as const;
 export const CHAT_VOICE_STABILITY_MAX_ATTEMPTS = 10;
 export const CHAT_VOICE_STABILITY_INTERVAL_MS = 100;
+export const CHAT_VOICE_RECORDING_OPTIONS: RecordingOptions = {
+  ...RecordingPresets.HIGH_QUALITY,
+  extension: '.m4a',
+  numberOfChannels: 1,
+  bitRate: 64_000,
+  android: { ...RecordingPresets.HIGH_QUALITY.android, outputFormat: 'mpeg4', audioEncoder: 'aac' },
+  ios: { ...RecordingPresets.HIGH_QUALITY.ios },
+  web: { ...RecordingPresets.HIGH_QUALITY.web, bitsPerSecond: 64_000 },
+};
 
 let stableVoiceFileSequence = 0;
+let voiceTimingSequence = 0;
 
 export type ChatVoiceSpeed = typeof CHAT_VOICE_SPEEDS[number];
 export type ChatVoiceM4aMime = 'audio/mp4' | 'audio/x-m4a';
@@ -125,6 +137,8 @@ export class ChatVoiceDraftSender {
   constructor(private readonly upload: (draft: ChatVoiceDraft) => Promise<string> = uploadChatVoiceDraft) {}
 
   async handoff<T>(draft: ChatVoiceDraft, accept: (input: ChatVoiceMessageInput) => Promise<T>): Promise<T> {
+    const startedAt = Date.now();
+    const operationId = `voice-handoff-${Date.now()}-${++voiceTimingSequence}`;
     const generation = this.generation;
     let upload = this.uploads.get(draft.uri);
     if (!upload) {
@@ -142,6 +156,11 @@ export class ChatVoiceDraftSender {
     } catch (error) {
       if (!uploaded) this.uploads.delete(draft.uri);
       throw error;
+    } finally {
+      console.info('[ChatVoice]', {
+        stage: 'VOICE_HANDOFF_TIMING', operationId,
+        handoff_total_ms: Math.max(0, Date.now() - startedAt),
+      });
     }
   }
 
@@ -301,6 +320,7 @@ export async function prepareStableChatVoiceDraft(
   draft: ChatVoiceDraft,
   options: ChatVoiceStabilizationOptions = {},
 ): Promise<StableChatVoiceFile> {
+  const startedAt = Date.now();
   const maxAttempts = options.maxAttempts ?? CHAT_VOICE_STABILITY_MAX_ATTEMPTS;
   const intervalMs = options.intervalMs ?? CHAT_VOICE_STABILITY_INTERVAL_MS;
   const readSize = options.readSize ?? ((uri: string) => new File(uri).size);
@@ -327,6 +347,7 @@ export async function prepareStableChatVoiceDraft(
         stage: 'VOICE_FILE_STABLE', operationId, durationMs: draft.durationMs,
         stableSize: stable.sizeBytes, detectedMimeType: stable.detectedMimeType,
         mimeType: stable.mimeType, attempt,
+        stabilize_ms: Math.max(0, Date.now() - startedAt),
       });
       return stable;
     }
@@ -341,8 +362,10 @@ export async function uploadChatVoiceDraft(
   signal?: AbortSignal,
   options: ChatVoiceUploadOptions = {},
 ): Promise<string> {
-  const stable = await prepareStableChatVoiceDraft(draft, { ...options.stabilization, signal });
+  const startedAt = Date.now();
+  let stable: StableChatVoiceFile | null = null;
   try {
+    stable = await prepareStableChatVoiceDraft(draft, { ...options.stabilization, signal });
     throwIfVoiceUploadAborted(signal);
     return await (options.upload ?? uploadPrivateVoiceNote)({
       uri: stable.uri,
@@ -353,7 +376,12 @@ export async function uploadChatVoiceDraft(
       signal,
     });
   } finally {
-    stable.cleanup();
+    console.info('[ChatVoice]', {
+      stage: 'VOICE_UPLOAD_TIMING',
+      operationId: stable?.fileName.replace(/\.m4a$/, ''),
+      upload_total_ms: Math.max(0, Date.now() - startedAt),
+    });
+    stable?.cleanup();
   }
 }
 

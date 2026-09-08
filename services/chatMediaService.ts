@@ -5,6 +5,8 @@ export const CHAT_IMAGE_MAX_BYTES = 25_000_000;
 export const CHAT_VOICE_MAX_BYTES = 100_000_000;
 export const CHAT_VOICE_MIME_TYPES = ['audio/mp4', 'audio/aac', 'audio/x-m4a', 'audio/mpeg', 'audio/wav'] as const;
 export const CHAT_MEDIA_SIGNED_URL_TTL_SECONDS = 300;
+export const CHAT_STANDARD_VOICE_ACCESS_CACHE_SAFETY_MS = 30_000;
+export const CHAT_STANDARD_VOICE_ACCESS_CACHE_MAX_ENTRIES = 64;
 
 type ChatMediaAccessResponse = {
   success?: boolean;
@@ -27,6 +29,30 @@ export type ChatMediaAccess = {
 };
 
 const standardAccessFlights = new Map<string, Promise<ChatMediaAccess>>();
+const standardVoiceAccessCache = new Map<string, ChatMediaAccess>();
+
+function readCachedStandardVoiceAccess(assetId: string, now = Date.now()): ChatMediaAccess | null {
+  const cached = standardVoiceAccessCache.get(assetId);
+  if (!cached) return null;
+  const expiresAt = Date.parse(cached.expiresAt);
+  if (!Number.isFinite(expiresAt) || expiresAt - now <= CHAT_STANDARD_VOICE_ACCESS_CACHE_SAFETY_MS) {
+    standardVoiceAccessCache.delete(assetId);
+    return null;
+  }
+  standardVoiceAccessCache.delete(assetId);
+  standardVoiceAccessCache.set(assetId, cached);
+  return cached;
+}
+
+function cacheStandardVoiceAccess(access: ChatMediaAccess): void {
+  standardVoiceAccessCache.delete(access.assetId);
+  standardVoiceAccessCache.set(access.assetId, access);
+  while (standardVoiceAccessCache.size > CHAT_STANDARD_VOICE_ACCESS_CACHE_MAX_ENTRIES) {
+    const oldestAssetId = standardVoiceAccessCache.keys().next().value;
+    if (!oldestAssetId) break;
+    standardVoiceAccessCache.delete(oldestAssetId);
+  }
+}
 
 export async function uploadPrivateChatImage(input: {
   uri: string;
@@ -108,10 +134,13 @@ export function getStandardChatImageAccess(assetId: string): Promise<ChatMediaAc
 }
 
 export function getStandardChatVoiceAccess(assetId: string): Promise<ChatMediaAccess> {
+  const cached = readCachedStandardVoiceAccess(assetId);
+  if (cached) return Promise.resolve(cached);
   const existing = standardAccessFlights.get(assetId);
   if (existing) return existing;
   const flight = requestChatMediaAccess(assetId).then(access => {
     if (access.consumptionPolicy !== 'standard') throw new Error('chat_voice_policy_invalid');
+    cacheStandardVoiceAccess(access);
     return access;
   }).finally(() => standardAccessFlights.delete(assetId));
   standardAccessFlights.set(assetId, flight);

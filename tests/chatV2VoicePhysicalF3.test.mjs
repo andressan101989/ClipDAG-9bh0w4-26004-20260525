@@ -33,6 +33,11 @@ function loadVoiceService({ detectedMimeType = 'audio/x-m4a', stableSize = 95_53
   }).outputText;
   const imports = {
     'expo-audio': {
+      RecordingPresets: { HIGH_QUALITY: {
+        extension: '.m4a', sampleRate: 44100, numberOfChannels: 2, bitRate: 128000,
+        android: { outputFormat: 'mpeg4', audioEncoder: 'aac' },
+        ios: { outputFormat: 'aac ' }, web: { mimeType: 'audio/webm', bitsPerSecond: 128000 },
+      } },
       getRecordingPermissionsAsync: async () => ({ granted: true }),
       requestRecordingPermissionsAsync: async () => ({ granted: true }),
       setAudioModeAsync: async () => undefined,
