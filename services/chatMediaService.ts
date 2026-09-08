@@ -31,26 +31,35 @@ export type ChatMediaAccess = {
 const standardAccessFlights = new Map<string, Promise<ChatMediaAccess>>();
 const standardVoiceAccessCache = new Map<string, ChatMediaAccess>();
 
-function readCachedStandardVoiceAccess(assetId: string, now = Date.now()): ChatMediaAccess | null {
-  const cached = standardVoiceAccessCache.get(assetId);
+async function getAuthenticatedUserId(): Promise<string | null> {
+  const { data } = await getSupabaseClient().auth.getSession();
+  return data.session?.user.id ?? null;
+}
+
+function getStandardAccessKey(userId: string, assetId: string): string {
+  return `${userId}:${assetId}`;
+}
+
+function readCachedStandardVoiceAccess(cacheKey: string, now = Date.now()): ChatMediaAccess | null {
+  const cached = standardVoiceAccessCache.get(cacheKey);
   if (!cached) return null;
   const expiresAt = Date.parse(cached.expiresAt);
   if (!Number.isFinite(expiresAt) || expiresAt - now <= CHAT_STANDARD_VOICE_ACCESS_CACHE_SAFETY_MS) {
-    standardVoiceAccessCache.delete(assetId);
+    standardVoiceAccessCache.delete(cacheKey);
     return null;
   }
-  standardVoiceAccessCache.delete(assetId);
-  standardVoiceAccessCache.set(assetId, cached);
+  standardVoiceAccessCache.delete(cacheKey);
+  standardVoiceAccessCache.set(cacheKey, cached);
   return cached;
 }
 
-function cacheStandardVoiceAccess(access: ChatMediaAccess): void {
-  standardVoiceAccessCache.delete(access.assetId);
-  standardVoiceAccessCache.set(access.assetId, access);
+function cacheStandardVoiceAccess(cacheKey: string, access: ChatMediaAccess): void {
+  standardVoiceAccessCache.delete(cacheKey);
+  standardVoiceAccessCache.set(cacheKey, access);
   while (standardVoiceAccessCache.size > CHAT_STANDARD_VOICE_ACCESS_CACHE_MAX_ENTRIES) {
-    const oldestAssetId = standardVoiceAccessCache.keys().next().value;
-    if (!oldestAssetId) break;
-    standardVoiceAccessCache.delete(oldestAssetId);
+    const oldestCacheKey = standardVoiceAccessCache.keys().next().value;
+    if (!oldestCacheKey) break;
+    standardVoiceAccessCache.delete(oldestCacheKey);
   }
 }
 
@@ -122,28 +131,42 @@ async function requestChatMediaAccess(assetId: string): Promise<ChatMediaAccess>
   };
 }
 
-export function getStandardChatImageAccess(assetId: string): Promise<ChatMediaAccess> {
-  const existing = standardAccessFlights.get(assetId);
+export async function getStandardChatImageAccess(assetId: string): Promise<ChatMediaAccess> {
+  const userId = await getAuthenticatedUserId();
+  if (!userId) {
+    const access = await requestChatMediaAccess(assetId);
+    if (access.consumptionPolicy !== 'standard') throw new Error('chat_media_policy_invalid');
+    return access;
+  }
+  const cacheKey = getStandardAccessKey(userId, assetId);
+  const existing = standardAccessFlights.get(cacheKey);
   if (existing) return existing;
   const flight = requestChatMediaAccess(assetId).then(access => {
     if (access.consumptionPolicy !== 'standard') throw new Error('chat_media_policy_invalid');
     return access;
-  }).finally(() => standardAccessFlights.delete(assetId));
-  standardAccessFlights.set(assetId, flight);
+  }).finally(() => standardAccessFlights.delete(cacheKey));
+  standardAccessFlights.set(cacheKey, flight);
   return flight;
 }
 
-export function getStandardChatVoiceAccess(assetId: string): Promise<ChatMediaAccess> {
-  const cached = readCachedStandardVoiceAccess(assetId);
+export async function getStandardChatVoiceAccess(assetId: string): Promise<ChatMediaAccess> {
+  const userId = await getAuthenticatedUserId();
+  if (!userId) {
+    const access = await requestChatMediaAccess(assetId);
+    if (access.consumptionPolicy !== 'standard') throw new Error('chat_voice_policy_invalid');
+    return access;
+  }
+  const cacheKey = getStandardAccessKey(userId, assetId);
+  const cached = readCachedStandardVoiceAccess(cacheKey);
   if (cached) return Promise.resolve(cached);
-  const existing = standardAccessFlights.get(assetId);
+  const existing = standardAccessFlights.get(cacheKey);
   if (existing) return existing;
   const flight = requestChatMediaAccess(assetId).then(access => {
     if (access.consumptionPolicy !== 'standard') throw new Error('chat_voice_policy_invalid');
-    cacheStandardVoiceAccess(access);
+    cacheStandardVoiceAccess(cacheKey, access);
     return access;
-  }).finally(() => standardAccessFlights.delete(assetId));
-  standardAccessFlights.set(assetId, flight);
+  }).finally(() => standardAccessFlights.delete(cacheKey));
+  standardAccessFlights.set(cacheKey, flight);
   return flight;
 }
 

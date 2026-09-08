@@ -13,8 +13,9 @@ const finalizeSource = readFileSync('supabase/functions/finalize-media-upload/in
 const expoAudioSource = readFileSync('node_modules/expo-audio/src/ExpoAudio.ts', 'utf8');
 const recordingPresetsSource = readFileSync('node_modules/expo-audio/src/RecordingConstants.ts', 'utf8');
 
-function loadChatMediaService(invoke) {
+function loadChatMediaService(invoke, initialUserId = 'user-a') {
   let calls = 0;
+  let sessionUserId = initialUserId;
   const module = { exports: {} };
   const output = ts.transpileModule(chatMediaSource, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -22,6 +23,12 @@ function loadChatMediaService(invoke) {
   const imports = {
     '@/template': {
       getSupabaseClient: () => ({
+        auth: {
+          getSession: async () => ({
+            data: { session: sessionUserId ? { user: { id: sessionUserId } } : null },
+            error: null,
+          }),
+        },
         functions: { invoke: async (...args) => { calls += 1; return invoke(...args); } },
       }),
     },
@@ -31,7 +38,11 @@ function loadChatMediaService(invoke) {
     },
   };
   Function('require', 'module', 'exports', output)(name => imports[name], module, module.exports);
-  return { api: module.exports, get calls() { return calls; } };
+  return {
+    api: module.exports,
+    get calls() { return calls; },
+    setSessionUserId(userId) { sessionUserId = userId; },
+  };
 }
 
 function accessResponse(assetId, options = {}) {
@@ -40,7 +51,7 @@ function accessResponse(assetId, options = {}) {
       success: true,
       data: {
         assetId,
-        url: `https://signed.example/${assetId}`,
+        url: options.url ?? `https://signed.example/${assetId}`,
         expiresAt: options.expiresAt ?? new Date(Date.now() + 120_000).toISOString(),
         consumptionPolicy: options.consumptionPolicy ?? 'standard',
         consumedAt: options.consumedAt ?? null,
@@ -146,6 +157,75 @@ test('the loaded asset is reused without replacing its source again', () => {
   assert.match(bubbleSource, /setLoadedAsset\(assetId\)/);
 });
 
+test('standard voice cache is isolated by authenticated user', async () => {
+  let activeUserId = 'user-a';
+  const harness = loadChatMediaService(async (_name, { body }) => accessResponse(body.asset_id, {
+    url: `https://signed.example/${activeUserId}/${body.asset_id}`,
+  }));
+
+  const firstA = await harness.api.getStandardChatVoiceAccess('shared-voice');
+  const secondA = await harness.api.getStandardChatVoiceAccess('shared-voice');
+  assert.equal(harness.calls, 1);
+  assert.equal(secondA.url, firstA.url);
+
+  activeUserId = 'user-b';
+  harness.setSessionUserId(activeUserId);
+  const firstB = await harness.api.getStandardChatVoiceAccess('shared-voice');
+  const secondB = await harness.api.getStandardChatVoiceAccess('shared-voice');
+  assert.equal(harness.calls, 2);
+  assert.equal(firstB.url, 'https://signed.example/user-b/shared-voice');
+  assert.notEqual(firstB.url, firstA.url);
+  assert.equal(secondB.url, firstB.url);
+});
+
+test('logout never reuses or populates an authenticated voice cache entry', async () => {
+  let requestScope = 'user-a';
+  const harness = loadChatMediaService(async (_name, { body }) => accessResponse(body.asset_id, {
+    url: `https://signed.example/${requestScope}/${body.asset_id}`,
+  }));
+  const authenticated = await harness.api.getStandardChatVoiceAccess('logout-voice');
+
+  requestScope = 'logged-out';
+  harness.setSessionUserId(null);
+  const firstLoggedOut = await harness.api.getStandardChatVoiceAccess('logout-voice');
+  const secondLoggedOut = await harness.api.getStandardChatVoiceAccess('logout-voice');
+  assert.equal(harness.calls, 3);
+  assert.notEqual(firstLoggedOut.url, authenticated.url);
+  assert.equal(secondLoggedOut.url, firstLoggedOut.url);
+});
+
+test('in-flight standard access is isolated by authenticated user', async () => {
+  let activeUserId = 'user-a';
+  const pending = new Map();
+  const started = new Map();
+  const harness = loadChatMediaService((_name, { body }) => new Promise(resolve => {
+    const requestUserId = activeUserId;
+    pending.set(requestUserId, () => resolve(accessResponse(body.asset_id, {
+      url: `https://signed.example/${requestUserId}/${body.asset_id}`,
+    })));
+    started.get(requestUserId)?.();
+  }));
+
+  const startedA = new Promise(resolve => started.set('user-a', resolve));
+  const accessA = harness.api.getStandardChatVoiceAccess('in-flight-voice');
+  await startedA;
+
+  activeUserId = 'user-b';
+  harness.setSessionUserId(activeUserId);
+  const startedB = new Promise(resolve => started.set('user-b', resolve));
+  const accessB = harness.api.getStandardChatVoiceAccess('in-flight-voice');
+  await startedB;
+  assert.equal(harness.calls, 2);
+
+  pending.get('user-b')();
+  const resultB = await accessB;
+  pending.get('user-a')();
+  const resultA = await accessA;
+  assert.equal(resultA.url, 'https://signed.example/user-a/in-flight-voice');
+  assert.equal(resultB.url, 'https://signed.example/user-b/in-flight-voice');
+  assert.notEqual(resultA.url, resultB.url);
+});
+
 test('standard voice access cache respects URL expiry', async () => {
   const harness = loadChatMediaService(async (_name, { body }) => (
     accessResponse(body.asset_id, { expiresAt: new Date(Date.now() + 20_000).toISOString() })
@@ -167,7 +247,7 @@ test('standard voice access cache is bounded to 64 LRU entries', async () => {
   }
   await harness.api.getStandardChatVoiceAccess('voice-0');
   assert.equal(harness.calls, 66);
-  assert.match(chatMediaSource, /standardVoiceAccessCache\.delete\(assetId\);[\s\S]*standardVoiceAccessCache\.set\(assetId, cached\)/);
+  assert.match(chatMediaSource, /standardVoiceAccessCache\.delete\(cacheKey\);[\s\S]*standardVoiceAccessCache\.set\(cacheKey, cached\)/);
 });
 
 test('failed access requests are never cached', async () => {

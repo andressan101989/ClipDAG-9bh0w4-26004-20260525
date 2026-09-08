@@ -25,10 +25,13 @@ function load(source, imports = {}) {
 function mediaHarness({ invoke, upload, remove } = {}) {
   const calls = { invoke: [], upload: [], remove: [] };
   const service = load(mediaServiceSource, {
-    '@/template': { getSupabaseClient: () => ({ functions: { invoke(name, options) {
-      calls.invoke.push([name, options]);
-      return invoke?.(name, options) ?? Promise.resolve({ data: null, error: null });
-    } } }) },
+    '@/template': { getSupabaseClient: () => ({
+      auth: { getSession: async () => ({ data: { session: { user: { id: 'user-a' } } }, error: null }) },
+      functions: { invoke(name, options) {
+        calls.invoke.push([name, options]);
+        return invoke?.(name, options) ?? Promise.resolve({ data: null, error: null });
+      } },
+    }) },
     '@/services/mediaService': {
       uploadMediaFromUri(input) { calls.upload.push(input); return upload?.(input); },
       deleteMediaAsset(id) { calls.remove.push(id); return remove?.(id) ?? Promise.resolve(); },
@@ -109,14 +112,18 @@ test('malformed upload result fails closed instead of publishing a URL', async (
 
 test('standard signed URL requests are single-flight and reusable', async () => {
   let resolve;
+  let markInvoked;
   const response = new Promise(done => { resolve = done; });
-  const { service, calls } = mediaHarness({ invoke: () => response });
+  const invoked = new Promise(done => { markInvoked = done; });
+  const { service, calls } = mediaHarness({ invoke: () => { markInvoked(); return response; } });
   const first = service.getStandardChatImageAccess('asset-1');
   const second = service.getStandardChatImageAccess('asset-1');
-  assert.equal(first, second);
+  await invoked;
   assert.equal(calls.invoke.length, 1);
   resolve({ data: { success: true, data: { assetId: 'asset-1', url: 'https://signed', expiresAt: 'soon', consumptionPolicy: 'standard' } }, error: null });
-  assert.equal((await first).url, 'https://signed');
+  const [firstAccess, secondAccess] = await Promise.all([first, second]);
+  assert.equal(firstAccess.url, 'https://signed');
+  assert.equal(secondAccess.url, firstAccess.url);
   await service.getStandardChatImageAccess('asset-1');
   assert.equal(calls.invoke.length, 2);
 });
