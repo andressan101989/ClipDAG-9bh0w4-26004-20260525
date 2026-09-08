@@ -6,7 +6,7 @@ import type { StoryGroup, StoryItem } from '@/components/feature/StoriesBar';
 interface StoriesContextType {
   storyGroups: StoryGroup[];
   isLoadingStories: boolean;
-  addStory: (mediaUrl: string, mediaType: 'photo' | 'video', allowOptimistic?: boolean, mediaAssetId?: string) => Promise<string | undefined>;
+  addStory: (mediaAssetId: string) => Promise<string | undefined>;
   markStoryViewed: (storyId: string) => Promise<void>;
   refreshStories: () => Promise<void>;
   viewedStoryIds: Set<string>;
@@ -57,23 +57,14 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     if (!supabase || !supabaseOk.current) { setIsLoadingStories(false); return; }
     setIsLoadingStories(true);
     try {
-      // Load follows
-      const { data: followData } = await supabase
-        .from('follows')
-        .select('following_id')
-        .eq('follower_id', user.id);
-
-      const followedIds = (followData || []).map((f: { following_id: string }) => f.following_id);
-      // Always include own stories
-      const allIds = [user.id, ...followedIds];
-
+      // Visibility is enforced by the stories RLS authority (owner/follow plus
+      // bidirectional block checks). Client filters are presentation only.
       const { data: storiesData, error } = await supabase
         .from('stories')
         .select(`
           id, user_id, media_url, media_type, created_at, expires_at,
           user_profiles!stories_user_id_fkey(id, username, avatar_url)
         `)
-        .in('user_id', allIds)
         .gt('expires_at', new Date().toISOString())
         .order('created_at', { ascending: false });
 
@@ -144,77 +135,25 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     }
   }, [user?.id]);
 
-  const addStory = useCallback(async (
-    mediaUrl: string,
-    mediaType: 'photo' | 'video',
-    allowOptimistic = true,
-    mediaAssetId?: string,
-  ) => {
+  const addStory = useCallback(async (mediaAssetId: string) => {
     if (!user) return undefined;
     const supabase = supabaseRef.current;
     if (!supabase || !supabaseOk.current) return undefined;
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-
-    try {
-      const result = mediaType === 'photo' && mediaAssetId
-        ? await supabase.rpc('create_photo_story_with_media', {
-          p_asset_id: mediaAssetId,
-        })
-        : await supabase.from('stories').insert({
-          user_id: user.id,
-          media_url: mediaUrl,
-          media_type: mediaType,
-          expires_at: expiresAt,
-        }).select('id').single();
-      const data = mediaType === 'photo' && mediaAssetId
-        ? { id: result.data as string | null }
-        : result.data as { id?: string } | null;
-      const error = result.error;
-
-      if (!error && data?.id) {
-        await loadStories();
-        return data.id as string;
-      } else {
-        console.warn('[StoriesContext] story persistence failed', {
-          stage: 'STORY_INSERT',
-          code: error?.code ?? 'missing_story_id',
-        });
-        if (!allowOptimistic) {
-          throw Object.assign(new Error('STORY_INSERT_FAILED'), {
-            stage: 'STORY_INSERT',
-            code: error?.code ?? 'missing_story_id',
-          });
-        }
-        // Optimistic local add if DB fails
-        const localStory: StoryItem = {
-          id: `local_${Date.now()}`,
-          userId: user.id,
-          mediaUrl,
-          mediaType,
-          createdAt: new Date().toISOString(),
-          expiresAt,
-        };
-        setStoryGroups(prev => {
-          const existing = prev.find(g => g.userId === user.id);
-          if (existing) {
-            return prev.map(g => g.userId === user.id
-              ? { ...g, stories: [localStory, ...g.stories], hasUnseen: false }
-              : g
-            );
-          }
-          return [{
-            userId: user.id,
-            username: user.username,
-            avatar: user.avatar || generateAvatarUrl(user.username),
-            hasUnseen: false,
-            stories: [localStory],
-          }, ...prev];
-        });
-      }
-    } catch (error) {
-      if (!allowOptimistic) throw error;
+    const { data, error } = await supabase.rpc('create_story_with_media', {
+      p_asset_id: mediaAssetId,
+    });
+    if (error || typeof data !== 'string') {
+      console.warn('[StoriesContext] story persistence failed', {
+        stage: 'STORY_CREATE_RPC',
+        code: error?.code ?? 'missing_story_id',
+      });
+      throw Object.assign(new Error('STORY_CREATE_FAILED'), {
+        stage: 'STORY_CREATE_RPC',
+        code: error?.code ?? 'missing_story_id',
+      });
     }
-    return undefined;
+    await loadStories();
+    return data;
   }, [user, loadStories]);
 
   const markStoryViewed = useCallback(async (storyId: string) => {

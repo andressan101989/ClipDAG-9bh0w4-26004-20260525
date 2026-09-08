@@ -4,11 +4,11 @@ New public images use Cloudflare R2 and are tracked by `media_assets` plus
 `media_asset_links`. Public URLs are persisted by the finalize function and are
 the only URLs accepted by the atomic post, story, product, and avatar RPCs.
 
-Photo stories are deleted through the regular media cleanup lifecycle after
-they expire. Video stories remain on the legacy Supabase Storage path until the
-Cloudflare Stream phase. Their database rows and views expire normally, but
-safe deletion of the legacy video object remains pending because the current
-story row does not store an authoritative bucket/object identity. The cleanup
-must not guess an object key from a public URL.
+Photo and video stories created by the current app use the R2 media lifecycle.
+The canonical Story RPC atomically links each READY asset, and regular cleanup
+deletes the Story and schedules its R2 object after expiry. Historical legacy
+video objects in Supabase Storage remain untouched because old Story rows do not
+store an authoritative bucket/object identity; cleanup must never guess an
+object key from a public URL.
 
 Cloudflare Stream is intentionally not started by this foundation.

@@ -10,9 +10,11 @@ test('all authorized purposes have explicit limits and MIME allowlists', () => {
     'chat_image', 'chat_audio', 'voice_note', 'music_audio', 'document',
     'attachment', 'dispute_evidence', 'return_label', 'live_cover',
     'product_video',
+    'story_video',
   ]) assert.match(source, new RegExp(`${purpose}:\\s*\\{`));
   assert.match(source, /avatar:\s*\{\s*kind:\s*"image",\s*maxBytes:\s*10_000_000/);
   assert.match(source, /product_video:\s*\{[\s\S]*maxBytes:\s*250_000_000/);
+  assert.match(source, /story_video:\s*\{[\s\S]*maxBytes:\s*100_000_000[\s\S]*video\/quicktime[\s\S]*defaultVisibility:\s*"public"/);
   assert.match(source, /video\/mp4/);
   assert.match(source, /return_label:\s*\{\s*kind:\s*"document",\s*maxBytes:\s*10_000_000,\s*mimeTypes:\s*\["application\/pdf"\],\s*defaultVisibility:\s*"private"/);
 });

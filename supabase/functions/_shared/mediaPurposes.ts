@@ -1,6 +1,7 @@
 export type MediaPurpose =
   | "avatar"
   | "post_image"
+  | "story_video"
   | "carousel_image"
   | "thumbnail"
   | "product_image"
@@ -51,6 +52,12 @@ export const MEDIA_PURPOSES: Record<MediaPurpose, Rule> = {
     kind: "image",
     maxBytes: 25_000_000,
     mimeTypes: PUBLIC_IMAGES,
+    defaultVisibility: "public",
+  },
+  story_video: {
+    kind: "video",
+    maxBytes: 100_000_000,
+    mimeTypes: ["video/mp4", "video/quicktime"],
     defaultVisibility: "public",
   },
   carousel_image: {

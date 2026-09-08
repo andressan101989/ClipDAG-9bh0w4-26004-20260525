@@ -13,7 +13,6 @@ import { useFeed } from '@/hooks/useFeed';
 import { useStories } from '@/hooks/useStories';
 import { useNotifications } from '@/hooks/useNotifications';
 import { useAlert } from '@/template';
-import { getSupabaseClient } from '@/template';
 import { VideoCard, TAB_BAR_HEIGHT } from '@/components/feature/VideoCard';
 import { CommentSheet } from '@/components/feature/CommentSheet';
 import { DAGRewardToast } from '@/components/feature/DAGRewardToast';
@@ -21,7 +20,6 @@ import { StoriesBar } from '@/components/feature/StoriesBar';
 import { StoryViewer } from '@/components/feature/StoryViewer';
 import { Colors, FontWeight } from '@/constants/theme';
 import { PostCardSkeleton, FadeIn } from '@/components/ui/SkeletonLoader';
-import { uploadFileFromUri } from '@/contexts/FeedContext';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Audio } from 'expo-av';
 import { useScrollToTop } from '@react-navigation/native';
@@ -49,7 +47,6 @@ export default function FeedScreen() {
   const { storyGroups, addStory, markStoryViewed } = useStories();
   const { unreadCount: notifCount } = useNotifications();
   const { showAlert } = useAlert();
-  const supabase = getSupabaseClient();
 
   const [activeIndex, setActiveIndex] = useState(0);
   const [commentVideoId, setCommentVideoId] = useState<string | null>(null);
@@ -138,58 +135,36 @@ export default function FeedScreen() {
   const uploadStory = useCallback(async (asset: ImagePicker.ImagePickerAsset) => {
     if (!user) return;
     const isVideo = asset.type === 'video';
-    const ext = isVideo ? 'mp4' : 'jpg';
-    const bucket = isVideo ? 'videos' : 'images';
-    const fileName = `${user.id}/story_${Date.now()}.${ext}`;
     const mimeType = asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg');
     let uploadedAssetId: string | undefined;
-    let persistedStoryId: string | undefined;
     let failureStage = 'STORY_UPLOAD';
 
     try {
-      if (!isVideo) {
-        const uploaded = await uploadMediaFromUri({
-          uri: asset.uri,
-          purpose: 'post_image',
-          mimeType,
-          fileName: asset.fileName || undefined,
-          sizeBytes: asset.fileSize,
-          visibility: 'public',
-        });
-        if (!uploaded.url?.startsWith('https://')) throw new Error('R2 did not return a public URL');
-        uploadedAssetId = uploaded.assetId;
-        failureStage = 'STORY_INSERT';
-        persistedStoryId = await addStory(uploaded.url, 'photo', false, uploaded.assetId);
-        if (!persistedStoryId) throw new Error('Story was not persisted');
-        uploadedAssetId = undefined;
-        showAlert('Historia publicada!', 'Tu historia estará visible por 24 horas');
-        return;
-      }
-      const publicUrl = await uploadFileFromUri(
-        supabase,
-        asset.uri,
-        bucket,
-        fileName,
+      const uploaded = await uploadMediaFromUri({
+        uri: asset.uri,
+        purpose: isVideo ? 'story_video' : 'post_image',
         mimeType,
-        asset.base64,
-      );
-      if (!publicUrl?.startsWith('https://')) throw new Error('STORY_UPLOAD_FAILED');
-      failureStage = 'STORY_INSERT';
-      persistedStoryId = await addStory(publicUrl, 'video', false);
+        fileName: asset.fileName || undefined,
+        sizeBytes: asset.fileSize,
+        durationMs: isVideo && typeof asset.duration === 'number' ? asset.duration : undefined,
+        visibility: 'public',
+      });
+      if (!uploaded.url?.startsWith('https://')) throw new Error('R2 did not return a public URL');
+      uploadedAssetId = uploaded.assetId;
+      failureStage = 'STORY_CREATE_RPC';
+      const persistedStoryId = await addStory(uploaded.assetId);
       if (!persistedStoryId) throw new Error('STORY_INSERT_FAILED');
+      uploadedAssetId = undefined;
       showAlert('Historia publicada!', 'Tu historia estará visible por 24 horas');
     } catch (error) {
       console.warn('[Feed] story publish failed', {
         stage: failureStage,
         code: error instanceof Error ? error.message : 'unknown',
       });
-      if (persistedStoryId && uploadedAssetId) {
-        await supabase.from('stories').delete().eq('id', persistedStoryId).eq('user_id', user.id);
-      }
       if (uploadedAssetId) await deleteMediaAsset(uploadedAssetId).catch(() => {});
       showAlert('Error', 'No se pudo publicar la historia');
     }
-  }, [user, supabase, addStory, showAlert]);
+  }, [user, addStory, showAlert]);
 
   const handleAddStory = useCallback(() => {
     showAlert('Agregar Historia', 'Cómo quieres crear tu historia?', [

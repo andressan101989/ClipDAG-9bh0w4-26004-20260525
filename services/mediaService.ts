@@ -6,6 +6,7 @@ import { getSupabaseClient } from "@/template";
 export type MediaPurpose =
   | "avatar"
   | "post_image"
+  | "story_video"
   | "carousel_image"
   | "thumbnail"
   | "product_image"
