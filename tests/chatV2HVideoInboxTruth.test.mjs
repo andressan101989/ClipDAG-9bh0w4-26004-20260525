@@ -14,7 +14,7 @@ const video = read('components/chat/PrivateChatVideo.tsx');
 const purposes = read('supabase/functions/_shared/mediaPurposes.ts');
 const getMediaUrl = read('supabase/functions/get-media-url/index.ts');
 const createMediaUpload = read('supabase/functions/create-media-upload/index.ts');
-const migration = read('supabase/migrations/20260907234811_chat_v2_h_video_inbox_truth.sql');
+const migration = read('supabase/migrations/20260908040726_chat_v2_h_video_inbox_truth.sql');
 
 function accessResponse(assetId, url, expiresAt = new Date(Date.now() + 120_000).toISOString()) {
   return { data: { success: true, data: { assetId, url, expiresAt, consumptionPolicy: 'standard', consumedAt: null } }, error: null };

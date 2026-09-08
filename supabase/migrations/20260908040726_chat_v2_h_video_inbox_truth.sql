@@ -1,3 +1,4 @@
+-- CHAT-V2-H: private video authorization and canonical Inbox receipt truth.
 begin;
 
 create or replace function public.chat_send_message(
