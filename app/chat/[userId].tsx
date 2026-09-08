@@ -10,6 +10,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import {
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+  useFonts,
+} from '@expo-google-fonts/inter';
 import * as ImagePicker from 'expo-image-picker';
 import * as ScreenCapture from 'expo-screen-capture';
 import { useMessages } from '@/hooks/useMessages';
@@ -246,6 +253,12 @@ export default function ChatScreen() {
   } = useMessages();
   const { showAlert } = useAlert();
   const supabase = getSupabaseClient();
+  const [chatFontsLoaded] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+  });
 
   const [text,         setText]         = useState('');
   const [isSending,    setIsSending]    = useState(false);
@@ -253,7 +266,7 @@ export default function ChatScreen() {
   const [oneTimeMediaUrl, setOneTimeMediaUrl] = useState<string | null>(null);
   const [inputHeight,  setInputHeight]  = useState(INPUT_MIN_HEIGHT);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [composerHeight, setComposerHeight] = useState(72);
+  const [composerHeight, setComposerHeight] = useState(58);
   const [voiceRecording, setVoiceRecording] = useState(false);
   const [activeVoiceMessageId, setActiveVoiceMessageId] = useState<string | null>(null);
   const flatListRef = useRef<FlatList>(null);
@@ -531,9 +544,9 @@ export default function ChatScreen() {
             <LinearGradient
               colors={item.deliveryStatus === 'failed'
                 ? ['#451B27', '#451B27']
-                : isPremium ? [PREMIUM_COLOR, PREMIUM_COLOR2] : ['#5222A8', '#6D28D9']}
+                : isPremium ? [PREMIUM_COLOR, PREMIUM_COLOR2] : ['#5222A8', '#5222A8']}
               start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-              style={[styles.bubbleMineGrad, isCardMedia && styles.mediaBubble]}
+              style={[styles.bubbleMineGrad, isCardMedia && styles.mediaBubble, isVoice && styles.voiceBubble]}
             >
               {isPremium ? (
                 <View style={styles.premiumMsgHeader}>
@@ -566,7 +579,7 @@ export default function ChatScreen() {
               </View>
             </LinearGradient>
           ) : (
-            <View style={[styles.bubbleTheirsInner, isPremium && styles.premiumBubble, isCardMedia && styles.mediaBubble]}>
+            <View style={[styles.bubbleTheirsInner, isPremium && styles.premiumBubble, isCardMedia && styles.mediaBubble, isVoice && styles.voiceBubble]}>
               {isPremium ? (
                 <View style={styles.premiumMsgHeader}>
                   <MaterialIcons name="star" size={11} color={PREMIUM_COLOR} />
@@ -610,6 +623,22 @@ export default function ChatScreen() {
   const premiumEnabled = premiumConfig?.enabled && partnerId !== user?.id;
   const composerBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
   const composerClearance = composerBottom + composerHeight + 16;
+  const conversationDayLabel = useMemo(() => {
+    const latest = chatMessages[chatMessages.length - 1];
+    if (!latest?.createdAt) return 'Hoy';
+    const messageDate = new Date(latest.createdAt);
+    const today = new Date();
+    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    const startOfMessage = new Date(messageDate.getFullYear(), messageDate.getMonth(), messageDate.getDate()).getTime();
+    const dayDelta = Math.round((startOfToday - startOfMessage) / 86_400_000);
+    if (dayDelta === 0) return 'Hoy';
+    if (dayDelta === 1) return 'Ayer';
+    return messageDate.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+  }, [chatMessages]);
+
+  if (!chatFontsLoaded) {
+    return <View style={styles.container}><StatusBar style="light" /></View>;
+  }
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -618,11 +647,11 @@ export default function ChatScreen() {
 
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
+        <Pressable accessibilityLabel="Volver" onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
           <MaterialCommunityIcons name="arrow-left" size={22} color={Colors.textPrimary} />
         </Pressable>
 
-        <Pressable style={styles.headerCenter} onPress={() => {}}>
+        <Pressable accessibilityLabel="Ver perfil" style={styles.headerCenter} onPress={() => router.push(`/creator/${partnerId}` as any)}>
           <View style={{ position: 'relative' }}>
             <Avatar uri={partnerAvatar} username={partnerName} size={46} showBorder />
             {presenceByUser[partnerId || ''] === 'online' ? <View style={styles.avatarOnlineDot} /> : null}
@@ -646,7 +675,6 @@ export default function ChatScreen() {
               <Text style={styles.typingText}>Escribiendo…</Text>
             ) : presenceByUser[partnerId || ''] === 'online' ? (
               <View style={styles.onlineRow}>
-                <View style={styles.onlineDot} />
                 <Text style={styles.onlineText}>En línea</Text>
               </View>
             ) : subStatus?.isSubscribed ? (
@@ -656,13 +684,13 @@ export default function ChatScreen() {
         </Pressable>
 
         <View style={styles.headerActions}>
-          <Pressable hitSlop={8} onPress={() => router.push(`/call/${partnerId}`)} style={styles.headerActionBtn}>
+          <Pressable accessibilityLabel="Llamada de audio" hitSlop={8} onPress={() => router.push(`/call/${partnerId}`)} style={styles.headerActionBtn}>
             <MaterialCommunityIcons name="phone-outline" size={21} color="#F6F7FB" />
           </Pressable>
-          <Pressable hitSlop={8} onPress={() => router.push(`/video-call/${partnerId}`)} style={styles.headerActionBtn}>
+          <Pressable accessibilityLabel="Videollamada" hitSlop={8} onPress={() => router.push(`/video-call/${partnerId}`)} style={[styles.headerActionBtn, styles.headerVideoAction]}>
             <MaterialCommunityIcons name="video-outline" size={21} color="#F6F7FB" />
           </Pressable>
-          <Pressable hitSlop={8} onPress={() => router.push(`/creator/${partnerId}` as any)} style={styles.headerActionBtn}>
+          <Pressable accessibilityLabel="Perfil e información" hitSlop={8} onPress={() => router.push(`/creator/${partnerId}` as any)} style={[styles.headerActionBtn, styles.headerInfoAction]}>
             <MaterialCommunityIcons name="dots-vertical" size={21} color="#9298AD" />
           </Pressable>
         </View>
@@ -711,6 +739,9 @@ export default function ChatScreen() {
       {/* ── Chat area ────────────────────────────────────────────────────── */}
       <View style={styles.chatBody}>
         <View style={[styles.messagePane, { marginBottom: composerClearance }]}>
+        {chatMessages.length > 0 ? (
+          <View style={styles.dateChip}><Text style={styles.dateChipText}>{conversationDayLabel}</Text></View>
+        ) : null}
         {chatMessages.length === 0 ? (
           <View style={styles.emptyChat}>
             <LinearGradient colors={['#7C5CFF22', '#FF2D7811']} style={styles.emptyChatIconWrap}>
@@ -761,7 +792,6 @@ export default function ChatScreen() {
           styles.inputBar,
           {
             bottom: composerBottom,
-            paddingBottom: 8,
           },
         ]}
           onLayout={event => {
@@ -791,6 +821,7 @@ export default function ChatScreen() {
               hitSlop={6} style={styles.inputAction} disabled={isUploading}>
               <MaterialCommunityIcons name="eye-off-outline" size={20} color="#9298AD" />
             </Pressable>
+            <View style={styles.inputDivider} />
           </> : null}
 
           {!voiceRecording ? <TextInput
@@ -812,7 +843,7 @@ export default function ChatScreen() {
 
           {!voiceRecording ? <Pressable accessibilityLabel="Agregar emoji" onPress={() => setText(value => `${value}😊`)}
             hitSlop={6} style={styles.emojiAction}>
-            <MaterialCommunityIcons name="emoticon-happy-outline" size={21} color="#F4C95D" />
+            <MaterialCommunityIcons name="emoticon-happy-outline" size={21} color="#9298AD" />
           </Pressable> : null}
 
           {text.trim() && !voiceRecording ? <Pressable
@@ -863,27 +894,27 @@ const styles = StyleSheet.create({
 
   // Header
   header: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
-    minHeight: 64, paddingHorizontal: 16, paddingBottom: 8,
+    height: 68, position: 'relative',
     borderBottomWidth: 1, borderBottomColor: '#23283A',
   },
-  backBtn: { padding: 4 },
-  headerCenter:   { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  headerInfo:     { flex: 1, gap: 3 },
+  backBtn: { position: 'absolute', left: 16, top: 11, width: 32, height: 46, alignItems: 'center', justifyContent: 'center' },
+  headerCenter:   { position: 'absolute', left: 57, right: 111, top: 14, height: 46, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerInfo:     { flex: 1, height: 46, justifyContent: 'center' },
   headerNameRow:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  headerName:     { color: '#F6F7FB', fontSize: 19, fontWeight: FontWeight.bold },
+  headerName:     { color: '#F6F7FB', fontFamily: 'Inter_700Bold', fontSize: 19, lineHeight: 23 },
   premiumHeaderBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,157,0,0.15)', borderRadius: Radius.full, paddingHorizontal: 6, paddingVertical: 2 },
   premiumHeaderBadgeText: { color: PREMIUM_COLOR, fontSize: 9, fontWeight: FontWeight.bold },
-  onlineRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  onlineDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.accent },
-  onlineText: { color: '#9298AD', fontSize: 11 },
-  typingText: { color: '#9B5CFF', fontSize: 11 },
-  avatarOnlineDot: { position: 'absolute', right: 1, bottom: 1, width: 11, height: 11, borderRadius: 6, backgroundColor: '#35E28A', borderWidth: 2, borderColor: '#080A12' },
-  headerActions: { flexDirection: 'row', gap: 2 },
+  onlineRow: { flexDirection: 'row', alignItems: 'center' },
+  onlineText: { color: '#9298AD', fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 13 },
+  typingText: { color: '#9B5CFF', fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 13 },
+  avatarOnlineDot: { position: 'absolute', right: 1, bottom: 1, width: 12, height: 12, borderRadius: 6, backgroundColor: '#35E28A', borderWidth: 2, borderColor: '#080A12' },
+  headerActions: { position: 'absolute', left: 279, top: 16, height: 46, flexDirection: 'row' },
   headerActionBtn: {
-    width: 34, height: 36,
+    width: 40, height: 46,
     alignItems: 'center', justifyContent: 'center',
   },
+  headerVideoAction: { width: 43 },
+  headerInfoAction: { width: 19 },
   subBadgeDot: {
     position: 'absolute', bottom: -2, right: -2,
     width: 16, height: 16, borderRadius: 8,
@@ -909,6 +940,8 @@ const styles = StyleSheet.create({
   // Empty state
   chatBody: { flex: 1 },
   messagePane: { flex: 1 },
+  dateChip: { alignSelf: 'center', width: 52, height: 22, marginTop: 12, borderRadius: 11, backgroundColor: '#141827', alignItems: 'center', justifyContent: 'center' },
+  dateChipText: { color: '#9298AD', fontFamily: 'Inter_400Regular', fontSize: 9, lineHeight: 11 },
   emptyChat: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.md, paddingHorizontal: Spacing.xl },
   emptyChatIconWrap: { width: 96, height: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center' },
   emptyChatName: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
@@ -918,7 +951,7 @@ const styles = StyleSheet.create({
   startPremiumBtnText: { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.bold },
 
   // Messages list
-  messagesList: { paddingHorizontal: 20, paddingTop: 14, gap: 8 },
+  messagesList: { paddingHorizontal: 20, paddingTop: 16, gap: 8 },
   msgRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
   msgRowMine: { flexDirection: 'row-reverse' },
   bubble: { maxWidth: '82%' },
@@ -928,6 +961,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#1A1E2B', borderRadius: 16,
     paddingHorizontal: 16, paddingVertical: 10, gap: 4,
   },
+  voiceBubble: { width: 300, height: 66, paddingHorizontal: 15, paddingVertical: 7, gap: 0 },
   mediaBubble: { paddingHorizontal: 0, paddingVertical: 0, backgroundColor: 'transparent', overflow: 'hidden' },
   premiumBubble: { borderColor: 'rgba(255,157,0,0.4)', backgroundColor: 'rgba(255,157,0,0.08)' },
   premiumMsgHeader: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -940,10 +974,10 @@ const styles = StyleSheet.create({
   oneTimeViewer: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
   oneTimeImage: { width: '100%', height: '100%' },
   oneTimeClose: { position: 'absolute', top: 52, right: 20, zIndex: 2, padding: 8 },
-  msgText: { color: Colors.textPrimary, fontSize: FontSize.sm, lineHeight: 20 },
-  msgTextMine: { color: '#fff', fontSize: FontSize.sm, lineHeight: 20 },
-  msgTime: { color: Colors.textSubtle, fontSize: 10, alignSelf: 'flex-end' },
-  msgTimeMine: { color: 'rgba(255,255,255,0.6)', fontSize: 10, alignSelf: 'flex-end' },
+  msgText: { color: '#F6F7FB', fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 16 },
+  msgTextMine: { color: '#FFFFFF', fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 16 },
+  msgTime: { color: '#9298AD', fontFamily: 'Inter_400Regular', fontSize: 8, lineHeight: 10, alignSelf: 'flex-end' },
+  msgTimeMine: { color: '#9298AD', fontFamily: 'Inter_400Regular', fontSize: 8, lineHeight: 10, alignSelf: 'flex-end' },
   messageMeta: { alignSelf: 'flex-end', flexDirection: 'row', alignItems: 'center', gap: 3 },
   mediaMeta: { position: 'absolute', right: 8, bottom: 6 },
   mediaTime: { position: 'absolute', right: 8, bottom: 6, color: '#FFFFFF' },
@@ -955,18 +989,19 @@ const styles = StyleSheet.create({
   inputBar: {
     position: 'absolute', left: 12, right: 12,
     minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 2,
-    paddingHorizontal: 8, paddingVertical: 6,
+    paddingLeft: 10, paddingRight: 6, paddingVertical: 6,
     borderWidth: 1, borderColor: '#23283A', backgroundColor: '#0E111A', borderRadius: 22,
     zIndex: 100,
     elevation: 24,
   },
-  inputAction: { width: 30, height: 38, alignItems: 'center', justifyContent: 'center' },
+  inputAction: { width: 32, height: 38, alignItems: 'center', justifyContent: 'center' },
   plusAction: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#171B29', borderWidth: 1, borderColor: '#30364A' },
+  inputDivider: { width: 1, height: 34, marginLeft: 4, backgroundColor: '#23283A' },
   emojiAction: { width: 30, height: 38, alignItems: 'center', justifyContent: 'center' },
   input: {
     flex: 1, minHeight: 40, maxHeight: 120,
     paddingHorizontal: 10, paddingVertical: 10,
-    color: '#F6F7FB', fontSize: 12,
+    color: '#F6F7FB', fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 15,
     textAlignVertical: 'top',
   },
   sendBtn: { borderRadius: Radius.full, overflow: 'hidden' },

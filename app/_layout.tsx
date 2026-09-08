@@ -96,7 +96,7 @@ function AppShell() {
                     <Stack.Screen name="seller/orders/[id]" />
                     <Stack.Screen
                       name="chat/[userId]"
-                      options={{ headerShown: true, title: '' }}
+                      options={{ headerShown: false }}
                     />
                     <Stack.Screen
                       name="creator/[id]"

@@ -8,14 +8,32 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
+import {
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+  useFonts,
+} from '@expo-google-fonts/inter';
 import { useMessages } from '@/hooks/useMessages';
 import { useAuth } from '@/hooks/useAuth';
 import { getSupabaseClient } from '@/template';
 import { Avatar } from '@/components/ui/Avatar';
-import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
+import { Colors, FontSize, Radius, Spacing } from '@/constants/theme';
 import { timeAgo } from '@/services/mockData';
 import { MessageDeliveryIndicator } from '@/components/chat/MessageDeliveryIndicator';
 import { TAB_BAR_HEIGHT } from './_layout';
+
+function InboxDeliveryStatus({ item, user }: { item: any; user?: { id?: string } | null }) {
+  if (item.lastMessageSenderId === user?.id && item.lastMessageDeliveryStatus) {
+    return (
+      <View style={styles.inboxDeliverySlot}>
+        <MessageDeliveryIndicator status={item.lastMessageDeliveryStatus} />
+      </View>
+    );
+  }
+  return null;
+}
 
 // ── Main Messages Screen ──────────────────────────────────────────────────────
 export default function MessagesScreen() {
@@ -25,6 +43,12 @@ export default function MessagesScreen() {
   const { user } = useAuth();
   const { conversations, isLoading, refreshConversations, presenceByUser } = useMessages();
   const supabase = getSupabaseClient();
+  const [chatFontsLoaded] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+  });
 
   const [search, setSearch] = useState('');
   const searchInputRef = useRef<TextInput>(null);
@@ -69,11 +93,15 @@ export default function MessagesScreen() {
   });
 
   const TABS = [
-    { key: 'all' as const, label: 'Todos', icon: 'circle-outline' },
-    { key: 'direct' as const, label: 'Directos', icon: 'account-outline' },
-    { key: 'group' as const, label: 'Grupos', icon: 'account-group-outline' },
-    { key: 'premium' as const, label: 'Premium', icon: 'crown-outline' },
+    { key: 'all' as const, label: 'Todos', icon: 'circle-outline', width: 76, gapBefore: 0 },
+    { key: 'direct' as const, label: 'Directos', icon: 'account-outline', width: 86, gapBefore: 8 },
+    { key: 'group' as const, label: 'Grupos', icon: 'account-group-outline', width: 83, gapBefore: 9 },
+    { key: 'premium' as const, label: 'Premium', icon: 'crown-outline', width: 80, gapBefore: 8 },
   ];
+
+  if (!chatFontsLoaded) {
+    return <View style={styles.container}><StatusBar style="light" /></View>;
+  }
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -93,7 +121,7 @@ export default function MessagesScreen() {
             <MaterialCommunityIcons name="account-multiple-plus-outline" size={17} color="#9298AD" />
           </Pressable>
           <Pressable accessibilityLabel="Buscar conversaciones" onPress={() => searchInputRef.current?.focus()} hitSlop={8} style={styles.headerAction}>
-            <MaterialCommunityIcons name="magnify" size={18} color="#F6F7FB" />
+            <MaterialCommunityIcons name="magnify" size={18} color="#9298AD" />
           </Pressable>
         </View>
       </View>
@@ -122,7 +150,11 @@ export default function MessagesScreen() {
         {TABS.map(t => (
           <Pressable
             key={t.key}
-            style={[styles.tabBtn, activeTab === t.key && styles.tabBtnActive]}
+            style={[
+              styles.tabBtn,
+              { width: t.width, marginLeft: t.gapBefore },
+              activeTab === t.key && styles.tabBtnActive,
+            ]}
             onPress={() => setActiveTab(t.key)}
           >
             <MaterialCommunityIcons
@@ -217,15 +249,13 @@ export default function MessagesScreen() {
                     </Text>
                   </View>
                   <View style={styles.convBottomRow}>
-                    {item.lastMessageSenderId === user?.id && item.lastMessageDeliveryStatus ? (
-                      <MessageDeliveryIndicator status={item.lastMessageDeliveryStatus} />
-                    ) : null}
                     <Text
                       style={[styles.convLastMsg, hasUnread && styles.convLastMsgBold]}
                       numberOfLines={1}
                     >
                       {item.lastMessage || 'Inicia la conversación'}
                     </Text>
+                    <InboxDeliveryStatus item={item} user={user} />
                     {hasUnread ? (
                       <View style={styles.unreadBadge}>
                         <Text style={styles.unreadBadgeText}>{item.unreadCount > 9 ? '9+' : item.unreadCount}</Text>
@@ -266,35 +296,35 @@ export default function MessagesScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#080A12' },
 
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 14, paddingBottom: 16 },
-  headerBrand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  headerTitle: { fontSize: 26, fontWeight: FontWeight.bold, color: '#F6F7FB' },
-  headerSubtitle: { color: '#9298AD', fontSize: 11, marginTop: 1 },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  header: { height: 79, position: 'relative' },
+  headerBrand: { position: 'absolute', left: 24, top: 14, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerTitle: { fontFamily: 'Inter_700Bold', fontSize: 26, lineHeight: 31, color: '#F6F7FB' },
+  headerSubtitle: { fontFamily: 'Inter_400Regular', color: '#9298AD', fontSize: 11, lineHeight: 13, marginTop: 1 },
+  headerActions: { position: 'absolute', right: 1, top: 17, flexDirection: 'row', alignItems: 'center', gap: 8 },
   headerAction: {
     width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
     backgroundColor: '#141827', borderWidth: 1, borderColor: '#23283A',
   },
 
   searchWrap: { height: 46, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#141827', borderRadius: 14, paddingHorizontal: 14, marginHorizontal: 20, marginBottom: 12, borderWidth: 1, borderColor: '#23283A' },
-  searchInput: { flex: 1, color: '#F6F7FB', fontSize: 14 },
+  searchInput: { flex: 1, color: '#F6F7FB', fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 17, paddingVertical: 0 },
 
   // Tab bar
-  tabBar: { flexDirection: 'row', gap: 8, marginHorizontal: 20, marginBottom: 14 },
-  tabBtn: { flex: 1, height: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: 17, backgroundColor: '#141827', borderWidth: 1, borderColor: '#23283A' },
+  tabBar: { flexDirection: 'row', marginHorizontal: 20, marginBottom: 14 },
+  tabBtn: { height: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: 17, backgroundColor: '#141827', borderWidth: 1, borderColor: '#23283A' },
   tabBtnActive: { backgroundColor: '#381A7A', borderColor: '#9B5CFF' },
-  tabText: { color: '#9298AD', fontSize: 11, fontWeight: FontWeight.regular },
-  tabTextActive: { color: '#FFFFFF', fontWeight: FontWeight.semibold },
+  tabText: { color: '#9298AD', fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 13 },
+  tabTextActive: { color: '#FFFFFF', fontFamily: 'Inter_600SemiBold' },
 
   // Empty state
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.md, paddingHorizontal: Spacing.xl, paddingTop: 60 },
   emptyIconWrap: { borderRadius: Radius.xl, overflow: 'hidden' },
   emptyIconGrad: { width: 88, height: 88, alignItems: 'center', justifyContent: 'center', borderRadius: Radius.xl },
-  emptyTitle: { color: Colors.textSecondary, fontSize: FontSize.lg, fontWeight: FontWeight.semibold },
-  emptySubtitle: { color: Colors.textSubtle, fontSize: FontSize.sm, textAlign: 'center', lineHeight: 20 },
+  emptyTitle: { color: Colors.textSecondary, fontFamily: 'Inter_600SemiBold', fontSize: FontSize.lg },
+  emptySubtitle: { color: Colors.textSubtle, fontFamily: 'Inter_400Regular', fontSize: FontSize.sm, textAlign: 'center', lineHeight: 20 },
   startChatBtn: { borderRadius: Radius.full, overflow: 'hidden', marginTop: Spacing.xs },
   startChatBtnGrad: { paddingHorizontal: 24, paddingVertical: 12 },
-  startChatBtnText: { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.bold },
+  startChatBtnText: { color: '#fff', fontFamily: 'Inter_700Bold', fontSize: FontSize.sm },
 
   // Conversation item
   convItem: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 13, marginHorizontal: 16, marginBottom: 6, paddingHorizontal: 10, paddingVertical: 9, backgroundColor: '#0F121C', borderRadius: 14, borderWidth: 1, borderColor: '#23283A' },
@@ -307,15 +337,16 @@ const styles = StyleSheet.create({
   convInfo: { flex: 1, gap: 4 },
   convTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   convNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
-  convName: { color: '#F6F7FB', fontSize: 14, fontWeight: FontWeight.semibold },
-  convNameBold: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
+  convName: { color: '#F6F7FB', fontFamily: 'Inter_600SemiBold', fontSize: 14, lineHeight: 17 },
+  convNameBold: { color: Colors.textPrimary, fontFamily: 'Inter_700Bold' },
   premiumChip: { width: 22, height: 22, borderRadius: 6, backgroundColor: '#3A1B78', alignItems: 'center', justifyContent: 'center' },
-  convTime: { color: '#9298AD', fontSize: 10 },
+  convTime: { color: '#9298AD', fontFamily: 'Inter_400Regular', fontSize: 10, lineHeight: 12, marginRight: 14 },
   convBottomRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 5 },
-  convLastMsg: { color: '#9298AD', fontSize: 11, flex: 1 },
-  convLastMsgBold: { color: Colors.textSecondary, fontWeight: FontWeight.medium },
-  unreadBadge: { backgroundColor: '#7C3AED', borderRadius: Radius.full, minWidth: 24, height: 24, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
-  unreadBadgeText: { color: '#fff', fontSize: 10, fontWeight: FontWeight.bold },
+  convLastMsg: { color: '#9298AD', fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 13, flex: 1 },
+  convLastMsgBold: { color: Colors.textSecondary, fontFamily: 'Inter_500Medium' },
+  inboxDeliverySlot: { width: 28, marginRight: 13, alignItems: 'flex-start' },
+  unreadBadge: { backgroundColor: '#7C3AED', borderRadius: Radius.full, minWidth: 24, height: 24, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6, marginRight: 7 },
+  unreadBadgeText: { color: '#fff', fontFamily: 'Inter_700Bold', fontSize: 10, lineHeight: 12 },
   separator: { height: 0 },
   fab: { position: 'absolute', right: 24, width: 48, height: 48, borderRadius: 24, overflow: 'hidden', zIndex: 20, elevation: 8 },
   fabGradient: { flex: 1, alignItems: 'center', justifyContent: 'center' },

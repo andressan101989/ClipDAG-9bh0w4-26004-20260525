@@ -8,15 +8,14 @@
 
 import { Tabs } from 'expo-router';
 import { Platform, View, Text, Pressable, StyleSheet } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
+import { Inter_400Regular, Inter_600SemiBold, useFonts } from '@expo-google-fonts/inter';
 import { useMessages } from '@/hooks/useMessages';
 import { useNotifications } from '@/hooks/useNotifications';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 
-// Height exported so other components can offset correctly
-export const TAB_BAR_HEIGHT = Platform.select({ ios: 82, android: 70, default: 70 });
+// Figma FAB anchor: 68px canonical bar + 7px visual bridge; Inbox adds its approved 14px clearance.
+export const TAB_BAR_HEIGHT = Platform.select({ ios: 75, android: 75, default: 75 });
 
 const TABS = [
   { name: 'index',   icon: 'home-variant',        label: 'Inicio' },
@@ -26,19 +25,14 @@ const TABS = [
   { name: 'profile', icon: 'account-circle-outline', label: 'Perfil' },
 ] as const;
 
-function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
-  const insets = useSafeAreaInsets();
+function CustomTabBar({ state, navigation }: BottomTabBarProps) {
+  const [tabFontsLoaded] = useFonts({ Inter_400Regular, Inter_600SemiBold });
   // Safe context access — hooks return defaults if providers not ready
   const { unreadTotal } = useMessages();
   const { unreadCount } = useNotifications();
 
   return (
-    <View style={[styles.tabBarOuter, { paddingBottom: insets.bottom || 8 }]}>
-      <LinearGradient
-        colors={['rgba(10,10,15,0)', 'rgba(10,10,15,0.97)']}
-        style={StyleSheet.absoluteFillObject}
-        pointerEvents="none"
-      />
+    <View style={[styles.tabBarOuter, !tabFontsLoaded && styles.tabBarLoading]}>
       <View style={styles.tabBarInner}>
         {state.routes
           .filter(r => ['index','search','upload','shop','profile'].includes(r.name))
@@ -46,26 +40,10 @@ function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
             const tab = TABS.find(t => t.name === route.name);
             if (!tab) return null;
             const isFocused = state.index === state.routes.indexOf(route);
-            const isUpload = route.name === 'upload';
-
             const onPress = () => {
               const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
               if (!isFocused && !event.defaultPrevented) navigation.navigate(route.name);
             };
-
-            if (isUpload) {
-              return (
-                <Pressable key={route.key} onPress={onPress} style={styles.uploadBtn} hitSlop={4}>
-                  <LinearGradient
-                    colors={['#7C5CFF', '#FF2D78']}
-                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                    style={styles.uploadGrad}
-                  >
-                    <MaterialCommunityIcons name="plus" size={28} color="#fff" />
-                  </LinearGradient>
-                </Pressable>
-              );
-            }
 
             const badge = route.name === 'profile' ? (unreadTotal + unreadCount) : 0;
 
@@ -76,11 +54,11 @@ function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
                 style={styles.tabBtn}
                 hitSlop={4}
               >
-                <View style={styles.tabIconWrap}>
+                <View style={[styles.tabIconWrap, route.name === 'upload' && styles.uploadGrad]}>
                   <MaterialCommunityIcons
                     name={tab.icon as any}
                     size={24}
-                    color={isFocused ? '#7C5CFF' : 'rgba(255,255,255,0.45)'}
+                    color={isFocused ? '#9B5CFF' : '#9298AD'}
                   />
                   {badge > 0 && (
                     <View style={styles.badge}>
@@ -121,46 +99,44 @@ const styles = StyleSheet.create({
   tabBarOuter: {
     position: 'absolute',
     bottom: 0, left: 0, right: 0,
+    height: 68,
     paddingTop: 8,
+    paddingBottom: 6,
+    backgroundColor: '#0B0E16',
+    borderTopWidth: 1,
+    borderTopColor: '#23283A',
   },
+  tabBarLoading: { opacity: 0 },
   tabBarInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
-    paddingHorizontal: 8,
     height: 54,
   },
   tabBtn: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 2,
+    gap: 3,
   },
   tabIconWrap: { position: 'relative' },
+  // Keep the canonical create slot as its own visual authority without
+  // restoring the obsolete raised gradient treatment.
+  uploadGrad: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   tabLabel: {
+    fontFamily: 'Inter_400Regular',
     fontSize: 10,
-    color: 'rgba(255,255,255,0.45)',
-    fontWeight: '500',
+    lineHeight: 12,
+    color: '#9298AD',
   },
   tabLabelActive: {
-    color: '#7C5CFF',
-    fontWeight: '600',
-  },
-  uploadBtn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  uploadGrad: {
-    width: 48, height: 48,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#7C5CFF',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 8,
+    color: '#9B5CFF',
+    fontFamily: 'Inter_600SemiBold',
   },
   badge: {
     position: 'absolute',
