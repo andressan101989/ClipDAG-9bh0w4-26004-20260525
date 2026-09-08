@@ -36,7 +36,12 @@ export type ChatConversationPageRow = {
   group_avatar_url: string | null;
   member_count: number;
   current_user_role: ChatMemberRole;
-  last_message: ChatMessageRow | null;
+  last_message: (ChatMessageRow & {
+    delivery_status: Extract<ChatDeliveryStatus, 'sent' | 'delivered' | 'read'> | null;
+    recipient_count: number;
+    delivered_count: number;
+    read_count: number;
+  }) | null;
   unread_count: number;
 };
 

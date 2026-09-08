@@ -14,14 +14,15 @@ test('G2 keeps the current Figma nodes as the explicit visual authority', () => 
   assert.match(direct, /FmwCrxtAV5k8jpLFr3RTgy, node 1:112/);
 });
 
-test('Inbox header follows the current create, compose, menu order and existing routes', () => {
+test('Inbox header keeps create and uses search while the FAB owns compose', () => {
   const create = inbox.indexOf('accessibilityLabel="Crear grupo"');
+  const search = inbox.indexOf('accessibilityLabel="Buscar conversaciones"');
   const compose = inbox.indexOf('accessibilityLabel="Nuevo mensaje"');
-  const menu = inbox.indexOf('accessibilityLabel="Notificaciones y opciones"');
-  assert.ok(create >= 0 && create < compose && compose < menu);
+  assert.ok(create >= 0 && create < search && search < compose);
   assert.match(inbox, /router\.push\('\/chat\/group\/create'/);
+  assert.doesNotMatch(inbox, /accessibilityLabel="Notificaciones y opciones"/);
   assert.match(inbox, /router\.push\('\/new-message'\)/);
-  assert.match(inbox, /router\.push\('\/notifications'\)/);
+  assert.doesNotMatch(inbox, /router\.push\('\/notifications'\)/);
   assert.match(inbox, /width: 32, height: 32, borderRadius: 16/);
 });
 
@@ -55,7 +56,7 @@ test('Direct header retains presence, typing, phone, video and menu actions', ()
 
 test('Media cards use their Figma dimensions without a second layer of bubble padding', () => {
   assert.match(image, /width:228,height:124,borderRadius:16/);
-  assert.match(direct, /isCardMedia = isImage \|\| isOneTime/);
+  assert.match(direct, /isCardMedia = isImage \|\| isVideo \|\| isOneTime/);
   assert.match(direct, /mediaBubble: \{ paddingHorizontal: 0, paddingVertical: 0/);
   assert.match(direct, /oneTimeCard: \{ width: 184, height: 92/);
   assert.match(direct, /cachePolicy="none"/);

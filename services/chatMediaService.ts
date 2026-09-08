@@ -2,11 +2,15 @@ import { getSupabaseClient } from '@/template';
 import { deleteMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
 
 export const CHAT_IMAGE_MAX_BYTES = 25_000_000;
+export const CHAT_VIDEO_MAX_BYTES = 100_000_000;
+export const CHAT_VIDEO_MIME_TYPES = ['video/mp4', 'video/quicktime'] as const;
 export const CHAT_VOICE_MAX_BYTES = 100_000_000;
 export const CHAT_VOICE_MIME_TYPES = ['audio/mp4', 'audio/aac', 'audio/x-m4a', 'audio/mpeg', 'audio/wav'] as const;
 export const CHAT_MEDIA_SIGNED_URL_TTL_SECONDS = 300;
-export const CHAT_STANDARD_VOICE_ACCESS_CACHE_SAFETY_MS = 30_000;
-export const CHAT_STANDARD_VOICE_ACCESS_CACHE_MAX_ENTRIES = 64;
+export const CHAT_STANDARD_PRIVATE_MEDIA_ACCESS_CACHE_SAFETY_MS = 30_000;
+export const CHAT_STANDARD_PRIVATE_MEDIA_ACCESS_CACHE_MAX_ENTRIES = 64;
+export const CHAT_STANDARD_VOICE_ACCESS_CACHE_SAFETY_MS = CHAT_STANDARD_PRIVATE_MEDIA_ACCESS_CACHE_SAFETY_MS;
+export const CHAT_STANDARD_VOICE_ACCESS_CACHE_MAX_ENTRIES = CHAT_STANDARD_PRIVATE_MEDIA_ACCESS_CACHE_MAX_ENTRIES;
 
 type ChatMediaAccessResponse = {
   success?: boolean;
@@ -29,7 +33,7 @@ export type ChatMediaAccess = {
 };
 
 const standardAccessFlights = new Map<string, Promise<ChatMediaAccess>>();
-const standardVoiceAccessCache = new Map<string, ChatMediaAccess>();
+const standardPrivateMediaAccessCache = new Map<string, ChatMediaAccess>();
 
 async function getAuthenticatedUserId(): Promise<string | null> {
   const { data } = await getSupabaseClient().auth.getSession();
@@ -40,26 +44,26 @@ function getStandardAccessKey(userId: string, assetId: string): string {
   return `${userId}:${assetId}`;
 }
 
-function readCachedStandardVoiceAccess(cacheKey: string, now = Date.now()): ChatMediaAccess | null {
-  const cached = standardVoiceAccessCache.get(cacheKey);
+function readCachedStandardPrivateMediaAccess(cacheKey: string, now = Date.now()): ChatMediaAccess | null {
+  const cached = standardPrivateMediaAccessCache.get(cacheKey);
   if (!cached) return null;
   const expiresAt = Date.parse(cached.expiresAt);
-  if (!Number.isFinite(expiresAt) || expiresAt - now <= CHAT_STANDARD_VOICE_ACCESS_CACHE_SAFETY_MS) {
-    standardVoiceAccessCache.delete(cacheKey);
+  if (!Number.isFinite(expiresAt) || expiresAt - now <= CHAT_STANDARD_PRIVATE_MEDIA_ACCESS_CACHE_SAFETY_MS) {
+    standardPrivateMediaAccessCache.delete(cacheKey);
     return null;
   }
-  standardVoiceAccessCache.delete(cacheKey);
-  standardVoiceAccessCache.set(cacheKey, cached);
+  standardPrivateMediaAccessCache.delete(cacheKey);
+  standardPrivateMediaAccessCache.set(cacheKey, cached);
   return cached;
 }
 
-function cacheStandardVoiceAccess(cacheKey: string, access: ChatMediaAccess): void {
-  standardVoiceAccessCache.delete(cacheKey);
-  standardVoiceAccessCache.set(cacheKey, access);
-  while (standardVoiceAccessCache.size > CHAT_STANDARD_VOICE_ACCESS_CACHE_MAX_ENTRIES) {
-    const oldestCacheKey = standardVoiceAccessCache.keys().next().value;
+function cacheStandardPrivateMediaAccess(cacheKey: string, access: ChatMediaAccess): void {
+  standardPrivateMediaAccessCache.delete(cacheKey);
+  standardPrivateMediaAccessCache.set(cacheKey, access);
+  while (standardPrivateMediaAccessCache.size > CHAT_STANDARD_PRIVATE_MEDIA_ACCESS_CACHE_MAX_ENTRIES) {
+    const oldestCacheKey = standardPrivateMediaAccessCache.keys().next().value;
     if (!oldestCacheKey) break;
-    standardVoiceAccessCache.delete(oldestCacheKey);
+    standardPrivateMediaAccessCache.delete(oldestCacheKey);
   }
 }
 
@@ -80,6 +84,31 @@ export async function uploadPrivateChatImage(input: {
   });
   if (asset.visibility !== 'private' || asset.mediaKind !== 'image' || asset.url) {
     throw new Error('chat_private_media_contract_invalid');
+  }
+  return asset.assetId;
+}
+
+export async function uploadPrivateChatVideo(input: {
+  uri: string;
+  mimeType: string;
+  fileName?: string;
+  sizeBytes?: number;
+  signal?: AbortSignal;
+}): Promise<string> {
+  if (!CHAT_VIDEO_MIME_TYPES.includes(input.mimeType as typeof CHAT_VIDEO_MIME_TYPES[number])) {
+    throw new Error('chat_video_mime_invalid');
+  }
+  if (input.sizeBytes != null && input.sizeBytes > CHAT_VIDEO_MAX_BYTES) {
+    throw new Error('chat_video_too_large');
+  }
+  const asset = await uploadMediaFromUri({
+    ...input,
+    purpose: 'chat_video',
+    visibility: 'private',
+  });
+  if (asset.visibility !== 'private' || asset.mediaKind !== 'video'
+    || asset.purpose !== 'chat_video' || asset.url) {
+    throw new Error('chat_private_video_contract_invalid');
   }
   return asset.assetId;
 }
@@ -131,43 +160,37 @@ async function requestChatMediaAccess(assetId: string): Promise<ChatMediaAccess>
   };
 }
 
-export async function getStandardChatImageAccess(assetId: string): Promise<ChatMediaAccess> {
+async function getStandardPrivateChatMediaAccess(assetId: string, policyError: string): Promise<ChatMediaAccess> {
   const userId = await getAuthenticatedUserId();
   if (!userId) {
     const access = await requestChatMediaAccess(assetId);
-    if (access.consumptionPolicy !== 'standard') throw new Error('chat_media_policy_invalid');
+    if (access.consumptionPolicy !== 'standard') throw new Error(policyError);
     return access;
   }
   const cacheKey = getStandardAccessKey(userId, assetId);
+  const cached = readCachedStandardPrivateMediaAccess(cacheKey);
+  if (cached) return Promise.resolve(cached);
   const existing = standardAccessFlights.get(cacheKey);
   if (existing) return existing;
   const flight = requestChatMediaAccess(assetId).then(access => {
-    if (access.consumptionPolicy !== 'standard') throw new Error('chat_media_policy_invalid');
+    if (access.consumptionPolicy !== 'standard') throw new Error(policyError);
+    cacheStandardPrivateMediaAccess(cacheKey, access);
     return access;
   }).finally(() => standardAccessFlights.delete(cacheKey));
   standardAccessFlights.set(cacheKey, flight);
   return flight;
 }
 
+export async function getStandardChatImageAccess(assetId: string): Promise<ChatMediaAccess> {
+  return getStandardPrivateChatMediaAccess(assetId, 'chat_media_policy_invalid');
+}
+
+export async function getStandardChatVideoAccess(assetId: string): Promise<ChatMediaAccess> {
+  return getStandardPrivateChatMediaAccess(assetId, 'chat_video_policy_invalid');
+}
+
 export async function getStandardChatVoiceAccess(assetId: string): Promise<ChatMediaAccess> {
-  const userId = await getAuthenticatedUserId();
-  if (!userId) {
-    const access = await requestChatMediaAccess(assetId);
-    if (access.consumptionPolicy !== 'standard') throw new Error('chat_voice_policy_invalid');
-    return access;
-  }
-  const cacheKey = getStandardAccessKey(userId, assetId);
-  const cached = readCachedStandardVoiceAccess(cacheKey);
-  if (cached) return Promise.resolve(cached);
-  const existing = standardAccessFlights.get(cacheKey);
-  if (existing) return existing;
-  const flight = requestChatMediaAccess(assetId).then(access => {
-    if (access.consumptionPolicy !== 'standard') throw new Error('chat_voice_policy_invalid');
-    cacheStandardVoiceAccess(cacheKey, access);
-    return access;
-  }).finally(() => standardAccessFlights.delete(cacheKey));
-  standardAccessFlights.set(cacheKey, flight);
-  return flight;
+  return getStandardPrivateChatMediaAccess(assetId, 'chat_voice_policy_invalid');
 }
 
 export async function openOneTimeChatImage(assetId: string): Promise<ChatMediaAccess> {

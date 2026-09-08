@@ -32,6 +32,8 @@ export interface Conversation {
   partnerId: string; partnerUsername?: string; partnerAvatar?: string;
   groupName?: string; groupAvatar?: string; memberCount?: number; currentUserRole?: 'owner' | 'admin' | 'member';
   lastMessage: string; lastMessageAt: string; unreadCount: number; otherUserId?: string;
+  lastMessageSenderId?: string; lastMessageDeliveryStatus?: Extract<ChatDeliveryStatus, 'sent' | 'delivered' | 'read'>;
+  lastMessageRecipientCount?: number; lastMessageDeliveredCount?: number; lastMessageReadCount?: number;
   otherUsername?: string; otherUserAvatar?: string;
 }
 export interface MessagesContextType {
@@ -39,7 +41,7 @@ export interface MessagesContextType {
   hasOlderMessages: Record<string, boolean>; isLoadingOlder: Record<string, boolean>;
   presenceByUser: Record<string, 'online' | 'offline'>; typingByUser: Record<string, boolean>;
   sendMessage: (recipientId: string, text: string, mediaUrl?: string, mediaType?: string) => Promise<void>;
-  sendMediaMessage: (recipientId: string, input: { text: string; mediaType: 'image' | 'one_time_image'; mediaAssetId: string }) => Promise<void>;
+  sendMediaMessage: (recipientId: string, input: { text: string; mediaType: 'image' | 'video' | 'one_time_image'; mediaAssetId: string }) => Promise<void>;
   sendVoiceMessage: (recipientId: string, input: { mediaAssetId: string; durationMs: number; waveform: number[] }) => Promise<void>;
   openOneTimeMedia: (partnerId: string, messageId: string) => Promise<string>;
   retryMessage: (partnerId: string, clientMessageId: string) => Promise<void>;
@@ -51,7 +53,7 @@ export interface MessagesContextType {
   sendConversationVoiceMessage: (conversationId: string, input: { mediaAssetId: string; durationMs: number; waveform: number[] }) => Promise<void>;
   loadConversationById: (conversationId: string) => Promise<void>;
   loadOlderConversationMessages: (conversationId: string) => Promise<void>;
-  sendConversationMessage: (conversationId: string, text: string, input?: { mediaType?: 'text' | 'image' | 'voice'; mediaAssetId?: string; durationMs?: number; waveform?: number[] }) => Promise<void>;
+  sendConversationMessage: (conversationId: string, text: string, input?: { mediaType?: 'text' | 'image' | 'video' | 'voice'; mediaAssetId?: string; durationMs?: number; waveform?: number[] }) => Promise<void>;
   retryConversationMessage: (conversationId: string, clientMessageId: string) => Promise<void>;
   markConversationReadById: (conversationId: string) => Promise<void>;
   activateConversationById: (conversationId: string) => Promise<void>;
@@ -157,6 +159,11 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
           groupName: row.group_name || undefined, groupAvatar: row.group_avatar_url || undefined,
           memberCount: Number(row.member_count) || 0, currentUserRole: row.current_user_role,
           lastMessage: messagePreview(row.last_message), lastMessageAt: row.last_message?.created_at || row.last_activity_at,
+          lastMessageSenderId: row.last_message?.sender_id,
+          lastMessageDeliveryStatus: row.last_message?.delivery_status || undefined,
+          lastMessageRecipientCount: row.last_message ? Number(row.last_message.recipient_count) || 0 : undefined,
+          lastMessageDeliveredCount: row.last_message ? Number(row.last_message.delivered_count) || 0 : undefined,
+          lastMessageReadCount: row.last_message ? Number(row.last_message.read_count) || 0 : undefined,
           unreadCount: Number(row.unread_count) || 0, otherUserId: row.other_user_id || undefined,
           otherUsername: row.other_username || undefined, otherUserAvatar: row.other_avatar_url || undefined };
       }));
@@ -271,7 +278,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
   }, [resolveConversation, transmitMessage, user?.id]);
 
   const sendMediaMessage = useCallback(async (recipientId: string, input: {
-    text: string; mediaType: 'image' | 'one_time_image'; mediaAssetId: string;
+    text: string; mediaType: 'image' | 'video' | 'one_time_image'; mediaAssetId: string;
   }) => {
     const userId = user?.id; const normalizedText = input.text.trim();
     if (!userId || !recipientId || !input.mediaAssetId || !normalizedText) throw new Error('chat_media_message_invalid');
@@ -370,7 +377,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     void fetchConversations();
   }, [fetchConversations, user?.id]);
 
-  const sendConversationMessage = useCallback(async (conversationId: string, text: string, input: { mediaType?: 'text' | 'image' | 'voice'; mediaAssetId?: string; durationMs?: number; waveform?: number[] } = {}) => {
+  const sendConversationMessage = useCallback(async (conversationId: string, text: string, input: { mediaType?: 'text' | 'image' | 'video' | 'voice'; mediaAssetId?: string; durationMs?: number; waveform?: number[] } = {}) => {
     const userId = user?.id; const normalized = text.trim(); const mediaType = input.mediaType || 'text';
     if (!userId || !conversationId || (mediaType === 'text' && !normalized)) throw new Error('chat_message_invalid');
     const clientMessageId = createChatClientMessageId();

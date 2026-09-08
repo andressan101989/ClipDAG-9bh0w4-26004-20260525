@@ -242,8 +242,8 @@ test('standard voice access cache respects URL expiry', async () => {
 });
 
 test('standard voice access cache applies a 30-second safety margin', () => {
-  assert.equal(chatMediaSource.includes('CHAT_STANDARD_VOICE_ACCESS_CACHE_SAFETY_MS = 30_000'), true);
-  assert.match(chatMediaSource, /expiresAt - now <= CHAT_STANDARD_VOICE_ACCESS_CACHE_SAFETY_MS/);
+  assert.equal(chatMediaSource.includes('CHAT_STANDARD_PRIVATE_MEDIA_ACCESS_CACHE_SAFETY_MS = 30_000'), true);
+  assert.match(chatMediaSource, /expiresAt - now <= CHAT_STANDARD_PRIVATE_MEDIA_ACCESS_CACHE_SAFETY_MS/);
 });
 
 test('standard voice access cache is bounded to 64 LRU entries', async () => {
@@ -253,7 +253,7 @@ test('standard voice access cache is bounded to 64 LRU entries', async () => {
   }
   await harness.api.getStandardChatVoiceAccess('voice-0');
   assert.equal(harness.calls, 66);
-  assert.match(chatMediaSource, /standardVoiceAccessCache\.delete\(cacheKey\);[\s\S]*standardVoiceAccessCache\.set\(cacheKey, cached\)/);
+  assert.match(chatMediaSource, /standardPrivateMediaAccessCache\.delete\(cacheKey\);[\s\S]*standardPrivateMediaAccessCache\.set\(cacheKey, cached\)/);
 });
 
 test('failed access requests are never cached', async () => {
@@ -334,9 +334,10 @@ test('the Inbox FAB still navigates to new-message', () => {
   assert.match(messagesSource, /accessibilityLabel="Nuevo mensaje"[\s\S]*router\.push\('\/new-message'\)[\s\S]*bottom: TAB_BAR_HEIGHT \+ 14/);
 });
 
-test('the Inbox header action remains unchanged', () => {
-  const header = messagesSource.slice(0, messagesSource.indexOf('// Search'));
-  assert.match(header, /accessibilityLabel="Nuevo mensaje"/);
+test('the Inbox header search action preserves the F1 FAB as the sole new-message action', () => {
+  const header = messagesSource.slice(messagesSource.indexOf('<View style={styles.header}>'), messagesSource.indexOf('{/* ── Search'));
+  assert.match(header, /accessibilityLabel="Buscar conversaciones"/);
+  assert.doesNotMatch(header, /accessibilityLabel="Nuevo mensaje"/);
   assert.match(header, /style=\{styles\.headerAction\}/);
 });
 

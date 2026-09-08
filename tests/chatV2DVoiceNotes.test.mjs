@@ -123,7 +123,7 @@ test('private voice helper rejects public or malformed upload results and invali
 
 test('signed voice playback reuses the CHAT media authorization endpoint', async () => {
   const h = loadService(); assert.equal(await h.api.getChatVoicePlaybackUrl('asset-1'), 'https://signed.example/audio');
-  assert.match(edge, /a\.purpose==='chat_image'\|\|a\.purpose==='voice_note'/);
+  assert.match(edge, /a\.purpose==='chat_image'\|\|a\.purpose==='chat_video'\|\|a\.purpose==='voice_note'/);
   assert.match(edge, /caller\.rpc\('chat_authorize_media_access'/);
 });
 

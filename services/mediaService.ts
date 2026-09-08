@@ -13,6 +13,7 @@ export type MediaPurpose =
   | "store_logo"
   | "store_banner"
   | "chat_image"
+  | "chat_video"
   | "chat_audio"
   | "voice_note"
   | "music_audio"

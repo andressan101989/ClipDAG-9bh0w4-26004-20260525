@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, FlatList, Pressable, TextInput, StyleSheet,
   ActivityIndicator, RefreshControl,
@@ -14,6 +14,7 @@ import { getSupabaseClient } from '@/template';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { timeAgo } from '@/services/mockData';
+import { MessageDeliveryIndicator } from '@/components/chat/MessageDeliveryIndicator';
 import { TAB_BAR_HEIGHT } from './_layout';
 
 // ── Main Messages Screen ──────────────────────────────────────────────────────
@@ -26,6 +27,7 @@ export default function MessagesScreen() {
   const supabase = getSupabaseClient();
 
   const [search, setSearch] = useState('');
+  const searchInputRef = useRef<TextInput>(null);
   const [activeTab, setActiveTab] = useState<'all' | 'direct' | 'group' | 'premium'>('all');
 
   // Premium DM payments for inbox (creator view)
@@ -90,11 +92,8 @@ export default function MessagesScreen() {
           <Pressable accessibilityLabel="Crear grupo" onPress={() => router.push('/chat/group/create' as any)} hitSlop={8} style={styles.headerAction}>
             <MaterialCommunityIcons name="account-multiple-plus-outline" size={17} color="#9298AD" />
           </Pressable>
-          <Pressable accessibilityLabel="Nuevo mensaje" onPress={() => router.push('/new-message')} hitSlop={8} style={styles.headerAction}>
-            <MaterialCommunityIcons name="pencil-outline" size={17} color="#F6F7FB" />
-          </Pressable>
-          <Pressable accessibilityLabel="Notificaciones y opciones" onPress={() => router.push('/notifications')} hitSlop={8} style={styles.headerAction}>
-            <MaterialCommunityIcons name="dots-vertical" size={18} color="#9298AD" />
+          <Pressable accessibilityLabel="Buscar conversaciones" onPress={() => searchInputRef.current?.focus()} hitSlop={8} style={styles.headerAction}>
+            <MaterialCommunityIcons name="magnify" size={18} color="#F6F7FB" />
           </Pressable>
         </View>
       </View>
@@ -103,6 +102,7 @@ export default function MessagesScreen() {
       <View style={styles.searchWrap}>
         <MaterialCommunityIcons name="magnify" size={18} color={Colors.textSubtle} />
         <TextInput
+          ref={searchInputRef}
           style={styles.searchInput}
           value={search}
           onChangeText={setSearch}
@@ -217,6 +217,9 @@ export default function MessagesScreen() {
                     </Text>
                   </View>
                   <View style={styles.convBottomRow}>
+                    {item.lastMessageSenderId === user?.id && item.lastMessageDeliveryStatus ? (
+                      <MessageDeliveryIndicator status={item.lastMessageDeliveryStatus} />
+                    ) : null}
                     <Text
                       style={[styles.convLastMsg, hasUnread && styles.convLastMsgBold]}
                       numberOfLines={1}
@@ -227,9 +230,7 @@ export default function MessagesScreen() {
                       <View style={styles.unreadBadge}>
                         <Text style={styles.unreadBadgeText}>{item.unreadCount > 9 ? '9+' : item.unreadCount}</Text>
                       </View>
-                    ) : (
-                      <MaterialCommunityIcons name="check-all" size={16} color="#5EDCFF" />
-                    )}
+                    ) : null}
                   </View>
                 </View>
               </Pressable>
@@ -310,7 +311,7 @@ const styles = StyleSheet.create({
   convNameBold: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
   premiumChip: { width: 22, height: 22, borderRadius: 6, backgroundColor: '#3A1B78', alignItems: 'center', justifyContent: 'center' },
   convTime: { color: '#9298AD', fontSize: 10 },
-  convBottomRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  convBottomRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 5 },
   convLastMsg: { color: '#9298AD', fontSize: 11, flex: 1 },
   convLastMsgBold: { color: Colors.textSecondary, fontWeight: FontWeight.medium },
   unreadBadge: { backgroundColor: '#7C3AED', borderRadius: Radius.full, minWidth: 24, height: 24, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },

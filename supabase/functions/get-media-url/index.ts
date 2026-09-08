@@ -70,7 +70,7 @@ Deno.serve(async(req)=>{
   const {asset_id}=await req.json().catch(()=>({}));
   const {data:a}=await admin().from('media_assets').select('*').eq('id',asset_id).eq('status','ready').maybeSingle();
   if(!a) return corsJson({error:'not_found'},404);
-  if(a.purpose==='chat_image'||a.purpose==='voice_note'){
+  if(a.purpose==='chat_image'||a.purpose==='chat_video'||a.purpose==='voice_note'){
     const caller=authenticatedClient(req);
     if(!caller)return corsJson({error:'unauthorized'},401);
     let signedUrl:string;

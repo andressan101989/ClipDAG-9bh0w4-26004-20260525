@@ -13,6 +13,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { MessageDeliveryIndicator } from '@/components/chat/MessageDeliveryIndicator';
 import { MessageReceiptSheet } from '@/components/chat/MessageReceiptSheet';
 import { PrivateChatImage } from '@/components/chat/PrivateChatImage';
+import { PrivateChatVideo } from '@/components/chat/PrivateChatVideo';
 import { VoiceMessageBubble } from '@/components/chat/VoiceMessageBubble';
 import { VoiceRecorderBar } from '@/components/chat/VoiceRecorderBar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
@@ -22,7 +23,7 @@ import { useMessages } from '@/hooks/useMessages';
 import { generateUUID } from '@/services/agoraService';
 import { sendCallNotification } from '@/services/callNotificationService';
 import { getActiveGroupCall, startGroupCall, type CallType, type GroupCallSession } from '@/services/callSessionService';
-import { uploadPrivateChatImage } from '@/services/chatMediaService';
+import { uploadPrivateChatImage, uploadPrivateChatVideo } from '@/services/chatMediaService';
 import { ChatVoiceDraftSender } from '@/services/chatVoiceService';
 import { clearActiveMessageConversation, setActiveMessageConversation } from '@/services/messageNotificationPresentation';
 import { timeAgo } from '@/services/mockData';
@@ -139,21 +140,31 @@ export default function GroupChatScreen() {
     }
   }, [conversationId, sendConversationMessage, sending, text]);
 
-  const pickImage = useCallback(async () => {
+  const pickMedia = useCallback(async () => {
     if (uploading) return;
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) return;
-      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7 });
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 0.7 });
       if (result.canceled) return;
       setUploading(true);
       const asset = result.assets[0];
-      const mediaAssetId = await uploadPrivateChatImage({
-        uri: asset.uri, mimeType: asset.mimeType || 'image/jpeg', fileName: asset.fileName || undefined, sizeBytes: asset.fileSize,
-      });
-      await sendConversationMessage(conversationId, 'Foto', { mediaType: 'image', mediaAssetId });
+      const isVideo = asset.type === 'video' || asset.mimeType?.startsWith('video/') === true
+        || /\.(mp4|mov)$/i.test(asset.fileName || asset.uri);
+      if (isVideo) {
+        const mimeType = asset.mimeType || (/\.mov$/i.test(asset.fileName || asset.uri) ? 'video/quicktime' : 'video/mp4');
+        const mediaAssetId = await uploadPrivateChatVideo({
+          uri: asset.uri, mimeType, fileName: asset.fileName || undefined, sizeBytes: asset.fileSize,
+        });
+        await sendConversationMessage(conversationId, 'Video', { mediaType: 'video', mediaAssetId });
+      } else {
+        const mediaAssetId = await uploadPrivateChatImage({
+          uri: asset.uri, mimeType: asset.mimeType || 'image/jpeg', fileName: asset.fileName || undefined, sizeBytes: asset.fileSize,
+        });
+        await sendConversationMessage(conversationId, 'Foto', { mediaType: 'image', mediaAssetId });
+      }
     } catch (error) {
-      Alert.alert('Imagen no enviada', error instanceof Error ? error.message : 'No se pudo enviar.');
+      Alert.alert('Archivo no enviado', error instanceof Error ? error.message : 'No se pudo enviar.');
     } finally {
       setUploading(false);
     }
@@ -174,6 +185,7 @@ export default function GroupChatScreen() {
           waveform={item.audioWaveform || Array(48).fill(0)} isMine={mine}
           activeMessageId={activeVoice} onActivate={setActiveVoice}
         /> : item.mediaType === 'image' ? <PrivateChatImage assetId={item.mediaAssetId} legacyUrl={item.mediaUrl} />
+          : item.mediaType === 'video' ? <PrivateChatVideo assetId={item.mediaAssetId} />
           : <Text style={styles.body}>{item.text}</Text>}
         <View style={styles.meta}>
           <Text style={styles.time}>{timeAgo(item.createdAt)}</Text>
@@ -232,7 +244,7 @@ export default function GroupChatScreen() {
     </View>}
 
     <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, Spacing.sm) }]}>
-      {!voiceRecording ? <Pressable accessibilityLabel="Enviar imagen" onPress={() => void pickImage()}
+      {!voiceRecording ? <Pressable accessibilityLabel="Enviar foto o video" onPress={() => void pickMedia()}
         disabled={uploading || sending} style={styles.composerAction}>
         {uploading ? <ActivityIndicator size="small" color={Colors.primary} />
           : <MaterialCommunityIcons name="image-outline" size={23} color={Colors.textSecondary} />}

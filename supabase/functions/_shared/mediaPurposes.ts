@@ -8,6 +8,7 @@ export type MediaPurpose =
   | "store_logo"
   | "store_banner"
   | "chat_image"
+  | "chat_video"
   | "chat_audio"
   | "voice_note"
   | "music_audio"
@@ -98,6 +99,12 @@ export const MEDIA_PURPOSES: Record<MediaPurpose, Rule> = {
     kind: "image",
     maxBytes: 25_000_000,
     mimeTypes: PUBLIC_IMAGES,
+    defaultVisibility: "private",
+  },
+  chat_video: {
+    kind: "video",
+    maxBytes: 100_000_000,
+    mimeTypes: ["video/mp4", "video/quicktime"],
     defaultVisibility: "private",
   },
   chat_audio: {

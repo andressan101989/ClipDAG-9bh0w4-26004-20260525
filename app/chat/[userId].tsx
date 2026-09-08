@@ -20,8 +20,9 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { timeAgo } from '@/services/mockData';
 import { detectMimeType } from '@/contexts/FeedContext';
-import { uploadPrivateChatImage } from '@/services/chatMediaService';
+import { uploadPrivateChatImage, uploadPrivateChatVideo } from '@/services/chatMediaService';
 import { PrivateChatImage } from '@/components/chat/PrivateChatImage';
+import { PrivateChatVideo } from '@/components/chat/PrivateChatVideo';
 import { ChatVoiceDraftSender, type ChatVoiceDraft } from '@/services/chatVoiceService';
 import { VoiceRecorderBar } from '@/components/chat/VoiceRecorderBar';
 import { VoiceMessageBubble } from '@/components/chat/VoiceMessageBubble';
@@ -453,10 +454,25 @@ export default function ChatScreen() {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { showAlert('Permiso denegado', 'Habilita el acceso a la galería'); return; }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7,
+      mediaTypes: mode === 'one-time' ? ['images'] : ['images', 'videos'], quality: 0.7,
     });
     if (result.canceled || !result.assets[0] || !user) return;
     const asset = result.assets[0];
+    const isVideo = asset.type === 'video' || asset.mimeType?.startsWith('video/') === true
+      || /\.(mp4|mov)$/i.test(asset.fileName || asset.uri);
+    if (isVideo) {
+      if (!partnerId) return;
+      setIsUploading(true);
+      try {
+        const mimeType = asset.mimeType || (/\.mov$/i.test(asset.fileName || asset.uri) ? 'video/quicktime' : 'video/mp4');
+        const mediaAssetId = await uploadPrivateChatVideo({ uri: asset.uri, mimeType,
+          fileName: asset.fileName || undefined, sizeBytes: asset.fileSize });
+        await sendMediaMessage(partnerId, { text: 'Video', mediaType: 'video', mediaAssetId });
+      } catch {
+        showAlert('Mensaje no enviado', 'No se pudo enviar el video. Puedes intentarlo nuevamente.');
+      } finally { setIsUploading(false); }
+      return;
+    }
     const sendSelectedImage = async (oneTime: boolean) => {
       if (!partnerId) return;
       setIsUploading(true);
@@ -494,13 +510,15 @@ export default function ChatScreen() {
     const isMine   = item.senderId === user?.id;
     const isImage  = item.mediaType === 'image' && Boolean(item.mediaUrl || item.mediaAssetId)
       && item.deliveryStatus !== 'pending' && item.deliveryStatus !== 'failed';
+    const isVideo = item.mediaType === 'video' && Boolean(item.mediaAssetId)
+      && item.deliveryStatus !== 'pending' && item.deliveryStatus !== 'failed';
     const isOneTime = item.mediaType === 'one_time_image';
     const isVoice = item.mediaType === 'voice' && Boolean(item.mediaAssetId && item.audioDurationMs && item.audioWaveform?.length === 48)
       && item.deliveryStatus !== 'pending' && item.deliveryStatus !== 'failed';
     const oneTimeConsumed = Boolean(item.mediaConsumedAt) || item.mediaAvailable === false;
     const canOpenOneTime = isOneTime && !isMine && !oneTimeConsumed;
     const isPremium = item.mediaType === 'premium_dm';
-    const isCardMedia = isImage || isOneTime;
+    const isCardMedia = isImage || isVideo || isOneTime;
     const handleRetry = () => item.clientMessageId && partnerId
       ? void retryMessage(partnerId, item.clientMessageId)
         .catch(() => showAlert('Mensaje no enviado', 'No se pudo reintentar.'))
@@ -526,6 +544,7 @@ export default function ChatScreen() {
               {isImage ? (
                 <PrivateChatImage assetId={item.mediaAssetId} legacyUrl={item.mediaUrl} />
               ) : null}
+              {isVideo ? <PrivateChatVideo assetId={item.mediaAssetId} /> : null}
               {isOneTime ? <View style={[styles.oneTimeStatus, styles.oneTimeCard]}>
                 <MaterialCommunityIcons name="eye-off-outline" size={30} color="#F6F7FB" />
                 <View style={styles.oneTimeBadge}><Text style={styles.oneTimeBadgeText}>1</Text></View>
@@ -535,7 +554,7 @@ export default function ChatScreen() {
                 durationMs={item.audioDurationMs!} waveform={item.audioWaveform!} isMine
                 activeMessageId={activeVoiceMessageId} onActivate={setActiveVoiceMessageId} /> : null}
               {item.mediaType === 'voice' && !isVoice ? <Text style={styles.msgTextMine}>Nota de voz</Text> : null}
-              {item.text && item.text !== '📷 Imagen' && !isOneTime && !isVoice ? (
+              {item.text && item.text !== '📷 Imagen' && item.text !== 'Video' && !isOneTime && !isVoice ? (
                 <Text style={styles.msgTextMine}>{item.text}</Text>
               ) : null}
               {item.deliveryStatus === 'failed' ? (
@@ -557,6 +576,7 @@ export default function ChatScreen() {
               {isImage ? (
                 <PrivateChatImage assetId={item.mediaAssetId} legacyUrl={item.mediaUrl} />
               ) : null}
+              {isVideo ? <PrivateChatVideo assetId={item.mediaAssetId} /> : null}
               {isOneTime ? <Pressable disabled={!canOpenOneTime} accessibilityRole="button"
                 accessibilityLabel={oneTimeConsumed ? 'Foto abierta' : 'Ver foto una vez'}
                 onPress={() => partnerId && openOneTimeMedia(partnerId, item.id).then(setOneTimeMediaUrl)
@@ -570,7 +590,7 @@ export default function ChatScreen() {
                 durationMs={item.audioDurationMs!} waveform={item.audioWaveform!} isMine={false}
                 activeMessageId={activeVoiceMessageId} onActivate={setActiveVoiceMessageId} /> : null}
               {item.mediaType === 'voice' && !isVoice ? <Text style={styles.msgText}>Nota de voz</Text> : null}
-              {item.text && item.text !== '📷 Imagen' && !isOneTime && !isVoice ? (
+              {item.text && item.text !== '📷 Imagen' && item.text !== 'Video' && !isOneTime && !isVoice ? (
                 <Text style={styles.msgText}>{item.text}</Text>
               ) : null}
               <Text style={[styles.msgTime, isCardMedia && styles.mediaTime]}>{timeAgo(item.createdAt)}</Text>
@@ -761,7 +781,7 @@ export default function ChatScreen() {
             >
               <MaterialCommunityIcons name="plus" size={21} color="#F6F7FB" />
             </Pressable>
-            <Pressable accessibilityLabel="Enviar foto" onPress={() => void handlePickImage('normal')}
+            <Pressable accessibilityLabel="Enviar foto o video" onPress={() => void handlePickImage('normal')}
               hitSlop={6} style={styles.inputAction} disabled={isUploading}>
               {isUploading
                 ? <ActivityIndicator size="small" color="#9B5CFF" />
