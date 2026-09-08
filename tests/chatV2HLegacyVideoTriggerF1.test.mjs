@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const migration = readFileSync(
-  'supabase/migrations/20260908060700_chat_v2_h_f1_legacy_video_trigger_alignment.sql',
+  'supabase/migrations/20260908061603_chat_v2_h_f1_legacy_video_trigger_alignment.sql',
   'utf8',
 ).replace(/\r\n/g, '\n');
 
