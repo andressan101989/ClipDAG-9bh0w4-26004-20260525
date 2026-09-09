@@ -13,6 +13,7 @@ interface StoriesContextType {
     cursor?: StoryViewerCursor,
     limit?: number,
   ) => Promise<StoryViewersPage>;
+  deleteStory: (storyId: string) => Promise<StoryDeleteResult>;
   refreshStories: () => Promise<void>;
   viewedStoryIds: Set<string>;
 }
@@ -35,6 +36,14 @@ export interface StoryViewersPage {
   viewers: StoryViewerRecord[];
   totalCount: number;
   nextCursor: StoryViewerCursor | null;
+}
+
+export type StoryMediaCleanupStatus = 'scheduled' | 'deleted' | 'asset_in_use' | 'none';
+
+export interface StoryDeleteResult {
+  deletedStoryId: string;
+  mediaAssetId: string | null;
+  mediaCleanupStatus: StoryMediaCleanupStatus;
 }
 
 type StoryProfile = {
@@ -75,6 +84,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
   const [viewedStoryIds, setViewedStoryIds] = useState<Set<string>>(new Set());
   const viewedStoryIdsRef = useRef<Set<string>>(new Set());
   const viewFlightsRef = useRef<Map<string, Promise<void>>>(new Map());
+  const deleteFlightsRef = useRef<Map<string, Promise<StoryDeleteResult>>>(new Map());
   const storySessionRef = useRef<string | undefined>(user?.id);
   storySessionRef.current = user?.id;
 
@@ -186,6 +196,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       setStoryGroups([]);
       viewedStoryIdsRef.current = new Set();
       viewFlightsRef.current.clear();
+      deleteFlightsRef.current.clear();
       setViewedStoryIds(new Set());
     }
   }, [user?.id]);
@@ -301,6 +312,53 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     };
   }, [user]);
 
+  const deleteStory = useCallback(async (storyId: string): Promise<StoryDeleteResult> => {
+    if (!user) throw new Error('STORY_DELETE_NOT_AUTHENTICATED');
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) throw new Error('STORY_DELETE_CLIENT_UNAVAILABLE');
+
+    const existingFlight = deleteFlightsRef.current.get(storyId);
+    if (existingFlight) return existingFlight;
+
+    const actorId = user.id;
+    const flight = (async () => {
+      const { data, error } = await supabase.rpc('delete_story', {
+        p_story_id: storyId,
+      });
+      if (error) {
+        console.warn('[StoriesContext] Story deletion failed', {
+          code: error.code ?? 'unknown',
+        });
+        throw new Error('STORY_DELETE_FAILED');
+      }
+
+      const row = Array.isArray(data) ? data[0] : data;
+      const cleanupStatus = row?.media_cleanup_status;
+      if (
+        row?.deleted_story_id !== storyId
+        || (row?.media_asset_id !== null && typeof row?.media_asset_id !== 'string')
+        || !['scheduled', 'deleted', 'asset_in_use', 'none'].includes(cleanupStatus)
+      ) {
+        throw new Error('STORY_DELETE_INVALID_RESPONSE');
+      }
+      if (storySessionRef.current !== actorId) throw new Error('STORY_DELETE_SESSION_CHANGED');
+
+      await loadStories();
+      return {
+        deletedStoryId: row.deleted_story_id,
+        mediaAssetId: row.media_asset_id,
+        mediaCleanupStatus: cleanupStatus as StoryMediaCleanupStatus,
+      };
+    })().finally(() => {
+      if (deleteFlightsRef.current.get(storyId) === flight) {
+        deleteFlightsRef.current.delete(storyId);
+      }
+    });
+
+    deleteFlightsRef.current.set(storyId, flight);
+    return flight;
+  }, [user, loadStories]);
+
   return (
     <StoriesContext.Provider value={{
       storyGroups,
@@ -308,6 +366,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       addStory,
       markStoryViewed,
       getStoryViewers,
+      deleteStory,
       refreshStories: loadStories,
       viewedStoryIds,
     }}>

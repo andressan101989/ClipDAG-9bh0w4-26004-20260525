@@ -24,6 +24,7 @@ import { useStoryMediaUrl } from './useStoryMediaUrl';
 import { StoryViewersSheet } from './StoryViewersSheet';
 import type {
   StoryViewerCursor,
+  StoryDeleteResult,
   StoryViewerRecord,
   StoryViewersPage,
 } from '@/contexts/StoriesContext';
@@ -42,6 +43,7 @@ interface StoryViewerProps {
     cursor?: StoryViewerCursor,
     limit?: number,
   ) => Promise<StoryViewersPage>;
+  onDeleteStory?: (storyId: string) => Promise<StoryDeleteResult>;
 }
 
 function ReadyStoryVideo({ url, isActive, onError }: { url: string; isActive: boolean; onError: () => void }) {
@@ -117,6 +119,7 @@ export function StoryViewer({
   onClose,
   onMarkViewed,
   onGetViewers,
+  onDeleteStory,
 }: StoryViewerProps) {
   const insets = useSafeAreaInsets();
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -128,6 +131,9 @@ export function StoryViewer({
   const [viewersLoadingMore, setViewersLoadingMore] = useState(false);
   const [viewersError, setViewersError] = useState(false);
   const [viewerCursor, setViewerCursor] = useState<StoryViewerCursor | null>(null);
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
+  const [deletePending, setDeletePending] = useState(false);
+  const [deleteError, setDeleteError] = useState(false);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const progressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const translateY = useRef(new Animated.Value(0)).current;
@@ -147,6 +153,9 @@ export function StoryViewer({
     if (append) setViewersLoadingMore(true);
     else setViewersLoading(true);
     setViewersError(false);
+    setDeleteConfirmVisible(false);
+    setDeletePending(false);
+    setDeleteError(false);
     try {
       const page = await onGetViewers(storyId, cursor, 50);
       if (viewerRequestGeneration.current !== generation) return;
@@ -228,6 +237,35 @@ export function StoryViewer({
     }
   }, [currentIndex]);
 
+  const requestDelete = useCallback(() => {
+    if (!isOwnStory || !onDeleteStory || deletePending) return;
+    stopProgress();
+    setDeleteError(false);
+    setDeleteConfirmVisible(true);
+  }, [isOwnStory, onDeleteStory, deletePending, stopProgress]);
+
+  const cancelDelete = useCallback(() => {
+    if (deletePending) return;
+    setDeleteConfirmVisible(false);
+    setDeleteError(false);
+    startProgress();
+  }, [deletePending, startProgress]);
+
+  const confirmDelete = useCallback(async () => {
+    if (!currentStory || !isOwnStory || !onDeleteStory || deletePending) return;
+    setDeletePending(true);
+    setDeleteError(false);
+    try {
+      await onDeleteStory(currentStory.id);
+      setDeleteConfirmVisible(false);
+      onClose();
+    } catch {
+      setDeleteError(true);
+    } finally {
+      setDeletePending(false);
+    }
+  }, [currentStory, isOwnStory, onDeleteStory, deletePending, onClose]);
+
   // Swipe down to close
   const panResponder = useRef(
     PanResponder.create({
@@ -303,6 +341,18 @@ export function StoryViewer({
               {timeAgo(currentStory.createdAt)}
             </Text>
           </View>
+          {isOwnStory && onDeleteStory ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Eliminar historia"
+              disabled={deletePending}
+              onPress={requestDelete}
+              hitSlop={10}
+              style={styles.iconBtn}
+            >
+              <MaterialIcons name="delete-outline" size={22} color="rgba(255,255,255,0.9)" />
+            </Pressable>
+          ) : null}
           <Pressable onPress={() => setIsMuted(m => !m)} hitSlop={10} style={styles.iconBtn}>
             <MaterialIcons
               name={isMuted ? 'volume-off' : 'volume-up'}
@@ -316,7 +366,7 @@ export function StoryViewer({
         </View>
 
         {/* Tap zones: left = prev, right = next */}
-        <View style={styles.tapZones} pointerEvents="box-none">
+        <View style={styles.tapZones} pointerEvents={deleteConfirmVisible ? 'none' : 'box-none'}>
           <Pressable style={styles.tapLeft} onPress={goPrev} />
           <Pressable style={styles.tapRight} onPress={goNext} />
         </View>
@@ -366,6 +416,37 @@ export function StoryViewer({
             if (currentStory && viewerCursor) void loadViewers(currentStory.id, viewerCursor, true);
           }}
         />
+
+        {deleteConfirmVisible && isOwnStory ? (
+          <View style={styles.deleteOverlay}>
+            <View accessibilityRole="alert" style={styles.deleteCard}>
+              <Text style={styles.deleteTitle}>¿Eliminar esta historia?</Text>
+              <Text style={styles.deleteMessage}>Se eliminará para todos.</Text>
+              {deleteError ? (
+                <Text style={styles.deleteError}>No se pudo eliminar. Inténtalo de nuevo.</Text>
+              ) : null}
+              <View style={styles.deleteActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={deletePending}
+                  onPress={cancelDelete}
+                  style={styles.deleteCancelButton}
+                >
+                  <Text style={styles.deleteCancelText}>Cancelar</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={deletePending}
+                  onPress={() => void confirmDelete()}
+                  style={[styles.deleteConfirmButton, deletePending && styles.deleteButtonDisabled]}
+                >
+                  {deletePending ? <ActivityIndicator size="small" color="#fff" /> : null}
+                  <Text style={styles.deleteConfirmText}>{deletePending ? 'Eliminando…' : 'Eliminar'}</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        ) : null}
       </Animated.View>
     </Modal>
   );
@@ -528,4 +609,38 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.4)',
     fontSize: FontSize.xs,
   },
+  deleteOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xl,
+    backgroundColor: 'rgba(0,0,0,0.66)',
+  },
+  deleteCard: {
+    width: '100%',
+    maxWidth: 340,
+    borderRadius: Radius.lg,
+    backgroundColor: '#1B1B20',
+    padding: Spacing.lg,
+  },
+  deleteTitle: { color: '#fff', fontSize: FontSize.lg, fontWeight: FontWeight.bold },
+  deleteMessage: { color: 'rgba(255,255,255,0.72)', fontSize: FontSize.sm, marginTop: Spacing.sm },
+  deleteError: { color: '#FF6B7A', fontSize: FontSize.xs, marginTop: Spacing.sm },
+  deleteActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: Spacing.sm, marginTop: Spacing.lg },
+  deleteCancelButton: { paddingHorizontal: Spacing.md, height: 40, justifyContent: 'center' },
+  deleteCancelText: { color: 'rgba(255,255,255,0.84)', fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  deleteConfirmButton: {
+    minWidth: 102,
+    height: 40,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.full,
+    backgroundColor: '#E5484D',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+  },
+  deleteButtonDisabled: { opacity: 0.65 },
+  deleteConfirmText: { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.bold },
 });
