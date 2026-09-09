@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
-const migration = read('supabase/migrations/20260909135106_stories_v2_e_delete_own_lifecycle_closure.sql');
+const migration = read('supabase/migrations/20260909144214_stories_v2_e_delete_own_lifecycle_closure.sql');
 const migrationCode = migration.replace(/--.*$/gm, '');
 const baseSchema = read('supabase/migrations/20260726100000_create_stories_schema.sql');
 const lifecycle = read('supabase/migrations/20260726105000_media_public_urls_and_safe_links.sql');
