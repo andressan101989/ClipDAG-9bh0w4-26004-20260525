@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
-const migration = read('supabase/migrations/20260909020320_stories_v2_d_viewer_integrity.sql');
+const migration = read('supabase/migrations/20260909045509_stories_v2_d_viewer_integrity.sql');
 const baseSchema = read('supabase/migrations/20260726100000_create_stories_schema.sql');
 const context = read('contexts/StoriesContext.tsx');
 const nativeViewer = read('components/feature/StoryViewer.native.tsx');
