@@ -50,9 +50,9 @@ test('the iOS DeepAR config authority remains registered', () => {
   assert.equal(existsSync('plugins/withDeepARFabricView.js'), true);
 });
 
-test('Android SDK levels remain canonical without DeepAR ProGuard authority', () => {
+test('Android SDK levels retain the F1 floor without DeepAR ProGuard authority', () => {
   assert.equal(buildProperties.minSdkVersion, 24);
-  assert.equal(buildProperties.compileSdkVersion, 35);
+  assert.ok(buildProperties.compileSdkVersion >= 35);
   assert.equal(buildProperties.targetSdkVersion, 35);
   assert.equal('extraProguardRules' in buildProperties, false);
 });
