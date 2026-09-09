@@ -142,14 +142,14 @@ export default function FeedScreen() {
     try {
       const uploaded = await uploadMediaFromUri({
         uri: asset.uri,
-        purpose: isVideo ? 'story_video' : 'post_image',
+        purpose: isVideo ? 'story_video' : 'story_image',
         mimeType,
         fileName: asset.fileName || undefined,
         sizeBytes: asset.fileSize,
         durationMs: isVideo && typeof asset.duration === 'number' ? asset.duration : undefined,
-        visibility: 'public',
+        visibility: 'private',
       });
-      if (!uploaded.url?.startsWith('https://')) throw new Error('R2 did not return a public URL');
+      if (uploaded.url) throw new Error('Private Story upload returned a persistent URL');
       uploadedAssetId = uploaded.assetId;
       failureStage = 'STORY_CREATE_RPC';
       const persistedStoryId = await addStory(uploaded.assetId);

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet, Dimensions,
-  Animated, PanResponder,
+  ActivityIndicator, Animated, PanResponder,
 } from 'react-native';
 import { Image } from 'expo-image';
 // expo-video — lazy-loaded to prevent Hermes crash from dynamic import() syntax
@@ -20,6 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 import type { StoryGroup, StoryItem } from './StoriesBar';
+import { useStoryMediaUrl } from './useStoryMediaUrl';
 
 const { width: W, height: H } = Dimensions.get('window');
 const STORY_DURATION = 15000; // 15 seconds
@@ -31,15 +32,13 @@ interface StoryViewerProps {
   onMarkViewed?: (storyId: string) => void;
 }
 
-function StoryMedia({ story, isActive }: { story: StoryItem; isActive: boolean }) {
-  const isVideo = story.mediaType === 'video';
-  const player = _useVideoPlayer(isVideo ? story.mediaUrl : '', p => {
+function ReadyStoryVideo({ url, isActive, onError }: { url: string; isActive: boolean; onError: () => void }) {
+  const player = _useVideoPlayer(url, (p: any) => {
     p.loop = false;
     p.muted = false;
   });
 
   useEffect(() => {
-    if (!isVideo) return;
     try {
       if (isActive) {
         player.play();
@@ -48,24 +47,53 @@ function StoryMedia({ story, isActive }: { story: StoryItem; isActive: boolean }
         player.currentTime = 0;
       }
     } catch (_) {}
-  }, [isActive, isVideo]);
+  }, [isActive, player]);
 
-  if (isVideo) {
+  useEffect(() => {
+    const subscription = player?.addListener?.('statusChange', ({ status }: { status?: string }) => {
+      if (status === 'error') onError();
+    });
+    return () => subscription?.remove?.();
+  }, [onError, player]);
+
+  return (
+    <VideoView
+      player={player}
+      style={styles.media}
+      contentFit="contain"
+      nativeControls={false}
+    />
+  );
+}
+
+function StoryMedia({ story, isActive }: { story: StoryItem; isActive: boolean }) {
+  const { url, isLoading, hasError, retry, fail } = useStoryMediaUrl(story, isActive);
+
+  if (isLoading) {
+    return <View style={[styles.media, styles.mediaState]}><ActivityIndicator color="#fff" /></View>;
+  }
+
+  if (hasError || !url) {
     return (
-      <VideoView
-        player={player}
-        style={styles.media}
-        contentFit="contain"
-        nativeControls={false}
-      />
+      <View style={[styles.media, styles.mediaState]}>
+        <Text style={styles.mediaStateText}>Historia no disponible.</Text>
+        <Pressable accessibilityRole="button" onPress={retry} style={styles.retryButton}>
+          <Text style={styles.retryText}>Reintentar</Text>
+        </Pressable>
+      </View>
     );
+  }
+
+  if (story.mediaType === 'video') {
+    return <ReadyStoryVideo key={url} url={url} isActive={isActive} onError={fail} />;
   }
   return (
     <Image
-      source={{ uri: story.mediaUrl }}
+      source={{ uri: url }}
       style={styles.media}
       contentFit="contain"
       transition={150}
+      onError={fail}
     />
   );
 }
@@ -260,6 +288,27 @@ const styles = StyleSheet.create({
     top: 0, left: 0, right: 0, bottom: 0,
     width: W,
     height: H,
+  },
+  mediaState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    zIndex: 6,
+  },
+  mediaStateText: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: FontSize.sm,
+  },
+  retryButton: {
+    borderRadius: Radius.full,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+  },
+  retryText: {
+    color: '#fff',
+    fontSize: FontSize.xs,
+    fontWeight: FontWeight.semibold,
   },
   topGrad: {
     position: 'absolute',

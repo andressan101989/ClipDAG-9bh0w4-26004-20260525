@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet, Dimensions,
-  Animated, PanResponder,
+  ActivityIndicator, Animated, PanResponder,
 } from 'react-native';
 import { Image } from '@/components/ui/SafeImage';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 import type { StoryGroup, StoryItem } from './StoriesBar';
+import { useStoryMediaUrl } from './useStoryMediaUrl';
 
 const { width: W, height: H } = Dimensions.get('window');
 const STORY_DURATION = 15000;
@@ -25,8 +26,35 @@ interface StoryViewerProps {
   onMarkViewed?: (storyId: string) => void;
 }
 
-// Web: render image only (videos show as image placeholder)
-function StoryMedia({ story }: { story: StoryItem; isActive: boolean }) {
+function StoryPhotoMedia({ story, isActive }: { story: StoryItem; isActive: boolean }) {
+  const { url, isLoading, hasError, retry, fail } = useStoryMediaUrl(story, isActive);
+  if (isLoading) {
+    return <View style={[styles.media, styles.mediaState]}><ActivityIndicator color="#fff" /></View>;
+  }
+  if (hasError || !url) {
+    return (
+      <View style={[styles.media, styles.mediaState]}>
+        <Text style={styles.mediaStateText}>Historia no disponible.</Text>
+        <Pressable accessibilityRole="button" onPress={retry} style={styles.retryButton}>
+          <Text style={styles.retryText}>Reintentar</Text>
+        </Pressable>
+      </View>
+    );
+  }
+  return (
+    <Image
+      source={{ uri: url }}
+      style={styles.media}
+      contentFit="contain"
+      transition={150}
+      onError={fail}
+    />
+  );
+}
+
+// Web: render image only (videos show as image placeholder).
+// Do not request a signed URL until web video playback is implemented.
+function StoryMedia({ story, isActive }: { story: StoryItem; isActive: boolean }) {
   if (story.mediaType === 'video') {
     return (
       <View style={[styles.media, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
@@ -35,14 +63,7 @@ function StoryMedia({ story }: { story: StoryItem; isActive: boolean }) {
       </View>
     );
   }
-  return (
-    <Image
-      source={{ uri: story.mediaUrl }}
-      style={styles.media}
-      contentFit="contain"
-      transition={150}
-    />
-  );
+  return <StoryPhotoMedia story={story} isActive={isActive} />;
 }
 
 export function StoryViewer({ visible, storyGroup, onClose, onMarkViewed }: StoryViewerProps) {
@@ -171,6 +192,15 @@ function timeAgo(dateStr: string): string {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   media: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: W, height: H },
+  mediaState: { alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, zIndex: 6 },
+  mediaStateText: { color: 'rgba(255,255,255,0.8)', fontSize: FontSize.sm },
+  retryButton: {
+    borderRadius: Radius.full,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+  },
+  retryText: { color: '#fff', fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
   topGrad: { position: 'absolute', top: 0, left: 0, right: 0, height: 160 },
   botGrad: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 100 },
   progressRow: {

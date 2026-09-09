@@ -63,6 +63,25 @@ async function returnParticipantMayReadLabel(assetId:string,userId:string){
   return !shipmentError&&Boolean(shipment);
 }
 
+async function visibleStoryForAsset(req:Request,assetId:string){
+  const {data:links,error:linksError}=await admin().from('media_asset_links')
+    .select('entity_id')
+    .eq('asset_id',assetId)
+    .eq('entity_type','story')
+    .eq('slot','media')
+    .eq('position',0)
+    .limit(2);
+  if(linksError||links?.length!==1)return null;
+  const caller=authenticatedClient(req);
+  if(!caller)return null;
+  const {data:story,error:storyError}=await caller.from('stories')
+    .select('id,expires_at')
+    .eq('id',links[0].entity_id)
+    .gt('expires_at',new Date().toISOString())
+    .maybeSingle();
+  return storyError||!story?null:story;
+}
+
 Deno.serve(async(req)=>{
   if(req.method==='OPTIONS')return new Response(null,{status:204,headers:corsHeaders});
   if(req.method!=='POST') return corsJson({error:'method_not_allowed'},405);
@@ -70,6 +89,22 @@ Deno.serve(async(req)=>{
   const {asset_id}=await req.json().catch(()=>({}));
   const {data:a}=await admin().from('media_assets').select('*').eq('id',asset_id).eq('status','ready').maybeSingle();
   if(!a) return corsJson({error:'not_found'},404);
+  const storyKindMatches=(a.purpose==='story_image'&&a.media_kind==='image')
+    ||(a.purpose==='story_video'&&a.media_kind==='video');
+  if(a.purpose==='story_image'||a.purpose==='story_video'){
+    if(a.visibility!=='private'||!storyKindMatches)return corsJson({error:'forbidden'},403);
+    const story=await visibleStoryForAsset(req,a.id);
+    if(!story)return corsJson({error:'forbidden'},403);
+    const remainingSeconds=Math.floor((Date.parse(story.expires_at)-Date.now())/1000);
+    if(!Number.isSafeInteger(remainingSeconds)||remainingSeconds<=0)return corsJson({error:'forbidden'},403);
+    const signedTtlSeconds=Math.min(300,remainingSeconds);
+    let signedUrl:string;
+    try{signedUrl=await signGet(a.bucket_name,a.object_key,signedTtlSeconds);}
+    catch{return corsJson({error:'signed_access_unavailable'},503);}
+    return corsJson({success:true,data:{
+      assetId:a.id,url:signedUrl,expiresAt:new Date(Date.now()+signedTtlSeconds*1000).toISOString(),
+    }});
+  }
   if(a.purpose==='chat_image'||a.purpose==='chat_video'||a.purpose==='voice_note'){
     const caller=authenticatedClient(req);
     if(!caller)return corsJson({error:'unauthorized'},401);

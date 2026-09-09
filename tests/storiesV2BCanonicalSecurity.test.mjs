@@ -78,8 +78,8 @@ test('raw Story creation and excessive client table grants are removed', () => {
 test('photo and video callers share the canonical R2 media pipeline', () => {
   assert.match(context, /rpc\('create_story_with_media'/);
   assert.match(feed, /uploadMediaFromUri\(/);
-  assert.match(feed, /purpose: isVideo \? 'story_video' : 'post_image'/);
-  assert.match(feed, /visibility: 'public'/);
+  assert.match(feed, /purpose: isVideo \? 'story_video' : 'story_image'/);
+  assert.match(feed, /visibility: 'private'/);
   assert.match(feed, /addStory\(uploaded\.assetId\)/);
   assert.match(feed, /deleteMediaAsset\(uploadedAssetId\)/);
   assert.doesNotMatch(feed, /uploadFileFromUri/);
@@ -87,9 +87,12 @@ test('photo and video callers share the canonical R2 media pipeline', () => {
   assert.doesNotMatch(context, /Date\.now\(\) \+ 24 \* 60 \* 60|expires_at:\s*expires/i);
 });
 
-test('story_video is registered once in the canonical media contract', () => {
+test('Story purposes remain registered once in the canonical media contract', () => {
+  assert.match(mediaClient, /\| "story_image"/);
   assert.match(mediaClient, /\| "story_video"/);
-  assert.match(mediaRegistry, /story_video:\s*\{\s*kind: "video",\s*maxBytes: 100_000_000,\s*mimeTypes: \["video\/mp4", "video\/quicktime"\],\s*defaultVisibility: "public"/);
+  assert.match(mediaRegistry, /story_image:\s*\{\s*kind: "image",\s*maxBytes: 25_000_000,[\s\S]*?defaultVisibility: "private"/);
+  assert.match(mediaRegistry, /story_video:\s*\{\s*kind: "video",\s*maxBytes: 100_000_000,\s*mimeTypes: \["video\/mp4", "video\/quicktime"\],\s*defaultVisibility: "private"/);
+  assert.equal((mediaRegistry.match(/story_image:\s*\{/g) ?? []).length, 1);
   assert.equal((mediaRegistry.match(/story_video:\s*\{/g) ?? []).length, 1);
 });
 

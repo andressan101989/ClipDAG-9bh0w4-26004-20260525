@@ -80,6 +80,26 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      const storyIds = storiesData.map(row => row.id);
+      const { data: storyLinks, error: storyLinksError } = await supabase
+        .from('media_asset_links')
+        .select('entity_id, asset_id')
+        .eq('entity_type', 'story')
+        .eq('slot', 'media')
+        .eq('position', 0)
+        .in('entity_id', storyIds);
+      if (storyLinksError) {
+        console.warn('[StoriesContext] story media link discovery failed', {
+          code: storyLinksError.code,
+        });
+      }
+      const storyAssetIds = new Map<string, string>();
+      for (const link of storyLinks || []) {
+        if (typeof link.entity_id === 'string' && typeof link.asset_id === 'string') {
+          storyAssetIds.set(link.entity_id, link.asset_id);
+        }
+      }
+
       // Load viewed story IDs
       const { data: viewedData } = await supabase
         .from('story_views')
@@ -99,7 +119,8 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
         const story: StoryItem = {
           id: row.id,
           userId: row.user_id,
-          mediaUrl: row.media_url,
+          mediaAssetId: storyAssetIds.get(row.id),
+          mediaUrl: typeof row.media_url === 'string' ? row.media_url : null,
           mediaType: row.media_type as 'photo' | 'video',
           createdAt: row.created_at,
           expiresAt: row.expires_at,

@@ -22,7 +22,8 @@ export interface StoryGroup {
 export interface StoryItem {
   id: string;
   userId: string;
-  mediaUrl: string;
+  mediaAssetId?: string;
+  mediaUrl?: string | null;
   mediaType: 'photo' | 'video';
   createdAt: string;
   expiresAt: string;

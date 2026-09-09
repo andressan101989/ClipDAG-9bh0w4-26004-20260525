@@ -6,6 +6,7 @@ import { getSupabaseClient } from "@/template";
 export type MediaPurpose =
   | "avatar"
   | "post_image"
+  | "story_image"
   | "story_video"
   | "carousel_image"
   | "thumbnail"
@@ -110,6 +111,7 @@ const DIRECT_IMAGE_MIMES = new Set([
 const IMAGE_PURPOSES = new Set<MediaPurpose>([
   "avatar",
   "post_image",
+  "story_image",
   "carousel_image",
   "thumbnail",
   "product_image",
