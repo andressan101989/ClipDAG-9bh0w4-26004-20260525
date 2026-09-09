@@ -4,7 +4,7 @@ import test from 'node:test';
 import ts from 'typescript';
 
 const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
-const migration = read('supabase/migrations/20260908233853_stories_v2_c_private_media_lifecycle.sql');
+const migration = read('supabase/migrations/20260909003332_stories_v2_c_private_media_lifecycle.sql');
 const registry = read('supabase/functions/_shared/mediaPurposes.ts');
 const mediaClient = read('services/mediaService.ts');
 const getMediaUrl = read('supabase/functions/get-media-url/index.ts');
