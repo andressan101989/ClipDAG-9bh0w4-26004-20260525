@@ -2,7 +2,7 @@
  * StoryViewer.tsx — Web stub (no expo-video, not available on web bundler)
  * The real implementation is in StoryViewer.native.tsx for iOS/Android.
  */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet, Dimensions,
   ActivityIndicator, Animated, PanResponder,
@@ -24,7 +24,8 @@ import type {
 } from '@/contexts/StoriesContext';
 
 const { width: W, height: H } = Dimensions.get('window');
-const STORY_DURATION = 15000;
+const PHOTO_DURATION_MS = 15000;
+const HOLD_DELAY_MS = 220;
 
 interface StoryViewerProps {
   visible: boolean;
@@ -40,8 +41,27 @@ interface StoryViewerProps {
   onDeleteStory?: (storyId: string) => Promise<StoryDeleteResult>;
 }
 
-function StoryPhotoMedia({ story, isActive }: { story: StoryItem; isActive: boolean }) {
+function StoryPhotoMedia({
+  story,
+  isActive,
+  onReadyChange,
+  onReset,
+}: {
+  story: StoryItem;
+  isActive: boolean;
+  onReadyChange: (storyId: string, ready: boolean) => void;
+  onReset: () => void;
+}) {
   const { url, isLoading, hasError, retry, fail } = useStoryMediaUrl(story, isActive);
+  const failMedia = useCallback(() => {
+    onReadyChange(story.id, false);
+    fail();
+  }, [fail, onReadyChange, story.id]);
+  const retryMedia = useCallback(() => {
+    onReset();
+    onReadyChange(story.id, false);
+    retry();
+  }, [onReadyChange, onReset, retry, story.id]);
   if (isLoading) {
     return <View style={[styles.media, styles.mediaState]}><ActivityIndicator color="#fff" /></View>;
   }
@@ -49,7 +69,7 @@ function StoryPhotoMedia({ story, isActive }: { story: StoryItem; isActive: bool
     return (
       <View style={[styles.media, styles.mediaState]}>
         <Text style={styles.mediaStateText}>Historia no disponible.</Text>
-        <Pressable accessibilityRole="button" onPress={retry} style={styles.retryButton}>
+        <Pressable accessibilityRole="button" onPress={retryMedia} style={styles.retryButton}>
           <Text style={styles.retryText}>Reintentar</Text>
         </Pressable>
       </View>
@@ -61,14 +81,25 @@ function StoryPhotoMedia({ story, isActive }: { story: StoryItem; isActive: bool
       style={styles.media}
       contentFit="contain"
       transition={150}
-      onError={fail}
+      onLoad={() => onReadyChange(story.id, true)}
+      onError={failMedia}
     />
   );
 }
 
 // Web: render image only (videos show as image placeholder).
 // Do not request a signed URL until web video playback is implemented.
-function StoryMedia({ story, isActive }: { story: StoryItem; isActive: boolean }) {
+function StoryMedia({
+  story,
+  isActive,
+  onReadyChange,
+  onReset,
+}: {
+  story: StoryItem;
+  isActive: boolean;
+  onReadyChange: (storyId: string, ready: boolean) => void;
+  onReset: () => void;
+}) {
   if (story.mediaType === 'video') {
     return (
       <View style={[styles.media, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
@@ -77,7 +108,14 @@ function StoryMedia({ story, isActive }: { story: StoryItem; isActive: boolean }
       </View>
     );
   }
-  return <StoryPhotoMedia story={story} isActive={isActive} />;
+  return (
+    <StoryPhotoMedia
+      story={story}
+      isActive={isActive}
+      onReadyChange={onReadyChange}
+      onReset={onReset}
+    />
+  );
 }
 
 export function StoryViewer({
@@ -91,6 +129,9 @@ export function StoryViewer({
 }: StoryViewerProps) {
   const insets = useSafeAreaInsets();
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [mediaReady, setMediaReady] = useState(false);
+  const [manualHold, setManualHold] = useState(false);
+  const [restartToken, setRestartToken] = useState(0);
   const [viewersVisible, setViewersVisible] = useState(false);
   const [viewers, setViewers] = useState<StoryViewerRecord[]>([]);
   const [viewerCount, setViewerCount] = useState(0);
@@ -102,12 +143,26 @@ export function StoryViewer({
   const [deletePending, setDeletePending] = useState(false);
   const [deleteError, setDeleteError] = useState(false);
   const progressAnim = useRef(new Animated.Value(0)).current;
+  const photoProgressRef = useRef(0);
   const translateY = useRef(new Animated.Value(0)).current;
   const viewerRequestGeneration = useRef(0);
+  const playbackGeneration = useRef(0);
+  const transitionLock = useRef(false);
+  const holdTriggered = useRef(false);
 
   const stories = storyGroup?.stories || [];
   const currentStory = stories[currentIndex] || null;
+  const currentStoryId = currentStory?.id;
+  const currentMediaType = currentStory?.mediaType;
   const isOwnStory = Boolean(currentStory && currentStory.userId === currentUserId);
+  const currentStoryIdRef = useRef<string | null>(null);
+  currentStoryIdRef.current = currentStoryId ?? null;
+  const shouldPausePlayback = !visible
+    || manualHold
+    || viewersVisible
+    || deleteConfirmVisible
+    || deletePending
+    || !mediaReady;
 
   const loadViewers = useCallback(async (
     storyId: string,
@@ -133,7 +188,7 @@ export function StoryViewer({
         for (const viewer of page.viewers) merged.set(viewer.viewerId, viewer);
         return Array.from(merged.values());
       });
-    } catch (_) {
+    } catch {
       if (viewerRequestGeneration.current === generation) setViewersError(true);
     } finally {
       if (viewerRequestGeneration.current === generation) {
@@ -150,62 +205,122 @@ export function StoryViewer({
     setViewerCount(0);
     setViewerCursor(null);
     setViewersError(false);
-    if (visible && currentStory && isOwnStory && onGetViewers) {
-      void loadViewers(currentStory.id);
+    if (visible && currentStoryId && isOwnStory && onGetViewers) {
+      void loadViewers(currentStoryId);
     }
-  }, [visible, currentStory?.id, isOwnStory, onGetViewers, loadViewers]);
+  }, [visible, currentStoryId, isOwnStory, onGetViewers, loadViewers]);
 
-  const startProgress = useCallback(() => {
-    progressAnim.setValue(0);
-    Animated.timing(progressAnim, {
-      toValue: 1,
-      duration: STORY_DURATION,
-      useNativeDriver: false,
-    }).start(({ finished }) => {
-      if (finished) goNext();
+  const stopPhotoProgress = useCallback((capture = true) => {
+    progressAnim.stopAnimation(value => {
+      if (capture && Number.isFinite(value)) {
+        photoProgressRef.current = Math.max(0, Math.min(1, value));
+      }
     });
-  }, [currentIndex, stories.length]);
+  }, [progressAnim]);
 
-  const stopProgress = useCallback(() => {
-    progressAnim.stopAnimation();
-  }, []);
+  const resetProgress = useCallback(() => {
+    stopPhotoProgress(false);
+    photoProgressRef.current = 0;
+    progressAnim.setValue(0);
+  }, [progressAnim, stopPhotoProgress]);
 
-  useEffect(() => {
-    if (visible && currentStory) {
-      startProgress();
-      if (onMarkViewed) void onMarkViewed(currentStory.id);
+  const closeViewer = useCallback(() => {
+    if (transitionLock.current) return;
+    transitionLock.current = true;
+    stopPhotoProgress();
+    onClose();
+  }, [onClose, stopPhotoProgress]);
+
+  const goNext = useCallback((sourceStoryId?: string, sourceGeneration?: number) => {
+    if (sourceStoryId && sourceStoryId !== currentStoryIdRef.current) return;
+    if (sourceGeneration !== undefined && sourceGeneration !== playbackGeneration.current) return;
+    if (transitionLock.current) return;
+    transitionLock.current = true;
+    resetProgress();
+    if (currentIndex < stories.length - 1) {
+      setCurrentIndex(index => index + 1);
+    } else {
+      onClose();
     }
-    return () => stopProgress();
-  }, [visible, currentIndex]);
+  }, [currentIndex, onClose, resetProgress, stories.length]);
 
-  useEffect(() => {
-    if (!visible) { setCurrentIndex(0); stopProgress(); }
-  }, [visible]);
-
-  const goNext = useCallback(() => {
-    stopProgress();
-    if (currentIndex < stories.length - 1) setCurrentIndex(i => i + 1);
-    else onClose();
-  }, [currentIndex, stories.length]);
+  const restartCurrentStory = useCallback(() => {
+    resetProgress();
+    setRestartToken(token => token + 1);
+    transitionLock.current = false;
+  }, [resetProgress]);
 
   const goPrev = useCallback(() => {
-    stopProgress();
-    if (currentIndex > 0) setCurrentIndex(i => i - 1);
-  }, [currentIndex]);
+    if (transitionLock.current) return;
+    transitionLock.current = true;
+    resetProgress();
+    if (currentIndex > 0) setCurrentIndex(index => index - 1);
+    else restartCurrentStory();
+  }, [currentIndex, resetProgress, restartCurrentStory]);
+
+  const handleMediaReadyChange = useCallback((storyId: string, ready: boolean) => {
+    if (currentStoryIdRef.current === storyId) setMediaReady(ready);
+  }, []);
+
+  const handleMediaReset = useCallback(() => {
+    resetProgress();
+    setMediaReady(false);
+  }, [resetProgress]);
+
+  useLayoutEffect(() => {
+    playbackGeneration.current += 1;
+    transitionLock.current = false;
+    setManualHold(false);
+    setMediaReady(false);
+    resetProgress();
+    return () => stopPhotoProgress(false);
+  }, [currentStoryId, resetProgress, stopPhotoProgress, visible]);
+
+  useEffect(() => {
+    if (visible && currentStoryId && onMarkViewed) void onMarkViewed(currentStoryId);
+  }, [currentStoryId, onMarkViewed, visible]);
+
+  useEffect(() => {
+    if (!currentStoryId || currentMediaType !== 'photo' || shouldPausePlayback) {
+      stopPhotoProgress();
+      return;
+    }
+    const storyId = currentStoryId;
+    const generation = playbackGeneration.current;
+    const currentProgress = photoProgressRef.current;
+    progressAnim.setValue(currentProgress);
+    Animated.timing(progressAnim, {
+      toValue: 1,
+      duration: Math.max(0, PHOTO_DURATION_MS * (1 - currentProgress)),
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (finished) goNext(storyId, generation);
+    });
+    return () => stopPhotoProgress();
+  }, [currentMediaType, currentStoryId, goNext, progressAnim, restartToken, shouldPausePlayback, stopPhotoProgress]);
+
+  useEffect(() => {
+    if (!visible) {
+      setCurrentIndex(0);
+      setManualHold(false);
+      setViewersVisible(false);
+      setDeleteConfirmVisible(false);
+      resetProgress();
+      transitionLock.current = false;
+    }
+  }, [resetProgress, visible]);
 
   const requestDelete = useCallback(() => {
     if (!isOwnStory || !onDeleteStory || deletePending) return;
-    stopProgress();
     setDeleteError(false);
     setDeleteConfirmVisible(true);
-  }, [isOwnStory, onDeleteStory, deletePending, stopProgress]);
+  }, [isOwnStory, onDeleteStory, deletePending]);
 
   const cancelDelete = useCallback(() => {
     if (deletePending) return;
     setDeleteConfirmVisible(false);
     setDeleteError(false);
-    startProgress();
-  }, [deletePending, startProgress]);
+  }, [deletePending]);
 
   const confirmDelete = useCallback(async () => {
     if (!currentStory || !isOwnStory || !onDeleteStory || deletePending) return;
@@ -214,13 +329,38 @@ export function StoryViewer({
     try {
       await onDeleteStory(currentStory.id);
       setDeleteConfirmVisible(false);
+      transitionLock.current = true;
+      stopPhotoProgress();
       onClose();
-    } catch {
+    } catch (_) {
+      void _;
       setDeleteError(true);
     } finally {
       setDeletePending(false);
     }
-  }, [currentStory, isOwnStory, onDeleteStory, deletePending, onClose]);
+  }, [currentStory, isOwnStory, onClose, onDeleteStory, deletePending, stopPhotoProgress]);
+
+  const handlePressIn = useCallback(() => {
+    holdTriggered.current = false;
+  }, []);
+
+  const handleLongPress = useCallback(() => {
+    holdTriggered.current = true;
+    setManualHold(true);
+  }, []);
+
+  const handlePressOut = useCallback(() => {
+    if (holdTriggered.current) setManualHold(false);
+  }, []);
+
+  const handleZonePress = useCallback((direction: 'prev' | 'next') => {
+    if (holdTriggered.current) {
+      holdTriggered.current = false;
+      return;
+    }
+    if (direction === 'prev') goPrev();
+    else goNext();
+  }, [goNext, goPrev]);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -228,7 +368,7 @@ export function StoryViewer({
       onPanResponderMove: (_, g) => { if (g.dy > 0) translateY.setValue(g.dy); },
       onPanResponderRelease: (_, g) => {
         if (g.dy > 100) {
-          Animated.timing(translateY, { toValue: H, duration: 200, useNativeDriver: true }).start(onClose);
+          Animated.timing(translateY, { toValue: H, duration: 200, useNativeDriver: true }).start(closeViewer);
         } else {
           Animated.spring(translateY, { toValue: 0, useNativeDriver: true }).start();
         }
@@ -244,13 +384,18 @@ export function StoryViewer({
       animationType="slide"
       transparent={false}
       presentationStyle="fullScreen"
-      onRequestClose={onClose}
+      onRequestClose={closeViewer}
     >
       <Animated.View
         style={[styles.container, { transform: [{ translateY }] }]}
         {...panResponder.panHandlers}
       >
-        <StoryMedia story={currentStory} isActive={true} />
+        <StoryMedia
+          story={currentStory}
+          isActive={visible && currentStory.mediaType === 'photo'}
+          onReadyChange={handleMediaReadyChange}
+          onReset={handleMediaReset}
+        />
 
         <LinearGradient colors={['rgba(0,0,0,0.6)', 'transparent']} style={styles.topGrad} pointerEvents="none" />
         <LinearGradient colors={['transparent', 'rgba(0,0,0,0.45)']} style={styles.botGrad} pointerEvents="none" />
@@ -284,14 +429,28 @@ export function StoryViewer({
               <MaterialIcons name="delete-outline" size={22} color="rgba(255,255,255,0.9)" />
             </Pressable>
           ) : null}
-          <Pressable onPress={onClose} hitSlop={10} style={styles.iconBtn}>
+          <Pressable onPress={closeViewer} hitSlop={10} style={styles.iconBtn}>
             <MaterialIcons name="close" size={24} color="#fff" />
           </Pressable>
         </View>
 
-        <View style={styles.tapZones} pointerEvents={deleteConfirmVisible ? 'none' : 'box-none'}>
-          <Pressable style={styles.tapLeft} onPress={goPrev} />
-          <Pressable style={styles.tapRight} onPress={goNext} />
+        <View style={styles.tapZones} pointerEvents={deleteConfirmVisible || viewersVisible ? 'none' : 'box-none'}>
+          <Pressable
+            style={styles.tapLeft}
+            delayLongPress={HOLD_DELAY_MS}
+            onPressIn={handlePressIn}
+            onLongPress={handleLongPress}
+            onPressOut={handlePressOut}
+            onPress={() => handleZonePress('prev')}
+          />
+          <Pressable
+            style={styles.tapRight}
+            delayLongPress={HOLD_DELAY_MS}
+            onPressIn={handlePressIn}
+            onLongPress={handleLongPress}
+            onPressOut={handlePressOut}
+            onPress={() => handleZonePress('next')}
+          />
         </View>
 
         <View style={[styles.bottomRow, { paddingBottom: insets.bottom + Spacing.md }]}>

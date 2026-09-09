@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet, Dimensions,
-  ActivityIndicator, Animated, PanResponder,
+  ActivityIndicator, Animated, PanResponder, AppState,
 } from 'react-native';
 import { Image } from 'expo-image';
 // expo-video — lazy-loaded to prevent Hermes crash from dynamic import() syntax
@@ -30,7 +30,8 @@ import type {
 } from '@/contexts/StoriesContext';
 
 const { width: W, height: H } = Dimensions.get('window');
-const STORY_DURATION = 15000; // 15 seconds
+const PHOTO_DURATION_MS = 15000;
+const HOLD_DELAY_MS = 220;
 
 interface StoryViewerProps {
   visible: boolean;
@@ -46,29 +47,98 @@ interface StoryViewerProps {
   onDeleteStory?: (storyId: string) => Promise<StoryDeleteResult>;
 }
 
-function ReadyStoryVideo({ url, isActive, onError }: { url: string; isActive: boolean; onError: () => void }) {
+interface ReadyStoryVideoProps {
+  url: string;
+  storyId: string;
+  isActive: boolean;
+  shouldPause: boolean;
+  isMuted: boolean;
+  restartToken: number;
+  onReadyChange: (ready: boolean) => void;
+  onProgress: (progress: number) => void;
+  onEnd: (storyId: string) => void;
+  onError: () => void;
+}
+
+function ReadyStoryVideo({
+  url,
+  storyId,
+  isActive,
+  shouldPause,
+  isMuted,
+  restartToken,
+  onReadyChange,
+  onProgress,
+  onEnd,
+  onError,
+}: ReadyStoryVideoProps) {
+  const [isReady, setIsReady] = useState(false);
+  const durationRef = useRef(0);
   const player = _useVideoPlayer(url, (p: any) => {
     p.loop = false;
-    p.muted = false;
+    p.muted = isMuted;
+    p.staysActiveInBackground = false;
+    p.timeUpdateEventInterval = 0.25;
   });
 
   useEffect(() => {
     try {
-      if (isActive) {
+      player.muted = isMuted;
+    } catch {}
+  }, [isMuted, player]);
+
+  useEffect(() => {
+    try {
+      if (isActive && isReady && !shouldPause) {
         player.play();
       } else {
         player.pause();
-        player.currentTime = 0;
       }
-    } catch (_) {}
-  }, [isActive, player]);
+    } catch {}
+  }, [isActive, isReady, player, shouldPause]);
 
   useEffect(() => {
-    const subscription = player?.addListener?.('statusChange', ({ status }: { status?: string }) => {
+    const statusSubscription = player?.addListener?.('statusChange', ({ status }: { status?: string }) => {
+      const ready = status === 'readyToPlay';
+      setIsReady(ready);
+      onReadyChange(ready);
       if (status === 'error') onError();
     });
-    return () => subscription?.remove?.();
-  }, [onError, player]);
+    const sourceSubscription = player?.addListener?.('sourceLoad', ({ duration }: { duration?: number }) => {
+      durationRef.current = Number.isFinite(duration) && Number(duration) > 0
+        ? Number(duration)
+        : Number(player?.duration ?? 0);
+    });
+    const timeSubscription = player?.addListener?.('timeUpdate', ({ currentTime }: { currentTime?: number }) => {
+      const duration = durationRef.current || Number(player?.duration ?? 0);
+      if (duration > 0 && Number.isFinite(currentTime)) {
+        onProgress(Math.max(0, Math.min(1, Number(currentTime) / duration)));
+      }
+    });
+    const endSubscription = player?.addListener?.('playToEnd', () => onEnd(storyId));
+    const ready = player?.status === 'readyToPlay';
+    durationRef.current = Number(player?.duration ?? 0);
+    setIsReady(ready);
+    onReadyChange(ready);
+    return () => {
+      statusSubscription?.remove?.();
+      sourceSubscription?.remove?.();
+      timeSubscription?.remove?.();
+      endSubscription?.remove?.();
+      try { player?.pause?.(); } catch {}
+      onReadyChange(false);
+    };
+  }, [onEnd, onError, onProgress, onReadyChange, player, storyId]);
+
+  useEffect(() => {
+    try {
+      player.currentTime = 0;
+      onProgress(0);
+      if (isActive && isReady && !shouldPause) player.play();
+    } catch {}
+    // restartToken is the only restart authority; playback state changes must not seek to zero.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restartToken]);
 
   return (
     <VideoView
@@ -80,8 +150,49 @@ function ReadyStoryVideo({ url, isActive, onError }: { url: string; isActive: bo
   );
 }
 
-function StoryMedia({ story, isActive }: { story: StoryItem; isActive: boolean }) {
+interface StoryMediaProps {
+  story: StoryItem;
+  isActive: boolean;
+  shouldPause: boolean;
+  isMuted: boolean;
+  restartToken: number;
+  onReadyChange: (storyId: string, ready: boolean) => void;
+  onProgress: (storyId: string, progress: number) => void;
+  onVideoEnd: (storyId: string) => void;
+  onReset: () => void;
+}
+
+function StoryMedia({
+  story,
+  isActive,
+  shouldPause,
+  isMuted,
+  restartToken,
+  onReadyChange,
+  onProgress,
+  onVideoEnd,
+  onReset,
+}: StoryMediaProps) {
   const { url, isLoading, hasError, retry, fail } = useStoryMediaUrl(story, isActive);
+
+  const failMedia = useCallback(() => {
+    onReadyChange(story.id, false);
+    fail();
+  }, [fail, onReadyChange, story.id]);
+
+  const retryMedia = useCallback(() => {
+    onReset();
+    onReadyChange(story.id, false);
+    retry();
+  }, [onReadyChange, onReset, retry, story.id]);
+
+  const handleVideoReadyChange = useCallback((ready: boolean) => {
+    onReadyChange(story.id, ready);
+  }, [onReadyChange, story.id]);
+
+  const handleVideoProgress = useCallback((progress: number) => {
+    onProgress(story.id, progress);
+  }, [onProgress, story.id]);
 
   if (isLoading) {
     return <View style={[styles.media, styles.mediaState]}><ActivityIndicator color="#fff" /></View>;
@@ -91,7 +202,7 @@ function StoryMedia({ story, isActive }: { story: StoryItem; isActive: boolean }
     return (
       <View style={[styles.media, styles.mediaState]}>
         <Text style={styles.mediaStateText}>Historia no disponible.</Text>
-        <Pressable accessibilityRole="button" onPress={retry} style={styles.retryButton}>
+        <Pressable accessibilityRole="button" onPress={retryMedia} style={styles.retryButton}>
           <Text style={styles.retryText}>Reintentar</Text>
         </Pressable>
       </View>
@@ -99,7 +210,21 @@ function StoryMedia({ story, isActive }: { story: StoryItem; isActive: boolean }
   }
 
   if (story.mediaType === 'video') {
-    return <ReadyStoryVideo key={url} url={url} isActive={isActive} onError={fail} />;
+    return (
+      <ReadyStoryVideo
+        key={url}
+        url={url}
+        storyId={story.id}
+        isActive={isActive}
+        shouldPause={shouldPause}
+        isMuted={isMuted}
+        restartToken={restartToken}
+        onReadyChange={handleVideoReadyChange}
+        onProgress={handleVideoProgress}
+        onEnd={onVideoEnd}
+        onError={failMedia}
+      />
+    );
   }
   return (
     <Image
@@ -107,7 +232,8 @@ function StoryMedia({ story, isActive }: { story: StoryItem; isActive: boolean }
       style={styles.media}
       contentFit="contain"
       transition={150}
-      onError={fail}
+      onLoad={() => onReadyChange(story.id, true)}
+      onError={failMedia}
     />
   );
 }
@@ -124,6 +250,10 @@ export function StoryViewer({
   const insets = useSafeAreaInsets();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
+  const [mediaReady, setMediaReady] = useState(false);
+  const [manualHold, setManualHold] = useState(false);
+  const [restartToken, setRestartToken] = useState(0);
+  const [appState, setAppState] = useState(AppState.currentState);
   const [viewersVisible, setViewersVisible] = useState(false);
   const [viewers, setViewers] = useState<StoryViewerRecord[]>([]);
   const [viewerCount, setViewerCount] = useState(0);
@@ -135,13 +265,32 @@ export function StoryViewer({
   const [deletePending, setDeletePending] = useState(false);
   const [deleteError, setDeleteError] = useState(false);
   const progressAnim = useRef(new Animated.Value(0)).current;
-  const progressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const photoProgressRef = useRef(0);
   const translateY = useRef(new Animated.Value(0)).current;
   const viewerRequestGeneration = useRef(0);
+  const playbackGeneration = useRef(0);
+  const transitionLock = useRef(false);
+  const holdTriggered = useRef(false);
 
   const stories = storyGroup?.stories || [];
   const currentStory = stories[currentIndex] || null;
+  const currentStoryId = currentStory?.id;
+  const currentMediaType = currentStory?.mediaType;
   const isOwnStory = Boolean(currentStory && currentStory.userId === currentUserId);
+  const currentStoryIdRef = useRef<string | null>(null);
+  currentStoryIdRef.current = currentStoryId ?? null;
+  const shouldPausePlayback = !visible
+    || manualHold
+    || viewersVisible
+    || deleteConfirmVisible
+    || deletePending
+    || appState !== 'active'
+    || !mediaReady;
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', setAppState);
+    return () => subscription.remove();
+  }, []);
 
   const loadViewers = useCallback(async (
     storyId: string,
@@ -167,7 +316,7 @@ export function StoryViewer({
         for (const viewer of page.viewers) merged.set(viewer.viewerId, viewer);
         return Array.from(merged.values());
       });
-    } catch (_) {
+    } catch {
       if (viewerRequestGeneration.current === generation) setViewersError(true);
     } finally {
       if (viewerRequestGeneration.current === generation) {
@@ -184,72 +333,135 @@ export function StoryViewer({
     setViewerCount(0);
     setViewerCursor(null);
     setViewersError(false);
-    if (visible && currentStory && isOwnStory && onGetViewers) {
-      void loadViewers(currentStory.id);
+    if (visible && currentStoryId && isOwnStory && onGetViewers) {
+      void loadViewers(currentStoryId);
     }
-  }, [visible, currentStory?.id, isOwnStory, onGetViewers, loadViewers]);
+  }, [visible, currentStoryId, isOwnStory, onGetViewers, loadViewers]);
 
-  // Start progress bar animation for current story
-  const startProgress = useCallback(() => {
-    progressAnim.setValue(0);
-    Animated.timing(progressAnim, {
-      toValue: 1,
-      duration: STORY_DURATION,
-      useNativeDriver: false,
-    }).start(({ finished }) => {
-      if (finished) goNext();
+  const stopPhotoProgress = useCallback((capture = true) => {
+    progressAnim.stopAnimation(value => {
+      if (capture && Number.isFinite(value)) {
+        photoProgressRef.current = Math.max(0, Math.min(1, value));
+      }
     });
-  }, [currentIndex, stories.length]);
+  }, [progressAnim]);
 
-  const stopProgress = useCallback(() => {
-    progressAnim.stopAnimation();
-    if (progressTimer.current) clearTimeout(progressTimer.current);
+  const resetProgress = useCallback(() => {
+    stopPhotoProgress(false);
+    photoProgressRef.current = 0;
+    progressAnim.setValue(0);
+  }, [progressAnim, stopPhotoProgress]);
+
+  const closeViewer = useCallback(() => {
+    if (transitionLock.current) return;
+    transitionLock.current = true;
+    stopPhotoProgress();
+    onClose();
+  }, [onClose, stopPhotoProgress]);
+
+  const goNext = useCallback((sourceStoryId?: string, sourceGeneration?: number) => {
+    if (sourceStoryId && sourceStoryId !== currentStoryIdRef.current) return;
+    if (sourceGeneration !== undefined && sourceGeneration !== playbackGeneration.current) return;
+    if (transitionLock.current) return;
+    transitionLock.current = true;
+    resetProgress();
+    if (currentIndex < stories.length - 1) {
+      setCurrentIndex(index => index + 1);
+    } else {
+      onClose();
+    }
+  }, [currentIndex, onClose, resetProgress, stories.length]);
+
+  const restartCurrentStory = useCallback(() => {
+    resetProgress();
+    setRestartToken(token => token + 1);
+    transitionLock.current = false;
+  }, [resetProgress]);
+
+  const goPrev = useCallback(() => {
+    if (transitionLock.current) return;
+    transitionLock.current = true;
+    resetProgress();
+    if (currentIndex > 0) {
+      setCurrentIndex(index => index - 1);
+    } else {
+      restartCurrentStory();
+    }
+  }, [currentIndex, resetProgress, restartCurrentStory]);
+
+  const handleMediaReadyChange = useCallback((storyId: string, ready: boolean) => {
+    if (currentStoryIdRef.current === storyId) setMediaReady(ready);
   }, []);
 
+  const handleVideoProgress = useCallback((storyId: string, progress: number) => {
+    if (currentStoryIdRef.current !== storyId) return;
+    progressAnim.setValue(Math.max(0, Math.min(1, progress)));
+  }, [progressAnim]);
+
+  const handleVideoEnd = useCallback((storyId: string) => {
+    goNext(storyId, playbackGeneration.current);
+  }, [goNext]);
+
+  const handleMediaReset = useCallback(() => {
+    resetProgress();
+    setMediaReady(false);
+  }, [resetProgress]);
+
+  useLayoutEffect(() => {
+    playbackGeneration.current += 1;
+    transitionLock.current = false;
+    setManualHold(false);
+    setMediaReady(false);
+    resetProgress();
+    return () => stopPhotoProgress(false);
+  }, [currentStoryId, resetProgress, stopPhotoProgress, visible]);
+
   useEffect(() => {
-    if (visible && currentStory) {
-      startProgress();
-      if (onMarkViewed) void onMarkViewed(currentStory.id);
+    if (visible && currentStoryId && onMarkViewed) void onMarkViewed(currentStoryId);
+  }, [currentStoryId, onMarkViewed, visible]);
+
+  useEffect(() => {
+    if (!currentStoryId || currentMediaType !== 'photo' || shouldPausePlayback) {
+      stopPhotoProgress();
+      return;
     }
-    return () => stopProgress();
-  }, [visible, currentIndex]);
+    const storyId = currentStoryId;
+    const generation = playbackGeneration.current;
+    const currentProgress = photoProgressRef.current;
+    progressAnim.setValue(currentProgress);
+    Animated.timing(progressAnim, {
+      toValue: 1,
+      duration: Math.max(0, PHOTO_DURATION_MS * (1 - currentProgress)),
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (finished) goNext(storyId, generation);
+    });
+    return () => stopPhotoProgress();
+  }, [currentMediaType, currentStoryId, goNext, progressAnim, restartToken, shouldPausePlayback, stopPhotoProgress]);
 
   useEffect(() => {
     if (!visible) {
       setCurrentIndex(0);
-      stopProgress();
+      setIsMuted(false);
+      setManualHold(false);
+      setViewersVisible(false);
+      setDeleteConfirmVisible(false);
+      resetProgress();
+      transitionLock.current = false;
     }
-  }, [visible]);
-
-  const goNext = useCallback(() => {
-    stopProgress();
-    if (currentIndex < stories.length - 1) {
-      setCurrentIndex(i => i + 1);
-    } else {
-      onClose();
-    }
-  }, [currentIndex, stories.length]);
-
-  const goPrev = useCallback(() => {
-    stopProgress();
-    if (currentIndex > 0) {
-      setCurrentIndex(i => i - 1);
-    }
-  }, [currentIndex]);
+  }, [resetProgress, visible]);
 
   const requestDelete = useCallback(() => {
     if (!isOwnStory || !onDeleteStory || deletePending) return;
-    stopProgress();
     setDeleteError(false);
     setDeleteConfirmVisible(true);
-  }, [isOwnStory, onDeleteStory, deletePending, stopProgress]);
+  }, [isOwnStory, onDeleteStory, deletePending]);
 
   const cancelDelete = useCallback(() => {
     if (deletePending) return;
     setDeleteConfirmVisible(false);
     setDeleteError(false);
-    startProgress();
-  }, [deletePending, startProgress]);
+  }, [deletePending]);
 
   const confirmDelete = useCallback(async () => {
     if (!currentStory || !isOwnStory || !onDeleteStory || deletePending) return;
@@ -258,13 +470,38 @@ export function StoryViewer({
     try {
       await onDeleteStory(currentStory.id);
       setDeleteConfirmVisible(false);
+      transitionLock.current = true;
+      stopPhotoProgress();
       onClose();
-    } catch {
+    } catch (_) {
+      void _;
       setDeleteError(true);
     } finally {
       setDeletePending(false);
     }
-  }, [currentStory, isOwnStory, onDeleteStory, deletePending, onClose]);
+  }, [currentStory, isOwnStory, onClose, onDeleteStory, deletePending, stopPhotoProgress]);
+
+  const handlePressIn = useCallback(() => {
+    holdTriggered.current = false;
+  }, []);
+
+  const handleLongPress = useCallback(() => {
+    holdTriggered.current = true;
+    setManualHold(true);
+  }, []);
+
+  const handlePressOut = useCallback(() => {
+    if (holdTriggered.current) setManualHold(false);
+  }, []);
+
+  const handleZonePress = useCallback((direction: 'prev' | 'next') => {
+    if (holdTriggered.current) {
+      holdTriggered.current = false;
+      return;
+    }
+    if (direction === 'prev') goPrev();
+    else goNext();
+  }, [goNext, goPrev]);
 
   // Swipe down to close
   const panResponder = useRef(
@@ -275,7 +512,7 @@ export function StoryViewer({
       },
       onPanResponderRelease: (_, g) => {
         if (g.dy > 100) {
-          Animated.timing(translateY, { toValue: H, duration: 200, useNativeDriver: true }).start(onClose);
+          Animated.timing(translateY, { toValue: H, duration: 200, useNativeDriver: true }).start(closeViewer);
         } else {
           Animated.spring(translateY, { toValue: 0, useNativeDriver: true }).start();
         }
@@ -291,14 +528,24 @@ export function StoryViewer({
       animationType="slide"
       transparent={false}
       presentationStyle="fullScreen"
-      onRequestClose={onClose}
+      onRequestClose={closeViewer}
     >
       <Animated.View
         style={[styles.container, { transform: [{ translateY }] }]}
         {...panResponder.panHandlers}
       >
         {/* Story media */}
-        <StoryMedia story={currentStory} isActive={true} />
+        <StoryMedia
+          story={currentStory}
+          isActive={visible}
+          shouldPause={shouldPausePlayback}
+          isMuted={isMuted}
+          restartToken={restartToken}
+          onReadyChange={handleMediaReadyChange}
+          onProgress={handleVideoProgress}
+          onVideoEnd={handleVideoEnd}
+          onReset={handleMediaReset}
+        />
 
         {/* Dark gradient top/bottom */}
         <LinearGradient
@@ -353,22 +600,44 @@ export function StoryViewer({
               <MaterialIcons name="delete-outline" size={22} color="rgba(255,255,255,0.9)" />
             </Pressable>
           ) : null}
-          <Pressable onPress={() => setIsMuted(m => !m)} hitSlop={10} style={styles.iconBtn}>
-            <MaterialIcons
-              name={isMuted ? 'volume-off' : 'volume-up'}
-              size={22}
-              color="rgba(255,255,255,0.9)"
-            />
-          </Pressable>
-          <Pressable onPress={onClose} hitSlop={10} style={styles.iconBtn}>
+          {currentStory.mediaType === 'video' ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={isMuted ? 'Activar sonido' : 'Silenciar video'}
+              onPress={() => setIsMuted(muted => !muted)}
+              hitSlop={10}
+              style={styles.iconBtn}
+            >
+              <MaterialIcons
+                name={isMuted ? 'volume-off' : 'volume-up'}
+                size={22}
+                color="rgba(255,255,255,0.9)"
+              />
+            </Pressable>
+          ) : null}
+          <Pressable onPress={closeViewer} hitSlop={10} style={styles.iconBtn}>
             <MaterialIcons name="close" size={24} color="#fff" />
           </Pressable>
         </View>
 
         {/* Tap zones: left = prev, right = next */}
-        <View style={styles.tapZones} pointerEvents={deleteConfirmVisible ? 'none' : 'box-none'}>
-          <Pressable style={styles.tapLeft} onPress={goPrev} />
-          <Pressable style={styles.tapRight} onPress={goNext} />
+        <View style={styles.tapZones} pointerEvents={deleteConfirmVisible || viewersVisible ? 'none' : 'box-none'}>
+          <Pressable
+            style={styles.tapLeft}
+            delayLongPress={HOLD_DELAY_MS}
+            onPressIn={handlePressIn}
+            onLongPress={handleLongPress}
+            onPressOut={handlePressOut}
+            onPress={() => handleZonePress('prev')}
+          />
+          <Pressable
+            style={styles.tapRight}
+            delayLongPress={HOLD_DELAY_MS}
+            onPressIn={handlePressIn}
+            onLongPress={handleLongPress}
+            onPressOut={handlePressOut}
+            onPress={() => handleZonePress('next')}
+          />
         </View>
 
         {/* Media type badge */}
