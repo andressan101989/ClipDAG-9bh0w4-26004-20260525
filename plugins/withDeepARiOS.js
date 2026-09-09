@@ -4,7 +4,8 @@
  * Configures react-native-deepar for iOS:
  *  1. Adds the DeepAR API key to Info.plist so the SDK can initialize
  *  2. Adds camera usage description (if not already present)
- *  3. No-op on Android (handled by withDeepARAndroidFix.js)
+ *  3. Keeps optional Android license-string injection only; the Android
+ *     react-native-deepar module itself is intentionally not autolinked.
  *
  * CRITICAL: Without a valid API key in Info.plist, the DeepAR SDK
  * crashes the app at startup when the native module initializes.

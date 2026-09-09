@@ -2,8 +2,8 @@
  * services/deeparService.ts — v9 (strict validation + runtime logs)
  *
  * DeepAR SDK resolution:
- *   - metro.config.js blocks react-native-deepar on web/preview → require() throws → null
- *   - EAS native build → require() succeeds → validate function type → assign
+ *   - metro.config.js stubs react-native-deepar on web/preview/Android
+ *   - iOS native builds use the local DeepAR Fabric view
  *
  * Runtime confirmation logs (visible in Metro/Xcode console):
  *   [DeepAR] SDK require succeeded
@@ -27,9 +27,8 @@ export const DEEPAR_ENABLED = true;
 // Set EXPO_PUBLIC_DEEPAR_LICENSE_IOS and EXPO_PUBLIC_DEEPAR_LICENSE_ANDROID
 // in your .env file. Obtain keys at https://www.deepar.ai
 //
-// Native config plugins inject the values into Info.plist / strings.xml at build time:
-//   iOS:     plugins/withDeepARiOS.js      → Info.plist  key: ar_key
-//   Android: plugins/withDeepARAndroidFix.js → strings.xml key: deepar_api_key
+// The iOS config plugin injects the value into Info.plist at build time.
+// Android receives the Metro stub and falls back to expo-camera.
 export const DEEPAR_API_KEY_IOS: string =
   process.env.EXPO_PUBLIC_DEEPAR_LICENSE_IOS ?? '';
 export const DEEPAR_API_KEY_ANDROID: string =
@@ -78,8 +77,8 @@ try {
   }
 
   // ── Resolve DeepARCamera React component ─────────────────────────────────
-  // iOS uses the local Expo Fabric view. Android keeps react-native-deepar's
-  // existing runtime path, where sdk.Camera is only the permission helper.
+  // iOS uses the local Expo Fabric view. Android receives Metro's empty stub
+  // and therefore falls through to the expo-camera path below.
   const candidates: Array<[string, unknown]> = Platform.OS === 'ios'
     ? [
         ['deepar-fabric-view.DeepARFabricView', sdk?.DeepARFabricView],
@@ -499,8 +498,8 @@ export function stopDeepARRecording(deepARRef: React.MutableRefObject<any>) {
 // PERMISSIONS
 // ─────────────────────────────────────────────────────────────────────────────
 /**
- * Request camera permissions through react-native-deepar's Camera helper when
- * available. Fall back to expo-camera in preview/stub builds.
+ * Request camera permissions through the native helper when available on the
+ * supported platform. Android and preview/stub builds use expo-camera.
  */
 export async function requestDeepARPermissions(): Promise<boolean> {
   try {

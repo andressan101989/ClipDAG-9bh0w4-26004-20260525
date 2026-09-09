@@ -122,8 +122,8 @@ const OTEL_PREFIXES = ['@opentelemetry/'];
 
 // ── Blocked only on web / PC preview ─────────────────────────────────────────
 // react-native-deepar is included here so the web preview doesn't crash
-// with "requireNativeComponent is not a function" — but on iOS/Android EAS
-// builds it loads normally (not blocked).
+// with "requireNativeComponent is not a function". Only iOS native builds
+// load the real SDK; Android is explicitly stubbed above.
 const WEB_ONLY_BLOCKED = [
   'react-native-deepar',
   'react-native-vision-camera',
@@ -190,9 +190,10 @@ config.resolver = {
       return { type: 'sourceFile', filePath: EMPTY_STUB };
     }
 
-    // 5. Web-only / preview blocked (NOT blocked on iOS/Android EAS builds)
+    // 5. Web-only / preview blocked (the DeepAR platform gate above also
+    // blocks Android while preserving the real module on iOS).
     // react-native-deepar is in this list so web preview stays crash-free,
-    // but the native EAS build loads the real SDK.
+    // while the iOS native build loads the real SDK.
     const isPreview = platform === 'web' || platform === null;
     if (isPreview) {
       const isWebBlocked = WEB_ONLY_BLOCKED.some(

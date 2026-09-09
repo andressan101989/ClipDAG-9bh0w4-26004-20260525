@@ -49,7 +49,6 @@
         }
       ],
       "expo-web-browser",
-      "./plugins/withDeepARAndroidFix",
       "./plugins/withDeepARiOS",
       "./plugins/withDeepARFabricView",
       [
@@ -65,8 +64,7 @@
           "android": {
             "minSdkVersion": 24,
             "compileSdkVersion": 35,
-            "targetSdkVersion": 35,
-            "extraProguardRules": "-keepclassmembers class ai.deepar.ar.DeepAR { *; }\n-keepclassmembers class ai.deepar.ar.core.videotexture.VideoTextureAndroidJava { *; }\n-keep class ai.deepar.ar.core.videotexture.VideoTextureAndroidJava"
+            "targetSdkVersion": 35
           },
           "ios": {
             "deploymentTarget": "16.4"

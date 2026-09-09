@@ -5,10 +5,10 @@
  * para módulos que requieren configuración especial o que fueron
  * excluidos para estabilizar el startup nativo iOS.
  *
- * ESTADO ACTUAL (Fase 1 DeepAR re-integración):
- *  - react-native-deepar: iOS autolinking DESACTIVADO para aislar crash.
- *    Android autolinking sigue activo.
- *    El SDK JS sigue siendo lazy-loaded (solo en deepar-test y creator-studio).
+ * ESTADO ACTUAL:
+ *  - react-native-deepar: iOS autolinking habilitado para la autoridad iOS.
+ *    Android autolinking deshabilitado porque Metro entrega el stub Android.
+ *    El SDK JS sigue siendo lazy-loaded en los entrypoints de creator studio.
  *
  *  - @walletconnect/react-native-compat: iOS excluido — NSDictionary nil crash en startup.
  *  - react-native-maps: iOS excluido — AIRGoogleMapManager.constantsToExport llama a
@@ -27,8 +27,9 @@ module.exports = {
     // builds resolve the real SDK so CocoaPods autolinking picks it up correctly.
     'react-native-deepar': {
       platforms: {
-        // iOS autolinking re-enabled — withDeepARiOS.js injects DEEPAR_API_KEY_IOS
-        // Android: autolinking habilitado (no override needed)
+        // iOS stays enabled by omission; withDeepARiOS.js configures that build.
+        // Android intentionally matches Metro's empty-stub runtime contract.
+        android: null,
       },
     },
 
