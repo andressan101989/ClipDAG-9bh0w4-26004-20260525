@@ -164,6 +164,10 @@ export function StoryViewer({
     || deletePending
     || !mediaReady;
 
+  useEffect(() => {
+    if (visible && storyGroup && currentIndex >= stories.length) onClose();
+  }, [currentIndex, onClose, stories.length, storyGroup, visible]);
+
   const loadViewers = useCallback(async (
     storyId: string,
     cursor?: StoryViewerCursor,

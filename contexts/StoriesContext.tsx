@@ -1,4 +1,5 @@
 import React, { createContext, useState, useCallback, useEffect, useContext, useRef, ReactNode } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import { getSupabaseClient } from '@/template';
 import { AuthContext } from './AuthContext';
 import type { StoryGroup, StoryItem } from '@/components/feature/StoriesBar';
@@ -15,6 +16,7 @@ interface StoriesContextType {
   ) => Promise<StoryViewersPage>;
   deleteStory: (storyId: string) => Promise<StoryDeleteResult>;
   refreshStories: () => Promise<void>;
+  getStoryGroupForUser: (userId: string | undefined) => StoryGroup | null;
   viewedStoryIds: Set<string>;
 }
 
@@ -69,6 +71,22 @@ function generateAvatarUrl(username: string): string {
   return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(username)}`;
 }
 
+function pruneExpiredStoryGroups(
+  groups: StoryGroup[],
+  viewed: Set<string>,
+  nowMs: number,
+): StoryGroup[] {
+  return groups.flatMap(group => {
+    const stories = group.stories.filter(story => new Date(story.expiresAt).getTime() > nowMs);
+    if (stories.length === 0) return [];
+    return [{
+      ...group,
+      stories,
+      hasUnseen: stories.some(story => !viewed.has(story.id)),
+    }];
+  });
+}
+
 export function StoriesProvider({ children }: { children: ReactNode }) {
   const supabaseRef = useRef<ReturnType<typeof getSupabaseClient> | null>(null);
   const supabaseOk  = useRef(true);
@@ -80,16 +98,19 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
   const user = authContext?.user;
 
   const [storyGroups, setStoryGroups] = useState<StoryGroup[]>([]);
+  const storyGroupsRef = useRef<StoryGroup[]>([]);
+  storyGroupsRef.current = storyGroups;
   const [isLoadingStories, setIsLoadingStories] = useState(false);
   const [viewedStoryIds, setViewedStoryIds] = useState<Set<string>>(new Set());
   const viewedStoryIdsRef = useRef<Set<string>>(new Set());
   const viewFlightsRef = useRef<Map<string, Promise<void>>>(new Map());
   const deleteFlightsRef = useRef<Map<string, Promise<StoryDeleteResult>>>(new Map());
+  const refreshFlightRef = useRef<Promise<void> | null>(null);
+  const refreshPendingRef = useRef(false);
   const storySessionRef = useRef<string | undefined>(user?.id);
   storySessionRef.current = user?.id;
 
-  const loadStories = useCallback(async () => {
-    if (!user) return;
+  const fetchCanonicalStories = useCallback(async (actorId: string) => {
     const supabase = supabaseRef.current;
     if (!supabase || !supabaseOk.current) { setIsLoadingStories(false); return; }
     setIsLoadingStories(true);
@@ -107,15 +128,14 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
 
       if (error) {
         console.log('Stories load error:', error.message);
-        setIsLoadingStories(false);
         return;
       }
 
       if (!storiesData || storiesData.length === 0) {
+        if (storySessionRef.current !== actorId) return;
         setStoryGroups([]);
         viewedStoryIdsRef.current = new Set();
         setViewedStoryIds(new Set());
-        setIsLoadingStories(false);
         return;
       }
 
@@ -143,10 +163,17 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       const { data: viewedData } = await supabase
         .from('story_views')
         .select('story_id')
-        .eq('viewer_id', user.id)
+        .eq('viewer_id', actorId)
         .in('story_id', storyIds);
 
+      const activeStoryIds = new Set(storyIds);
       const viewed = new Set<string>((viewedData || []).map((v: { story_id: string }) => v.story_id));
+      // Preserve RPC-confirmed local views (including owner NOOP semantics)
+      // across reconciliation while the Story remains active in this session.
+      for (const storyId of viewedStoryIdsRef.current) {
+        if (activeStoryIds.has(storyId)) viewed.add(storyId);
+      }
+      if (storySessionRef.current !== actorId) return;
       viewedStoryIdsRef.current = viewed;
       setViewedStoryIds(viewed);
 
@@ -185,21 +212,103 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       setStoryGroups(Array.from(groupMap.values()));
     } catch (e) {
       console.log('Stories context error:', e);
+    } finally {
+      if (storySessionRef.current === actorId) setIsLoadingStories(false);
     }
-    setIsLoadingStories(false);
-  }, [user]);
+  }, []);
+
+  // All invalidation sources converge here. Events that arrive during a load
+  // set one pending bit, so bursts result in at most one follow-up query.
+  const loadStories = useCallback(async () => {
+    if (!storySessionRef.current) return;
+    if (refreshFlightRef.current) {
+      refreshPendingRef.current = true;
+      return refreshFlightRef.current;
+    }
+
+    const flight = (async () => {
+      do {
+        refreshPendingRef.current = false;
+        const actorId = storySessionRef.current;
+        if (!actorId) return;
+        await fetchCanonicalStories(actorId);
+      } while (refreshPendingRef.current && storySessionRef.current);
+    })().finally(() => {
+      if (refreshFlightRef.current === flight) refreshFlightRef.current = null;
+    });
+    refreshFlightRef.current = flight;
+    return flight;
+  }, [fetchCanonicalStories]);
 
   useEffect(() => {
+    setStoryGroups([]);
+    viewedStoryIdsRef.current = new Set();
+    viewFlightsRef.current.clear();
+    deleteFlightsRef.current.clear();
+    setViewedStoryIds(new Set());
     if (user?.id) {
-      loadStories();
+      refreshPendingRef.current = true;
+      void loadStories();
     } else {
-      setStoryGroups([]);
-      viewedStoryIdsRef.current = new Set();
-      viewFlightsRef.current.clear();
-      deleteFlightsRef.current.clear();
-      setViewedStoryIds(new Set());
+      refreshPendingRef.current = false;
+      setIsLoadingStories(false);
     }
-  }, [user?.id]);
+  }, [user?.id, loadStories]);
+
+  // One provider-owned channel per authenticated session. Its payload is never
+  // merged into state; it only triggers the RLS-authorized canonical query.
+  useEffect(() => {
+    const actorId = user?.id;
+    const supabase = supabaseRef.current;
+    if (!actorId || !supabase || !supabaseOk.current) return;
+
+    let active = true;
+    const channel = supabase
+      .channel(`stories-v2:${actorId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'stories',
+      }, () => {
+        if (active && storySessionRef.current === actorId) void loadStories();
+      })
+      .subscribe(status => {
+        if (active && status === 'SUBSCRIBED' && storySessionRef.current === actorId) {
+          void loadStories();
+        }
+      });
+
+    return () => {
+      active = false;
+      void supabase.removeChannel(channel);
+    };
+  }, [user?.id, loadStories]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let previousState: AppStateStatus = AppState.currentState;
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (previousState !== 'active' && nextState === 'active') void loadStories();
+      previousState = nextState;
+    });
+    return () => subscription.remove();
+  }, [user?.id, loadStories]);
+
+  // Reconcile at the nearest expiry instead of polling. Local pruning happens
+  // first, so an expired Story cannot linger while the network is unavailable.
+  useEffect(() => {
+    if (!user?.id || storyGroups.length === 0) return;
+    const now = Date.now();
+    const nextExpiry = Math.min(...storyGroups.flatMap(group =>
+      group.stories.map(story => new Date(story.expiresAt).getTime()),
+    ));
+    if (!Number.isFinite(nextExpiry)) return;
+    const timer = setTimeout(() => {
+      setStoryGroups(previous => pruneExpiredStoryGroups(previous, viewedStoryIdsRef.current, Date.now()));
+      void loadStories();
+    }, Math.max(0, nextExpiry - now + 25));
+    return () => clearTimeout(timer);
+  }, [user?.id, storyGroups, loadStories]);
 
   const addStory = useCallback(async (mediaAssetId: string) => {
     if (!user) return undefined;
@@ -359,6 +468,11 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     return flight;
   }, [user, loadStories]);
 
+  const getStoryGroupForUser = useCallback((userId: string | undefined) => {
+    if (!userId) return null;
+    return storyGroupsRef.current.find(group => group.userId === userId) ?? null;
+  }, []);
+
   return (
     <StoriesContext.Provider value={{
       storyGroups,
@@ -368,6 +482,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       getStoryViewers,
       deleteStory,
       refreshStories: loadStories,
+      getStoryGroupForUser,
       viewedStoryIds,
     }}>
       {children}

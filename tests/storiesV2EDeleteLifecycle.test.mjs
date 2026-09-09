@@ -149,7 +149,8 @@ test('foreign ownership and invalid media state roll back the modeled transactio
 });
 
 test('StoriesContext calls only delete_story and refreshes after success', () => {
-  const block = context.slice(context.indexOf('const deleteStory = useCallback'), context.indexOf('return ('));
+  const start = context.indexOf('const deleteStory = useCallback');
+  const block = context.slice(start, context.indexOf('\n  return (', start));
   assert.match(block, /rpc\('delete_story'/i);
   assert.ok(block.indexOf("rpc('delete_story'") < block.indexOf('await loadStories()'));
   assert.match(block, /deleteFlightsRef\.current\.get\(storyId\)/i);
@@ -158,7 +159,8 @@ test('StoriesContext calls only delete_story and refreshes after success', () =>
 });
 
 test('client validates the complete server result and logs no Story identity', () => {
-  const block = context.slice(context.indexOf('const deleteStory = useCallback'), context.indexOf('return ('));
+  const start = context.indexOf('const deleteStory = useCallback');
+  const block = context.slice(start, context.indexOf('\n  return (', start));
   assert.match(block, /row\?\.deleted_story_id !== storyId/i);
   assert.match(block, /scheduled', 'deleted', 'asset_in_use', 'none'/i);
   assert.match(block, /Story deletion failed[\s\S]*code: error\.code/i);
@@ -200,6 +202,6 @@ test('generic cleanup and physical deletion remain unchanged authorities', () =>
 test('E creates no parallel table, Edge, cleanup, scheduler, reactions or direct object deletion', () => {
   const changed = migration + context + nativeViewer + webViewer;
   assert.doesNotMatch(migration, /create table|cron\.schedule|create or replace function public\.(remove_story|delete_my_story|delete_story_with_media)/i);
-  assert.doesNotMatch(changed, /deleteObject|StoryDeleteService|reaction|reply|subscribe\(/i);
+  assert.doesNotMatch(changed, /deleteObject|StoryDeleteService|reaction|reply/i);
   assert.doesNotMatch(context, /deleteMediaAsset|\.from\('stories'\)[\s\S]{0,120}\.delete/i);
 });

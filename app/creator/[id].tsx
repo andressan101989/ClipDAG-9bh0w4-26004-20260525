@@ -13,7 +13,7 @@
  *  • Exclusive content grid with lock/unlock
  *  • Subscriber badge + perks when subscribed
  */
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
   ActivityIndicator, Dimensions,
@@ -26,6 +26,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
 import { useWallet } from '@/hooks/useWallet';
+import { useStories } from '@/hooks/useStories';
 import { useAlert } from '@/template';
 import {
   fetchCreatorProfile, fetchCreatorVideos, fetchCreatorExclusiveContent,
@@ -45,6 +46,8 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import { SubscribeSheet } from '@/components/creator/SubscribeSheet';
 import { BoostProfileSheet } from '@/components/creator/BoostProfileSheet';
 import { ReportModal } from '@/components/feature/ReportModal';
+import { StoryViewer } from '@/components/feature/StoryViewer';
+import { StoryAvatarRing } from '@/components/feature/StoriesBar';
 import { fetchCreatorShowcase, type MarketplaceCreatorShowcaseProduct } from '@/services/marketplaceCreatorShowcaseService';
 
 const { width: W } = Dimensions.get('window');
@@ -76,6 +79,10 @@ export default function CreatorProfileScreen() {
   const router  = useRouter();
   const { user, toggleFollow, isFollowing: isFollowingCtx } = useAuth();
   const walletData = useWallet();
+  const {
+    getStoryGroupForUser, markStoryViewed, getStoryViewers,
+    deleteStory, refreshStories,
+  } = useStories();
   const balance = walletData?.balance ?? 0;
   const { showAlert } = useAlert();
 
@@ -108,6 +115,12 @@ export default function CreatorProfileScreen() {
   const [boostSheetVis, setBoostSheetVis] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
   const [reportModalVisible, setReportModalVisible] = useState(false);
+  const [storyViewerVisible, setStoryViewerVisible] = useState(false);
+  const creatorStoryGroup = getStoryGroupForUser(creatorId);
+
+  useEffect(() => {
+    if (storyViewerVisible && !creatorStoryGroup) setStoryViewerVisible(false);
+  }, [creatorStoryGroup, storyViewerVisible]);
 
   // ── Load all data ─────────────────────────────────────────────────────────
   // useFocusEffect (not plain useEffect) so re-visiting a profile — e.g. tab
@@ -117,6 +130,7 @@ export default function CreatorProfileScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!creatorId) return;
+      void refreshStories();
       let cancelled = false;
       const load = async () => {
         setLoading(true);
@@ -164,7 +178,7 @@ export default function CreatorProfileScreen() {
       };
       load();
       return () => { cancelled = true; };
-    }, [creatorId, user?.id]),
+    }, [creatorId, user?.id, refreshStories]),
   );
 
   const loadMoreShowcase = useCallback(async () => {
@@ -205,11 +219,12 @@ export default function CreatorProfileScreen() {
     setFollowLoading(true);
     const wasFollowing = isFollowingCtx(creatorId);
     await toggleFollow(creatorId);
+    await refreshStories();
     setCreator(prev => prev
       ? { ...prev, followers_count: Math.max(0, prev.followers_count + (wasFollowing ? -1 : 1)) }
       : prev);
     setFollowLoading(false);
-  }, [user?.id, creatorId, toggleFollow, isFollowingCtx, followLoading]);
+  }, [user?.id, creatorId, toggleFollow, isFollowingCtx, followLoading, refreshStories]);
 
   // ── Subscribe ─────────────────────────────────────────────────────────────
   const handleSubscribe = useCallback(async (plan: SubscriptionPlan) => {
@@ -338,8 +353,23 @@ export default function CreatorProfileScreen() {
         {/* ── Hero section ─────────────────────────────────────────────── */}
         <View style={styles.hero}>
           {/* Avatar with boost glow */}
-          <View style={styles.avatarContainer}>
-            {isBoosted ? (
+          <Pressable
+            style={styles.avatarContainer}
+            disabled={!creatorStoryGroup}
+            onPress={() => setStoryViewerVisible(true)}
+            accessibilityRole={creatorStoryGroup ? 'button' : undefined}
+            accessibilityLabel={creatorStoryGroup ? `Ver historias de ${creator.username}` : undefined}
+          >
+            {creatorStoryGroup ? (
+              <StoryAvatarRing
+                uri={avatarUri}
+                username={creator.username}
+                hasUnseen={creatorStoryGroup.hasUnseen}
+                ringSize={100}
+                avatarSize={93}
+                ringPadding={2.5}
+              />
+            ) : isBoosted ? (
               <LinearGradient colors={['#FF9D00', '#FF5A00', '#A855F7']} style={styles.boostRing}>
                 <Image source={{ uri: avatarUri }} style={styles.avatarImg} contentFit="cover" transition={200} />
               </LinearGradient>
@@ -360,7 +390,7 @@ export default function CreatorProfileScreen() {
                 <Text style={styles.boostedBadgeText}>BOOST</Text>
               </View>
             ) : null}
-          </View>
+          </Pressable>
 
           {/* Name + profession */}
           <Text style={styles.displayName}>
@@ -647,6 +677,16 @@ export default function CreatorProfileScreen() {
           </View>
         ) : null}
       </ScrollView>
+
+      <StoryViewer
+        visible={storyViewerVisible}
+        storyGroup={creatorStoryGroup}
+        currentUserId={user?.id}
+        onClose={() => setStoryViewerVisible(false)}
+        onMarkViewed={markStoryViewed}
+        onGetViewers={getStoryViewers}
+        onDeleteStory={deleteStory}
+      />
 
       {/* Subscribe sheet */}
       <SubscribeSheet

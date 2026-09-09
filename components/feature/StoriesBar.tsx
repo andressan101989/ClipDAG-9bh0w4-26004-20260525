@@ -54,6 +54,52 @@ function AvatarImage({ uri, username, size }: { uri?: string; username: string; 
   );
 }
 
+export function StoryAvatarRing({
+  uri,
+  username,
+  hasUnseen,
+  ringSize = RING_SIZE,
+  avatarSize = AVATAR_SIZE - 4,
+  ringPadding = RING_PAD,
+}: {
+  uri?: string;
+  username: string;
+  hasUnseen: boolean;
+  ringSize?: number;
+  avatarSize?: number;
+  ringPadding?: number;
+}) {
+  const ringShape = {
+    width: ringSize,
+    height: ringSize,
+    borderRadius: ringSize / 2,
+    padding: ringPadding,
+  };
+  return (
+    <View style={[styles.storyRingOuter, { width: ringSize, height: ringSize }]}>
+      {hasUnseen ? (
+        <LinearGradient
+          colors={['#7C5CFF', '#FF2D78', '#FF9F0A']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.storyRingGrad, ringShape]}
+        >
+          <View style={styles.storyRingBg}>
+            <AvatarImage uri={uri} username={username} size={avatarSize} />
+          </View>
+        </LinearGradient>
+      ) : (
+        <View style={[styles.storyRingGradSeen, ringShape]}>
+          <View style={styles.storyRingBg}>
+            <AvatarImage uri={uri} username={username} size={avatarSize} />
+          </View>
+        </View>
+      )}
+      {hasUnseen ? <View style={styles.unseenDot} /> : null}
+    </View>
+  );
+}
+
 export function StoriesBar({
   currentUserId,
   currentUserAvatar,
@@ -109,39 +155,11 @@ export function StoriesBar({
             onPress={() => onViewStory(group)}
             style={({ pressed }) => [styles.item, pressed && { opacity: 0.75 }]}
           >
-            <View style={styles.storyRingOuter}>
-              {group.hasUnseen ? (
-                <LinearGradient
-                  colors={['#7C5CFF', '#FF2D78', '#FF9F0A']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.storyRingGrad}
-                >
-                  <View style={styles.storyRingBg}>
-                    <AvatarImage
-                      uri={group.avatar}
-                      username={group.username}
-                      size={AVATAR_SIZE - 4}
-                    />
-                  </View>
-                </LinearGradient>
-              ) : (
-                <View style={styles.storyRingGradSeen}>
-                  <View style={styles.storyRingBg}>
-                    <AvatarImage
-                      uri={group.avatar}
-                      username={group.username}
-                      size={AVATAR_SIZE - 4}
-                    />
-                  </View>
-                </View>
-              )}
-
-              {/* Unseen dot indicator */}
-              {group.hasUnseen ? (
-                <View style={styles.unseenDot} />
-              ) : null}
-            </View>
+            <StoryAvatarRing
+              uri={group.avatar}
+              username={group.username}
+              hasUnseen={group.hasUnseen}
+            />
 
             <Text
               style={[styles.label, group.hasUnseen && styles.labelUnseen]}

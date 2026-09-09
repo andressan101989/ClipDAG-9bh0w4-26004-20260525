@@ -52,7 +52,7 @@ export default function FeedScreen() {
   const [commentVideoId, setCommentVideoId] = useState<string | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [viewingStoryGroup, setViewingStoryGroup] = useState<StoryGroup | null>(null);
+  const [viewingStoryUserId, setViewingStoryUserId] = useState<string | null>(null);
   const [storyViewerVisible, setStoryViewerVisible] = useState(false);
   const [initialLoaded, setInitialLoaded] = useState(false);
   const [productTagCounts, setProductTagCounts] = useState<Record<string, number>>({});
@@ -191,9 +191,19 @@ export default function FeedScreen() {
   }, [showAlert, uploadStory]);
 
   const handleViewStory = useCallback((group: StoryGroup) => {
-    setViewingStoryGroup(group);
+    setViewingStoryUserId(group.userId);
     setStoryViewerVisible(true);
   }, []);
+  const viewingStoryGroup = viewingStoryUserId
+    ? storyGroups.find(group => group.userId === viewingStoryUserId) ?? null
+    : null;
+
+  useEffect(() => {
+    if (storyViewerVisible && viewingStoryUserId && !viewingStoryGroup) {
+      setStoryViewerVisible(false);
+      setViewingStoryUserId(null);
+    }
+  }, [storyViewerVisible, viewingStoryGroup, viewingStoryUserId]);
 
   const feedHeader = (
     <View style={styles.feedHeader}>
@@ -323,7 +333,7 @@ export default function FeedScreen() {
         visible={storyViewerVisible}
         storyGroup={viewingStoryGroup}
         currentUserId={user?.id}
-        onClose={() => { setStoryViewerVisible(false); setViewingStoryGroup(null); }}
+        onClose={() => { setStoryViewerVisible(false); setViewingStoryUserId(null); }}
         onMarkViewed={markStoryViewed}
         onGetViewers={getStoryViewers}
         onDeleteStory={deleteStory}

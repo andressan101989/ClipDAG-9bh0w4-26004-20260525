@@ -16,12 +16,15 @@ import { useFeed } from '@/hooks/useFeed';
 import { useNotifications } from '@/hooks/useNotifications';
 import { useMessages } from '@/hooks/useMessages';
 import { useWallet } from '@/hooks/useWallet';
+import { useStories } from '@/hooks/useStories';
 import { useAlert } from '@/template';
 import { CyberButton } from '@/components/ui/CyberButton';
 import { FadeIn, SlideUp, ProfileGridSkeleton } from '@/components/ui/SkeletonLoader';
 import { AnimatedPressable } from '@/components/ui/AnimatedPressable';
 import { Avatar } from '@/components/ui/Avatar';
 import { AnalyticsSheet } from '@/components/feature/AnalyticsSheet';
+import { StoryViewer } from '@/components/feature/StoryViewer';
+import { StoryAvatarRing } from '@/components/feature/StoriesBar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { useI18n } from '@/contexts/I18nContext';
 import { MOCK_CREATORS, formatNumber } from '@/services/mockData';
@@ -106,6 +109,10 @@ export default function ProfileScreen() {
   const { unreadCount: notifCount } = useNotifications();
   const { unreadTotal: unreadDMs } = useMessages();
   const walletData = useWallet();
+  const {
+    getStoryGroupForUser, markStoryViewed, getStoryViewers,
+    deleteStory, refreshStories,
+  } = useStories();
   const dagBalance = walletData?.balance ?? 0;
   const { t } = useI18n();
 
@@ -120,6 +127,12 @@ export default function ProfileScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [profileLoaded, setProfileLoaded] = useState(false);
+  const [storyViewerVisible, setStoryViewerVisible] = useState(false);
+  const ownStoryGroup = getStoryGroupForUser(user?.id);
+
+  useEffect(() => {
+    if (storyViewerVisible && !ownStoryGroup) setStoryViewerVisible(false);
+  }, [ownStoryGroup, storyViewerVisible]);
 
   useEffect(() => {
     if (user && !profileLoaded) {
@@ -154,9 +167,9 @@ export default function ProfileScreen() {
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
-    try { await refreshProfile(); } catch (_) {}
+    try { await Promise.all([refreshProfile(), refreshStories()]); } catch (_) {}
     setIsRefreshing(false);
-  }, [refreshProfile]);
+  }, [refreshProfile, refreshStories]);
 
   const handlePickAvatar = useCallback(() => {
     showAlert('Foto de perfil', 'Elige una opción', [
@@ -310,20 +323,39 @@ export default function ProfileScreen() {
         <SlideUp delay={60} distance={18}>
         <View style={styles.hero}>
           {/* Avatar */}
-          <Pressable onPress={handlePickAvatar} style={styles.avatarOuter} hitSlop={4}>
-            <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={styles.avatarRing}>
-              <View style={styles.avatarInner}>
-                <Avatar uri={avatarUri} username={user.username} size={86} />
-                {isUploadingAvatar ? (
-                  <View style={styles.avatarLoadingOverlay}>
-                    <ActivityIndicator color="#fff" size="small" />
-                  </View>
-                ) : null}
+          <Pressable
+            onPress={() => ownStoryGroup ? setStoryViewerVisible(true) : handlePickAvatar()}
+            style={styles.avatarOuter}
+            hitSlop={4}
+            accessibilityRole="button"
+            accessibilityLabel={ownStoryGroup ? 'Ver tu historia' : 'Cambiar foto de perfil'}
+          >
+            {ownStoryGroup ? (
+              <StoryAvatarRing
+                uri={avatarUri}
+                username={user.username}
+                hasUnseen={ownStoryGroup.hasUnseen}
+                ringSize={98}
+                avatarSize={86}
+                ringPadding={2.5}
+              />
+            ) : (
+              <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={styles.avatarRing}>
+                <View style={styles.avatarInner}>
+                  <Avatar uri={avatarUri} username={user.username} size={86} />
+                  {isUploadingAvatar ? (
+                    <View style={styles.avatarLoadingOverlay}>
+                      <ActivityIndicator color="#fff" size="small" />
+                    </View>
+                  ) : null}
+                </View>
+              </LinearGradient>
+            )}
+            {!ownStoryGroup ? (
+              <View style={styles.cameraBadge}>
+                <MaterialCommunityIcons name="camera" size={11} color="#fff" />
               </View>
-            </LinearGradient>
-            <View style={styles.cameraBadge}>
-              <MaterialCommunityIcons name="camera" size={11} color="#fff" />
-            </View>
+            ) : null}
           </Pressable>
 
           {/* Name + profession */}
@@ -713,6 +745,16 @@ export default function ProfileScreen() {
           fetchAnalytics={() => getAnalytics(analyticsVideo.id)}
         />
       ) : null}
+
+      <StoryViewer
+        visible={storyViewerVisible}
+        storyGroup={ownStoryGroup}
+        currentUserId={user.id}
+        onClose={() => setStoryViewerVisible(false)}
+        onMarkViewed={markStoryViewed}
+        onGetViewers={getStoryViewers}
+        onDeleteStory={deleteStory}
+      />
 
       {/* ── Edit Profile Modal ─────────────────────────────────────────────── */}
       <Modal

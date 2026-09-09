@@ -288,6 +288,10 @@ export function StoryViewer({
     || !mediaReady;
 
   useEffect(() => {
+    if (visible && storyGroup && currentIndex >= stories.length) onClose();
+  }, [currentIndex, onClose, stories.length, storyGroup, visible]);
+
+  useEffect(() => {
     const subscription = AppState.addEventListener('change', setAppState);
     return () => subscription.remove();
   }, []);

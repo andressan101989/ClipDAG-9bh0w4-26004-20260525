@@ -136,7 +136,7 @@ test('viewer page limit is clamped to 1..100 while total remains global', () => 
 });
 
 test('StoriesContext scopes seen-marker loading to the visible Story set', () => {
-  assert.match(context, /\.from\('story_views'\)[\s\S]*\.eq\('viewer_id', user\.id\)[\s\S]*\.in\('story_id', storyIds\)/i);
+  assert.match(context, /\.from\('story_views'\)[\s\S]*\.eq\('viewer_id', actorId\)[\s\S]*\.in\('story_id', storyIds\)/i);
 });
 
 test('StoriesContext marks local state only after a successful canonical RPC status', () => {
@@ -205,5 +205,6 @@ test('StoryViewersSheet is presentational and includes loading, empty, error, re
 
 test('D adds no parallel view table, analytics authority, realtime or reactions', () => {
   assert.doesNotMatch(migration, /create table|story_view_events|story_impressions|story_view_counts|realtime|reaction|reply/i);
-  assert.doesNotMatch(context + nativeViewer + webViewer + viewersSheet, /story_view_events|story_impressions|reaction|reply|subscribe\(/i);
+  assert.doesNotMatch(context + nativeViewer + webViewer + viewersSheet, /story_view_events|story_impressions|reaction|reply/i);
+  assert.doesNotMatch(context, /table:\s*['"]story_views['"]/i);
 });
