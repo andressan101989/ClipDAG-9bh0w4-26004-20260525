@@ -15,6 +15,12 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 import type { StoryGroup, StoryItem } from './StoriesBar';
 import { useStoryMediaUrl } from './useStoryMediaUrl';
+import { StoryViewersSheet } from './StoryViewersSheet';
+import type {
+  StoryViewerCursor,
+  StoryViewerRecord,
+  StoryViewersPage,
+} from '@/contexts/StoriesContext';
 
 const { width: W, height: H } = Dimensions.get('window');
 const STORY_DURATION = 15000;
@@ -22,8 +28,14 @@ const STORY_DURATION = 15000;
 interface StoryViewerProps {
   visible: boolean;
   storyGroup: StoryGroup | null;
+  currentUserId?: string;
   onClose: () => void;
-  onMarkViewed?: (storyId: string) => void;
+  onMarkViewed?: (storyId: string) => Promise<void>;
+  onGetViewers?: (
+    storyId: string,
+    cursor?: StoryViewerCursor,
+    limit?: number,
+  ) => Promise<StoryViewersPage>;
 }
 
 function StoryPhotoMedia({ story, isActive }: { story: StoryItem; isActive: boolean }) {
@@ -66,14 +78,73 @@ function StoryMedia({ story, isActive }: { story: StoryItem; isActive: boolean }
   return <StoryPhotoMedia story={story} isActive={isActive} />;
 }
 
-export function StoryViewer({ visible, storyGroup, onClose, onMarkViewed }: StoryViewerProps) {
+export function StoryViewer({
+  visible,
+  storyGroup,
+  currentUserId,
+  onClose,
+  onMarkViewed,
+  onGetViewers,
+}: StoryViewerProps) {
   const insets = useSafeAreaInsets();
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [viewersVisible, setViewersVisible] = useState(false);
+  const [viewers, setViewers] = useState<StoryViewerRecord[]>([]);
+  const [viewerCount, setViewerCount] = useState(0);
+  const [viewersLoading, setViewersLoading] = useState(false);
+  const [viewersLoadingMore, setViewersLoadingMore] = useState(false);
+  const [viewersError, setViewersError] = useState(false);
+  const [viewerCursor, setViewerCursor] = useState<StoryViewerCursor | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(0)).current;
+  const viewerRequestGeneration = useRef(0);
 
   const stories = storyGroup?.stories || [];
   const currentStory = stories[currentIndex] || null;
+  const isOwnStory = Boolean(currentStory && currentStory.userId === currentUserId);
+
+  const loadViewers = useCallback(async (
+    storyId: string,
+    cursor?: StoryViewerCursor,
+    append = false,
+  ) => {
+    if (!onGetViewers) return;
+    const generation = ++viewerRequestGeneration.current;
+    if (append) setViewersLoadingMore(true);
+    else setViewersLoading(true);
+    setViewersError(false);
+    try {
+      const page = await onGetViewers(storyId, cursor, 50);
+      if (viewerRequestGeneration.current !== generation) return;
+      setViewerCount(page.totalCount);
+      setViewerCursor(page.nextCursor);
+      setViewers(previous => {
+        if (!append) return page.viewers;
+        const merged = new Map(previous.map(viewer => [viewer.viewerId, viewer]));
+        for (const viewer of page.viewers) merged.set(viewer.viewerId, viewer);
+        return Array.from(merged.values());
+      });
+    } catch (_) {
+      if (viewerRequestGeneration.current === generation) setViewersError(true);
+    } finally {
+      if (viewerRequestGeneration.current === generation) {
+        setViewersLoading(false);
+        setViewersLoadingMore(false);
+      }
+    }
+  }, [onGetViewers]);
+
+  useEffect(() => {
+    viewerRequestGeneration.current += 1;
+    setViewersVisible(false);
+    setViewers([]);
+    setViewerCount(0);
+    setViewerCursor(null);
+    setViewersError(false);
+    if (visible && currentStory && isOwnStory && onGetViewers) {
+      void loadViewers(currentStory.id);
+    }
+  }, [visible, currentStory?.id, isOwnStory, onGetViewers, loadViewers]);
 
   const startProgress = useCallback(() => {
     progressAnim.setValue(0);
@@ -93,7 +164,7 @@ export function StoryViewer({ visible, storyGroup, onClose, onMarkViewed }: Stor
   useEffect(() => {
     if (visible && currentStory) {
       startProgress();
-      if (onMarkViewed) onMarkViewed(currentStory.id);
+      if (onMarkViewed) void onMarkViewed(currentStory.id);
     }
     return () => stopProgress();
   }, [visible, currentIndex]);
@@ -174,9 +245,40 @@ export function StoryViewer({ visible, storyGroup, onClose, onMarkViewed }: Stor
         </View>
 
         <View style={[styles.bottomRow, { paddingBottom: insets.bottom + Spacing.md }]}>
-          <Text style={styles.storyCounter}>{currentIndex + 1} / {stories.length}</Text>
+          <View style={styles.bottomLeft}>
+            {isOwnStory && onGetViewers ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Ver visualizaciones: ${viewerCount}`}
+                hitSlop={8}
+                style={styles.viewerCountButton}
+                onPress={() => setViewersVisible(true)}
+              >
+                <MaterialIcons name="visibility" size={18} color="rgba(255,255,255,0.9)" />
+                <Text style={styles.viewerCountText}>{viewersLoading ? '…' : viewerCount}</Text>
+              </Pressable>
+            ) : null}
+            <Text style={styles.storyCounter}>{currentIndex + 1} / {stories.length}</Text>
+          </View>
           <Text style={styles.swipeHint}>Desliza para cerrar</Text>
         </View>
+
+        <StoryViewersSheet
+          visible={viewersVisible && isOwnStory}
+          viewers={viewers}
+          totalCount={viewerCount}
+          isLoading={viewersLoading}
+          isLoadingMore={viewersLoadingMore}
+          hasMore={Boolean(viewerCursor) && viewers.length < viewerCount}
+          error={viewersError}
+          onClose={() => setViewersVisible(false)}
+          onRetry={() => {
+            if (currentStory) void loadViewers(currentStory.id);
+          }}
+          onLoadMore={() => {
+            if (currentStory && viewerCursor) void loadViewers(currentStory.id, viewerCursor, true);
+          }}
+        />
       </Animated.View>
     </Modal>
   );
@@ -229,6 +331,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg, zIndex: 10,
   },
+  bottomLeft: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  viewerCountButton: {
+    minWidth: 46,
+    height: 34,
+    paddingHorizontal: Spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    borderRadius: Radius.full,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  viewerCountText: { color: '#fff', fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
   storyCounter: { color: 'rgba(255,255,255,0.7)', fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
   swipeHint: { color: 'rgba(255,255,255,0.4)', fontSize: FontSize.xs },
 });

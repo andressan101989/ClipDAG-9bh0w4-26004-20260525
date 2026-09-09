@@ -8,11 +8,34 @@ interface StoriesContextType {
   isLoadingStories: boolean;
   addStory: (mediaAssetId: string) => Promise<string | undefined>;
   markStoryViewed: (storyId: string) => Promise<void>;
+  getStoryViewers: (
+    storyId: string,
+    cursor?: StoryViewerCursor,
+    limit?: number,
+  ) => Promise<StoryViewersPage>;
   refreshStories: () => Promise<void>;
   viewedStoryIds: Set<string>;
 }
 
 export const StoriesContext = createContext<StoriesContextType | undefined>(undefined);
+
+export interface StoryViewerCursor {
+  viewedAt: string;
+  viewerId: string;
+}
+
+export interface StoryViewerRecord {
+  viewerId: string;
+  username: string;
+  avatarUrl: string | null;
+  viewedAt: string;
+}
+
+export interface StoryViewersPage {
+  viewers: StoryViewerRecord[];
+  totalCount: number;
+  nextCursor: StoryViewerCursor | null;
+}
 
 type StoryProfile = {
   id: string;
@@ -50,6 +73,10 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
   const [storyGroups, setStoryGroups] = useState<StoryGroup[]>([]);
   const [isLoadingStories, setIsLoadingStories] = useState(false);
   const [viewedStoryIds, setViewedStoryIds] = useState<Set<string>>(new Set());
+  const viewedStoryIdsRef = useRef<Set<string>>(new Set());
+  const viewFlightsRef = useRef<Map<string, Promise<void>>>(new Map());
+  const storySessionRef = useRef<string | undefined>(user?.id);
+  storySessionRef.current = user?.id;
 
   const loadStories = useCallback(async () => {
     if (!user) return;
@@ -76,6 +103,8 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
 
       if (!storiesData || storiesData.length === 0) {
         setStoryGroups([]);
+        viewedStoryIdsRef.current = new Set();
+        setViewedStoryIds(new Set());
         setIsLoadingStories(false);
         return;
       }
@@ -104,9 +133,11 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       const { data: viewedData } = await supabase
         .from('story_views')
         .select('story_id')
-        .eq('viewer_id', user.id);
+        .eq('viewer_id', user.id)
+        .in('story_id', storyIds);
 
       const viewed = new Set<string>((viewedData || []).map((v: { story_id: string }) => v.story_id));
+      viewedStoryIdsRef.current = viewed;
       setViewedStoryIds(viewed);
 
       // Group by user
@@ -153,6 +184,9 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       loadStories();
     } else {
       setStoryGroups([]);
+      viewedStoryIdsRef.current = new Set();
+      viewFlightsRef.current.clear();
+      setViewedStoryIds(new Set());
     }
   }, [user?.id]);
 
@@ -178,26 +212,94 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
   }, [user, loadStories]);
 
   const markStoryViewed = useCallback(async (storyId: string) => {
-    if (!user || viewedStoryIds.has(storyId)) return;
-    setViewedStoryIds(prev => new Set([...prev, storyId]));
+    if (!user || viewedStoryIdsRef.current.has(storyId)) return;
+    const actorId = user.id;
     const supabase = supabaseRef.current;
     if (!supabase || !supabaseOk.current) return;
-    try {
-      await supabase.from('story_views').insert({
-        story_id: storyId,
-        viewer_id: user.id,
-      });
-    } catch (_) {}
+    const existingFlight = viewFlightsRef.current.get(storyId);
+    if (existingFlight) return existingFlight;
 
-    // Update hasUnseen in groups
-    setStoryGroups(prev => prev.map(g => {
-      const newViewed = new Set([...viewedStoryIds, storyId]);
-      return {
-        ...g,
-        hasUnseen: g.stories.some(s => !newViewed.has(s.id)),
-      };
-    }));
-  }, [user, viewedStoryIds]);
+    const flight = (async () => {
+      const { data, error } = await supabase.rpc('mark_story_viewed', {
+        p_story_id: storyId,
+      });
+      if (error) {
+        console.warn('[StoriesContext] Story view persistence failed', {
+          code: error.code ?? 'unknown',
+        });
+        return;
+      }
+
+      const result = Array.isArray(data) ? data[0] : data;
+      const status = result?.status;
+      if (status !== 'recorded' && status !== 'already_recorded' && status !== 'owner') {
+        console.warn('[StoriesContext] Story view persistence returned an invalid status');
+        return;
+      }
+      if (storySessionRef.current !== actorId) return;
+
+      const nextViewed = new Set(viewedStoryIdsRef.current);
+      nextViewed.add(storyId);
+      viewedStoryIdsRef.current = nextViewed;
+      setViewedStoryIds(nextViewed);
+      setStoryGroups(prev => prev.map(group => ({
+        ...group,
+        hasUnseen: group.stories.some(story => !nextViewed.has(story.id)),
+      })));
+    })().finally(() => {
+      if (viewFlightsRef.current.get(storyId) === flight) {
+        viewFlightsRef.current.delete(storyId);
+      }
+    });
+
+    viewFlightsRef.current.set(storyId, flight);
+    return flight;
+  }, [user]);
+
+  const getStoryViewers = useCallback(async (
+    storyId: string,
+    cursor?: StoryViewerCursor,
+    limit = 50,
+  ): Promise<StoryViewersPage> => {
+    if (!user) throw new Error('STORY_VIEWERS_NOT_AUTHENTICATED');
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) throw new Error('STORY_VIEWERS_CLIENT_UNAVAILABLE');
+
+    const safeLimit = Math.max(1, Math.min(limit, 100));
+    const { data, error } = await supabase.rpc('get_story_viewers', {
+      p_story_id: storyId,
+      p_limit: safeLimit,
+      p_before_viewed_at: cursor?.viewedAt ?? null,
+      p_before_viewer_id: cursor?.viewerId ?? null,
+    });
+    if (error) {
+      console.warn('[StoriesContext] Story viewers load failed', {
+        code: error.code ?? 'unknown',
+      });
+      throw new Error('STORY_VIEWERS_LOAD_FAILED');
+    }
+
+    const rows = Array.isArray(data) ? data : [];
+    const viewers: StoryViewerRecord[] = rows.flatMap((row: any) => {
+      if (
+        typeof row?.viewer_id !== 'string'
+        || typeof row?.username !== 'string'
+        || typeof row?.viewed_at !== 'string'
+      ) return [];
+      return [{
+        viewerId: row.viewer_id,
+        username: row.username,
+        avatarUrl: typeof row.avatar_url === 'string' ? row.avatar_url : null,
+        viewedAt: row.viewed_at,
+      }];
+    });
+    const last = viewers[viewers.length - 1];
+    return {
+      viewers,
+      totalCount: rows.length > 0 ? Number(rows[0].total_count) || 0 : 0,
+      nextCursor: last ? { viewedAt: last.viewedAt, viewerId: last.viewerId } : null,
+    };
+  }, [user]);
 
   return (
     <StoriesContext.Provider value={{
@@ -205,6 +307,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       isLoadingStories,
       addStory,
       markStoryViewed,
+      getStoryViewers,
       refreshStories: loadStories,
       viewedStoryIds,
     }}>

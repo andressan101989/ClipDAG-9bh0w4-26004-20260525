@@ -44,7 +44,7 @@ export default function FeedScreen() {
     addComment, loadMoreVideos, refreshFeed,
     isLoadingFeed, trackView, sendGift,
   } = useFeed();
-  const { storyGroups, addStory, markStoryViewed } = useStories();
+  const { storyGroups, addStory, markStoryViewed, getStoryViewers } = useStories();
   const { unreadCount: notifCount } = useNotifications();
   const { showAlert } = useAlert();
 
@@ -322,8 +322,10 @@ export default function FeedScreen() {
       <StoryViewer
         visible={storyViewerVisible}
         storyGroup={viewingStoryGroup}
+        currentUserId={user?.id}
         onClose={() => { setStoryViewerVisible(false); setViewingStoryGroup(null); }}
         onMarkViewed={markStoryViewed}
+        onGetViewers={getStoryViewers}
       />
     </View>
   );
