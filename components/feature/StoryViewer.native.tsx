@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import {
-  View, Text, Modal, Pressable, StyleSheet, Dimensions,
+  View, Text, Modal, Pressable, StyleSheet, useWindowDimensions,
   ActivityIndicator, Animated, PanResponder, AppState, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -26,6 +26,7 @@ import { StoryViewersSheet } from './StoryViewersSheet';
 import { StoryInteractions } from './StoryInteractions';
 import { StoryCompositionOverlay } from './storyComposition';
 import { StorySharedContentCard } from './StorySharedContentCard';
+import { StoryReactionEffect } from './StoryReactionEffect';
 import type { StoryReactionKey } from './storyReactions';
 import type {
   StoryReactionCursor,
@@ -38,7 +39,6 @@ import type {
   StorySharedContent,
 } from '@/contexts/StoriesContext';
 
-const { width: W, height: H } = Dimensions.get('window');
 const PHOTO_DURATION_MS = 15000;
 const HOLD_DELAY_MS = 220;
 
@@ -269,6 +269,7 @@ export function StoryViewer({
   onGetSharedContent,
 }: StoryViewerProps) {
   const insets = useSafeAreaInsets();
+  const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const router = useRouter();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
@@ -294,6 +295,10 @@ export function StoryViewer({
   const [reactionsLoadingMore, setReactionsLoadingMore] = useState(false);
   const [reactionsError, setReactionsError] = useState(false);
   const [reactionCursor, setReactionCursor] = useState<StoryReactionCursor | null>(null);
+  const [reactionEffect, setReactionEffect] = useState<{
+    reaction: StoryReactionKey | null;
+    token: number;
+  }>({ reaction: null, token: 0 });
   const progressAnim = useRef(new Animated.Value(0)).current;
   const photoProgressRef = useRef(0);
   const translateY = useRef(new Animated.Value(0)).current;
@@ -302,6 +307,8 @@ export function StoryViewer({
   const playbackGeneration = useRef(0);
   const transitionLock = useRef(false);
   const holdTriggered = useRef(false);
+  const viewportHeightRef = useRef(viewportHeight);
+  viewportHeightRef.current = viewportHeight;
 
   const stories = storyGroup?.stories || [];
   const currentStory = stories[currentIndex] || null;
@@ -501,6 +508,7 @@ export function StoryViewer({
     setManualHold(false);
     setInteractionFocused(false);
     setMediaReady(false);
+    setReactionEffect(current => ({ reaction: null, token: current.token + 1 }));
     resetProgress();
     return () => stopPhotoProgress(false);
   }, [currentStoryId, resetProgress, stopPhotoProgress, visible]);
@@ -552,6 +560,10 @@ export function StoryViewer({
       setReactionPending(false);
     }
   }, [currentStory, isOwnStory, onSetReaction, reactionPending]);
+
+  const triggerReactionEffect = useCallback((reaction: StoryReactionKey) => {
+    setReactionEffect(current => ({ reaction, token: current.token + 1 }));
+  }, []);
 
   const sendReply = useCallback(async (text: string, clientMessageId: string) => {
     if (!currentStory || isOwnStory || !onReplyToStory) throw new Error('STORY_REPLY_UNAVAILABLE');
@@ -619,7 +631,11 @@ export function StoryViewer({
       },
       onPanResponderRelease: (_, g) => {
         if (g.dy > 100) {
-          Animated.timing(translateY, { toValue: H, duration: 200, useNativeDriver: true }).start(closeViewer);
+          Animated.timing(translateY, {
+            toValue: viewportHeightRef.current,
+            duration: 200,
+            useNativeDriver: true,
+          }).start(closeViewer);
         } else {
           Animated.spring(translateY, { toValue: 0, useNativeDriver: true }).start();
         }
@@ -664,7 +680,12 @@ export function StoryViewer({
             onReset={handleMediaReset}
           />
         )}
-        <StoryCompositionOverlay composition={currentStory.composition} width={W} height={H} />
+        <StoryCompositionOverlay composition={currentStory.composition} width={viewportWidth} height={viewportHeight} />
+
+        <StoryReactionEffect
+          reaction={reactionEffect.reaction}
+          effectToken={reactionEffect.token}
+        />
 
         {/* Dark gradient top/bottom */}
         <LinearGradient
@@ -734,7 +755,13 @@ export function StoryViewer({
               />
             </Pressable>
           ) : null}
-          <Pressable onPress={closeViewer} hitSlop={10} style={styles.iconBtn}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Cerrar historia"
+            onPress={closeViewer}
+            hitSlop={10}
+            style={styles.iconBtn}
+          >
             <MaterialIcons name="close" size={24} color="#fff" />
           </Pressable>
         </View>
@@ -759,15 +786,6 @@ export function StoryViewer({
           />
         </View>
 
-        {/* Media type badge */}
-        <View style={styles.mediaBadge} pointerEvents="none">
-          <MaterialIcons
-            name={currentStory.storyKind === 'shared' ? 'share' : currentStory.mediaType === 'video' ? 'videocam' : 'photo'}
-            size={13}
-            color={currentStory.storyKind === 'shared' || currentStory.mediaType === 'video' ? Colors.secondary : Colors.primary}
-          />
-        </View>
-
         {!isOwnStory && onSetReaction && onReplyToStory ? (
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -780,6 +798,7 @@ export function StoryViewer({
               selectedReaction={currentStory.viewerReaction ?? null}
               reactionPending={reactionPending}
               onReaction={selectReaction}
+              onReactionEffect={triggerReactionEffect}
               onReply={sendReply}
               onFocusChange={setInteractionFocused}
             />
@@ -887,8 +906,6 @@ const styles = StyleSheet.create({
   media: {
     position: 'absolute',
     top: 0, left: 0, right: 0, bottom: 0,
-    width: W,
-    height: H,
   },
   mediaState: {
     alignItems: 'center',
@@ -914,25 +931,25 @@ const styles = StyleSheet.create({
   topGrad: {
     position: 'absolute',
     top: 0, left: 0, right: 0,
-    height: 160,
+    height: 184,
   },
   botGrad: {
     position: 'absolute',
     bottom: 0, left: 0, right: 0,
-    height: 100,
+    height: 196,
   },
   progressRow: {
     position: 'absolute',
     top: 0, left: 0, right: 0,
     flexDirection: 'row',
-    paddingHorizontal: Spacing.sm,
-    gap: 4,
+    paddingHorizontal: Spacing.md,
+    gap: 3,
     zIndex: 10,
   },
   progressTrack: {
     flex: 1,
     height: 2.5,
-    backgroundColor: 'rgba(255,255,255,0.35)',
+    backgroundColor: 'rgba(255,255,255,0.28)',
     borderRadius: 2,
     overflow: 'hidden',
   },
@@ -962,10 +979,12 @@ const styles = StyleSheet.create({
     fontSize: FontSize.xs,
   },
   iconBtn: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: Radius.full,
+    backgroundColor: 'rgba(10,10,15,0.24)',
   },
   tapZones: {
     position: 'absolute',
@@ -979,22 +998,13 @@ const styles = StyleSheet.create({
   tapRight: {
     flex: 2,
   },
-  mediaBadge: {
-    position: 'absolute',
-    bottom: 80,
-    right: Spacing.md,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    borderRadius: Radius.full,
-    padding: 6,
-    zIndex: 10,
-  },
   bottomRow: {
     position: 'absolute',
     bottom: 0, left: 0, right: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
+    paddingHorizontal: Spacing.md,
     zIndex: 10,
   },
   sharedContentLayer: {
@@ -1008,7 +1018,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     zIndex: 20,
     paddingTop: Spacing.sm,
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(10,10,15,0.38)',
   },
   bottomLeft: {
     flexDirection: 'row',
@@ -1017,7 +1029,7 @@ const styles = StyleSheet.create({
   },
   viewerCountButton: {
     minWidth: 46,
-    height: 34,
+    height: 44,
     paddingHorizontal: Spacing.sm,
     flexDirection: 'row',
     alignItems: 'center',

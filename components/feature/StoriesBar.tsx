@@ -5,7 +5,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from '@/components/ui/SafeImage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
+import { Colors, FontSize, FontWeight, Spacing } from '@/constants/theme';
 import type { StoryReactionKey } from './storyReactions';
 import type { StoryComposition } from './storyComposition';
 
@@ -113,6 +113,9 @@ export function StoriesBar({
   onAddStory,
   onViewStory,
 }: StoriesBarProps) {
+  const ownStoryGroup = storyGroups.find(group => group.userId === currentUserId) ?? null;
+  const otherStoryGroups = storyGroups.filter(group => group.userId !== currentUserId);
+
   return (
     <View style={styles.wrapper}>
       <ScrollView
@@ -122,43 +125,60 @@ export function StoriesBar({
         decelerationRate="fast"
       >
         {/* ── My story / Add story ───────────────────────────────────────── */}
-        <Pressable
-          onPress={onAddStory}
-          style={({ pressed }) => [styles.item, pressed && { opacity: 0.75 }]}
-        >
-          <View style={styles.addRingOuter}>
-            {/* Dashed gradient border */}
-            <LinearGradient
-              colors={['#7C5CFF', '#FF2D78']}
-              style={styles.addRingGrad}
+        <View style={styles.item}>
+          <View style={styles.storyPrimary}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={ownStoryGroup ? 'Ver tu historia' : 'Añadir historia'}
+              onPress={() => ownStoryGroup ? onViewStory(ownStoryGroup) : onAddStory()}
+              style={({ pressed }) => pressed && styles.pressed}
             >
-              <View style={styles.addRingBg}>
-                <AvatarImage
+              {ownStoryGroup ? (
+                <StoryAvatarRing
                   uri={currentUserAvatar}
                   username={currentUsername || 'me'}
-                  size={AVATAR_SIZE - 4}
+                  hasUnseen={ownStoryGroup.hasUnseen}
                 />
-              </View>
-            </LinearGradient>
-            {/* Plus badge */}
-            <View style={styles.addBadge}>
+              ) : (
+                <View style={styles.addRingOuter}>
+                  <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={styles.addRingGrad}>
+                    <View style={styles.addRingBg}>
+                      <AvatarImage
+                        uri={currentUserAvatar}
+                        username={currentUsername || 'me'}
+                        size={AVATAR_SIZE - 4}
+                      />
+                    </View>
+                  </LinearGradient>
+                </View>
+              )}
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={ownStoryGroup ? 'Añadir otra historia' : 'Añadir historia'}
+              hitSlop={6}
+              onPress={onAddStory}
+              style={({ pressed }) => [styles.addBadge, pressed && styles.pressed]}
+            >
               <LinearGradient
                 colors={['#7C5CFF', '#FF2D78']}
                 style={styles.addBadgeGrad}
               >
                 <MaterialCommunityIcons name="plus" size={12} color="#fff" />
               </LinearGradient>
-            </View>
+            </Pressable>
           </View>
-          <Text style={styles.label} numberOfLines={1}>Tu historia</Text>
-        </Pressable>
+          <Text style={[styles.label, ownStoryGroup?.hasUnseen && styles.labelUnseen]} numberOfLines={1}>Tu historia</Text>
+        </View>
 
         {/* ── Other users' stories ───────────────────────────────────────── */}
-        {storyGroups.map(group => (
+        {otherStoryGroups.map(group => (
           <Pressable
             key={group.userId}
+            accessibilityRole="button"
+            accessibilityLabel={`Ver historias de ${group.username}`}
             onPress={() => onViewStory(group)}
-            style={({ pressed }) => [styles.item, pressed && { opacity: 0.75 }]}
+            style={({ pressed }) => [styles.item, pressed && styles.pressed]}
           >
             <StoryAvatarRing
               uri={group.avatar}
@@ -178,7 +198,7 @@ export function StoriesBar({
         ))}
 
         {/* ── Empty hint ────────────────────────────────────────────────── */}
-        {storyGroups.length === 0 ? (
+        {otherStoryGroups.length === 0 && !ownStoryGroup ? (
           <View style={styles.emptyHint}>
             <MaterialCommunityIcons name="account-group-outline" size={15} color={Colors.textSubtle} />
             <Text style={styles.emptyHintText}>Sigue creadores para ver sus historias</Text>
@@ -208,6 +228,12 @@ const styles = StyleSheet.create({
     gap: 6,
     width: RING_SIZE,
   },
+  storyPrimary: {
+    position: 'relative',
+    width: RING_SIZE,
+    height: RING_SIZE,
+  },
+  pressed: { opacity: 0.72, transform: [{ scale: 0.97 }] },
 
   // ── Add story ring ─────────────────────────────────────────────────────────
   addRingOuter: {

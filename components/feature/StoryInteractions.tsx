@@ -17,6 +17,7 @@ interface StoryInteractionsProps {
   selectedReaction: StoryReactionKey | null;
   reactionPending: boolean;
   onReaction: (reaction: StoryReactionKey | null) => Promise<void>;
+  onReactionEffect: (reaction: StoryReactionKey) => void;
   onReply: (text: string, clientMessageId: string) => Promise<void>;
   onFocusChange: (focused: boolean) => void;
 }
@@ -26,6 +27,7 @@ export function StoryInteractions({
   selectedReaction,
   reactionPending,
   onReaction,
+  onReactionEffect,
   onReply,
   onFocusChange,
 }: StoryInteractionsProps) {
@@ -81,15 +83,21 @@ export function StoryInteractions({
           placeholderTextColor="rgba(255,255,255,0.62)"
           maxLength={4975}
           returnKeyType="send"
+          accessibilityHint="Envía un mensaje privado sobre esta historia"
           editable={!sending}
           style={styles.input}
         />
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Enviar respuesta"
+          accessibilityHint="Envía la respuesta por mensaje privado"
           disabled={!draft.trim() || sending}
           onPress={() => void submit()}
-          style={[styles.sendButton, (!draft.trim() || sending) && styles.disabled]}
+          style={({ pressed }) => [
+            styles.sendButton,
+            (!draft.trim() || sending) && styles.disabled,
+            pressed && styles.pressed,
+          ]}
         >
           {sending ? (
             <ActivityIndicator size="small" color="#fff" />
@@ -108,10 +116,16 @@ export function StoryInteractions({
               key={item.key}
               accessibilityRole="radio"
               accessibilityLabel={item.label}
+              accessibilityHint={selected ? 'Toca para quitar tu reacción' : 'Toca para reaccionar a la historia'}
               accessibilityState={{ checked: selected, disabled: reactionPending }}
               disabled={reactionPending}
+              onPressIn={() => onReactionEffect(item.key)}
               onPress={() => void onReaction(selected ? null : item.key)}
-              style={[styles.reactionButton, selected && styles.reactionSelected]}
+              style={({ pressed }) => [
+                styles.reactionButton,
+                selected && styles.reactionSelected,
+                pressed && styles.reactionPressed,
+              ]}
             >
               <Text style={styles.emoji}>{item.emoji}</Text>
             </Pressable>
@@ -124,8 +138,9 @@ export function StoryInteractions({
 
 const styles = StyleSheet.create({
   root: {
-    gap: Spacing.xs,
+    gap: Spacing.sm,
     paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.xs,
   },
   replyRow: {
     flexDirection: 'row',
@@ -134,44 +149,51 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    minHeight: 42,
+    minHeight: 46,
     paddingHorizontal: Spacing.md,
     color: '#fff',
     fontSize: FontSize.sm,
     borderRadius: Radius.full,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.48)',
-    backgroundColor: 'rgba(0,0,0,0.38)',
+    borderColor: 'rgba(255,255,255,0.28)',
+    backgroundColor: 'rgba(15,15,22,0.72)',
   },
   sendButton: {
-    width: 42,
-    height: 42,
+    width: 46,
+    height: 46,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: Radius.full,
     backgroundColor: Colors.primary,
+    shadowColor: Colors.primary,
+    shadowOpacity: 0.32,
+    shadowRadius: 9,
+    elevation: 4,
   },
+  pressed: { opacity: 0.78, transform: [{ scale: 0.96 }] },
   disabled: { opacity: 0.45 },
   reactions: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingHorizontal: Spacing.xs,
   },
   reactionButton: {
-    width: 42,
-    height: 38,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: 'transparent',
-    backgroundColor: 'rgba(0,0,0,0.28)',
+    backgroundColor: 'rgba(15,15,22,0.58)',
   },
   reactionSelected: {
-    borderColor: '#fff',
-    backgroundColor: 'rgba(124,92,255,0.62)',
+    borderColor: Colors.primaryLight,
+    backgroundColor: 'rgba(124,92,255,0.38)',
     transform: [{ scale: 1.06 }],
   },
+  reactionPressed: { opacity: 0.72, transform: [{ scale: 0.92 }] },
   emoji: { fontSize: 22 },
   feedbackError: { color: '#ffb4b4', fontSize: FontSize.xs },
   feedbackSuccess: { color: '#b8ffd2', fontSize: FontSize.xs, fontWeight: FontWeight.semibold },

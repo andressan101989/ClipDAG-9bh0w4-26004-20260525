@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import type { StoryReactionRecord, StoryViewerRecord } from '@/contexts/StoriesContext';
-import { storyReactionEmoji } from './storyReactions';
+import { storyReactionDefinition, storyReactionEmoji } from './storyReactions';
 
 interface StoryViewersSheetProps {
   visible: boolean;
@@ -91,7 +91,7 @@ export function StoryViewersSheet({
           onPress={onClose}
         />
         <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, Spacing.md) }]}>
-          <View style={styles.handle} />
+          <View accessibilityElementsHidden style={styles.handle} />
           <View style={styles.header}>
             <View>
               <Text style={styles.title}>{tab === 'viewers' ? 'Visualizaciones' : 'Reacciones'}</Text>
@@ -114,6 +114,7 @@ export function StoryViewersSheet({
           <View style={styles.tabs}>
             <Pressable
               accessibilityRole="tab"
+              accessibilityLabel={`Vistas, ${totalCount}`}
               accessibilityState={{ selected: tab === 'viewers' }}
               onPress={() => setTab('viewers')}
               style={[styles.tab, tab === 'viewers' && styles.tabSelected]}
@@ -122,6 +123,7 @@ export function StoryViewersSheet({
             </Pressable>
             <Pressable
               accessibilityRole="tab"
+              accessibilityLabel={`Reacciones, ${reactionCount}`}
               accessibilityState={{ selected: tab === 'reactions' }}
               onPress={() => setTab('reactions')}
               style={[styles.tab, tab === 'reactions' && styles.tabSelected]}
@@ -217,7 +219,7 @@ export function StoryViewersSheet({
                     <Text style={styles.username}>@{item.username}</Text>
                     <Text style={styles.viewedAt}>{viewedTime(item.reactedAt)}</Text>
                   </View>
-                  <Text accessibilityLabel={item.reaction} style={styles.reactionEmoji}>
+                  <Text accessibilityLabel={storyReactionDefinition(item.reaction).label} style={styles.reactionEmoji}>
                     {storyReactionEmoji(item.reaction)}
                   </Text>
                 </View>
@@ -240,11 +242,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.58)',
   },
   sheet: {
-    maxHeight: '68%',
+    maxHeight: '72%',
     minHeight: 300,
     backgroundColor: Colors.surfaceElevated,
-    borderTopLeftRadius: Radius.xl,
-    borderTopRightRadius: Radius.xl,
+    borderTopLeftRadius: Radius.xxl,
+    borderTopRightRadius: Radius.xxl,
     borderWidth: 1,
     borderBottomWidth: 0,
     borderColor: Colors.border,
@@ -263,7 +265,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: Colors.border,
   },
@@ -288,17 +291,20 @@ const styles = StyleSheet.create({
   tabs: {
     flexDirection: 'row',
     paddingHorizontal: Spacing.lg,
+    gap: Spacing.sm,
+    paddingBottom: Spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: Colors.border,
   },
   tab: {
     flex: 1,
     alignItems: 'center',
-    paddingVertical: Spacing.sm,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
+    minHeight: 44,
+    justifyContent: 'center',
+    borderRadius: Radius.full,
+    backgroundColor: Colors.surfaceHighlight,
   },
-  tabSelected: { borderBottomColor: Colors.primary },
+  tabSelected: { backgroundColor: Colors.primaryDim2, borderWidth: 1, borderColor: Colors.primary },
   tabText: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
   tabTextSelected: { color: Colors.textPrimary },
   list: {
@@ -312,7 +318,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   viewerRow: {
-    minHeight: 64,
+    minHeight: 62,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.md,
@@ -332,7 +338,7 @@ const styles = StyleSheet.create({
     color: Colors.textSubtle,
     fontSize: FontSize.xs,
   },
-  reactionEmoji: { fontSize: 24 },
+  reactionEmoji: { minWidth: 40, textAlign: 'center', fontSize: 25 },
   state: {
     flex: 1,
     minHeight: 190,
