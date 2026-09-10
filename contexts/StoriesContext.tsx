@@ -23,7 +23,7 @@ interface StoriesContextType {
     cursor?: StoryReactionCursor,
     limit?: number,
   ) => Promise<StoryReactionsPage>;
-  replyToStory: (storyId: string, text: string) => Promise<void>;
+  replyToStory: (storyId: string, text: string, clientMessageId: string) => Promise<void>;
   refreshStories: () => Promise<void>;
   getStoryGroupForUser: (userId: string | undefined) => StoryGroup | null;
   viewedStoryIds: Set<string>;
@@ -615,12 +615,16 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     };
   }, [user]);
 
-  const replyToStory = useCallback(async (storyId: string, text: string): Promise<void> => {
+  const replyToStory = useCallback(async (
+    storyId: string,
+    text: string,
+    clientMessageId: string,
+  ): Promise<void> => {
     if (!user) throw new Error('STORY_REPLY_NOT_AUTHENTICATED');
     const trimmed = text.trim();
-    if (!trimmed) throw new Error('STORY_REPLY_EMPTY');
+    if (!trimmed || !clientMessageId) throw new Error('STORY_REPLY_INVALID');
     try {
-      await sendStoryReply(storyId, trimmed);
+      await sendStoryReply(storyId, trimmed, clientMessageId);
     } catch (error: any) {
       console.warn('[StoriesContext] Story reply failed', {
         code: typeof error?.code === 'string' ? error.code : 'request_failed',

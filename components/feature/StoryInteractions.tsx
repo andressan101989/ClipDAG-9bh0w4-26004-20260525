@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
+import { createChatClientMessageId } from '@/services/chatService';
 import { STORY_REACTIONS, type StoryReactionKey } from './storyReactions';
 
 interface StoryInteractionsProps {
@@ -16,7 +17,7 @@ interface StoryInteractionsProps {
   selectedReaction: StoryReactionKey | null;
   reactionPending: boolean;
   onReaction: (reaction: StoryReactionKey | null) => Promise<void>;
-  onReply: (text: string) => Promise<void>;
+  onReply: (text: string, clientMessageId: string) => Promise<void>;
   onFocusChange: (focused: boolean) => void;
 }
 
@@ -32,20 +33,29 @@ export function StoryInteractions({
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState(false);
   const [sent, setSent] = useState(false);
+  const sendingRef = useRef(false);
+  const replyAttemptRef = useRef<{ text: string; clientMessageId: string } | null>(null);
 
   const submit = async () => {
     const text = draft.trim();
-    if (!text || sending) return;
+    if (!text || sendingRef.current) return;
+    const attempt = replyAttemptRef.current?.text === text
+      ? replyAttemptRef.current
+      : { text, clientMessageId: createChatClientMessageId() };
+    replyAttemptRef.current = attempt;
+    sendingRef.current = true;
     setSending(true);
     setSendError(false);
     setSent(false);
     try {
-      await onReply(text);
+      await onReply(text, attempt.clientMessageId);
+      replyAttemptRef.current = null;
       setDraft('');
       setSent(true);
     } catch {
       setSendError(true);
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   };
@@ -57,6 +67,9 @@ export function StoryInteractions({
           accessibilityLabel={`Responder a ${username}`}
           value={draft}
           onChangeText={value => {
+            // Any user edit starts a new logical payload, even if they later
+            // type the previous text again.
+            replyAttemptRef.current = null;
             setDraft(value);
             setSendError(false);
             setSent(false);

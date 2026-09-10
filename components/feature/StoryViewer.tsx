@@ -50,7 +50,7 @@ interface StoryViewerProps {
     cursor?: StoryReactionCursor,
     limit?: number,
   ) => Promise<StoryReactionsPage>;
-  onReplyToStory?: (storyId: string, text: string) => Promise<void>;
+  onReplyToStory?: (storyId: string, text: string, clientMessageId: string) => Promise<void>;
 }
 
 function StoryPhotoMedia({
@@ -393,9 +393,9 @@ export function StoryViewer({
     }
   }, [currentStory, isOwnStory, onSetReaction, reactionPending]);
 
-  const sendReply = useCallback(async (text: string) => {
+  const sendReply = useCallback(async (text: string, clientMessageId: string) => {
     if (!currentStory || isOwnStory || !onReplyToStory) throw new Error('STORY_REPLY_UNAVAILABLE');
-    await onReplyToStory(currentStory.id, text);
+    await onReplyToStory(currentStory.id, text, clientMessageId);
   }, [currentStory, isOwnStory, onReplyToStory]);
 
   const requestDelete = useCallback(() => {

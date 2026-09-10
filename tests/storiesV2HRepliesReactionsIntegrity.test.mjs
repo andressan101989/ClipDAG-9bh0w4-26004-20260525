@@ -150,9 +150,9 @@ test('Story replies store safe durable text context and no Story media identity'
 
 test('reply send state trims, guards duplicates, preserves draft on failure and clears on success', () => {
   assert.match(interactions, /const text = draft\.trim\(\)/i);
-  assert.match(interactions, /if \(!text \|\| sending\) return/i);
+  assert.match(interactions, /if \(!text \|\| sendingRef\.current\) return/i);
   assert.match(interactions, /setSending\(true\)/i);
-  assert.match(interactions, /await onReply\(text\)[\s\S]*setDraft\(''\)/i);
+  assert.match(interactions, /await onReply\(text, attempt\.clientMessageId\)[\s\S]*setDraft\(''\)/i);
   assert.match(interactions, /catch \{[\s\S]*setSendError\(true\)/i);
   assert.doesNotMatch(interactions.slice(interactions.indexOf('catch {'), interactions.indexOf('finally')), /setDraft/);
 });
