@@ -29,6 +29,15 @@ export function createChatClientMessageId(): string {
   return Crypto.randomUUID();
 }
 
+export async function sendStoryReply(storyId: string, text: string): Promise<ChatMessageRow> {
+  const { data, error } = await client().rpc('reply_to_story', {
+    p_story_id: storyId,
+    p_client_message_id: createChatClientMessageId(),
+    p_text: text,
+  });
+  return assertData(data as ChatMessageRow | null, error);
+}
+
 export async function getOrCreateDirectConversation(otherUserId: string): Promise<string> {
   const { data, error } = await client().rpc('chat_get_or_create_direct', {
     p_other_user_id: otherUserId,

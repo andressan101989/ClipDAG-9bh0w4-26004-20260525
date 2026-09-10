@@ -172,7 +172,7 @@ test('viewer list caller maps only approved fields and returns a keyset cursor',
 });
 
 test('feed wires current identity and both canonical viewer callbacks into the existing viewer', () => {
-  assert.match(feed, /getStoryViewers[^\n]*= useStories\(\)/i);
+  assert.match(feed, /getStoryViewers[\s\S]{0,180}\}\s*=\s*useStories\(\)/i);
   assert.match(feed, /<StoryViewer[\s\S]*currentUserId=\{user\?\.id\}[\s\S]*onMarkViewed=\{markStoryViewed\}[\s\S]*onGetViewers=\{getStoryViewers\}/i);
 });
 
@@ -203,8 +203,8 @@ test('StoryViewersSheet is presentational and includes loading, empty, error, re
   assert.doesNotMatch(viewersSheet, /getSupabaseClient|createClient|\.from\(|\.rpc\(/i);
 });
 
-test('D adds no parallel view table, analytics authority, realtime or reactions', () => {
+test('D adds no parallel view table, analytics authority or realtime authority', () => {
   assert.doesNotMatch(migration, /create table|story_view_events|story_impressions|story_view_counts|realtime|reaction|reply/i);
-  assert.doesNotMatch(context + nativeViewer + webViewer + viewersSheet, /story_view_events|story_impressions|reaction|reply/i);
+  assert.doesNotMatch(context + nativeViewer + webViewer + viewersSheet, /story_view_events|story_impressions/i);
   assert.doesNotMatch(context, /table:\s*['"]story_views['"]/i);
 });

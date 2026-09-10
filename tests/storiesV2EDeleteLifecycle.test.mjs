@@ -168,7 +168,7 @@ test('client validates the complete server result and logs no Story identity', (
 });
 
 test('Feed wires the canonical delete callback into the existing StoryViewer', () => {
-  assert.match(feed, /deleteStory[^\n]*= useStories\(\)/i);
+  assert.match(feed, /deleteStory[\s\S]{0,180}\}\s*=\s*useStories\(\)/i);
   assert.match(feed, /<StoryViewer[\s\S]*onDeleteStory=\{deleteStory\}/i);
 });
 
@@ -199,9 +199,9 @@ test('generic cleanup and physical deletion remain unchanged authorities', () =>
   assert.match(docs, /Physical R2 deletion remains exclusively/i);
 });
 
-test('E creates no parallel table, Edge, cleanup, scheduler, reactions or direct object deletion', () => {
+test('E creates no parallel delete table, Edge, cleanup, scheduler or direct object deletion', () => {
   const changed = migration + context + nativeViewer + webViewer;
   assert.doesNotMatch(migration, /create table|cron\.schedule|create or replace function public\.(remove_story|delete_my_story|delete_story_with_media)/i);
-  assert.doesNotMatch(changed, /deleteObject|StoryDeleteService|reaction|reply/i);
+  assert.doesNotMatch(changed, /deleteObject|StoryDeleteService/i);
   assert.doesNotMatch(context, /deleteMediaAsset|\.from\('stories'\)[\s\S]{0,120}\.delete/i);
 });

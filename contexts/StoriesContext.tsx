@@ -3,6 +3,8 @@ import { AppState, type AppStateStatus } from 'react-native';
 import { getSupabaseClient } from '@/template';
 import { AuthContext } from './AuthContext';
 import type { StoryGroup, StoryItem } from '@/components/feature/StoriesBar';
+import { isStoryReactionKey, type StoryReactionKey } from '@/components/feature/storyReactions';
+import { sendStoryReply } from '@/services/chatService';
 
 interface StoriesContextType {
   storyGroups: StoryGroup[];
@@ -15,6 +17,13 @@ interface StoriesContextType {
     limit?: number,
   ) => Promise<StoryViewersPage>;
   deleteStory: (storyId: string) => Promise<StoryDeleteResult>;
+  setStoryReaction: (storyId: string, reaction: StoryReactionKey | null) => Promise<void>;
+  getStoryReactions: (
+    storyId: string,
+    cursor?: StoryReactionCursor,
+    limit?: number,
+  ) => Promise<StoryReactionsPage>;
+  replyToStory: (storyId: string, text: string) => Promise<void>;
   refreshStories: () => Promise<void>;
   getStoryGroupForUser: (userId: string | undefined) => StoryGroup | null;
   viewedStoryIds: Set<string>;
@@ -71,6 +80,25 @@ function generateAvatarUrl(username: string): string {
   return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(username)}`;
 }
 
+export interface StoryReactionCursor {
+  reactedAt: string;
+  reactorId: string;
+}
+
+export interface StoryReactionRecord {
+  reactorId: string;
+  username: string;
+  avatarUrl: string | null;
+  reaction: StoryReactionKey;
+  reactedAt: string;
+}
+
+export interface StoryReactionsPage {
+  reactions: StoryReactionRecord[];
+  totalCount: number;
+  nextCursor: StoryReactionCursor | null;
+}
+
 function pruneExpiredStoryGroups(
   groups: StoryGroup[],
   viewed: Set<string>,
@@ -105,6 +133,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
   const viewedStoryIdsRef = useRef<Set<string>>(new Set());
   const viewFlightsRef = useRef<Map<string, Promise<void>>>(new Map());
   const deleteFlightsRef = useRef<Map<string, Promise<StoryDeleteResult>>>(new Map());
+  const reactionFlightsRef = useRef<Map<string, Promise<void>>>(new Map());
   const refreshFlightRef = useRef<Promise<void> | null>(null);
   const refreshPendingRef = useRef(false);
   const storySessionRef = useRef<string | undefined>(user?.id);
@@ -168,6 +197,22 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
 
       const activeStoryIds = new Set(storyIds);
       const viewed = new Set<string>((viewedData || []).map((v: { story_id: string }) => v.story_id));
+      const { data: reactionData, error: reactionError } = await supabase
+        .from('story_reactions')
+        .select('story_id, reaction')
+        .eq('reactor_id', actorId)
+        .in('story_id', storyIds);
+      if (reactionError) {
+        console.warn('[StoriesContext] Story reaction state load failed', {
+          code: reactionError.code ?? 'unknown',
+        });
+      }
+      const ownReactionByStory = new Map<string, StoryReactionKey>();
+      for (const row of reactionData || []) {
+        if (typeof row.story_id === 'string' && isStoryReactionKey(row.reaction)) {
+          ownReactionByStory.set(row.story_id, row.reaction);
+        }
+      }
       // Preserve RPC-confirmed local views (including owner NOOP semantics)
       // across reconciliation while the Story remains active in this session.
       for (const storyId of viewedStoryIdsRef.current) {
@@ -192,6 +237,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
           mediaType: row.media_type as 'photo' | 'video',
           createdAt: row.created_at,
           expiresAt: row.expires_at,
+          viewerReaction: ownReactionByStory.get(row.id) ?? null,
         };
 
         if (groupMap.has(row.user_id)) {
@@ -245,6 +291,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     viewedStoryIdsRef.current = new Set();
     viewFlightsRef.current.clear();
     deleteFlightsRef.current.clear();
+    reactionFlightsRef.current.clear();
     setViewedStoryIds(new Set());
     if (user?.id) {
       refreshPendingRef.current = true;
@@ -468,6 +515,120 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     return flight;
   }, [user, loadStories]);
 
+  const setStoryReaction = useCallback(async (
+    storyId: string,
+    reaction: StoryReactionKey | null,
+  ): Promise<void> => {
+    if (!user) throw new Error('STORY_REACTION_NOT_AUTHENTICATED');
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) throw new Error('STORY_REACTION_CLIENT_UNAVAILABLE');
+    const existingFlight = reactionFlightsRef.current.get(storyId);
+    if (existingFlight) return existingFlight;
+
+    const actorId = user.id;
+    const previous = storyGroupsRef.current
+      .flatMap(group => group.stories)
+      .find(story => story.id === storyId)?.viewerReaction ?? null;
+    const updateLocal = (next: StoryReactionKey | null) => {
+      setStoryGroups(groups => groups.map(group => ({
+        ...group,
+        stories: group.stories.map(story => story.id === storyId
+          ? { ...story, viewerReaction: next }
+          : story),
+      })));
+    };
+    updateLocal(reaction);
+
+    const flight = (async () => {
+      const { data, error } = await supabase.rpc('set_story_reaction', {
+        p_story_id: storyId,
+        p_reaction: reaction,
+      });
+      if (error) {
+        if (storySessionRef.current === actorId) updateLocal(previous);
+        console.warn('[StoriesContext] Story reaction persistence failed', {
+          code: error.code ?? 'unknown',
+        });
+        throw new Error('STORY_REACTION_FAILED');
+      }
+      const row = Array.isArray(data) ? data[0] : data;
+      const persisted = row?.reaction;
+      if (
+        !['set', 'removed', 'unchanged'].includes(row?.status)
+        || (persisted !== null && !isStoryReactionKey(persisted))
+      ) {
+        if (storySessionRef.current === actorId) updateLocal(previous);
+        throw new Error('STORY_REACTION_INVALID_RESPONSE');
+      }
+      if (storySessionRef.current === actorId) updateLocal(persisted ?? null);
+    })().finally(() => {
+      if (reactionFlightsRef.current.get(storyId) === flight) {
+        reactionFlightsRef.current.delete(storyId);
+      }
+    });
+
+    reactionFlightsRef.current.set(storyId, flight);
+    return flight;
+  }, [user]);
+
+  const getStoryReactions = useCallback(async (
+    storyId: string,
+    cursor?: StoryReactionCursor,
+    limit = 50,
+  ): Promise<StoryReactionsPage> => {
+    if (!user) throw new Error('STORY_REACTIONS_NOT_AUTHENTICATED');
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) throw new Error('STORY_REACTIONS_CLIENT_UNAVAILABLE');
+    const { data, error } = await supabase.rpc('get_story_reactions', {
+      p_story_id: storyId,
+      p_limit: Math.max(1, Math.min(limit, 100)),
+      p_before_updated_at: cursor?.reactedAt ?? null,
+      p_before_reactor_id: cursor?.reactorId ?? null,
+    });
+    if (error) {
+      console.warn('[StoriesContext] Story reactions load failed', {
+        code: error.code ?? 'unknown',
+      });
+      throw new Error('STORY_REACTIONS_LOAD_FAILED');
+    }
+    const rows = Array.isArray(data) ? data : [];
+    const reactions: StoryReactionRecord[] = rows.flatMap((row: any) => {
+      if (
+        typeof row?.reactor_id !== 'string'
+        || typeof row?.username !== 'string'
+        || typeof row?.reacted_at !== 'string'
+        || !isStoryReactionKey(row?.reaction)
+      ) return [];
+      return [{
+        reactorId: row.reactor_id,
+        username: row.username,
+        avatarUrl: typeof row.avatar_url === 'string' ? row.avatar_url : null,
+        reaction: row.reaction,
+        reactedAt: row.reacted_at,
+      }];
+    });
+    const last = reactions[reactions.length - 1];
+    return {
+      reactions,
+      totalCount: rows.length > 0 ? Number(rows[0].total_count) || 0 : 0,
+      nextCursor: last ? { reactedAt: last.reactedAt, reactorId: last.reactorId } : null,
+    };
+  }, [user]);
+
+  const replyToStory = useCallback(async (storyId: string, text: string): Promise<void> => {
+    if (!user) throw new Error('STORY_REPLY_NOT_AUTHENTICATED');
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error('STORY_REPLY_EMPTY');
+    try {
+      await sendStoryReply(storyId, trimmed);
+    } catch (error: any) {
+      console.warn('[StoriesContext] Story reply failed', {
+        code: typeof error?.code === 'string' ? error.code : 'request_failed',
+      });
+      throw new Error('STORY_REPLY_FAILED');
+    }
+  }, [user]);
+
   const getStoryGroupForUser = useCallback((userId: string | undefined) => {
     if (!userId) return null;
     return storyGroupsRef.current.find(group => group.userId === userId) ?? null;
@@ -481,6 +642,9 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       markStoryViewed,
       getStoryViewers,
       deleteStory,
+      setStoryReaction,
+      getStoryReactions,
+      replyToStory,
       refreshStories: loadStories,
       getStoryGroupForUser,
       viewedStoryIds,

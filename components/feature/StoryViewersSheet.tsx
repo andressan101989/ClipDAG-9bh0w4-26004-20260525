@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -12,7 +12,8 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
-import type { StoryViewerRecord } from '@/contexts/StoriesContext';
+import type { StoryReactionRecord, StoryViewerRecord } from '@/contexts/StoriesContext';
+import { storyReactionEmoji } from './storyReactions';
 
 interface StoryViewersSheetProps {
   visible: boolean;
@@ -25,6 +26,14 @@ interface StoryViewersSheetProps {
   onClose: () => void;
   onRetry: () => void;
   onLoadMore: () => void;
+  reactions?: StoryReactionRecord[];
+  reactionCount?: number;
+  reactionsLoading?: boolean;
+  reactionsLoadingMore?: boolean;
+  reactionsHasMore?: boolean;
+  reactionsError?: boolean;
+  onReactionsRetry?: () => void;
+  onReactionsLoadMore?: () => void;
 }
 
 function viewedTime(value: string): string {
@@ -49,8 +58,21 @@ export function StoryViewersSheet({
   onClose,
   onRetry,
   onLoadMore,
+  reactions = [],
+  reactionCount = 0,
+  reactionsLoading = false,
+  reactionsLoadingMore = false,
+  reactionsHasMore = false,
+  reactionsError = false,
+  onReactionsRetry,
+  onReactionsLoadMore,
 }: StoryViewersSheetProps) {
   const insets = useSafeAreaInsets();
+  const [tab, setTab] = useState<'viewers' | 'reactions'>('viewers');
+
+  useEffect(() => {
+    if (!visible) setTab('viewers');
+  }, [visible]);
 
   return (
     <Modal
@@ -72,8 +94,11 @@ export function StoryViewersSheet({
           <View style={styles.handle} />
           <View style={styles.header}>
             <View>
-              <Text style={styles.title}>Visualizaciones</Text>
-              <Text style={styles.count}>{totalCount} {totalCount === 1 ? 'persona' : 'personas'}</Text>
+              <Text style={styles.title}>{tab === 'viewers' ? 'Visualizaciones' : 'Reacciones'}</Text>
+              <Text style={styles.count}>
+                {tab === 'viewers' ? totalCount : reactionCount}{' '}
+                {(tab === 'viewers' ? totalCount : reactionCount) === 1 ? 'persona' : 'personas'}
+              </Text>
             </View>
             <Pressable
               accessibilityRole="button"
@@ -86,12 +111,31 @@ export function StoryViewersSheet({
             </Pressable>
           </View>
 
-          {isLoading ? (
+          <View style={styles.tabs}>
+            <Pressable
+              accessibilityRole="tab"
+              accessibilityState={{ selected: tab === 'viewers' }}
+              onPress={() => setTab('viewers')}
+              style={[styles.tab, tab === 'viewers' && styles.tabSelected]}
+            >
+              <Text style={[styles.tabText, tab === 'viewers' && styles.tabTextSelected]}>Vistas</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="tab"
+              accessibilityState={{ selected: tab === 'reactions' }}
+              onPress={() => setTab('reactions')}
+              style={[styles.tab, tab === 'reactions' && styles.tabSelected]}
+            >
+              <Text style={[styles.tabText, tab === 'reactions' && styles.tabTextSelected]}>Reacciones</Text>
+            </Pressable>
+          </View>
+
+          {tab === 'viewers' && isLoading ? (
             <View style={styles.state}>
               <ActivityIndicator color={Colors.primary} />
               <Text style={styles.stateText}>Cargando visualizaciones…</Text>
             </View>
-          ) : error ? (
+          ) : tab === 'viewers' && error ? (
             <View style={styles.state}>
               <MaterialIcons name="error-outline" size={28} color={Colors.error} />
               <Text style={styles.stateText}>No pudimos cargar las visualizaciones.</Text>
@@ -99,7 +143,7 @@ export function StoryViewersSheet({
                 <Text style={styles.retryText}>Reintentar</Text>
               </Pressable>
             </View>
-          ) : (
+          ) : tab === 'viewers' ? (
             <FlatList
               style={styles.viewerList}
               data={viewers}
@@ -130,6 +174,52 @@ export function StoryViewersSheet({
                     <Text style={styles.username}>@{item.username}</Text>
                     <Text style={styles.viewedAt}>{viewedTime(item.viewedAt)}</Text>
                   </View>
+                </View>
+              )}
+            />
+          ) : reactionsLoading ? (
+            <View style={styles.state}>
+              <ActivityIndicator color={Colors.primary} />
+              <Text style={styles.stateText}>Cargando reacciones…</Text>
+            </View>
+          ) : reactionsError ? (
+            <View style={styles.state}>
+              <MaterialIcons name="error-outline" size={28} color={Colors.error} />
+              <Text style={styles.stateText}>No pudimos cargar las reacciones.</Text>
+              <Pressable accessibilityRole="button" style={styles.retryButton} onPress={onReactionsRetry}>
+                <Text style={styles.retryText}>Reintentar</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <FlatList
+              style={styles.viewerList}
+              data={reactions}
+              keyExtractor={item => item.reactorId}
+              contentContainerStyle={reactions.length === 0 ? styles.emptyList : styles.list}
+              onEndReached={() => {
+                if (reactionsHasMore && !reactionsLoadingMore) onReactionsLoadMore?.();
+              }}
+              onEndReachedThreshold={0.35}
+              ListEmptyComponent={(
+                <View style={styles.state}>
+                  <MaterialIcons name="favorite-border" size={30} color={Colors.textSubtle} />
+                  <Text style={styles.emptyTitle}>Todavía no hay reacciones</Text>
+                  <Text style={styles.stateText}>Las reacciones a tu historia aparecerán aquí.</Text>
+                </View>
+              )}
+              ListFooterComponent={reactionsLoadingMore ? (
+                <ActivityIndicator style={styles.footerLoader} color={Colors.primary} />
+              ) : null}
+              renderItem={({ item }) => (
+                <View style={styles.viewerRow}>
+                  <Avatar uri={item.avatarUrl || undefined} username={item.username} size={42} />
+                  <View style={styles.viewerInfo}>
+                    <Text style={styles.username}>@{item.username}</Text>
+                    <Text style={styles.viewedAt}>{viewedTime(item.reactedAt)}</Text>
+                  </View>
+                  <Text accessibilityLabel={item.reaction} style={styles.reactionEmoji}>
+                    {storyReactionEmoji(item.reaction)}
+                  </Text>
                 </View>
               )}
             />
@@ -195,6 +285,22 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     backgroundColor: Colors.surfaceHighlight,
   },
+  tabs: {
+    flexDirection: 'row',
+    paddingHorizontal: Spacing.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.border,
+  },
+  tab: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabSelected: { borderBottomColor: Colors.primary },
+  tabText: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  tabTextSelected: { color: Colors.textPrimary },
   list: {
     paddingHorizontal: Spacing.lg,
     paddingBottom: Spacing.md,
@@ -226,6 +332,7 @@ const styles = StyleSheet.create({
     color: Colors.textSubtle,
     fontSize: FontSize.xs,
   },
+  reactionEmoji: { fontSize: 24 },
   state: {
     flex: 1,
     minHeight: 190,

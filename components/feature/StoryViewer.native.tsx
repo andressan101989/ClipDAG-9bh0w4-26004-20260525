@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet, Dimensions,
-  ActivityIndicator, Animated, PanResponder, AppState,
+  ActivityIndicator, Animated, PanResponder, AppState, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
 // expo-video — lazy-loaded to prevent Hermes crash from dynamic import() syntax
@@ -22,7 +22,12 @@ import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme
 import type { StoryGroup, StoryItem } from './StoriesBar';
 import { useStoryMediaUrl } from './useStoryMediaUrl';
 import { StoryViewersSheet } from './StoryViewersSheet';
+import { StoryInteractions } from './StoryInteractions';
+import type { StoryReactionKey } from './storyReactions';
 import type {
+  StoryReactionCursor,
+  StoryReactionRecord,
+  StoryReactionsPage,
   StoryViewerCursor,
   StoryDeleteResult,
   StoryViewerRecord,
@@ -45,6 +50,13 @@ interface StoryViewerProps {
     limit?: number,
   ) => Promise<StoryViewersPage>;
   onDeleteStory?: (storyId: string) => Promise<StoryDeleteResult>;
+  onSetReaction?: (storyId: string, reaction: StoryReactionKey | null) => Promise<void>;
+  onGetReactions?: (
+    storyId: string,
+    cursor?: StoryReactionCursor,
+    limit?: number,
+  ) => Promise<StoryReactionsPage>;
+  onReplyToStory?: (storyId: string, text: string) => Promise<void>;
 }
 
 interface ReadyStoryVideoProps {
@@ -246,6 +258,9 @@ export function StoryViewer({
   onMarkViewed,
   onGetViewers,
   onDeleteStory,
+  onSetReaction,
+  onGetReactions,
+  onReplyToStory,
 }: StoryViewerProps) {
   const insets = useSafeAreaInsets();
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -264,10 +279,19 @@ export function StoryViewer({
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
   const [deleteError, setDeleteError] = useState(false);
+  const [interactionFocused, setInteractionFocused] = useState(false);
+  const [reactionPending, setReactionPending] = useState(false);
+  const [reactions, setReactions] = useState<StoryReactionRecord[]>([]);
+  const [reactionCount, setReactionCount] = useState(0);
+  const [reactionsLoading, setReactionsLoading] = useState(false);
+  const [reactionsLoadingMore, setReactionsLoadingMore] = useState(false);
+  const [reactionsError, setReactionsError] = useState(false);
+  const [reactionCursor, setReactionCursor] = useState<StoryReactionCursor | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const photoProgressRef = useRef(0);
   const translateY = useRef(new Animated.Value(0)).current;
   const viewerRequestGeneration = useRef(0);
+  const reactionRequestGeneration = useRef(0);
   const playbackGeneration = useRef(0);
   const transitionLock = useRef(false);
   const holdTriggered = useRef(false);
@@ -284,6 +308,8 @@ export function StoryViewer({
     || viewersVisible
     || deleteConfirmVisible
     || deletePending
+    || interactionFocused
+    || reactionPending
     || appState !== 'active'
     || !mediaReady;
 
@@ -330,6 +356,37 @@ export function StoryViewer({
     }
   }, [onGetViewers]);
 
+  const loadReactions = useCallback(async (
+    storyId: string,
+    cursor?: StoryReactionCursor,
+    append = false,
+  ) => {
+    if (!onGetReactions) return;
+    const generation = ++reactionRequestGeneration.current;
+    if (append) setReactionsLoadingMore(true);
+    else setReactionsLoading(true);
+    setReactionsError(false);
+    try {
+      const page = await onGetReactions(storyId, cursor, 50);
+      if (reactionRequestGeneration.current !== generation) return;
+      setReactionCount(page.totalCount);
+      setReactionCursor(page.nextCursor);
+      setReactions(previous => {
+        if (!append) return page.reactions;
+        const merged = new Map(previous.map(reaction => [reaction.reactorId, reaction]));
+        for (const reaction of page.reactions) merged.set(reaction.reactorId, reaction);
+        return Array.from(merged.values());
+      });
+    } catch {
+      if (reactionRequestGeneration.current === generation) setReactionsError(true);
+    } finally {
+      if (reactionRequestGeneration.current === generation) {
+        setReactionsLoading(false);
+        setReactionsLoadingMore(false);
+      }
+    }
+  }, [onGetReactions]);
+
   useEffect(() => {
     viewerRequestGeneration.current += 1;
     setViewersVisible(false);
@@ -337,10 +394,18 @@ export function StoryViewer({
     setViewerCount(0);
     setViewerCursor(null);
     setViewersError(false);
+    reactionRequestGeneration.current += 1;
+    setReactions([]);
+    setReactionCount(0);
+    setReactionCursor(null);
+    setReactionsError(false);
     if (visible && currentStoryId && isOwnStory && onGetViewers) {
       void loadViewers(currentStoryId);
     }
-  }, [visible, currentStoryId, isOwnStory, onGetViewers, loadViewers]);
+    if (visible && currentStoryId && isOwnStory && onGetReactions) {
+      void loadReactions(currentStoryId);
+    }
+  }, [visible, currentStoryId, isOwnStory, onGetViewers, onGetReactions, loadViewers, loadReactions]);
 
   const stopPhotoProgress = useCallback((capture = true) => {
     progressAnim.stopAnimation(value => {
@@ -415,6 +480,7 @@ export function StoryViewer({
     playbackGeneration.current += 1;
     transitionLock.current = false;
     setManualHold(false);
+    setInteractionFocused(false);
     setMediaReady(false);
     resetProgress();
     return () => stopPhotoProgress(false);
@@ -448,12 +514,30 @@ export function StoryViewer({
       setCurrentIndex(0);
       setIsMuted(false);
       setManualHold(false);
+      setInteractionFocused(false);
       setViewersVisible(false);
       setDeleteConfirmVisible(false);
       resetProgress();
       transitionLock.current = false;
     }
   }, [resetProgress, visible]);
+
+  const selectReaction = useCallback(async (reaction: StoryReactionKey | null) => {
+    if (!currentStory || isOwnStory || !onSetReaction || reactionPending) return;
+    setReactionPending(true);
+    try {
+      await onSetReaction(currentStory.id, reaction);
+    } catch {
+      // StoriesContext restores the last persisted selection.
+    } finally {
+      setReactionPending(false);
+    }
+  }, [currentStory, isOwnStory, onSetReaction, reactionPending]);
+
+  const sendReply = useCallback(async (text: string) => {
+    if (!currentStory || isOwnStory || !onReplyToStory) throw new Error('STORY_REPLY_UNAVAILABLE');
+    await onReplyToStory(currentStory.id, text);
+  }, [currentStory, isOwnStory, onReplyToStory]);
 
   const requestDelete = useCallback(() => {
     if (!isOwnStory || !onDeleteStory || deletePending) return;
@@ -653,8 +737,26 @@ export function StoryViewer({
           />
         </View>
 
-        {/* Bottom: story index */}
-        <View style={[styles.bottomRow, { paddingBottom: insets.bottom + Spacing.md }]}>
+        {!isOwnStory && onSetReaction && onReplyToStory ? (
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            pointerEvents="box-none"
+            style={[styles.interactionsContainer, { paddingBottom: Math.max(insets.bottom, Spacing.sm) }]}
+          >
+            <StoryInteractions
+              key={currentStory.id}
+              username={storyGroup.username}
+              selectedReaction={currentStory.viewerReaction ?? null}
+              reactionPending={reactionPending}
+              onReaction={selectReaction}
+              onReply={sendReply}
+              onFocusChange={setInteractionFocused}
+            />
+          </KeyboardAvoidingView>
+        ) : null}
+
+        {/* Bottom: owner controls / story index */}
+        {isOwnStory ? <View style={[styles.bottomRow, { paddingBottom: insets.bottom + Spacing.md }]}>
           <View style={styles.bottomLeft}>
             {isOwnStory && onGetViewers ? (
               <Pressable
@@ -671,7 +773,7 @@ export function StoryViewer({
             <Text style={styles.storyCounter}>{currentIndex + 1} / {stories.length}</Text>
           </View>
           <Text style={styles.swipeHint}>Desliza para cerrar</Text>
-        </View>
+        </View> : null}
 
         <StoryViewersSheet
           visible={viewersVisible && isOwnStory}
@@ -687,6 +789,18 @@ export function StoryViewer({
           }}
           onLoadMore={() => {
             if (currentStory && viewerCursor) void loadViewers(currentStory.id, viewerCursor, true);
+          }}
+          reactions={reactions}
+          reactionCount={reactionCount}
+          reactionsLoading={reactionsLoading}
+          reactionsLoadingMore={reactionsLoadingMore}
+          reactionsHasMore={Boolean(reactionCursor) && reactions.length < reactionCount}
+          reactionsError={reactionsError}
+          onReactionsRetry={() => {
+            if (currentStory) void loadReactions(currentStory.id);
+          }}
+          onReactionsLoadMore={() => {
+            if (currentStory && reactionCursor) void loadReactions(currentStory.id, reactionCursor, true);
           }}
         />
 
@@ -851,6 +965,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
     zIndex: 10,
+  },
+  interactionsContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 20,
+    paddingTop: Spacing.sm,
+    backgroundColor: 'rgba(0,0,0,0.2)',
   },
   bottomLeft: {
     flexDirection: 'row',

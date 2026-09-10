@@ -200,8 +200,8 @@ test('F preserves the existing D and E viewer/delete authorities', () => {
   assert.doesNotMatch(nativeViewer + webViewer, /\.from\('stories'\)|\.from\('story_views'\)|rpc\(/i);
 });
 
-test('F creates no parallel playback, media, context, backend or reaction authority', () => {
+test('F creates no parallel playback, media or context authority', () => {
   const changed = nativeViewer + webViewer;
-  assert.doesNotMatch(changed, /StoryPlaybackService|StoryMediaService|createContext|create table|create or replace function|reaction|reply/i);
+  assert.doesNotMatch(changed, /StoryPlaybackService|StoryMediaService|createContext|create table|create or replace function/i);
   assert.doesNotMatch(changed, /setInterval|STORY_DURATION/);
 });

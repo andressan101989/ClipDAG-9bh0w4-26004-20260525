@@ -44,7 +44,10 @@ export default function FeedScreen() {
     addComment, loadMoreVideos, refreshFeed,
     isLoadingFeed, trackView, sendGift,
   } = useFeed();
-  const { storyGroups, addStory, markStoryViewed, getStoryViewers, deleteStory } = useStories();
+  const {
+    storyGroups, addStory, markStoryViewed, getStoryViewers, deleteStory,
+    setStoryReaction, getStoryReactions, replyToStory,
+  } = useStories();
   const { unreadCount: notifCount } = useNotifications();
   const { showAlert } = useAlert();
 
@@ -337,6 +340,9 @@ export default function FeedScreen() {
         onMarkViewed={markStoryViewed}
         onGetViewers={getStoryViewers}
         onDeleteStory={deleteStory}
+        onSetReaction={setStoryReaction}
+        onGetReactions={getStoryReactions}
+        onReplyToStory={replyToStory}
       />
     </View>
   );

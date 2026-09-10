@@ -6,6 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from '@/components/ui/SafeImage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
+import type { StoryReactionKey } from './storyReactions';
 
 const AVATAR_SIZE = 58;
 const RING_PAD = 3;
@@ -27,6 +28,7 @@ export interface StoryItem {
   mediaType: 'photo' | 'video';
   createdAt: string;
   expiresAt: string;
+  viewerReaction?: StoryReactionKey | null;
 }
 
 interface StoriesBarProps {
