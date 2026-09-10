@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,6 +15,8 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import type { StoryReactionRecord, StoryViewerRecord } from '@/contexts/StoriesContext';
 import { storyReactionDefinition, storyReactionEmoji } from './storyReactions';
+
+// Figma visual authority: ClipDAG Stories V2 Final, node 2:131.
 
 interface StoryViewersSheetProps {
   visible: boolean;
@@ -39,12 +42,12 @@ interface StoryViewersSheetProps {
 function viewedTime(value: string): string {
   const viewedAt = new Date(value);
   if (Number.isNaN(viewedAt.getTime())) return '';
-  return viewedAt.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - viewedAt.getTime()) / 60_000));
+  if (elapsedMinutes < 1) return 'ahora';
+  if (elapsedMinutes < 60) return `hace ${elapsedMinutes} min`;
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 24) return `hace ${elapsedHours} h`;
+  return `hace ${Math.floor(elapsedHours / 24)} d`;
 }
 
 export function StoryViewersSheet({
@@ -68,6 +71,8 @@ export function StoryViewersSheet({
   onReactionsLoadMore,
 }: StoryViewersSheetProps) {
   const insets = useSafeAreaInsets();
+  const { height: viewportHeight } = useWindowDimensions();
+  const sheetHeight = Math.min(484, Math.max(360, viewportHeight * 0.575));
   const [tab, setTab] = useState<'viewers' | 'reactions'>('viewers');
 
   useEffect(() => {
@@ -90,14 +95,13 @@ export function StoryViewersSheet({
           style={styles.backdrop}
           onPress={onClose}
         />
-        <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, Spacing.md) }]}>
+        <View style={[styles.sheet, { height: sheetHeight, paddingBottom: Math.max(insets.bottom, Spacing.md) }]}>
           <View accessibilityElementsHidden style={styles.handle} />
           <View style={styles.header}>
             <View>
-              <Text style={styles.title}>{tab === 'viewers' ? 'Visualizaciones' : 'Reacciones'}</Text>
+              <Text style={styles.title}>Visualizaciones</Text>
               <Text style={styles.count}>
-                {tab === 'viewers' ? totalCount : reactionCount}{' '}
-                {(tab === 'viewers' ? totalCount : reactionCount) === 1 ? 'persona' : 'personas'}
+                {totalCount} {totalCount === 1 ? 'persona' : 'personas'}
               </Text>
             </View>
             <Pressable
@@ -119,7 +123,7 @@ export function StoryViewersSheet({
               onPress={() => setTab('viewers')}
               style={[styles.tab, tab === 'viewers' && styles.tabSelected]}
             >
-              <Text style={[styles.tabText, tab === 'viewers' && styles.tabTextSelected]}>Vistas</Text>
+              <Text style={[styles.tabText, tab === 'viewers' && styles.tabTextSelected]}>Vistas · {totalCount}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="tab"
@@ -128,7 +132,7 @@ export function StoryViewersSheet({
               onPress={() => setTab('reactions')}
               style={[styles.tab, tab === 'reactions' && styles.tabSelected]}
             >
-              <Text style={[styles.tabText, tab === 'reactions' && styles.tabTextSelected]}>Reacciones</Text>
+              <Text style={[styles.tabText, tab === 'reactions' && styles.tabTextSelected]}>Reacciones · {reactionCount}</Text>
             </Pressable>
           </View>
 
@@ -242,14 +246,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.58)',
   },
   sheet: {
-    maxHeight: '72%',
     minHeight: 300,
-    backgroundColor: Colors.surfaceElevated,
-    borderTopLeftRadius: Radius.xxl,
-    borderTopRightRadius: Radius.xxl,
+    backgroundColor: '#111118',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     borderWidth: 1,
     borderBottomWidth: 0,
-    borderColor: Colors.border,
+    borderColor: '#2A2B36',
     overflow: 'hidden',
   },
   handle: {
@@ -264,15 +267,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
+    paddingHorizontal: 23,
     paddingTop: Spacing.sm,
     paddingBottom: Spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: Colors.border,
   },
   title: {
     color: Colors.textPrimary,
-    fontSize: FontSize.lg,
+    fontSize: 20,
     fontWeight: FontWeight.bold,
   },
   count: {
@@ -281,34 +282,32 @@ const styles = StyleSheet.create({
     fontSize: FontSize.xs,
   },
   closeButton: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: Radius.full,
-    backgroundColor: Colors.surfaceHighlight,
+    backgroundColor: 'transparent',
   },
   tabs: {
     flexDirection: 'row',
-    paddingHorizontal: Spacing.lg,
-    gap: Spacing.sm,
-    paddingBottom: Spacing.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: Colors.border,
+    paddingHorizontal: 19,
+    gap: 18,
+    paddingBottom: 16,
   },
   tab: {
     flex: 1,
     alignItems: 'center',
-    minHeight: 44,
+    height: 42,
     justifyContent: 'center',
     borderRadius: Radius.full,
-    backgroundColor: Colors.surfaceHighlight,
+    backgroundColor: '#23232D',
   },
   tabSelected: { backgroundColor: Colors.primaryDim2, borderWidth: 1, borderColor: Colors.primary },
   tabText: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
   tabTextSelected: { color: Colors.textPrimary },
   list: {
-    paddingHorizontal: Spacing.lg,
+    paddingHorizontal: 23,
     paddingBottom: Spacing.md,
   },
   viewerList: {
@@ -318,12 +317,10 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   viewerRow: {
-    minHeight: 62,
+    minHeight: 66,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: Colors.borderSubtle,
   },
   viewerInfo: {
     flex: 1,

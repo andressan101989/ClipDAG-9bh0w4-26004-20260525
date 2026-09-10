@@ -14,6 +14,7 @@ import {
 
 export const STORY_REACTION_EFFECT_DURATION_MS = 980;
 export const STORY_REACTION_REDUCED_MOTION_DURATION_MS = 700;
+// Figma visual authority: ClipDAG Stories V2 Final, node 2:42.
 
 const PARTICLE_OFFSETS = [-0.34, -0.21, -0.1, 0.04, 0.16, 0.29, -0.26, 0.24] as const;
 
@@ -115,6 +116,14 @@ export function StoryReactionEffect({ reaction, effectToken }: StoryReactionEffe
   }
 
   const particles = PARTICLE_OFFSETS.slice(0, definition.particleCount);
+  const heroScale = progress.interpolate({
+    inputRange: [0, 0.24, 0.72, 1],
+    outputRange: [0.72, 1.08, 1, 0.94],
+  });
+  const scrimOpacity = progress.interpolate({
+    inputRange: [0, 0.12, 0.8, 1],
+    outputRange: [0, 0.1, 0.1, 0],
+  });
   return (
     <View
       pointerEvents="none"
@@ -122,6 +131,12 @@ export function StoryReactionEffect({ reaction, effectToken }: StoryReactionEffe
       importantForAccessibility="no-hide-descendants"
       style={styles.layer}
     >
+      <Animated.View style={[styles.scrim, { opacity: scrimOpacity }]} />
+      {reaction === 'fire' ? (
+        <Animated.Text style={[styles.fireHero, { opacity, transform: [{ scale: heroScale }] }]}>
+          {definition.emoji}
+        </Animated.Text>
+      ) : null}
       {reaction === 'sad' ? (
         <Animated.Text style={[styles.sadHero, { opacity }]}>{definition.emoji}</Animated.Text>
       ) : null}
@@ -170,6 +185,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  scrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#000',
+  },
   reducedEmoji: {
     fontSize: 82,
     textShadowColor: 'rgba(0,0,0,0.45)',
@@ -190,15 +209,25 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 3 },
     textShadowRadius: 10,
   },
+  fireHero: {
+    position: 'absolute',
+    top: '39%',
+    fontSize: 88,
+    textShadowColor: 'rgba(255,120,20,0.42)',
+    textShadowOffset: { width: 0, height: 4 },
+    textShadowRadius: 18,
+  },
   particle: {
     position: 'absolute',
     width: 48,
-    height: 54,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'rgba(24,24,32,0.45)',
   },
   particleEmoji: {
-    fontSize: 40,
+    fontSize: 28,
     textShadowColor: 'rgba(0,0,0,0.42)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 8,

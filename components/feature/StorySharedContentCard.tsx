@@ -7,6 +7,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import type { StorySharedContent } from '@/contexts/StoriesContext';
 
+// Figma visual authority: ClipDAG Stories V2 Final, node 2:82.
+
 export function StorySharedContentCard({
   storyId, load, onReadyChange, onOpen,
 }: {
@@ -57,10 +59,10 @@ export function StorySharedContentCard({
       <Pressable accessibilityRole="button" accessibilityLabel="Abrir contenido original" accessibilityHint={`${cta} de @${content.username}`} onPress={() => onOpen(content.sourceVideoId)} style={styles.card}>
         {content.previewUrl ? <Image source={{ uri: content.previewUrl }} style={styles.image} contentFit="cover" /> : <View style={styles.image}><MaterialIcons name="play-circle-outline" color="#fff" size={54} /></View>}
         <LinearGradient colors={['transparent', 'rgba(10,10,15,0.94)']} style={styles.imageShade} pointerEvents="none" />
+        <Text style={styles.type}>{content.contentType === 'reel' ? 'REEL' : 'POST'}</Text>
         <View style={styles.copy}>
-          <Text style={styles.type}>{content.contentType === 'reel' ? 'REEL' : 'POST'}</Text>
           <View style={styles.creator}>
-            <Avatar uri={content.avatarUrl || ''} username={content.username} size={30} />
+            <Avatar uri={content.avatarUrl || ''} username={content.username} size={34} />
             <Text style={styles.user}>@{content.username}</Text>
           </View>
           {content.caption ? <Text numberOfLines={2} style={styles.caption}>{content.caption}</Text> : null}
@@ -70,22 +72,24 @@ export function StorySharedContentCard({
           </View>
         </View>
       </Pressable>
+      <Text style={styles.openHint}>Toque en la tarjeta → contenido original</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   center: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bg },
-  card: { width: '84%', maxWidth: 430, borderRadius: Radius.xl, overflow: 'hidden', backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.borderHighlight, zIndex: 4, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 18, elevation: 9 },
-  image: { width: '100%', aspectRatio: 4 / 3, backgroundColor: Colors.surfaceHighlight, alignItems: 'center', justifyContent: 'center' },
-  imageShade: { position: 'absolute', top: 80, left: 0, right: 0, height: 170 },
-  copy: { padding: Spacing.md },
-  type: { alignSelf: 'flex-start', color: Colors.primaryLight, fontSize: FontSize.xs, fontWeight: FontWeight.extrabold, letterSpacing: 0.8 },
-  creator: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 7 },
-  user: { color: Colors.textPrimary, fontWeight: FontWeight.extrabold, fontSize: FontSize.md },
-  caption: { color: Colors.textSecondary, marginTop: Spacing.sm, lineHeight: 19 },
-  ctaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: Spacing.xs, marginTop: Spacing.md },
+  card: { width: '84%', maxWidth: 328, minHeight: 468, borderRadius: 24, overflow: 'hidden', backgroundColor: '#181820', borderWidth: 1, borderColor: '#343541', zIndex: 4, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 18, elevation: 9 },
+  image: { width: '100%', aspectRatio: 328 / 286, backgroundColor: Colors.surfaceHighlight, alignItems: 'center', justifyContent: 'center' },
+  imageShade: { position: 'absolute', top: 92, left: 0, right: 0, height: 194 },
+  copy: { minHeight: 181, padding: 17, paddingTop: 24, justifyContent: 'space-between' },
+  type: { position: 'absolute', top: 17, left: 17, zIndex: 5, color: Colors.textOnBrand, backgroundColor: Colors.primary, borderRadius: Radius.full, overflow: 'hidden', paddingHorizontal: 13, paddingVertical: 5, fontSize: 11, fontWeight: FontWeight.extrabold, letterSpacing: 0.6 },
+  creator: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  user: { color: Colors.textPrimary, fontWeight: FontWeight.semibold, fontSize: FontSize.sm },
+  caption: { color: '#D7D7DE', marginTop: Spacing.md, lineHeight: 19, fontSize: FontSize.sm },
+  ctaRow: { minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, marginTop: 18, borderRadius: Radius.full, backgroundColor: 'rgba(35,35,45,0.96)' },
   cta: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  openHint: { width: '74%', maxWidth: 286, marginTop: 22, color: Colors.textSecondary, fontSize: FontSize.xs, textAlign: 'center' },
   unavailableCard: { width: '80%', maxWidth: 360, minHeight: 180, alignItems: 'center', justifyContent: 'center', borderRadius: Radius.xl, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surfaceElevated, padding: Spacing.lg },
   unavailable: { color: Colors.textPrimary, marginTop: Spacing.sm, fontSize: FontSize.md, textAlign: 'center' },
   retry: { marginTop: 14, borderRadius: Radius.full, backgroundColor: Colors.primary, paddingHorizontal: 18, paddingVertical: 9 },

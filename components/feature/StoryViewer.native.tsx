@@ -41,6 +41,7 @@ import type {
 
 const PHOTO_DURATION_MS = 15000;
 const HOLD_DELAY_MS = 220;
+// Figma visual authority: ClipDAG Stories V2 Final, node 2:7.
 
 interface StoryViewerProps {
   visible: boolean;
@@ -700,7 +701,7 @@ export function StoryViewer({
         />
 
         {/* Progress bars */}
-        <View style={[styles.progressRow, { paddingTop: insets.top + 8 }]}>
+        <View style={[styles.progressRow, { paddingTop: Math.max(insets.top, 13) }]}>
           {stories.map((_, i) => (
             <View key={i} style={styles.progressTrack}>
               <Animated.View
@@ -720,7 +721,7 @@ export function StoryViewer({
         </View>
 
         {/* Header */}
-        <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
+        <View style={[styles.header, { paddingTop: Math.max(insets.top + 26, 43) }]}>
           <Avatar uri={storyGroup.avatar} username={storyGroup.username} size={38} showBorder />
           <View style={styles.headerInfo}>
             <Text style={styles.headerUsername}>@{storyGroup.username}</Text>
@@ -893,9 +894,9 @@ function timeAgo(dateStr: string): string {
   const date = new Date(dateStr);
   const now = new Date();
   const diff = Math.floor((now.getTime() - date.getTime()) / 1000);
-  if (diff < 60) return `${diff}s`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  return `${Math.floor(diff / 3600)}h`;
+  if (diff < 60) return 'ahora';
+  if (diff < 3600) return `${Math.floor(diff / 60)} min`;
+  return `${Math.floor(diff / 3600)} h`;
 }
 
 const styles = StyleSheet.create({
@@ -931,23 +932,24 @@ const styles = StyleSheet.create({
   topGrad: {
     position: 'absolute',
     top: 0, left: 0, right: 0,
-    height: 184,
+    height: 150,
   },
   botGrad: {
     position: 'absolute',
     bottom: 0, left: 0, right: 0,
-    height: 196,
+    height: 234,
   },
   progressRow: {
     position: 'absolute',
     top: 0, left: 0, right: 0,
     flexDirection: 'row',
-    paddingHorizontal: Spacing.md,
-    gap: 3,
+    paddingHorizontal: 13,
+    gap: 4,
     zIndex: 10,
   },
   progressTrack: {
     flex: 1,
+    // Figma renders this as 3 px; 2.5 preserves J's scaled-screen density.
     height: 2.5,
     backgroundColor: 'rgba(255,255,255,0.28)',
     borderRadius: 2,
@@ -984,7 +986,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: Radius.full,
-    backgroundColor: 'rgba(10,10,15,0.24)',
+    backgroundColor: 'transparent',
   },
   tapZones: {
     position: 'absolute',
@@ -1004,7 +1006,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.md,
+    paddingHorizontal: 15,
     zIndex: 10,
   },
   sharedContentLayer: {
@@ -1017,10 +1019,8 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     zIndex: 20,
-    paddingTop: Spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: 'rgba(255,255,255,0.12)',
-    backgroundColor: 'rgba(10,10,15,0.38)',
+    paddingTop: 0,
+    backgroundColor: 'transparent',
   },
   bottomLeft: {
     flexDirection: 'row',

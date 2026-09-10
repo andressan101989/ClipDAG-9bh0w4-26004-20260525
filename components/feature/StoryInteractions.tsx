@@ -138,9 +138,8 @@ export function StoryInteractions({
 
 const styles = StyleSheet.create({
   root: {
-    gap: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.xs,
+    gap: 12,
+    paddingHorizontal: 15,
   },
   replyRow: {
     flexDirection: 'row',
@@ -150,13 +149,14 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     minHeight: 46,
+    height: 48,
     paddingHorizontal: Spacing.md,
     color: '#fff',
     fontSize: FontSize.sm,
     borderRadius: Radius.full,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.28)',
-    backgroundColor: 'rgba(15,15,22,0.72)',
+    borderColor: '#343541',
+    backgroundColor: 'rgba(24,24,32,0.88)',
   },
   sendButton: {
     width: 46,
@@ -176,7 +176,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: Spacing.xs,
   },
   reactionButton: {
     width: 44,
@@ -186,7 +185,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: 'transparent',
-    backgroundColor: 'rgba(15,15,22,0.58)',
+    backgroundColor: 'rgba(24,24,32,0.88)',
   },
   reactionSelected: {
     borderColor: Colors.primaryLight,

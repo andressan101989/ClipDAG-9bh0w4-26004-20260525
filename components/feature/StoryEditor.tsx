@@ -18,6 +18,7 @@ import { StoryEditorVideoPreview } from './StoryEditorVideoPreview';
 const STORY_MAX_ELEMENTS = 32;
 const STORY_MAX_TEXT_ELEMENTS = 10;
 const STORY_MAX_STICKER_ELEMENTS = 24;
+// Figma visual authority: ClipDAG Stories V2 Final, node 2:105.
 
 export type StoryEditorSource =
   | { kind: 'media'; uri: string; mediaType: 'photo' | 'video'; asset: unknown }
@@ -103,10 +104,13 @@ export function StoryEditor({
 }) {
   const insets = useSafeAreaInsets();
   const { width: CANVAS_W, height: screenHeight } = useWindowDimensions();
-  const CANVAS_H = Math.max(360, screenHeight - insets.top - insets.bottom - 142);
+  const headerHeight = Math.max(92, insets.top + 56);
+  const toolbarHeight = Math.max(122, insets.bottom + 88);
+  const CANVAS_H = Math.max(360, screenHeight - headerHeight - toolbarHeight);
   const [composition, setComposition] = useState<StoryComposition>(EMPTY_STORY_COMPOSITION);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState(false);
   const clientStoryIdRef = useRef<string | null>(null);
@@ -116,6 +120,7 @@ export function StoryEditor({
     setComposition({ version: 1, elements: [] });
     setSelectedId(null);
     setEditingTextId(null);
+    setShowStickerPicker(false);
     setError(false);
     clientStoryIdRef.current = Crypto.randomUUID();
   }, [source, visible]);
@@ -135,6 +140,7 @@ export function StoryEditor({
     };
     setComposition(current => ({ ...current, elements: [...current.elements, element] }));
     setSelectedId(element.id);
+    setShowStickerPicker(false);
     setEditingTextId(element.id);
   };
   const addSticker = (value: typeof STORY_STICKERS[number]) => {
@@ -187,7 +193,7 @@ export function StoryEditor({
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.root}
       >
-        <View style={[styles.header, { paddingTop: Math.max(insets.top, Spacing.sm) }]}>
+        <View style={[styles.header, { height: headerHeight, paddingTop: insets.top }]}>
           <Pressable
             accessibilityRole="button"
             onPress={cancel}
@@ -196,7 +202,7 @@ export function StoryEditor({
             hitSlop={8}
             style={styles.headerButton}
           >
-            <MaterialIcons name="close" color="#fff" size={28} />
+            <MaterialIcons name="close" color="#fff" size={26} />
           </Pressable>
           <Text style={styles.title}>Tu historia</Text>
           <Pressable
@@ -204,6 +210,7 @@ export function StoryEditor({
             accessibilityLabel="Publicar historia"
             onPress={() => void submit()}
             disabled={publishing}
+            hitSlop={3}
             style={({ pressed }) => [styles.publish, pressed && styles.pressed, publishing && styles.disabled]}
           >
             {publishing ? <ActivityIndicator color="#fff" /> : <Text style={styles.publishText}>Publicar</Text>}
@@ -253,19 +260,33 @@ export function StoryEditor({
             value={selected.text}
             onChangeText={text => updateElement({ ...selected, text: text.replace(/[<>]/g, '') })}
             onBlur={finishTextEditing}
-            style={[styles.textInput, { bottom: 72 + Math.max(insets.bottom, Spacing.sm) }]}
+            style={[styles.textInput, { bottom: toolbarHeight + 12 }]}
           />
         ) : null}
 
-        <View style={[styles.toolbar, { paddingBottom: Math.max(insets.bottom, Spacing.sm) }]}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Añadir texto" onPress={addText} style={styles.tool}><Text style={styles.toolText}>Aa</Text></Pressable>
-          <View style={styles.stickers}>{STORY_STICKERS.slice(0, 6).map(item => <Pressable accessibilityRole="button" accessibilityLabel={`Añadir ${item}`} style={styles.stickerTool} key={item} onPress={() => addSticker(item)}><Text style={styles.stickerButton}>{item}</Text></Pressable>)}</View>
-          {selected?.type === 'text' ? <>
-            <Pressable accessibilityRole="button" accessibilityLabel="Cambiar color" onPress={() => updateElement({ ...selected, color: STORY_TEXT_COLORS[(STORY_TEXT_COLORS.indexOf(selected.color) + 1) % STORY_TEXT_COLORS.length] })} style={[styles.tool, styles.colorTool]}><View style={[styles.color, { backgroundColor: selected.color }]} /></Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="Cambiar tamaño" style={styles.tool} onPress={() => updateElement({ ...selected, size: selected.size === 'small' ? 'medium' : selected.size === 'medium' ? 'large' : 'small' })}><MaterialIcons name="format-size" color="#fff" size={24} /></Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="Editar texto" style={styles.tool} onPress={() => setEditingTextId(selected.id)}><MaterialIcons name="edit" color="#fff" size={24} /></Pressable>
-          </> : null}
-          {selected ? <Pressable accessibilityRole="button" accessibilityLabel="Eliminar elemento" style={[styles.tool, styles.deleteTool]} onPress={() => { setComposition(current => ({ ...current, elements: current.elements.filter(item => item.id !== selected.id) })); setSelectedId(null); }}><MaterialIcons name="delete-outline" color="#fff" size={26} /></Pressable> : null}
+        {showStickerPicker ? (
+          <View style={[styles.stickerPicker, { bottom: toolbarHeight + 10 }]}>
+            {STORY_STICKERS.slice(0, 6).map(item => (
+              <Pressable accessibilityRole="button" accessibilityLabel={`Añadir ${item}`} style={styles.stickerChoice} key={item} onPress={() => addSticker(item)}>
+                <Text style={styles.stickerButton}>{item}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
+        <View style={[styles.toolbar, { minHeight: toolbarHeight, paddingBottom: Math.max(insets.bottom, 24) }]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Añadir texto"
+            accessibilityHint={selected?.type === 'text' ? 'Edita el texto seleccionado' : 'Añade texto a la historia'}
+            onPress={() => selected?.type === 'text' ? setEditingTextId(selected.id) : addText()}
+            style={[styles.tool, editingTextId && styles.toolSelected]}
+          ><Text style={styles.toolText}>Aa</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Elegir sticker" onPress={() => setShowStickerPicker(value => !value)} style={[styles.tool, showStickerPicker && styles.toolSelected]}><Text style={styles.stickerToolIcon}>☺</Text></Pressable>
+          <Pressable disabled={selected?.type !== 'text'} accessibilityRole="button" accessibilityLabel="Cambiar color" onPress={() => selected?.type === 'text' && updateElement({ ...selected, color: STORY_TEXT_COLORS[(STORY_TEXT_COLORS.indexOf(selected.color) + 1) % STORY_TEXT_COLORS.length] })} style={[styles.tool, selected?.type !== 'text' && styles.toolDisabled]}><View style={[styles.color, { backgroundColor: selected?.type === 'text' ? selected.color : '#FFFFFF' }]} /></Pressable>
+          <Pressable disabled={selected?.type !== 'text'} accessibilityRole="button" accessibilityLabel="Cambiar tamaño" style={[styles.tool, selected?.type !== 'text' && styles.toolDisabled]} onPress={() => selected?.type === 'text' && updateElement({ ...selected, size: selected.size === 'small' ? 'medium' : selected.size === 'medium' ? 'large' : 'small' })}><MaterialIcons name="format-size" color="#fff" size={20} /></Pressable>
+          <Pressable disabled={!selected} accessibilityRole="button" accessibilityLabel="Eliminar elemento" style={[styles.tool, !selected && styles.toolDisabled, selected && styles.deleteTool]} onPress={() => { if (!selected) return; setComposition(current => ({ ...current, elements: current.elements.filter(item => item.id !== selected.id) })); setSelectedId(null); }}><MaterialIcons name="backspace" color="#fff" size={20} /></Pressable>
+          <Text pointerEvents="none" style={styles.toolbarHint}>Arrastra · pellizca · edita</Text>
         </View>
         {error ? <Text style={styles.error}>No se pudo publicar. Tu edición sigue aquí.</Text> : null}
       </KeyboardAvoidingView>
@@ -275,16 +296,16 @@ export function StoryEditor({
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#050507' },
-  header: { minHeight: 68, paddingHorizontal: Spacing.md, paddingBottom: Spacing.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  headerButton: { width: 44, height: 44, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)' },
-  title: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  publish: { minHeight: 44, backgroundColor: Colors.primary, borderRadius: Radius.full, paddingHorizontal: 18, justifyContent: 'center', minWidth: 92, alignItems: 'center' },
+  header: { paddingHorizontal: 17, paddingBottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(8,8,13,0.72)' },
+  headerButton: { width: 44, height: 44, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent', zIndex: 2 },
+  title: { position: 'absolute', left: 0, right: 0, color: '#fff', fontSize: 16, fontWeight: '600', textAlign: 'center' },
+  publish: { height: 38, backgroundColor: '#7C5CFF', borderRadius: 19, paddingHorizontal: 16, justifyContent: 'center', width: 88, alignItems: 'center', zIndex: 2 },
   pressed: { opacity: 0.8, transform: [{ scale: 0.97 }] },
   disabled: { opacity: 0.58 },
-  publishText: { color: '#fff', fontWeight: '800' },
+  publishText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   canvas: { overflow: 'hidden', backgroundColor: Colors.surface, position: 'relative' },
   editable: { position: 'absolute', width: 130, minHeight: 70, alignItems: 'center', justifyContent: 'center', zIndex: 5 },
-  selected: { borderWidth: 1.5, borderColor: Colors.primaryLight, borderRadius: Radius.md, backgroundColor: 'rgba(124,92,255,0.08)' },
+  selected: { borderWidth: 2, borderColor: Colors.primaryLight, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.28)' },
   sharedPreview: { width: '84%', maxWidth: 430, alignSelf: 'center', marginTop: '18%', borderRadius: Radius.xl, overflow: 'hidden', backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.borderHighlight },
   sharedImage: { width: '100%', aspectRatio: 4 / 3, backgroundColor: Colors.surfaceHighlight },
   sharedCopy: { padding: 16 },
@@ -292,15 +313,18 @@ const styles = StyleSheet.create({
   sharedCreator: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 7 },
   sharedUser: { color: '#fff', fontWeight: '800' },
   sharedCaption: { color: '#ddd', marginTop: 5 },
-  toolbar: { minHeight: 64, flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.md, paddingTop: Spacing.sm, gap: Spacing.sm, backgroundColor: Colors.bg },
-  tool: { width: 44, height: 44, borderRadius: Radius.full, backgroundColor: Colors.surfaceHighlight, alignItems: 'center', justifyContent: 'center' },
-  toolText: { color: '#fff', fontSize: 19, fontWeight: '900' },
-  stickers: { flex: 1, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center' },
-  stickerTool: { width: 40, height: 44, alignItems: 'center', justifyContent: 'center' },
+  toolbar: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: 19, paddingTop: 28, backgroundColor: 'rgba(11,11,16,0.94)' },
+  tool: { width: 52, height: 52, borderRadius: 26, borderWidth: 1, borderColor: 'transparent', backgroundColor: '#23232D', alignItems: 'center', justifyContent: 'center' },
+  toolSelected: { borderWidth: 2, borderColor: '#7C5CFF', backgroundColor: '#181820' },
+  toolDisabled: { opacity: 0.42 },
+  toolText: { color: '#fff', fontSize: 17, fontWeight: '700' },
+  stickerToolIcon: { color: '#fff', fontSize: 19, fontWeight: '500' },
+  stickerPicker: { position: 'absolute', left: 19, right: 19, zIndex: 30, minHeight: 58, paddingHorizontal: Spacing.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', borderRadius: Radius.xl, borderWidth: 1, borderColor: Colors.border, backgroundColor: 'rgba(17,17,24,0.96)' },
+  stickerChoice: { width: 44, height: 52, alignItems: 'center', justifyContent: 'center' },
   stickerButton: { fontSize: 25 },
-  color: { width: 22, height: 22, borderRadius: 11, borderWidth: 1, borderColor: '#fff' },
-  colorTool: { padding: 0 },
-  deleteTool: { backgroundColor: 'rgba(255,59,92,0.18)' },
+  color: { width: 18, height: 18, borderRadius: 9, borderWidth: 1, borderColor: '#fff' },
+  deleteTool: { backgroundColor: '#23232D' },
+  toolbarHint: { position: 'absolute', left: 0, right: 0, bottom: 8, color: '#6F7080', fontSize: 11, fontWeight: '500', textAlign: 'center' },
   textInput: { position: 'absolute', left: Spacing.md, right: Spacing.md, minHeight: 48, backgroundColor: Colors.textPrimary, color: Colors.textInverse, borderRadius: Radius.lg, paddingHorizontal: Spacing.md, zIndex: 20 },
   error: { color: '#ff7b91', textAlign: 'center', paddingBottom: 8 },
 });

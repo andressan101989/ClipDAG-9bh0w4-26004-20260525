@@ -366,9 +366,9 @@ export default function CreatorProfileScreen() {
                 uri={avatarUri}
                 username={creator.username}
                 hasUnseen={creatorStoryGroup.hasUnseen}
-                ringSize={100}
-                avatarSize={93}
-                ringPadding={2.5}
+                ringSize={142}
+                avatarSize={130}
+                ringPadding={6}
               />
             ) : isBoosted ? (
               <LinearGradient colors={['#FF9D00', '#FF5A00', '#A855F7']} style={styles.boostRing}>

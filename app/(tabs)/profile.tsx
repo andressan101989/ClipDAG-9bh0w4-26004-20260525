@@ -336,9 +336,9 @@ export default function ProfileScreen() {
                 uri={avatarUri}
                 username={user.username}
                 hasUnseen={ownStoryGroup.hasUnseen}
-                ringSize={98}
-                avatarSize={86}
-                ringPadding={2.5}
+                ringSize={142}
+                avatarSize={130}
+                ringPadding={6}
               />
             ) : (
               <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={styles.avatarRing}>

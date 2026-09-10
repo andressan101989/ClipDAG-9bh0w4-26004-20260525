@@ -9,9 +9,10 @@ import { Colors, FontSize, FontWeight, Spacing } from '@/constants/theme';
 import type { StoryReactionKey } from './storyReactions';
 import type { StoryComposition } from './storyComposition';
 
-const AVATAR_SIZE = 58;
-const RING_PAD = 3;
-const RING_SIZE = AVATAR_SIZE + RING_PAD * 2 + 4;
+const AVATAR_SIZE = 60;
+const RING_PAD = 4;
+const RING_SIZE = 68;
+// Figma visual authority: ClipDAG Stories V2 Final, node 2:178.
 
 export interface StoryGroup {
   userId: string;
@@ -64,7 +65,7 @@ export function StoryAvatarRing({
   username,
   hasUnseen,
   ringSize = RING_SIZE,
-  avatarSize = AVATAR_SIZE - 4,
+  avatarSize = AVATAR_SIZE,
   ringPadding = RING_PAD,
 }: {
   uri?: string;
@@ -84,7 +85,7 @@ export function StoryAvatarRing({
     <View style={[styles.storyRingOuter, { width: ringSize, height: ringSize }]}>
       {hasUnseen ? (
         <LinearGradient
-          colors={['#7C5CFF', '#FF2D78', '#FF9F0A']}
+          colors={['#7C5CFF', '#5B4DE8']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={[styles.storyRingGrad, ringShape]}
@@ -100,7 +101,6 @@ export function StoryAvatarRing({
           </View>
         </View>
       )}
-      {hasUnseen ? <View style={styles.unseenDot} /> : null}
     </View>
   );
 }
@@ -146,7 +146,7 @@ export function StoriesBar({
                       <AvatarImage
                         uri={currentUserAvatar}
                         username={currentUsername || 'me'}
-                        size={AVATAR_SIZE - 4}
+                        size={AVATAR_SIZE}
                       />
                     </View>
                   </LinearGradient>
@@ -211,21 +211,21 @@ export function StoriesBar({
 
 const styles = StyleSheet.create({
   wrapper: {
-    backgroundColor: 'rgba(10,10,15,0.9)',
+    backgroundColor: '#0B0B10',
     borderBottomWidth: 1,
     borderBottomColor: Colors.borderSubtle,
-    paddingVertical: 10,
+    paddingVertical: 20,
   },
   scrollContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    gap: Spacing.md,
+    paddingHorizontal: 19,
+    gap: 24,
     minHeight: RING_SIZE + 26,
   },
   item: {
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
     width: RING_SIZE,
   },
   storyPrimary: {
@@ -299,7 +299,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: Colors.border,
+    borderColor: '#2A2B36',
   },
   storyRingBg: {
     flex: 1,
@@ -311,23 +311,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  unseenDot: {
-    position: 'absolute',
-    bottom: 1,
-    right: 1,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: Colors.primary,
-    borderWidth: 2,
-    borderColor: Colors.bg,
-    zIndex: 10,
-  },
-
   // ── Labels ─────────────────────────────────────────────────────────────────
   label: {
     color: Colors.textSubtle,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: FontWeight.medium,
     maxWidth: RING_SIZE,
     textAlign: 'center',
