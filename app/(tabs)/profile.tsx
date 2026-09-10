@@ -112,6 +112,7 @@ export default function ProfileScreen() {
   const {
     getStoryGroupForUser, markStoryViewed, getStoryViewers,
     deleteStory, refreshStories, setStoryReaction, getStoryReactions, replyToStory,
+    getStorySharedContent,
   } = useStories();
   const dagBalance = walletData?.balance ?? 0;
   const { t } = useI18n();
@@ -757,6 +758,7 @@ export default function ProfileScreen() {
         onSetReaction={setStoryReaction}
         onGetReactions={getStoryReactions}
         onReplyToStory={replyToStory}
+        onGetSharedContent={getStorySharedContent}
       />
 
       {/* ── Edit Profile Modal ─────────────────────────────────────────────── */}

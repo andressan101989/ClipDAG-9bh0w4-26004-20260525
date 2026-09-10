@@ -5,11 +5,38 @@ import { AuthContext } from './AuthContext';
 import type { StoryGroup, StoryItem } from '@/components/feature/StoriesBar';
 import { isStoryReactionKey, type StoryReactionKey } from '@/components/feature/storyReactions';
 import { sendStoryReply } from '@/services/chatService';
+import {
+  EMPTY_STORY_COMPOSITION,
+  type StoryComposition,
+} from '@/components/feature/storyComposition';
+
+export type StorySharedContent =
+  | { status: 'unavailable' }
+  | {
+      status: 'available';
+      sourceVideoId: string;
+      contentType: 'feed' | 'reel';
+      ownerId: string;
+      username: string;
+      avatarUrl: string | null;
+      caption: string | null;
+      previewUrl: string | null;
+    };
 
 interface StoriesContextType {
   storyGroups: StoryGroup[];
   isLoadingStories: boolean;
-  addStory: (mediaAssetId: string) => Promise<string | undefined>;
+  addStory: (
+    mediaAssetId: string,
+    composition: StoryComposition,
+    clientStoryId: string,
+  ) => Promise<string | undefined>;
+  addSharedStory: (
+    videoId: string,
+    composition: StoryComposition,
+    clientStoryId: string,
+  ) => Promise<string>;
+  getStorySharedContent: (storyId: string) => Promise<StorySharedContent>;
   markStoryViewed: (storyId: string) => Promise<void>;
   getStoryViewers: (
     storyId: string,
@@ -149,7 +176,8 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       const { data: storiesData, error } = await supabase
         .from('stories')
         .select(`
-          id, user_id, media_url, media_type, created_at, expires_at,
+          id, user_id, media_url, media_type, story_kind,
+          story_composition, created_at, expires_at,
           user_profiles!stories_user_id_fkey(id, username, avatar_url)
         `)
         .gt('expires_at', new Date().toISOString())
@@ -235,6 +263,10 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
           mediaAssetId: storyAssetIds.get(row.id),
           mediaUrl: typeof row.media_url === 'string' ? row.media_url : null,
           mediaType: row.media_type as 'photo' | 'video',
+          storyKind: row.story_kind === 'shared' ? 'shared' : 'media',
+          composition: row.story_composition && typeof row.story_composition === 'object'
+            ? row.story_composition as StoryComposition
+            : EMPTY_STORY_COMPOSITION,
           createdAt: row.created_at,
           expiresAt: row.expires_at,
           viewerReaction: ownReactionByStory.get(row.id) ?? null,
@@ -357,12 +389,18 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(timer);
   }, [user?.id, storyGroups, loadStories]);
 
-  const addStory = useCallback(async (mediaAssetId: string) => {
+  const addStory = useCallback(async (
+    mediaAssetId: string,
+    composition: StoryComposition,
+    clientStoryId: string,
+  ) => {
     if (!user) return undefined;
     const supabase = supabaseRef.current;
     if (!supabase || !supabaseOk.current) return undefined;
     const { data, error } = await supabase.rpc('create_story_with_media', {
       p_asset_id: mediaAssetId,
+      p_composition: composition,
+      p_client_story_id: clientStoryId,
     });
     if (error || typeof data !== 'string') {
       console.warn('[StoriesContext] story persistence failed', {
@@ -515,6 +553,58 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     return flight;
   }, [user, loadStories]);
 
+  const addSharedStory = useCallback(async (
+    videoId: string,
+    composition: StoryComposition,
+    clientStoryId: string,
+  ): Promise<string> => {
+    if (!user) throw new Error('STORY_CREATE_NOT_AUTHENTICATED');
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) throw new Error('STORY_CREATE_CLIENT_UNAVAILABLE');
+    const { data, error } = await supabase.rpc('create_story_from_content', {
+      p_video_id: videoId,
+      p_composition: composition,
+      p_client_story_id: clientStoryId,
+    });
+    if (error || typeof data !== 'string') {
+      console.warn('[StoriesContext] shared Story persistence failed', {
+        stage: 'SHARED_STORY_CREATE_RPC',
+        code: error?.code ?? 'missing_story_id',
+      });
+      throw new Error('SHARED_STORY_CREATE_FAILED');
+    }
+    await loadStories();
+    return data;
+  }, [loadStories, user]);
+
+  const getStorySharedContent = useCallback(async (storyId: string): Promise<StorySharedContent> => {
+    if (!user) throw new Error('STORY_SHARED_CONTENT_NOT_AUTHENTICATED');
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) throw new Error('STORY_SHARED_CONTENT_CLIENT_UNAVAILABLE');
+    const { data, error } = await supabase.rpc('get_story_shared_content', {
+      p_story_id: storyId,
+    });
+    if (error) throw new Error('STORY_SHARED_CONTENT_LOAD_FAILED');
+    const row = Array.isArray(data) ? data[0] : data;
+    if (row?.status !== 'available') return { status: 'unavailable' };
+    if (
+      typeof row.source_video_id !== 'string'
+      || (row.content_type !== 'feed' && row.content_type !== 'reel')
+      || typeof row.owner_id !== 'string'
+      || typeof row.username !== 'string'
+    ) throw new Error('STORY_SHARED_CONTENT_INVALID_RESPONSE');
+    return {
+      status: 'available',
+      sourceVideoId: row.source_video_id,
+      contentType: row.content_type,
+      ownerId: row.owner_id,
+      username: row.username,
+      avatarUrl: typeof row.avatar_url === 'string' ? row.avatar_url : null,
+      caption: typeof row.caption === 'string' ? row.caption : null,
+      previewUrl: typeof row.preview_url === 'string' ? row.preview_url : null,
+    };
+  }, [user]);
+
   const setStoryReaction = useCallback(async (
     storyId: string,
     reaction: StoryReactionKey | null,
@@ -643,6 +733,8 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       storyGroups,
       isLoadingStories,
       addStory,
+      addSharedStory,
+      getStorySharedContent,
       markStoryViewed,
       getStoryViewers,
       deleteStory,

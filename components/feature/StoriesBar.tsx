@@ -7,6 +7,7 @@ import { Image } from '@/components/ui/SafeImage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 import type { StoryReactionKey } from './storyReactions';
+import type { StoryComposition } from './storyComposition';
 
 const AVATAR_SIZE = 58;
 const RING_PAD = 3;
@@ -26,6 +27,8 @@ export interface StoryItem {
   mediaAssetId?: string;
   mediaUrl?: string | null;
   mediaType: 'photo' | 'video';
+  storyKind: 'media' | 'shared';
+  composition: StoryComposition;
   createdAt: string;
   expiresAt: string;
   viewerReaction?: StoryReactionKey | null;

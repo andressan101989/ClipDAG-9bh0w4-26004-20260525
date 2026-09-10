@@ -9,15 +9,16 @@
  */
 import React, { useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors } from '@/constants/theme';
 
 export default function VideoDeepLinkRedirect() {
   const router = useRouter();
+  const { id } = useLocalSearchParams<{ id?: string }>();
 
   useEffect(() => {
-    router.replace('/(tabs)');
-  }, [router]);
+    router.replace({ pathname: '/(tabs)', params: typeof id === 'string' ? { videoId: id } : {} });
+  }, [id, router]);
 
   return (
     <View style={styles.container}>

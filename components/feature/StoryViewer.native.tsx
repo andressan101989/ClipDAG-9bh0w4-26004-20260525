@@ -17,12 +17,15 @@ try {
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 import type { StoryGroup, StoryItem } from './StoriesBar';
 import { useStoryMediaUrl } from './useStoryMediaUrl';
 import { StoryViewersSheet } from './StoryViewersSheet';
 import { StoryInteractions } from './StoryInteractions';
+import { StoryCompositionOverlay } from './storyComposition';
+import { StorySharedContentCard } from './StorySharedContentCard';
 import type { StoryReactionKey } from './storyReactions';
 import type {
   StoryReactionCursor,
@@ -32,6 +35,7 @@ import type {
   StoryDeleteResult,
   StoryViewerRecord,
   StoryViewersPage,
+  StorySharedContent,
 } from '@/contexts/StoriesContext';
 
 const { width: W, height: H } = Dimensions.get('window');
@@ -57,6 +61,7 @@ interface StoryViewerProps {
     limit?: number,
   ) => Promise<StoryReactionsPage>;
   onReplyToStory?: (storyId: string, text: string, clientMessageId: string) => Promise<void>;
+  onGetSharedContent?: (storyId: string) => Promise<StorySharedContent>;
 }
 
 interface ReadyStoryVideoProps {
@@ -261,8 +266,10 @@ export function StoryViewer({
   onSetReaction,
   onGetReactions,
   onReplyToStory,
+  onGetSharedContent,
 }: StoryViewerProps) {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [mediaReady, setMediaReady] = useState(false);
@@ -476,6 +483,18 @@ export function StoryViewer({
     setMediaReady(false);
   }, [resetProgress]);
 
+  const handleSharedReadyChange = useCallback((ready: boolean) => {
+    if (currentStoryId) handleMediaReadyChange(currentStoryId, ready);
+  }, [currentStoryId, handleMediaReadyChange]);
+
+  const openSharedContent = useCallback((videoId: string) => {
+    if (transitionLock.current) return;
+    transitionLock.current = true;
+    stopPhotoProgress();
+    onClose();
+    router.push(`/video/${videoId}` as never);
+  }, [onClose, router, stopPhotoProgress]);
+
   useLayoutEffect(() => {
     playbackGeneration.current += 1;
     transitionLock.current = false;
@@ -623,17 +642,29 @@ export function StoryViewer({
         {...panResponder.panHandlers}
       >
         {/* Story media */}
-        <StoryMedia
-          story={currentStory}
-          isActive={visible}
-          shouldPause={shouldPausePlayback}
-          isMuted={isMuted}
-          restartToken={restartToken}
-          onReadyChange={handleMediaReadyChange}
-          onProgress={handleVideoProgress}
-          onVideoEnd={handleVideoEnd}
-          onReset={handleMediaReset}
-        />
+        {currentStory.storyKind === 'shared' && onGetSharedContent ? (
+          <View style={styles.sharedContentLayer} pointerEvents="box-none">
+            <StorySharedContentCard
+              storyId={currentStory.id}
+              load={onGetSharedContent}
+              onReadyChange={handleSharedReadyChange}
+              onOpen={openSharedContent}
+            />
+          </View>
+        ) : (
+          <StoryMedia
+            story={currentStory}
+            isActive={visible}
+            shouldPause={shouldPausePlayback}
+            isMuted={isMuted}
+            restartToken={restartToken}
+            onReadyChange={handleMediaReadyChange}
+            onProgress={handleVideoProgress}
+            onVideoEnd={handleVideoEnd}
+            onReset={handleMediaReset}
+          />
+        )}
+        <StoryCompositionOverlay composition={currentStory.composition} width={W} height={H} />
 
         {/* Dark gradient top/bottom */}
         <LinearGradient
@@ -688,7 +719,7 @@ export function StoryViewer({
               <MaterialIcons name="delete-outline" size={22} color="rgba(255,255,255,0.9)" />
             </Pressable>
           ) : null}
-          {currentStory.mediaType === 'video' ? (
+          {currentStory.storyKind === 'media' && currentStory.mediaType === 'video' ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={isMuted ? 'Activar sonido' : 'Silenciar video'}
@@ -731,9 +762,9 @@ export function StoryViewer({
         {/* Media type badge */}
         <View style={styles.mediaBadge} pointerEvents="none">
           <MaterialIcons
-            name={currentStory.mediaType === 'video' ? 'videocam' : 'photo'}
+            name={currentStory.storyKind === 'shared' ? 'share' : currentStory.mediaType === 'video' ? 'videocam' : 'photo'}
             size={13}
-            color={currentStory.mediaType === 'video' ? Colors.secondary : Colors.primary}
+            color={currentStory.storyKind === 'shared' || currentStory.mediaType === 'video' ? Colors.secondary : Colors.primary}
           />
         </View>
 
@@ -965,6 +996,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
     zIndex: 10,
+  },
+  sharedContentLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 6,
   },
   interactionsContainer: {
     position: 'absolute',

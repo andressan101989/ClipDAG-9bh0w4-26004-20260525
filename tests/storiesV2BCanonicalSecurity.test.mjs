@@ -80,7 +80,7 @@ test('photo and video callers share the canonical R2 media pipeline', () => {
   assert.match(feed, /uploadMediaFromUri\(/);
   assert.match(feed, /purpose: isVideo \? 'story_video' : 'story_image'/);
   assert.match(feed, /visibility: 'private'/);
-  assert.match(feed, /addStory\(uploaded\.assetId\)/);
+  assert.match(feed, /addStory\(uploadedAssetId, composition, clientStoryId\)/);
   assert.match(feed, /deleteMediaAsset\(uploadedAssetId\)/);
   assert.doesNotMatch(feed, /uploadFileFromUri/);
   assert.doesNotMatch(feed, /storage\.from/);

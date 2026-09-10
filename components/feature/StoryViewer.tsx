@@ -11,12 +11,15 @@ import { Image } from '@/components/ui/SafeImage';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 import type { StoryGroup, StoryItem } from './StoriesBar';
 import { useStoryMediaUrl } from './useStoryMediaUrl';
 import { StoryViewersSheet } from './StoryViewersSheet';
 import { StoryInteractions } from './StoryInteractions';
+import { StoryCompositionOverlay } from './storyComposition';
+import { StorySharedContentCard } from './StorySharedContentCard';
 import type { StoryReactionKey } from './storyReactions';
 import type {
   StoryReactionCursor,
@@ -26,6 +29,7 @@ import type {
   StoryDeleteResult,
   StoryViewerRecord,
   StoryViewersPage,
+  StorySharedContent,
 } from '@/contexts/StoriesContext';
 
 const { width: W, height: H } = Dimensions.get('window');
@@ -51,6 +55,7 @@ interface StoryViewerProps {
     limit?: number,
   ) => Promise<StoryReactionsPage>;
   onReplyToStory?: (storyId: string, text: string, clientMessageId: string) => Promise<void>;
+  onGetSharedContent?: (storyId: string) => Promise<StorySharedContent>;
 }
 
 function StoryPhotoMedia({
@@ -141,8 +146,10 @@ export function StoryViewer({
   onSetReaction,
   onGetReactions,
   onReplyToStory,
+  onGetSharedContent,
 }: StoryViewerProps) {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [mediaReady, setMediaReady] = useState(false);
   const [manualHold, setManualHold] = useState(false);
@@ -336,6 +343,18 @@ export function StoryViewer({
     setMediaReady(false);
   }, [resetProgress]);
 
+  const handleSharedReadyChange = useCallback((ready: boolean) => {
+    if (currentStoryId) handleMediaReadyChange(currentStoryId, ready);
+  }, [currentStoryId, handleMediaReadyChange]);
+
+  const openSharedContent = useCallback((videoId: string) => {
+    if (transitionLock.current) return;
+    transitionLock.current = true;
+    stopPhotoProgress();
+    onClose();
+    router.push(`/video/${videoId}` as never);
+  }, [onClose, router, stopPhotoProgress]);
+
   useLayoutEffect(() => {
     playbackGeneration.current += 1;
     transitionLock.current = false;
@@ -478,12 +497,24 @@ export function StoryViewer({
         style={[styles.container, { transform: [{ translateY }] }]}
         {...panResponder.panHandlers}
       >
-        <StoryMedia
-          story={currentStory}
-          isActive={visible && currentStory.mediaType === 'photo'}
-          onReadyChange={handleMediaReadyChange}
-          onReset={handleMediaReset}
-        />
+        {currentStory.storyKind === 'shared' && onGetSharedContent ? (
+          <View style={styles.sharedContentLayer} pointerEvents="box-none">
+            <StorySharedContentCard
+              storyId={currentStory.id}
+              load={onGetSharedContent}
+              onReadyChange={handleSharedReadyChange}
+              onOpen={openSharedContent}
+            />
+          </View>
+        ) : (
+          <StoryMedia
+            story={currentStory}
+            isActive={visible && currentStory.mediaType === 'photo'}
+            onReadyChange={handleMediaReadyChange}
+            onReset={handleMediaReset}
+          />
+        )}
+        <StoryCompositionOverlay composition={currentStory.composition} width={W} height={H} />
 
         <LinearGradient colors={['rgba(0,0,0,0.6)', 'transparent']} style={styles.topGrad} pointerEvents="none" />
         <LinearGradient colors={['transparent', 'rgba(0,0,0,0.45)']} style={styles.botGrad} pointerEvents="none" />
@@ -675,6 +706,7 @@ const styles = StyleSheet.create({
   tapZones: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, flexDirection: 'row', zIndex: 5 },
   tapLeft: { flex: 1 },
   tapRight: { flex: 2 },
+  sharedContentLayer: { ...StyleSheet.absoluteFillObject, zIndex: 6 },
   bottomRow: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

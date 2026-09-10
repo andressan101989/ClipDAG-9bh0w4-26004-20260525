@@ -20,7 +20,7 @@ import { StoriesBar } from '@/components/feature/StoriesBar';
 import { StoryViewer } from '@/components/feature/StoryViewer';
 import { Colors, FontWeight } from '@/constants/theme';
 import { PostCardSkeleton, FadeIn } from '@/components/ui/SkeletonLoader';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Audio } from 'expo-av';
 import { useScrollToTop } from '@react-navigation/native';
 import type { StoryGroup } from '@/components/feature/StoriesBar';
@@ -32,12 +32,15 @@ import {
   marketplaceContentTypeForMedia,
   type MarketplaceCreatorContentType,
 } from '@/services/marketplaceCreatorContentTagService';
+import { StoryEditor, type StoryEditorSource } from '@/components/feature/StoryEditor';
+import type { StoryComposition } from '@/components/feature/storyComposition';
 
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 75 };
 
 export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { videoId: requestedVideoId } = useLocalSearchParams<{ videoId?: string }>();
   const { user, toggleFollow, isFollowing } = useAuth();
   const {
     videos, isLiked, isSaved, toggleLike, toggleSave,
@@ -45,7 +48,8 @@ export default function FeedScreen() {
     isLoadingFeed, trackView, sendGift,
   } = useFeed();
   const {
-    storyGroups, addStory, markStoryViewed, getStoryViewers, deleteStory,
+    storyGroups, addStory, addSharedStory, getStorySharedContent,
+    markStoryViewed, getStoryViewers, deleteStory,
     setStoryReaction, getStoryReactions, replyToStory,
   } = useStories();
   const { unreadCount: notifCount } = useNotifications();
@@ -64,6 +68,8 @@ export default function FeedScreen() {
     contentType: MarketplaceCreatorContentType;
     creatorDisplayName: string;
   } | null>(null);
+  const [storyEditorSource, setStoryEditorSource] = useState<StoryEditorSource | null>(null);
+  const storyUploadAttemptsRef = useRef(new Map<string, string>());
 
   useEffect(() => {
     let cancelled = false;
@@ -101,7 +107,31 @@ export default function FeedScreen() {
 
   // Ref for scroll-to-top on Home tab press
   const feedListRef = useRef<FlatList<VideoWithMeta>>(null);
+  const deepLinkScrollRetriesRef = useRef(0);
   useScrollToTop(feedListRef);
+
+  useEffect(() => {
+    if (!requestedVideoId) return;
+    const index = videos.findIndex(video => video.id === requestedVideoId);
+    if (index < 0) return;
+    deepLinkScrollRetriesRef.current = 0;
+    setActiveIndex(index);
+    requestAnimationFrame(() => {
+      feedListRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
+    });
+  }, [requestedVideoId, videos]);
+
+  const handleDeepLinkScrollFailure = useCallback(({ index, averageItemLength }: {
+    index: number;
+    averageItemLength: number;
+  }) => {
+    if (deepLinkScrollRetriesRef.current >= 2) return;
+    deepLinkScrollRetriesRef.current += 1;
+    feedListRef.current?.scrollToOffset({ offset: Math.max(0, averageItemLength * index), animated: false });
+    requestAnimationFrame(() => {
+      feedListRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
+    });
+  }, []);
 
   // Top bar height: safe area + 52px content
   const TOP_BAR_HEIGHT = insets.top + 52;
@@ -134,40 +164,63 @@ export default function FeedScreen() {
     trackView(videoId, durationMs, completed);
   }, [trackView]);
 
-  // Story upload
-  const uploadStory = useCallback(async (asset: ImagePicker.ImagePickerAsset) => {
-    if (!user) return;
-    const isVideo = asset.type === 'video';
+  const publishStory = useCallback(async (
+    source: StoryEditorSource,
+    composition: StoryComposition,
+    clientStoryId: string,
+  ) => {
+    if (!user) throw new Error('STORY_PUBLISH_NOT_AUTHENTICATED');
+    if (source.kind === 'shared') {
+      await addSharedStory(source.videoId, composition, clientStoryId);
+      setStoryEditorSource(null);
+      showAlert('Historia publicada!', 'Tu historia estará visible por 24 horas');
+      return;
+    }
+
+    const asset = source.asset as ImagePicker.ImagePickerAsset;
+    const isVideo = source.mediaType === 'video';
     const mimeType = asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg');
-    let uploadedAssetId: string | undefined;
+    let uploadedAssetId = storyUploadAttemptsRef.current.get(clientStoryId);
     let failureStage = 'STORY_UPLOAD';
 
     try {
-      const uploaded = await uploadMediaFromUri({
-        uri: asset.uri,
-        purpose: isVideo ? 'story_video' : 'story_image',
-        mimeType,
-        fileName: asset.fileName || undefined,
-        sizeBytes: asset.fileSize,
-        durationMs: isVideo && typeof asset.duration === 'number' ? asset.duration : undefined,
-        visibility: 'private',
-      });
-      if (uploaded.url) throw new Error('Private Story upload returned a persistent URL');
-      uploadedAssetId = uploaded.assetId;
+      if (!uploadedAssetId) {
+        const uploaded = await uploadMediaFromUri({
+          uri: asset.uri,
+          purpose: isVideo ? 'story_video' : 'story_image',
+          mimeType,
+          fileName: asset.fileName || undefined,
+          sizeBytes: asset.fileSize,
+          durationMs: isVideo && typeof asset.duration === 'number' ? asset.duration : undefined,
+          visibility: 'private',
+        });
+        uploadedAssetId = uploaded.assetId;
+        storyUploadAttemptsRef.current.set(clientStoryId, uploaded.assetId);
+        if (uploaded.url) throw new Error('Private Story upload returned a persistent URL');
+      }
       failureStage = 'STORY_CREATE_RPC';
-      const persistedStoryId = await addStory(uploaded.assetId);
+      const persistedStoryId = await addStory(uploadedAssetId, composition, clientStoryId);
       if (!persistedStoryId) throw new Error('STORY_INSERT_FAILED');
-      uploadedAssetId = undefined;
+      storyUploadAttemptsRef.current.delete(clientStoryId);
+      setStoryEditorSource(null);
       showAlert('Historia publicada!', 'Tu historia estará visible por 24 horas');
     } catch (error) {
       console.warn('[Feed] story publish failed', {
         stage: failureStage,
         code: error instanceof Error ? error.message : 'unknown',
       });
-      if (uploadedAssetId) await deleteMediaAsset(uploadedAssetId).catch(() => {});
       showAlert('Error', 'No se pudo publicar la historia');
+      throw error;
     }
-  }, [user, addStory, showAlert]);
+  }, [user, addSharedStory, addStory, showAlert]);
+
+  const cancelStoryEditor = useCallback((clientStoryId?: string) => {
+    setStoryEditorSource(null);
+    if (!clientStoryId) return;
+    const uploadedAssetId = storyUploadAttemptsRef.current.get(clientStoryId);
+    storyUploadAttemptsRef.current.delete(clientStoryId);
+    if (uploadedAssetId) void deleteMediaAsset(uploadedAssetId).catch(() => {});
+  }, []);
 
   const handleAddStory = useCallback(() => {
     showAlert('Agregar Historia', 'Cómo quieres crear tu historia?', [
@@ -177,7 +230,10 @@ export default function FeedScreen() {
           const perm = await ImagePicker.requestCameraPermissionsAsync();
           if (!perm.granted) { showAlert('Permiso denegado', 'Habilita la cámara en ajustes'); return; }
           const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, allowsEditing: true, aspect: [9, 16], quality: 0.8, base64: true, videoMaxDuration: 15 });
-          if (!result.canceled && result.assets[0]) await uploadStory(result.assets[0]);
+          if (!result.canceled && result.assets[0]) {
+            const asset = result.assets[0];
+            setStoryEditorSource({ kind: 'media', uri: asset.uri, mediaType: asset.type === 'video' ? 'video' : 'photo', asset });
+          }
         },
       },
       {
@@ -186,12 +242,15 @@ export default function FeedScreen() {
           const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
           if (!perm.granted) { showAlert('Permiso denegado', 'Habilita la galería en ajustes'); return; }
           const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, allowsEditing: true, aspect: [9, 16], quality: 0.8, base64: true, videoMaxDuration: 15 });
-          if (!result.canceled && result.assets[0]) await uploadStory(result.assets[0]);
+          if (!result.canceled && result.assets[0]) {
+            const asset = result.assets[0];
+            setStoryEditorSource({ kind: 'media', uri: asset.uri, mediaType: asset.type === 'video' ? 'video' : 'photo', asset });
+          }
         },
       },
       { text: 'Cancelar', style: 'cancel' },
     ]);
-  }, [showAlert, uploadStory]);
+  }, [showAlert]);
 
   const handleViewStory = useCallback((group: StoryGroup) => {
     setViewingStoryUserId(group.userId);
@@ -275,11 +334,21 @@ export default function FeedScreen() {
               contentType: marketplaceContentTypeForMedia(item.videoUrl, item.mediaUrls),
               creatorDisplayName: item.username,
             })}
+            onAddToStory={() => setStoryEditorSource({
+              kind: 'shared',
+              videoId: item.id,
+              contentType: marketplaceContentTypeForMedia(item.videoUrl, item.mediaUrls),
+              previewUrl: item.thumbnailUrl || item.mediaUrls?.[0] || item.videoUrl,
+              username: item.username,
+              avatarUrl: item.userAvatar,
+              caption: item.caption,
+            })}
           />
         )}
         showsVerticalScrollIndicator={false}
         onViewableItemsChanged={onViewableItemsChanged.current}
         viewabilityConfig={viewabilityConfig.current}
+        onScrollToIndexFailed={handleDeepLinkScrollFailure}
         onEndReached={loadMoreVideos}
         onEndReachedThreshold={0.5}
         removeClippedSubviews
@@ -343,6 +412,13 @@ export default function FeedScreen() {
         onSetReaction={setStoryReaction}
         onGetReactions={getStoryReactions}
         onReplyToStory={replyToStory}
+        onGetSharedContent={getStorySharedContent}
+      />
+      <StoryEditor
+        visible={Boolean(storyEditorSource)}
+        source={storyEditorSource}
+        onCancel={cancelStoryEditor}
+        onPublish={publishStory}
       />
     </View>
   );

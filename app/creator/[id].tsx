@@ -82,6 +82,7 @@ export default function CreatorProfileScreen() {
   const {
     getStoryGroupForUser, markStoryViewed, getStoryViewers,
     deleteStory, refreshStories, setStoryReaction, getStoryReactions, replyToStory,
+    getStorySharedContent,
   } = useStories();
   const balance = walletData?.balance ?? 0;
   const { showAlert } = useAlert();
@@ -689,6 +690,7 @@ export default function CreatorProfileScreen() {
         onSetReaction={setStoryReaction}
         onGetReactions={getStoryReactions}
         onReplyToStory={replyToStory}
+        onGetSharedContent={getStorySharedContent}
       />
 
       {/* Subscribe sheet */}

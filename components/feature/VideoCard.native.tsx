@@ -102,6 +102,7 @@ export interface VideoCardProps {
   onViewTracked?: (watchDurationMs: number, completed: boolean) => void;
   productTagCount?: number;
   onProducts?: () => void;
+  onAddToStory?: () => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -370,7 +371,7 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
     video, isActive, isLiked, isSaved = false, isFollowing,
     currentUserDagBalance = 0, currentUserId = '',
     onLike, onComment, onFollow, onSave = () => {}, onProfilePress, onSendGift, onViewTracked,
-    productTagCount = 0, onProducts,
+    productTagCount = 0, onProducts, onAddToStory,
   } = props;
 
   const { showAlert } = useAlert();
@@ -494,6 +495,7 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
     const message = `Mira este video en OnSpace: ${deepLink}`;
 
     showAlert('Compartir video', '', [
+      ...(onAddToStory ? [{ text: 'Añadir a historia', onPress: onAddToStory }] : []),
       {
         text: 'Copiar enlace',
         onPress: async () => {
@@ -511,7 +513,7 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
       },
       { text: 'Cancelar', style: 'cancel' },
     ]);
-  }, [video.id, showAlert]);
+  }, [onAddToStory, video.id, showAlert]);
 
   // ── Heart overlay (reused in both carousel + single) ─────────────────────
   const heartOverlay = showHeart ? (
