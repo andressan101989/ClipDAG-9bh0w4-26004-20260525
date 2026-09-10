@@ -35,6 +35,7 @@ import {
   extractNullableStreamRpcUuid,
   getSafeStreamError,
 } from '@/services/streamService';
+import { fetchMarketplaceContentProductTags } from '@/services/marketplaceCreatorContentTagService';
 
 export interface VideoWithMeta extends Video {
   editedAt?:   string;
@@ -68,6 +69,10 @@ export interface VideoAnalytics {
   dagEarned:      number;
 }
 
+export type EnsureVideoLoadedResult =
+  | { status: 'available'; videoId: string; alreadyLoaded: boolean }
+  | { status: 'unavailable' };
+
 interface FeedContextType {
   videos:          VideoWithMeta[];
   likedVideos:     Set<string>;
@@ -84,6 +89,7 @@ interface FeedContextType {
   trackView:       (videoId: string, watchDurationMs: number, completed: boolean) => Promise<void>;
   getAnalytics:    (videoId: string) => Promise<VideoAnalytics>;
   sendGift:        (recipientId: string, videoId: string | null, giftType: string, dagValue: number) => Promise<{ success: boolean; error?: string }>;
+  ensureVideoLoadedById: (videoId: string) => Promise<EnsureVideoLoadedResult>;
   loadMoreVideos:  () => Promise<void>;
   isLiked:         (videoId: string) => boolean;
   getComments:     (videoId: string) => Comment[];
@@ -254,6 +260,7 @@ async function deleteStorageFile(
 }
 
 const isMockId = (id: string) => /^v\d+$/.test(id);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // Debounce view tracking: only log a view per video per 60s window
 const viewedRecently = new Map<string, number>();
@@ -278,6 +285,8 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   const supabaseRef   = useRef<ReturnType<typeof getSupabaseClient> | null>(null);
   const supabaseOk    = useRef(true);
   const isLoadingRef  = useRef(false);
+  const videosRef     = useRef<VideoWithMeta[]>([]);
+  const exactVideoFlightsRef = useRef(new Map<string, Promise<EnsureVideoLoadedResult>>());
 
   if (!supabaseRef.current) {
     try {
@@ -297,6 +306,10 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   const [initialLoaded,   setInitialLoaded]   = useState(false);
   const [hasMoreDb,       setHasMoreDb]       = useState(true);
   const [blockedUserIds,  setBlockedUserIds]  = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    videosRef.current = videos;
+  }, [videos]);
 
   // ── Load videos ───────────────────────────────────────────────────────────
   const loadVideos = useCallback(async (offset = 0) => {
@@ -413,6 +426,68 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     }
     setInitialLoaded(true);
   }, [loadVideos, loadLikesAndSaves, loadBlockedUsers, user]);
+
+  const confirmMarketplaceContentVisible = useCallback(async (videoId: string) => {
+    // The public product-tag RPC is the existing authenticated facade that
+    // delegates visibility to marketplace_creator_content_visible. Trying the
+    // two canonical types avoids reading the video row merely to infer its type.
+    for (const contentType of ['feed', 'reel'] as const) {
+      try {
+        const result = await fetchMarketplaceContentProductTags(contentType, videoId);
+        return result.visible;
+      } catch {
+        // A type mismatch is intentionally indistinguishable from a missing ID.
+      }
+    }
+    return false;
+  }, []);
+
+  const ensureVideoLoadedById = useCallback((videoId: string): Promise<EnsureVideoLoadedResult> => {
+    const normalizedId = videoId.trim().toLowerCase();
+    if (!UUID_PATTERN.test(normalizedId)) return Promise.resolve({ status: 'unavailable' });
+
+    const loaded = videosRef.current.find(video => video.id === normalizedId);
+    if (loaded) {
+      return Promise.resolve({ status: 'available', videoId: loaded.id, alreadyLoaded: true });
+    }
+
+    const pending = exactVideoFlightsRef.current.get(normalizedId);
+    if (pending) return pending;
+
+    const flight = (async (): Promise<EnsureVideoLoadedResult> => {
+      const supabase = supabaseRef.current;
+      if (!supabase || !supabaseOk.current) return { status: 'unavailable' };
+      if (!await confirmMarketplaceContentVisible(normalizedId)) return { status: 'unavailable' };
+
+      const { data, error } = await supabase
+        .from('videos')
+        .select('*, user_profiles!videos_user_id_fkey(username, avatar_url)')
+        .eq('id', normalizedId)
+        .maybeSingle();
+      if (error || !data) return { status: 'unavailable' };
+
+      const profile = data.user_profiles as Record<string, string> | null;
+      const mapped = mapVideo(
+        data as unknown as Record<string, unknown>,
+        profile?.username || 'user',
+        profile?.avatar_url || '',
+      );
+      setVideos(current => {
+        if (current.some(video => video.id === mapped.id)) return current;
+        const next = [...current, mapped];
+        videosRef.current = next;
+        return next;
+      });
+      return { status: 'available', videoId: mapped.id, alreadyLoaded: false };
+    })().catch((): EnsureVideoLoadedResult => ({ status: 'unavailable' })).finally(() => {
+      if (exactVideoFlightsRef.current.get(normalizedId) === flight) {
+        exactVideoFlightsRef.current.delete(normalizedId);
+      }
+    });
+
+    exactVideoFlightsRef.current.set(normalizedId, flight);
+    return flight;
+  }, [confirmMarketplaceContentVisible]);
 
   const isLiked     = useCallback((videoId: string) => likedVideos.has(videoId), [likedVideos]);
   const isSaved     = useCallback((videoId: string) => savedVideos.has(videoId), [savedVideos]);
@@ -879,7 +954,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       toggleLike, toggleSave, isSaved,
       addComment, addVideo, updateVideo, deleteVideo,
       trackView, getAnalytics, sendGift,
-      loadMoreVideos, isLiked, getComments, refreshFeed,
+      ensureVideoLoadedById, loadMoreVideos, isLiked, getComments, refreshFeed,
     }}>
       {children}
     </FeedContext.Provider>

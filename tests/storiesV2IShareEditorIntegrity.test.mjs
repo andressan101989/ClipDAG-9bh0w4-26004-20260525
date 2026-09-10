@@ -162,7 +162,7 @@ test('one client Story id survives retries and new editor sessions get a new id'
   assert.match(editor, /clientStoryIdRef = useRef<string \| null>/);
   assert.match(editor, /clientStoryIdRef\.current = Crypto\.randomUUID\(\)/);
   assert.match(editor, /if \(!clientStoryIdRef\.current\) clientStoryIdRef\.current = Crypto\.randomUUID\(\)/);
-  assert.match(editor, /onPublish\(source, composition, clientStoryIdRef\.current\)/);
+  assert.match(editor, /onPublish\(source, publishableComposition, clientStoryIdRef\.current\)/);
   assert.doesNotMatch(context.slice(context.indexOf('const addSharedStory'), context.indexOf('const getStorySharedContent')), /randomUUID/);
   assert.match(feed, /storyUploadAttemptsRef = useRef\(new Map<string, string>\(\)\)/);
   assert.match(feed, /storyUploadAttemptsRef\.current\.get\(clientStoryId\)/);

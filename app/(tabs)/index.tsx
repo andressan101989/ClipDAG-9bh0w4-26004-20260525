@@ -45,7 +45,7 @@ export default function FeedScreen() {
   const {
     videos, isLiked, isSaved, toggleLike, toggleSave,
     addComment, loadMoreVideos, refreshFeed,
-    isLoadingFeed, trackView, sendGift,
+    isLoadingFeed, trackView, sendGift, ensureVideoLoadedById,
   } = useFeed();
   const {
     storyGroups, addStory, addSharedStory, getStorySharedContent,
@@ -108,18 +108,39 @@ export default function FeedScreen() {
   // Ref for scroll-to-top on Home tab press
   const feedListRef = useRef<FlatList<VideoWithMeta>>(null);
   const deepLinkScrollRetriesRef = useRef(0);
+  const deepLinkResolutionRef = useRef<{ id: string; status: 'loading' | 'unavailable' | 'loaded' } | null>(null);
   useScrollToTop(feedListRef);
 
   useEffect(() => {
-    if (!requestedVideoId) return;
-    const index = videos.findIndex(video => video.id === requestedVideoId);
-    if (index < 0) return;
+    if (!requestedVideoId) {
+      deepLinkResolutionRef.current = null;
+      return;
+    }
+    const targetVideoId = requestedVideoId.trim().toLowerCase();
+    const index = videos.findIndex(video => video.id === targetVideoId);
+    if (index < 0) {
+      const currentResolution = deepLinkResolutionRef.current;
+      if (currentResolution?.id === targetVideoId
+        && (currentResolution.status === 'loading' || currentResolution.status === 'unavailable')) return;
+      deepLinkResolutionRef.current = { id: targetVideoId, status: 'loading' };
+      void ensureVideoLoadedById(targetVideoId).then(result => {
+        if (deepLinkResolutionRef.current?.id !== targetVideoId) return;
+        if (result.status === 'unavailable') {
+          deepLinkResolutionRef.current = { id: targetVideoId, status: 'unavailable' };
+          showAlert('Contenido no disponible', 'Este contenido ya no existe o no está disponible para ti.');
+          return;
+        }
+        deepLinkResolutionRef.current = { id: targetVideoId, status: 'loaded' };
+      });
+      return;
+    }
+    deepLinkResolutionRef.current = { id: targetVideoId, status: 'loaded' };
     deepLinkScrollRetriesRef.current = 0;
     setActiveIndex(index);
     requestAnimationFrame(() => {
       feedListRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
     });
-  }, [requestedVideoId, videos]);
+  }, [ensureVideoLoadedById, requestedVideoId, showAlert, videos]);
 
   const handleDeepLinkScrollFailure = useCallback(({ index, averageItemLength }: {
     index: number;

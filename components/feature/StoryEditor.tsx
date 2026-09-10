@@ -16,6 +16,9 @@ import { StoryEditorVideoPreview } from './StoryEditorVideoPreview';
 
 const { width: CANVAS_W, height: SCREEN_H } = Dimensions.get('window');
 const CANVAS_H = Math.max(420, SCREEN_H - 150);
+const STORY_MAX_ELEMENTS = 32;
+const STORY_MAX_TEXT_ELEMENTS = 10;
+const STORY_MAX_STICKER_ELEMENTS = 24;
 
 export type StoryEditorSource =
   | { kind: 'media'; uri: string; mediaType: 'photo' | 'video'; asset: unknown }
@@ -118,7 +121,8 @@ export function StoryEditor({
     }));
   };
   const addText = () => {
-    if (composition.elements.filter(item => item.type === 'text').length >= 10) return;
+    if (composition.elements.length >= STORY_MAX_ELEMENTS
+      || composition.elements.filter(item => item.type === 'text').length >= STORY_MAX_TEXT_ELEMENTS) return;
     const element: StoryTextElement = {
       id: Crypto.randomUUID(), type: 'text', text: 'Texto', x: 0.5, y: 0.35,
       scale: 1, rotation: 0, color: '#FFFFFF', align: 'center', size: 'medium',
@@ -128,20 +132,41 @@ export function StoryEditor({
     setEditingTextId(element.id);
   };
   const addSticker = (value: typeof STORY_STICKERS[number]) => {
-    if (composition.elements.filter(item => item.type === 'sticker').length >= 24) return;
+    if (composition.elements.length >= STORY_MAX_ELEMENTS
+      || composition.elements.filter(item => item.type === 'sticker').length >= STORY_MAX_STICKER_ELEMENTS) return;
     const element = { id: Crypto.randomUUID(), type: 'sticker' as const, value, x: 0.5, y: 0.5, scale: 1, rotation: 0 };
     setComposition(current => ({ ...current, elements: [...current.elements, element] }));
     setSelectedId(element.id);
   };
   const selected = composition.elements.find(item => item.id === selectedId) ?? null;
+  const finishTextEditing = () => {
+    if (editingTextId && selected?.type === 'text' && selected.id === editingTextId
+      && selected.text.trim().length === 0) {
+      setComposition(current => ({
+        ...current,
+        elements: current.elements.filter(item => item.id !== editingTextId),
+      }));
+      setSelectedId(null);
+    }
+    setEditingTextId(null);
+  };
   const cancel = () => { if (!publishing) onCancel(clientStoryIdRef.current ?? undefined); };
   const submit = async () => {
     if (!source || publishing) return;
     if (!clientStoryIdRef.current) clientStoryIdRef.current = Crypto.randomUUID();
+    const publishableComposition: StoryComposition = {
+      ...composition,
+      elements: composition.elements.filter(element => element.type !== 'text' || element.text.trim().length > 0),
+    };
+    if (publishableComposition.elements.length !== composition.elements.length) {
+      setComposition(publishableComposition);
+      setEditingTextId(null);
+      setSelectedId(null);
+    }
     setPublishing(true);
     setError(false);
     try {
-      await onPublish(source, composition, clientStoryIdRef.current);
+      await onPublish(source, publishableComposition, clientStoryIdRef.current);
     } catch {
       setError(true);
     } finally {
@@ -163,7 +188,7 @@ export function StoryEditor({
           </Pressable>
         </View>
 
-        <Pressable style={styles.canvas} onPress={() => { setSelectedId(null); setEditingTextId(null); }}>
+        <Pressable style={styles.canvas} onPress={() => { finishTextEditing(); setSelectedId(null); }}>
           {source.kind === 'media' && source.mediaType === 'photo' ? (
             <Image source={{ uri: source.uri }} style={StyleSheet.absoluteFillObject} contentFit="contain" />
           ) : source.kind === 'media' ? (
@@ -198,7 +223,7 @@ export function StoryEditor({
             maxLength={200}
             value={selected.text}
             onChangeText={text => updateElement({ ...selected, text: text.replace(/[<>]/g, '') })}
-            onBlur={() => setEditingTextId(null)}
+            onBlur={finishTextEditing}
             style={styles.textInput}
           />
         ) : null}
