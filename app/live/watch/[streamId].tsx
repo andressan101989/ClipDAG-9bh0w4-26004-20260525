@@ -159,7 +159,7 @@ async function attachMessageAvatars(supabase: ReturnType<typeof getSupabaseClien
   if (userIds.length === 0) return messages;
 
   const { data } = await supabase
-    .from('user_profiles')
+    .from('public_user_profiles')
     .select('id, avatar_url')
     .in('id', userIds);
 

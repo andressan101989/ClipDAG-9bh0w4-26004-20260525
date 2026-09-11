@@ -34,7 +34,7 @@ export default function NewMessageScreen() {
       setIsSearching(true);
       try {
         const { data, error } = await supabase
-          .from('user_profiles')
+          .from('public_user_profiles')
           .select('id, username, avatar_url, bio')
           .ilike('username', `%${search.trim()}%`)
           .neq('id', user?.id || '')

@@ -670,8 +670,8 @@ test("payment Edge envelope and authoritative BDAG balance reject coercive JSON"
   );
 });
 
-test("settlement and support Edge envelopes require an exact boolean success", async () => {
-  const orderId = id(11), key = id(24), settlement = settlementReceipt(), support = supportReceipt();
+test("settlement Edge envelopes require an exact boolean success", async () => {
+  const orderId = id(11), key = id(24), settlement = settlementReceipt();
   activeClient = {
     functions: { invoke: async () => ({ data: { success: true, data: settlement }, error: null }) },
   };
@@ -693,26 +693,6 @@ test("settlement and support Edge envelopes require an exact boolean success", a
   await assert.rejects(
     () => settlements.confirmMarketplaceOrderDelivery(orderId, key),
     /marketplace_order_not_shipped/,
-  );
-  activeClient.functions.invoke = async () => ({ data: { success: true, data: support }, error: null });
-  assert.equal(
-    (await settlements.fetchSupportMarketplaceDispute(id(12), key)).dispute.status,
-    "open",
-  );
-  for (const success of ["true", "false", 1, 0, null, undefined, {}, []]) {
-    activeClient.functions.invoke = async () => ({ data: { success, data: support }, error: null });
-    await assert.rejects(
-      () => settlements.fetchSupportMarketplaceDispute(id(12), key),
-      /marketplace_dispute_resolution_unknown/,
-    );
-  }
-  activeClient.functions.invoke = async () => ({
-    data: { success: false, error: "marketplace_dispute_not_found", data: support },
-    error: null,
-  });
-  await assert.rejects(
-    () => settlements.fetchSupportMarketplaceDispute(id(12), key),
-    /marketplace_dispute_not_found/,
   );
 });
 

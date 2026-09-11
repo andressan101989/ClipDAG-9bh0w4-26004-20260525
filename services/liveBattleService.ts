@@ -380,7 +380,7 @@ export async function getLiveBattlePublicProfiles(
   const uniqueIds = Array.from(new Set(userIds.filter(isLiveBattleUuid))).slice(0, 2);
   if (uniqueIds.length === 0) return [];
   const { data, error } = await getSupabaseClient()
-    .from('user_profiles')
+    .from('public_user_profiles')
     .select('id, username, avatar_url')
     .in('id', uniqueIds);
   if (error) throw normalizeRpcError(error);

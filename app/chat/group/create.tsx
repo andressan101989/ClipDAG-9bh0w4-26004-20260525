@@ -19,7 +19,7 @@ export default function CreateChatGroupScreen() {
   const groupIdRef = useRef(createChatClientMessageId());
   useEffect(() => {
     const query = search.trim(); if (!query) { setRows([]); return; }
-    const timer = setTimeout(() => { void getSupabaseClient().from('user_profiles').select('id,username,avatar_url')
+    const timer = setTimeout(() => { void getSupabaseClient().from('public_user_profiles').select('id,username,avatar_url')
       .ilike('username', `%${query}%`).neq('id', user?.id || '').limit(30).then(({ data }) => setRows((data || []) as UserRow[])); }, 300);
     return () => clearTimeout(timer);
   }, [search, user?.id]);

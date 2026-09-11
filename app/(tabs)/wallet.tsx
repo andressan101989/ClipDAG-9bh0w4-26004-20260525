@@ -88,7 +88,6 @@ interface RecipientUser {
   username: string;
   display_name: string | null;
   avatar_url: string | null;
-  email: string;
 }
 
 // ── Stable network chips ────────────────────────────────────────────────────
@@ -226,9 +225,9 @@ function WalletScreenInner() {
     setTransferSearching(true);
     try {
       const { data } = await supabase
-        .from('user_profiles')
-        .select('id, username, display_name, avatar_url, email')
-        .or(`username.ilike.%${q.trim()}%,display_name.ilike.%${q.trim()}%,email.ilike.%${q.trim()}%`)
+        .from('public_user_profiles')
+        .select('id, username, display_name, avatar_url')
+        .or(`username.ilike.%${q.trim()}%,display_name.ilike.%${q.trim()}%`)
         .neq('id', user?.id ?? '')
         .limit(5);
       setSearchResults((data as RecipientUser[]) ?? []);

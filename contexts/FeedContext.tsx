@@ -36,6 +36,7 @@ import {
   getSafeStreamError,
 } from '@/services/streamService';
 import { fetchMarketplaceContentProductTags } from '@/services/marketplaceCreatorContentTagService';
+import { sendGift as sendLedgerGift } from '@/services/financial/ledgerClient';
 
 export interface VideoWithMeta extends Video {
   editedAt?:   string;
@@ -664,37 +665,14 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     if (!supabase || !supabaseOk.current) return { success: false, error: 'Backend no disponible' };
 
     try {
-      const { error: giftError } = await supabase.from('gifts').insert({
-        sender_id:    user.id,
-        recipient_id: recipientId,
-        video_id:     videoId,
-        gift_type:    giftType,
-        dag_value:    dagValue,
-        message:      '',
+      const result = await sendLedgerGift({
+        toUserId: recipientId,
+        videoId: videoId ?? undefined,
+        giftType,
+        amount: dagValue,
       });
-      if (giftError) return { success: false, error: giftError.message };
-
-      await supabase.from('user_profiles')
-        .update({ dag_balance: Math.max(0, (user.dagBalance || 0) - dagValue) })
-        .eq('id', user.id);
-
-      const { data: recipientData } = await supabase
-        .from('user_profiles').select('dag_balance').eq('id', recipientId).single();
-      if (recipientData) {
-        await supabase.from('user_profiles')
-          .update({ dag_balance: Number(recipientData.dag_balance || 0) + dagValue })
-          .eq('id', recipientId);
-      }
-
-      await supabase.from('transactions').insert({
-        user_id:     user.id,
-        amount:      dagValue,
-        type:        'tip',
-        status:      'completed',
-        description: `Gift ${giftType} enviado`,
-      });
-
-      authContext?.updateDAGBalance((user.dagBalance || 0) - dagValue);
+      if (!result.success) return { success: false, error: result.error || 'No se pudo enviar el gift' };
+      await authContext?.refreshProfile();
       return { success: true };
     } catch (e: any) {
       console.warn('[FeedContext] sendGift error:', e);

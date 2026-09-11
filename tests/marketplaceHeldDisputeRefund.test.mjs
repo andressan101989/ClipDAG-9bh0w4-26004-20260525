@@ -58,13 +58,10 @@ test("unsupported and conflict outcomes are explicit",()=>{
  assert.match(migration,/allocation_count<>1 or a\.status<>'held'/);
 });
 
-test("trusted gateway derives admin authority and exposes no arbitrary financial input",()=>{
- assert.match(gateway,/\.from\('user_profiles'\)\.select\('is_admin'\)\.eq\('id', user\.id\)/);
- assert.match(gateway,/p_resolver_id: user\.id/);
- assert.match(gateway,/p_partial_amount: null/);
- assert.doesNotMatch(gateway,/buyer_id.*marketplace_dispute_resolve/);
- assert.doesNotMatch(gateway,/seller_id.*marketplace_dispute_resolve/);
- assert.doesNotMatch(gateway,/ledger_account_id.*marketplace_dispute_resolve/);
+test("general ledger gateway exposes no Marketplace admin dispute authority",()=>{
+ assert.doesNotMatch(gateway,/marketplace_dispute_(fetch|resolve)/);
+ assert.doesNotMatch(gateway,/rpc\('resolve_marketplace_dispute'/);
+ assert.doesNotMatch(gateway,/select\('is_admin'\)/);
 });
 
 test("RPC is service-role only and uses explicit search paths and locks",()=>{

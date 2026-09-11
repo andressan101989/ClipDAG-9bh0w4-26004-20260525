@@ -272,7 +272,7 @@ export default function AdminPanelScreen() {
       // 3. Batch-load reporter profiles
       const reporterIds = [...new Set(rawReports.map((r: any) => r.reporter_user_id))];
       const { data: reporters } = reporterIds.length
-        ? await supabase.from('user_profiles').select('id, username, avatar_url').in('id', reporterIds)
+        ? await supabase.from('public_user_profiles').select('id, username, avatar_url').in('id', reporterIds)
         : { data: [] };
       const reporterMap: Record<string, { username: string; avatar_url: string }> =
         Object.fromEntries((reporters ?? []).map((p: any) => [p.id, p]));
@@ -296,7 +296,7 @@ export default function AdminPanelScreen() {
       // 6. Batch-load reported user profiles
       const reportedUserIds = rawReports.filter((r: any) => r.reported_content_type === 'user').map((r: any) => r.reported_content_id);
       const { data: reportedUsers } = reportedUserIds.length
-        ? await supabase.from('user_profiles').select('id, username').in('id', reportedUserIds)
+        ? await supabase.from('public_user_profiles').select('id, username').in('id', reportedUserIds)
         : { data: [] };
       const reportedUserMap: Record<string, { username: string }> =
         Object.fromEntries((reportedUsers ?? []).map((u: any) => [u.id, u]));

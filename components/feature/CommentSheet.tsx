@@ -157,7 +157,7 @@ export function CommentSheet({ visible, onClose, videoId, onSubmit, userAvatar, 
 
       const userIds = Array.from(new Set(rows.map((r: any) => r.user_id)));
       const { data: profiles } = await supabase
-        .from('user_profiles')
+        .from('public_user_profiles')
         .select('id, username, avatar_url')
         .in('id', userIds);
       const profileMap = new Map((profiles || []).map((p: any) => [p.id, p]));
@@ -207,7 +207,7 @@ export function CommentSheet({ visible, onClose, videoId, onSubmit, userAvatar, 
         const row = payload.new;
         let profile: any = null;
         try {
-          const { data } = await supabase.from('user_profiles')
+          const { data } = await supabase.from('public_user_profiles')
             .select('username, avatar_url').eq('id', row.user_id).single();
           profile = data;
         } catch (_) { /* ignore */ }

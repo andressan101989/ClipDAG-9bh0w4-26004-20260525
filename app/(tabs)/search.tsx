@@ -152,7 +152,7 @@ export default function SearchScreen() {
     } else {
       Promise.all([
         supabase
-          .from('user_profiles')
+          .from('public_user_profiles')
           .select('id, username, display_name, avatar_url, followers_count')
           .or(`username.ilike.%${q}%,display_name.ilike.%${q}%`)
           .order('followers_count', { ascending: false })
@@ -186,7 +186,7 @@ export default function SearchScreen() {
         .gte('created_at', since)
         .limit(200),
       supabase
-        .from('user_profiles')
+        .from('public_user_profiles')
         .select('id, username, display_name, avatar_url, followers_count')
         .order('followers_count', { ascending: false })
         .limit(20),

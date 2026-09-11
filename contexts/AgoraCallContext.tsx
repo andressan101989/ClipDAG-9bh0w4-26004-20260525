@@ -257,7 +257,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
     });
 
     const callerProfile = supabase
-      .from('user_profiles').select('username, avatar_url').eq('id', row.caller_id).single();
+      .from('public_user_profiles').select('username, avatar_url').eq('id', row.caller_id).single();
     const presentFallback = async (resolvedCaller?: { username?: string | null; avatar_url?: string | null } | null) => {
       if (callKitSuppressedIdsRef.current.has(row.id)) return;
       const caller = resolvedCaller === undefined ? (await callerProfile).data : resolvedCaller;
@@ -533,7 +533,7 @@ export function AgoraCallProvider({ children }: { children: ReactNode }) {
         .eq('id', participant.call_id).eq('call_scope', 'group').eq('status', 'accepted').maybeSingle();
       if (!call || stale) return;
       const [{ data: caller }, { data: conversation }] = await Promise.all([
-        supabase.from('user_profiles')
+        supabase.from('public_user_profiles')
           .select('username,display_name,avatar_url').eq('id', call.caller_id).maybeSingle(),
         supabase.from('chat_conversations')
           .select('group_name,group_avatar_url').eq('id', call.conversation_id).maybeSingle(),

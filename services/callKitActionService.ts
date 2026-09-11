@@ -190,7 +190,7 @@ async function fetchCallerProfile(callerId: string): Promise<CallerProfile> {
   try {
     const supabase = getSupabaseClient();
     const response = await supabase
-      .from('user_profiles')
+      .from('public_user_profiles')
       .select('username, display_name, avatar_url')
       .eq('id', callerId)
       .maybeSingle<CallerProfileRow>();

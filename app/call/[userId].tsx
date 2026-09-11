@@ -126,7 +126,7 @@ export default function AudioCallScreen() {
     startInProgressRef.current = true;
     transition('starting');
 
-    supabase.from('user_profiles').select('username, avatar_url').eq('id', partnerId).single()
+    supabase.from('public_user_profiles').select('username, avatar_url').eq('id', partnerId).single()
       .then(({ data }) => {
         if (data && mountedRef.current) {
           setPartnerName(data.username || 'Usuario');

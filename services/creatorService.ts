@@ -8,7 +8,6 @@ import { getSupabaseClient } from '@/template';
 export interface CreatorProfile {
   id: string;
   username: string;
-  email: string;
   display_name: string;
   bio: string;
   avatar_url: string | null;
@@ -17,7 +16,6 @@ export interface CreatorProfile {
   location: string;
   followers_count: number;
   following_count: number;
-  dag_balance?: number;
   is_private: boolean;
 }
 
@@ -35,8 +33,8 @@ const db = () => getSupabaseClient();
 /** Fetch full creator profile by user ID */
 export async function fetchCreatorProfile(userId: string): Promise<CreatorProfile | null> {
   const { data } = await db()
-    .from('user_profiles')
-    .select('*')
+    .from('public_user_profiles')
+    .select('id, username, display_name, bio, avatar_url, profession, website, location, followers_count, following_count, is_private')
     .eq('id', userId)
     .single();
   return (data as CreatorProfile) ?? null;
@@ -129,7 +127,7 @@ export async function fetchCreatorStats(userId: string): Promise<CreatorStats> {
 /** Search creator profiles by username */
 export async function searchCreators(query: string, limit = 20): Promise<CreatorProfile[]> {
   const { data } = await db()
-    .from('user_profiles')
+    .from('public_user_profiles')
     .select('id, username, display_name, avatar_url, bio, followers_count')
     .ilike('username', `%${query}%`)
     .order('followers_count', { ascending: false })
@@ -140,7 +138,7 @@ export async function searchCreators(query: string, limit = 20): Promise<Creator
 /** Fetch featured/boosted creators */
 export async function fetchFeaturedCreators(limit = 12): Promise<CreatorProfile[]> {
   const { data } = await db()
-    .from('user_profiles')
+    .from('public_user_profiles')
     .select('id, username, display_name, avatar_url, bio, followers_count, profession')
     .order('followers_count', { ascending: false })
     .limit(limit);

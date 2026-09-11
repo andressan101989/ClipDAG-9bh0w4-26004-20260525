@@ -172,7 +172,7 @@ class ConnectionManagerImpl {
 
       // Upsert presence — lightweight write proves DB connectivity
       const { error } = await Promise.race([
-        supabase.from('user_profiles').select('id').eq('id', this._userId).maybeSingle(),
+        supabase.from('public_user_profiles').select('id').eq('id', this._userId).maybeSingle(),
         new Promise<{ error: Error }>(resolve =>
           setTimeout(() => resolve({ error: new Error('ping timeout') }), HEARTBEAT_TIMEOUT_MS),
         ),

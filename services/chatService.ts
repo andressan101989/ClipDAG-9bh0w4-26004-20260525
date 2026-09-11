@@ -156,7 +156,7 @@ export async function fetchChatUserProfile(userId: string): Promise<{
   avatar_url: string | null;
 } | null> {
   const { data, error } = await client()
-    .from('user_profiles')
+    .from('public_user_profiles')
     .select('username, avatar_url')
     .eq('id', userId)
     .maybeSingle();

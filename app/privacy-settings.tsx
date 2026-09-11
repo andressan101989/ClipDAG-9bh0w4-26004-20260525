@@ -109,11 +109,7 @@ export default function PrivacySettingsScreen() {
     if (!user) return;
     (async () => {
       setLoading(true);
-      const { data } = await supabase
-        .from('user_profiles')
-        .select('is_private, hide_activity, allow_comments_from, allow_messages_from')
-        .eq('id', user.id)
-        .single();
+      const { data } = await supabase.rpc('get_my_user_profile_private');
       if (data) {
         setIsPrivate(!!data.is_private);
         setHideActivity(!!data.hide_activity);

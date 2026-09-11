@@ -119,13 +119,8 @@ export function useWallet() {
         updateBal.current(bal);
         return bal;
       }
-
-      // Fallback: user_profiles.dag_balance
-      const { data: profile } = await supa.current
-        .from('user_profiles').select('dag_balance').eq('id', uid).single();
-      const bal = Number(profile?.dag_balance ?? 0);
-      updateBal.current(bal);
-      return bal;
+      updateBal.current(0);
+      return 0;
     } catch {
       return 0;
     } finally {
@@ -427,53 +422,6 @@ export function useWallet() {
     }
   }, [dbBalance, loadTx]);
 
-  // ── ADD REWARD (legacy) ───────────────────────────────────────────────
-  // ⚠️  SECURITY: Only valid for type='reward' (system rewards to current user).
-  //    Tips and gifts MUST use the atomic server-side RPC (transferBdag /
-  //    send_premium_dm) because addReward() always credits the SENDER, not
-  //    the recipient. This guard must NOT be removed.
-  const addReward = useCallback(async (
-    amount: number,
-    description: string,
-    type: 'reward' | 'tip' | 'gift' = 'reward',
-  ) => {
-    const uid = userIdRef.current;
-    if (!uid || amount <= 0) return;
-
-    // CRITICAL FINANCIAL GUARD: tips and gifts must route through the atomic
-    // server RPC (transfer_bdag_internal / send_premium_dm) which credits the
-    // RECIPIENT. Calling addReward() for tips would credit the caller instead.
-    if (type === 'tip' || type === 'gift') {
-      console.error(
-        '[useWallet] addReward() blocked for type=' + type +
-        '. Use transferBdag() or the premium DM RPC instead.'
-      );
-      return;
-    }
-
-    let waited = 0;
-    while (isBalWriting.current && waited < 500) {
-      await new Promise(r => setTimeout(r, 50));
-      waited += 50;
-    }
-    isBalWriting.current = true;
-    try {
-      const { data: prof } = await supa.current
-        .from('user_profiles').select('dag_balance').eq('id', uid).single();
-      const newBal = Number((Number(prof?.dag_balance ?? 0) + amount).toFixed(8));
-      await Promise.all([
-        supa.current.from('user_profiles').update({ dag_balance: newBal }).eq('id', uid),
-        supa.current.from('transactions').insert({
-          user_id: uid, amount, type, status: 'completed', description,
-        }),
-      ]);
-      updateBal.current(newBal);
-    } finally {
-      isBalWriting.current = false;
-    }
-    await loadTx();
-  }, [loadTx]);
-
   // ── Treasury address helper ───────────────────────────────────────────
   const getTreasuryAddress = useCallback((chainKey?: string): string => {
     if (!chainKey) return TREASURY_DEPOSIT_ADDRESS;
@@ -506,7 +454,6 @@ export function useWallet() {
     connectWalletAddress,
     verifyAndCreditDeposit,
     requestWithdraw,
-    addReward,
     transferBdag,
     fullSync,
     pollBalanceBurst,

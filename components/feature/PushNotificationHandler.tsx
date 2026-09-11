@@ -216,7 +216,7 @@ export function PushNotificationHandler() {
     }
 
     const { data: caller } = await supabase
-      .from('user_profiles')
+      .from('public_user_profiles')
       .select('username, display_name, avatar_url')
       .eq('id', call.caller_id)
       .maybeSingle();

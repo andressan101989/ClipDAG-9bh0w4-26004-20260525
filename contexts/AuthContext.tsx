@@ -119,21 +119,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const supabase = supabaseRef.current;
     if (!supabase) return null;
     try {
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('*')
+      let { data: profileData, error } = await supabase
+        .from('public_user_profiles')
+        .select('id, username, display_name, avatar_url, bio, profession, website, location, followers_count, following_count, is_private, created_at, updated_at')
         .eq('id', userId)
         .maybeSingle();
 
       if (error) { console.log('[AuthProvider] profile load error:', error.message); return null; }
 
-      if (!data) {
+      if (!profileData) {
         // First login — create profile row
         const username = email.split('@')[0];
         const { data: newData, error: insertErr } = await supabase
           .from('user_profiles')
-          .insert({ id: userId, email, username, dag_balance: 0 })
-          .select()
+          .insert({ id: userId, username })
+          .select('id, username, display_name, avatar_url, bio, profession, website, location, followers_count, following_count, is_private, created_at, updated_at')
           .single();
 
         if (insertErr) {
@@ -144,12 +144,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             bio: '', profession: '', website: '', location: '',
             followers: 0, following: 0, dagBalance: 0,
             walletAddress: null, totalLikes: 0,
+            isAdmin: false,
           };
         }
-        return mapProfile(newData as any, email);
+        profileData = newData;
       }
 
-      return mapProfile(data as any, email);
+      const [privateResult, ledgerResult, adminResult] = await Promise.all([
+        supabase.rpc('get_my_user_profile_private'),
+        supabase.from('ledger_accounts')
+          .select('balance')
+          .eq('owner_id', userId)
+          .eq('account_type', 'user')
+          .maybeSingle(),
+        supabase.rpc('get_my_marketplace_admin_access'),
+      ]);
+
+      return mapProfile({
+        ...profileData,
+        ...((privateResult.data as Record<string, unknown> | null) ?? {}),
+        dag_balance: ledgerResult.data?.balance ?? 0,
+        is_admin: Boolean(adminResult.data),
+      }, email);
     } catch (e) {
       console.log('[AuthProvider] profile exception:', e);
       return null;
@@ -294,7 +310,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (error) return { success: false, error: error.message };
       if (data.user) {
         await supabase.from('user_profiles')
-          .update({ username, dag_balance: 0 }).eq('id', data.user.id);
+          .update({ username }).eq('id', data.user.id);
         // Every user needs a ledger_accounts row before any BDAG operation
         // (deposit/withdraw/transfer) can touch their balance. Non-fatal:
         // it's also lazily created by ensure_ledger_account() inside those
@@ -405,40 +421,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         : u
       );
 
-      // Fallback: manual separate queries if RPC doesn't exist yet.
-      // All counter updates use the functional form of setUser so we read
-      // the LATEST state, never the stale closure value.
-      try {
-        if (isFollowingNow) {
-          await supabase.from('follows').delete()
-            .eq('follower_id', user.id).eq('following_id', targetUserId);
-          // Use functional setter — avoids stale closure on `user.following`
-          setUser(u => u ? { ...u, following: Math.max(0, u.following - 1) } : u);
-          const { data: tp } = await supabase.from('user_profiles')
-            .select('followers_count').eq('id', targetUserId).single();
-          if (tp) await supabase.from('user_profiles')
-            .update({ followers_count: Math.max(0, (tp.followers_count || 0) - 1) })
-            .eq('id', targetUserId);
-        } else {
-          await supabase.from('follows')
-            .insert({ follower_id: user.id, following_id: targetUserId })
-            .select().single().catch(() => null);
-          // Use functional setter — avoids stale closure on `user.following`
-          setUser(u => u ? { ...u, following: u.following + 1 } : u);
-          const { data: tp } = await supabase.from('user_profiles')
-            .select('followers_count').eq('id', targetUserId).single();
-          if (tp) await supabase.from('user_profiles')
-            .update({ followers_count: (tp.followers_count || 0) + 1 })
-            .eq('id', targetUserId);
-        }
-        // Re-apply correct follow-set state after fallback succeeds
-        setFollowedUsers(prev => {
-          const next = new Set(prev);
-          isFollowingNow ? next.delete(targetUserId) : next.add(targetUserId);
-          return next;
-        });
-        await loadFollows(user.id);
-      } catch { /* fallback also failed — UI already reverted */ }
     }
   }, [user, followedUsers, loadFollows]);
 

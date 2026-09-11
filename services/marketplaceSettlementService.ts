@@ -141,7 +141,6 @@ export class MarketplaceDisputeResolutionError extends Error {
     this.name = "MarketplaceDisputeResolutionError";
   }
 }
-
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const known: MarketplaceSettlementErrorCode[] = [
@@ -532,7 +531,6 @@ export function parseSupportMarketplaceDispute(
     );
   }
 }
-
 function validateFinancialResult(
   value: unknown,
   outcome: MarketplaceDisputeFinalOutcome,
@@ -779,81 +777,4 @@ export function parseMarketplaceDisputeResolution(
       "marketplace_dispute_resolution_unknown",
     );
   }
-}
-
-async function supportInvoke(
-  action: "marketplace_dispute_fetch" | "marketplace_dispute_resolve",
-  body: Record<string, unknown>,
-) {
-  const { data, error } = await getSupabaseClient().functions.invoke(
-    "bdag-ledger",
-    { body: { action, ...body } },
-  );
-  if (error) {
-    const code = resolutionCode(error);
-    throw new MarketplaceDisputeResolutionError(
-      code,
-      typeof (error as { code?: unknown }).code === "string"
-        ? String((error as { code: string }).code)
-        : null,
-    );
-  }
-  let envelope: Record<string, unknown>, success: boolean;
-  try {
-    envelope = rpcObject(data, "support_edge_envelope");
-    success = rpcBoolean(envelope.success, "support_edge_envelope.success");
-  } catch {
-    throw new MarketplaceDisputeResolutionError(
-      "marketplace_dispute_resolution_unknown",
-    );
-  }
-  if (success === false)
-    throw new MarketplaceDisputeResolutionError(resolutionCode(envelope));
-  return envelope.data;
-}
-export async function fetchSupportMarketplaceDispute(
-  disputeId: string,
-  idempotencyKey: string,
-): Promise<SupportMarketplaceDisputeDetail> {
-  if (!UUID.test(disputeId) || !UUID.test(idempotencyKey))
-    throw new MarketplaceDisputeResolutionError(
-      "marketplace_dispute_resolution_invalid_input",
-    );
-  return parseSupportMarketplaceDispute(
-    await supportInvoke("marketplace_dispute_fetch", {
-      dispute_id: disputeId,
-      idempotency_key: idempotencyKey,
-    }),
-  );
-}
-export async function resolveMarketplaceDispute(
-  disputeId: string,
-  outcome: MarketplaceDisputeResolutionOutcome,
-  reasonCode: string,
-  note: string | null,
-  idempotencyKey: string,
-): Promise<MarketplaceDisputeResolutionResult> {
-  if (
-    !UUID.test(disputeId) ||
-    !UUID.test(idempotencyKey) ||
-    ![
-      "refund_buyer",
-      "release_seller",
-      "reject_claim",
-      "manual_review",
-    ].includes(outcome) ||
-    reasonCode.trim().length < 2
-  )
-    throw new MarketplaceDisputeResolutionError(
-      "marketplace_dispute_resolution_invalid_input",
-    );
-  return parseMarketplaceDisputeResolution(
-    await supportInvoke("marketplace_dispute_resolve", {
-      dispute_id: disputeId,
-      outcome,
-      reason_code: reasonCode.trim(),
-      note: note?.trim() || null,
-      idempotency_key: idempotencyKey,
-    }),
-  );
 }
