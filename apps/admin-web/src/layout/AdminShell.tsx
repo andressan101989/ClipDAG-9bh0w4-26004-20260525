@@ -5,6 +5,9 @@ import {useAdminAuth} from "../auth/AdminAuthProvider";
 const links=[
   {to:"/users",label:"Usuarios",capability:"users.accounts.read",group:"PLATAFORMA"},
   {to:"/reports",label:"Reportes",capability:"reports.cases.read",group:"PLATAFORMA"},
+  {to:"/content",label:"Contenido",capability:"content.items.read",group:"PLATAFORMA"},
+  {to:"/stories",label:"Stories",capability:"stories.items.read",group:"PLATAFORMA"},
+  {to:"/chat/reports",label:"Chat reportado",capability:"chat.abuse_reports.read",group:"PLATAFORMA"},
   {to:"/access",label:"Acceso",capability:"admin.roles.read",group:"PLATAFORMA"},
   {to:"/marketplace",label:"Resumen",capability:"marketplace.overview.read",group:"MARKETPLACE",end:true},
   {to:"/marketplace/orders",label:"Pedidos",capability:"marketplace.orders.read",group:"MARKETPLACE"},

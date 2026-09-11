@@ -42,6 +42,41 @@ export async function submitReport(
   }
 }
 
+async function submitValidatedDomainReport(
+  rpcName: 'report_story' | 'report_chat_message',
+  targetKey: 'p_story_id' | 'p_message_id',
+  targetId: string,
+  reason: ReportReason,
+  details?: string,
+): Promise<{ success: boolean; reportId?: string; error?: string }> {
+  try {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase.rpc(rpcName, {
+      [targetKey]: targetId,
+      p_reason: reason,
+      p_details: details?.trim() || null,
+    });
+    if (error) return { success: false, error: error.message };
+    return { success: true, reportId: typeof data === 'string' ? data : undefined };
+  } catch (e: any) {
+    return { success: false, error: e?.message || 'Error al reportar' };
+  }
+}
+
+export function reportStory(storyId: string, reason: ReportReason, details?: string) {
+  return submitValidatedDomainReport('report_story', 'p_story_id', storyId, reason, details);
+}
+
+export function reportChatMessage(messageId: string, reason: ReportReason, details?: string) {
+  return submitValidatedDomainReport(
+    'report_chat_message',
+    'p_message_id',
+    messageId,
+    reason,
+    details,
+  );
+}
+
 export async function blockUser(
   blockerId: string,
   blockedId: string,

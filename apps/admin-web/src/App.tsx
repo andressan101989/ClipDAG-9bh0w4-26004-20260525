@@ -7,6 +7,9 @@ import {LoginPage} from "./pages/LoginPage";
 import {AdminUsersPage,AdminUserDetailPage} from "./pages/AdminUsersPages";
 import {AdminReportsPage,AdminReportDetailPage} from "./pages/AdminReportsPages";
 import {AdminAccessPage} from "./pages/AdminAccessPage";
+import {AdminContentDetailPage,AdminContentPage} from "./pages/AdminContentPages";
+import {AdminStoriesPage,AdminStoryDetailPage} from "./pages/AdminStoriesPages";
+import {AdminChatReportDetailPage,AdminChatReportsPage} from "./pages/AdminChatReportPages";
 import {MarketplaceOrderDetailPage} from "./pages/MarketplaceOrderDetailPage";
 import {MarketplaceOrdersPage} from "./pages/MarketplaceOrdersPage";
 import {MarketplaceOverviewPage} from "./pages/MarketplaceOverviewPage";
@@ -18,7 +21,7 @@ import {MarketplaceSellerDetailPage} from "./pages/MarketplaceSellerDetailPage";
 import {MarketplaceSellersPage} from "./pages/MarketplaceSellersPage";
 import {MarketplaceActivityPage,MarketplaceAdDetailPage,MarketplaceAdsPage,MarketplaceCreatorCommercePage,MarketplaceCreatorDetailPage,MarketplaceHealthPage,MarketplacePromotionDetailPage,MarketplacePromotionsPage} from "./pages/MarketplaceIntelligencePages";
 
-function DefaultAdminRoute(){const {hasCapability}=useAdminAuth();const target=hasCapability("marketplace.overview.read")?"/marketplace":hasCapability("reports.cases.read")?"/reports":hasCapability("users.accounts.read")?"/users":hasCapability("admin.roles.read")?"/access":null;return target?<Navigate to={target} replace/>:<main className="center-state"><div className="state-card"><h1>Sin módulos disponibles</h1><p>Tu acceso al shell no incluye todavía un módulo administrativo.</p></div></main>}
+function DefaultAdminRoute(){const {hasCapability}=useAdminAuth();const target=hasCapability("marketplace.overview.read")?"/marketplace":hasCapability("reports.cases.read")?"/reports":hasCapability("content.items.read")?"/content":hasCapability("stories.items.read")?"/stories":hasCapability("chat.abuse_reports.read")?"/chat/reports":hasCapability("users.accounts.read")?"/users":hasCapability("admin.roles.read")?"/access":null;return target?<Navigate to={target} replace/>:<main className="center-state"><div className="state-card"><h1>Sin módulos disponibles</h1><p>Tu acceso al shell no incluye todavía un módulo administrativo.</p></div></main>}
 
 export function App(){return <Routes>
   <Route path="/login" element={<LoginPage/>}/>
@@ -26,6 +29,9 @@ export function App(){return <Routes>
     <Route index element={<DefaultAdminRoute/>}/>
     <Route element={<CapabilityRoute capability="users.accounts.read"/>}><Route path="/users" element={<AdminUsersPage/>}/><Route path="/users/:id" element={<AdminUserDetailPage/>}/></Route>
     <Route element={<CapabilityRoute capability="reports.cases.read"/>}><Route path="/reports" element={<AdminReportsPage/>}/><Route path="/reports/:id" element={<AdminReportDetailPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="content.items.read"/>}><Route path="/content" element={<AdminContentPage/>}/><Route path="/content/:type/:id" element={<AdminContentDetailPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="stories.items.read"/>}><Route path="/stories" element={<AdminStoriesPage/>}/><Route path="/stories/:id" element={<AdminStoryDetailPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="chat.abuse_reports.read"/>}><Route path="/chat/reports" element={<AdminChatReportsPage/>}/><Route path="/chat/reports/:id" element={<AdminChatReportDetailPage/>}/></Route>
     <Route element={<CapabilityRoute capability="admin.roles.read"/>}><Route path="/access" element={<AdminAccessPage/>}/></Route>
     <Route element={<CapabilityRoute capability="marketplace.overview.read"/>}><Route path="/marketplace" element={<MarketplaceOverviewPage/>}/></Route>
     <Route element={<CapabilityRoute capability="marketplace.orders.read"/>}><Route path="/marketplace/orders" element={<MarketplaceOrdersPage/>}/><Route path="/marketplace/orders/:orderId" element={<MarketplaceOrderDetailPage/>}/></Route>
