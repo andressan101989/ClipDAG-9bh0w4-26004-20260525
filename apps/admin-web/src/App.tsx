@@ -13,6 +13,7 @@ import {AdminChatReportDetailPage,AdminChatReportsPage} from "./pages/AdminChatR
 import {AdminLiveDetailPage,AdminLivePage} from "./pages/AdminLivePages";
 import {AdminBattleDetailPage,AdminBattlesPage} from "./pages/AdminBattlePages";
 import {AdminMediaDetailPage,AdminMediaPage} from "./pages/AdminMediaPages";
+import {AdminFinanceAnomaliesPage,AdminFinanceAuditPage,AdminFinanceOverviewPage,AdminFinanceReconciliationPage,AdminFinancialTransactionDetailPage,AdminFinancialTransactionsPage,AdminGlobalAuditPage,AdminLedgerAccountsPage,AdminSystemAuditPage,AdminSystemHealthPage,AdminSystemJobDetailPage,AdminSystemJobsPage} from "./pages/AdminFinanceAuditSystemPages";
 import {MarketplaceOrderDetailPage} from "./pages/MarketplaceOrderDetailPage";
 import {MarketplaceOrdersPage} from "./pages/MarketplaceOrdersPage";
 import {MarketplaceOverviewPage} from "./pages/MarketplaceOverviewPage";
@@ -24,7 +25,7 @@ import {MarketplaceSellerDetailPage} from "./pages/MarketplaceSellerDetailPage";
 import {MarketplaceSellersPage} from "./pages/MarketplaceSellersPage";
 import {MarketplaceActivityPage,MarketplaceAdDetailPage,MarketplaceAdsPage,MarketplaceCreatorCommercePage,MarketplaceCreatorDetailPage,MarketplaceHealthPage,MarketplacePromotionDetailPage,MarketplacePromotionsPage} from "./pages/MarketplaceIntelligencePages";
 
-function DefaultAdminRoute(){const {hasCapability}=useAdminAuth();const target=hasCapability("marketplace.overview.read")?"/marketplace":hasCapability("reports.cases.read")?"/reports":hasCapability("content.items.read")?"/content":hasCapability("stories.items.read")?"/stories":hasCapability("chat.abuse_reports.read")?"/chat/reports":hasCapability("live.sessions.read")?"/live":hasCapability("battles.sessions.read")?"/battles":hasCapability("media.assets.read")?"/media":hasCapability("users.accounts.read")?"/users":hasCapability("admin.roles.read")?"/access":null;return target?<Navigate to={target} replace/>:<main className="center-state"><div className="state-card"><h1>Sin módulos disponibles</h1><p>Tu acceso al shell no incluye todavía un módulo administrativo.</p></div></main>}
+function DefaultAdminRoute(){const {hasCapability}=useAdminAuth();const target=hasCapability("marketplace.overview.read")?"/marketplace":hasCapability("finance.ledger.read")?"/finance":hasCapability("finance.reconciliation.read")?"/finance/reconciliation":hasCapability("finance.anomalies.read")?"/finance/anomalies":hasCapability("admin.audit.read")?"/audit":hasCapability("system.health.read")?"/system":hasCapability("system.jobs.read")?"/system/jobs":hasCapability("system.audit.read")?"/system/audit":hasCapability("reports.cases.read")?"/reports":hasCapability("content.items.read")?"/content":hasCapability("stories.items.read")?"/stories":hasCapability("chat.abuse_reports.read")?"/chat/reports":hasCapability("live.sessions.read")?"/live":hasCapability("battles.sessions.read")?"/battles":hasCapability("media.assets.read")?"/media":hasCapability("users.accounts.read")?"/users":hasCapability("admin.roles.read")?"/access":null;return target?<Navigate to={target} replace/>:<main className="center-state"><div className="state-card"><h1>Sin módulos disponibles</h1><p>Tu acceso al shell no incluye todavía un módulo administrativo.</p></div></main>}
 
 export function App(){return <Routes>
   <Route path="/login" element={<LoginPage/>}/>
@@ -38,6 +39,14 @@ export function App(){return <Routes>
     <Route element={<CapabilityRoute capability="live.sessions.read"/>}><Route path="/live" element={<AdminLivePage/>}/><Route path="/live/:id" element={<AdminLiveDetailPage/>}/></Route>
     <Route element={<CapabilityRoute capability="battles.sessions.read"/>}><Route path="/battles" element={<AdminBattlesPage/>}/><Route path="/battles/:id" element={<AdminBattleDetailPage/>}/></Route>
     <Route element={<CapabilityRoute capability="media.assets.read"/>}><Route path="/media" element={<AdminMediaPage/>}/><Route path="/media/:id" element={<AdminMediaDetailPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="finance.ledger.read"/>}><Route path="/finance" element={<AdminFinanceOverviewPage/>}/><Route path="/finance/accounts" element={<AdminLedgerAccountsPage/>}/><Route path="/finance/transactions" element={<AdminFinancialTransactionsPage/>}/><Route path="/finance/transactions/:id" element={<AdminFinancialTransactionDetailPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="finance.reconciliation.read"/>}><Route path="/finance/reconciliation" element={<AdminFinanceReconciliationPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="finance.anomalies.read"/>}><Route path="/finance/anomalies" element={<AdminFinanceAnomaliesPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="finance.audit.read"/>}><Route path="/finance/audit" element={<AdminFinanceAuditPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="admin.audit.read"/>}><Route path="/audit" element={<AdminGlobalAuditPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="system.health.read"/>}><Route path="/system" element={<AdminSystemHealthPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="system.jobs.read"/>}><Route path="/system/jobs" element={<AdminSystemJobsPage/>}/><Route path="/system/jobs/:id" element={<AdminSystemJobDetailPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="system.audit.read"/>}><Route path="/system/audit" element={<AdminSystemAuditPage/>}/></Route>
     <Route element={<CapabilityRoute capability="admin.roles.read"/>}><Route path="/access" element={<AdminAccessPage/>}/></Route>
     <Route element={<CapabilityRoute capability="marketplace.overview.read"/>}><Route path="/marketplace" element={<MarketplaceOverviewPage/>}/></Route>
     <Route element={<CapabilityRoute capability="marketplace.orders.read"/>}><Route path="/marketplace/orders" element={<MarketplaceOrdersPage/>}/><Route path="/marketplace/orders/:orderId" element={<MarketplaceOrderDetailPage/>}/></Route>
