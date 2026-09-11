@@ -1,4 +1,5 @@
 import {createClient} from 'https://esm.sh/@supabase/supabase-js@2';
+import {reconcileUserModeration} from './reconciliation.mjs';
 
 const corsHeaders={
   'Access-Control-Allow-Origin':'*',
@@ -7,11 +8,6 @@ const corsHeaders={
 };
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...corsHeaders,'Content-Type':'application/json'}});
 const uuid=(value:unknown)=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-const safeProviderCode=(error:{code?:string|null}|null)=>{
-  const candidate=String(error?.code||'auth_admin_error').toLowerCase().replace(/[^a-z0-9_.:-]/g,'_').slice(0,120);
-  return candidate||'auth_admin_error';
-};
-const normalizedDate=(value:unknown)=>typeof value==='string'&&value.length?new Date(value).toISOString():null;
 
 Deno.serve(async(req:Request)=>{
   if(req.method==='OPTIONS')return new Response(null,{status:204,headers:corsHeaders});
@@ -33,32 +29,30 @@ Deno.serve(async(req:Request)=>{
   });
   if(prepareError){const forbidden=prepareError.code==='42501'||prepareError.code==='28000';return json({error:forbidden?'forbidden':prepareError.code==='23505'?'idempotency_conflict':'prepare_failed'},forbidden?403:prepareError.code==='23505'?409:400);}
   if(!prepared||prepared.target_user_id!==targetUserId||prepared.action!==action||!uuid(prepared.id))return json({error:'command_mismatch'},409);
-  if(prepared.status==='succeeded')return json({success:true,receipt:prepared});
-  if(prepared.status==='failed')return json({error:'command_failed',receipt:{id:prepared.id,status:'failed',provider_error_code:prepared.provider_error_code}},409);
-  if(prepared.status!=='pending')return json({error:'command_state_invalid'},409);
   const service=createClient(url,serviceKey,{auth:{persistSession:false,autoRefreshToken:false}});
-  const {data:beforeData,error:beforeError}=await service.auth.admin.getUserById(targetUserId as string);
-  if(beforeError||!beforeData.user){
-    const code=safeProviderCode(beforeError);
-    await service.rpc('admin_finalize_user_moderation_action',{p_action_id:prepared.id,p_result:'failed',p_auth_banned_until_before:prepared.auth_banned_until_before,p_auth_banned_until_after:prepared.auth_banned_until_before,p_provider_error_code:code});
-    return json({error:'auth_admin_failed',code},502);
-  }
-  const actualBefore=normalizedDate(beforeData.user.banned_until),expectedBefore=normalizedDate(prepared.auth_banned_until_before);
-  if(actualBefore!==expectedBefore){
-    await service.rpc('admin_finalize_user_moderation_action',{p_action_id:prepared.id,p_result:'failed',p_auth_banned_until_before:prepared.auth_banned_until_before,p_auth_banned_until_after:actualBefore,p_provider_error_code:'auth_state_changed'});
-    return json({error:'auth_state_changed'},409);
-  }
-  const {data:updated,error:updateError}=await service.auth.admin.updateUserById(targetUserId as string,{ban_duration:action==='suspend'?'876000h':'none'});
-  if(updateError||!updated.user){
-    const code=safeProviderCode(updateError);
-    await service.rpc('admin_finalize_user_moderation_action',{p_action_id:prepared.id,p_result:'failed',p_auth_banned_until_before:prepared.auth_banned_until_before,p_auth_banned_until_after:actualBefore,p_provider_error_code:code});
-    return json({error:'auth_admin_failed',code},502);
-  }
-  const after=normalizedDate(updated.user.banned_until);
-  const {data:receipt,error:finalizeError}=await service.rpc('admin_finalize_user_moderation_action',{
-    p_action_id:prepared.id,p_result:'succeeded',p_auth_banned_until_before:prepared.auth_banned_until_before,
-    p_auth_banned_until_after:after,p_provider_error_code:null,
+  const result=await reconcileUserModeration({
+    prepared,action,
+    readAuthState:async()=>{
+      const {data,error}=await service.auth.admin.getUserById(targetUserId as string);
+      if(error||!data.user)throw error||{code:'auth_user_not_found'};
+      return data.user.banned_until;
+    },
+    updateAuthState:async()=>{
+      const {data,error}=await service.auth.admin.updateUserById(targetUserId as string,{ban_duration:action==='suspend'?'876000h':'none'});
+      if(error||!data.user)throw error||{code:'auth_admin_response_invalid'};
+      return data.user.banned_until;
+    },
+    finalize:async({result,bannedUntilAfter,providerErrorCode}:{result:'succeeded'|'failed';bannedUntilAfter:string|null;providerErrorCode:string|null})=>{
+      const {data,error}=await service.rpc('admin_finalize_user_moderation_action',{
+        p_action_id:prepared.id,p_result:result,p_auth_banned_until_before:prepared.auth_banned_until_before,
+        p_auth_banned_until_after:bannedUntilAfter,p_provider_error_code:providerErrorCode,
+      });
+      if(error)throw error;
+      return data;
+    },
   });
-  if(finalizeError)return json({error:'finalize_unavailable'},503);
-  return json({success:true,receipt});
+  if(result.kind==='succeeded')return json({success:true,receipt:result.receipt});
+  if(result.kind==='retryable')return json({error:result.error,retryable:true},503);
+  const status=result.error==='auth_state_changed'||result.error==='command_failed'||result.error==='command_state_invalid'?409:502;
+  return json({error:result.error,code:result.providerErrorCode,receipt:result.receipt},status);
 });
