@@ -5,7 +5,7 @@ import { supabase } from "../lib/supabase";
 
 /* eslint-disable react-refresh/only-export-components */
 
-type AuthState={loading:boolean;session:Session|null;admin:AdminAccess|null;denied:boolean;error:string|null;login:(email:string,password:string)=>Promise<void>;logout:()=>Promise<void>;retry:()=>Promise<void>};
+type AuthState={loading:boolean;session:Session|null;admin:AdminAccess|null;denied:boolean;error:string|null;hasCapability:(capability:string)=>boolean;login:(email:string,password:string)=>Promise<void>;logout:()=>Promise<void>;retry:()=>Promise<void>};
 const Context=createContext<AuthState|null>(null);
 
 export function AdminAuthProvider({children}:{children:ReactNode}){
@@ -15,7 +15,8 @@ export function AdminAuthProvider({children}:{children:ReactNode}){
   const login=useCallback(async(email:string,password:string)=>{setLoading(true);setError(null);const {data,error:authError}=await supabase.auth.signInWithPassword({email,password});if(authError){setLoading(false);throw authError;}await authorize(data.session);},[authorize]);
   const logout=useCallback(async()=>{await supabase.auth.signOut();await authorize(null);},[authorize]);
   const retry=useCallback(async()=>authorize(session),[authorize,session]);
-  const value=useMemo(()=>({loading,session,admin,denied,error,login,logout,retry}),[loading,session,admin,denied,error,login,logout,retry]);
+  const hasCapability=useCallback((capability:string)=>admin?.capabilities.includes(capability)===true,[admin]);
+  const value=useMemo(()=>({loading,session,admin,denied,error,hasCapability,login,logout,retry}),[loading,session,admin,denied,error,hasCapability,login,logout,retry]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 export function useAdminAuth(){const value=useContext(Context);if(!value)throw new Error("AdminAuthProvider requerido");return value;}

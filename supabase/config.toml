@@ -27,3 +27,6 @@ verify_jwt = true
 
 [functions.stream-webhook]
 verify_jwt = false
+
+[functions.admin-user-moderation]
+verify_jwt = true

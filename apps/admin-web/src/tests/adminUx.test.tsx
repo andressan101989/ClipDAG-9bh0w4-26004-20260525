@@ -15,14 +15,18 @@ beforeEach(() => {
       user_id: "10000000-0000-4000-8000-000000000001",
       username: "ops",
       display_name: "Marketplace Ops",
+      avatar_url: null,
       admin: true,
-      capabilities: ["marketplace:read"],
+      roles: ["MARKETPLACE_ADMIN"],
+      capabilities: ["admin.shell.access","marketplace.overview.read","marketplace.orders.read","marketplace.disputes.read","marketplace.sellers.read","marketplace.products.read","marketplace.creators.read","marketplace.promotions.read","marketplace.ads.read","marketplace.health.read","marketplace.audit.read"],
+      authority_version: "a1b2c3d4",
     },
     denied: false,
     error: null,
     login: vi.fn(),
     logout: vi.fn(),
     retry: vi.fn(),
+    hasCapability: (capability) => capability.startsWith("marketplace.") || capability === "admin.shell.access",
   });
 });
 

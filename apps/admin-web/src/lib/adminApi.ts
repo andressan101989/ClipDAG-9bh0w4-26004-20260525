@@ -3,7 +3,7 @@ import { supabase } from "./supabase";
 export const ranges = ["7d", "30d", "90d", "all"] as const;
 export type AdminRange = (typeof ranges)[number];
 export type Money = string | number;
-export type AdminAccess = { user_id:string;username:string|null;display_name:string|null;admin:true;capabilities:string[] };
+export type AdminAccess = { user_id:string;username:string|null;display_name:string|null;avatar_url:string|null;admin:true;roles:string[];capabilities:string[];authority_version:string };
 export type Overview = {
   range:AdminRange;generated_at:string;
   commerce:{ orders:number;paid_orders:number;paid_gmv:Money;units:number;pending_fulfillment:number;shipped:number;delivered:number;refunded_orders:number;reversed_orders:number;reversed_gross:Money };
@@ -47,9 +47,10 @@ class AdminRpcError extends Error{code:string|null;constructor(message:string,co
 async function rpc(name:string,args:Record<string,unknown>={}){const {data,error}=await supabase.rpc(name,args);if(error)throw new AdminRpcError(error.message||"No se pudo consultar Marketplace",error.code);return data as unknown;}
 
 export async function getAdminAccess():Promise<AdminAccess>{
-  const value=object(await rpc("get_my_marketplace_admin_access"),"access");
+  const value=object(await rpc("get_my_admin_access"),"access");
   if(value.admin!==true)throw new Error("Acceso administrativo denegado");
-  return {user_id:uuid(value.user_id,"user_id"),username:nullableString(value.username,"username"),display_name:nullableString(value.display_name,"display_name"),admin:true,capabilities:array(value.capabilities,"capabilities").map((entry)=>string(entry,"capability"))};
+  const capabilities=array(value.effective_capabilities,"effective_capabilities").map((entry)=>string(entry,"capability"));
+  return {user_id:uuid(value.user_id,"user_id"),username:nullableString(value.username,"username"),display_name:nullableString(value.display_name,"display_name"),avatar_url:nullableString(value.avatar_url,"avatar_url"),admin:true,roles:array(value.roles,"roles").map((entry)=>string(entry,"role")),capabilities,authority_version:string(value.authority_version,"authority_version")};
 }
 
 export async function getOverview(selected:AdminRange):Promise<Overview>{
@@ -202,6 +203,54 @@ export async function searchProducts(input:{query?:string;moderationStatus?:stri
 export function validateProductDetail(value:unknown):OpsDetail{const detail=object(value,"product_detail"),product=object(detail.product,"product"),store=object(detail.store,"store"),usage=object(detail.usage,"usage");uuid(product.id,"product.id");string(product.title,"product.title");string(product.description,"product.description");string(product.status,"product.status");string(product.moderation_status,"product.moderation_status");nullableString(product.moderation_reason,"product.moderation_reason");string(product.product_type,"product.product_type");string(product.currency,"product.currency");money(product.price,"product.price");nullableMoney(product.compare_at_price,"product.compare_at_price");array(product.images,"product.images").forEach((entry,index)=>string(entry,`product.images[${index}]`));nullableDate(product.published_at,"product.published_at");date(product.created_at,"product.created_at");date(product.updated_at,"product.updated_at");nullableUuid(product.shipping_profile_id,"product.shipping_profile_id");simpleIdentity(detail.seller,"seller");uuid(store.id,"store.id");string(store.name,"store.name");string(store.slug,"store.slug");string(store.status,"store.status");array(detail.variants,"variants").forEach((entry,index)=>{const row=object(entry,`variants[${index}]`);uuid(row.id,`variants[${index}].id`);string(row.sku,`variants[${index}].sku`);nullableString(row.title,`variants[${index}].title`);string(row.status,`variants[${index}].status`);money(row.price,`variants[${index}].price`);nullableMoney(row.compare_at_price,`variants[${index}].compare_at_price`);integer(row.on_hand,`variants[${index}].on_hand`);integer(row.reserved,`variants[${index}].reserved`);integer(row.available,`variants[${index}].available`);nullableDate(row.archived_at,`variants[${index}].archived_at`)});for(const key of["showcase_refs","content_tag_refs","live_refs"]as const)integer(usage[key],`usage.${key}`);actionRows(detail.admin_actions,"admin_actions");return detail}
 export async function getProductDetail(id:string){uuid(id,"productId");return validateProductDetail(await rpc("get_marketplace_admin_product_detail",{p_product_id:id}))}
 export async function moderateProduct(input:{id:string;action:string;reason?:string;idempotencyKey:string}){uuid(input.id,"productId");uuid(input.idempotencyKey,"idempotencyKey");const value=object(await rpc("admin_moderate_marketplace_product",{p_product_id:input.id,p_action:input.action,p_reason:input.reason||null,p_idempotency_key:input.idempotencyKey}),"product_receipt");uuid(value.product_id,"product_receipt.product_id");string(value.moderation_status,"product_receipt.moderation_status");nullableString(value.moderation_reason,"product_receipt.moderation_reason");string(value.publication_status,"product_receipt.publication_status");string(value.action,"product_receipt.action");date(value.updated_at,"product_receipt.updated_at");return value}
+
+export type AdminUserSummary={id:string;username:string|null;display_name:string|null;avatar_url:string|null;created_at:string;last_sign_in_at:string|null;account_status:"active"|"suspended";banned_until:string|null};
+export type AdminUserDetail=AdminUserSummary&{bio:string|null;public_counters:{followers_count:number;following_count:number};active_admin_roles:Array<{assignment_id:string;role_code:string;granted_at:string;version:number}>|null};
+export type AdminReportSummary={id:string;reporter:{id:string;username:string|null;display_name:string|null;avatar_url:string|null};reported_content_id:string;reported_content_type:"video"|"comment"|"user";reason:string;status:"pending"|"reviewed"|"dismissed";created_at:string};
+export type AdminReportDetail=AdminReportSummary&{details:string|null;subject:Record<string,unknown>|null};
+export type AdminRole={role_code:string;display_name:string;description:string;is_assignable:boolean;is_root:boolean;is_exclusive:boolean;capability_count:number};
+export type AdminRoleAssignment={assignment_id:string;user:{id:string;username:string|null;display_name:string|null;avatar_url:string|null};role_code:string;grant_actor_kind:"human_admin"|"trusted_operator";granted_at:string;revoked_at:string|null;version:number};
+export type KeysetCursor={created_at:string;id:string};
+
+const identity=(value:unknown,name:string)=>{const row=object(value,name);return{id:uuid(row.id,`${name}.id`),username:nullableString(row.username,`${name}.username`),display_name:nullableString(row.display_name,`${name}.display_name`),avatar_url:nullableString(row.avatar_url,`${name}.avatar_url`)};};
+const pageCursor=(value:unknown,name:string,key="created_at")=>value===null?null:(()=>{const row=object(value,name);return{created_at:date(row[key],`${name}.${key}`),id:uuid(row.id,`${name}.id`)};})();
+const accountStatus=(value:unknown)=>value==="active"||value==="suspended"?value:invalid("account_status");
+const reportStatus=(value:unknown)=>value==="pending"||value==="reviewed"||value==="dismissed"?value:invalid("report_status");
+const contentType=(value:unknown)=>value==="video"||value==="comment"||value==="user"?value:invalid("reported_content_type");
+
+export async function searchAdminUsers(input:{query?:string;status?:string;cursor?:KeysetCursor;limit?:number}={}){
+  const value=object(await rpc("search_admin_users",{p_query:input.query||null,p_status:input.status||null,p_cursor_created_at:input.cursor?.created_at||null,p_cursor_id:input.cursor?.id||null,p_limit:input.limit??50}),"users_page");
+  const items=array(value.items,"users").map((entry,index):AdminUserSummary=>{const row=object(entry,`users[${index}]`);return{id:uuid(row.id,"user.id"),username:nullableString(row.username,"user.username"),display_name:nullableString(row.display_name,"user.display_name"),avatar_url:nullableString(row.avatar_url,"user.avatar_url"),created_at:date(row.created_at,"user.created_at"),last_sign_in_at:nullableDate(row.last_sign_in_at,"user.last_sign_in_at"),account_status:accountStatus(row.account_status),banned_until:nullableDate(row.banned_until,"user.banned_until")};});
+  return{items,next_cursor:pageCursor(value.next_cursor,"users.next_cursor")};
+}
+
+export async function getAdminUserDetail(id:string):Promise<AdminUserDetail>{
+  uuid(id,"userId");const row=object(await rpc("get_admin_user_detail",{p_user_id:id}),"user_detail"),counters=object(row.public_counters,"public_counters");
+  const roles=row.active_admin_roles===null?null:array(row.active_admin_roles,"active_admin_roles").map((entry,index)=>{const role=object(entry,`active_admin_roles[${index}]`);return{assignment_id:uuid(role.assignment_id,"assignment_id"),role_code:string(role.role_code,"role_code"),granted_at:date(role.granted_at,"granted_at"),version:integer(role.version,"version")};});
+  return{id:uuid(row.id,"id"),username:nullableString(row.username,"username"),display_name:nullableString(row.display_name,"display_name"),avatar_url:nullableString(row.avatar_url,"avatar_url"),bio:nullableString(row.bio,"bio"),created_at:date(row.created_at,"created_at"),last_sign_in_at:nullableDate(row.last_sign_in_at,"last_sign_in_at"),account_status:accountStatus(row.account_status),banned_until:nullableDate(row.banned_until,"banned_until"),public_counters:{followers_count:integer(counters.followers_count,"followers_count"),following_count:integer(counters.following_count,"following_count")},active_admin_roles:roles};
+}
+
+export async function moderateAdminUser(input:{targetUserId:string;action:"suspend"|"restore";reason:string;idempotencyKey:string}){
+  uuid(input.targetUserId,"targetUserId");uuid(input.idempotencyKey,"idempotencyKey");
+  const {data,error}=await supabase.functions.invoke("admin-user-moderation",{body:{target_user_id:input.targetUserId,action:input.action,reason:input.reason,idempotency_key:input.idempotencyKey}});
+  if(error)throw new AdminRpcError(error.message||"No se pudo moderar la cuenta");
+  return object(data,"user_moderation_receipt");
+}
+
+export async function searchAdminReports(input:{query?:string;status?:string;contentType?:string;cursor?:KeysetCursor;limit?:number}={}){
+  const value=object(await rpc("search_admin_reports",{p_query:input.query||null,p_status:input.status||null,p_content_type:input.contentType||null,p_cursor_created_at:input.cursor?.created_at||null,p_cursor_id:input.cursor?.id||null,p_limit:input.limit??50}),"reports_page");
+  const items=array(value.items,"reports").map((entry,index):AdminReportSummary=>{const row=object(entry,`reports[${index}]`);return{id:uuid(row.id,"report.id"),reporter:identity(row.reporter,"report.reporter"),reported_content_id:uuid(row.reported_content_id,"reported_content_id"),reported_content_type:contentType(row.reported_content_type),reason:string(row.reason,"reason"),status:reportStatus(row.status),created_at:date(row.created_at,"created_at")};});
+  return{items,next_cursor:pageCursor(value.next_cursor,"reports.next_cursor")};
+}
+
+export async function getAdminReportDetail(id:string):Promise<AdminReportDetail>{uuid(id,"reportId");const row=object(await rpc("get_admin_report_detail",{p_report_id:id}),"report_detail");return{id:uuid(row.id,"id"),reporter:identity(row.reporter,"reporter"),reported_content_id:uuid(row.reported_content_id,"reported_content_id"),reported_content_type:contentType(row.reported_content_type),reason:string(row.reason,"reason"),details:nullableString(row.details,"details"),status:reportStatus(row.status),created_at:date(row.created_at,"created_at"),subject:nullableObject(row.subject,"subject")};}
+export async function reviewAdminReport(input:{id:string;note:string;idempotencyKey:string}){uuid(input.id,"reportId");uuid(input.idempotencyKey,"idempotencyKey");return object(await rpc("admin_review_report",{p_report_id:input.id,p_note:input.note,p_idempotency_key:input.idempotencyKey}),"review_receipt");}
+export async function dismissAdminReport(input:{id:string;reason:string;idempotencyKey:string}){uuid(input.id,"reportId");uuid(input.idempotencyKey,"idempotencyKey");return object(await rpc("admin_dismiss_report",{p_report_id:input.id,p_reason:input.reason,p_idempotency_key:input.idempotencyKey}),"dismiss_receipt");}
+
+export async function getAdminRoleCatalog():Promise<AdminRole[]>{const value=object(await rpc("get_admin_role_catalog"),"role_catalog");return array(value.roles,"roles").map((entry,index)=>{const row=object(entry,`roles[${index}]`);return{role_code:string(row.role_code,"role_code"),display_name:string(row.display_name,"display_name"),description:string(row.description,"description"),is_assignable:bool(row.is_assignable,"is_assignable"),is_root:bool(row.is_root,"is_root"),is_exclusive:bool(row.is_exclusive,"is_exclusive"),capability_count:integer(row.capability_count,"capability_count")};});}
+export async function searchAdminRoleAssignments(input:{query?:string;roleCode?:string;active?:boolean;cursor?:KeysetCursor;limit?:number}={}){const value=object(await rpc("search_admin_role_assignments",{p_query:input.query||null,p_role_code:input.roleCode||null,p_active:input.active??null,p_cursor_granted_at:input.cursor?.created_at||null,p_cursor_id:input.cursor?.id||null,p_limit:input.limit??50}),"assignment_page");const items=array(value.items,"assignments").map((entry,index):AdminRoleAssignment=>{const row=object(entry,`assignments[${index}]`),rawKind=string(row.grant_actor_kind,"grant_actor_kind");if(rawKind!=="human_admin"&&rawKind!=="trusted_operator")invalid("grant_actor_kind");const kind=rawKind as AdminRoleAssignment["grant_actor_kind"];return{assignment_id:uuid(row.assignment_id,"assignment_id"),user:identity(row.user,"user"),role_code:string(row.role_code,"role_code"),grant_actor_kind:kind,granted_at:date(row.granted_at,"granted_at"),revoked_at:nullableDate(row.revoked_at,"revoked_at"),version:integer(row.version,"version")};});return{items,next_cursor:pageCursor(value.next_cursor,"assignments.next_cursor","granted_at")};}
+export async function assignAdminRole(input:{userId:string;roleCode:string;reason:string;idempotencyKey:string}){uuid(input.userId,"userId");uuid(input.idempotencyKey,"idempotencyKey");return object(await rpc("admin_assign_role",{p_user_id:input.userId,p_role_code:input.roleCode,p_reason:input.reason,p_idempotency_key:input.idempotencyKey}),"assignment_receipt");}
+export async function revokeAdminRole(input:{assignmentId:string;reason:string;idempotencyKey:string}){uuid(input.assignmentId,"assignmentId");uuid(input.idempotencyKey,"idempotencyKey");return object(await rpc("admin_revoke_role",{p_assignment_id:input.assignmentId,p_reason:input.reason,p_idempotency_key:input.idempotencyKey}),"revocation_receipt");}
 
 export const formatBdag=(value:Money)=>`${String(value)} BDAG`;
 export const formatDate=(value:unknown)=>typeof value==="string"&&!Number.isNaN(Date.parse(value))?new Intl.DateTimeFormat("es",{dateStyle:"medium",timeStyle:"short"}).format(new Date(value)):"—";

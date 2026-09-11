@@ -15,8 +15,8 @@ vi.mock("../auth/AdminAuthProvider",()=>({useAdminAuth:vi.fn()}));
 vi.mock("../lib/supabase",()=>({supabase:{rpc:vi.fn(),auth:{getSession:vi.fn(),onAuthStateChange:vi.fn(),signInWithPassword:vi.fn(),signOut:vi.fn()}}}));
 vi.mock("../lib/adminApi",async(importOriginal)=>{const original=await importOriginal<typeof import("../lib/adminApi")>();return{...original,getOverview:vi.fn(),searchOrders:vi.fn(),getOrderDetail:vi.fn()};});
 const auth=vi.mocked(useAdminAuth),overview=vi.mocked(getOverview),orders=vi.mocked(searchOrders),detail=vi.mocked(getOrderDetail);
-const admin={user_id:"10000000-0000-4000-8000-000000000001",username:"ops",display_name:"Ops",admin:true as const,capabilities:["marketplace:read"]};
-const baseAuth={loading:false,session:{user:{id:admin.user_id}} as never,admin,denied:false,error:null,login:vi.fn(),logout:vi.fn(),retry:vi.fn()};
+const admin={user_id:"10000000-0000-4000-8000-000000000001",username:"ops",display_name:"Ops",avatar_url:null,admin:true as const,roles:["MARKETPLACE_ADMIN"],capabilities:["admin.shell.access","marketplace.overview.read"],authority_version:"a1b2c3d4"};
+const baseAuth={loading:false,session:{user:{id:admin.user_id}} as never,admin,denied:false,error:null,hasCapability:(capability:string)=>admin.capabilities.includes(capability),login:vi.fn(),logout:vi.fn(),retry:vi.fn()};
 
 beforeEach(()=>{vi.clearAllMocks();auth.mockReturnValue(baseAuth);});
 

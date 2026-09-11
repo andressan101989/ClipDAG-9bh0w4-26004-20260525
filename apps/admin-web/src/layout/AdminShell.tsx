@@ -1,94 +1,21 @@
-import { useEffect, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { useAdminAuth } from "../auth/AdminAuthProvider";
+import {useEffect,useState} from "react";
+import {NavLink,Outlet,useLocation} from "react-router-dom";
+import {useAdminAuth} from "../auth/AdminAuthProvider";
 
-const titles: Record<string, string> = {
-  "/marketplace": "Resumen de Marketplace",
-  "/marketplace/orders": "Pedidos",
-  "/marketplace/disputes": "Disputas",
-  "/marketplace/sellers": "Vendedores",
-  "/marketplace/products": "Productos",
-  "/marketplace/creator-commerce": "Creator Commerce",
-  "/marketplace/promotions": "Promociones",
-  "/marketplace/ads": "Marketplace Ads",
-  "/marketplace/health": "Salud",
-  "/marketplace/activity": "Actividad",
-};
-export function AdminShell() {
-  const { admin, logout } = useAdminAuth();
-  const location = useLocation();
-  const [navigationOpen, setNavigationOpen] = useState(false);
-  useEffect(() => setNavigationOpen(false), [location.pathname]);
-  const section = Object.keys(titles).find(
-    (path) =>
-      path !== "/marketplace" && location.pathname.startsWith(`${path}/`),
-  );
-  const title = section
-    ? `Detalle · ${titles[section]}`
-    : (titles[location.pathname] ?? "Marketplace");
-  return (
-    <div className="admin-layout">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark">OS</span>
-          <div>
-            <strong>OnSpace</strong>
-            <small>Admin</small>
-          </div>
-        </div>
-        <button
-          aria-controls="marketplace-navigation"
-          aria-expanded={navigationOpen}
-          aria-label={navigationOpen ? "Cerrar navegación" : "Abrir navegación"}
-          className="nav-toggle"
-          onClick={() => setNavigationOpen((value) => !value)}
-          type="button"
-        >
-          <span aria-hidden="true">{navigationOpen ? "×" : "☰"}</span>
-          Menú
-        </button>
-        <p className="nav-section">MARKETPLACE</p>
-        <nav aria-label="Marketplace" className={navigationOpen ? "is-open" : ""} id="marketplace-navigation">
-          <NavLink end to="/marketplace">
-            Resumen
-          </NavLink>
-          <NavLink to="/marketplace/orders">Pedidos</NavLink>
-          <NavLink to="/marketplace/disputes">Disputas</NavLink>
-          <NavLink to="/marketplace/sellers">Vendedores</NavLink>
-          <NavLink to="/marketplace/products">Productos</NavLink>
-          <NavLink to="/marketplace/creator-commerce">Creator Commerce</NavLink>
-          <NavLink to="/marketplace/promotions">Promociones</NavLink>
-          <NavLink to="/marketplace/ads">Ads</NavLink>
-          <NavLink to="/marketplace/health">Salud</NavLink>
-          <NavLink to="/marketplace/activity">Actividad</NavLink>
-        </nav>
-        <div className="sidebar-foot">
-          <span className="status-dot" />
-          Operaciones internas
-        </div>
-      </aside>
-      <div className="workspace">
-        <header className="topbar">
-          <div>
-            <span className="breadcrumb">Marketplace /</span>
-            <h1>{title}</h1>
-          </div>
-          <div className="admin-identity">
-            <div>
-              <strong>
-                {admin?.display_name || admin?.username || "Administrador"}
-              </strong>
-              <small>Acceso interno</small>
-            </div>
-            <button className="ghost" onClick={() => void logout()}>
-              Salir
-            </button>
-          </div>
-        </header>
-        <main className="content">
-          <Outlet />
-        </main>
-      </div>
-    </div>
-  );
-}
+const links=[
+  {to:"/users",label:"Usuarios",capability:"users.accounts.read",group:"PLATAFORMA"},
+  {to:"/reports",label:"Reportes",capability:"reports.cases.read",group:"PLATAFORMA"},
+  {to:"/access",label:"Acceso",capability:"admin.roles.read",group:"PLATAFORMA"},
+  {to:"/marketplace",label:"Resumen",capability:"marketplace.overview.read",group:"MARKETPLACE",end:true},
+  {to:"/marketplace/orders",label:"Pedidos",capability:"marketplace.orders.read",group:"MARKETPLACE"},
+  {to:"/marketplace/disputes",label:"Disputas",capability:"marketplace.disputes.read",group:"MARKETPLACE"},
+  {to:"/marketplace/sellers",label:"Vendedores",capability:"marketplace.sellers.read",group:"MARKETPLACE"},
+  {to:"/marketplace/products",label:"Productos",capability:"marketplace.products.read",group:"MARKETPLACE"},
+  {to:"/marketplace/creator-commerce",label:"Creator Commerce",capability:"marketplace.creators.read",group:"MARKETPLACE"},
+  {to:"/marketplace/promotions",label:"Promociones",capability:"marketplace.promotions.read",group:"MARKETPLACE"},
+  {to:"/marketplace/ads",label:"Ads",capability:"marketplace.ads.read",group:"MARKETPLACE"},
+  {to:"/marketplace/health",label:"Salud",capability:"marketplace.health.read",group:"MARKETPLACE"},
+  {to:"/marketplace/activity",label:"Actividad",capability:"marketplace.audit.read",group:"MARKETPLACE"},
+] as const;
+
+export function AdminShell(){const {admin,hasCapability,logout}=useAdminAuth(),location=useLocation();const [navigationOpen,setNavigationOpen]=useState(false);useEffect(()=>setNavigationOpen(false),[location.pathname]);const match=[...links].sort((a,b)=>b.to.length-a.to.length).find((link)=>location.pathname===link.to||location.pathname.startsWith(`${link.to}/`));const title=match?.label??"Administración";return <div className="admin-layout"><aside className="sidebar"><div className="brand"><span className="brand-mark">OS</span><div><strong>OnSpace</strong><small>Admin</small></div></div><button aria-controls="admin-navigation" aria-expanded={navigationOpen} aria-label={navigationOpen?"Cerrar navegación":"Abrir navegación"} className="nav-toggle" onClick={()=>setNavigationOpen((value)=>!value)} type="button"><span aria-hidden="true">{navigationOpen?"×":"☰"}</span>Menú</button><div id="admin-navigation" className="nav-groups">{["PLATAFORMA","MARKETPLACE"].map((group)=>{const visible=links.filter((link)=>link.group===group&&hasCapability(link.capability));if(!visible.length)return null;return <div key={group}><p className="nav-section">{group}</p><nav className={navigationOpen?"is-open":""} aria-label={group==="MARKETPLACE"?"Marketplace":"Administración global"}>{visible.map((link)=><NavLink end={"end" in link&&link.end} to={link.to} key={link.to}>{link.label}</NavLink>)}</nav></div>})}</div><div className="sidebar-foot"><span className="status-dot"/>Operaciones internas · Autoridad v{admin?.authority_version.slice(0,8)??"—"}</div></aside><div className="workspace"><header className="topbar"><div><p className="eyebrow">ONSPACE ADMIN</p><h1>{title}</h1></div><div className="admin-identity"><div><strong>{admin?.display_name??admin?.username??"Admin"}</strong><small>{admin?.roles.join(" · ")}</small></div><button className="secondary" onClick={()=>void logout()}>Cerrar sesión</button></div></header><main className="content"><Outlet/></main></div></div>}
