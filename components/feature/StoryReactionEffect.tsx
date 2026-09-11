@@ -29,7 +29,6 @@ export function StoryReactionEffect({ reaction, effectToken }: StoryReactionEffe
   const progress = useRef(new Animated.Value(0)).current;
   const animationRef = useRef<Animated.CompositeAnimation | null>(null);
   const generationRef = useRef(0);
-  const [visible, setVisible] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
 
   useEffect(() => {
@@ -50,11 +49,9 @@ export function StoryReactionEffect({ reaction, effectToken }: StoryReactionEffe
     progress.stopAnimation();
     progress.setValue(0);
     if (!reaction || effectToken <= 0) {
-      setVisible(false);
       return undefined;
     }
 
-    setVisible(true);
     const animation = Animated.timing(progress, {
       toValue: 1,
       duration: reduceMotion
@@ -64,7 +61,9 @@ export function StoryReactionEffect({ reaction, effectToken }: StoryReactionEffe
     });
     animationRef.current = animation;
     animation.start(({ finished }) => {
-      if (finished && generationRef.current === generation) setVisible(false);
+      if (finished && generationRef.current === generation) {
+        animationRef.current = null;
+      }
     });
 
     return () => {
@@ -73,7 +72,10 @@ export function StoryReactionEffect({ reaction, effectToken }: StoryReactionEffe
     };
   }, [effectToken, progress, reaction, reduceMotion]);
 
-  if (!visible || !reaction) return null;
+  // Keep the effect nodes mounted for the triggering render. Previously they
+  // were mounted only after the native animation had already started, so the
+  // first effect could complete without ever attaching to a native view.
+  if (!reaction) return null;
 
   const definition = storyReactionDefinition(reaction);
   const opacity = progress.interpolate({
