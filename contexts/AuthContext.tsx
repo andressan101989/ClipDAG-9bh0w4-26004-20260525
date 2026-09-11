@@ -40,7 +40,6 @@ export interface AppUser {
   dagBalance:    number;
   walletAddress: string | null;
   totalLikes:    number;
-  isAdmin:       boolean;
 }
 
 interface AuthContextType {
@@ -85,7 +84,6 @@ function mapProfile(data: Record<string, any>, fallbackEmail: string): AppUser {
     dagBalance:    Number(data.dag_balance || 0),
     walletAddress: data.wallet_address   || null,
     totalLikes:    0,
-    isAdmin:       Boolean(data.is_admin),
   };
 }
 
@@ -144,27 +142,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             bio: '', profession: '', website: '', location: '',
             followers: 0, following: 0, dagBalance: 0,
             walletAddress: null, totalLikes: 0,
-            isAdmin: false,
           };
         }
         profileData = newData;
       }
 
-      const [privateResult, ledgerResult, adminResult] = await Promise.all([
+      const [privateResult, ledgerResult] = await Promise.all([
         supabase.rpc('get_my_user_profile_private'),
         supabase.from('ledger_accounts')
           .select('balance')
           .eq('owner_id', userId)
           .eq('account_type', 'user')
           .maybeSingle(),
-        supabase.rpc('get_my_marketplace_admin_access'),
       ]);
 
       return mapProfile({
         ...profileData,
         ...((privateResult.data as Record<string, unknown> | null) ?? {}),
         dag_balance: ledgerResult.data?.balance ?? 0,
-        is_admin: Boolean(adminResult.data),
       }, email);
     } catch (e) {
       console.log('[AuthProvider] profile exception:', e);

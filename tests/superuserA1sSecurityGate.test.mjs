@@ -67,7 +67,8 @@ test("self-private profile path is authenticated, minimal, and admin remains can
   assert.match(migration, /grant execute on function public\.get_my_user_profile_private\(\) to authenticated/i);
   assert.match(authContext, /\.from\('public_user_profiles'\)/);
   assert.match(authContext, /rpc\('get_my_user_profile_private'\)/);
-  assert.match(authContext, /rpc\('get_my_marketplace_admin_access'\)/);
+  assert.doesNotMatch(authContext, /rpc\('get_my_(?:marketplace_)?admin_access'\)/);
+  assert.doesNotMatch(authContext, /\bisAdmin\b|\bis_admin\b/);
   assert.match(authContext, /\.from\('ledger_accounts'\)/);
   assert.doesNotMatch(authContext, /\.select\('\*'\)/);
   assert.doesNotMatch(authContext, /\.insert\(\{ id: userId, email,/);

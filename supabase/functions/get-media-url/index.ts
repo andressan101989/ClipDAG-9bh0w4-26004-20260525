@@ -40,8 +40,10 @@ async function adminMayReadDisputeEvidence(req:Request,assetId:string){
   if(error||!link)return false;
   const caller=authenticatedClient(req);
   if(!caller)return false;
-  const {data:access,error:accessError}=await caller.rpc('get_my_marketplace_admin_access');
-  return !accessError&&access?.admin===true;
+  const {data:access,error:accessError}=await caller.rpc('admin_actor_has_capability',{
+    p_capability:'marketplace.disputes.read',
+  });
+  return !accessError&&access===true;
 }
 
 async function returnParticipantMayReadLabel(assetId:string,userId:string){

@@ -28,16 +28,16 @@ test("R1C preserves existing financial, review and resolver contracts", () => {
   assert.match(page, /resolveDispute/);
 });
 
-test("private evidence signer grants only linked dispute evidence to Marketplace Admin", () => {
+test("private evidence signer grants only linked dispute evidence with the exact canonical capability", () => {
   assert.match(edge, /adminMayReadDisputeEvidence/);
   assert.match(edge, /entity_type','marketplace_dispute'/);
   assert.match(edge, /\.in\('slot',\['buyer_evidence','seller_evidence'\]\)/);
-  assert.match(edge, /caller\.rpc\('get_my_marketplace_admin_access'\)/);
+  assert.match(edge, /caller\.rpc\('admin_actor_has_capability',[\s\S]*p_capability:'marketplace\.disputes\.read'/);
   assert.match(edge, /sellerMayReadBuyerDisputeEvidence/);
   assert.match(edge, /a\.owner_id!==user\.id/);
   assert.match(edge, /signGet\(a\.bucket_name,a\.object_key\)/);
   assert.match(edge, /300_000/);
-  assert.doesNotMatch(edge, /service_role.*get_my_marketplace_admin_access/i);
+  assert.doesNotMatch(edge, /get_my_marketplace_admin_access|marketplace_actor_is_admin|user_profiles\.is_admin/i);
   assert.match(auth, /authenticatedClient/);
 });
 
