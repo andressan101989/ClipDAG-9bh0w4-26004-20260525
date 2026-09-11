@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 
 const migration = readFileSync(
-  new URL("../supabase/migrations/20260911135721_superuser_a1s_security_gate.sql", import.meta.url),
+  new URL("../supabase/migrations/20260911141751_superuser_a1s_security_gate.sql", import.meta.url),
   "utf8",
 );
 const ledgerEdge = readFileSync(
