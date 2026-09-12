@@ -30,3 +30,6 @@ verify_jwt = false
 
 [functions.admin-user-moderation]
 verify_jwt = true
+
+[functions.ai-handoff]
+verify_jwt = false

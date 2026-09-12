@@ -24,7 +24,18 @@ export function r2Client() {
   });
 }
 export const signPut=(bucket:string,key:string,mime:string)=>getSignedUrl(r2Client(),new PutObjectCommand({Bucket:bucket,Key:key,ContentType:mime}),{expiresIn:300});
+export const signPutIfAbsent=(bucket:string,key:string,mime:string,metadata:Record<string,string>)=>getSignedUrl(
+  r2Client(),
+  new PutObjectCommand({Bucket:bucket,Key:key,ContentType:mime,Metadata:metadata,IfNoneMatch:'*'}),
+  {
+    expiresIn:300,
+    signableHeaders:new Set(['content-type']),
+    unhoistableHeaders:new Set(['x-amz-meta-sha256']),
+  },
+);
 export const signGet=(bucket:string,key:string,expiresIn=300)=>getSignedUrl(r2Client(),new GetObjectCommand({Bucket:bucket,Key:key}),{expiresIn});
+export const signHead=(bucket:string,key:string,expiresIn=60)=>getSignedUrl(r2Client(),new HeadObjectCommand({Bucket:bucket,Key:key}),{expiresIn});
+export const signDelete=(bucket:string,key:string,expiresIn=60)=>getSignedUrl(r2Client(),new DeleteObjectCommand({Bucket:bucket,Key:key}),{expiresIn});
 export const headObject=(bucket:string,key:string)=>r2Client().send(new HeadObjectCommand({Bucket:bucket,Key:key}));
 export const deleteObject=(bucket:string,key:string)=>r2Client().send(new DeleteObjectCommand({Bucket:bucket,Key:key}));
 export const publicUrl=(key:string)=>`${R2_PUBLIC_BASE_URL()}/${key.split('/').map(encodeURIComponent).join('/')}`;
