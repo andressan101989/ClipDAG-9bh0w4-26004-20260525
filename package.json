@@ -38,6 +38,7 @@
     "admin:web:lint": "npm --prefix apps/admin-web run lint",
     "admin:web:build": "npm --prefix apps/admin-web run build",
     "test:ai-handoff": "node --test tests/aiHandoffBridge.test.mjs",
+    "test:ai-handoff-mcp": "node --test tests/aiHandoffMcp.test.mjs",
     "prove:marketplace-dispute-refund": "node scripts/prove-marketplace-held-dispute-refund.mjs",
     "prove:marketplace-shipping": "node scripts/prove-marketplace-shipping.mjs",
     "prove:marketplace-publication": "node scripts/audit-marketplace-publication.mjs",

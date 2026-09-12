@@ -33,3 +33,6 @@ verify_jwt = true
 
 [functions.ai-handoff]
 verify_jwt = false
+
+[functions.ai-handoff-mcp]
+verify_jwt = false
