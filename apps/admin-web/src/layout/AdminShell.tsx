@@ -1,37 +1,36 @@
-import {useEffect,useState} from "react";
-import {NavLink,Outlet,useLocation} from "react-router-dom";
+import {useEffect,useMemo,useRef,useState} from "react";
+import {NavLink,Outlet,useLocation,useNavigate} from "react-router-dom";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
+import {AdminIcon} from "../components/AdminIcon";
+import {adminLinks} from "./adminNavigation";
 
-const links=[
-  {to:"/users",label:"Usuarios",capability:"users.accounts.read",group:"PLATAFORMA"},
-  {to:"/reports",label:"Reportes",capability:"reports.cases.read",group:"PLATAFORMA"},
-  {to:"/content",label:"Contenido",capability:"content.items.read",group:"PLATAFORMA"},
-  {to:"/stories",label:"Stories",capability:"stories.items.read",group:"PLATAFORMA"},
-  {to:"/chat/reports",label:"Chat reportado",capability:"chat.abuse_reports.read",group:"PLATAFORMA"},
-  {to:"/live",label:"LIVE",capability:"live.sessions.read",group:"OPERACIONES"},
-  {to:"/battles",label:"Battles",capability:"battles.sessions.read",group:"OPERACIONES"},
-  {to:"/media",label:"Media",capability:"media.assets.read",group:"OPERACIONES"},
-  {to:"/finance",label:"Resumen financiero",capability:"finance.ledger.read",group:"FINANZAS",end:true},
-  {to:"/finance/accounts",label:"Cuentas",capability:"finance.ledger.read",group:"FINANZAS"},
-  {to:"/finance/transactions",label:"Transacciones",capability:"finance.ledger.read",group:"FINANZAS"},
-  {to:"/finance/reconciliation",label:"Reconciliación",capability:"finance.reconciliation.read",group:"FINANZAS"},
-  {to:"/finance/anomalies",label:"Anomalías",capability:"finance.anomalies.read",group:"FINANZAS"},
-  {to:"/finance/audit",label:"Audit financiero",capability:"finance.audit.read",group:"FINANZAS"},
-  {to:"/audit",label:"Audit global",capability:"admin.audit.read",group:"SISTEMA"},
-  {to:"/system",label:"Salud global",capability:"system.health.read",group:"SISTEMA",end:true},
-  {to:"/system/jobs",label:"Jobs",capability:"system.jobs.read",group:"SISTEMA"},
-  {to:"/system/audit",label:"Audit de sistema",capability:"system.audit.read",group:"SISTEMA"},
-  {to:"/access",label:"Acceso",capability:"admin.roles.read",group:"PLATAFORMA"},
-  {to:"/marketplace",label:"Resumen",capability:"marketplace.overview.read",group:"MARKETPLACE",end:true},
-  {to:"/marketplace/orders",label:"Pedidos",capability:"marketplace.orders.read",group:"MARKETPLACE"},
-  {to:"/marketplace/disputes",label:"Disputas",capability:"marketplace.disputes.read",group:"MARKETPLACE"},
-  {to:"/marketplace/sellers",label:"Vendedores",capability:"marketplace.sellers.read",group:"MARKETPLACE"},
-  {to:"/marketplace/products",label:"Productos",capability:"marketplace.products.read",group:"MARKETPLACE"},
-  {to:"/marketplace/creator-commerce",label:"Creator Commerce",capability:"marketplace.creators.read",group:"MARKETPLACE"},
-  {to:"/marketplace/promotions",label:"Promociones",capability:"marketplace.promotions.read",group:"MARKETPLACE"},
-  {to:"/marketplace/ads",label:"Ads",capability:"marketplace.ads.read",group:"MARKETPLACE"},
-  {to:"/marketplace/health",label:"Salud",capability:"marketplace.health.read",group:"MARKETPLACE"},
-  {to:"/marketplace/activity",label:"Actividad",capability:"marketplace.audit.read",group:"MARKETPLACE"},
-] as const;
+const initials=(name:string)=>name.split(/\s+/).filter(Boolean).slice(0,2).map((part)=>part[0]?.toUpperCase()).join("")||"AD";
 
-export function AdminShell(){const {admin,hasCapability,logout}=useAdminAuth(),location=useLocation();const [navigationOpen,setNavigationOpen]=useState(false);useEffect(()=>setNavigationOpen(false),[location.pathname]);const match=[...links].sort((a,b)=>b.to.length-a.to.length).find((link)=>location.pathname===link.to||location.pathname.startsWith(`${link.to}/`));const title=match?.label??"Administración";return <div className="admin-layout"><aside className="sidebar"><div className="brand"><span className="brand-mark">OS</span><div><strong>OnSpace</strong><small>Admin</small></div></div><button aria-controls="admin-navigation" aria-expanded={navigationOpen} aria-label={navigationOpen?"Cerrar navegación":"Abrir navegación"} className="nav-toggle" onClick={()=>setNavigationOpen((value)=>!value)} type="button"><span aria-hidden="true">{navigationOpen?"×":"☰"}</span>Menú</button><div id="admin-navigation" className="nav-groups">{["PLATAFORMA","OPERACIONES","FINANZAS","SISTEMA","MARKETPLACE"].map((group)=>{const visible=links.filter((link)=>link.group===group&&hasCapability(link.capability));if(!visible.length)return null;return <div key={group}><p className="nav-section">{group}</p><nav className={navigationOpen?"is-open":""} aria-label={group==="MARKETPLACE"?"Marketplace":"Administración global"}>{visible.map((link)=><NavLink end={"end" in link&&link.end} to={link.to} key={link.to}>{link.label}</NavLink>)}</nav></div>})}</div><div className="sidebar-foot"><span className="status-dot"/>Operaciones internas · Autoridad v{admin?.authority_version.slice(0,8)??"—"}</div></aside><div className="workspace"><header className="topbar"><div><p className="eyebrow">ONSPACE ADMIN</p><h1>{title}</h1></div><div className="admin-identity"><div><strong>{admin?.display_name??admin?.username??"Admin"}</strong><small>{admin?.roles.join(" · ")}</small></div><button className="secondary" onClick={()=>void logout()}>Cerrar sesión</button></div></header><main className="content"><Outlet/></main></div></div>}
+export function AdminShell(){
+  const {admin,hasCapability,logout}=useAdminAuth(),location=useLocation(),navigate=useNavigate();
+  const [navigationOpen,setNavigationOpen]=useState(false),[query,setQuery]=useState(""),searchRef=useRef<HTMLInputElement>(null);
+  const authorized=useMemo(()=>adminLinks.filter((link)=>hasCapability(link.capability)),[hasCapability]);
+  const primary=authorized.filter((link)=>link.primary);
+  const results=query.trim()?authorized.filter((link)=>link.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).slice(0,8):[];
+  const match=[...authorized].sort((a,b)=>b.to.length-a.to.length).find((link)=>location.pathname===link.to||location.pathname.startsWith(`${link.to}/`));
+  useEffect(()=>{setNavigationOpen(false);setQuery("")},[location.pathname]);
+  useEffect(()=>{const key=(event:KeyboardEvent)=>{if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==="k"){event.preventDefault();searchRef.current?.focus()}if(event.key==="Escape"){setNavigationOpen(false);setQuery("");searchRef.current?.blur()}};window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key)},[]);
+  const identity=admin?.display_name??admin?.username??"Admin",role=admin?.roles.join(" · ")??"";
+  return <div className="admin-layout">
+    <aside className={`sidebar ${navigationOpen?"is-open":""}`} aria-label="Admin sidebar">
+      <div className="brand"><span className="brand-mark"><i/></span><div><strong>ONSPACE</strong><small>Admin Console <em>{role}</em></small></div></div>
+      <nav id="admin-navigation" aria-label="Administración global">{primary.map((link)=><NavLink end={link.end} to={link.to} key={link.to}><AdminIcon name={link.icon}/><span>{link.label}</span></NavLink>)}</nav>
+      <div className="brand-card"><strong>Secure<br/>Scalable<br/>Creator Economy</strong><small>PEOPLE · CREATORS · OPPORTUNITIES</small></div>
+    </aside>
+    {navigationOpen&&<button aria-label="Cerrar navegación" className="nav-scrim" onClick={()=>setNavigationOpen(false)} type="button"/>}
+    <div className="workspace">
+      <header className="topbar">
+        <button aria-controls="admin-navigation" aria-expanded={navigationOpen} aria-label={navigationOpen?"Cerrar navegación":"Abrir navegación"} className="nav-toggle" onClick={()=>setNavigationOpen((open)=>!open)} type="button"><AdminIcon name={navigationOpen?"close":"menu"}/></button>
+        <div className="command-search"><AdminIcon name="search"/><input aria-label="Buscar módulos y secciones" autoComplete="off" onChange={(event)=>setQuery(event.target.value)} placeholder="Buscar módulos y secciones…" ref={searchRef} value={query}/><kbd>⌘ K</kbd>{results.length>0&&<div className="command-results" role="listbox" aria-label="Rutas autorizadas">{results.map((link)=><button key={link.to} onClick={()=>navigate(link.to)} role="option" type="button"><AdminIcon name={link.icon}/><span>{link.label}</span><small>{link.to}</small></button>)}</div>}</div>
+        <div className="current-module"><span>{match?.label??"Admin Console"}</span></div>
+        <div className="admin-identity"><span className="avatar">{initials(identity)}</span><div><strong>{identity}</strong><small>{role}</small></div><button aria-label="Cerrar sesión" className="icon-button" onClick={()=>void logout()} title="Cerrar sesión" type="button"><AdminIcon name="logout"/></button></div>
+      </header>
+      <main className="content"><Outlet/></main>
+    </div>
+  </div>
+}

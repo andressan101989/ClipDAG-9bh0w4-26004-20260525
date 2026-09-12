@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useAdminAuth } from "../auth/AdminAuthProvider";
 import { AdminShell } from "../layout/AdminShell";
+import { adminLinks } from "../layout/adminNavigation";
 
 vi.mock("../auth/AdminAuthProvider", () => ({ useAdminAuth: vi.fn() }));
 
@@ -30,8 +31,8 @@ beforeEach(() => {
   });
 });
 
-describe("B8D-006 responsive Admin navigation", () => {
-  it("keeps every Marketplace route reachable through the compact menu", async () => {
+describe("UI-FINAL responsive Admin navigation", () => {
+  it("keeps every Marketplace route reachable through capability-aware search", async () => {
     render(
       <MemoryRouter initialEntries={["/marketplace"]}>
         <Routes>
@@ -45,21 +46,25 @@ describe("B8D-006 responsive Admin navigation", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    const navigation = screen.getByRole("navigation", { name: "Marketplace" });
+    const navigation = screen.getByRole("navigation", { name: "Administración global" });
+    expect(within(navigation).getByRole("link", { name: "Marketplace" })).toHaveAttribute("href", "/marketplace");
+    const search = screen.getByRole("textbox", { name: "Buscar módulos y secciones" });
+    await userEvent.type(search, "Orders");
+    const results = screen.getByRole("listbox", { name: "Rutas autorizadas" });
     const routes = [
-      ["Resumen", "/marketplace"],
-      ["Pedidos", "/marketplace/orders"],
-      ["Disputas", "/marketplace/disputes"],
-      ["Vendedores", "/marketplace/sellers"],
-      ["Productos", "/marketplace/products"],
-      ["Creator Commerce", "/marketplace/creator-commerce"],
-      ["Promociones", "/marketplace/promotions"],
-      ["Ads", "/marketplace/ads"],
-      ["Salud", "/marketplace/health"],
-      ["Actividad", "/marketplace/activity"],
+      ["Marketplace", "/marketplace"],
+      ["Marketplace · Orders", "/marketplace/orders"],
+      ["Marketplace · Disputes", "/marketplace/disputes"],
+      ["Marketplace · Sellers", "/marketplace/sellers"],
+      ["Marketplace · Products", "/marketplace/products"],
+      ["Marketplace · Creator Commerce", "/marketplace/creator-commerce"],
+      ["Marketplace · Promotions", "/marketplace/promotions"],
+      ["Marketplace · Ads", "/marketplace/ads"],
+      ["Marketplace · Health", "/marketplace/health"],
+      ["Marketplace · Activity", "/marketplace/activity"],
     ];
-    routes.forEach(([name, href]) =>
-      expect(within(navigation).getByRole("link", { name })).toHaveAttribute("href", href),
-    );
+    expect(within(results).getByText("Marketplace · Orders")).toBeInTheDocument();
+    expect(within(results).getByText("/marketplace/orders")).toBeInTheDocument();
+    routes.forEach(([name, href]) => expect(adminLinks).toEqual(expect.arrayContaining([expect.objectContaining({label:name,to:href})])));
   });
 });

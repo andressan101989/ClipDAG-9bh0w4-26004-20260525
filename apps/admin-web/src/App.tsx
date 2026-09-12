@@ -3,6 +3,7 @@ import {AdminRoute} from "./auth/AdminRoute";
 import {CapabilityRoute} from "./auth/CapabilityRoute";
 import {useAdminAuth} from "./auth/AdminAuthProvider";
 import {AdminShell} from "./layout/AdminShell";
+import {AdminOverviewPage} from "./pages/AdminOverviewPage";
 import {LoginPage} from "./pages/LoginPage";
 import {AdminUsersPage,AdminUserDetailPage} from "./pages/AdminUsersPages";
 import {AdminReportsPage,AdminReportDetailPage} from "./pages/AdminReportsPages";
@@ -25,12 +26,13 @@ import {MarketplaceSellerDetailPage} from "./pages/MarketplaceSellerDetailPage";
 import {MarketplaceSellersPage} from "./pages/MarketplaceSellersPage";
 import {MarketplaceActivityPage,MarketplaceAdDetailPage,MarketplaceAdsPage,MarketplaceCreatorCommercePage,MarketplaceCreatorDetailPage,MarketplaceHealthPage,MarketplacePromotionDetailPage,MarketplacePromotionsPage} from "./pages/MarketplaceIntelligencePages";
 
-function DefaultAdminRoute(){const {hasCapability}=useAdminAuth();const target=hasCapability("marketplace.overview.read")?"/marketplace":hasCapability("finance.ledger.read")?"/finance":hasCapability("finance.reconciliation.read")?"/finance/reconciliation":hasCapability("finance.anomalies.read")?"/finance/anomalies":hasCapability("admin.audit.read")?"/audit":hasCapability("system.health.read")?"/system":hasCapability("system.jobs.read")?"/system/jobs":hasCapability("system.audit.read")?"/system/audit":hasCapability("reports.cases.read")?"/reports":hasCapability("content.items.read")?"/content":hasCapability("stories.items.read")?"/stories":hasCapability("chat.abuse_reports.read")?"/chat/reports":hasCapability("live.sessions.read")?"/live":hasCapability("battles.sessions.read")?"/battles":hasCapability("media.assets.read")?"/media":hasCapability("users.accounts.read")?"/users":hasCapability("admin.roles.read")?"/access":null;return target?<Navigate to={target} replace/>:<main className="center-state"><div className="state-card"><h1>Sin módulos disponibles</h1><p>Tu acceso al shell no incluye todavía un módulo administrativo.</p></div></main>}
+function DefaultAdminRoute(){const {hasCapability}=useAdminAuth();return hasCapability("admin.shell.access")?<Navigate to="/overview" replace/>:<main className="center-state"><div className="state-card"><h1>Sin módulos disponibles</h1><p>Tu acceso al shell no incluye todavía un módulo administrativo.</p></div></main>}
 
 export function App(){return <Routes>
   <Route path="/login" element={<LoginPage/>}/>
   <Route element={<AdminRoute/>}><Route element={<AdminShell/>}>
     <Route index element={<DefaultAdminRoute/>}/>
+    <Route element={<CapabilityRoute capability="admin.shell.access"/>}><Route path="/overview" element={<AdminOverviewPage/>}/></Route>
     <Route element={<CapabilityRoute capability="users.accounts.read"/>}><Route path="/users" element={<AdminUsersPage/>}/><Route path="/users/:id" element={<AdminUserDetailPage/>}/></Route>
     <Route element={<CapabilityRoute capability="reports.cases.read"/>}><Route path="/reports" element={<AdminReportsPage/>}/><Route path="/reports/:id" element={<AdminReportDetailPage/>}/></Route>
     <Route element={<CapabilityRoute capability="content.items.read"/>}><Route path="/content" element={<AdminContentPage/>}/><Route path="/content/:type/:id" element={<AdminContentDetailPage/>}/></Route>
