@@ -11,7 +11,7 @@ const foreignProfile = read('app/creator/[id].tsx');
 const feed = read('app/(tabs)/index.tsx');
 const nativeViewer = read('components/feature/StoryViewer.native.tsx');
 const webViewer = read('components/feature/StoryViewer.tsx');
-const migration = read('supabase/migrations/20260909225612_stories_v2_g_enable_stories_realtime.sql');
+const migration = read('supabase/migrations/20260910002320_stories_v2_g_enable_stories_realtime.sql');
 
 function profileState(group) {
   if (!group?.stories?.length) return 'none';
