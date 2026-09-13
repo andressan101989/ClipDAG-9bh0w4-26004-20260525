@@ -155,7 +155,7 @@ export function AvatarsTab() {
     try {
       await addVideo({
         videoUrl: avatarUrl, thumbnailUrl: avatarUrl,
-        caption: `Mi nuevo avatar IA ${AVATAR_STYLES.find(s => s.id === selectedStyle)?.emoji ?? '✨'} #AIAvatar #ClipDAG`,
+        caption: `Mi nuevo avatar IA ${AVATAR_STYLES.find(s => s.id === selectedStyle)?.emoji ?? '✨'} #AIAvatar #Nelyon`,
         music: 'Sin música', username: '', userAvatar: '',
       });
       showAlert('Publicado 🎉', 'Tu avatar fue publicado al feed', [
@@ -175,7 +175,7 @@ export function AvatarsTab() {
             <View style={{ flex: 1 }}>
               <Text style={a.heroTitle}>Avatar IA Generativo</Text>
               <Text style={a.heroSub}>Tu foto → avatar estilizado con Gemini 2.5</Text>
-              <Text style={a.heroPowered}>Powered by OnSpace AI</Text>
+              <Text style={a.heroPowered}>Powered by Nelyon AI</Text>
             </View>
           </LinearGradient>
         </View>

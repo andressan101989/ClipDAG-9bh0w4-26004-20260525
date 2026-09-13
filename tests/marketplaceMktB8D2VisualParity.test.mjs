@@ -23,7 +23,7 @@ const store = read("app/seller/store.tsx");
 
 test("approved product mockup hierarchy is composed as one premium commerce surface", () => {
   for (const token of [
-    'accessibilityLabel="OnSpace Marketplace"',
+    'accessibilityLabel="Nelyon Marketplace"',
     "headerBrandName",
     "ProductMediaGallery",
     "categoryPill",
@@ -130,7 +130,7 @@ test("sticky purchase bar matches quantity, primary cart, secondary buy, and sec
     "Agregar al carrito",
     "Comprar ahora",
     "Compra segura en",
-    "OnSpace Marketplace",
+    "Nelyon Marketplace",
   ])
     assert(purchase.includes(token), token);
   assert.match(product, /onAdd=\{\(\) => void handleAddToCart\(\)\}/);
@@ -142,7 +142,7 @@ test("sticky purchase bar matches quantity, primary cart, secondary buy, and sec
 test("approved store configuration structure uses only canonical branding and reputation", () => {
   for (const token of [
     "Configuración de tienda",
-    "OnSpace Marketplace",
+    "Nelyon Marketplace",
     "IDENTIDAD DE MARCA",
     "JPG · PNG · WebP",
     "Máx. 10 MB",
@@ -279,7 +279,7 @@ test("C4-C1 confirms a changed public URL and keeps cancel and ordinary saves no
   assert.match(saveBody, /if \(store && slug !== store\.slug\)/);
   assert.match(saveBody, /showAlert\(/);
   assert.match(saveBody, /"Cambiar dirección pública"/);
-  assert.match(saveBody, /onspace\.app\/store\/\$\{slug\}/);
+  assert.match(saveBody, /identificador público:\\n\/store\/\$\{slug\}/);
   assert.match(saveBody, /El identificador anterior dejará de ser la dirección pública/);
   assert.match(saveBody, /\{ text: "Cancelar", style: "cancel" \}/);
   assert.match(saveBody, /text: "Cambiar y guardar"/);

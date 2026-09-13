@@ -492,7 +492,7 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
   // ── Share ─────────────────────────────────────────────────────────────────
   const handleShare = useCallback(() => {
     const deepLink = `onspaceapp://video/${video.id}`;
-    const message = `Mira este video en OnSpace: ${deepLink}`;
+    const message = `Mira este video en Nelyon: ${deepLink}`;
 
     showAlert('Compartir video', '', [
       ...(onAddToStory ? [{ text: 'Añadir a historia', onPress: onAddToStory }] : []),

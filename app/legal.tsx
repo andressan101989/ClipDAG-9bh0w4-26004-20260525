@@ -32,11 +32,11 @@ const DOCS: DocConfig[] = [
     sections: [
       {
         heading: '1. Aceptacion de los Terminos',
-        content: 'Al acceder y usar ClipDAG, aceptas quedar vinculado por estos Terminos de Servicio. Si no estas de acuerdo con alguno de estos terminos, no podras usar la plataforma. Nos reservamos el derecho de actualizar estos terminos en cualquier momento con notificacion previa de 30 dias.',
+        content: 'Al acceder y usar Nelyon, aceptas quedar vinculado por estos Terminos de Servicio. Si no estas de acuerdo con alguno de estos terminos, no podras usar la plataforma. Nos reservamos el derecho de actualizar estos terminos en cualquier momento con notificacion previa de 30 dias.',
       },
       {
         heading: '2. Uso de la Plataforma',
-        content: 'ClipDAG es una plataforma de contenido creativo basada en blockchain. Puedes crear, compartir y monetizar contenido a traves de tokens $DAG. El uso de la plataforma esta sujeto a que tengas al menos 13 anos de edad y permiso de un padre o tutor si eres menor de 18 anos.',
+        content: 'Nelyon es una plataforma de contenido creativo. Puedes crear, compartir y monetizar contenido mediante las funciones disponibles en la plataforma. El uso de la plataforma esta sujeto a que tengas al menos 13 anos de edad y permiso de un padre o tutor si eres menor de 18 anos.',
       },
       {
         heading: '3. Cuentas de Usuario',
@@ -44,7 +44,7 @@ const DOCS: DocConfig[] = [
       },
       {
         heading: '4. Propiedad Intelectual',
-        content: 'Retienes la propiedad de todo el contenido que subes a ClipDAG. Sin embargo, al subir contenido, nos otorgas una licencia mundial, no exclusiva, libre de regalias para usar, reproducir y distribuir tu contenido en conexion con la plataforma.',
+        content: 'Retienes la propiedad de todo el contenido que subes a Nelyon. Sin embargo, al subir contenido, nos otorgas una licencia mundial, no exclusiva, libre de regalias para usar, reproducir y distribuir tu contenido en conexion con la plataforma.',
       },
       {
         heading: '5. Terminacion del Servicio',
@@ -92,7 +92,7 @@ const DOCS: DocConfig[] = [
     sections: [
       {
         heading: 'Contenido Permitido',
-        content: 'ClipDAG es una plataforma para contenido creativo, educativo y de entretenimiento. Apoyamos a creadores que comparten contenido original, autentico y positivo. El contenido relacionado con blockchain, crypto, arte digital y creatividad es especialmente bienvenido.',
+        content: 'Nelyon es una plataforma para contenido creativo, educativo y de entretenimiento. Apoyamos a creadores que comparten contenido original, autentico y positivo. El contenido relacionado con tecnología, arte digital y creatividad es especialmente bienvenido.',
       },
       {
         heading: 'Contenido Prohibido',
@@ -118,15 +118,15 @@ const DOCS: DocConfig[] = [
     sections: [
       {
         heading: 'Respeto a la Propiedad Intelectual',
-        content: 'ClipDAG respeta los derechos de propiedad intelectual y espera que sus usuarios hagan lo mismo. Solo debes subir contenido del cual poseas los derechos o tengas permission expresa del titular de los derechos.',
+        content: 'Nelyon respeta los derechos de propiedad intelectual y espera que sus usuarios hagan lo mismo. Solo debes subir contenido del cual poseas los derechos o tengas permission expresa del titular de los derechos.',
       },
       {
         heading: 'Procedimiento de Reclamo DMCA',
-        content: 'Si crees que tu trabajo protegido por derechos de autor ha sido utilizado sin autorizacion, puedes enviar una notificacion DMCA a copyright@clipdag.io incluyendo: identificacion del trabajo, ubicacion en nuestra plataforma, tu informacion de contacto y declaracion de buena fe.',
+        content: 'Si crees que tu trabajo protegido por derechos de autor ha sido utilizado sin autorizacion, puedes enviar una notificacion desde el Centro de ayuda de Nelyon incluyendo: identificacion del trabajo, ubicacion en nuestra plataforma, tu informacion de contacto y declaracion de buena fe.',
       },
       {
         heading: 'Musica y Audio',
-        content: 'Para usar musica protegida por derechos de autor, debes obtener una licencia apropiada. ClipDAG ofrece una biblioteca de musica con licencia que puedes usar libremente. El uso no autorizado de musica puede resultar en la eliminacion del contenido.',
+        content: 'Para usar musica protegida por derechos de autor, debes obtener una licencia apropiada. Nelyon ofrece una biblioteca de musica con licencia que puedes usar libremente. El uso no autorizado de musica puede resultar en la eliminacion del contenido.',
       },
     ],
   },
@@ -148,7 +148,7 @@ const DOCS: DocConfig[] = [
       },
       {
         heading: 'Tienda de Creadores',
-        content: 'Los creadores pueden vender productos digitales y fisicos a traves de la Tienda integrada. ClipDAG cobra una comision del 10% en cada venta. Los pagos se procesan dentro de los 7 dias habiles siguientes a la venta.',
+        content: 'Los creadores pueden vender productos digitales y fisicos a traves de la Tienda integrada. Nelyon cobra una comision del 10% en cada venta. Los pagos se procesan dentro de los 7 dias habiles siguientes a la venta.',
       },
       {
         heading: 'Requisitos para Monetizar',
@@ -156,7 +156,7 @@ const DOCS: DocConfig[] = [
       },
       {
         heading: 'Impuestos y Regulaciones',
-        content: 'Eres responsable de reportar y pagar los impuestos aplicables en tu jurisdiccion sobre los ingresos obtenidos en ClipDAG. ClipDAG puede estar obligado a reportar ingresos a las autoridades fiscales en algunos paises.',
+        content: 'Eres responsable de reportar y pagar los impuestos aplicables en tu jurisdiccion sobre los ingresos obtenidos en Nelyon. Nelyon puede estar obligado a reportar ingresos a las autoridades fiscales en algunos paises.',
       },
     ],
   },
@@ -243,7 +243,7 @@ export default function LegalScreen() {
 
           <View style={styles.docFooter}>
             <Text style={styles.docFooterText}>
-              Si tienes preguntas sobre este documento, contactanos en legal@clipdag.io
+              Si tienes preguntas sobre este documento, utiliza el Centro de ayuda de Nelyon.
             </Text>
           </View>
         </ScrollView>
@@ -274,7 +274,7 @@ export default function LegalScreen() {
           <MaterialCommunityIcons name="shield-check-outline" size={32} color={Colors.primary} />
           <View style={{ flex: 1 }}>
             <Text style={styles.bannerTitle}>Tus derechos y nuestra responsabilidad</Text>
-            <Text style={styles.bannerSub}>Documentos legales y politicas de ClipDAG v1.0</Text>
+            <Text style={styles.bannerSub}>Documentos legales y politicas de Nelyon v1.0</Text>
           </View>
         </LinearGradient>
 
@@ -294,15 +294,15 @@ export default function LegalScreen() {
           </Text>
           <View style={styles.contactRow}>
             <MaterialCommunityIcons name="email-outline" size={15} color={Colors.primary} />
-            <Text style={styles.contactEmail}>legal@clipdag.io</Text>
+            <Text style={styles.contactEmail}>Centro de ayuda de Nelyon</Text>
           </View>
           <View style={styles.contactRow}>
             <MaterialCommunityIcons name="copyright" size={15} color={Colors.primary} />
-            <Text style={styles.contactEmail}>copyright@clipdag.io</Text>
+            <Text style={styles.contactEmail}>Reclamos de propiedad intelectual</Text>
           </View>
           <View style={styles.contactRow}>
             <MaterialCommunityIcons name="shield-lock-outline" size={15} color={Colors.primary} />
-            <Text style={styles.contactEmail}>privacy@clipdag.io</Text>
+            <Text style={styles.contactEmail}>Solicitudes de privacidad</Text>
           </View>
         </View>
       </ScrollView>

@@ -22,9 +22,9 @@ export const SESSION_PARAMS = {
 };
 
 export const PROVIDER_METADATA = {
-  name: 'ClipDAG',
-  description: 'TikTok meets BlockDAG — earn BDAG for your content',
-  url: 'https://clipdag.app',
-  icons: ['https://clipdag.app/icon.png'],
+  name: 'Nelyon',
+  description: 'Create, connect, and discover on Nelyon',
+  url: 'https://pub-d146e3d06d274db4871f5b6020fd850f.r2.dev/production/branding/nelyon/v1/',
+  icons: ['https://pub-d146e3d06d274db4871f5b6020fd850f.r2.dev/production/branding/nelyon/v1/nelyon-app-icon.png'],
   redirect: { native: 'clipdag://', universal: 'https://clipdag.app' },
 };

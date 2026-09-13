@@ -282,7 +282,7 @@ export function EffectsTab() {
     try {
       await addVideo({
         videoUrl: capturedUri, thumbnailUrl: capturedUri,
-        caption: `${activeFilter ? `${(activeFilter as any).emoji} ${activeFilter.name} ` : ''}#ClipDAG #CreatorStudio`,
+        caption: `${activeFilter ? `${(activeFilter as any).emoji} ${activeFilter.name} ` : ''}#Nelyon #CreatorStudio`,
         music: 'Sin música', username: '', userAvatar: '',
       });
       showAlert('Publicado 🎉', 'Publicado al feed', [

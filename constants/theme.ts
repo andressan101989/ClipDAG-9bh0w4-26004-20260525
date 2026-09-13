@@ -1,4 +1,4 @@
-// ClipDAG Design System — Instagram/TikTok Modern Dark Theme
+// Nelyon Design System — modern dark creator experience
 export const Colors = {
   // ── Base surfaces ──────────────────────────────────────────────────────────
   bg: '#0A0A0F',
@@ -19,22 +19,22 @@ export const Colors = {
   textInverse: '#0A0A0F',
   textOnBrand: '#FFFFFF',
 
-  // ── Brand / Accent — Purple-Blue-Pink gradient palette ────────────────────
-  primary: '#7C5CFF',       // Violet — primary actions
-  primaryDim: '#7C5CFF18',
-  primaryGlow: '#7C5CFF44',
-  primaryLight: '#A385FF',
+  // ── Nelyon brand palette ──────────────────────────────────────────────────
+  primary: '#123B9E',
+  primaryDim: '#123B9E18',
+  primaryGlow: '#1F79FF44',
+  primaryLight: '#1F79FF',
 
-  secondary: '#FF2D78',     // Hot pink — likes / social
-  secondaryDim: '#FF2D7818',
-  secondaryLight: '#FF6FA8',
+  secondary: '#1F79FF',
+  secondaryDim: '#1F79FF18',
+  secondaryLight: '#66A5FF',
 
   accent: '#00E5A0',        // Mint green — success / earnings
   accentDim: '#00E5A018',
   accentLight: '#4FFFC0',
 
-  blue: '#2D9EFF',          // Sky blue — info / links
-  blueDim: '#2D9EFF18',
+  blue: '#1F79FF',
+  blueDim: '#1F79FF18',
 
   warning: '#FFB800',       // Amber — premium / gold
   warningDim: '#FFB80018',
@@ -48,9 +48,9 @@ export const Colors = {
   info: '#2D9EFF',
 
   // ── Gradient arrays (use with LinearGradient) ─────────────────────────────
-  gradientBrand:    ['#7C5CFF', '#FF2D78'] as string[],
-  gradientBrandSoft:['#7C5CFF44', '#FF2D7844'] as string[],
-  gradientCool:     ['#2D9EFF', '#7C5CFF'] as string[],
+  gradientBrand:    ['#123B9E', '#1F79FF'] as string[],
+  gradientBrandSoft:['#123B9E44', '#1F79FF44'] as string[],
+  gradientCool:     ['#0C1F4F', '#1F79FF'] as string[],
   gradientEarn:     ['#00E5A0', '#2D9EFF'] as string[],
   gradientDark:     ['#18181F', '#0A0A0F'] as string[],
   gradientOverlay:  ['transparent', 'rgba(10,10,15,0.96)'] as string[],
@@ -58,7 +58,7 @@ export const Colors = {
   gradientCardBottom: ['transparent', 'rgba(10,10,15,0.92)'] as string[],
 
   // Legacy aliases (keep existing code from breaking)
-  primaryDim2: '#7C5CFF22',
+  primaryDim2: '#123B9E22',
 };
 
 export const Spacing = {
@@ -102,7 +102,7 @@ export const FontWeight = {
 
 export const Shadow = {
   brand: {
-    shadowColor: '#7C5CFF',
+    shadowColor: '#1F79FF',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.35,
     shadowRadius: 16,
@@ -131,7 +131,7 @@ export const Shadow = {
   },
   // Legacy alias
   glow: {
-    shadowColor: '#7C5CFF',
+    shadowColor: '#1F79FF',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.4,
     shadowRadius: 12,

@@ -1,4 +1,4 @@
-# ClipDAG — Architecture Reference v6
+# Nelyon — Architecture Reference v6
 
 ## Quick Navigation
 

@@ -172,7 +172,7 @@ public final class OnSpaceCallCoordinator: NSObject {
     // failure ("cannot assign to property: 'localizedName' is a get-only
     // property") after an earlier attempt to set it post-init. It can only
     // be set through this initializer, deprecation warning notwithstanding.
-    let configuration = CXProviderConfiguration(localizedName: "OnSpace")
+    let configuration = CXProviderConfiguration(localizedName: "Nelyon")
     configuration.supportsVideo = true
     configuration.maximumCallGroups = 1
     configuration.maximumCallsPerCallGroup = 1
@@ -1221,7 +1221,7 @@ extension OnSpaceCallCoordinator: PKPushRegistryDelegate {
     }
 
     let callIdRaw = dict["call_id"] as? String
-    let callerName = (dict["caller_name"] as? String) ?? "OnSpace"
+    let callerName = (dict["caller_name"] as? String) ?? "Nelyon"
     let callType = (dict["call_type"] as? String) ?? "audio"
     let hasVideo = (dict["has_video"] as? Bool) ?? (callType == "video")
     let watchToken = (dict["watch_token"] as? String).flatMap { $0.isEmpty ? nil : $0 }

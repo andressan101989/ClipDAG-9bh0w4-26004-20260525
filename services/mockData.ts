@@ -1,4 +1,4 @@
-// Mock data service for ClipDAG
+// Mock data service for Nelyon
 
 export interface User {
   id: string;
@@ -97,7 +97,7 @@ export const SAMPLE_VIDEOS: Video[] = [
     userAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&h=200&fit=crop',
     videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
     thumbnailUrl: 'https://images.unsplash.com/photo-1620321023374-d1a68fbc720d?w=400&h=700&fit=crop',
-    caption: 'Como gane 500 DAG en una semana creando contenido! #ClipDAG #EarnCrypto',
+    caption: 'Como gane 500 DAG en una semana creando contenido! #Nelyon #EarnCrypto',
     likes: 38200,
     comments: 1240,
     shares: 2100,
@@ -112,7 +112,7 @@ export const SAMPLE_VIDEOS: Video[] = [
     userAvatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=200&h=200&fit=crop',
     videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
     thumbnailUrl: 'https://images.unsplash.com/photo-1518546305927-5a555bb7020d?w=400&h=700&fit=crop',
-    caption: 'Tutorial: Conecta tu wallet MetaMask a ClipDAG en 30 segundos! #Tutorial #BlockDAG',
+    caption: 'Tutorial: Conecta tu wallet MetaMask a Nelyon en 30 segundos! #Tutorial #BlockDAG',
     likes: 15900,
     comments: 567,
     shares: 890,
@@ -272,7 +272,7 @@ export const MOCK_CREATORS: Creator[] = [
 ];
 
 export const SEARCH_TAGS = [
-  '#BlockDAG', '#Web3', '#Crypto', '#NFT', '#DeFi', '#ClipDAG',
+  '#BlockDAG', '#Web3', '#Crypto', '#NFT', '#DeFi', '#Nelyon',
   '#EarnCrypto', '#BlockchainLife', '#CryptoCreator', '#DAG',
 ];
 

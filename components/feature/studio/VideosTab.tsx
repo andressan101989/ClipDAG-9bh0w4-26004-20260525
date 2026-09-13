@@ -323,7 +323,7 @@ export function VideosTab() {
     try {
       await addVideo({
         videoUrl: uri, thumbnailUrl: '',
-        caption: caption.trim() || `🎬 ${editor.colorFilter !== 'none' ? `#${editor.colorFilter} ` : ''}${editor.speed !== 1 ? `${editor.speed}× ` : ''}#ClipDAG`,
+        caption: caption.trim() || `🎬 ${editor.colorFilter !== 'none' ? `#${editor.colorFilter} ` : ''}${editor.speed !== 1 ? `${editor.speed}× ` : ''}#Nelyon`,
         music: editor.selectedTrack
           ? `${editor.selectedTrack.title} — ${editor.selectedTrack.artist.name}`
           : 'Sin música',

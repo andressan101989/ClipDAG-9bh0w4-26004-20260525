@@ -206,7 +206,7 @@ export default function MarketplaceCheckoutScreen() {
           <MaterialIcons name="arrow-back-ios" size={20} color={Colors.textPrimary} />
         </Pressable>
         <View style={styles.headerCopy}>
-          <Text style={styles.headerTitle}>Checkout · OnSpace SHOP</Text>
+          <Text style={styles.headerTitle}>Checkout · Nelyon Shop</Text>
           <Text style={styles.headerSubtitle}>Compra segura</Text>
         </View>
         <MaterialIcons name="verified-user" size={22} color={Colors.accent} />
@@ -227,7 +227,7 @@ export default function MarketplaceCheckoutScreen() {
                   <ProductThumbnail uri={item.imageUrl} size="medium" label={item.title} />
                   <View style={styles.productCopy}>
                     <Text style={styles.itemTitle} numberOfLines={2}>{item.title}</Text>
-                    <Text style={styles.storeLabel} numberOfLines={1}>{item.sellerUsername ? `@${item.sellerUsername}` : "OnSpace Shop"}</Text>
+                    <Text style={styles.storeLabel} numberOfLines={1}>{item.sellerUsername ? `@${item.sellerUsername}` : "Nelyon Shop"}</Text>
                     <Text style={styles.options} numberOfLines={1}>{item.options.map((option) => option.value).join(" · ")}</Text>
                     <Text style={styles.itemMeta}>Cantidad {item.quantity}</Text>
                   </View>

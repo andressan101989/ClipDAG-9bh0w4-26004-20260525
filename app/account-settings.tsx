@@ -167,7 +167,7 @@ export default function AccountSettingsScreen() {
   const handleDownloadData = useCallback(() => {
     showAlert(
       'Descargar mis datos',
-      'Recibirás un email con todos tus datos en un plazo de 48 horas. Envíanos la solicitud a: data@clipdag.io',
+      'Recibirás un email con todos tus datos en un plazo de 48 horas. Solicítalo desde el Centro de ayuda de Nelyon.',
       [{ text: 'Entendido' }]
     );
   }, [showAlert]);
@@ -182,7 +182,7 @@ export default function AccountSettingsScreen() {
           text: 'Continuar',
           style: 'destructive',
           onPress: () => {
-            showAlert('Confirmar eliminacion', 'Por seguridad, contacta soporte para eliminar tu cuenta: support@clipdag.io');
+            showAlert('Confirmar eliminacion', 'Por seguridad, solicita la eliminación desde el Centro de ayuda de Nelyon.');
           },
         },
       ]

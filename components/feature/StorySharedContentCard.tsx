@@ -7,7 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import type { StorySharedContent } from '@/contexts/StoriesContext';
 
-// Figma visual authority: ClipDAG Stories V2 Final, node 2:82.
+// Historical Figma visual authority: Stories V2 Final, node 2:82.
 
 export function StorySharedContentCard({
   storyId, load, onReadyChange, onOpen,

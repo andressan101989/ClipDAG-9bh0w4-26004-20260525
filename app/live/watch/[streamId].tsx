@@ -933,8 +933,8 @@ export default function LiveWatchScreen() {
     try {
       await Share.share({
         message: session?.title
-          ? `Estoy viendo "${session.title}" en OnSpace. Únete al live.`
-          : 'Estoy viendo un live en OnSpace. Únete ahora.',
+          ? `Estoy viendo "${session.title}" en Nelyon. Únete al live.`
+          : 'Estoy viendo un live en Nelyon. Únete ahora.',
       });
     } catch (err: any) {
       console.warn('[LiveWatch] share failed', err?.message ?? err);

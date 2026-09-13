@@ -18,7 +18,7 @@ import { StoryEditorVideoPreview } from './StoryEditorVideoPreview';
 const STORY_MAX_ELEMENTS = 32;
 const STORY_MAX_TEXT_ELEMENTS = 10;
 const STORY_MAX_STICKER_ELEMENTS = 24;
-// Figma visual authority: ClipDAG Stories V2 Final, node 2:105.
+// Historical Figma visual authority: Stories V2 Final, node 2:105.
 
 export type StoryEditorSource =
   | { kind: 'media'; uri: string; mediaType: 'photo' | 'video'; asset: unknown }

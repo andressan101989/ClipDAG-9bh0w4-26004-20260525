@@ -661,7 +661,7 @@ export function IosCallKitActionHandler() {
   if (!launchGate) return null;
   return (
     <View style={styles.launchGate} pointerEvents="auto">
-      <Text style={styles.brand}>OnSpace</Text>
+      <Text style={styles.brand}>NELYON</Text>
       <Text style={styles.message}>
         {launchGate.failed ? 'No se pudo abrir la llamada. Finalízala desde CallKit o inténtalo nuevamente.' : 'Conectando llamada…'}
       </Text>

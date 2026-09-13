@@ -856,7 +856,7 @@ export function LiveViewerCommerce({
                   shippingAmount={reservation.shippingAmount}
                   balance={balance}
                   productTitle={reservation.productTitle}
-                  storeName={pin?.storeName ?? "OnSpace LIVE"}
+                  storeName={pin?.storeName ?? "Nelyon LIVE"}
                   imageUrl={reservation.imageUrl}
                   quantity={reservation.quantity}
                   unitPrice={reservation.unitPrice}

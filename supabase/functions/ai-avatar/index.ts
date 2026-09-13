@@ -6,8 +6,8 @@
  * Actions:
  *   generate-image  → Google Gemini (gemini-2.0-flash-exp) image generation,
  *                     called directly — styled avatar from photo + prompt
- *   generate-video  → OnSpace AI video generation (Sora-2: talking avatar
- *                     animation) — kept on OnSpace; Gemini has no equivalent
+ *   generate-video  → Nelyon AI video generation (Sora-2: talking avatar
+ *                     animation) — kept on Nelyon; Gemini has no equivalent
  *                     video-generation endpoint
  *   check-video     → Poll video prediction status + download/store on completion
  */
@@ -18,7 +18,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') ?? '';
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent';
 
-// Video generation (generate-video / check-video) still goes through OnSpace —
+// Video generation (generate-video / check-video) still goes through Nelyon —
 // Gemini's generateContent endpoint doesn't do video/Sora-2-style predictions.
 const AI_BASE  = Deno.env.get('ONSPACE_AI_BASE_URL') ?? '';
 const AI_KEY   = Deno.env.get('ONSPACE_AI_API_KEY')  ?? '';
@@ -161,7 +161,7 @@ serve(async (req: Request) => {
 
       if (!predResp.ok) {
         const errText = await predResp.text();
-        throw new Error(`OnSpace AI video error: ${errText}`);
+        throw new Error(`Nelyon AI video error: ${errText}`);
       }
 
       const prediction = await predResp.json();

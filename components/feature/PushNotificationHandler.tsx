@@ -353,7 +353,7 @@ export function PushNotificationHandler() {
         'Activa las notificaciones',
         permission.isProvisional
           ? 'Las notificaciones provisionales pueden llegar silenciosamente. Activa Pantalla bloqueada, Banners y Sonidos en Configuración.'
-          : 'Para recibir mensajes cuando OnSpace esté cerrada o el iPhone esté bloqueado, activa Pantalla bloqueada, Banners y Sonidos en Configuración.',
+          : 'Para recibir mensajes cuando Nelyon esté cerrada o el iPhone esté bloqueado, activa Pantalla bloqueada, Banners y Sonidos en Configuración.',
         [
           { text: 'Ahora no', style: 'cancel' },
           {

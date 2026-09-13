@@ -35,7 +35,7 @@ import type {
 
 const PHOTO_DURATION_MS = 15000;
 const HOLD_DELAY_MS = 220;
-// Figma visual authority: ClipDAG Stories V2 Final, node 2:7.
+// Historical Figma visual authority: Stories V2 Final, node 2:7.
 
 interface StoryViewerProps {
   visible: boolean;

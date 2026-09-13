@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, Dimensions,
-  ActivityIndicator,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -11,6 +10,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useAuth } from '@/hooks/useAuth';
 import { useAlert } from '@/template';
 import { CyberButton } from '@/components/ui/CyberButton';
+import { NelyonLogo } from '@/components/ui/NelyonLogo';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -94,8 +94,7 @@ export default function LoginScreen() {
         >
           {/* Logo */}
           <View style={styles.logoArea}>
-            <Text style={styles.logoIcon}>◈</Text>
-            <Text style={styles.logoText}>ClipDAG</Text>
+            <NelyonLogo onDark style={styles.brandLogo} />
             <Text style={styles.tagline}>Crea. Comparte. Gana $DAG.</Text>
           </View>
 
@@ -182,7 +181,7 @@ export default function LoginScreen() {
               <Text style={styles.web3NoteText}>
                 {mode === 'register'
                   ? 'Al crear cuenta, se genera automáticamente tu billetera $DAG interna para acumular recompensas'
-                  : 'Gana $DAG por cada like que reciben tus videos en ClipDAG'}
+                  : 'Gana $DAG por cada like que reciben tus videos en Nelyon'}
               </Text>
             </View>
           </View>
@@ -213,13 +212,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xl,
     gap: Spacing.xs,
   },
-  logoIcon: { fontSize: 48, color: Colors.primary },
-  logoText: {
-    fontSize: 40,
-    fontWeight: FontWeight.extrabold,
-    color: Colors.textPrimary,
-    letterSpacing: -1,
-  },
+  brandLogo: { width: 286, height: 76 },
   tagline: {
     fontSize: FontSize.md,
     color: Colors.textSecondary,

@@ -8,7 +8,6 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
-import { Image } from 'expo-image';
 import { useAuth } from '@/hooks/useAuth';
 import { useAlert } from '@/template';
 import { getSupabaseClient } from '@/template';
@@ -232,7 +231,7 @@ export default function SettingsScreen() {
         { text: 'Cancelar', style: 'cancel' },
         {
           text: 'Eliminar', style: 'destructive',
-          onPress: () => showAlert('Contacta soporte', 'Para eliminar tu cuenta escribe a: support@clipdag.io'),
+          onPress: () => showAlert('Contacta soporte', 'Solicita la eliminación de tu cuenta desde el Centro de ayuda de Nelyon.'),
         },
       ]
     );
@@ -428,7 +427,7 @@ export default function SettingsScreen() {
 
         {/* About */}
         <SettingsSection title="Informacion">
-          <SettingsRow icon="information-outline" iconColor={Colors.blue} label="Acerca de ClipDAG" value="v1.0.0" />
+          <SettingsRow icon="information-outline" iconColor={Colors.blue} label="Acerca de Nelyon" value="v1.0.0" />
           <SettingsRow icon="file-document-outline" iconColor={Colors.textSubtle} label="Terminos de servicio" onPress={() => router.push('/terms-of-service')} />
           <SettingsRow icon="shield-check-outline" iconColor={Colors.textSubtle} label="Politica de privacidad" last onPress={() => router.push('/privacy-policy')} />
         </SettingsSection>

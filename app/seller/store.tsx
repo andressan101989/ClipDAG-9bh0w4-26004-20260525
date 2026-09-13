@@ -296,7 +296,7 @@ export default function SellerStore() {
     if (store && slug !== store.slug) {
       showAlert(
         "Cambiar dirección pública",
-        `Tu tienda usará:\nonspace.app/store/${slug}\n\nEl identificador anterior dejará de ser la dirección pública de esta tienda.`,
+        `Tu tienda usará el identificador público:\n/store/${slug}\n\nEl identificador anterior dejará de ser la dirección pública de esta tienda.`,
         [
           { text: "Cancelar", style: "cancel" },
           {
@@ -551,7 +551,7 @@ export default function SellerStore() {
           <StoreField
             label="Identificador público"
             helper={
-              slug ? `onspace.app/store/${slug}` : "URL pública de tu tienda"
+              slug ? `Nelyon Store · /store/${slug}` : "URL pública de tu tienda"
             }
             notice={
               focusedField === "slug"
@@ -822,7 +822,7 @@ export default function SellerStore() {
           />
           <Text style={styles.secureFooterText}>
             Tu información está segura en{" "}
-            <Text style={styles.headerAccent}>OnSpace Marketplace</Text>
+            <Text style={styles.headerAccent}>Nelyon Marketplace</Text>
           </Text>
         </View>
       </ScrollView>

@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "onspace-app",
+    "name": "Nelyon",
     "slug": "onspace-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/logo.png",
+    "icon": "./assets/branding/nelyon/v1/nelyon-app-icon.png",
     "scheme": "onspaceapp",
     "newArchEnabled": true,
     "userInterfaceStyle": "automatic",
@@ -22,8 +22,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/logo.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/branding/nelyon/v1/nelyon-adaptive-foreground.png",
+        "backgroundColor": "#0C1F4F"
       },
       "edgeToEdgeEnabled": true,
       "permissions": [
@@ -35,17 +35,17 @@
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/logo.png"
+      "favicon": "./assets/branding/nelyon/v1/nelyon-favicon.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/logo.png",
-          "imageWidth": 200,
+          "image": "./assets/branding/nelyon/v1/nelyon-wordmark.png",
+          "imageWidth": 260,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#F5F7FA"
         }
       ],
       "expo-web-browser",
@@ -54,8 +54,8 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "ClipDAG necesita la cámara para filtros AR en tiempo real",
-          "microphonePermission": "ClipDAG necesita el micrófono para grabar videos"
+          "cameraPermission": "Nelyon necesita la cámara para filtros AR en tiempo real",
+          "microphonePermission": "Nelyon necesita el micrófono para grabar videos"
         }
       ],
       [
@@ -84,41 +84,41 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/images/logo.png",
-          "color": "#ffffff",
+          "icon": "./assets/branding/nelyon/v1/nelyon-notification-icon.png",
+          "color": "#1F79FF",
           "mode": "production"
         }
       ],
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "ClipDAG necesita tu ubicación para mostrarte contenido cercano"
+          "locationWhenInUsePermission": "Nelyon necesita tu ubicación para mostrarte contenido cercano"
         }
       ],
       [
         "expo-media-library",
         {
-          "photosPermission": "ClipDAG necesita acceso a tu galería para subir videos y fotos",
-          "savePhotosPermission": "ClipDAG necesita acceso para guardar videos en tu galería",
+          "photosPermission": "Nelyon necesita acceso a tu galería para subir videos y fotos",
+          "savePhotosPermission": "Nelyon necesita acceso para guardar videos en tu galería",
           "isAccessMediaLocationEnabled": true
         }
       ],
       [
         "expo-local-authentication",
         {
-          "faceIDPermission": "ClipDAG usa Face ID para proteger tu cuenta"
+          "faceIDPermission": "Nelyon usa Face ID para proteger tu cuenta"
         }
       ],
       [
         "expo-contacts",
         {
-          "contactsPermission": "ClipDAG necesita acceso a tus contactos para que puedas conectar con amigos"
+          "contactsPermission": "Nelyon necesita acceso a tus contactos para que puedas conectar con amigos"
         }
       ],
       [
         "expo-calendar",
         {
-          "calendarPermission": "ClipDAG necesita acceso al calendario para programar tus publicaciones"
+          "calendarPermission": "Nelyon necesita acceso al calendario para programar tus publicaciones"
         }
       ]
     ],

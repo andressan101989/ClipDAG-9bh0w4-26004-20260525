@@ -76,11 +76,11 @@ export const walletConnectNetworkByKey: Record<string, AppKitNetwork> = {
 export const walletConnectAppKit = createAppKit({
   projectId: rawProjectId || 'walletconnect-project-id-not-configured',
   metadata: {
-    name: 'OnSpace',
-    description: 'OnSpace / ClipDAG',
-    url: 'https://clipdag.io',
+    name: 'Nelyon',
+    description: 'Create, connect, and discover on Nelyon',
+    url: 'https://pub-d146e3d06d274db4871f5b6020fd850f.r2.dev/production/branding/nelyon/v1/',
     icons: [
-      'https://raw.githubusercontent.com/andressan101989/ClipDAG-9bh0w4-26004-20260525/main/assets/images/logo.png',
+      'https://pub-d146e3d06d274db4871f5b6020fd850f.r2.dev/production/branding/nelyon/v1/nelyon-app-icon.png',
     ],
     redirect: {
       native: 'onspaceapp://wallet',

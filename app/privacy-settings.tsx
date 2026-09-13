@@ -341,7 +341,7 @@ export default function PrivacySettingsScreen() {
         {/* Data and ads */}
         <SectionHeader title="Datos y Publicidad" />
         <View style={styles.card}>
-          <Pressable style={[styles.row]} onPress={() => showAlert('Datos de anuncios', 'ClipDAG no vende tus datos personales a terceros. Usamos datos anonimizados para mejorar la plataforma.')}>
+          <Pressable style={[styles.row]} onPress={() => showAlert('Datos de anuncios', 'Nelyon no vende tus datos personales a terceros. Usamos datos anonimizados para mejorar la plataforma.')}>
             <LinearGradient colors={['#2D9EFF', '#7C5CFF']} style={styles.rowIcon}>
               <MaterialCommunityIcons name="chart-bar" size={17} color="#fff" />
             </LinearGradient>

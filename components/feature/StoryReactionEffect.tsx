@@ -14,7 +14,7 @@ import {
 
 export const STORY_REACTION_EFFECT_DURATION_MS = 980;
 export const STORY_REACTION_REDUCED_MOTION_DURATION_MS = 700;
-// Figma visual authority: ClipDAG Stories V2 Final, node 2:42.
+// Historical Figma visual authority: Stories V2 Final, node 2:42.
 
 const PARTICLE_OFFSETS = [-0.34, -0.21, -0.1, 0.04, 0.16, 0.29, -0.26, 0.24] as const;
 

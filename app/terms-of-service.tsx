@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
+import { Colors, FontSize, FontWeight, Spacing } from '@/constants/theme';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -50,7 +50,7 @@ export default function TermsOfServiceScreen() {
         contentContainerStyle={[styles.content, { paddingBottom: 40 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.appName}>OnSpace / ClipDAG</Text>
+        <Text style={styles.appName}>Nelyon</Text>
         <Text style={styles.updated}>Última actualización: 28 de junio de 2026</Text>
 
         {/* ── ESPAÑOL ─────────────────────────────────────────────────────── */}
@@ -58,7 +58,7 @@ export default function TermsOfServiceScreen() {
 
         <Section title="1. Aceptación de los Términos">
           <P>
-            Al registrarte o usar OnSpace / ClipDAG ("la Aplicación"), aceptas quedar vinculado por estos
+            Al registrarte o usar Nelyon (“la Aplicación”), aceptas quedar vinculado por estos
             Términos de Servicio. Si no aceptas estos términos, no puedes usar la Aplicación.
           </P>
           <P>
@@ -76,7 +76,7 @@ export default function TermsOfServiceScreen() {
           </P>
           <P>
             Si eres padre, madre o tutor y descubres que tu hijo menor de 13 años tiene una cuenta, comunícate
-            con nosotros a <Text style={styles.link}>legal@onspace.ai</Text> para eliminarla.
+            con nosotros mediante el <Text style={styles.link}>Centro de ayuda de Nelyon</Text> para eliminarla.
           </P>
         </Section>
 
@@ -126,7 +126,7 @@ export default function TermsOfServiceScreen() {
           <P>
             <Text style={styles.bold}>
               Los créditos BDAG dentro de la Aplicación son créditos virtuales internos del ecosistema
-              OnSpace/ClipDAG. No son moneda de curso legal, no tienen valor monetario garantizado fuera de
+              Nelyon. No son moneda de curso legal, no tienen valor monetario garantizado fuera de
               la Aplicación, y no son reembolsables en efectivo.
             </Text>
           </P>
@@ -149,7 +149,7 @@ export default function TermsOfServiceScreen() {
           <Li>Tu cuenta ha estado inactiva por más de 24 meses.</Li>
           <P style={{ marginTop: Spacing.sm }}>
             También puedes eliminar tu cuenta en cualquier momento contactando a{' '}
-            <Text style={styles.link}>legal@onspace.ai</Text>. La eliminación de la cuenta resulta en la
+            <Text style={styles.link}>Centro de ayuda de Nelyon</Text>. La eliminación de la cuenta resulta en la
             pérdida permanente de todos los datos, videos y créditos BDAG asociados.
           </P>
         </Section>
@@ -159,7 +159,7 @@ export default function TermsOfServiceScreen() {
             En la máxima medida permitida por la ley aplicable:
           </P>
           <Li>
-            La Aplicación se proporciona "tal cual" y "según disponibilidad" sin garantías de ningún tipo,
+            La Aplicación se proporciona “tal cual” y “según disponibilidad” sin garantías de ningún tipo,
             expresas o implícitas.
           </Li>
           <Li>
@@ -181,7 +181,7 @@ export default function TermsOfServiceScreen() {
 
         <Section title="9. Propiedad Intelectual de la App">
           <P>
-            Todo el código fuente, diseño, marca, logotipos, interfaz y funcionalidades de OnSpace / ClipDAG
+            Todo el código fuente, diseño, marca, logotipos, interfaz y funcionalidades de Nelyon
             son propiedad exclusiva de sus desarrolladores y están protegidos por leyes de propiedad
             intelectual. No puedes copiar, modificar, distribuir ni realizar ingeniería inversa de ninguna
             parte de la Aplicación.
@@ -190,7 +190,7 @@ export default function TermsOfServiceScreen() {
 
         <Section title="10. Ley Aplicable">
           <P>
-            Estos Términos se rigen por las leyes aplicables en la jurisdicción de operación de OnSpace.
+            Estos Términos se rigen por las leyes aplicables en la jurisdicción de operación de Nelyon.
             Cualquier disputa será resuelta mediante arbitraje vinculante o en los tribunales competentes.
           </P>
         </Section>
@@ -198,7 +198,7 @@ export default function TermsOfServiceScreen() {
         <Section title="11. Contacto">
           <P>
             Para preguntas legales o reportar contenido inapropiado:{'\n'}
-            <Text style={styles.link}>legal@onspace.ai</Text>
+            <Text style={styles.link}>Centro de ayuda de Nelyon</Text>
           </P>
         </Section>
 
@@ -208,7 +208,7 @@ export default function TermsOfServiceScreen() {
 
         <Section title="1. Acceptance of Terms">
           <P>
-            By registering for or using OnSpace / ClipDAG ("the App"), you agree to be bound by these Terms
+            By registering for or using Nelyon (“the App”), you agree to be bound by these Terms
             of Service. If you do not accept these terms, you may not use the App.
           </P>
           <P>
@@ -225,7 +225,7 @@ export default function TermsOfServiceScreen() {
           </P>
           <P>
             If you are a parent or guardian and discover that your child under 13 has created an account,
-            please contact us at <Text style={styles.link}>legal@onspace.ai</Text> to have it removed.
+            please contact us through the <Text style={styles.link}>Nelyon Help Center</Text> to have it removed.
           </P>
         </Section>
 
@@ -273,7 +273,7 @@ export default function TermsOfServiceScreen() {
         <Section title="6. BDAG Credits — Not Real Currency">
           <P>
             <Text style={styles.bold}>
-              BDAG credits within the App are internal virtual credits of the OnSpace/ClipDAG ecosystem.
+              BDAG credits within the App are internal virtual credits of the Nelyon ecosystem.
               They are not legal tender, have no guaranteed monetary value outside the App, and are not
               redeemable for cash.
             </Text>
@@ -284,7 +284,7 @@ export default function TermsOfServiceScreen() {
           <Li>The external blockchain wallet connection feature is experimental and does not constitute financial advice.</Li>
           <P style={{ marginTop: Spacing.sm }}>
             This statement is required for compliance with Apple App Store and Google Play guidelines.
-            The App's virtual credits are not regulated by any financial authority.
+            The App’s virtual credits are not regulated by any financial authority.
           </P>
         </Section>
 
@@ -296,7 +296,7 @@ export default function TermsOfServiceScreen() {
           <Li>Your account has been inactive for more than 24 months.</Li>
           <P style={{ marginTop: Spacing.sm }}>
             You may also delete your account at any time by contacting{' '}
-            <Text style={styles.link}>legal@onspace.ai</Text>. Account deletion results in permanent loss
+            <Text style={styles.link}>Nelyon Help Center</Text>. Account deletion results in permanent loss
             of all associated data, videos, and BDAG credits.
           </P>
         </Section>
@@ -304,7 +304,7 @@ export default function TermsOfServiceScreen() {
         <Section title="8. Limitation of Liability">
           <P>To the fullest extent permitted by applicable law:</P>
           <Li>
-            The App is provided "as is" and "as available" without warranties of any kind, express or implied.
+            The App is provided “as is” and “as available” without warranties of any kind, express or implied.
           </Li>
           <Li>
             We are not liable for data loss, service interruptions, technical errors, or indirect, incidental,
@@ -324,7 +324,7 @@ export default function TermsOfServiceScreen() {
 
         <Section title="9. App Intellectual Property">
           <P>
-            All source code, design, branding, logos, interface, and features of OnSpace / ClipDAG are the
+            All source code, design, branding, logos, interface, and features of Nelyon are the
             exclusive property of their developers and are protected by intellectual property laws. You may
             not copy, modify, distribute, or reverse-engineer any part of the App.
           </P>
@@ -332,7 +332,7 @@ export default function TermsOfServiceScreen() {
 
         <Section title="10. Governing Law">
           <P>
-            These Terms are governed by the laws applicable in OnSpace's jurisdiction of operation. Any
+            These Terms are governed by the laws applicable in Nelyon’s jurisdiction of operation. Any
             disputes will be resolved through binding arbitration or in courts of competent jurisdiction.
           </P>
         </Section>
@@ -340,7 +340,7 @@ export default function TermsOfServiceScreen() {
         <Section title="11. Contact">
           <P>
             For legal questions or to report inappropriate content:{'\n'}
-            <Text style={styles.link}>legal@onspace.ai</Text>
+            <Text style={styles.link}>Nelyon Help Center</Text>
           </P>
         </Section>
       </ScrollView>

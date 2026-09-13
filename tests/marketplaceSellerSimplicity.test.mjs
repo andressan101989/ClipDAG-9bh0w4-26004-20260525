@@ -59,7 +59,7 @@ test("limited Photos access is explicit and expandable through the installed nat
     parsePhotosAccess({ granted: false, accessPrivileges: "none" }),
     "none",
   );
-  assert.match(editor, /OnSpace solo puede ver algunos/);
+  assert.match(editor, /Nelyon solo puede ver algunos/);
   assert.match(editor, /Elegir más/);
   assert.match(
     readFileSync("services/marketplaceMediaPickerService.ts", "utf8"),

@@ -376,7 +376,7 @@ export default function PromotionsScreen() {
 
             <Pressable
               style={styles.joinAffiliateBtn}
-              onPress={() => showAlert('Programa de Afiliados', 'Para unirte a nuevos programas de afiliados, contacta a nuestro equipo en partnerships@clipdag.io')}
+              onPress={() => showAlert('Programa de Afiliados', 'Para unirte a nuevos programas de afiliados, contacta al equipo desde el Centro de ayuda de Nelyon.')}
             >
               <LinearGradient
                 colors={['rgba(45,158,255,0.12)', 'rgba(124,92,255,0.08)']}

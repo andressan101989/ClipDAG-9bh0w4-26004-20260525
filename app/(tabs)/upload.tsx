@@ -72,7 +72,7 @@ import {
 
 // ── Hashtag suggestions ────────────────────────────────────────────────────
 const HASHTAG_SUGGESTIONS = [
-  '#BlockDAG', '#Web3', '#ClipDAG', '#NFT', '#DeFi', '#CryptoCreator',
+  '#BlockDAG', '#Web3', '#Nelyon', '#NFT', '#DeFi', '#CryptoCreator',
   '#EarnCrypto', '#DAG', '#BlockchainLife', '#Crypto',
 ];
 

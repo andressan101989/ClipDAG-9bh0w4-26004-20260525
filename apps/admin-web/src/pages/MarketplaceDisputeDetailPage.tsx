@@ -122,7 +122,7 @@ export function MarketplaceDisputeDetailPage() {
   const terminal = Boolean(decision.id) || ["resolved", "rejected", "cancelled"].includes(text(dispute.status));
   const pendingRejectRelease = dispute.status === "rejected" && decision.outcome === "reject_claim" && allocation.status === "held" && !settlement.id;
   const run = async (action: string, reason: string, idempotencyKey: string) => {
-    await resolveDispute({ id, outcome: action, reason, note: "Operación desde OnSpace Admin", idempotencyKey });
+    await resolveDispute({ id, outcome: action, reason, note: "Operación desde Nelyon Admin", idempotencyKey });
     setNonce((value) => value + 1);
   };
   return (

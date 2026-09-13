@@ -10,11 +10,12 @@
 console.log('[BOOT] 0 - _layout module start');
 
 import { useContext } from 'react';
-import { View, ActivityIndicator, Text } from 'react-native';
+import { View, ActivityIndicator } from 'react-native';
 import { Stack } from 'expo-router';
 console.log('[BOOT] 1 - expo-router imported');
 
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
+import { NelyonLogo } from '@/components/ui/NelyonLogo';
 
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -65,9 +66,9 @@ function AppShell() {
 
   if (!isAuthReady) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#0A0A0F', alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ color: '#FFFFFF', fontSize: 34, fontWeight: '700', marginBottom: 20 }}>OnSpace</Text>
-        <ActivityIndicator size="large" color="#7C5CFF" />
+      <View style={{ flex: 1, backgroundColor: '#F5F7FA', alignItems: 'center', justifyContent: 'center' }}>
+        <NelyonLogo style={{ width: 260, height: 64, marginBottom: 24 }} />
+        <ActivityIndicator size="large" color="#1F79FF" />
       </View>
     );
   }

@@ -122,7 +122,7 @@ export function liveGiftEventFromPayload(
     transactionId,
     sessionId,
     giftId,
-    label: nonEmpty(payload.gift_name) || nonEmpty(payload.label) || 'Regalo ClipDAG',
+    label: nonEmpty(payload.gift_name) || nonEmpty(payload.label) || 'Regalo Nelyon',
     icon: nonEmpty(payload.icon) || nonEmpty(payload.emoji) || '\uD83C\uDF81',
     category: nonEmpty(payload.category) || 'basic',
     costCoins,

@@ -953,8 +953,8 @@ export default function LiveBroadcasterScreen() {
     try {
       await Share.share({
         message: title.trim()
-          ? `Estoy transmitiendo "${title.trim()}" en OnSpace. Únete al LIVE.`
-          : 'Estoy transmitiendo en vivo en OnSpace. Únete ahora.',
+          ? `Estoy transmitiendo "${title.trim()}" en Nelyon. Únete al LIVE.`
+          : 'Estoy transmitiendo en vivo en Nelyon. Únete ahora.',
       });
     } catch (err: any) {
       console.warn('[LiveBroadcast] share failed', err?.message ?? err);

@@ -317,7 +317,7 @@ export default function BoostProfileScreen() {
 
         {/* ── Fine print ───────────────────────────────────────────────── */}
         <Text style={styles.finePrint}>
-          El boost activa el algoritmo de visibilidad de ClipDAG. Los resultados son estimados y pueden variar según la competencia del mercado. El BDAG se descuenta al activar.
+          El boost activa el algoritmo de visibilidad de Nelyon. Los resultados son estimados y pueden variar según la competencia del mercado. El BDAG se descuenta al activar.
         </Text>
       </ScrollView>
     </View>

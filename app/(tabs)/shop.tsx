@@ -422,7 +422,7 @@ function FeaturedHero({
         <Text style={styles.heroBody} numberOfLines={2}>
           {item
             ? `Por @${item.seller.username}`
-            : "Explora productos físicos y digitales en OnSpace."}
+            : "Explora productos físicos y digitales en Nelyon."}
         </Text>
         <Pressable
           style={styles.heroButton}

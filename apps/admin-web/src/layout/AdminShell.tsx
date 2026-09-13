@@ -2,6 +2,7 @@ import {useEffect,useMemo,useRef,useState} from "react";
 import {NavLink,Outlet,useLocation,useNavigate} from "react-router-dom";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
 import {AdminIcon} from "../components/AdminIcon";
+import {NelyonBrand} from "../components/NelyonBrand";
 import {adminLinks} from "./adminNavigation";
 
 const initials=(name:string)=>name.split(/\s+/).filter(Boolean).slice(0,2).map((part)=>part[0]?.toUpperCase()).join("")||"AD";
@@ -18,7 +19,7 @@ export function AdminShell(){
   const identity=admin?.display_name??admin?.username??"Admin",role=admin?.roles.join(" · ")??"";
   return <div className="admin-layout">
     <aside className={`sidebar ${navigationOpen?"is-open":""}`} aria-label="Admin sidebar">
-      <div className="brand"><span className="brand-mark"><i/></span><div><strong>ONSPACE</strong><small>Admin Console <em>{role}</em></small></div></div>
+      <NelyonBrand role={role}/>
       <nav id="admin-navigation" aria-label="Administración global">{primary.map((link)=><NavLink end={link.end} to={link.to} key={link.to}><AdminIcon name={link.icon}/><span>{link.label}</span></NavLink>)}</nav>
       <div className="brand-card"><strong>Secure<br/>Scalable<br/>Creator Economy</strong><small>PEOPLE · CREATORS · OPPORTUNITIES</small></div>
     </aside>

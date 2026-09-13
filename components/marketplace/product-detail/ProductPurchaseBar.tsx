@@ -166,7 +166,7 @@ export function ProductPurchaseBar({
         />
         <Text style={styles.secureText}>
           Compra segura en{" "}
-          <Text style={styles.secureBrand}>OnSpace Marketplace</Text>
+          <Text style={styles.secureBrand}>Nelyon Marketplace</Text>
         </Text>
       </View>
     </View>

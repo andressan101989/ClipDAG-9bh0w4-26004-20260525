@@ -1,4 +1,4 @@
-# ClipDAG — Security & Credentials Guide
+# Nelyon — Security & Credentials Guide
 
 ## Environment Variables
 
@@ -9,7 +9,7 @@ All sensitive credentials are managed via environment variables.
 
 | Variable | Description | Where to get it |
 |---|---|---|
-| `EXPO_PUBLIC_SUPABASE_URL` | OnSpace Cloud / Supabase project URL | Dashboard → Settings → API |
+| `EXPO_PUBLIC_SUPABASE_URL` | Supabase project URL | Dashboard → Settings → API |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase anonymous key | Dashboard → Settings → API |
 | `EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID` | WalletConnect project ID | https://cloud.walletconnect.com |
 | `EXPO_PUBLIC_DEEPAR_LICENSE_IOS` | DeepAR iOS license key | https://developer.deepar.ai |

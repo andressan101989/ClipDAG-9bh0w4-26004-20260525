@@ -40,7 +40,7 @@ const CATEGORIES: NotifCategory[] = [
   { key: 'updates', icon: 'information-outline', gradient: ['#5A5A72', '#3D3D52'], label: 'Actualizaciones de la app', sublabel: 'Nuevas funciones y mejoras', section: 'Seguridad' },
   // Marketing
   { key: 'promotions', icon: 'bullhorn-outline', gradient: ['#FFB800', '#FF6B00'], label: 'Promociones y ofertas', sublabel: 'Campanas y oportunidades especiales', section: 'Marketing' },
-  { key: 'creator_tips', icon: 'lightbulb-outline', gradient: ['#00E5A0', '#7C5CFF'], label: 'Tips de creador', sublabel: 'Consejos para crecer en ClipDAG', section: 'Marketing' },
+  { key: 'creator_tips', icon: 'lightbulb-outline', gradient: ['#00E5A0', '#1F79FF'], label: 'Tips de creador', sublabel: 'Consejos para crecer en Nelyon', section: 'Marketing' },
 ];
 
 interface ChannelConfig {

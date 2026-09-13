@@ -675,7 +675,7 @@ export default function ProductEditorScreen() {
       return await new Promise<boolean>((resolve) =>
         Alert.alert(
           "Acceso limitado a Fotos",
-          `OnSpace solo puede ver algunos ${kind === "video" ? "videos" : "archivos"}.`,
+          `Nelyon solo puede ver algunos ${kind === "video" ? "videos" : "archivos"}.`,
           [
             {
               text: "Cancelar",

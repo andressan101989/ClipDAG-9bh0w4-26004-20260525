@@ -621,7 +621,7 @@ export default function ProductScreen() {
         />
         <View
           style={styles.headerBrand}
-          accessibilityLabel="OnSpace Marketplace"
+          accessibilityLabel="Nelyon Marketplace"
         >
           <Text style={styles.headerBrandName}>
             On<Text style={styles.headerBrandAccent}>Space</Text>

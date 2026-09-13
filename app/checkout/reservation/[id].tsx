@@ -124,7 +124,7 @@ export default function ReservationDetailScreen() {
       <StatusBar style="light" />
       <View style={styles.header}>
         <Pressable style={styles.icon} onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Volver"><MaterialIcons name="arrow-back-ios" size={20} color={Colors.textPrimary} /></Pressable>
-        <View style={styles.headerCopy}><Text style={styles.headerTitle}>Checkout · OnSpace SHOP</Text><Text style={styles.reference}>{data.checkout.reference}</Text></View>
+        <View style={styles.headerCopy}><Text style={styles.headerTitle}>Checkout · Nelyon Shop</Text><Text style={styles.reference}>{data.checkout.reference}</Text></View>
         <View style={[styles.badge, (expired || cancelled) && styles.badgeTerminal]}><Text style={styles.badgeText}>{paid ? "Pagado" : pending ? countdown : expired ? "Expirada" : "Cancelada"}</Text></View>
       </View>
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.xl }]}>

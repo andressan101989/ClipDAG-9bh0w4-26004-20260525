@@ -288,7 +288,7 @@ function WalletScreenInner() {
   const handleConnect = async () => {
     if (!wcAvailable) {
       Alert.alert('WalletConnect no disponible',
-        'WalletConnect no está disponible en esta versión. Actualiza OnSpace para conectar tu wallet.');
+        'WalletConnect no está disponible en esta versión. Actualiza Nelyon para conectar tu wallet.');
       return;
     }
     setIsConnecting(true);
@@ -557,7 +557,7 @@ function WalletScreenInner() {
           <View style={[sty.banner, { borderColor: 'rgba(255,184,0,0.30)', backgroundColor: 'rgba(255,184,0,0.06)' }]}>
             <MaterialCommunityIcons name="alert-outline" size={14} color={C.warning} />
             <Text style={[sty.bannerText, { color: C.warning }]}>
-              WalletConnect no está disponible en esta versión. Actualiza OnSpace para conectar tu wallet.
+              WalletConnect no está disponible en esta versión. Actualiza Nelyon para conectar tu wallet.
             </Text>
           </View>
         ) : wcInitError ? (

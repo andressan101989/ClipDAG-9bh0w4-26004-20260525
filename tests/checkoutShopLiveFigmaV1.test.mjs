@@ -85,7 +85,7 @@ test("both checkout presentations follow the approved section order", () => {
     assert.equal(positions.every((value) => value >= 0), true);
     assert.deepEqual([...positions].sort((a, b) => a - b), positions);
   }
-  assert.match(shop, /Checkout · OnSpace SHOP/);
+  assert.match(shop, /Checkout · Nelyon Shop/);
   assert.match(live, /Checkout · EN VIVO/);
   assert.match(shop, /automaticallyAdjustKeyboardInsets/);
   assert.match(liveAddress, /automaticallyAdjustKeyboardInsets/);

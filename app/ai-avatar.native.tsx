@@ -218,7 +218,7 @@ export default function AIAvatarScreen() {
   const handlePublishToFeed = useCallback(async () => {
     const mediaUrl = videoUrl || avatarUrl; if (!mediaUrl) return; setPublishingToFeed(true);
     try {
-      await addVideo({ videoUrl: mediaUrl, thumbnailUrl: avatarUrl || '', caption: `Mi nuevo avatar IA ${AVATAR_STYLES.find(s => s.id === selectedStyle)?.emoji || '✨'} #AIAvatar #ClipDAG`, music: 'Sin música', username: user?.username || '', userAvatar: user?.avatar || '' });
+      await addVideo({ videoUrl: mediaUrl, thumbnailUrl: avatarUrl || '', caption: `Mi nuevo avatar IA ${AVATAR_STYLES.find(s => s.id === selectedStyle)?.emoji || '✨'} #AIAvatar #Nelyon`, music: 'Sin música', username: user?.username || '', userAvatar: user?.avatar || '' });
       showAlert('Publicado 🎉', 'Tu avatar fue publicado al feed', [{ text: 'Ver feed', onPress: () => router.replace('/(tabs)') }]);
     } catch (e: any) { showAlert('Error', e?.message || 'No se pudo publicar'); }
     setPublishingToFeed(false);
@@ -239,7 +239,7 @@ export default function AIAvatarScreen() {
         </Pressable>
         <View style={{ flex: 1, alignItems: 'center', gap: 2 }}>
           <Text style={root.headerTitle}>AI Avatar</Text>
-          <Text style={root.headerSub}>Powered by OnSpace AI</Text>
+          <Text style={root.headerSub}>Powered by Nelyon AI</Text>
         </View>
         <View style={{ width: 36 }} />
       </View>

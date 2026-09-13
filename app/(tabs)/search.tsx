@@ -29,7 +29,7 @@ const MAX_RECENT = 5;
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 const FALLBACK_TAGS = [
-  '#BlockDAG', '#Web3', '#Crypto', '#NFT', '#DeFi', '#ClipDAG',
+  '#BlockDAG', '#Web3', '#Crypto', '#NFT', '#DeFi', '#Nelyon',
   '#EarnCrypto', '#BlockchainLife', '#CryptoCreator', '#DAG',
 ];
 

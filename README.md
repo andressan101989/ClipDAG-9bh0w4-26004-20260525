@@ -1,6 +1,6 @@
-# Welcome to OnSpace AI
+# Nelyon
 
-Onspace AI empowers anyone to turn ideas into powerful AI applications in minutes—no coding required. Our free, no-code platform enables effortless creation of custom AI apps; simply describe your vision and our agentic AI handles the rest. The onspace-app, built with React Native and Expo, demonstrates this capability—integrating popular third-party libraries to deliver seamless cross-platform performance across iOS, Android, and Web environments.
+Nelyon is a cross-platform creator platform built with React Native and Expo for iOS, Android, and the web. The repository retains selected legacy technical identifiers—such as the Expo slug, native bundle IDs, deep-link scheme, and CallKit module name—to preserve installed-app compatibility; they are not the active product brand.
 
 ## Getting Started
 

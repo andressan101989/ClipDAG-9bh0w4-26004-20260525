@@ -1,10 +1,8 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
-  View, StyleSheet, FlatList, ViewToken, RefreshControl,
-  Text, Pressable,
+  View, StyleSheet, FlatList, ViewToken, RefreshControl, Pressable,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,8 +16,9 @@ import { CommentSheet } from '@/components/feature/CommentSheet';
 import { DAGRewardToast } from '@/components/feature/DAGRewardToast';
 import { StoriesBar } from '@/components/feature/StoriesBar';
 import { StoryViewer } from '@/components/feature/StoryViewer';
-import { Colors, FontWeight } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
 import { PostCardSkeleton, FadeIn } from '@/components/ui/SkeletonLoader';
+import { NelyonLogo } from '@/components/ui/NelyonLogo';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Audio } from 'expo-av';
 import { useScrollToTop } from '@react-navigation/native';
@@ -291,16 +290,7 @@ export default function FeedScreen() {
   const feedHeader = (
     <View style={styles.feedHeader}>
       <View style={[styles.topBar, { paddingTop: insets.top + 8, height: TOP_BAR_HEIGHT }]}>
-        <View style={styles.logoWrap}>
-          <LinearGradient
-            colors={['#7C5CFF', '#FF2D78']}
-            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-            style={styles.logoGrad}
-          >
-            <Text style={styles.logoClip}>Clip</Text>
-          </LinearGradient>
-          <Text style={styles.logoDAG}>DAG</Text>
-        </View>
+        <NelyonLogo onDark style={styles.brandLogo} />
         <View style={styles.topBarRight}>
           <Pressable style={styles.topBarBtn} onPress={() => router.push('/messages')} hitSlop={8}>
             <MaterialCommunityIcons name="message-text-outline" size={22} color="rgba(255,255,255,0.85)" />
@@ -462,19 +452,7 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
 
-  // ClipDAG Brand Logo
-  logoWrap: { flexDirection: 'row', alignItems: 'center', gap: 2 },
-  logoGrad: {
-    borderRadius: 7, paddingHorizontal: 8, paddingVertical: 3,
-  },
-  logoClip: {
-    color: '#fff', fontSize: 17, fontWeight: FontWeight.extrabold,
-    letterSpacing: -0.5,
-  },
-  logoDAG: {
-    color: '#fff', fontSize: 17, fontWeight: FontWeight.extrabold,
-    letterSpacing: -0.5,
-  },
+  brandLogo: { width: 154, height: 42 },
 
   topBarRight: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   topBarBtn: { padding: 8, borderRadius: 20 },

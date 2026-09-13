@@ -5,7 +5,7 @@
  * Optional: enter a script → AI generates a talking avatar video (Sora-2).
  * Result can be applied to profile or published to feed.
  *
- * Uses OnSpace AI (image: gemini-2.5-flash-image, video: sora-2)
+ * Uses Nelyon AI (image: gemini-2.5-flash-image, video: sora-2)
  * via the ai-avatar Edge Function.
  */
 import React, { useState, useCallback, useRef } from 'react';
@@ -316,7 +316,7 @@ export default function AIAvatarScreen() {
       await addVideo({
         videoUrl:   mediaUrl,
         thumbnailUrl: avatarUrl || '',
-        caption:    `Mi nuevo avatar IA ${AVATAR_STYLES.find(s => s.id === selectedStyle)?.emoji || '✨'} #AIAvatar #ClipDAG #Creator`,
+        caption:    `Mi nuevo avatar IA ${AVATAR_STYLES.find(s => s.id === selectedStyle)?.emoji || '✨'} #AIAvatar #Nelyon #Creator`,
         music:      'Sin música',
         username:   user?.username || '',
         userAvatar: user?.avatar || '',
@@ -356,7 +356,7 @@ export default function AIAvatarScreen() {
         </Pressable>
         <View style={{ flex: 1, alignItems: 'center', gap: 2 }}>
           <Text style={root.headerTitle}>AI Avatar</Text>
-          <Text style={root.headerSub}>Powered by OnSpace AI</Text>
+          <Text style={root.headerSub}>Powered by Nelyon AI</Text>
         </View>
         <View style={{ width: 36 }} />
       </View>
@@ -535,7 +535,7 @@ export default function AIAvatarScreen() {
                   style={step3.input}
                   value={script}
                   onChangeText={t => { if (t.length <= 200) setScript(t); }}
-                  placeholder="Hola, soy [tu nombre]. Bienvenidos a mi canal de ClipDAG..."
+                  placeholder="Hola, soy [tu nombre]. Bienvenidos a mi canal de Nelyon..."
                   placeholderTextColor={Colors.textSubtle}
                   multiline
                   numberOfLines={4}

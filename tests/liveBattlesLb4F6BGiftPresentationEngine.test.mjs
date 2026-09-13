@@ -43,7 +43,7 @@ function event(overrides = {}) {
     transactionId: `transaction-${sequence}`,
     sessionId: 'session-a',
     giftId: 'clipdag_gift',
-    label: 'Regalo ClipDAG',
+    label: 'Regalo Nelyon',
     icon: '🎁',
     category: 'basic',
     costCoins: 5,
@@ -106,7 +106,7 @@ test('normalizer rejects malformed authority snapshots and applies safe visual f
   const normalized = contract.liveGiftEventFromPayload(row, 'session-a');
   assert.equal(normalized.costCoins, 5);
   assert.equal(normalized.durationMs, 800);
-  assert.equal(normalized.label, 'Regalo ClipDAG');
+  assert.equal(normalized.label, 'Regalo Nelyon');
   assert.equal(normalized.icon, '🎁');
   assert.equal(normalized.quantity, 1);
   assert.ok(Object.isFrozen(normalized));
@@ -246,8 +246,8 @@ test('visual engine has no database, scoring, boost, or financial authority', as
 
 test('protected manifests and deployed F6-A migration remain byte-equivalent after LF normalization', async () => {
   const expected = new Map([
-    ['package.json', '67b0b13e81b3b4d89fa068205636a6c6c55abe52856d5256beb0d39bcc50f3c0'],
-    ['package-lock.json', '9563f6480ec75a028a4580025d68884aca731c7836320ee148785156b0c40bf4'],
+    ['package.json', '47c4b7b08321a6d445a8612518eab23001cfef3e0bd06bfaa0f1ec69f30ff1ca'],
+    ['package-lock.json', '21fab289248d7f9b3d788b8ab9610fec074486454b6cfd91b5dd8e6e1fb246a1'],
     ['supabase/migrations/20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql', '8adfe6b93e1164dd53242523a3e5b3096e71f5e1ab8869d49c7e2e628c629dbf'],
   ]);
   for (const [file, hash] of expected) {
