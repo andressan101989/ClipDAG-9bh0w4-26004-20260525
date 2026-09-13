@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Colors, FontSize, FontWeight, Spacing } from '@/constants/theme';
+import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -58,7 +58,7 @@ export default function PrivacyPolicyScreen() {
 
         <Section title="1. Introducción">
           <P>
-            Bienvenido a Nelyon (“la Aplicación”, “nosotros”, “nuestro”). Esta Política de Privacidad
+            Bienvenido a Nelyon (&quot;la Aplicación&quot;, &quot;nosotros&quot;, &quot;nuestro&quot;). Esta Política de Privacidad
             describe cómo recopilamos, usamos y protegemos tu información personal cuando usas nuestra
             plataforma de videos cortos y creación de contenido.
           </P>
@@ -163,11 +163,11 @@ export default function PrivacyPolicyScreen() {
           <P>Tienes derecho a:</P>
           <Li><Text style={styles.bold}>Acceder</Text> a tu información personal almacenada.</Li>
           <Li><Text style={styles.bold}>Corregir</Text> información incorrecta desde la configuración de tu perfil.</Li>
-          <Li><Text style={styles.bold}>Eliminar tu cuenta</Text> y todos tus datos asociados desde la configuración o el Centro de ayuda de Nelyon.</Li>
-          <Li><Text style={styles.bold}>Exportar</Text> tus datos enviando una solicitud desde el Centro de ayuda de Nelyon.</Li>
+          <Li><Text style={styles.bold}>Eliminar tu cuenta</Text> y todos tus datos asociados contactando a privacy@onspace.ai.</Li>
+          <Li><Text style={styles.bold}>Exportar</Text> tus datos enviando una solicitud a privacy@onspace.ai.</Li>
           <Li><Text style={styles.bold}>Retirar tu consentimiento</Text> para notificaciones push desde la configuración de tu dispositivo.</Li>
           <P style={{ marginTop: Spacing.sm }}>
-            Para ejercer estos derechos, utiliza el <Text style={styles.link}>Centro de ayuda de Nelyon</Text>.
+            Para ejercer estos derechos, escríbenos a: <Text style={styles.link}>privacy@onspace.ai</Text>
           </P>
         </Section>
 
@@ -190,7 +190,7 @@ export default function PrivacyPolicyScreen() {
         <Section title="10. Contacto">
           <P>
             Para preguntas sobre privacidad, solicitudes de datos o inquietudes:{'\n'}
-            <Text style={styles.link}>Centro de ayuda de Nelyon</Text>
+            <Text style={styles.link}>privacy@onspace.ai</Text>
           </P>
         </Section>
 
@@ -200,7 +200,7 @@ export default function PrivacyPolicyScreen() {
 
         <Section title="1. Introduction">
           <P>
-            Welcome to Nelyon (“the App”, “we”, “our”). This Privacy Policy describes how we collect,
+            Welcome to Nelyon (&quot;the App&quot;, &quot;we&quot;, &quot;our&quot;). This Privacy Policy describes how we collect,
             use, and protect your personal information when you use our short-video and content creation platform.
           </P>
           <P>
@@ -221,7 +221,7 @@ export default function PrivacyPolicyScreen() {
           </Li>
           <Li>
             <Text style={styles.bold}>Wallet address:</Text> Your blockchain wallet address (BlockDAG/BDAG)
-            if you connect an external wallet or use the app’s internal wallet.
+            if you connect an external wallet or use the app&apos;s internal wallet.
           </Li>
           <Li>
             <Text style={styles.bold}>Usage data:</Text> In-app interactions, videos viewed, searches, and
@@ -304,11 +304,11 @@ export default function PrivacyPolicyScreen() {
           <P>You have the right to:</P>
           <Li><Text style={styles.bold}>Access</Text> your stored personal information.</Li>
           <Li><Text style={styles.bold}>Correct</Text> inaccurate information from your profile settings.</Li>
-          <Li><Text style={styles.bold}>Delete your account</Text> and all associated data from settings or the Nelyon Help Center.</Li>
-          <Li><Text style={styles.bold}>Export</Text> your data by sending a request through the Nelyon Help Center.</Li>
+          <Li><Text style={styles.bold}>Delete your account</Text> and all associated data by contacting privacy@onspace.ai.</Li>
+          <Li><Text style={styles.bold}>Export</Text> your data by sending a request to privacy@onspace.ai.</Li>
           <Li><Text style={styles.bold}>Withdraw consent</Text> for push notifications from your device settings.</Li>
           <P style={{ marginTop: Spacing.sm }}>
-            To exercise these rights, use the <Text style={styles.link}>Nelyon Help Center</Text>.
+            To exercise these rights, contact us at: <Text style={styles.link}>privacy@onspace.ai</Text>
           </P>
         </Section>
 
@@ -330,7 +330,7 @@ export default function PrivacyPolicyScreen() {
         <Section title="10. Contact">
           <P>
             For privacy questions, data requests, or concerns:{'\n'}
-            <Text style={styles.link}>Nelyon Help Center</Text>
+            <Text style={styles.link}>privacy@onspace.ai</Text>
           </P>
         </Section>
       </ScrollView>

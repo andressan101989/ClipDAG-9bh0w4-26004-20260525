@@ -1,5 +1,5 @@
 /**
- * Nelyon Music Library
+ * ClipDAG Music Library
  * Curated free-to-use audio tracks for reels and stories.
  * Uses free Creative Commons / royalty-free audio from public sources.
  */

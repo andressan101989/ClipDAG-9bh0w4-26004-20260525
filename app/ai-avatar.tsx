@@ -5,7 +5,7 @@
  * Optional: enter a script → AI generates a talking avatar video (Sora-2).
  * Result can be applied to profile or published to feed.
  *
- * Uses Nelyon AI (image: gemini-2.5-flash-image, video: sora-2)
+ * Uses OnSpace AI (image: gemini-2.5-flash-image, video: sora-2)
  * via the ai-avatar Edge Function.
  */
 import React, { useState, useCallback, useRef } from 'react';

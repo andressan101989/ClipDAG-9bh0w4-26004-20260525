@@ -3,7 +3,7 @@
  *
  * Problem: expo-image v2+ throws "native only [Image]" when rendered in
  * environments that don't bundle the expo-image native module
- * (Nelyon preview, Expo Go, CI, web).
+ * (OnSpace App preview, Expo Go, CI, web).
  *
  * Solution: try-require expo-image at module load time (one-time cost).
  * If it's unavailable, fall back to React Native's built-in Image.

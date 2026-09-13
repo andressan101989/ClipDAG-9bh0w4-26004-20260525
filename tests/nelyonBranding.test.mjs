@@ -20,6 +20,10 @@ test('Expo and native display metadata use Nelyon without changing app identity'
   assert.equal(app.android.package, 'com.clipdag.onspaceapp');
   assert.match(read('ios/onspaceapp/Info.plist'), /<key>CFBundleDisplayName<\/key>\s*<string>Nelyon<\/string>/);
   assert.match(read('android/app/src/main/res/values/strings.xml'), /<string name="app_name">Nelyon<\/string>/);
+  assert.equal(JSON.parse(read('package.json')).name, 'onspace-app');
+  assert.equal(JSON.parse(read('package-lock.json')).packages[''].name, 'onspace-app');
+  assert.equal(JSON.parse(read('apps/admin-web/package.json')).name, '@onspace/admin-web');
+  assert.equal(JSON.parse(read('apps/admin-web/package-lock.json')).packages[''].name, '@onspace/admin-web');
 });
 
 test('canonical Nelyon assets are present, valid, and wired to Expo', () => {
@@ -47,9 +51,30 @@ test('active customer-facing brand surfaces contain no legacy product name', () 
     'apps/admin-web/index.html',
   ];
   const legacy = /ClipDAG|ClickDAG|ClickDAC|OnSpace|OnSpend/i;
-  for (const path of activeSurfaces) assert.doesNotMatch(read(path), legacy, path);
+  const technicalContacts = /(?:legal|privacy|copyright)@(?:onspace\.ai|clipdag\.io)/gi;
+  for (const path of activeSurfaces) {
+    assert.doesNotMatch(read(path).replace(technicalContacts, '<preserved-contact>'), legacy, path);
+  }
   assert.match(read('components/feature/PushNotificationHandler.tsx'), /cuando Nelyon esté cerrada/);
   assert.match(read('components/feature/IosCallKitActionHandler.tsx'), />NELYON<\/Text>/);
+});
+
+test('legal copy preserves the baseline legal and financial meaning', () => {
+  const legal = read('app/legal.tsx');
+  const privacy = read('app/privacy-policy.tsx');
+  const terms = read('app/terms-of-service.tsx');
+
+  assert.match(legal, /Nelyon es una plataforma de contenido creativo basada en blockchain/);
+  assert.match(legal, /monetizar contenido a traves de tokens \$DAG/);
+  assert.match(legal, /contenido relacionado con blockchain, crypto, arte digital y creatividad/);
+  assert.match(legal, /notificacion DMCA a copyright@clipdag\.io/);
+  assert.match(legal, /comision del 10% en cada venta/);
+  assert.match(legal, /Los pagos se procesan dentro de los 7 dias habiles/);
+  assert.match(privacy, /privacy@onspace\.ai/);
+  assert.match(privacy, /No constituyen moneda de curso legal/);
+  assert.match(terms, /legal@onspace\.ai/);
+  assert.match(terms, /No son moneda de curso legal, no tienen valor monetario garantizado/);
+  for (const source of [legal, privacy, terms]) assert.doesNotMatch(source, /Centro de ayuda de Nelyon|Nelyon Help Center/);
 });
 
 test('legacy visual assets are removed after their callers are migrated', () => {

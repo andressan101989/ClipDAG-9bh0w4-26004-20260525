@@ -1,4 +1,4 @@
-// Nelyon Design System — modern dark creator experience
+// ClipDAG Design System — Instagram/TikTok Modern Dark Theme
 export const Colors = {
   // ── Base surfaces ──────────────────────────────────────────────────────────
   bg: '#0A0A0F',

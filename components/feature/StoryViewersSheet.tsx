@@ -16,7 +16,7 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import type { StoryReactionRecord, StoryViewerRecord } from '@/contexts/StoriesContext';
 import { storyReactionDefinition, storyReactionEmoji } from './storyReactions';
 
-// Historical Figma visual authority: Stories V2 Final, node 2:131.
+// Figma visual authority: ClipDAG Stories V2 Final, node 2:131.
 
 interface StoryViewersSheetProps {
   visible: boolean;

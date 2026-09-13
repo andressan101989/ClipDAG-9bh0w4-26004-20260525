@@ -12,7 +12,7 @@ import type { StoryComposition } from './storyComposition';
 const AVATAR_SIZE = 60;
 const RING_PAD = 4;
 const RING_SIZE = 68;
-// Historical Figma visual authority: Stories V2 Final, node 2:178.
+// Figma visual authority: ClipDAG Stories V2 Final, node 2:178.
 
 export interface StoryGroup {
   userId: string;

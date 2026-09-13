@@ -1,4 +1,4 @@
-// Mock data service for Nelyon
+// Mock data service for ClipDAG
 
 export interface User {
   id: string;

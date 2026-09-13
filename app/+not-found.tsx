@@ -2,7 +2,7 @@
  * @Description: 
  */
 
-// Nelyon application route fallback
+// Powered by OnSpace.AI
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';

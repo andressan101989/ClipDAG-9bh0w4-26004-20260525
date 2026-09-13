@@ -8,8 +8,8 @@ Pod::Spec.new do |s|
   s.summary        = package['description']
   s.description    = package['description']
   s.license        = { :type => 'MIT' }
-  s.author         = 'Nelyon'
-  s.homepage       = 'https://github.com/andressan101989/ClipDAG-9bh0w4-26004-20260525'
+  s.author         = 'ClipDAG'
+  s.homepage       = 'https://clipdag.com'
   s.platforms      = { :ios => '16.4' }
   s.source         = { :path => '.' }
   s.static_framework = true

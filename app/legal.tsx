@@ -36,7 +36,7 @@ const DOCS: DocConfig[] = [
       },
       {
         heading: '2. Uso de la Plataforma',
-        content: 'Nelyon es una plataforma de contenido creativo. Puedes crear, compartir y monetizar contenido mediante las funciones disponibles en la plataforma. El uso de la plataforma esta sujeto a que tengas al menos 13 anos de edad y permiso de un padre o tutor si eres menor de 18 anos.',
+        content: 'Nelyon es una plataforma de contenido creativo basada en blockchain. Puedes crear, compartir y monetizar contenido a traves de tokens $DAG. El uso de la plataforma esta sujeto a que tengas al menos 13 anos de edad y permiso de un padre o tutor si eres menor de 18 anos.',
       },
       {
         heading: '3. Cuentas de Usuario',
@@ -92,7 +92,7 @@ const DOCS: DocConfig[] = [
     sections: [
       {
         heading: 'Contenido Permitido',
-        content: 'Nelyon es una plataforma para contenido creativo, educativo y de entretenimiento. Apoyamos a creadores que comparten contenido original, autentico y positivo. El contenido relacionado con tecnología, arte digital y creatividad es especialmente bienvenido.',
+        content: 'Nelyon es una plataforma para contenido creativo, educativo y de entretenimiento. Apoyamos a creadores que comparten contenido original, autentico y positivo. El contenido relacionado con blockchain, crypto, arte digital y creatividad es especialmente bienvenido.',
       },
       {
         heading: 'Contenido Prohibido',
@@ -122,7 +122,7 @@ const DOCS: DocConfig[] = [
       },
       {
         heading: 'Procedimiento de Reclamo DMCA',
-        content: 'Si crees que tu trabajo protegido por derechos de autor ha sido utilizado sin autorizacion, puedes enviar una notificacion desde el Centro de ayuda de Nelyon incluyendo: identificacion del trabajo, ubicacion en nuestra plataforma, tu informacion de contacto y declaracion de buena fe.',
+        content: 'Si crees que tu trabajo protegido por derechos de autor ha sido utilizado sin autorizacion, puedes enviar una notificacion DMCA a copyright@clipdag.io incluyendo: identificacion del trabajo, ubicacion en nuestra plataforma, tu informacion de contacto y declaracion de buena fe.',
       },
       {
         heading: 'Musica y Audio',
@@ -243,7 +243,7 @@ export default function LegalScreen() {
 
           <View style={styles.docFooter}>
             <Text style={styles.docFooterText}>
-              Si tienes preguntas sobre este documento, utiliza el Centro de ayuda de Nelyon.
+              Si tienes preguntas sobre este documento, contactanos en legal@clipdag.io
             </Text>
           </View>
         </ScrollView>
@@ -294,15 +294,15 @@ export default function LegalScreen() {
           </Text>
           <View style={styles.contactRow}>
             <MaterialCommunityIcons name="email-outline" size={15} color={Colors.primary} />
-            <Text style={styles.contactEmail}>Centro de ayuda de Nelyon</Text>
+            <Text style={styles.contactEmail}>legal@clipdag.io</Text>
           </View>
           <View style={styles.contactRow}>
             <MaterialCommunityIcons name="copyright" size={15} color={Colors.primary} />
-            <Text style={styles.contactEmail}>Reclamos de propiedad intelectual</Text>
+            <Text style={styles.contactEmail}>copyright@clipdag.io</Text>
           </View>
           <View style={styles.contactRow}>
             <MaterialCommunityIcons name="shield-lock-outline" size={15} color={Colors.primary} />
-            <Text style={styles.contactEmail}>Solicitudes de privacidad</Text>
+            <Text style={styles.contactEmail}>privacy@clipdag.io</Text>
           </View>
         </View>
       </ScrollView>

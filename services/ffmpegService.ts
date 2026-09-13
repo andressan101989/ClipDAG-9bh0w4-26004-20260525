@@ -16,7 +16,7 @@
  *   - Graceful fallback when ffmpeg-kit not compiled in
  */
 
-// expo-file-system loaded lazily — top-level import crashes the Nelyon preview on iOS
+// expo-file-system loaded lazily — top-level import crashes OnSpace preview on iOS
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { EventBus } from '@/modules/core/EventBus';
 
