@@ -130,6 +130,18 @@ export function validateDisputeDetail(value:unknown):OpsDetail{
 export async function getDisputeDetail(id:string){uuid(id,"disputeId");return validateDisputeDetail(await rpc("get_marketplace_admin_dispute_detail",{p_dispute_id:id}))}
 export async function getDisputeEvidenceUrl(assetId:string){uuid(assetId,"assetId");const {data,error}=await supabase.functions.invoke("get-media-url",{body:{asset_id:assetId}});if(error)throw new Error("No pudimos cargar esta evidencia privada.");const envelope=object(data,"media_url"),payload=object(envelope.data,"media_url.data");if(envelope.success!==true)invalid("media_url.success");return string(payload.url,"media_url.data.url")}
 
+export type AdminMediaContext={surface:"story"|"reported_message"|"marketplace_dispute";entityId:string};
+export async function getAdminMediaUrl(assetId:string,context:AdminMediaContext){
+  uuid(assetId,"assetId");uuid(context.entityId,"adminMediaContext.entityId");
+  const {data,error}=await supabase.functions.invoke("get-media-url",{body:{asset_id:assetId,admin_context:{surface:context.surface,entity_id:context.entityId}}});
+  if(error)throw new Error("No pudimos cargar esta vista previa autorizada.");
+  const envelope=object(data,"admin_media_url"),payload=object(envelope.data,"admin_media_url.data");
+  if(envelope.success!==true)invalid("admin_media_url.success");
+  const url=string(payload.url,"admin_media_url.data.url");
+  if(!/^https:\/\//i.test(url))invalid("admin_media_url.data.url");
+  return url;
+}
+
 const validateReceiptDispute=(value:unknown,name:string)=>{const item=object(value,name);string(item.status,`${name}.status`);nullableDate(item.resolved_at,`${name}.resolved_at`);return item};
 const validateFinalFinancialResult=(value:unknown,outcome:string)=>{
   const result=object(value,"finalDecision.financial_result");

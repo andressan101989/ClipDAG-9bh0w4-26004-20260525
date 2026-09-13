@@ -17,6 +17,8 @@ export function AdminShell(){
   useEffect(()=>{setNavigationOpen(false);setQuery("")},[location.pathname]);
   useEffect(()=>{const key=(event:KeyboardEvent)=>{if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==="k"){event.preventDefault();searchRef.current?.focus()}if(event.key==="Escape"){setNavigationOpen(false);setQuery("");searchRef.current?.blur()}};window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key)},[]);
   const identity=admin?.display_name??admin?.username??"Admin",role=admin?.roles.join(" · ")??"";
+  const sectionPrefix=["/finance","/marketplace","/system"].find((prefix)=>location.pathname===prefix||location.pathname.startsWith(`${prefix}/`));
+  const sectionLinks=sectionPrefix?authorized.filter((link)=>link.to===sectionPrefix||link.to.startsWith(`${sectionPrefix}/`)):[];
   return <div className="admin-layout">
     <aside className={`sidebar ${navigationOpen?"is-open":""}`} aria-label="Admin sidebar">
       <NelyonBrand role={role}/>
@@ -31,7 +33,7 @@ export function AdminShell(){
         <div className="current-module"><span>{match?.label??"Admin Console"}</span></div>
         <div className="admin-identity"><span className="avatar">{initials(identity)}</span><div><strong>{identity}</strong><small>{role}</small></div><button aria-label="Cerrar sesión" className="icon-button" onClick={()=>void logout()} title="Cerrar sesión" type="button"><AdminIcon name="logout"/></button></div>
       </header>
-      <main className="content"><Outlet/></main>
+      <main className="content">{sectionLinks.length>1&&<nav className="admin-section-nav" aria-label={`Secciones de ${sectionPrefix?.slice(1)}`}>{sectionLinks.map((link)=><NavLink end={link.end} to={link.to} key={link.to}>{link.label.split(" · ").at(-1)}</NavLink>)}</nav>}<Outlet/></main>
     </div>
   </div>
 }

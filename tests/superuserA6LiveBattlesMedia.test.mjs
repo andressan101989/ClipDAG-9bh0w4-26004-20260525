@@ -5,6 +5,7 @@ import {readFileSync} from "node:fs";
 const migration=readFileSync(new URL("../supabase/migrations/20260911205948_superuser_a6_live_battles_media.sql",import.meta.url),"utf8");
 const app=readFileSync(new URL("../apps/admin-web/src/App.tsx",import.meta.url),"utf8");
 const shell=readFileSync(new URL("../apps/admin-web/src/layout/AdminShell.tsx",import.meta.url),"utf8");
+const navigation=readFileSync(new URL("../apps/admin-web/src/layout/adminNavigation.ts",import.meta.url),"utf8");
 const api=readFileSync(new URL("../apps/admin-web/src/lib/adminApi.ts",import.meta.url),"utf8");
 const agora=readFileSync(new URL("../supabase/functions/agora-token/index.ts",import.meta.url),"utf8");
 const broadcast=readFileSync(new URL("../app/live/broadcast/[streamId].tsx",import.meta.url),"utf8");
@@ -99,7 +100,7 @@ test("existing runtime observes ended sessions and Agora rejects them",()=>{
 });
 
 test("admin-web exposes only the six capability-guarded A6 routes and safe actions",()=>{
-  for(const [route,capability] of [["/live","live.sessions.read"],["/battles","battles.sessions.read"],["/media","media.assets.read"]]){assert.match(app,new RegExp(route));assert.match(app,new RegExp(capability.replaceAll(".","\\.")));assert.match(shell,new RegExp(capability.replaceAll(".","\\.")));}
+  for(const [route,capability] of [["/live","live.sessions.read"],["/battles","battles.sessions.read"],["/media","media.assets.read"]]){assert.match(app,new RegExp(route));assert.match(app,new RegExp(capability.replaceAll(".","\\.")));assert.match(navigation,new RegExp(capability.replaceAll(".","\\.")));}
   for(const rpc of ["search_admin_live_sessions","get_admin_live_session_detail","admin_moderate_live_participant","admin_terminate_live_session","search_admin_live_battles","get_admin_live_battle_detail","admin_cancel_live_battle","search_admin_media_assets","get_admin_media_asset_detail","admin_schedule_media_cleanup"])assert.match(api,new RegExp(rpc));
   assert.doesNotMatch(app+shell,/force winner|edit score|refund gifts|view private file|force physical delete/i);
 });

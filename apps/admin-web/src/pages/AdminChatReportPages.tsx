@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAdminAuth } from "../auth/AdminAuthProvider";
 import { EmptyState, ErrorState, LoadingState } from "../components/PageState";
+import {AdminFact,AdminFactGrid,AdminIdentity,AdminMessageBubble,asRecord,asRows,shortId} from "../components/AdminPresentation";
+import {AdminReportSubject} from "../components/AdminReportSubject";
 import {
   dismissAdminReport,
   formatDate,
@@ -85,7 +87,7 @@ export function AdminChatReportsPage() {
                 key={report.id}
               >
                 <span>
-                  <strong>{report.id}</strong>
+                  <strong>{shortId(report.id)}</strong>
                 </span>
                 <span>
                   {report.reporter.display_name ??
@@ -97,7 +99,7 @@ export function AdminChatReportsPage() {
                   <em className="badge">{report.status}</em>
                 </span>
                 <span>{formatDate(report.created_at)}</span>
-                <span>{report.reported_content_id}</span>
+                <span className="mono">{shortId(report.reported_content_id)}</span>
               </Link>
             ))}
           </div>
@@ -180,17 +182,24 @@ export function AdminChatReportDetailPage() {
         </div>
         <em className="badge">{report.status}</em>
       </div>
-      <section className="detail-grid">
-        <article className="detail-card">
-          <h3>Mensaje reportado</h3>
-          <pre>{JSON.stringify(report.subject, null, 2)}</pre>
-        </article>
-        <article className="detail-card">
-          <h3>Contexto mínimo</h3>
-          <p>Máximo 3 mensajes antes y 3 después, de la misma conversación.</p>
-          <pre>{JSON.stringify(report.chat_context, null, 2)}</pre>
-        </article>
-      </section>
+      <div className="presentation-grid">
+        <section className="presentation-card">
+          <header><h3>Conversación acotada</h3><span className="badge">±3 mensajes</span></header>
+          <p className="muted-text">Sólo contexto del mismo hilo asociado al reporte.</p>
+          <div className="admin-chat-context">
+            <div className="admin-chat-divider">Antes</div>
+            {asRows(asRecord(report.chat_context).before).map((message)=><AdminMessageBubble key={String(message.id)} message={message}/>)}
+            <div className="admin-chat-divider">Reportado</div>
+            <AdminMessageBubble message={report.subject??{}} reported media={<AdminReportSubject subject={report.subject} reportId={report.id}/>}/>
+            <div className="admin-chat-divider">Después</div>
+            {asRows(asRecord(report.chat_context).after).map((message)=><AdminMessageBubble key={String(message.id)} message={message}/>)}
+          </div>
+        </section>
+        <aside className="presentation-stack">
+          <section className="presentation-card"><header><h3>Reportante</h3></header><AdminIdentity value={report.reporter}/></section>
+          <section className="presentation-card"><header><h3>Caso</h3></header><AdminFactGrid><AdminFact label="Estado" value={report.status}/><AdminFact label="Conversación" value={String(asRecord(report.chat_context).conversation_type??"—")}/><AdminFact label="Reporte" value={shortId(report.id)} mono/><AdminFact label="Mensaje" value={shortId(report.reported_content_id)} mono/></AdminFactGrid><p>{report.details??"Sin detalle adicional"}</p></section>
+        </aside>
+      </div>
       <section className="detail-card">
         <h3>Acción administrativa</h3>
         <textarea

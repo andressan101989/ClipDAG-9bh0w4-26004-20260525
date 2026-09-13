@@ -6,9 +6,10 @@ const migrationPath=new URL("../supabase/migrations/20260911231907_superuser_a8_
 const correctivePath=new URL("../supabase/migrations/20260911232103_superuser_a8_finance_audit_system_health_f1_reference_type.sql",import.meta.url);
 const appPath=new URL("../apps/admin-web/src/App.tsx",import.meta.url);
 const shellPath=new URL("../apps/admin-web/src/layout/AdminShell.tsx",import.meta.url);
+const navigationPath=new URL("../apps/admin-web/src/layout/adminNavigation.ts",import.meta.url);
 const apiPath=new URL("../apps/admin-web/src/lib/adminObservabilityApi.ts",import.meta.url);
 const pagePath=new URL("../apps/admin-web/src/pages/AdminFinanceAuditSystemPages.tsx",import.meta.url);
-const [sql,app,shell,api,pages]=await Promise.all([migrationPath,appPath,shellPath,apiPath,pagePath].map((path)=>readFile(path,"utf8")));
+const [sql,app,shell,navigation,api,pages]=await Promise.all([migrationPath,appPath,shellPath,navigationPath,apiPath,pagePath].map((path)=>readFile(path,"utf8")));
 const corrective=await readFile(correctivePath,"utf8");
 
 const publicFunctions=[
@@ -117,7 +118,7 @@ test("A8 UI contains no mutating financial or cron controls",()=>{
 });
 
 test("FINANCE and SYSTEM navigation remain capability-driven",()=>{
-  assert.match(shell,/group:"FINANZAS"/);
-  assert.match(shell,/group:"SISTEMA"/);
-  assert.doesNotMatch(shell,/FINANCE_AUDITOR|PLATFORM_ADMIN|SUPER_ADMIN/);
+  for(const capability of ["finance.ledger.read","finance.reconciliation.read","finance.anomalies.read","system.health.read","system.jobs.read","system.audit.read"])assert.match(navigation,new RegExp(capability.replaceAll(".","\\.")));
+  assert.match(shell,/sectionLinks/);
+  assert.doesNotMatch(shell+navigation,/FINANCE_AUDITOR|PLATFORM_ADMIN|SUPER_ADMIN/);
 });

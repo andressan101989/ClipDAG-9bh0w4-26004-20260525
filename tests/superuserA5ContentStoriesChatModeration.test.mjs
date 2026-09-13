@@ -5,6 +5,7 @@ import {readFileSync} from "node:fs";
 const migration=readFileSync(new URL("../supabase/migrations/20260911200240_superuser_a5_content_stories_chat_moderation.sql",import.meta.url),"utf8");
 const app=readFileSync(new URL("../apps/admin-web/src/App.tsx",import.meta.url),"utf8");
 const shell=readFileSync(new URL("../apps/admin-web/src/layout/AdminShell.tsx",import.meta.url),"utf8");
+const navigation=readFileSync(new URL("../apps/admin-web/src/layout/adminNavigation.ts",import.meta.url),"utf8");
 const api=readFileSync(new URL("../apps/admin-web/src/lib/adminApi.ts",import.meta.url),"utf8");
 const reportService=readFileSync(new URL("../services/reportService.ts",import.meta.url),"utf8");
 
@@ -85,7 +86,7 @@ test("reported Chat moderation accepts no message id and preserves row, receipts
 });
 
 test("Admin Web exposes only capability-routed A5 modules",()=>{
-  for(const [route,cap] of [["/content","content.items.read"],["/stories","stories.items.read"],["/chat/reports","chat.abuse_reports.read"]]){assert.match(app,new RegExp(route.replaceAll("/","\\/")));assert.match(app,new RegExp(cap.replaceAll(".","\\.")));assert.match(shell,new RegExp(cap.replaceAll(".","\\.")));}
+  for(const [route,cap] of [["/content","content.items.read"],["/stories","stories.items.read"],["/chat/reports","chat.abuse_reports.read"]]){assert.match(app,new RegExp(route.replaceAll("/","\\/")));assert.match(app,new RegExp(cap.replaceAll(".","\\.")));assert.match(navigation,new RegExp(cap.replaceAll(".","\\.")));}
   assert.match(api,/rpc\("admin_moderate_content"/);assert.match(api,/rpc\("admin_moderate_story"/);assert.match(api,/rpc\("admin_moderate_reported_chat_message"/);
   assert.doesNotMatch(app,/browse conversations|global message search/i);
 });
