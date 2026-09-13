@@ -45,6 +45,4 @@ export function AdminMessageBubble({message,reported=false,media}:{message:Recor
   const sender=asRecord(message.sender);return <article className={`admin-message${reported?" reported":""}`}><AdminIdentity value={sender} compact/><div className="admin-message-body"><header><strong>{reported?"Mensaje reportado":humanValue(message.message_type,"Mensaje")}</strong><time>{formatDate(message.created_at)}</time></header>{message.text_excerpt?<p>{String(message.text_excerpt)}</p>:<p className="muted-text">{message.has_media===true?`Contenido ${humanValue(message.message_type,"multimedia")}`:"Sin texto visible"}</p>}{media}{message.audio_duration_ms!==null&&message.audio_duration_ms!==undefined?<small>Duración: {humanDuration(message.audio_duration_ms)}</small>:null}{message.hidden===true?<em className="badge warn">Oculto</em>:null}</div></article>
 }
 
-export function AdminTechnicalDetails({value}:{value:unknown}){return <details className="admin-technical"><summary>Ver datos técnicos</summary><pre>{JSON.stringify(value,null,2)}</pre></details>}
-
 export function AdminStatusPanel({title,detail,tone="neutral"}:{title:string;detail:string;tone?:"neutral"|"success"|"warning"|"danger"}){return <div className={`admin-status-panel ${tone}`}><i aria-hidden="true"/><div><strong>{title}</strong><span>{detail}</span></div></div>}

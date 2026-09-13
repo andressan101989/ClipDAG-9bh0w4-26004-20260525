@@ -3,15 +3,13 @@ import {join} from "node:path";
 import {render,screen} from "@testing-library/react";
 import {MemoryRouter} from "react-router-dom";
 import {describe,expect,it,vi} from "vitest";
-import {AdminMediaPreview,AdminMessageBubble,AdminTechnicalDetails} from "../components/AdminPresentation";
+import {AdminMediaPreview,AdminMessageBubble} from "../components/AdminPresentation";
 import {AdminReportSubject} from "../components/AdminReportSubject";
 
 vi.mock("../lib/adminApi",()=>({formatDate:(value:unknown)=>String(value??"—"),getAdminMediaUrl:vi.fn().mockResolvedValue("https://signed.example/media")}));
 
 describe("SUPERUSER-UI-PRESENTATION-A2-A4",()=>{
   it("forbids raw JSON renderers in every page",()=>{const pages=join(process.cwd(),"src","pages");for(const file of readdirSync(pages).filter((name)=>name.endsWith(".tsx"))){const source=readFileSync(join(pages,file),"utf8");expect(source,`${file} raw JSON`).not.toMatch(/<pre[\s\S]{0,120}JSON\.stringify|JSON\.stringify\([^)]*\)[\s\S]{0,120}<\/pre>/)}});
-
-  it("keeps technical details secondary and collapsed",()=>{render(<AdminTechnicalDetails value={{status:"safe"}}/>);const details=screen.getByText("Ver datos técnicos").closest("details");expect(details).not.toHaveAttribute("open");expect(details).toHaveTextContent('"status": "safe"')});
 
   it("renders public image, video and audio previews with native controls",()=>{const {rerender}=render(<AdminMediaPreview url="https://cdn.example/image.jpg" kind="image" alt="Imagen pública"/>);expect(screen.getByRole("img",{name:"Imagen pública"})).toHaveAttribute("src","https://cdn.example/image.jpg");rerender(<AdminMediaPreview url="https://cdn.example/video.mp4" kind="video" alt="Video público"/>);expect(screen.getByLabelText("Video público")).toHaveAttribute("controls");rerender(<AdminMediaPreview url="https://cdn.example/voice.m4a" kind="voice" alt="Audio reportado"/>);expect(screen.getByLabelText("Audio reportado")).toHaveAttribute("controls")});
 
