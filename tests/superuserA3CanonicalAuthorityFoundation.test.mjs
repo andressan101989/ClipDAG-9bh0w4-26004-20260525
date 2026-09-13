@@ -23,6 +23,13 @@ const auditScopeClosure = readFileSync(
   ),
   "utf8",
 );
+const rootRpcAuthRoleCompat = readFileSync(
+  new URL(
+    "../supabase/migrations/20260913171745_superadmin_root_rpc_auth_role_compat.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 const roles = [
   ["SUPER_ADMIN", false, true, true],
@@ -329,6 +336,45 @@ test("trusted root workflows are service-only, exclusive, atomic, and never invo
   assert.match(migration, /grant execute on function public\.admin_trusted_revoke_super_admin[^\n]*to service_role/);
   assert.doesNotMatch(migration, /(?:select|perform|call)\s+public\.admin_trusted_(?:provision|revoke)_super_admin/i);
   assert.match(migration, /a3_super_admin_must_not_be_provisioned/);
+});
+
+test("root RPC compatibility migration changes only JWT role resolution and preserves safeguards", () => {
+  const provisionStart = rootRpcAuthRoleCompat.indexOf(
+    "create or replace function public.admin_trusted_provision_super_admin",
+  );
+  const revokeStart = rootRpcAuthRoleCompat.indexOf(
+    "create or replace function public.admin_trusted_revoke_super_admin",
+  );
+  const grantsStart = rootRpcAuthRoleCompat.indexOf(
+    "revoke all on function public.admin_trusted_provision_super_admin",
+  );
+
+  assert.notEqual(provisionStart, -1);
+  assert.notEqual(revokeStart, -1);
+  assert.notEqual(grantsStart, -1);
+
+  const provision = rootRpcAuthRoleCompat.slice(provisionStart, revokeStart);
+  const revoke = rootRpcAuthRoleCompat.slice(revokeStart, grantsStart);
+
+  for (const body of [provision, revoke]) {
+    assert.match(body, /if coalesce\(auth\.role\(\),''\)<>'service_role'/);
+    assert.doesNotMatch(body, /request\.jwt\.claim\.role/);
+    assert.match(body, /security definer/);
+    assert.match(body, /set search_path to 'pg_catalog','private','public'/);
+    assert.match(body, /request_fingerprint<>v_fingerprint/);
+    assert.match(body, /errcode='23505',message='admin_idempotency_conflict'/);
+    assert.match(body, /'succeeded',false,true/);
+  }
+
+  assert.match(provision, /admin-super-admin-roster/);
+  assert.match(provision, /admin_root_requires_atomic_role_replacement/);
+  assert.match(provision, /'SUPER_ADMIN','trusted_operator',null,v_operator/);
+  assert.match(revoke, /admin-super-admin-roster/);
+  assert.match(revoke, /errcode='55000',message='admin_last_super_admin'/);
+  assert.match(rootRpcAuthRoleCompat, /revoke all on function public\.admin_trusted_provision_super_admin[\s\S]*?from public,anon,authenticated,service_role/);
+  assert.match(rootRpcAuthRoleCompat, /revoke all on function public\.admin_trusted_revoke_super_admin[\s\S]*?from public,anon,authenticated,service_role/);
+  assert.match(rootRpcAuthRoleCompat, /grant execute on function public\.admin_trusted_provision_super_admin[\s\S]*?to service_role/);
+  assert.match(rootRpcAuthRoleCompat, /grant execute on function public\.admin_trusted_revoke_super_admin[\s\S]*?to service_role/);
 });
 
 test("legacy Marketplace admin migrates only to MARKETPLACE_ADMIN with trusted provenance", () => {
