@@ -47,23 +47,24 @@ describe("UI-FINAL responsive Admin navigation", () => {
     await userEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     const navigation = screen.getByRole("navigation", { name: "Administración global" });
-    expect(within(navigation).getByRole("link", { name: "Marketplace" })).toHaveAttribute("href", "/marketplace");
+    expect(within(navigation).getByRole("button", { name: "Marketplace" })).toHaveAttribute("aria-expanded", "true");
+    expect(within(document.getElementById("admin-group-marketplace") as HTMLElement).getByRole("link", { name: "Resumen" })).toHaveAttribute("href", "/marketplace");
     const search = screen.getByRole("textbox", { name: "Buscar módulos y secciones" });
-    await userEvent.type(search, "Orders");
+    await userEvent.type(search, "Pedidos");
     const results = screen.getByRole("listbox", { name: "Rutas autorizadas" });
     const routes = [
       ["Marketplace", "/marketplace"],
-      ["Marketplace · Orders", "/marketplace/orders"],
-      ["Marketplace · Disputes", "/marketplace/disputes"],
-      ["Marketplace · Sellers", "/marketplace/sellers"],
-      ["Marketplace · Products", "/marketplace/products"],
+      ["Marketplace · Pedidos", "/marketplace/orders"],
+      ["Marketplace · Disputas", "/marketplace/disputes"],
+      ["Marketplace · Vendedores", "/marketplace/sellers"],
+      ["Marketplace · Productos", "/marketplace/products"],
       ["Marketplace · Creator Commerce", "/marketplace/creator-commerce"],
-      ["Marketplace · Promotions", "/marketplace/promotions"],
+      ["Marketplace · Promociones", "/marketplace/promotions"],
       ["Marketplace · Ads", "/marketplace/ads"],
-      ["Marketplace · Health", "/marketplace/health"],
-      ["Marketplace · Activity", "/marketplace/activity"],
+      ["Marketplace · Salud", "/marketplace/health"],
+      ["Marketplace · Actividad", "/marketplace/activity"],
     ];
-    expect(within(results).getByText("Marketplace · Orders")).toBeInTheDocument();
+    expect(within(results).getByText("Marketplace · Pedidos")).toBeInTheDocument();
     expect(within(results).getByText("/marketplace/orders")).toBeInTheDocument();
     routes.forEach(([name, href]) => expect(adminLinks).toEqual(expect.arrayContaining([expect.objectContaining({label:name,to:href})])));
   });

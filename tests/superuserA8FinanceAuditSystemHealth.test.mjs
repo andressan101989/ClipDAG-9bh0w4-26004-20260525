@@ -119,6 +119,8 @@ test("A8 UI contains no mutating financial or cron controls",()=>{
 
 test("FINANCE and SYSTEM navigation remain capability-driven",()=>{
   for(const capability of ["finance.ledger.read","finance.reconciliation.read","finance.anomalies.read","system.health.read","system.jobs.read","system.audit.read"])assert.match(navigation,new RegExp(capability.replaceAll(".","\\.")));
-  assert.match(shell,/sectionLinks/);
+  assert.match(shell,/authorizedChildren/);
+  assert.match(shell,/sidebar-group-children/);
+  assert.doesNotMatch(shell,/sectionLinks/);
   assert.doesNotMatch(shell+navigation,/FINANCE_AUDITOR|PLATFORM_ADMIN|SUPER_ADMIN/);
 });

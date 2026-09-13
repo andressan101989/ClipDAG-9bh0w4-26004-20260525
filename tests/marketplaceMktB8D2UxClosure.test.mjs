@@ -6,6 +6,7 @@ import test from "node:test";
 const root = process.cwd();
 const read = (path) => readFileSync(join(root, path), "utf8");
 const shell = read("apps/admin-web/src/layout/AdminShell.tsx");
+const navigation = read("apps/admin-web/src/layout/adminNavigation.ts");
 const dialog = read("apps/admin-web/src/components/ConfirmDialog.tsx");
 const operation = read("apps/admin-web/src/components/OperationConfirm.tsx");
 const adminCss = read("apps/admin-web/src/styles/admin.css");
@@ -16,11 +17,11 @@ const showcase = read("app/creator-showcase.tsx");
 
 test("B8D-006 provides a bounded responsive navigation without losing routes", () => {
   for (const path of ["orders", "disputes", "sellers", "products", "creator-commerce", "promotions", "ads", "health", "activity"])
-    assert(shell.includes(`/marketplace/${path}`), path);
+    assert(navigation.includes(`/marketplace/${path}`), path);
   for (const token of ["aria-controls", "aria-expanded", "nav-toggle", "is-open"])
     assert(shell.includes(token), token);
-  assert.match(adminCss, /@media\(max-width:720px\).*\.sidebar nav\.is-open\{display:grid\}/s);
-  assert.match(adminCss, /max-height:min\(62vh,480px\);overflow-y:auto/);
+  assert.match(adminCss, /@media\(max-width:900px\).*\.sidebar\.is-open\{transform:translateX\(0\)\}/s);
+  assert.match(adminCss, /\.sidebar\{[^}]*overflow:auto/);
   assert.match(adminTests, /keeps every Marketplace route reachable/);
 });
 
@@ -30,9 +31,9 @@ test("B8D-007 keeps critical operational headers readable through one responsive
     "MarketplaceIntelligencePages.tsx",
   ];
   pages.forEach((file) => assert(read(`apps/admin-web/src/pages/${file}`).includes("table-panel"), file));
-  for (const token of ["overflow-x:auto", "min-width:860px", "scrollbar-gutter:stable", ".table-head{display:grid"])
+  for (const token of ["overflow-x:auto", "min-width:860px", "scrollbar-gutter:stable", ".table-head,.table-row{display:grid"])
     assert(adminCss.includes(token), token);
-  assert.match(adminCss, /@media\(max-width:1050px\)\{\.table-head,\.table-row\{/);
+  assert.match(adminCss, /@media\(max-width:768px\).*\.table-head,\.table-row\{grid-template-columns/s);
 });
 
 test("B8D-008 uses an accessible app dialog and preserves privileged-action safety", () => {

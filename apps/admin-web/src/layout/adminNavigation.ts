@@ -1,6 +1,17 @@
 import type {AdminIconName} from "../components/AdminIcon";
 
-export type AdminLink={to:string;label:string;capability:string;icon:AdminIconName;primary?:boolean;end?:boolean};
+export type AdminNavigationGroup="finance"|"marketplace"|"system";
+export type AdminLink={
+  to:string;
+  label:string;
+  capability:string;
+  icon:AdminIconName;
+  primary?:boolean;
+  end?:boolean;
+  group?:AdminNavigationGroup;
+  sectionLabel?:string;
+};
+
 export const adminLinks:AdminLink[]=[
   {to:"/overview",label:"Overview",capability:"admin.shell.access",icon:"overview",primary:true,end:true},
   {to:"/users",label:"Users",capability:"users.accounts.read",icon:"users",primary:true},
@@ -11,25 +22,25 @@ export const adminLinks:AdminLink[]=[
   {to:"/live",label:"LIVE",capability:"live.sessions.read",icon:"live",primary:true},
   {to:"/battles",label:"Battles",capability:"battles.sessions.read",icon:"battles",primary:true},
   {to:"/media",label:"Media",capability:"media.assets.read",icon:"media",primary:true},
-  {to:"/finance",label:"Finance",capability:"finance.ledger.read",icon:"finance",primary:true,end:true},
-  {to:"/finance/accounts",label:"Finance · Accounts",capability:"finance.ledger.read",icon:"finance"},
-  {to:"/finance/transactions",label:"Finance · Transactions",capability:"finance.ledger.read",icon:"finance"},
-  {to:"/finance/reconciliation",label:"Finance · Reconciliation",capability:"finance.reconciliation.read",icon:"finance"},
-  {to:"/finance/anomalies",label:"Finance · Anomalies",capability:"finance.anomalies.read",icon:"finance"},
-  {to:"/finance/audit",label:"Finance · Audit",capability:"finance.audit.read",icon:"finance"},
-  {to:"/marketplace",label:"Marketplace",capability:"marketplace.overview.read",icon:"marketplace",primary:true,end:true},
-  {to:"/marketplace/orders",label:"Marketplace · Orders",capability:"marketplace.orders.read",icon:"marketplace"},
-  {to:"/marketplace/disputes",label:"Marketplace · Disputes",capability:"marketplace.disputes.read",icon:"marketplace"},
-  {to:"/marketplace/sellers",label:"Marketplace · Sellers",capability:"marketplace.sellers.read",icon:"marketplace"},
-  {to:"/marketplace/products",label:"Marketplace · Products",capability:"marketplace.products.read",icon:"marketplace"},
-  {to:"/marketplace/creator-commerce",label:"Marketplace · Creator Commerce",capability:"marketplace.creators.read",icon:"marketplace"},
-  {to:"/marketplace/promotions",label:"Marketplace · Promotions",capability:"marketplace.promotions.read",icon:"marketplace"},
-  {to:"/marketplace/ads",label:"Marketplace · Ads",capability:"marketplace.ads.read",icon:"marketplace"},
-  {to:"/marketplace/health",label:"Marketplace · Health",capability:"marketplace.health.read",icon:"marketplace"},
-  {to:"/marketplace/activity",label:"Marketplace · Activity",capability:"marketplace.audit.read",icon:"marketplace"},
+  {to:"/finance",label:"Finance",capability:"finance.ledger.read",icon:"finance",primary:true,end:true,group:"finance",sectionLabel:"Resumen"},
+  {to:"/finance/accounts",label:"Finance · Cuentas",capability:"finance.ledger.read",icon:"finance",group:"finance",sectionLabel:"Cuentas"},
+  {to:"/finance/transactions",label:"Finance · Transacciones",capability:"finance.ledger.read",icon:"finance",group:"finance",sectionLabel:"Transacciones"},
+  {to:"/finance/reconciliation",label:"Finance · Reconciliación",capability:"finance.reconciliation.read",icon:"finance",group:"finance",sectionLabel:"Reconciliación"},
+  {to:"/finance/anomalies",label:"Finance · Anomalías",capability:"finance.anomalies.read",icon:"finance",group:"finance",sectionLabel:"Anomalías"},
+  {to:"/finance/audit",label:"Finance · Auditoría",capability:"finance.audit.read",icon:"finance",group:"finance",sectionLabel:"Auditoría"},
+  {to:"/marketplace",label:"Marketplace",capability:"marketplace.overview.read",icon:"marketplace",primary:true,end:true,group:"marketplace",sectionLabel:"Resumen"},
+  {to:"/marketplace/orders",label:"Marketplace · Pedidos",capability:"marketplace.orders.read",icon:"marketplace",group:"marketplace",sectionLabel:"Pedidos"},
+  {to:"/marketplace/disputes",label:"Marketplace · Disputas",capability:"marketplace.disputes.read",icon:"marketplace",group:"marketplace",sectionLabel:"Disputas"},
+  {to:"/marketplace/sellers",label:"Marketplace · Vendedores",capability:"marketplace.sellers.read",icon:"marketplace",group:"marketplace",sectionLabel:"Vendedores"},
+  {to:"/marketplace/products",label:"Marketplace · Productos",capability:"marketplace.products.read",icon:"marketplace",group:"marketplace",sectionLabel:"Productos"},
+  {to:"/marketplace/creator-commerce",label:"Marketplace · Creator Commerce",capability:"marketplace.creators.read",icon:"marketplace",group:"marketplace",sectionLabel:"Creator Commerce"},
+  {to:"/marketplace/promotions",label:"Marketplace · Promociones",capability:"marketplace.promotions.read",icon:"marketplace",group:"marketplace",sectionLabel:"Promociones"},
+  {to:"/marketplace/ads",label:"Marketplace · Ads",capability:"marketplace.ads.read",icon:"marketplace",group:"marketplace",sectionLabel:"Ads"},
+  {to:"/marketplace/health",label:"Marketplace · Salud",capability:"marketplace.health.read",icon:"marketplace",group:"marketplace",sectionLabel:"Salud"},
+  {to:"/marketplace/activity",label:"Marketplace · Actividad",capability:"marketplace.audit.read",icon:"marketplace",group:"marketplace",sectionLabel:"Actividad"},
   {to:"/audit",label:"Audit",capability:"admin.audit.read",icon:"audit",primary:true},
-  {to:"/system",label:"System",capability:"system.health.read",icon:"system",primary:true,end:true},
-  {to:"/system/jobs",label:"System · Jobs",capability:"system.jobs.read",icon:"system"},
-  {to:"/system/audit",label:"System · Audit",capability:"system.audit.read",icon:"system"},
+  {to:"/system",label:"System",capability:"system.health.read",icon:"system",primary:true,end:true,group:"system",sectionLabel:"Salud"},
+  {to:"/system/jobs",label:"System · Jobs",capability:"system.jobs.read",icon:"system",group:"system",sectionLabel:"Jobs"},
+  {to:"/system/audit",label:"System · Auditoría",capability:"system.audit.read",icon:"system",group:"system",sectionLabel:"Auditoría"},
   {to:"/access",label:"Access",capability:"admin.roles.read",icon:"access",primary:true},
 ];

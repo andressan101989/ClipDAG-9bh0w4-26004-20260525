@@ -3,26 +3,36 @@ import {NavLink,Outlet,useLocation,useNavigate} from "react-router-dom";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
 import {AdminIcon} from "../components/AdminIcon";
 import {NelyonBrand} from "../components/NelyonBrand";
-import {adminLinks} from "./adminNavigation";
+import {adminLinks,type AdminNavigationGroup} from "./adminNavigation";
 
 const initials=(name:string)=>name.split(/\s+/).filter(Boolean).slice(0,2).map((part)=>part[0]?.toUpperCase()).join("")||"AD";
 
 export function AdminShell(){
   const {admin,hasCapability,logout}=useAdminAuth(),location=useLocation(),navigate=useNavigate();
-  const [navigationOpen,setNavigationOpen]=useState(false),[query,setQuery]=useState(""),searchRef=useRef<HTMLInputElement>(null);
+  const [navigationOpen,setNavigationOpen]=useState(false),[query,setQuery]=useState(""),[groupOverrides,setGroupOverrides]=useState<Partial<Record<AdminNavigationGroup,boolean>>>({}),searchRef=useRef<HTMLInputElement>(null);
   const authorized=useMemo(()=>adminLinks.filter((link)=>hasCapability(link.capability)),[hasCapability]);
-  const primary=authorized.filter((link)=>link.primary);
+  const primary=adminLinks.filter((link)=>link.primary&&(!link.group?hasCapability(link.capability):authorized.some((candidate)=>candidate.group===link.group)));
   const results=query.trim()?authorized.filter((link)=>link.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).slice(0,8):[];
   const match=[...authorized].sort((a,b)=>b.to.length-a.to.length).find((link)=>location.pathname===link.to||location.pathname.startsWith(`${link.to}/`));
+  const groupRoots=primary.filter((link)=>link.group);
+  const authorizedChildren=(group:AdminNavigationGroup)=>authorized.filter((link)=>link.group===group);
+  const broadNavigation=groupRoots.length===3&&groupRoots.every((link)=>authorizedChildren(link.group as AdminNavigationGroup).length>=2);
+  const activeGroup=match?.group;
+  const isExpanded=(group:AdminNavigationGroup)=>groupOverrides[group]??(activeGroup===group||broadNavigation);
   useEffect(()=>{setNavigationOpen(false);setQuery("")},[location.pathname]);
   useEffect(()=>{const key=(event:KeyboardEvent)=>{if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==="k"){event.preventDefault();searchRef.current?.focus()}if(event.key==="Escape"){setNavigationOpen(false);setQuery("");searchRef.current?.blur()}};window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key)},[]);
   const identity=admin?.display_name??admin?.username??"Admin",role=admin?.roles.join(" · ")??"";
-  const sectionPrefix=["/finance","/marketplace","/system"].find((prefix)=>location.pathname===prefix||location.pathname.startsWith(`${prefix}/`));
-  const sectionLinks=sectionPrefix?authorized.filter((link)=>link.to===sectionPrefix||link.to.startsWith(`${sectionPrefix}/`)):[];
   return <div className="admin-layout">
     <aside className={`sidebar ${navigationOpen?"is-open":""}`} aria-label="Admin sidebar">
       <NelyonBrand role={role}/>
-      <nav id="admin-navigation" aria-label="Administración global">{primary.map((link)=><NavLink end={link.end} to={link.to} key={link.to}><AdminIcon name={link.icon}/><span>{link.label}</span></NavLink>)}</nav>
+      <nav id="admin-navigation" aria-label="Administración global">{primary.map((link)=>{
+        if(!link.group)return <NavLink end={link.end} to={link.to} key={link.to}><AdminIcon name={link.icon}/><span>{link.label}</span></NavLink>;
+        const group=link.group,children=authorizedChildren(group),expanded=isExpanded(group),active=activeGroup===group,controls=`admin-group-${group}`;
+        return <div className="sidebar-group" key={group}>
+          <button aria-controls={controls} aria-expanded={expanded} className={`sidebar-group-toggle${active?" is-active":""}`} onClick={()=>setGroupOverrides((current)=>({...current,[group]:!expanded}))} type="button"><AdminIcon name={link.icon}/><span>{link.label}</span><span aria-hidden="true" className="sidebar-group-chevron">{expanded?"−":"+"}</span></button>
+          {expanded&&<div className="sidebar-group-children" id={controls}>{children.map((child)=><NavLink end={child.end} to={child.to} key={child.to}>{child.sectionLabel??child.label}</NavLink>)}</div>}
+        </div>;
+      })}</nav>
       <div className="brand-card"><strong>Secure<br/>Scalable<br/>Creator Economy</strong><small>PEOPLE · CREATORS · OPPORTUNITIES</small></div>
     </aside>
     {navigationOpen&&<button aria-label="Cerrar navegación" className="nav-scrim" onClick={()=>setNavigationOpen(false)} type="button"/>}
@@ -33,7 +43,7 @@ export function AdminShell(){
         <div className="current-module"><span>{match?.label??"Admin Console"}</span></div>
         <div className="admin-identity"><span className="avatar">{initials(identity)}</span><div><strong>{identity}</strong><small>{role}</small></div><button aria-label="Cerrar sesión" className="icon-button" onClick={()=>void logout()} title="Cerrar sesión" type="button"><AdminIcon name="logout"/></button></div>
       </header>
-      <main className="content">{sectionLinks.length>1&&<nav className="admin-section-nav" aria-label={`Secciones de ${sectionPrefix?.slice(1)}`}>{sectionLinks.map((link)=><NavLink end={link.end} to={link.to} key={link.to}>{link.label.split(" · ").at(-1)}</NavLink>)}</nav>}<Outlet/></main>
+      <main className="content"><Outlet/></main>
     </div>
   </div>
 }
