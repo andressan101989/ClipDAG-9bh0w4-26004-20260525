@@ -38,12 +38,38 @@ def crop_official_variants() -> tuple[Image.Image, Image.Image, Image.Image]:
     left, top, right, bottom = bounds
     wordmark = horizontal.crop((max(0, left - 20), max(0, top - 20), min(horizontal.width, right + 20), min(horizontal.height, bottom + 20)))
 
-    dark = Image.open(BRAND / "nelyon-logo-dark.png").convert("RGB")
-    wordmark_on_dark = dark.crop((200, 300, 1470, 640))
+    # The dark header variant must stay transparent. The previous implementation
+    # cropped the RGB presentation board, which baked a navy rectangle into every
+    # in-app header. Keep the approved symbol pixels and turn only the wordmark
+    # portion white for contrast on Nelyon's dark surfaces.
+    wordmark_on_dark = wordmark.copy()
+    pixels = wordmark_on_dark.load()
+    for y in range(wordmark_on_dark.height):
+        for x in range(480, wordmark_on_dark.width):
+            red, green, blue, alpha_value = pixels[x, y]
+            if alpha_value:
+                luminance = max(red, green, blue)
+                white = max(238, luminance)
+                pixels[x, y] = (white, white, white, alpha_value)
 
     transparent = Image.open(BRAND / "nelyon-transparent-assets.png").convert("RGBA")
     symbol = transparent.crop((150, 490, 770, 860))
     return wordmark, wordmark_on_dark, symbol
+
+
+def create_full_bleed_app_icon(symbol: Image.Image) -> Image.Image:
+    visible_bounds = symbol.getchannel("A").getbbox()
+    if visible_bounds is None:
+        raise RuntimeError("The official Nelyon symbol has no visible pixels")
+    visible_symbol = symbol.crop(visible_bounds)
+    fitted_symbol = resize_contain(visible_symbol, (820, 620))
+    icon = Image.new("RGB", (1024, 1024), (12, 31, 79))
+    icon.paste(
+        fitted_symbol,
+        ((icon.width - fitted_symbol.width) // 2, (icon.height - fitted_symbol.height) // 2),
+        fitted_symbol,
+    )
+    return icon
 
 
 def main() -> None:
@@ -63,7 +89,8 @@ def main() -> None:
     notification.alpha_composite(notification_glyph, ((96 - notification_glyph.width) // 2, (96 - notification_glyph.height) // 2))
     save_png(notification, BRAND / "nelyon-notification-icon.png")
 
-    app_icon = Image.open(BRAND / "nelyon-app-icon.png").convert("RGB")
+    app_icon = create_full_bleed_app_icon(symbol)
+    save_png(app_icon, BRAND / "nelyon-app-icon.png")
     favicon = app_icon.resize((256, 256), RESAMPLING)
     save_png(favicon, BRAND / "nelyon-favicon.png")
 

@@ -10,6 +10,7 @@ const pngDimensions = (path) => {
   assert.deepEqual([...bytes.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
   return [bytes.readUInt32BE(16), bytes.readUInt32BE(20)];
 };
+const pngColorType = path => readFileSync(path)[25];
 
 test('Expo and native display metadata use Nelyon without changing app identity', () => {
   const app = JSON.parse(read('app.json')).expo;
@@ -31,7 +32,7 @@ test('canonical Nelyon assets are present, valid, and wired to Expo', () => {
   const assets = [
     ['assets/branding/nelyon/v1/nelyon-logo-horizontal.png', [1672, 941], '2bb677e9c0584cd36d90a1c5cedb31cc61f91d127f79992b2c23bbb68c0f9d9d'],
     ['assets/branding/nelyon/v1/nelyon-logo-dark.png', [1672, 941], 'bd0c4cdae26bd7525e60916965a56f9781cb21c9dd52334315939730d65ff0df'],
-    ['assets/branding/nelyon/v1/nelyon-app-icon.png', [1254, 1254], 'fef09edb9c4026b93f3720b169e928e8cf30c911d48715c01ecd952f6e932d35'],
+    ['assets/branding/nelyon/v1/nelyon-app-icon.png', [1024, 1024], 'f8b6fa6a12277878f322c16650f156ddfe89af6087420f8fd4134bb08b80e2dd'],
     ['assets/branding/nelyon/v1/nelyon-transparent-assets.png', [1672, 941], '26e147fdc39831c6fa7aec1cd9a07a0c7f6fe76a5ca4cc8da43a350dc3bb867d'],
   ];
   for (const [path, dimensions, hash] of assets) {
@@ -41,6 +42,11 @@ test('canonical Nelyon assets are present, valid, and wired to Expo', () => {
   assert.equal(app.icon, './assets/branding/nelyon/v1/nelyon-app-icon.png');
   assert.equal(app.android.adaptiveIcon.foregroundImage, './assets/branding/nelyon/v1/nelyon-adaptive-foreground.png');
   assert.equal(app.web.favicon, './assets/branding/nelyon/v1/nelyon-favicon.png');
+  assert.equal(pngColorType('assets/branding/nelyon/v1/nelyon-app-icon.png'), 2, 'app icon must be opaque/full-bleed');
+  assert.equal(pngColorType('assets/branding/nelyon/v1/nelyon-wordmark-on-dark.png'), 6, 'dark wordmark must preserve transparency');
+  const generator = read('scripts/generate-nelyon-brand-assets.py');
+  assert.match(generator, /create_full_bleed_app_icon/);
+  assert.doesNotMatch(generator, /wordmark_on_dark\s*=\s*dark\.crop/);
 });
 
 test('active customer-facing brand surfaces contain no legacy product name', () => {
@@ -57,6 +63,26 @@ test('active customer-facing brand surfaces contain no legacy product name', () 
   }
   assert.match(read('components/feature/PushNotificationHandler.tsx'), /cuando Nelyon esté cerrada/);
   assert.match(read('components/feature/IosCallKitActionHandler.tsx'), />NELYON<\/Text>/);
+});
+
+test('shop and commerce surfaces contain no visible legacy branding literal', () => {
+  const paths = [
+    'components/live/shop/LiveHostShopManager.tsx',
+    'components/live/shop/LiveShopHud.tsx',
+    'components/live/shop/LiveProductBagSheet.tsx',
+    'components/live/shop/LiveProductQuickView.tsx',
+    'components/live/shop/LivePurchaseSuccess.tsx',
+    'components/live/commerce/LiveViewerCommerce.tsx',
+    'components/live/commerce/LiveFeaturedProductCard.tsx',
+    'components/design/Commerce.tsx',
+  ];
+  const legacy = /ClipDAG|ClickDAG|ClickDAC|OnSpace|OnSpend/i;
+  for (const path of paths) {
+    const source = read(path);
+    const jsxText = [...source.matchAll(/>([^<{]+)</g)].map(match => match[1]);
+    const visibleProps = [...source.matchAll(/(?:accessibilityLabel|detail|eyebrow|label|placeholder|title)=["']([^"']+)["']/g)].map(match => match[1]);
+    assert.doesNotMatch([...jsxText, ...visibleProps].join('\n'), legacy, path);
+  }
 });
 
 test('legal copy preserves the baseline legal and financial meaning', () => {
