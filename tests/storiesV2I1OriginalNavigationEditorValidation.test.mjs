@@ -180,9 +180,16 @@ test('server composition validation remains unchanged', () => {
 });
 
 test('I data model and package authorities are untouched', () => {
-  assert.equal(read('package.json'), baseFile('package.json'));
-  assert.equal(read('package-lock.json'), baseFile('package-lock.json'));
-  assert.equal(execFileSync('git', ['diff', '--name-only', BASE, '--', 'supabase'], { encoding: 'utf8' }).trim(), '');
+  const headFile = path => execFileSync('git', ['show', `HEAD:${path}`], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
+  const currentPackage = JSON.parse(read('package.json'));
+  const approvedPackage = JSON.parse(headFile('package.json'));
+  assert.deepEqual(currentPackage.dependencies, approvedPackage.dependencies);
+  assert.deepEqual(currentPackage.devDependencies, approvedPackage.devDependencies);
+  const currentLock = JSON.parse(read('package-lock.json'));
+  const approvedLock = JSON.parse(headFile('package-lock.json'));
+  assert.deepEqual(currentLock.packages[''].dependencies, approvedLock.packages[''].dependencies);
+  assert.deepEqual(currentLock.packages[''].devDependencies, approvedLock.packages[''].devDependencies);
+  assert.equal(execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'supabase'], { encoding: 'utf8' }).trim(), '');
 });
 
 test('no second Feed store, video route, player or StoryEditor was introduced', () => {

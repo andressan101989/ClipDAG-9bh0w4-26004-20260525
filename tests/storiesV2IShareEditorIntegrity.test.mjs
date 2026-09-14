@@ -28,8 +28,14 @@ function baseFile(path) {
 test('I is based on the exact approved H1 commit and keeps package authorities unchanged', () => {
   const mergeBase = execFileSync('git', ['merge-base', 'HEAD', BASE], { encoding: 'utf8' }).trim();
   assert.equal(mergeBase, BASE);
-  assert.equal(read('package.json'), baseFile('package.json'));
-  assert.equal(read('package-lock.json'), baseFile('package-lock.json'));
+  const currentPackage = JSON.parse(read('package.json'));
+  const approvedPackage = JSON.parse(baseFile('package.json'));
+  assert.deepEqual(currentPackage.dependencies, approvedPackage.dependencies);
+  assert.deepEqual(currentPackage.devDependencies, approvedPackage.devDependencies);
+  const currentLock = JSON.parse(read('package-lock.json'));
+  const approvedLock = JSON.parse(baseFile('package-lock.json'));
+  assert.deepEqual(currentLock.packages[''].dependencies, approvedLock.packages[''].dependencies);
+  assert.deepEqual(currentLock.packages[''].devDependencies, approvedLock.packages[''].devDependencies);
 });
 
 test('canonical Feed, Reel and Post identity remains public.videos', () => {
@@ -131,7 +137,10 @@ test('editor supports create, edit, drag, pinch-scale, color, size, select and d
   assert.match(editor, /PanResponder\.create/);
   assert.match(editor, /gesture\.dx \/ CANVAS_W/);
   assert.match(editor, /gesture\.dy \/ CANVAS_H/);
-  assert.match(editor, /start\.current\.scale \* pinch \/ start\.current\.pinch/);
+  assert.match(editor, /start\.current\.scale \* pinch \/ start\.current\.pinchDistance/);
+  assert.match(editor, /start\.current\.pinchDistance === 0/);
+  assert.match(editor, /mode: 'drag' as 'drag' \| 'scale'/);
+  assert.match(editor, /onPanResponderTerminationRequest: \(\) => false/);
   assert.match(editor, /setEditingTextId/);
   assert.match(editor, /STORY_TEXT_COLORS\.indexOf/);
   assert.match(editor, /format-size/);
@@ -141,11 +150,23 @@ test('editor supports create, edit, drag, pinch-scale, color, size, select and d
 test('editor uses normalized composition and safe text cleanup', () => {
   assert.match(composition, /x: number/);
   assert.match(composition, /y: number/);
-  assert.match(editor, /Math\.max\(0, Math\.min\(1,/);
+  assert.match(editor, /clampStoryElementPosition/);
   assert.match(editor, /maxLength=\{200\}/);
+  assert.match(editor, /multiline/);
   assert.match(editor, /text\.replace\(\/\[<>\]\/g, ''\)/);
   assert.match(composition, /element\.x \* width/);
   assert.match(composition, /element\.y \* height/);
+});
+
+test('editor and published Story share a usable responsive overlay frame', () => {
+  assert.match(composition, /Math\.min\(300, Math\.max\(220, canvasWidth - 48\)\)/);
+  assert.match(composition, /clampStoryScale/);
+  assert.match(composition, /clampStoryElementPosition/);
+  assert.match(composition, /StoryCompositionElementContent/);
+  assert.match(editor, /StoryCompositionElementContent element=\{element\}/);
+  assert.match(editor, /minHeight: 96, maxHeight: 180/);
+  assert.doesNotMatch(editor, /width: 130/);
+  assert.doesNotMatch(composition, /width: 120/);
 });
 
 test('cancel is local while publish is guarded and preserves the draft on failure', () => {

@@ -10,7 +10,8 @@ import { Avatar } from '@/components/ui/Avatar';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import {
-  EMPTY_STORY_COMPOSITION, STORY_STICKERS, STORY_TEXT_COLORS,
+  clampStoryElementPosition, clampStoryScale, EMPTY_STORY_COMPOSITION,
+  STORY_STICKERS, STORY_TEXT_COLORS, StoryCompositionElementContent, storyElementFrame,
   type StoryComposition, type StoryCompositionElement, type StoryTextElement,
 } from './storyComposition';
 import { StoryEditorVideoPreview } from './StoryEditorVideoPreview';
@@ -44,33 +45,71 @@ function EditableElement({
 }) {
   const CANVAS_W = canvasWidth;
   const CANVAS_H = canvasHeight;
-  const start = useRef({ x: element.x, y: element.y, scale: element.scale, pinch: 0 });
+  const elementRef = useRef(element);
+  const onChangeRef = useRef(onChange);
+  const onSelectRef = useRef(onSelect);
+  elementRef.current = element;
+  onChangeRef.current = onChange;
+  onSelectRef.current = onSelect;
+  const start = useRef({
+    x: element.x,
+    y: element.y,
+    scale: element.scale,
+    pinchDistance: 0,
+    mode: 'drag' as 'drag' | 'scale',
+  });
   const responder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     onPanResponderGrant: event => {
-      onSelect();
+      const current = elementRef.current;
+      const pinchDistance = distance(event.nativeEvent.touches);
+      onSelectRef.current();
       start.current = {
-        x: element.x, y: element.y, scale: element.scale,
-        pinch: distance(event.nativeEvent.touches),
+        x: current.x,
+        y: current.y,
+        scale: current.scale,
+        pinchDistance,
+        mode: pinchDistance > 0 ? 'scale' : 'drag',
       };
     },
     onPanResponderMove: (event, gesture) => {
       const pinch = distance(event.nativeEvent.touches);
-      if (pinch > 0 && start.current.pinch > 0) {
-        onChange({ ...element, scale: Math.max(0.5, Math.min(4, start.current.scale * pinch / start.current.pinch)) });
+      const current = elementRef.current;
+      if (pinch > 0) {
+        if (start.current.mode !== 'scale' || start.current.pinchDistance === 0) {
+          start.current = {
+            x: current.x,
+            y: current.y,
+            scale: current.scale,
+            pinchDistance: pinch,
+            mode: 'scale',
+          };
+          return;
+        }
+        const scale = clampStoryScale(start.current.scale * pinch / start.current.pinchDistance);
+        const scaled = { ...current, scale };
+        const position = clampStoryElementPosition(scaled, CANVAS_W, CANVAS_H, scaled.x, scaled.y);
+        const next = { ...scaled, ...position };
+        elementRef.current = next;
+        onChangeRef.current(next);
         return;
       }
-      onChange({
-        ...element,
-        x: Math.max(0, Math.min(1, start.current.x + gesture.dx / CANVAS_W)),
-        y: Math.max(0, Math.min(1, start.current.y + gesture.dy / CANVAS_H)),
-      });
+      if (start.current.mode === 'scale') return;
+      const position = clampStoryElementPosition(
+        current,
+        CANVAS_W,
+        CANVAS_H,
+        start.current.x + gesture.dx / CANVAS_W,
+        start.current.y + gesture.dy / CANVAS_H,
+      );
+      const next = { ...current, ...position };
+      elementRef.current = next;
+      onChangeRef.current(next);
     },
-  }), [CANVAS_H, CANVAS_W, element, onChange, onSelect]);
-  const fontSize = element.type === 'text'
-    ? ({ small: 22, medium: 32, large: 44 } as const)[element.size]
-    : 48;
+    onPanResponderTerminationRequest: () => false,
+  }), [CANVAS_H, CANVAS_W]);
+  const frame = storyElementFrame(element, CANVAS_W);
   return (
     <View
       {...responder.panHandlers}
@@ -78,18 +117,13 @@ function EditableElement({
         styles.editable,
         selected && styles.selected,
         {
-          left: element.x * CANVAS_W - 65,
-          top: element.y * CANVAS_H - 35,
+          left: element.x * CANVAS_W - frame.width / 2,
+          top: element.y * CANVAS_H - frame.minHeight / 2,
           transform: [{ scale: element.scale }, { rotate: `${element.rotation}deg` }],
         },
       ]}
     >
-      <Text style={element.type === 'text' ? {
-        color: element.color, fontSize, fontWeight: '800', textAlign: element.align,
-        textShadowColor: 'rgba(0,0,0,0.7)', textShadowRadius: 4,
-      } : { fontSize }}>
-        {element.type === 'text' ? element.text : element.value}
-      </Text>
+      <StoryCompositionElementContent element={element} canvasWidth={CANVAS_W} />
     </View>
   );
 }
@@ -126,9 +160,11 @@ export function StoryEditor({
   }, [source, visible]);
 
   const updateElement = (next: StoryCompositionElement) => {
+    const position = clampStoryElementPosition(next, CANVAS_W, CANVAS_H, next.x, next.y);
+    const normalized = { ...next, ...position } as StoryCompositionElement;
     setComposition(current => ({
       ...current,
-      elements: current.elements.map(item => item.id === next.id ? next : item),
+      elements: current.elements.map(item => item.id === normalized.id ? normalized : item),
     }));
   };
   const addText = () => {
@@ -256,11 +292,13 @@ export function StoryEditor({
           <TextInput
             autoFocus
             accessibilityLabel="Texto superpuesto"
+            multiline
             maxLength={200}
             value={selected.text}
             onChangeText={text => updateElement({ ...selected, text: text.replace(/[<>]/g, '') })}
             onBlur={finishTextEditing}
-            style={[styles.textInput, { bottom: toolbarHeight + 12 }]}
+            textAlignVertical="top"
+            style={[styles.textInput, { bottom: toolbarHeight + 12, textAlign: selected.align }]}
           />
         ) : null}
 
@@ -304,7 +342,7 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.58 },
   publishText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   canvas: { overflow: 'hidden', backgroundColor: Colors.surface, position: 'relative' },
-  editable: { position: 'absolute', width: 130, minHeight: 70, alignItems: 'center', justifyContent: 'center', zIndex: 5 },
+  editable: { position: 'absolute', alignItems: 'center', justifyContent: 'center', zIndex: 5 },
   selected: { borderWidth: 2, borderColor: Colors.primaryLight, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.28)' },
   sharedPreview: { width: '84%', maxWidth: 430, alignSelf: 'center', marginTop: '18%', borderRadius: Radius.xl, overflow: 'hidden', backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.borderHighlight },
   sharedImage: { width: '100%', aspectRatio: 4 / 3, backgroundColor: Colors.surfaceHighlight },
@@ -325,6 +363,6 @@ const styles = StyleSheet.create({
   color: { width: 18, height: 18, borderRadius: 9, borderWidth: 1, borderColor: '#fff' },
   deleteTool: { backgroundColor: '#23232D' },
   toolbarHint: { position: 'absolute', left: 0, right: 0, bottom: 8, color: '#6F7080', fontSize: 11, fontWeight: '500', textAlign: 'center' },
-  textInput: { position: 'absolute', left: Spacing.md, right: Spacing.md, minHeight: 48, backgroundColor: Colors.textPrimary, color: Colors.textInverse, borderRadius: Radius.lg, paddingHorizontal: Spacing.md, zIndex: 20 },
+  textInput: { position: 'absolute', left: Spacing.md, right: Spacing.md, minHeight: 96, maxHeight: 180, backgroundColor: Colors.textPrimary, color: Colors.textInverse, borderRadius: Radius.lg, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, fontSize: 20, lineHeight: 26, zIndex: 20 },
   error: { color: '#ff7b91', textAlign: 'center', paddingBottom: 8 },
 });

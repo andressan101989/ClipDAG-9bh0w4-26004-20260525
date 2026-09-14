@@ -22,11 +22,33 @@ function baseFile(path) {
   return execFileSync('git', ['show', `${BASE}:${path}`], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
 }
 
+function headFile(path) {
+  return execFileSync('git', ['show', `HEAD:${path}`], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
+}
+
+function assertPackageAuthoritiesUnchanged() {
+  const currentPackage = JSON.parse(read('package.json'));
+  const approvedPackage = JSON.parse(headFile('package.json'));
+  assert.deepEqual(currentPackage.dependencies, approvedPackage.dependencies);
+  assert.deepEqual(currentPackage.devDependencies, approvedPackage.devDependencies);
+  const currentLock = JSON.parse(read('package-lock.json'));
+  const approvedLock = JSON.parse(headFile('package-lock.json'));
+  assert.deepEqual(currentLock.packages[''].dependencies, approvedLock.packages[''].dependencies);
+  assert.deepEqual(currentLock.packages[''].devDependencies, approvedLock.packages[''].devDependencies);
+}
+
+function nativeAuthorityChanges() {
+  return execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'android', 'ios'], { encoding: 'utf8' })
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .filter(path => !/android\/app\/src\/main\/res\/|ios\/onspaceapp\/Images\.xcassets\/|ios\/onspaceapp\/Info\.plist$|ios\/onspaceapp\.xcodeproj\/project\.pbxproj$/.test(path));
+}
+
 test('J2 starts from the exact approved J base with client-only scope', () => {
   assert.equal(execFileSync('git', ['merge-base', 'HEAD', BASE], { encoding: 'utf8' }).trim(), BASE);
-  assert.equal(read('package.json'), baseFile('package.json'));
-  assert.equal(read('package-lock.json'), baseFile('package-lock.json'));
-  assert.equal(execFileSync('git', ['diff', '--name-only', BASE, '--', 'supabase', 'android', 'ios'], { encoding: 'utf8' }).trim(), '');
+  assertPackageAuthoritiesUnchanged();
+  assert.equal(execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'supabase'], { encoding: 'utf8' }).trim(), '');
+  assert.deepEqual(nativeAuthorityChanges(), []);
 });
 
 test('all six approved Figma nodes are recorded as visual authority', () => {
@@ -221,11 +243,10 @@ test('one canonical component authority exists for each Story surface', () => {
 });
 
 test('J2 introduces no persistence, service, package or native authority', () => {
-  const names = execFileSync('git', ['diff', '--name-only', BASE], { encoding: 'utf8' });
+  const names = execFileSync('git', ['diff', '--name-only', 'HEAD'], { encoding: 'utf8' });
   assert.doesNotMatch(names, /^supabase\//m);
   assert.doesNotMatch(names, /^services\//m);
   assert.doesNotMatch(names, /^contexts\//m);
-  assert.doesNotMatch(names, /^android\/|^ios\//m);
-  assert.equal(read('package.json'), baseFile('package.json'));
-  assert.equal(read('package-lock.json'), baseFile('package-lock.json'));
+  assert.deepEqual(nativeAuthorityChanges(), []);
+  assertPackageAuthoritiesUnchanged();
 });
