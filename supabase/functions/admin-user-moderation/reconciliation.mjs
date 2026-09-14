@@ -120,3 +120,59 @@ export async function reconcileUserModeration({
     || (authoritative.value !== original.value ? "auth_state_changed" : "auth_state_not_applied");
   return finalizeOutcome(finalize, "failed", authoritative.value, failureCode);
 }
+
+export async function reconcileWarningEnforcement({ warning, prepareSuspension, reconcileSuspension }) {
+  if (!warning?.suspension_required) {
+    return {
+      required: false,
+      status: "not_required",
+      moderation_action_id: null,
+      account_status: warning?.account_status || null,
+    };
+  }
+
+  let prepared;
+  try {
+    prepared = await prepareSuspension();
+  } catch (error) {
+    return {
+      required: true,
+      status: "pending",
+      moderation_action_id: null,
+      account_status: warning.account_status || "active",
+      error: safeProviderCode(error),
+    };
+  }
+
+  let result;
+  try {
+    result = await reconcileSuspension(prepared);
+  } catch {
+    return {
+      required: true,
+      status: "pending",
+      moderation_action_id: prepared?.id || null,
+      account_status: warning.account_status || "active",
+      error: "reconciliation_unavailable",
+    };
+  }
+
+  if (result.kind === "succeeded") {
+    return {
+      required: true,
+      status: "succeeded",
+      moderation_action_id: prepared.id,
+      account_status: "suspended",
+      receipt: result.receipt,
+    };
+  }
+  return {
+    required: true,
+    status: result.kind === "retryable" ? "pending" : "failed",
+    moderation_action_id: prepared?.id || null,
+    account_status: warning.account_status || "active",
+    error: result.error,
+    provider_error_code: result.providerErrorCode || null,
+    receipt: result.receipt || null,
+  };
+}

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   reconcileUserModeration,
+  reconcileWarningEnforcement,
   requestedStateIsSatisfied,
 } from "../supabase/functions/admin-user-moderation/reconciliation.mjs";
 
@@ -160,4 +161,48 @@ test("desired-state predicates are provider-state-aware and time-safe", () => {
   assert.equal(requestedStateIsSatisfied("restore", "2026-09-11T18:29:59.000Z", NOW), true);
   assert.equal(requestedStateIsSatisfied("restore", FUTURE, NOW), false);
   assert.equal(requestedStateIsSatisfied("restore", "invalid", NOW), false);
+});
+
+test("a first or second warning never prepares an Auth suspension", async () => {
+  let prepares = 0;
+  const result = await reconcileWarningEnforcement({
+    warning: { suspension_required: false, account_status: "active" },
+    prepareSuspension: async () => { prepares += 1; },
+    reconcileSuspension: async () => { throw new Error("must not run"); },
+  });
+  assert.deepEqual(result, { required: false, status: "not_required", moderation_action_id: null, account_status: "active" });
+  assert.equal(prepares, 0);
+});
+
+test("third warning reuses the canonical prepared suspension and succeeds", async () => {
+  const prepared = command("suspend", null);
+  const result = await reconcileWarningEnforcement({
+    warning: { suspension_required: true, account_status: "active" },
+    prepareSuspension: async () => prepared,
+    reconcileSuspension: async (value) => ({ kind: "succeeded", receipt: { id: value.id, status: "succeeded" } }),
+  });
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.moderation_action_id, prepared.id);
+  assert.equal(result.account_status, "suspended");
+});
+
+test("third warning remains applied when suspension prepare needs attention", async () => {
+  const result = await reconcileWarningEnforcement({
+    warning: { suspension_required: true, account_status: "active" },
+    prepareSuspension: async () => { throw { code: "provider unavailable" }; },
+    reconcileSuspension: async () => { throw new Error("must not run"); },
+  });
+  assert.equal(result.status, "pending");
+  assert.equal(result.error, "provider_unavailable");
+});
+
+test("third warning exposes failed canonical enforcement without inventing a fourth warning", async () => {
+  const prepared = command("suspend", null);
+  const result = await reconcileWarningEnforcement({
+    warning: { suspension_required: true, account_status: "active" },
+    prepareSuspension: async () => prepared,
+    reconcileSuspension: async () => ({ kind: "failed", error: "auth_admin_failed", providerErrorCode: "provider_failure", receipt: prepared }),
+  });
+  assert.equal(result.status, "failed");
+  assert.equal(result.provider_error_code, "provider_failure");
 });

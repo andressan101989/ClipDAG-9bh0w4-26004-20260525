@@ -21,6 +21,7 @@ const NOTIF_CONFIG: Record<NotificationType, { icon: string; gradient: string[] 
   message:      { icon: 'message-text',    gradient: ['#2D9EFF', '#7C5CFF'] },
   sale:         { icon: 'shopping',        gradient: ['#00E5A0', '#2D9EFF'] },
   order_update: { icon: 'truck-delivery',  gradient: ['#2D9EFF', '#7C5CFF'] },
+  admin_warning:{ icon: 'shield-alert',    gradient: ['#FF8F70', '#D64242'] },
 };
 
 function NotifItem({ notif, onPress }: { notif: AppNotification; onPress: () => void }) {
@@ -50,7 +51,7 @@ function NotifItem({ notif, onPress }: { notif: AppNotification; onPress: () => 
 
         <View style={styles.notifContent}>
           <Text style={styles.notifText}>
-            <Text style={styles.notifUsername}>@{notif.fromUsername} </Text>
+            <Text style={styles.notifUsername}>{notif.type === 'admin_warning' ? `${notif.fromUsername} · ` : `@${notif.fromUsername} `}</Text>
             <Text>{notif.message}</Text>
           </Text>
           <Text style={styles.notifTime}>{timeAgo(notif.createdAt)}</Text>

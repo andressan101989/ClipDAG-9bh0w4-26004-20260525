@@ -22,6 +22,7 @@ const NOTIF_CONFIG: Record<NotificationType, { icon: string; gradient: [string, 
   message:      { icon: 'message-text',   gradient: ['#2D9EFF', '#7C5CFF'] },
   sale:         { icon: 'shopping',       gradient: ['#00E5A0', '#2D9EFF'] },
   order_update: { icon: 'truck-delivery', gradient: ['#2D9EFF', '#7C5CFF'] },
+  admin_warning:{ icon: 'shield-alert',   gradient: ['#FF8F70', '#D64242'] },
 };
 
 const AUTO_DISMISS_MS = 4000;
@@ -77,7 +78,7 @@ export function NotificationToast({ notification, onDismiss, onPress }: Notifica
           </View>
           <View style={styles.content}>
             <Text style={styles.text} numberOfLines={2}>
-              <Text style={styles.username}>@{notification.fromUsername} </Text>
+              <Text style={styles.username}>{notification.type === 'admin_warning' ? `${notification.fromUsername} · ` : `@${notification.fromUsername} `}</Text>
               {notification.message}
             </Text>
           </View>

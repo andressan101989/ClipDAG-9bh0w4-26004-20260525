@@ -8,7 +8,7 @@ import { PollingManager } from '@/modules/realtime/PollingManager';
 import { NotificationToast } from '@/components/feature/NotificationToast';
 
 export type NotificationType =
-  | 'like' | 'comment' | 'follow' | 'gift' | 'message' | 'sale' | 'order_update';
+  | 'like' | 'comment' | 'follow' | 'gift' | 'message' | 'sale' | 'order_update' | 'admin_warning';
 
 export interface AppNotification {
   id: string;
