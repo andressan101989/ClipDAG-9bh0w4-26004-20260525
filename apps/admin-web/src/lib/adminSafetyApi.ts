@@ -1,0 +1,13 @@
+import {supabase} from "./supabase";
+
+export type JsonRecord=Record<string,unknown>;
+const record=(value:unknown,name:string):JsonRecord=>{if(value===null||typeof value!=="object"||Array.isArray(value))throw new Error(`${name}: respuesta inválida`);return value as JsonRecord};
+async function rpc(name:string,args:JsonRecord={}){const {data,error}=await supabase.rpc(name,args);if(error)throw new Error(error.message||`No se pudo ejecutar ${name}`);return data as unknown}
+
+export const searchAdminContentSafetyAlerts=async(filters:JsonRecord={})=>record(await rpc("search_admin_content_safety_alerts",filters),"content_safety_alerts");
+export const getAdminContentSafetyAlert=async(id:string)=>record(await rpc("get_admin_content_safety_alert",{p_alert_id:id}),"content_safety_alert");
+export const searchAdminContentSafetyRules=async()=>record(await rpc("search_admin_content_safety_rules"),"content_safety_rules");
+export const createAdminContentSafetyRule=async(input:{label:string;category:string;detectorType:string;pattern:string;severity:string;scopes:string[];enabled:boolean;idempotencyKey:string})=>record(await rpc("admin_create_content_safety_rule",{p_label:input.label,p_category:input.category,p_detector_type:input.detectorType,p_pattern:input.pattern,p_severity:input.severity,p_scopes:input.scopes,p_enabled:input.enabled,p_idempotency_key:input.idempotencyKey}),"content_safety_rule_receipt");
+export const updateAdminContentSafetyRule=async(input:{id:string;severity:string;scopes:string[];enabled:boolean;idempotencyKey:string})=>record(await rpc("admin_update_content_safety_rule",{p_rule_id:input.id,p_severity:input.severity,p_scopes:input.scopes,p_enabled:input.enabled,p_idempotency_key:input.idempotencyKey}),"content_safety_rule_receipt");
+export const reviewAdminContentSafetyAlert=async(input:{id:string;action:"take_review"|"dismiss"|"resolve";resolution:string|null;note:string|null;idempotencyKey:string})=>record(await rpc("admin_review_content_safety_alert",{p_alert_id:input.id,p_action:input.action,p_resolution:input.resolution,p_note:input.note,p_idempotency_key:input.idempotencyKey}),"content_safety_alert_receipt");
+export const retryAdminContentSafetyScan=async(input:{id:string;idempotencyKey:string})=>record(await rpc("admin_retry_content_safety_scan",{p_scan_id:input.id,p_idempotency_key:input.idempotencyKey}),"content_safety_scan_receipt");

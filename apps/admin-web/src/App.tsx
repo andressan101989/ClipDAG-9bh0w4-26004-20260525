@@ -25,6 +25,7 @@ import {MarketplaceProductsPage} from "./pages/MarketplaceProductsPage";
 import {MarketplaceSellerDetailPage} from "./pages/MarketplaceSellerDetailPage";
 import {MarketplaceSellersPage} from "./pages/MarketplaceSellersPage";
 import {MarketplaceActivityPage,MarketplaceAdDetailPage,MarketplaceAdsPage,MarketplaceCreatorCommercePage,MarketplaceCreatorDetailPage,MarketplaceHealthPage,MarketplacePromotionDetailPage,MarketplacePromotionsPage} from "./pages/MarketplaceIntelligencePages";
+import {AdminContentSafetyDetailPage,AdminContentSafetyPage,AdminContentSafetyRulesPage} from "./pages/AdminContentSafetyPages";
 
 function DefaultAdminRoute(){const {hasCapability}=useAdminAuth();return hasCapability("admin.shell.access")?<Navigate to="/overview" replace/>:<main className="center-state"><div className="state-card"><h1>Sin módulos disponibles</h1><p>Tu acceso al shell no incluye todavía un módulo administrativo.</p></div></main>}
 
@@ -41,6 +42,8 @@ export function App(){return <Routes>
     <Route element={<CapabilityRoute capability="live.sessions.read"/>}><Route path="/live" element={<AdminLivePage/>}/><Route path="/live/:id" element={<AdminLiveDetailPage/>}/></Route>
     <Route element={<CapabilityRoute capability="battles.sessions.read"/>}><Route path="/battles" element={<AdminBattlesPage/>}/><Route path="/battles/:id" element={<AdminBattleDetailPage/>}/></Route>
     <Route element={<CapabilityRoute capability="media.assets.read"/>}><Route path="/media" element={<AdminMediaPage/>}/><Route path="/media/:id" element={<AdminMediaDetailPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="content.items.read"/>}><Route path="/content-safety" element={<AdminContentSafetyPage/>}/><Route path="/content-safety/:id" element={<AdminContentSafetyDetailPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="content.items.moderate"/>}><Route path="/content-safety/rules" element={<AdminContentSafetyRulesPage/>}/></Route>
     <Route element={<CapabilityRoute capability="finance.ledger.read"/>}><Route path="/finance" element={<AdminFinanceOverviewPage/>}/><Route path="/finance/accounts" element={<AdminLedgerAccountsPage/>}/><Route path="/finance/transactions" element={<AdminFinancialTransactionsPage/>}/><Route path="/finance/transactions/:id" element={<AdminFinancialTransactionDetailPage/>}/></Route>
     <Route element={<CapabilityRoute capability="finance.reconciliation.read"/>}><Route path="/finance/reconciliation" element={<AdminFinanceReconciliationPage/>}/></Route>
     <Route element={<CapabilityRoute capability="finance.anomalies.read"/>}><Route path="/finance/anomalies" element={<AdminFinanceAnomaliesPage/>}/></Route>

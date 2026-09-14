@@ -16,7 +16,7 @@ export function AdminShell(){
   const match=[...authorized].sort((a,b)=>b.to.length-a.to.length).find((link)=>location.pathname===link.to||location.pathname.startsWith(`${link.to}/`));
   const groupRoots=primary.filter((link)=>link.group);
   const authorizedChildren=(group:AdminNavigationGroup)=>authorized.filter((link)=>link.group===group);
-  const broadNavigation=groupRoots.length===3&&groupRoots.every((link)=>authorizedChildren(link.group as AdminNavigationGroup).length>=2);
+  const broadNavigation=groupRoots.length>=3&&groupRoots.every((link)=>authorizedChildren(link.group as AdminNavigationGroup).length>=2);
   const activeGroup=match?.group;
   const isExpanded=(group:AdminNavigationGroup)=>groupOverrides[group]??(activeGroup===group||broadNavigation);
   useEffect(()=>{setNavigationOpen(false);setQuery("")},[location.pathname]);

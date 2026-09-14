@@ -27,16 +27,18 @@ function renderShell(path:string){
 beforeEach(()=>vi.mocked(useAdminAuth).mockReturnValue(access(adminLinks.map((link)=>link.capability)) as never));
 
 describe("ADMIN-SUPERPANEL-FULL-F1 navigation",()=>{
-  it("shows every Finance, Marketplace and System child for capability breadth without checking a role",()=>{
+  it("shows every grouped child, including Content Safety, for capability breadth without checking a role",()=>{
     renderShell("/overview");
     const navigation=screen.getByRole("navigation",{name:"Administración global"});
     const expected={
       finance:["Resumen","Cuentas","Transacciones","Reconciliación","Anomalías","Auditoría"],
       marketplace:["Resumen","Pedidos","Disputas","Vendedores","Productos","Creator Commerce","Promociones","Ads","Salud","Actividad"],
       system:["Salud","Jobs","Auditoría"],
+      content_safety:["Alertas","Reglas"],
     };
     for(const [group,labels] of Object.entries(expected)){
-      const button=within(navigation).getByRole("button",{name:new RegExp(`^${group}`,"i")});
+      const groupLabel=group==="content_safety"?"Content Safety":group;
+      const button=within(navigation).getByRole("button",{name:new RegExp(`^${groupLabel}`,"i")});
       expect(button).toHaveAttribute("aria-expanded","true");
       const children=document.getElementById(`admin-group-${group}`);
       expect(children).not.toBeNull();
