@@ -70,6 +70,7 @@ test('active customer-facing brand surfaces contain no legacy product name', () 
 
 test('shop and commerce surfaces contain no visible legacy branding literal', () => {
   const paths = [
+    'app/(tabs)/shop.tsx',
     'components/live/shop/LiveHostShopManager.tsx',
     'components/live/shop/LiveShopHud.tsx',
     'components/live/shop/LiveProductBagSheet.tsx',
@@ -79,13 +80,18 @@ test('shop and commerce surfaces contain no visible legacy branding literal', ()
     'components/live/commerce/LiveFeaturedProductCard.tsx',
     'components/design/Commerce.tsx',
   ];
-  const legacy = /ClipDAG|ClickDAG|ClickDAC|OnSpace|OnSpend/i;
+  const legacy = /clipdag|clickdag|clickdac|onspace|onspend|onspain/i;
   for (const path of paths) {
     const source = read(path);
     const jsxText = [...source.matchAll(/>([^<{]+)</g)].map(match => match[1]);
     const visibleProps = [...source.matchAll(/(?:accessibilityLabel|detail|eyebrow|label|placeholder|title)=["']([^"']+)["']/g)].map(match => match[1]);
-    assert.doesNotMatch([...jsxText, ...visibleProps].join('\n'), legacy, path);
+    const visibleBranding = [...jsxText, ...visibleProps].join('\n').replace(/\s+/g, '');
+    assert.doesNotMatch(visibleBranding, legacy, path);
   }
+
+  const shop = read('app/(tabs)/shop.tsx');
+  assert.match(shop, /import \{ NelyonLogo \} from "@\/components\/ui\/NelyonLogo";/);
+  assert.match(shop, /<NelyonLogo onDark style=\{styles\.headerBrand\} \/>/);
 });
 
 test('legal copy preserves the baseline legal and financial meaning', () => {

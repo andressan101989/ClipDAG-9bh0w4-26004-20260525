@@ -13,7 +13,7 @@ const saves = read("contexts/ShopContext.tsx");
 
 test("active Shop route implements the authoritative premium hierarchy", () => {
   for (const token of [
-    "O N S P A C E",
+    "NelyonLogo",
     "Tienda",
     "Compra productos físicos y digitales",
     "Buscar productos",
@@ -27,7 +27,7 @@ test("active Shop route implements the authoritative premium hierarchy", () => {
   ])
     assert(shop.includes(token), token);
 
-  const header = shop.indexOf("O N S P A C E");
+  const header = shop.indexOf("<NelyonLogo onDark");
   const search = shop.indexOf('placeholder="Buscar productos"');
   const hero = shop.indexOf("<FeaturedHero");
   const categories = shop.indexOf("categoryOptions.map");
@@ -149,7 +149,7 @@ test("loading, empty state, bounded query and existing bottom navigation remain 
   assert.match(tabs, /name="shop"/);
 });
 
-test("Figma Shop implementation preserves Build 22 across later authorized migrations", () => {
+test("Figma Shop implementation preserves approved Build 23 across later authorized migrations", () => {
   const migrations = readdirSync(join(root, "supabase/migrations"))
     .filter((name) => name.endsWith(".sql") && name <= "20260906053652_live_battle_gift_like_scoring.sql")
     .sort();
@@ -169,7 +169,7 @@ test("Figma Shop implementation preserves Build 22 across later authorized migra
   assert.ok(migrations.includes("20260821010000_marketplace_buyer_dispute_evidence_r1a.sql"));
   assert.ok(migrations.includes("20260821020000_marketplace_seller_dispute_defense_r1b.sql"));
   assert.ok(migrations.includes("20260817011718_harden_buyer_financial_exposure.sql"));
-  assert.equal(String(JSON.parse(read("app.json")).expo.ios.buildNumber), "22");
+  assert.equal(String(JSON.parse(read("app.json")).expo.ios.buildNumber), "23");
   assert.doesNotMatch(
     shop,
     /service_role|atomic_ledger_transfer|ledger_(credit|debit)|seller_payout|creator_payout|B8D-3/i,

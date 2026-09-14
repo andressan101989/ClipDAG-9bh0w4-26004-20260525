@@ -25,6 +25,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { NelyonLogo } from "@/components/ui/NelyonLogo";
 import { useAuth } from "@/hooks/useAuth";
 import { useMarketplaceCart } from "@/hooks/useMarketplaceCart";
 import { useShop } from "@/hooks/useShop";
@@ -691,7 +692,7 @@ export default function ShopScreen() {
     <View style={styles.headerStack}>
       <View style={styles.header}>
         <View style={styles.headerCopy}>
-          <Text style={styles.headerEyebrow}>O N S P A C E</Text>
+          <NelyonLogo onDark style={styles.headerBrand} />
           <Text style={styles.headerTitle}>Tienda</Text>
           <Text style={styles.headerSub}>
             Compra productos físicos y digitales
@@ -1000,13 +1001,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   headerCopy: { flex: 1, minWidth: 0, paddingRight: 8 },
-  headerEyebrow: {
-    color: "#38A9FF",
-    fontSize: 9,
-    lineHeight: 13,
-    fontWeight: FontWeight.extrabold,
-    letterSpacing: 2.2,
-  },
+  headerBrand: { width: 106, height: 20, marginBottom: 2 },
   headerTitle: {
     color: "#F8F8FB",
     fontSize: 36,
