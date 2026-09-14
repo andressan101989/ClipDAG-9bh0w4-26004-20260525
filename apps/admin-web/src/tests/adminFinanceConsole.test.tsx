@@ -1,4 +1,4 @@
-import {cleanup,render,screen} from "@testing-library/react";
+import {cleanup,fireEvent,render,screen,waitFor,within} from "@testing-library/react";
 import {MemoryRouter,Route,Routes} from "react-router-dom";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {
@@ -7,13 +7,13 @@ import {
   AdminFinancialTransactionsPage,AdminLedgerAccountsPage,
 } from "../pages/AdminFinanceAuditSystemPages";
 import {
-  getAdminFinanceOverview,getAdminFinanceReconciliation,getAdminFinancialTransactionDetail,
+  getAdminFinanceOverview,getAdminFinanceReconciliation,getAdminFinancialTransactionDetail,getAdminPlatformRevenue,
   searchAdminFinanceAnomalies,searchAdminFinanceAudit,searchAdminFinancialTransactions,
   searchAdminLedgerAccounts,
 } from "../lib/adminObservabilityApi";
 
 vi.mock("../lib/adminObservabilityApi",()=>({
-  getAdminFinanceOverview:vi.fn(),getAdminFinanceReconciliation:vi.fn(),getAdminFinancialTransactionDetail:vi.fn(),
+  getAdminFinanceOverview:vi.fn(),getAdminFinanceReconciliation:vi.fn(),getAdminFinancialTransactionDetail:vi.fn(),getAdminPlatformRevenue:vi.fn(),
   getAdminSystemHealth:vi.fn(),getAdminSystemJobDetail:vi.fn(),searchAdminFinanceAnomalies:vi.fn(),
   searchAdminFinanceAudit:vi.fn(),searchAdminFinancialTransactions:vi.fn(),searchAdminGlobalAudit:vi.fn(),
   searchAdminLedgerAccounts:vi.fn(),searchAdminSystemAudit:vi.fn(),searchAdminSystemJobs:vi.fn(),
@@ -34,6 +34,26 @@ beforeEach(()=>{
     accounts_by_type:[{account_type:"user",currency:"BDAG",account_count:124,balance_total:223.96430556}],
     blockchain_settlements_by_status:[{status:"confirmed",count:11},{status:"provisional",count:7}],
   });
+  vi.mocked(getAdminPlatformRevenue).mockResolvedValue({
+    period:"year",period_start:"2026-01-01T00:00:00Z",period_end:"2026-09-14T13:00:00Z",timezone:"UTC",generated_at:"2026-09-14T13:00:00Z",
+    kpis:[{currency:"BDAG",today_net:0,month_net:36,year_net:1033.44589444,all_net:1033.44589444}],
+    summary:[{currency:"BDAG",gross_revenue:1051.94589444,reversals:18.5,net_revenue:1033.44589444,event_count:93}],
+    sources:[
+      {source_code:"live_gifts",label:"LIVE Gifts",currency:"BDAG",gross_revenue:841,reversals:0,net_revenue:841,event_count:41},
+      {source_code:"marketplace",label:"Marketplace Fees",currency:"BDAG",gross_revenue:70.1,reversals:18.5,net_revenue:51.6,event_count:38},
+      {source_code:"marketplace_ads",label:"Marketplace Ads",currency:"BDAG",gross_revenue:99.97569444,reversals:0,net_revenue:99.97569444,event_count:5},
+      {source_code:"withdrawal_fees",label:"Withdrawal Fees",currency:"BDAG",gross_revenue:40.8702,reversals:0,net_revenue:40.8702,event_count:9},
+    ],
+    trend:[{bucket_start:"2026-09-01T00:00:00Z",currency:"BDAG",gross_revenue:36,reversals:0,net_revenue:36,event_count:8}],
+    current_balances:[{account_type:"platform",currency:"BDAG",balance:891.1},{account_type:"marketplace_ads_revenue",currency:"BDAG",balance:99.97569444}],
+    current_balance_totals:[{currency:"BDAG",balance:991.07569444}],
+    reconciliation:{overall_status:"pass",sources:[
+      {source_code:"live_gifts",label:"LIVE Gifts",currency:"BDAG",status:"pass",primary_net:841,crosscheck_net:841,ledger_net:null},
+      {source_code:"marketplace",label:"Marketplace Fees",currency:"BDAG",status:"pass",primary_net:51.6,crosscheck_net:51.6,ledger_net:51.6},
+      {source_code:"marketplace_ads",label:"Marketplace Ads",currency:"BDAG",status:"pass",primary_net:99.97569444,crosscheck_net:99.97569444,ledger_net:99.97569444},
+      {source_code:"withdrawal_fees",label:"Withdrawal Fees",currency:"BDAG",status:"pass",primary_net:40.8702,crosscheck_net:40.8702,ledger_net:null},
+    ]},
+  });
   vi.mocked(searchAdminLedgerAccounts).mockResolvedValue({items:[{id:accountId,owner,frozen:false,balance:0,currency:"BDAG",created_at:"2026-09-06T23:23:13Z",updated_at:"2026-09-06T23:43:07Z",account_type:"user"}],next_cursor:null});
   vi.mocked(searchAdminFinancialTransactions).mockResolvedValue({items:[{id:txId,amount:100,status:"completed",currency:"BDAG",created_at:"2026-09-06T23:43:07Z",fee_amount:1,entry_count:2,operation_type:"withdrawal",reference_type:"marketplace_order"}],next_cursor:null});
   vi.mocked(getAdminFinancialTransactionDetail).mockResolvedValue({transaction:{id:txId,amount:100,status:"completed",chain_id:null,currency:"BDAG",created_at:"2026-09-06T23:43:07Z",fee_amount:1,reference_id:"order-public-reference",operation_type:"withdrawal",reference_type:"marketplace_order",blockchain_txid:"0x5e58c27583a41e584e42fe29f7a2a56a51f960f8707a31df8cc4f756edb07cd5"},ledger_entries:[{id:"20000000-0000-4000-8000-000000000001",entry_type:"debit",amount:100,balance_after:0,account:{id:accountId,account_type:"user",owner}}]});
@@ -51,6 +71,25 @@ describe("ADMIN-SUPERPANEL-FULL-F1 Finance console",()=>{
     expect(screen.getByText("Transacciones por operación")).toBeInTheDocument();
     expect(screen.getByText("withdrawal")).toBeInTheDocument();
     expect(screen.getByText(/223\.96430556 BDAG de balance/)).toBeInTheDocument();
+  });
+
+  it("renders canonical revenue separately from current balances and changes periods server-side",async()=>{
+    render(<MemoryRouter><AdminFinanceOverviewPage/></MemoryRouter>);
+    const revenue=await screen.findByRole("region",{name:"Ingresos de Nelyon"});
+    expect(within(revenue).getByText("Ingresos netos Nelyon")).toBeInTheDocument();
+    expect(within(revenue).getByText("Marketplace Fees")).toBeInTheDocument();
+    expect(within(revenue).getByText("Saldos actuales de plataforma")).toBeInTheDocument();
+    expect(within(revenue).getByText(/saldo actual puede diferir del revenue acumulado/i)).toBeInTheDocument();
+    expect(within(revenue).getByText("Reconciliado")).toBeInTheDocument();
+    fireEvent.change(within(revenue).getByRole("combobox",{name:"Periodo de ingresos"}),{target:{value:"month"}});
+    await waitFor(()=>expect(getAdminPlatformRevenue).toHaveBeenLastCalledWith("month"));
+  });
+
+  it("renders a controlled platform revenue error without hiding the finance overview",async()=>{
+    vi.mocked(getAdminPlatformRevenue).mockRejectedValueOnce(new Error("Revenue projection failed"));
+    render(<MemoryRouter><AdminFinanceOverviewPage/></MemoryRouter>);
+    expect(await screen.findByText("Revenue projection failed")).toBeInTheDocument();
+    expect(await screen.findByText("Resumen financiero")).toBeInTheDocument();
   });
 
   it("renders a controlled Finance overview error",async()=>{

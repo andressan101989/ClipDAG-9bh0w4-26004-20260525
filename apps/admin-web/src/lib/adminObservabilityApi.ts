@@ -9,6 +9,7 @@ const page=(value:unknown,name:string):JsonPage=>{const parsed=record(value,name
 async function rpc(name:string,args:JsonRecord={}){const {data,error}=await supabase.rpc(name,args);if(error)throw new Error(error.message||`No se pudo ejecutar ${name}`);return data as unknown}
 
 export const getAdminFinanceOverview=async()=>record(await rpc("get_admin_finance_overview"),"finance_overview");
+export const getAdminPlatformRevenue=async(period:"today"|"month"|"year"|"all"="year")=>record(await rpc("get_admin_platform_revenue",{p_period:period}),"platform_revenue");
 export const searchAdminLedgerAccounts=async(filters:JsonRecord={})=>page(await rpc("search_admin_ledger_accounts",filters),"ledger_accounts");
 export const searchAdminFinancialTransactions=async(filters:JsonRecord={})=>page(await rpc("search_admin_financial_transactions",filters),"financial_transactions");
 export const getAdminFinancialTransactionDetail=async(id:string)=>record(await rpc("get_admin_financial_transaction_detail",{p_transaction_id:id}),"financial_transaction_detail");
