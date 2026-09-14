@@ -2,13 +2,13 @@ import {fireEvent,render,screen,waitFor,within} from "@testing-library/react";
 import {MemoryRouter,Route,Routes} from "react-router-dom";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
-import {getAdminContentSafetyAlert,searchAdminContentSafetyAlerts,searchAdminContentSafetyRules,updateAdminContentSafetyRule} from "../lib/adminSafetyApi";
+import {approveAdminContentSafetyRule,createAdminContentSafetyRule,getAdminContentSafetyAlert,previewAdminContentSafetyRule,searchAdminContentSafetyAlerts,searchAdminContentSafetyRules} from "../lib/adminSafetyApi";
 import {AdminContentSafetyDetailPage,AdminContentSafetyPage,AdminContentSafetyRulesPage} from "../pages/AdminContentSafetyPages";
 
 vi.mock("../auth/AdminAuthProvider",()=>({useAdminAuth:vi.fn()}));
 vi.mock("../lib/adminSafetyApi",()=>({
   getAdminContentSafetyAlert:vi.fn(),searchAdminContentSafetyAlerts:vi.fn(),searchAdminContentSafetyRules:vi.fn(),
-  createAdminContentSafetyRule:vi.fn(),updateAdminContentSafetyRule:vi.fn(),reviewAdminContentSafetyAlert:vi.fn(),retryAdminContentSafetyScan:vi.fn(),
+  createAdminContentSafetyRule:vi.fn(),updateAdminContentSafetyRule:vi.fn(),previewAdminContentSafetyRule:vi.fn(),approveAdminContentSafetyRule:vi.fn(),setAdminContentSafetyRuleEnabled:vi.fn(),retireAdminContentSafetyRule:vi.fn(),reviewAdminContentSafetyAlert:vi.fn(),retryAdminContentSafetyScan:vi.fn(),
 }));
 
 const alertId="10000000-0000-4000-8000-000000000001",targetId="20000000-0000-4000-8000-000000000002",ownerId="30000000-0000-4000-8000-000000000003",scanId="40000000-0000-4000-8000-000000000004";
@@ -51,15 +51,31 @@ describe("ADMIN-SUPERUSER-OPT-F4 Content Safety",()=>{
     expect(screen.queryByRole("button",{name:"Crear regla"})).not.toBeInTheDocument();
   });
 
-  it("edits rule severity, scopes and enabled state through the audited canonical mutation",async()=>{
-    vi.mocked(searchAdminContentSafetyRules).mockResolvedValue({items:[{id:"50000000-0000-4000-8000-000000000005",code:"policy_rule",label:"Policy rule",category:"threat",detector_type:"keyword",pattern:"policy",severity:"medium",scopes:["video_caption"],enabled:false,version:1}]});
-    vi.mocked(updateAdminContentSafetyRule).mockResolvedValue({rule_id:"50000000-0000-4000-8000-000000000005"});
+  it("requires bounded preview before a human can approve a governed draft",async()=>{
+    vi.mocked(searchAdminContentSafetyRules).mockResolvedValue({stats:{total:1,draft:1,approved:0,enabled:0,retired:0},items:[{id:"50000000-0000-4000-8000-000000000005",code:"policy_rule",label:"Policy rule",category:"threat",detector_type:"keyword",pattern:"policy",severity:"medium",scopes:["video_caption"],locale:"es",policy_source:"owner_manual",policy_reference:"owner-policy-2026-09",policy_version:null,rationale:"Decisión explícita",approval_state:"draft",approved_by:null,approved_at:null,enabled:false,version:1}]});
+    vi.mocked(previewAdminContentSafetyRule).mockResolvedValue({total_matching_content:1,counts:{videos:1,stories:0,comments:0,live_chat:0,reported_messages:0},samples:[{target_type:"video",target_id:targetId,excerpt:"policy",scope:"video_caption",current_visibility:"visible"}],sample_limit:20,excerpt_limit:240});
+    vi.mocked(approveAdminContentSafetyRule).mockResolvedValue({rule_id:"50000000-0000-4000-8000-000000000005"});
+    vi.spyOn(window,"confirm").mockReturnValue(true);
     render(<MemoryRouter><AdminContentSafetyRulesPage/></MemoryRouter>);
-    const row=(await screen.findByText("Policy rule")).closest("tr") as HTMLElement;
-    fireEvent.change(within(row).getByLabelText("Severidad Policy rule"),{target:{value:"high"}});
-    fireEvent.click(within(row).getByLabelText("comment"));
-    fireEvent.click(within(row).getByLabelText("Activa"));
-    fireEvent.click(within(row).getByRole("button",{name:"Guardar"}));
-    await waitFor(()=>expect(updateAdminContentSafetyRule).toHaveBeenCalledWith(expect.objectContaining({severity:"high",scopes:["video_caption","comment"],enabled:true})));
+    const card=(await screen.findByText("Policy rule")).closest("article") as HTMLElement;
+    expect(within(card).getByRole("button",{name:"Aprobar regla"})).toBeDisabled();
+    fireEvent.click(within(card).getByRole("button",{name:"Probar regla"}));
+    expect(await within(card).findByText("1 coincidencias potenciales")).toBeInTheDocument();
+    fireEvent.click(within(card).getByRole("button",{name:"Aprobar regla"}));
+    await waitFor(()=>expect(approveAdminContentSafetyRule).toHaveBeenCalledWith(expect.objectContaining({id:"50000000-0000-4000-8000-000000000005"})));
+    expect(previewAdminContentSafetyRule).toHaveBeenCalledWith(expect.objectContaining({limit:20,locale:"es"}));
+  });
+
+  it("creates owner-authorized rules only as disabled drafts with provenance",async()=>{
+    vi.mocked(createAdminContentSafetyRule).mockResolvedValue({rule_id:"50000000-0000-4000-8000-000000000005",approval_state:"draft",enabled:false});
+    render(<MemoryRouter><AdminContentSafetyRulesPage/></MemoryRouter>);
+    await screen.findByText("0 reglas configuradas");
+    fireEvent.change(screen.getByLabelText("Code de regla"),{target:{value:"owner_term"}});
+    fireEvent.change(screen.getByLabelText("Nombre de regla"),{target:{value:"Término del propietario"}});
+    fireEvent.change(screen.getByLabelText("Palabra o frase"),{target:{value:"literal"}});
+    fireEvent.change(screen.getByLabelText("Policy reference"),{target:{value:"owner-policy-2026-09"}});
+    fireEvent.change(screen.getByLabelText("Rationale"),{target:{value:"Decisión humana explícita"}});
+    fireEvent.click(screen.getByRole("button",{name:"Guardar borrador"}));
+    await waitFor(()=>expect(createAdminContentSafetyRule).toHaveBeenCalledWith(expect.objectContaining({code:"owner_term",policySource:"owner_manual",policyReference:"owner-policy-2026-09",rationale:"Decisión humana explícita"})));
   });
 });
