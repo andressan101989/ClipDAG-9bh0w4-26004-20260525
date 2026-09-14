@@ -18,8 +18,11 @@ test('Expo and native display metadata use Nelyon without changing app identity'
   assert.equal(app.slug, 'onspace-app');
   assert.equal(app.scheme, 'onspaceapp');
   assert.equal(app.ios.bundleIdentifier, 'com.clipdag.onspaceapp');
+  assert.equal(app.ios.buildNumber, '23');
   assert.equal(app.android.package, 'com.clipdag.onspaceapp');
   assert.match(read('ios/onspaceapp/Info.plist'), /<key>CFBundleDisplayName<\/key>\s*<string>Nelyon<\/string>/);
+  assert.match(read('ios/onspaceapp/Info.plist'), /<key>CFBundleVersion<\/key>\s*<string>23<\/string>/);
+  assert.equal((read('ios/onspaceapp.xcodeproj/project.pbxproj').match(/CURRENT_PROJECT_VERSION = 23;/g) ?? []).length, 2);
   assert.match(read('android/app/src/main/res/values/strings.xml'), /<string name="app_name">Nelyon<\/string>/);
   assert.equal(JSON.parse(read('package.json')).name, 'onspace-app');
   assert.equal(JSON.parse(read('package-lock.json')).packages[''].name, 'onspace-app');
