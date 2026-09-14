@@ -29,12 +29,12 @@ export function AdminVideoPreview({url,poster,alt="Video administrativo"}:{url:s
   return <video ref={videoRef} className="admin-media-element" controls preload="metadata" poster={poster??undefined} aria-label={alt}>{!isHls(url)&&<source src={url}/>}Tu navegador no puede reproducir este video.</video>
 }
 
-export function AdminMediaPreview({url,kind="image",alt="Vista previa",loading=false,error,onRetry,restricted=false}:{url?:string|null;kind?:string|null;alt?:string;loading?:boolean;error?:string|null;onRetry?:()=>void;restricted?:boolean}){
+export function AdminMediaPreview({url,poster,kind="image",alt="Vista previa",loading=false,error,onRetry,restricted=false}:{url?:string|null;poster?:string|null;kind?:string|null;alt?:string;loading?:boolean;error?:string|null;onRetry?:()=>void;restricted?:boolean}){
   const safe=safeHttpsUrl(url);
   if(loading)return <div className="admin-media-state" role="status"><span className="spinner"/>Preparando vista previa segura…</div>;
   if(error)return <div className="admin-media-state"><strong>Vista previa no disponible</strong><span>{error}</span>{onRetry&&<button className="secondary" onClick={onRetry}>Reintentar URL</button>}</div>;
   if(!safe)return <div className="admin-media-state"><strong>{restricted?"Vista previa restringida":"Sin vista previa"}</strong><span>{restricted?"Este asset es privado y no está vinculado a una superficie administrativa revisable.":"No existe una URL HTTPS segura para este contenido."}</span></div>;
-  if(kind==="video")return <AdminVideoPreview url={safe} alt={alt}/>;
+  if(kind==="video")return <AdminVideoPreview url={safe} poster={safeHttpsUrl(poster)} alt={alt}/>;
   if(kind==="audio"||kind==="voice")return <audio className="admin-audio" controls preload="metadata" aria-label={alt}><source src={safe}/></audio>;
   return <img className="admin-media-element" src={safe} alt={alt}/>;
 }
