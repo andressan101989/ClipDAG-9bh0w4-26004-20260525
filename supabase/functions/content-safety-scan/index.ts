@@ -2,6 +2,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { evaluateTextRules } from './ruleEngine.mjs'
 import { AudioPipelineError, MAX_AUDIO_BYTES, WHISPER_MODEL, bytesToBase64, makeProbeWav, normalizeWhisperResult, timecodeForMatch, validateStreamAudioUrl } from './audioPipeline.mjs'
+import { VISUAL_AI_PROVIDER, VISUAL_MODEL, VisualProbeError, runVisualProviderProbe } from './visualProbe.mjs'
 import { streamAccountId, streamCustomerCode, streamFetch } from '../_shared/stream.ts'
 
 const BATCH_LIMIT = 25
@@ -95,11 +96,18 @@ Deno.serve(async req => {
   if (!expectedSecret || !suppliedSecret || !secretsEqual(suppliedSecret, expectedSecret)) {
     return json({ success: false, error: 'invalid_dispatch_authorization' }, 401)
   }
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-  if (!supabaseUrl || !serviceRoleKey) return json({ success: false, error: 'server_configuration_unavailable' }, 503)
-  const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const body = object(await req.json().catch(() => ({})))
+  if (body.action === 'visual_provider_probe') {
+    try {
+      const result = await runVisualProviderProbe({ token: Deno.env.get('CLOUDFLARE_AI_TOKEN')?.trim(), accountId: streamAccountId() })
+      return json({ success: true, action: 'visual_provider_probe', configured: true, provider: VISUAL_AI_PROVIDER, model: VISUAL_MODEL,
+        vision_input: result.visionInput, structured_output: result.structuredOutput, schema_valid: result.schemaValid, error: null })
+    } catch (error) {
+      const issue = error instanceof VisualProbeError ? error : new VisualProbeError('visual_workers_ai_probe_failed')
+      return json({ success: false, action: 'visual_provider_probe', configured: issue.code !== 'visual_workers_ai_configuration_missing',
+        provider: VISUAL_AI_PROVIDER, model: VISUAL_MODEL, vision_input: false, structured_output: false, schema_valid: false, error: issue.code }, issue.status)
+    }
+  }
   if (body.action === 'provider_probe') {
     try {
       await workersAi(makeProbeWav())
@@ -109,6 +117,10 @@ Deno.serve(async req => {
       return json({ success: false, action: 'provider_probe', configured: issue.code !== 'workers_ai_configuration_missing', provider: 'Cloudflare Workers AI', model: WHISPER_MODEL, error: issue.code }, issue.status)
     }
   }
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  if (!supabaseUrl || !serviceRoleKey) return json({ success: false, error: 'server_configuration_unavailable' }, 503)
+  const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const { data: rulesData, error: rulesError } = await admin.rpc('get_content_safety_worker_rules')
   if (rulesError || !Array.isArray(rulesData)) return json({ success: false, error: 'rule_load_failed' }, 500)
   const { data: scansData, error: scansError } = await admin.rpc('claim_content_safety_scans', { p_limit: BATCH_LIMIT })
