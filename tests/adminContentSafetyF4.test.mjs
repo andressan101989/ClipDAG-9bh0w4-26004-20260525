@@ -40,13 +40,14 @@ test("priority implements the exact deterministic boosts and clamp",()=>{
   for(const fragment of ["when 'critical' then 90","when 'high' then 70","when 'medium' then 45","else 20","*2,10",">=10 then 10",">=3 then 6","when 1 then 3","when 2 then 6","when 3 then 9",">=100000 then 8",">=10000 then 5",">=1000 then 3","least(100,greatest(0"]){assert.ok(migration.includes(fragment),fragment)}
 });
 
-test("worker is authenticated internally, claims safely and retries without external providers",()=>{
+test("worker remains authenticated internally and preserves safe text claims after the F6 extension",()=>{
   assert.match(migration,/for update skip locked limit p_limit/);
   assert.match(migration,/attempt_count<5/);
   assert.match(worker,/x-content-safety-secret/);
   assert.match(worker,/CALL_DISPATCH_SECRET/);
-  assert.match(worker,/external_providers: 0/);
-  assert.doesNotMatch(worker,/fetch\(/);
+  assert.match(worker,/external_providers: audioClaimed/);
+  assert.match(worker,/claim_content_safety_scans/);
+  assert.match(worker,/complete_content_safety_scan/);
 });
 
 test("automatic pipeline has no enforcement or financial authority",()=>{

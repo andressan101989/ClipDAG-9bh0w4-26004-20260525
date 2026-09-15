@@ -2,13 +2,14 @@ import {fireEvent,render,screen,waitFor,within} from "@testing-library/react";
 import {MemoryRouter,Route,Routes} from "react-router-dom";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
-import {approveAdminContentSafetyRule,createAdminContentSafetyRule,getAdminContentSafetyAlert,previewAdminContentSafetyRule,searchAdminContentSafetyAlerts,searchAdminContentSafetyRules,setAdminContentSafetyRuleEnabled,updateAdminContentSafetyRule} from "../lib/adminSafetyApi";
-import {AdminContentSafetyDetailPage,AdminContentSafetyPage,AdminContentSafetyRulesPage} from "../pages/AdminContentSafetyPages";
+import {approveAdminContentSafetyRule,createAdminContentSafetyRule,getAdminContentSafetyAlert,getAdminContentSafetyAudioDetail,previewAdminContentSafetyRule,searchAdminContentSafetyAlerts,searchAdminContentSafetyAudio,searchAdminContentSafetyRules,setAdminContentSafetyRuleEnabled,updateAdminContentSafetyRule} from "../lib/adminSafetyApi";
+import {AdminContentSafetyAudioDetailPage,AdminContentSafetyAudioPage,AdminContentSafetyDetailPage,AdminContentSafetyPage,AdminContentSafetyRulesPage} from "../pages/AdminContentSafetyPages";
 
 vi.mock("../auth/AdminAuthProvider",()=>({useAdminAuth:vi.fn()}));
 vi.mock("../lib/adminSafetyApi",()=>({
   getAdminContentSafetyAlert:vi.fn(),searchAdminContentSafetyAlerts:vi.fn(),searchAdminContentSafetyRules:vi.fn(),
   createAdminContentSafetyRule:vi.fn(),updateAdminContentSafetyRule:vi.fn(),previewAdminContentSafetyRule:vi.fn(),previewAdminContentSafetyRuleDraft:vi.fn(),approveAdminContentSafetyRule:vi.fn(),setAdminContentSafetyRuleEnabled:vi.fn(),retireAdminContentSafetyRule:vi.fn(),reviewAdminContentSafetyAlert:vi.fn(),retryAdminContentSafetyScan:vi.fn(),
+  searchAdminContentSafetyAudio:vi.fn(),getAdminContentSafetyAudioDetail:vi.fn(),retryAdminContentSafetyAudio:vi.fn(),
 }));
 
 const alertId="10000000-0000-4000-8000-000000000001",targetId="20000000-0000-4000-8000-000000000002",ownerId="30000000-0000-4000-8000-000000000003",scanId="40000000-0000-4000-8000-000000000004";
@@ -23,6 +24,8 @@ beforeEach(()=>{
   vi.mocked(searchAdminContentSafetyAlerts).mockResolvedValue({stats:{critical_count:0,high_count:1,medium_count:0,low_count:0,open_count:1,in_review_count:0},active_rule_count:0,items:[item],next_cursor:null});
   vi.mocked(searchAdminContentSafetyRules).mockResolvedValue({items:[]});
   vi.mocked(getAdminContentSafetyAlert).mockResolvedValue({...item,evidence:{matched_terms:["policy term"],matched_text_excerpt:"extracto acotado",detector_version:"text-rules-v1"},rule:{id:"50000000-0000-4000-8000-000000000005",code:"policy_rule",label:"Policy rule",version:1},scan:{id:scanId,status:"completed",requested_reason:"content_created",detector_version:"text-rules-v1",attempt_count:1,last_error_code:null,started_at:"2026-09-14T12:00:00Z",completed_at:"2026-09-14T12:00:01Z",coverage:item.coverage,media_source_scan_id:null},content:{path:`/content/video/${targetId}`,summary:"extracto acotado"},related_reports:[],policy_rules_not_configured:false});
+  vi.mocked(searchAdminContentSafetyAudio).mockResolvedValue({provider:{configured:true,name:"Cloudflare Workers AI",model:"@cf/openai/whisper-large-v3-turbo",status:"healthy",last_success_at:"2026-09-15T12:00:00Z"},stats:{eligible:2,pending:0,analyzed:2,failed:0,not_applicable:2,not_configured:3,transcripts:1,provider_calls:1},items:[{scan_id:scanId,target_type:"story",target_id:targetId,summary:"Story compartida",audio_status:"analyzed",provider:"cloudflare_workers_ai",model:"@cf/openai/whisper-large-v3-turbo",duration_seconds:13.6,detected_language:"es",transcript_status:"completed",word_count:4,rule_matches:0,source_reused:true,processed_at:"2026-09-15T12:00:00Z"}]});
+  vi.mocked(getAdminContentSafetyAudioDetail).mockResolvedValue({scan_id:scanId,target_type:"story",target_id:targetId,content:{path:`/stories/${targetId}`,summary:"Story compartida"},author:{id:ownerId,username:"creator",display_name:"Creator"},audio_status:"analyzed",provider:"cloudflare_workers_ai",model:"@cf/openai/whisper-large-v3-turbo",source_reused:true,source_scan_id:"60000000-0000-4000-8000-000000000006",source_target_id:"70000000-0000-4000-8000-000000000007",source_asset_id:"80000000-0000-4000-8000-000000000008",duration_seconds:13.6,attempts:1,cleanup_pending:false,transcript:{text:"texto real transcrito",word_count:3,detected_language:"es",segments:[{start:0,end:1.2,text:"texto real"}],fingerprint:"abc",rule_eval_status:"completed"},shared_references:[{id:targetId,path:`/stories/${targetId}`}]});
 });
 
 describe("ADMIN-SUPERUSER-OPT-F4 Content Safety",()=>{
@@ -46,6 +49,18 @@ describe("ADMIN-SUPERUSER-OPT-F4 Content Safety",()=>{
     expect(within(review).getByRole("button",{name:"Tomar para revisión"})).toBeInTheDocument();
     expect(within(review).getByRole("button",{name:"Sin infracción"})).toBeInTheDocument();
     expect(within(review).queryByRole("button",{name:/ocultar|suspender|warning/i})).not.toBeInTheDocument();
+  });
+
+  it("shows Audio AI source reuse, transcript timing and no automatic sanctions",async()=>{
+    render(<MemoryRouter><AdminContentSafetyAudioPage/></MemoryRouter>);
+    expect(await screen.findByRole("heading",{name:"Speech-to-Text"})).toBeInTheDocument();
+    expect(screen.getByText(/Cloudflare Workers AI · Activo/)).toBeInTheDocument();
+    expect(screen.getByText(/Reutilizada desde video fuente/)).toBeInTheDocument();
+    render(<MemoryRouter initialEntries={[`/content-safety/audio/${scanId}`]}><Routes><Route path="/content-safety/audio/:id" element={<AdminContentSafetyAudioDetailPage/>}/></Routes></MemoryRouter>);
+    expect(await screen.findByText("Transcripción reutilizada desde video fuente")).toBeInTheDocument();
+    expect(screen.getByText("texto real transcrito")).toBeInTheDocument();
+    expect(screen.getByText("0.0 s – 1.2 s")).toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:/warning|suspender|ocultar|eliminar/i})).not.toBeInTheDocument();
   });
 
   it("capability-gates rule mutation and explains that production starts without invented rules",async()=>{

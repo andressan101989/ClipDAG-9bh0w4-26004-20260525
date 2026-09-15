@@ -11,7 +11,12 @@ function required(name:string):string {
 
 export const streamAccountId=()=>required('CLOUDFLARE_ACCOUNT_ID');
 export const streamToken=()=>required('CLOUDFLARE_STREAM_TOKEN');
-export const streamCustomerCode=()=>required('STREAM_CUSTOMER_CODE').replace(/^customer-/i,'');
+export const normalizeStreamCustomerCode=(value:string)=>value.trim().toLowerCase()
+  .replace(/^https?:\/\//i,'')
+  .replace(/\/$/,'')
+  .replace(/^customer-/i,'')
+  .replace(/\.cloudflarestream\.com$/i,'');
+export const streamCustomerCode=()=>normalizeStreamCustomerCode(required('STREAM_CUSTOMER_CODE'));
 export const streamWebhookSecret=()=>Deno.env.get('STREAM_WEBHOOK_SECRET')?.trim()||null;
 export const streamApiBase=()=>`https://api.cloudflare.com/client/v4/accounts/${streamAccountId()}/stream`;
 

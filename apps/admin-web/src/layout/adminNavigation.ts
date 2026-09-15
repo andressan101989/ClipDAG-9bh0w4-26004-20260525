@@ -23,6 +23,7 @@ export const adminLinks:AdminLink[]=[
   {to:"/battles",label:"Battles",capability:"battles.sessions.read",icon:"battles",primary:true},
   {to:"/media",label:"Media",capability:"media.assets.read",icon:"media",primary:true},
   {to:"/content-safety",label:"Content Safety",capability:"content.items.read",icon:"content",primary:true,end:true,group:"content_safety",sectionLabel:"Alertas"},
+  {to:"/content-safety/audio",label:"Content Safety · Audio AI",capability:"content.items.read",icon:"content",group:"content_safety",sectionLabel:"Audio AI"},
   {to:"/content-safety/rules",label:"Content Safety · Reglas",capability:"content.items.moderate",icon:"content",group:"content_safety",sectionLabel:"Reglas"},
   {to:"/finance",label:"Finance",capability:"finance.ledger.read",icon:"finance",primary:true,end:true,group:"finance",sectionLabel:"Resumen"},
   {to:"/finance/accounts",label:"Finance · Cuentas",capability:"finance.ledger.read",icon:"finance",group:"finance",sectionLabel:"Cuentas"},
