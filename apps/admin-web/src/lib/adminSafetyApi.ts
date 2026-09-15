@@ -21,3 +21,6 @@ export const retryAdminContentSafetyScan=async(input:{id:string;idempotencyKey:s
 export const searchAdminContentSafetyAudio=async()=>record(await rpc("search_admin_content_safety_audio"),"content_safety_audio");
 export const getAdminContentSafetyAudioDetail=async(id:string)=>record(await rpc("get_admin_content_safety_audio_detail",{p_scan_id:id}),"content_safety_audio_detail");
 export const retryAdminContentSafetyAudio=async(input:{id:string;idempotencyKey:string})=>record(await rpc("admin_retry_content_safety_audio",{p_scan_id:input.id,p_idempotency_key:input.idempotencyKey}),"content_safety_audio_receipt");
+export const searchAdminContentSafetyVisual=async()=>record(await rpc("search_admin_content_safety_visual"),"content_safety_visual");
+export const getAdminContentSafetyVisualDetail=async(id:string)=>record(await rpc("get_admin_content_safety_visual_detail",{p_scan_id:id}),"content_safety_visual_detail");
+export const retryAdminContentSafetyVisual=async(input:{id:string;idempotencyKey:string})=>record(await rpc("admin_retry_content_safety_visual",{p_scan_id:input.id,p_idempotency_key:input.idempotencyKey}),"content_safety_visual_receipt");

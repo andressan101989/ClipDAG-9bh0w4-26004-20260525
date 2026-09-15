@@ -38,6 +38,17 @@ export const signHead=(bucket:string,key:string,expiresIn=60)=>getSignedUrl(r2Cl
 export const signDelete=(bucket:string,key:string,expiresIn=60)=>getSignedUrl(r2Client(),new DeleteObjectCommand({Bucket:bucket,Key:key}),{expiresIn});
 export const headObject=(bucket:string,key:string)=>r2Client().send(new HeadObjectCommand({Bucket:bucket,Key:key}));
 export const deleteObject=(bucket:string,key:string)=>r2Client().send(new DeleteObjectCommand({Bucket:bucket,Key:key}));
+export async function getObjectBytes(bucket:string,key:string,maxBytes:number):Promise<{bytes:Uint8Array;contentType:string|null}> {
+  if(!bucket.trim()||!key.trim()||!Number.isInteger(maxBytes)||maxBytes<1) throw new Error('invalid_r2_object_request');
+  const result=await r2Client().send(new GetObjectCommand({Bucket:bucket,Key:key}));
+  const declared=Number(result.ContentLength??0);
+  if(declared>maxBytes) throw new Error('r2_object_too_large');
+  if(!result.Body) throw new Error('r2_object_empty');
+  const bytes=await result.Body.transformToByteArray();
+  if(!bytes.length) throw new Error('r2_object_empty');
+  if(bytes.length>maxBytes) throw new Error('r2_object_too_large');
+  return {bytes,contentType:result.ContentType??null};
+}
 export const publicUrl=(key:string)=>`${R2_PUBLIC_BASE_URL()}/${key.split('/').map(encodeURIComponent).join('/')}`;
 
 export function r2ErrorStatus(error:unknown):number|undefined {

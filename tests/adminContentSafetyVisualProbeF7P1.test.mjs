@@ -7,8 +7,10 @@ import {
   VISUAL_AI_PROVIDER,
   VISUAL_MODEL,
   VisualProbeError,
+  buildVisualMultiImageProbeRequest,
   buildVisualProbeRequest,
   makeSyntheticVisualProbeImage,
+  runVisualMultiImageProviderProbe,
   runVisualProviderProbe,
   validateVisualProbeResponse,
 } from '../supabase/functions/content-safety-scan/visualProbe.mjs'
@@ -28,6 +30,7 @@ test('probe request uses documented vision parts, synthetic PNG, and JSON schema
   assert.equal(content[1].type, 'image_url')
   assert.match(content[1].image_url.url, /^data:image\/png;base64,/)
   assert.equal(request.response_format.type, 'json_schema')
+  assert.equal(request.chat_template_kwargs.enable_thinking, false)
   assert.deepEqual(request.response_format.json_schema.required, ['objects'])
   assert.equal(request.response_format.json_schema.additionalProperties, false)
   const png = Buffer.from(makeSyntheticVisualProbeImage().split(',')[1], 'base64')
@@ -38,6 +41,23 @@ test('valid structured output must recognize the synthetic red square and blue c
   assert.deepEqual(validateVisualProbeResponse(validProviderPayload), { visionInput: true, structuredOutput: true, schemaValid: true })
   assert.deepEqual(validateVisualProbeResponse({ success: true, result: { choices: [{ message: { content: JSON.stringify(validProviderPayload.result.response) } }] } }), { visionInput: true, structuredOutput: true, schemaValid: true })
   assert.throws(() => validateVisualProbeResponse({ result: { response: { objects: [{ shape: 'square', color: 'red' }] } } }), error => error.code === 'visual_workers_ai_image_not_recognized')
+})
+
+test('multi-image probe sends two separate image parts and requires schema-valid recognition', async () => {
+  const request = buildVisualMultiImageProbeRequest()
+  assert.equal(request.messages[1].content.filter(part => part.type === 'image_url').length, 2)
+  assert.equal(request.response_format.type, 'json_schema')
+  const result = await runVisualMultiImageProviderProbe({
+    token: 'server-secret',
+    accountId: 'account-id',
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ success: true, result: { response: { image_count: 2 } } }) }),
+  })
+  assert.deepEqual(result, { visionInput: true, structuredOutput: true, schemaValid: true, multiImage: true })
+  await assert.rejects(() => runVisualMultiImageProviderProbe({
+    token: 'server-secret',
+    accountId: 'account-id',
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ success: true, result: { response: { image_count: 1 } } }) }),
+  }), error => error.code === 'visual_workers_ai_multi_image_not_recognized')
 })
 
 test('malformed, fenced, partial, and schema-invalid output fail closed', () => {
@@ -82,7 +102,10 @@ test('visual probe remains behind JWT and dispatch-secret checks and performs no
   const dispatchCheck = worker.indexOf("req.headers.get('x-content-safety-secret')")
   const visualBranch = worker.indexOf("body.action === 'visual_provider_probe'")
   const clientCreation = worker.indexOf('createClient(supabaseUrl')
-  assert.ok(jwtCheck >= 0 && dispatchCheck > jwtCheck && visualBranch > dispatchCheck && clientCreation > visualBranch)
+  const serviceProbeCheck = worker.indexOf('serviceProbeAuthorized')
+  assert.ok(jwtCheck >= 0 && dispatchCheck > jwtCheck && serviceProbeCheck > dispatchCheck && visualBranch > serviceProbeCheck && clientCreation > visualBranch)
+  assert.match(worker, /SUPABASE_SERVICE_ROLE_KEY/)
+  assert.match(worker, /jwtRole\(bearer\) === 'service_role'/)
   const branch = worker.slice(visualBranch, worker.indexOf("body.action === 'provider_probe'"))
   assert.doesNotMatch(branch, /admin\.rpc|\.from\(|insert|update|delete/i)
   assert.match(worker, /body\.action === 'provider_probe'/)

@@ -2,8 +2,10 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { evaluateTextRules } from './ruleEngine.mjs'
 import { AudioPipelineError, MAX_AUDIO_BYTES, WHISPER_MODEL, bytesToBase64, makeProbeWav, normalizeWhisperResult, timecodeForMatch, validateStreamAudioUrl } from './audioPipeline.mjs'
-import { VISUAL_AI_PROVIDER, VISUAL_MODEL, VisualProbeError, runVisualProviderProbe } from './visualProbe.mjs'
+import { VISUAL_AI_PROVIDER, VISUAL_MODEL, VisualProbeError, runVisualMultiImageProviderProbe, runVisualProviderProbe } from './visualProbe.mjs'
+import { MAX_VISUAL_IMAGE_BYTES, VisualPipelineError, analyzeVisualBytes, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps } from './visualPipeline.mjs'
 import { streamAccountId, streamCustomerCode, streamFetch } from '../_shared/stream.ts'
+import { getObjectBytes, isR2Transient } from '../_shared/r2.ts'
 
 const BATCH_LIMIT = 25
 const TRANSCRIPT_BATCH_LIMIT = 10
@@ -19,6 +21,16 @@ function secretsEqual(actual: string, expected: string) {
   let difference = left.length ^ right.length
   for (let index = 0; index < length; index += 1) difference |= (left[index] ?? 0) ^ (right[index] ?? 0)
   return difference === 0
+}
+
+function jwtRole(token: string) {
+  try {
+    const payload = token.split('.')[1]
+    if (!payload) return ''
+    const decoded = atob(payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payload.length / 4) * 4, '='))
+    const value = JSON.parse(decoded)
+    return typeof value?.role === 'string' ? value.role : ''
+  } catch { return '' }
 }
 
 const uuid = (value: unknown): value is string => typeof value === 'string' &&
@@ -91,12 +103,19 @@ Deno.serve(async req => {
   if (!req.headers.get('Authorization')?.startsWith('Bearer ') || !req.headers.get('apikey')) {
     return json({ success: false, error: 'missing_authorization' }, 401)
   }
+  const body = object(await req.json().catch(() => ({})))
   const expectedSecret = Deno.env.get('CALL_DISPATCH_SECRET') ?? ''
   const suppliedSecret = req.headers.get('x-content-safety-secret') ?? ''
-  if (!expectedSecret || !suppliedSecret || !secretsEqual(suppliedSecret, expectedSecret)) {
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  const bearer = req.headers.get('Authorization')?.slice('Bearer '.length) ?? ''
+  const apiKey = req.headers.get('apikey') ?? ''
+  const dispatchAuthorized = Boolean(expectedSecret && suppliedSecret && secretsEqual(suppliedSecret, expectedSecret))
+  const serviceProbeAuthorized = ['visual_provider_probe', 'visual_multi_image_probe', 'provider_probe'].includes(String(body.action ?? '')) &&
+    Boolean((serviceRoleKey && ((bearer && secretsEqual(bearer, serviceRoleKey)) || (apiKey && secretsEqual(apiKey, serviceRoleKey)))) || jwtRole(bearer) === 'service_role')
+  const serviceRunAuthorized = body.action === 'run_once' && jwtRole(bearer) === 'service_role'
+  if (!dispatchAuthorized && !serviceProbeAuthorized && !serviceRunAuthorized) {
     return json({ success: false, error: 'invalid_dispatch_authorization' }, 401)
   }
-  const body = object(await req.json().catch(() => ({})))
   if (body.action === 'visual_provider_probe') {
     try {
       const result = await runVisualProviderProbe({ token: Deno.env.get('CLOUDFLARE_AI_TOKEN')?.trim(), accountId: streamAccountId() })
@@ -106,6 +125,17 @@ Deno.serve(async req => {
       const issue = error instanceof VisualProbeError ? error : new VisualProbeError('visual_workers_ai_probe_failed')
       return json({ success: false, action: 'visual_provider_probe', configured: issue.code !== 'visual_workers_ai_configuration_missing',
         provider: VISUAL_AI_PROVIDER, model: VISUAL_MODEL, vision_input: false, structured_output: false, schema_valid: false, error: issue.code }, issue.status)
+    }
+  }
+  if (body.action === 'visual_multi_image_probe') {
+    try {
+      const result = await runVisualMultiImageProviderProbe({ token: Deno.env.get('CLOUDFLARE_AI_TOKEN')?.trim(), accountId: streamAccountId() })
+      return json({ success: true, action: 'visual_multi_image_probe', configured: true, provider: VISUAL_AI_PROVIDER, model: VISUAL_MODEL,
+        vision_input: result.visionInput, structured_output: result.structuredOutput, schema_valid: result.schemaValid, multi_image: result.multiImage, error: null })
+    } catch (error) {
+      const issue = error instanceof VisualProbeError ? error : new VisualProbeError('visual_workers_ai_multi_image_probe_failed')
+      return json({ success: false, action: 'visual_multi_image_probe', configured: issue.code !== 'visual_workers_ai_configuration_missing',
+        provider: VISUAL_AI_PROVIDER, model: VISUAL_MODEL, vision_input: false, structured_output: false, schema_valid: false, multi_image: false, error: issue.code }, issue.status)
     }
   }
   if (body.action === 'provider_probe') {
@@ -118,7 +148,6 @@ Deno.serve(async req => {
     }
   }
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
   if (!supabaseUrl || !serviceRoleKey) return json({ success: false, error: 'server_configuration_unavailable' }, 503)
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const { data: rulesData, error: rulesError } = await admin.rpc('get_content_safety_worker_rules')
@@ -210,7 +239,68 @@ Deno.serve(async req => {
       await admin.rpc('fail_content_safety_transcript_evaluation', { p_transcript_id: transcript.transcript_id, p_error_code: 'transcript_evaluation_failed', p_retryable: true })
     }
   }
-  return json({ success: true, claimed: scansData.length, completed, retried, failed, alerts, external_providers: audioClaimed,
+
+  let visualClaimed = 0, visualAnalyzed = 0, visualAdvanced = 0, visualRetried = 0, visualFailed = 0, visualAlerts = 0
+  const visualErrors: { scan_id: string; code: string; retryable: boolean; provider_called: boolean }[] = []
+  const { data: visualData, error: visualClaimError } = await admin.rpc('claim_content_safety_visual_scans', { p_limit: 1 })
+  if (!visualClaimError) for (const value of Array.isArray(visualData) ? visualData : []) {
+    const scan = object(value); visualClaimed += 1
+    if (!uuid(scan.scan_id) || typeof scan.content_fingerprint !== 'string' || !['eligible_image', 'eligible_stream_video'].includes(String(scan.source_kind))) {
+      if (uuid(scan.scan_id)) await admin.rpc('fail_content_safety_visual_scan', { p_scan_id: scan.scan_id, p_error_code: 'malformed_visual_scan', p_retryable: false, p_provider_called: false })
+      visualFailed += 1; continue
+    }
+    let providerCalled = false
+    try {
+      const sourceKind = String(scan.source_kind)
+      const frameCursor = Number(scan.frame_cursor ?? 0)
+      let bytes: Uint8Array, mimeType: string, timestampMs: number | null = null, timestamps: number[] = []
+      if (sourceKind === 'eligible_image') {
+        if (!uuid(scan.media_asset_id) || typeof scan.bucket_name !== 'string' || typeof scan.object_key !== 'string' ||
+            !['image/jpeg', 'image/png', 'image/webp'].includes(String(scan.mime_type))) throw new VisualPipelineError('invalid_canonical_image_source')
+        const result = await getObjectBytes(scan.bucket_name, scan.object_key, MAX_VISUAL_IMAGE_BYTES).catch(error => {
+          throw new VisualPipelineError(isR2Transient(error) ? 'r2_visual_temporarily_unavailable' : String((error as Error)?.message ?? 'r2_visual_fetch_failed'), { retryable: isR2Transient(error) })
+        })
+        mimeType = String(scan.mime_type)
+        if (result.contentType && result.contentType.split(';')[0].trim().toLowerCase() !== mimeType) throw new VisualPipelineError('r2_visual_mime_mismatch')
+        bytes = result.bytes
+      } else {
+        if (!uuid(scan.video_asset_id) || typeof scan.cloudflare_uid !== 'string' || typeof scan.duration_seconds !== 'number') throw new VisualPipelineError('invalid_canonical_stream_source')
+        timestamps = sampleVideoFrameTimestamps(scan.duration_seconds)
+        if (!Number.isInteger(frameCursor) || frameCursor < 0 || frameCursor >= timestamps.length) throw new VisualPipelineError('invalid_visual_frame_cursor')
+        timestampMs = timestamps[frameCursor]
+        bytes = await fetchStreamFrame({ uid: scan.cloudflare_uid, customerCode: streamCustomerCode(), timestampMs })
+        mimeType = 'image/jpeg'
+      }
+      const finding = await analyzeVisualBytes({ token: Deno.env.get('CLOUDFLARE_AI_TOKEN')?.trim(), accountId: streamAccountId(), bytes, mimeType,
+        sourceKind, frameIndex: sourceKind === 'eligible_stream_video' ? frameCursor : null })
+      providerCalled = true
+      if (sourceKind === 'eligible_stream_video' && frameCursor < timestamps.length - 1) {
+        const { error } = await admin.rpc('advance_content_safety_visual_scan', { p_scan_id: scan.scan_id, p_expected_cursor: frameCursor,
+          p_frame_timestamp_ms: timestampMs, p_frame_result: finding })
+        if (error) throw new VisualPipelineError('visual_advance_failed', { retryable: true, providerCalled: true })
+        visualAdvanced += 1
+      } else {
+        const prior = Array.isArray(object(scan.partial_result).frames) ? object(scan.partial_result).frames as Record<string, unknown>[] : []
+        const result = sourceKind === 'eligible_image' ? finding : mergeVisualFrameResults([...prior, { frame_index: frameCursor, timestamp_ms: timestampMs, result: finding }])
+        const frameTimestamps = sourceKind === 'eligible_image' ? [] : timestamps
+        const fingerprint = await sha256(`${scan.scan_id}|${scan.content_fingerprint}|${VISUAL_MODEL}|visual-safety-v1|${JSON.stringify(frameTimestamps)}|${JSON.stringify(result)}`)
+        const { data, error } = await admin.rpc('complete_content_safety_visual_analysis', { p_scan_id: scan.scan_id,
+          p_content_fingerprint: scan.content_fingerprint, p_analysis_result: result, p_analysis_fingerprint: fingerprint,
+          p_frame_timestamps_ms: frameTimestamps })
+        if (error) throw new VisualPipelineError('visual_completion_failed', { retryable: true, providerCalled: true })
+        visualAlerts += Number(object(data).alerts_processed ?? 0); visualAnalyzed += 1
+      }
+    } catch (error) {
+      const issue = error instanceof VisualPipelineError ? error : new VisualPipelineError('visual_processing_unexpected', { retryable: true, providerCalled })
+      const { data } = await admin.rpc('fail_content_safety_visual_scan', { p_scan_id: scan.scan_id, p_error_code: issue.code,
+        p_retryable: issue.retryable, p_provider_called: issue.providerCalled || providerCalled })
+      visualErrors.push({ scan_id: String(scan.scan_id), code: issue.code, retryable: issue.retryable, provider_called: issue.providerCalled || providerCalled })
+      if (object(data).visual_status === 'pending') visualRetried += 1
+      else visualFailed += 1
+    }
+  }
+  return json({ success: true, claimed: scansData.length, completed, retried, failed, alerts, external_providers: audioClaimed + visualClaimed,
     audio: { claimed: audioClaimed, analyzed: audioAnalyzed, retried: audioRetried, failed: audioFailed, cleanup_completed: cleanupCompleted },
-    transcripts: { evaluated: transcriptEvaluated, alerts: transcriptAlerts } })
+    transcripts: { evaluated: transcriptEvaluated, alerts: transcriptAlerts },
+    visual: { claimed: visualClaimed, analyzed: visualAnalyzed, advanced: visualAdvanced, retried: visualRetried, failed: visualFailed, alerts: visualAlerts, errors: visualErrors } })
 })
