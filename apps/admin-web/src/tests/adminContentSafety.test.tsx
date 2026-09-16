@@ -72,7 +72,7 @@ describe("ADMIN-SUPERUSER-OPT-F4 Content Safety",()=>{
     expect(screen.getByText(/Cloudflare Workers AI · Activo/)).toBeInTheDocument();
     expect(screen.getByText((_,node)=>node?.textContent?.includes("Reutilizado desde fuente")===true&&node.tagName==="SMALL")).toBeInTheDocument();
     render(<MemoryRouter initialEntries={[`/content-safety/visual/${scanId}`]}><Routes><Route path="/content-safety/visual/:id" element={<AdminContentSafetyVisualDetailPage/>}/></Routes></MemoryRouter>);
-    expect(await screen.findByText("Análisis visual reutilizado desde fuente canónica")).toBeInTheDocument();
+    expect(await screen.findByText("Análisis visual reutilizado desde asset canónico")).toBeInTheDocument();
     expect(screen.getByText("Objeto similar a un arma. · frame 2")).toBeInTheDocument();
     expect(screen.getByText("6.8 s")).toBeInTheDocument();
     expect(screen.queryByRole("button",{name:/warning|suspender|ocultar|eliminar/i})).not.toBeInTheDocument();
