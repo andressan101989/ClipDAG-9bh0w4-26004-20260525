@@ -51,7 +51,7 @@ type CreateResponse = {
     assetId: string;
     uploadUrl: string;
     method: "PUT";
-    headers: { "Content-Type": string };
+    headers: R2UploadHeaders;
     expiresAt: string;
   };
   error?: string;
@@ -383,12 +383,16 @@ export function validateCommonLinkedEntityRows(
 
 const R2_PUT_RETRY_DELAYS_MS = [500, 1500] as const;
 const R2_RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+type R2UploadHeaders = {
+  "Content-Type": string;
+  "If-None-Match": "*";
+};
 type R2PutResponse = Awaited<ReturnType<typeof expoFetch>>;
 type R2PutFetcher = (
   url: string,
   init: {
     method: "PUT";
-    headers: { "Content-Type": string };
+    headers: R2UploadHeaders;
     body: File;
     signal: AbortSignal;
   },
@@ -396,7 +400,7 @@ type R2PutFetcher = (
 interface R2PutRetryInput {
   file: File;
   uploadUrl: string;
-  headers: { "Content-Type": string };
+  headers: R2UploadHeaders;
   signal: AbortSignal;
   operationId: string;
   mimeType: string;
@@ -428,6 +432,7 @@ export async function putFileToR2WithRetry(
     ((milliseconds) =>
       new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const maxAttempts = R2_PUT_RETRY_DELAYS_MS.length + 1;
+  let priorAttemptWasAmbiguous = false;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (input.signal.aborted) {
       throw new MediaClientError({
@@ -449,8 +454,13 @@ export async function putFileToR2WithRetry(
         signal: input.signal,
       });
       if (response.ok) return response;
+      // A retry can race with a first PUT that reached R2 even when its
+      // response was lost. The conditional 412 proves the object already
+      // exists; finalize-media-upload remains the authority that verifies it.
+      if (response.status === 412 && priorAttemptWasAmbiguous) return response;
       if (R2_RETRYABLE_HTTP_STATUSES.has(response.status)) {
         transientCode = `media_upload_http_${response.status}`;
+        priorAttemptWasAmbiguous = true;
       } else {
         throw new MediaClientError({
           stage: "MEDIA_R2_PUT",
@@ -471,6 +481,7 @@ export async function putFileToR2WithRetry(
           operationId: input.operationId,
         });
       }
+      priorAttemptWasAmbiguous = true;
     }
     const retrying = attempt < maxAttempts && !input.signal.aborted;
     console.warn("[MediaService] R2 PUT transient failure", {

@@ -6,13 +6,16 @@ const create = fs.readFileSync('supabase/functions/create-media-upload/index.ts'
 const finalize = fs.readFileSync('supabase/functions/finalize-media-upload/index.ts', 'utf8');
 const r2 = fs.readFileSync('supabase/functions/_shared/r2.ts', 'utf8');
 
-test('create returns a short-lived content-type-bound direct PUT contract', () => {
+test('create returns a short-lived write-once direct PUT contract', () => {
   assert.match(create, /authenticatedUser\(req\)/);
   assert.match(create, /crypto\.randomUUID\(\)/);
   assert.match(create, /status:'pending'/);
   assert.match(create, /method:'PUT'/);
-  assert.match(create, /headers:\{'Content-Type':mime\}/);
+  assert.match(create, /signPutIfAbsent\(bucket,key,mime,\{\}\)/);
+  assert.match(create, /headers:\{'Content-Type':mime,'If-None-Match':'\*'\}/);
   assert.match(r2, /ContentType:mime/);
+  assert.match(r2, /IfNoneMatch:'\*'/);
+  assert.match(r2, /signableHeaders:new Set\(\['content-type','if-none-match'\]\)/);
   assert.match(r2, /expiresIn:300/);
 });
 test('finalize uses HEAD and changes only verified objects to ready', () => {

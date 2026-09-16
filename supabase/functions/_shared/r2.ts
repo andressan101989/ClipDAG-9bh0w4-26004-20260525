@@ -23,13 +23,12 @@ export function r2Client() {
     credentials:{accessKeyId:required('R2_ACCESS_KEY_ID'),secretAccessKey:required('R2_SECRET_ACCESS_KEY')},
   });
 }
-export const signPut=(bucket:string,key:string,mime:string)=>getSignedUrl(r2Client(),new PutObjectCommand({Bucket:bucket,Key:key,ContentType:mime}),{expiresIn:300});
 export const signPutIfAbsent=(bucket:string,key:string,mime:string,metadata:Record<string,string>)=>getSignedUrl(
   r2Client(),
   new PutObjectCommand({Bucket:bucket,Key:key,ContentType:mime,Metadata:metadata,IfNoneMatch:'*'}),
   {
     expiresIn:300,
-    signableHeaders:new Set(['content-type']),
+    signableHeaders:new Set(['content-type','if-none-match']),
     unhoistableHeaders:new Set(['x-amz-meta-sha256']),
   },
 );

@@ -43,7 +43,7 @@ const http=status=>({ok:false,status});
 const noDelay=async()=>{};
 const baseInput=fetcher=>({
   file:{uri:'file:///photo.png'},uploadUrl:'https://signed.invalid/secret',
-  headers:{'Content-Type':'image/png'},signal:new AbortController().signal,
+  headers:{'Content-Type':'image/png','If-None-Match':'*'},signal:new AbortController().signal,
   operationId:'op-safe',mimeType:'image/png',fetcher,sleep:noDelay,
 });
 const emptyInvoke=async()=>({data:null,error:null});
@@ -84,6 +84,22 @@ for(const status of [403,413]) {
 }
 
 calls=0;
+const recovered=await service.putFileToR2WithRetry(baseInput(async()=>{
+  calls++;
+  if(calls===1) throw new Error('fetch failed: The network connection was lost.');
+  return http(412);
+}));
+assert.equal(calls,2);
+assert.equal(recovered.status,412);
+
+calls=0;
+await assert.rejects(
+  service.putFileToR2WithRetry(baseInput(async()=>{calls++;return http(412);})),
+  error=>error.stage==='MEDIA_R2_PUT'&&error.code==='media_upload_http_412',
+);
+assert.equal(calls,1);
+
+calls=0;
 await assert.rejects(
   service.putFileToR2WithRetry(baseInput(async()=>{
     calls++;
@@ -118,7 +134,7 @@ const integrated=loadService({
       createCalls++;
       return {data:{success:true,data:{
         assetId:'one-asset',uploadUrl:'https://signed.invalid/private',
-        method:'PUT',headers:{'Content-Type':'image/png'},expiresAt:'soon',
+        method:'PUT',headers:{'Content-Type':'image/png','If-None-Match':'*'},expiresAt:'soon',
       }},error:null};
     }
     if(name==='finalize-media-upload') {

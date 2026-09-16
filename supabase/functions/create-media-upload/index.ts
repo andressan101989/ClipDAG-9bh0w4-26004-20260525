@@ -1,6 +1,6 @@
 import { authenticatedUser,admin,json } from '../_shared/mediaAuth.ts';
 import { extensionForMime,validateMediaRequest } from '../_shared/mediaPurposes.ts';
-import { R2_PRIVATE_BUCKET,R2_PUBLIC_BUCKET,signPut } from '../_shared/r2.ts';
+import { R2_PRIVATE_BUCKET,R2_PUBLIC_BUCKET,signPutIfAbsent } from '../_shared/r2.ts';
 
 Deno.serve(async(req)=>{
   if(req.method!=='POST') return json({error:'method_not_allowed'},405);
@@ -29,7 +29,7 @@ Deno.serve(async(req)=>{
   const {error}=await db.from('media_assets').insert({id,owner_id:user.id,provider:'r2',media_kind:validated.rule.kind,purpose,visibility,bucket_name:bucket,object_key:key,mime_type:mime,size_bytes:size,original_filename:safeName,status:'pending'});
   if(error) return json({error:'asset_create_failed'},500);
   let uploadUrl:string;
-  try { uploadUrl=await signPut(bucket,key,mime); }
+  try { uploadUrl=await signPutIfAbsent(bucket,key,mime,{}); }
   catch {
     await db.from('media_assets').update({status:'failed',error_code:'presign_failed',updated_at:new Date().toISOString()}).eq('id',id);
     return json({error:'presign_failed'},503);
@@ -42,5 +42,5 @@ Deno.serve(async(req)=>{
     }).eq('id',id);
     return json({error:'asset_state_failed'},503);
   }
-  return json({success:true,data:{assetId:id,uploadUrl,method:'PUT',headers:{'Content-Type':mime},expiresAt:new Date(Date.now()+300_000).toISOString()}});
+  return json({success:true,data:{assetId:id,uploadUrl,method:'PUT',headers:{'Content-Type':mime,'If-None-Match':'*'},expiresAt:new Date(Date.now()+300_000).toISOString()}});
 });
