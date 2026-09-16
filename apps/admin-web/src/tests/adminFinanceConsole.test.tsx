@@ -47,6 +47,7 @@ beforeEach(()=>{
     trend:[{bucket_start:"2026-09-01T00:00:00Z",currency:"BDAG",gross_revenue:36,reversals:0,net_revenue:36,event_count:8}],
     current_balances:[{account_type:"platform",currency:"BDAG",balance:891.1},{account_type:"marketplace_ads_revenue",currency:"BDAG",balance:99.97569444}],
     current_balance_totals:[{currency:"BDAG",balance:991.07569444}],
+    platform_balance_summary:{currency:"BDAG",bdag_balance:991.07569444,usd_equivalent:9.9107569444,usd_per_bdag:.01},
     reconciliation:{overall_status:"pass",sources:[
       {source_code:"live_gifts",label:"LIVE Gifts",currency:"BDAG",status:"pass",primary_net:841,crosscheck_net:841,ledger_net:null},
       {source_code:"marketplace",label:"Marketplace Fees",currency:"BDAG",status:"pass",primary_net:51.6,crosscheck_net:51.6,ledger_net:51.6},
@@ -70,15 +71,19 @@ describe("ADMIN-SUPERPANEL-FULL-F1 Finance console",()=>{
     expect(summary.querySelector("dl")).not.toBeNull();
     expect(screen.getByText("Transacciones por operación")).toBeInTheDocument();
     expect(screen.getByText("withdrawal")).toBeInTheDocument();
-    expect(screen.getByText(/223\.96430556 BDAG de balance/)).toBeInTheDocument();
+    expect(screen.getByText(/223\.96 BDAG de balance/)).toBeInTheDocument();
   });
 
   it("renders canonical revenue separately from current balances and changes periods server-side",async()=>{
     render(<MemoryRouter><AdminFinanceOverviewPage/></MemoryRouter>);
     const revenue=await screen.findByRole("region",{name:"Ingresos de Nelyon"});
-    expect(within(revenue).getByText("Ingresos netos Nelyon")).toBeInTheDocument();
+    expect(within(revenue).getByText("Ingresos netos")).toBeInTheDocument();
     expect(within(revenue).getByText("Marketplace Fees")).toBeInTheDocument();
-    expect(within(revenue).getByText("Saldos actuales de plataforma")).toBeInTheDocument();
+    expect(within(revenue).getByText("Detalle de cuentas de plataforma")).toBeInTheDocument();
+    const balanceCard=within(revenue).getByText("Saldo actual BDAG").closest("article") as HTMLElement;
+    expect(within(balanceCard).getByText("991.08 BDAG")).toBeInTheDocument();
+    const usdCard=within(revenue).getByText("Equivalente USD").closest("article") as HTMLElement;
+    expect(within(usdCard).getByText("$9.91 USD")).toBeInTheDocument();
     expect(within(revenue).getByText(/saldo actual puede diferir del revenue acumulado/i)).toBeInTheDocument();
     expect(within(revenue).getByText("Reconciliado")).toBeInTheDocument();
     fireEvent.change(within(revenue).getByRole("combobox",{name:"Periodo de ingresos"}),{target:{value:"month"}});
@@ -107,7 +112,7 @@ describe("ADMIN-SUPERPANEL-FULL-F1 Finance console",()=>{
     render(<MemoryRouter><AdminFinancialTransactionsPage/></MemoryRouter>);
     const transaction=await screen.findByRole("link",{name:"withdrawal"});
     expect(transaction).toHaveAttribute("href",`/finance/transactions/${txId}`);
-    expect(screen.getByText("Fee 1")).toBeInTheDocument();
+    expect(screen.getByText("Fee 1.00 BDAG")).toBeInTheDocument();
   });
 
   it("renders transaction detail, ledger entries and allow-listed blockchain reference",async()=>{

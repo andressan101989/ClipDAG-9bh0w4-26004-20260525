@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import {useEffect,useRef,type ReactNode} from "react";
+import {useEffect,useRef,useState,type ReactNode} from "react";
 import {Link} from "react-router-dom";
 import {formatDate} from "../lib/adminApi";
 
@@ -23,20 +23,24 @@ export function AdminFact({label,value,mono=false}:{label:string;value:ReactNode
 export function AdminEntityLink({to,id,label}:{to?:string;id:unknown;label?:string}){const body=<>{label&&<strong>{label}</strong>}<span className="mono">{shortId(id)}</span></>;return to?<Link className="entity-link" to={to}>{body}</Link>:<span className="entity-link">{body}</span>}
 
 function isHls(url:string){return /\.m3u8(?:$|\?)/i.test(url)||/cloudflarestream\.com|videodelivery\.net/i.test(url)&&url.includes("m3u8")}
-export function AdminVideoPreview({url,poster,alt="Video administrativo"}:{url:string;poster?:string|null;alt?:string}){
-  const videoRef=useRef<HTMLVideoElement>(null);
-  useEffect(()=>{const video=videoRef.current;if(!video||!isHls(url)||video.canPlayType("application/vnd.apple.mpegurl"))return;let disposed=false,hls:import("hls.js").default|null=null;void import("hls.js").then(({default:Hls})=>{if(disposed||!Hls.isSupported())return;hls=new Hls({enableWorker:true});hls.loadSource(url);hls.attachMedia(video)});return()=>{disposed=true;hls?.destroy()}},[url]);
-  return <video ref={videoRef} className="admin-media-element" controls preload="metadata" poster={poster??undefined} aria-label={alt}>{!isHls(url)&&<source src={url}/>}Tu navegador no puede reproducir este video.</video>
+export function AdminVideoPreview({url,poster,alt="Video administrativo",onReady,onError}:{url:string;poster?:string|null;alt?:string;onReady?:()=>void;onError?:()=>void}){
+  const videoRef=useRef<HTMLVideoElement>(null),errorRef=useRef(onError);
+  errorRef.current=onError;
+  useEffect(()=>{const video=videoRef.current;if(!video||!isHls(url)||video.canPlayType("application/vnd.apple.mpegurl"))return;let disposed=false,hls:import("hls.js").default|null=null;void import("hls.js").then(({default:Hls})=>{if(disposed)return;if(!Hls.isSupported()){errorRef.current?.();return}hls=new Hls({enableWorker:true});hls.on(Hls.Events.ERROR,(_event,data)=>{if(data.fatal)errorRef.current?.()});hls.loadSource(url);hls.attachMedia(video)}).catch(()=>errorRef.current?.());return()=>{disposed=true;hls?.destroy()}},[url]);
+  return <video ref={videoRef} className="admin-media-element" controls preload="metadata" poster={poster??undefined} aria-label={alt} onLoadedMetadata={onReady} onCanPlay={onReady} onError={onError}>{!isHls(url)&&<source src={url}/>}Tu navegador no puede reproducir este video.</video>
 }
 
 export function AdminMediaPreview({url,poster,kind="image",alt="Vista previa",loading=false,error,onRetry,restricted=false}:{url?:string|null;poster?:string|null;kind?:string|null;alt?:string;loading?:boolean;error?:string|null;onRetry?:()=>void;restricted?:boolean}){
   const safe=safeHttpsUrl(url);
-  if(loading)return <div className="admin-media-state" role="status"><span className="spinner"/>Preparando vista previa segura…</div>;
+  const [mediaState,setMediaState]=useState<"loading"|"ready"|"error">("loading");
+  useEffect(()=>{setMediaState("loading")},[kind,safe]);
+  if(loading)return <div className="admin-media-state" role="status"><span className="spinner"/>Cargando vista previa…</div>;
   if(error)return <div className="admin-media-state"><strong>Vista previa no disponible</strong><span>{error}</span>{onRetry&&<button className="secondary" onClick={onRetry}>Reintentar URL</button>}</div>;
-  if(!safe)return <div className="admin-media-state"><strong>{restricted?"Vista previa restringida":"Sin vista previa"}</strong><span>{restricted?"Este asset es privado y no está vinculado a una superficie administrativa revisable.":"No existe una URL HTTPS segura para este contenido."}</span></div>;
-  if(kind==="video")return <AdminVideoPreview url={safe} poster={safeHttpsUrl(poster)} alt={alt}/>;
+  if(!safe)return <div className="admin-media-state"><strong>{restricted?"Vista previa restringida":"Vista previa no disponible"}</strong><span>{restricted?"Este asset es privado y no está vinculado a una superficie administrativa revisable.":"El asset no tiene URL reproducible."}</span></div>;
+  const state=<div className="admin-media-state admin-media-overlay" role={mediaState==="loading"?"status":undefined}>{mediaState==="loading"?<><span className="spinner"/>Cargando vista previa…</>:<><strong>Vista previa no disponible</strong><span>El asset no pudo reproducirse de forma segura.</span>{onRetry&&<button className="secondary" onClick={onRetry}>Reintentar</button>}</>}</div>;
+  if(kind==="video")return <div className="admin-media-stage"><AdminVideoPreview url={safe} poster={safeHttpsUrl(poster)} alt={alt} onReady={()=>setMediaState("ready")} onError={()=>setMediaState("error")}/>{mediaState!=="ready"&&state}</div>;
   if(kind==="audio"||kind==="voice")return <audio className="admin-audio" controls preload="metadata" aria-label={alt}><source src={safe}/></audio>;
-  return <img className="admin-media-element" src={safe} alt={alt}/>;
+  return <div className="admin-media-stage"><img className="admin-media-element" src={safe} alt={alt} onLoad={()=>setMediaState("ready")} onError={()=>setMediaState("error")}/>{mediaState!=="ready"&&state}</div>;
 }
 
 export function AdminTimeline({items}:{items:Array<{id:string;title:string;detail?:string;time?:unknown;status?:string}>}){return <div className="admin-timeline">{items.map((item)=><div key={item.id}><i aria-hidden="true"/><div><strong>{item.title}</strong>{item.detail&&<span>{item.detail}</span>}</div><div>{item.status&&<em className="badge">{item.status}</em>}<small>{formatDate(item.time)}</small></div></div>)}</div>}

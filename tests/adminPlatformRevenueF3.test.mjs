@@ -58,7 +58,7 @@ test("known non-revenue operations are absent from the recognition allow-list",(
 
 test("Finance overview renders revenue, reconciliation, and current balances separately",()=>{
   assert.match(api,/getAdminPlatformRevenue[\s\S]*get_admin_platform_revenue[\s\S]*p_period:period/);
-  for(const label of ["Ingresos de Nelyon","Ingresos brutos","Reversiones","Ingresos netos Nelyon","Saldos actuales de plataforma","Estado de reconciliación"])assert.match(page,new RegExp(label));
+  for(const label of ["Saldo actual BDAG","Equivalente USD","Ingresos de Nelyon","Ingresos brutos","Reversiones","Ingresos netos","Detalle de cuentas de plataforma","Estado de reconciliación"])assert.match(page,new RegExp(label));
   assert.match(page,/saldo actual puede diferir del revenue acumulado/i);
   assert.doesNotMatch(page,/JSON\.stringify/);
 });
