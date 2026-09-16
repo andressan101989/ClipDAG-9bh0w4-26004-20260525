@@ -67,6 +67,7 @@ export function BusinessMediaPage() {
         {([{ label: "Todos", value: undefined }, { label: "Imágenes", value: "image" }, { label: "Videos", value: "video" }] as const).map((filter) => <button key={filter.label} type="button" className={kind === filter.value ? "filter-chip is-active" : "filter-chip"} onClick={() => setKind(filter.value)}>{filter.label}</button>)}
       </div>
       <InlineError message={error} />
+      {error && <button className="secondary-button media-retry" type="button" onClick={() => void load(false)}>Reintentar</button>}
       {loading && <div className="media-page-state">Cargando biblioteca…</div>}
       {!loading && !error && items.length === 0 && <div className="media-page-state"><strong>Tu biblioteca está lista para empezar</strong><p>{canManage ? "Sube una imagen o video, o reutiliza media canónica vinculada a tu Store." : "No hay media disponible para este negocio."}</p></div>}
       {!loading && items.length > 0 && <div className="media-grid">{items.map((item) => <article className="media-card" key={`${item.assetSource}:${item.assetId}`}>
