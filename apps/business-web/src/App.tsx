@@ -7,6 +7,31 @@ import { BusinessLoginPage } from "./pages/BusinessLoginPage";
 import { BusinessOnboardingPage } from "./pages/BusinessOnboardingPage";
 import { BusinessStatusPage } from "./pages/BusinessStatusPage";
 import { BusinessStoreForm } from "./pages/BusinessStorePages";
+import { BusinessSelectorPage } from "./pages/BusinessSelectorPage";
+
+function BusinessHomeRoute() {
+  const { hasCapability } = useBusinessAuth();
+  if (hasCapability("business.home.read")) return <BusinessDashboardPage />;
+  if (hasCapability("business.store.read") || hasCapability("business.store.manage")) {
+    return <Navigate to="/store" replace />;
+  }
+  return <BusinessStatusPage kind="no-permissions" />;
+}
+
+function BusinessStoreRoute() {
+  const { hasCapability } = useBusinessAuth();
+  if (!hasCapability("business.store.read") && !hasCapability("business.store.manage")) {
+    return <Navigate to="/" replace />;
+  }
+  return <BusinessStoreForm />;
+}
+
+function BusinessSettingsRoute() {
+  const { hasCapability } = useBusinessAuth();
+  return hasCapability("business.settings.manage")
+    ? <BusinessSettingsPage />
+    : <Navigate to="/" replace />;
+}
 
 function LifecycleBoundary() {
   const { phase, error, retry } = useBusinessAuth();
@@ -17,6 +42,8 @@ function LifecycleBoundary() {
   if (phase === "seller_pending") return <BusinessStatusPage kind="pending" />;
   if (phase === "seller_rejected") return <BusinessOnboardingPage rejected />;
   if (phase === "seller_suspended") return <BusinessStatusPage kind="seller-suspended" />;
+  if (phase === "select_business") return <BusinessSelectorPage />;
+  if (phase === "no_permissions") return <BusinessStatusPage kind="no-permissions" />;
   if (phase === "approved_no_store") return <BusinessStoreForm setup />;
   if (phase === "store_draft") return <BusinessStoreForm />;
   if (phase === "store_suspended") return <BusinessStatusPage kind="store-suspended" />;
@@ -24,9 +51,9 @@ function LifecycleBoundary() {
   return (
     <Routes>
       <Route element={<BusinessLayout />}>
-        <Route index element={<BusinessDashboardPage />} />
-        <Route path="store" element={<BusinessStoreForm />} />
-        <Route path="settings" element={<BusinessSettingsPage />} />
+        <Route index element={<BusinessHomeRoute />} />
+        <Route path="store" element={<BusinessStoreRoute />} />
+        <Route path="settings" element={<BusinessSettingsRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

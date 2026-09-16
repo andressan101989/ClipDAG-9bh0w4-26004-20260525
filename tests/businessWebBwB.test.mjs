@@ -5,13 +5,14 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
 
-test("BW-B uses only canonical seller/store RPC authorities", async () => {
+test("Business Web preserves canonical seller/store mutation authorities", async () => {
   const api = await read("apps/business-web/src/lib/businessApi.ts");
   for (const rpc of ["apply_marketplace_seller", "update_marketplace_seller_application", "create_marketplace_store", "update_marketplace_store"]) {
     assert.match(api, new RegExp(`\\\"${rpc}\\\"`));
   }
   assert.doesNotMatch(api, /\.insert\s*\(|\.update\s*\(|service[_-]?role/i);
-  assert.doesNotMatch(api, /businesses|merchants|organizations|membership/i);
+  assert.match(api, /get_my_business_access/);
+  assert.doesNotMatch(api, /businesses_table|merchants|organizations/i);
 });
 
 test("canonical SQL denies cross-owner Store mutations and preserves one Store per seller", async () => {

@@ -7,6 +7,7 @@ import { BusinessAuthProvider } from "../auth/BusinessAuthProvider";
 import type {
   BusinessGateway,
   BusinessIdentity,
+  BusinessAccess,
   MarketplaceSeller,
   MarketplaceStore,
 } from "../lib/businessApi";
@@ -37,6 +38,39 @@ const activeStore: MarketplaceStore = {
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
+const ownerCapabilities = [
+  "business.home.read",
+  "business.store.read",
+  "business.store.manage",
+  "business.settings.manage",
+] as const;
+
+function identity(ownedSeller: MarketplaceSeller | null, currentStore: MarketplaceStore | null): BusinessIdentity {
+  const businesses: BusinessAccess[] = ownedSeller?.status === "approved" ? [{
+    businessOwnerId: ownedSeller.userId,
+    accessType: "owner",
+    membershipId: null,
+    capabilities: [...ownerCapabilities],
+    seller: { userId: ownedSeller.userId, status: ownedSeller.status, displayName: ownedSeller.displayName },
+    store: currentStore,
+  }] : [];
+  return { user, ownedSeller, businesses };
+}
+
+function memberAccess(ownerId: string, capabilities: BusinessAccess["capabilities"], name = "Partner Store"): BusinessAccess {
+  return {
+    businessOwnerId: ownerId,
+    accessType: "member",
+    membershipId: `membership-${ownerId}`,
+    capabilities,
+    seller: { userId: ownerId, status: "approved", displayName: name },
+    store: { ...activeStore, id: `store-${ownerId}`, sellerId: ownerId, name, slug: name.toLowerCase().replaceAll(" ", "-") },
+  };
+}
+
+function memberIdentity(...businesses: BusinessAccess[]): BusinessIdentity {
+  return { user, ownedSeller: null, businesses };
+}
 
 function seller(status: MarketplaceSeller["status"]): MarketplaceSeller {
   return { ...approvedSeller, status, suspensionReason: status === "suspended" ? "Revisión necesaria" : null };
@@ -86,7 +120,10 @@ function renderBusiness(identity: BusinessIdentity | null, initialPath = "/", op
 }
 
 describe("Business Web owner lifecycle", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.sessionStorage.clear();
+  });
 
   it("routes a missing session to the Nelyon login", async () => {
     renderBusiness(null);
@@ -94,82 +131,82 @@ describe("Business Web owner lifecycle", () => {
   });
 
   it("restores a valid session and resolves the active owner context", async () => {
-    const { gateway } = renderBusiness({ user, seller: approvedSeller, store: activeStore });
+    const { gateway } = renderBusiness(identity(approvedSeller, activeStore));
     expect(await screen.findByText("Hola, Nelyon Shop")).toBeInTheDocument();
     expect(gateway.loadIdentity).toHaveBeenCalledTimes(1);
   });
 
   it("logs out and returns to login", async () => {
-    const { client } = renderBusiness({ user, seller: approvedSeller, store: activeStore });
+    const { client } = renderBusiness(identity(approvedSeller, activeStore));
     fireEvent.click(await screen.findByRole("button", { name: "Cerrar sesión" }));
     expect(await screen.findByText("Accede con tu cuenta de Nelyon")).toBeInTheDocument();
     expect(client.auth.signOut).toHaveBeenCalledTimes(1);
   });
 
   it("returns to login when Supabase reports an expired or cleared session", async () => {
-    const { emitAuth } = renderBusiness({ user, seller: approvedSeller, store: activeStore });
+    const { emitAuth } = renderBusiness(identity(approvedSeller, activeStore));
     await screen.findByText("Hola, Nelyon Shop");
     act(() => emitAuth(null));
     expect(await screen.findByText("Accede con tu cuenta de Nelyon")).toBeInTheDocument();
   });
 
   it("shows seller onboarding when no seller exists", async () => {
-    renderBusiness({ user, seller: null, store: null });
+    renderBusiness(identity(null, null));
     expect(await screen.findByText("Activa tu presencia comercial")).toBeInTheDocument();
   });
 
   it("submits the owner-only canonical seller application", async () => {
-    const { gateway } = renderBusiness({ user, seller: null, store: null });
+    const { gateway } = renderBusiness(identity(null, null));
     fireEvent.change(await screen.findByLabelText("Nombre visible"), { target: { value: "Mi negocio" } });
     fireEvent.click(screen.getByRole("button", { name: "Enviar solicitud" }));
     await waitFor(() => expect(gateway.applySeller).toHaveBeenCalledWith({ displayName: "Mi negocio", applicationNote: "" }, expect.anything()));
   });
 
   it("blocks pending sellers on the review screen", async () => {
-    renderBusiness({ user, seller: seller("pending"), store: null });
+    renderBusiness(identity(seller("pending"), null));
     expect(await screen.findByText("Tu solicitud está en revisión")).toBeInTheDocument();
     expect(screen.queryByText("Tu tienda")).not.toBeInTheDocument();
   });
 
   it("allows a rejected seller to use only the existing update/reapply flow", async () => {
-    const { gateway } = renderBusiness({ user, seller: seller("rejected"), store: null });
+    const { gateway } = renderBusiness(identity(seller("rejected"), null));
     expect(await screen.findByText("Actualiza tu solicitud")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Actualizar y reenviar" }));
     await waitFor(() => expect(gateway.updateSeller).toHaveBeenCalled());
   });
 
   it("blocks a suspended seller", async () => {
-    renderBusiness({ user, seller: seller("suspended"), store: null });
+    renderBusiness(identity(seller("suspended"), null));
     expect(await screen.findByText("Tu acceso como seller está suspendido")).toBeInTheDocument();
     expect(screen.getByText("Revisión necesaria")).toBeInTheDocument();
   });
 
   it("routes approved sellers without a Store to Store Setup", async () => {
-    renderBusiness({ user, seller: approvedSeller, store: null });
+    renderBusiness(identity(approvedSeller, null));
     expect(await screen.findByText("Da forma a tu espacio comercial")).toBeInTheDocument();
   });
 
   it("creates a Store through the gateway without a seller id", async () => {
-    const { gateway } = renderBusiness({ user, seller: approvedSeller, store: null });
+    const { gateway } = renderBusiness(identity(approvedSeller, null));
     fireEvent.change(await screen.findByLabelText("Nombre de la tienda"), { target: { value: "Tienda Azul" } });
     fireEvent.click(screen.getByRole("button", { name: "Crear tienda" }));
     await waitFor(() => expect(gateway.createStore).toHaveBeenCalledWith({ name: "Tienda Azul", slug: "tienda-azul", description: "" }, expect.anything()));
   });
 
   it("routes a draft Store to its editable profile", async () => {
-    renderBusiness({ user, seller: approvedSeller, store: store("draft") });
+    renderBusiness(identity(approvedSeller, store("draft")));
     expect(await screen.findByText("Completa el perfil de tu tienda")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Nelyon Shop")).toBeInTheDocument();
   });
 
   it("renders the active Business dashboard and canonical Store identity", async () => {
-    renderBusiness({ user, seller: approvedSeller, store: activeStore });
+    renderBusiness(identity(approvedSeller, activeStore));
     expect(await screen.findByText("Tu espacio de negocio está listo. Aquí encontrarás el estado real de la fundación Business.")).toBeInTheDocument();
     expect(screen.getAllByText("Nelyon Shop").length).toBeGreaterThan(1);
   });
 
   it("blocks a suspended Store", async () => {
-    renderBusiness({ user, seller: approvedSeller, store: store("suspended") });
+    renderBusiness(identity(approvedSeller, store("suspended")));
     expect(await screen.findByText("Tu tienda está suspendida")).toBeInTheDocument();
     expect(screen.queryByText("Configuración inicial")).not.toBeInTheDocument();
   });
@@ -177,25 +214,86 @@ describe("Business Web owner lifecycle", () => {
   it("shows loading and friendly error states", async () => {
     let release: ((value: BusinessIdentity) => void) | undefined;
     const pending = new Promise<BusinessIdentity>((resolve) => { release = resolve; });
-    const active = harness({ user, seller: approvedSeller, store: activeStore });
+    const active = harness(identity(approvedSeller, activeStore));
     active.gateway.loadIdentity = vi.fn(() => pending);
     const view = render(
       <MemoryRouter><BusinessAuthProvider client={active.client} gateway={active.gateway}><App /></BusinessAuthProvider></MemoryRouter>,
     );
     expect(await screen.findByText("Cargando tu espacio…")).toBeInTheDocument();
-    await act(async () => release?.({ user, seller: approvedSeller, store: activeStore }));
+    await act(async () => release?.(identity(approvedSeller, activeStore)));
     await screen.findByText("Hola, Nelyon Shop");
     view.unmount();
 
-    renderBusiness({ user, seller: approvedSeller, store: activeStore }, "/", { loadError: new Error("context_failed") });
+    renderBusiness(identity(approvedSeller, activeStore), "/", { loadError: new Error("context_failed") });
     expect(await screen.findByText("Error al cargar Business")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
   });
 
   it("keeps future navigation visibly disabled", async () => {
-    renderBusiness({ user, seller: approvedSeller, store: activeStore });
+    renderBusiness(identity(approvedSeller, activeStore));
     await screen.findByText("Hola, Nelyon Shop");
     expect(screen.getByRole("button", { name: /Productos/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Equipo/ })).toBeDisabled();
+  });
+
+  it("auto-selects a single member business and labels the actor as member", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-b", ["business.home.read", "business.store.read"])));
+    expect(await screen.findByText("Negocio compartido")).toBeInTheDocument();
+    expect(screen.getAllByText("Miembro").length).toBeGreaterThan(0);
+  });
+
+  it("requires selection when multiple authorized businesses are returned", async () => {
+    renderBusiness(memberIdentity(
+      memberAccess("owner-b", ["business.home.read"], "Business B"),
+      memberAccess("owner-c", ["business.home.read"], "Business C"),
+    ));
+    expect(await screen.findByText("Selecciona un negocio")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Business C/ }));
+    expect(await screen.findByText("Hola, Business C")).toBeInTheDocument();
+  });
+
+  it("keeps a persisted selection only while it remains authorized", async () => {
+    window.sessionStorage.setItem("nelyon.business.selected-owner", "owner-c");
+    renderBusiness(memberIdentity(
+      memberAccess("owner-b", ["business.home.read"], "Business B"),
+      memberAccess("owner-c", ["business.home.read"], "Business C"),
+    ));
+    expect(await screen.findByText("Hola, Business C")).toBeInTheDocument();
+  });
+
+  it("clears a revoked persisted selection and fails back to authorized selection", async () => {
+    window.sessionStorage.setItem("nelyon.business.selected-owner", "revoked-owner");
+    renderBusiness(memberIdentity(memberAccess("owner-b", ["business.home.read"], "Business B")));
+    expect(await screen.findByText("Hola, Business B")).toBeInTheDocument();
+    expect(window.sessionStorage.getItem("nelyon.business.selected-owner")).toBe("owner-b");
+  });
+
+  it("fails closed for an active membership with zero capabilities", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-b", [])));
+    expect(await screen.findByText("Tu acceso no tiene permisos asignados")).toBeInTheDocument();
+  });
+
+  it("lets a multi-business member leave a zero-capability selection", async () => {
+    window.sessionStorage.setItem("nelyon.business.selected-owner", "owner-b");
+    renderBusiness(memberIdentity(
+      memberAccess("owner-b", [], "Business B"),
+      memberAccess("owner-c", ["business.home.read"], "Business C"),
+    ));
+    expect(await screen.findByText("Tu acceso no tiene permisos asignados")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Cambiar de negocio"), { target: { value: "owner-c" } });
+    expect(await screen.findByText("Hola, Business C")).toBeInTheDocument();
+  });
+
+  it("renders Store read-only without store.manage", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-b", ["business.store.read"])) , "/store");
+    expect(await screen.findByText(/Vista de solo lectura/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Nombre de la tienda")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Guardar cambios" })).not.toBeInTheDocument();
+  });
+
+  it("enables Store editing only with store.manage", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-b", ["business.store.manage"])) , "/store");
+    expect(await screen.findByRole("button", { name: "Guardar cambios" })).toBeEnabled();
+    expect(screen.getByLabelText("Nombre de la tienda")).toBeEnabled();
   });
 });

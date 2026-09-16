@@ -7,7 +7,8 @@ function slugify(value: string) {
 }
 
 export function BusinessStoreForm({ setup = false }: { setup?: boolean }) {
-  const { store, createStore, updateStore, logout } = useBusinessAuth();
+  const { store, createStore, updateStore, logout, hasCapability, accessType } = useBusinessAuth();
+  const canManage = setup || hasCapability("business.store.manage");
   const [name, setName] = useState(store?.name ?? "");
   const [slug, setSlug] = useState(store?.slug ?? "");
   const [description, setDescription] = useState(store?.description ?? "");
@@ -17,6 +18,7 @@ export function BusinessStoreForm({ setup = false }: { setup?: boolean }) {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (!canManage) return;
     setSubmitting(true);
     setSaved(false);
     setError(null);
@@ -38,6 +40,7 @@ export function BusinessStoreForm({ setup = false }: { setup?: boolean }) {
         <div>
           <h2>{setup ? "Crea tu tienda" : "Perfil de la tienda"}</h2>
           <p className="muted">Estos datos forman la identidad pública de tu Store.</p>
+          {!canManage && <p className="readonly-note">Vista de solo lectura para miembros con business.store.read.</p>}
         </div>
         {store && <StatusBadge status={store.status} />}
       </div>
@@ -47,6 +50,7 @@ export function BusinessStoreForm({ setup = false }: { setup?: boolean }) {
           minLength={2}
           maxLength={100}
           required
+          disabled={!canManage}
           value={name}
           onChange={(event) => {
             setName(event.target.value);
@@ -55,10 +59,10 @@ export function BusinessStoreForm({ setup = false }: { setup?: boolean }) {
         />
       </FormField>
       <FormField label="Dirección pública" hint="Letras minúsculas, números y guiones.">
-        <div className="slug-input"><span>nelyon.com/store/</span><input aria-label="Dirección pública" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" minLength={3} maxLength={80} required value={slug} onChange={(event) => setSlug(slugify(event.target.value))} /></div>
+        <div className="slug-input"><span>nelyon.com/store/</span><input aria-label="Dirección pública" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" minLength={3} maxLength={80} required disabled={!canManage} value={slug} onChange={(event) => setSlug(slugify(event.target.value))} /></div>
       </FormField>
       <FormField label="Descripción" hint="Opcional. Máximo 1,000 caracteres.">
-        <textarea aria-label="Descripción" maxLength={1000} rows={5} value={description} onChange={(event) => setDescription(event.target.value)} />
+        <textarea aria-label="Descripción" maxLength={1000} rows={5} disabled={!canManage} value={description} onChange={(event) => setDescription(event.target.value)} />
       </FormField>
       <div className="deferred-media">
         <span aria-hidden="true">▧</span>
@@ -67,7 +71,7 @@ export function BusinessStoreForm({ setup = false }: { setup?: boolean }) {
       <InlineError message={error} />
       {saved && <div className="inline-success" role="status">Cambios guardados.</div>}
       <div className="form-actions">
-        <button className="primary-button" type="submit" disabled={submitting}>{submitting ? "Guardando…" : setup ? "Crear tienda" : "Guardar cambios"}</button>
+        {canManage && <button className="primary-button" type="submit" disabled={submitting}>{submitting ? "Guardando…" : setup ? "Crear tienda" : "Guardar cambios"}</button>}
         {setup && <button className="text-button" type="button" onClick={() => void logout()}>Cerrar sesión</button>}
       </div>
     </form>
@@ -88,7 +92,7 @@ export function BusinessStoreForm({ setup = false }: { setup?: boolean }) {
 
   return (
     <>
-      <PageHeader eyebrow="Tienda" title="Perfil de la tienda" description="Administra la identidad básica de tu storefront." />
+      <PageHeader eyebrow="Tienda" title="Perfil de la tienda" description={canManage ? "Administra la identidad básica de tu storefront." : `Acceso ${accessType === "member" ? "como miembro" : "de solo lectura"}.`} />
       {content}
     </>
   );

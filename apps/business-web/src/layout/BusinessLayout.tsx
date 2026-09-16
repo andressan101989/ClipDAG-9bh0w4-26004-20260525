@@ -8,11 +8,12 @@ type BusinessNavItem = {
   symbol: string;
   path?: string;
   enabled?: boolean;
+  capability?: `business.${string}.${string}`;
 };
 
 const navigation: readonly BusinessNavItem[] = [
-  { label: "Inicio", path: "/", symbol: "⌂", enabled: true },
-  { label: "Tienda", path: "/store", symbol: "◇", enabled: true },
+  { label: "Inicio", path: "/", symbol: "⌂", enabled: true, capability: "business.home.read" },
+  { label: "Tienda", path: "/store", symbol: "◇", enabled: true, capability: "business.store.read" },
   { label: "Productos", symbol: "▦" },
   { label: "Pedidos", symbol: "▤" },
   { label: "Publicidad", symbol: "◎" },
@@ -20,12 +21,12 @@ const navigation: readonly BusinessNavItem[] = [
   { label: "Finanzas", symbol: "$" },
   { label: "Analítica", symbol: "↗" },
   { label: "Equipo", symbol: "♙" },
-  { label: "Configuración", path: "/settings", symbol: "⚙", enabled: true },
+  { label: "Configuración", path: "/settings", symbol: "⚙", enabled: true, capability: "business.settings.manage" },
 ];
 
 export function BusinessLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const { store, user, logout } = useBusinessAuth();
+  const { store, user, logout, businesses, currentBusiness, accessType, hasCapability, selectBusiness } = useBusinessAuth();
   const location = useLocation();
 
   const pageName =
@@ -45,7 +46,10 @@ export function BusinessLayout() {
         </div>
         <nav aria-label="Navegación Business">
           {navigation.map((item) =>
-            item.enabled && item.path ? (
+            item.enabled && item.path && item.capability && (
+              hasCapability(item.capability)
+              || (item.path === "/store" && hasCapability("business.store.manage"))
+            ) ? (
               <NavLink
                 end={item.path === "/"}
                 key={item.label}
@@ -70,8 +74,9 @@ export function BusinessLayout() {
             {store?.name.slice(0, 1).toUpperCase() ?? "N"}
           </div>
           <div>
-            <strong>{store?.name}</strong>
+            <strong>{store?.name ?? currentBusiness?.seller.displayName}</strong>
             {store && <StatusBadge status={store.status} />}
+            {accessType && <small>{accessType === "owner" ? "Propietario" : "Miembro"}</small>}
           </div>
         </div>
       </aside>
@@ -98,6 +103,19 @@ export function BusinessLayout() {
             <strong>{pageName}</strong>
           </div>
           <div className="topbar-account">
+            {businesses.length > 1 && (
+              <select
+                aria-label="Negocio actual"
+                value={currentBusiness?.businessOwnerId ?? ""}
+                onChange={(event) => selectBusiness(event.target.value)}
+              >
+                {businesses.map((business) => (
+                  <option key={business.businessOwnerId} value={business.businessOwnerId}>
+                    {business.store?.name ?? business.seller.displayName}
+                  </option>
+                ))}
+              </select>
+            )}
             <span>{user?.email}</span>
             <button className="text-button" type="button" onClick={() => void logout()}>
               Cerrar sesión
