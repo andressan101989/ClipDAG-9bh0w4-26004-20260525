@@ -165,6 +165,36 @@ assert.ok(warnings.every(entry=>entry.label==='[MediaService] R2 PUT transient f
 assert.ok(warnings.every(entry=>!JSON.stringify(entry).includes('signed.invalid')));
 assert.ok(warnings.every(entry=>!('assetId' in entry.payload)));
 
+let ambiguousPutCalls=0,ambiguousFinalizeCalls=0;
+const ambiguousRetry=loadService({
+  invoke:async name=>{
+    if(name==='create-media-upload') return {data:{success:true,data:{
+      assetId:'ambiguous-asset',uploadUrl:'https://signed.invalid/ambiguous',
+      method:'PUT',headers:{'Content-Type':'image/png','If-None-Match':'*'},expiresAt:'soon',
+    }},error:null};
+    if(name==='finalize-media-upload') {
+      ambiguousFinalizeCalls++;
+      return {data:{success:true,data:{
+        assetId:'ambiguous-asset',provider:'r2',mediaKind:'image',purpose:'product_image',
+        visibility:'public',status:'ready',url:'https://public.invalid/ambiguous.png',
+      }},error:null};
+    }
+    return {data:null,error:null};
+  },
+  fetchImpl:async()=>{
+    ambiguousPutCalls++;
+    if(ambiguousPutCalls===1) throw new Error('network request failed');
+    return http(412);
+  },
+});
+const ambiguousUploaded=await ambiguousRetry.uploadMediaFromUri({
+  uri:'file:///photo.png',purpose:'product_image',mimeType:'image/png',
+  visibility:'public',timeoutMs:10_000,
+});
+assert.equal(ambiguousUploaded.assetId,'ambiguous-asset');
+assert.equal(ambiguousPutCalls,2);
+assert.equal(ambiguousFinalizeCalls,1);
+
 const carouselSource=fs.readFileSync(path.join(root,'app/(tabs)/upload.tsx'),'utf8');
 assert.match(carouselSource,/CAROUSEL_RECONCILED_AFTER_AMBIGUOUS_RESPONSE/);
 const productSource=fs.readFileSync(path.join(root,'app/create-product.tsx'),'utf8');
