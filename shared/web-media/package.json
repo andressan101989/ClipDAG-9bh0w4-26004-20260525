@@ -1,0 +1,13 @@
+{
+  "name": "@nelyon/web-media",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/BrowserVideoPreview.tsx"
+  },
+  "peerDependencies": {
+    "hls.js": "1.7.3",
+    "react": "19.1.1"
+  }
+}

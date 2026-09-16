@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
-import {useEffect,useRef,useState,type ReactNode} from "react";
+import {useEffect,useState,type ReactNode} from "react";
 import {Link} from "react-router-dom";
+import {BrowserVideoPreview} from "@nelyon/web-media";
 import {formatDate} from "../lib/adminApi";
 
 export type AdminIdentityValue={id?:unknown;username?:unknown;display_name?:unknown;avatar_url?:unknown};
@@ -22,12 +23,8 @@ export function AdminFact({label,value,mono=false}:{label:string;value:ReactNode
 
 export function AdminEntityLink({to,id,label}:{to?:string;id:unknown;label?:string}){const body=<>{label&&<strong>{label}</strong>}<span className="mono">{shortId(id)}</span></>;return to?<Link className="entity-link" to={to}>{body}</Link>:<span className="entity-link">{body}</span>}
 
-function isHls(url:string){return /\.m3u8(?:$|\?)/i.test(url)||/cloudflarestream\.com|videodelivery\.net/i.test(url)&&url.includes("m3u8")}
 export function AdminVideoPreview({url,poster,alt="Video administrativo",onReady,onError}:{url:string;poster?:string|null;alt?:string;onReady?:()=>void;onError?:()=>void}){
-  const videoRef=useRef<HTMLVideoElement>(null),errorRef=useRef(onError);
-  errorRef.current=onError;
-  useEffect(()=>{const video=videoRef.current;if(!video||!isHls(url))return;if(video.canPlayType("application/vnd.apple.mpegurl")){video.src=url;return()=>{if(video.getAttribute("src")===url)video.removeAttribute("src")}}let disposed=false,hls:import("hls.js").default|null=null;void import("hls.js").then(({default:Hls})=>{if(disposed)return;if(!Hls.isSupported()){errorRef.current?.();return}hls=new Hls({enableWorker:true});hls.on(Hls.Events.ERROR,(_event,data)=>{if(!disposed&&data.fatal)errorRef.current?.()});hls.loadSource(url);hls.attachMedia(video)}).catch(()=>{if(!disposed)errorRef.current?.()});return()=>{disposed=true;hls?.destroy()}},[url]);
-  return <video ref={videoRef} className="admin-media-element" controls preload="metadata" poster={poster??undefined} aria-label={alt} onLoadedMetadata={onReady} onCanPlay={onReady} onError={onError}>{!isHls(url)&&<source src={url}/>}Tu navegador no puede reproducir este video.</video>
+  return <BrowserVideoPreview url={url} poster={poster} alt={alt} className="admin-media-element" onReady={onReady} onError={onError}/>;
 }
 
 export function AdminMediaPreview({url,poster,kind="image",alt="Vista previa",loading=false,error,onRetry,restricted=false}:{url?:string|null;poster?:string|null;kind?:string|null;alt?:string;loading?:boolean;error?:string|null;onRetry?:()=>void;restricted?:boolean}){

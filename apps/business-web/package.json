@@ -10,7 +10,9 @@
     "build": "tsc -b && vite build"
   },
   "dependencies": {
+    "@nelyon/web-media": "file:../../shared/web-media",
     "@supabase/supabase-js": "2.56.1",
+    "hls.js": "1.7.3",
     "react": "19.1.1",
     "react-dom": "19.1.1",
     "react-router-dom": "7.18.2"

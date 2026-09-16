@@ -1,21 +1,34 @@
-import { authenticatedUser,admin,json } from '../_shared/mediaAuth.ts';
+import { businessActorHasAnyCapability,isUuid } from '../_shared/businessMediaAuth.ts';
+import { authenticatedUser,admin,corsHeaders,json } from '../_shared/mediaAuth.ts';
 import { extensionForMime,validateMediaRequest } from '../_shared/mediaPurposes.ts';
 import { R2_PRIVATE_BUCKET,R2_PUBLIC_BUCKET,signPutIfAbsent } from '../_shared/r2.ts';
 
 Deno.serve(async(req)=>{
+  if(req.method==='OPTIONS') return new Response('ok',{headers:corsHeaders});
   if(req.method!=='POST') return json({error:'method_not_allowed'},405);
   const user=await authenticatedUser(req); if(!user) return json({error:'unauthorized'},401);
   const body=await req.json().catch(()=>({}));
   const purpose=String(body.purpose??''),mime=String(body.mime_type??''),visibility=String(body.visibility??'');
+  const requestedBusinessOwner=body.business_owner_id;
+  let ownerId=user.id;
+  if(requestedBusinessOwner!==undefined&&requestedBusinessOwner!==null) {
+    if(!isUuid(requestedBusinessOwner)) return json({error:'invalid_business_scope'},400);
+    if(purpose!=='business_library'||visibility!=='public') return json({error:'invalid_business_media_contract'},400);
+    const allowed=await businessActorHasAnyCapability(req,requestedBusinessOwner,['business.media.manage']);
+    if(!allowed) return json({error:'business_media_manage_required'},403);
+    ownerId=requestedBusinessOwner;
+  } else if(purpose==='business_library') {
+    return json({error:'business_scope_required'},400);
+  }
   const size=Number(body.size_bytes);
   const validated=validateMediaRequest(purpose,mime,size,visibility);
   if('error' in validated) return json({error:validated.error},400);
   const db=admin();
   const minute=new Date(Date.now()-60_000).toISOString();
   const [recentResult,pendingResult,bytesResult] = await Promise.all([
-    db.from('media_assets').select('*',{count:'exact',head:true}).eq('owner_id',user.id).gte('created_at',minute),
-    db.from('media_assets').select('*',{count:'exact',head:true}).eq('owner_id',user.id).in('status',['pending','uploading']),
-    db.from('media_assets').select('size_bytes').eq('owner_id',user.id).gte('created_at',minute),
+    db.from('media_assets').select('*',{count:'exact',head:true}).eq('owner_id',ownerId).gte('created_at',minute),
+    db.from('media_assets').select('*',{count:'exact',head:true}).eq('owner_id',ownerId).in('status',['pending','uploading']),
+    db.from('media_assets').select('size_bytes').eq('owner_id',ownerId).gte('created_at',minute),
   ]);
   if(recentResult.error||pendingResult.error||bytesResult.error) return json({error:'rate_limit_unavailable'},503);
   const recent=recentResult.count,pending=pendingResult.count,bytes=bytesResult.data;
@@ -23,10 +36,10 @@ Deno.serve(async(req)=>{
   if((bytes??[]).reduce((n,r)=>n+Number(r.size_bytes??0),0)+size>500_000_000) return json({error:'byte_rate_limited'},429);
   const id=crypto.randomUUID(),now=new Date(),ext=extensionForMime(mime);
   const env=Deno.env.get('DENO_DEPLOYMENT_ID')?'production':'development';
-  const key=`${env}/${purpose}/${user.id}/${now.getUTCFullYear()}/${String(now.getUTCMonth()+1).padStart(2,'0')}/${id}.${ext}`;
+  const key=`${env}/${purpose}/${ownerId}/${now.getUTCFullYear()}/${String(now.getUTCMonth()+1).padStart(2,'0')}/${id}.${ext}`;
   const bucket=visibility==='public'?R2_PUBLIC_BUCKET():R2_PRIVATE_BUCKET();
   const safeName=String(body.file_name??'upload').replace(/[\u0000-\u001f\\\/]/g,'_').slice(0,180);
-  const {error}=await db.from('media_assets').insert({id,owner_id:user.id,provider:'r2',media_kind:validated.rule.kind,purpose,visibility,bucket_name:bucket,object_key:key,mime_type:mime,size_bytes:size,original_filename:safeName,status:'pending'});
+  const {error}=await db.from('media_assets').insert({id,owner_id:ownerId,provider:'r2',media_kind:validated.rule.kind,purpose,visibility,bucket_name:bucket,object_key:key,mime_type:mime,size_bytes:size,original_filename:safeName,status:'pending'});
   if(error) return json({error:'asset_create_failed'},500);
   let uploadUrl:string;
   try { uploadUrl=await signPutIfAbsent(bucket,key,mime,{}); }
@@ -42,5 +55,5 @@ Deno.serve(async(req)=>{
     }).eq('id',id);
     return json({error:'asset_state_failed'},503);
   }
-  return json({success:true,data:{assetId:id,uploadUrl,method:'PUT',headers:{'Content-Type':mime,'If-None-Match':'*'},expiresAt:new Date(Date.now()+300_000).toISOString()}});
+  return json({success:true,data:{assetId:id,uploadUrl,method:'PUT',headers:{'Content-Type':mime,'If-None-Match':'*'},expiresAt:new Date(Date.now()+300_000).toISOString(),ownerId}});
 });

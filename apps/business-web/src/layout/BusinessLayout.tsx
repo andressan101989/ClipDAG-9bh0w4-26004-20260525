@@ -17,7 +17,7 @@ const navigation: readonly BusinessNavItem[] = [
   { label: "Productos", symbol: "▦" },
   { label: "Pedidos", symbol: "▤" },
   { label: "Publicidad", symbol: "◎" },
-  { label: "Media", symbol: "▧" },
+  { label: "Media", path: "/media", symbol: "▧", enabled: true, capability: "business.media.read" },
   { label: "Finanzas", symbol: "$" },
   { label: "Analítica", symbol: "↗" },
   { label: "Equipo", symbol: "♙" },
@@ -49,6 +49,7 @@ export function BusinessLayout() {
             item.enabled && item.path && item.capability && (
               hasCapability(item.capability)
               || (item.path === "/store" && hasCapability("business.store.manage"))
+              || (item.path === "/media" && hasCapability("business.media.manage"))
             ) ? (
               <NavLink
                 end={item.path === "/"}

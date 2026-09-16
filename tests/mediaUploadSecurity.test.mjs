@@ -16,7 +16,9 @@ test('R2 credentials remain backend-only and are never public client variables',
   assert.doesNotMatch(files, /EXPO_PUBLIC_R2|console\.(log|warn)\([^)]*uploadUrl/);
 });
 test('server owns object keys and enforces traversal-safe names and rate limits', () => {
-  assert.match(create, /const key=`\$\{env\}\/\$\{purpose\}\/\$\{user\.id\}/);
+  assert.match(create, /let ownerId=user\.id/);
+  assert.match(create, /businessActorHasAnyCapability\(req,requestedBusinessOwner,\['business\.media\.manage'\]\)/);
+  assert.match(create, /const key=`\$\{env\}\/\$\{purpose\}\/\$\{ownerId\}/);
   assert.doesNotMatch(create, /body\.object_key/);
   assert.match(create, /replace\(\/\[\\u0000-\\u001f\\\\\\\/\]\//);
   assert.match(create, /recent\?\?0\)>=20/);

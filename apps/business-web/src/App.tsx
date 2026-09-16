@@ -4,6 +4,7 @@ import { StatePanel } from "./components/BusinessUI";
 import { BusinessLayout } from "./layout/BusinessLayout";
 import { BusinessDashboardPage, BusinessSettingsPage } from "./pages/BusinessDashboardPage";
 import { BusinessLoginPage } from "./pages/BusinessLoginPage";
+import { BusinessMediaPage } from "./pages/BusinessMediaPage";
 import { BusinessOnboardingPage } from "./pages/BusinessOnboardingPage";
 import { BusinessStatusPage } from "./pages/BusinessStatusPage";
 import { BusinessStoreForm } from "./pages/BusinessStorePages";
@@ -33,6 +34,13 @@ function BusinessSettingsRoute() {
     : <Navigate to="/" replace />;
 }
 
+function BusinessMediaRoute() {
+  const { hasCapability } = useBusinessAuth();
+  return hasCapability("business.media.read") || hasCapability("business.media.manage")
+    ? <BusinessMediaPage />
+    : <Navigate to="/" replace />;
+}
+
 function LifecycleBoundary() {
   const { phase, error, retry } = useBusinessAuth();
   if (phase === "loading") return <StatePanel eyebrow="Nelyon Business" title="Cargando tu espacio…" body="Estamos validando tu identidad empresarial." />;
@@ -53,6 +61,7 @@ function LifecycleBoundary() {
       <Route element={<BusinessLayout />}>
         <Route index element={<BusinessHomeRoute />} />
         <Route path="store" element={<BusinessStoreRoute />} />
+        <Route path="media" element={<BusinessMediaRoute />} />
         <Route path="settings" element={<BusinessSettingsRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

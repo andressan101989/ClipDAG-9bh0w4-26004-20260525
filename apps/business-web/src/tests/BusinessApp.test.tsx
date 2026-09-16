@@ -14,6 +14,16 @@ import type {
 import type { BusinessSupabaseClient } from "../lib/supabase";
 
 vi.mock("../lib/supabase", () => ({ supabase: {} }));
+const mediaMocks = vi.hoisted(() => ({
+  search: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+  upload: vi.fn(),
+  setStore: vi.fn(),
+}));
+vi.mock("../lib/businessMediaApi", () => ({
+  searchBusinessMedia: mediaMocks.search,
+  uploadBusinessMedia: mediaMocks.upload,
+  setBusinessStoreMedia: mediaMocks.setStore,
+}));
 
 const user = { id: "11111111-1111-4111-8111-111111111111", email: "owner@nelyon.test" } as User;
 const session = { user, access_token: "test", refresh_token: "test" } as Session;
@@ -42,6 +52,8 @@ const ownerCapabilities = [
   "business.home.read",
   "business.store.read",
   "business.store.manage",
+  "business.media.read",
+  "business.media.manage",
   "business.settings.manage",
 ] as const;
 
@@ -122,6 +134,7 @@ function renderBusiness(identity: BusinessIdentity | null, initialPath = "/", op
 describe("Business Web owner lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mediaMocks.search.mockResolvedValue({ items: [], nextCursor: null });
     window.sessionStorage.clear();
   });
 
@@ -295,5 +308,33 @@ describe("Business Web owner lifecycle", () => {
     renderBusiness(memberIdentity(memberAccess("owner-b", ["business.store.manage"])) , "/store");
     expect(await screen.findByRole("button", { name: "Guardar cambios" })).toBeEnabled();
     expect(screen.getByLabelText("Nombre de la tienda")).toBeEnabled();
+  });
+
+  it("opens a server-scoped read-only Media library for media.read", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-b", ["business.media.read"])), "/media");
+    expect(await screen.findByText("Biblioteca multimedia")).toBeInTheDocument();
+    expect(screen.getByText(/Vista de solo lectura/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Subir archivo" })).not.toBeInTheDocument();
+    await waitFor(() => expect(mediaMocks.search).toHaveBeenCalledWith("owner-b", expect.objectContaining({ limit: 24 })));
+  });
+
+  it("enables canonical upload UI only for media.manage", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-b", ["business.media.manage"])), "/media");
+    expect(await screen.findByRole("button", { name: "Subir archivo" })).toBeEnabled();
+    expect(screen.getByRole("link", { name: /Media/ })).toHaveClass("is-active");
+  });
+
+  it("keeps Media unavailable without media capability", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-b", ["business.home.read"])), "/media");
+    expect(await screen.findByText("Negocio compartido")).toBeInTheDocument();
+    expect(screen.queryByText("Biblioteca multimedia")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Media/ })).toBeDisabled();
+  });
+
+  it("shows the Store media picker only with store.manage and media access", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-b", ["business.store.manage", "business.media.read"])), "/store");
+    fireEvent.click(await screen.findAllByRole("button", { name: "Elegir de Media" }).then((buttons) => buttons[0]));
+    expect(await screen.findByRole("dialog", { name: "Elegir logo" })).toBeInTheDocument();
+    expect(mediaMocks.search).toHaveBeenCalledWith("owner-b", expect.objectContaining({ kind: "image", status: "ready" }));
   });
 });

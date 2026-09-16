@@ -1,4 +1,5 @@
-import { authenticatedUser, admin, json } from "../_shared/mediaAuth.ts";
+import { businessActorHasAnyCapability } from "../_shared/businessMediaAuth.ts";
+import { authenticatedUser, admin, corsHeaders, json } from "../_shared/mediaAuth.ts";
 import {
   deleteObject,
   headObject,
@@ -68,6 +69,7 @@ async function headWithRetry(bucket: string, key: string) {
   throw lastError;
 }
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
   const user = await authenticatedUser(req);
   if (!user) return json({ error: "unauthorized" }, 401);
@@ -81,9 +83,13 @@ Deno.serve(async (req) => {
     .from("media_assets")
     .select("*")
     .eq("id", asset_id)
-    .eq("owner_id", user.id)
     .maybeSingle();
   if (!a) return json({ error: "not_found" }, 404);
+  if (a.owner_id !== user.id) {
+    const allowed = a.purpose === "business_library"
+      && await businessActorHasAnyCapability(req, String(a.owner_id), ["business.media.manage"]);
+    if (!allowed) return json({ error: "business_media_manage_required" }, 403);
+  }
   if (a.status === "ready") {
     if (a.visibility === "public" && !a.public_url)
       return json({ error: "public_url_missing" }, 409);

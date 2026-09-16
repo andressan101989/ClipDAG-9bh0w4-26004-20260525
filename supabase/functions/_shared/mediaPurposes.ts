@@ -9,6 +9,7 @@ export type MediaPurpose =
   | "product_video"
   | "store_logo"
   | "store_banner"
+  | "business_library"
   | "chat_image"
   | "chat_video"
   | "chat_audio"
@@ -98,6 +99,12 @@ export const MEDIA_PURPOSES: Record<MediaPurpose, Rule> = {
     defaultVisibility: "public",
   },
   store_banner: {
+    kind: "image",
+    maxBytes: 25_000_000,
+    mimeTypes: PUBLIC_IMAGES,
+    defaultVisibility: "public",
+  },
+  business_library: {
     kind: "image",
     maxBytes: 25_000_000,
     mimeTypes: PUBLIC_IMAGES,
