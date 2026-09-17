@@ -168,7 +168,7 @@ function ReturnCard({ item, isOwner, canManage, ownerId, onRun }: { item: Return
   const input = useRef<HTMLInputElement>(null);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const shipment = item.shipment;
-  const canRefundWithoutShipment = isOwner && item.status === "approved" && !shipment;
+  const canRefundWithoutShipment = isOwner && (item.status === "requested" || item.status === "approved") && !shipment;
   const canConfirmReceived = isOwner && item.status === "approved" && shipment?.status === "shipped";
   async function label(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -202,7 +202,7 @@ function ReturnCard({ item, isOwner, canManage, ownerId, onRun }: { item: Return
       {canManage && <button className="secondary-button" type="button" onClick={() => void onRun(() => respondReturn(item.id, "reject", "Solicitud revisada en Seller Center"), "Devolución rechazada")}>Rechazar</button>}
       {isOwner ? <button className="primary-button" type="button" onClick={() => void onRun(() => respondReturn(item.id, "approve", "Solicitud aprobada por el propietario"), "Devolución aprobada y hold financiado")}>Aprobar (propietario)</button> : <span className="readonly-note">La aprobación financiera requiere al propietario.</span>}
     </div>}
-    {item.status === "approved" && canManage && <div className="card-actions"><input ref={input} className="visually-hidden" type="file" accept="application/pdf" onChange={(event) => void label(event)} /><button className="secondary-button" type="button" disabled={Boolean(progress)} onClick={() => input.current?.click()}>{progress ? `Subiendo ${progress.percent}%` : "Subir y enviar etiqueta"}</button></div>}
+    {item.status === "approved" && canManage && !shipment && <div className="card-actions"><input ref={input} className="visually-hidden" type="file" accept="application/pdf" onChange={(event) => void label(event)} /><button className="secondary-button" type="button" disabled={Boolean(progress)} onClick={() => input.current?.click()}>{progress ? `Subiendo ${progress.percent}%` : "Subir y enviar etiqueta"}</button></div>}
     {(canRefundWithoutShipment || canConfirmReceived) && <div className="financial-actions">
       {canRefundWithoutShipment && <button className="danger-button" type="button" onClick={() => confirmAndRun("¿Reembolsar este pedido y permitir que el comprador conserve el producto?", () => refundReturnWithoutShipment(item.id, "Reembolso sin envío confirmado por el propietario"), "Reembolso completado")}>Reembolsar y permitir que conserve el producto</button>}
       {canConfirmReceived && <button className="danger-button" type="button" onClick={() => confirmAndRun("¿Confirmar que recibiste la devolución y completar el reembolso?", () => confirmReturnReceived(item.id, "Devolución recibida por el propietario"), "Recepción confirmada y reembolso completado")}>Confirmar recibido y reembolsar</button>}

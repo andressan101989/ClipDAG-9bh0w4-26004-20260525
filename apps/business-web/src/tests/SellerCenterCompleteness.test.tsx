@@ -89,7 +89,7 @@ function productDetail(variants: Array<Record<string, unknown>>) {
   };
 }
 
-describe("Seller Center C5 completeness", () => {
+describe("Seller Center C5/C6 completeness", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     auth.ownerId = "owner-a";
@@ -156,24 +156,46 @@ describe("Seller Center C5 completeness", () => {
     expect(screen.queryByRole("button", { name: "Ver más" })).not.toBeInTheDocument();
   });
 
-  it("shows confirmed owner-only financial actions and never calculates money", async () => {
+  it("offers direct keep-item refunds to owners for requested or approved returns without shipment", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    api.searchReturns.mockResolvedValue({ items: [returnItem("keep"), returnItem("received", { status: "shipped", tracking_number: "TRACK-2" })], nextCursor: null });
+    api.searchReturns.mockResolvedValue({ items: [
+      { ...returnItem("requested"), status: "requested" },
+      returnItem("approved"),
+      { ...returnItem("requested-shipment", { status: "awaiting_buyer_shipment" }), status: "requested" },
+      returnItem("approved-shipment", { status: "shipped", tracking_number: "TRACK-2" }),
+    ], nextCursor: null });
     renderOrders("/orders?view=returns");
-    fireEvent.click(await screen.findByRole("button", { name: "Reembolsar y permitir que conserve el producto" }));
-    await waitFor(() => expect(api.refundReturnWithoutShipment).toHaveBeenCalledWith("keep", expect.any(String)));
+    const keepItemButtons = await screen.findAllByRole("button", { name: "Reembolsar y permitir que conserve el producto" });
+    expect(keepItemButtons).toHaveLength(2);
+    fireEvent.click(keepItemButtons[0]);
+    await waitFor(() => expect(api.refundReturnWithoutShipment).toHaveBeenCalledWith("requested", expect.any(String)));
+    expect(api.respondReturn).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Confirmar recibido y reembolsar" }));
-    await waitFor(() => expect(api.confirmReturnReceived).toHaveBeenCalledWith("received", expect.any(String)));
+    await waitFor(() => expect(api.confirmReturnReceived).toHaveBeenCalledWith("approved-shipment", expect.any(String)));
     expect(window.confirm).toHaveBeenCalledTimes(2);
   });
 
-  it("never presents financial return actions to a member", async () => {
+  it("never presents requested or approved keep-item actions to a member", async () => {
     auth.accessType = "member";
-    api.searchReturns.mockResolvedValue({ items: [returnItem("keep"), returnItem("received", { status: "shipped" })], nextCursor: null });
+    api.searchReturns.mockResolvedValue({ items: [{ ...returnItem("requested"), status: "requested" }, returnItem("approved")], nextCursor: null });
     renderOrders("/orders?view=returns");
-    await screen.findByText("RETURN-keep");
+    await screen.findByText("RETURN-requested");
     expect(screen.queryByRole("button", { name: "Reembolsar y permitir que conserve el producto" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirmar recibido y reembolsar" })).not.toBeInTheDocument();
+  });
+
+  it("offers a return label only for approved returns without any shipment", async () => {
+    api.searchReturns.mockResolvedValue({ items: [
+      returnItem("no-shipment"),
+      returnItem("awaiting", { status: "awaiting_buyer_shipment", label_sent_at: "2026-09-16T01:00:00Z" }),
+      returnItem("shipped", { status: "shipped" }),
+      { ...returnItem("refunded"), status: "refunded", refund_status: "refunded" },
+    ], nextCursor: null });
+    renderOrders("/orders?view=returns");
+    expect(await screen.findAllByRole("button", { name: "Subir y enviar etiqueta" })).toHaveLength(1);
+    expect(screen.getByText("RETURN-awaiting")).toBeInTheDocument();
+    expect(screen.getByText("RETURN-shipped")).toBeInTheDocument();
+    expect(screen.getByText("RETURN-refunded")).toBeInTheDocument();
   });
 
   it("reaches all paged shipping profiles without duplicates", async () => {
@@ -212,26 +234,34 @@ describe("Seller Center C5 completeness", () => {
     expect(payload.p_regions.map((item: { id: string | null }) => item.id)).toEqual(["r1", "r3", null]);
   });
 
-  it("requires a replacement for the default variant and disables the last active archive", async () => {
+  it("uses every non-archived variant for default replacement and excludes archived variants", async () => {
     api.getProduct.mockResolvedValue(productDetail([
       { id: "default", sku: "SKU-1", title: "Uno", price: 10, compareAtPrice: null, status: "active", isDefault: true, imageAssetId: null, barcode: null, onHand: 1, reserved: 0, available: 1, lowStockThreshold: 0 },
-      { id: "replacement", sku: "SKU-2", title: "Dos", price: 10, compareAtPrice: null, status: "active", isDefault: false, imageAssetId: null, barcode: null, onHand: 1, reserved: 0, available: 1, lowStockThreshold: 0 },
+      { id: "inactive-replacement", sku: "SKU-2", title: "Dos", price: 10, compareAtPrice: null, status: "inactive", isDefault: false, imageAssetId: null, barcode: null, onHand: 1, reserved: 0, available: 1, lowStockThreshold: 0 },
+      { id: "active-replacement", sku: "SKU-3", title: "Tres", price: 10, compareAtPrice: null, status: "active", isDefault: false, imageAssetId: null, barcode: null, onHand: 1, reserved: 0, available: 1, lowStockThreshold: 0 },
+      { id: "archived", sku: "SKU-4", title: "Archivada", price: 10, compareAtPrice: null, status: "archived", isDefault: false, imageAssetId: null, barcode: null, onHand: 1, reserved: 0, available: 1, lowStockThreshold: 0 },
     ]));
     api.searchShippingProfiles.mockResolvedValue({ items: [], nextCursor: null });
     const productView = render(<MemoryRouter initialEntries={["/products/product-id"]}><Routes><Route path="/products/:productId" element={<BusinessProductDetailPage />} /></Routes></MemoryRouter>);
     const archiveButtons = await screen.findAllByRole("button", { name: "Archivar" });
-    fireEvent.click(archiveButtons[1]);
-    await waitFor(() => expect(api.variantAction).toHaveBeenCalledWith("archive", "replacement", null));
+    expect(archiveButtons[0]).toBeEnabled();
+    fireEvent.click(archiveButtons[2]);
+    await waitFor(() => expect(api.variantAction).toHaveBeenCalledWith("archive", "active-replacement", null));
     api.variantAction.mockClear();
     fireEvent.click(archiveButtons[0]);
-    fireEvent.change(screen.getByLabelText("Selecciona la nueva variante predeterminada"), { target: { value: "replacement" } });
+    const replacement = screen.getByLabelText("Selecciona la nueva variante predeterminada");
+    expect(screen.getByRole("option", { name: "Dos — inactive" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Tres — active" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Archivada/ })).not.toBeInTheDocument();
+    fireEvent.change(replacement, { target: { value: "inactive-replacement" } });
     fireEvent.click(screen.getByRole("button", { name: "Confirmar archivo" }));
-    await waitFor(() => expect(api.variantAction).toHaveBeenCalledWith("archive", "default", "replacement"));
+    await waitFor(() => expect(api.variantAction).toHaveBeenCalledWith("archive", "default", "inactive-replacement"));
 
     productView.unmount();
     vi.clearAllMocks();
     api.getProduct.mockResolvedValue(productDetail([
       { id: "only", sku: "SKU-ONLY", title: "Única", price: 10, compareAtPrice: null, status: "active", isDefault: true, imageAssetId: null, barcode: null, onHand: 1, reserved: 0, available: 1, lowStockThreshold: 0 },
+      { id: "archived", sku: "SKU-OLD", title: "Archivada", price: 10, compareAtPrice: null, status: "archived", isDefault: false, imageAssetId: null, barcode: null, onHand: 0, reserved: 0, available: 0, lowStockThreshold: 0 },
     ]));
     api.searchShippingProfiles.mockResolvedValue({ items: [], nextCursor: null });
     render(<MemoryRouter initialEntries={["/products/product-id"]}><Routes><Route path="/products/:productId" element={<BusinessProductDetailPage />} /></Routes></MemoryRouter>);
