@@ -15,6 +15,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders }  from '../_shared/cors.ts';
+import { BDAG_PER_USD } from '../_shared/bdagEconomics.ts';
 import { callRPC }      from '../_shared/rpc.ts';
 import { getStablecoinByContract, type StablecoinSymbol } from '../_shared/stablecoins.ts';
 
@@ -26,9 +27,6 @@ const USDT_CONTRACTS: Record<string, string> = {
   '1':    '0xdac17f958d2ee523a2206206994597c13d831ec7',
   '97':   '0x337610d27c682e347c9cd60bd4b3b107c9d34def',
 };
-
-// Fixed platform conversion rate
-const USD_TO_BDAG = 100; // 1 USD = 100 BDAG
 
 const MEMPOOL_ATTEMPTS = 12;    // 12 × 1500ms = 18 s max wait
 const MEMPOOL_DELAY_MS = 1500;
@@ -219,7 +217,7 @@ async function validateMempoolTx(
 
     // USDT is pegged 1:1 to USD — no live price needed
     const usdValue   = usdtAmount;
-    const bdagAmount = Number((usdValue * USD_TO_BDAG).toFixed(2));
+    const bdagAmount = Number((usdValue * BDAG_PER_USD).toFixed(2));
 
     console.log(`[bdag-deposit] USDT: ${usdtAmount} USDT → $${usdValue} USD → ${bdagAmount} BDAG`);
 
@@ -364,7 +362,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         bdag_credited:         validation.bdagAmount,
         eth_price_usd:         validation.tokenType === 'ETH' ? validation.ethPriceUsd : null,
         usd_value:             validation.usdValue,
-        conversion_rate_used:  `1 USD = ${USD_TO_BDAG} BDAG`,
+        conversion_rate_used:  `1 USD = ${BDAG_PER_USD} BDAG`,
         block_number:          blockNumber,
         confirmations:         blockNumber ? 1 : 0,
         status:                depositStatus,

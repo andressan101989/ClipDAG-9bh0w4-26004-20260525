@@ -28,6 +28,12 @@ verify_jwt = true
 [functions.stream-webhook]
 verify_jwt = false
 
+[functions.stripe-bdag-checkout]
+verify_jwt = true
+
+[functions.stripe-webhook]
+verify_jwt = false
+
 [functions.admin-user-moderation]
 verify_jwt = true
 
