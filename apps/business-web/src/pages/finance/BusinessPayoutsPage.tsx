@@ -9,6 +9,7 @@ import {
   requestBusinessPayout,
   searchBusinessPayouts,
   type BusinessPayout,
+  type BusinessPayoutPage,
   type PayoutCursor,
   type PayoutStatus,
   type WithdrawalConfig,
@@ -17,6 +18,14 @@ import {
 
 const STATUS_LABELS: Record<PayoutStatus, string> = {
   pending: "Pendiente", broadcasting: "Enviando", completed: "Completado", failed: "Fallido",
+};
+
+const EMPTY_SUMMARY: BusinessPayoutPage["summary"] = {
+  pendingCount: 0,
+  broadcastingCount: 0,
+  completedCount: 0,
+  failedCount: 0,
+  totalCompletedBdag: 0,
 };
 
 export function BusinessPayoutsPage() {
@@ -28,6 +37,7 @@ export function BusinessPayoutsPage() {
   const [items, setItems] = useState<BusinessPayout[]>([]);
   const [cursor, setCursor] = useState<PayoutCursor | null>(null);
   const [balance, setBalance] = useState(0);
+  const [summary, setSummary] = useState<BusinessPayoutPage["summary"]>(EMPTY_SUMMARY);
   const [status, setStatus] = useState<PayoutStatus | "">("");
   const [config, setConfig] = useState<WithdrawalConfig | null>(null);
   const [amount, setAmount] = useState("");
@@ -51,6 +61,7 @@ export function BusinessPayoutsPage() {
       const page = await searchBusinessPayouts(ownerId, { status: status || undefined, cursor: append ? cursor ?? undefined : undefined });
       if (scope.current !== expected) return;
       setBalance(page.bdagBalance);
+      setSummary(page.summary);
       setItems((current) => append ? dedupe([...current, ...page.items]) : page.items);
       setCursor(page.nextCursor);
     } catch (cause) {
@@ -61,7 +72,7 @@ export function BusinessPayoutsPage() {
   }, [cursor, ownerId, status]);
 
   useEffect(() => {
-    setItems([]); setCursor(null); setBalance(0); setConfig(null); setAmount(""); setDestination("");
+    setItems([]); setCursor(null); setBalance(0); setSummary(EMPTY_SUMMARY); setConfig(null); setAmount(""); setDestination("");
     setRailKey(""); setQuote(null); setSuccess(null); setError(null);
     if (!ownerId) return;
     const expected = ownerId;
@@ -69,7 +80,7 @@ export function BusinessPayoutsPage() {
       .then(([nextConfig, page]) => {
         if (scope.current !== expected) return;
         setConfig(nextConfig); setRailKey(`${nextConfig.rails[0]?.token ?? ""}:${nextConfig.rails[0]?.chainId ?? ""}`);
-        setItems(page.items); setCursor(page.nextCursor); setBalance(page.bdagBalance);
+        setItems(page.items); setCursor(page.nextCursor); setBalance(page.bdagBalance); setSummary(page.summary);
       })
       .catch((cause) => { if (scope.current === expected) setError(cause instanceof Error ? cause.message : "No se pudieron cargar los retiros"); })
       .finally(() => { if (scope.current === expected) setLoading(false); });
@@ -112,7 +123,7 @@ export function BusinessPayoutsPage() {
     {!loading && <>
       <section className="finance-overview-grid">
         <article className="finance-balance-card"><span>BDAG disponible</span><strong>{formatMoney(balance)}</strong><small>Autoridad: ledger Nelyon</small></article>
-        <article className="finance-provider-card"><span>Retiros completados</span><strong>{items.filter((item) => item.status === "completed").length}</strong><small>La red confirma el estado final</small></article>
+        <article className="finance-provider-card"><span>Retiros completados</span><strong>{summary.completedCount}</strong><small>La red confirma el estado final</small></article>
       </section>
 
       {isOwner ? <section className="seller-panel payout-form">

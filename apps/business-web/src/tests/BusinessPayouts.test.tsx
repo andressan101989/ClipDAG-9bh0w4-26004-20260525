@@ -34,9 +34,9 @@ const payout: BusinessPayout = {
   createdAt: "2026-09-17T00:00:00Z", broadcastAt: "2026-09-17T00:01:00Z",
   confirmedAt: null, completedAt: null, failedAt: null, failureReason: null,
 };
-const page = (items = [payout], nextCursor: null | { createdAt: string; id: string } = null) => ({
+const page = (items = [payout], nextCursor: null | { createdAt: string; id: string } = null, completedCount = 0) => ({
   businessOwnerId: auth.ownerId, bdagBalance: 250, items, nextCursor,
-  summary: { pendingCount: 0, broadcastingCount: 1, completedCount: 0, failedCount: 0, totalCompletedBdag: 0 },
+  summary: { pendingCount: 0, broadcastingCount: 1, completedCount, failedCount: 0, totalCompletedBdag: completedCount * 100 },
 });
 
 describe("Business Payouts", () => {
@@ -72,23 +72,39 @@ describe("Business Payouts", () => {
     expect(window.confirm).toHaveBeenCalled();
   });
 
+  it("shows the global completed summary instead of the 20-row page count", async () => {
+    const firstPage = Array.from({ length: 20 }, (_, index) => ({
+      ...payout,
+      id: `completed-${index}`,
+      status: "completed" as const,
+    }));
+    api.search.mockResolvedValue(page(firstPage, { createdAt: payout.createdAt, id: "completed-19" }, 25));
+    render(<MemoryRouter><BusinessPayoutsPage /></MemoryRouter>);
+    expect((await screen.findByText("Retiros completados")).parentElement).toHaveTextContent("25");
+    expect(screen.getAllByText("Completado")).toHaveLength(20);
+  });
+
   it("appends cursor pages without duplicates", async () => {
     api.search
-      .mockResolvedValueOnce(page([payout], { createdAt: payout.createdAt, id: payout.id }))
-      .mockResolvedValueOnce(page([payout, { ...payout, id: "payout-2", status: "completed" as const }], null));
+      .mockResolvedValueOnce(page([payout], { createdAt: payout.createdAt, id: payout.id }, 25))
+      .mockResolvedValueOnce(page([payout, { ...payout, id: "payout-2", status: "completed" as const }], null, 25));
     render(<MemoryRouter><BusinessPayoutsPage /></MemoryRouter>);
+    expect((await screen.findByText("Retiros completados")).parentElement).toHaveTextContent("25");
     fireEvent.click(await screen.findByRole("button", { name: "Ver más" }));
     await waitFor(() => expect(api.search).toHaveBeenCalledTimes(2));
     expect(screen.getAllByText("0x1234…ABCD")).toHaveLength(2);
+    expect(screen.getByText("Retiros completados").parentElement).toHaveTextContent("25");
   });
 
   it("clears state when the selected business changes", async () => {
+    api.search.mockResolvedValue(page([payout], null, 25));
     const view = render(<MemoryRouter><BusinessPayoutsPage /></MemoryRouter>);
-    await screen.findByText(/250[,.]00 BDAG/);
+    expect((await screen.findByText("Retiros completados")).parentElement).toHaveTextContent("25");
     auth.ownerId = "owner-2";
-    api.search.mockResolvedValue(page([], null));
+    api.search.mockResolvedValue(page([], null, 0));
     view.rerender(<MemoryRouter><BusinessPayoutsPage /></MemoryRouter>);
     await waitFor(() => expect(api.search).toHaveBeenCalledWith("owner-2", expect.anything()));
     expect(screen.queryByText("0x1234…ABCD")).not.toBeInTheDocument();
+    expect(screen.getByText("Retiros completados").parentElement).toHaveTextContent("0");
   });
 });

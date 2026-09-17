@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import {
+  bdagUnitsToStablecoinUnits,
+  bdagUnitsToUsdString,
+  formatStablecoinUnits,
+  parseBdagUnits,
+} from "../supabase/functions/_shared/bdagPayoutPrecision.ts";
 
 const migration = fs.readFileSync("supabase/migrations/20260917191915_business_payouts_bw_h.sql", "utf8");
 const withdraw = fs.readFileSync("supabase/functions/bdag-withdraw/index.ts", "utf8");
+const payoutPrecision = fs.readFileSync("supabase/functions/_shared/bdagPayoutPrecision.ts", "utf8");
 const monitor = fs.readFileSync("supabase/functions/bdag-monitor/index.ts", "utf8");
 const wallet = fs.readFileSync("app/(tabs)/wallet.tsx", "utf8");
 const walletApi = fs.readFileSync("services/walletApi.ts", "utf8");
@@ -59,7 +66,7 @@ test("config and quote are server-driven and use the canonical stablecoin regist
   assert.match(withdraw, /get_withdrawal_config/);
   assert.match(withdraw, /BDAG_PER_USD/);
   assert.match(withdraw, /bdagUnitsToStablecoinUnits\(netUnits, rail\.decimals\)/);
-  assert.match(withdraw, /value \* stablecoinScale.*BDAG_PER_USD.*BDAG_SCALE/s);
+  assert.match(payoutPrecision, /value \* stablecoinScale.*BDAG_PER_USD.*BDAG_SCALE/s);
   assert.doesNotMatch(withdraw, /const MIN_WITHDRAWAL_BDAG|const WITHDRAWAL_FEE/);
 });
 
@@ -77,4 +84,51 @@ test("request idempotency is UUID scoped and retries cannot rebroadcast", () => 
   assert.ok(withdraw.indexOf("existingByKey") < withdraw.indexOf("Cooldown check"));
   assert.match(withdraw, /if \(rpcData\.idempotent\)/);
   assert.match(withdraw, /never broadcasts a[\s\S]*second blockchain transfer/);
+});
+
+function payoutQuote(grossText, decimals = 6) {
+  const gross = parseBdagUnits(grossText);
+  assert.notEqual(gross, null);
+  const fee = (gross * 100n + 5_000n) / 10_000n;
+  const net = gross - fee;
+  const raw = bdagUnitsToStablecoinUnits(net, decimals);
+  return { gross, fee, net, raw, display: formatStablecoinUnits(raw, decimals) };
+}
+
+test("quote and broadcast share exact stablecoin units across the payout matrix", () => {
+  const matrix = [
+    ["100", 990_000n, "0.99"],
+    ["1000", 9_900_000n, "9.9"],
+    ["542.18878788", 5_367_669n, "5.367669"],
+    ["100.00000001", 990_000n, "0.99"],
+    ["123.45678901", 1_222_222n, "1.222222"],
+    ["1000000", 9_900_000_000n, "9900"],
+  ];
+  for (const [gross, expectedRaw, expectedDisplay] of matrix) {
+    const quoted = payoutQuote(gross);
+    const broadcast = bdagUnitsToStablecoinUnits(quoted.net, 6);
+    assert.equal(quoted.raw, expectedRaw, gross);
+    assert.equal(broadcast, quoted.raw, gross);
+    assert.equal(quoted.display, expectedDisplay, gross);
+  }
+});
+
+test("fractional payout preserves the exact audited fee, net and USD snapshot", () => {
+  const result = payoutQuote("542.18878788");
+  assert.equal(result.fee, 542_188_788n);
+  assert.equal(result.net, 53_676_690_000n);
+  assert.equal(result.raw, 5_367_669n);
+  assert.equal(bdagUnitsToUsdString(result.net), "5.367669");
+});
+
+test("broadcast transfers the exact bigint and rejects an invalid canonical net before broadcast", () => {
+  const start = withdraw.indexOf("async function broadcastStablecoin");
+  const end = withdraw.indexOf("Deno.serve(", start);
+  const broadcast = withdraw.slice(start, end);
+  assert.match(broadcast, /netBdagUnits: bigint/);
+  assert.match(broadcast, /bdagUnitsToStablecoinUnits\(params\.netBdagUnits, stablecoin\.decimals\)/);
+  assert.match(broadcast, /contract\['transfer'\]\(params\.toAddress, stablecoinRawUnits/);
+  assert.doesNotMatch(broadcast, /Math\.(floor|round)|parseFloat|BigInt\(usdtUnits\)|BigInt\(Number/);
+  assert.doesNotMatch(withdraw, /function bdagToStablecoinUnits/);
+  assert.ok(withdraw.indexOf("canonical_net_amount_invalid_refunding") < withdraw.indexOf("INSTANT BROADCAST"));
 });

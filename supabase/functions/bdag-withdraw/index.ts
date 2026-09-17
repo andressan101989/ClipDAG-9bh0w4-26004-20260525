@@ -22,6 +22,13 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { STABLECOINS, getStablecoin } from '../_shared/stablecoins.ts';
 import { BDAG_PER_USD } from '../_shared/bdagEconomics.ts';
+import {
+  bdagUnitsToStablecoinUnits,
+  bdagUnitsToUsdString,
+  formatBdagUnits,
+  formatStablecoinUnits,
+  parseBdagUnits,
+} from '../_shared/bdagPayoutPrecision.ts';
 import { corsHeaders }  from '../_shared/cors.ts';
 
 const SUPABASE_URL     = Deno.env.get('SUPABASE_URL')!;
@@ -102,26 +109,6 @@ async function getWithdrawalConfig(): Promise<WithdrawalConfig> {
 }
 
 const NETWORK_LABELS: Record<string, string> = { '1': 'Ethereum', '8453': 'Base' };
-const BDAG_SCALE = BigInt(100_000_000);
-
-function parseBdagUnits(value: unknown): bigint | null {
-  const raw = String(value ?? '').trim();
-  if (!/^\d+(\.\d{1,8})?$/.test(raw)) return null;
-  const [whole, fraction = ''] = raw.split('.');
-  return BigInt(whole) * BDAG_SCALE + BigInt(fraction.padEnd(8, '0'));
-}
-
-function formatBdagUnits(value: bigint): string {
-  const whole = value / BDAG_SCALE;
-  const fraction = (value % BDAG_SCALE).toString().padStart(8, '0').replace(/0+$/, '');
-  return fraction ? `${whole}.${fraction}` : whole.toString();
-}
-
-function bdagUnitsToStablecoinUnits(value: bigint, decimals: number): bigint {
-  const stablecoinScale = BigInt(10) ** BigInt(decimals);
-  return (value * stablecoinScale) / (BigInt(BDAG_PER_USD) * BDAG_SCALE);
-}
-
 // ── Live ETH price ─────────────────────────────────────────────────────────────
 async function fetchEthPriceUsd(): Promise<number> {
   try {
@@ -156,11 +143,6 @@ function bdagToEthWei(bdag: number, ethPriceUsd: number): number {
   const eth = usd / ethPriceUsd;
   return Math.floor(eth * 1e18);
 }
-function bdagToStablecoinUnits(bdag: number, decimals: number): number {
-  const stablecoin = bdag / BDAG_PER_USD;
-  return Math.floor(stablecoin * 10 ** decimals);
-}
-
 // ── ETH native broadcast ───────────────────────────────────────────────────────
 async function broadcastETH(params: {
   toAddress: string; netBdag: number; chainId: string;
@@ -207,8 +189,8 @@ async function broadcastETH(params: {
 
 // ── USDT ERC-20 broadcast ──────────────────────────────────────────────────────
 async function broadcastStablecoin(params: {
-  toAddress: string; netBdag: number; chainId: string; tokenType: 'USDT' | 'USDC';
-}): Promise<{ txHash: string; usdtAmount: number; usdtUnits: number } | { error: string }> {
+  toAddress: string; netBdagUnits: bigint; chainId: string; tokenType: 'USDT' | 'USDC';
+}): Promise<{ txHash: string; stablecoinAmount: string; stablecoinRawUnits: string } | { error: string }> {
   if (!TREASURY_KEY) return { error: 'TREASURY_PRIVATE_KEY not configured' };
 
   const stablecoin = getStablecoin(params.chainId, params.tokenType);
@@ -222,38 +204,39 @@ async function broadcastStablecoin(params: {
     const wallet     = new ethers.Wallet(TREASURY_KEY, provider);
     const contract   = new ethers.Contract(usdtContract, ERC20_ABI, wallet);
 
-    const usdtUnits  = bdagToStablecoinUnits(params.netBdag, stablecoin.decimals);
-    const usdtAmount = params.netBdag / BDAG_PER_USD;
+    const stablecoinRawUnits = bdagUnitsToStablecoinUnits(params.netBdagUnits, stablecoin.decimals);
+    const stablecoinAmount = formatStablecoinUnits(stablecoinRawUnits, stablecoin.decimals);
 
-    if (usdtUnits <= 0) return { error: `usdt_amount_too_small: ${usdtUnits}` };
+    if (stablecoinRawUnits <= BigInt(0)) return { error: `stablecoin_amount_too_small: ${stablecoinRawUnits}` };
 
     log('INFO', 'usdt_broadcast_amounts', {
-      net_bdag: params.netBdag, usdt_amount: usdtAmount, usdt_units: usdtUnits,
+      net_bdag: formatBdagUnits(params.netBdagUnits), stablecoin_amount: stablecoinAmount,
+      stablecoin_raw_units: stablecoinRawUnits.toString(),
       contract: usdtContract, to: params.toAddress,
     });
 
     // Verify treasury balance
     try {
       const bal = await contract['balanceOf'](TREASURY_ADDRESS) as bigint;
-      if (bal < BigInt(usdtUnits)) {
-        return { error: `treasury_insufficient_usdt: balance=${bal} need=${usdtUnits}` };
+      if (bal < stablecoinRawUnits) {
+        return { error: `treasury_insufficient_stablecoin: balance=${bal} need=${stablecoinRawUnits}` };
       }
     } catch { /* non-fatal, continue */ }
 
     // Estimate gas with 20% buffer
     let gasLimit = BigInt(100_000); // safe default
     try {
-      const est: bigint = await contract['transfer'].estimateGas(params.toAddress, BigInt(usdtUnits)) as bigint;
+      const est: bigint = await contract['transfer'].estimateGas(params.toAddress, stablecoinRawUnits) as bigint;
       gasLimit = BigInt(Math.ceil(Number(est) * 1.2));
       log('INFO', 'usdt_gas_estimated', { estimated: est.toString(), with_buffer: gasLimit.toString() });
     } catch (e: unknown) {
       log('WARN', 'usdt_gas_estimation_failed', { error: (e as Error)?.message });
     }
 
-    const tx = await contract['transfer'](params.toAddress, BigInt(usdtUnits), { gasLimit });
+    const tx = await contract['transfer'](params.toAddress, stablecoinRawUnits, { gasLimit });
 
-    log('INFO', 'usdt_tx_broadcasted', { tx_hash: tx.hash, to: params.toAddress, usdt_amount: usdtAmount });
-    return { txHash: tx.hash, usdtAmount, usdtUnits };
+    log('INFO', 'stablecoin_tx_broadcasted', { tx_hash: tx.hash, to: params.toAddress, stablecoin_amount: stablecoinAmount });
+    return { txHash: tx.hash, stablecoinAmount, stablecoinRawUnits: stablecoinRawUnits.toString() };
   } catch (e: unknown) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -307,16 +290,11 @@ Deno.serve(async (req) => {
       const feeUnits = (grossUnits * BigInt(config.fee_bps) + BigInt(5_000)) / BigInt(10_000);
       const netUnits = grossUnits - feeUnits;
       const stablecoinRawUnits = bdagUnitsToStablecoinUnits(netUnits, rail.decimals);
-      const stablecoinDivisor = BigInt(10 ** rail.decimals);
-      const stablecoinWhole = stablecoinRawUnits / stablecoinDivisor;
-      const stablecoinFraction = (stablecoinRawUnits % stablecoinDivisor)
-        .toString().padStart(rail.decimals, '0').replace(/0+$/, '');
       return ok({
         gross_bdag: formatBdagUnits(grossUnits),
         fee_bdag: formatBdagUnits(feeUnits),
         net_bdag: formatBdagUnits(netUnits),
-        estimated_stablecoin_amount: stablecoinFraction
-          ? `${stablecoinWhole}.${stablecoinFraction}` : stablecoinWhole.toString(),
+        estimated_stablecoin_amount: formatStablecoinUnits(stablecoinRawUnits, rail.decimals),
         fee_bps: config.fee_bps,
         minimum_bdag: config.minimum_bdag,
         bdag_per_usd: config.bdag_per_usd,
@@ -358,7 +336,6 @@ Deno.serve(async (req) => {
     if (!minimumUnits || amountUnits < minimumUnits) return fail(`minimum withdrawal: ${config.minimum_bdag} BDAG`);
     if (!maximumUnits || amountUnits > maximumUnits) return fail(`maximum withdrawal: ${config.maximum_bdag} BDAG`);
     const normalizedAmount = formatBdagUnits(amountUnits);
-    const amt = Number(normalizedAmount);
     if (!isValidEVMAddress(to_address as string)) return fail('invalid EVM wallet address');
 
     const chainId  = String(chain_id);
@@ -455,7 +432,17 @@ Deno.serve(async (req) => {
     }
 
     const withdrawalId = rpcData.withdrawal_id;
-    const netBdag      = Number(rpcData.net_amount ?? 0);
+    const netBdagUnits = parseBdagUnits(rpcData.net_amount);
+    if (netBdagUnits === null || netBdagUnits <= BigInt(0)) {
+      log('ERROR', 'canonical_net_amount_invalid_refunding', { withdrawal_id: withdrawalId });
+      await admin.rpc('refund_withdrawal_to_ledger', {
+        p_withdrawal_id: withdrawalId,
+        p_failure_reason: 'canonical_net_amount_invalid',
+      });
+      return fail('canonical withdrawal net amount invalid', 502);
+    }
+    const netBdagExact = formatBdagUnits(netBdagUnits);
+    const netBdag      = Number(netBdagExact);
     const feeBdag      = Number(rpcData.fee ?? 0);
 
     log('INFO', 'withdrawal_queued', {
@@ -475,14 +462,16 @@ Deno.serve(async (req) => {
     let ethPriceSnapshot: number | null = null;
 
     if (tokenTyp === 'USDT' || tokenTyp === 'USDC') {
-      const result = await broadcastStablecoin({ toAddress: toAddr, netBdag, chainId, tokenType: tokenTyp });
+      const result = await broadcastStablecoin({ toAddress: toAddr, netBdagUnits, chainId, tokenType: tokenTyp });
       if ('error' in result) {
         broadcastErr = result.error;
       } else {
         txHash      = result.txHash;
         broadcastOk = true;
         log('INFO', 'usdt_broadcast_success', {
-          withdrawal_id: withdrawalId, tx_hash: txHash, usdt_amount: result.usdtAmount,
+          withdrawal_id: withdrawalId, tx_hash: txHash,
+          stablecoin_amount: result.stablecoinAmount,
+          stablecoin_raw_units: result.stablecoinRawUnits,
         });
       }
     } else {
@@ -521,7 +510,7 @@ Deno.serve(async (req) => {
     const updatePayload: Record<string, unknown> = {
       status:  'broadcasted',
       tx_hash: txHash,
-      usd_equivalent_at_withdrawal: netBdag / BDAG_PER_USD,
+      usd_equivalent_at_withdrawal: bdagUnitsToUsdString(netBdagUnits),
       broadcast_at: new Date().toISOString(),
     };
     if (ethPriceSnapshot !== null) updatePayload['eth_price_usd'] = ethPriceSnapshot;
