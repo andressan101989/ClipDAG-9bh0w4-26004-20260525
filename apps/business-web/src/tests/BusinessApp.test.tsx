@@ -39,6 +39,17 @@ vi.mock("../lib/sellerCenterApi", async (original) => ({
   searchReturns: sellerCenterMocks.returns,
   searchDisputes: sellerCenterMocks.disputes,
 }));
+const adsMocks = vi.hoisted(() => ({
+  search: vi.fn().mockResolvedValue({
+    items: [],
+    nextCursor: null,
+    summary: { activeCampaigns: 0, totalBudgetBdag: 0, spentBdag: 0, impressions: 0, clicks: 0, orders: 0, attributedGmvBdag: 0 },
+  }),
+}));
+vi.mock("../lib/adsManagerApi", async (original) => ({
+  ...(await original<typeof import("../lib/adsManagerApi")>()),
+  searchAdCampaigns: adsMocks.search,
+}));
 
 const user = { id: "11111111-1111-4111-8111-111111111111", email: "owner@nelyon.test" } as User;
 const session = { user, access_token: "test", refresh_token: "test" } as Session;
@@ -150,6 +161,11 @@ describe("Business Web owner lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mediaMocks.search.mockResolvedValue({ items: [], nextCursor: null });
+    adsMocks.search.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      summary: { activeCampaigns: 0, totalBudgetBdag: 0, spentBdag: 0, impressions: 0, clicks: 0, orders: 0, attributedGmvBdag: 0 },
+    });
     window.sessionStorage.clear();
   });
 
@@ -276,6 +292,14 @@ describe("Business Web owner lifecycle", () => {
     expect(await screen.findByRole("heading", { name: "Pedidos" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Devoluciones" })).toBeInTheDocument();
     expect(sellerCenterMocks.orders).toHaveBeenCalledWith("owner-orders", expect.objectContaining({ status: undefined, cursor: undefined }));
+  });
+
+  it("opens capability-scoped Ads reporting without create for ads.read", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-ads", ["business.ads.read"])), "/ads");
+    expect(await screen.findByRole("heading", { name: "Publicidad" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Publicidad/ })).toHaveAttribute("href", "/ads");
+    expect(screen.queryByRole("link", { name: "Crear campaña" })).not.toBeInTheDocument();
+    expect(adsMocks.search).toHaveBeenCalledWith("owner-ads", { status: undefined, cursor: undefined });
   });
 
   it("auto-selects a single member business and labels the actor as member", async () => {

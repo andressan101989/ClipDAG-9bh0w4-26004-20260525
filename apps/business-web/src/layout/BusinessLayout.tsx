@@ -16,7 +16,7 @@ const navigation: readonly BusinessNavItem[] = [
   { label: "Tienda", path: "/store", symbol: "◇", enabled: true, capabilities: ["business.store.read", "business.store.manage"] },
   { label: "Productos", path: "/products", symbol: "▦", enabled: true, capabilities: ["business.catalog.read", "business.catalog.manage"] },
   { label: "Pedidos", path: "/orders", symbol: "▤", enabled: true, capabilities: ["business.orders.read", "business.orders.fulfill", "business.returns.read", "business.returns.manage", "business.disputes.read", "business.disputes.respond"] },
-  { label: "Publicidad", symbol: "◎" },
+  { label: "Publicidad", path: "/ads", symbol: "◎", enabled: true, capabilities: ["business.ads.read", "business.ads.manage"] },
   { label: "Media", path: "/media", symbol: "▧", enabled: true, capabilities: ["business.media.read", "business.media.manage"] },
   { label: "Finanzas", symbol: "$" },
   { label: "Analítica", symbol: "↗" },
@@ -30,7 +30,8 @@ export function BusinessLayout() {
   const location = useLocation();
 
   const pageName =
-    navigation.find((item) => item.path === location.pathname)?.label ?? "Business";
+    navigation.find((item) => item.path === location.pathname)?.label
+      ?? (location.pathname.startsWith("/ads") ? "Publicidad" : "Business");
 
   return (
     <div className="business-shell">

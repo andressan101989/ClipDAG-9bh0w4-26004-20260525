@@ -22,6 +22,11 @@ export function StatusBadge({ status }: { status: string }) {
     suspended: "Suspendido",
     active: "Activa",
     draft: "Borrador",
+    scheduled: "Programada",
+    paused: "Pausada",
+    completed: "Completada",
+    exhausted: "Agotada",
+    cancelled: "Cancelada",
   };
   return (
     <span className={`status-badge status-${status}`}>

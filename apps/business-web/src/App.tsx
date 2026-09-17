@@ -14,6 +14,9 @@ import { BusinessProductsPage } from "./pages/products/BusinessProductsPage";
 import { BusinessShippingPage } from "./pages/products/BusinessShippingPage";
 import { BusinessOrderDetailPage } from "./pages/orders/BusinessOrderDetailPage";
 import { BusinessOrdersPage } from "./pages/orders/BusinessOrdersPage";
+import { BusinessAdsPage } from "./pages/ads/BusinessAdsPage";
+import { BusinessAdCreatePage } from "./pages/ads/BusinessAdCreatePage";
+import { BusinessAdDetailPage } from "./pages/ads/BusinessAdDetailPage";
 
 function BusinessHomeRoute() {
   const { hasCapability } = useBusinessAuth();
@@ -62,6 +65,15 @@ function BusinessOrdersRoute({ detail = false }: { detail?: boolean }) {
   return detail ? <BusinessOrderDetailPage /> : <BusinessOrdersPage />;
 }
 
+function BusinessAdsRoute({ detail = false, create = false }: { detail?: boolean; create?: boolean }) {
+  const { hasCapability } = useBusinessAuth();
+  const canRead = hasCapability("business.ads.read") || hasCapability("business.ads.manage");
+  if (!canRead) return <Navigate to="/" replace />;
+  if (create && !hasCapability("business.ads.manage")) return <Navigate to="/ads" replace />;
+  if (create) return <BusinessAdCreatePage />;
+  return detail ? <BusinessAdDetailPage /> : <BusinessAdsPage />;
+}
+
 function LifecycleBoundary() {
   const { phase, error, retry } = useBusinessAuth();
   if (phase === "loading") return <StatePanel eyebrow="Nelyon Business" title="Cargando tu espacio…" body="Estamos validando tu identidad empresarial." />;
@@ -88,6 +100,9 @@ function LifecycleBoundary() {
         <Route path="products/:productId" element={<BusinessProductsRoute detail />} />
         <Route path="orders" element={<BusinessOrdersRoute />} />
         <Route path="orders/:orderId" element={<BusinessOrdersRoute detail />} />
+        <Route path="ads" element={<BusinessAdsRoute />} />
+        <Route path="ads/new" element={<BusinessAdsRoute create />} />
+        <Route path="ads/:campaignId" element={<BusinessAdsRoute detail />} />
         <Route path="settings" element={<BusinessSettingsRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
