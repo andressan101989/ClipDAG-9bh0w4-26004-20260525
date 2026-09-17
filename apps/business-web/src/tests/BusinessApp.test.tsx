@@ -50,6 +50,16 @@ vi.mock("../lib/adsManagerApi", async (original) => ({
   ...(await original<typeof import("../lib/adsManagerApi")>()),
   searchAdCampaigns: adsMocks.search,
 }));
+const billingMocks = vi.hoisted(() => ({
+  overview: vi.fn().mockResolvedValue({
+    businessOwnerId: "owner-finance", bdagBalance: 0,
+    stripe: { available: false, mode: "test", currency: "usd", minimumUsdCents: 50, maximumUsdCents: 99999999, bdagPerUsd: 0, topups: [] },
+  }),
+}));
+vi.mock("../lib/businessBillingApi", async (original) => ({
+  ...(await original<typeof import("../lib/businessBillingApi")>()),
+  getBusinessBillingOverview: billingMocks.overview,
+}));
 
 const user = { id: "11111111-1111-4111-8111-111111111111", email: "owner@nelyon.test" } as User;
 const session = { user, access_token: "test", refresh_token: "test" } as Session;
@@ -284,14 +294,14 @@ describe("Business Web owner lifecycle", () => {
     renderBusiness(memberIdentity(memberAccess("owner-products", ["business.catalog.read"])), "/products");
     expect(await screen.findByRole("heading", { name: "Productos" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Productos/ })).toHaveAttribute("href", "/products");
-    expect(sellerCenterMocks.products).toHaveBeenCalledWith("owner-products", expect.anything());
+    await waitFor(() => expect(sellerCenterMocks.products).toHaveBeenCalledWith("owner-products", expect.anything()));
   });
 
   it("enables the Orders tabs from domain-scoped read capabilities", async () => {
     renderBusiness(memberIdentity(memberAccess("owner-orders", ["business.orders.read", "business.returns.read"])), "/orders");
     expect(await screen.findByRole("heading", { name: "Pedidos" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Devoluciones" })).toBeInTheDocument();
-    expect(sellerCenterMocks.orders).toHaveBeenCalledWith("owner-orders", expect.objectContaining({ status: undefined, cursor: undefined }));
+    await waitFor(() => expect(sellerCenterMocks.orders).toHaveBeenCalledWith("owner-orders", expect.objectContaining({ status: undefined, cursor: undefined })));
   });
 
   it("opens capability-scoped Ads reporting without create for ads.read", async () => {
@@ -299,7 +309,15 @@ describe("Business Web owner lifecycle", () => {
     expect(await screen.findByRole("heading", { name: "Publicidad" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Publicidad/ })).toHaveAttribute("href", "/ads");
     expect(screen.queryByRole("link", { name: "Crear campaña" })).not.toBeInTheDocument();
-    expect(adsMocks.search).toHaveBeenCalledWith("owner-ads", { status: undefined, cursor: undefined });
+    await waitFor(() => expect(adsMocks.search).toHaveBeenCalledWith("owner-ads", { status: undefined, cursor: undefined }));
+  });
+
+  it("opens capability-scoped read-only Finance for finance.read", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-finance", ["business.finance.read"])), "/finance");
+    expect(await screen.findByRole("heading", { name: "Finanzas" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Finanzas/ })).toHaveAttribute("href", "/finance");
+    expect(await screen.findByText(/Solo el propietario puede añadir saldo/)).toBeInTheDocument();
+    expect(billingMocks.overview).toHaveBeenCalledWith("owner-finance");
   });
 
   it("auto-selects a single member business and labels the actor as member", async () => {
