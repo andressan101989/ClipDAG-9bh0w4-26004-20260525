@@ -191,6 +191,43 @@ export async function uploadBusinessMedia(
   throw new Error("media_type_not_supported");
 }
 
+export async function uploadBusinessOperationalMedia(
+  businessOwnerId: string,
+  purpose: "return_label" | "dispute_evidence",
+  file: File,
+  onProgress?: (progress: UploadProgress) => void,
+  client: BusinessSupabaseClient = supabase,
+) {
+  const valid = purpose === "return_label"
+    ? file.type === "application/pdf" && file.size > 0 && file.size <= 10_000_000
+    : IMAGE_TYPES.has(file.type) && file.type !== "image/gif" && file.size > 0 && file.size <= 25_000_000;
+  if (!valid) throw new Error(purpose === "return_label" ? "return_label_file_invalid" : "dispute_evidence_file_invalid");
+  onProgress?.({ phase: "reserving", percent: 0 });
+  const reservation = await client.functions.invoke("create-media-upload", { body: {
+    purpose,
+    visibility: "private",
+    mime_type: file.type,
+    size_bytes: file.size,
+    file_name: file.name,
+    business_owner_id: businessOwnerId,
+  } });
+  if (reservation.error) throw new Error(reservation.error.message || "operational_media_reservation_failed");
+  const contract = edgePayload(reservation.data, "operational_media_reservation_invalid");
+  const assetId = stringValue(contract.assetId, "operational_media_reservation_invalid");
+  onProgress?.({ phase: "uploading", percent: 0 });
+  await uploadRequest(
+    stringValue(contract.uploadUrl, "operational_media_reservation_invalid"),
+    "PUT",
+    file,
+    record(contract.headers, "operational_media_reservation_invalid") as Record<string, string>,
+    (percent) => onProgress?.({ phase: "uploading", percent }),
+  );
+  onProgress?.({ phase: "finalizing", percent: 100 });
+  const finalized = await client.functions.invoke("finalize-media-upload", { body: { asset_id: assetId } });
+  if (finalized.error) throw new Error(finalized.error.message || "operational_media_finalize_failed");
+  return assetId;
+}
+
 export async function setBusinessStoreMedia(
   storeId: string,
   logoAssetId: string | null,

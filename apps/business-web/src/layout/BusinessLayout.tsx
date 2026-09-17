@@ -8,20 +8,20 @@ type BusinessNavItem = {
   symbol: string;
   path?: string;
   enabled?: boolean;
-  capability?: `business.${string}.${string}`;
+  capabilities?: readonly `business.${string}.${string}`[];
 };
 
 const navigation: readonly BusinessNavItem[] = [
-  { label: "Inicio", path: "/", symbol: "⌂", enabled: true, capability: "business.home.read" },
-  { label: "Tienda", path: "/store", symbol: "◇", enabled: true, capability: "business.store.read" },
-  { label: "Productos", symbol: "▦" },
-  { label: "Pedidos", symbol: "▤" },
+  { label: "Inicio", path: "/", symbol: "⌂", enabled: true, capabilities: ["business.home.read"] },
+  { label: "Tienda", path: "/store", symbol: "◇", enabled: true, capabilities: ["business.store.read", "business.store.manage"] },
+  { label: "Productos", path: "/products", symbol: "▦", enabled: true, capabilities: ["business.catalog.read", "business.catalog.manage"] },
+  { label: "Pedidos", path: "/orders", symbol: "▤", enabled: true, capabilities: ["business.orders.read", "business.orders.fulfill", "business.returns.read", "business.returns.manage", "business.disputes.read", "business.disputes.respond"] },
   { label: "Publicidad", symbol: "◎" },
-  { label: "Media", path: "/media", symbol: "▧", enabled: true, capability: "business.media.read" },
+  { label: "Media", path: "/media", symbol: "▧", enabled: true, capabilities: ["business.media.read", "business.media.manage"] },
   { label: "Finanzas", symbol: "$" },
   { label: "Analítica", symbol: "↗" },
   { label: "Equipo", symbol: "♙" },
-  { label: "Configuración", path: "/settings", symbol: "⚙", enabled: true, capability: "business.settings.manage" },
+  { label: "Configuración", path: "/settings", symbol: "⚙", enabled: true, capabilities: ["business.settings.manage"] },
 ];
 
 export function BusinessLayout() {
@@ -46,11 +46,7 @@ export function BusinessLayout() {
         </div>
         <nav aria-label="Navegación Business">
           {navigation.map((item) =>
-            item.enabled && item.path && item.capability && (
-              hasCapability(item.capability)
-              || (item.path === "/store" && hasCapability("business.store.manage"))
-              || (item.path === "/media" && hasCapability("business.media.manage"))
-            ) ? (
+            item.enabled && item.path && item.capabilities?.some((capability) => hasCapability(capability)) ? (
               <NavLink
                 end={item.path === "/"}
                 key={item.label}

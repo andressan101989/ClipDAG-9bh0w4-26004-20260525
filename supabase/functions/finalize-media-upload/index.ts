@@ -86,9 +86,16 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (!a) return json({ error: "not_found" }, 404);
   if (a.owner_id !== user.id) {
-    const allowed = a.purpose === "business_library"
-      && await businessActorHasAnyCapability(req, String(a.owner_id), ["business.media.manage"]);
-    if (!allowed) return json({ error: "business_media_manage_required" }, 403);
+    const capability = a.purpose === "business_library"
+      ? "business.media.manage"
+      : a.purpose === "return_label"
+        ? "business.returns.manage"
+        : a.purpose === "dispute_evidence"
+          ? "business.disputes.respond"
+          : null;
+    const allowed = capability
+      && await businessActorHasAnyCapability(req, String(a.owner_id), [capability]);
+    if (!allowed) return json({ error: "business_media_capability_required" }, 403);
   }
   if (a.status === "ready") {
     if (a.visibility === "public" && !a.public_url)

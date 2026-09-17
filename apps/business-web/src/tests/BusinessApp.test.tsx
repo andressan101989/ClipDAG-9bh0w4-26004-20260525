@@ -17,12 +17,27 @@ vi.mock("../lib/supabase", () => ({ supabase: {} }));
 const mediaMocks = vi.hoisted(() => ({
   search: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
   upload: vi.fn(),
+  operational: vi.fn(),
   setStore: vi.fn(),
 }));
 vi.mock("../lib/businessMediaApi", () => ({
   searchBusinessMedia: mediaMocks.search,
   uploadBusinessMedia: mediaMocks.upload,
+  uploadBusinessOperationalMedia: mediaMocks.operational,
   setBusinessStoreMedia: mediaMocks.setStore,
+}));
+const sellerCenterMocks = vi.hoisted(() => ({
+  products: vi.fn().mockResolvedValue({ items: [], categories: [{ id: "category-1", name: "General" }], nextCursor: null }),
+  orders: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+  returns: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+  disputes: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+}));
+vi.mock("../lib/sellerCenterApi", async (original) => ({
+  ...(await original<typeof import("../lib/sellerCenterApi")>()),
+  searchProducts: sellerCenterMocks.products,
+  searchOrders: sellerCenterMocks.orders,
+  searchReturns: sellerCenterMocks.returns,
+  searchDisputes: sellerCenterMocks.disputes,
 }));
 
 const user = { id: "11111111-1111-4111-8111-111111111111", email: "owner@nelyon.test" } as User;
@@ -247,6 +262,20 @@ describe("Business Web owner lifecycle", () => {
     await screen.findByText("Hola, Nelyon Shop");
     expect(screen.getByRole("button", { name: /Productos/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Equipo/ })).toBeDisabled();
+  });
+
+  it("enables Products only for a business with catalog capability", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-products", ["business.catalog.read"])), "/products");
+    expect(await screen.findByRole("heading", { name: "Productos" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Productos/ })).toHaveAttribute("href", "/products");
+    expect(sellerCenterMocks.products).toHaveBeenCalledWith("owner-products", expect.anything());
+  });
+
+  it("enables the Orders tabs from domain-scoped read capabilities", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-orders", ["business.orders.read", "business.returns.read"])), "/orders");
+    expect(await screen.findByRole("heading", { name: "Pedidos" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Devoluciones" })).toBeInTheDocument();
+    expect(sellerCenterMocks.orders).toHaveBeenCalledWith("owner-orders");
   });
 
   it("auto-selects a single member business and labels the actor as member", async () => {

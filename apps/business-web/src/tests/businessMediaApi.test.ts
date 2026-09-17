@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { searchBusinessMedia, setBusinessStoreMedia, uploadBusinessMedia } from "../lib/businessMediaApi";
+import { searchBusinessMedia, setBusinessStoreMedia, uploadBusinessMedia, uploadBusinessOperationalMedia } from "../lib/businessMediaApi";
 import type { BusinessSupabaseClient } from "../lib/supabase";
 
 vi.mock("../lib/supabase", () => ({ supabase: {} }));
@@ -80,5 +80,15 @@ describe("canonical Business Media API", () => {
     const rpc = vi.fn().mockResolvedValue({ data: true, error: null });
     await setBusinessStoreMedia("store-id", "logo-id", "banner-id", { rpc } as unknown as BusinessSupabaseClient);
     expect(rpc).toHaveBeenCalledWith("set_marketplace_store_media", { p_store_id: "store-id", p_logo_asset_id: "logo-id", p_banner_asset_id: "banner-id" });
+  });
+
+  it("reuses the canonical R2 contract for scoped return labels", async () => {
+    const invoke = vi.fn()
+      .mockResolvedValueOnce({ data: { success: true, data: { assetId: mediaRow.asset_id, uploadUrl: "https://r2.test/label", headers: { "Content-Type": "application/pdf", "If-None-Match": "*" } } }, error: null })
+      .mockResolvedValueOnce({ data: { success: true }, error: null });
+    const client = { functions: { invoke } } as unknown as BusinessSupabaseClient;
+    await uploadBusinessOperationalMedia("owner-id", "return_label", new File(["pdf"], "label.pdf", { type: "application/pdf" }), undefined, client);
+    expect(invoke).toHaveBeenNthCalledWith(1, "create-media-upload", { body: expect.objectContaining({ business_owner_id: "owner-id", purpose: "return_label", visibility: "private" }) });
+    expect(FakeXhr.instances[0].headers["If-None-Match"]).toBe("*");
   });
 });

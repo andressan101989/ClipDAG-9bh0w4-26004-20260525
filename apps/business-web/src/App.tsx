@@ -9,6 +9,11 @@ import { BusinessOnboardingPage } from "./pages/BusinessOnboardingPage";
 import { BusinessStatusPage } from "./pages/BusinessStatusPage";
 import { BusinessStoreForm } from "./pages/BusinessStorePages";
 import { BusinessSelectorPage } from "./pages/BusinessSelectorPage";
+import { BusinessProductDetailPage } from "./pages/products/BusinessProductDetailPage";
+import { BusinessProductsPage } from "./pages/products/BusinessProductsPage";
+import { BusinessShippingPage } from "./pages/products/BusinessShippingPage";
+import { BusinessOrderDetailPage } from "./pages/orders/BusinessOrderDetailPage";
+import { BusinessOrdersPage } from "./pages/orders/BusinessOrdersPage";
 
 function BusinessHomeRoute() {
   const { hasCapability } = useBusinessAuth();
@@ -41,6 +46,22 @@ function BusinessMediaRoute() {
     : <Navigate to="/" replace />;
 }
 
+function BusinessProductsRoute({ detail = false, shipping = false }: { detail?: boolean; shipping?: boolean }) {
+  const { hasCapability } = useBusinessAuth();
+  if (!hasCapability("business.catalog.read") && !hasCapability("business.catalog.manage")) return <Navigate to="/" replace />;
+  if (shipping) return <BusinessShippingPage />;
+  return detail ? <BusinessProductDetailPage /> : <BusinessProductsPage />;
+}
+
+function BusinessOrdersRoute({ detail = false }: { detail?: boolean }) {
+  const { hasCapability } = useBusinessAuth();
+  const allowed = hasCapability("business.orders.read") || hasCapability("business.orders.fulfill")
+    || hasCapability("business.returns.read") || hasCapability("business.returns.manage")
+    || hasCapability("business.disputes.read") || hasCapability("business.disputes.respond");
+  if (!allowed) return <Navigate to="/" replace />;
+  return detail ? <BusinessOrderDetailPage /> : <BusinessOrdersPage />;
+}
+
 function LifecycleBoundary() {
   const { phase, error, retry } = useBusinessAuth();
   if (phase === "loading") return <StatePanel eyebrow="Nelyon Business" title="Cargando tu espacio…" body="Estamos validando tu identidad empresarial." />;
@@ -62,6 +83,11 @@ function LifecycleBoundary() {
         <Route index element={<BusinessHomeRoute />} />
         <Route path="store" element={<BusinessStoreRoute />} />
         <Route path="media" element={<BusinessMediaRoute />} />
+        <Route path="products" element={<BusinessProductsRoute />} />
+        <Route path="products/shipping" element={<BusinessProductsRoute shipping />} />
+        <Route path="products/:productId" element={<BusinessProductsRoute detail />} />
+        <Route path="orders" element={<BusinessOrdersRoute />} />
+        <Route path="orders/:orderId" element={<BusinessOrdersRoute detail />} />
         <Route path="settings" element={<BusinessSettingsRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

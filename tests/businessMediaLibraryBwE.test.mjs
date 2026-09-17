@@ -24,10 +24,18 @@ test("business upload scopes are capability-checked and keep business_owner_id c
     assert.match(source, /business_owner_id/);
     assert.match(source, /business\.media\.manage/);
     assert.match(source, /ownerId=requestedBusinessOwner/);
-    assert.match(source, /purpose!=='business_library'/);
   }
+  assert.match(createStream, /purpose!=='business_library'/);
+  assert.match(createMedia, /purpose==='business_library'&&visibility==='public'/);
+  assert.match(createMedia, /purpose==='return_label'&&visibility==='private'/);
+  assert.match(createMedia, /purpose==='dispute_evidence'&&visibility==='private'/);
+  assert.match(createMedia, /businessActorHasAnyCapability\(req,requestedBusinessOwner,\[capability\]\)/);
   assert.match(finalizeMedia, /a\.purpose === "business_library"/);
   assert.match(finalizeMedia, /business\.media\.manage/);
+  assert.match(finalizeMedia, /a\.purpose === "return_label"/);
+  assert.match(finalizeMedia, /business\.returns\.manage/);
+  assert.match(finalizeMedia, /a\.purpose === "dispute_evidence"/);
+  assert.match(finalizeMedia, /business\.disputes\.respond/);
 });
 
 test("R2 client sends exact returned headers and preserves write-once precondition", () => {

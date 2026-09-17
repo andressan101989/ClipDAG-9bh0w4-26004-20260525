@@ -13,9 +13,16 @@ Deno.serve(async(req)=>{
   let ownerId=user.id;
   if(requestedBusinessOwner!==undefined&&requestedBusinessOwner!==null) {
     if(!isUuid(requestedBusinessOwner)) return json({error:'invalid_business_scope'},400);
-    if(purpose!=='business_library'||visibility!=='public') return json({error:'invalid_business_media_contract'},400);
-    const allowed=await businessActorHasAnyCapability(req,requestedBusinessOwner,['business.media.manage']);
-    if(!allowed) return json({error:'business_media_manage_required'},403);
+    const capability = purpose==='business_library'&&visibility==='public'
+      ? 'business.media.manage'
+      : purpose==='return_label'&&visibility==='private'
+        ? 'business.returns.manage'
+        : purpose==='dispute_evidence'&&visibility==='private'
+          ? 'business.disputes.respond'
+          : null;
+    if(!capability) return json({error:'invalid_business_media_contract'},400);
+    const allowed=await businessActorHasAnyCapability(req,requestedBusinessOwner,[capability]);
+    if(!allowed) return json({error:'business_media_capability_required'},403);
     ownerId=requestedBusinessOwner;
   } else if(purpose==='business_library') {
     return json({error:'business_scope_required'},400);

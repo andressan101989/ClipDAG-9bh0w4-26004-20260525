@@ -17,7 +17,11 @@ test('R2 credentials remain backend-only and are never public client variables',
 });
 test('server owns object keys and enforces traversal-safe names and rate limits', () => {
   assert.match(create, /let ownerId=user\.id/);
-  assert.match(create, /businessActorHasAnyCapability\(req,requestedBusinessOwner,\['business\.media\.manage'\]\)/);
+  assert.match(create, /businessActorHasAnyCapability\(req,requestedBusinessOwner,\[capability\]\)/);
+  assert.match(create, /purpose==='business_library'&&visibility==='public'/);
+  assert.match(create, /purpose==='return_label'&&visibility==='private'/);
+  assert.match(create, /purpose==='dispute_evidence'&&visibility==='private'/);
+  assert.match(create, /if\(!capability\) return json\(\{error:'invalid_business_media_contract'\},400\)/);
   assert.match(create, /const key=`\$\{env\}\/\$\{purpose\}\/\$\{ownerId\}/);
   assert.doesNotMatch(create, /body\.object_key/);
   assert.match(create, /replace\(\/\[\\u0000-\\u001f\\\\\\\/\]\//);
