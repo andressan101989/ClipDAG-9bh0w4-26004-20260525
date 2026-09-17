@@ -47,7 +47,12 @@ test("checkout is hosted, owner-derived and never accepts URLs or conversion fro
   assert.match(checkout, /user\.id/);
   assert.match(stripeBilling, /BUSINESS_WEB_PUBLIC_URL/);
   assert.match(stripeBilling, /webhookSecret/);
-  assert.doesNotMatch(checkout, /body\.(?:businessOwnerId|bdag_amount|conversion_rate|customer_id|success_url|cancel_url)/);
+  assert.doesNotMatch(checkout, /body\.(?:businessOwnerId|topup|bdag_amount|conversion_rate|customer_id|success_url|cancel_url)/);
+  assert.match(checkout, /const topupId = String\(prepared\.data\.topup_id\)/);
+  assert.match(checkout, /success_url: `\$\{config\.businessUrl\}\/finance\?stripe=success&topup=\$\{topupId\}`/);
+  assert.match(checkout, /cancel_url: `\$\{config\.businessUrl\}\/finance\?stripe=cancelled&topup=\$\{topupId\}`/);
+  const returnUrls = checkout.split("\n").filter((line) => /(?:success|cancel)_url:/.test(line)).join("\n");
+  assert.doesNotMatch(returnUrls, /session\.id|customerId|paymentIntent|cs_|pi_|cus_/);
 });
 
 test("one shared USD to BDAG source is reused by blockchain deposit", () => {

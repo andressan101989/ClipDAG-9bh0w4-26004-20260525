@@ -93,8 +93,8 @@ Deno.serve(async (req: Request) => {
           product_data: { name: "Nelyon Business BDAG balance top-up" },
         },
       }],
-      success_url: `${config.businessUrl}/finance?stripe=success`,
-      cancel_url: `${config.businessUrl}/finance?stripe=cancelled`,
+      success_url: `${config.businessUrl}/finance?stripe=success&topup=${topupId}`,
+      cancel_url: `${config.businessUrl}/finance?stripe=cancelled&topup=${topupId}`,
     }, { idempotencyKey: `nelyon-test-topup-${topupId}` });
     if (!session.url) throw new Error("stripe_checkout_url_missing");
 

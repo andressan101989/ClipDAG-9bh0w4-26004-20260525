@@ -17,18 +17,24 @@ const STATUS_LABELS: Record<StripeTopup["status"], string> = {
   requires_review: "Revisión requerida",
 };
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TERMINAL_TOPUP_STATUSES = new Set<StripeTopup["status"]>(["credited", "failed", "expired", "requires_review"]);
+
 export function BusinessFinancePage() {
   const { currentBusiness, accessType } = useBusinessAuth();
   const ownerId = currentBusiness?.businessOwnerId ?? "";
   const isOwner = accessType === "owner";
   const [searchParams] = useSearchParams();
   const stripeRedirect = searchParams.get("stripe");
+  const topupParam = searchParams.get("topup");
+  const redirectTopupId = topupParam && UUID_PATTERN.test(topupParam) ? topupParam.toLowerCase() : null;
   const [overview, setOverview] = useState<BusinessBillingOverview | null>(null);
   const [amount, setAmount] = useState("10.00");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestScope = useRef(ownerId);
+  const pollAttempts = useRef(0);
   requestScope.current = ownerId;
 
   const load = useCallback(async () => {
@@ -54,20 +60,27 @@ export function BusinessFinancePage() {
   }, [load]);
 
   useEffect(() => {
-    if (stripeRedirect !== "success" || !ownerId) return;
-    let attempts = 0;
+    pollAttempts.current = 0;
+  }, [ownerId, redirectTopupId, stripeRedirect]);
+
+  const targetTopup = redirectTopupId
+    ? overview?.stripe.topups.find((topup) => topup.id.toLowerCase() === redirectTopupId)
+    : undefined;
+  const targetStatus = targetTopup?.status;
+
+  useEffect(() => {
+    if (stripeRedirect !== "success" || !ownerId || (targetStatus && TERMINAL_TOPUP_STATUSES.has(targetStatus))) return;
     const timer = window.setInterval(() => {
-      attempts += 1;
+      pollAttempts.current += 1;
       void load();
-      if (attempts >= 6) window.clearInterval(timer);
+      if (pollAttempts.current >= 6) window.clearInterval(timer);
     }, 2_000);
     return () => window.clearInterval(timer);
-  }, [load, ownerId, stripeRedirect]);
+  }, [load, ownerId, stripeRedirect, targetStatus]);
 
   const cents = usdInputToCents(amount);
   const quote = useMemo(() => cents != null && overview?.stripe.bdagPerUsd
     ? (cents / 100) * overview.stripe.bdagPerUsd : null, [cents, overview]);
-  const latestCredited = overview?.stripe.topups.some((topup) => topup.status === "credited") ?? false;
 
   const continueToStripe = async () => {
     if (!overview || cents == null || cents < overview.stripe.minimumUsdCents || cents > overview.stripe.maximumUsdCents) {
@@ -87,10 +100,7 @@ export function BusinessFinancePage() {
 
   return <>
     <PageHeader eyebrow="Finanzas" title="Finanzas" description="Saldo empresarial y depósitos externos acreditados en el ledger canónico de Nelyon." />
-    {stripeRedirect === "success" && <div className="finance-notice success-note" role="status">
-      <strong>{latestCredited ? "Saldo actualizado." : "Pago recibido por Stripe. Estamos confirmando tu saldo."}</strong>
-      {!latestCredited && <span>Confirmación pendiente.</span>}
-    </div>}
+    {stripeRedirect === "success" && <StripeSuccessNotice target={targetTopup} />}
     {stripeRedirect === "cancelled" && <div className="finance-notice readonly-note" role="status"><strong>Pago cancelado.</strong><span>No se agregó saldo.</span></div>}
     <InlineError message={error} />
     {loading && <div className="seller-state">Cargando finanzas…</div>}
@@ -109,6 +119,18 @@ export function BusinessFinancePage() {
       <BillingHistory topups={overview.stripe.topups} />
     </>}
   </>;
+}
+
+function StripeSuccessNotice({ target }: { target: StripeTopup | undefined }) {
+  if (!target) return <div className="finance-notice readonly-note" role="status"><strong>Estamos verificando el estado del pago.</strong></div>;
+  if (target.status === "credited") return <div className="finance-notice success-note" role="status"><strong>Saldo actualizado.</strong></div>;
+  if (target.status === "failed") return <div className="finance-notice readonly-note" role="status"><strong>El pago no pudo confirmarse.</strong></div>;
+  if (target.status === "expired") return <div className="finance-notice readonly-note" role="status"><strong>La sesión de pago expiró.</strong></div>;
+  if (target.status === "requires_review") return <div className="finance-notice readonly-note" role="status"><strong>El pago requiere revisión.</strong></div>;
+  return <div className="finance-notice success-note" role="status">
+    <strong>Pago recibido por Stripe. Estamos confirmando tu saldo.</strong>
+    <span>Confirmación pendiente.</span>
+  </div>;
 }
 
 function BillingHistory({ topups }: { topups: StripeTopup[] }) {
