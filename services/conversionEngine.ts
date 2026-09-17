@@ -167,24 +167,6 @@ export function formatBdagWithUsd(bdag: number): string {
 }
 
 /**
- * Platform fee on withdrawals (applied to BDAG before converting to external asset).
- */
-export const WITHDRAWAL_FEE_PERCENT = 5;
-
-/**
- * Calculate net BDAG after withdrawal fee.
- */
-export function applyWithdrawalFee(grossBdag: number): {
-  gross: number;
-  fee: number;
-  net: number;
-} {
-  const fee = Math.round(grossBdag * WITHDRAWAL_FEE_PERCENT / 100 * 10000) / 10000;
-  const net = Math.round((grossBdag - fee) * 10000) / 10000;
-  return { gross: grossBdag, fee, net };
-}
-
-/**
  * Fetch live ETH price from CoinGecko (best-effort, no auth required).
  * Call once at app startup and cache.
  */

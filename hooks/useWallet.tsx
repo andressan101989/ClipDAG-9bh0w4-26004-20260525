@@ -17,7 +17,6 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from './useAuth';
 import { getSupabaseClient } from '@/template';
 import {
-  MIN_WITHDRAWAL_AMOUNT,
   TREASURY_ADDRESSES,
   TREASURY_DEPOSIT_ADDRESS,
   isValidEvmAddress,
@@ -30,6 +29,7 @@ import {
 import {
   submitDepositToBackend,
   requestWithdrawalFromBackend,
+  getWithdrawalConfigFromBackend,
   transferBdagToUser,
 } from '@/services/walletApi';
 import {
@@ -41,8 +41,6 @@ import type {
   WalletTransactionKind,
   WalletTransactionPresentation,
 } from '@/services/walletTransactionPresentation';
-
-export { MIN_WITHDRAWAL_AMOUNT as MIN_WITHDRAWAL_BDAG };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -364,8 +362,11 @@ export function useWallet() {
     const destAddr = (toAddress ?? '').trim().toLowerCase();
     if (!isValidEvmAddress(destAddr))
       return { success: false, error: 'Wallet destino inválida (debe ser 0x + 40 hex chars)' };
-    if (bdagAmount < MIN_WITHDRAWAL_AMOUNT)
-      return { success: false, error: `Mínimo: ${MIN_WITHDRAWAL_AMOUNT} BDAG` };
+    let withdrawalConfig;
+    try { withdrawalConfig = await getWithdrawalConfigFromBackend(); }
+    catch { return { success: false, error: 'No se pudo cargar la política de retiros' }; }
+    if (bdagAmount < withdrawalConfig.minimumBdag)
+      return { success: false, error: `Mínimo: ${withdrawalConfig.minimumBdag} BDAG` };
 
     const liveBal = await dbBalance();
     if (bdagAmount > liveBal)

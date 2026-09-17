@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useBusinessAuth } from "../../auth/BusinessAuthProvider";
 import { InlineError, PageHeader, StatusBadge } from "../../components/BusinessUI";
 import {
@@ -21,7 +21,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 const TERMINAL_TOPUP_STATUSES = new Set<StripeTopup["status"]>(["credited", "failed", "expired", "requires_review"]);
 
 export function BusinessFinancePage() {
-  const { currentBusiness, accessType } = useBusinessAuth();
+  const { currentBusiness, accessType, hasCapability } = useBusinessAuth();
   const ownerId = currentBusiness?.businessOwnerId ?? "";
   const isOwner = accessType === "owner";
   const [searchParams] = useSearchParams();
@@ -105,6 +105,7 @@ export function BusinessFinancePage() {
     <InlineError message={error} />
     {loading && <div className="seller-state">Cargando finanzas…</div>}
     {!loading && overview && <>
+      {(hasCapability("business.payouts.read") || hasCapability("business.payouts.manage")) && <div className="finance-subnav"><Link className="secondary-button" to="/finance/payouts">Retiros</Link></div>}
       <section className="finance-overview-grid">
         <article className="finance-balance-card"><span>Saldo BDAG</span><strong>{formatMoney(overview.bdagBalance)}</strong><small>Autoridad: ledger Nelyon</small></article>
         <article className="finance-provider-card"><span>Stripe / Tarjeta</span><strong>{overview.stripe.available ? "Test mode disponible" : "Configuración pendiente"}</strong><small>Checkout alojado por Stripe · USD</small></article>

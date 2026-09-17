@@ -20,7 +20,8 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { getStablecoin } from '../_shared/stablecoins.ts';
+import { STABLECOINS, getStablecoin } from '../_shared/stablecoins.ts';
+import { BDAG_PER_USD } from '../_shared/bdagEconomics.ts';
 import { corsHeaders }  from '../_shared/cors.ts';
 
 const SUPABASE_URL     = Deno.env.get('SUPABASE_URL')!;
@@ -34,11 +35,7 @@ const TREASURY_KEY     = Deno.env.get('TREASURY_PRIVATE_KEY');
 const TREASURY_ADDRESS = (Deno.env.get('TREASURY_WALLET_ADDRESS') ?? '').toLowerCase();
 const ALCHEMY_KEY      = Deno.env.get('ALCHEMY_ETH_KEY') ?? '';
 
-const MIN_WITHDRAWAL_BDAG  = 100;
-const MAX_WITHDRAWAL_BDAG  = 1_000_000;
 const WITHDRAWAL_COOLDOWN_MS = 10 * 60 * 1000;
-const BDAG_TO_USD          = 0.01;   // 1 BDAG = $0.01 USD (fixed)
-const USDT_DECIMALS        = 6;
 
 // ── USDT contract addresses per EIP-155 chain ID ──────────────────────────────
 const USDT_CONTRACTS: Record<string, string> = {
@@ -89,6 +86,42 @@ function fail(e: string, code = 400) {
 }
 function isValidEVMAddress(addr: string) { return /^0x[a-fA-F0-9]{40}$/.test(addr); }
 
+type WithdrawalConfig = {
+  minimum_bdag: number;
+  maximum_bdag: number;
+  fee_bps: number;
+  bdag_per_usd: number;
+  max_active_per_user: number;
+  required_confirmations: number;
+};
+
+async function getWithdrawalConfig(): Promise<WithdrawalConfig> {
+  const { data, error } = await admin.rpc('get_withdrawal_config');
+  if (error || !data) throw new Error(error?.message ?? 'withdrawal_config_unavailable');
+  return data as WithdrawalConfig;
+}
+
+const NETWORK_LABELS: Record<string, string> = { '1': 'Ethereum', '8453': 'Base' };
+const BDAG_SCALE = BigInt(100_000_000);
+
+function parseBdagUnits(value: unknown): bigint | null {
+  const raw = String(value ?? '').trim();
+  if (!/^\d+(\.\d{1,8})?$/.test(raw)) return null;
+  const [whole, fraction = ''] = raw.split('.');
+  return BigInt(whole) * BDAG_SCALE + BigInt(fraction.padEnd(8, '0'));
+}
+
+function formatBdagUnits(value: bigint): string {
+  const whole = value / BDAG_SCALE;
+  const fraction = (value % BDAG_SCALE).toString().padStart(8, '0').replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
+function bdagUnitsToStablecoinUnits(value: bigint, decimals: number): bigint {
+  const stablecoinScale = BigInt(10) ** BigInt(decimals);
+  return (value * stablecoinScale) / (BigInt(BDAG_PER_USD) * BDAG_SCALE);
+}
+
 // ── Live ETH price ─────────────────────────────────────────────────────────────
 async function fetchEthPriceUsd(): Promise<number> {
   try {
@@ -119,13 +152,13 @@ async function fetchEthPriceUsd(): Promise<number> {
 
 // ── Conversion helpers ─────────────────────────────────────────────────────────
 function bdagToEthWei(bdag: number, ethPriceUsd: number): number {
-  const usd = bdag * BDAG_TO_USD;
+  const usd = bdag / BDAG_PER_USD;
   const eth = usd / ethPriceUsd;
   return Math.floor(eth * 1e18);
 }
-function bdagToUsdtUnits(bdag: number): number {
-  const usdt = bdag * BDAG_TO_USD;
-  return Math.floor(usdt * 10 ** USDT_DECIMALS);
+function bdagToStablecoinUnits(bdag: number, decimals: number): number {
+  const stablecoin = bdag / BDAG_PER_USD;
+  return Math.floor(stablecoin * 10 ** decimals);
 }
 
 // ── ETH native broadcast ───────────────────────────────────────────────────────
@@ -189,8 +222,8 @@ async function broadcastStablecoin(params: {
     const wallet     = new ethers.Wallet(TREASURY_KEY, provider);
     const contract   = new ethers.Contract(usdtContract, ERC20_ABI, wallet);
 
-    const usdtUnits  = bdagToUsdtUnits(params.netBdag);
-    const usdtAmount = params.netBdag * BDAG_TO_USD;
+    const usdtUnits  = bdagToStablecoinUnits(params.netBdag, stablecoin.decimals);
+    const usdtAmount = params.netBdag / BDAG_PER_USD;
 
     if (usdtUnits <= 0) return { error: `usdt_amount_too_small: ${usdtUnits}` };
 
@@ -244,6 +277,55 @@ Deno.serve(async (req) => {
   const { action = 'request' } = body;
 
   try {
+    // ── Canonical configuration ───────────────────────────────────────────
+    if (action === 'config') {
+      const config = await getWithdrawalConfig();
+      return ok({
+        ...config,
+        rails: STABLECOINS.map((rail) => ({
+          token: rail.symbol,
+          chain_id: rail.chainId,
+          network: NETWORK_LABELS[rail.chainId] ?? `Chain ${rail.chainId}`,
+          decimals: rail.decimals,
+        })),
+      });
+    }
+
+    // ── Server-authoritative quote (no persistence / no ledger mutation) ─
+    if (action === 'quote') {
+      const config = await getWithdrawalConfig();
+      const grossUnits = parseBdagUnits(body.amount);
+      const chainId = String(body.chain_id ?? '');
+      const tokenType = String(body.token_type ?? '').toUpperCase();
+      const rail = getStablecoin(chainId, tokenType);
+      if (!grossUnits) return fail('invalid withdrawal amount');
+      const minimumUnits = parseBdagUnits(config.minimum_bdag);
+      const maximumUnits = parseBdagUnits(config.maximum_bdag);
+      if (!minimumUnits || grossUnits < minimumUnits) return fail(`minimum withdrawal: ${config.minimum_bdag} BDAG`);
+      if (!maximumUnits || grossUnits > maximumUnits) return fail(`maximum withdrawal: ${config.maximum_bdag} BDAG`);
+      if (!rail) return fail(`${tokenType || 'token'} not supported on chain ${chainId || 'unknown'}`);
+      const feeUnits = (grossUnits * BigInt(config.fee_bps) + BigInt(5_000)) / BigInt(10_000);
+      const netUnits = grossUnits - feeUnits;
+      const stablecoinRawUnits = bdagUnitsToStablecoinUnits(netUnits, rail.decimals);
+      const stablecoinDivisor = BigInt(10 ** rail.decimals);
+      const stablecoinWhole = stablecoinRawUnits / stablecoinDivisor;
+      const stablecoinFraction = (stablecoinRawUnits % stablecoinDivisor)
+        .toString().padStart(rail.decimals, '0').replace(/0+$/, '');
+      return ok({
+        gross_bdag: formatBdagUnits(grossUnits),
+        fee_bdag: formatBdagUnits(feeUnits),
+        net_bdag: formatBdagUnits(netUnits),
+        estimated_stablecoin_amount: stablecoinFraction
+          ? `${stablecoinWhole}.${stablecoinFraction}` : stablecoinWhole.toString(),
+        fee_bps: config.fee_bps,
+        minimum_bdag: config.minimum_bdag,
+        bdag_per_usd: config.bdag_per_usd,
+        token: rail.symbol,
+        chain_id: rail.chainId,
+        network: NETWORK_LABELS[rail.chainId] ?? `Chain ${rail.chainId}`,
+      });
+    }
+
     // ── Status check ──────────────────────────────────────────────────────
     if (action === 'status') {
       const { withdrawal_id } = body;
@@ -268,16 +350,53 @@ Deno.serve(async (req) => {
     if (!amount || !to_address || !chain_id || !token_type || !idempotency_key)
       return fail('amount, to_address, chain_id, token_type, idempotency_key required');
 
-    const amt = Number(amount);
-    if (isNaN(amt) || amt < MIN_WITHDRAWAL_BDAG) return fail(`minimum withdrawal: ${MIN_WITHDRAWAL_BDAG} BDAG`);
-    if (amt > MAX_WITHDRAWAL_BDAG) return fail(`maximum withdrawal: ${MAX_WITHDRAWAL_BDAG} BDAG`);
+    const config = await getWithdrawalConfig();
+    const amountUnits = parseBdagUnits(amount);
+    const minimumUnits = parseBdagUnits(config.minimum_bdag);
+    const maximumUnits = parseBdagUnits(config.maximum_bdag);
+    if (!amountUnits) return fail('invalid withdrawal amount');
+    if (!minimumUnits || amountUnits < minimumUnits) return fail(`minimum withdrawal: ${config.minimum_bdag} BDAG`);
+    if (!maximumUnits || amountUnits > maximumUnits) return fail(`maximum withdrawal: ${config.maximum_bdag} BDAG`);
+    const normalizedAmount = formatBdagUnits(amountUnits);
+    const amt = Number(normalizedAmount);
     if (!isValidEVMAddress(to_address as string)) return fail('invalid EVM wallet address');
-    if (!['USDT', 'USDC'].includes(token_type as string)) return fail('token_type must be USDT or USDC');
 
     const chainId  = String(chain_id);
     const toAddr   = (to_address as string).toLowerCase();
     const tokenTyp = (token_type as string).toUpperCase();
+    if (!['USDT', 'USDC'].includes(tokenTyp)) return fail('token_type must be USDT or USDC');
     if (!getStablecoin(chainId, tokenTyp)) return fail(`${tokenTyp} not supported on chain ${chainId}`);
+
+    // Resolve an existing logical request before enforcing the new-request
+    // cooldown. The RPC revalidates the immutable fingerprint, so a changed
+    // amount/address/rail with the same key still fails closed.
+    const { data: existingByKey } = await admin.from('withdrawal_requests')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('idempotency_key', String(idempotency_key))
+      .maybeSingle();
+    if (existingByKey) {
+      const { data: retryData, error: retryError } = await admin.rpc('request_withdrawal_from_ledger', {
+        p_user_id: user.id,
+        p_bdag_amount: normalizedAmount,
+        p_to_address: toAddr,
+        p_chain_id: chainId,
+        p_token_type: tokenTyp,
+        p_idempotency_key: idempotency_key,
+      });
+      if (retryError) return fail(retryError.message);
+      const { data: existing } = await admin.from('withdrawal_requests')
+        .select('id,status,net_bdag,fee_bdag,tx_hash')
+        .eq('id', retryData.withdrawal_id).eq('user_id', user.id).single();
+      return ok({
+        withdrawal_id: retryData.withdrawal_id,
+        net_bdag: existing?.net_bdag ?? retryData.net_amount,
+        fee_bdag: existing?.fee_bdag ?? retryData.fee,
+        tx_hash: existing?.tx_hash ?? null,
+        status: existing?.status ?? retryData.status,
+        idempotent: true,
+      });
+    }
 
     // ── Cooldown check ─────────────────────────────────────────────────────
     const since = new Date(Date.now() - WITHDRAWAL_COOLDOWN_MS).toISOString();
@@ -300,28 +419,6 @@ Deno.serve(async (req) => {
       return fail(`withdrawal_cooldown: Next withdrawal available in ${timeStr}`, 429);
     }
 
-    // ── Ensure the user's own ledger account exists ────────────────────────
-    // New signups don't always have a ledger_accounts row yet (register()
-    // creates one, but older/pre-fix accounts or edge cases might not).
-    // ensure_ledger_account() is idempotent — safe to call unconditionally.
-    const { error: ensureErr } = await admin.rpc('ensure_ledger_account', { p_user_id: user.id });
-    if (ensureErr) {
-      log('ERROR', 'ensure_ledger_account_failed', { user_id: user.id, error: ensureErr.message });
-      return fail('Could not verify ledger account: ' + ensureErr.message, 503);
-    }
-
-    // ── Balance check from authoritative ledger ────────────────────────────
-    const { data: ledgerAcct } = await admin
-      .from('ledger_accounts')
-      .select('balance')
-      .eq('owner_id', user.id)
-      .eq('account_type', 'user')
-      .single();
-    const currentBalance = Number(ledgerAcct?.balance ?? 0);
-    log('INFO', 'balance_check', { user_id: user.id, ledger_balance: currentBalance, requested: amt });
-    if (currentBalance < amt)
-      return fail(`insufficient BDAG balance. Available: ${currentBalance.toFixed(2)} BDAG`);
-
     // ── Pre-flight: check treasury key is configured ────────────────────────
     if (!TREASURY_KEY) {
       log('ERROR', 'treasury_key_missing', { user_id: user.id });
@@ -331,7 +428,7 @@ Deno.serve(async (req) => {
     // ── Atomic: debit user → escrow, create withdrawal record ──────────────
     const { data: rpcData, error: rpcErr } = await admin.rpc('request_withdrawal_from_ledger', {
       p_user_id:         user.id,
-      p_bdag_amount:     amt,
+      p_bdag_amount:     normalizedAmount,
       p_to_address:      toAddr,
       p_chain_id:        chainId,
       p_token_type:      tokenTyp,
@@ -340,6 +437,22 @@ Deno.serve(async (req) => {
 
     if (rpcErr) return fail(rpcErr.message);
     if (!rpcData?.success) return fail(rpcData?.error ?? 'withdrawal request failed');
+
+    // A retry returns the original canonical request and never broadcasts a
+    // second blockchain transfer.
+    if (rpcData.idempotent) {
+      const { data: existing } = await admin.from('withdrawal_requests')
+        .select('id,status,net_bdag,fee_bdag,tx_hash')
+        .eq('id', rpcData.withdrawal_id).eq('user_id', user.id).single();
+      return ok({
+        withdrawal_id: rpcData.withdrawal_id,
+        net_bdag: existing?.net_bdag ?? rpcData.net_amount,
+        fee_bdag: existing?.fee_bdag ?? rpcData.fee,
+        tx_hash: existing?.tx_hash ?? null,
+        status: existing?.status ?? rpcData.status,
+        idempotent: true,
+      });
+    }
 
     const withdrawalId = rpcData.withdrawal_id;
     const netBdag      = Number(rpcData.net_amount ?? 0);
@@ -408,31 +521,14 @@ Deno.serve(async (req) => {
     const updatePayload: Record<string, unknown> = {
       status:  'broadcasted',
       tx_hash: txHash,
-      usd_equivalent_at_withdrawal: netBdag * BDAG_TO_USD,
+      usd_equivalent_at_withdrawal: netBdag / BDAG_PER_USD,
+      broadcast_at: new Date().toISOString(),
     };
     if (ethPriceSnapshot !== null) updatePayload['eth_price_usd'] = ethPriceSnapshot;
 
     await admin.from('withdrawal_requests')
       .update(updatePayload)
       .eq('id', withdrawalId);
-
-    // ── Update financial_transaction to 'processing' after broadcast ─────────────────
-    // We intentionally use 'processing' (not 'completed') here because the tx has been
-    // broadcast to the mempool but is NOT yet confirmed on-chain. bdag-monitor will
-    // update it to 'completed' once it sees the receipt with status=0x1.
-    // This prevents the wallet history from showing 'completed' for a tx that might
-    // be dropped from the mempool (low gas, nonce collision, network congestion).
-    if (rpcData.fin_txn_id) {
-      try {
-        await admin
-          .from('financial_transactions')
-          .update({ status: 'processing', blockchain_txid: txHash })
-          .eq('id', rpcData.fin_txn_id);
-        log('INFO', 'fin_txn_marked_processing_on_broadcast', { fin_txn_id: rpcData.fin_txn_id });
-      } catch (ftErr) {
-        log('WARN', 'fin_txn_update_failed_non_fatal', { fin_txn_id: rpcData.fin_txn_id });
-      }
-    }
 
     // Also record in blockchain_settlements
     try {

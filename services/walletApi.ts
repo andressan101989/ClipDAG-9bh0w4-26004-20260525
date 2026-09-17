@@ -111,7 +111,7 @@ export function validateDepositPayload(p: Partial<DepositPayload>): string | nul
 }
 
 export interface WithdrawalPayload {
-  amount:           number;           // BDAG amount (>= 100)
+  amount:           number;           // server policy defines the minimum
   to_address:       string;           // destination EVM address
   chain_id:         string;           // EIP-155 chain ID
   token_type:       'USDT' | 'USDC';
@@ -121,7 +121,6 @@ export interface WithdrawalPayload {
 
 export function validateWithdrawalPayload(p: Partial<WithdrawalPayload>): string | null {
   if (!p.amount || p.amount <= 0)      return 'amount must be positive';
-  if (p.amount < 100)                  return 'minimum withdrawal is 100 BDAG';
   if (!p.to_address)                   return 'to_address is required';
   if (!/^0x[a-fA-F0-9]{40}$/i.test(p.to_address))
     return `invalid to_address format: "${p.to_address}"`;
@@ -132,6 +131,8 @@ export function validateWithdrawalPayload(p: Partial<WithdrawalPayload>): string
   if (!['1', '8453'].includes(p.chain_id)) return `unsupported chain_id: "${p.chain_id}"`;
   if (p.chain_id === '8453' && p.token_type !== 'USDC') return 'Base only supports USDC';
   if (!p.idempotency_key)              return 'idempotency_key is required';
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(p.idempotency_key))
+    return 'idempotency_key must be a UUID';
   return null;
 }
 
@@ -266,6 +267,64 @@ export interface WithdrawalResult {
   message?:      string;
 }
 
+function generateUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const value = Math.floor(Math.random() * 16);
+    return (char === 'x' ? value : (value & 0x3) | 0x8).toString(16);
+  });
+}
+
+export interface WithdrawalConfigResult {
+  minimumBdag: number;
+  maximumBdag: number;
+  feeBps: number;
+  bdagPerUsd: number;
+  maxActivePerUser: number;
+  rails: { token: string; chainId: string; network: string; decimals: number }[];
+}
+
+export interface WithdrawalQuoteResult {
+  grossBdag: number;
+  feeBdag: number;
+  netBdag: number;
+  estimatedStablecoinAmount: number;
+  token: string;
+  chainId: string;
+  network: string;
+}
+
+function edgeData(payload: any) { return payload?.data ?? payload; }
+
+export async function getWithdrawalConfigFromBackend(): Promise<WithdrawalConfigResult> {
+  const { data, error } = await supabase.functions.invoke('bdag-withdraw', { body: { action: 'config' } });
+  if (error || !data?.success) throw new Error(error ? await extractApiError(error) : data?.error ?? 'withdrawal config unavailable');
+  const value = edgeData(data);
+  return {
+    minimumBdag: Number(value.minimum_bdag), maximumBdag: Number(value.maximum_bdag),
+    feeBps: Number(value.fee_bps), bdagPerUsd: Number(value.bdag_per_usd),
+    maxActivePerUser: Number(value.max_active_per_user),
+    rails: Array.isArray(value.rails) ? value.rails.map((rail: any) => ({
+      token: String(rail.token), chainId: String(rail.chain_id), network: String(rail.network), decimals: Number(rail.decimals),
+    })) : [],
+  };
+}
+
+export async function getWithdrawalQuoteFromBackend(params: {
+  amount: number; chainKey: string; asset: string;
+}): Promise<WithdrawalQuoteResult> {
+  const { data, error } = await supabase.functions.invoke('bdag-withdraw', {
+    body: { action: 'quote', amount: params.amount, chain_id: chainKeyToId(params.chainKey), token_type: assetToTokenType(params.asset) },
+  });
+  if (error || !data?.success) throw new Error(error ? await extractApiError(error) : data?.error ?? 'withdrawal quote unavailable');
+  const value = edgeData(data);
+  return {
+    grossBdag: Number(value.gross_bdag), feeBdag: Number(value.fee_bdag), netBdag: Number(value.net_bdag),
+    estimatedStablecoinAmount: Number(value.estimated_stablecoin_amount), token: String(value.token),
+    chainId: String(value.chain_id), network: String(value.network),
+  };
+}
+
 /**
  * Request a BDAG withdrawal (queue-based, atomic).
  *
@@ -273,10 +332,10 @@ export interface WithdrawalResult {
  * Settlement worker (bdag-monitor) processes the queue within 24h.
  * On failure, funds auto-refund from escrow back to user.
  *
- * @param amount       BDAG amount to withdraw (>= 100)
+ * @param amount       BDAG amount validated against server configuration
  * @param toAddress    Destination EVM wallet address
  * @param chainKey     Target chain: 'ethereum' | 'base'
- * @param asset        'usdt' | 'eth'
+ * @param asset        Stablecoin symbol supported by the server rail registry
  */
 export async function requestWithdrawalFromBackend(params: {
   amount:    number;
@@ -290,7 +349,7 @@ export async function requestWithdrawalFromBackend(params: {
       error: 'USDT no está habilitado actualmente en Base. Selecciona Ethereum.',
     };
   }
-  const idempotencyKey = generateIdempotencyKey('withdrawal');
+  const idempotencyKey = generateUuid();
 
   const payload: WithdrawalPayload = {
     action:          'request',

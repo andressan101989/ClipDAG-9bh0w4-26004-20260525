@@ -14,7 +14,6 @@
 export {
   USD_TO_BDAG_RATE,
   BDAG_TO_USD_RATE,
-  WITHDRAWAL_FEE_PERCENT as PLATFORM_FEE_PERCENT,
   usdToBdag,
   bdagToUsd,
   usdtToBdag,
@@ -22,7 +21,6 @@ export {
   bdagToEth,
   depositToBdag,
   bdagToWithdrawAsset,
-  applyWithdrawalFee,
   formatBdagWithUsd,
   fetchAndCacheEthPrice,
 } from './conversionEngine';
@@ -38,13 +36,6 @@ export const TREASURY_ADDRESSES: Record<string, string> = {
 
 // Default fallback
 export const TREASURY_DEPOSIT_ADDRESS = TREASURY_ADDRESSES.ethereum;
-
-// ── Minimum withdrawal in platform BDAG credits (Layer B) ─────────────────────
-/** Min withdrawal in internal BDAG credits = $1.00 */
-export const MIN_WITHDRAWAL_AMOUNT = 100;
-
-/** Legacy alias */
-export const MIN_WITHDRAWAL_BDAG = MIN_WITHDRAWAL_AMOUNT;
 
 // ── EVM address validation ────────────────────────────────────────────────────
 export function isValidEvmAddress(address: string): boolean {

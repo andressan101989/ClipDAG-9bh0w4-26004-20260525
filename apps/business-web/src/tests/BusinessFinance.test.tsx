@@ -8,7 +8,7 @@ const billing = vi.hoisted(() => ({
   overview: vi.fn(), checkout: vi.fn(),
 }));
 vi.mock("../auth/BusinessAuthProvider", () => ({
-  useBusinessAuth: () => ({ currentBusiness: { businessOwnerId: "owner-1" }, accessType: auth.accessType }),
+  useBusinessAuth: () => ({ currentBusiness: { businessOwnerId: "owner-1" }, accessType: auth.accessType, hasCapability: () => false }),
 }));
 vi.mock("../lib/businessBillingApi", () => ({
   getBusinessBillingOverview: billing.overview,

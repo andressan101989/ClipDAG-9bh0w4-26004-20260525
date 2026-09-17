@@ -24,6 +24,10 @@ import {
   chainKeyToId,
   assetToTokenType,
   getWithdrawalStatus,
+  getWithdrawalConfigFromBackend,
+  getWithdrawalQuoteFromBackend,
+  type WithdrawalConfigResult,
+  type WithdrawalQuoteResult,
 } from '@/services/walletApi';
 import {
   NETWORKS, shortAddress, getExplorerTxUrl,
@@ -31,13 +35,11 @@ import {
 } from '@/services/multiChainService';
 import {
   isValidEvmAddress,
-  MIN_WITHDRAWAL_AMOUNT,
   REWARD_RATES,
 } from '@/services/walletConfig';
 import {
-  usdtToBdag, bdagToUsd, bdagToWithdrawAsset,
-  applyWithdrawalFee,
-  WITHDRAWAL_FEE_PERCENT, USD_TO_BDAG_RATE, BDAG_TO_USD_RATE,
+  usdtToBdag, bdagToUsd,
+  USD_TO_BDAG_RATE, BDAG_TO_USD_RATE,
   fetchAndCacheEthPrice, getEthPrice,
   type DepositAsset,
 } from '@/services/conversionEngine';
@@ -159,6 +161,8 @@ function WalletScreenInner() {
   const [withdrawAddr, setWithdrawAddr]   = useState('');
   const [withdrawAsset, setWithdrawAsset] = useState<DepositAsset>('usdt');
   const [withdrawOk, setWithdrawOk]       = useState(false);
+  const [withdrawalConfig, setWithdrawalConfig] = useState<WithdrawalConfigResult | null>(null);
+  const [withdrawalQuote, setWithdrawalQuote] = useState<WithdrawalQuoteResult | null>(null);
 
   // Transfer
   const [transferQuery, setTransferQuery]         = useState('');
@@ -212,6 +216,22 @@ function WalletScreenInner() {
       setDepositBdagPreview(0);
     }
   }, [depositAmt, depositAsset, ethPrice]);
+
+  useEffect(() => {
+    if (modal !== 'withdraw') return;
+    getWithdrawalConfigFromBackend().then(setWithdrawalConfig).catch(() => setWithdrawalConfig(null));
+  }, [modal]);
+
+  useEffect(() => {
+    setWithdrawalQuote(null);
+    const amount = Number(withdrawAmt);
+    if (modal !== 'withdraw' || !withdrawalConfig || !Number.isFinite(amount) || amount < withdrawalConfig.minimumBdag) return;
+    const timer = setTimeout(() => {
+      getWithdrawalQuoteFromBackend({ amount, chainKey: depositNetwork, asset: withdrawAsset })
+        .then(setWithdrawalQuote).catch(() => setWithdrawalQuote(null));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [depositNetwork, modal, withdrawAmt, withdrawAsset, withdrawalConfig]);
 
   const copyAddress = useCallback((addr: string) => {
     try { Clipboard.setStringAsync(addr).catch(() => {}); } catch { /* ok */ }
@@ -399,9 +419,11 @@ function WalletScreenInner() {
 
   // ── Withdraw ─────────────────────────────────────────────────────────────
   const wNum   = parseFloat(withdrawAmt) || 0;
-  const { gross: wGross, fee: wFee, net: wNet } = applyWithdrawalFee(wNum);
-  const wAsset = bdagToWithdrawAsset(wNet, withdrawAsset);
-  const wUsd   = bdagToUsd(wNet);
+  const wGross = withdrawalQuote?.grossBdag ?? wNum;
+  const wFee   = withdrawalQuote?.feeBdag ?? 0;
+  const wNet   = withdrawalQuote?.netBdag ?? 0;
+  const wAsset = withdrawalQuote?.estimatedStablecoinAmount ?? 0;
+  const wUsd   = withdrawalConfig ? wNet / withdrawalConfig.bdagPerUsd : 0;
 
   const handleRefresh = async () => {
     try { await Promise.all([fullSync(), fetchBalance()]); } catch { /* ok */ }
@@ -409,17 +431,18 @@ function WalletScreenInner() {
 
   const handleWithdraw = async () => {
     const amount = parseFloat(withdrawAmt);
-    if (isNaN(amount) || amount < MIN_WITHDRAWAL_AMOUNT) {
-      Alert.alert('Mínimo', `El mínimo es ${MIN_WITHDRAWAL_AMOUNT} créditos BDAG`);
+    if (!withdrawalConfig || isNaN(amount) || amount < withdrawalConfig.minimumBdag) {
+      Alert.alert('Mínimo', withdrawalConfig ? `El mínimo es ${withdrawalConfig.minimumBdag} créditos BDAG` : 'No se pudo cargar la política de retiros');
       return;
     }
+    if (!withdrawalQuote) { Alert.alert('Cotización', 'Espera la cotización del servidor antes de continuar.'); return; }
     const dest = (withdrawAddr.trim() || walletAddress || savedWallet || '').toLowerCase();
     if (!isValidEvmAddress(dest)) { Alert.alert('Error', 'Ingresa una dirección EVM válida (0x...)'); return; }
 
     const assetLabel = withdrawAsset.toUpperCase();
     Alert.alert(
       'Confirmar retiro',
-      `Monto bruto: ${safeFmt(amount)} BDAG\nComisión (${WITHDRAWAL_FEE_PERCENT}%): ${safeFmt(wFee)} BDAG\nRecibes: ${safeFmt(wNet)} BDAG\n≈ $${safeFmt(wUsd)}\nEnviado como: ${safeFmt(wAsset, 4)} ${assetLabel}\nDestino: ${shortAddress(dest)}`,
+      `Monto bruto: ${safeFmt(amount)} BDAG\nComisión (${withdrawalConfig.feeBps / 100}%): ${safeFmt(wFee)} BDAG\nRecibes: ${safeFmt(wNet)} BDAG\n≈ $${safeFmt(wUsd)}\nEnviado como: ${safeFmt(wAsset, 4)} ${assetLabel}\nDestino: ${shortAddress(dest)}`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -447,7 +470,7 @@ function WalletScreenInner() {
               fullSync();
               setWithdrawOk(false);
               const displayNet = r.netBdag != null
-                ? bdagToWithdrawAsset(r.netBdag, withdrawAsset)
+                ? r.netBdag / withdrawalConfig.bdagPerUsd
                 : wAsset;
               const txHashShort = r.txHash ? ` · TX: ${shortAddress(r.txHash)}` : '';
               Alert.alert(
@@ -1033,7 +1056,7 @@ function WalletScreenInner() {
 
             <Text style={sty.inputLabel}>Monto a retirar (BDAG)</Text>
             <TextInput style={sty.input} value={withdrawAmt} onChangeText={setWithdrawAmt}
-              placeholder={`Min. ${MIN_WITHDRAWAL_AMOUNT} BDAG`} placeholderTextColor="#333"
+              placeholder={withdrawalConfig ? `Min. ${withdrawalConfig.minimumBdag} BDAG` : 'Cargando política…'} placeholderTextColor="#333"
               keyboardType="decimal-pad" editable={!isWithdrawing && !withdrawOk} />
             <View style={sty.quickRow}>
               {([100, 250, 500, 1000] as const).map(v => (
@@ -1063,10 +1086,10 @@ function WalletScreenInner() {
               </View>
             ) : null}
 
-            {wNum > 0 ? (
+            {withdrawalQuote ? (
               <View style={sty.feeBox}>
                 <View style={sty.feeRow}><Text style={sty.feeLabel}>BDAG bruto</Text><Text style={sty.feeValue}>{safeFmt(wGross)} BDAG</Text></View>
-                <View style={sty.feeRow}><Text style={sty.feeLabel}>Comisión ({WITHDRAWAL_FEE_PERCENT}%)</Text><Text style={[sty.feeValue, { color: C.secondary }]}>-{safeFmt(wFee)} BDAG</Text></View>
+                <View style={sty.feeRow}><Text style={sty.feeLabel}>Comisión ({withdrawalConfig ? withdrawalConfig.feeBps / 100 : '—'}%)</Text><Text style={[sty.feeValue, { color: C.secondary }]}>-{safeFmt(wFee)} BDAG</Text></View>
                 <View style={[sty.feeRow, { borderTopWidth: 1, borderTopColor: C.border, paddingTop: 6, marginTop: 2 }]}>
                   <Text style={[sty.feeLabel, { color: C.text, fontWeight: '700' }]}>BDAG neto</Text>
                   <Text style={[sty.feeValue, { color: C.accent }]}>{safeFmt(wNet)} BDAG</Text>
@@ -1085,8 +1108,8 @@ function WalletScreenInner() {
             ) : null}
 
             <Pressable
-              style={[sty.primaryBtn, (isWithdrawing || withdrawOk || balance < MIN_WITHDRAWAL_AMOUNT) && sty.primaryBtnDisabled]}
-              onPress={handleWithdraw} disabled={isWithdrawing || withdrawOk || balance < MIN_WITHDRAWAL_AMOUNT}>
+              style={[sty.primaryBtn, (isWithdrawing || withdrawOk || !withdrawalConfig || !withdrawalQuote || balance < withdrawalConfig.minimumBdag) && sty.primaryBtnDisabled]}
+              onPress={handleWithdraw} disabled={isWithdrawing || withdrawOk || !withdrawalConfig || !withdrawalQuote || balance < withdrawalConfig.minimumBdag}>
               <LinearGradient colors={withdrawOk ? ['#00C87A', '#00C87A'] : ['#FF2D78', '#B44FFF']} style={sty.primaryBtnGrad}>
                 {withdrawOk
                   ? <><MaterialIcons name="check-circle" size={18} color="#fff" /><Text style={sty.primaryBtnText}>Completado</Text></>

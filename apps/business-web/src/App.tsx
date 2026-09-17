@@ -18,6 +18,7 @@ import { BusinessAdsPage } from "./pages/ads/BusinessAdsPage";
 import { BusinessAdCreatePage } from "./pages/ads/BusinessAdCreatePage";
 import { BusinessAdDetailPage } from "./pages/ads/BusinessAdDetailPage";
 import { BusinessFinancePage } from "./pages/finance/BusinessFinancePage";
+import { BusinessPayoutsPage } from "./pages/finance/BusinessPayoutsPage";
 
 function BusinessHomeRoute() {
   const { hasCapability } = useBusinessAuth();
@@ -77,9 +78,16 @@ function BusinessAdsRoute({ detail = false, create = false }: { detail?: boolean
 
 function BusinessFinanceRoute() {
   const { hasCapability } = useBusinessAuth();
-  return hasCapability("business.finance.read")
-    ? <BusinessFinancePage />
-    : <Navigate to="/" replace />;
+  if (hasCapability("business.finance.read")) return <BusinessFinancePage />;
+  if (hasCapability("business.payouts.read") || hasCapability("business.payouts.manage")) return <Navigate to="/finance/payouts" replace />;
+  return <Navigate to="/" replace />;
+}
+
+function BusinessPayoutsRoute() {
+  const { hasCapability } = useBusinessAuth();
+  return hasCapability("business.payouts.read") || hasCapability("business.payouts.manage")
+    ? <BusinessPayoutsPage />
+    : <Navigate to="/finance" replace />;
 }
 
 function LifecycleBoundary() {
@@ -112,6 +120,7 @@ function LifecycleBoundary() {
         <Route path="ads/new" element={<BusinessAdsRoute create />} />
         <Route path="ads/:campaignId" element={<BusinessAdsRoute detail />} />
         <Route path="finance" element={<BusinessFinanceRoute />} />
+        <Route path="finance/payouts" element={<BusinessPayoutsRoute />} />
         <Route path="settings" element={<BusinessSettingsRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

@@ -260,10 +260,6 @@ export function getExplorerAddressUrl(address: string): string {
   return `${BDAG_NETWORK.explorerAddress}${address}`;
 }
 
-// ── Minimum withdrawal amount in BDAG ────────────────────────────────────────
-export const MIN_WITHDRAWAL_BDAG = 1;
-export const PLATFORM_FEE_PERCENT = 5; // 5% platform fee on withdrawals
-
 // ── Platform treasury / deposit address ──────────────────────────────────────
 // Users send BDAG to this address to deposit into the platform.
 // The actual address is held in TREASURY_WALLET_ADDRESS env var (server-side).

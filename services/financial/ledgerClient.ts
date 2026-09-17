@@ -13,6 +13,7 @@
  */
 
 import { getSupabaseClient } from '@/template';
+import { getWithdrawalConfigFromBackend } from '@/services/walletApi';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 
 const supabase = () => getSupabaseClient();
@@ -24,6 +25,14 @@ function makeKey(prefix: string): string {
     ? crypto.randomUUID()
     : `${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
   return `${prefix}:${uuid}:${Date.now()}`;
+}
+
+function makeUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const value = Math.floor(Math.random() * 16);
+    return (char === 'x' ? value : (value & 0x3) | 0x8).toString(16);
+  });
 }
 
 // ── Extract human-readable error from FunctionsHttpError ─────────────────
@@ -322,10 +331,10 @@ export async function submitDeposit(params: {
  *
  * Payload contract (bdag-withdraw):
  *   action          — always 'request'
- *   amount          — BDAG amount (>= 100)
+ *   amount          — BDAG amount (server policy)
  *   to_address      — destination EVM address
  *   chain_id        — EIP-155 string
- *   token_type      — 'ETH' | 'USDT'
+ *   token_type      — canonical stablecoin rail
  *   idempotency_key — generated here, unique per request
  *
  * Funds move user → escrow atomically on request.
@@ -336,9 +345,9 @@ export async function requestWithdrawal(params: {
   amount:    number;
   toAddress: string;
   chainId:   string;
-  tokenType: 'ETH' | 'USDT';
+  tokenType: 'USDT' | 'USDC';
 }): Promise<{ success: boolean; error?: string; data?: Record<string, unknown> }> {
-  const idempotencyKey = makeKey('withdrawal');
+  const idempotencyKey = makeUuid();
 
   const payload = {
     action:           'request',
@@ -349,15 +358,16 @@ export async function requestWithdrawal(params: {
     idempotency_key:  idempotencyKey,
   };
 
-  // Validate before invoke
-  if (!payload.amount || payload.amount < 100)
-    return { success: false, error: 'minimum withdrawal is 100 BDAG' };
+  // Client UX uses the server policy; the canonical RPC validates again.
+  const config = await getWithdrawalConfigFromBackend();
+  if (!payload.amount || payload.amount < config.minimumBdag)
+    return { success: false, error: `minimum withdrawal is ${config.minimumBdag} BDAG` };
   if (!payload.to_address || !/^0x[a-fA-F0-9]{40}$/i.test(payload.to_address))
     return { success: false, error: `invalid to_address: "${payload.to_address}"` };
   if (!payload.chain_id)
     return { success: false, error: 'chain_id is required' };
-  if (!['ETH', 'USDT'].includes(payload.token_type))
-    return { success: false, error: 'token_type must be ETH or USDT' };
+  if (!['USDT', 'USDC'].includes(payload.token_type))
+    return { success: false, error: 'token_type must be USDT or USDC' };
 
   console.log('[ledgerClient] requestWithdrawal payload:', JSON.stringify({
     ...payload,
