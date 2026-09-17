@@ -18,9 +18,36 @@ export type ProductVariant = {
 export type ProductDetail = {
   product: Row; media: Row[]; options: Row[]; variants: ProductVariant[]; categories: Row[];
 };
-export type ShippingProfile = Row & { id: string; name: string; store_id: string; regions: Row[] };
+export type ShippingRegion = Row & {
+  id: string | null;
+  country_code: string;
+  region_code: string | null;
+  shipping_price: number | string;
+  free_shipping_threshold: number | string | null;
+  transit_days_min: number;
+  transit_days_max: number;
+  status?: string;
+};
+export type ShippingProfile = Row & { id: string; name: string; store_id: string; regions: ShippingRegion[] };
 export type OrderSummary = Row & { id: string; order_number: string; status: string; currency: string; total: number; created_at: string; items: Row[] };
-export type ReturnSummary = Row & { id: string; order_id: string; order_number: string; status: string; created_at: string };
+export type ReturnShipment = Row & {
+  status: string;
+  return_label_asset_id?: string | null;
+  label_sent_at?: string | null;
+  tracking_number?: string | null;
+  received_at?: string | null;
+};
+export type ReturnSummary = Row & {
+  id: string;
+  order_id: string;
+  order_number: string;
+  status: string;
+  created_at: string;
+  shipment?: ReturnShipment | null;
+  refund_status?: string | null;
+  refunded_at?: string | null;
+  resolution_mode?: string | null;
+};
 export type DisputeSummary = Row & { id: string; order_id: string; order_number: string; status: string; created_at: string };
 
 function row(value: unknown, code: string): Row {
@@ -90,5 +117,7 @@ export async function shipOrder(orderId: string, input: { carrier: string; servi
 export const searchReturns = (ownerId: string, pageCursor?: Cursor, client: BusinessSupabaseClient = supabase) => pagedRpc<ReturnSummary>("search_my_business_returns", ownerId, { p_cursor_created_at: pageCursor?.createdAt ?? null, p_cursor_id: pageCursor?.id ?? null, p_limit: 30 }, "No se pudieron cargar las devoluciones", client);
 export async function respondReturn(returnId: string, decision: "approve" | "reject", note: string, client: BusinessSupabaseClient = supabase) { const { error } = await client.rpc("respond_to_marketplace_return", { p_return_id: returnId, p_decision: decision, p_seller_note: note || null, p_idempotency_key: crypto.randomUUID() }); rpcError(error, decision === "approve" ? "Esta acción financiera requiere al propietario" : "No se pudo responder la devolución"); }
 export async function sendReturnLabel(returnId: string, assetId: string, client: BusinessSupabaseClient = supabase) { const { error } = await client.rpc("send_marketplace_return_label", { p_return_id: returnId, p_label_asset_id: assetId, p_idempotency_key: crypto.randomUUID() }); rpcError(error, "No se pudo enviar la etiqueta"); }
+export async function refundReturnWithoutShipment(returnId: string, note: string, client: BusinessSupabaseClient = supabase) { const { error } = await client.rpc("refund_marketplace_return_without_shipment", { p_return_id: returnId, p_seller_note: note || null, p_idempotency_key: crypto.randomUUID() }); rpcError(error, "No se pudo completar el reembolso sin envío"); }
+export async function confirmReturnReceived(returnId: string, note: string, client: BusinessSupabaseClient = supabase) { const { error } = await client.rpc("confirm_marketplace_return_received", { p_return_id: returnId, p_seller_note: note || null, p_idempotency_key: crypto.randomUUID() }); rpcError(error, "No se pudo confirmar la recepción"); }
 export const searchDisputes = (ownerId: string, pageCursor?: Cursor, client: BusinessSupabaseClient = supabase) => pagedRpc<DisputeSummary>("search_my_business_disputes", ownerId, { p_cursor_created_at: pageCursor?.createdAt ?? null, p_cursor_id: pageCursor?.id ?? null, p_limit: 30 }, "No se pudieron cargar las disputas", client);
 export async function respondDispute(disputeId: string, note: string, evidenceIds: string[], client: BusinessSupabaseClient = supabase) { const { error } = await client.rpc("respond_to_marketplace_dispute", { p_dispute_id: disputeId, p_seller_note: note || null, p_evidence_asset_ids: evidenceIds, p_idempotency_key: crypto.randomUUID() }); rpcError(error, "No se pudo responder la disputa"); }

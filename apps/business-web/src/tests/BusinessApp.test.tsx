@@ -275,7 +275,7 @@ describe("Business Web owner lifecycle", () => {
     renderBusiness(memberIdentity(memberAccess("owner-orders", ["business.orders.read", "business.returns.read"])), "/orders");
     expect(await screen.findByRole("heading", { name: "Pedidos" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Devoluciones" })).toBeInTheDocument();
-    expect(sellerCenterMocks.orders).toHaveBeenCalledWith("owner-orders");
+    expect(sellerCenterMocks.orders).toHaveBeenCalledWith("owner-orders", expect.objectContaining({ status: undefined, cursor: undefined }));
   });
 
   it("auto-selects a single member business and labels the actor as member", async () => {
