@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View, StyleSheet, FlatList, ViewToken, RefreshControl, Pressable,
 } from 'react-native';
@@ -11,7 +11,7 @@ import { useFeed } from '@/hooks/useFeed';
 import { useStories } from '@/hooks/useStories';
 import { useNotifications } from '@/hooks/useNotifications';
 import { useAlert } from '@/template';
-import { VideoCard, TAB_BAR_HEIGHT } from '@/components/feature/VideoCard';
+import { VideoCard } from '@/components/feature/VideoCard';
 import { CommentSheet } from '@/components/feature/CommentSheet';
 import { DAGRewardToast } from '@/components/feature/DAGRewardToast';
 import { StoriesBar } from '@/components/feature/StoriesBar';
@@ -33,6 +33,17 @@ import {
 } from '@/services/marketplaceCreatorContentTagService';
 import { StoryEditor, type StoryEditorSource } from '@/components/feature/StoryEditor';
 import type { StoryComposition } from '@/components/feature/storyComposition';
+import { SponsoredFeedCard } from '@/components/marketplace/SponsoredFeedCard';
+import {
+  fetchSponsoredProducts,
+  recordAdEvent,
+  type SponsoredProduct,
+} from '@/services/marketplaceAdsService';
+import {
+  mixSocialFeedSponsoredProducts,
+  socialFeedSponsoredProductRoute,
+  type SocialFeedItem,
+} from '@/services/marketplaceSponsoredMix';
 
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 75 };
 
@@ -51,7 +62,7 @@ export default function FeedScreen() {
     markStoryViewed, getStoryViewers, deleteStory,
     setStoryReaction, getStoryReactions, replyToStory,
   } = useStories();
-  const { unreadCount: notifCount } = useNotifications();
+  useNotifications();
   const { showAlert } = useAlert();
 
   const [activeIndex, setActiveIndex] = useState(0);
@@ -68,7 +79,26 @@ export default function FeedScreen() {
     creatorDisplayName: string;
   } | null>(null);
   const [storyEditorSource, setStoryEditorSource] = useState<StoryEditorSource | null>(null);
+  const [sponsoredProducts, setSponsoredProducts] = useState<SponsoredProduct[]>([]);
   const storyUploadAttemptsRef = useRef(new Map<string, string>());
+  const sponsoredImpressionsRef = useRef(new Set<string>());
+
+  const loadSponsoredProducts = useCallback(async () => {
+    try {
+      setSponsoredProducts((await fetchSponsoredProducts('social_feed')).slice(0, 3));
+    } catch {
+      setSponsoredProducts([]);
+    }
+  }, []);
+
+  useEffect(() => { void loadSponsoredProducts(); }, [loadSponsoredProducts]);
+
+  const feedItems = useMemo(
+    () => mixSocialFeedSponsoredProducts(videos, sponsoredProducts),
+    [sponsoredProducts, videos],
+  );
+  const feedItemsRef = useRef(feedItems);
+  feedItemsRef.current = feedItems;
 
   useEffect(() => {
     let cancelled = false;
@@ -105,7 +135,7 @@ export default function FeedScreen() {
   }, [videos.length, initialLoaded]);
 
   // Ref for scroll-to-top on Home tab press
-  const feedListRef = useRef<FlatList<VideoWithMeta>>(null);
+  const feedListRef = useRef<FlatList<SocialFeedItem<VideoWithMeta, SponsoredProduct>>>(null);
   const deepLinkScrollRetriesRef = useRef(0);
   const deepLinkResolutionRef = useRef<{ id: string; status: 'loading' | 'unavailable' | 'loaded' } | null>(null);
   useScrollToTop(feedListRef);
@@ -116,8 +146,9 @@ export default function FeedScreen() {
       return;
     }
     const targetVideoId = requestedVideoId.trim().toLowerCase();
-    const index = videos.findIndex(video => video.id === targetVideoId);
-    if (index < 0) {
+    const organicIndex = videos.findIndex(video => video.id === targetVideoId);
+    const index = feedItems.findIndex(item => item.kind === 'organic' && item.video.id === targetVideoId);
+    if (organicIndex < 0 || index < 0) {
       const currentResolution = deepLinkResolutionRef.current;
       if (currentResolution?.id === targetVideoId
         && (currentResolution.status === 'loading' || currentResolution.status === 'unavailable')) return;
@@ -139,7 +170,7 @@ export default function FeedScreen() {
     requestAnimationFrame(() => {
       feedListRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
     });
-  }, [ensureVideoLoadedById, requestedVideoId, showAlert, videos]);
+  }, [ensureVideoLoadedById, feedItems, requestedVideoId, showAlert, videos]);
 
   const handleDeepLinkScrollFailure = useCallback(({ index, averageItemLength }: {
     index: number;
@@ -160,6 +191,17 @@ export default function FeedScreen() {
     const fullyVisible = viewableItems.find(t => t.isViewable && t.index !== null);
     if (fullyVisible && fullyVisible.index !== null) {
       setActiveIndex(fullyVisible.index);
+      const item = feedItemsRef.current[fullyVisible.index];
+      if (item?.kind === 'sponsored' && !sponsoredImpressionsRef.current.has(item.product.campaign_id)) {
+        sponsoredImpressionsRef.current.add(item.product.campaign_id);
+        void recordAdEvent({
+          campaignId: item.product.campaign_id,
+          productId: item.product.product_id,
+          eventType: 'impression',
+          surface: 'social_feed',
+          metadata: { position: item.position },
+        }).catch(() => {});
+      }
     }
   });
   const viewabilityConfig = useRef(VIEWABILITY_CONFIG);
@@ -174,9 +216,24 @@ export default function FeedScreen() {
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
-    await refreshFeed();
+    sponsoredImpressionsRef.current.clear();
+    await Promise.allSettled([refreshFeed(), loadSponsoredProducts()]);
     setIsRefreshing(false);
-  }, [refreshFeed]);
+  }, [loadSponsoredProducts, refreshFeed]);
+
+  const openSponsoredProduct = useCallback((product: SponsoredProduct, position: number) => {
+    void recordAdEvent({
+      campaignId: product.campaign_id,
+      productId: product.product_id,
+      eventType: 'click',
+      surface: 'social_feed',
+      metadata: { position },
+    }).catch(() => {});
+    router.push({
+      pathname: '/product/[id]',
+      params: socialFeedSponsoredProductRoute(product),
+    });
+  }, [router]);
 
   const handleSave = useCallback((videoId: string) => { toggleSave(videoId); }, [toggleSave]);
 
@@ -319,40 +376,42 @@ export default function FeedScreen() {
 
       <FlatList
         ref={feedListRef}
-        data={videos}
-        keyExtractor={item => item.id}
+        data={feedItems}
+        keyExtractor={item => item.kind === 'organic' ? `video:${item.video.id}` : `ad:${item.product.campaign_id}`}
         style={styles.feedList}
         ListHeaderComponent={feedHeader}
-        renderItem={({ item, index }) => (
+        renderItem={({ item, index }) => item.kind === 'sponsored' ? (
+          <SponsoredFeedCard product={item.product} onPress={() => openSponsoredProduct(item.product, item.position)} />
+        ) : (
           <VideoCard
-            video={item}
+            video={item.video}
             isActive={index === activeIndex}
-            isLiked={isLiked(item.id)}
-            isSaved={isSaved(item.id)}
-            isFollowing={isFollowing(item.userId)}
+            isLiked={isLiked(item.video.id)}
+            isSaved={isSaved(item.video.id)}
+            isFollowing={isFollowing(item.video.userId)}
             currentUserDagBalance={user?.dagBalance || 0}
             currentUserId={user?.id || ''}
-            onLike={() => handleLike(item.id, item.userId)}
-            onComment={() => setCommentVideoId(item.id)}
-            onFollow={() => toggleFollow(item.userId)}
-            onSave={() => handleSave(item.id)}
+            onLike={() => handleLike(item.video.id, item.video.userId)}
+            onComment={() => setCommentVideoId(item.video.id)}
+            onFollow={() => toggleFollow(item.video.userId)}
+            onSave={() => handleSave(item.video.id)}
             onProfilePress={() => {}}
             onSendGift={sendGift}
-            onViewTracked={(durationMs, completed) => handleViewTracked(item.id, durationMs, completed)}
-            productTagCount={productTagCounts[item.id] ?? 0}
+            onViewTracked={(durationMs, completed) => handleViewTracked(item.video.id, durationMs, completed)}
+            productTagCount={productTagCounts[item.video.id] ?? 0}
             onProducts={() => setProductSheet({
-              contentId: item.id,
-              contentType: marketplaceContentTypeForMedia(item.videoUrl, item.mediaUrls),
-              creatorDisplayName: item.username,
+              contentId: item.video.id,
+              contentType: marketplaceContentTypeForMedia(item.video.videoUrl, item.video.mediaUrls),
+              creatorDisplayName: item.video.username,
             })}
             onAddToStory={() => setStoryEditorSource({
               kind: 'shared',
-              videoId: item.id,
-              contentType: marketplaceContentTypeForMedia(item.videoUrl, item.mediaUrls),
-              previewUrl: item.thumbnailUrl || item.mediaUrls?.[0] || item.videoUrl,
-              username: item.username,
-              avatarUrl: item.userAvatar,
-              caption: item.caption,
+              videoId: item.video.id,
+              contentType: marketplaceContentTypeForMedia(item.video.videoUrl, item.video.mediaUrls),
+              previewUrl: item.video.thumbnailUrl || item.video.mediaUrls?.[0] || item.video.videoUrl,
+              username: item.video.username,
+              avatarUrl: item.video.userAvatar,
+              caption: item.video.caption,
             })}
           />
         )}

@@ -104,6 +104,7 @@ export default function ProductScreen() {
       creatorId,
       liveSessionId,
       campaignId,
+      sourceSurface,
       showcaseItemId,
       contentProductTagId,
       liveSessionProductId,
@@ -115,6 +116,7 @@ export default function ProductScreen() {
       creatorId?: string;
       liveSessionId?: string;
       campaignId?: string;
+      sourceSurface?: string;
       showcaseItemId?: string;
       contentProductTagId?: string;
       liveSessionProductId?: string;
@@ -273,14 +275,14 @@ export default function ProductScreen() {
       campaignId,
       productId: detail.product.id,
       eventType: "product_view",
-      surface: "product_detail",
+      surface: sourceSurface === "social_feed" ? "social_feed" : "product_detail",
       eventKey: analyticsInstanceRef.current + ":ad-view:" + campaignId,
     })
       .then((value) => {
         adTouchRef.current = value.touch_id ?? null;
       })
       .catch(() => {});
-  }, [detail, source, campaignId]);
+  }, [campaignId, detail, source, sourceSurface]);
   const effectivePrice = selectedVariant?.price ?? product?.price ?? 0,
     available = selectedVariant?.available_quantity ?? 0,
     isOwner = Boolean(product && user?.id === product.seller_id),
@@ -492,7 +494,7 @@ export default function ProductScreen() {
           campaignId,
           productId: product.id,
           eventType: "add_to_cart",
-          surface: "cart",
+          surface: sourceSurface === "social_feed" ? "social_feed" : "cart",
           metadata: { variant_id: selectedVariant.id, quantity: applied },
           eventKey: marketplaceCommerceEventKey("ad-cart"),
         }).catch(() => {});

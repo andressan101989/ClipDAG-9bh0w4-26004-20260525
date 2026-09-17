@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { materializeSponsoredCandidates } from "../supabase/functions/marketplace-ads/orchestration.ts";
+import { materializeSponsoredCandidates, parseSponsoredSurface } from "../supabase/functions/marketplace-ads/orchestration.ts";
+
+test("delivery accepts only the three canonical surfaces", () => {
+  assert.equal(parseSponsoredSurface("marketplace_home"), "marketplace_home");
+  assert.equal(parseSponsoredSurface("marketplace_search"), "marketplace_search");
+  assert.equal(parseSponsoredSurface("social_feed"), "social_feed");
+  assert.equal(parseSponsoredSurface("reels"), null);
+  assert.equal(parseSponsoredSurface(undefined), null);
+});
 
 test("sponsored delivery fails closed when candidate materialization fails", async () => {
   const delivered = [];

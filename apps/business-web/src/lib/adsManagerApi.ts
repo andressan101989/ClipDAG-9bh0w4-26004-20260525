@@ -1,6 +1,8 @@
 import { supabase, type BusinessSupabaseClient } from "./supabase";
 
 type Row = Record<string, unknown>;
+export const AD_PLACEMENTS = ["marketplace_home", "marketplace_search", "social_feed"] as const;
+export type AdPlacement = (typeof AD_PLACEMENTS)[number];
 
 export type AdsCursor = { createdAt: string; id: string };
 export type AdsMetricSummary = {
@@ -37,6 +39,7 @@ export type AdCampaignSummary = {
   finalizedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  placements: AdPlacement[];
 };
 export type AdCampaignPage = {
   items: AdCampaignSummary[];
@@ -85,6 +88,14 @@ function number(value: unknown) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
 }
+function placements(value: unknown): AdPlacement[] {
+  return array(value, "business_ad_placements_invalid").map((item) => {
+    if (typeof item !== "string" || !AD_PLACEMENTS.includes(item as AdPlacement)) {
+      throw new Error("business_ad_placements_invalid");
+    }
+    return item as AdPlacement;
+  });
+}
 function rpcError(error: { message?: string } | null, fallback: string) {
   if (error) throw new Error(error.message || fallback);
 }
@@ -132,6 +143,7 @@ function parseCampaign(value: unknown): AdCampaignSummary {
     finalizedAt: optionalString(parsed.finalized_at),
     createdAt: string(parsed.created_at, "business_ad_campaign_invalid"),
     updatedAt: string(parsed.updated_at, "business_ad_campaign_invalid"),
+    placements: placements(parsed.placements),
   };
 }
 
@@ -276,6 +288,19 @@ export async function createAdCampaignDraft(input: {
   });
   rpcError(error, "No se pudo crear la campaña");
   return object(data, "business_ad_campaign_result_invalid");
+}
+
+export async function setAdCampaignPlacements(
+  campaignId: string,
+  selectedPlacements: AdPlacement[],
+  client: BusinessSupabaseClient = supabase,
+) {
+  const { data, error } = await client.rpc("set_my_marketplace_ad_campaign_placements", {
+    p_campaign_id: campaignId,
+    p_surfaces: selectedPlacements,
+  });
+  rpcError(error, "No se pudieron guardar las ubicaciones");
+  return object(data, "business_ad_placements_result_invalid");
 }
 
 export async function activateAdCampaign(campaignId: string, client: BusinessSupabaseClient = supabase) {

@@ -6,6 +6,8 @@ import {
   createAdCampaignDraft,
   fetchAdConfig,
   searchEligibleAdProducts,
+  setAdCampaignPlacements,
+  type AdPlacement,
   type AdConfig,
   type AdsCursor,
   type EligibleAdProduct,
@@ -13,6 +15,11 @@ import {
 import { formatMoney } from "../../lib/businessFormat";
 
 const emptyConfig: AdConfig = { minimumBudgetBdag: 0, maximumBudgetBdag: 0, minimumDurationSeconds: 0, maximumDurationSeconds: 0 };
+const placementOptions: Array<{ value: AdPlacement; eyebrow: string; label: string }> = [
+  { value: "marketplace_home", eyebrow: "Marketplace", label: "Inicio" },
+  { value: "marketplace_search", eyebrow: "Marketplace", label: "Búsqueda" },
+  { value: "social_feed", eyebrow: "Nelyon", label: "Feed" },
+];
 
 function appendUnique(current: EligibleAdProduct[], incoming: EligibleAdProduct[]) {
   const seen = new Set(current.map((item) => item.id));
@@ -44,6 +51,8 @@ export function BusinessAdCreatePage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [placements, setPlacements] = useState<AdPlacement[]>(["marketplace_home", "marketplace_search"]);
+  const [draftId, setDraftId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const requestOwner = useRef("");
   requestOwner.current = ownerId;
@@ -78,18 +87,26 @@ export function BusinessAdCreatePage() {
     if (!canManage || !productId) return;
     setSaving(true); setError(null);
     try {
-      const campaign = await createAdCampaignDraft({
-        productId,
-        name,
-        budgetBdag: Number(budget),
-        startsAt: new Date(startsAt).toISOString(),
-        endsAt: new Date(endsAt).toISOString(),
-      });
-      navigate(`/ads/${String(campaign.id)}`);
+      const campaignId = draftId ?? String((await createAdCampaignDraft({
+          productId,
+          name,
+          budgetBdag: Number(budget),
+          startsAt: new Date(startsAt).toISOString(),
+          endsAt: new Date(endsAt).toISOString(),
+        })).id);
+      if (!draftId) setDraftId(campaignId);
+      await setAdCampaignPlacements(campaignId, placements);
+      navigate(`/ads/${campaignId}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo crear la campaña");
       setSaving(false);
     }
+  }
+
+  function togglePlacement(value: AdPlacement) {
+    setPlacements((current) => current.includes(value)
+      ? current.filter((placement) => placement !== value)
+      : [...current, value]);
   }
 
   return <>
@@ -114,11 +131,23 @@ export function BusinessAdCreatePage() {
         <p className="eyebrow">3 · Programación</p><h2>Elige la ventana</h2>
         <div className="form-grid"><FormField label="Inicio"><input type="datetime-local" required value={startsAt} onChange={(event) => setStartsAt(event.target.value)} /></FormField><FormField label="Fin" hint={`Duración permitida: ${durationLabel(config.minimumDurationSeconds)} a ${durationLabel(config.maximumDurationSeconds)}.`}><input type="datetime-local" required value={endsAt} onChange={(event) => setEndsAt(event.target.value)} /></FormField></div>
       </section>
+      <section className="business-card ads-form-section">
+        <p className="eyebrow">4 · Ubicaciones</p><h2>Elige dónde puede mostrarse</h2>
+        <p className="muted-copy">Selecciona al menos una ubicación. Puedes cambiarla mientras la campaña siga en draft.</p>
+        <div className="ads-placement-grid">
+          {placementOptions.map((option) => <label key={option.value} className={placements.includes(option.value) ? "ads-placement-option is-selected" : "ads-placement-option"}>
+            <input type="checkbox" checked={placements.includes(option.value)} onChange={() => togglePlacement(option.value)} />
+            <span><small>{option.eyebrow}</small><strong>{option.label}</strong></span>
+          </label>)}
+        </div>
+        {placements.length === 0 && <span className="field-error">Selecciona al menos una ubicación.</span>}
+      </section>
       <section className="business-card ads-review-card">
-        <p className="eyebrow">4 · Revisión</p><h2>Crear borrador</h2>
+        <p className="eyebrow">5 · Revisión</p><h2>Crear borrador</h2>
         <p>Este paso no debita BDAG ni reserva fondos.</p>
         {accessType === "member" && <div className="readonly-note">Podrás preparar el draft. La activación y financiación requerirán al propietario.</div>}
-        <button className="primary-button" type="submit" disabled={saving || !productId}>{saving ? "Creando…" : "Crear campaña draft"}</button>
+        {draftId && error && <Link className="text-button" to={`/ads/${draftId}`}>Abrir el draft y reintentar ubicaciones</Link>}
+        <button className="primary-button" type="submit" disabled={saving || !productId || placements.length === 0}>{saving ? "Guardando…" : draftId ? "Reintentar ubicaciones" : "Crear campaña draft"}</button>
       </section>
     </form>}
   </>;

@@ -7,9 +7,17 @@ import {
   getAdCampaign,
   pauseAdCampaign,
   resumeAdCampaign,
+  setAdCampaignPlacements,
+  type AdPlacement,
   type AdCampaignDetail,
 } from "../../lib/adsManagerApi";
 import { formatDate, formatMoney } from "../../lib/businessFormat";
+
+const placementLabels: Record<AdPlacement, string> = {
+  marketplace_home: "Marketplace Inicio",
+  marketplace_search: "Marketplace Búsqueda",
+  social_feed: "Feed Nelyon",
+};
 
 function ctr(clicks: number, impressions: number) {
   return impressions > 0 ? `${((clicks / impressions) * 100).toFixed(2)}%` : "—";
@@ -25,6 +33,7 @@ export function BusinessAdDetailPage() {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [placements, setPlacements] = useState<AdPlacement[]>([]);
   const requestKey = useRef("");
   requestKey.current = `${ownerId}:${campaignId}`;
 
@@ -34,7 +43,7 @@ export function BusinessAdDetailPage() {
     setLoading(true); setError(null);
     try {
       const value = await getAdCampaign(ownerId, campaignId);
-      if (requestKey.current === expected) setCampaign(value);
+      if (requestKey.current === expected) { setCampaign(value); setPlacements(value.placements); }
     } catch (cause) {
       if (requestKey.current === expected) setError(cause instanceof Error ? cause.message : "No se pudo cargar la campaña");
     } finally {
@@ -57,6 +66,14 @@ export function BusinessAdDetailPage() {
     if (confirmed) void run(() => activateAdCampaign(campaign.id), "Campaña activada y financiada");
   }
 
+  function togglePlacement(value: AdPlacement) {
+    setPlacements((current) => current.includes(value)
+      ? current.filter((placement) => placement !== value)
+      : [...current, value]);
+  }
+
+  const placementEditable = Boolean(campaign && canManage && campaign.status === "draft" && !campaign.fundedAt);
+
   return <>
     <PageHeader eyebrow="Ads Manager" title={campaign?.name ?? campaign?.product.title ?? "Detalle de campaña"} description="Rendimiento, atribución y presupuesto sobre las authorities canónicas." action={<Link className="text-button" to="/ads">Volver a campañas</Link>} />
     <InlineError message={error} />
@@ -74,9 +91,21 @@ export function BusinessAdDetailPage() {
         </div>
       </section>
       <section className="ads-detail-section"><h2>Presupuesto</h2><div className="ads-summary-grid"><Metric label="Presupuesto" value={formatMoney(campaign.totalBudgetBdag)} /><Metric label="Gastado" value={formatMoney(campaign.spentBdag)} /><Metric label="Restante reservado" value={formatMoney(campaign.remainingReservedBdag)} /><Metric label="Liberado" value={formatMoney(campaign.releasedBdag)} /></div></section>
+      <section className="business-card ads-placement-section">
+        <div><p className="eyebrow">Ubicaciones configuradas</p><h2>Dónde puede mostrarse</h2></div>
+        {placementEditable ? <>
+          <div className="ads-placement-grid">
+            {(Object.keys(placementLabels) as AdPlacement[]).map((placement) => <label key={placement} className={placements.includes(placement) ? "ads-placement-option is-selected" : "ads-placement-option"}>
+              <input type="checkbox" checked={placements.includes(placement)} onChange={() => togglePlacement(placement)} />
+              <strong>{placementLabels[placement]}</strong>
+            </label>)}
+          </div>
+          <button className="secondary-button" type="button" disabled={working || placements.length === 0} onClick={() => void run(() => setAdCampaignPlacements(campaign.id, placements), "Ubicaciones actualizadas")}>Guardar ubicaciones</button>
+        </> : <div className="ads-placement-chips">{campaign.placements.map((placement) => <span className="filter-chip is-active" key={placement}>{placementLabels[placement]}</span>)}</div>}
+      </section>
       <section className="ads-detail-section"><h2>Performance</h2><div className="ads-summary-grid"><Metric label="Impresiones" value={campaign.impressions.toLocaleString("es")} /><Metric label="Clicks" value={campaign.clicks.toLocaleString("es")} /><Metric label="CTR" value={ctr(campaign.clicks, campaign.impressions)} /><Metric label="Vistas de producto" value={campaign.productViews.toLocaleString("es")} /><Metric label="Añadidos al carrito" value={campaign.cartAdds.toLocaleString("es")} /><Metric label="Pedidos" value={String(campaign.orders)} /><Metric label="GMV atribuido" value={formatMoney(campaign.attributedGmvBdag)} /></div></section>
       <section className="ads-detail-grid">
-        <article className="business-card"><h2>Delivery</h2>{campaign.deliverySurfaces.length === 0 ? <p className="muted-copy">Aún no hay eventos de delivery.</p> : <div className="ads-surface-list">{campaign.deliverySurfaces.map((surface) => <div key={surface.surface}><strong>{surface.surface}</strong><span>{surface.impressions} impresiones · {surface.clicks} clicks · {surface.productViews} vistas · {surface.cartAdds} carritos · {surface.purchases} compras</span></div>)}</div>}</article>
+        <article className="business-card"><h2>Delivery real por superficie</h2>{campaign.deliverySurfaces.length === 0 ? <p className="muted-copy">Aún no hay eventos de delivery.</p> : <div className="ads-surface-list">{campaign.deliverySurfaces.map((surface) => <div key={surface.surface}><strong>{surface.surface}</strong><span>{surface.impressions} impresiones · {surface.clicks} clicks · {surface.productViews} vistas · {surface.cartAdds} carritos · {surface.purchases} compras</span></div>)}</div>}</article>
         <article className="business-card"><h2>Atribución canónica</h2>{campaign.attribution.length === 0 ? <p className="muted-copy">Aún no hay pedidos atribuidos.</p> : <div className="ads-surface-list">{campaign.attribution.map((item) => <div key={`${item.orderNumber}:${item.attributedAt}`}><strong>{item.orderNumber}</strong><span>{formatMoney(item.attributedGmvBdag)} · {formatDate(item.attributedAt)}</span></div>)}</div>}</article>
       </section>
       {campaign.finalization && <section className="business-card ads-finalization"><p className="eyebrow">Finalización</p><h2>Delivery finalizado</h2><p>Finalizada el {formatDate(String(campaign.finalization.finalized_at))}. El estado financiero final es de solo lectura.</p></section>}

@@ -8,6 +8,7 @@ import {
   resumeAdCampaign,
   searchAdCampaigns,
   searchEligibleAdProducts,
+  setAdCampaignPlacements,
 } from "../lib/adsManagerApi";
 
 vi.mock("../lib/supabase", () => ({ supabase: {} }));
@@ -19,6 +20,7 @@ const campaign = {
   eligible_elapsed_seconds: 3600, eligibility_state: false, eligibility_reason: "terminal",
   impressions: 10, clicks: 2, product_views: 4, cart_adds: 1, orders: 1, attributed_gmv_bdag: "25",
   finalized_at: "2026-09-02T00:00:00Z", created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-02T00:00:00Z",
+  placements: ["marketplace_home", "marketplace_search"],
 };
 
 describe("Ads Manager canonical API", () => {
@@ -34,7 +36,17 @@ describe("Ads Manager canonical API", () => {
       p_business_owner_id: "owner-a", p_status: "completed", p_cursor_created_at: "2026-09-03T00:00:00Z", p_cursor_id: "cursor", p_limit: 20,
     });
     expect(page.items[0]).toMatchObject({ totalBudgetBdag: 100, spentBdag: 99.97569444, releasedBdag: 0.02430556 });
+    expect(page.items[0].placements).toEqual(["marketplace_home", "marketplace_search"]);
     expect(page.nextCursor).toEqual({ createdAt: campaign.created_at, id: campaign.id });
+  });
+
+  it("sets placements through the single non-financial canonical mutation", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: { campaign_id: "campaign-1", placements: ["social_feed"] }, error: null });
+    await setAdCampaignPlacements("campaign-1", ["social_feed"], { rpc } as unknown as BusinessSupabaseClient);
+    expect(rpc).toHaveBeenCalledWith("set_my_marketplace_ad_campaign_placements", {
+      p_campaign_id: "campaign-1",
+      p_surfaces: ["social_feed"],
+    });
   });
 
   it("uses canonical eligibility and configuration projections without hardcoded limits", async () => {

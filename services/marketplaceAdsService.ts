@@ -10,6 +10,12 @@ export type AdEventType =
   | "click"
   | "product_view"
   | "add_to_cart";
+export type MarketplaceAdSurface =
+  | "marketplace_home"
+  | "marketplace_search"
+  | "social_feed"
+  | "product_detail"
+  | "cart";
 export interface SponsoredProduct {
   campaign_id: string;
   product_id: string;
@@ -48,7 +54,7 @@ export const parseSponsoredProduct=(value:unknown,path="sponsored"):SponsoredPro
 export const parseAdCampaign=(value:unknown,path="campaign"):AdCampaign=>{const row=rpcObject(value,path);return{id:rpcUuid(row.id,`${path}.id`),product_id:rpcUuid(row.product_id,`${path}.product_id`),product_title:rpcString(row.product_title,`${path}.product_title`),images:rpcStringArray(row.images,`${path}.images`),name:rpcNullableString(row.name,`${path}.name`),status:rpcEnum(row.status,campaignStatuses,`${path}.status`),budget:rpcNonnegative(row.budget,`${path}.budget`),spent:rpcNonnegative(row.spent,`${path}.spent`),released:rpcNonnegative(row.released,`${path}.released`),remaining:rpcNonnegative(row.remaining,`${path}.remaining`),starts_at:rpcTimestamp(row.starts_at,`${path}.starts_at`),ends_at:rpcTimestamp(row.ends_at,`${path}.ends_at`),eligible_elapsed_seconds:rpcNonnegativeInteger(row.eligible_elapsed_seconds,`${path}.eligible_elapsed_seconds`),impressions:rpcNonnegativeInteger(row.impressions,`${path}.impressions`),clicks:rpcNonnegativeInteger(row.clicks,`${path}.clicks`),product_views:rpcNonnegativeInteger(row.product_views,`${path}.product_views`),cart_adds:rpcNonnegativeInteger(row.cart_adds,`${path}.cart_adds`),orders:rpcNonnegativeInteger(row.orders,`${path}.orders`),gmv:rpcNonnegative(row.gmv,`${path}.gmv`)}};
 const parseIdReceipt=(value:unknown,path:string)=>({id:rpcUuid(rpcObject(value,path).id,`${path}.id`)});
 export async function fetchSponsoredProducts(
-  surface: "marketplace_home" | "marketplace_search",
+  surface: Extract<MarketplaceAdSurface, "marketplace_home" | "marketplace_search" | "social_feed">,
   category?: string,
 ) {
   const { data, error } = await db().functions.invoke("marketplace-ads", {
@@ -68,11 +74,7 @@ export async function recordAdEvent(input: {
   campaignId: string;
   productId: string;
   eventType: AdEventType;
-  surface:
-    | "marketplace_home"
-    | "marketplace_search"
-    | "product_detail"
-    | "cart";
+  surface: MarketplaceAdSurface;
   metadata?: Record<string, string | number>;
   eventKey?: string;
 }) {

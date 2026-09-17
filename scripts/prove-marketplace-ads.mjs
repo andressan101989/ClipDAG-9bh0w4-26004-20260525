@@ -44,7 +44,10 @@ assert.match(edge, /materializeSponsoredCandidates/);
 assert.match(service, /functions\.invoke\(["']marketplace-ads["']/);
 assert.doesNotMatch(service, /adService|ad_create/);
 assert.match(shop, /Patrocinado/);
-assert.match(shop, /visible\s*\/\s*height\s*>=\s*MARKETPLACE_AD_VISIBLE_RATIO/);
+assert.match(
+  shop,
+  /itemVisiblePercentThreshold:\s*MARKETPLACE_AD_VISIBLE_RATIO\s*\*\s*100/,
+);
 assert.match(shop, /setTimeout/);
 assert.match(shop, /mixMarketplaceSponsoredProducts\(products,\s*sponsored\)/);
 assert.match(sponsoredMix, /position\s*%\s*8\s*===\s*0/);
@@ -202,6 +205,7 @@ try {
   await db.query('savepoint ads_fair_rotation');
   const fairCampaigns=[randomUUID(),randomUUID()];
   await db.query("insert into marketplace_ad_campaigns(id,seller_id,store_id,product_id,name,status,starts_at,ends_at,total_budget_bdag,spent_bdag,released_bdag,funded_at,creation_idempotency_key,funding_idempotency_key,eligible_elapsed_seconds,eligibility_checkpoint_at,eligibility_state,eligibility_reason) values($1,$3,$4,$5,'Fair small','active',now()-interval'1 hour',now()+interval'1 day',10,0,0,now(),$6,$7,60,now(),true,'eligible'),($2,$3,$4,$5,'Fair largest','active',now()-interval'1 hour',now()+interval'1 day',1000,0,0,now(),$8,$9,60,now(),true,'eligible')",[fairCampaigns[0],fairCampaigns[1],ids.seller,ids.store,product,randomUUID(),randomUUID(),randomUUID(),randomUUID()]);
+  await db.query("insert into marketplace_ad_campaign_placements(campaign_id,surface) values($1,'marketplace_home'),($2,'marketplace_home')",fairCampaigns);
   const eligibleFair=(await db.query("select result->>'campaign_id' campaign_id from fetch_marketplace_sponsored_products_v2('marketplace_home','physical',8,'fair-inspect') result")).rows;const winners=new Set();for(let i=0;i<24;i++){const row=(await db.query("select result->>'campaign_id' campaign_id from fetch_marketplace_sponsored_products_v2('marketplace_home','physical',1,$1) result",[`fair-session-${i}`])).rows[0];if(row)winners.add(row.campaign_id)}assert.ok(winners.size>1,JSON.stringify({eligibleFair,winners:[...winners]}));assert.ok([...winners].some(id=>id!==fairCampaigns[1]));
   await db.query('rollback to savepoint ads_fair_rotation');
   const organicCard=(await db.query("select marketplace_public_product_card_price($1,now()) result",[product])).rows[0].result;
