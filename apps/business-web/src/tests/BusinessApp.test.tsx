@@ -60,6 +60,23 @@ vi.mock("../lib/businessBillingApi", async (original) => ({
   ...(await original<typeof import("../lib/businessBillingApi")>()),
   getBusinessBillingOverview: billingMocks.overview,
 }));
+const analyticsMocks = vi.hoisted(() => ({
+  get: vi.fn().mockResolvedValue({
+    businessOwnerId: "owner-analytics", range: "30d", timezone: "UTC", generatedAt: "2026-09-18T12:00:00Z",
+    window: { currentStart: "2026-08-20T00:00:00Z", currentEnd: "2026-09-19T00:00:00Z", previousStart: "2026-07-21T00:00:00Z", previousEnd: "2026-08-20T00:00:00Z" },
+    commerce: {
+      current: { gmvBdag: "0", orders: 0, units: 0, productViews: 0, cartAdds: 0, refundedBdag: "0" },
+      previous: { gmvBdag: "0", orders: 0, units: 0, productViews: 0, cartAdds: 0, refundedBdag: "0" },
+      comparisons: { gmvPercent: null, ordersPercent: null, unitsPercent: null, productViewsPercent: null },
+      daily: [], products: { items: [], totalCount: 0 }, variants: { items: [], totalCount: 0 }, sources: [],
+    },
+    ads: { authorized: false, data: null }, finance: { authorized: false, data: null }, payouts: { authorized: false, data: null },
+  }),
+}));
+vi.mock("../lib/businessAnalyticsApi", async (original) => ({
+  ...(await original<typeof import("../lib/businessAnalyticsApi")>()),
+  getBusinessAnalytics: analyticsMocks.get,
+}));
 
 const user = { id: "11111111-1111-4111-8111-111111111111", email: "owner@nelyon.test" } as User;
 const session = { user, access_token: "test", refresh_token: "test" } as Session;
@@ -318,6 +335,20 @@ describe("Business Web owner lifecycle", () => {
     expect(screen.getByRole("link", { name: /Finanzas/ })).toHaveAttribute("href", "/finance");
     expect(await screen.findByText(/Solo el propietario puede añadir saldo/)).toBeInTheDocument();
     expect(billingMocks.overview).toHaveBeenCalledWith("owner-finance");
+  });
+
+  it("opens Analytics only with business.analytics.read", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-analytics", ["business.analytics.read"])), "/analytics");
+    expect(await screen.findByRole("heading", { name: "Analytics" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Analítica/ })).toHaveAttribute("href", "/analytics");
+    expect(analyticsMocks.get).toHaveBeenCalledWith("owner-analytics", "30d");
+  });
+
+  it("does not let Ads, Finance or Payout capabilities grant Analytics route access", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-no-analytics", ["business.ads.read", "business.finance.read", "business.payouts.read"])), "/analytics");
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Analytics" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Analítica/ })).toBeDisabled();
+    expect(analyticsMocks.get).not.toHaveBeenCalled();
   });
 
   it("auto-selects a single member business and labels the actor as member", async () => {

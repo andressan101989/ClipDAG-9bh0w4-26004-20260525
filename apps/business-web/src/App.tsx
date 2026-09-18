@@ -19,6 +19,7 @@ import { BusinessAdCreatePage } from "./pages/ads/BusinessAdCreatePage";
 import { BusinessAdDetailPage } from "./pages/ads/BusinessAdDetailPage";
 import { BusinessFinancePage } from "./pages/finance/BusinessFinancePage";
 import { BusinessPayoutsPage } from "./pages/finance/BusinessPayoutsPage";
+import { BusinessAnalyticsPage } from "./pages/analytics/BusinessAnalyticsPage";
 
 function BusinessHomeRoute() {
   const { hasCapability } = useBusinessAuth();
@@ -90,6 +91,13 @@ function BusinessPayoutsRoute() {
     : <Navigate to="/finance" replace />;
 }
 
+function BusinessAnalyticsRoute() {
+  const { hasCapability } = useBusinessAuth();
+  return hasCapability("business.analytics.read")
+    ? <BusinessAnalyticsPage />
+    : <Navigate to="/" replace />;
+}
+
 function LifecycleBoundary() {
   const { phase, error, retry } = useBusinessAuth();
   if (phase === "loading") return <StatePanel eyebrow="Nelyon Business" title="Cargando tu espacio…" body="Estamos validando tu identidad empresarial." />;
@@ -121,6 +129,7 @@ function LifecycleBoundary() {
         <Route path="ads/:campaignId" element={<BusinessAdsRoute detail />} />
         <Route path="finance" element={<BusinessFinanceRoute />} />
         <Route path="finance/payouts" element={<BusinessPayoutsRoute />} />
+        <Route path="analytics" element={<BusinessAnalyticsRoute />} />
         <Route path="settings" element={<BusinessSettingsRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

@@ -19,7 +19,7 @@ const navigation: readonly BusinessNavItem[] = [
   { label: "Publicidad", path: "/ads", symbol: "◎", enabled: true, capabilities: ["business.ads.read", "business.ads.manage"] },
   { label: "Media", path: "/media", symbol: "▧", enabled: true, capabilities: ["business.media.read", "business.media.manage"] },
   { label: "Finanzas", path: "/finance", symbol: "$", enabled: true, capabilities: ["business.finance.read", "business.payouts.read", "business.payouts.manage"] },
-  { label: "Analítica", symbol: "↗" },
+  { label: "Analítica", path: "/analytics", symbol: "↗", enabled: true, capabilities: ["business.analytics.read"] },
   { label: "Equipo", symbol: "♙" },
   { label: "Configuración", path: "/settings", symbol: "⚙", enabled: true, capabilities: ["business.settings.manage"] },
 ];
