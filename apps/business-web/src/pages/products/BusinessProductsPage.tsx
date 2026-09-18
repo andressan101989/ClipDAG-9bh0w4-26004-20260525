@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useBusinessAuth } from "../../auth/BusinessAuthProvider";
 import { InlineError, PageHeader, StatusBadge } from "../../components/BusinessUI";
@@ -9,6 +9,7 @@ const filters = [{ label: "Todos", value: "" }, { label: "Borradores", value: "d
 
 export function BusinessProductsPage() {
   const { currentBusiness, hasCapability } = useBusinessAuth();
+  const ownerId = currentBusiness?.businessOwnerId ?? "";
   const canManage = hasCapability("business.catalog.manage");
   const canSeeInventory = hasCapability("business.inventory.read") || hasCapability("business.inventory.manage");
   const [items, setItems] = useState<ProductSummary[]>([]);
@@ -21,20 +22,32 @@ export function BusinessProductsPage() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [categoryId, setCategoryId] = useState("");
+  const requestRef = useRef(0);
 
   const load = useCallback(async (append = false) => {
-    if (!currentBusiness) return;
+    if (!ownerId) return;
+    const request = ++requestRef.current;
     if (append) setMore(true); else setLoading(true);
     setError(null);
+    if (!append) {
+      setItems([]);
+      setCategories([]);
+      setCategoryId("");
+    }
     try {
-      const page = await searchProducts(currentBusiness.businessOwnerId, { status: status || undefined, query: query || undefined, cursor: append ? cursor ?? undefined : undefined });
+      const page = await searchProducts(ownerId, { status: status || undefined, query: query || undefined, cursor: append ? cursor ?? undefined : undefined });
+      if (request !== requestRef.current) return;
       setItems((current) => append ? [...current, ...page.items.filter((next) => !current.some((item) => item.id === next.id))] : page.items);
       setCategories(page.categories); setCategoryId((current) => current || String(page.categories[0]?.id ?? "")); setCursor(page.nextCursor);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo cargar el catálogo"); }
-    finally { setLoading(false); setMore(false); }
-  }, [currentBusiness, cursor, query, status]);
+    } catch (cause) { if (request === requestRef.current) setError(cause instanceof Error ? cause.message : "No se pudo cargar el catálogo"); }
+    finally { if (request === requestRef.current) { setLoading(false); setMore(false); } }
+  }, [cursor, ownerId, query, status]);
 
-  useEffect(() => { setCursor(null); void load(false); }, [currentBusiness?.businessOwnerId, status]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setCursor(null);
+    void load(false);
+    return () => { requestRef.current += 1; };
+  }, [ownerId, status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function create() {
     if (!currentBusiness?.store || !categoryId || !canManage) return;

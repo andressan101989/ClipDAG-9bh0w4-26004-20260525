@@ -147,6 +147,14 @@ describe("Business Team UI", () => {
     ));
   });
 
+  it("focuses and closes the permission editor from the keyboard", async () => {
+    render(<MemoryRouter><BusinessTeamPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "Invitar miembro" }));
+    expect(screen.getByRole("button", { name: "Cerrar" })).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Invitar miembro" })).not.toBeInTheDocument();
+  });
+
   it("resets prior business data and ignores a stale Team response", async () => {
     let releaseA: ((value: typeof ownerTeam) => void) | undefined;
     teamMocks.get.mockImplementationOnce(() => new Promise((resolve) => { releaseA = resolve; }));

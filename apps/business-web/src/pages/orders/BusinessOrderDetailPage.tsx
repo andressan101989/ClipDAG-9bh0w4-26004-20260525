@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useBusinessAuth } from "../../auth/BusinessAuthProvider";
 import { FormField, InlineError, PageHeader, StatusBadge } from "../../components/BusinessUI";
@@ -7,9 +7,11 @@ import { getOrder, shipOrder, startOrderProcessing } from "../../lib/sellerCente
 
 export function BusinessOrderDetailPage() {
   const { orderId = "" } = useParams(); const { currentBusiness, hasCapability } = useBusinessAuth(); const canFulfill = hasCapability("business.orders.fulfill");
+  const ownerId = currentBusiness?.businessOwnerId ?? "";
   const [order, setOrder] = useState<Record<string, unknown> | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [success, setSuccess] = useState<string | null>(null);
-  const load = useCallback(async () => { if (!currentBusiness) return; setLoading(true); setError(null); try { setOrder(await getOrder(currentBusiness.businessOwnerId, orderId)); } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo cargar el pedido"); } finally { setLoading(false); } }, [currentBusiness, orderId]);
-  useEffect(() => { void load(); }, [load]); async function run(action: () => Promise<void>, label: string) { setError(null); try { await action(); setSuccess(label); await load(); } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo completar la acción"); } }
+  const requestRef = useRef(0);
+  const load = useCallback(async () => { if (!ownerId || !orderId) return; const request = ++requestRef.current; setLoading(true); setError(null); try { const next = await getOrder(ownerId, orderId); if (request === requestRef.current) setOrder(next); } catch (cause) { if (request === requestRef.current) setError(cause instanceof Error ? cause.message : "No se pudo cargar el pedido"); } finally { if (request === requestRef.current) setLoading(false); } }, [orderId, ownerId]);
+  useEffect(() => { setOrder(null); setSuccess(null); void load(); return () => { requestRef.current += 1; }; }, [load]); async function run(action: () => Promise<void>, label: string) { setError(null); try { await action(); setSuccess(label); await load(); } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo completar la acción"); } }
   async function ship(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); await run(() => shipOrder(orderId, { carrier: String(form.get("carrier")), service: String(form.get("service")), tracking: String(form.get("tracking")), url: String(form.get("url")), note: String(form.get("note")) }), "Pedido marcado como enviado"); }
   if (loading) return <div className="seller-state">Cargando pedido…</div>; if (!order) return <><InlineError message={error} /><Link to="/orders">Volver</Link></>;
   const items = Array.isArray(order.items) ? order.items as Record<string, unknown>[] : []; const address = order.shipping_address as Record<string, unknown> | null;

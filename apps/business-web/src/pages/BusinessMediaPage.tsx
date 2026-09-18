@@ -15,6 +15,7 @@ const statusLabels: Record<string, string> = { ready: "Listo", pending: "Pendien
 
 export function BusinessMediaPage() {
   const { currentBusiness, hasCapability } = useBusinessAuth();
+  const ownerId = currentBusiness?.businessOwnerId ?? "";
   const canManage = hasCapability("business.media.manage");
   const [kind, setKind] = useState<BusinessMediaKind | undefined>();
   const [items, setItems] = useState<BusinessMediaItem[]>([]);
@@ -24,25 +25,36 @@ export function BusinessMediaPage() {
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const requestRef = useRef(0);
 
   const load = useCallback(async (append = false) => {
-    if (!currentBusiness) return;
+    if (!ownerId) return;
+    const request = ++requestRef.current;
     if (append) setLoadingMore(true);
     else setLoading(true);
     setError(null);
     try {
-      const page = await searchBusinessMedia(currentBusiness.businessOwnerId, { kind, cursor: append ? cursor ?? undefined : undefined, limit: 24 });
+      const page = await searchBusinessMedia(ownerId, { kind, cursor: append ? cursor ?? undefined : undefined, limit: 24 });
+      if (request !== requestRef.current) return;
       setItems((current) => append ? [...current, ...page.items.filter((next) => !current.some((item) => item.assetId === next.assetId))] : page.items);
       setCursor(page.nextCursor);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "No se pudo cargar la biblioteca");
+      if (request === requestRef.current) setError(cause instanceof Error ? cause.message : "No se pudo cargar la biblioteca");
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      if (request === requestRef.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
-  }, [currentBusiness, cursor, kind]);
+  }, [cursor, kind, ownerId]);
 
-  useEffect(() => { setCursor(null); void load(false); }, [currentBusiness?.businessOwnerId, kind]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setItems([]);
+    setCursor(null);
+    setProgress(null);
+    void load(false);
+    return () => { requestRef.current += 1; };
+  }, [ownerId, kind]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function upload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];

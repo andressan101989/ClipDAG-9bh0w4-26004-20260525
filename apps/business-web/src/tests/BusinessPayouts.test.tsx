@@ -107,4 +107,19 @@ describe("Business Payouts", () => {
     expect(screen.queryByText("0x1234…ABCD")).not.toBeInTheDocument();
     expect(screen.getByText("Retiros completados").parentElement).toHaveTextContent("0");
   });
+
+  it("does not let an older quote overwrite the latest amount", async () => {
+    let resolveFirst!: (value: typeof quote) => void;
+    const first = new Promise<typeof quote>((resolve) => { resolveFirst = resolve; });
+    api.quote.mockImplementationOnce(() => first).mockResolvedValueOnce({ ...quote, grossBdag: 200, feeBdag: 2, netBdag: 198, estimatedStablecoinAmount: 1.98 });
+    render(<MemoryRouter><BusinessPayoutsPage /></MemoryRouter>);
+    await screen.findByText(/250[,.]00 BDAG/);
+    fireEvent.change(screen.getByLabelText("Monto BDAG"), { target: { value: "100" } });
+    await waitFor(() => expect(api.quote).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText("Monto BDAG"), { target: { value: "200" } });
+    expect(await screen.findByText("1.98 USDT")).toBeInTheDocument();
+    resolveFirst(quote);
+    await waitFor(() => expect(screen.getByText("1.98 USDT")).toBeInTheDocument());
+    expect(screen.queryByText("0.99 USDT")).not.toBeInTheDocument();
+  });
 });

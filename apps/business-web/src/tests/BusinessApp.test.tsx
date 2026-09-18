@@ -340,7 +340,7 @@ describe("Business Web owner lifecycle", () => {
     });
     renderBusiness(memberIdentity(access), "/team");
     expect(await screen.findByRole("heading", { name: "Team" })).toBeInTheDocument();
-    expect(teamMocks.get).toHaveBeenCalledWith("owner-team");
+    await waitFor(() => expect(teamMocks.get).toHaveBeenCalledWith("owner-team"));
   });
 
   it("denies Team without team.read or team.manage", async () => {

@@ -76,6 +76,20 @@ function CapabilityEditor({
   const preset = deriveTeamPreset(selected);
   const groups = useMemo(() => capabilityGroups(catalog), [catalog]);
   const actorSet = useMemo(() => new Set(actorCapabilities), [actorCapabilities]);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus();
+    const closeFromKeyboard = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", closeFromKeyboard);
+    return () => {
+      document.removeEventListener("keydown", closeFromKeyboard);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, [onClose]);
 
   function selectPreset(value: TeamPreset) {
     if (value === "custom") return;
@@ -106,7 +120,7 @@ function CapabilityEditor({
   return (
     <div className="media-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <form className="media-dialog team-dialog" role="dialog" aria-modal="true" aria-label={title} onSubmit={(event) => void submit(event)}>
-        <header><div><p className="eyebrow">Acceso empresarial</p><h2>{title}</h2></div><button className="icon-button" type="button" aria-label="Cerrar" onClick={onClose}>×</button></header>
+        <header><div><p className="eyebrow">Acceso empresarial</p><h2>{title}</h2></div><button ref={closeButtonRef} className="icon-button" type="button" aria-label="Cerrar" onClick={onClose}>×</button></header>
         {email && <label className="form-field"><span>Email</span><input aria-label="Email" type="email" required value={emailValue} onChange={(event) => setEmailValue(event.target.value)} /></label>}
         <label className="form-field team-preset-field">
           <span>Preset de permisos</span>

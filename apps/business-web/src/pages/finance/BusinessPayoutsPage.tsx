@@ -49,6 +49,7 @@ export function BusinessPayoutsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const quoteRequest = useRef(0);
 
   const selectedRail = useMemo(() => config?.rails.find((rail) => `${rail.token}:${rail.chainId}` === railKey) ?? null, [config, railKey]);
 
@@ -87,13 +88,19 @@ export function BusinessPayoutsPage() {
   }, [ownerId, status]);
 
   useEffect(() => {
+    const request = ++quoteRequest.current;
     setQuote(null);
     if (!isOwner || !selectedRail || !amount.trim()) return;
     const timer = window.setTimeout(() => {
-      void getWithdrawalQuote(amount, selectedRail).then(setQuote).catch(() => setQuote(null));
+      void getWithdrawalQuote(amount, selectedRail)
+        .then((next) => { if (request === quoteRequest.current) setQuote(next); })
+        .catch(() => { if (request === quoteRequest.current) setQuote(null); });
     }, 250);
-    return () => window.clearTimeout(timer);
-  }, [amount, isOwner, selectedRail]);
+    return () => {
+      window.clearTimeout(timer);
+      if (request === quoteRequest.current) quoteRequest.current += 1;
+    };
+  }, [amount, isOwner, ownerId, selectedRail]);
 
   async function submit() {
     if (!quote || !selectedRail || !destination.trim()) return;

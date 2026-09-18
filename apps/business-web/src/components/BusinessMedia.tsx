@@ -1,5 +1,5 @@
 import { BrowserVideoPreview } from "@nelyon/web-media";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useBusinessAuth } from "../auth/BusinessAuthProvider";
 import {
   searchBusinessMedia,
@@ -34,28 +34,49 @@ export function BusinessMediaPicker({
   onClose: () => void;
 }) {
   const { currentBusiness } = useBusinessAuth();
+  const ownerId = currentBusiness?.businessOwnerId ?? "";
   const [items, setItems] = useState<BusinessMediaItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef(0);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const load = useCallback(async () => {
-    if (!currentBusiness || !open) return;
+    if (!ownerId || !open) return;
+    const request = ++requestRef.current;
     setLoading(true);
     setError(null);
     try {
-      const page = await searchBusinessMedia(currentBusiness.businessOwnerId, { kind: "image", status: "ready", limit: 60 });
-      setItems(page.items);
+      const page = await searchBusinessMedia(ownerId, { kind: "image", status: "ready", limit: 60 });
+      if (request === requestRef.current) setItems(page.items);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "No se pudo cargar Media");
+      if (request === requestRef.current) setError(cause instanceof Error ? cause.message : "No se pudo cargar Media");
     } finally {
-      setLoading(false);
+      if (request === requestRef.current) setLoading(false);
     }
-  }, [currentBusiness, open]);
-  useEffect(() => { void load(); }, [load]);
+  }, [open, ownerId]);
+  useEffect(() => {
+    setItems([]);
+    void load();
+    return () => { requestRef.current += 1; };
+  }, [load]);
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus();
+    const closeFromKeyboard = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", closeFromKeyboard);
+    return () => {
+      document.removeEventListener("keydown", closeFromKeyboard);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, [onClose, open]);
   if (!open) return null;
   return (
     <div className="media-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="media-dialog" role="dialog" aria-modal="true" aria-label={title}>
-        <header><div><p className="eyebrow">Business Media</p><h2>{title}</h2></div><button className="icon-button" type="button" aria-label="Cerrar" onClick={onClose}>×</button></header>
+        <header><div><p className="eyebrow">Business Media</p><h2>{title}</h2></div><button ref={closeButtonRef} className="icon-button" type="button" aria-label="Cerrar" onClick={onClose}>×</button></header>
         {loading && <div className="media-dialog-state">Cargando biblioteca…</div>}
         {error && <div className="media-dialog-state"><p>{error}</p><button className="secondary-button" type="button" onClick={() => void load()}>Reintentar</button></div>}
         {!loading && !error && items.length === 0 && <div className="media-dialog-state">No hay imágenes listas en la biblioteca.</div>}
