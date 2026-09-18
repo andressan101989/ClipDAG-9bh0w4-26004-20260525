@@ -27,6 +27,8 @@ export function StatusBadge({ status }: { status: string }) {
     completed: "Completada",
     exhausted: "Agotada",
     cancelled: "Cancelada",
+    revoked: "Revocado",
+    expired: "Expirada",
   };
   return (
     <span className={`status-badge status-${status}`}>

@@ -544,3 +544,67 @@ h1, h2, p { margin-top: 0; }
   .analytics-kpi-grid { grid-template-columns: 1fr; }
   .analytics-stats { grid-template-columns: 1fr; }
 }
+
+.team-page { display: grid; gap: 18px; }
+.team-section { padding: 0; overflow: hidden; }
+.team-section-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 22px; border-bottom: 1px solid var(--line); }
+.team-section-head h2, .team-section-head p { margin: 0; }
+.team-section-head > span { color: var(--muted); font-weight: 700; }
+.team-list { display: grid; }
+.team-person { display: grid; grid-template-columns: 44px minmax(180px, 1fr) auto auto; gap: 14px; align-items: center; padding: 17px 22px; border-bottom: 1px solid var(--line); }
+.team-person:last-child { border-bottom: 0; }
+.team-person.is-revoked { opacity: .62; }
+.team-avatar { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--navy); font-weight: 800; }
+.team-person-copy, .team-person-meta { display: grid; gap: 3px; }
+.team-person-copy span, .team-person-copy small { color: var(--muted); }
+.team-person-meta { justify-items: end; }
+.team-role { font-weight: 800; color: var(--navy); }
+.team-person-actions { display: flex; gap: 8px; }
+.team-invitation-list { display: grid; }
+.team-invitation-list article { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto auto; gap: 12px; align-items: center; padding: 16px 22px; border-bottom: 1px solid var(--line); }
+.team-invitation-list article:last-child { border-bottom: 0; }
+.team-invitation-list article > div { display: grid; gap: 4px; }
+.team-invitation-list article span { color: var(--muted); }
+.team-invitation-list article small { color: var(--muted); }
+.team-capability-summary { display: flex !important; flex-direction: row; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.team-capability-summary span { padding: 3px 7px; border-radius: 999px; background: #f1f4f9; font-size: .72rem; }
+.team-dialog { width: min(780px, calc(100vw - 32px)); max-height: min(860px, calc(100vh - 32px)); overflow: auto; }
+.team-preset-field { margin-bottom: 16px; }
+.team-capability-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.team-capability-group { display: grid; gap: 8px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; }
+.team-capability-group legend { padding: 0 6px; color: var(--navy); font-weight: 800; }
+.team-capability { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 9px; }
+.team-capability > span { display: grid; gap: 2px; }
+.team-capability small { color: var(--muted); }
+.team-capability em { color: #7b5200; font-size: .72rem; font-style: normal; font-weight: 800; }
+.team-capability.is-disabled { opacity: .55; }
+.team-invite-summary { display: flex; justify-content: space-between; gap: 12px; padding: 13px; border-radius: 12px; background: #f4f7fb; }
+.invitation-notice { color: var(--navy); font-weight: 800; text-decoration: none; }
+.invitation-page { min-height: 100vh; background: var(--background); }
+.invitation-page-actions { display: flex; align-items: center; gap: 14px; }
+.invitation-shell { width: min(880px, calc(100% - 32px)); margin: 0 auto; padding: 44px 0 72px; }
+.invitation-shell > h1 { margin: 4px 0 8px; }
+.invitation-inbox-list { display: grid; gap: 14px; margin-top: 24px; }
+.invitation-card { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto; gap: 22px; align-items: center; }
+.invitation-card.is-target { border-color: var(--navy); box-shadow: 0 0 0 2px rgba(5, 22, 56, .08); }
+.invitation-card h2, .invitation-card p { margin: 0; }
+.invitation-card ul { margin: 0; color: var(--muted); }
+.invitation-empty { margin-top: 24px; text-align: center; }
+.status-revoked, .status-expired { color: #7d2638; background: #fff0f2; }
+
+@media (max-width: 860px) {
+  .team-person { grid-template-columns: 44px minmax(0, 1fr) auto; }
+  .team-person-actions { grid-column: 2 / -1; }
+  .team-invitation-list article { grid-template-columns: minmax(0, 1fr) auto; }
+  .team-invitation-list article .text-button, .team-invitation-list article .danger-button { justify-self: start; }
+  .invitation-card { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 620px) {
+  .team-capability-groups { grid-template-columns: 1fr; }
+  .team-person { grid-template-columns: 40px minmax(0, 1fr); }
+  .team-person-meta { grid-column: 2; justify-items: start; }
+  .team-person-actions { grid-column: 1 / -1; flex-wrap: wrap; }
+  .team-section-head { align-items: flex-start; }
+  .invitation-page-actions { flex-wrap: wrap; justify-content: flex-end; }
+}

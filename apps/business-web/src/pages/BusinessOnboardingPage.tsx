@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useBusinessAuth } from "../auth/BusinessAuthProvider";
 import { BrandMark, FormField, InlineError } from "../components/BusinessUI";
+import { BusinessInvitationNotice } from "./team/BusinessInvitationInboxPage";
 
 export function BusinessOnboardingPage({ rejected = false }: { rejected?: boolean }) {
   const { seller, applySeller, updateSeller, logout } = useBusinessAuth();
@@ -28,9 +29,7 @@ export function BusinessOnboardingPage({ rejected = false }: { rejected?: boolea
     <main className="onboarding-page">
       <header className="onboarding-topbar">
         <BrandMark />
-        <button className="text-button" type="button" onClick={() => void logout()}>
-          Cerrar sesión
-        </button>
+        <div className="invitation-page-actions"><BusinessInvitationNotice /><button className="text-button" type="button" onClick={() => void logout()}>Cerrar sesión</button></div>
       </header>
       <div className="onboarding-grid">
         <section className="onboarding-copy">

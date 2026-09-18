@@ -20,6 +20,8 @@ import { BusinessAdDetailPage } from "./pages/ads/BusinessAdDetailPage";
 import { BusinessFinancePage } from "./pages/finance/BusinessFinancePage";
 import { BusinessPayoutsPage } from "./pages/finance/BusinessPayoutsPage";
 import { BusinessAnalyticsPage } from "./pages/analytics/BusinessAnalyticsPage";
+import { BusinessInvitationInboxPage } from "./pages/team/BusinessInvitationInboxPage";
+import { BusinessTeamPage } from "./pages/team/BusinessTeamPage";
 
 function BusinessHomeRoute() {
   const { hasCapability } = useBusinessAuth();
@@ -98,6 +100,21 @@ function BusinessAnalyticsRoute() {
     : <Navigate to="/" replace />;
 }
 
+function BusinessTeamRoute() {
+  const { accessType, hasCapability } = useBusinessAuth();
+  return accessType === "owner" || hasCapability("business.team.read") || hasCapability("business.team.manage")
+    ? <BusinessTeamPage />
+    : <Navigate to="/" replace />;
+}
+
+function BusinessInvitationRoute() {
+  const { phase, error, retry } = useBusinessAuth();
+  if (phase === "loading") return <StatePanel eyebrow="Nelyon Business" title="Cargando invitaciones…" body="Estamos validando tu identidad." />;
+  if (phase === "error") return <StatePanel tone="warning" eyebrow="No pudimos continuar" title="Error al cargar Business" body={error ?? "Inténtalo nuevamente."}><button className="primary-button" type="button" onClick={() => void retry()}>Reintentar</button></StatePanel>;
+  if (phase === "signed_out") return <Navigate to="/login" replace />;
+  return <BusinessInvitationInboxPage />;
+}
+
 function LifecycleBoundary() {
   const { phase, error, retry } = useBusinessAuth();
   if (phase === "loading") return <StatePanel eyebrow="Nelyon Business" title="Cargando tu espacio…" body="Estamos validando tu identidad empresarial." />;
@@ -130,6 +147,7 @@ function LifecycleBoundary() {
         <Route path="finance" element={<BusinessFinanceRoute />} />
         <Route path="finance/payouts" element={<BusinessPayoutsRoute />} />
         <Route path="analytics" element={<BusinessAnalyticsRoute />} />
+        <Route path="team" element={<BusinessTeamRoute />} />
         <Route path="settings" element={<BusinessSettingsRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
@@ -141,6 +159,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<BusinessLoginPage />} />
+      <Route path="/invitations" element={<BusinessInvitationRoute />} />
       <Route path="/*" element={<LifecycleBoundary />} />
     </Routes>
   );

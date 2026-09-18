@@ -1,5 +1,6 @@
 import { useBusinessAuth } from "../auth/BusinessAuthProvider";
 import { BrandMark, StatusBadge } from "../components/BusinessUI";
+import { BusinessInvitationNotice } from "./team/BusinessInvitationInboxPage";
 
 export function BusinessSelectorPage() {
   const { businesses, selectBusiness, logout } = useBusinessAuth();
@@ -10,6 +11,7 @@ export function BusinessSelectorPage() {
         <p className="eyebrow">Tus accesos</p>
         <h1>Selecciona un negocio</h1>
         <p className="state-copy">Elige el espacio en el que quieres trabajar. El servidor validará cada operación.</p>
+        <BusinessInvitationNotice />
         <div className="business-choice-list">
           {businesses.map((business) => (
             <button

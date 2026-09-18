@@ -2,6 +2,7 @@ import { useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useBusinessAuth } from "../auth/BusinessAuthProvider";
 import { BrandMark, StatusBadge } from "../components/BusinessUI";
+import { BusinessInvitationNotice } from "../pages/team/BusinessInvitationInboxPage";
 
 type BusinessNavItem = {
   label: string;
@@ -20,7 +21,7 @@ const navigation: readonly BusinessNavItem[] = [
   { label: "Media", path: "/media", symbol: "▧", enabled: true, capabilities: ["business.media.read", "business.media.manage"] },
   { label: "Finanzas", path: "/finance", symbol: "$", enabled: true, capabilities: ["business.finance.read", "business.payouts.read", "business.payouts.manage"] },
   { label: "Analítica", path: "/analytics", symbol: "↗", enabled: true, capabilities: ["business.analytics.read"] },
-  { label: "Equipo", symbol: "♙" },
+  { label: "Team", path: "/team", symbol: "♙", enabled: true, capabilities: ["business.team.read", "business.team.manage"] },
   { label: "Configuración", path: "/settings", symbol: "⚙", enabled: true, capabilities: ["business.settings.manage"] },
 ];
 
@@ -31,7 +32,7 @@ export function BusinessLayout() {
 
   const pageName =
     navigation.find((item) => item.path === location.pathname)?.label
-      ?? (location.pathname.startsWith("/ads") ? "Publicidad" : location.pathname.startsWith("/finance") ? "Finanzas" : "Business");
+      ?? (location.pathname.startsWith("/ads") ? "Publicidad" : location.pathname.startsWith("/finance") ? "Finanzas" : location.pathname.startsWith("/team") ? "Team" : "Business");
 
   return (
     <div className="business-shell">
@@ -101,6 +102,7 @@ export function BusinessLayout() {
             <strong>{pageName}</strong>
           </div>
           <div className="topbar-account">
+            <BusinessInvitationNotice />
             {businesses.length > 1 && (
               <select
                 aria-label="Negocio actual"

@@ -1,5 +1,6 @@
 import { useBusinessAuth } from "../auth/BusinessAuthProvider";
 import { StatePanel, StatusBadge } from "../components/BusinessUI";
+import { BusinessInvitationNotice } from "./team/BusinessInvitationInboxPage";
 
 export function BusinessStatusPage({ kind }: { kind: "pending" | "seller-suspended" | "store-suspended" | "no-permissions" }) {
   const { seller, store, businesses, currentBusiness, selectBusiness, logout } = useBusinessAuth();
@@ -55,6 +56,7 @@ export function BusinessStatusPage({ kind }: { kind: "pending" | "seller-suspend
       <button className="secondary-button" type="button" onClick={() => void logout()}>
         Cerrar sesión
       </button>
+      <BusinessInvitationNotice />
     </StatePanel>
   );
 }

@@ -77,6 +77,20 @@ vi.mock("../lib/businessAnalyticsApi", async (original) => ({
   ...(await original<typeof import("../lib/businessAnalyticsApi")>()),
   getBusinessAnalytics: analyticsMocks.get,
 }));
+const teamMocks = vi.hoisted(() => ({
+  get: vi.fn(), inbox: vi.fn().mockResolvedValue({ actorUserId: "actor", items: [] }),
+  create: vi.fn(), revokeInvitation: vi.fn(), accept: vi.fn(), decline: vi.fn(), setCapabilities: vi.fn(), revokeMember: vi.fn(),
+}));
+vi.mock("../lib/businessTeamApi", () => ({
+  getBusinessTeam: teamMocks.get,
+  getMyBusinessInvitations: teamMocks.inbox,
+  createBusinessInvitation: teamMocks.create,
+  revokeBusinessInvitation: teamMocks.revokeInvitation,
+  acceptBusinessInvitation: teamMocks.accept,
+  declineBusinessInvitation: teamMocks.decline,
+  setBusinessMemberCapabilities: teamMocks.setCapabilities,
+  revokeBusinessMember: teamMocks.revokeMember,
+}));
 
 const user = { id: "11111111-1111-4111-8111-111111111111", email: "owner@nelyon.test" } as User;
 const session = { user, access_token: "test", refresh_token: "test" } as Session;
@@ -107,6 +121,8 @@ const ownerCapabilities = [
   "business.store.manage",
   "business.media.read",
   "business.media.manage",
+  "business.team.read",
+  "business.team.manage",
   "business.settings.manage",
 ] as const;
 
@@ -192,6 +208,13 @@ describe("Business Web owner lifecycle", () => {
       items: [],
       nextCursor: null,
       summary: { activeCampaigns: 0, totalBudgetBdag: 0, spentBdag: 0, impressions: 0, clicks: 0, orders: 0, attributedGmvBdag: 0 },
+    });
+    teamMocks.inbox.mockResolvedValue({ actorUserId: user.id, items: [] });
+    teamMocks.get.mockResolvedValue({
+      businessOwnerId: user.id,
+      actor: { userId: user.id, isOwner: true, canManage: true, canManageProtected: true },
+      owner: { userId: user.id, displayName: "Nelyon Shop", username: "owner", avatarUrl: null, email: user.email, status: "active" },
+      members: [], invitations: [], capabilityCatalog: [],
     });
     window.sessionStorage.clear();
   });
@@ -300,11 +323,32 @@ describe("Business Web owner lifecycle", () => {
     expect(screen.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
   });
 
-  it("keeps future navigation visibly disabled", async () => {
+  it("keeps unavailable navigation visibly disabled while enabling Team for the owner", async () => {
     renderBusiness(identity(approvedSeller, activeStore));
     await screen.findByText("Hola, Nelyon Shop");
     expect(screen.getByRole("button", { name: /Productos/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Equipo/ })).toBeDisabled();
+    expect(screen.getByRole("link", { name: /Team/ })).toHaveAttribute("href", "/team");
+  });
+
+  it("opens Team for team.manage without requiring team.read", async () => {
+    const access = memberAccess("owner-team", ["business.team.manage"]);
+    teamMocks.get.mockResolvedValueOnce({
+      businessOwnerId: "owner-team",
+      actor: { userId: user.id, isOwner: false, canManage: true, canManageProtected: false },
+      owner: { userId: "owner-team", displayName: "Partner Store", username: "owner", avatarUrl: null, email: "owner@nelyon.test", status: "active" },
+      members: [], invitations: [], capabilityCatalog: [],
+    });
+    renderBusiness(memberIdentity(access), "/team");
+    expect(await screen.findByRole("heading", { name: "Team" })).toBeInTheDocument();
+    expect(teamMocks.get).toHaveBeenCalledWith("owner-team");
+  });
+
+  it("denies Team without team.read or team.manage", async () => {
+    renderBusiness(memberIdentity(memberAccess("owner-no-team", ["business.home.read"])), "/team");
+    expect(await screen.findByText("Negocio compartido")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Team" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Team/ })).toBeDisabled();
+    expect(teamMocks.get).not.toHaveBeenCalled();
   });
 
   it("enables Products only for a business with catalog capability", async () => {
@@ -381,6 +425,31 @@ describe("Business Web owner lifecycle", () => {
     renderBusiness(memberIdentity(memberAccess("owner-b", ["business.home.read"], "Business B")));
     expect(await screen.findByText("Hola, Business B")).toBeInTheDocument();
     expect(window.sessionStorage.getItem("nelyon.business.selected-owner")).toBe("owner-b");
+  });
+
+  it("clears a revoked current business on the next canonical access refresh", async () => {
+    const initial = memberIdentity(memberAccess("owner-revoked", ["business.home.read"], "Revoked Business"));
+    const testHarness = harness(initial);
+    testHarness.gateway.loadIdentity = vi.fn()
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(memberIdentity());
+    render(<MemoryRouter><BusinessAuthProvider client={testHarness.client} gateway={testHarness.gateway}><App /></BusinessAuthProvider></MemoryRouter>);
+    expect(await screen.findByText("Hola, Revoked Business")).toBeInTheDocument();
+    act(() => testHarness.emitAuth(session));
+    expect(await screen.findByText("Activa tu presencia comercial")).toBeInTheDocument();
+    expect(window.sessionStorage.getItem("nelyon.business.selected-owner")).toBeNull();
+  });
+
+  it("keeps the invitation inbox reachable without an existing business", async () => {
+    teamMocks.inbox.mockResolvedValueOnce({ actorUserId: user.id, items: [{
+      id: "invite-visible", businessOwnerId: "owner-invite", businessName: "Nuevo negocio",
+      createdAt: "2026-09-18T00:00:00Z", expiresAt: "2026-09-25T00:00:00Z",
+      invitedBy: { displayName: "Invitador", username: "inviter" },
+      capabilities: [{ code: "business.home.read", domain: "home", label: "Ver inicio", description: "Ver el resumen." }],
+    }] });
+    renderBusiness(identity(null, null), "/invitations?invitation=invite-visible");
+    expect(await screen.findByRole("heading", { name: "Invitaciones a negocios" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Nuevo negocio" })).toBeInTheDocument();
   });
 
   it("fails closed for an active membership with zero capabilities", async () => {
