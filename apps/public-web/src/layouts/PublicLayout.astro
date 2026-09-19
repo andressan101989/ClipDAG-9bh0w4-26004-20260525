@@ -4,12 +4,14 @@ import '../styles/public.css';
 
 type Props = { title: string; description: string };
 const { title, description } = Astro.props;
-const isHome = Astro.url.pathname === '/';
-const canonicalPath = isHome ? '/' : Astro.url.pathname.replace(/\/+$/, '');
+const pagePath = Astro.url.pathname.replace(/\.html$/, '').replace(/\/+$/, '') || '/';
+const isHome = pagePath === '/';
+const isProductPage = ['/features', '/business', '/ads', '/marketplace', '/creators', '/live'].includes(pagePath);
+const canonicalPath = pagePath;
 const canonical = new URL(canonicalPath, Astro.site).toString();
 ---
 <!doctype html>
-<html lang={isHome ? 'en' : 'es'}>
+<html lang={isHome || isProductPage ? 'en' : 'es'}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -28,7 +30,7 @@ const canonical = new URL(canonicalPath, Astro.site).toString();
     <title>{isHome ? title : `${title} · Nelyon`}</title>
   </head>
   <body class:list={{ 'home-page': isHome }}>
-    <a class="skip-link" href="#main">{isHome ? 'Skip to content' : 'Saltar al contenido'}</a>
+    <a class="skip-link" href="#main">{isHome || isProductPage ? 'Skip to content' : 'Saltar al contenido'}</a>
     <header class="site-header" id="site-header">
       <a class="brand" href="/" aria-label="Nelyon, home"><img src={logo.src} width="160" height="42" alt="Nelyon" /></a>
       <nav class="desktop-nav" aria-label="Public navigation">

@@ -1,6 +1,7 @@
 ---
 import PublicLayout from '../layouts/PublicLayout.astro';
 import { legacyStaticRedirects, publicRoutes } from '../lib/routeContract.mjs';
+import { productPageSlugs } from '../data/productPages';
 
 export function getStaticPaths() {
   const titles: Record<string, string> = {
@@ -9,7 +10,7 @@ export function getStaticPaths() {
     '/whats-new': "What's New", '/download': 'Download', '/support': 'Support',
     '/contact': 'Contact', '/privacy': 'Privacy', '/terms': 'Terms',
   };
-  const pages = publicRoutes.filter((path) => path !== '/').map((path) => ({
+  const pages = publicRoutes.filter((path) => path !== '/' && !productPageSlugs.includes(path.slice(1))).map((path) => ({
     params: { path: path.slice(1) }, props: { title: titles[path], destination: null },
   }));
   const redirects = Object.entries(legacyStaticRedirects).map(([path, destination]) => ({

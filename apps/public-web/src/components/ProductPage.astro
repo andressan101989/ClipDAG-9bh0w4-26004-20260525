@@ -1,0 +1,99 @@
+---
+import PublicLayout from '../layouts/PublicLayout.astro';
+import PillarCard from './PillarCard.astro';
+import type { ProductPageContent } from '../data/productPages';
+import appIcon from '../../../../assets/branding/nelyon/v1/nelyon-app-icon.png';
+import '../styles/product-pages.css';
+
+type Props = { content: ProductPageContent };
+const { content } = Astro.props;
+---
+<PublicLayout title={content.pageTitle} description={content.description}>
+  <div class={`product-page theme-${content.theme}`}>
+    <section class="product-hero" aria-labelledby="product-title">
+      <div class="product-hero-light" aria-hidden="true"></div>
+      <div class="product-container product-hero-grid">
+        <div class="product-hero-copy">
+          <span class="product-pill">{content.eyebrow}</span>
+          <h1 id="product-title">{content.headline}</h1>
+          <p>{content.lead}</p>
+          <div class="product-actions">
+            <a class="button button-primary" href={content.primaryCta.href}>{content.primaryCta.label}</a>
+            <a class="button button-ghost" href={content.secondaryCta.href}>{content.secondaryCta.label}</a>
+          </div>
+        </div>
+        <div class="product-hero-art">
+          <div class="product-image-glow" aria-hidden="true"></div>
+          <div class="product-hero-image">
+            <picture><source media="(max-width: 700px)" srcset={content.heroImageMobile} /><img src={content.heroImage} alt={content.heroAlt} width="1120" height="900" decoding="async" fetchpriority="high" /></picture>
+            <span class="product-hero-tag">{content.heroLabel}</span>
+          </div>
+          {content.theme === 'business' || content.theme === 'ads' ? (
+            <div class="product-interface" aria-label="Illustrative Business preview using demo presentation only">
+              <span>Nelyon Business · demo</span>
+              <strong>{content.theme === 'ads' ? 'Campaign placements' : 'Business overview'}</strong>
+              <div class="product-interface-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+              <small>{content.theme === 'ads' ? 'Marketplace · Search · Feed' : 'Products · Orders · Analytics'}</small>
+            </div>
+          ) : content.theme === 'marketplace' ? (
+            <div class="product-interface product-product-label"><span>Marketplace preview</span><strong>Studio essentials</strong><small>Illustrative product · demo</small></div>
+          ) : content.theme === 'creators' ? (
+            <div class="product-interface product-creator-label"><img src="/media/home/creator-portrait-192.webp" width="64" height="64" alt="" /><div><span>Creator preview</span><strong>One identity. Many moments.</strong><small>Illustrative media</small></div></div>
+          ) : content.theme === 'live' ? (
+            <div class="product-interface product-live-label"><span class="product-live-dot" aria-hidden="true"></span><strong>LIVE · Battle preview</strong><small>Illustrative media, not a real broadcast</small></div>
+          ) : (
+            <div class="product-interface"><span>One Nelyon</span><strong>Social · LIVE · Commerce</strong><small>Illustrative experience</small></div>
+          )}
+        </div>
+      </div>
+    </section>
+
+    <section class="product-bridge" id="explore" aria-labelledby="bridge-title">
+      <div class="product-container product-bridge-grid">
+        <div><span class="product-pill product-pill-light">{content.bridge.eyebrow}</span><h2 id="bridge-title">{content.bridge.title}</h2></div>
+        <div><p>{content.bridge.body}</p><div class="product-link-row">{content.bridge.links.map((link) => <a href={link.href}>{link.label}<span aria-hidden="true"> ↗</span></a>)}</div></div>
+      </div>
+    </section>
+
+    {content.theme === 'social' && (
+      <section class="product-pillars" aria-labelledby="pillars-title">
+        <div class="product-container">
+          <span class="product-pill product-pill-light">Explore Nelyon</span>
+          <h2 id="pillars-title">Every part has a place.</h2>
+          <div class="product-pillar-grid">
+            <PillarCard title="Social" description="Feed, Stories and discovery." href="/features" kind="image" image="/media/home/feed-720.webp" />
+            <PillarCard title="Creators" description="Profiles, content and community." href="/creators" kind="image" image="/media/home/feed-720.webp" />
+            <PillarCard title="LIVE" description="Real-time creator experiences." href="/live" kind="image" image="/media/home/live-battle-760.webp" />
+            <PillarCard title="Marketplace" description="Products inside the ecosystem." href="/marketplace" kind="image" image="/media/home/studio-light-440.webp" />
+            <PillarCard title="Business" description="Tools for commerce and operations." href="/business" kind="analytics" />
+            <PillarCard title="Ads" description="Placements and campaign tools." href="/ads" kind="analytics" analyticsLabel="Nelyon Ads" />
+          </div>
+        </div>
+      </section>
+    )}
+
+    {content.sections.map((section, index) => (
+      <section class:list={['product-story', { 'product-story-dark': index % 2 === 1 }]} aria-labelledby={`story-${index}`}>
+        <div class:list={['product-container', 'product-story-grid', { 'product-story-reverse': index % 2 === 1 }]}>
+          <div class="product-story-copy">
+            <span class:list={['product-pill', { 'product-pill-light': index % 2 === 0 }]}>{section.eyebrow}</span>
+            <h2 id={`story-${index}`}>{section.title}</h2>
+            <p>{section.body}</p>
+            <ul>{section.points.map((point) => <li>{point}</li>)}</ul>
+          </div>
+          <div class="product-story-media">
+            <img src={section.image} alt={section.imageAlt} width="760" height="650" loading="lazy" decoding="async" />
+            <div class="product-media-edge" aria-hidden="true"></div>
+          </div>
+        </div>
+      </section>
+    ))}
+
+    <section class="product-final" aria-labelledby="product-final-title">
+      <div class="product-container product-final-grid">
+        <div><span class="product-pill">Nelyon · connected</span><h2 id="product-final-title">{content.closing.title}</h2><p>{content.closing.body}</p><a class="button button-primary" href={content.closing.cta.href}>{content.closing.cta.label}</a></div>
+        <img class="product-final-icon" src={appIcon.src} width="220" height="220" loading="lazy" decoding="async" alt="" />
+      </div>
+    </section>
+  </div>
+</PublicLayout>
