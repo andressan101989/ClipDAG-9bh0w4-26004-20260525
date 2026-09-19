@@ -1,0 +1,64 @@
+---
+import PublicLayout from '../layouts/PublicLayout.astro';
+import { publicCtas, storeLinks } from '../lib/publicCtas';
+import appIcon from '../../../../assets/branding/nelyon/v1/nelyon-app-icon.png';
+import '../styles/download.css';
+
+const hasStoreLink = Boolean(storeLinks.ios || storeLinks.android);
+---
+<PublicLayout title="Download Nelyon" description="Find the official Nelyon app links when they become available, and explore the connected experience and Business workspace.">
+  <section class="download-hero" aria-labelledby="download-heading">
+    <div class="download-aura" aria-hidden="true"></div>
+    <div class="download-container download-hero-grid">
+      <div class="download-copy">
+        <span class="download-pill">Nelyon on your device</span>
+        <img class="download-app-icon" src={appIcon.src} width="104" height="104" alt="Nelyon app icon" />
+        <h1 id="download-heading">Your next connection starts here.</h1>
+        <p>Discover content, creators, LIVE and Marketplace in one connected Nelyon experience.</p>
+        <div class="download-hero-actions">
+          <a class="button button-primary" href="#platforms">View app availability</a>
+          <a class="button button-ghost" href={publicCtas.businessHome}>Open Nelyon Business</a>
+        </div>
+      </div>
+      <div class="download-media" aria-label="Illustrative Nelyon creator feed preview">
+        <div class="download-device">
+          <div class="download-device-top" aria-hidden="true"><span></span><strong>For You</strong><span></span></div>
+          <picture>
+            <source media="(max-width: 600px)" srcset="/media/home/feed-720.webp" />
+            <img src="/media/home/feed-1120.webp" width="1120" height="1400" alt="Illustrative fictional creator scene in a Nelyon-style feed" fetchpriority="high" />
+          </picture>
+          <div class="download-device-label">Nelyon experience preview</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="download-platforms" id="platforms" aria-labelledby="platforms-heading">
+    <div class="download-container">
+      <span class="download-eyebrow">App availability</span>
+      <h2 id="platforms-heading">Find the right way in.</h2>
+      <p class="download-platforms-lead">Official platform links will appear here when they are verified. We will not send you to an unverified download.</p>
+      <div class="download-platform-grid">
+        <div class="download-platform-card">
+          <span class="platform-glyph" aria-hidden="true">iOS</span>
+          <h3>iPhone</h3>
+          {storeLinks.ios ? <a class="button button-primary" href={storeLinks.ios} rel="noopener noreferrer" aria-label="Get Nelyon on the App Store">View on the App Store</a> : <p class="platform-unavailable">Store links will be available here.</p>}
+        </div>
+        <div class="download-platform-card">
+          <span class="platform-glyph" aria-hidden="true">Android</span>
+          <h3>Android</h3>
+          {storeLinks.android ? <a class="button button-primary" href={storeLinks.android} rel="noopener noreferrer" aria-label="Get Nelyon on Google Play">View on Google Play</a> : <p class="platform-unavailable">Store links will be available here.</p>}
+        </div>
+      </div>
+      {!hasStoreLink && <p class="download-note">There is no public app-store destination to share yet. You can still explore what Nelyon brings together on this site.</p>}
+      <a class="download-text-link" href={publicCtas.features}>Explore Nelyon features <span aria-hidden="true">→</span></a>
+    </div>
+  </section>
+
+  <section class="download-business" aria-labelledby="download-business-heading">
+    <div class="download-container download-business-grid">
+      <div><span class="download-eyebrow">For businesses</span><h2 id="download-business-heading">Building inside Nelyon?</h2><p>Products, campaigns, insights and your team have a dedicated, access-controlled workspace.</p></div>
+      <div class="download-business-actions"><a class="button button-primary" href={publicCtas.businessHome}>Open Nelyon Business</a><a class="button button-ghost" href={publicCtas.business}>Learn about Business</a></div>
+    </div>
+  </section>
+</PublicLayout>

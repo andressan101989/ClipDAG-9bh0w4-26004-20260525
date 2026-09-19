@@ -4,6 +4,7 @@ import PillarCard from '../components/PillarCard.astro';
 import UpdateCard from '../components/UpdateCard.astro';
 import { getPublishedUpdates } from '../lib/updates';
 import { availabilityLabels } from '../lib/updatePresentation';
+import { publicCtas } from '../lib/publicCtas';
 import appIcon from '../../../../assets/branding/nelyon/v1/nelyon-app-icon.png';
 import '../styles/home.css';
 
@@ -19,7 +20,7 @@ const updates = (await getPublishedUpdates()).items.slice(0, 3);
         <span class="section-pill pill-dark">One connected ecosystem</span>
         <h1 id="hero-title">Connect.<br />Create.<br /><span>Go LIVE.<br class="mobile-only" /> Grow.</span></h1>
         <p>Social, creators, LIVE, commerce and business tools — connected in one Nelyon experience.</p>
-        <div class="hero-actions"><a class="button button-primary" href="#ecosystem">Explore Nelyon</a><a class="button button-ghost" href="/business/home">Open Nelyon Business</a></div>
+        <div class="hero-actions"><a class="button button-primary" href="#ecosystem">Explore Nelyon</a><a class="button button-ghost" href={publicCtas.businessHome}>Open Nelyon Business</a></div>
       </div>
       <div class="hero-showcase" aria-label="Illustrative Nelyon ecosystem preview">
         <div class="hero-phone device-frame">
@@ -52,11 +53,11 @@ const updates = (await getPublishedUpdates()).items.slice(0, 3);
       <h2 id="ecosystem-title">One Nelyon. Many ways<br class="desktop-only" /> to move.</h2>
       <p class="section-lead">Discover, create, participate, shop and grow without jumping between disconnected experiences.</p>
       <div class="pillar-grid">
-        <PillarCard title="Social" description="Discover people, stories and ideas." href="/features" image={`${media}/feed-720.webp`} kind="image" />
-        <PillarCard title="Creators" description="Publish, grow and build community." href="/creators" image={`${media}/feed-720.webp`} kind="image" />
-        <PillarCard title="LIVE" description="Interact, react and join Battles." href="/live" image={`${media}/live-battle-760.webp`} kind="image" />
-        <PillarCard title="Marketplace" description="Discover products inside Nelyon." href="/marketplace" image={`${media}/studio-light-440.webp`} kind="image" />
-        <PillarCard title="Business" description="Operate products, Ads and Analytics." href="/business" kind="analytics" />
+        <PillarCard title="Social" description="Discover people, stories and ideas." href={publicCtas.features} image={`${media}/feed-720.webp`} kind="image" />
+        <PillarCard title="Creators" description="Publish, grow and build community." href={publicCtas.creators} image={`${media}/feed-720.webp`} kind="image" />
+        <PillarCard title="LIVE" description="Interact, react and join Battles." href={publicCtas.live} image={`${media}/live-battle-760.webp`} kind="image" />
+        <PillarCard title="Marketplace" description="Discover products inside Nelyon." href={publicCtas.marketplace} image={`${media}/studio-light-440.webp`} kind="image" />
+        <PillarCard title="Business" description="Operate products, Ads and Analytics." href={publicCtas.business} kind="analytics" />
       </div>
     </div>
   </section>
@@ -110,7 +111,7 @@ const updates = (await getPublishedUpdates()).items.slice(0, 3);
 
   <section class="feature-section business-section section-dark" id="business-tools" aria-labelledby="business-title">
     <div class="section-container split-grid">
-      <div class="feature-copy" data-reveal><span class="section-pill pill-dark">Nelyon Business + Ads</span><h2 id="business-title">Grow inside one ecosystem.</h2><p class="section-lead">Products, campaigns, Analytics, Finance and Team come together in one secure Business workspace.</p><a class="button button-primary" href="/business/home">Open Nelyon Business</a></div>
+      <div class="feature-copy" data-reveal><span class="section-pill pill-dark">Nelyon Business + Ads</span><h2 id="business-title">Grow inside one ecosystem.</h2><p class="section-lead">Products, campaigns, Analytics, Finance and Team come together in one secure Business workspace.</p><a class="button button-primary" href={publicCtas.businessHome}>Open Nelyon Business</a></div>
       <div class="business-preview feature-visual" data-reveal aria-label="Illustrative Nelyon Business overview with demo data">
         <div class="business-preview-head"><strong>Business overview</strong><span>Demo data</span></div>
         <div class="business-metrics"><div><span>GMV</span><strong>18.2K</strong></div><div><span>Orders</span><strong>284</strong></div><div><span>ROAS</span><strong>4.8×</strong></div></div>
@@ -124,7 +125,7 @@ const updates = (await getPublishedUpdates()).items.slice(0, 3);
     <div class="section-container">
       <div data-reveal><span class="section-pill">What’s New</span><h2 id="updates-title">Nelyon keeps moving.</h2><p class="section-lead">Product updates, launches and improvements — published clearly in one place.</p></div>
       <div class="updates-grid">
-        {updates.map((update) => <UpdateCard label={availabilityLabels[update.data.availability]} title={update.data.title} description={update.data.summary} kind={update.data.category === 'LIVE' ? 'live' : update.data.category === 'Business' ? 'analytics' : 'product'} image={update.data.coverImage} href={`/whats-new/${update.id}`} date={update.data.publishedAt} category={update.data.category} />)}
+        {updates.map((update) => <UpdateCard label={availabilityLabels[update.data.availability]} title={update.data.title} description={update.data.summary} kind={update.data.category === 'LIVE' ? 'live' : update.data.category === 'Business' ? 'analytics' : 'product'} image={update.data.coverImage} href={`${publicCtas.whatsNew}/${update.id}`} date={update.data.publishedAt} category={update.data.category} />)}
       </div>
       {updates.length === 0 && <p class="section-lead">Product updates will appear here when published.</p>}
     </div>
@@ -132,7 +133,7 @@ const updates = (await getPublishedUpdates()).items.slice(0, 3);
 
   <section class="download-section section-dark" id="download" aria-labelledby="download-title">
     <div class="section-container download-grid">
-      <div data-reveal><h2 id="download-title">Your next connection starts here.</h2><p class="section-lead">Download Nelyon or open Nelyon Business to start building inside the ecosystem.</p><div class="download-actions"><a class="button button-primary" href="/download">Download Nelyon</a><a class="button button-ghost" href="/business/home">Open Business</a></div></div>
+      <div data-reveal><h2 id="download-title">Your next connection starts here.</h2><p class="section-lead">Explore app availability or open Nelyon Business to start building inside the ecosystem.</p><div class="download-actions"><a class="button button-primary" href={publicCtas.download}>Download Nelyon</a><a class="button button-ghost" href={publicCtas.businessHome}>Open Nelyon Business</a></div></div>
       <img class="download-icon" src={appIcon.src} width="220" height="220" loading="lazy" decoding="async" alt="Nelyon app icon" />
     </div>
   </section>

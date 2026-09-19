@@ -34,8 +34,8 @@ test('product metadata and copy are unique, cautious and noindex remains shared'
 test('public product surfaces contain no private imports or new data authority', () => {
   const files = [source('components/ProductPage.astro'), source('data/productPages.ts'), ...slugs.map((slug) => source(`pages/${slug}.astro`))].join('\n');
   assert.doesNotMatch(files, /BusinessAuthProvider|@supabase|businessApi|sellerCenterApi|adsManagerApi|businessBillingApi|businessPayoutsApi|businessAnalyticsApi|businessTeamApi|hls\.js/);
-  assert.match(files, /\/business\/home/);
-  assert.match(files, /\/business\/ads/);
+  assert.match(files, /publicCtas\.businessHome/);
+  assert.match(files, /publicCtas\.businessAds/);
 });
 
 test('shared composition has semantic sections, a single H1, accessible media and reduced motion', () => {

@@ -1,0 +1,35 @@
+.download-container { width: min(100% - 48px, 1240px); margin-inline: auto; }
+.download-hero { position: relative; isolation: isolate; overflow: hidden; padding: 184px 0 112px; background: #0c1f4f; color: #fff; }
+.download-aura { position: absolute; z-index: -1; inset: -25% -12%; background: radial-gradient(circle at 72% 45%, #1f79ff80, transparent 32%), radial-gradient(circle at 24% 8%, #123b9e, transparent 43%); pointer-events: none; }
+.download-hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .88fr); gap: clamp(56px, 8vw, 132px); align-items: center; }
+.download-pill, .download-eyebrow { display: inline-block; color: #9acbff; font-size: 12px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+.download-app-icon { width: 104px; height: 104px; margin: 26px 0; border-radius: 24px; box-shadow: 0 16px 48px #020a2080; }
+.download-copy h1, .download-platforms h2, .download-business h2 { font-family: var(--font-heading); letter-spacing: -.035em; }
+.download-copy h1 { max-width: 750px; margin: 0; font-size: clamp(48px, 5.5vw, 78px); line-height: 1.06; }
+.download-copy > p { max-width: 620px; margin: 28px 0 0; color: #d8e7ff; font-size: clamp(17px, 1.6vw, 20px); line-height: 1.55; }
+.download-hero-actions, .download-business-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
+.download-media { display: grid; place-items: center; min-width: 0; }
+.download-device { width: min(100%, 380px); overflow: hidden; border: 9px solid #17254c; border-radius: 44px; background: #17254c; box-shadow: 0 38px 100px #01071db3, 0 0 70px #1f79ff4d; transform: rotate(4deg); }
+.download-device-top { display: flex; justify-content: space-between; align-items: center; height: 36px; padding: 0 22px; font-size: 13px; }
+.download-device-top span { width: 12px; height: 12px; border-radius: 50%; background: #1f79ff; }
+.download-device img { width: 100%; height: 440px; object-fit: cover; object-position: center; }
+.download-device-label { padding: 14px 20px; color: #eaf3ff; font-size: 13px; }
+.download-platforms { padding: 112px 0; background: #f5f7fa; }
+.download-platforms .download-eyebrow, .download-business .download-eyebrow { color: #123b9e; }
+.download-platforms h2, .download-business h2 { margin: 14px 0 0; color: #0c1f4f; font-size: clamp(36px, 4vw, 58px); line-height: 1.12; }
+.download-platforms-lead, .download-business p { max-width: 640px; color: #52627d; font-size: 18px; line-height: 1.55; }
+.download-platform-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 42px 0 24px; }
+.download-platform-card { min-height: 228px; padding: 32px; border: 1px solid #d5dfef; border-radius: 28px; background: #fff; box-shadow: 0 20px 60px #0c1f4f0d; }
+.platform-glyph { display: inline-grid; place-items: center; min-width: 52px; min-height: 52px; padding: 8px; border-radius: 14px; background: #eaf2ff; color: #123b9e; font-size: 14px; font-weight: 800; }
+.download-platform-card h3 { margin: 20px 0 8px; color: #0c1f4f; font: 700 25px var(--font-heading); }
+.platform-unavailable { color: #52627d; line-height: 1.5; }
+.download-note { margin: 0 0 20px; color: #52627d; line-height: 1.5; }
+.download-text-link { display: inline-flex; align-items: center; min-height: 44px; color: #123b9e; font-weight: 700; text-underline-offset: 4px; }
+.download-business { padding: 100px 0; background: linear-gradient(130deg, #e8f2ff, #fff 58%, #e7eeff); }
+.download-business-grid { display: flex; justify-content: space-between; align-items: center; gap: 36px; }
+.download-business-actions { flex: none; }
+.download-business .button-ghost { border-color: #123b9e; color: #123b9e; }
+@media (max-width: 1024px) { .download-hero-grid { gap: 44px; } .download-business-grid { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 767px) { .download-container { width: min(100% - 32px, 600px); } .download-hero { padding: 154px 0 72px; } .download-hero-grid { grid-template-columns: 1fr; } .download-copy h1 { font-size: clamp(42px, 9vw, 64px); } .download-device { width: min(80%, 320px); transform: rotate(2deg); } .download-device img { height: 360px; } .download-platforms, .download-business { padding: 72px 0; } .download-platform-grid { grid-template-columns: 1fr; } }
+@media (max-width: 430px) { .download-hero-actions, .download-business-actions { display: grid; } .download-device { width: min(86%, 280px); } .download-platform-card { padding: 24px; } }
+@media (prefers-reduced-motion: reduce) { .download-device { transform: none; } }

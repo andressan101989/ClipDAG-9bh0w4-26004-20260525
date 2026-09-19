@@ -3,6 +3,7 @@ import { render } from 'astro:content';
 import PublicLayout from '../../layouts/PublicLayout.astro';
 import { getPublishedUpdates } from '../../lib/updates';
 import { availabilityLabels, formatUpdateDate } from '../../lib/updatePresentation';
+import { publicCtas } from '../../lib/publicCtas';
 import '../../styles/updates.css';
 
 export async function getStaticPaths() {
@@ -20,7 +21,7 @@ const { Content } = await render(entry);
 <PublicLayout title={entry.data.title} description={entry.data.summary} article={{ publishedAt: entry.data.publishedAt, updatedAt: entry.data.updatedAt, image: entry.data.coverImage }}>
   <article class="editorial-article">
     <header class="article-header editorial-container">
-      <a class="article-back" href="/whats-new">← All updates</a>
+      <a class="article-back" href={publicCtas.whatsNew}>← All updates</a>
       <div class="article-meta"><span>{entry.data.category}</span><span class="availability-badge">{availabilityLabels[entry.data.availability]}</span></div>
       <h1>{entry.data.title}</h1><p class="article-dek">{entry.data.summary}</p>
       <div class="article-dates"><time datetime={entry.data.publishedAt.toISOString()}>{formatUpdateDate(entry.data.publishedAt)}</time>{entry.data.updatedAt && <span>Updated <time datetime={entry.data.updatedAt.toISOString()}>{formatUpdateDate(entry.data.updatedAt)}</time></span>}</div>
@@ -28,9 +29,9 @@ const { Content } = await render(entry);
     {entry.data.coverImage && <div class="article-cover editorial-container"><img src={entry.data.coverImage} alt={entry.data.coverAlt} width="1120" height="560" decoding="async" /></div>}
     <div class="article-body editorial-prose"><Content /></div>
     <nav class="article-neighbors editorial-container" aria-label="Other updates">
-      {newer && <a href={`/whats-new/${newer.id}`}><span>Newer story</span><strong>{newer.data.title}</strong></a>}
-      {older && <a href={`/whats-new/${older.id}`}><span>Older story</span><strong>{older.data.title}</strong></a>}
+      {newer && <a href={`${publicCtas.whatsNew}/${newer.id}`}><span>Newer story</span><strong>{newer.data.title}</strong></a>}
+      {older && <a href={`${publicCtas.whatsNew}/${older.id}`}><span>Older story</span><strong>{older.data.title}</strong></a>}
     </nav>
-    <div class="article-final editorial-container"><p>Keep exploring the Nelyon ecosystem.</p><a class="button button-primary" href="/features">Explore Nelyon</a></div>
+    <div class="article-final editorial-container"><p>Keep exploring the Nelyon ecosystem.</p><a class="button button-primary" href={publicCtas.features}>Explore Nelyon</a></div>
   </article>
 </PublicLayout>

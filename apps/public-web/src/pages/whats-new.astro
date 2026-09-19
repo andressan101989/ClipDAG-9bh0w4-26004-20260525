@@ -3,6 +3,7 @@ import PublicLayout from '../layouts/PublicLayout.astro';
 import UpdateCard from '../components/UpdateCard.astro';
 import { getPublishedUpdates } from '../lib/updates';
 import { availabilityLabels } from '../lib/updatePresentation';
+import { publicCtas } from '../lib/publicCtas';
 import '../styles/updates.css';
 
 const { items, featured } = await getPublishedUpdates();
@@ -13,9 +14,9 @@ const kind = (category: string) => category === 'LIVE' ? 'live' : category === '
     <div class="editorial-container"><span class="section-pill pill-dark">Nelyon journal</span><h1 id="updates-page-title">What’s New</h1><p>Explore the ideas and product surfaces shaping Nelyon. Every story states its availability clearly.</p></div>
   </section>
   <div class="editorial-container editorial-index">
-    {featured && <section aria-labelledby="featured-heading"><div class="editorial-section-head"><span class="editorial-eyebrow">Selected story</span><h2 id="featured-heading">Featured</h2></div><div class="editorial-featured"><UpdateCard label={availabilityLabels[featured.data.availability]} title={featured.data.title} description={featured.data.summary} kind={kind(featured.data.category)} image={featured.data.coverImage} href={`/whats-new/${featured.id}`} date={featured.data.publishedAt} category={featured.data.category} /></div></section>}
+    {featured && <section aria-labelledby="featured-heading"><div class="editorial-section-head"><span class="editorial-eyebrow">Selected story</span><h2 id="featured-heading">Featured</h2></div><div class="editorial-featured"><UpdateCard label={availabilityLabels[featured.data.availability]} title={featured.data.title} description={featured.data.summary} kind={kind(featured.data.category)} image={featured.data.coverImage} href={`${publicCtas.whatsNew}/${featured.id}`} date={featured.data.publishedAt} category={featured.data.category} /></div></section>}
     <section aria-labelledby="latest-heading"><div class="editorial-section-head"><span class="editorial-eyebrow">In chronological order</span><h2 id="latest-heading">Latest updates</h2></div>
-      {items.length ? <div class="editorial-grid">{items.map((update) => <UpdateCard label={availabilityLabels[update.data.availability]} title={update.data.title} description={update.data.summary} kind={kind(update.data.category)} image={update.data.coverImage} href={`/whats-new/${update.id}`} date={update.data.publishedAt} category={update.data.category} />)}</div> : <p class="editorial-empty">No product updates have been published yet. Check back for verified Nelyon news.</p>}
+      {items.length ? <div class="editorial-grid">{items.map((update) => <UpdateCard label={availabilityLabels[update.data.availability]} title={update.data.title} description={update.data.summary} kind={kind(update.data.category)} image={update.data.coverImage} href={`${publicCtas.whatsNew}/${update.id}`} date={update.data.publishedAt} category={update.data.category} />)}</div> : <p class="editorial-empty">No product updates have been published yet. Check back for verified Nelyon news.</p>}
     </section>
   </div>
 </PublicLayout>

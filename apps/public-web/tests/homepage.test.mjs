@@ -30,18 +30,12 @@ test("homepage replaces the A3 shell with the approved ten-section narrative", (
 
 test("homepage preserves public navigation and uses no private product code", () => {
   assert.match(home, /href="#ecosystem"/);
-  assert.match(home, /href="\/business\/home"/);
-  assert.match(home, /href="\/download"/);
-  for (const path of [
-    "/features",
-    "/business",
-    "/ads",
-    "/marketplace",
-    "/creators",
-    "/live",
-    "/whats-new",
+  assert.match(home, /href=\{publicCtas\.businessHome\}/);
+  assert.match(home, /href=\{publicCtas\.download\}/);
+  for (const route of [
+    "features", "business", "ads", "marketplace", "creators", "live", "whatsNew",
   ]) {
-    assert.ok(layout.includes(`href="${path}"`), path);
+    assert.ok(layout.includes(`href={publicCtas.${route}}`), route);
   }
   assert.doesNotMatch(
     home + layout,

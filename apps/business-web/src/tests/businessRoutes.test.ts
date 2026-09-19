@@ -10,7 +10,7 @@ describe("Business route authority", () => {
 
   it("accepts only safe non-login Business return paths", () => {
     const origin = "https://nelyon.app";
-    for (const path of ["/business/home", "/business/orders/abc", "/business/invitations?invitation=123"]) {
+    for (const path of ["/business/home", "/business/ads", "/business/orders/abc", "/business/invitations?invitation=123"]) {
       expect(validateBusinessReturnTo(path, origin)).toBe(path);
     }
     for (const path of [
@@ -18,6 +18,7 @@ describe("Business route authority", () => {
       "data:text/html,evil", "\\\\evil.example", "/business\\evil.example",
       "%2f%2fevil.example", "/%2f%2fevil.example", "/business/%2e%2e/login",
       "/business/login", "/business/login?returnTo=/business/home", "/business", "/ads",
+      "%252f%252fevil.example", "/business/home\\evil.example", "/business/home\n", "/business/home?next=ok\rnot-ok",
     ]) {
       expect(validateBusinessReturnTo(path, origin)).toBe("/business/home");
     }

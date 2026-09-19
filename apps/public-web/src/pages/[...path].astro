@@ -2,6 +2,7 @@
 import PublicLayout from '../layouts/PublicLayout.astro';
 import { legacyStaticRedirects, publicRoutes } from '../lib/routeContract.mjs';
 import { productPageSlugs } from '../data/productPages';
+import { publicCtas } from '../lib/publicCtas';
 
 export function getStaticPaths() {
   const titles: Record<string, string> = {
@@ -10,7 +11,7 @@ export function getStaticPaths() {
     '/download': 'Download', '/support': 'Support',
     '/contact': 'Contact', '/privacy': 'Privacy', '/terms': 'Terms',
   };
-  const pages = publicRoutes.filter((path) => path !== '/' && path !== '/whats-new' && !productPageSlugs.includes(path.slice(1))).map((path) => ({
+  const pages = publicRoutes.filter((path) => path !== '/' && path !== '/whats-new' && path !== '/download' && !productPageSlugs.includes(path.slice(1))).map((path) => ({
     params: { path: path.slice(1) }, props: { title: titles[path], destination: null },
   }));
   const redirects = Object.entries(legacyStaticRedirects).map(([path, destination]) => ({
@@ -38,7 +39,7 @@ const { title, destination } = Astro.props;
       <p class="eyebrow">Nelyon · Public Web foundation</p>
       <h1>{title}</h1>
       <p>Esta sección pública está reservada para la implementación visual y editorial posterior. No es un panel privado.</p>
-      {Astro.url.pathname === '/business' && <a class="primary-action" href="/business/home">Open Nelyon Business</a>}
+      {Astro.url.pathname === publicCtas.business && <a class="primary-action" href={publicCtas.businessHome}>Open Nelyon Business</a>}
     </section>
   </PublicLayout>
 )}

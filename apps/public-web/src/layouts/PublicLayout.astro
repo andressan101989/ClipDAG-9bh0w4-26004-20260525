@@ -1,15 +1,16 @@
 ---
 import logo from '../../../../assets/branding/nelyon/v1/nelyon-wordmark-on-dark.png';
+import { publicCtas } from '../lib/publicCtas';
 import '../styles/public.css';
 
 type Props = { title: string; description: string; article?: { publishedAt: Date; updatedAt?: Date; image?: string } };
 const { title, description, article } = Astro.props;
 const pagePath = Astro.url.pathname.replace(/\.html$/, '').replace(/\/+$/, '') || '/';
 const isHome = pagePath === '/';
-const isProductPage = ['/features', '/business', '/ads', '/marketplace', '/creators', '/live'].includes(pagePath);
+const isProductPage = [publicCtas.features, publicCtas.business, publicCtas.ads, publicCtas.marketplace, publicCtas.creators, publicCtas.live].includes(pagePath);
 const canonicalPath = pagePath;
 const canonical = new URL(canonicalPath, Astro.site).toString();
-const isEditorial = pagePath === '/whats-new' || pagePath.startsWith('/whats-new/');
+const isEditorial = pagePath === publicCtas.whatsNew || pagePath.startsWith(`${publicCtas.whatsNew}/`);
 const articleJson = article ? JSON.stringify({
   '@context': 'https://schema.org', '@type': 'Article', headline: title,
   description, datePublished: article.publishedAt.toISOString(),
@@ -19,7 +20,7 @@ const articleJson = article ? JSON.stringify({
 }).replace(/</g, '\\u003c') : null;
 ---
 <!doctype html>
-<html lang={isHome || isProductPage || isEditorial ? 'en' : 'es'}>
+<html lang={isHome || isProductPage || isEditorial || pagePath === publicCtas.download ? 'en' : 'es'}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -42,29 +43,29 @@ const articleJson = article ? JSON.stringify({
     <title>{isHome ? title : `${title} · Nelyon`}</title>
   </head>
   <body class:list={{ 'home-page': isHome }}>
-    <a class="skip-link" href="#main">{isHome || isProductPage || isEditorial ? 'Skip to content' : 'Saltar al contenido'}</a>
+    <a class="skip-link" href="#main">{isHome || isProductPage || isEditorial || pagePath === publicCtas.download ? 'Skip to content' : 'Saltar al contenido'}</a>
     <header class="site-header" id="site-header">
-      <a class="brand" href="/" aria-label="Nelyon, home"><img src={logo.src} width="160" height="42" alt="Nelyon" /></a>
+      <a class="brand" href={publicCtas.home} aria-label="Nelyon, home"><img src={logo.src} width="160" height="42" alt="Nelyon" /></a>
       <nav class="desktop-nav" aria-label="Public navigation">
-        <a href="/features">Features</a><a href="/business">Business</a><a href="/ads">Ads</a>
-        <a href="/marketplace">Marketplace</a><a href="/creators">Creators</a><a href="/live">LIVE</a><a href="/whats-new">What’s New</a>
+        <a href={publicCtas.features}>Features</a><a href={publicCtas.business}>Business</a><a href={publicCtas.ads}>Ads</a>
+        <a href={publicCtas.marketplace}>Marketplace</a><a href={publicCtas.creators}>Creators</a><a href={publicCtas.live}>LIVE</a><a href={publicCtas.whatsNew}>What’s New</a>
       </nav>
-      <div class="header-actions"><a class="button button-ghost" href="/download">Download</a><a class="button button-primary" href="/business/home">Open Business</a></div>
+      <div class="header-actions"><a class="button button-ghost" href={publicCtas.download}>Download</a><a class="button button-primary" href={publicCtas.businessHome}>Open Nelyon Business</a></div>
       <button class="menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="public-mobile-menu" data-menu-toggle><span></span><span></span><span></span></button>
       <nav class="mobile-menu" id="public-mobile-menu" aria-label="Mobile public navigation" hidden>
-        <a href="/features">Features</a><a href="/business">Business</a><a href="/ads">Ads</a>
-        <a href="/marketplace">Marketplace</a><a href="/creators">Creators</a><a href="/live">LIVE</a><a href="/whats-new">What’s New</a>
-        <div class="mobile-menu-actions"><a class="button button-ghost" href="/download">Download</a><a class="button button-primary" href="/business/home">Open Business</a></div>
+        <a href={publicCtas.features}>Features</a><a href={publicCtas.business}>Business</a><a href={publicCtas.ads}>Ads</a>
+        <a href={publicCtas.marketplace}>Marketplace</a><a href={publicCtas.creators}>Creators</a><a href={publicCtas.live}>LIVE</a><a href={publicCtas.whatsNew}>What’s New</a>
+        <div class="mobile-menu-actions"><a class="button button-ghost" href={publicCtas.download}>Download</a><a class="button button-primary" href={publicCtas.businessHome}>Open Nelyon Business</a></div>
       </nav>
     </header>
     <main id="main"><slot /></main>
     <footer class="site-footer">
       <div class="footer-brand"><img src={logo.src} width="170" height="45" alt="Nelyon" /><p>Connect. Create. Go LIVE. Grow.</p></div>
       <div class="footer-columns">
-        <div><h2>Product</h2><a href="/features">Features</a><a href="/marketplace">Marketplace</a><a href="/creators">Creators</a><a href="/live">LIVE</a><a href="/download">Download</a></div>
-        <div><h2>Business</h2><a href="/business">Nelyon Business</a><a href="/ads">Ads</a><a href="/business/home">Open Business</a></div>
-        <div><h2>Company</h2><a href="/whats-new">What’s New</a><a href="/support">Support</a><a href="/contact">Contact</a></div>
-        <div><h2>Legal</h2><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
+        <div><h2>Product</h2><a href={publicCtas.features}>Features</a><a href={publicCtas.marketplace}>Marketplace</a><a href={publicCtas.creators}>Creators</a><a href={publicCtas.live}>LIVE</a><a href={publicCtas.download}>Download</a></div>
+        <div><h2>Business</h2><a href={publicCtas.business}>Nelyon Business</a><a href={publicCtas.ads}>Ads</a><a href={publicCtas.businessHome}>Open Nelyon Business</a></div>
+        <div><h2>Company</h2><a href={publicCtas.whatsNew}>What’s New</a><a href={publicCtas.support}>Support</a><a href={publicCtas.contact}>Contact</a></div>
+        <div><h2>Legal</h2><a href={publicCtas.privacy}>Privacy</a><a href={publicCtas.terms}>Terms</a></div>
       </div>
       <div class="footer-bottom"><span>© {new Date().getFullYear()} Nelyon</span><span>One connected ecosystem.</span></div>
     </footer>

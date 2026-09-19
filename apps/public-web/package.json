@@ -7,6 +7,7 @@
     "dev": "astro dev --host 127.0.0.1 --port 8082",
     "test": "node --test tests/*.test.mjs",
     "test:built:updates": "node scripts/verify-updates-build.mjs",
+    "test:built:download": "node scripts/verify-download-build.mjs",
     "check": "astro check",
     "build": "astro build",
     "preview": "astro preview --host 127.0.0.1 --port 8082"

@@ -11,7 +11,7 @@ export function businessPath(path: string) {
 const privatePath = /^\/business\/(?:home|invitations|store|media|products(?:\/(?:shipping|[^/]+))?|orders(?:\/[^/]+)?|ads(?:\/(?:new|[^/]+))?|finance(?:\/payouts)?|analytics|team|settings)$/;
 
 export function validateBusinessReturnTo(value: string | null | undefined, _origin: string = window.location.origin) {
-  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return BUSINESS_HOME_PATH;
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\") || [...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) return BUSINESS_HOME_PATH;
   const [rawPath] = value.split(/[?#]/, 1);
   if (rawPath.includes("%") || !privatePath.test(rawPath)) return BUSINESS_HOME_PATH;
   try {

@@ -1,6 +1,7 @@
 ---
 import PublicLayout from '../layouts/PublicLayout.astro';
 import PillarCard from './PillarCard.astro';
+import { publicCtas } from '../lib/publicCtas';
 import type { ProductPageContent } from '../data/productPages';
 import appIcon from '../../../../assets/branding/nelyon/v1/nelyon-app-icon.png';
 import '../styles/product-pages.css';
@@ -61,12 +62,12 @@ const { content } = Astro.props;
           <span class="product-pill product-pill-light">Explore Nelyon</span>
           <h2 id="pillars-title">Every part has a place.</h2>
           <div class="product-pillar-grid">
-            <PillarCard title="Social" description="Feed, Stories and discovery." href="/features" kind="image" image="/media/home/feed-720.webp" />
-            <PillarCard title="Creators" description="Profiles, content and community." href="/creators" kind="image" image="/media/home/feed-720.webp" />
-            <PillarCard title="LIVE" description="Real-time creator experiences." href="/live" kind="image" image="/media/home/live-battle-760.webp" />
-            <PillarCard title="Marketplace" description="Products inside the ecosystem." href="/marketplace" kind="image" image="/media/home/studio-light-440.webp" />
-            <PillarCard title="Business" description="Tools for commerce and operations." href="/business" kind="analytics" />
-            <PillarCard title="Ads" description="Placements and campaign tools." href="/ads" kind="analytics" analyticsLabel="Nelyon Ads" />
+            <PillarCard title="Social" description="Feed, Stories and discovery." href={publicCtas.features} kind="image" image="/media/home/feed-720.webp" />
+            <PillarCard title="Creators" description="Profiles, content and community." href={publicCtas.creators} kind="image" image="/media/home/feed-720.webp" />
+            <PillarCard title="LIVE" description="Real-time creator experiences." href={publicCtas.live} kind="image" image="/media/home/live-battle-760.webp" />
+            <PillarCard title="Marketplace" description="Products inside the ecosystem." href={publicCtas.marketplace} kind="image" image="/media/home/studio-light-440.webp" />
+            <PillarCard title="Business" description="Tools for commerce and operations." href={publicCtas.business} kind="analytics" />
+            <PillarCard title="Ads" description="Placements and campaign tools." href={publicCtas.ads} kind="analytics" analyticsLabel="Nelyon Ads" />
           </div>
         </div>
       </section>

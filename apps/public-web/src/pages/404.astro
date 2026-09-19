@@ -1,6 +1,7 @@
 ---
 import PublicLayout from '../layouts/PublicLayout.astro';
+import { publicCtas } from '../lib/publicCtas';
 ---
 <PublicLayout title="Página no encontrada" description="La página solicitada no existe.">
-  <section class="shell"><p class="eyebrow">404</p><h1>Página no encontrada</h1><p>La dirección no existe en la web pública de Nelyon.</p><a class="primary-action" href="/">Volver al inicio</a></section>
+  <section class="shell"><p class="eyebrow">404</p><h1>Página no encontrada</h1><p>La dirección no existe en la web pública de Nelyon.</p><a class="primary-action" href={publicCtas.home}>Volver al inicio</a></section>
 </PublicLayout>
