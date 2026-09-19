@@ -2,10 +2,13 @@
 import PublicLayout from '../layouts/PublicLayout.astro';
 import PillarCard from '../components/PillarCard.astro';
 import UpdateCard from '../components/UpdateCard.astro';
+import { getPublishedUpdates } from '../lib/updates';
+import { availabilityLabels } from '../lib/updatePresentation';
 import appIcon from '../../../../assets/branding/nelyon/v1/nelyon-app-icon.png';
 import '../styles/home.css';
 
 const media = '/media/home';
+const updates = (await getPublishedUpdates()).items.slice(0, 3);
 ---
 <PublicLayout title="Nelyon — Connect. Create. Go LIVE. Grow." description="Nelyon brings social discovery, creators, LIVE, commerce and business tools together in one connected ecosystem.">
   <section class="hero section-dark" id="hero" aria-labelledby="hero-title">
@@ -121,10 +124,9 @@ const media = '/media/home';
     <div class="section-container">
       <div data-reveal><span class="section-pill">What’s New</span><h2 id="updates-title">Nelyon keeps moving.</h2><p class="section-lead">Product updates, launches and improvements — published clearly in one place.</p></div>
       <div class="updates-grid">
-        <UpdateCard label="New" title="Nelyon Business" description="A connected workspace for products, Ads and Analytics." kind="analytics" />
-        <UpdateCard label="Update" title="LIVE experiences" description="More creator tools and real-time interaction." kind="live" image={`${media}/live-battle-760.webp`} />
-        <UpdateCard label="Coming next" title="Public Nelyon web" description="A faster way to discover the whole ecosystem." kind="product" image={`${media}/studio-light-440.webp`} />
+        {updates.map((update) => <UpdateCard label={availabilityLabels[update.data.availability]} title={update.data.title} description={update.data.summary} kind={update.data.category === 'LIVE' ? 'live' : update.data.category === 'Business' ? 'analytics' : 'product'} image={update.data.coverImage} href={`/whats-new/${update.id}`} date={update.data.publishedAt} category={update.data.category} />)}
       </div>
+      {updates.length === 0 && <p class="section-lead">Product updates will appear here when published.</p>}
     </div>
   </section>
 

@@ -2,27 +2,39 @@
 import logo from '../../../../assets/branding/nelyon/v1/nelyon-wordmark-on-dark.png';
 import '../styles/public.css';
 
-type Props = { title: string; description: string };
-const { title, description } = Astro.props;
+type Props = { title: string; description: string; article?: { publishedAt: Date; updatedAt?: Date; image?: string } };
+const { title, description, article } = Astro.props;
 const pagePath = Astro.url.pathname.replace(/\.html$/, '').replace(/\/+$/, '') || '/';
 const isHome = pagePath === '/';
 const isProductPage = ['/features', '/business', '/ads', '/marketplace', '/creators', '/live'].includes(pagePath);
 const canonicalPath = pagePath;
 const canonical = new URL(canonicalPath, Astro.site).toString();
+const isEditorial = pagePath === '/whats-new' || pagePath.startsWith('/whats-new/');
+const articleJson = article ? JSON.stringify({
+  '@context': 'https://schema.org', '@type': 'Article', headline: title,
+  description, datePublished: article.publishedAt.toISOString(),
+  ...(article.updatedAt ? { dateModified: article.updatedAt.toISOString() } : {}),
+  mainEntityOfPage: canonical, publisher: { '@type': 'Organization', name: 'Nelyon' },
+  ...(article.image ? { image: new URL(article.image, Astro.site).toString() } : {}),
+}).replace(/</g, '\\u003c') : null;
 ---
 <!doctype html>
-<html lang={isHome || isProductPage ? 'en' : 'es'}>
+<html lang={isHome || isProductPage || isEditorial ? 'en' : 'es'}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex,nofollow" />
     <meta name="theme-color" content="#0C1F4F" />
     <meta name="description" content={description} />
-    <meta property="og:type" content="website" />
+    <meta property="og:type" content={article ? 'article' : 'website'} />
     <meta property="og:site_name" content="Nelyon" />
     <meta property="og:title" content={isHome ? title : `${title} · Nelyon`} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
+    {article?.image && <meta property="og:image" content={new URL(article.image, Astro.site).toString()} />}
+    {article && <meta property="article:published_time" content={article.publishedAt.toISOString()} />}
+    {article?.updatedAt && <meta property="article:modified_time" content={article.updatedAt.toISOString()} />}
+    {articleJson && <script type="application/ld+json" set:html={articleJson} />}
     <link rel="canonical" href={canonical} />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -30,7 +42,7 @@ const canonical = new URL(canonicalPath, Astro.site).toString();
     <title>{isHome ? title : `${title} · Nelyon`}</title>
   </head>
   <body class:list={{ 'home-page': isHome }}>
-    <a class="skip-link" href="#main">{isHome || isProductPage ? 'Skip to content' : 'Saltar al contenido'}</a>
+    <a class="skip-link" href="#main">{isHome || isProductPage || isEditorial ? 'Skip to content' : 'Saltar al contenido'}</a>
     <header class="site-header" id="site-header">
       <a class="brand" href="/" aria-label="Nelyon, home"><img src={logo.src} width="160" height="42" alt="Nelyon" /></a>
       <nav class="desktop-nav" aria-label="Public navigation">
