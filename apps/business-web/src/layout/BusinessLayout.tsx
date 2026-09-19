@@ -13,7 +13,7 @@ type BusinessNavItem = {
 };
 
 const navigation: readonly BusinessNavItem[] = [
-  { label: "Inicio", path: "/", symbol: "⌂", enabled: true, capabilities: ["business.home.read"] },
+  { label: "Inicio", path: "/home", symbol: "⌂", enabled: true, capabilities: ["business.home.read"] },
   { label: "Tienda", path: "/store", symbol: "◇", enabled: true, capabilities: ["business.store.read", "business.store.manage"] },
   { label: "Productos", path: "/products", symbol: "▦", enabled: true, capabilities: ["business.catalog.read", "business.catalog.manage"] },
   { label: "Pedidos", path: "/orders", symbol: "▤", enabled: true, capabilities: ["business.orders.read", "business.orders.fulfill", "business.returns.read", "business.returns.manage", "business.disputes.read", "business.disputes.respond"] },
@@ -50,7 +50,7 @@ export function BusinessLayout() {
           {navigation.map((item) =>
             item.enabled && item.path && item.capabilities?.some((capability) => hasCapability(capability)) ? (
               <NavLink
-                end={item.path === "/"}
+                end={item.path === "/home"}
                 key={item.label}
                 to={item.path}
                 onClick={() => setMenuOpen(false)}

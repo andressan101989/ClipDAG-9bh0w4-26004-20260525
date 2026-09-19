@@ -1,6 +1,6 @@
 import type { Session, User } from "@supabase/supabase-js";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App";
 import { BusinessAuthProvider } from "../auth/BusinessAuthProvider";
@@ -12,6 +12,7 @@ import type {
   MarketplaceStore,
 } from "../lib/businessApi";
 import type { BusinessSupabaseClient } from "../lib/supabase";
+import { BUSINESS_BASE_PATH, businessPath } from "../lib/businessRoutes";
 
 vi.mock("../lib/supabase", () => ({ supabase: {} }));
 const mediaMocks = vi.hoisted(() => ({
@@ -188,16 +189,22 @@ function harness(identity: BusinessIdentity | null, options?: { loadError?: Erro
   return { client, gateway, emitAuth: (next: Session | null) => authCallback?.("SIGNED_IN", next) };
 }
 
-function renderBusiness(identity: BusinessIdentity | null, initialPath = "/", options?: { loadError?: Error }) {
+function renderBusiness(identity: BusinessIdentity | null, initialPath = "/home", options?: { loadError?: Error }) {
   const testHarness = harness(identity, options);
   render(
-    <MemoryRouter initialEntries={[initialPath]}>
+    <MemoryRouter basename={BUSINESS_BASE_PATH} initialEntries={[businessPath(initialPath)]}>
       <BusinessAuthProvider client={testHarness.client} gateway={testHarness.gateway}>
         <App />
+        <RouteLocationProbe />
       </BusinessAuthProvider>
     </MemoryRouter>,
   );
   return testHarness;
+}
+
+function RouteLocationProbe() {
+  const location = useLocation();
+  return <output data-testid="route-location">{location.pathname}{location.search}</output>;
 }
 
 describe("Business Web owner lifecycle", () => {
@@ -222,6 +229,43 @@ describe("Business Web owner lifecycle", () => {
   it("routes a missing session to the Nelyon login", async () => {
     renderBusiness(null);
     expect(await screen.findByText("Accede con tu cuenta de Nelyon")).toBeInTheDocument();
+  });
+
+  it("uses the private /business/home route and keeps public /business outside the SPA", async () => {
+    renderBusiness(identity(approvedSeller, activeStore), "/home");
+    expect(await screen.findByText("Hola, Nelyon Shop")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Team/ })).toHaveAttribute("href", "/business/team");
+    expect(screen.getByRole("link", { name: /Inicio/ })).toHaveAttribute("href", "/business/home");
+  });
+
+  it("returns a signed-out invitation to the same invite after login", async () => {
+    const auth = renderBusiness(null, "/invitations?invitation=invite-visible");
+    expect(await screen.findByText("Accede con tu cuenta de Nelyon")).toBeInTheDocument();
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/login?returnTo=%2Fbusiness%2Finvitations%3Finvitation%3Dinvite-visible");
+    expect(auth.client.auth.signInWithPassword).not.toHaveBeenCalled();
+  });
+
+  it("navigates back to the invitation after successful sign-in", async () => {
+    const testHarness = harness(null);
+    testHarness.gateway.loadIdentity = vi.fn().mockResolvedValue(identity(approvedSeller, activeStore));
+    render(
+      <MemoryRouter basename={BUSINESS_BASE_PATH} initialEntries={["/business/login?returnTo=%2Fbusiness%2Finvitations%3Finvitation%3Dinvite-visible"]}>
+        <BusinessAuthProvider client={testHarness.client} gateway={testHarness.gateway}>
+          <App /><RouteLocationProbe />
+        </BusinessAuthProvider>
+      </MemoryRouter>,
+    );
+    fireEvent.change(await screen.findByLabelText("Correo electrónico"), { target: { value: "owner@nelyon.test" } });
+    fireEvent.change(screen.getByLabelText("Contraseña"), { target: { value: "password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Acceder a Business" }));
+    expect(await screen.findByRole("heading", { name: "Invitaciones a negocios" })).toBeInTheDocument();
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/invitations?invitation=invite-visible");
+  });
+
+  it("ignores an unsafe login return path", async () => {
+    renderBusiness(identity(approvedSeller, activeStore), "/login?returnTo=%2F%2Fevil.example%2Fbusiness%2Fhome");
+    expect(await screen.findByText("Hola, Nelyon Shop")).toBeInTheDocument();
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/home");
   });
 
   it("restores a valid session and resolves the active owner context", async () => {
@@ -297,6 +341,7 @@ describe("Business Web owner lifecycle", () => {
     renderBusiness(identity(approvedSeller, activeStore));
     expect(await screen.findByText("Tu espacio de negocio está listo. Aquí encontrarás el estado real de la fundación Business.")).toBeInTheDocument();
     expect(screen.getAllByText("Nelyon Shop").length).toBeGreaterThan(1);
+    expect(screen.getByText("nelyon.app/store/nelyon-shop")).toBeInTheDocument();
   });
 
   it("blocks a suspended Store", async () => {
@@ -327,7 +372,7 @@ describe("Business Web owner lifecycle", () => {
     renderBusiness(identity(approvedSeller, activeStore));
     await screen.findByText("Hola, Nelyon Shop");
     expect(screen.getByRole("button", { name: /Productos/ })).toBeDisabled();
-    expect(screen.getByRole("link", { name: /Team/ })).toHaveAttribute("href", "/team");
+    expect(screen.getByRole("link", { name: /Team/ })).toHaveAttribute("href", "/business/team");
   });
 
   it("opens Team for team.manage without requiring team.read", async () => {
@@ -346,6 +391,7 @@ describe("Business Web owner lifecycle", () => {
   it("denies Team without team.read or team.manage", async () => {
     renderBusiness(memberIdentity(memberAccess("owner-no-team", ["business.home.read"])), "/team");
     expect(await screen.findByText("Negocio compartido")).toBeInTheDocument();
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/home");
     expect(screen.queryByRole("heading", { name: "Team" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Team/ })).toBeDisabled();
     expect(teamMocks.get).not.toHaveBeenCalled();
@@ -354,7 +400,7 @@ describe("Business Web owner lifecycle", () => {
   it("enables Products only for a business with catalog capability", async () => {
     renderBusiness(memberIdentity(memberAccess("owner-products", ["business.catalog.read"])), "/products");
     expect(await screen.findByRole("heading", { name: "Productos" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Productos/ })).toHaveAttribute("href", "/products");
+    expect(screen.getByRole("link", { name: /Productos/ })).toHaveAttribute("href", "/business/products");
     await waitFor(() => expect(sellerCenterMocks.products).toHaveBeenCalledWith("owner-products", expect.anything()));
   });
 
@@ -368,7 +414,7 @@ describe("Business Web owner lifecycle", () => {
   it("opens capability-scoped Ads reporting without create for ads.read", async () => {
     renderBusiness(memberIdentity(memberAccess("owner-ads", ["business.ads.read"])), "/ads");
     expect(await screen.findByRole("heading", { name: "Publicidad" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Publicidad/ })).toHaveAttribute("href", "/ads");
+    expect(screen.getByRole("link", { name: /Publicidad/ })).toHaveAttribute("href", "/business/ads");
     expect(screen.queryByRole("link", { name: "Crear campaña" })).not.toBeInTheDocument();
     await waitFor(() => expect(adsMocks.search).toHaveBeenCalledWith("owner-ads", { status: undefined, cursor: undefined }));
   });
@@ -376,7 +422,7 @@ describe("Business Web owner lifecycle", () => {
   it("opens capability-scoped read-only Finance for finance.read", async () => {
     renderBusiness(memberIdentity(memberAccess("owner-finance", ["business.finance.read"])), "/finance");
     expect(await screen.findByRole("heading", { name: "Finanzas" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Finanzas/ })).toHaveAttribute("href", "/finance");
+    expect(screen.getByRole("link", { name: /Finanzas/ })).toHaveAttribute("href", "/business/finance");
     expect(await screen.findByText(/Solo el propietario puede añadir saldo/)).toBeInTheDocument();
     expect(billingMocks.overview).toHaveBeenCalledWith("owner-finance");
   });
@@ -384,7 +430,7 @@ describe("Business Web owner lifecycle", () => {
   it("opens Analytics only with business.analytics.read", async () => {
     renderBusiness(memberIdentity(memberAccess("owner-analytics", ["business.analytics.read"])), "/analytics");
     expect(await screen.findByRole("heading", { name: "Analytics" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Analítica/ })).toHaveAttribute("href", "/analytics");
+    expect(screen.getByRole("link", { name: /Analítica/ })).toHaveAttribute("href", "/business/analytics");
     expect(analyticsMocks.get).toHaveBeenCalledWith("owner-analytics", "30d");
   });
 

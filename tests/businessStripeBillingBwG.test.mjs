@@ -49,8 +49,10 @@ test("checkout is hosted, owner-derived and never accepts URLs or conversion fro
   assert.match(stripeBilling, /webhookSecret/);
   assert.doesNotMatch(checkout, /body\.(?:businessOwnerId|topup|bdag_amount|conversion_rate|customer_id|success_url|cancel_url)/);
   assert.match(checkout, /const topupId = String\(prepared\.data\.topup_id\)/);
-  assert.match(checkout, /success_url: `\$\{config\.businessUrl\}\/finance\?stripe=success&topup=\$\{topupId\}`/);
-  assert.match(checkout, /cancel_url: `\$\{config\.businessUrl\}\/finance\?stripe=cancelled&topup=\$\{topupId\}`/);
+  assert.match(checkout, /const returnUrls = stripeCheckoutReturnUrls\(config\.businessUrl, topupId\)/);
+  assert.match(checkout, /success_url: returnUrls\.success/);
+  assert.match(checkout, /cancel_url: returnUrls\.cancel/);
+  assert.match(stripeBilling, /new URL\("\/business\/finance", businessUrl\)/);
   const returnUrls = checkout.split("\n").filter((line) => /(?:success|cancel)_url:/.test(line)).join("\n");
   assert.doesNotMatch(returnUrls, /session\.id|customerId|paymentIntent|cs_|pi_|cus_/);
 });

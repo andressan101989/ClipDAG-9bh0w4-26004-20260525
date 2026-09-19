@@ -7,6 +7,7 @@ import {
   parseTopupRequest,
   publicStripeConfig,
   sha256,
+  stripeCheckoutReturnUrls,
   stripeRuntimeConfig,
   usdCentsToBdag,
 } from "../_shared/stripeBilling.ts";
@@ -78,6 +79,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const topupId = String(prepared.data.topup_id);
+    const returnUrls = stripeCheckoutReturnUrls(config.businessUrl, topupId);
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
@@ -93,8 +95,8 @@ Deno.serve(async (req: Request) => {
           product_data: { name: "Nelyon Business BDAG balance top-up" },
         },
       }],
-      success_url: `${config.businessUrl}/finance?stripe=success&topup=${topupId}`,
-      cancel_url: `${config.businessUrl}/finance?stripe=cancelled&topup=${topupId}`,
+      success_url: returnUrls.success,
+      cancel_url: returnUrls.cancel,
     }, { idempotencyKey: `nelyon-test-topup-${topupId}` });
     if (!session.url) throw new Error("stripe_checkout_url_missing");
 

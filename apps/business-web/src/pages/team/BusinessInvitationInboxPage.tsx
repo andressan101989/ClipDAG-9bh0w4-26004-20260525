@@ -68,7 +68,7 @@ export function BusinessInvitationInboxPage() {
 
   return (
     <main className="invitation-page">
-      <header className="onboarding-topbar"><BrandMark /><div className="invitation-page-actions"><Link className="text-button" to="/">Volver a Business</Link><button className="text-button" type="button" onClick={() => void logout()}>Cerrar sesión</button></div></header>
+      <header className="onboarding-topbar"><BrandMark /><div className="invitation-page-actions"><Link className="text-button" to="/home">Volver a Business</Link><button className="text-button" type="button" onClick={() => void logout()}>Cerrar sesión</button></div></header>
       <section className="invitation-shell">
         <p className="eyebrow">Accesos compartidos</p>
         <h1>Invitaciones a negocios</h1>

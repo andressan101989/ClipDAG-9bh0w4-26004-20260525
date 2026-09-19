@@ -99,6 +99,16 @@ describe("Business Team UI", () => {
     expect(within(owner).queryByRole("button", { name: /Editar permisos|Revocar/ })).not.toBeInTheDocument();
   });
 
+  it("copies the invitation link under the Business base path", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(<MemoryRouter><BusinessTeamPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "Copiar enlace" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(
+      `${window.location.origin}/business/invitations?invitation=invite-a`,
+    ));
+  });
+
   it("keeps team.read strictly read-only", async () => {
     authState.accessType = "member";
     authState.currentBusiness = business("owner-a", ["business.team.read"]);

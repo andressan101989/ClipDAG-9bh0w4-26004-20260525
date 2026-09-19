@@ -14,7 +14,7 @@ export function BusinessDashboardPage() {
       <section className="hero-card">
         <div className="store-identity">
           <div className="large-store-avatar" aria-hidden="true">{businessName.slice(0, 1).toUpperCase()}</div>
-          <div><p>{accessType === "owner" ? "Tu negocio" : "Negocio compartido"}</p><h2>{businessName}</h2>{store && <span>nelyon.com/store/{store.slug}</span>}</div>
+          <div><p>{accessType === "owner" ? "Tu negocio" : "Negocio compartido"}</p><h2>{businessName}</h2>{store && <span>nelyon.app/store/{store.slug}</span>}</div>
         </div>
         {store && <StatusBadge status={store.status} />}
       </section>

@@ -57,6 +57,16 @@ export function publicStripeConfig(config: StripeRuntimeConfig) {
   };
 }
 
+export function stripeCheckoutReturnUrls(businessUrl: string, topupId: string) {
+  const makeUrl = (result: "success" | "cancelled") => {
+    const url = new URL("/business/finance", businessUrl);
+    url.searchParams.set("stripe", result);
+    url.searchParams.set("topup", topupId);
+    return url.toString();
+  };
+  return { success: makeUrl("success"), cancel: makeUrl("cancelled") };
+}
+
 export async function sha256(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");

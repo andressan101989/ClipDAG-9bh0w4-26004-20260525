@@ -1,17 +1,20 @@
 import { useState, type FormEvent } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { useBusinessAuth } from "../auth/BusinessAuthProvider";
+import { BUSINESS_BASE_PATH, validateBusinessReturnTo } from "../lib/businessRoutes";
 import { BrandMark, FormField, InlineError } from "../components/BusinessUI";
 
 export function BusinessLoginPage() {
   const { phase, login } = useBusinessAuth();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (phase !== "signed_out" && phase !== "loading" && phase !== "error") {
-    return <Navigate to="/" replace />;
+    const returnTo = validateBusinessReturnTo(searchParams.get("returnTo"));
+    return <Navigate to={returnTo.slice(BUSINESS_BASE_PATH.length)} replace />;
   }
 
   async function submit(event: FormEvent) {

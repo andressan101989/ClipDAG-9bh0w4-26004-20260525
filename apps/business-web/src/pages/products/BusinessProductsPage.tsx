@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useBusinessAuth } from "../../auth/BusinessAuthProvider";
 import { InlineError, PageHeader, StatusBadge } from "../../components/BusinessUI";
 import { formatDate, formatMoney } from "../../lib/businessFormat";
@@ -8,6 +8,7 @@ import { createProductDraft, searchProducts, type ProductCursor, type ProductSum
 const filters = [{ label: "Todos", value: "" }, { label: "Borradores", value: "draft" }, { label: "Activos", value: "active" }, { label: "Pausados", value: "paused" }];
 
 export function BusinessProductsPage() {
+  const navigate = useNavigate();
   const { currentBusiness, hasCapability } = useBusinessAuth();
   const ownerId = currentBusiness?.businessOwnerId ?? "";
   const canManage = hasCapability("business.catalog.manage");
@@ -52,7 +53,7 @@ export function BusinessProductsPage() {
   async function create() {
     if (!currentBusiness?.store || !categoryId || !canManage) return;
     setCreating(true); setError(null);
-    try { window.location.assign(`/products/${await createProductDraft(currentBusiness.store.id, categoryId)}`); }
+    try { navigate(`/products/${await createProductDraft(currentBusiness.store.id, categoryId)}`); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo crear el producto"); setCreating(false); }
   }
 

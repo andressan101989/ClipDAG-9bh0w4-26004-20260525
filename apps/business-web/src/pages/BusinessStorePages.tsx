@@ -93,7 +93,7 @@ export function BusinessStoreForm({ setup = false }: { setup?: boolean }) {
         />
       </FormField>
       <FormField label="Dirección pública" hint="Letras minúsculas, números y guiones.">
-        <div className="slug-input"><span>nelyon.com/store/</span><input aria-label="Dirección pública" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" minLength={3} maxLength={80} required disabled={!canManage} value={slug} onChange={(event) => setSlug(slugify(event.target.value))} /></div>
+        <div className="slug-input"><span>nelyon.app/store/</span><input aria-label="Dirección pública" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" minLength={3} maxLength={80} required disabled={!canManage} value={slug} onChange={(event) => setSlug(slugify(event.target.value))} /></div>
       </FormField>
       <FormField label="Descripción" hint="Opcional. Máximo 1,000 caracteres.">
         <textarea aria-label="Descripción" maxLength={1000} rows={5} disabled={!canManage} value={description} onChange={(event) => setDescription(event.target.value)} />

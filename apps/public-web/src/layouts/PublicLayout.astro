@@ -1,0 +1,59 @@
+---
+import logo from '../../../../assets/branding/nelyon/v1/nelyon-logo-horizontal.png';
+
+type Props = { title: string; description: string };
+const { title, description } = Astro.props;
+const canonicalPath = Astro.url.pathname === '/' ? '/' : Astro.url.pathname.replace(/\/+$/, '');
+const canonical = new URL(canonicalPath, Astro.site).toString();
+---
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex,nofollow" />
+    <meta name="theme-color" content="#0C1F4F" />
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@600;700&display=swap" rel="stylesheet" />
+    <title>{title} · Nelyon</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Saltar al contenido</a>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="Nelyon, inicio"><img src={logo.src} width="160" height="42" alt="Nelyon" /></a>
+      <nav aria-label="Navegación pública">
+        <a href="/features">Features</a>
+        <a href="/business">Business</a>
+        <a href="/ads">Ads</a>
+        <a href="/marketplace">Marketplace</a>
+      </nav>
+      <a class="header-action" href="/business/home">Open Business</a>
+    </header>
+    <main id="main"><slot /></main>
+    <footer class="site-footer"><span>Nelyon</span><div><a href="/support">Support</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div></footer>
+  </body>
+</html>
+<style is:global>
+  :root { color-scheme: light; --navy: #0C1F4F; --blue: #123B9E; --accent: #1F79FF; --surface: #F5F7FA; font-family: Inter, system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: var(--navy); background: var(--surface); }
+  a { color: inherit; }
+  a:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+  .skip-link { position: absolute; top: -4rem; left: 1rem; z-index: 10; padding: .7rem 1rem; background: white; }
+  .skip-link:focus { top: 1rem; }
+  .site-header { display: flex; align-items: center; justify-content: space-between; gap: 2rem; padding: 1.1rem clamp(1rem, 4vw, 4rem); background: white; }
+  .brand img { display: block; max-width: 100%; height: auto; }
+  .site-header nav, .site-footer div { display: flex; flex-wrap: wrap; gap: 1.25rem; }
+  .site-header nav a, .site-footer a { text-decoration: none; font-size: .9rem; }
+  .header-action, .primary-action { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: .75rem 1.1rem; border-radius: 999px; background: var(--accent); color: white; text-decoration: none; font-weight: 600; }
+  .shell { max-width: 1100px; min-height: min(70vh, 740px); margin: auto; padding: clamp(4rem, 10vw, 9rem) 1.25rem; }
+  .eyebrow { color: var(--blue); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: .75rem; }
+  h1 { max-width: 15ch; margin: .5rem 0 1.2rem; font-family: Montserrat, Inter, sans-serif; font-size: clamp(2.7rem, 7vw, 6rem); line-height: 1.04; letter-spacing: -.045em; }
+  .shell p { max-width: 60ch; line-height: 1.6; }
+  .site-footer { display: flex; justify-content: space-between; gap: 1rem; padding: 2rem clamp(1rem, 4vw, 4rem); background: var(--navy); color: white; }
+  @media (max-width: 800px) { .site-header { flex-wrap: wrap; } .site-header nav { order: 3; width: 100%; overflow-x: auto; flex-wrap: nowrap; } }
+  @media (max-width: 440px) { .site-footer { flex-direction: column; } }
+</style>

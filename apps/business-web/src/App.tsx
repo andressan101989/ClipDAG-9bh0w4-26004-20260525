@@ -1,5 +1,6 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useBusinessAuth } from "./auth/BusinessAuthProvider";
+import { businessPath, validateBusinessReturnTo } from "./lib/businessRoutes";
 import { StatePanel } from "./components/BusinessUI";
 import { BusinessLayout } from "./layout/BusinessLayout";
 import { BusinessDashboardPage, BusinessSettingsPage } from "./pages/BusinessDashboardPage";
@@ -35,7 +36,7 @@ function BusinessHomeRoute() {
 function BusinessStoreRoute() {
   const { hasCapability } = useBusinessAuth();
   if (!hasCapability("business.store.read") && !hasCapability("business.store.manage")) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/home" replace />;
   }
   return <BusinessStoreForm />;
 }
@@ -44,19 +45,19 @@ function BusinessSettingsRoute() {
   const { hasCapability } = useBusinessAuth();
   return hasCapability("business.settings.manage")
     ? <BusinessSettingsPage />
-    : <Navigate to="/" replace />;
+    : <Navigate to="/home" replace />;
 }
 
 function BusinessMediaRoute() {
   const { hasCapability } = useBusinessAuth();
   return hasCapability("business.media.read") || hasCapability("business.media.manage")
     ? <BusinessMediaPage />
-    : <Navigate to="/" replace />;
+    : <Navigate to="/home" replace />;
 }
 
 function BusinessProductsRoute({ detail = false, shipping = false }: { detail?: boolean; shipping?: boolean }) {
   const { hasCapability } = useBusinessAuth();
-  if (!hasCapability("business.catalog.read") && !hasCapability("business.catalog.manage")) return <Navigate to="/" replace />;
+  if (!hasCapability("business.catalog.read") && !hasCapability("business.catalog.manage")) return <Navigate to="/home" replace />;
   if (shipping) return <BusinessShippingPage />;
   return detail ? <BusinessProductDetailPage /> : <BusinessProductsPage />;
 }
@@ -66,14 +67,14 @@ function BusinessOrdersRoute({ detail = false }: { detail?: boolean }) {
   const allowed = hasCapability("business.orders.read") || hasCapability("business.orders.fulfill")
     || hasCapability("business.returns.read") || hasCapability("business.returns.manage")
     || hasCapability("business.disputes.read") || hasCapability("business.disputes.respond");
-  if (!allowed) return <Navigate to="/" replace />;
+  if (!allowed) return <Navigate to="/home" replace />;
   return detail ? <BusinessOrderDetailPage /> : <BusinessOrdersPage />;
 }
 
 function BusinessAdsRoute({ detail = false, create = false }: { detail?: boolean; create?: boolean }) {
   const { hasCapability } = useBusinessAuth();
   const canRead = hasCapability("business.ads.read") || hasCapability("business.ads.manage");
-  if (!canRead) return <Navigate to="/" replace />;
+  if (!canRead) return <Navigate to="/home" replace />;
   if (create && !hasCapability("business.ads.manage")) return <Navigate to="/ads" replace />;
   if (create) return <BusinessAdCreatePage />;
   return detail ? <BusinessAdDetailPage /> : <BusinessAdsPage />;
@@ -83,7 +84,7 @@ function BusinessFinanceRoute() {
   const { hasCapability } = useBusinessAuth();
   if (hasCapability("business.finance.read")) return <BusinessFinancePage />;
   if (hasCapability("business.payouts.read") || hasCapability("business.payouts.manage")) return <Navigate to="/finance/payouts" replace />;
-  return <Navigate to="/" replace />;
+  return <Navigate to="/home" replace />;
 }
 
 function BusinessPayoutsRoute() {
@@ -97,29 +98,31 @@ function BusinessAnalyticsRoute() {
   const { hasCapability } = useBusinessAuth();
   return hasCapability("business.analytics.read")
     ? <BusinessAnalyticsPage />
-    : <Navigate to="/" replace />;
+    : <Navigate to="/home" replace />;
 }
 
 function BusinessTeamRoute() {
   const { accessType, hasCapability } = useBusinessAuth();
   return accessType === "owner" || hasCapability("business.team.read") || hasCapability("business.team.manage")
     ? <BusinessTeamPage />
-    : <Navigate to="/" replace />;
+    : <Navigate to="/home" replace />;
 }
 
 function BusinessInvitationRoute() {
   const { phase, error, retry } = useBusinessAuth();
+  const location = useLocation();
   if (phase === "loading") return <StatePanel eyebrow="Nelyon Business" title="Cargando invitaciones…" body="Estamos validando tu identidad." />;
   if (phase === "error") return <StatePanel tone="warning" eyebrow="No pudimos continuar" title="Error al cargar Business" body={error ?? "Inténtalo nuevamente."}><button className="primary-button" type="button" onClick={() => void retry()}>Reintentar</button></StatePanel>;
-  if (phase === "signed_out") return <Navigate to="/login" replace />;
+  if (phase === "signed_out") return <Navigate to={`/login?returnTo=${encodeURIComponent(validateBusinessReturnTo(businessPath(`${location.pathname}${location.search}`)))}`} replace />;
   return <BusinessInvitationInboxPage />;
 }
 
 function LifecycleBoundary() {
   const { phase, error, retry } = useBusinessAuth();
+  const location = useLocation();
   if (phase === "loading") return <StatePanel eyebrow="Nelyon Business" title="Cargando tu espacio…" body="Estamos validando tu identidad empresarial." />;
   if (phase === "error") return <StatePanel tone="warning" eyebrow="No pudimos continuar" title="Error al cargar Business" body={error ?? "Inténtalo nuevamente."}><button className="primary-button" type="button" onClick={() => void retry()}>Reintentar</button></StatePanel>;
-  if (phase === "signed_out") return <Navigate to="/login" replace />;
+  if (phase === "signed_out") return <Navigate to={`/login?returnTo=${encodeURIComponent(validateBusinessReturnTo(businessPath(`${location.pathname}${location.search}`)))}`} replace />;
   if (phase === "no_seller") return <BusinessOnboardingPage />;
   if (phase === "seller_pending") return <BusinessStatusPage kind="pending" />;
   if (phase === "seller_rejected") return <BusinessOnboardingPage rejected />;
@@ -133,7 +136,7 @@ function LifecycleBoundary() {
   return (
     <Routes>
       <Route element={<BusinessLayout />}>
-        <Route index element={<BusinessHomeRoute />} />
+        <Route path="home" element={<BusinessHomeRoute />} />
         <Route path="store" element={<BusinessStoreRoute />} />
         <Route path="media" element={<BusinessMediaRoute />} />
         <Route path="products" element={<BusinessProductsRoute />} />
@@ -149,7 +152,7 @@ function LifecycleBoundary() {
         <Route path="analytics" element={<BusinessAnalyticsRoute />} />
         <Route path="team" element={<BusinessTeamRoute />} />
         <Route path="settings" element={<BusinessSettingsRoute />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/home" replace />} />
       </Route>
     </Routes>
   );

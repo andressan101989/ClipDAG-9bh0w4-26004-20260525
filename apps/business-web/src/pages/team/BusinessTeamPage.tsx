@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { useBusinessAuth } from "../../auth/BusinessAuthProvider";
 import { InlineError, PageHeader, StatusBadge } from "../../components/BusinessUI";
 import type { BusinessCapability } from "../../lib/businessApi";
+import { businessPath } from "../../lib/businessRoutes";
 import {
   createBusinessInvitation,
   getBusinessTeam,
@@ -203,7 +204,7 @@ export function BusinessTeamPage() {
   }, [team]);
 
   async function copyInvitation(invitationId: string) {
-    const link = `${window.location.origin}/invitations?invitation=${invitationId}`;
+    const link = `${window.location.origin}${businessPath(`/invitations?invitation=${encodeURIComponent(invitationId)}`)}`;
     if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(link);
   }
 
