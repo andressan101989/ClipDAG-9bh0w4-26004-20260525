@@ -1,11 +1,147 @@
 ---
 import PublicLayout from '../layouts/PublicLayout.astro';
+import PillarCard from '../components/PillarCard.astro';
+import UpdateCard from '../components/UpdateCard.astro';
+import appIcon from '../../../../assets/branding/nelyon/v1/nelyon-app-icon.png';
+import '../styles/home.css';
+
+const media = '/media/home';
 ---
-<PublicLayout title="Inicio" description="Nelyon conecta comunidad, creadores, LIVE y comercio.">
-  <section class="shell">
-    <p class="eyebrow">Nelyon · Public Web foundation</p>
-    <h1>Connect. Create. Go LIVE. Grow.</h1>
-    <p>La experiencia pública visual aprobada se incorporará en NPW-B. Esta página es un shell de desarrollo y no está indexada.</p>
-    <a class="primary-action" href="/business">Descubre Nelyon Business</a>
+<PublicLayout title="Nelyon — Connect. Create. Go LIVE. Grow." description="Nelyon brings social discovery, creators, LIVE, commerce and business tools together in one connected ecosystem.">
+  <section class="hero section-dark" id="hero" aria-labelledby="hero-title">
+    <div class="hero-aurora" aria-hidden="true"></div>
+    <div class="hero-stars" aria-hidden="true"></div>
+    <div class="section-container hero-grid">
+      <div class="hero-copy">
+        <span class="section-pill pill-dark">One connected ecosystem</span>
+        <h1 id="hero-title">Connect.<br />Create.<br /><span>Go LIVE.<br class="mobile-only" /> Grow.</span></h1>
+        <p>Social, creators, LIVE, commerce and business tools — connected in one Nelyon experience.</p>
+        <div class="hero-actions"><a class="button button-primary" href="#ecosystem">Explore Nelyon</a><a class="button button-ghost" href="/business/home">Open Nelyon Business</a></div>
+      </div>
+      <div class="hero-showcase" aria-label="Illustrative Nelyon ecosystem preview">
+        <div class="hero-phone device-frame">
+          <div class="phone-screen">
+            <div class="phone-nav"><span>Following</span><strong>For You</strong></div>
+            <picture><source media="(max-width: 600px)" srcset={`${media}/feed-720.webp`} /><img src={`${media}/feed-1120.webp`} width="1120" height="1400" alt="Illustrative creator scene in a Nelyon-style feed" fetchpriority="high" /></picture>
+            <div class="phone-caption"><strong>Creator preview</strong><span>City light, creator energy.</span><div class="phone-product">Creator essentials <small>24 BDAG · demo</small></div></div>
+          </div>
+        </div>
+        <div class="hero-live-card floating-card">
+          <picture><img src={`${media}/live-battle-760.webp`} width="760" height="460" alt="" /></picture>
+          <div class="hero-live-overlay"><span class="live-dot"></span> LIVE <strong>Creators<br />Battle</strong><small>Demo preview</small></div>
+        </div>
+        <div class="hero-product-card floating-card">
+          <img src={`${media}/studio-light-440.webp`} width="440" height="440" alt="" />
+          <strong>Studio light kit</strong><small>42 BDAG · demo</small>
+        </div>
+        <div class="hero-business-card floating-card" aria-label="Illustrative Business analytics demo">
+          <span>Nelyon Business</span><strong>Analytics in motion</strong>
+          <div class="hero-business-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+          <small>Demo data</small>
+        </div>
+      </div>
+    </div>
   </section>
+
+  <section class="ecosystem section-light" id="ecosystem" aria-labelledby="ecosystem-title">
+    <div class="section-container">
+      <span class="section-pill">Everything connected</span>
+      <h2 id="ecosystem-title">One Nelyon. Many ways<br class="desktop-only" /> to move.</h2>
+      <p class="section-lead">Discover, create, participate, shop and grow without jumping between disconnected experiences.</p>
+      <div class="pillar-grid">
+        <PillarCard title="Social" description="Discover people, stories and ideas." href="/features" image={`${media}/feed-720.webp`} kind="image" />
+        <PillarCard title="Creators" description="Publish, grow and build community." href="/creators" image={`${media}/feed-720.webp`} kind="image" />
+        <PillarCard title="LIVE" description="Interact, react and join Battles." href="/live" image={`${media}/live-battle-760.webp`} kind="image" />
+        <PillarCard title="Marketplace" description="Discover products inside Nelyon." href="/marketplace" image={`${media}/studio-light-440.webp`} kind="image" />
+        <PillarCard title="Business" description="Operate products, Ads and Analytics." href="/business" kind="analytics" />
+      </div>
+    </div>
+  </section>
+
+  <section class="feature-section social-section section-white" id="social" aria-labelledby="social-title">
+    <div class="section-container split-grid">
+      <div class="feature-copy" data-reveal><span class="section-pill">Social + Discovery</span><h2 id="social-title">Find your people. Find your next idea.</h2><p class="section-lead">Feed, profiles, Stories and search stay connected — with commerce appearing where it is relevant.</p></div>
+      <div class="social-showcase feature-visual" data-reveal>
+        <div class="story-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="social-feed">
+          <img src={`${media}/feed-720.webp`} srcset={`${media}/feed-720.webp 720w, ${media}/feed-1120.webp 1120w`} sizes="(max-width: 768px) 90vw, 520px" width="720" height="900" loading="lazy" decoding="async" alt="Illustrative creator scene representing Feed and discovery" />
+          <div class="social-feed-heading"><small>For you</small><strong>One moment.<br />Every surface connected.</strong></div>
+          <div class="social-product"><small>Sponsored demo</small><strong>Studio creator kit · 42 BDAG</strong></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="creators-section section-dark" id="creators" aria-labelledby="creators-title">
+    <div class="section-container">
+      <div data-reveal><span class="section-pill pill-dark">Creators</span><h2 id="creators-title">Identity that moves with<br class="desktop-only" /> every format.</h2><p class="section-lead">Publish, build a profile, engage a community and connect content with LIVE and commerce.</p></div>
+      <div class="creator-profile feature-visual" data-reveal>
+        <div class="creator-identity"><img src={`${media}/creator-portrait-192.webp`} width="96" height="96" loading="lazy" decoding="async" alt="Illustrative fictional creator portrait" /><div><strong>Creator preview</strong><span>Concept · demo</span><small>Illustrative media · demo only</small></div></div>
+        <div class="creator-media"><div><img src={`${media}/feed-720.webp`} width="720" height="900" loading="lazy" decoding="async" alt="" /><span>CLIP</span></div><div><img src={`${media}/live-battle-760.webp`} width="760" height="460" loading="lazy" decoding="async" alt="" /><span>LIVE</span></div><div><img src={`${media}/studio-light-440.webp`} width="440" height="440" loading="lazy" decoding="async" alt="" /><span>SHOP</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="feature-section live-section section-dark" id="live" aria-labelledby="live-title">
+    <div class="section-container split-grid">
+      <div class="feature-copy" data-reveal><span class="section-pill pill-dark">LIVE + Battles</span><h2 id="live-title">Real-time energy. Human connection.</h2><p class="section-lead">Broadcast, react, compete and discover products together — without turning interaction into noise.</p></div>
+      <div class="live-showcase feature-visual" data-reveal>
+        <img src={`${media}/live-battle-760.webp`} srcset={`${media}/live-battle-760.webp 760w, ${media}/live-battle-1420.webp 1420w`} sizes="(max-width: 900px) 92vw, 650px" width="760" height="460" loading="lazy" decoding="async" alt="Illustrative split-screen LIVE Battle with two fictional hosts" />
+        <div class="live-top"><span class="live-dot"></span> LIVE <strong>CREATOR BATTLE</strong></div>
+        <div class="live-timer">02:18 <span>demo</span></div>
+        <div class="live-progress" aria-hidden="true"><span></span></div>
+        <div class="live-bottom"><span>12.8K</span><span>11.9K</span></div>
+        <div class="reaction-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="feature-section marketplace-section section-light" id="marketplace" aria-labelledby="marketplace-title">
+    <div class="section-container split-grid">
+      <div class="feature-copy" data-reveal><span class="section-pill">Marketplace</span><h2 id="marketplace-title">Discovery that can become commerce.</h2><p class="section-lead">Products live beside creators, search, Feed and LIVE — always inside the same Nelyon ecosystem.</p></div>
+      <div class="product-grid feature-visual" data-reveal>
+        {['Studio light','Creator mic','Studio light','Creator mic','Studio light','Creator mic'].map((name, index) => <div class="product-tile"><img src={`${media}/${index % 2 ? 'product-440' : 'studio-light-440'}.webp`} width="440" height="440" loading="lazy" decoding="async" alt={`Illustrative ${name.toLowerCase()} product render`} /><strong>{name}</strong><span>{index % 2 ? '36' : '42'} BDAG · demo</span></div>)}
+      </div>
+    </div>
+  </section>
+
+  <section class="feature-section business-section section-dark" id="business-tools" aria-labelledby="business-title">
+    <div class="section-container split-grid">
+      <div class="feature-copy" data-reveal><span class="section-pill pill-dark">Nelyon Business + Ads</span><h2 id="business-title">Grow inside one ecosystem.</h2><p class="section-lead">Products, campaigns, Analytics, Finance and Team come together in one secure Business workspace.</p><a class="button button-primary" href="/business/home">Open Nelyon Business</a></div>
+      <div class="business-preview feature-visual" data-reveal aria-label="Illustrative Nelyon Business overview with demo data">
+        <div class="business-preview-head"><strong>Business overview</strong><span>Demo data</span></div>
+        <div class="business-metrics"><div><span>GMV</span><strong>18.2K</strong></div><div><span>Orders</span><strong>284</strong></div><div><span>ROAS</span><strong>4.8×</strong></div></div>
+        <div class="business-chart" aria-label="Illustrative rising trend chart"><svg viewBox="0 0 600 180" preserveAspectRatio="none" role="img" aria-hidden="true"><path d="M8 151 C80 125 130 137 205 105 S310 58 385 57 S490 51 592 15" /></svg></div>
+        <div class="business-placement"><span>Ads placements</span><p>Marketplace Home &nbsp; • &nbsp; Search &nbsp; • &nbsp; Social Feed</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="updates-section section-white" id="whats-new" aria-labelledby="updates-title">
+    <div class="section-container">
+      <div data-reveal><span class="section-pill">What’s New</span><h2 id="updates-title">Nelyon keeps moving.</h2><p class="section-lead">Product updates, launches and improvements — published clearly in one place.</p></div>
+      <div class="updates-grid">
+        <UpdateCard label="New" title="Nelyon Business" description="A connected workspace for products, Ads and Analytics." kind="analytics" />
+        <UpdateCard label="Update" title="LIVE experiences" description="More creator tools and real-time interaction." kind="live" image={`${media}/live-battle-760.webp`} />
+        <UpdateCard label="Coming next" title="Public Nelyon web" description="A faster way to discover the whole ecosystem." kind="product" image={`${media}/studio-light-440.webp`} />
+      </div>
+    </div>
+  </section>
+
+  <section class="download-section section-dark" id="download" aria-labelledby="download-title">
+    <div class="section-container download-grid">
+      <div data-reveal><h2 id="download-title">Your next connection starts here.</h2><p class="section-lead">Download Nelyon or open Nelyon Business to start building inside the ecosystem.</p><div class="download-actions"><a class="button button-primary" href="/download">Download Nelyon</a><a class="button button-ghost" href="/business/home">Open Business</a></div></div>
+      <img class="download-icon" src={appIcon.src} width="220" height="220" loading="lazy" decoding="async" alt="Nelyon app icon" />
+    </div>
+  </section>
+  <script>
+    const revealItems = document.querySelectorAll<HTMLElement>('[data-reveal]');
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reduced && 'IntersectionObserver' in window) {
+      const observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) if (entry.isIntersecting) { entry.target.classList.add('is-visible'); observer.unobserve(entry.target); }
+      }, { threshold: 0.12, rootMargin: '0px 0px 40px 0px' });
+      revealItems.forEach((item) => observer.observe(item));
+    } else revealItems.forEach((item) => item.classList.add('is-visible'));
+  </script>
 </PublicLayout>

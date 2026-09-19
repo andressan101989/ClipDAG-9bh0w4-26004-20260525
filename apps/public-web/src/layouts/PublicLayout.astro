@@ -1,59 +1,77 @@
 ---
-import logo from '../../../../assets/branding/nelyon/v1/nelyon-logo-horizontal.png';
+import logo from '../../../../assets/branding/nelyon/v1/nelyon-wordmark-on-dark.png';
+import '../styles/public.css';
 
 type Props = { title: string; description: string };
 const { title, description } = Astro.props;
-const canonicalPath = Astro.url.pathname === '/' ? '/' : Astro.url.pathname.replace(/\/+$/, '');
+const isHome = Astro.url.pathname === '/';
+const canonicalPath = isHome ? '/' : Astro.url.pathname.replace(/\/+$/, '');
 const canonical = new URL(canonicalPath, Astro.site).toString();
 ---
 <!doctype html>
-<html lang="es">
+<html lang={isHome ? 'en' : 'es'}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex,nofollow" />
     <meta name="theme-color" content="#0C1F4F" />
     <meta name="description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Nelyon" />
+    <meta property="og:title" content={isHome ? title : `${title} · Nelyon`} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
     <link rel="canonical" href={canonical} />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@600;700&display=swap" rel="stylesheet" />
-    <title>{title} · Nelyon</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@500;600;700;800&display=swap" rel="stylesheet" />
+    <title>{isHome ? title : `${title} · Nelyon`}</title>
   </head>
-  <body>
-    <a class="skip-link" href="#main">Saltar al contenido</a>
-    <header class="site-header">
-      <a class="brand" href="/" aria-label="Nelyon, inicio"><img src={logo.src} width="160" height="42" alt="Nelyon" /></a>
-      <nav aria-label="Navegación pública">
-        <a href="/features">Features</a>
-        <a href="/business">Business</a>
-        <a href="/ads">Ads</a>
-        <a href="/marketplace">Marketplace</a>
+  <body class:list={{ 'home-page': isHome }}>
+    <a class="skip-link" href="#main">{isHome ? 'Skip to content' : 'Saltar al contenido'}</a>
+    <header class="site-header" id="site-header">
+      <a class="brand" href="/" aria-label="Nelyon, home"><img src={logo.src} width="160" height="42" alt="Nelyon" /></a>
+      <nav class="desktop-nav" aria-label="Public navigation">
+        <a href="/features">Features</a><a href="/business">Business</a><a href="/ads">Ads</a>
+        <a href="/marketplace">Marketplace</a><a href="/creators">Creators</a><a href="/live">LIVE</a><a href="/whats-new">What’s New</a>
       </nav>
-      <a class="header-action" href="/business/home">Open Business</a>
+      <div class="header-actions"><a class="button button-ghost" href="/download">Download</a><a class="button button-primary" href="/business/home">Open Business</a></div>
+      <button class="menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="public-mobile-menu" data-menu-toggle><span></span><span></span><span></span></button>
+      <nav class="mobile-menu" id="public-mobile-menu" aria-label="Mobile public navigation" hidden>
+        <a href="/features">Features</a><a href="/business">Business</a><a href="/ads">Ads</a>
+        <a href="/marketplace">Marketplace</a><a href="/creators">Creators</a><a href="/live">LIVE</a><a href="/whats-new">What’s New</a>
+        <div class="mobile-menu-actions"><a class="button button-ghost" href="/download">Download</a><a class="button button-primary" href="/business/home">Open Business</a></div>
+      </nav>
     </header>
     <main id="main"><slot /></main>
-    <footer class="site-footer"><span>Nelyon</span><div><a href="/support">Support</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div></footer>
+    <footer class="site-footer">
+      <div class="footer-brand"><img src={logo.src} width="170" height="45" alt="Nelyon" /><p>Connect. Create. Go LIVE. Grow.</p></div>
+      <div class="footer-columns">
+        <div><h2>Product</h2><a href="/features">Features</a><a href="/marketplace">Marketplace</a><a href="/creators">Creators</a><a href="/live">LIVE</a><a href="/download">Download</a></div>
+        <div><h2>Business</h2><a href="/business">Nelyon Business</a><a href="/ads">Ads</a><a href="/business/home">Open Business</a></div>
+        <div><h2>Company</h2><a href="/whats-new">What’s New</a><a href="/support">Support</a><a href="/contact">Contact</a></div>
+        <div><h2>Legal</h2><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
+      </div>
+      <div class="footer-bottom"><span>© {new Date().getFullYear()} Nelyon</span><span>One connected ecosystem.</span></div>
+    </footer>
+    <script>
+      const header = document.getElementById('site-header');
+      const toggle = document.querySelector<HTMLButtonElement>('[data-menu-toggle]');
+      const menu = document.getElementById('public-mobile-menu');
+      const setMenu = (open: boolean) => {
+        if (!toggle || !menu) return;
+        toggle.setAttribute('aria-expanded', String(open));
+        toggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+        menu.hidden = !open;
+        document.body.classList.toggle('menu-open', open);
+        if (!open) toggle.focus();
+      };
+      toggle?.addEventListener('click', () => setMenu(toggle.getAttribute('aria-expanded') !== 'true'));
+      menu?.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => setMenu(false)));
+      document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && toggle?.getAttribute('aria-expanded') === 'true') setMenu(false); });
+      const syncHeader = () => header?.classList.toggle('is-scrolled', window.scrollY > 24);
+      window.addEventListener('scroll', syncHeader, { passive: true });
+      syncHeader();
+    </script>
   </body>
 </html>
-<style is:global>
-  :root { color-scheme: light; --navy: #0C1F4F; --blue: #123B9E; --accent: #1F79FF; --surface: #F5F7FA; font-family: Inter, system-ui, sans-serif; }
-  * { box-sizing: border-box; }
-  body { margin: 0; color: var(--navy); background: var(--surface); }
-  a { color: inherit; }
-  a:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
-  .skip-link { position: absolute; top: -4rem; left: 1rem; z-index: 10; padding: .7rem 1rem; background: white; }
-  .skip-link:focus { top: 1rem; }
-  .site-header { display: flex; align-items: center; justify-content: space-between; gap: 2rem; padding: 1.1rem clamp(1rem, 4vw, 4rem); background: white; }
-  .brand img { display: block; max-width: 100%; height: auto; }
-  .site-header nav, .site-footer div { display: flex; flex-wrap: wrap; gap: 1.25rem; }
-  .site-header nav a, .site-footer a { text-decoration: none; font-size: .9rem; }
-  .header-action, .primary-action { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: .75rem 1.1rem; border-radius: 999px; background: var(--accent); color: white; text-decoration: none; font-weight: 600; }
-  .shell { max-width: 1100px; min-height: min(70vh, 740px); margin: auto; padding: clamp(4rem, 10vw, 9rem) 1.25rem; }
-  .eyebrow { color: var(--blue); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: .75rem; }
-  h1 { max-width: 15ch; margin: .5rem 0 1.2rem; font-family: Montserrat, Inter, sans-serif; font-size: clamp(2.7rem, 7vw, 6rem); line-height: 1.04; letter-spacing: -.045em; }
-  .shell p { max-width: 60ch; line-height: 1.6; }
-  .site-footer { display: flex; justify-content: space-between; gap: 1rem; padding: 2rem clamp(1rem, 4vw, 4rem); background: var(--navy); color: white; }
-  @media (max-width: 800px) { .site-header { flex-wrap: wrap; } .site-header nav { order: 3; width: 100%; overflow-x: auto; flex-wrap: nowrap; } }
-  @media (max-width: 440px) { .site-footer { flex-direction: column; } }
-</style>

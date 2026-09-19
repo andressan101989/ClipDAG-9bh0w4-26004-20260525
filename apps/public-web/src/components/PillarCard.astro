@@ -1,0 +1,10 @@
+---
+type Props = { title: string; description: string; href: string; kind: 'image' | 'analytics'; image?: string };
+const { title, description, href, kind, image } = Astro.props;
+---
+<a class="pillar-card" href={href}>
+  <div class="pillar-media">
+    {kind === 'analytics' ? <div class="mini-analytics" aria-hidden="true"><span>Business Analytics</span><div><i></i><i></i><i></i><i></i><i></i></div></div> : <img src={image} width="440" height="250" loading="lazy" decoding="async" alt="" />}
+  </div>
+  <h3>{title}</h3><p>{description}</p>
+</a>

@@ -1,0 +1,8 @@
+---
+type Props = { label: string; title: string; description: string; kind: 'analytics' | 'live' | 'product'; image?: string };
+const { label, title, description, kind, image } = Astro.props;
+---
+<a class:list={['update-card', { 'update-card-dark': kind === 'live' }]} href="/whats-new">
+  <div class="update-media">{kind === 'analytics' ? <div class="mini-analytics" aria-hidden="true"><span>Business Analytics</span><div><i></i><i></i><i></i><i></i><i></i></div></div> : <img src={image} width="760" height="240" loading="lazy" decoding="async" alt="" />}</div>
+  <span class="update-label">{label}</span><h3>{title}</h3><p>{description}</p>
+</a>

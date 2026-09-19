@@ -11,7 +11,7 @@ test('public foundation is static, noindex during shell phase and uses official 
   assert.match(config, /output:\s*'static'/);
   assert.match(config, /site:\s*'https:\/\/nelyon\.app'/);
   assert.match(layout, /noindex,nofollow/);
-  assert.match(layout, /nelyon-logo-horizontal\.png/);
+  assert.match(layout, /nelyon-wordmark-on-dark\.png/);
   assert.match(shell, /getStaticPaths/);
   assert.ok(existsSync(new URL('../src/pages/404.astro', import.meta.url)));
 });
