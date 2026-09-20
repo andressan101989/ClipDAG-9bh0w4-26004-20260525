@@ -29,6 +29,4 @@ test('B1 contract keeps no user-visible signup or legal changes', () => {
   assert.match(contract, /hook remains inactive/i);
   assert.match(contract, /first usable token/i);
   assert.match(contract, /financial resolution/i);
-  const legal = readFileSync(new URL('../shared/legal/decisions.ts', import.meta.url), 'utf8');
-  assert.match(legal, /minimumAge: owner\('owner_approved', '18'\)/);
 });

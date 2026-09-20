@@ -16,8 +16,14 @@ test('DOB input rejects malformed and future dates before submit', () => {
   assert.equal(validateSignupDob('2026-09-21', today), 'future');
 });
 
-test('client leaves age decisions to the server', () => {
-  assert.equal(validateSignupDob('2015-01-01', new Date(2026, 8, 20)), null);
+test('client rejects under-13 signup for UX while accepting the exact 13th birthday', () => {
+  const today = new Date(2026, 8, 20);
+  assert.equal(validateSignupDob('2013-09-21', today), 'underage');
+  assert.equal(validateSignupDob('2013-09-20', today), null);
+  assert.equal(validateSignupDob('2008-09-20', today), null);
+  assert.equal(validateSignupDob('2012-02-29', new Date(2025, 1, 28)), 'underage');
+  assert.equal(validateSignupDob('2012-02-29', new Date(2025, 2, 1)), null);
+  assert.equal(validateSignupDob('2013-09-20', new Date('2026-09-20T00:30:00Z')), null);
 });
 
 test('signup metadata keeps username and sends only the calendar DOB input', () => {
@@ -28,6 +34,6 @@ test('signup metadata keeps username and sends only the calendar DOB input', () 
 });
 
 test('stable server age rejection has a clear Spanish message', () => {
-  assert.match(signupErrorMessage('You must be at least 18 years old to create a Nelyon account.'), /18 años/);
+  assert.match(signupErrorMessage('You must be at least 13 years old to create a Nelyon account.'), /13 años/);
   assert.equal(signupErrorMessage('Network error'), 'Network error');
 });

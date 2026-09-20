@@ -81,7 +81,9 @@ test('pending legal content is not presentable but an approved fixture resolves 
 
 test('one decision registry distinguishes owner policy from legal approval and cannot accidentally activate', () => {
   assert.doesNotThrow(() => validateLegalDecisions(legalDecisions));
-  assert.equal(legalDecisionIds.length, 31);
+  assert.ok(legalDecisionIds.includes('creatorExclusiveMinimumAge'));
+  assert.equal(legalDecisions.minimumAge.value, '13');
+  assert.equal(legalDecisions.creatorExclusiveMinimumAge.value, '18');
   assert.ok(Object.values(legalDecisions).every((decision) => decision.status !== 'approved' && decision.legalReview === 'pending' && decision.approvedAt === null));
   const invalid = structuredClone(legalDecisions);
   invalid.legalEntity.status = 'approved';

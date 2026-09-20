@@ -53,7 +53,12 @@ export default function LoginScreen() {
       showAlert('Campos requeridos', 'Completa todos los campos');
       return;
     }
-    if (validateSignupDob(dateOfBirth)) {
+    const dobError = validateSignupDob(dateOfBirth);
+    if (dobError === 'underage') {
+      showAlert('Edad mínima', 'Debes tener al menos 13 años para crear una cuenta en Nelyon.');
+      return;
+    }
+    if (dobError) {
       showAlert('Fecha inválida', 'Ingresa una fecha de nacimiento válida en formato AAAA-MM-DD.');
       return;
     }
@@ -181,7 +186,7 @@ export default function LoginScreen() {
                     ) : null}
                   </View>
                 ) : null}
-                <Text style={styles.dobNotice}>Debes tener 18 años o más para crear una cuenta en Nelyon.</Text>
+                <Text style={styles.dobNotice}>Debes tener al menos 13 años para crear una cuenta en Nelyon.</Text>
               </View>
             ) : null}
 

@@ -6,14 +6,15 @@ import { legalManifest, legalDocuments } from '../shared/legal/manifest.ts';
 const text = (id) => legalDocuments.find((document) => document.id === id).sections
   .flatMap((section) => section.blocks.map((block) => block.text ?? '')).join(' ');
 
-test('owner eligibility is 18 with no parental override while activation stays blocked', () => {
-  assert.equal(legalDecisions.minimumAge.value, '18');
+test('owner allows 13+ accounts and reserves creator exclusive content for 18+ while legal activation stays blocked', () => {
+  assert.equal(legalDecisions.minimumAge.value, '13');
+  assert.equal(legalDecisions.creatorExclusiveMinimumAge.value, '18');
   assert.equal(legalDecisions.minimumAge.status, 'owner_approved');
   assert.equal(legalDecisions.minimumAge.legalReview, 'pending');
-  assert.equal(legalDecisions.guardianPolicy.value, 'No parental-consent exception for accounts under 18');
+  assert.equal(legalDecisions.guardianPolicy.value, 'No parental-consent exception for accounts under 13');
   assert.equal(legalDecisions.ageEnforcement.status, 'unresolved');
-  assert.match(text('terms'), /minimum eligibility age at 18/i);
-  assert.doesNotMatch(text('terms'), /13\+|17\+|13.{0,5}17|parental consent/i);
+  assert.match(text('terms'), /minimum eligibility age at 13/i);
+  assert.match(text('terms'), /creator-exclusive content requires 18/i);
   assert.deepEqual(getLegalActivationState(legalManifest, legalDocuments, legalDecisions, 'terms', 'en'), { state: 'pending' });
 });
 

@@ -5,7 +5,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 export const legalDecisionIds = [
   'legalEntity', 'tradeName', 'jurisdiction', 'address',
   'supportContact', 'privacyContact', 'legalContact', 'copyrightContact',
-  'minimumAge', 'guardianPolicy', 'ageEnforcement', 'governingLaw', 'disputeModel', 'arbitration',
+  'minimumAge', 'creatorExclusiveMinimumAge', 'guardianPolicy', 'ageEnforcement', 'governingLaw', 'disputeModel', 'arbitration',
   'liabilityApproval', 'contentLicenseApproval', 'bdagLegalCharacterization',
   'feesApproval', 'refundPolicyApproval', 'payoutTermsApproval',
   'retentionApproval', 'deletionPolicyApproval', 'internationalTransferReview', 'providerReview',
@@ -32,8 +32,8 @@ const decisionStatuses: LegalDecisionStatus[] = ['unresolved', 'owner_approved',
   'owner_policy_defined_operational_channel_pending_legal_review', 'approved'];
 
 const unresolved = (): LegalDecision => Object.freeze({ status: 'unresolved', legalReview: 'pending', value: null, source: null, approvedAt: null });
-const owner = (status: Exclude<LegalDecisionStatus, 'unresolved' | 'approved'>, value: string): LegalDecision =>
-  Object.freeze({ status, legalReview: 'pending', value, source: 'Owner direction: NPW-F-C4', approvedAt: null });
+const owner = (status: Exclude<LegalDecisionStatus, 'unresolved' | 'approved'>, value: string, source = 'NPW-F-C4'): LegalDecision =>
+  Object.freeze({ status, legalReview: 'pending', value, source: `Owner direction: ${source}`, approvedAt: null });
 export const legalDecisions: Readonly<Record<LegalDecisionId, LegalDecision>> = Object.freeze(
   {
     ...Object.fromEntries(legalDecisionIds.map((id) => [id, unresolved()])),
@@ -41,8 +41,9 @@ export const legalDecisions: Readonly<Record<LegalDecisionId, LegalDecision>> = 
     legalEntity: owner('owner_selected_pending_registration_verification', 'Nelyon, Inc.'),
     jurisdiction: owner('owner_approved_pending_registration_verification', 'Florida, United States'),
     address: owner('owner_provided', '2055 SW 122nd Ave\nMiami, FL 33175\nUnited States'),
-    minimumAge: owner('owner_approved', '18'),
-    guardianPolicy: owner('owner_approved', 'No parental-consent exception for accounts under 18'),
+    minimumAge: owner('owner_approved', '13', 'NPW-F-C5-B2-C1'),
+    creatorExclusiveMinimumAge: owner('owner_approved', '18', 'NPW-F-C5-B2-C1'),
+    guardianPolicy: owner('owner_approved', 'No parental-consent exception for accounts under 13', 'NPW-F-C5-B2-C1'),
     governingLaw: owner('owner_policy_approved_legal_review_pending', 'Florida law and applicable United States federal law, subject to non-waivable rights'),
     disputeModel: owner('owner_policy_approved_legal_review_pending', 'Informal resolution for 30 days after valid notice; then competent state or federal courts in Miami-Dade County, subject to mandatory forums'),
     arbitration: owner('owner_policy_no_mandatory_arbitration_legal_review_pending', 'No mandatory arbitration, class-action waiver or jury-trial waiver'),
