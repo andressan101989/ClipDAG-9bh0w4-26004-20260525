@@ -11,7 +11,7 @@
     "ios": {
       "newArchEnabled": true,
       "supportsTablet": true,
-      "buildNumber": "23",
+      "buildNumber": "24",
       "deploymentTarget": "16.4",
       "bundleIdentifier": "com.clipdag.onspaceapp",
       "infoPlist": {
@@ -30,7 +30,8 @@
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
       ],
-      "package": "com.clipdag.onspaceapp"
+      "package": "com.clipdag.onspaceapp",
+      "versionCode": 2
     },
     "web": {
       "bundler": "metro",
