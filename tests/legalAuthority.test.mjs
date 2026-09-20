@@ -34,7 +34,7 @@ test('initial authority has no approved content or invented identity/contact', (
   assert.equal(legalManifest.legalEntity, null);
   assert.equal(legalManifest.jurisdiction, null);
   assert.equal(legalManifest.address, null);
-  assert.deepEqual(legalDocuments, []);
+  assert.deepEqual(legalDocuments.map((document) => document.id), ['privacy', 'terms']);
   for (const id of ['privacy', 'terms']) {
     assert.equal(legalManifest.documents[id].status, 'pending_approval');
     assert.equal(legalManifest.documents[id].version, null);

@@ -1,4 +1,5 @@
-import type { LegalDocument, LegalManifest } from './core.ts';
+import type { LegalManifest } from './core.ts';
+import { legalDocuments } from './content.ts';
 
 // This is the sole future technical authority. No legal text is approved yet.
 export const legalManifest: LegalManifest = {
@@ -23,5 +24,5 @@ export const legalManifest: LegalManifest = {
   legacyHub: { route: '/legal', reviewRequired: ['community', 'copyright', 'monetization', 'cookies'] },
 };
 
-// Approved documents will be added only after owner/legal approval.
-export const legalDocuments: readonly LegalDocument[] = [];
+// Renderer-neutral content comes from one source; internal provenance is outside this import graph.
+export { legalDocuments };

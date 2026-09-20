@@ -91,6 +91,7 @@ export function validateLegalManifest(value: unknown): asserts value is LegalMan
     date(doc.lastUpdated);
     if (!Array.isArray(doc.availableLocales) || doc.availableLocales.some((locale) => !locales.includes(locale as LegalLocale)) || new Set(doc.availableLocales).size !== doc.availableLocales.length) fail('locale_invalid');
     if (doc.status === 'approved' && (doc.version === null || doc.effectiveDate === null || doc.lastUpdated === null || doc.availableLocales.length === 0)) fail('approved_metadata_missing');
+    if (doc.status === 'approved' && /^draft-/i.test(doc.version as string)) fail('draft_unapproved');
     if (doc.status === 'approved' && (value.legalEntity === null || value.jurisdiction === null || value.address === null)) fail('approved_identity_missing');
     if (typeof doc.effectiveDate === 'string' && typeof doc.lastUpdated === 'string' && doc.lastUpdated < doc.effectiveDate) fail('date_order_invalid');
   }
