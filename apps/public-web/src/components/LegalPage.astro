@@ -1,0 +1,40 @@
+---
+import PublicLayout from '../layouts/PublicLayout.astro';
+import { getPublicLegalPageState } from '../lib/legalAdapter.ts';
+import { publicCtas } from '../lib/publicCtas.ts';
+import type { LegalId } from '../../../../shared/legal/core.ts';
+import '../styles/help-legal.css';
+
+type Props = { id: LegalId };
+const { id } = Astro.props;
+const label = id === 'privacy' ? 'Privacy Policy' : 'Terms of Service';
+const state = getPublicLegalPageState(id, 'en');
+---
+<PublicLayout title={label} description={state.state === 'approved' ? `${label} for Nelyon.` : `${label} publication status for Nelyon. The canonical document is not yet approved.`}>
+  {state.state === 'approved' ? (
+    <article class="legal-article" aria-labelledby="legal-title">
+      <span class="legal-eyebrow">Nelyon · Legal</span>
+      <h1 id="legal-title">{state.document.title}</h1>
+      <div class="legal-meta"><span>Version {state.document.version}</span><span>Effective {state.document.effectiveDate}</span><span>Last updated {state.document.lastUpdated}</span></div>
+      <div class="legal-grid">
+        <nav class="legal-toc" aria-label="Table of contents"><strong>On this page</strong>{state.document.toc.map((item) => <a href={`#${item.id}`}>{item.title}</a>)}</nav>
+        <div class="legal-body">{state.document.sections.map((section) => (
+          <section id={section.id} aria-labelledby={`${section.id}-title`}>
+            <h2 id={`${section.id}-title`}>{section.title}</h2>
+            {section.blocks.map((block) => block.type === 'paragraph' ? <p>{block.text}</p> : block.type === 'list' ? <ul>{block.items.map((item) => <li>{item}</li>)}</ul> : <p><a href={`mailto:${block.value}`}>{block.value}</a></p>)}
+          </section>
+        ))}</div>
+      </div>
+    </article>
+  ) : (
+    <section class="legal-article" aria-labelledby="legal-title">
+      <span class="legal-eyebrow">Nelyon · Legal</span>
+      <h1 id="legal-title">{label}</h1>
+      <div class="legal-pending">
+        <p>{state.state === 'retired' ? 'This document is no longer current.' : 'This document is being prepared and has not been approved or published as a current policy.'}</p>
+        <p>Verified official contact channels will appear on the Contact page when available.</p>
+        <a class="help-contact-link" href={publicCtas.contact}>View contact status</a>
+      </div>
+    </section>
+  )}
+</PublicLayout>

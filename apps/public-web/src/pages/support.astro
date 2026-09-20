@@ -1,0 +1,37 @@
+---
+import PublicLayout from '../layouts/PublicLayout.astro';
+import { supportTopics } from '../data/support';
+import { publicCtas } from '../lib/publicCtas';
+import '../styles/help-legal.css';
+---
+<PublicLayout title="Support Center" description="Find factual guidance for Nelyon accounts, content, LIVE, Marketplace, Business and app availability.">
+  <div class="help-page">
+    <section class="help-hero" aria-labelledby="support-title">
+      <div class="help-container">
+        <span class="help-eyebrow">Nelyon Support</span>
+        <h1 id="support-title">Find your way through Nelyon.</h1>
+        <p>Choose a topic for concise guidance and a direct path to the relevant public overview.</p>
+      </div>
+    </section>
+    <section class="help-content" aria-label="Support topics">
+      <div class="help-container help-topic-grid">
+        {supportTopics.map((topic) => (
+          <section class="help-card" id={topic.id} aria-labelledby={`${topic.id}-title`}>
+            <h2 id={`${topic.id}-title`}>{topic.title}</h2>
+            <p>{topic.introduction}</p>
+            <div class="help-faqs">
+              {topic.questions.map((item) => <details><summary>{item.question}</summary><p>{item.answer}</p></details>)}
+            </div>
+            <div class="help-links">{topic.links.map((link) => <a href={publicCtas[link.cta]}>{link.label}<span aria-hidden="true"> ↗</span></a>)}</div>
+          </section>
+        ))}
+      </div>
+    </section>
+    <section class="help-closing" aria-labelledby="support-contact-title">
+      <div class="help-container help-closing-grid">
+        <div><h2 id="support-contact-title">Need contact information?</h2><p>Only verified official channels will be listed on the Contact page. No request is sent from this Support Center.</p></div>
+        <a class="button button-primary" href={publicCtas.contact}>View contact status</a>
+      </div>
+    </section>
+  </div>
+</PublicLayout>

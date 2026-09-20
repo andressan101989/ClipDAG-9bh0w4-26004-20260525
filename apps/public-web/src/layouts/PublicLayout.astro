@@ -11,6 +11,8 @@ const isProductPage = [publicCtas.features, publicCtas.business, publicCtas.ads,
 const canonicalPath = pagePath;
 const canonical = new URL(canonicalPath, Astro.site).toString();
 const isEditorial = pagePath === publicCtas.whatsNew || pagePath.startsWith(`${publicCtas.whatsNew}/`);
+const informationRoutes: string[] = [publicCtas.support, publicCtas.contact, publicCtas.privacy, publicCtas.terms];
+const isInformationPage = informationRoutes.includes(pagePath);
 const articleJson = article ? JSON.stringify({
   '@context': 'https://schema.org', '@type': 'Article', headline: title,
   description, datePublished: article.publishedAt.toISOString(),
@@ -20,7 +22,7 @@ const articleJson = article ? JSON.stringify({
 }).replace(/</g, '\\u003c') : null;
 ---
 <!doctype html>
-<html lang={isHome || isProductPage || isEditorial || pagePath === publicCtas.download ? 'en' : 'es'}>
+<html lang={isHome || isProductPage || isEditorial || isInformationPage || pagePath === publicCtas.download ? 'en' : 'es'}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -43,7 +45,7 @@ const articleJson = article ? JSON.stringify({
     <title>{isHome ? title : `${title} · Nelyon`}</title>
   </head>
   <body class:list={{ 'home-page': isHome }}>
-    <a class="skip-link" href="#main">{isHome || isProductPage || isEditorial || pagePath === publicCtas.download ? 'Skip to content' : 'Saltar al contenido'}</a>
+    <a class="skip-link" href="#main">{isHome || isProductPage || isEditorial || isInformationPage || pagePath === publicCtas.download ? 'Skip to content' : 'Saltar al contenido'}</a>
     <header class="site-header" id="site-header">
       <a class="brand" href={publicCtas.home} aria-label="Nelyon, home"><img src={logo.src} width="160" height="42" alt="Nelyon" /></a>
       <nav class="desktop-nav" aria-label="Public navigation">

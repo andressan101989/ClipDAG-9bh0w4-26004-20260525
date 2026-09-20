@@ -185,6 +185,16 @@ export function resolveLegalDocument(manifest: unknown, content: readonly unknow
     fingerprint: fingerprintLegalDocument(document) };
 }
 
+// A safe presentation boundary for both web and mobile. Pending or retired text is never returned.
+export function getLegalPresentationState(manifest: unknown, content: readonly unknown[], id: LegalId, locale: string) {
+  validateLegalManifest(manifest);
+  if (!ids.includes(id)) fail('id_invalid');
+  const status = manifest.documents[id].status;
+  if (status === 'pending_approval') return { state: 'pending' } as const;
+  if (status === 'retired') return { state: 'retired' } as const;
+  return { state: 'approved', document: resolveLegalDocument(manifest, content, id, locale) } as const;
+}
+
 // Portable, deterministic change fingerprint (not a cryptographic signature).
 // Includes document identity, locale, version, title and every content block.
 export function fingerprintLegalDocument(value: unknown): string {

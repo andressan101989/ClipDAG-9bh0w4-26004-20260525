@@ -13,6 +13,7 @@ import { useAlert } from '@/template';
 import { getSupabaseClient } from '@/template';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { useI18n, AVAILABLE_LANGUAGES, type Language } from '@/contexts/I18nContext';
+import { accountDeletionNotice } from '@/shared/legal/accountDeletionNotice';
 
 // ── Row component ─────────────────────────────────────────────────────────────
 function Row({
@@ -173,20 +174,7 @@ export default function AccountSettingsScreen() {
   }, [showAlert]);
 
   const handleDeleteAccount = useCallback(() => {
-    showAlert(
-      'Eliminar cuenta permanentemente',
-      'Esta accion eliminara TODOS tus datos: videos, seguidores, balance DAG y perfil. No se puede deshacer.',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Continuar',
-          style: 'destructive',
-          onPress: () => {
-            showAlert('Confirmar eliminacion', 'Por seguridad, solicita la eliminación desde el Centro de ayuda de Nelyon.');
-          },
-        },
-      ]
-    );
+    showAlert(accountDeletionNotice.title, accountDeletionNotice.message, [{ text: accountDeletionNotice.actionLabel }]);
   }, [showAlert]);
 
   return (
@@ -295,10 +283,9 @@ export default function AccountSettingsScreen() {
           />
           <Row
             icon="delete-forever-outline"
-            iconGradient={['#FF3B5C', '#FF2D78']}
-            label="Eliminar cuenta"
-            sublabel="Accion permanente e irreversible"
-            danger
+            iconGradient={['#123B9E', '#1F79FF']}
+            label={accountDeletionNotice.rowLabel}
+            sublabel={accountDeletionNotice.rowSublabel}
             onPress={handleDeleteAccount}
             last
           />

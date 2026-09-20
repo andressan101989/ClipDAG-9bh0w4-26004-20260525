@@ -5,13 +5,14 @@ import { productPageSlugs } from '../data/productPages';
 import { publicCtas } from '../lib/publicCtas';
 
 export function getStaticPaths() {
+  const dedicatedRoutes: string[] = [publicCtas.support, publicCtas.contact, publicCtas.privacy, publicCtas.terms];
   const titles: Record<string, string> = {
     '/features': 'Features', '/business': 'Nelyon Business', '/ads': 'Nelyon Ads',
     '/marketplace': 'Marketplace', '/creators': 'Creators', '/live': 'LIVE',
     '/download': 'Download', '/support': 'Support',
     '/contact': 'Contact', '/privacy': 'Privacy', '/terms': 'Terms',
   };
-  const pages = publicRoutes.filter((path) => path !== '/' && path !== '/whats-new' && path !== '/download' && !productPageSlugs.includes(path.slice(1))).map((path) => ({
+  const pages = publicRoutes.filter((path) => path !== '/' && path !== '/whats-new' && path !== '/download' && !dedicatedRoutes.includes(path) && !productPageSlugs.includes(path.slice(1))).map((path) => ({
     params: { path: path.slice(1) }, props: { title: titles[path], destination: null },
   }));
   const redirects = Object.entries(legacyStaticRedirects).map(([path, destination]) => ({

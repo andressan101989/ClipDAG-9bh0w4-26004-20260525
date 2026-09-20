@@ -21,7 +21,7 @@ export const canonicalDrafts: readonly CanonicalDraft[] = [
     p('payments-payouts', 'legal_review_required', ['supabase/migrations/20260703212533_migration_to_supabase.sql:198', 'supabase/functions/stripe-webhook/index.ts:25'], 'Economic and legal characterization awaits review.'),
     p('device-notifications', 'blocked_unknown', ['supabase/migrations/20260712130000_authoritative_call_sessions.sql:51', 'services/pushNotifications.ts:27'], 'Deployment logs and retention not verified.'),
     p('service-providers', 'legal_review_required', ['services/agoraService.native.ts:2', 'supabase/functions/stripe-bdag-checkout/index.ts:24', 'supabase/functions/cleanup-stale-media-uploads/index.ts:2', 'supabase/functions/content-safety-scan/index.ts:54'], 'Confirm active provider configuration and legal disclosure, including Workers AI.'),
-    p('retention-deletion', 'blocked_unknown', ['app/settings.tsx:229', 'app/settings.tsx:234', 'supabase/migrations/20260731223000_marketplace_mkt_a3b_orders_reservations.sql:45'], 'Settings promises all-data/DAG erasure, then only directs to support; contradicts actual action. No global retention commitment verified.'),
+    p('retention-deletion', 'blocked_unknown', ['app/settings.tsx:228', 'app/account-settings.tsx:177', 'supabase/migrations/20260731223000_marketplace_mkt_a3b_orders_reservations.sql:45'], 'C3 made the visible Settings entry points informational; no request channel, global deletion procedure or retention commitment verified.'),
     p('legal-choices-contact', 'owner_decision_required', [], 'Identity, contacts, rights, age, dates and jurisdiction must be supplied and reviewed.'),
   ] },
   { document: terms, provenance: [
@@ -32,7 +32,7 @@ export const canonicalDrafts: readonly CanonicalDraft[] = [
     p('business-ads', 'verified_fact', ['supabase/migrations/20260918120318_business_team_access_management_bw_j2.sql:5', 'supabase/migrations/20260917125517_business_ads_placements_delivery_bw_f.sql:1'], 'Contractual ad terms unresolved.'),
     p('bdag-payments', 'owner_decision_required', ['supabase/migrations/20260703212533_migration_to_supabase.sql:198', 'supabase/functions/bdag-withdraw/index.ts:287'], 'Do not select cash/redeemability characterization.'),
     p('refunds-payouts', 'legal_review_required', ['supabase/migrations/20260806100000_held_marketplace_dispute_refunds.sql:117', 'supabase/functions/_shared/bdagPayoutPrecision.ts:1'], 'Terms, timing and availability unresolved.'),
-    p('moderation-termination', 'legal_review_required', ['supabase/functions/admin-user-moderation/index.ts:21', 'app/settings.tsx:225'], 'No universal deletion or notice claim.'),
+    p('moderation-termination', 'legal_review_required', ['supabase/functions/admin-user-moderation/index.ts:21', 'app/settings.tsx:227'], 'No universal deletion or notice claim.'),
     p('third-parties', 'legal_review_required', ['supabase/functions/agora-token/index.ts:3', 'supabase/functions/stripe-bdag-checkout/index.ts:2'], 'Contractual allocation unresolved.'),
     p('legal-terms', 'owner_decision_required', [], 'Entity, jurisdiction, dispute model, liability, notice and effective date unresolved.'),
   ] },
@@ -47,7 +47,7 @@ export function validateDraftRegistry(entries: readonly CanonicalDraft[]): void 
       const meta = entry.provenance[index];
       if (meta?.sectionId !== section.id || !['verified_fact', 'owner_decision_required', 'legal_review_required', 'blocked_unknown'].includes(meta.decisionState)
         || !Array.isArray(meta.evidenceRefs) || (meta.decisionState === 'verified_fact' && meta.evidenceRefs.length === 0)
-        || meta.evidenceRefs.some((ref) => typeof ref !== 'string' || !/^(?:app|apps|contexts|services|supabase)\/[\w./()[\]-]+:\d+$/.test(ref))
+        || meta.evidenceRefs.some((ref) => typeof ref !== 'string' || !/^(?:app|apps|contexts|services|supabase|shared)\/[\w./()[\]-]+:\d+$/.test(ref))
         || typeof meta.reviewNote !== 'string' || !meta.reviewNote.trim()) throw new Error('legal_draft_provenance_invalid');
     });
   }
@@ -104,8 +104,8 @@ export const legacyReconciliation = [
   legacy('onspace.ai contacts', '2026 standalone mobile documents', 'OWNER_DECISION', 'No address copied; contacts remain null', ['app/privacy-policy.tsx:166', 'app/terms-of-service.tsx:79']),
   legacy('clipdag.io contacts', '2025 mobile legal hub', 'OWNER_DECISION', 'No address copied; legacy hub remains unchanged', ['app/legal.tsx:237']),
   legacy('age 13+', '2025 and 2026 mobile text', 'OWNER_DECISION', 'No age or parental-consent threshold selected', ['app/terms-of-service.tsx:73', 'app/legal.tsx:39']),
-  legacy('all-data deletion', '2026 mobile policy and terms', 'REMOVE_UNSUPPORTED', 'Settings directs user to support; financial/order records have separate lifecycles', ['app/settings.tsx:225', 'app/terms-of-service.tsx:151']),
-  legacy('settings deletion promise', 'active mobile Settings confirmation', 'REMOVE_UNSUPPORTED', 'Live misleading contradiction: the dialog promises all data, videos and DAG balance deleted, but the action only shows support instructions; requires separate approved UI correction', ['app/settings.tsx:229', 'app/settings.tsx:234']),
+  legacy('all-data deletion', '2026 mobile policy and terms', 'REMOVE_UNSUPPORTED', 'Current Settings makes no complete deletion promise; financial/order records have separate lifecycles', ['app/settings.tsx:228', 'app/terms-of-service.tsx:151']),
+  legacy('settings deletion promise', 'C2 baseline mobile Settings confirmation', 'REMOVE_UNSUPPORTED', 'Historical misleading contradiction documented in C2; C3 replaced both visible Settings prompts with information-only wording', ['shared/legal/RECONCILIATION-C2.md:11', 'app/settings.tsx:228', 'app/account-settings.tsx:177']),
   legacy('0.01 DAG per like', '2025 Monetization hub', 'REMOVE_UNSUPPORTED', 'UI-derived display is not canonical reward authority', ['app/legal.tsx:143', 'contexts/FeedContext.tsx:624']),
   legacy('50 dollar withdrawal threshold', '2025 Monetization hub', 'REMOVE_UNSUPPORTED', 'Payout minimum comes from server configuration, not this legacy claim', ['app/legal.tsx:143', 'supabase/functions/bdag-withdraw/index.ts:287']),
   legacy('10 percent commission', '2025 Monetization hub', 'LEGAL_REVIEW', 'Historical fee setting exists but final contractual rate and applicability unapproved', ['app/legal.tsx:151', 'supabase/migrations/20260801043000_marketplace_mkt_a3c_bdag_payment.sql:17']),

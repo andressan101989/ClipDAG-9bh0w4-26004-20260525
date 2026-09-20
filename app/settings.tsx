@@ -14,6 +14,7 @@ import { getSupabaseClient } from '@/template';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { useI18n, AVAILABLE_LANGUAGES, type Language } from '@/contexts/I18nContext';
+import { accountDeletionNotice } from '@/shared/legal/accountDeletionNotice';
 
 interface BlockedUser {
   id: string;
@@ -224,17 +225,7 @@ export default function SettingsScreen() {
 
   // Delete account
   const handleDeleteAccount = useCallback(() => {
-    showAlert(
-      'Eliminar cuenta',
-      'Esta accion es permanente e irreversible. Todos tus datos, videos y balance DAG seran eliminados.',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Eliminar', style: 'destructive',
-          onPress: () => showAlert('Contacta soporte', 'Solicita la eliminación de tu cuenta desde el Centro de ayuda de Nelyon.'),
-        },
-      ]
-    );
+    showAlert(accountDeletionNotice.title, accountDeletionNotice.message, [{ text: accountDeletionNotice.actionLabel }]);
   }, [showAlert]);
 
   const handleLogout = useCallback(() => {
@@ -471,10 +462,9 @@ export default function SettingsScreen() {
           />
           <SettingsRow
             icon="delete-forever-outline"
-            iconColor={Colors.error}
-            label="Eliminar cuenta"
-            sublabel="Accion permanente e irreversible"
-            danger
+            iconColor={Colors.textSubtle}
+            label={accountDeletionNotice.rowLabel}
+            sublabel={accountDeletionNotice.rowSublabel}
             last
             onPress={handleDeleteAccount}
           />
