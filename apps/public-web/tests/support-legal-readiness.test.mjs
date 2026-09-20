@@ -42,7 +42,19 @@ test('pending legal content is not presentable but an approved fixture resolves 
   assert.equal(result.document.toc.length, document.sections.length);
   assert.deepEqual(getLegalActivationState(fixture, [document, legalDocuments[1]], legalDecisions, 'privacy', 'en'), { state: 'pending' });
   const approvedDecisions = structuredClone(legalDecisions);
-  for (const decision of Object.values(approvedDecisions)) Object.assign(decision, { status: 'approved', value: 'TEST_ONLY approved', source: 'TEST_ONLY owner and legal review', approvedAt: '2030-01-01T00:00:00Z' });
+  for (const decision of Object.values(approvedDecisions)) Object.assign(decision, { status: 'approved', legalReview: 'approved', value: 'TEST_ONLY approved', source: 'TEST_ONLY owner and legal review', approvedAt: '2030-01-01T00:00:00Z' });
+  const noContactIdentity = legalApprovalIdentity(fixture, [document, legalDocuments[1]], approvedDecisions, 'privacy');
+  approvedDecisions.privacyOwnerApproval.value = noContactIdentity;
+  approvedDecisions.privacyLegalApproval.value = noContactIdentity;
+  assert.deepEqual(getLegalActivationState(fixture, [document, legalDocuments[1]], approvedDecisions, 'privacy', 'en'), { state: 'pending' });
+  for (const contactId of ['support', 'privacy', 'legal', 'copyright']) {
+    const email = `${contactId}@example.test`;
+    fixture.contacts[contactId] = { status: 'verified', value: email };
+    approvedDecisions[`${contactId}Contact`].value = email;
+  }
+  const missingAgeProof = structuredClone(approvedDecisions);
+  missingAgeProof.ageEnforcement = structuredClone(legalDecisions.ageEnforcement);
+  assert.deepEqual(getLegalActivationState(fixture, [document, legalDocuments[1]], missingAgeProof, 'privacy', 'en'), { state: 'pending' });
   const identity = legalApprovalIdentity(fixture, [document, legalDocuments[1]], approvedDecisions, 'privacy');
   assert.match(identity, /^sha256:[0-9a-f]{64}$/);
   approvedDecisions.privacyOwnerApproval.value = identity;
@@ -58,8 +70,7 @@ test('pending legal content is not presentable but an approved fixture resolves 
   changedIdentity.legalEntity = 'TEST_ONLY Different Entity';
   assert.deepEqual(getLegalActivationState(changedIdentity, [document, legalDocuments[1]], approvedDecisions, 'privacy', 'en'), { state: 'pending' });
   const changedContact = structuredClone(fixture);
-  changedContact.contacts.support = { status: 'verified', value: 'TEST_ONLY@example.test' };
-  approvedDecisions.supportContact.value = 'TEST_ONLY@example.test';
+  changedContact.contacts.support = { status: 'verified', value: 'changed@example.test' };
   assert.deepEqual(getLegalActivationState(changedContact, [document, legalDocuments[1]], approvedDecisions, 'privacy', 'en'), { state: 'pending' });
   fixture.documents.privacy.status = 'retired';
   assert.deepEqual(getLegalPresentationState(fixture, [document, legalDocuments[1]], 'privacy', 'en'), { state: 'retired' });
@@ -68,10 +79,10 @@ test('pending legal content is not presentable but an approved fixture resolves 
   for (const path of ['app/privacy-policy.tsx', 'app/terms-of-service.tsx', 'app/legal.tsx']) assert.doesNotMatch(source(path), /CanonicalLegalDocument/);
 });
 
-test('one decision registry remains unresolved and cannot accidentally approve legal content', () => {
+test('one decision registry distinguishes owner policy from legal approval and cannot accidentally activate', () => {
   assert.doesNotThrow(() => validateLegalDecisions(legalDecisions));
-  assert.equal(legalDecisionIds.length, 30);
-  assert.ok(Object.values(legalDecisions).every((decision) => decision.status === 'unresolved' && decision.value === null && decision.source === null && decision.approvedAt === null));
+  assert.equal(legalDecisionIds.length, 31);
+  assert.ok(Object.values(legalDecisions).every((decision) => decision.status !== 'approved' && decision.legalReview === 'pending' && decision.approvedAt === null));
   const invalid = structuredClone(legalDecisions);
   invalid.legalEntity.status = 'approved';
   assert.throws(() => validateLegalDecisions(invalid), /approval_incomplete/);
@@ -84,7 +95,7 @@ test('a verified contact still requires a matching owner/legal decision', () => 
   fixture.contacts.support = { status: 'verified', value: 'TEST_ONLY@example.test' };
   assert.equal(getApprovedLegalContact(fixture, legalDecisions, 'support'), null);
   const decisions = structuredClone(legalDecisions);
-  decisions.supportContact = { status: 'approved', value: 'wrong@example.test', source: 'TEST_ONLY', approvedAt: '2030-01-01T00:00:00Z' };
+  decisions.supportContact = { status: 'approved', legalReview: 'approved', value: 'wrong@example.test', source: 'TEST_ONLY', approvedAt: '2030-01-01T00:00:00Z' };
   assert.equal(getApprovedLegalContact(fixture, decisions, 'support'), null);
   decisions.supportContact.value = 'TEST_ONLY@example.test';
   assert.equal(getApprovedLegalContact(fixture, decisions, 'support'), 'TEST_ONLY@example.test');

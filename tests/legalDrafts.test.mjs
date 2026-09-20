@@ -38,7 +38,7 @@ test('a status flip cannot publish an explicitly unapproved draft version', () =
   flipped.jurisdiction = 'TEST_ONLY Jurisdiction';
   flipped.address = 'TEST_ONLY Address';
   flipped.documents.privacy = {
-    status: 'approved', version: 'draft-c2-unapproved', effectiveDate: '2030-01-01',
+    status: 'approved', version: 'draft-c4-unapproved', effectiveDate: '2030-01-01',
     lastUpdated: '2030-01-01', availableLocales: ['en'],
   };
   assert.throws(() => resolveLegalDocument(flipped, legalDocuments, 'privacy', 'en'), /draft_unapproved/);
@@ -71,7 +71,8 @@ test('privacy categories, providers and financial claims are evidence-linked and
   }
   assert.ok(privacyDataMatrix.every((item) => item.retention === null));
   const text = legalDocuments.flatMap((document) => document.sections.flatMap((section) => section.blocks.flatMap((block) => block.type === 'paragraph' ? [block.text] : block.type === 'list' ? block.items : []))).join(' ');
-  assert.doesNotMatch(text, /@(?:clipdag\.io|onspace\.ai|nelyon\.app)|0\.01\s*\$?DAG|\$50|10%|85\s*\/\s*15|7[- ]day|seven[- ]day|2FA|24\/7|regular audits|30[- ]day|binding arbitration|13\+|all (?:user )?data (?:is |always )?deleted/i);
+  assert.doesNotMatch(text, /@(?:clipdag\.io|onspace\.ai|nelyon\.app)|0\.01\s*\$?DAG|\$50|10%|85\s*\/\s*15|7[- ]day|seven[- ]day|2FA|24\/7|regular audits|binding arbitration|13\+|all (?:user )?data (?:is |always )?deleted/i);
+  assert.match(text, /informal resolution for 30 days after valid notice/i);
   assert.doesNotMatch(text, /guaranteed|end-to-end encrypted|not redeemable for cash|governed by the laws of/i);
   assert.ok(providerMatrix.some((item) => item.provider === 'Supabase'));
   assert.ok(providerMatrix.some((item) => item.provider === 'Cloudflare' && /Workers AI/.test(item.use) && /configuration/.test(item.caveat)));
