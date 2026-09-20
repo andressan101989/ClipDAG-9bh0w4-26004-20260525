@@ -79,7 +79,10 @@ export default function TwoFactorScreen() {
   const handleSendOTP = useCallback(async () => {
     if (!user?.email) return;
     setSending(true);
-    const { error } = await supabase.auth.signInWithOtp({ email: user.email });
+    const { error } = await supabase.auth.signInWithOtp({
+      email: user.email,
+      options: { shouldCreateUser: false },
+    });
     setSending(false);
     if (error) {
       showAlert('Error', error.message);

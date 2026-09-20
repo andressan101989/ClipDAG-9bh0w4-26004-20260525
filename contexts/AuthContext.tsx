@@ -15,6 +15,7 @@ import React, {
   createContext, useState, useCallback, useEffect, useRef, ReactNode,
 } from 'react';
 import { getSupabaseClient } from '@/template';
+import { signupErrorMessage, signupMetadata } from '@/utils/signupDob';
 import { PresenceManager }   from '@/modules/realtime/PresenceManager';
 import {
   deactivateCurrentCallDevice,
@@ -49,7 +50,7 @@ interface AuthContextType {
   isAuthenticated:  boolean;
   followedUsers:    Set<string>;
   login:            (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  register:         (email: string, password: string, username: string) => Promise<{ success: boolean; error?: string }>;
+  register:         (email: string, password: string, username: string, dateOfBirth: string) => Promise<{ success: boolean; error?: string }>;
   logout:           () => Promise<void>;
   updateProfile:    (updates: Partial<AppUser>) => Promise<void>;
   updateDAGBalance: (newBalance: number) => void;
@@ -291,18 +292,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const register = useCallback(async (email: string, password: string, username: string) => {
+  const register = useCallback(async (email: string, password: string, username: string, dateOfBirth: string) => {
     const supabase = supabaseRef.current;
     if (!supabase) return { success: false, error: 'Backend unavailable' };
-    if (!email || !password || !username)
+    if (!email || !password || !username || !dateOfBirth)
       return { success: false, error: 'Todos los campos son requeridos' };
     if (password.length < 6)
       return { success: false, error: 'La contrasena debe tener al menos 6 caracteres' };
     try {
       const { data, error } = await supabase.auth.signUp({
-        email, password, options: { data: { username } },
+        email, password, options: { data: signupMetadata(username, dateOfBirth) },
       });
-      if (error) return { success: false, error: error.message };
+      if (error) return {
+        success: false,
+        error: signupErrorMessage(error.message),
+      };
       if (data.user) {
         await supabase.from('user_profiles')
           .update({ username }).eq('id', data.user.id);

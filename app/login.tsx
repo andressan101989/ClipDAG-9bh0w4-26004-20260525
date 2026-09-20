@@ -7,11 +7,13 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useAuth } from '@/hooks/useAuth';
 import { useAlert } from '@/template';
 import { CyberButton } from '@/components/ui/CyberButton';
 import { NelyonLogo } from '@/components/ui/NelyonLogo';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
+import { formatLocalCalendarDate, validateSignupDob } from '@/utils/signupDob';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -25,6 +27,8 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [username, setUsername] = useState('');
+  const [dateOfBirth, setDateOfBirth] = useState('');
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   // ─── Login ────────────────────────────────────────────────────────────────
@@ -45,8 +49,12 @@ export default function LoginScreen() {
 
   // ─── Register ─────────────────────────────────────────────────────────────
   const handleRegister = async () => {
-    if (!email.trim() || !password || !username.trim()) {
+    if (!email.trim() || !password || !username.trim() || !dateOfBirth.trim()) {
       showAlert('Campos requeridos', 'Completa todos los campos');
+      return;
+    }
+    if (validateSignupDob(dateOfBirth)) {
+      showAlert('Fecha inválida', 'Ingresa una fecha de nacimiento válida en formato AAAA-MM-DD.');
       return;
     }
     if (password.length < 6) {
@@ -59,7 +67,7 @@ export default function LoginScreen() {
     }
 
     setIsLoading(true);
-    const result = await register(email.trim().toLowerCase(), password, username.trim());
+    const result = await register(email.trim().toLowerCase(), password, username.trim(), dateOfBirth);
     setIsLoading(false);
 
     if (!result.success) {
@@ -130,6 +138,51 @@ export default function LoginScreen() {
                 autoCapitalize="none"
                 autoCorrect={false}
               />
+            ) : null}
+
+            {mode === 'register' ? (
+              <View>
+                <Text style={styles.dobLabel}>Fecha de nacimiento</Text>
+                {Platform.OS === 'web' ? (
+                  <TextInput
+                    style={styles.input}
+                    value={dateOfBirth}
+                    onChangeText={setDateOfBirth}
+                    placeholder="AAAA-MM-DD"
+                    placeholderTextColor={Colors.textSubtle}
+                    keyboardType="numbers-and-punctuation"
+                    maxLength={10}
+                  />
+                ) : (
+                  <Pressable style={styles.input} onPress={() => setShowDatePicker(true)} accessibilityRole="button">
+                    <Text style={dateOfBirth ? styles.dobValue : styles.dobPlaceholder}>
+                      {dateOfBirth || 'Selecciona tu fecha de nacimiento'}
+                    </Text>
+                  </Pressable>
+                )}
+                {showDatePicker && Platform.OS !== 'web' ? (
+                  <View>
+                    <DateTimePicker
+                      value={dateOfBirth
+                        ? new Date(Number(dateOfBirth.slice(0, 4)), Number(dateOfBirth.slice(5, 7)) - 1, Number(dateOfBirth.slice(8, 10)))
+                        : new Date(2000, 0, 1)}
+                      mode="date"
+                      maximumDate={new Date()}
+                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      onChange={(event, selectedDate) => {
+                        if (Platform.OS !== 'ios') setShowDatePicker(false);
+                        if (event.type === 'set' && selectedDate) setDateOfBirth(formatLocalCalendarDate(selectedDate));
+                      }}
+                    />
+                    {Platform.OS === 'ios' ? (
+                      <Pressable onPress={() => setShowDatePicker(false)} accessibilityRole="button">
+                        <Text style={styles.dobDone}>Listo</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ) : null}
+                <Text style={styles.dobNotice}>Debes tener 18 años o más para crear una cuenta en Nelyon.</Text>
+              </View>
             ) : null}
 
             <TextInput
@@ -251,6 +304,11 @@ const styles = StyleSheet.create({
     fontSize: FontSize.md,
     height: 52,
   },
+  dobLabel: { color: Colors.textPrimary, fontSize: FontSize.sm, marginBottom: Spacing.xs },
+  dobValue: { color: Colors.textPrimary, fontSize: FontSize.md },
+  dobPlaceholder: { color: Colors.textSubtle, fontSize: FontSize.md },
+  dobDone: { color: Colors.primary, fontSize: FontSize.md, textAlign: 'right', padding: Spacing.sm },
+  dobNotice: { color: Colors.textSecondary, fontSize: FontSize.xs, marginTop: Spacing.xs },
   web3Note: {
     flexDirection: 'row',
     alignItems: 'flex-start',

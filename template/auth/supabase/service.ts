@@ -142,7 +142,7 @@ export class AuthService {
 
   async sendOTP(email: string, options: SendOTPOptions = {}) {
     try {
-      const { shouldCreateUser = true, emailRedirectTo } = options;
+      const { shouldCreateUser = false, emailRedirectTo } = options;
       
       return await safeSupabaseOperation(async (client) => {
         const { error } = await withTimeout(
