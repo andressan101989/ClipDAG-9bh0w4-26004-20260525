@@ -6,7 +6,7 @@ import '../styles/download.css';
 
 const hasStoreLink = Boolean(storeLinks.ios || storeLinks.android);
 ---
-<PublicLayout title="Download Nelyon" description="Find the official Nelyon app links when they become available, and explore the connected experience and Business workspace.">
+<PublicLayout>
   <section class="download-hero" aria-labelledby="download-heading">
     <div class="download-aura" aria-hidden="true"></div>
     <div class="download-container download-hero-grid">
@@ -20,7 +20,7 @@ const hasStoreLink = Boolean(storeLinks.ios || storeLinks.android);
           <a class="button button-ghost" href={publicCtas.businessHome}>Open Nelyon Business</a>
         </div>
       </div>
-      <div class="download-media" aria-label="Illustrative Nelyon creator feed preview">
+      <div class="download-media" role="group" aria-label="Illustrative Nelyon creator feed preview">
         <div class="download-device">
           <div class="download-device-top" aria-hidden="true"><span></span><strong>For You</strong><span></span></div>
           <picture>

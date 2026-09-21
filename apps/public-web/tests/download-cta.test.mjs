@@ -14,7 +14,7 @@ test('download has a dedicated public page and an honest unavailable-store state
   assert.match(page, /storeLinks\.android/);
   assert.match(page, /Store links will be available here/);
   assert.doesNotMatch(page, /apps\.apple\.com|play\.google\.com/);
-  assert.match(source('pages/[...path].astro'), /path !== '\/download'/);
+  assert.doesNotMatch(source('pages/[...path].astro'), /download/);
 });
 
 test('public destinations have one CTA authority and no session logic', () => {

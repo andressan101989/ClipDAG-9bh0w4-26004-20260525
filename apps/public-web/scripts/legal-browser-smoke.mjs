@@ -43,7 +43,10 @@ try {
       }
     }
   }
-  const errors = results.filter((x) => x.scrollWidth > x.width || x.h1 !== 1 || x.main !== 1 || x.nav < 1 || x.footer !== 1 || x.brokenImages || x.missingAlt || x.robots !== 'noindex,nofollow' || x.leak);
+  const errors = results.filter((x) => {
+    const expectedRobots = x.route === '/privacy' || x.route === '/terms' ? 'noindex,nofollow' : 'index,follow';
+    return x.scrollWidth > x.width || x.h1 !== 1 || x.main !== 1 || x.nav < 1 || x.footer !== 1 || x.brokenImages || x.missingAlt || x.robots !== expectedRobots || x.leak;
+  });
   console.log(JSON.stringify({ output, results, errors }, null, 2));
   if (errors.length) process.exitCode = 1;
 } finally { socket?.close(); browser.kill(); }

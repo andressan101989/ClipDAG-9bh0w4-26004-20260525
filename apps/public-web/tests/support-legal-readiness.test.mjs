@@ -16,7 +16,8 @@ test('Support and Contact use dedicated pages and factual internal navigation', 
     assert.ok(present(`apps/public-web/src/pages/${route}.astro`));
   }
   const shell = source('apps/public-web/src/pages/[...path].astro');
-  assert.match(shell, /!dedicatedRoutes\.includes/);
+  assert.match(shell, /legacyStaticRedirects/);
+  assert.doesNotMatch(shell, /support|contact|privacy|terms/);
   assert.ok(supportTopics.length >= 5);
   for (const topic of supportTopics) {
     assert.ok(topic.questions.length > 0);

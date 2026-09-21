@@ -50,7 +50,7 @@ try {
   await send('Page.navigate',{url:`${base}/live`});
   await wait(400);
   const reduced=await evaluate('({hero:getComputedStyle(document.querySelector(".product-hero h1")).animationName,media:getComputedStyle(document.querySelector(".product-hero-image")).animationName})');
-  const errors=results.filter(item=>item.scrollWidth>item.width||item.lang!=='en'||item.h1!==1||item.main!==1||item.nav<1||item.footer!==1||item.brokenImages.length||item.missingAlt.length||!item.description||!item.canonical.endsWith(`/${item.route}`)||item.robots!=='noindex,nofollow');
+  const errors=results.filter(item=>item.scrollWidth>item.width||item.lang!=='en'||item.h1!==1||item.main!==1||item.nav<1||item.footer!==1||item.brokenImages.length||item.missingAlt.length||!item.description||!item.canonical.endsWith(`/${item.route}`)||item.robots!=='index,follow');
   console.log(JSON.stringify({out,checked:results.length,errors:errors.map(({route,width,scrollWidth,canonical,brokenImages,missingAlt})=>({route,width,scrollWidth,canonical,brokenImages,missingAlt})),reduced,screenshots:routes.flatMap(route=>[`${route}-390.png`,`${route}-1440.png`])},null,2));
   if(errors.length||reduced.hero!=='none'||reduced.media!=='none')process.exitCode=1;
 } finally { socket?.close(); browser.kill(); }

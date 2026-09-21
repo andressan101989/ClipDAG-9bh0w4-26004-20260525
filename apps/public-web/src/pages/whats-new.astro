@@ -9,7 +9,7 @@ import '../styles/updates.css';
 const { items, featured } = await getPublishedUpdates();
 const kind = (category: string) => category === 'LIVE' ? 'live' : category === 'Business' ? 'analytics' : 'product';
 ---
-<PublicLayout title="What’s New" description="Explore Nelyon product previews and updates, with a clear availability status for every story.">
+<PublicLayout>
   <section class="editorial-hero" aria-labelledby="updates-page-title">
     <div class="editorial-container"><span class="section-pill pill-dark">Nelyon journal</span><h1 id="updates-page-title">What’s New</h1><p>Explore the ideas and product surfaces shaping Nelyon. Every story states its availability clearly.</p></div>
   </section>

@@ -12,7 +12,7 @@ const contactTypes = [
 ] as const;
 const contacts = contactTypes.map((item) => ({ ...item, address: getApprovedLegalContact(legalManifest, legalDecisions, item.id) }));
 ---
-<PublicLayout title="Contact Nelyon" description="Check verified Nelyon contact channels and find public guidance while launch details are being finalized.">
+<PublicLayout>
   <div class="help-page">
     <section class="help-hero" aria-labelledby="contact-title"><div class="help-container"><span class="help-eyebrow">Nelyon Contact</span><h1 id="contact-title">The right channel, when verified.</h1><p>We only publish official contact details after they are confirmed. This page does not send a message or create a support request.</p></div></section>
     <section class="help-content" aria-label="Contact channels"><div class="help-container">

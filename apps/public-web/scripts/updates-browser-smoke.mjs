@@ -60,5 +60,5 @@ try {
   }
   const statuses = Object.fromEntries(await Promise.all(['/whats-new', ...paths.slice(1), '/whats-new/not-a-story'].map(async (path) => [path, (await fetch(base + path)).status])));
   console.log(JSON.stringify({ out, results, statuses }, null, 2));
-  if (results.some((item) => item.scrollWidth > item.width || item.h1 !== 1 || item.main !== 1 || item.brokenImages.length || item.missingAlt.length || item.noindex !== 'noindex,nofollow' || !item.canonical || (item.path.includes('preview') && item.article !== 1)) || statuses['/whats-new/not-a-story'] !== 404 || Object.entries(statuses).some(([path, status]) => path !== '/whats-new/not-a-story' && status !== 200)) process.exitCode = 1;
+  if (results.some((item) => item.scrollWidth > item.width || item.h1 !== 1 || item.main !== 1 || item.brokenImages.length || item.missingAlt.length || item.noindex !== 'index,follow' || !item.canonical || (item.path.includes('preview') && item.article !== 1)) || statuses['/whats-new/not-a-story'] !== 404 || Object.entries(statuses).some(([path, status]) => path !== '/whats-new/not-a-story' && status !== 200)) process.exitCode = 1;
 } finally { socket?.close(); browser.kill(); }

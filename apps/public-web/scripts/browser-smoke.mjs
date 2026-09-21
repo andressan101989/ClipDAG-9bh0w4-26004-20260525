@@ -98,7 +98,7 @@ try {
       '(async()=>{await Promise.race([document.fonts.ready,new Promise(r=>setTimeout(r,3000))]);document.querySelectorAll("img[loading=lazy]").forEach(i=>i.loading="eager");await Promise.race([Promise.all(Array.from(document.images,im=>im.decode().catch(()=>{}))),new Promise(r=>setTimeout(r,6000))]);document.querySelectorAll("[data-reveal]").forEach(i=>i.classList.add("is-visible"));window.scrollTo(0,0)})()',
     );
     const metrics = await evaluate(
-      '({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight,h1:document.querySelectorAll("h1").length,brokenImages:Array.from(document.images).filter(i=>i.complete&&i.naturalWidth===0).map(i=>i.src),overflow:Array.from(document.querySelectorAll("body *")).filter(el=>el.getBoundingClientRect().right>innerWidth+2&&!el.closest(".hero")).slice(0,8).map(el=>({name:el.className||el.tagName,right:Math.round(el.getBoundingClientRect().right)}))})',
+      '({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight,h1:document.querySelectorAll("h1").length,brokenImages:Array.from(document.images).filter(i=>i.complete&&i.naturalWidth===0).map(i=>i.src),overflow:Array.from(document.querySelectorAll("body *")).filter(el=>el.getBoundingClientRect().right>innerWidth+2&&!el.closest(".hero")).slice(0,8).map(el=>({name:el.className||el.tagName,parent:el.parentElement?.className,id:el.id,text:el.textContent?.trim().slice(0,80),left:Math.round(el.getBoundingClientRect().left),right:Math.round(el.getBoundingClientRect().right),width:Math.round(el.getBoundingClientRect().width)}))})',
     );
     results.push(metrics);
     if ([390, 768, 1280, 1440].includes(width)) {

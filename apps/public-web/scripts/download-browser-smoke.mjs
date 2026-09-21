@@ -46,7 +46,7 @@ try {
   if (!await evaluate("location.pathname === '/download' && document.readyState === 'complete'")) throw new Error('Menu test navigation did not complete');
   const menu = await evaluate(`(()=>{const button=document.querySelector('[data-menu-toggle]');button.click();const opened=button.getAttribute('aria-expanded')==='true';document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));return {opened,closed:button.getAttribute('aria-expanded')==='false',focusRestored:document.activeElement===button}})()`);
   const statuses = Object.fromEntries(await Promise.all(['/download', '/business', '/ads'].map(async (path) => [path, (await fetch(base + path)).status])));
-  const errors = results.filter((item) => item.scrollWidth > item.width || item.h1 !== 1 || item.main !== 1 || item.nav < 1 || item.footer !== 1 || item.brokenImages.length || item.missingAlt.length || item.robots !== 'noindex,nofollow' || item.canonical !== 'https://nelyon.app/download' || item.storeLinks !== 0 || item.businessLink < 1);
+  const errors = results.filter((item) => item.scrollWidth > item.width || item.h1 !== 1 || item.main !== 1 || item.nav < 1 || item.footer !== 1 || item.brokenImages.length || item.missingAlt.length || item.robots !== 'index,follow' || item.canonical !== 'https://nelyon.app/download' || item.storeLinks !== 0 || item.businessLink < 1);
   console.log(JSON.stringify({ out, results, menu, statuses, errors: errors.length }, null, 2));
   if (errors.length || !menu.opened || !menu.closed || !menu.focusRestored || Object.values(statuses).some((status) => status !== 200)) process.exitCode = 1;
 } finally { socket?.close(); browser.kill(); }

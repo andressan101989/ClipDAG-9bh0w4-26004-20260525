@@ -11,7 +11,8 @@ const privatePaths = new Set(['/business/home', '/business/login', '/business/ad
 
 for (const route of routes) {
   const html = readPage(`${route}.html`);
-  assert.match(html, /name="robots" content="noindex,nofollow"/);
+  const robots = route === 'privacy' || route === 'terms' ? 'noindex,nofollow' : 'index,follow';
+  assert.match(html, new RegExp(`name="robots" content="${robots}"`));
   assert.equal((html.match(/<h1\b/g) ?? []).length, 1, `${route}: H1`);
   assert.match(html, /<main\b/);
   assert.match(html, /<nav\b/);
@@ -29,7 +30,7 @@ for (const route of routes) {
 }
 
 const download = readPage('download.html');
-assert.match(download, /<title>Download Nelyon · Nelyon<\/title>/);
+assert.match(download, /<title>Download Nelyon<\/title>/);
 assert.match(download, /href="https:\/\/nelyon\.app\/download"/);
 assert.match(download, /Store links will be available here/);
 assert.doesNotMatch(download, /href="https:\/\/(?:apps\.apple\.com|play\.google\.com)/);

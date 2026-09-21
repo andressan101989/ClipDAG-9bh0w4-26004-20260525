@@ -3,7 +3,7 @@
   --navy: #0c1f4f;
   --navy-deep: #0d1528;
   --blue: #123b9e;
-  --accent: #1f79ff;
+  --accent: #0965d6;
   --surface: #f5f7fa;
   --ink: #121b2e;
   --muted: #5f6c81;
@@ -49,7 +49,10 @@ img {
   max-width: 100%;
 }
 a:focus-visible,
-button:focus-visible {
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
   outline: 3px solid #80b9ff;
   outline-offset: 4px;
 }
@@ -128,6 +131,12 @@ button:focus-visible {
 .desktop-nav a:hover,
 .mobile-menu a:hover {
   color: #82bdff;
+}
+.desktop-nav a[aria-current="page"],
+.mobile-menu a[aria-current="page"] {
+  color: #a9d5ff;
+  text-decoration: underline;
+  text-underline-offset: 0.35em;
 }
 .header-actions {
   display: flex;
@@ -413,10 +422,12 @@ button:focus-visible {
   html {
     scroll-behavior: auto;
   }
-  .site-header,
-  .button,
-  .desktop-nav a,
-  .mobile-menu a {
-    transition: none !important;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }

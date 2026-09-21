@@ -11,7 +11,7 @@ import '../styles/home.css';
 const media = '/media/home';
 const updates = (await getPublishedUpdates()).items.slice(0, 3);
 ---
-<PublicLayout title="Nelyon — Connect. Create. Go LIVE. Grow." description="Nelyon brings social discovery, creators, LIVE, commerce and business tools together in one connected ecosystem.">
+<PublicLayout>
   <section class="hero section-dark" id="hero" aria-labelledby="hero-title">
     <div class="hero-aurora" aria-hidden="true"></div>
     <div class="hero-stars" aria-hidden="true"></div>
@@ -22,7 +22,7 @@ const updates = (await getPublishedUpdates()).items.slice(0, 3);
         <p>Social, creators, LIVE, commerce and business tools — connected in one Nelyon experience.</p>
         <div class="hero-actions"><a class="button button-primary" href="#ecosystem">Explore Nelyon</a><a class="button button-ghost" href={publicCtas.businessHome}>Open Nelyon Business</a></div>
       </div>
-      <div class="hero-showcase" aria-label="Illustrative Nelyon ecosystem preview">
+      <div class="hero-showcase" role="group" aria-label="Illustrative Nelyon ecosystem preview">
         <div class="hero-phone device-frame">
           <div class="phone-screen">
             <div class="phone-nav"><span>Following</span><strong>For You</strong></div>
@@ -38,7 +38,7 @@ const updates = (await getPublishedUpdates()).items.slice(0, 3);
           <img src={`${media}/studio-light-440.webp`} width="440" height="440" alt="" />
           <strong>Studio light kit</strong><small>42 BDAG · demo</small>
         </div>
-        <div class="hero-business-card floating-card" aria-label="Illustrative Business analytics demo">
+        <div class="hero-business-card floating-card" role="img" aria-label="Illustrative Business analytics demo">
           <span>Nelyon Business</span><strong>Analytics in motion</strong>
           <div class="hero-business-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
           <small>Demo data</small>
@@ -112,10 +112,10 @@ const updates = (await getPublishedUpdates()).items.slice(0, 3);
   <section class="feature-section business-section section-dark" id="business-tools" aria-labelledby="business-title">
     <div class="section-container split-grid">
       <div class="feature-copy" data-reveal><span class="section-pill pill-dark">Nelyon Business + Ads</span><h2 id="business-title">Grow inside one ecosystem.</h2><p class="section-lead">Products, campaigns, Analytics, Finance and Team come together in one secure Business workspace.</p><a class="button button-primary" href={publicCtas.businessHome}>Open Nelyon Business</a></div>
-      <div class="business-preview feature-visual" data-reveal aria-label="Illustrative Nelyon Business overview with demo data">
+      <div class="business-preview feature-visual" data-reveal role="group" aria-label="Illustrative Nelyon Business overview with demo data">
         <div class="business-preview-head"><strong>Business overview</strong><span>Demo data</span></div>
         <div class="business-metrics"><div><span>GMV</span><strong>18.2K</strong></div><div><span>Orders</span><strong>284</strong></div><div><span>ROAS</span><strong>4.8×</strong></div></div>
-        <div class="business-chart" aria-label="Illustrative rising trend chart"><svg viewBox="0 0 600 180" preserveAspectRatio="none" role="img" aria-hidden="true"><path d="M8 151 C80 125 130 137 205 105 S310 58 385 57 S490 51 592 15" /></svg></div>
+        <div class="business-chart" role="img" aria-label="Illustrative rising trend chart"><svg viewBox="0 0 600 180" preserveAspectRatio="none" aria-hidden="true"><path d="M8 151 C80 125 130 137 205 105 S310 58 385 57 S490 51 592 15" /></svg></div>
         <div class="business-placement"><span>Ads placements</span><p>Marketplace Home &nbsp; • &nbsp; Search &nbsp; • &nbsp; Social Feed</p></div>
       </div>
     </div>

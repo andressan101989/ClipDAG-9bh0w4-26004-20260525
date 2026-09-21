@@ -4,13 +4,15 @@ import test from 'node:test';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
-test('public foundation is static, noindex during shell phase and uses official branding', () => {
+test('public foundation is static, centrally indexed and uses official branding', () => {
   const config = read('../astro.config.mjs');
   const layout = read('../src/layouts/PublicLayout.astro');
+  const seo = read('../src/lib/seo.ts');
   const shell = read('../src/pages/[...path].astro');
   assert.match(config, /output:\s*'static'/);
   assert.match(config, /site:\s*'https:\/\/nelyon\.app'/);
-  assert.match(layout, /noindex,nofollow/);
+  assert.match(layout, /seo\.indexable \? 'index,follow' : 'noindex,nofollow'/);
+  assert.match(seo, /PUBLIC_ORIGIN = 'https:\/\/nelyon\.app'/);
   assert.match(layout, /nelyon-wordmark-on-dark\.png/);
   assert.match(shell, /getStaticPaths/);
   assert.ok(existsSync(new URL('../src/pages/404.astro', import.meta.url)));

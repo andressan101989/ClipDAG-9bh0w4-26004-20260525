@@ -15,7 +15,7 @@ const slugs = eligible.map((item) => item.slug);
 const index = read('whats-new.html');
 const home = read('index.html');
 assert.match(index, /<h1[^>]*>What’s New<\/h1>/);
-assert.match(index, /noindex,nofollow/);
+assert.match(index, /name="robots" content="index,follow"/);
 assert.match(index, /https:\/\/nelyon\.app\/whats-new/);
 assert.match(index, /og:description/);
 const chronology = index.slice(index.indexOf('Latest updates'));
@@ -28,7 +28,7 @@ for (const slug of slugs) {
   const html = read(path);
   assert.match(html, /<article\b/);
   assert.equal((html.match(/<h1\b/g) ?? []).length, 1);
-  assert.match(html, /noindex,nofollow/);
+  assert.match(html, /name="robots" content="index,follow"/);
   assert.match(html, new RegExp(`https://nelyon\\.app/whats-new/${slug}`));
   assert.match(html, /application\/ld\+json/);
   assert.match(html, /datePublished/);

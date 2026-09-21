@@ -10,8 +10,6 @@ export type ProductSection = {
 };
 
 export type ProductPageContent = {
-  pageTitle: string;
-  description: string;
   eyebrow: string;
   headline: string;
   lead: string;
@@ -31,8 +29,6 @@ const media = '/media/home';
 
 export const productPages: Record<'features' | 'business' | 'ads' | 'marketplace' | 'creators' | 'live', ProductPageContent> = {
   features: {
-    pageTitle: 'Features',
-    description: 'Explore how social discovery, creators, LIVE, Marketplace and Business connect in Nelyon.',
     eyebrow: 'The Nelyon ecosystem',
     headline: 'One place to discover what moves you.',
     lead: 'A connected experience for content, people, LIVE and commerce — with tools for the businesses behind it.',
@@ -46,8 +42,6 @@ export const productPages: Record<'features' | 'business' | 'ads' | 'marketplace
     closing: { title: 'Find your way into Nelyon.', body: 'Explore the ecosystem, or open the workspace built for businesses.', cta: { label: 'Discover Nelyon Business', href: publicCtas.business } },
   },
   business: {
-    pageTitle: 'Nelyon Business',
-    description: 'A dedicated workspace for Nelyon products, orders, Ads, media, Analytics, Finance and Team.',
     eyebrow: 'Nelyon Business',
     headline: 'Build your business inside the ecosystem.',
     lead: 'A dedicated, access-controlled workspace for your store, campaigns, operations and insights — connected to Nelyon.',
@@ -61,8 +55,6 @@ export const productPages: Record<'features' | 'business' | 'ads' | 'marketplace
     closing: { title: 'Your business has a home in Nelyon.', body: 'Sign in to the private workspace. Your account and permissions determine what you can access.', cta: { label: 'Open Nelyon Business', href: publicCtas.businessHome } },
   },
   ads: {
-    pageTitle: 'Nelyon Ads',
-    description: 'Discover Nelyon Ads placements across Marketplace and Social Feed, managed from Nelyon Business.',
     eyebrow: 'Nelyon Ads',
     headline: 'Meet people in the moments that matter.',
     lead: 'Create product-focused campaigns for placements inside Nelyon, then manage and review them in the private Business workspace.',
@@ -76,8 +68,6 @@ export const productPages: Record<'features' | 'business' | 'ads' | 'marketplace
     closing: { title: 'Ads belong to the bigger picture.', body: 'Use the private Ads Manager to work with your campaigns and available reporting.', cta: { label: 'Open Ads Manager', href: publicCtas.businessAds } },
   },
   marketplace: {
-    pageTitle: 'Marketplace',
-    description: 'Discover products, stores and creator-connected commerce within the Nelyon ecosystem.',
     eyebrow: 'Nelyon Marketplace',
     headline: 'Discover more than a product.',
     lead: 'Explore products in a world already shaped by people, content and creators. Marketplace is part of Nelyon, not a separate destination.',
@@ -91,8 +81,6 @@ export const productPages: Record<'features' | 'business' | 'ads' | 'marketplace
     closing: { title: 'Commerce, in context.', body: 'Learn how businesses manage the products behind the experience.', cta: { label: 'Explore Nelyon Business', href: publicCtas.business } },
   },
   creators: {
-    pageTitle: 'Creators',
-    description: 'Explore creator profiles, content, community and connected LIVE and commerce experiences on Nelyon.',
     eyebrow: 'Creators on Nelyon',
     headline: 'Make space for your point of view.',
     lead: 'A profile, content and community can move with you across discovery, LIVE and product moments in Nelyon.',
@@ -106,8 +94,6 @@ export const productPages: Record<'features' | 'business' | 'ads' | 'marketplace
     closing: { title: 'Keep creating. Keep connecting.', body: 'Discover the different ways creators can be part of the Nelyon ecosystem.', cta: { label: 'Explore all features', href: publicCtas.features } },
   },
   live: {
-    pageTitle: 'LIVE',
-    description: 'Explore Nelyon LIVE experiences, real-time interaction and creator Battles.',
     eyebrow: 'Nelyon LIVE',
     headline: 'A moment feels different when you are there.',
     lead: 'Join real-time creator experiences, participate with reactions and see how Battles bring two LIVE worlds together.',

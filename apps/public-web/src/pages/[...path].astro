@@ -1,46 +1,22 @@
 ---
-import PublicLayout from '../layouts/PublicLayout.astro';
-import { legacyStaticRedirects, publicRoutes } from '../lib/routeContract.mjs';
-import { productPageSlugs } from '../data/productPages';
-import { publicCtas } from '../lib/publicCtas';
+import { legacyStaticRedirects } from '../lib/routeContract.mjs';
 
 export function getStaticPaths() {
-  const dedicatedRoutes: string[] = [publicCtas.support, publicCtas.contact, publicCtas.privacy, publicCtas.terms];
-  const titles: Record<string, string> = {
-    '/features': 'Features', '/business': 'Nelyon Business', '/ads': 'Nelyon Ads',
-    '/marketplace': 'Marketplace', '/creators': 'Creators', '/live': 'LIVE',
-    '/download': 'Download', '/support': 'Support',
-    '/contact': 'Contact', '/privacy': 'Privacy', '/terms': 'Terms',
-  };
-  const pages = publicRoutes.filter((path) => path !== '/' && path !== '/whats-new' && path !== '/download' && !dedicatedRoutes.includes(path) && !productPageSlugs.includes(path.slice(1))).map((path) => ({
-    params: { path: path.slice(1) }, props: { title: titles[path], destination: null },
-  }));
   const redirects = Object.entries(legacyStaticRedirects).map(([path, destination]) => ({
-    params: { path: path.slice(1) }, props: { title: null, destination },
+    params: { path: path.slice(1) }, props: { destination },
   }));
-  return [...pages, ...redirects];
+  return redirects;
 }
 
-const { title, destination } = Astro.props;
+const { destination } = Astro.props;
 ---
-{destination ? (
-  <html lang="es" data-legacy-destination={destination}>
-    <head><meta charset="utf-8" /><meta name="robots" content="noindex,nofollow" /><title>Redirigiendo · Nelyon</title></head>
-    <body>
-      <p>Esta dirección se movió a <a href={destination}>{destination}</a>.</p>
-      <script is:inline>
-        const destination = document.documentElement.dataset.legacyDestination;
-        if (destination) window.location.replace(destination + window.location.search + window.location.hash);
-      </script>
-    </body>
-  </html>
-) : (
-  <PublicLayout title={title} description={`${title} forma parte del ecosistema Nelyon.`}>
-    <section class="shell">
-      <p class="eyebrow">Nelyon · Public Web foundation</p>
-      <h1>{title}</h1>
-      <p>Esta sección pública está reservada para la implementación visual y editorial posterior. No es un panel privado.</p>
-      {Astro.url.pathname === publicCtas.business && <a class="primary-action" href={publicCtas.businessHome}>Open Nelyon Business</a>}
-    </section>
-  </PublicLayout>
-)}
+<html lang="es" data-legacy-destination={destination}>
+  <head><meta charset="utf-8" /><meta name="robots" content="noindex,nofollow" /><title>Redirigiendo · Nelyon</title></head>
+  <body>
+    <p>Esta dirección se movió a <a href={destination}>{destination}</a>.</p>
+    <script is:inline>
+      const destination = document.documentElement.dataset.legacyDestination;
+      if (destination) window.location.replace(destination + window.location.search + window.location.hash);
+    </script>
+  </body>
+</html>

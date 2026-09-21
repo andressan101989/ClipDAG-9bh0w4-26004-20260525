@@ -13,19 +13,20 @@ test('the six product routes have dedicated pages and one shared public composit
     assert.match(page, /ProductPage/);
     assert.match(page, new RegExp(`productPages\.${slug}`));
   }
-  const shell = source('pages/[...path].astro');
-  assert.match(shell, /productPageSlugs/);
-  assert.match(shell, /!productPageSlugs\.includes/);
+  const product = source('components/ProductPage.astro');
+  assert.match(product, /<PublicLayout>/);
 });
 
-test('product metadata and copy are unique, cautious and noindex remains shared', () => {
+test('product metadata is centralized and product copy remains cautious', () => {
   const config = source('data/productPages.ts');
   const layout = source('layouts/PublicLayout.astro');
-  const titles = [...config.matchAll(/pageTitle: '([^']+)'/g)].map((match) => match[1]);
+  const seo = source('lib/seo.ts');
+  const titles = slugs.map((slug) => seo.match(new RegExp(`'/${slug}': \\{ title: '([^']+)'`))?.[1]);
   assert.equal(titles.length, slugs.length);
   assert.equal(new Set(titles).size, slugs.length);
-  assert.ok((config.match(/description:/g) ?? []).length >= slugs.length);
-  assert.match(layout, /noindex,nofollow/);
+  assert.ok(titles.every(Boolean));
+  assert.doesNotMatch(config, /pageTitle:|description:/);
+  assert.match(layout, /seo\.indexable/);
   assert.match(layout, /rel="canonical"/);
   assert.match(layout, /og:title/);
   assert.doesNotMatch(config, /PROMOTIONAL CONCEPT|PRODUCT-FAITHFUL MOCKUP|testimonio real|usuarios reales/i);

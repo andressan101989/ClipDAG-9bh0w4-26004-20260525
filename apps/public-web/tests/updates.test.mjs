@@ -88,7 +88,7 @@ test('homepage, index and detail share one canonical collection helper', () => {
   }
   assert.match(source('../src/lib/updates.ts'), /getCollection\('whatsNew'\)/);
   assert.doesNotMatch(source('../src/pages/index.astro'), /<UpdateCard label="(?:New|Update|Coming next)"/);
-  assert.match(source('../src/pages/[...path].astro'), /path !== '\/whats-new'/);
+  assert.doesNotMatch(source('../src/pages/[...path].astro'), /whats-new/);
   assert.doesNotMatch(source('../src/components/UpdateCard.astro'), /aria-label=/);
   assert.match(source('../src/components/UpdateCard.astro'), /\{category\} · \{label\}/);
 });

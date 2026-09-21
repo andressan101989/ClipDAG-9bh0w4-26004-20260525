@@ -10,7 +10,7 @@ const { id } = Astro.props;
 const label = id === 'privacy' ? 'Privacy Policy' : 'Terms of Service';
 const state = getPublicLegalPageState(id, 'en');
 ---
-<PublicLayout title={label} description={state.state === 'approved' ? `${label} for Nelyon.` : `${label} publication status for Nelyon. The canonical document is not yet approved.`}>
+<PublicLayout indexable={state.state === 'approved'}>
   {state.state === 'approved' ? (
     <article class="legal-article" aria-labelledby="legal-title">
       <span class="legal-eyebrow">Nelyon · Legal</span>

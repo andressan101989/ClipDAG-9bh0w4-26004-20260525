@@ -9,7 +9,7 @@ import '../styles/product-pages.css';
 type Props = { content: ProductPageContent };
 const { content } = Astro.props;
 ---
-<PublicLayout title={content.pageTitle} description={content.description}>
+<PublicLayout>
   <div class={`product-page theme-${content.theme}`}>
     <section class="product-hero" aria-labelledby="product-title">
       <div class="product-hero-light" aria-hidden="true"></div>
@@ -30,7 +30,7 @@ const { content } = Astro.props;
             <span class="product-hero-tag">{content.heroLabel}</span>
           </div>
           {content.theme === 'business' || content.theme === 'ads' ? (
-            <div class="product-interface" aria-label="Illustrative Business preview using demo presentation only">
+            <div class="product-interface" role="img" aria-label="Illustrative Business preview using demo presentation only">
               <span>Nelyon Business · demo</span>
               <strong>{content.theme === 'ads' ? 'Campaign placements' : 'Business overview'}</strong>
               <div class="product-interface-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>

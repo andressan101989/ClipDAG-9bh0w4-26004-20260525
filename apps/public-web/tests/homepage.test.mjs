@@ -20,7 +20,7 @@ test("homepage replaces the A3 shell with the approved ten-section narrative", (
   ]) {
     assert.match(home, new RegExp(`id="${id}"`), id);
   }
-  assert.match(home, /Connect\. Create\. Go LIVE\. Grow\./);
+  assert.match(home, /Connect\.<br \/>Create\.<br \/><span>Go LIVE\./);
   assert.doesNotMatch(home, /Public Web foundation|se incorporará en NPW-B/);
   assert.doesNotMatch(
     home,
