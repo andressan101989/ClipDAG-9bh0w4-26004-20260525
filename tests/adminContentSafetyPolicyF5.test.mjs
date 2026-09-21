@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import {readFileSync} from "node:fs";
 import {join} from "node:path";
+import {execFileSync} from "node:child_process";
 
 const root=process.cwd();
 const migration=readFileSync(join(root,"supabase","migrations","20260914163245_admin_content_safety_policy_text_rules_v1.sql"),"utf8");
@@ -13,13 +14,27 @@ const preview=migration.slice(migration.indexOf("create function public.preview_
 const f4=readFileSync(join(root,"supabase","migrations","20260914144028_admin_content_safety_alert_pipeline_v1.sql"),"utf8");
 
 test("policy audit hashes remain traceable and no detector terms are seeded",()=>{
+  // C6-C1 deliberately retired the independent mobile copies. Preserve the
+  // prior audit snapshot in Git while pinning the compatibility routes now shipped.
+  const retiredAt="d13eeec6e1705565cbab9d99cf1d6441c900b336";
+  // Blob hashes differ from the former Windows worktree hashes due to CRLF checkout.
+  const retiredDocuments={
+    "app/legal.tsx":"856316e62df622781ae1d6557406d873bcaa870a507e33ea4bca96938fca9d1b",
+    "app/terms-of-service.tsx":"27d816cd1cf97bc9c5b38272bb37bcdcf7e8764a8a3d77fe26c40e35f517ab36",
+    "app/privacy-policy.tsx":"c3e4145d6e0b4125d17c9f2c29dbf03e1859136fdad7d1e03111d0e836e2f349",
+  };
+  for(const [path,expected] of Object.entries(retiredDocuments)){
+    const old=execFileSync("git",["show",`${retiredAt}:${path}`]);
+    assert.equal(createHash("sha256").update(old).digest("hex"),expected,`retired ${path}`);
+  }
   const documents={
-    "app/legal.tsx":"1c0ed42e23d34406bb0be2d1eaefcb196bcf1fc5ce1bdb05d2b19240bb79518b",
-    "app/terms-of-service.tsx":"04e56f31af1a6d9e3a49c6066af1ac1232c5d6247e7191986491e60a92773674",
-    "app/privacy-policy.tsx":"2245247acb5066134c32a2bd36d02455a143fc5b6e60fbdc3ff1c00ca34d582c",
+    "app/legal.tsx":"22d4137047cbafd7667408f5831e589ac5c00a9982508fb1406aff9a2215ff35",
+    "app/terms-of-service.tsx":"ad311f51e80d6eb4fe1b1fc53b588d42becabd642bed00033ee48379fc8b75b2",
+    "app/privacy-policy.tsx":"b55f6c10e7ed4a704547947210a3c13810230e0cba8d7514febb9fabe1288904",
   };
   for(const [path,expected] of Object.entries(documents)){
-    assert.equal(createHash("sha256").update(readFileSync(join(root,path))).digest("hex"),expected,path);
+    const normalized=readFileSync(join(root,path),"utf8").replace(/\r\n/g,"\n");
+    assert.equal(createHash("sha256").update(normalized).digest("hex"),expected,path);
   }
   assert.doesNotMatch(migration.slice(0,migration.indexOf("create function public.admin_create_content_safety_rule")),/insert\s+into\s+private\.content_safety_rules/i);
 });

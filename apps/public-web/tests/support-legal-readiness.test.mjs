@@ -76,7 +76,9 @@ test('pending legal content is not presentable but an approved fixture resolves 
   assert.deepEqual(getLegalPresentationState(fixture, [document, legalDocuments[1]], 'privacy', 'en'), { state: 'retired' });
   const mobile = source('components/legal/CanonicalLegalDocument.tsx');
   assert.match(mobile, /getMobileLegalPageState/);
-  for (const path of ['app/privacy-policy.tsx', 'app/terms-of-service.tsx', 'app/legal.tsx']) assert.doesNotMatch(source(path), /CanonicalLegalDocument/);
+  assert.match(source('app/privacy-policy.tsx'), /CanonicalLegalDocument/);
+  assert.match(source('app/terms-of-service.tsx'), /CanonicalLegalDocument/);
+  assert.doesNotMatch(source('app/legal.tsx'), /CanonicalLegalDocument/);
 });
 
 test('one decision registry distinguishes owner policy from legal approval and cannot accidentally activate', () => {

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { legalManifest, legalDocuments } from '../shared/legal/manifest.ts';
 import { canonicalDrafts, privacyDataMatrix, providerMatrix, financialFacts, legacyReconciliation, validateDraftRegistry } from '../shared/legal/drafts.ts';
 import { validateLegalDocument, resolveLegalDocument } from '../shared/legal/core.ts';
@@ -8,6 +9,13 @@ import { getMobileLegalDocument } from '../shared/legal/mobile.ts';
 import { getPublicLegalDocument } from '../apps/public-web/src/lib/legalAdapter.ts';
 
 const fileExists = (ref) => {
+  const historical = ref.match(/^git:([0-9a-f]{40}):(app\/[^:]+):(\d+)$/);
+  if (historical) {
+    try {
+      const content = execFileSync('git', ['show', `${historical[1]}:${historical[2]}`], { encoding: 'utf8' });
+      return Boolean(content.split(/\r?\n/)[Number(historical[3]) - 1]?.trim());
+    } catch { return false; }
+  }
   const match = ref.match(/^(.*):(\d+)$/);
   if (!match || !existsSync(match[1])) return false;
   return Boolean(readFileSync(match[1], 'utf8').split(/\r?\n/)[Number(match[2]) - 1]?.trim());

@@ -3,7 +3,7 @@ import { ScrollView, Text, View, StyleSheet } from 'react-native';
 import { getMobileLegalPageState } from '../../shared/legal/mobile.ts';
 import type { LegalId, LegalLocale } from '../../shared/legal/core.ts';
 
-// Future route component only. Active legacy mobile legal routes do not import it.
+// Active mobile legal routes use this renderer; pending drafts never become current policies.
 export function CanonicalLegalDocument({ id, locale }: { id: LegalId; locale: LegalLocale }) {
   const state = getMobileLegalPageState(id, locale);
   if (state.state !== 'approved') {

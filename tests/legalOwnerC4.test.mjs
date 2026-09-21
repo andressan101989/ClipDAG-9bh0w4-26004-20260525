@@ -15,6 +15,7 @@ test('owner allows 13+ accounts and reserves creator exclusive content for 18+ w
   assert.equal(legalDecisions.ageEnforcement.status, 'unresolved');
   assert.match(text('terms'), /minimum eligibility age at 13/i);
   assert.match(text('terms'), /creator-exclusive content requires 18/i);
+  assert.doesNotMatch(text('privacy'), /operational age enforcement remains pending activation/i);
   assert.deepEqual(getLegalActivationState(legalManifest, legalDocuments, legalDecisions, 'terms', 'en'), { state: 'pending' });
 });
 

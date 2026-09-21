@@ -96,22 +96,29 @@ test('shop and commerce surfaces contain no visible legacy branding literal', ()
   assert.match(shop, /<NelyonLogo onDark style=\{styles\.headerBrand\} \/>/);
 });
 
-test('legal copy preserves the baseline legal and financial meaning', () => {
+test('mobile legal routes preserve URLs but retire independent legacy copy', () => {
   const legal = read('app/legal.tsx');
   const privacy = read('app/privacy-policy.tsx');
   const terms = read('app/terms-of-service.tsx');
+  assert.match(privacy, /<CanonicalLegalDocument id="privacy" locale="en"/);
+  assert.match(terms, /<CanonicalLegalDocument id="terms" locale="en"/);
+  assert.match(legal, /legalManifest\.routes\.privacy\.mobile/);
+  assert.match(legal, /legalManifest\.routes\.terms\.mobile/);
+  assert.match(legal, /legalManifest\.legacyHub\.reviewRequired/);
+  for (const source of [legal, privacy, terms]) {
+    assert.doesNotMatch(source, /@(?:onspace\.ai|clipdag\.io|nelyon\.app)/i);
+    assert.doesNotMatch(source, /0\.01|\$50|85\s*\/\s*15|7[- ]day|10%|13.{0,20}parent|must be 18 to create/i);
+    assert.doesNotMatch(source, /DOCS\s*[:=]|Última actualización: 28 de junio de 2026|Nelyon Help Center/i);
+  }
+});
 
-  assert.match(legal, /Nelyon es una plataforma de contenido creativo basada en blockchain/);
-  assert.match(legal, /monetizar contenido a traves de tokens \$DAG/);
-  assert.match(legal, /contenido relacionado con blockchain, crypto, arte digital y creatividad/);
-  assert.match(legal, /notificacion DMCA a copyright@clipdag\.io/);
-  assert.match(legal, /comision del 10% en cada venta/);
-  assert.match(legal, /Los pagos se procesan dentro de los 7 dias habiles/);
-  assert.match(privacy, /privacy@onspace\.ai/);
-  assert.match(privacy, /No constituyen moneda de curso legal/);
-  assert.match(terms, /legal@onspace\.ai/);
-  assert.match(terms, /No son moneda de curso legal, no tienen valor monetario garantizado/);
-  for (const source of [legal, privacy, terms]) assert.doesNotMatch(source, /Centro de ayuda de Nelyon|Nelyon Help Center/);
+test('profile support alert does not expose an unverified legacy contact', () => {
+  assert.match(read('app/(tabs)/profile.tsx'), /t\('profile\.supportContact'\)/);
+  for (const locale of ['en', 'es', 'fr', 'pt']) {
+    const message = JSON.parse(read(`locales/${locale}.json`)).profile.supportContact;
+    assert.doesNotMatch(message, /@(?:clipdag\.io|onspace\.ai|nelyon\.app)/i);
+    assert.ok(message.length > 10);
+  }
 });
 
 test('legacy visual assets are removed after their callers are migrated', () => {
