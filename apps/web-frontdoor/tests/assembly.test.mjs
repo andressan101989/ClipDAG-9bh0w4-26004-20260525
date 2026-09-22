@@ -11,6 +11,7 @@ test('assembles Public at root and Business under /business without overwriting 
   const publicDist = join(root, 'public');
   const businessDist = join(root, 'business');
   const output = join(root, 'output');
+  const iconSource = join(root, 'nelyon-icon.png');
   await mkdir(join(publicDist, '_astro'), { recursive: true });
   await mkdir(join(businessDist, 'assets'), { recursive: true });
   await writeFile(join(publicDist, 'index.html'), 'public-home');
@@ -21,12 +22,14 @@ test('assembles Public at root and Business under /business without overwriting 
   await writeFile(join(publicDist, 'site.webmanifest'), 'manifest');
   await writeFile(join(businessDist, 'index.html'), 'business-spa');
   await writeFile(join(businessDist, 'assets', 'app.js'), 'business-js');
+  await writeFile(iconSource, 'nelyon-icon');
 
-  const result = await assemble({ publicDist, businessDist, output, allowedRoot: root });
+  const result = await assemble({ publicDist, businessDist, iconSource, output, allowedRoot: root });
 
   assert.equal(await readFile(join(output, 'business.html'), 'utf8'), 'public-business');
   assert.equal(await readFile(join(output, 'business', 'index.html'), 'utf8'), 'business-spa');
   assert.equal(await readFile(join(output, 'business', 'assets', 'app.js'), 'utf8'), 'business-js');
+  assert.equal(await readFile(join(output, 'favicon.png'), 'utf8'), 'nelyon-icon');
   assert.deepEqual(result.requiredFiles, [
     'index.html',
     'business.html',
@@ -35,5 +38,6 @@ test('assembles Public at root and Business under /business without overwriting 
     'robots.txt',
     'sitemap.xml',
     'site.webmanifest',
+    'favicon.png',
   ]);
 });

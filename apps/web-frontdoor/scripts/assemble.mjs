@@ -13,6 +13,7 @@ export const requiredFiles = Object.freeze([
   'robots.txt',
   'sitemap.xml',
   'site.webmanifest',
+  'favicon.png',
 ]);
 
 function assertSafeOutput(output, allowedRoot) {
@@ -27,6 +28,7 @@ function assertSafeOutput(output, allowedRoot) {
 export async function assemble({
   publicDist = resolve(repoRoot, 'apps', 'public-web', 'dist'),
   businessDist = resolve(repoRoot, 'apps', 'business-web', 'dist'),
+  iconSource = resolve(repoRoot, 'assets', 'branding', 'nelyon', 'v1', 'nelyon-app-icon.png'),
   output = resolve(appRoot, 'dist'),
   allowedRoot = appRoot,
 } = {}) {
@@ -39,6 +41,7 @@ export async function assemble({
   await mkdir(resolvedOutput, { recursive: true });
   await cp(resolve(publicDist), resolvedOutput, { recursive: true });
   await cp(resolve(businessDist), resolve(resolvedOutput, 'business'), { recursive: true });
+  await cp(resolve(iconSource), resolve(resolvedOutput, 'favicon.png'));
 
   for (const file of requiredFiles) await access(resolve(resolvedOutput, file));
   return { output: resolvedOutput, requiredFiles: [...requiredFiles] };

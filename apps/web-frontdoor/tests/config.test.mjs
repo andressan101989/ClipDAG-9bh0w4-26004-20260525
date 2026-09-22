@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
+const businessShell = await readFile(new URL('../../business-web/index.html', import.meta.url), 'utf8');
 
 test('deploys one Worker with Static Assets and no workers.dev origin', () => {
   assert.equal(config.name, 'nelyon-web');
@@ -15,6 +16,10 @@ test('deploys one Worker with Static Assets and no workers.dev origin', () => {
     not_found_handling: '404-page',
     run_worker_first: true,
   });
+});
+
+test('Business shell uses the stable assembled Nelyon favicon', () => {
+  assert.match(businessShell, /<link rel="icon" href="\/favicon\.png" type="image\/png"\s*\/>/);
 });
 
 test('binds only the apex and www custom domains', () => {
