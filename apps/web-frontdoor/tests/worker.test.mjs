@@ -54,7 +54,7 @@ test('falls back Business document navigations to the SPA shell', async () => {
     '/business/orders',
     '/business/index.html',
   ]);
-  assert.equal(response.headers.get('cache-control'), 'public, max-age=0, must-revalidate');
+  assert.equal(response.headers.get('cache-control'), 'public, max-age=0, must-revalidate, no-transform');
 });
 
 test('serves Business assets exactly and never falls missing assets back to HTML', async () => {

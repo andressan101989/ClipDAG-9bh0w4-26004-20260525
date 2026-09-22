@@ -19,7 +19,7 @@ function withHeaders(response, pathname) {
   if (pathname.startsWith('/_astro/') || pathname.startsWith('/business/assets/')) {
     headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   } else if (headers.get('content-type')?.includes('text/html')) {
-    headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
+    headers.set('Cache-Control', 'public, max-age=0, must-revalidate, no-transform');
   }
 
   return new Response(response.body, {
