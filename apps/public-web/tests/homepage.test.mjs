@@ -64,3 +64,23 @@ test("semantic shell, accessible menu, reduced motion and optimized media are pr
     existsSync(new URL("../public/media/home/feed-720.webp", import.meta.url)),
   );
 });
+
+test("premium homepage keeps the hero compact and contained from 320px upward", () => {
+  const homeCss = source("../src/styles/home.css");
+  const publicCss = source("../src/styles/public.css");
+
+  assert.match(homeCss, /\.home-page\s*\{[^}]*overflow-x:\s*clip/s);
+  assert.match(homeCss, /\.hero::before\s*\{/);
+  assert.match(homeCss, /--home-section-space:/);
+  assert.match(
+    homeCss,
+    /\.social-showcase,\s*\.creator-profile,\s*\.live-showcase,\s*\.product-grid,\s*\.business-preview\s*\{[^}]*border-radius:\s*var\(--home-card-radius\)/s,
+  );
+  assert.match(
+    homeCss,
+    /@media \(max-width: 600px\)[\s\S]*?\.hero-showcase\s*\{[^}]*width:\s*100%[^}]*margin:\s*[^;]*auto/s,
+  );
+  assert.doesNotMatch(homeCss, /width:\s*calc\(100% \+ 16px\)/);
+  assert.match(publicCss, /\.site-header\s*\{[^}]*isolation:\s*isolate/s);
+  assert.doesNotMatch(home + layout, /BusinessAuthProvider|@supabase|hls\.js/);
+});

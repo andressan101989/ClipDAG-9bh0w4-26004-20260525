@@ -85,6 +85,7 @@ textarea:focus-visible {
   border-radius: 21px;
   background: #0e1930ed;
   color: #fff;
+  isolation: isolate;
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   transition:
@@ -241,7 +242,10 @@ textarea:focus-visible {
   grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
   gap: 64px 8%;
   padding: 90px max(24px, calc((100vw - 1320px) / 2)) 32px;
-  background: #0b1429;
+  border-top: 1px solid #ffffff14;
+  background:
+    radial-gradient(circle at 18% 0, #1f79ff17, transparent 32%),
+    #0b1429;
   color: #fff;
 }
 .footer-brand img {
