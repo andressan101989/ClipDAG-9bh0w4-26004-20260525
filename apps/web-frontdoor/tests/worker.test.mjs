@@ -99,6 +99,15 @@ test('redirects www permanently to the apex while preserving path and query', as
   assert.equal(env.calls.length, 0);
 });
 
+test('redirects apex HTTP requests permanently to HTTPS', async () => {
+  const env = environment();
+  const response = await worker.fetch(new Request('http://nelyon.app/download?source=http'), env);
+
+  assert.equal(response.status, 308);
+  assert.equal(response.headers.get('location'), 'https://nelyon.app/download?source=http');
+  assert.equal(env.calls.length, 0);
+});
+
 test('adds the shared safe response headers', async () => {
   const env = environment();
   const response = await worker.fetch(new Request('https://nelyon.app/'), env);
@@ -106,5 +115,5 @@ test('adds the shared safe response headers', async () => {
   assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(response.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
   assert.equal(response.headers.get('permissions-policy'), 'browsing-topics=()');
-  assert.equal(response.headers.get('strict-transport-security'), null);
+  assert.equal(response.headers.get('strict-transport-security'), 'max-age=31536000');
 });

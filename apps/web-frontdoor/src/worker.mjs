@@ -9,6 +9,7 @@ const commonHeaders = Object.freeze({
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Permissions-Policy': 'browsing-topics=()',
+  'Strict-Transport-Security': 'max-age=31536000',
 });
 
 function withHeaders(response, pathname) {
@@ -59,6 +60,11 @@ export default {
 
     if (url.hostname === WWW_HOST) {
       url.hostname = APEX_HOST;
+      url.protocol = 'https:';
+      return redirect(url.toString());
+    }
+
+    if (url.protocol !== 'https:') {
       url.protocol = 'https:';
       return redirect(url.toString());
     }
