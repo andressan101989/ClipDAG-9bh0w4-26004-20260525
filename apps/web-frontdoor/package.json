@@ -1,0 +1,15 @@
+{
+  "name": "@nelyon/web-frontdoor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:public": "npm --prefix ../public-web run build",
+    "build:business": "npm --prefix ../business-web run build",
+    "assemble": "node scripts/assemble.mjs",
+    "build": "npm run build:public && npm run build:business && npm run assemble",
+    "test": "node --test tests/*.test.mjs",
+    "dev": "npx --yes wrangler@4.135.0 dev",
+    "deploy": "npm run build && npx --yes wrangler@4.135.0 deploy"
+  }
+}

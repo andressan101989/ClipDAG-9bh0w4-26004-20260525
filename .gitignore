@@ -41,3 +41,6 @@ app-example
 
 # Supabase CLI
 supabase/.temp/
+
+# Cloudflare Wrangler local state
+.wrangler/
