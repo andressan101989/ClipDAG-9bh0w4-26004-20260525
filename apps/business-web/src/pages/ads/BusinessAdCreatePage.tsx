@@ -96,7 +96,7 @@ export function BusinessAdCreatePage() {
         })).id);
       if (!draftId) setDraftId(campaignId);
       await setAdCampaignPlacements(campaignId, placements);
-      navigate(`/ads/${campaignId}`);
+      navigate(`/ads/marketplace/${campaignId}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo crear la campaña");
       setSaving(false);
@@ -110,7 +110,7 @@ export function BusinessAdCreatePage() {
   }
 
   return <>
-    <PageHeader eyebrow="Ads Manager" title="Nueva campaña" description="Crea un draft sin mover BDAG. La financiación ocurre únicamente al activar." action={<Link className="text-button" to="/ads">Volver a campañas</Link>} />
+    <PageHeader eyebrow="Marketplace Ads Legacy" title="Nueva campaña" description="Crea una campaña de producto en la autoridad Marketplace existente." action={<Link className="text-button" to="/ads/marketplace">Volver a campañas legacy</Link>} />
     <InlineError message={error} />
     {loading && <div className="seller-state">Cargando productos elegibles y configuración…</div>}
     {!loading && products.length === 0 && !error && <div className="seller-state"><strong>No hay productos elegibles</strong><p>El producto debe estar activo, aprobado, publicado, en BDAG y con inventario disponible.</p></div>}
@@ -146,7 +146,7 @@ export function BusinessAdCreatePage() {
         <p className="eyebrow">5 · Revisión</p><h2>Crear borrador</h2>
         <p>Este paso no debita BDAG ni reserva fondos.</p>
         {accessType === "member" && <div className="readonly-note">Podrás preparar el draft. La activación y financiación requerirán al propietario.</div>}
-        {draftId && error && <Link className="text-button" to={`/ads/${draftId}`}>Abrir el draft y reintentar ubicaciones</Link>}
+        {draftId && error && <Link className="text-button" to={`/ads/marketplace/${draftId}`}>Abrir el draft y reintentar ubicaciones</Link>}
         <button className="primary-button" type="submit" disabled={saving || !productId || placements.length === 0}>{saving ? "Guardando…" : draftId ? "Reintentar ubicaciones" : "Crear campaña draft"}</button>
       </section>
     </form>}

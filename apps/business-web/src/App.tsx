@@ -18,6 +18,7 @@ import { BusinessOrdersPage } from "./pages/orders/BusinessOrdersPage";
 import { BusinessAdsPage } from "./pages/ads/BusinessAdsPage";
 import { BusinessAdCreatePage } from "./pages/ads/BusinessAdCreatePage";
 import { BusinessAdDetailPage } from "./pages/ads/BusinessAdDetailPage";
+import { AdvertisingManagerProvider, BusinessAdsManagerCampaignPage, BusinessAdsManagerHomePage, BusinessAdsManagerNewCampaignPage } from "./pages/ads/BusinessAdsV2Pages";
 import { BusinessFinancePage } from "./pages/finance/BusinessFinancePage";
 import { BusinessPayoutsPage } from "./pages/finance/BusinessPayoutsPage";
 import { BusinessAnalyticsPage } from "./pages/analytics/BusinessAnalyticsPage";
@@ -117,6 +118,24 @@ function BusinessInvitationRoute() {
   return <BusinessInvitationInboxPage />;
 }
 
+function AdvertisingBoundary() {
+  const { phase, error, retry } = useBusinessAuth();
+  const location = useLocation();
+  if (phase === "loading") return <StatePanel eyebrow="Nelyon Ads" title="Loading Ads Manager…" body="We are validating your advertiser access." />;
+  if (phase === "error") return <StatePanel tone="warning" eyebrow="We could not continue" title="Error loading Business" body={error ?? "Try again."}><button className="primary-button" type="button" onClick={() => void retry()}>Retry</button></StatePanel>;
+  if (phase === "signed_out") return <Navigate to={`/login?returnTo=${encodeURIComponent(validateBusinessReturnTo(businessPath(`${location.pathname}${location.search}`)))}`} replace />;
+  return <AdvertisingManagerProvider><Routes><Route element={<BusinessLayout advertising />}>
+    <Route index element={<BusinessAdsManagerHomePage />} />
+    <Route path="campaigns" element={<BusinessAdsManagerHomePage />} />
+    <Route path="campaigns/new" element={<BusinessAdsManagerNewCampaignPage />} />
+    <Route path="campaigns/:campaignId" element={<BusinessAdsManagerCampaignPage />} />
+    <Route path="marketplace" element={<BusinessAdsRoute />} />
+    <Route path="marketplace/new" element={<BusinessAdsRoute create />} />
+    <Route path="marketplace/:campaignId" element={<BusinessAdsRoute detail />} />
+    <Route path="*" element={<Navigate to="/ads" replace />} />
+  </Route></Routes></AdvertisingManagerProvider>;
+}
+
 function LifecycleBoundary() {
   const { phase, error, retry } = useBusinessAuth();
   const location = useLocation();
@@ -163,6 +182,7 @@ export function App() {
     <Routes>
       <Route path="/login" element={<BusinessLoginPage />} />
       <Route path="/invitations" element={<BusinessInvitationRoute />} />
+      <Route path="/ads/*" element={<AdvertisingBoundary />} />
       <Route path="/*" element={<LifecycleBoundary />} />
     </Routes>
   );

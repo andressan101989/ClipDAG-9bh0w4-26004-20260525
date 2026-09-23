@@ -46,10 +46,14 @@ const adsMocks = vi.hoisted(() => ({
     nextCursor: null,
     summary: { activeCampaigns: 0, totalBudgetBdag: 0, spentBdag: 0, impressions: 0, clicks: 0, orders: 0, attributedGmvBdag: 0 },
   }),
+  accounts: vi.fn().mockResolvedValue([]),
+  campaigns: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("../lib/adsManagerApi", async (original) => ({
   ...(await original<typeof import("../lib/adsManagerApi")>()),
   searchAdCampaigns: adsMocks.search,
+  getAdvertiserAccounts: adsMocks.accounts,
+  getAdvertisingCampaigns: adsMocks.campaigns,
 }));
 const billingMocks = vi.hoisted(() => ({
   overview: vi.fn().mockResolvedValue({
@@ -216,6 +220,8 @@ describe("Business Web owner lifecycle", () => {
       nextCursor: null,
       summary: { activeCampaigns: 0, totalBudgetBdag: 0, spentBdag: 0, impressions: 0, clicks: 0, orders: 0, attributedGmvBdag: 0 },
     });
+    adsMocks.accounts.mockResolvedValue([]);
+    adsMocks.campaigns.mockResolvedValue([]);
     teamMocks.inbox.mockResolvedValue({ actorUserId: user.id, items: [] });
     teamMocks.get.mockResolvedValue({
       businessOwnerId: user.id,
@@ -412,11 +418,13 @@ describe("Business Web owner lifecycle", () => {
   });
 
   it("opens capability-scoped Ads reporting without create for ads.read", async () => {
+    adsMocks.accounts.mockResolvedValue([{ businessAccountId: "business-owner-ads", displayName: "Partner Store", status: "active", accessType: "member", marketplace: { linked: true, marketplaceSellerUserId: "owner-ads", sellerStatus: "approved" }, adAccounts: [{ id: "ad-account-owner-ads", name: "Nelyon Ads", status: "active", billingCurrency: "BDAG", isDefault: true }] }]);
     renderBusiness(memberIdentity(memberAccess("owner-ads", ["business.ads.read"])), "/ads");
-    expect(await screen.findByRole("heading", { name: "Publicidad" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Ads Manager" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Publicidad/ })).toHaveAttribute("href", "/business/ads");
-    expect(screen.queryByRole("link", { name: "Crear campaña" })).not.toBeInTheDocument();
-    await waitFor(() => expect(adsMocks.search).toHaveBeenCalledWith("owner-ads", { status: undefined, cursor: undefined }));
+    expect(screen.queryByRole("link", { name: "Create campaign" })).not.toBeInTheDocument();
+    expect(await screen.findByText(/owner-only/i)).toBeInTheDocument();
+    await waitFor(() => expect(adsMocks.accounts).toHaveBeenCalled());
   });
 
   it("opens capability-scoped read-only Finance for finance.read", async () => {

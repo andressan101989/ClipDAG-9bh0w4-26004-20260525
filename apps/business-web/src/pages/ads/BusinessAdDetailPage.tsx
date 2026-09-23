@@ -75,7 +75,7 @@ export function BusinessAdDetailPage() {
   const placementEditable = Boolean(campaign && canManage && campaign.status === "draft" && !campaign.fundedAt);
 
   return <>
-    <PageHeader eyebrow="Ads Manager" title={campaign?.name ?? campaign?.product.title ?? "Detalle de campaña"} description="Rendimiento, atribución y presupuesto sobre las authorities canónicas." action={<Link className="text-button" to="/ads">Volver a campañas</Link>} />
+    <PageHeader eyebrow="Marketplace Ads Legacy" title={campaign?.name ?? campaign?.product.title ?? "Detalle de campaña"} description="Rendimiento, atribución y presupuesto de la autoridad Marketplace existente." action={<Link className="text-button" to="/ads/marketplace">Volver a campañas legacy</Link>} />
     <InlineError message={error} />
     {success && <div className="inline-success" role="status">{success}</div>}
     {loading && <div className="seller-state">Cargando campaña…</div>}

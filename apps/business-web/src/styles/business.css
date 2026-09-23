@@ -341,6 +341,32 @@ h1, h2, p { margin-top: 0; }
 .ads-surface-list span { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .ads-finalization { margin-top: 18px; border-left: 4px solid var(--electric); }
 
+.ads-v2-account-bar { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto; gap: 14px; align-items: end; margin-bottom: 20px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 16px; background: white; }
+.ads-v2-account-bar label { margin: 0; }
+.ads-v2-prelaunch-badge, .authority-badge { display: inline-flex; align-items: center; justify-content: center; width: fit-content; padding: 6px 9px; border-radius: 999px; color: #76520a; background: #fff4cf; font-size: 10px; font-weight: 900; letter-spacing: .06em; }
+.authority-badge.ads_v2 { color: var(--blue); background: #eaf2ff; }
+.authority-badge.marketplace_legacy { color: #4c5870; background: #eef1f5; }
+.ads-v2-safety { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 22px; border-left: 4px solid #f0a51d; }
+.ads-v2-safety strong { color: var(--navy); }
+.ads-v2-safety span { color: var(--muted); font-size: 12px; }
+.ads-v2-onboarding { max-width: 720px; margin: 42px auto; }
+.ads-v2-compact-form { display: grid; gap: 16px; max-width: 760px; }
+.ads-v2-workspace { display: grid; gap: 18px; min-width: 0; }
+.ads-v2-workspace .editor-card { min-width: 0; }
+.ads-v2-workspace summary { margin: 12px 0; color: var(--blue); font-weight: 800; cursor: pointer; }
+.ads-v2-definition { max-height: 320px; overflow: auto; padding: 14px; border-radius: 12px; color: #dce8ff; background: #0c1f4f; font: 11px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ads-v2-preview { display: grid; gap: 7px; margin: 14px 0; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: #f8faff; }
+.ads-v2-preview p { margin: 0; color: var(--muted); }
+.ads-v2-preview span { color: var(--muted); font-size: 11px; }
+.ads-v2-checklist { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; padding: 0; list-style: none; }
+.ads-v2-checklist li { display: grid; grid-template-columns: auto 1fr; gap: 2px 9px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 12px; color: var(--muted); background: #f8faff; }
+.ads-v2-checklist li.is-ready { border-color: #b7dfc6; color: #14643a; background: #f1fbf5; }
+.ads-v2-checklist small { grid-column: 2; }
+.ads-v2-locked { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; padding: 14px; border-radius: 12px; color: #76520a; background: #fff7df; }
+.ads-v2-locked strong { width: 100%; }
+.ads-v2-locked span { padding: 5px 8px; border-radius: 8px; background: rgba(255,255,255,.7); font-size: 11px; font-weight: 800; }
+.ads-v2-table td:first-child a { color: var(--blue); font-weight: 800; text-decoration: none; }
+
 @media (max-width: 1020px) {
   .business-shell { grid-template-columns: 1fr; }
   .business-sidebar { position: fixed; left: 0; transform: translateX(-105%); width: min(86vw, 300px); transition: transform .2s ease; box-shadow: 24px 0 60px rgba(3,13,38,.3); }
@@ -361,6 +387,7 @@ h1, h2, p { margin-top: 0; }
   .ads-create-layout { grid-template-columns: 1fr; }
   .ads-form-section:nth-child(n), .ads-review-card { grid-column: 1; grid-row: auto; }
   .ads-review-card { position: static; }
+  .ads-v2-checklist { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 760px) {
@@ -404,6 +431,10 @@ h1, h2, p { margin-top: 0; }
   .ads-detail-hero { grid-template-columns: 1fr; }
   .ads-detail-status { justify-items: start; text-align: left; }
   .ads-detail-hero .header-actions { grid-column: auto; justify-content: flex-start; }
+  .ads-v2-account-bar { grid-template-columns: 1fr; }
+  .ads-v2-safety { align-items: flex-start; flex-direction: column; }
+  .ads-v2-checklist { grid-template-columns: 1fr; }
+  .ads-v2-workspace .ads-placement-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 420px) {

@@ -9,6 +9,14 @@ import {
   searchAdCampaigns,
   searchEligibleAdProducts,
   setAdCampaignPlacements,
+  createAdvertiserBusinessAccount,
+  createAdvertisingCampaignDraft,
+  getAdvertiserAccounts,
+  getAdvertisingCampaign,
+  getAdvertisingCampaigns,
+  getAdvertisingFinance,
+  getAdvertisingPlacementSelection,
+  isAdvertisingFinanceNotFound,
 } from "../lib/adsManagerApi";
 
 vi.mock("../lib/supabase", () => ({ supabase: {} }));
@@ -82,5 +90,55 @@ describe("Ads Manager canonical API", () => {
     expect(rpc).toHaveBeenNthCalledWith(2, "pause_marketplace_ad_campaign", { p_campaign_id: "campaign-1" });
     expect(rpc).toHaveBeenNthCalledWith(3, "resume_marketplace_ad_campaign", { p_campaign_id: "campaign-1" });
     expect(rpc.mock.calls.flat().join(" ")).not.toMatch(/spend_marketplace|release_marketplace|finalize_marketplace/);
+  });
+
+  it("uses the canonical advertiser identity and Campaign V2 read authorities", async () => {
+    const rpc = vi.fn()
+      .mockResolvedValueOnce({ data: { businesses: [] }, error: null })
+      .mockResolvedValueOnce({ data: { business_account_id: "business-1", display_name: "Studio", status: "active", access_type: "owner", marketplace: { linked: false, marketplace_seller_user_id: null, seller_status: null }, ad_accounts: [{ id: "ad-account-1", name: "Nelyon Ads", status: "active", billing_currency: "BDAG", is_default: true }] }, error: null })
+      .mockResolvedValueOnce({ data: { campaigns: [{ id: "v2-1", name: "Brand", status: "draft", objective: "awareness", ad_account_id: "ad-account-1", business_account_id: "business-1", authority: "ads_v2", write_authority: "ads_v2", created_at: "2026-09-23T00:00:00Z" }] }, error: null })
+      .mockResolvedValueOnce({ data: { id: "v2-1", ad_account_id: "ad-account-1", business_account_id: "business-1", name: "Brand", status: "draft", objective: "awareness", authority: "ads_v2", write_authority: "ads_v2", created_at: "2026-09-23T00:00:00Z", updated_at: "2026-09-23T00:00:00Z", archived_at: null, ad_sets: [{ id: "set-1", name: "Main", status: "draft", starts_at: null, ends_at: null, created_at: "2026-09-23T00:00:00Z", audience: { id: "audience-1", status: "draft", latest_version_number: 1 }, placement_selection: { id: "selection-1", status: "draft", latest_version_number: 1 } }], destinations: [] }, error: null });
+    const client = { rpc } as unknown as BusinessSupabaseClient;
+
+    expect(await getAdvertiserAccounts(client)).toEqual([]);
+    expect((await createAdvertiserBusinessAccount("Studio", client)).businessAccountId).toBe("business-1");
+    expect((await getAdvertisingCampaigns(client))[0]).toMatchObject({ authority: "ads_v2", writeAuthority: "ads_v2" });
+    expect((await getAdvertisingCampaign("v2-1", "ads_v2", client)).adSets[0]).toMatchObject({ audience: { id: "audience-1" }, placementSelection: { id: "selection-1" } });
+    expect(rpc).toHaveBeenNthCalledWith(1, "get_my_advertiser_accounts");
+    expect(rpc).toHaveBeenNthCalledWith(2, "create_my_business_account", expect.objectContaining({ p_display_name: "Studio" }));
+    expect(rpc).toHaveBeenNthCalledWith(3, "get_my_advertising_campaigns");
+    expect(rpc).toHaveBeenNthCalledWith(4, "get_my_advertising_campaign", { p_campaign_id: "v2-1", p_authority: "ads_v2" });
+  });
+
+  it("creates only a general draft and never calls funding, spend, settlement, activation, or delivery", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("33333333-3333-4333-8333-333333333333");
+    const rpc = vi.fn().mockResolvedValue({ data: { id: "v2-1", ad_account_id: "ad-account-1", business_account_id: "business-1", name: "Brand", status: "draft", objective: "awareness", created_at: "2026-09-23T00:00:00Z", updated_at: "2026-09-23T00:00:00Z", archived_at: null, ad_sets: [], destinations: [] }, error: null });
+    await createAdvertisingCampaignDraft({ adAccountId: "ad-account-1", name: "Brand", objective: "awareness" }, { rpc } as unknown as BusinessSupabaseClient);
+    expect(rpc).toHaveBeenCalledWith("create_my_advertising_campaign_draft", {
+      p_ad_account_id: "ad-account-1", p_name: "Brand", p_objective: "awareness", p_idempotency_key: "33333333-3333-4333-8333-333333333333",
+    });
+    expect(rpc.mock.calls.flat().join(" ")).not.toMatch(/fund_|spend_|settle_|activate|delivery_candidates|record_advertising/);
+  });
+
+  it("parses canonical placement state for refresh-safe workspace restoration", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: {
+      placement_selection_id: "selection-1", ad_set_id: "set-1", status: "draft", production_delivery_enabled: false,
+      latest_version: { version_number: 2, registry_policy_version: "nelyon-ads-delivery-v2", definition_fingerprint: "fingerprint", placements: [
+        { code: "clips", label: "Clips", surface_family: "video", surface_verified: true, selection_enabled: true, v2_delivery_enabled: false },
+      ] } },
+      error: null,
+    });
+    const selection = await getAdvertisingPlacementSelection("selection-1", { rpc } as unknown as BusinessSupabaseClient);
+    expect(selection.latestVersion?.placements).toEqual([expect.objectContaining({ code: "clips", v2DeliveryEnabled: false })]);
+    expect(selection.productionDeliveryEnabled).toBe(false);
+  });
+
+  it("distinguishes a missing finance draft from authorization and transport failures", async () => {
+    const missingRpc = vi.fn().mockResolvedValue({ data: null, error: { code: "P0002", message: "advertising_campaign_finance_not_found" } });
+    const deniedRpc = vi.fn().mockResolvedValue({ data: null, error: { code: "42501", message: "advertising_campaign_finance_access_denied" } });
+    let missing: unknown;
+    try { await getAdvertisingFinance("campaign-1", { rpc: missingRpc } as unknown as BusinessSupabaseClient); } catch (cause) { missing = cause; }
+    expect(isAdvertisingFinanceNotFound(missing)).toBe(true);
+    await expect(getAdvertisingFinance("campaign-1", { rpc: deniedRpc } as unknown as BusinessSupabaseClient)).rejects.toThrow("advertising_campaign_finance_access_denied");
   });
 });

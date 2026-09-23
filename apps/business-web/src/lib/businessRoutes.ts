@@ -8,7 +8,7 @@ export function businessPath(path: string) {
   return `${BUSINESS_BASE_PATH}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
-const privatePath = /^\/business\/(?:home|invitations|store|media|products(?:\/(?:shipping|[^/]+))?|orders(?:\/[^/]+)?|ads(?:\/(?:new|[^/]+))?|finance(?:\/payouts)?|analytics|team|settings)$/;
+const privatePath = /^\/business\/(?:home|invitations|store|media|products(?:\/(?:shipping|[^/]+))?|orders(?:\/[^/]+)?|ads(?:\/(?:new|[^/]+|campaigns(?:\/(?:new|[^/]+))?|marketplace(?:\/(?:new|[^/]+))?))?|finance(?:\/payouts)?|analytics|team|settings)$/;
 
 export function validateBusinessReturnTo(value: string | null | undefined, _origin: string = window.location.origin) {
   if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\") || [...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) return BUSINESS_HOME_PATH;

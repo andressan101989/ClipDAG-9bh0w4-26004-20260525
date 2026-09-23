@@ -25,7 +25,7 @@ const navigation: readonly BusinessNavItem[] = [
   { label: "Configuración", path: "/settings", symbol: "⚙", enabled: true, capabilities: ["business.settings.manage"] },
 ];
 
-export function BusinessLayout() {
+export function BusinessLayout({ advertising = false }: { advertising?: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { store, user, logout, businesses, currentBusiness, accessType, hasCapability, selectBusiness } = useBusinessAuth();
   const location = useLocation();
@@ -48,7 +48,7 @@ export function BusinessLayout() {
         </div>
         <nav aria-label="Navegación Business">
           {navigation.map((item) =>
-            item.enabled && item.path && item.capabilities?.some((capability) => hasCapability(capability)) ? (
+            item.enabled && item.path && ((advertising && item.path === "/ads") || item.capabilities?.some((capability) => hasCapability(capability))) ? (
               <NavLink
                 end={item.path === "/home"}
                 key={item.label}
@@ -73,7 +73,7 @@ export function BusinessLayout() {
             {store?.name.slice(0, 1).toUpperCase() ?? "N"}
           </div>
           <div>
-            <strong>{store?.name ?? currentBusiness?.seller.displayName}</strong>
+            <strong>{store?.name ?? currentBusiness?.seller.displayName ?? (advertising ? "Ads Manager" : "Nelyon Business")}</strong>
             {store && <StatusBadge status={store.status} />}
             {accessType && <small>{accessType === "owner" ? "Propietario" : "Miembro"}</small>}
           </div>
@@ -102,7 +102,7 @@ export function BusinessLayout() {
             <strong>{pageName}</strong>
           </div>
           <div className="topbar-account">
-            <BusinessInvitationNotice />
+            {!advertising && <BusinessInvitationNotice />}
             {businesses.length > 1 && (
               <select
                 aria-label="Negocio actual"

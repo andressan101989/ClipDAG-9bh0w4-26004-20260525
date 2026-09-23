@@ -76,7 +76,7 @@ export function BusinessAdsPage() {
       eyebrow="Ads Manager"
       title="Publicidad"
       description="Campañas de producto financiadas en BDAG, con delivery y atribución canónicos."
-      action={canManage ? <Link className="primary-button" to="/ads/new">Crear campaña</Link> : undefined}
+      action={canManage ? <Link className="primary-button" to="/ads/marketplace/new">Crear campaña legacy</Link> : undefined}
     />
     {!canManage && <div className="readonly-note">Vista de solo lectura. Puedes consultar campañas y rendimiento.</div>}
     <section className="ads-summary-grid" aria-label="Resumen de publicidad">
@@ -107,7 +107,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function CampaignTable({ items }: { items: AdCampaignSummary[] }) {
   return <div className="seller-table-wrap"><table className="seller-table ads-table"><thead><tr><th>Campaña</th><th>Estado</th><th>Presupuesto</th><th>Gastado</th><th>Performance</th><th>Programación</th></tr></thead><tbody>{items.map((campaign) => <tr key={campaign.id}>
-    <td data-label="Campaña"><Link className="product-cell" to={`/ads/${campaign.id}`}>{campaign.productImageUrl ? <img src={campaign.productImageUrl} alt="" /> : <span className="product-placeholder">◎</span>}<span><strong>{campaign.name ?? campaign.productTitle}</strong><small>{campaign.productTitle}</small></span></Link></td>
+    <td data-label="Campaña"><Link className="product-cell" to={`/ads/marketplace/${campaign.id}`}>{campaign.productImageUrl ? <img src={campaign.productImageUrl} alt="" /> : <span className="product-placeholder">◎</span>}<span><strong>{campaign.name ?? campaign.productTitle}</strong><small>{campaign.productTitle}</small></span></Link></td>
     <td data-label="Estado"><StatusBadge status={campaign.status} /></td>
     <td data-label="Presupuesto">{formatMoney(campaign.totalBudgetBdag)}<small className="table-subline">Restante {formatMoney(campaign.remainingReservedBdag)}</small></td>
     <td data-label="Gastado">{formatMoney(campaign.spentBdag)}<small className="table-subline">Liberado {formatMoney(campaign.releasedBdag)}</small></td>

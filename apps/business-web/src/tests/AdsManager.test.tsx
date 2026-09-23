@@ -55,8 +55,8 @@ const detail = (status = "completed") => ({
 });
 
 function renderList() { return render(<MemoryRouter><BusinessAdsPage /></MemoryRouter>); }
-function renderCreate() { return render(<MemoryRouter initialEntries={["/ads/new"]}><Routes><Route path="/ads/new" element={<BusinessAdCreatePage />} /><Route path="/ads/:campaignId" element={<div>Campaign destination</div>} /></Routes></MemoryRouter>); }
-function renderDetail() { return render(<MemoryRouter initialEntries={["/ads/campaign-1"]}><Routes><Route path="/ads/:campaignId" element={<BusinessAdDetailPage />} /></Routes></MemoryRouter>); }
+function renderCreate() { return render(<MemoryRouter initialEntries={["/ads/marketplace/new"]}><Routes><Route path="/ads/marketplace/new" element={<BusinessAdCreatePage />} /><Route path="/ads/marketplace/:campaignId" element={<div>Campaign destination</div>} /></Routes></MemoryRouter>); }
+function renderDetail() { return render(<MemoryRouter initialEntries={["/ads/marketplace/campaign-1"]}><Routes><Route path="/ads/marketplace/:campaignId" element={<BusinessAdDetailPage />} /></Routes></MemoryRouter>); }
 
 describe("Business Ads Manager", () => {
   beforeEach(() => {

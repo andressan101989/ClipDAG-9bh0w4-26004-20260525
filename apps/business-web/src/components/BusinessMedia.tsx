@@ -24,17 +24,21 @@ export function BusinessMediaPicker({
   open,
   selectedId,
   title,
+  kind = "image",
+  businessOwnerId,
   onSelect,
   onClose,
 }: {
   open: boolean;
   selectedId: string | null;
   title: string;
+  kind?: "image" | "video";
+  businessOwnerId?: string;
   onSelect: (item: BusinessMediaItem) => void;
   onClose: () => void;
 }) {
   const { currentBusiness } = useBusinessAuth();
-  const ownerId = currentBusiness?.businessOwnerId ?? "";
+  const ownerId = businessOwnerId ?? currentBusiness?.businessOwnerId ?? "";
   const [items, setItems] = useState<BusinessMediaItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,14 +50,14 @@ export function BusinessMediaPicker({
     setLoading(true);
     setError(null);
     try {
-      const page = await searchBusinessMedia(ownerId, { kind: "image", status: "ready", limit: 60 });
+      const page = await searchBusinessMedia(ownerId, { kind, status: "ready", limit: 60 });
       if (request === requestRef.current) setItems(page.items);
     } catch (cause) {
       if (request === requestRef.current) setError(cause instanceof Error ? cause.message : "No se pudo cargar Media");
     } finally {
       if (request === requestRef.current) setLoading(false);
     }
-  }, [open, ownerId]);
+  }, [kind, open, ownerId]);
   useEffect(() => {
     setItems([]);
     void load();
@@ -79,7 +83,7 @@ export function BusinessMediaPicker({
         <header><div><p className="eyebrow">Business Media</p><h2>{title}</h2></div><button ref={closeButtonRef} className="icon-button" type="button" aria-label="Cerrar" onClick={onClose}>×</button></header>
         {loading && <div className="media-dialog-state">Cargando biblioteca…</div>}
         {error && <div className="media-dialog-state"><p>{error}</p><button className="secondary-button" type="button" onClick={() => void load()}>Reintentar</button></div>}
-        {!loading && !error && items.length === 0 && <div className="media-dialog-state">No hay imágenes listas en la biblioteca.</div>}
+        {!loading && !error && items.length === 0 && <div className="media-dialog-state">{kind === "image" ? "No hay imágenes listas en la biblioteca." : "No hay videos listos en la biblioteca."}</div>}
         {!loading && !error && items.length > 0 && <div className="media-picker-grid">{items.map((item) => (
           <button className={item.assetId === selectedId ? "media-picker-item is-selected" : "media-picker-item"} type="button" key={item.assetId} onClick={() => onSelect(item)}>
             <BusinessMediaPreview item={item} compact />
