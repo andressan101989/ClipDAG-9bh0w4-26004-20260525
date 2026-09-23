@@ -11,6 +11,8 @@ test("Business Ads V2 exposes the canonical routes and keeps launch controls abs
   for (const route of ["campaigns", "campaigns/new", "campaigns/:campaignId", "marketplace"]) {
     assert.match(app, new RegExp(`path=["']${route.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`));
   }
+  assert.match(app, /path=["']new["'][^>]+<BusinessAdsRoute create/);
+  assert.match(app, /path=["']:campaignId["'][^>]+<BusinessAdsRoute detail/);
   assert.doesNotMatch(pages, /fund_my_advertising_campaign_budget_v2|spend_advertising_campaign_budget_v2|settle_advertising_campaign_budget_v2|fetch_advertising_delivery_candidates_v2|record_advertising_(?:impression|interaction)/);
   assert.match(pages, /Campaign activation/);
   assert.match(pages, /Funding is not enabled yet/);

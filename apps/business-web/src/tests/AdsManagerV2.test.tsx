@@ -81,6 +81,8 @@ describe("Ads Manager V2 workspace", () => {
     expect(screen.getByLabelText("Ad Account")).toHaveValue("account-2");
     expect(screen.getByLabelText("Business")).toBeDisabled();
     expect(screen.getByLabelText("Ad Account")).toBeDisabled();
+    expect(screen.getByText(/Media Library is still Marketplace Business capability-scoped/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Choose from Media Library" })).toBeDisabled();
   });
 
   it("restores canonical placement codes in the assembled review after refresh", async () => {

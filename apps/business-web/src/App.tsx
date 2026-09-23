@@ -132,6 +132,8 @@ function AdvertisingBoundary() {
     <Route path="marketplace" element={<BusinessAdsRoute />} />
     <Route path="marketplace/new" element={<BusinessAdsRoute create />} />
     <Route path="marketplace/:campaignId" element={<BusinessAdsRoute detail />} />
+    <Route path="new" element={<BusinessAdsRoute create />} />
+    <Route path=":campaignId" element={<BusinessAdsRoute detail />} />
     <Route path="*" element={<Navigate to="/ads" replace />} />
   </Route></Routes></AdvertisingManagerProvider>;
 }
