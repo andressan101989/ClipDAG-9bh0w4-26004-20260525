@@ -48,12 +48,14 @@ const adsMocks = vi.hoisted(() => ({
   }),
   accounts: vi.fn().mockResolvedValue([]),
   campaigns: vi.fn().mockResolvedValue([]),
+  age: vi.fn().mockResolvedValue({ status: "eligible", ageBand: "age_18_plus", evaluated: true, advertiser18PlusEligible: true, policyVersion: "nelyon-age-v2", minimumAge: 13 }),
 }));
 vi.mock("../lib/adsManagerApi", async (original) => ({
   ...(await original<typeof import("../lib/adsManagerApi")>()),
   searchAdCampaigns: adsMocks.search,
   getAdvertiserAccounts: adsMocks.accounts,
   getAdvertisingCampaigns: adsMocks.campaigns,
+  getMyAgeEligibility: adsMocks.age,
 }));
 const billingMocks = vi.hoisted(() => ({
   overview: vi.fn().mockResolvedValue({

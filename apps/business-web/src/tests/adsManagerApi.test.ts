@@ -15,8 +15,10 @@ import {
   getAdvertisingCampaign,
   getAdvertisingCampaigns,
   getAdvertisingFinance,
+  getMyAgeEligibility,
   getAdvertisingPlacementSelection,
   isAdvertisingFinanceNotFound,
+  remediateMyAgeEligibility,
 } from "../lib/adsManagerApi";
 
 vi.mock("../lib/supabase", () => ({ supabase: {} }));
@@ -33,6 +35,17 @@ const campaign = {
 
 describe("Ads Manager canonical API", () => {
   beforeEach(() => vi.restoreAllMocks());
+
+  it("reads and remediates only the current actor through canonical age RPCs", async () => {
+    const payload = { status: "eligible", age_band: "age_18_plus", evaluated: true, advertiser_18_plus_eligible: true, policy_version: "nelyon-age-v2", minimum_age: 13 };
+    const rpc = vi.fn().mockResolvedValue({ data: payload, error: null });
+    const client = { rpc } as unknown as BusinessSupabaseClient;
+    expect(await getMyAgeEligibility(client)).toMatchObject({ ageBand: "age_18_plus", advertiser18PlusEligible: true });
+    expect(await remediateMyAgeEligibility("1990-05-10", client)).toMatchObject({ evaluated: true, minimumAge: 13 });
+    expect(rpc).toHaveBeenNthCalledWith(1, "get_my_age_eligibility");
+    expect(rpc).toHaveBeenNthCalledWith(2, "remediate_my_age_eligibility", { p_date_of_birth: "1990-05-10" });
+    expect(rpc.mock.calls.flat().join(" ")).not.toContain("p_user_id");
+  });
 
   it("uses bounded business-scoped campaign pagination and preserves numeric precision", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: {

@@ -484,6 +484,35 @@ export const ADVERTISING_OBJECTIVES = ["awareness", "reach", "traffic", "engagem
 export const ADVERTISING_PLACEMENTS = ["marketplace_home", "marketplace_search", "social_feed", "stories", "clips", "live"] as const;
 export const ADVERTISING_CTAS = ["learn_more", "shop_now", "sign_up", "contact_us", "send_message", "download", "visit_profile", "none"] as const;
 
+export type AdvertisingAgeEligibility = {
+  status: "eligible" | "ineligible" | "unknown_legacy";
+  ageBand: "age_18_plus" | "age_13_17" | "under_13" | "unknown_legacy";
+  evaluated: boolean;
+  advertiser18PlusEligible: boolean;
+  policyVersion: string;
+  minimumAge: number;
+};
+
+function parseAdvertisingAgeEligibility(value: unknown): AdvertisingAgeEligibility {
+  const row = object(value, "advertising_age_eligibility_invalid");
+  return {
+    status: string(row.status, "advertising_age_eligibility_invalid") as AdvertisingAgeEligibility["status"],
+    ageBand: string(row.age_band, "advertising_age_eligibility_invalid") as AdvertisingAgeEligibility["ageBand"],
+    evaluated: row.evaluated === true,
+    advertiser18PlusEligible: row.advertiser_18_plus_eligible === true,
+    policyVersion: string(row.policy_version, "advertising_age_eligibility_invalid"),
+    minimumAge: number(row.minimum_age),
+  };
+}
+
+export async function getMyAgeEligibility(client: BusinessSupabaseClient = supabase) {
+  return parseAdvertisingAgeEligibility(await advertisingRpc("get_my_age_eligibility", undefined, "No se pudo cargar la elegibilidad publicitaria", client));
+}
+
+export async function remediateMyAgeEligibility(dateOfBirth: string, client: BusinessSupabaseClient = supabase) {
+  return parseAdvertisingAgeEligibility(await advertisingRpc("remediate_my_age_eligibility", { p_date_of_birth: dateOfBirth }, "No se pudo confirmar la elegibilidad", client));
+}
+
 export type AdvertisingAudienceDefinition = {
   age_scope: "adults_only";
   geographies: Array<{ mode: "include" | "exclude"; type: "country" | "region" | "city" | "radius"; country_code: string; region_code?: string; city_name?: string; latitude?: number; longitude?: number; radius_km?: number }>;
@@ -596,6 +625,7 @@ export function isAdvertisingFinanceNotFound(cause: unknown) {
 export function advertisingUserMessage(cause: unknown) {
   const message = cause instanceof Error ? cause.message : String(cause ?? "");
   if (message.includes("advertising_adult_eligibility_required")) return "Advertising creation requires verified adult eligibility.";
+  if (message.includes("age_eligibility_invalid_date_of_birth")) return "Enter a valid date of birth.";
   if (message.includes("42501") || message.includes("access_denied")) return "No tienes permiso para completar esta acción.";
   return message || "No se pudo completar la acción.";
 }

@@ -20,6 +20,7 @@ import {
   createAdvertisingFinanceDraft,
   createAdvertisingPlacementSelectionDraft,
   getAdvertiserAccounts,
+  getMyAgeEligibility,
   getAdvertisingAudience,
   getAdvertisingCampaign,
   getAdvertisingCampaigns,
@@ -28,10 +29,12 @@ import {
   getAdvertisingFinance,
   getAdvertisingPlacementSelection,
   isAdvertisingFinanceNotFound,
+  remediateMyAgeEligibility,
   submitAdvertisingAdForReview,
   type AdvertiserAdAccount,
   type AdvertiserBusiness,
   type AdvertisingAudienceDefinition,
+  type AdvertisingAgeEligibility,
   type AdvertisingCampaign,
   type AdvertisingCampaignSummary,
   type AdvertisingCreativeWorkspace,
@@ -47,9 +50,11 @@ type AdvertisingManagerState = {
   selectedAdAccount: AdvertiserAdAccount | null;
   loading: boolean;
   error: string | null;
+  ageEligibility: AdvertisingAgeEligibility | null;
   selectBusiness: (id: string) => void;
   selectAdAccount: (id: string) => void;
   createBusiness: (name: string) => Promise<void>;
+  remediateAge: (dateOfBirth: string) => Promise<AdvertisingAgeEligibility>;
   refresh: () => Promise<void>;
 };
 
@@ -63,13 +68,15 @@ export function AdvertisingManagerProvider({ children }: { children: ReactNode }
   const [selectedAdAccountId, setSelectedAdAccountId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [ageEligibility, setAgeEligibility] = useState<AdvertisingAgeEligibility | null>(null);
 
   const refresh = useCallback(async () => {
     if (!user) return;
     setLoading(true); setError(null);
     try {
-      const [nextAccounts, nextCampaigns] = await Promise.all([getAdvertiserAccounts(), getAdvertisingCampaigns()]);
+      const [nextAccounts, nextCampaigns, nextAgeEligibility] = await Promise.all([getAdvertiserAccounts(), getAdvertisingCampaigns(), getMyAgeEligibility()]);
       setAccounts(nextAccounts); setCampaigns(nextCampaigns);
+      setAgeEligibility(nextAgeEligibility);
       setSelectedBusinessId((current) => nextAccounts.some((item) => item.businessAccountId === current) ? current : nextAccounts[0]?.businessAccountId ?? "");
     } catch (cause) { setError(advertisingUserMessage(cause)); }
     finally { setLoading(false); }
@@ -86,8 +93,49 @@ export function AdvertisingManagerProvider({ children }: { children: ReactNode }
     await refresh();
   }, [refresh]);
 
-  const value = useMemo<AdvertisingManagerState>(() => ({ accounts, campaigns, selectedBusiness, selectedAdAccount, loading, error, selectBusiness: setSelectedBusinessId, selectAdAccount: setSelectedAdAccountId, createBusiness, refresh }), [accounts, campaigns, selectedBusiness, selectedAdAccount, loading, error, createBusiness, refresh]);
+  const remediateAge = useCallback(async (dateOfBirth: string) => {
+    const result = await remediateMyAgeEligibility(dateOfBirth);
+    setAgeEligibility(result);
+    return result;
+  }, []);
+
+  const value = useMemo<AdvertisingManagerState>(() => ({ accounts, campaigns, selectedBusiness, selectedAdAccount, loading, error, ageEligibility, selectBusiness: setSelectedBusinessId, selectAdAccount: setSelectedAdAccountId, createBusiness, remediateAge, refresh }), [accounts, campaigns, selectedBusiness, selectedAdAccount, loading, error, ageEligibility, createBusiness, remediateAge, refresh]);
   return <AdvertisingManagerContext.Provider value={value}>{children}</AdvertisingManagerContext.Provider>;
+}
+
+function AdvertisingAgeEligibilityPanel() {
+  const { ageEligibility, remediateAge } = useAdvertisingManager();
+  const [dateOfBirth, setDateOfBirth] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!ageEligibility || ageEligibility.advertiser18PlusEligible) return null;
+  if (ageEligibility.evaluated) {
+    return <section className="business-card ads-v2-age-gate" role="status">
+      <strong>{ageEligibility.ageBand === "age_13_17" ? "Advertising is available only to adults 18 or older." : "This account is not eligible to use advertising."}</strong>
+      <span>Eligibility is enforced by the canonical server authority.</span>
+    </section>;
+  }
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault(); setSaving(true); setError(null);
+    try {
+      await remediateAge(dateOfBirth);
+      setDateOfBirth("");
+    } catch (cause) {
+      setError(advertisingUserMessage(cause));
+    } finally { setSaving(false); }
+  }
+
+  return <section className="business-card ads-v2-age-gate">
+    <strong>Confirm your age to continue with advertising.</strong>
+    <p>Your date of birth is sent to the server only to determine eligibility. Ads Manager does not store it.</p>
+    <InlineError message={error} />
+    <form className="seller-form" onSubmit={(event) => void submit(event)}>
+      <FormField label="Date of birth"><input type="date" required value={dateOfBirth} onChange={(event) => setDateOfBirth(event.target.value)} /></FormField>
+      <button className="primary-button" disabled={saving} type="submit">{saving ? "Confirming…" : "Confirm age"}</button>
+    </form>
+  </section>;
 }
 
 export function useAdvertisingManager() {
@@ -115,16 +163,17 @@ function AdvertiserOnboarding() {
 }
 
 export function BusinessAdsManagerHomePage() {
-  const { accounts, campaigns, selectedBusiness, selectedAdAccount, loading, error } = useAdvertisingManager();
+  const { accounts, campaigns, selectedBusiness, selectedAdAccount, loading, error, ageEligibility } = useAdvertisingManager();
   const visible = campaigns.filter((item) => item.businessAccountId === selectedBusiness?.businessAccountId && (!item.adAccountId || item.adAccountId === selectedAdAccount?.id));
   const owner = selectedBusiness?.accessType === "owner";
   return <>
-    <PageHeader eyebrow="Business Ads Manager V2" title="Ads Manager" description="Build campaigns, creative, review, audience and budget drafts in one resumable workspace." action={owner ? <Link className="primary-button" to="/ads/campaigns/new">Create campaign</Link> : undefined} />
+    <PageHeader eyebrow="Business Ads Manager V2" title="Ads Manager" description="Build campaigns, creative, review, audience and budget drafts in one resumable workspace." action={owner && ageEligibility?.advertiser18PlusEligible ? <Link className="primary-button" to="/ads/campaigns/new">Create campaign</Link> : undefined} />
     <InlineError message={error} />
     {loading && <div className="seller-state">Loading advertiser accounts…</div>}
     {!loading && accounts.length === 0 && <AdvertiserOnboarding />}
     {!loading && accounts.length > 0 && <>
       <AccountSelectors />
+      {owner && <AdvertisingAgeEligibilityPanel />}
       {!owner && <div className="readonly-note">Ads V2 campaign reads and writes are currently owner-only. Member access remains unsupported by the canonical campaign RPCs.</div>}
       <section className="business-card ads-v2-safety"><strong>Safe pre-launch workspace</strong><span>Campaign activation, funding and live delivery are unavailable. All placements remain delivery inactive.</span></section>
       <div className="seller-subnav"><Link className="is-active" to="/ads/campaigns">Campaigns</Link>{selectedBusiness?.marketplace.linked && <Link to="/ads/marketplace">Marketplace Legacy</Link>}</div>
@@ -134,13 +183,14 @@ export function BusinessAdsManagerHomePage() {
 }
 
 export function BusinessAdsManagerNewCampaignPage() {
-  const { accounts, selectedBusiness, selectedAdAccount } = useAdvertisingManager();
+  const { accounts, selectedBusiness, selectedAdAccount, ageEligibility } = useAdvertisingManager();
   const navigate = useNavigate();
   const [name, setName] = useState(""); const [objective, setObjective] = useState<(typeof ADVERTISING_OBJECTIVES)[number]>("awareness"); const [saving, setSaving] = useState(false); const [error, setError] = useState<string | null>(null);
   const owner = selectedBusiness?.accessType === "owner";
-  async function submit(event: React.FormEvent) { event.preventDefault(); if (!owner || !selectedAdAccount) return; setSaving(true); setError(null); try { const campaign = await createAdvertisingCampaignDraft({ adAccountId: selectedAdAccount.id, name, objective }); navigate(`/ads/campaigns/${campaign.id}`); } catch (cause) { setError(advertisingUserMessage(cause)); } finally { setSaving(false); } }
+  const canWrite = owner && ageEligibility?.advertiser18PlusEligible === true;
+  async function submit(event: React.FormEvent) { event.preventDefault(); if (!canWrite || !selectedAdAccount) return; setSaving(true); setError(null); try { const campaign = await createAdvertisingCampaignDraft({ adAccountId: selectedAdAccount.id, name, objective }); navigate(`/ads/campaigns/${campaign.id}`); } catch (cause) { setError(advertisingUserMessage(cause)); } finally { setSaving(false); } }
   if (accounts.length === 0) return <><PageHeader eyebrow="Ads Manager" title="Create campaign draft" description="Create a Business Account first." /><AdvertiserOnboarding /></>;
-  return <><PageHeader eyebrow="Ads Manager · Step 1" title="Create campaign draft" description="This creates a general Ads V2 draft. It does not fund, activate, or deliver advertising." action={<Link className="text-button" to="/ads">Back</Link>} /><AccountSelectors /><InlineError message={error} />{!owner && <div className="readonly-note">Only the Business Account owner can create Ads V2 drafts.</div>}<form className="business-card ads-v2-compact-form" onSubmit={(event) => void submit(event)}><FormField label="Campaign name"><input required minLength={2} maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /></FormField><FormField label="Objective"><select value={objective} onChange={(event) => setObjective(event.target.value as (typeof ADVERTISING_OBJECTIVES)[number])}>{ADVERTISING_OBJECTIVES.map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</select></FormField><FormField label="Ad Account"><input readOnly value={selectedAdAccount?.name ?? ""} /></FormField><button className="primary-button" type="submit" disabled={!owner || !selectedAdAccount || saving}>{saving ? "Creating…" : "Create draft"}</button></form></>;
+  return <><PageHeader eyebrow="Ads Manager · Step 1" title="Create campaign draft" description="This creates a general Ads V2 draft. It does not fund, activate, or deliver advertising." action={<Link className="text-button" to="/ads">Back</Link>} /><AccountSelectors /><InlineError message={error} />{owner && <AdvertisingAgeEligibilityPanel />}{!owner && <div className="readonly-note">Only the Business Account owner can create Ads V2 drafts.</div>}<form className="business-card ads-v2-compact-form" onSubmit={(event) => void submit(event)}><FormField label="Campaign name"><input required minLength={2} maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /></FormField><FormField label="Objective"><select value={objective} onChange={(event) => setObjective(event.target.value as (typeof ADVERTISING_OBJECTIVES)[number])}>{ADVERTISING_OBJECTIVES.map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</select></FormField><FormField label="Ad Account"><input readOnly value={selectedAdAccount?.name ?? ""} /></FormField><button className="primary-button" type="submit" disabled={!canWrite || !selectedAdAccount || saving}>{saving ? "Creating…" : "Create draft"}</button></form></>;
 }
 
 type WorkspaceData = { campaign: AdvertisingCampaign; creatives: AdvertisingCreativeWorkspace; finance: AdvertisingFinance | null; analytics: Record<string, unknown>; audience: Record<string, unknown> | null; placement: AdvertisingPlacementSelection | null };
@@ -149,11 +199,12 @@ const defaultAudience: AdvertisingAudienceDefinition = { age_scope: "adults_only
 
 export function BusinessAdsManagerCampaignPage() {
   const { campaignId = "" } = useParams();
-  const { accounts, refresh: refreshList } = useAdvertisingManager();
+  const { accounts, refresh: refreshList, ageEligibility } = useAdvertisingManager();
   const [data, setData] = useState<WorkspaceData | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [success, setSuccess] = useState<string | null>(null);
   const campaignBusiness = data ? accounts.find((item) => item.businessAccountId === data.campaign.businessAccountId) ?? null : null;
   const campaignAdAccount = data ? campaignBusiness?.adAccounts.find((item) => item.id === data.campaign.adAccountId) ?? null : null;
   const owner = campaignBusiness?.accessType === "owner";
+  const canWrite = owner && ageEligibility?.advertiser18PlusEligible === true;
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
@@ -177,7 +228,7 @@ export function BusinessAdsManagerCampaignPage() {
   async function run(action: () => Promise<unknown>, message: string) { setError(null); setSuccess(null); try { await action(); setSuccess(message); await Promise.all([load(), refreshList()]); } catch (cause) { setError(advertisingUserMessage(cause)); } }
   if (loading) return <div className="seller-state">Restoring campaign workspace from server…</div>;
   if (!data) return <><InlineError message={error} /><Link to="/ads">Back to campaigns</Link></>;
-  return <><PageHeader eyebrow="Ads V2 draft workspace" title={data.campaign.name} description="Server-backed configuration. Refreshing this page reconstructs Audience, Placements, Creative, Review, Finance and Analytics." action={<Link className="text-button" to="/ads">Back to campaigns</Link>} /><InlineError message={error} />{success && <div className="inline-success" role="status">{success}</div>}{!owner && <div className="readonly-note">This campaign is not writable by the current owner-authoritative Ads V2 RPCs.</div>}<AccountSelectors business={campaignBusiness} adAccount={campaignAdAccount} locked /><CampaignWorkspace data={data} business={campaignBusiness} adAccount={campaignAdAccount} owner={owner} run={run} /></>;
+  return <><PageHeader eyebrow="Ads V2 draft workspace" title={data.campaign.name} description="Server-backed configuration. Refreshing this page reconstructs Audience, Placements, Creative, Review, Finance and Analytics." action={<Link className="text-button" to="/ads">Back to campaigns</Link>} /><InlineError message={error} />{success && <div className="inline-success" role="status">{success}</div>}{owner && <AdvertisingAgeEligibilityPanel />}{!owner && <div className="readonly-note">This campaign is not writable by the current owner-authoritative Ads V2 RPCs.</div>}<AccountSelectors business={campaignBusiness} adAccount={campaignAdAccount} locked /><CampaignWorkspace data={data} business={campaignBusiness} adAccount={campaignAdAccount} owner={canWrite} run={run} /></>;
 }
 
 function CampaignWorkspace({ data, business, adAccount, owner, run }: { data: WorkspaceData; business: AdvertiserBusiness | null; adAccount: AdvertiserAdAccount | null; owner: boolean; run: (action: () => Promise<unknown>, message: string) => Promise<void> }) {

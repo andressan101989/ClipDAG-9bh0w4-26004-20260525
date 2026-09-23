@@ -4,10 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AdvertisingManagerProvider, BusinessAdsManagerCampaignPage, BusinessAdsManagerHomePage, BusinessAdsManagerNewCampaignPage } from "../pages/ads/BusinessAdsV2Pages";
 
 vi.mock("../lib/supabase", () => ({ supabase: {} }));
-vi.mock("../auth/BusinessAuthProvider", () => ({ useBusinessAuth: () => ({ user: { id: "owner-1", email: "owner@nelyon.app" } }) }));
+const authUser = vi.hoisted(() => ({ id: "owner-1", email: "owner@nelyon.app" }));
+vi.mock("../auth/BusinessAuthProvider", () => ({ useBusinessAuth: () => ({ user: authUser }) }));
 const api = vi.hoisted(() => ({
   accounts: vi.fn(), campaigns: vi.fn(), createBusiness: vi.fn(), createCampaign: vi.fn(),
   campaign: vi.fn(), creativeWorkspace: vi.fn(), finance: vi.fn(), summary: vi.fn(), audience: vi.fn(), placement: vi.fn(),
+  age: vi.fn(), remediateAge: vi.fn(),
 }));
 vi.mock("../lib/adsManagerApi", async (original) => ({
   ...await original<typeof import("../lib/adsManagerApi")>(),
@@ -21,6 +23,8 @@ vi.mock("../lib/adsManagerApi", async (original) => ({
   getAdvertisingEventSummary: api.summary,
   getAdvertisingAudience: api.audience,
   getAdvertisingPlacementSelection: api.placement,
+  getMyAgeEligibility: api.age,
+  remediateMyAgeEligibility: api.remediateAge,
 }));
 
 const ownerBusiness = { businessAccountId: "business-1", displayName: "Nelyon Studio", status: "active", accessType: "owner", marketplace: { linked: false, marketplaceSellerUserId: null, sellerStatus: null }, adAccounts: [{ id: "account-1", name: "Nelyon Ads", status: "active", billingCurrency: "BDAG", isDefault: true }] };
@@ -41,6 +45,8 @@ describe("Ads Manager V2 workspace", () => {
     api.summary.mockResolvedValue({ impressions: 0, clicks: 0, conversions: 0, ctr: 0 });
     api.audience.mockResolvedValue(null);
     api.placement.mockResolvedValue(null);
+    api.age.mockResolvedValue({ status: "eligible", ageBand: "age_18_plus", evaluated: true, advertiser18PlusEligible: true, policyVersion: "nelyon-age-v2", minimumAge: 13 });
+    api.remediateAge.mockResolvedValue({ status: "eligible", ageBand: "age_18_plus", evaluated: true, advertiser18PlusEligible: true, policyVersion: "nelyon-age-v2", minimumAge: 13 });
   });
 
   it("offers advertiser-only onboarding without Marketplace seller, Store, or Product", async () => {
@@ -50,6 +56,26 @@ describe("Ads Manager V2 workspace", () => {
     fireEvent.change(screen.getByLabelText("Business name"), { target: { value: "Local Studio" } });
     fireEvent.click(screen.getByRole("button", { name: "Create business account" }));
     await waitFor(() => expect(api.createBusiness).toHaveBeenCalledWith("Local Studio"));
+  });
+
+  it("offers self-service remediation for unknown eligibility and unlocks Ads after the server returns adult", async () => {
+    api.age.mockResolvedValue({ status: "unknown_legacy", ageBand: "unknown_legacy", evaluated: false, advertiser18PlusEligible: false, policyVersion: "nelyon-age-v2", minimumAge: 13 });
+    renderHome();
+    expect(await screen.findByText("Confirm your age to continue with advertising.")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Create campaign" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Date of birth"), { target: { value: "1990-05-10" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm age" }));
+    await waitFor(() => expect(api.remediateAge).toHaveBeenCalledWith("1990-05-10"));
+    expect(await screen.findByRole("link", { name: "Create campaign" })).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("1990-05-10")).not.toBeInTheDocument();
+  });
+
+  it("keeps a server-classified teen blocked without exposing internal age authority", async () => {
+    api.age.mockResolvedValue({ status: "eligible", ageBand: "age_13_17", evaluated: true, advertiser18PlusEligible: false, policyVersion: "nelyon-age-v2", minimumAge: 13 });
+    renderHome();
+    expect(await screen.findByText("Advertising is available only to adults 18 or older.")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Create campaign" })).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("age_13_17");
   });
 
   it("labels V2 and legacy campaigns and keeps legacy writes in the legacy workspace", async () => {
