@@ -1,4 +1,4 @@
-import { authenticatedClient } from "./mediaAuth.ts";
+import { admin, authenticatedClient } from "./mediaAuth.ts";
 
 export function isUuid(value: unknown): value is string {
   return typeof value === "string"
@@ -21,4 +21,19 @@ export async function businessActorHasAnyCapability(
   }) as Record<string, unknown> | undefined;
   if (!access || !Array.isArray(access.capabilities)) return false;
   return capabilities.some((capability) => access.capabilities.includes(capability));
+}
+
+export async function businessActorHasAdvertiserOwnerMediaAccess(
+  actorUserId: string,
+  businessOwnerId: string,
+) {
+  if (!isUuid(actorUserId) || actorUserId !== businessOwnerId) return false;
+  const { data, error } = await admin().rpc(
+    "business_media_actor_has_advertiser_owner_scope",
+    {
+      p_actor_user_id: actorUserId,
+      p_business_owner_id: businessOwnerId,
+    },
+  );
+  return !error && data === true;
 }

@@ -4,6 +4,8 @@ import { useBusinessAuth } from "../auth/BusinessAuthProvider";
 import {
   searchBusinessMedia,
   type BusinessMediaItem,
+  type UploadProgress,
+  uploadBusinessMedia,
 } from "../lib/businessMediaApi";
 
 export function BusinessMediaPreview({ item, compact = false }: { item: BusinessMediaItem; compact?: boolean }) {
@@ -26,6 +28,7 @@ export function BusinessMediaPicker({
   title,
   kind = "image",
   businessOwnerId,
+  allowUpload = false,
   onSelect,
   onClose,
 }: {
@@ -34,6 +37,7 @@ export function BusinessMediaPicker({
   title: string;
   kind?: "image" | "video";
   businessOwnerId?: string;
+  allowUpload?: boolean;
   onSelect: (item: BusinessMediaItem) => void;
   onClose: () => void;
 }) {
@@ -41,9 +45,12 @@ export function BusinessMediaPicker({
   const ownerId = businessOwnerId ?? currentBusiness?.businessOwnerId ?? "";
   const [items, setItems] = useState<BusinessMediaItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const load = useCallback(async () => {
     if (!ownerId || !open) return;
     const request = ++requestRef.current;
@@ -76,11 +83,27 @@ export function BusinessMediaPicker({
       if (previous?.isConnected) previous.focus();
     };
   }, [onClose, open]);
+  const upload = async (file: File) => {
+    if (!allowUpload || !ownerId) return;
+    setUploading(true);
+    setUploadProgress(null);
+    setError(null);
+    try {
+      await uploadBusinessMedia(ownerId, file, setUploadProgress);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo subir el archivo");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
   if (!open) return null;
   return (
     <div className="media-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="media-dialog" role="dialog" aria-modal="true" aria-label={title}>
-        <header><div><p className="eyebrow">Business Media</p><h2>{title}</h2></div><button ref={closeButtonRef} className="icon-button" type="button" aria-label="Cerrar" onClick={onClose}>×</button></header>
+        <header><div><p className="eyebrow">Business Media</p><h2>{title}</h2></div><div className="inline-actions">{allowUpload && <><input ref={fileInputRef} hidden type="file" accept={kind === "image" ? "image/jpeg,image/png,image/webp,image/gif" : "video/mp4,video/quicktime,video/webm"} onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) void upload(file); }} /><button className="secondary-button" disabled={uploading} type="button" onClick={() => fileInputRef.current?.click()}>{uploading ? "Subiendo…" : "Subir archivo"}</button></>}<button ref={closeButtonRef} className="icon-button" type="button" aria-label="Cerrar" onClick={onClose}>×</button></div></header>
+        {uploading && uploadProgress && <div className="media-dialog-state" role="status">{uploadProgress.phase} · {uploadProgress.percent}%</div>}
         {loading && <div className="media-dialog-state">Cargando biblioteca…</div>}
         {error && <div className="media-dialog-state"><p>{error}</p><button className="secondary-button" type="button" onClick={() => void load()}>Reintentar</button></div>}
         {!loading && !error && items.length === 0 && <div className="media-dialog-state">{kind === "image" ? "No hay imágenes listas en la biblioteca." : "No hay videos listos en la biblioteca."}</div>}

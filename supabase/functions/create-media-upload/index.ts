@@ -1,4 +1,4 @@
-import { businessActorHasAnyCapability,isUuid } from '../_shared/businessMediaAuth.ts';
+import { businessActorHasAdvertiserOwnerMediaAccess,businessActorHasAnyCapability,isUuid } from '../_shared/businessMediaAuth.ts';
 import { authenticatedUser,admin,corsHeaders,json } from '../_shared/mediaAuth.ts';
 import { extensionForMime,validateMediaRequest } from '../_shared/mediaPurposes.ts';
 import { R2_PRIVATE_BUCKET,R2_PUBLIC_BUCKET,signPutIfAbsent } from '../_shared/r2.ts';
@@ -21,7 +21,11 @@ Deno.serve(async(req)=>{
           ? 'business.disputes.respond'
           : null;
     if(!capability) return json({error:'invalid_business_media_contract'},400);
-    const allowed=await businessActorHasAnyCapability(req,requestedBusinessOwner,[capability]);
+    const legacyAllowed=await businessActorHasAnyCapability(req,requestedBusinessOwner,[capability]);
+    const advertiserOwnerAllowed=purpose==='business_library'&&visibility==='public'
+      ? await businessActorHasAdvertiserOwnerMediaAccess(user.id,requestedBusinessOwner)
+      : false;
+    const allowed=legacyAllowed||advertiserOwnerAllowed;
     if(!allowed) return json({error:'business_media_capability_required'},403);
     ownerId=requestedBusinessOwner;
   } else if(purpose==='business_library') {

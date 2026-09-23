@@ -18,6 +18,7 @@ function deferred<T>(): Deferred<T> {
 const auth = vi.hoisted(() => ({ ownerId: "owner-a" }));
 const api = vi.hoisted(() => ({
   media: vi.fn(),
+  upload: vi.fn(),
   products: vi.fn(),
   product: vi.fn(),
   shipping: vi.fn(),
@@ -55,6 +56,7 @@ vi.mock("../auth/BusinessAuthProvider", () => {
 vi.mock("../lib/businessMediaApi", async (original) => ({
   ...(await original<typeof import("../lib/businessMediaApi")>()),
   searchBusinessMedia: api.media,
+  uploadBusinessMedia: api.upload,
 }));
 vi.mock("../lib/sellerCenterApi", async (original) => ({
   ...(await original<typeof import("../lib/sellerCenterApi")>()),
@@ -111,6 +113,7 @@ describe("Business Web production stale-response hardening", () => {
     vi.clearAllMocks();
     auth.ownerId = "owner-a";
     api.shipping.mockResolvedValue({ items: [], nextCursor: null });
+    api.upload.mockResolvedValue({ assetId: "uploaded-1", kind: "image" });
   });
 
   it("does not let old-business Media results overwrite the active business", async () => {
@@ -147,6 +150,16 @@ describe("Business Web production stale-response hardening", () => {
     expect(screen.getByRole("button", { name: "Cerrar" })).toHaveFocus();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses the canonical Business Media uploader when upload is enabled", async () => {
+    api.media.mockResolvedValue({ items: [], nextCursor: null });
+    const { container } = render(<BusinessMediaPicker open allowUpload businessOwnerId="owner-a" selectedId={null} title="Elegir media" onSelect={vi.fn()} onClose={vi.fn()} />);
+    const input = container.querySelector('input[type="file"]');
+    expect(input).not.toBeNull();
+    fireEvent.change(input!, { target: { files: [new File(["image"], "creative.png", { type: "image/png" })] } });
+    await act(async () => { await Promise.resolve(); });
+    expect(api.upload).toHaveBeenCalledWith("owner-a", expect.objectContaining({ name: "creative.png", type: "image/png" }), expect.any(Function));
   });
 
   it("does not let old-business product pages overwrite the active catalog", async () => {

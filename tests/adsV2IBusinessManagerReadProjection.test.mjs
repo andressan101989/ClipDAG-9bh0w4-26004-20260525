@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const migrationUrl = new URL("../supabase/migrations/20260923060732_ads_v2_i_business_manager_read_projection.sql", import.meta.url);
+const migrationUrl = new URL("../supabase/migrations/20260923060826_ads_v2_i_business_manager_read_projection.sql", import.meta.url);
 
 test("ADS V2 I extends the existing campaign read model without adding write authority", () => {
   const sql = readFileSync(migrationUrl, "utf8");

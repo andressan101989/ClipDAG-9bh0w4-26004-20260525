@@ -1,4 +1,4 @@
-import { businessActorHasAnyCapability,isUuid } from '../_shared/businessMediaAuth.ts';
+import { businessActorHasAdvertiserOwnerMediaAccess,businessActorHasAnyCapability,isUuid } from '../_shared/businessMediaAuth.ts';
 import { authenticatedUser,admin,corsHeaders,json } from '../_shared/mediaAuth.ts';
 import {
   STREAM_MAX_DURATION_SECONDS,STREAM_MAX_SIZE_BYTES,safeFilename,sanitizeProviderError,
@@ -16,7 +16,9 @@ Deno.serve(async(req)=>{
   if(requestedBusinessOwner!==undefined&&requestedBusinessOwner!==null) {
     if(!isUuid(requestedBusinessOwner)) return json({error:'invalid_business_scope'},400);
     if(purpose!=='business_library') return json({error:'invalid_business_media_contract'},400);
-    const allowed=await businessActorHasAnyCapability(req,requestedBusinessOwner,['business.media.manage']);
+    const legacyAllowed=await businessActorHasAnyCapability(req,requestedBusinessOwner,['business.media.manage']);
+    const advertiserOwnerAllowed=await businessActorHasAdvertiserOwnerMediaAccess(user.id,requestedBusinessOwner);
+    const allowed=legacyAllowed||advertiserOwnerAllowed;
     if(!allowed) return json({error:'business_media_manage_required'},403);
     ownerId=requestedBusinessOwner;
   } else if(purpose!=='feed_video') return json({error:'invalid_purpose'},400);

@@ -71,7 +71,7 @@ describe("Ads Manager V2 workspace", () => {
     expect(screen.queryByRole("link", { name: "Create campaign" })).not.toBeInTheDocument();
   });
 
-  it("locks a resumed workspace to the Campaign Business and Ad Account", async () => {
+  it("locks a resumed workspace to the Campaign Business and Ad Account while enabling advertiser-owned Media", async () => {
     const campaignBusiness = { ...ownerBusiness, businessAccountId: "business-2", displayName: "Campaign Business", adAccounts: [{ ...ownerBusiness.adAccounts[0], id: "account-2", name: "Campaign Ads" }] };
     api.accounts.mockResolvedValue([ownerBusiness, campaignBusiness]);
     api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-2", businessAccountId: "business-2", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [], destinations: [] });
@@ -81,8 +81,8 @@ describe("Ads Manager V2 workspace", () => {
     expect(screen.getByLabelText("Ad Account")).toHaveValue("account-2");
     expect(screen.getByLabelText("Business")).toBeDisabled();
     expect(screen.getByLabelText("Ad Account")).toBeDisabled();
-    expect(screen.getByText(/Media Library is still Marketplace Business capability-scoped/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Choose from Media Library" })).toBeDisabled();
+    expect(screen.queryByText(/Media Library is still Marketplace Business capability-scoped/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Choose from Media Library" })).toBeEnabled();
   });
 
   it("restores canonical placement codes in the assembled review after refresh", async () => {
