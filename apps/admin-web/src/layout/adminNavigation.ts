@@ -1,6 +1,6 @@
 import type {AdminIconName} from "../components/AdminIcon";
 
-export type AdminNavigationGroup="content_safety"|"finance"|"marketplace"|"system";
+export type AdminNavigationGroup="advertising"|"content_safety"|"finance"|"marketplace"|"system";
 export type AdminLink={
   to:string;
   label:string;
@@ -26,6 +26,12 @@ export const adminLinks:AdminLink[]=[
   {to:"/content-safety/audio",label:"Content Safety · Audio AI",capability:"content.items.read",icon:"content",group:"content_safety",sectionLabel:"Audio AI"},
   {to:"/content-safety/visual",label:"Content Safety · Visual AI",capability:"content.items.read",icon:"content",group:"content_safety",sectionLabel:"Visual AI"},
   {to:"/content-safety/rules",label:"Content Safety · Reglas",capability:"content.items.moderate",icon:"content",group:"content_safety",sectionLabel:"Reglas"},
+  {to:"/advertising",label:"Advertising",capability:"advertising.ads.read",icon:"advertising",primary:true,end:true,group:"advertising",sectionLabel:"Overview"},
+  {to:"/advertising/campaigns",label:"Advertising · Campaigns",capability:"advertising.ads.read",icon:"advertising",group:"advertising",sectionLabel:"Campaigns"},
+  {to:"/advertising/review",label:"Advertising · Review Queue",capability:"content.items.read",icon:"advertising",group:"advertising",sectionLabel:"Review Queue"},
+  {to:"/advertising/analytics",label:"Advertising · Analytics",capability:"advertising.ads.read",icon:"advertising",group:"advertising",sectionLabel:"Analytics"},
+  {to:"/advertising/health",label:"Advertising · Health",capability:"advertising.ads.read",icon:"advertising",group:"advertising",sectionLabel:"Health"},
+  {to:"/advertising/finance-health",label:"Advertising · Finance Health",capability:"finance.reconciliation.read",icon:"advertising",group:"advertising",sectionLabel:"Finance Health"},
   {to:"/finance",label:"Finance",capability:"finance.ledger.read",icon:"finance",primary:true,end:true,group:"finance",sectionLabel:"Resumen"},
   {to:"/finance/accounts",label:"Finance · Cuentas",capability:"finance.ledger.read",icon:"finance",group:"finance",sectionLabel:"Cuentas"},
   {to:"/finance/transactions",label:"Finance · Transacciones",capability:"finance.ledger.read",icon:"finance",group:"finance",sectionLabel:"Transacciones"},

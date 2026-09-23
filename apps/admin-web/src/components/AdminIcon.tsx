@@ -1,6 +1,6 @@
 import type {ReactNode} from "react";
 
-export type AdminIconName="overview"|"users"|"reports"|"content"|"stories"|"chat"|"live"|"battles"|"media"|"finance"|"marketplace"|"audit"|"system"|"access"|"search"|"logout"|"menu"|"close";
+export type AdminIconName="overview"|"users"|"reports"|"content"|"stories"|"chat"|"live"|"battles"|"media"|"finance"|"advertising"|"marketplace"|"audit"|"system"|"access"|"search"|"logout"|"menu"|"close";
 
 const paths:Record<AdminIconName,ReactNode>={
   overview:<><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></>,
@@ -13,6 +13,7 @@ const paths:Record<AdminIconName,ReactNode>={
   battles:<><path d="m8 4 8 16M16 4 8 20M5 7l3-3 3 3M13 17l3 3 3-3"/></>,
   media:<><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></>,
   finance:<><circle cx="12" cy="12" r="9"/><path d="M16 8.5c-.7-1-1.8-1.5-3.3-1.5-1.8 0-3.2.9-3.2 2.3 0 3.5 6.5 1.6 6.5 5 0 1.6-1.5 2.7-3.5 2.7-1.7 0-3-.6-3.8-1.8M12.5 5v14"/></>,
+  advertising:<><path d="M4 14v-4l13-5v14L4 14Z"/><path d="M8 15v5h4v-4M17 9h3M18 5l2-2M18 19l2 2"/></>,
   marketplace:<><path d="M4 8h16l-1-4H5L4 8Z"/><path d="M5 8v12h14V8M9 20v-6h6v6"/><path d="M4 8c0 2 3 2 4 0 1 2 3 2 4 0 1 2 3 2 4 0 1 2 4 2 4 0"/></>,
   audit:<><path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6l-8-3Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></>,
   system:<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H3v-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6V3h4v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></>,

@@ -4,6 +4,7 @@
     "allowJs": false, "skipLibCheck": true, "esModuleInterop": true, "allowSyntheticDefaultImports": true,
     "strict": true, "forceConsistentCasingInFileNames": true, "module": "ESNext", "moduleResolution": "Bundler",
     "resolveJsonModule": true, "isolatedModules": true, "noEmit": true, "jsx": "react-jsx",
+    "baseUrl": ".", "paths": {"hls.js": ["node_modules/hls.js"]},
     "types": ["vitest/globals", "@testing-library/jest-dom"]
   },
   "include": ["src"]

@@ -26,6 +26,7 @@ import {MarketplaceSellerDetailPage} from "./pages/MarketplaceSellerDetailPage";
 import {MarketplaceSellersPage} from "./pages/MarketplaceSellersPage";
 import {MarketplaceActivityPage,MarketplaceAdDetailPage,MarketplaceAdsPage,MarketplaceCreatorCommercePage,MarketplaceCreatorDetailPage,MarketplaceHealthPage,MarketplacePromotionDetailPage,MarketplacePromotionsPage} from "./pages/MarketplaceIntelligencePages";
 import {AdminContentSafetyAudioDetailPage,AdminContentSafetyAudioPage,AdminContentSafetyDetailPage,AdminContentSafetyPage,AdminContentSafetyRulesPage,AdminContentSafetyVisualDetailPage,AdminContentSafetyVisualPage} from "./pages/AdminContentSafetyPages";
+import {AdminAdvertisingAnalyticsPage,AdminAdvertisingCampaignDetailPage,AdminAdvertisingCampaignsPage,AdminAdvertisingFinanceHealthPage,AdminAdvertisingHealthPage,AdminAdvertisingOverviewPage,AdminAdvertisingReviewPage} from "./pages/AdminAdvertisingPages";
 
 function DefaultAdminRoute(){const {hasCapability}=useAdminAuth();return hasCapability("admin.shell.access")?<Navigate to="/overview" replace/>:<main className="center-state"><div className="state-card"><h1>Sin módulos disponibles</h1><p>Tu acceso al shell no incluye todavía un módulo administrativo.</p></div></main>}
 
@@ -63,6 +64,9 @@ export function App(){return <Routes>
     <Route element={<CapabilityRoute capability="marketplace.ads.read"/>}><Route path="/marketplace/ads" element={<MarketplaceAdsPage/>}/><Route path="/marketplace/ads/:id" element={<MarketplaceAdDetailPage/>}/></Route>
     <Route element={<CapabilityRoute capability="marketplace.health.read"/>}><Route path="/marketplace/health" element={<MarketplaceHealthPage/>}/></Route>
     <Route element={<CapabilityRoute capability="marketplace.audit.read"/>}><Route path="/marketplace/activity" element={<MarketplaceActivityPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="advertising.ads.read"/>}><Route path="/advertising" element={<AdminAdvertisingOverviewPage/>}/><Route path="/advertising/campaigns" element={<AdminAdvertisingCampaignsPage/>}/><Route path="/advertising/campaigns/:campaignId" element={<AdminAdvertisingCampaignDetailPage/>}/><Route path="/advertising/analytics" element={<AdminAdvertisingAnalyticsPage/>}/><Route path="/advertising/health" element={<AdminAdvertisingHealthPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="content.items.read"/>}><Route path="/advertising/review" element={<AdminAdvertisingReviewPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="finance.reconciliation.read"/>}><Route path="/advertising/finance-health" element={<AdminAdvertisingFinanceHealthPage/>}/></Route>
     <Route path="*" element={<DefaultAdminRoute/>}/>
   </Route></Route>
   <Route path="*" element={<Navigate to="/" replace/>}/>
