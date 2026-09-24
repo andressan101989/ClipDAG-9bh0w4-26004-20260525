@@ -7,7 +7,11 @@
     "dev": "vite",
     "test": "vitest run",
     "lint": "eslint . --max-warnings 0",
-    "build": "tsc -b && vite build"
+    "build": "tsc -b && vite build",
+    "build:deployment": "npm run build",
+    "test:deployment": "node --test deployment/tests/*.test.mjs",
+    "deploy:isolated": "npm run build:deployment && npx --yes wrangler@4.135.0 deploy --config deployment/wrangler.unbound.jsonc",
+    "upload:preview": "npm run build:deployment && npx --yes wrangler@4.135.0 versions upload --config deployment/wrangler.preview.jsonc"
   },
   "dependencies": {
     "@nelyon/web-media": "file:../../shared/web-media",

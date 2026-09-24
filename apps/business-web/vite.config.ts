@@ -8,6 +8,7 @@ export default defineConfig({
   resolve: { dedupe: ["react", "react-dom", "hls.js"] },
   server: { port: 8081, strictPort: true },
   test: {
+    include: ["src/**/*.test.{ts,tsx}"],
     environment: "jsdom",
     setupFiles: "./src/tests/setup.ts",
     globals: true,

@@ -1,0 +1,15 @@
+{
+  "name": "nelyon-business-web",
+  "main": "./worker.mjs",
+  "compatibility_date": "2026-09-24",
+  "account_id": "24a176456cf57435119db8caf3af61dd",
+  "workers_dev": true,
+  "preview_urls": true,
+  "assets": {
+    "directory": "../dist",
+    "binding": "ASSETS",
+    "html_handling": "none",
+    "not_found_handling": "none",
+    "run_worker_first": true
+  }
+}
