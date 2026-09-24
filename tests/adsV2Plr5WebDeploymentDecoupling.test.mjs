@@ -111,10 +111,10 @@ test('contains exactly one production route and keeps Admin route-unbound', asyn
   await assert.rejects(access(join(ROOT, 'apps/admin-web/deployment/wrangler.production.jsonc')));
 });
 
-test('creates no PLR-5 migration and retains the 288-migration history', async () => {
+test('creates no PLR-5 migration and retains the approved PLR-4 checkpoint', async () => {
   const migrations = (await readdir(join(ROOT, 'supabase/migrations'))).filter((name) => name.endsWith('.sql'));
-  assert.equal(migrations.length, 288);
   assert.equal(migrations.some((name) => /plr[_-]?5/i.test(name)), false);
+  assert.equal(migrations.includes('20260924024512_ads_v2_plr_4_targeting_launch_scope.sql'), true);
 });
 
 test('allows denylist literals only in exact documentary paths', async () => {

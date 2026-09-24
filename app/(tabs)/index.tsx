@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
-  View, StyleSheet, FlatList, ViewToken, RefreshControl, Pressable,
+  View, StyleSheet, FlatList, ViewToken, RefreshControl, Pressable, Linking,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -44,8 +44,24 @@ import {
   socialFeedSponsoredProductRoute,
   type SocialFeedItem,
 } from '@/services/marketplaceSponsoredMix';
+import { randomUUID } from 'expo-crypto';
+import { AdvertisingFeedCardV2 } from '@/components/advertising/AdvertisingFeedCardV2';
+import {
+  advertisingDestinationAction,
+  fetchAdvertisingV2SocialFeedCandidate,
+  recordAdvertisingV2SocialFeedImpression,
+  type AdvertisingDeliveryAdV2,
+} from '@/services/advertisingDeliveryService';
+import {
+  ADS_V2_VIEWABILITY_CONFIG,
+  advertisingV2OpportunityForViewer,
+  createAdvertisingV2ImpressionController,
+  mixSocialFeedAdvertisingV2,
+  type AdvertisingV2FeedItem,
+} from '@/services/advertisingV2FeedRuntime.mjs';
 
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 75 };
+type FeedItem = SocialFeedItem<VideoWithMeta, SponsoredProduct> | AdvertisingV2FeedItem<AdvertisingDeliveryAdV2>;
 
 export default function FeedScreen() {
   const insets = useSafeAreaInsets();
@@ -80,6 +96,7 @@ export default function FeedScreen() {
   } | null>(null);
   const [storyEditorSource, setStoryEditorSource] = useState<StoryEditorSource | null>(null);
   const [sponsoredProducts, setSponsoredProducts] = useState<SponsoredProduct[]>([]);
+  const [advertisingV2Opportunity, setAdvertisingV2Opportunity] = useState<{ viewerUserId: string; ad: AdvertisingDeliveryAdV2; eventKey: string } | null>(null);
   const storyUploadAttemptsRef = useRef(new Map<string, string>());
   const sponsoredImpressionsRef = useRef(new Set<string>());
 
@@ -93,9 +110,28 @@ export default function FeedScreen() {
 
   useEffect(() => { void loadSponsoredProducts(); }, [loadSponsoredProducts]);
 
-  const feedItems = useMemo(
-    () => mixSocialFeedSponsoredProducts(videos, sponsoredProducts),
-    [sponsoredProducts, videos],
+  useEffect(() => {
+    setAdvertisingV2Opportunity(null);
+    if (!user?.id) return;
+    const viewerUserId = user.id;
+    let cancelled = false;
+    void fetchAdvertisingV2SocialFeedCandidate()
+      .then((ad) => {
+        if (!cancelled) setAdvertisingV2Opportunity(ad ? { viewerUserId, ad, eventKey: randomUUID() } : null);
+      })
+      .catch(() => { if (!cancelled) setAdvertisingV2Opportunity(null); });
+    return () => { cancelled = true; };
+  }, [user?.id]);
+
+  const currentAdvertisingV2Opportunity = advertisingV2OpportunityForViewer(advertisingV2Opportunity, user?.id);
+
+  const feedItems = useMemo<FeedItem[]>(
+    () => mixSocialFeedAdvertisingV2<SocialFeedItem<(typeof videos)[number], SponsoredProduct>, AdvertisingDeliveryAdV2>(
+      mixSocialFeedSponsoredProducts(videos, sponsoredProducts),
+      currentAdvertisingV2Opportunity?.ad ?? null,
+      currentAdvertisingV2Opportunity?.eventKey ?? null,
+    ),
+    [currentAdvertisingV2Opportunity, sponsoredProducts, videos],
   );
   const feedItemsRef = useRef(feedItems);
   feedItemsRef.current = feedItems;
@@ -135,7 +171,7 @@ export default function FeedScreen() {
   }, [videos.length, initialLoaded]);
 
   // Ref for scroll-to-top on Home tab press
-  const feedListRef = useRef<FlatList<SocialFeedItem<VideoWithMeta, SponsoredProduct>>>(null);
+  const feedListRef = useRef<FlatList<FeedItem>>(null);
   const deepLinkScrollRetriesRef = useRef(0);
   const deepLinkResolutionRef = useRef<{ id: string; status: 'loading' | 'unavailable' | 'loaded' } | null>(null);
   useScrollToTop(feedListRef);
@@ -205,6 +241,11 @@ export default function FeedScreen() {
     }
   });
   const viewabilityConfig = useRef(VIEWABILITY_CONFIG);
+  const advertisingV2Viewability = useRef(createAdvertisingV2ImpressionController(recordAdvertisingV2SocialFeedImpression));
+  const viewabilityConfigCallbackPairs = useRef([
+    { viewabilityConfig: viewabilityConfig.current, onViewableItemsChanged: onViewableItemsChanged.current },
+    { viewabilityConfig: ADS_V2_VIEWABILITY_CONFIG, onViewableItemsChanged: advertisingV2Viewability.current },
+  ]);
 
   const handleLike = useCallback(async (videoId: string, creatorId: string) => {
     const wasLiked = isLiked(videoId);
@@ -233,6 +274,16 @@ export default function FeedScreen() {
       pathname: '/product/[id]',
       params: socialFeedSponsoredProductRoute(product),
     });
+  }, [router]);
+
+  const openAdvertisingDestination = useCallback((ad: AdvertisingDeliveryAdV2) => {
+    const action = advertisingDestinationAction(ad.destination);
+    if (!action) return;
+    if (action.kind === 'external') {
+      void Linking.openURL(action.url).catch(() => {});
+      return;
+    }
+    router.push({ pathname: action.pathname, params: { id: action.id } } as never);
   }, [router]);
 
   const handleSave = useCallback((videoId: string) => { toggleSave(videoId); }, [toggleSave]);
@@ -377,11 +428,18 @@ export default function FeedScreen() {
       <FlatList
         ref={feedListRef}
         data={feedItems}
-        keyExtractor={item => item.kind === 'organic' ? `video:${item.video.id}` : `ad:${item.product.campaign_id}`}
+        keyExtractor={item => item.kind === 'organic' ? `video:${item.video.id}` : item.kind === 'sponsored' ? `ad:${item.product.campaign_id}` : `ads-v2:${item.ad.ad_id}`}
         style={styles.feedList}
         ListHeaderComponent={feedHeader}
         renderItem={({ item, index }) => item.kind === 'sponsored' ? (
           <SponsoredFeedCard product={item.product} onPress={() => openSponsoredProduct(item.product, item.position)} />
+        ) : item.kind === 'advertising_v2' ? (
+          <AdvertisingFeedCardV2
+            ad={item.ad}
+            isActive={index === activeIndex}
+            onMediaReady={() => advertisingV2Viewability.current.markMediaReady(item.eventKey)}
+            onPress={advertisingDestinationAction(item.ad.destination) ? () => openAdvertisingDestination(item.ad) : undefined}
+          />
         ) : (
           <VideoCard
             video={item.video}
@@ -416,8 +474,7 @@ export default function FeedScreen() {
           />
         )}
         showsVerticalScrollIndicator={false}
-        onViewableItemsChanged={onViewableItemsChanged.current}
-        viewabilityConfig={viewabilityConfig.current}
+        viewabilityConfigCallbackPairs={viewabilityConfigCallbackPairs.current}
         onScrollToIndexFailed={handleDeepLinkScrollFailure}
         onEndReached={loadMoreVideos}
         onEndReachedThreshold={0.5}
