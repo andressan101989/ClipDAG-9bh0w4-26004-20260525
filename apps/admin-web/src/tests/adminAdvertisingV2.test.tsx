@@ -22,7 +22,7 @@ beforeEach(()=>{
   vi.mocked(getAdminAdvertisingOverview).mockResolvedValue(overview);
   vi.mocked(searchAdminAdvertisingCampaigns).mockResolvedValue({items:[],next_cursor:null,page_size:0,authority:"ads_v2"});
   vi.mocked(searchAdminAdvertisingAds).mockResolvedValue([]);
-  vi.mocked(getAdminAdvertisingHealth).mockResolvedValue({authority:"ads_v2",production_delivery_ready:false,blockers:["age_authority_unavailable","campaign_activation_disabled","campaign_automatic_transitions_disabled","finance_funding_disabled","global_delivery_disabled","no_v2_placement_enabled"],capability_not_enabled:["geo_matching_disabled","language_matching_disabled"],identity:{business_accounts:47,ad_accounts:47},age:{age_eligibility_rows:0,advertiser_eligible_rows:0,advertiser_eligibility_operational:false},targeting:{targeting_policy_version:"nelyon-ads-targeting-v1"},delivery:{delivery_policy_version:"nelyon-ads-delivery-v2",global_v2_delivery_enabled:false,enabled_placement_count:0,campaign_activation_implemented:true},lifecycle:{policy_version:"nelyon-ads-campaign-lifecycle-v1",activation_enabled:false,automatic_transitions_enabled:false},events:{event_policy_version:"nelyon-ads-events-v1",events:0},finance:{finance_policy_version:"nelyon-ads-finance-v1",funding_enabled:false}});
+  vi.mocked(getAdminAdvertisingHealth).mockResolvedValue({authority:"ads_v2",production_delivery_ready:false,blockers:["age_authority_unavailable","campaign_activation_disabled","campaign_automatic_transitions_disabled","finance_funding_disabled","global_delivery_disabled","no_v2_placement_enabled"],capability_not_enabled:["geo_matching_disabled","language_matching_disabled"],identity:{business_accounts:47,ad_accounts:47},age:{age_eligibility_rows:0,advertiser_eligible_rows:0,advertiser_eligibility_operational:false},targeting:{targeting_policy_version:"nelyon-ads-targeting-v2",geo_targeting_enabled:false,language_targeting_enabled:false,daypart_targeting_enabled:true,frequency_targeting_enabled:true},delivery:{delivery_policy_version:"nelyon-ads-delivery-v2",global_v2_delivery_enabled:false,enabled_placement_count:0,campaign_activation_implemented:true},lifecycle:{policy_version:"nelyon-ads-campaign-lifecycle-v1",activation_enabled:false,automatic_transitions_enabled:false},events:{event_policy_version:"nelyon-ads-events-v1",events:0},finance:{finance_policy_version:"nelyon-ads-finance-v1",funding_enabled:false}});
 });
 
 describe("ADS-V2-J Admin Web",()=>{
@@ -81,6 +81,9 @@ describe("ADS-V2-J Admin Web",()=>{
     render(<MemoryRouter><AdminAdvertisingHealthPage/></MemoryRouter>);
     expect(await screen.findByText("age authority unavailable")).toBeInTheDocument();
     expect(screen.getByText("geo matching disabled")).toBeInTheDocument();
+    expect(screen.getByText("nelyon-ads-targeting-v2")).toBeInTheDocument();
+    expect(screen.getByText("daypart targeting enabled")).toBeInTheDocument();
+    expect(screen.getByText("frequency targeting enabled")).toBeInTheDocument();
     expect(screen.getAllByText("BLOCKER").length).toBeGreaterThan(0);
     expect(screen.getAllByText("NOT ENABLED").length).toBeGreaterThan(0);
   });

@@ -49,6 +49,7 @@ const adsMocks = vi.hoisted(() => ({
   accounts: vi.fn().mockResolvedValue([]),
   campaigns: vi.fn().mockResolvedValue([]),
   age: vi.fn().mockResolvedValue({ status: "eligible", ageBand: "age_18_plus", evaluated: true, advertiser18PlusEligible: true, policyVersion: "nelyon-age-v2", minimumAge: 13 }),
+  targetingCapabilities: vi.fn().mockResolvedValue({ policyVersion: "nelyon-ads-targeting-v2", advertiserMinimumAge: 18, audienceMinimumAge: 18, ageScope: "adults_only", geoTargetingEnabled: false, languageTargetingEnabled: false, daypartTargetingEnabled: true, frequencyTargetingEnabled: true, interestTargetingEnabled: false, behavioralTargetingEnabled: false, customAudiencesEnabled: false, lookalikeTargetingEnabled: false, sensitiveTargetingAllowed: false, preciseViewerLocationMatchingEnabled: false }),
 }));
 vi.mock("../lib/adsManagerApi", async (original) => ({
   ...(await original<typeof import("../lib/adsManagerApi")>()),
@@ -56,6 +57,7 @@ vi.mock("../lib/adsManagerApi", async (original) => ({
   getAdvertiserAccounts: adsMocks.accounts,
   getAdvertisingCampaigns: adsMocks.campaigns,
   getMyAgeEligibility: adsMocks.age,
+  getAdvertisingTargetingCapabilities: adsMocks.targetingCapabilities,
 }));
 const billingMocks = vi.hoisted(() => ({
   overview: vi.fn().mockResolvedValue({

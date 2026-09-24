@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   campaign: vi.fn(), readiness: vi.fn(), creativeWorkspace: vi.fn(), finance: vi.fn(), summary: vi.fn(), audience: vi.fn(), placement: vi.fn(),
   activate: vi.fn(), pause: vi.fn(), resume: vi.fn(), cancel: vi.fn(),
   age: vi.fn(), remediateAge: vi.fn(),
+  targetingCapabilities: vi.fn(), createAudienceVersion: vi.fn(),
 }));
 vi.mock("../lib/adsManagerApi", async (original) => ({
   ...await original<typeof import("../lib/adsManagerApi")>(),
@@ -31,6 +32,8 @@ vi.mock("../lib/adsManagerApi", async (original) => ({
   getAdvertisingPlacementSelection: api.placement,
   getMyAgeEligibility: api.age,
   remediateMyAgeEligibility: api.remediateAge,
+  getAdvertisingTargetingCapabilities: api.targetingCapabilities,
+  createAdvertisingAudienceVersion: api.createAudienceVersion,
 }));
 
 const ownerBusiness = { businessAccountId: "business-1", displayName: "Nelyon Studio", status: "active", accessType: "owner", marketplace: { linked: false, marketplaceSellerUserId: null, sellerStatus: null }, adAccounts: [{ id: "account-1", name: "Nelyon Ads", status: "active", billingCurrency: "BDAG", isDefault: true }] };
@@ -58,6 +61,8 @@ describe("Ads Manager V2 workspace", () => {
     api.placement.mockResolvedValue(null);
     api.age.mockResolvedValue({ status: "eligible", ageBand: "age_18_plus", evaluated: true, advertiser18PlusEligible: true, policyVersion: "nelyon-age-v2", minimumAge: 13 });
     api.remediateAge.mockResolvedValue({ status: "eligible", ageBand: "age_18_plus", evaluated: true, advertiser18PlusEligible: true, policyVersion: "nelyon-age-v2", minimumAge: 13 });
+    api.targetingCapabilities.mockResolvedValue({ policyVersion: "nelyon-ads-targeting-v2", advertiserMinimumAge: 18, audienceMinimumAge: 18, ageScope: "adults_only", geoTargetingEnabled: false, languageTargetingEnabled: false, daypartTargetingEnabled: true, frequencyTargetingEnabled: true, interestTargetingEnabled: false, behavioralTargetingEnabled: false, customAudiencesEnabled: false, lookalikeTargetingEnabled: false, sensitiveTargetingAllowed: false, preciseViewerLocationMatchingEnabled: false });
+    api.createAudienceVersion.mockResolvedValue({ audience_id: "audience-1" });
   });
 
   it("offers advertiser-only onboarding without Marketplace seller, Store, or Product", async () => {
@@ -162,5 +167,26 @@ describe("Ads Manager V2 workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
     expect(await screen.findByText("Advertising creation requires verified adult eligibility.")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/age_band|DOB|policy_version/);
+  });
+
+  it("uses server targeting capabilities and never offers launch-disabled geo or language inputs", async () => {
+    api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: null, placementSelection: null }], destinations: [] });
+    renderHome("/ads/campaigns/campaign-1");
+    expect(await screen.findByDisplayValue("Adults 18+")).toBeInTheDocument();
+    expect(screen.getByText("Geographic targeting is not available in the current Ads launch scope.")).toBeInTheDocument();
+    expect(screen.getByText("Language targeting is not available in the current Ads launch scope.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Country code")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Language tag")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Daypart start")).toBeEnabled();
+    expect(screen.getByLabelText("Max impressions")).toBeEnabled();
+  });
+
+  it("marks a historical audience stale and creates a fresh version without rewriting it", async () => {
+    api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: { id: "audience-1", status: "draft", latestVersionNumber: 1 }, placementSelection: null }], destinations: [] });
+    api.audience.mockResolvedValue({ audience_id: "audience-1", latest_version: { targeting_policy_version: "nelyon-ads-targeting-v1", dayparts: [], frequency: null } });
+    renderHome("/ads/campaigns/campaign-1");
+    expect(await screen.findByText("Your audience configuration uses an older targeting policy. Create an updated audience version before launch.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Create updated audience version" }));
+    await waitFor(() => expect(api.createAudienceVersion).toHaveBeenCalledWith("audience-1", expect.objectContaining({ age_scope: "adults_only", geographies: [], languages: [] })));
   });
 });

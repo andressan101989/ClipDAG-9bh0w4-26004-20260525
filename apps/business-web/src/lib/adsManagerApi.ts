@@ -548,6 +548,53 @@ export async function remediateMyAgeEligibility(dateOfBirth: string, client: Bus
   return parseAdvertisingAgeEligibility(await advertisingRpc("remediate_my_age_eligibility", { p_date_of_birth: dateOfBirth }, "No se pudo confirmar la elegibilidad", client));
 }
 
+export type AdvertisingTargetingCapabilities = {
+  policyVersion: string;
+  advertiserMinimumAge: number;
+  audienceMinimumAge: number;
+  ageScope: "adults_only";
+  geoTargetingEnabled: boolean;
+  languageTargetingEnabled: boolean;
+  daypartTargetingEnabled: boolean;
+  frequencyTargetingEnabled: boolean;
+  interestTargetingEnabled: boolean;
+  behavioralTargetingEnabled: boolean;
+  customAudiencesEnabled: boolean;
+  lookalikeTargetingEnabled: boolean;
+  sensitiveTargetingAllowed: boolean;
+  preciseViewerLocationMatchingEnabled: boolean;
+};
+
+function parseAdvertisingTargetingCapabilities(value: unknown): AdvertisingTargetingCapabilities {
+  const row = object(value, "advertising_targeting_capabilities_invalid");
+  if (row.age_scope !== "adults_only") throw new Error("advertising_targeting_capabilities_invalid");
+  return {
+    policyVersion: string(row.policy_version, "advertising_targeting_capabilities_invalid"),
+    advertiserMinimumAge: number(row.advertiser_minimum_age),
+    audienceMinimumAge: number(row.audience_minimum_age),
+    ageScope: "adults_only",
+    geoTargetingEnabled: row.geo_targeting_enabled === true,
+    languageTargetingEnabled: row.language_targeting_enabled === true,
+    daypartTargetingEnabled: row.daypart_targeting_enabled === true,
+    frequencyTargetingEnabled: row.frequency_targeting_enabled === true,
+    interestTargetingEnabled: row.interest_targeting_enabled === true,
+    behavioralTargetingEnabled: row.behavioral_targeting_enabled === true,
+    customAudiencesEnabled: row.custom_audiences_enabled === true,
+    lookalikeTargetingEnabled: row.lookalike_targeting_enabled === true,
+    sensitiveTargetingAllowed: row.sensitive_targeting_allowed === true,
+    preciseViewerLocationMatchingEnabled: row.precise_viewer_location_matching_enabled === true,
+  };
+}
+
+export async function getAdvertisingTargetingCapabilities(client: BusinessSupabaseClient = supabase) {
+  return parseAdvertisingTargetingCapabilities(await advertisingRpc(
+    "get_my_advertising_targeting_capabilities",
+    undefined,
+    "No se pudo cargar el alcance de targeting",
+    client,
+  ));
+}
+
 export type AdvertisingAudienceDefinition = {
   age_scope: "adults_only";
   geographies: Array<{ mode: "include" | "exclude"; type: "country" | "region" | "city" | "radius"; country_code: string; region_code?: string; city_name?: string; latitude?: number; longitude?: number; radius_km?: number }>;
