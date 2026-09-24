@@ -1,6 +1,6 @@
 // Disposable PostgreSQL proof only. NELYON_PLR3_LOCAL=1 enables it.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -27,7 +27,18 @@ const futureAd = "80000000-0000-4000-8000-000000000002";
 
 const args = (db, ...extra) => ["exec", "-i", container, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", db, ...extra];
 const run = (sql, db = database) => execFileSync("docker", args(db, "-At"), { input: sql, encoding: "utf8" }).trim();
+const runAsync = (sql, db = database) => new Promise((resolve, reject) => {
+  const child = spawn("docker", args(db, "-At"));
+  let stdout = "", stderr = "";
+  child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  child.on("error", reject);
+  child.on("close", (code) => code === 0 ? resolve(stdout.trim()) : reject(new Error(stderr || `psql exited ${code}`)));
+  child.stdin.end(sql);
+});
 const asOwner = (sql, actor = owner) => run(`begin;set local request.jwt.claim.sub='${actor}';${sql};commit;`);
+const asOwnerAsync = (sql, actor = owner) => runAsync(`begin;set local request.jwt.claim.sub='${actor}';${sql};commit;`);
 const asService = (sql) => run(`begin;set local request.jwt.claim.role='service_role';${sql};commit;`);
 const migration = readFileSync(new URL("../supabase/migrations/20260924003147_ads_v2_plr_3_campaign_activation_lifecycle.sql", import.meta.url), "utf8");
 const eventsMigration = readFileSync(new URL("../supabase/migrations/20260922234902_ads_v2_g_events_conversions_attribution.sql", import.meta.url), "utf8");
@@ -140,7 +151,7 @@ insert into private.advertising_placement_selection_items values
 ('84000000-0000-4000-8000-000000000001','social_feed'),('84000000-0000-4000-8000-000000000002','social_feed');
 `;
 
-test("PLR-3 compiles and proves locked policy, lifecycle, delivery and reconciliation in disposable PostgreSQL", { skip: !enabled, timeout: 180_000 }, () => {
+test("PLR-3 compiles and proves locked policy, lifecycle, delivery and reconciliation in disposable PostgreSQL", { skip: !enabled, timeout: 180_000 }, async () => {
   run(`create database ${database}`, "postgres");
   try {
     run(bootstrap);
@@ -169,7 +180,13 @@ test("PLR-3 compiles and proves locked policy, lifecycle, delivery and reconcili
     assert.ok(JSON.parse(asOwner(`select public.get_my_advertising_campaign_activation_readiness('${campaign}')`)).blockers.includes("viewer_language_authority_unavailable"));
     run("delete from private.advertising_language_targets");
     const activationKey = "90000000-0000-4000-8000-000000000001";
-    assert.match(asOwner(`select public.activate_my_advertising_campaign_v2('${campaign}','${activationKey}')`), /"status": "active"/);
+    const concurrentActivation = await Promise.all([
+      asOwnerAsync(`select public.activate_my_advertising_campaign_v2('${campaign}','${activationKey}')`),
+      asOwnerAsync(`select public.activate_my_advertising_campaign_v2('${campaign}','${activationKey}')`),
+    ]);
+    assert.equal(concurrentActivation.length, 2);
+    assert.ok(concurrentActivation.every((result) => /"status": "active"/.test(result)));
+    assert.equal(run(`select count(*) from private.advertising_campaign_lifecycle_events where campaign_id='${campaign}' and action='activate'`), "1");
     run("update private.advertising_campaign_lifecycle_policy set activation_enabled=false");
     assert.match(asOwner(`select public.activate_my_advertising_campaign_v2('${campaign}','${activationKey}')`), /"status": "active"/);
     assert.throws(() => asOwner(`select public.activate_my_advertising_campaign_v2('${futureCampaign}','90000000-0000-4000-8000-000000000099')`), /advertising_campaign_activation_disabled/);
@@ -209,8 +226,12 @@ test("PLR-3 compiles and proves locked policy, lifecycle, delivery and reconcili
     assert.match(asService(`select public.record_advertising_impression_v2('${ad}','social_feed','${viewer}','${impressionKey}')`), /"event_type": "impression"/);
     assert.equal(run(`select count(*) from private.advertising_events where event_key='${impressionKey}'`), "1");
     const pauseKey = "90000000-0000-4000-8000-000000000002";
-    asOwner(`select public.pause_my_advertising_campaign_v2('${campaign}','${pauseKey}')`);
-    assert.match(asOwner(`select public.pause_my_advertising_campaign_v2('${campaign}','${pauseKey}')`), /"status": "paused"/);
+    const concurrentPause = await Promise.all([
+      asOwnerAsync(`select public.pause_my_advertising_campaign_v2('${campaign}','${pauseKey}')`),
+      asOwnerAsync(`select public.pause_my_advertising_campaign_v2('${campaign}','${pauseKey}')`),
+    ]);
+    assert.ok(concurrentPause.every((result) => /"status": "paused"/.test(result)));
+    assert.equal(run(`select count(*) from private.advertising_campaign_lifecycle_events where campaign_id='${campaign}' and action='pause'`), "1");
     const paused = JSON.parse(run(`select private.advertising_delivery_preflight_at('${ad}','social_feed','${viewer}',now())`));
     assert.equal(paused.production_deliverable, false);
     assert.ok(paused.reason_codes.includes("campaign_paused"));
