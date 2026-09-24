@@ -110,7 +110,7 @@ const plr3Migration = readFileSync(new URL("../supabase/migrations/2026092400314
 const plr4Migration = readFileSync(new URL("../supabase/migrations/20260924024512_ads_v2_plr_4_targeting_launch_scope.sql", import.meta.url), "utf8");
 const deliveryMigration = readFileSync(new URL("../supabase/migrations/20260922203641_ads_v2_f_generic_delivery_placement_registry.sql", import.meta.url), "utf8");
 const eventsMigration = readFileSync(new URL("../supabase/migrations/20260922234902_ads_v2_g_events_conversions_attribution.sql", import.meta.url), "utf8");
-const candidateMigration = readFileSync(new URL("../supabase/migrations/20260924174913_ads_v2_plr_6a_c1_social_feed_runtime_wiring.sql", import.meta.url), "utf8");
+const candidateMigration = readFileSync(new URL("../supabase/migrations/20260924182247_ads_v2_plr_6a_c1_social_feed_runtime_wiring.sql", import.meta.url), "utf8");
 
 test("PLR-6A-C1 proves service-only render, exact assembly and zero-spend impression in disposable PostgreSQL", { skip: !enabled, timeout: 180_000 }, () => {
   run(`create database ${database}`, "postgres");
