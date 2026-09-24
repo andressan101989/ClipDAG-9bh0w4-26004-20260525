@@ -36,6 +36,8 @@ test('has no Admin production config or production deploy script', async () => {
   await assert.rejects(access(new URL('../wrangler.production.jsonc', import.meta.url)));
   const packageJson = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
   assert.equal('deploy:production' in packageJson.scripts, false);
+  assert.match(packageJson.scripts['build:deployment'] ?? '', /buildPublicSupabaseSpa/);
+  assert.match(packageJson.scripts['test:deployment'] ?? '', /shared\/web-deployment/);
   assert.match(packageJson.scripts['deploy:isolated'] ?? '', /wrangler\.unbound\.jsonc/);
   assert.match(packageJson.scripts['upload:preview'] ?? '', /versions upload/);
 });

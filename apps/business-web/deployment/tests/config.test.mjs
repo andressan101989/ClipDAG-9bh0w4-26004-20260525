@@ -42,6 +42,8 @@ test('defines safe unbound, preview, and route-only Business configs', async () 
 
 test('keeps route application separate from version upload and deployment', async () => {
   const packageJson = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+  assert.match(packageJson.scripts['build:deployment'] ?? '', /buildPublicSupabaseSpa/);
+  assert.match(packageJson.scripts['test:deployment'] ?? '', /shared\/web-deployment/);
   assert.doesNotMatch(packageJson.scripts['upload:preview'] ?? '', /wrangler\.route/);
   assert.doesNotMatch(packageJson.scripts['deploy:isolated'] ?? '', /wrangler\.route/);
   assert.doesNotMatch(packageJson.scripts['apply:production-route'] ?? '', /wrangler deploy|versions upload/);

@@ -8,6 +8,9 @@ const ROOT = resolve(import.meta.dirname, '..');
 const BASE_SHA = '52168ef28651e9440ecf97eed7bd6bb79899b43a';
 const DENYLIST = [
   'SUPABASE_SERVICE_ROLE_KEY',
+  'SUPABASE_SECRET_KEY',
+  'SUPABASE_SECRET_KEYS',
+  'sb_secret_',
   'service_role',
   'CLOUDFLARE_API_TOKEN',
   'CLOUDFLARE_ACCOUNT_TOKEN',
@@ -17,10 +20,14 @@ const DENYLIST = [
   'R2_SECRET',
   'STREAM_SECRET',
 ];
+const EXECUTABLE_DENYLIST_USAGE_ALLOWLIST = new Map([
+  ['shared/web-deployment/publicSupabaseBuildEnv.mjs', new Set(['sb_secret_'])],
+]);
 const DOCUMENTARY_ALLOWLIST = new Set([
   'docs/superpowers/specs/2026-09-24-ads-v2-plr-5-web-deployment-decoupling-design.md',
   'docs/superpowers/plans/2026-09-24-ads-v2-plr-5-web-deployment-decoupling.md',
   'docs/runbooks/ads-v2-plr-5-web-deployment.md',
+  'shared/web-deployment/publicSupabaseBuildEnv.test.mjs',
   'tests/adsV2Plr5WebDeploymentDecoupling.test.mjs',
 ]);
 const SOURCE_EXTENSIONS = new Set(['.js', '.mjs', '.ts', '.tsx', '.json', '.jsonc', '.md']);
@@ -74,6 +81,7 @@ test('keeps Business and Admin build/deploy scripts isolated', async () => {
   assert.match(root.scripts['business:web:deploy:isolated'] ?? '', /apps\/business-web/);
   assert.match(root.scripts['admin:web:deploy:isolated'] ?? '', /apps\/admin-web/);
   assert.match(root.scripts['test:web:deployment:local'] ?? '', /smoke-local-web-deployments/);
+  assert.match(root.scripts['test:ads-v2-plr-5'] ?? '', /shared\/web-deployment/);
 });
 
 test('leaves Public and frontdoor byte-identical to the approved base', () => {
@@ -131,7 +139,9 @@ test('allows denylist literals only in exact documentary paths', async () => {
     const content = await readFile(join(ROOT, path), 'utf8');
     const matches = DENYLIST.filter((literal) => content.includes(literal));
     if (matches.length > 0) {
-      assert.equal(DOCUMENTARY_ALLOWLIST.has(path), true, `${path} contains denylist literals: ${matches.join(', ')}`);
+      const permitted = EXECUTABLE_DENYLIST_USAGE_ALLOWLIST.get(path) ?? new Set();
+      const unauthorized = matches.filter((literal) => !permitted.has(literal));
+      assert.equal(DOCUMENTARY_ALLOWLIST.has(path) || unauthorized.length === 0, true, `${path} contains denylist literals: ${unauthorized.join(', ')}`);
     }
   }
 });
@@ -146,9 +156,23 @@ test('generated bundles contain no server-secret references', async () => {
   }
 });
 
+test('generated isolated bundles target the canonical Supabase project', async () => {
+  const canonicalHost = 'aewwdlvbwpczqyvkwvvj.supabase.co';
+  for (const directory of ['apps/business-web/dist', 'apps/admin-web/dist']) {
+    const texts = [];
+    for (const path of await bundleFiles(directory)) {
+      if (!path.endsWith('.js')) continue;
+      texts.push((await readFile(join(ROOT, path))).toString('utf8'));
+    }
+    assert.equal(texts.some((text) => text.includes(canonicalHost)), true, `${directory} lacks canonical public config`);
+  }
+});
+
 test('actual sensitive environment values occur in no tracked file or bundle', async () => {
   const sensitiveNames = [
     'SUPABASE_SERVICE_ROLE_KEY',
+    'SUPABASE_SECRET_KEY',
+    'SUPABASE_SECRET_KEYS',
     'CLOUDFLARE_API_TOKEN',
     'CLOUDFLARE_ACCOUNT_TOKEN',
     'DATABASE_URL',
