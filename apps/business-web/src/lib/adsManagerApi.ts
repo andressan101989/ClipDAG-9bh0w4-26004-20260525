@@ -363,6 +363,13 @@ export type AdvertisingDestination = {
 };
 export type AdvertisingCampaign = AdvertisingCampaignSummary & {
   updatedAt: string | null; archivedAt: string | null; adSets: AdvertisingAdSet[]; destinations: AdvertisingDestination[];
+  lifecycle: { activationEnabled: boolean; automaticTransitionsEnabled: boolean; requiresFinancialSettlement: boolean };
+};
+export type AdvertisingCampaignReadiness = {
+  campaignId: string; currentStatus: string; structurallyReady: boolean;
+  activationEnabled: boolean; automaticTransitionsEnabled: boolean; targetStatus: "active" | "scheduled" | null;
+  blockers: string[]; readyAdCount: number; currentWindowAdSetCount: number; futureWindowAdSetCount: number;
+  financeReady: boolean; advertiserAgeReady: boolean;
 };
 export type AdvertisingCreativeVersion = {
   id: string; versionNumber: number; format: "image" | "video"; mediaAssetId: string | null; videoAssetId: string | null;
@@ -438,9 +445,11 @@ function parseResumeReference(value: unknown): AdvertisingResumeReference | null
 function parseAdvertisingCampaign(value: unknown): AdvertisingCampaign {
   const row = object(value, "advertising_campaign_invalid");
   const summary = parseCampaignSummary(row);
+  const lifecycle = row.lifecycle == null ? {} : object(row.lifecycle, "advertising_campaign_lifecycle_invalid");
   return {
     ...summary,
     updatedAt: optionalString(row.updated_at), archivedAt: optionalString(row.archived_at),
+    lifecycle: { activationEnabled: lifecycle.activation_enabled === true, automaticTransitionsEnabled: lifecycle.automatic_transitions_enabled === true, requiresFinancialSettlement: lifecycle.requires_financial_settlement === true },
     adSets: array(row.ad_sets ?? [], "advertising_campaign_invalid").map((value) => {
       const adSet = object(value, "advertising_ad_set_invalid");
       return { id: string(adSet.id, "advertising_ad_set_invalid"), name: string(adSet.name, "advertising_ad_set_invalid"), status: string(adSet.status, "advertising_ad_set_invalid"), startsAt: optionalString(adSet.starts_at), endsAt: optionalString(adSet.ends_at), createdAt: string(adSet.created_at, "advertising_ad_set_invalid"), audience: parseResumeReference(adSet.audience), placementSelection: parseResumeReference(adSet.placement_selection) };
@@ -479,6 +488,32 @@ export async function getAdvertisingCampaign(id: string, authority: AdvertisingA
 export async function createAdvertisingCampaignDraft(input: { adAccountId: string; name: string; objective: string }, client: BusinessSupabaseClient = supabase) {
   return parseAdvertisingCampaign(await advertisingRpc("create_my_advertising_campaign_draft", { p_ad_account_id: input.adAccountId, p_name: input.name.trim(), p_objective: input.objective, p_idempotency_key: crypto.randomUUID() }, "No se pudo crear la campaña", client));
 }
+
+function parseAdvertisingCampaignReadiness(value: unknown): AdvertisingCampaignReadiness {
+  const row = object(value, "advertising_campaign_readiness_invalid");
+  return {
+    campaignId: string(row.campaign_id, "advertising_campaign_readiness_invalid"),
+    currentStatus: string(row.current_status, "advertising_campaign_readiness_invalid"),
+    structurallyReady: row.structurally_ready === true,
+    activationEnabled: row.activation_enabled === true,
+    automaticTransitionsEnabled: row.automatic_transitions_enabled === true,
+    targetStatus: row.target_status == null ? null : string(row.target_status, "advertising_campaign_readiness_invalid") as "active" | "scheduled",
+    blockers: array(row.blockers ?? [], "advertising_campaign_readiness_invalid").map((item) => string(item, "advertising_campaign_readiness_invalid")),
+    readyAdCount: number(row.ready_ad_count), currentWindowAdSetCount: number(row.current_window_ad_set_count), futureWindowAdSetCount: number(row.future_window_ad_set_count),
+    financeReady: row.finance_ready === true, advertiserAgeReady: row.advertiser_age_ready === true,
+  };
+}
+
+export async function getAdvertisingCampaignActivationReadiness(campaignId: string, client: BusinessSupabaseClient = supabase) {
+  return parseAdvertisingCampaignReadiness(await advertisingRpc("get_my_advertising_campaign_activation_readiness", { p_campaign_id: campaignId }, "No se pudo evaluar la preparación de la campaña", client));
+}
+async function advertisingLifecycleAction(name: string, campaignId: string, client: BusinessSupabaseClient) {
+  return parseAdvertisingCampaign(await advertisingRpc(name, { p_campaign_id: campaignId, p_idempotency_key: crypto.randomUUID() }, "No se pudo actualizar el estado de la campaña", client));
+}
+export async function activateAdvertisingCampaign(campaignId: string, client: BusinessSupabaseClient = supabase) { return advertisingLifecycleAction("activate_my_advertising_campaign_v2", campaignId, client); }
+export async function pauseAdvertisingCampaign(campaignId: string, client: BusinessSupabaseClient = supabase) { return advertisingLifecycleAction("pause_my_advertising_campaign_v2", campaignId, client); }
+export async function resumeAdvertisingCampaign(campaignId: string, client: BusinessSupabaseClient = supabase) { return advertisingLifecycleAction("resume_my_advertising_campaign_v2", campaignId, client); }
+export async function cancelAdvertisingCampaign(campaignId: string, client: BusinessSupabaseClient = supabase) { return advertisingLifecycleAction("cancel_my_advertising_campaign_v2", campaignId, client); }
 
 export const ADVERTISING_OBJECTIVES = ["awareness", "reach", "traffic", "engagement", "video_views", "profile_visits", "messages", "website_conversions", "app_promotion", "marketplace_sales"] as const;
 export const ADVERTISING_PLACEMENTS = ["marketplace_home", "marketplace_search", "social_feed", "stories", "clips", "live"] as const;

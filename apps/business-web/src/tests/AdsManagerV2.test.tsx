@@ -8,7 +8,8 @@ const authUser = vi.hoisted(() => ({ id: "owner-1", email: "owner@nelyon.app" })
 vi.mock("../auth/BusinessAuthProvider", () => ({ useBusinessAuth: () => ({ user: authUser }) }));
 const api = vi.hoisted(() => ({
   accounts: vi.fn(), campaigns: vi.fn(), createBusiness: vi.fn(), createCampaign: vi.fn(),
-  campaign: vi.fn(), creativeWorkspace: vi.fn(), finance: vi.fn(), summary: vi.fn(), audience: vi.fn(), placement: vi.fn(),
+  campaign: vi.fn(), readiness: vi.fn(), creativeWorkspace: vi.fn(), finance: vi.fn(), summary: vi.fn(), audience: vi.fn(), placement: vi.fn(),
+  activate: vi.fn(), pause: vi.fn(), resume: vi.fn(), cancel: vi.fn(),
   age: vi.fn(), remediateAge: vi.fn(),
 }));
 vi.mock("../lib/adsManagerApi", async (original) => ({
@@ -18,6 +19,11 @@ vi.mock("../lib/adsManagerApi", async (original) => ({
   createAdvertiserBusinessAccount: api.createBusiness,
   createAdvertisingCampaignDraft: api.createCampaign,
   getAdvertisingCampaign: api.campaign,
+  getAdvertisingCampaignActivationReadiness: api.readiness,
+  activateAdvertisingCampaign: api.activate,
+  pauseAdvertisingCampaign: api.pause,
+  resumeAdvertisingCampaign: api.resume,
+  cancelAdvertisingCampaign: api.cancel,
   getAdvertisingCreativeWorkspace: api.creativeWorkspace,
   getAdvertisingFinance: api.finance,
   getAdvertisingEventSummary: api.summary,
@@ -41,6 +47,11 @@ describe("Ads Manager V2 workspace", () => {
     api.createBusiness.mockResolvedValue(ownerBusiness);
     api.createCampaign.mockResolvedValue({ id: "campaign-1" });
     api.creativeWorkspace.mockResolvedValue({ creatives: [], ads: [] });
+    api.readiness.mockResolvedValue({ campaignId: "campaign-1", currentStatus: "draft", structurallyReady: false, activationEnabled: false, automaticTransitionsEnabled: false, targetStatus: null, blockers: ["campaign_finance_not_funded"], readyAdCount: 0, currentWindowAdSetCount: 0, futureWindowAdSetCount: 0, financeReady: false, advertiserAgeReady: true });
+    api.activate.mockResolvedValue({ id: "campaign-1", status: "active" });
+    api.pause.mockResolvedValue({ id: "campaign-1", status: "paused" });
+    api.resume.mockResolvedValue({ id: "campaign-1", status: "active" });
+    api.cancel.mockResolvedValue({ id: "campaign-1", status: "cancelled" });
     api.finance.mockRejectedValue(new Error("advertising_campaign_finance_not_found"));
     api.summary.mockResolvedValue({ impressions: 0, clicks: 0, conversions: 0, ctr: 0 });
     api.audience.mockResolvedValue(null);
@@ -130,6 +141,17 @@ describe("Ads Manager V2 workspace", () => {
     renderHome("/ads/campaigns/campaign-1");
     expect(await screen.findByText("network_unavailable")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Define budget draft" })).not.toBeInTheDocument();
+  });
+
+  it("renders server readiness, keeps activation locked by policy, and sends cancellation through the canonical RPC", async () => {
+    api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, lifecycle: { activationEnabled: false, automaticTransitionsEnabled: false, requiresFinancialSettlement: false }, adSets: [], destinations: [] });
+    renderHome("/ads/campaigns/campaign-1");
+    const locked = await screen.findByRole("button", { name: "Activation locked" });
+    expect(locked).toBeDisabled();
+    expect(screen.getByText("campaign finance not funded")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(api.cancel).toHaveBeenCalledWith("campaign-1"));
+    expect(api.activate).not.toHaveBeenCalled();
   });
 
   it("maps Campaign draft creation and renders the adult eligibility blocker safely", async () => {

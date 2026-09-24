@@ -13,12 +13,17 @@ import {
   createAdvertisingCampaignDraft,
   getAdvertiserAccounts,
   getAdvertisingCampaign,
+  getAdvertisingCampaignActivationReadiness,
   getAdvertisingCampaigns,
   getAdvertisingFinance,
   getMyAgeEligibility,
   getAdvertisingPlacementSelection,
   isAdvertisingFinanceNotFound,
   remediateMyAgeEligibility,
+  activateAdvertisingCampaign,
+  pauseAdvertisingCampaign,
+  resumeAdvertisingCampaign,
+  cancelAdvertisingCampaign,
 } from "../lib/adsManagerApi";
 
 vi.mock("../lib/supabase", () => ({ supabase: {} }));
@@ -131,6 +136,36 @@ describe("Ads Manager canonical API", () => {
       p_ad_account_id: "ad-account-1", p_name: "Brand", p_objective: "awareness", p_idempotency_key: "33333333-3333-4333-8333-333333333333",
     });
     expect(rpc.mock.calls.flat().join(" ")).not.toMatch(/fund_|spend_|settle_|activate|delivery_candidates|record_advertising/);
+  });
+
+  it("uses canonical server readiness and lifecycle RPCs without mutating status client-side", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("44444444-4444-4444-8444-444444444444");
+    const readiness = {
+      campaign_id: "v2-1", current_status: "draft", structurally_ready: false,
+      activation_enabled: false, automatic_transitions_enabled: false, target_status: null,
+      blockers: ["campaign_activation_disabled"], ready_ad_count: 0,
+      current_window_ad_set_count: 0, future_window_ad_set_count: 0,
+      finance_ready: false, advertiser_age_ready: true,
+    };
+    const campaignResult = { id: "v2-1", ad_account_id: "ad-account-1", business_account_id: "business-1", name: "Brand", status: "draft", objective: "awareness", authority: "ads_v2", write_authority: "ads_v2", created_at: "2026-09-23T00:00:00Z", updated_at: "2026-09-23T00:00:00Z", archived_at: null, lifecycle: { activation_enabled: false, automatic_transitions_enabled: false, requires_financial_settlement: false }, ad_sets: [], destinations: [] };
+    const rpc = vi.fn()
+      .mockResolvedValueOnce({ data: readiness, error: null })
+      .mockResolvedValue({ data: campaignResult, error: null });
+    const client = { rpc } as unknown as BusinessSupabaseClient;
+
+    expect(await getAdvertisingCampaignActivationReadiness("v2-1", client)).toMatchObject({
+      campaignId: "v2-1", activationEnabled: false, blockers: ["campaign_activation_disabled"],
+    });
+    await activateAdvertisingCampaign("v2-1", client);
+    await pauseAdvertisingCampaign("v2-1", client);
+    await resumeAdvertisingCampaign("v2-1", client);
+    await cancelAdvertisingCampaign("v2-1", client);
+
+    expect(rpc).toHaveBeenNthCalledWith(1, "get_my_advertising_campaign_activation_readiness", { p_campaign_id: "v2-1" });
+    expect(rpc).toHaveBeenNthCalledWith(2, "activate_my_advertising_campaign_v2", { p_campaign_id: "v2-1", p_idempotency_key: "44444444-4444-4444-8444-444444444444" });
+    expect(rpc).toHaveBeenNthCalledWith(3, "pause_my_advertising_campaign_v2", { p_campaign_id: "v2-1", p_idempotency_key: "44444444-4444-4444-8444-444444444444" });
+    expect(rpc).toHaveBeenNthCalledWith(4, "resume_my_advertising_campaign_v2", { p_campaign_id: "v2-1", p_idempotency_key: "44444444-4444-4444-8444-444444444444" });
+    expect(rpc).toHaveBeenNthCalledWith(5, "cancel_my_advertising_campaign_v2", { p_campaign_id: "v2-1", p_idempotency_key: "44444444-4444-4444-8444-444444444444" });
   });
 
   it("parses canonical placement state for refresh-safe workspace restoration", async () => {

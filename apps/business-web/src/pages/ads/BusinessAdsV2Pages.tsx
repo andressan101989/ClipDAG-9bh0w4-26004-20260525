@@ -9,7 +9,9 @@ import {
   ADVERTISING_CTAS,
   ADVERTISING_OBJECTIVES,
   ADVERTISING_PLACEMENTS,
+  activateAdvertisingCampaign,
   advertisingUserMessage,
+  cancelAdvertisingCampaign,
   createAdvertiserBusinessAccount,
   createAdvertisingAdDraft,
   createAdvertisingAdSetDraft,
@@ -23,19 +25,23 @@ import {
   getMyAgeEligibility,
   getAdvertisingAudience,
   getAdvertisingCampaign,
+  getAdvertisingCampaignActivationReadiness,
   getAdvertisingCampaigns,
   getAdvertisingCreativeWorkspace,
   getAdvertisingEventSummary,
   getAdvertisingFinance,
   getAdvertisingPlacementSelection,
   isAdvertisingFinanceNotFound,
+  pauseAdvertisingCampaign,
   remediateMyAgeEligibility,
+  resumeAdvertisingCampaign,
   submitAdvertisingAdForReview,
   type AdvertiserAdAccount,
   type AdvertiserBusiness,
   type AdvertisingAudienceDefinition,
   type AdvertisingAgeEligibility,
   type AdvertisingCampaign,
+  type AdvertisingCampaignReadiness,
   type AdvertisingCampaignSummary,
   type AdvertisingCreativeWorkspace,
   type AdvertisingFinance,
@@ -193,7 +199,7 @@ export function BusinessAdsManagerNewCampaignPage() {
   return <><PageHeader eyebrow="Ads Manager · Step 1" title="Create campaign draft" description="This creates a general Ads V2 draft. It does not fund, activate, or deliver advertising." action={<Link className="text-button" to="/ads">Back</Link>} /><AccountSelectors /><InlineError message={error} />{owner && <AdvertisingAgeEligibilityPanel />}{!owner && <div className="readonly-note">Only the Business Account owner can create Ads V2 drafts.</div>}<form className="business-card ads-v2-compact-form" onSubmit={(event) => void submit(event)}><FormField label="Campaign name"><input required minLength={2} maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /></FormField><FormField label="Objective"><select value={objective} onChange={(event) => setObjective(event.target.value as (typeof ADVERTISING_OBJECTIVES)[number])}>{ADVERTISING_OBJECTIVES.map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</select></FormField><FormField label="Ad Account"><input readOnly value={selectedAdAccount?.name ?? ""} /></FormField><button className="primary-button" type="submit" disabled={!canWrite || !selectedAdAccount || saving}>{saving ? "Creating…" : "Create draft"}</button></form></>;
 }
 
-type WorkspaceData = { campaign: AdvertisingCampaign; creatives: AdvertisingCreativeWorkspace; finance: AdvertisingFinance | null; analytics: Record<string, unknown>; audience: Record<string, unknown> | null; placement: AdvertisingPlacementSelection | null };
+type WorkspaceData = { campaign: AdvertisingCampaign; readiness: AdvertisingCampaignReadiness; creatives: AdvertisingCreativeWorkspace; finance: AdvertisingFinance | null; analytics: Record<string, unknown>; audience: Record<string, unknown> | null; placement: AdvertisingPlacementSelection | null };
 
 const defaultAudience: AdvertisingAudienceDefinition = { age_scope: "adults_only", geographies: [], languages: [], dayparts: [], frequency: null };
 
@@ -210,7 +216,8 @@ export function BusinessAdsManagerCampaignPage() {
     try {
       const campaign = await getAdvertisingCampaign(campaignId, "ads_v2");
       const adSet = campaign.adSets[0];
-      const [creatives, finance, analytics, audience, placement] = await Promise.all([
+      const [readiness, creatives, finance, analytics, audience, placement] = await Promise.all([
+        getAdvertisingCampaignActivationReadiness(campaignId),
         getAdvertisingCreativeWorkspace(),
         getAdvertisingFinance(campaignId).catch((cause) => {
           if (isAdvertisingFinanceNotFound(cause)) return null;
@@ -220,7 +227,7 @@ export function BusinessAdsManagerCampaignPage() {
         adSet?.audience ? getAdvertisingAudience(adSet.audience.id) : Promise.resolve(null),
         adSet?.placementSelection ? getAdvertisingPlacementSelection(adSet.placementSelection.id) : Promise.resolve(null),
       ]);
-      setData({ campaign, creatives, finance, analytics, audience, placement });
+      setData({ campaign, readiness, creatives, finance, analytics, audience, placement });
     } catch (cause) { setError(advertisingUserMessage(cause)); }
     finally { setLoading(false); }
   }, [campaignId]);
@@ -260,7 +267,7 @@ function CampaignWorkspace({ data, business, adAccount, owner, run }: { data: Wo
     <section id="ad" className="business-card editor-card"><p className="eyebrow">Step 7</p><h2>Ad assembly</h2>{ad ? <p><strong>{ad.name}</strong> · <StatusBadge status={ad.reviewStatus} /></p> : <form className="seller-form" onSubmit={(event) => { event.preventDefault(); if (!adSet || !destination) return; void run(() => createAdvertisingAdDraft({ adSetId: adSet.id, creativeVersionId: versionId, destinationId: destination.id, name: adName }), "Ad assembled"); }}><FormField label="Ad name"><input value={adName} onChange={(event) => setAdName(event.target.value)} /></FormField><FormField label="Creative Version"><select required value={versionId} onChange={(event) => setVersionId(event.target.value)}><option value="">Select</option>{versions.map((item) => <option key={item.id} value={item.id}>{item.creativeName} · v{item.versionNumber}</option>)}</select></FormField><button className="primary-button" disabled={!owner || !adSet || !destination || !versionId} type="submit">Assemble Ad</button></form>}</section>
     <section id="review" className="business-card editor-card"><p className="eyebrow">Step 8</p><h2>Review</h2>{ad ? <><div className="ads-v2-preview"><strong>{versions.find((item) => item.id === ad.creativeVersionId)?.headline ?? ad.name}</strong><p>{versions.find((item) => item.id === ad.creativeVersionId)?.primaryText}</p><span>Destination: {destination?.destinationType}</span><span>Audience: Adults 18+</span><span>Placements: {displayedPlacements.join(", ")}</span></div><p>Review status: <StatusBadge status={ad.reviewStatus} /></p>{ad.latestRejectionMessage && <div className="readonly-note">{ad.latestRejectionMessage}</div>}{(ad.reviewStatus === "not_submitted" || ad.reviewStatus === "rejected") && <button className="primary-button" disabled={!owner} type="button" onClick={() => void run(() => submitAdvertisingAdForReview(ad.id), "Ad submitted for review")}>Submit for review</button>}</> : <p>Assemble an Ad first.</p>}</section>
     <section id="budget" className="business-card editor-card"><p className="eyebrow">Step 9</p><h2>Budget draft</h2>{data.finance ? <div className="ads-summary-grid"><Metric label="Budget" value={formatMoney(data.finance.budgetBdag)} /><Metric label="Funded" value={formatMoney(data.finance.fundedBdag)} /><Metric label="Spent" value={formatMoney(data.finance.spentBdag)} /><Metric label="Released" value={formatMoney(data.finance.releasedBdag)} /><Metric label="Reserved" value={formatMoney(data.finance.reservedBdag)} /></div> : <form className="seller-form" onSubmit={(event) => { event.preventDefault(); void run(() => createAdvertisingFinanceDraft(campaign.id, Number(budget)), "Budget draft created"); }}><FormField label="Budget BDAG"><input type="number" min="0.00000001" step="0.00000001" required value={budget} onChange={(event) => setBudget(event.target.value)} /></FormField><button className="primary-button" disabled={!owner} type="submit">Define budget draft</button></form>}<div className="readonly-note"><strong>Funding is not enabled yet.</strong> No Fund, Pay, Launch or Activate action is available.</div></section>
-    <section id="readiness" className="business-card editor-card"><p className="eyebrow">Step 10</p><h2>Readiness summary</h2><ul className="ads-v2-checklist">{readiness.map(([label, value]) => <li key={String(label)} className={value === true || (typeof value === "string" && value !== "not_submitted") ? "is-ready" : ""}><span aria-hidden="true">{value === true || (typeof value === "string" && value !== "not_submitted") ? "✓" : "○"}</span><strong>{label}</strong>{typeof value === "string" && <small>{value}</small>}</li>)}</ul><div className="ads-v2-locked"><strong>Not available yet</strong><span>Campaign activation</span><span>Funding</span><span>Live delivery</span></div><h3>Aggregate analytics</h3><div className="ads-summary-grid"><Metric label="Impressions" value={String(data.analytics.impressions ?? 0)} /><Metric label="Clicks" value={String(data.analytics.clicks ?? 0)} /><Metric label="Conversions" value={String(data.analytics.conversions ?? 0)} /><Metric label="CTR" value={String(data.analytics.ctr ?? 0)} /></div></section>
+    <section id="readiness" className="business-card editor-card"><p className="eyebrow">Step 10</p><h2>Readiness summary</h2><p>Campaign status: <StatusBadge status={data.campaign.status} /></p><ul className="ads-v2-checklist">{readiness.map(([label, value]) => <li key={String(label)} className={value === true || (typeof value === "string" && value !== "not_submitted") ? "is-ready" : ""}><span aria-hidden="true">{value === true || (typeof value === "string" && value !== "not_submitted") ? "✓" : "○"}</span><strong>{label}</strong>{typeof value === "string" && <small>{value}</small>}</li>)}</ul><div className="business-card"><h3>Server activation readiness</h3><p>{data.readiness.structurallyReady ? `Ready for ${data.readiness.targetStatus}` : "Pre-launch requirements remain open."}</p>{data.readiness.blockers.length > 0 && <ul>{data.readiness.blockers.map((blocker) => <li key={blocker}>{blocker.replaceAll("_", " ")}</li>)}</ul>}<div className="compact-actions">{data.campaign.status === "draft" && <button type="button" disabled={!owner || !data.readiness.activationEnabled || !data.readiness.structurallyReady} onClick={() => void run(() => activateAdvertisingCampaign(data.campaign.id), "Campaign activated")}>{data.readiness.activationEnabled ? "Activate" : "Activation locked"}</button>}{(data.campaign.status === "active" || data.campaign.status === "scheduled") && <button type="button" disabled={!owner} onClick={() => void run(() => pauseAdvertisingCampaign(data.campaign.id), "Campaign paused")}>Pause</button>}{data.campaign.status === "paused" && <button type="button" disabled={!owner || !data.readiness.activationEnabled || !data.readiness.structurallyReady} onClick={() => void run(() => resumeAdvertisingCampaign(data.campaign.id), "Campaign resumed")}>Resume</button>}{["draft", "scheduled", "active", "paused"].includes(data.campaign.status) && <button className="danger-button" type="button" disabled={!owner} onClick={() => void run(() => cancelAdvertisingCampaign(data.campaign.id), "Campaign cancelled")}>Cancel</button>}</div>{data.campaign.lifecycle?.requiresFinancialSettlement && <p className="readonly-note">Reserved funds require separate financial settlement.</p>}</div><div className="ads-v2-locked"><strong>Pre-launch locked</strong><span>Campaign activation policy disabled</span><span>Funding disabled</span><span>Live delivery disabled</span></div><h3>Aggregate analytics</h3><div className="ads-summary-grid"><Metric label="Impressions" value={String(data.analytics.impressions ?? 0)} /><Metric label="Clicks" value={String(data.analytics.clicks ?? 0)} /><Metric label="Conversions" value={String(data.analytics.conversions ?? 0)} /><Metric label="CTR" value={String(data.analytics.ctr ?? 0)} /></div></section>
   </div>;
 }
 

@@ -11,7 +11,9 @@ test("PLR-2 consists of exactly one corrective migration", () => {
   assert.equal(matches.length, 1, "exactly one PLR-2 migration must exist");
 });
 
-const sql = matches.length === 1 ? readFileSync(new URL(matches[0], migrations), "utf8") : "";
+const sql = matches.length === 1
+  ? readFileSync(new URL(matches[0], migrations), "utf8").replace(/\r\n?/g, "\n")
+  : "";
 
 function body(name) {
   const marker = `create or replace function public.${name}`;
