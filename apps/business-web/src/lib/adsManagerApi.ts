@@ -472,8 +472,8 @@ export async function getAdvertiserAccounts(client: BusinessSupabaseClient = sup
   return array(payload.businesses, "advertiser_accounts_invalid").map(parseAdvertiserBusiness);
 }
 
-export async function createAdvertiserBusinessAccount(displayName: string, client: BusinessSupabaseClient = supabase) {
-  return parseAdvertiserBusiness(await advertisingRpc("create_my_business_account", { p_display_name: displayName.trim(), p_idempotency_key: crypto.randomUUID() }, "No se pudo crear la cuenta empresarial", client));
+export async function createAdvertiserBusinessAccount(displayName: string, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
+  return parseAdvertiserBusiness(await advertisingRpc("create_my_business_account", { p_display_name: displayName.trim(), p_idempotency_key: idempotencyKey }, "No se pudo crear la cuenta empresarial", client));
 }
 
 export async function getAdvertisingCampaigns(client: BusinessSupabaseClient = supabase): Promise<AdvertisingCampaignSummary[]> {
@@ -485,8 +485,8 @@ export async function getAdvertisingCampaign(id: string, authority: AdvertisingA
   return parseAdvertisingCampaign(await advertisingRpc("get_my_advertising_campaign", { p_campaign_id: id, p_authority: authority }, "No se pudo cargar la campaña", client));
 }
 
-export async function createAdvertisingCampaignDraft(input: { adAccountId: string; name: string; objective: string }, client: BusinessSupabaseClient = supabase) {
-  return parseAdvertisingCampaign(await advertisingRpc("create_my_advertising_campaign_draft", { p_ad_account_id: input.adAccountId, p_name: input.name.trim(), p_objective: input.objective, p_idempotency_key: crypto.randomUUID() }, "No se pudo crear la campaña", client));
+export async function createAdvertisingCampaignDraft(input: { adAccountId: string; name: string; objective: string }, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
+  return parseAdvertisingCampaign(await advertisingRpc("create_my_advertising_campaign_draft", { p_ad_account_id: input.adAccountId, p_name: input.name.trim(), p_objective: input.objective, p_idempotency_key: idempotencyKey }, "No se pudo crear la campaña", client));
 }
 
 function parseAdvertisingCampaignReadiness(value: unknown): AdvertisingCampaignReadiness {
@@ -507,13 +507,13 @@ function parseAdvertisingCampaignReadiness(value: unknown): AdvertisingCampaignR
 export async function getAdvertisingCampaignActivationReadiness(campaignId: string, client: BusinessSupabaseClient = supabase) {
   return parseAdvertisingCampaignReadiness(await advertisingRpc("get_my_advertising_campaign_activation_readiness", { p_campaign_id: campaignId }, "No se pudo evaluar la preparación de la campaña", client));
 }
-async function advertisingLifecycleAction(name: string, campaignId: string, client: BusinessSupabaseClient) {
-  return parseAdvertisingCampaign(await advertisingRpc(name, { p_campaign_id: campaignId, p_idempotency_key: crypto.randomUUID() }, "No se pudo actualizar el estado de la campaña", client));
+async function advertisingLifecycleAction(name: string, campaignId: string, idempotencyKey: string, client: BusinessSupabaseClient) {
+  return parseAdvertisingCampaign(await advertisingRpc(name, { p_campaign_id: campaignId, p_idempotency_key: idempotencyKey }, "No se pudo actualizar el estado de la campaña", client));
 }
-export async function activateAdvertisingCampaign(campaignId: string, client: BusinessSupabaseClient = supabase) { return advertisingLifecycleAction("activate_my_advertising_campaign_v2", campaignId, client); }
-export async function pauseAdvertisingCampaign(campaignId: string, client: BusinessSupabaseClient = supabase) { return advertisingLifecycleAction("pause_my_advertising_campaign_v2", campaignId, client); }
-export async function resumeAdvertisingCampaign(campaignId: string, client: BusinessSupabaseClient = supabase) { return advertisingLifecycleAction("resume_my_advertising_campaign_v2", campaignId, client); }
-export async function cancelAdvertisingCampaign(campaignId: string, client: BusinessSupabaseClient = supabase) { return advertisingLifecycleAction("cancel_my_advertising_campaign_v2", campaignId, client); }
+export async function activateAdvertisingCampaign(campaignId: string, idempotencyKey: string, client: BusinessSupabaseClient = supabase) { return advertisingLifecycleAction("activate_my_advertising_campaign_v2", campaignId, idempotencyKey, client); }
+export async function pauseAdvertisingCampaign(campaignId: string, idempotencyKey: string, client: BusinessSupabaseClient = supabase) { return advertisingLifecycleAction("pause_my_advertising_campaign_v2", campaignId, idempotencyKey, client); }
+export async function resumeAdvertisingCampaign(campaignId: string, idempotencyKey: string, client: BusinessSupabaseClient = supabase) { return advertisingLifecycleAction("resume_my_advertising_campaign_v2", campaignId, idempotencyKey, client); }
+export async function cancelAdvertisingCampaign(campaignId: string, idempotencyKey: string, client: BusinessSupabaseClient = supabase) { return advertisingLifecycleAction("cancel_my_advertising_campaign_v2", campaignId, idempotencyKey, client); }
 
 export const ADVERTISING_OBJECTIVES = ["awareness", "reach", "traffic", "engagement", "video_views", "profile_visits", "messages", "website_conversions", "app_promotion", "marketplace_sales"] as const;
 export const ADVERTISING_PLACEMENTS = ["marketplace_home", "marketplace_search", "social_feed", "stories", "clips", "live"] as const;
@@ -603,32 +603,32 @@ export type AdvertisingAudienceDefinition = {
   frequency: { max_impressions: number; window_hours: number } | null;
 };
 
-export async function createAdvertisingAdSetDraft(input: { campaignId: string; name: string; startsAt?: string | null; endsAt?: string | null }, client: BusinessSupabaseClient = supabase) {
-  return object(await advertisingRpc("create_my_advertising_ad_set_draft", { p_campaign_id: input.campaignId, p_name: input.name.trim(), p_starts_at: input.startsAt || null, p_ends_at: input.endsAt || null, p_idempotency_key: crypto.randomUUID() }, "No se pudo crear el Ad Set", client), "advertising_ad_set_invalid");
+export async function createAdvertisingAdSetDraft(input: { campaignId: string; name: string; startsAt?: string | null; endsAt?: string | null }, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
+  return object(await advertisingRpc("create_my_advertising_ad_set_draft", { p_campaign_id: input.campaignId, p_name: input.name.trim(), p_starts_at: input.startsAt || null, p_ends_at: input.endsAt || null, p_idempotency_key: idempotencyKey }, "No se pudo crear el Ad Set", client), "advertising_ad_set_invalid");
 }
 
-export async function createAdvertisingDestinationDraft(input: { campaignId: string; type: string; externalUrl?: string | null; targetUserId?: string | null; targetBusinessAccountId?: string | null; targetProductId?: string | null; targetStoreId?: string | null }, client: BusinessSupabaseClient = supabase) {
-  return object(await advertisingRpc("create_my_advertising_destination_draft", { p_campaign_id: input.campaignId, p_destination_type: input.type, p_idempotency_key: crypto.randomUUID(), p_external_url: input.externalUrl || null, p_target_user_id: input.targetUserId || null, p_target_business_account_id: input.targetBusinessAccountId || null, p_target_product_id: input.targetProductId || null, p_target_store_id: input.targetStoreId || null }, "No se pudo crear el destino", client), "advertising_destination_invalid");
+export async function createAdvertisingDestinationDraft(input: { campaignId: string; type: string; externalUrl?: string | null; targetUserId?: string | null; targetBusinessAccountId?: string | null; targetProductId?: string | null; targetStoreId?: string | null }, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
+  return object(await advertisingRpc("create_my_advertising_destination_draft", { p_campaign_id: input.campaignId, p_destination_type: input.type, p_idempotency_key: idempotencyKey, p_external_url: input.externalUrl || null, p_target_user_id: input.targetUserId || null, p_target_business_account_id: input.targetBusinessAccountId || null, p_target_product_id: input.targetProductId || null, p_target_store_id: input.targetStoreId || null }, "No se pudo crear el destino", client), "advertising_destination_invalid");
 }
 
-export async function createAdvertisingAudienceDraft(adSetId: string, definition: AdvertisingAudienceDefinition, client: BusinessSupabaseClient = supabase) {
-  return object(await advertisingRpc("create_my_advertising_audience_draft", { p_ad_set_id: adSetId, p_definition: definition, p_idempotency_key: crypto.randomUUID() }, "No se pudo crear la audiencia", client), "advertising_audience_invalid");
+export async function createAdvertisingAudienceDraft(adSetId: string, definition: AdvertisingAudienceDefinition, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
+  return object(await advertisingRpc("create_my_advertising_audience_draft", { p_ad_set_id: adSetId, p_definition: definition, p_idempotency_key: idempotencyKey }, "No se pudo crear la audiencia", client), "advertising_audience_invalid");
 }
 
-export async function createAdvertisingAudienceVersion(audienceId: string, definition: AdvertisingAudienceDefinition, client: BusinessSupabaseClient = supabase) {
-  return object(await advertisingRpc("create_my_advertising_audience_version", { p_audience_id: audienceId, p_definition: definition, p_idempotency_key: crypto.randomUUID() }, "No se pudo actualizar la audiencia", client), "advertising_audience_invalid");
+export async function createAdvertisingAudienceVersion(audienceId: string, definition: AdvertisingAudienceDefinition, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
+  return object(await advertisingRpc("create_my_advertising_audience_version", { p_audience_id: audienceId, p_definition: definition, p_idempotency_key: idempotencyKey }, "No se pudo actualizar la audiencia", client), "advertising_audience_invalid");
 }
 
 export async function getAdvertisingAudience(audienceId: string, client: BusinessSupabaseClient = supabase) {
   return object(await advertisingRpc("get_my_advertising_audience", { p_audience_id: audienceId }, "No se pudo cargar la audiencia", client), "advertising_audience_invalid");
 }
 
-export async function createAdvertisingPlacementSelectionDraft(adSetId: string, codes: string[], client: BusinessSupabaseClient = supabase) {
-  return object(await advertisingRpc("create_my_advertising_placement_selection_draft", { p_ad_set_id: adSetId, p_placement_codes: codes, p_idempotency_key: crypto.randomUUID() }, "No se pudieron guardar los placements", client), "advertising_placement_invalid");
+export async function createAdvertisingPlacementSelectionDraft(adSetId: string, codes: string[], idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
+  return object(await advertisingRpc("create_my_advertising_placement_selection_draft", { p_ad_set_id: adSetId, p_placement_codes: codes, p_idempotency_key: idempotencyKey }, "No se pudieron guardar los placements", client), "advertising_placement_invalid");
 }
 
-export async function createAdvertisingPlacementSelectionVersion(selectionId: string, codes: string[], client: BusinessSupabaseClient = supabase) {
-  return object(await advertisingRpc("create_my_advertising_placement_selection_version", { p_placement_selection_id: selectionId, p_placement_codes: codes, p_idempotency_key: crypto.randomUUID() }, "No se pudieron actualizar los placements", client), "advertising_placement_invalid");
+export async function createAdvertisingPlacementSelectionVersion(selectionId: string, codes: string[], idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
+  return object(await advertisingRpc("create_my_advertising_placement_selection_version", { p_placement_selection_id: selectionId, p_placement_codes: codes, p_idempotency_key: idempotencyKey }, "No se pudieron actualizar los placements", client), "advertising_placement_invalid");
 }
 
 export async function getAdvertisingPlacementSelection(selectionId: string, client: BusinessSupabaseClient = supabase): Promise<AdvertisingPlacementSelection> {
@@ -673,20 +673,20 @@ export async function getAdvertisingCreativeWorkspace(client: BusinessSupabaseCl
   return parseCreativeWorkspace(await advertisingRpc("get_my_advertising_creative_workspace", undefined, "No se pudo cargar el workspace creativo", client));
 }
 
-export async function createAdvertisingCreative(input: { adAccountId: string; name: string; format: "image" | "video"; mediaAssetId?: string | null; videoAssetId?: string | null; primaryText?: string; headline?: string; description?: string; callToAction: string }, client: BusinessSupabaseClient = supabase) {
-  return object(await advertisingRpc("create_my_advertising_creative", { p_ad_account_id: input.adAccountId, p_name: input.name.trim(), p_format: input.format, p_media_asset_id: input.mediaAssetId || null, p_video_asset_id: input.videoAssetId || null, p_primary_text: input.primaryText?.trim() || null, p_headline: input.headline?.trim() || null, p_description: input.description?.trim() || null, p_call_to_action: input.callToAction, p_idempotency_key: crypto.randomUUID() }, "No se pudo crear el creative", client), "advertising_creative_invalid");
+export async function createAdvertisingCreative(input: { adAccountId: string; name: string; format: "image" | "video"; mediaAssetId?: string | null; videoAssetId?: string | null; primaryText?: string; headline?: string; description?: string; callToAction: string }, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
+  return object(await advertisingRpc("create_my_advertising_creative", { p_ad_account_id: input.adAccountId, p_name: input.name.trim(), p_format: input.format, p_media_asset_id: input.mediaAssetId || null, p_video_asset_id: input.videoAssetId || null, p_primary_text: input.primaryText?.trim() || null, p_headline: input.headline?.trim() || null, p_description: input.description?.trim() || null, p_call_to_action: input.callToAction, p_idempotency_key: idempotencyKey }, "No se pudo crear el creative", client), "advertising_creative_invalid");
 }
 
 export async function createAdvertisingCreativeVersion(input: { creativeId: string; format: "image" | "video"; mediaAssetId?: string | null; videoAssetId?: string | null; primaryText?: string; headline?: string; description?: string; callToAction: string }, client: BusinessSupabaseClient = supabase) {
   return object(await advertisingRpc("create_my_advertising_creative_version", { p_creative_id: input.creativeId, p_format: input.format, p_media_asset_id: input.mediaAssetId || null, p_video_asset_id: input.videoAssetId || null, p_primary_text: input.primaryText?.trim() || null, p_headline: input.headline?.trim() || null, p_description: input.description?.trim() || null, p_call_to_action: input.callToAction }, "No se pudo crear la versión", client), "advertising_creative_invalid");
 }
 
-export async function createAdvertisingAdDraft(input: { adSetId: string; creativeVersionId: string; destinationId: string; name: string }, client: BusinessSupabaseClient = supabase) {
-  return object(await advertisingRpc("create_my_advertising_ad_draft", { p_ad_set_id: input.adSetId, p_creative_version_id: input.creativeVersionId, p_destination_id: input.destinationId, p_name: input.name.trim(), p_idempotency_key: crypto.randomUUID() }, "No se pudo ensamblar el anuncio", client), "advertising_ad_invalid");
+export async function createAdvertisingAdDraft(input: { adSetId: string; creativeVersionId: string; destinationId: string; name: string }, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
+  return object(await advertisingRpc("create_my_advertising_ad_draft", { p_ad_set_id: input.adSetId, p_creative_version_id: input.creativeVersionId, p_destination_id: input.destinationId, p_name: input.name.trim(), p_idempotency_key: idempotencyKey }, "No se pudo ensamblar el anuncio", client), "advertising_ad_invalid");
 }
 
-export async function submitAdvertisingAdForReview(adId: string, client: BusinessSupabaseClient = supabase) {
-  return object(await advertisingRpc("submit_my_advertising_ad_for_review", { p_ad_id: adId, p_idempotency_key: crypto.randomUUID() }, "No se pudo enviar el anuncio a revisión", client), "advertising_ad_invalid");
+export async function submitAdvertisingAdForReview(adId: string, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
+  return object(await advertisingRpc("submit_my_advertising_ad_for_review", { p_ad_id: adId, p_idempotency_key: idempotencyKey }, "No se pudo enviar el anuncio a revisión", client), "advertising_ad_invalid");
 }
 
 export type AdvertisingFinance = { campaignId: string; currency: string; budgetBdag: number; financeStatus: string; fundedBdag: number; spentBdag: number; releasedBdag: number; reservedBdag: number; fundedAt: string | null; settledAt: string | null; policy: { fundingEnabled: boolean; spendEnabled: boolean; settlementEnabled: boolean } };
@@ -694,7 +694,7 @@ function parseAdvertisingFinance(value: unknown): AdvertisingFinance {
   const row = object(value, "advertising_finance_invalid"); const policy = object(row.finance_policy ?? {}, "advertising_finance_invalid");
   return { campaignId: string(row.campaign_id, "advertising_finance_invalid"), currency: string(row.currency, "advertising_finance_invalid"), budgetBdag: number(row.budget_bdag), financeStatus: string(row.finance_status, "advertising_finance_invalid"), fundedBdag: number(row.funded_bdag), spentBdag: number(row.spent_bdag), releasedBdag: number(row.released_bdag), reservedBdag: number(row.reserved_bdag), fundedAt: optionalString(row.funded_at), settledAt: optionalString(row.settled_at), policy: { fundingEnabled: policy.funding_enabled === true, spendEnabled: policy.spend_enabled === true, settlementEnabled: policy.settlement_enabled === true } };
 }
-export async function createAdvertisingFinanceDraft(campaignId: string, budgetBdag: number, client: BusinessSupabaseClient = supabase) { return parseAdvertisingFinance(await advertisingRpc("create_my_advertising_campaign_finance_draft", { p_campaign_id: campaignId, p_budget_bdag: budgetBdag, p_idempotency_key: crypto.randomUUID() }, "No se pudo definir el presupuesto", client)); }
+export async function createAdvertisingFinanceDraft(campaignId: string, budgetBdag: number, idempotencyKey: string, client: BusinessSupabaseClient = supabase) { return parseAdvertisingFinance(await advertisingRpc("create_my_advertising_campaign_finance_draft", { p_campaign_id: campaignId, p_budget_bdag: budgetBdag, p_idempotency_key: idempotencyKey }, "No se pudo definir el presupuesto", client)); }
 export async function getAdvertisingFinance(campaignId: string, client: BusinessSupabaseClient = supabase) { return parseAdvertisingFinance(await advertisingRpc("get_my_advertising_campaign_finance", { p_campaign_id: campaignId }, "advertising_campaign_finance_not_found", client)); }
 export async function getAdvertisingEventSummary(campaignId: string, client: BusinessSupabaseClient = supabase) { return object(await advertisingRpc("get_my_advertising_event_summary", { p_campaign_id: campaignId }, "No se pudieron cargar las métricas", client), "advertising_summary_invalid"); }
 

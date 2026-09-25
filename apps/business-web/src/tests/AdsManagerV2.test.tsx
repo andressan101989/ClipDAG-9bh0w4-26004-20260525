@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AdvertisingManagerProvider, BusinessAdsManagerCampaignPage, BusinessAdsManagerHomePage, BusinessAdsManagerNewCampaignPage } from "../pages/ads/BusinessAdsV2Pages";
@@ -12,6 +13,7 @@ const api = vi.hoisted(() => ({
   activate: vi.fn(), pause: vi.fn(), resume: vi.fn(), cancel: vi.fn(),
   age: vi.fn(), remediateAge: vi.fn(),
   targetingCapabilities: vi.fn(), createAudienceVersion: vi.fn(),
+  createAudience: vi.fn(),
 }));
 vi.mock("../lib/adsManagerApi", async (original) => ({
   ...await original<typeof import("../lib/adsManagerApi")>(),
@@ -34,6 +36,7 @@ vi.mock("../lib/adsManagerApi", async (original) => ({
   remediateMyAgeEligibility: api.remediateAge,
   getAdvertisingTargetingCapabilities: api.targetingCapabilities,
   createAdvertisingAudienceVersion: api.createAudienceVersion,
+  createAdvertisingAudienceDraft: api.createAudience,
 }));
 
 const ownerBusiness = { businessAccountId: "business-1", displayName: "Nelyon Studio", status: "active", accessType: "owner", marketplace: { linked: false, marketplaceSellerUserId: null, sellerStatus: null }, adAccounts: [{ id: "account-1", name: "Nelyon Ads", status: "active", billingCurrency: "BDAG", isDefault: true }] };
@@ -45,6 +48,7 @@ function renderHome(path = "/ads") {
 describe("Ads Manager V2 workspace", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     api.accounts.mockResolvedValue([ownerBusiness]);
     api.campaigns.mockResolvedValue([]);
     api.createBusiness.mockResolvedValue(ownerBusiness);
@@ -63,6 +67,7 @@ describe("Ads Manager V2 workspace", () => {
     api.remediateAge.mockResolvedValue({ status: "eligible", ageBand: "age_18_plus", evaluated: true, advertiser18PlusEligible: true, policyVersion: "nelyon-age-v2", minimumAge: 13 });
     api.targetingCapabilities.mockResolvedValue({ policyVersion: "nelyon-ads-targeting-v2", advertiserMinimumAge: 18, audienceMinimumAge: 18, ageScope: "adults_only", geoTargetingEnabled: false, languageTargetingEnabled: false, daypartTargetingEnabled: true, frequencyTargetingEnabled: true, interestTargetingEnabled: false, behavioralTargetingEnabled: false, customAudiencesEnabled: false, lookalikeTargetingEnabled: false, sensitiveTargetingAllowed: false, preciseViewerLocationMatchingEnabled: false });
     api.createAudienceVersion.mockResolvedValue({ audience_id: "audience-1" });
+    api.createAudience.mockResolvedValue({ audience_id: "audience-1" });
   });
 
   it("offers advertiser-only onboarding without Marketplace seller, Store, or Product", async () => {
@@ -71,7 +76,20 @@ describe("Ads Manager V2 workspace", () => {
     expect(await screen.findByText("Create your business account")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Business name"), { target: { value: "Local Studio" } });
     fireEvent.click(screen.getByRole("button", { name: "Create business account" }));
-    await waitFor(() => expect(api.createBusiness).toHaveBeenCalledWith("Local Studio"));
+    await waitFor(() => expect(api.createBusiness).toHaveBeenCalledWith("Local Studio", expect.any(String)));
+  });
+
+  it("keeps Business creation successful when the post-save refresh fails", async () => {
+    api.accounts.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error("refresh unavailable"));
+    renderHome();
+    expect(await screen.findByText("Create your business account")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Business name"), { target: { value: "Saved Studio" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create business account" }));
+
+    expect(await screen.findByText("Business account created.")).toBeInTheDocument();
+    expect(screen.getByText("Saved, but we couldn't refresh the latest view.")).toBeInTheDocument();
+    expect(screen.queryByText("refresh unavailable")).not.toBeInTheDocument();
+    expect(api.createBusiness).toHaveBeenCalledTimes(1);
   });
 
   it("offers self-service remediation for unknown eligibility and unlocks Ads after the server returns adult", async () => {
@@ -155,7 +173,7 @@ describe("Ads Manager V2 workspace", () => {
     expect(locked).toBeDisabled();
     expect(screen.getByText("campaign finance not funded")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(api.cancel).toHaveBeenCalledWith("campaign-1"));
+    await waitFor(() => expect(api.cancel).toHaveBeenCalledWith("campaign-1", expect.any(String)));
     expect(api.activate).not.toHaveBeenCalled();
   });
 
@@ -187,6 +205,66 @@ describe("Ads Manager V2 workspace", () => {
     renderHome("/ads/campaigns/campaign-1");
     expect(await screen.findByText("Your audience configuration uses an older targeting policy. Create an updated audience version before launch.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Create updated audience version" }));
-    await waitFor(() => expect(api.createAudienceVersion).toHaveBeenCalledWith("audience-1", expect.objectContaining({ age_scope: "adults_only", geographies: [], languages: [] })));
+    await waitFor(() => expect(api.createAudienceVersion).toHaveBeenCalledWith("audience-1", expect.objectContaining({ age_scope: "adults_only", geographies: [], languages: [] }), expect.any(String)));
+  });
+
+  it("coalesces a rapid Audience double submit and supplies one stable operation key", async () => {
+    api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: null, placementSelection: null }], destinations: [] });
+    let release!: (value: { audience_id: string }) => void;
+    api.createAudience.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    renderHome("/ads/campaigns/campaign-1");
+    const save = await screen.findByRole("button", { name: "Save Audience" });
+
+    fireEvent.click(save);
+    fireEvent.click(save);
+
+    await waitFor(() => expect(api.createAudience).toHaveBeenCalledTimes(1));
+    expect(api.createAudience).toHaveBeenCalledWith("set-1", expect.objectContaining({ age_scope: "adults_only" }), expect.any(String));
+    expect(save).toBeDisabled();
+    expect(save).toHaveTextContent("Saving…");
+    release({ audience_id: "audience-1" });
+    expect(await screen.findByText("Audience created")).toBeInTheDocument();
+  });
+
+  it("uses the form submit as the single Audience trigger for the Enter key", async () => {
+    const user = userEvent.setup();
+    api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: null, placementSelection: null }], destinations: [] });
+    let release!: (value: { audience_id: string }) => void;
+    api.createAudience.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    renderHome("/ads/campaigns/campaign-1");
+    const field = await screen.findByLabelText("Max impressions");
+
+    await user.click(field);
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(api.createAudience).toHaveBeenCalledTimes(1));
+    expect(field.closest("form")).toHaveAttribute("aria-busy", "true");
+    release({ audience_id: "audience-1" });
+    expect(await screen.findByText("Audience created")).toBeInTheDocument();
+  });
+
+  it("reconciles a matching Audience idempotency conflict without showing the raw code", async () => {
+    const withoutAudience = { id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: null, placementSelection: null }], destinations: [] };
+    const withAudience = { ...withoutAudience, adSets: [{ ...withoutAudience.adSets[0], audience: { id: "audience-1", status: "draft", latestVersionNumber: 1 } }] };
+    api.campaign.mockResolvedValueOnce(withoutAudience).mockResolvedValue(withAudience);
+    api.audience.mockResolvedValue({ audience_id: "audience-1", latest_version: { age_scope: "adults_only", geographies: [], languages: [], dayparts: [], frequency: null, targeting_policy_version: "nelyon-ads-targeting-v2" } });
+    api.createAudience.mockRejectedValue(new Error("advertising_audience_idempotency_conflict"));
+    renderHome("/ads/campaigns/campaign-1");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save Audience" }));
+
+    expect(await screen.findByText("Already saved. We refreshed the saved version.")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("advertising_audience_idempotency_conflict");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps a committed mutation successful when the post-save refresh fails", async () => {
+    const campaign = { id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: null, placementSelection: null }], destinations: [] };
+    api.campaign.mockResolvedValueOnce(campaign).mockRejectedValue(new Error("refresh_network_error"));
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Save Audience" }));
+
+    expect(await screen.findByText("Audience created")).toBeInTheDocument();
+    expect(screen.getByText("Saved, but we couldn't refresh the latest view.")).toBeInTheDocument();
+    expect(api.createAudience).toHaveBeenCalledTimes(1);
   });
 });

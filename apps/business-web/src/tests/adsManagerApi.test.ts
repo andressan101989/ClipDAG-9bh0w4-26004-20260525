@@ -25,6 +25,16 @@ import {
   pauseAdvertisingCampaign,
   resumeAdvertisingCampaign,
   cancelAdvertisingCampaign,
+  createAdvertisingAdDraft,
+  createAdvertisingAdSetDraft,
+  createAdvertisingAudienceDraft,
+  createAdvertisingAudienceVersion,
+  createAdvertisingCreative,
+  createAdvertisingDestinationDraft,
+  createAdvertisingFinanceDraft,
+  createAdvertisingPlacementSelectionDraft,
+  createAdvertisingPlacementSelectionVersion,
+  submitAdvertisingAdForReview,
 } from "../lib/adsManagerApi";
 
 vi.mock("../lib/supabase", () => ({ supabase: {} }));
@@ -135,7 +145,7 @@ describe("Ads Manager canonical API", () => {
     const client = { rpc } as unknown as BusinessSupabaseClient;
 
     expect(await getAdvertiserAccounts(client)).toEqual([]);
-    expect((await createAdvertiserBusinessAccount("Studio", client)).businessAccountId).toBe("business-1");
+    expect((await createAdvertiserBusinessAccount("Studio", "33333333-3333-4333-8333-333333333333", client)).businessAccountId).toBe("business-1");
     expect((await getAdvertisingCampaigns(client))[0]).toMatchObject({ authority: "ads_v2", writeAuthority: "ads_v2" });
     expect((await getAdvertisingCampaign("v2-1", "ads_v2", client)).adSets[0]).toMatchObject({ audience: { id: "audience-1" }, placementSelection: { id: "selection-1" } });
     expect(rpc).toHaveBeenNthCalledWith(1, "get_my_advertiser_accounts");
@@ -147,7 +157,7 @@ describe("Ads Manager canonical API", () => {
   it("creates only a general draft and never calls funding, spend, settlement, activation, or delivery", async () => {
     vi.spyOn(crypto, "randomUUID").mockReturnValue("33333333-3333-4333-8333-333333333333");
     const rpc = vi.fn().mockResolvedValue({ data: { id: "v2-1", ad_account_id: "ad-account-1", business_account_id: "business-1", name: "Brand", status: "draft", objective: "awareness", created_at: "2026-09-23T00:00:00Z", updated_at: "2026-09-23T00:00:00Z", archived_at: null, ad_sets: [], destinations: [] }, error: null });
-    await createAdvertisingCampaignDraft({ adAccountId: "ad-account-1", name: "Brand", objective: "awareness" }, { rpc } as unknown as BusinessSupabaseClient);
+    await createAdvertisingCampaignDraft({ adAccountId: "ad-account-1", name: "Brand", objective: "awareness" }, "33333333-3333-4333-8333-333333333333", { rpc } as unknown as BusinessSupabaseClient);
     expect(rpc).toHaveBeenCalledWith("create_my_advertising_campaign_draft", {
       p_ad_account_id: "ad-account-1", p_name: "Brand", p_objective: "awareness", p_idempotency_key: "33333333-3333-4333-8333-333333333333",
     });
@@ -172,10 +182,10 @@ describe("Ads Manager canonical API", () => {
     expect(await getAdvertisingCampaignActivationReadiness("v2-1", client)).toMatchObject({
       campaignId: "v2-1", activationEnabled: false, blockers: ["campaign_activation_disabled"],
     });
-    await activateAdvertisingCampaign("v2-1", client);
-    await pauseAdvertisingCampaign("v2-1", client);
-    await resumeAdvertisingCampaign("v2-1", client);
-    await cancelAdvertisingCampaign("v2-1", client);
+    await activateAdvertisingCampaign("v2-1", "44444444-4444-4444-8444-444444444444", client);
+    await pauseAdvertisingCampaign("v2-1", "44444444-4444-4444-8444-444444444444", client);
+    await resumeAdvertisingCampaign("v2-1", "44444444-4444-4444-8444-444444444444", client);
+    await cancelAdvertisingCampaign("v2-1", "44444444-4444-4444-8444-444444444444", client);
 
     expect(rpc).toHaveBeenNthCalledWith(1, "get_my_advertising_campaign_activation_readiness", { p_campaign_id: "v2-1" });
     expect(rpc).toHaveBeenNthCalledWith(2, "activate_my_advertising_campaign_v2", { p_campaign_id: "v2-1", p_idempotency_key: "44444444-4444-4444-8444-444444444444" });
@@ -204,5 +214,43 @@ describe("Ads Manager canonical API", () => {
     try { await getAdvertisingFinance("campaign-1", { rpc: missingRpc } as unknown as BusinessSupabaseClient); } catch (cause) { missing = cause; }
     expect(isAdvertisingFinanceNotFound(missing)).toBe(true);
     await expect(getAdvertisingFinance("campaign-1", { rpc: deniedRpc } as unknown as BusinessSupabaseClient)).rejects.toThrow("advertising_campaign_finance_access_denied");
+  });
+
+  it("requires the logical operation coordinator to supply every Ads V2 idempotency key", async () => {
+    const randomUUID = vi.spyOn(crypto, "randomUUID");
+    const rpc = vi.fn().mockResolvedValue({ data: {
+      id: "result-1", campaign_id: "campaign-1", ad_account_id: "ad-account-1",
+      business_account_id: "business-1", name: "Brand", status: "draft", objective: "awareness",
+      authority: "ads_v2", write_authority: "ads_v2", created_at: "2026-09-23T00:00:00Z",
+      updated_at: null, archived_at: null, lifecycle: {}, ad_sets: [], destinations: [],
+      currency: "BDAG", budget_bdag: 1, finance_status: "draft", funded_bdag: 0,
+      spent_bdag: 0, released_bdag: 0, reserved_bdag: 0, funded_at: null, settled_at: null,
+      finance_policy: {},
+    }, error: null });
+    const client = { rpc } as unknown as BusinessSupabaseClient;
+    const key = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const audience = { age_scope: "adults_only" as const, geographies: [], languages: [], dayparts: [], frequency: null };
+
+    await createAdvertisingCampaignDraft({ adAccountId: "ad-account-1", name: "Brand", objective: "awareness" }, key, client);
+    await createAdvertisingAdSetDraft({ campaignId: "campaign-1", name: "Main" }, key, client);
+    await createAdvertisingAudienceDraft("ad-set-1", audience, key, client);
+    await createAdvertisingAudienceVersion("audience-1", audience, key, client);
+    await createAdvertisingPlacementSelectionDraft("ad-set-1", ["social_feed"], key, client);
+    await createAdvertisingPlacementSelectionVersion("selection-1", ["social_feed"], key, client);
+    await createAdvertisingDestinationDraft({ campaignId: "campaign-1", type: "external_url", externalUrl: "https://nelyon.app" }, key, client);
+    await createAdvertisingCreative({ adAccountId: "ad-account-1", name: "Creative", format: "image", mediaAssetId: "media-1", callToAction: "learn_more" }, key, client);
+    await createAdvertisingAdDraft({ adSetId: "ad-set-1", creativeVersionId: "version-1", destinationId: "destination-1", name: "Ad" }, key, client);
+    await submitAdvertisingAdForReview("ad-1", key, client);
+    await createAdvertisingFinanceDraft("campaign-1", 1, key, client);
+    await activateAdvertisingCampaign("campaign-1", key, client);
+    await pauseAdvertisingCampaign("campaign-1", key, client);
+    await resumeAdvertisingCampaign("campaign-1", key, client);
+    await cancelAdvertisingCampaign("campaign-1", key, client);
+
+    expect(rpc).toHaveBeenCalledTimes(15);
+    for (const [, args] of rpc.mock.calls) {
+      expect(args).toEqual(expect.objectContaining({ p_idempotency_key: key }));
+    }
+    expect(randomUUID).not.toHaveBeenCalled();
   });
 });
