@@ -4,6 +4,7 @@ import test from "node:test";
 
 const api = readFileSync(new URL("../apps/business-web/src/lib/adsManagerApi.ts", import.meta.url), "utf8");
 const pages = readFileSync(new URL("../apps/business-web/src/pages/ads/BusinessAdsV2Pages.tsx", import.meta.url), "utf8");
+const placements = readFileSync(new URL("../apps/business-web/src/components/ads/PlacementSelectionPanel.tsx", import.meta.url), "utf8");
 const app = readFileSync(new URL("../apps/business-web/src/App.tsx", import.meta.url), "utf8");
 const css = readFileSync(new URL("../apps/business-web/src/styles/business.css", import.meta.url), "utf8");
 
@@ -16,7 +17,7 @@ test("Business Ads V2 exposes the canonical routes and keeps launch controls abs
   assert.doesNotMatch(pages, /fund_my_advertising_campaign_budget_v2|spend_advertising_campaign_budget_v2|settle_advertising_campaign_budget_v2|fetch_advertising_delivery_candidates_v2|record_advertising_(?:impression|interaction)/);
   assert.match(pages, /Campaign activation/);
   assert.match(pages, /Funding is not enabled yet/);
-  assert.match(pages, /Delivery not active/);
+  assert.match(placements, /Delivery is currently paused during pre-launch/);
 });
 
 test("Business Ads V2 uses RPCs and does not create browser-side authority", () => {

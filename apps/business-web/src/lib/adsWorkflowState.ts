@@ -33,7 +33,7 @@ export function deriveAdsWorkflow(input: AdsWorkflowInput) {
   const placements: AdsWorkflowStatus = !input.adSet.selected ? "blocked" : !input.placements.exists ? "not_started" : input.placements.valid ? "complete" : "needs_attention";
   const destination = childSelectionStatus(input.destination.count, input.destination.selected, input.destination.valid);
   const creative: AdsWorkflowStatus = !input.creative.exists ? "not_started" : input.creative.usable ? "complete" : "in_progress";
-  const ad: AdsWorkflowStatus = !input.adSet.selected || !input.destination.selected || !input.creative.usable ? "blocked" : childSelectionStatus(input.ad.count, input.ad.selected, input.ad.status === "draft");
+  const ad: AdsWorkflowStatus = !input.adSet.selected || !input.destination.selected || !input.destination.valid || !input.creative.usable ? "blocked" : childSelectionStatus(input.ad.count, input.ad.selected, input.ad.status === "draft");
   const review: AdsWorkflowStatus = !input.ad.selected ? "blocked" : (() => {
     if (["approved"].includes(input.ad.reviewStatus ?? "")) return "complete";
     if (["pending", "submitted", "in_review"].includes(input.ad.reviewStatus ?? "")) return "in_progress";

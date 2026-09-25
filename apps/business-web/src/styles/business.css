@@ -718,6 +718,35 @@ h1, h2, p { margin-top: 0; }
 .audience-remove-window { grid-column: 1 / -1; justify-self: start; }
 .audience-add-window { justify-self: start; }
 .field-error { color: #a52036; font-size: .82rem; font-weight: 700; }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.ads-choice-panel { display: grid; gap: 16px; }
+.ads-card-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.ads-card-fieldset > legend { margin-bottom: 12px; color: var(--navy); font-weight: 800; }
+.ads-placement-grid, .ads-destination-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ads-placement-card, .ads-destination-card { min-width: 0; display: flex; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: #fff; cursor: pointer; transition: border-color .15s, box-shadow .15s, background .15s; }
+.ads-placement-card:focus-within, .ads-destination-card:focus-within { border-color: var(--electric); box-shadow: 0 0 0 4px rgba(31,121,255,.1); }
+.ads-placement-card.is-selected, .ads-destination-card.is-selected { border-color: var(--electric); background: rgba(31,121,255,.055); }
+.ads-placement-card.needs-attention { border-color: #cc8d16; background: #fffaf0; }
+.ads-placement-card.is-disabled, .ads-destination-card.is-disabled { cursor: default; background: #f7f8fb; }
+.ads-placement-card input, .ads-destination-card input { margin-top: 3px; flex: 0 0 auto; }
+.ads-card-copy { min-width: 0; display: grid; gap: 5px; color: var(--muted); font-size: .9rem; line-height: 1.4; }
+.ads-card-copy strong { color: var(--navy); font-size: 1rem; }
+.ads-card-copy small { color: #52617a; font-weight: 750; }
+.ads-selection-summary { display: grid; gap: 8px; }
+.ads-summary-item { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 11px 13px; border: 1px solid var(--line); border-radius: 11px; }
+.ads-summary-item span { color: var(--muted); font-size: .86rem; font-weight: 700; }
+.ads-summary-item.needs-attention { border-color: #e3bd70; background: #fffaf0; }
+.ads-attention-note { display: grid; gap: 4px; padding: 13px 14px; border: 1px solid #e3bd70; border-radius: 12px; background: #fffaf0; color: #6c4a08; }
+.ads-prelaunch-note { margin: 0; color: var(--muted); font-size: .9rem; }
+.ads-destination-summary { display: grid; gap: 4px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: #fbfcff; }
+.ads-destination-summary span { color: var(--muted); font-size: .85rem; font-weight: 750; }
+.ads-destination-summary strong { color: var(--navy); font-size: 1.05rem; overflow-wrap: anywhere; }
+
+@media (max-width: 720px) {
+  .ads-placement-grid, .ads-destination-grid { grid-template-columns: 1fr; }
+  .ads-summary-item { align-items: flex-start; flex-direction: column; gap: 4px; }
+}
 .audience-toggle { display: flex; gap: 9px; align-items: center; width: fit-content; color: var(--navy); font-weight: 800; }
 .audience-frequency-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 240px)); gap: 14px; }
 .audience-capability-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }

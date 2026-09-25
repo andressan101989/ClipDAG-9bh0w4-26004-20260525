@@ -160,8 +160,8 @@ describe("Ads Manager V2 workspace", () => {
     api.creativeWorkspace.mockResolvedValue({ creatives: [{ id: "creative-1", adAccountId: "account-1", name: "Creative", status: "draft", versions: [{ id: "version-1", versionNumber: 1, format: "image", mediaAssetId: "media-1", videoAssetId: null, primaryText: "Copy", headline: "Headline", description: null, callToAction: "learn_more", createdAt: "2026-09-23T00:00:00Z" }] }], ads: [{ id: "ad-1", name: "Ad", campaignId: "campaign-1", adSetId: "set-1", creativeVersionId: "version-1", destinationId: "destination-1", status: "draft", reviewStatus: "not_submitted", submittedAt: null, reviewedAt: null, latestRejectionReasonCode: null, latestRejectionMessage: null }] });
     api.placement.mockResolvedValue({ placementSelectionId: "selection-1", adSetId: "set-1", status: "draft", latestVersion: { versionNumber: 1, registryPolicyVersion: "nelyon-ads-delivery-v2", definitionFingerprint: "fp", placements: [{ code: "clips", label: "Clips", surfaceFamily: "video", surfaceVerified: true, selectionEnabled: true, v2DeliveryEnabled: false }, { code: "live", label: "Live", surfaceFamily: "live", surfaceVerified: true, selectionEnabled: true, v2DeliveryEnabled: false }] }, productionDeliveryEnabled: false });
     renderHome("/ads/campaigns/campaign-1");
-    expect(await screen.findByText("Placements: clips, live")).toBeInTheDocument();
-    expect(screen.queryByText("Placements: social_feed")).not.toBeInTheDocument();
+    expect(await screen.findByText("Placements: Clips, Live")).toBeInTheDocument();
+    expect(screen.queryByText("Placements: Social Feed")).not.toBeInTheDocument();
   });
 
   it("requires explicit Ad Set selection when a campaign has multiple children", async () => {
@@ -216,18 +216,19 @@ describe("Ads Manager V2 workspace", () => {
     await waitFor(() => expect(api.updateAdSet).toHaveBeenCalledWith(expect.objectContaining({ adSetId: "set-1", name: "Updated Set", expectedUpdatedAt: "2026-09-24T00:00:00Z" }), expect.any(String)));
     await screen.findByRole("button", { name: "Edit Ad Set" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit placements" }));
-    fireEvent.click(screen.getByLabelText(/social_feed/));
+    fireEvent.click(screen.getByRole("button", { name: "Review placements" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^Clips/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^Social Feed/ }));
     fireEvent.click(screen.getByRole("button", { name: "Create updated placement version" }));
-    await waitFor(() => expect(api.createPlacementVersion).toHaveBeenCalledWith("selection-1", expect.arrayContaining(["clips", "social_feed"]), expect.any(String)));
-    await screen.findByRole("button", { name: "Edit placements" });
+    await waitFor(() => expect(api.createPlacementVersion).toHaveBeenCalledWith("selection-1", ["social_feed"], expect.any(String)));
+    await screen.findByRole("button", { name: "Review placements" });
 
     api.updateDestination.mockRejectedValueOnce(new Error("advertising_destination_draft_stale"));
     const campaignReadsBeforeStaleSave = api.campaign.mock.calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "Edit Destination" }));
-    fireEvent.change(screen.getByLabelText("HTTPS URL"), { target: { value: "https://new.example" } });
+    fireEvent.click(screen.getByRole("button", { name: "Edit destination" }));
+    fireEvent.change(screen.getByLabelText("Website URL"), { target: { value: "https://new.example" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(api.updateDestination).toHaveBeenCalledWith(expect.objectContaining({ destinationId: "destination-1", externalUrl: "https://new.example", expectedUpdatedAt: "2026-09-24T00:00:00Z" }), expect.any(String)));
+    await waitFor(() => expect(api.updateDestination).toHaveBeenCalledWith(expect.objectContaining({ destinationId: "destination-1", externalUrl: "https://new.example/", expectedUpdatedAt: "2026-09-24T00:00:00Z" }), expect.any(String)));
     expect(await screen.findByText("This draft changed in another session. We loaded the latest version.")).toBeInTheDocument();
     expect(api.campaign.mock.calls.length).toBeGreaterThan(campaignReadsBeforeStaleSave);
     expect(screen.queryByText("advertising_destination_draft_stale")).not.toBeInTheDocument();
@@ -244,12 +245,12 @@ describe("Ads Manager V2 workspace", () => {
     api.campaign.mockResolvedValue(campaign);
     api.placement.mockResolvedValueOnce(placementV1).mockResolvedValue(placementV2);
     renderHome("/ads/campaigns/campaign-1");
-    fireEvent.click(await screen.findByRole("button", { name: "Edit placements" }));
-    for (const code of ["clips", "live", "marketplace_home", "marketplace_search", "stories"]) fireEvent.click(screen.getByRole("checkbox", { name: new RegExp(`^${code}\\b`) }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review placements" }));
+    for (const label of ["Clips", "Live", "Marketplace Home", "Marketplace Search", "Stories"]) fireEvent.click(screen.getByRole("checkbox", { name: new RegExp(`^${label}\\b`) }));
     fireEvent.click(screen.getByRole("button", { name: "Create updated placement version" }));
     await waitFor(() => expect(api.createPlacementVersion).toHaveBeenCalledWith("selection-1", ["social_feed"], expect.any(String)));
-    expect(await screen.findByText("Selection v2")).toBeInTheDocument();
-    expect(screen.getByText(/social_feed/)).toBeInTheDocument();
+    expect(await screen.findByText("Social Feed")).toBeInTheDocument();
+    expect(screen.getByText("Selected")).toBeInTheDocument();
   });
 
   it("does not treat a finance read failure as an absent budget draft", async () => {

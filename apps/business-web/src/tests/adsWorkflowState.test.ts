@@ -74,4 +74,15 @@ describe("Ads draft workflow state", () => {
     });
     expect(workflow.nextAction).toEqual({ step: "budget", label: "Set Budget" });
   });
+
+  it("blocks Ad assembly while the selected destination needs attention", () => {
+    const workflow = deriveAdsWorkflow({
+      ...base,
+      destination: { selected: true, count: 1, valid: false },
+      creative: { exists: true, usable: true },
+    });
+    expect(workflow.steps.find((step) => step.key === "destination")?.status).toBe("needs_attention");
+    expect(workflow.steps.find((step) => step.key === "ad")?.status).toBe("blocked");
+    expect(workflow.nextAction).toEqual({ step: "destination", label: "Choose Destination" });
+  });
 });
