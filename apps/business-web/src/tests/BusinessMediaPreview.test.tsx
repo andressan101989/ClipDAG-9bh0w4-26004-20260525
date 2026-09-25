@@ -27,7 +27,10 @@ const base: BusinessMediaItem = {
 };
 
 describe("Business Media previews", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it("renders a ready R2 image as an image", () => {
     render(<BusinessMediaPreview item={base} />);
@@ -46,9 +49,18 @@ describe("Business Media previews", () => {
   });
 
   it("renders explicit processing and failed states instead of an empty player", () => {
-    const view = render(<BusinessMediaPreview item={{ ...base, status: "processing", previewUrl: null }} />);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-16T00:04:00Z"));
+    const view = render(<BusinessMediaPreview item={{ ...base, status: "processing", readyAt: null, previewUrl: null }} />);
     expect(screen.getByText("Procesando")).toBeInTheDocument();
     view.rerender(<BusinessMediaPreview item={{ ...base, status: "failed", previewUrl: null }} />);
     expect(screen.getByText("No disponible")).toBeInTheDocument();
+  });
+
+  it("labels an upload older than the reservation window as expired and keeps it unavailable", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-16T00:05:01Z"));
+    render(<BusinessMediaPreview item={{ ...base, status: "uploading", readyAt: null, previewUrl: null }} locale="en" />);
+    expect(screen.getByRole("status")).toHaveTextContent("Upload expired");
   });
 });

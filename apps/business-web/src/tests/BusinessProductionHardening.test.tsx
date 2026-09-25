@@ -163,6 +163,48 @@ describe("Business Web production stale-response hardening", () => {
     expect(api.upload).toHaveBeenCalledWith("owner-a", expect.objectContaining({ name: "creative.png", type: "image/png" }), expect.any(Function));
   });
 
+  it("refetches the canonical library after finalize and exposes the ready asset", async () => {
+    api.media
+      .mockResolvedValueOnce({ items: [], nextCursor: null })
+      .mockResolvedValueOnce({ items: [mediaItem("ready-upload")], nextCursor: null });
+    const onSelect = vi.fn();
+    const { container } = render(<BusinessMediaPicker open allowUpload businessOwnerId="owner-a" selectedId={null} title="Choose media" locale="en" onSelect={onSelect} onClose={vi.fn()} />);
+    await screen.findByText("No media in your Business Library yet.");
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [new File(["image"], "creative.png", { type: "image/png" })] } });
+    const ready = await screen.findByRole("button", { name: /Image · Ready/i });
+    expect(api.media).toHaveBeenCalledTimes(2);
+    expect(ready).toBeEnabled();
+    fireEvent.click(ready);
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ assetId: "ready-upload", status: "ready" }));
+  });
+
+  it("guards one upload intent against duplicate input events", async () => {
+    api.media.mockResolvedValue({ items: [], nextCursor: null });
+    let finishUpload!: (value: { assetId: string; kind: "image" }) => void;
+    api.upload.mockReturnValue(new Promise((resolve) => { finishUpload = resolve; }));
+    const { container } = render(<BusinessMediaPicker open allowUpload businessOwnerId="owner-a" selectedId={null} title="Choose media" locale="en" onSelect={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByText("No media in your Business Library yet.");
+    const input = container.querySelector('input[type="file"]')!;
+    const file = new File(["image"], "creative.png", { type: "image/png" });
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(api.upload).toHaveBeenCalledTimes(1);
+    await act(async () => { finishUpload({ assetId: "ready-upload", kind: "image" }); });
+  });
+
+  it("reconciles after an upload failure without exposing R2 internals or retrying automatically", async () => {
+    api.media.mockResolvedValue({ items: [], nextCursor: null });
+    api.upload.mockRejectedValue(new Error("upload_failed_403 X-Amz-Signature=secret bucket/key"));
+    const { container } = render(<BusinessMediaPicker open allowUpload businessOwnerId="owner-a" selectedId={null} title="Choose media" locale="en" onSelect={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByText("No media in your Business Library yet.");
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [new File(["image"], "creative.png", { type: "image/png" })] } });
+    expect(await screen.findByText("Upload failed. Please try again.")).toBeInTheDocument();
+    expect(screen.queryByText(/X-Amz|bucket\/key|upload_failed/i)).not.toBeInTheDocument();
+    expect(api.media).toHaveBeenCalledTimes(2);
+    expect(api.upload).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Upload media" })).toBeEnabled();
+  });
+
   it("does not let old-business product pages overwrite the active catalog", async () => {
     const a = deferred<{ items: ReturnType<typeof productSummary>[]; categories: { id: string; name: string }[]; nextCursor: null }>();
     const b = deferred<{ items: ReturnType<typeof productSummary>[]; categories: { id: string; name: string }[]; nextCursor: null }>();

@@ -20,11 +20,16 @@ describe("Ads V2 error presentation taxonomy", () => {
     [new Error("advertising_ad_already_approved"), "prerequisite_missing", "already approved"],
     [new Error("advertising_campaign_activation_disabled"), "platform_prelaunch", "pre-launch"],
     [new Error("advertising_campaign_not_operationally_ready"), "prerequisite_missing", "setup"],
+    [new Error("upload_transport_failed"), "permanent_rejection", "Upload failed"],
+    [new Error("upload_failed_403 X-Amz-Signature=secret"), "permanent_rejection", "Upload failed"],
+    [new Error("media_finalize_rejected object_missing"), "permanent_rejection", "finish processing"],
+    [new Error("media_finalize_temporarily_unavailable"), "permanent_rejection", "finish processing"],
+    [new Error("media_finalize_not_ready"), "permanent_rejection", "finish processing"],
   ])("maps %o to %s without exposing internals", (cause, kind, copy) => {
     const result = presentAdsError(cause, { operation: "mutation" });
     expect(result.kind).toBe(kind);
     expect(result.message).toMatch(new RegExp(copy, "i"));
-    expect(result.message).not.toMatch(/advertising_|42501|P0002|table /i);
+    expect(result.message).not.toMatch(/advertising_|42501|P0002|table |X-Amz|object_missing|media_finalize/i);
   });
 
   it("classifies retryable network and timeout reads while preserving safe data", () => {

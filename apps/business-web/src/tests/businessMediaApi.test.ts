@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { searchAllBusinessMedia, searchBusinessMedia, setBusinessStoreMedia, uploadBusinessMedia, uploadBusinessOperationalMedia } from "../lib/businessMediaApi";
+import {
+  businessMediaPresentationState,
+  searchAllBusinessMedia,
+  searchBusinessMedia,
+  setBusinessStoreMedia,
+  uploadBusinessMedia,
+  uploadBusinessOperationalMedia,
+} from "../lib/businessMediaApi";
 import type { BusinessSupabaseClient } from "../lib/supabase";
 
 vi.mock("../lib/supabase", () => ({ supabase: {} }));
@@ -27,6 +34,9 @@ const mediaRow = {
 
 class FakeXhr {
   static instances: FakeXhr[] = [];
+  static nextStatus = 200;
+  static rejectTransport = false;
+  static deferCompletion = false;
   status = 200;
   upload: { onprogress: ((event: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = { onprogress: null };
   onerror: (() => void) | null = null;
@@ -34,15 +44,26 @@ class FakeXhr {
   headers: Record<string, string> = {};
   method = "";
   url = "";
-  constructor() { FakeXhr.instances.push(this); }
+  body: unknown;
+  constructor() { this.status = FakeXhr.nextStatus; FakeXhr.instances.push(this); }
   open(method: string, url: string) { this.method = method; this.url = url; }
   setRequestHeader(name: string, value: string) { this.headers[name] = value; }
-  send() { this.upload.onprogress?.({ lengthComputable: true, loaded: 10, total: 10 }); this.onload?.(); }
+  send(body: unknown) {
+    this.body = body;
+    this.upload.onprogress?.({ lengthComputable: true, loaded: 10, total: 10 });
+    if (FakeXhr.deferCompletion) return;
+    if (FakeXhr.rejectTransport) this.onerror?.();
+    else this.onload?.();
+  }
+  complete() { this.onload?.(); }
 }
 
 describe("canonical Business Media API", () => {
   beforeEach(() => {
     FakeXhr.instances = [];
+    FakeXhr.nextStatus = 200;
+    FakeXhr.rejectTransport = false;
+    FakeXhr.deferCompletion = false;
     vi.stubGlobal("XMLHttpRequest", FakeXhr);
   });
   afterEach(() => vi.unstubAllGlobals());
@@ -78,16 +99,113 @@ describe("canonical Business Media API", () => {
     }));
   });
 
-  it("sends the server-returned R2 headers and canonical business scope before finalize", async () => {
+  it("preserves the exact R2 PUT contract and finalizes the same asset exactly once", async () => {
     const invoke = vi.fn()
-      .mockResolvedValueOnce({ data: { success: true, data: { assetId: mediaRow.asset_id, uploadUrl: "https://r2.test/upload", headers: { "Content-Type": "image/jpeg", "If-None-Match": "*" } } }, error: null })
-      .mockResolvedValueOnce({ data: { success: true }, error: null });
-    const client = { functions: { invoke } } as unknown as BusinessSupabaseClient;
+      .mockResolvedValueOnce({ data: { success: true, data: { assetId: mediaRow.asset_id, method: "PUT", uploadUrl: "https://r2.test/upload?X-Amz-Signature=unaltered", headers: { "Content-Type": "image/jpeg", "If-None-Match": "*" } } }, error: null })
+      .mockResolvedValueOnce({ data: { success: true, data: { assetId: mediaRow.asset_id, status: "ready" } }, error: null });
+    const rpc = vi.fn().mockResolvedValue({ data: { items: [mediaRow], next_cursor: null }, error: null });
+    const client = { functions: { invoke }, rpc } as unknown as BusinessSupabaseClient;
     const file = new File(["image"], "image.jpg", { type: "image/jpeg" });
-    await uploadBusinessMedia("owner-id", file, undefined, client);
+    const result = await uploadBusinessMedia("owner-id", file, undefined, client);
     expect(invoke).toHaveBeenNthCalledWith(1, "create-media-upload", { body: expect.objectContaining({ business_owner_id: "owner-id", purpose: "business_library" }) });
-    expect(FakeXhr.instances[0].headers).toEqual({ "Content-Type": "image/jpeg", "If-None-Match": "*" });
+    expect(FakeXhr.instances).toHaveLength(1);
+    expect(FakeXhr.instances[0]).toMatchObject({
+      method: "PUT",
+      url: "https://r2.test/upload?X-Amz-Signature=unaltered",
+      headers: { "Content-Type": "image/jpeg", "If-None-Match": "*" },
+      body: file,
+    });
+    expect(FakeXhr.instances[0].body).not.toBeInstanceOf(FormData);
     expect(invoke).toHaveBeenNthCalledWith(2, "finalize-media-upload", { body: { asset_id: mediaRow.asset_id } });
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(rpc).toHaveBeenCalledWith("search_my_business_media", expect.objectContaining({ p_business_owner_id: "owner-id", p_asset_ids: [mediaRow.asset_id], p_limit: 1 }));
+    expect(result).toMatchObject({ assetId: mediaRow.asset_id, kind: "image", item: { assetId: mediaRow.asset_id, status: "ready" } });
+  });
+
+  it.each([400, 412, 500])("does not finalize after a non-successful PUT (%s)", async (status) => {
+    FakeXhr.nextStatus = status;
+    const invoke = vi.fn().mockResolvedValueOnce({ data: { success: true, data: {
+      assetId: mediaRow.asset_id,
+      method: "PUT",
+      uploadUrl: "https://r2.test/upload",
+      headers: { "Content-Type": "image/jpeg", "If-None-Match": "*" },
+    } }, error: null });
+    const file = new File(["image"], "image.jpg", { type: "image/jpeg" });
+    await expect(uploadBusinessMedia("owner-id", file, undefined, { functions: { invoke } } as unknown as BusinessSupabaseClient))
+      .rejects.toThrow(`upload_failed_${status}`);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not finalize after a PUT transport rejection", async () => {
+    FakeXhr.rejectTransport = true;
+    const invoke = vi.fn().mockResolvedValueOnce({ data: { success: true, data: {
+      assetId: mediaRow.asset_id,
+      method: "PUT",
+      uploadUrl: "https://r2.test/upload",
+      headers: { "Content-Type": "image/jpeg", "If-None-Match": "*" },
+    } }, error: null });
+    await expect(uploadBusinessMedia("owner-id", new File(["image"], "image.jpg", { type: "image/jpeg" }), undefined, { functions: { invoke } } as unknown as BusinessSupabaseClient))
+      .rejects.toThrow("upload_transport_failed");
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the reservation changes the signed PUT contract", async () => {
+    const invoke = vi.fn().mockResolvedValueOnce({ data: { success: true, data: {
+      assetId: mediaRow.asset_id,
+      method: "POST",
+      uploadUrl: "https://r2.test/upload",
+      headers: { "Content-Type": "image/png", "If-None-Match": "*" },
+    } }, error: null });
+    await expect(uploadBusinessMedia("owner-id", new File(["image"], "image.jpg", { type: "image/jpeg" }), undefined, { functions: { invoke } } as unknown as BusinessSupabaseClient))
+      .rejects.toThrow("media_reservation_invalid");
+    expect(FakeXhr.instances).toHaveLength(0);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resolve success until finalize returns a canonical ready asset", async () => {
+    let finishFinalize!: (value: unknown) => void;
+    const finalize = new Promise((resolve) => { finishFinalize = resolve; });
+    const invoke = vi.fn()
+      .mockResolvedValueOnce({ data: { success: true, data: { assetId: mediaRow.asset_id, method: "PUT", uploadUrl: "https://r2.test/upload", headers: { "Content-Type": "image/jpeg", "If-None-Match": "*" } } }, error: null })
+      .mockReturnValueOnce(finalize);
+    const rpc = vi.fn().mockResolvedValue({ data: { items: [mediaRow], next_cursor: null }, error: null });
+    let resolved = false;
+    const promise = uploadBusinessMedia("owner-id", new File(["image"], "image.jpg", { type: "image/jpeg" }), undefined, { functions: { invoke }, rpc } as unknown as BusinessSupabaseClient)
+      .then(() => { resolved = true; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+    finishFinalize({ data: { success: true, data: { assetId: mediaRow.asset_id, status: "ready" } }, error: null });
+    await promise;
+    expect(resolved).toBe(true);
+  });
+
+  it("rejects a finalize response that does not confirm the same ready asset", async () => {
+    const invoke = vi.fn()
+      .mockResolvedValueOnce({ data: { success: true, data: { assetId: mediaRow.asset_id, method: "PUT", uploadUrl: "https://r2.test/upload", headers: { "Content-Type": "image/jpeg", "If-None-Match": "*" } } }, error: null })
+      .mockResolvedValueOnce({ data: { success: true, data: { assetId: mediaRow.asset_id, status: "uploading" } }, error: null });
+    await expect(uploadBusinessMedia("owner-id", new File(["image"], "image.jpg", { type: "image/jpeg" }), undefined, { functions: { invoke } } as unknown as BusinessSupabaseClient))
+      .rejects.toThrow("media_finalize_not_ready");
+  });
+
+  it.each([
+    [409, "media_finalize_rejected"],
+    [503, "media_finalize_temporarily_unavailable"],
+  ])("classifies finalize HTTP %s without exposing its raw response", async (status, expected) => {
+    const invoke = vi.fn()
+      .mockResolvedValueOnce({ data: { success: true, data: { assetId: mediaRow.asset_id, method: "PUT", uploadUrl: "https://r2.test/upload", headers: { "Content-Type": "image/jpeg", "If-None-Match": "*" } } }, error: null })
+      .mockResolvedValueOnce({ data: null, error: { message: "Edge Function returned a non-2xx status code", context: { status } } });
+    await expect(uploadBusinessMedia("owner-id", new File(["image"], "image.jpg", { type: "image/jpeg" }), undefined, { functions: { invoke } } as unknown as BusinessSupabaseClient))
+      .rejects.toThrow(expected);
+  });
+
+  it("derives recent processing, stale expiry, failure, and ready selection from canonical state", () => {
+    const now = Date.parse("2026-09-25T18:00:00Z");
+    const item = { provider: "r2" as const, status: "ready", createdAt: mediaRow.created_at };
+    expect(businessMediaPresentationState({ ...item, status: "uploading", createdAt: "2026-09-25T17:57:00Z" }, now)).toBe("processing");
+    expect(businessMediaPresentationState({ ...item, status: "uploading", createdAt: "2026-09-25T17:54:59Z" }, now)).toBe("expired");
+    expect(businessMediaPresentationState({ ...item, status: "failed" }, now)).toBe("failed");
+    expect(businessMediaPresentationState(item, now)).toBe("ready");
   });
 
   it("uses the existing Stream direct-upload authority for videos", async () => {
@@ -106,8 +224,8 @@ describe("canonical Business Media API", () => {
 
   it("reuses the canonical R2 contract for scoped return labels", async () => {
     const invoke = vi.fn()
-      .mockResolvedValueOnce({ data: { success: true, data: { assetId: mediaRow.asset_id, uploadUrl: "https://r2.test/label", headers: { "Content-Type": "application/pdf", "If-None-Match": "*" } } }, error: null })
-      .mockResolvedValueOnce({ data: { success: true }, error: null });
+      .mockResolvedValueOnce({ data: { success: true, data: { assetId: mediaRow.asset_id, method: "PUT", uploadUrl: "https://r2.test/label", headers: { "Content-Type": "application/pdf", "If-None-Match": "*" } } }, error: null })
+      .mockResolvedValueOnce({ data: { success: true, data: { assetId: mediaRow.asset_id, status: "ready" } }, error: null });
     const client = { functions: { invoke } } as unknown as BusinessSupabaseClient;
     await uploadBusinessOperationalMedia("owner-id", "return_label", new File(["pdf"], "label.pdf", { type: "application/pdf" }), undefined, client);
     expect(invoke).toHaveBeenNthCalledWith(1, "create-media-upload", { body: expect.objectContaining({ business_owner_id: "owner-id", purpose: "return_label", visibility: "private" }) });

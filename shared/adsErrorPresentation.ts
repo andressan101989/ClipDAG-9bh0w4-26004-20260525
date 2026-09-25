@@ -74,6 +74,13 @@ export function presentAdsError(cause: unknown, options: ErrorOptions): AdsError
   if (/advertising_ad_already_approved/.test(signal)) return result("prerequisite_missing", "This ad is already approved.");
   if (/advertising_campaign_not_operationally_ready|prerequisite/.test(signal)) return result("prerequisite_missing", "Complete the required campaign setup before continuing.");
 
+  if (/upload_transport_failed|upload_failed_\d+|media_reservation_(invalid|failed)/.test(signal)) {
+    return result("permanent_rejection", "Upload failed. Please try again.");
+  }
+  if (/media_finalize_(rejected|temporarily_unavailable|not_ready|failed|invalid)|object_missing|head_temporarily_unavailable/.test(signal)) {
+    return result("permanent_rejection", "We couldn't finish processing this file. Upload the file again.");
+  }
+
   if (/age_eligibility_invalid_date_of_birth/.test(signal)) return result("validation", "Enter a valid date of birth.");
   if (/advertising_ad_review_other_note_required/.test(signal)) return result("validation", "Add an internal note when the reason is Other.");
   if (/advertising_ad_review_reason_invalid/.test(signal)) return result("validation", "Choose a valid rejection reason.");

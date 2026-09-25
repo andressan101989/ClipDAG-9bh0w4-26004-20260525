@@ -557,7 +557,9 @@ describe("Business Web owner lifecycle", () => {
   it("offers a friendly retry when the library projection fails", async () => {
     mediaMocks.search.mockRejectedValueOnce(new Error("library_unavailable")).mockResolvedValueOnce({ items: [], nextCursor: null });
     renderBusiness(memberIdentity(memberAccess("owner-b", ["business.media.read"])), "/media");
-    expect(await screen.findByRole("alert")).toHaveTextContent("library_unavailable");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("We couldn't load this media library. Try again.");
+    expect(alert).not.toHaveTextContent("library_unavailable");
     fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
     await waitFor(() => expect(mediaMocks.search).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("No hay media disponible para este negocio.")).toBeInTheDocument();

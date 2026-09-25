@@ -38,10 +38,14 @@ test("business upload scopes are capability-checked and keep business_owner_id c
   assert.match(finalizeMedia, /business\.disputes\.respond/);
 });
 
-test("R2 client sends exact returned headers and preserves write-once precondition", () => {
+test("R2 client enforces the exact returned PUT contract and rejects non-2xx responses", () => {
   assert.match(createMedia, /'If-None-Match':'\*'/);
-  assert.match(client, /uploadRequest\(uploadUrl, "PUT", file, headers/);
-  assert.match(client, /request\.status === 412/);
+  assert.match(client, /const method = stringValue\(contract\.method/);
+  assert.match(client, /method !== "PUT"/);
+  assert.match(client, /headers\["Content-Type"\] !== file\.type/);
+  assert.match(client, /headers\["If-None-Match"\] !== "\*"/);
+  assert.match(client, /uploadRequest\(uploadUrl, method, file, headers/);
+  assert.doesNotMatch(client, /request\.status === 412/);
   assert.doesNotMatch(client, /setRequestHeader\("If-None-Match"/);
 });
 

@@ -36,12 +36,27 @@ export type BusinessMediaFilters = {
   limit?: number;
 };
 export type UploadProgress = { phase: "reserving" | "uploading" | "finalizing" | "processing"; percent: number };
+export type BusinessMediaPresentationState = "ready" | "processing" | "expired" | "failed";
 
 type JsonRecord = Record<string, unknown>;
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const VIDEO_TYPES = new Set(["video/mp4", "video/quicktime", "video/webm"]);
 export const BUSINESS_IMAGE_MAX_BYTES = 25_000_000;
 export const BUSINESS_VIDEO_MAX_BYTES = 200_000_000;
+export const BUSINESS_MEDIA_UPLOAD_STALE_AFTER_MS = 5 * 60 * 1000;
+
+export function businessMediaPresentationState(
+  item: Pick<BusinessMediaItem, "provider" | "status" | "createdAt">,
+  nowMs = Date.now(),
+): BusinessMediaPresentationState {
+  if (item.status === "ready") return "ready";
+  if (["failed", "delete_pending", "deleted"].includes(item.status)) return "failed";
+  if (item.provider === "r2" && ["pending", "uploading"].includes(item.status)) {
+    const createdAtMs = Date.parse(item.createdAt);
+    if (!Number.isFinite(createdAtMs) || nowMs - createdAtMs >= BUSINESS_MEDIA_UPLOAD_STALE_AFTER_MS) return "expired";
+  }
+  return "processing";
+}
 
 function record(value: unknown, code: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(code);
@@ -145,7 +160,7 @@ function uploadRequest(
     };
     request.onerror = () => reject(new Error("upload_transport_failed"));
     request.onload = () => {
-      if ((request.status >= 200 && request.status < 300) || (method === "PUT" && request.status === 412)) resolve();
+      if (request.status >= 200 && request.status < 300) resolve();
       else reject(new Error(`upload_failed_${request.status}`));
     };
     request.send(body);
@@ -155,6 +170,26 @@ function uploadRequest(
 function edgePayload(value: unknown, code: string) {
   const response = record(value, code);
   return record(response.data, code);
+}
+
+function edgeErrorStatus(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const context = (error as { context?: unknown }).context;
+  if (!context || typeof context !== "object") return null;
+  const status = (context as { status?: unknown }).status;
+  return typeof status === "number" ? status : null;
+}
+
+function throwFinalizeError(error: unknown, fallback: string): never {
+  const status = edgeErrorStatus(error);
+  if (status === 409) throw new Error("media_finalize_rejected");
+  if (status !== null && status >= 500) throw new Error("media_finalize_temporarily_unavailable");
+  throw new Error(fallback);
+}
+
+function requireReadyFinalization(value: unknown, assetId: string) {
+  const payload = edgePayload(value, "media_finalize_invalid");
+  if (payload.assetId !== assetId || payload.status !== "ready") throw new Error("media_finalize_not_ready");
 }
 
 export async function uploadBusinessMedia(
@@ -179,12 +214,20 @@ export async function uploadBusinessMedia(
     const assetId = stringValue(contract.assetId, "media_reservation_invalid");
     const uploadUrl = stringValue(contract.uploadUrl, "media_reservation_invalid");
     const headers = record(contract.headers, "media_reservation_invalid") as Record<string, string>;
+    const method = stringValue(contract.method, "media_reservation_invalid");
+    if (method !== "PUT" || headers["Content-Type"] !== file.type || headers["If-None-Match"] !== "*") {
+      throw new Error("media_reservation_invalid");
+    }
     onProgress?.({ phase: "uploading", percent: 0 });
-    await uploadRequest(uploadUrl, "PUT", file, headers, (percent) => onProgress?.({ phase: "uploading", percent }));
+    await uploadRequest(uploadUrl, method, file, headers, (percent) => onProgress?.({ phase: "uploading", percent }));
     onProgress?.({ phase: "finalizing", percent: 100 });
     const finalized = await client.functions.invoke("finalize-media-upload", { body: { asset_id: assetId } });
-    if (finalized.error) throw new Error(finalized.error.message || "media_finalize_failed");
-    return { assetId, kind: "image" as const };
+    if (finalized.error) throwFinalizeError(finalized.error, "media_finalize_failed");
+    requireReadyFinalization(finalized.data, assetId);
+    const canonical = await searchBusinessMedia(businessOwnerId, { assetIds: [assetId], limit: 1 }, client);
+    const item = canonical.items.find((candidate) => candidate.assetId === assetId);
+    if (!item || item.status !== "ready") throw new Error("media_finalize_not_ready");
+    return { assetId, kind: "image" as const, item };
   }
 
   if (VIDEO_TYPES.has(file.type)) {
@@ -206,7 +249,7 @@ export async function uploadBusinessMedia(
     onProgress?.({ phase: "uploading", percent: 0 });
     await uploadRequest(uploadUrl, "POST", body, {}, (percent) => onProgress?.({ phase: "uploading", percent }));
     onProgress?.({ phase: "processing", percent: 100 });
-    return { assetId, kind: "video" as const };
+    return { assetId, kind: "video" as const, item: null };
   }
 
   throw new Error("media_type_not_supported");
@@ -235,17 +278,24 @@ export async function uploadBusinessOperationalMedia(
   if (reservation.error) throw new Error(reservation.error.message || "operational_media_reservation_failed");
   const contract = edgePayload(reservation.data, "operational_media_reservation_invalid");
   const assetId = stringValue(contract.assetId, "operational_media_reservation_invalid");
+  const method = stringValue(contract.method, "operational_media_reservation_invalid");
+  const uploadUrl = stringValue(contract.uploadUrl, "operational_media_reservation_invalid");
+  const headers = record(contract.headers, "operational_media_reservation_invalid") as Record<string, string>;
+  if (method !== "PUT" || headers["Content-Type"] !== file.type || headers["If-None-Match"] !== "*") {
+    throw new Error("operational_media_reservation_invalid");
+  }
   onProgress?.({ phase: "uploading", percent: 0 });
   await uploadRequest(
-    stringValue(contract.uploadUrl, "operational_media_reservation_invalid"),
-    "PUT",
+    uploadUrl,
+    method,
     file,
-    record(contract.headers, "operational_media_reservation_invalid") as Record<string, string>,
+    headers,
     (percent) => onProgress?.({ phase: "uploading", percent }),
   );
   onProgress?.({ phase: "finalizing", percent: 100 });
   const finalized = await client.functions.invoke("finalize-media-upload", { body: { asset_id: assetId } });
-  if (finalized.error) throw new Error(finalized.error.message || "operational_media_finalize_failed");
+  if (finalized.error) throwFinalizeError(finalized.error, "operational_media_finalize_failed");
+  requireReadyFinalization(finalized.data, assetId);
   return assetId;
 }
 
