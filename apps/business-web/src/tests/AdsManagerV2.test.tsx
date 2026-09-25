@@ -233,6 +233,25 @@ describe("Ads Manager V2 workspace", () => {
     expect(screen.queryByText("advertising_destination_draft_stale")).not.toBeInTheDocument();
   });
 
+  it("creates an immutable placement v2 with social_feed only and reconstructs the latest version", async () => {
+    const campaign = {
+      id: "campaign-1", name: "Draft", status: "draft", objective: "traffic", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-24T00:00:00Z", updatedAt: "2026-09-24T00:00:00Z", archivedAt: null,
+      adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-24T00:00:00Z", updatedAt: "2026-09-24T00:00:00Z", audience: null, placementSelection: { id: "selection-1", status: "draft", latestVersionNumber: 1 } }],
+      destinations: [],
+    };
+    const placementV1 = { placementSelectionId: "selection-1", adSetId: "set-1", status: "draft", latestVersion: { versionNumber: 1, registryPolicyVersion: "nelyon-ads-delivery-v2", definitionFingerprint: "v1", placements: ["clips", "live", "marketplace_home", "marketplace_search", "social_feed", "stories"].map((code) => ({ code, label: code, surfaceFamily: "test", surfaceVerified: true, selectionEnabled: true, v2DeliveryEnabled: false })) }, productionDeliveryEnabled: false };
+    const placementV2 = { ...placementV1, latestVersion: { ...placementV1.latestVersion, versionNumber: 2, definitionFingerprint: "v2", placements: placementV1.latestVersion.placements.filter((item) => item.code === "social_feed") } };
+    api.campaign.mockResolvedValue(campaign);
+    api.placement.mockResolvedValueOnce(placementV1).mockResolvedValue(placementV2);
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Edit placements" }));
+    for (const code of ["clips", "live", "marketplace_home", "marketplace_search", "stories"]) fireEvent.click(screen.getByRole("checkbox", { name: new RegExp(`^${code}\\b`) }));
+    fireEvent.click(screen.getByRole("button", { name: "Create updated placement version" }));
+    await waitFor(() => expect(api.createPlacementVersion).toHaveBeenCalledWith("selection-1", ["social_feed"], expect.any(String)));
+    expect(await screen.findByText("Selection v2")).toBeInTheDocument();
+    expect(screen.getByText(/social_feed/)).toBeInTheDocument();
+  });
+
   it("does not treat a finance read failure as an absent budget draft", async () => {
     api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [], destinations: [] });
     api.finance.mockRejectedValue(new Error("network_unavailable"));
