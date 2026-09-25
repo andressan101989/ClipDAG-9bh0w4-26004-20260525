@@ -10,7 +10,7 @@ async function config(name) {
   return parseJsonc(await readFile(new URL(`../wrangler.${name}.jsonc`, import.meta.url), 'utf8'));
 }
 
-test('defines isolated unbound and preview Admin configs', async () => {
+test('defines isolated unbound, preview, and route-only Admin configs', async () => {
   const unbound = await config('unbound');
   const preview = await config('preview');
 
@@ -30,9 +30,18 @@ test('defines isolated unbound and preview Admin configs', async () => {
   assert.equal(unbound.preview_urls, false);
   assert.equal(preview.workers_dev, true);
   assert.equal(preview.preview_urls, true);
+
+  const route = await config('route');
+  assert.equal(route.name, 'nelyon-admin-web');
+  assert.deepEqual(route.routes, [
+    { pattern: 'nelyon.app/admin', zone_name: 'nelyon.app' },
+    { pattern: 'nelyon.app/admin/*', zone_name: 'nelyon.app' },
+  ]);
+  assert.equal(route.routes.some((item) => item.pattern === 'nelyon.app/admin*'), false);
+  assert.equal(route.routes.some((item) => item.custom_domain === true), false);
 });
 
-test('has no Admin production config or production deploy script', async () => {
+test('keeps route application separate from version upload and deployment', async () => {
   await assert.rejects(access(new URL('../wrangler.production.jsonc', import.meta.url)));
   const packageJson = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
   assert.equal('deploy:production' in packageJson.scripts, false);
@@ -40,4 +49,14 @@ test('has no Admin production config or production deploy script', async () => {
   assert.match(packageJson.scripts['test:deployment'] ?? '', /shared\/web-deployment/);
   assert.match(packageJson.scripts['deploy:isolated'] ?? '', /wrangler\.unbound\.jsonc/);
   assert.match(packageJson.scripts['upload:preview'] ?? '', /versions upload/);
+  assert.match(packageJson.scripts['promote:version'] ?? '', /versions deploy/);
+  assert.match(packageJson.scripts['apply:production-route'] ?? '', /triggers deploy/);
+  assert.doesNotMatch(packageJson.scripts['apply:production-route'] ?? '', /build|versions upload|deploy:isolated/);
+});
+
+test('builds and routes the Admin SPA under the explicit /admin base', async () => {
+  const vite = await readFile(new URL('../../vite.config.ts', import.meta.url), 'utf8');
+  const entry = await readFile(new URL('../../src/main.tsx', import.meta.url), 'utf8');
+  assert.match(vite, /base:\s*["']\/admin\/["']/);
+  assert.match(entry, /BrowserRouter basename=["']\/admin["']/);
 });

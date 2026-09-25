@@ -6,4 +6,4 @@ import { AdminAuthProvider } from "./auth/AdminAuthProvider";
 import "./styles/admin.css";
 import "./styles/operations.css";
 
-createRoot(document.getElementById("root")!).render(<StrictMode><BrowserRouter><AdminAuthProvider><App/></AdminAuthProvider></BrowserRouter></StrictMode>);
+createRoot(document.getElementById("root")!).render(<StrictMode><BrowserRouter basename="/admin"><AdminAuthProvider><App/></AdminAuthProvider></BrowserRouter></StrictMode>);

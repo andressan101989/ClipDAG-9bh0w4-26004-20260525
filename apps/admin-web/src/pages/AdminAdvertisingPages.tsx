@@ -2,6 +2,7 @@ import {useCallback,useEffect,useRef,useState,type ReactNode} from "react";
 import {Link,useParams} from "react-router-dom";
 import {EmptyState,ErrorState,LoadingState} from "../components/PageState";
 import {AdminMediaPreview} from "../components/AdminPresentation";
+import {ConfirmDialog} from "../components/ConfirmDialog";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
 import {formatBdag,formatDate,type AdminRange} from "../lib/adminApi";
 import {
@@ -10,10 +11,11 @@ import {
   searchAdminAdvertisingCampaigns,type AdsCampaignCursor,type AdsCampaignPage,type AdsOverview,
   type AdsReviewItem,type JsonRecord,
 } from "../lib/adminAdvertisingApi";
+import {adminReviewCoordinator} from "../lib/adminReviewCoordinator";
+import {adminReviewMessage,reconcileAdminDecision,reviewCtaLabel,reviewReasonLabel,reviewReasonOptions,reviewStatusLabel} from "../lib/adminReviewUx";
 
 const ranges:AdminRange[]=["7d","30d","90d","all"];
 const objectives=["awareness","reach","traffic","engagement","video_views","profile_visits","messages","website_conversions","app_promotion","marketplace_sales"];
-const reasonCodes=["policy_violation","misleading","unsafe_destination","prohibited_content","restricted_content","media_invalid","copy_invalid","other"];
 const num=(value:unknown)=>Number.isFinite(Number(value))?Number(value):0;
 const txt=(value:unknown)=>typeof value==="string"?value:"—";
 const obj=(value:unknown):JsonRecord=>value!==null&&typeof value==="object"&&!Array.isArray(value)?value as JsonRecord:{};
@@ -61,13 +63,85 @@ export function AdminAdvertisingCampaignDetailPage(){
 function DetailList({title,items,label,secondary}:{title:string;items:JsonRecord[];label:string;secondary?:(row:JsonRecord)=>string}){return <article className="detail-card"><h3>{title}</h3>{items.length===0?<p className="muted-copy">No records.</p>:items.map((item,index)=><div className="fact-row" key={String(item.id??index)}><span>{txt(item[label])}</span><strong>{secondary?secondary(item):txt(item.status)}</strong></div>)}</article>}
 
 export function AdminAdvertisingReviewPage(){
-  const {hasCapability}=useAdminAuth(),canModerate=hasCapability("content.items.moderate"),[filter,setFilter]=useState("pending"),[items,setItems]=useState<AdsReviewItem[]|null>(null),[error,setError]=useState<string|null>(null),[busy,setBusy]=useState<string|null>(null),[reason,setReason]=useState<Record<string,string>>({}),[note,setNote]=useState<Record<string,string>>({});
-  const load=useCallback(()=>{setItems(null);setError(null);void searchAdminAdvertisingAds(filter).then(setItems).catch((value)=>setError(value instanceof Error?value.message:"Error"))},[filter]);
+  const {hasCapability}=useAdminAuth();
+  const canModerate=hasCapability("content.items.moderate");
+  const [filter,setFilter]=useState("pending");
+  const [items,setItems]=useState<AdsReviewItem[]|null>(null);
+  const [error,setError]=useState<string|null>(null);
+  const [notice,setNotice]=useState<string|null>(null);
+  const [busy,setBusy]=useState<string|null>(null);
+  const [reason,setReason]=useState<Record<string,string>>({});
+  const [note,setNote]=useState<Record<string,string>>({});
+  const [confirmation,setConfirmation]=useState<{item:AdsReviewItem;action:"approve"|"reject"}|null>(null);
+  const fetchItems=useCallback(()=>searchAdminAdvertisingAds(filter),[filter]);
+  const load=useCallback(()=>{
+    setItems(null);setError(null);
+    void fetchItems().then(setItems).catch((value)=>setError(adminReviewMessage(value)));
+  },[fetchItems]);
   useEffect(load,[load]);
-  const decide=async(item:AdsReviewItem,action:"approve"|"reject")=>{setBusy(item.id);setError(null);try{await reviewAdvertisingAd({adId:item.id,action,reasonCode:action==="reject"?reason[item.id]||"policy_violation":undefined,note:note[item.id],idempotencyKey:crypto.randomUUID()});load()}catch(value){setError(value instanceof Error?value.message:"Review failed")}finally{setBusy(null)}};
-  return <><Heading eyebrow="CONTENT MODERATION" title="Ads V2 Review Queue" detail="Existing immutable Creative + Destination review workflow."><select aria-label="Review status" value={filter} onChange={(event)=>setFilter(event.target.value)}><option>pending</option><option>approved</option><option>rejected</option><option value="">all</option></select></Heading>{error&&<ErrorState message={error} onRetry={load}/>} {!items?<LoadingState label="Cargando revisión…"/>:items.length===0?<EmptyState title="Review queue empty" detail="No Ads V2 match this review state."/>:<section className="detail-grid">{items.map((item)=>{const creative=item.creative,destination=item.destination,format=txt(creative.format),mediaUrl=format==="video"?txt(creative.playback_url):txt(creative.preview_url),mediaReviewable=mediaUrl!=="—",poster=typeof creative.preview_url==="string"?creative.preview_url:null,target=destination.external_url??destination.target_user_id??destination.target_business_account_id??destination.target_product_id??destination.target_store_id;return <article className="detail-card" key={item.id}><div className="panel-title"><h3>{item.name}</h3><em className={`badge ${tone(item.review_status)}`}>{item.review_status}</em></div><div className="admin-media-frame ads-review-media"><AdminMediaPreview url={mediaReviewable?mediaUrl:null} poster={poster} kind={format} alt={`Creative ${item.name}`} restricted={!mediaReviewable}/></div><div className="fact-row"><span>Campaign</span><strong>{txt(item.campaign.name)}</strong></div><div className="fact-row"><span>Format / media</span><strong>{format} · {txt(creative.media_status)} · {txt(creative.media_mime_type)}</strong></div><div className="fact-row"><span>Headline</span><strong>{txt(creative.headline)}</strong></div><div className="fact-row"><span>CTA</span><strong>{txt(creative.call_to_action)}</strong></div><p className="content-copy">{txt(creative.primary_text)}</p><p className="muted-copy content-copy">{txt(creative.description)}</p><div className="fact-row"><span>Destination</span><strong>{txt(destination.destination_type)}</strong></div><div className="fact-row"><span>Target</span><strong className="content-copy">{txt(target)}</strong></div>{item.review_status==="pending"&&canModerate&&<div className="ads-review-actions">{!mediaReviewable&&<p role="alert">Approval unavailable until canonical media preview is available.</p>}<select aria-label={`Reason ${item.name}`} value={reason[item.id]??"policy_violation"} onChange={(event)=>setReason((old)=>({...old,[item.id]:event.target.value}))}>{reasonCodes.map((code)=><option key={code}>{code}</option>)}</select><textarea aria-label={`Internal note ${item.name}`} placeholder="Internal moderation note" value={note[item.id]??""} onChange={(event)=>setNote((old)=>({...old,[item.id]:event.target.value}))}/><div><button disabled={busy===item.id||!mediaReviewable} onClick={()=>void decide(item,"approve")}>Approve</button><button className="danger" disabled={busy===item.id} onClick={()=>void decide(item,"reject")}>Reject</button></div></div>}</article>})}</section>}</>;
-}
 
+  const decide=async(item:AdsReviewItem,action:"approve"|"reject")=>{
+    const reasonCode=action==="reject"?(reason[item.id]??"policy_violation"):null;
+    const internalNote=(note[item.id]??"").trim()||null;
+    if(action==="reject"&&reasonCode==="other"&&!internalNote){setError("Add an internal note when the reason is Other.");return;}
+    if(!item.submission_fingerprint){setError("The submitted review identity is unavailable. Refresh before reviewing it.");return;}
+    setBusy(item.id);setError(null);setNotice(null);
+    try{
+      const intent={adId:item.id,submissionFingerprint:item.submission_fingerprint,action,reasonCode,note:internalNote};
+      const result=await adminReviewCoordinator.run({
+        intent,
+        mutate:(idempotencyKey)=>reviewAdvertisingAd({adId:item.id,action,reasonCode:reasonCode??undefined,note:internalNote??undefined,idempotencyKey}),
+        reconcile:async()=>reconcileAdminDecision(await searchAdminAdvertisingAds(""),intent),
+      });
+      let refreshFailed=false;
+      try{setItems(await fetchItems())}catch{refreshFailed=true}
+      if(result.state==="uncertain"||result.state==="conflict") setError(result.message);
+      else{
+        setNotice(action==="approve"?"Ad approved.":"Ad rejected.");
+        if(refreshFailed)setError("The review was saved, but we could not refresh the queue. Try refreshing again.");
+      }
+      setConfirmation(null);
+    }catch(value){
+      try{setItems(await fetchItems())}catch{/* preserve the decision error */}
+      setError(adminReviewMessage(value));
+    }
+    finally{setBusy(null);}
+  };
+
+  return <>
+    <Heading eyebrow="CONTENT MODERATION" title="Ads V2 Review Queue" detail="Review the exact creative and destination submitted by the advertiser.">
+      <select aria-label="Review status" value={filter} onChange={(event)=>setFilter(event.target.value)}>
+        <option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="">All</option>
+      </select>
+    </Heading>
+    {error&&<p role="alert" className="state-card error-state">{error}</p>}
+    {notice&&<p role="status" className="state-card success-state">{notice}</p>}
+    {!items?<LoadingState label="Loading reviews…"/>:items.length===0?<EmptyState title="No ads are waiting for review." detail={filter==="pending"?"The pending review queue is empty.":"No ads match this filter."}/>:<section className="detail-grid ads-review-grid">{items.map((item)=>{
+      const creative=item.creative,destination=item.destination,format=txt(creative.format),mediaUrl=format==="video"?txt(creative.playback_url):txt(creative.preview_url),mediaReviewable=mediaUrl!=="—",poster=typeof creative.preview_url==="string"?creative.preview_url:null;
+      const externalUrl=destination.destination_type==="external_url"&&typeof destination.external_url==="string"?destination.external_url:null;
+      const destinationName=externalUrl?"External website":destination.destination_type==="nelyon_profile"?"Nelyon profile":destination.destination_type==="business_account"?"Business":destination.destination_type==="marketplace_product"?"Marketplace product":destination.destination_type==="marketplace_store"?"Marketplace store":"Destination details unavailable";
+      return <article className="detail-card ads-review-card" key={item.id} aria-busy={busy===item.id}>
+        <div className="panel-title"><div><h3>{item.name}</h3><p>{txt(item.campaign.name)} · {txt(item.campaign.objective).replaceAll("_"," ")}</p></div><em className={`badge ${tone(item.review_status)}`}>{reviewStatusLabel(item.review_status)}</em></div>
+        <div className="admin-media-frame ads-review-media"><AdminMediaPreview url={mediaReviewable?mediaUrl:null} poster={poster} kind={format} alt={`Creative ${item.name}`} restricted={!mediaReviewable}/></div>
+        <div className="fact-row"><span>Ad Set</span><strong>{txt(item.ad_set.name)}</strong></div>
+        <div className="fact-row"><span>Submitted</span><strong>{formatDate(item.submitted_at)}</strong></div>
+        <div className="fact-row"><span>Media</span><strong>{format==="video"?"Video":"Image"}</strong></div>
+        <div className="fact-row"><span>Headline</span><strong>{txt(creative.headline)}</strong></div>
+        <div className="fact-row"><span>Call to action</span><strong>{reviewCtaLabel(creative.call_to_action)}</strong></div>
+        <p className="content-copy">{txt(creative.primary_text)}</p><p className="muted-copy content-copy">{txt(creative.description)}</p>
+        <div className="fact-row"><span>Destination</span><strong>{destinationName}</strong></div>
+        {externalUrl?<a className="content-copy ads-review-destination" href={externalUrl} target="_blank" rel="noopener noreferrer">{externalUrl}</a>:<p className="muted-copy">Destination details unavailable</p>}
+        {item.latest_decision&&<div className="readonly-note"><strong>{reviewReasonLabel(item.latest_decision.reason_code)}</strong>{item.latest_decision.note&&<span>Internal note: {item.latest_decision.note}</span>}</div>}
+        {item.review_status==="pending"&&canModerate&&<div className="ads-review-actions">
+          {!mediaReviewable&&<p role="alert">Approval unavailable until canonical media preview is available.</p>}
+          <label>Rejection reason<select aria-label={`Rejection reason for ${item.name}`} value={reason[item.id]??"policy_violation"} onChange={(event)=>setReason((old)=>({...old,[item.id]:event.target.value}))}>{reviewReasonOptions.map(([value,label])=><option value={value} key={value}>{label}</option>)}</select></label>
+          <label>Internal note<textarea aria-label={`Internal note for ${item.name}`} value={note[item.id]??""} onChange={(event)=>setNote((old)=>({...old,[item.id]:event.target.value}))}/><small>Only administrators can see this note.</small></label>
+          <div><button disabled={busy===item.id||!mediaReviewable} onClick={()=>setConfirmation({item,action:"approve"})}>Approve</button><button className="danger" disabled={busy===item.id} onClick={()=>setConfirmation({item,action:"reject"})}>Reject</button></div>
+        </div>}
+      </article>})}</section>}
+    <ConfirmDialog open={Boolean(confirmation)} title={confirmation?.action==="approve"?"Approve this ad?":"Reject this ad?"} consequence={confirmation?.action==="approve"?"This decision applies to the exact submitted creative and destination.":"The advertiser will see the selected reason and can create a revised ad."} actionLabel={confirmation?.action==="approve"?"Approve ad":"Reject ad"} reason={confirmation?.action==="reject"?reviewReasonLabel(reason[confirmation.item.id]??"policy_violation"):undefined} danger={confirmation?.action==="reject"} pending={Boolean(confirmation&&busy===confirmation.item.id)} onCancel={()=>{if(!busy)setConfirmation(null)}} onConfirm={()=>{if(confirmation)void decide(confirmation.item,confirmation.action)}}/>
+  </>;
+}
 export function AdminAdvertisingAnalyticsPage(){
   const [range,setRange]=useState<AdminRange>("30d"),state=useAsync(()=>getAdminAdvertisingOverview(range),[range]);
   if(state.error)return <ErrorState message={state.error} onRetry={state.reload}/>;

@@ -5,10 +5,11 @@ import { useBusinessAuth } from "../../auth/BusinessAuthProvider";
 import { FormField, InlineError, PageHeader, StatusBadge } from "../../components/BusinessUI";
 import { AudienceTargetingPanel } from "../../components/ads/AudienceTargetingPanel";
 import { AdAssemblyPanel, CreativePanel } from "../../components/ads/CreativeAdPanels";
+import { BusinessReviewPanel } from "../../components/ads/BusinessReviewPanel";
 import { DestinationPanel, type DestinationValues } from "../../components/ads/DestinationPanel";
 import { PlacementSelectionPanel } from "../../components/ads/PlacementSelectionPanel";
 import { audienceCapabilitiesAreSafe } from "../../lib/audienceTargetingUx";
-import { destinationLabel, externalWebsiteSummary, isCurrentReleaseDestination, isCurrentReleasePlacementSelection, placementCards } from "../../lib/adsPlacementDestinationUx";
+import { destinationLabel, externalWebsiteSummary, isCurrentReleaseDestination, isCurrentReleasePlacementSelection } from "../../lib/adsPlacementDestinationUx";
 import { findAdOperationResult, isCreativeMediaSelectable, sameCreativeContent } from "../../lib/adsCreativeUx";
 import { searchAllBusinessMedia, type BusinessMediaItem } from "../../lib/businessMediaApi";
 import {
@@ -43,6 +44,7 @@ import {
   pauseAdvertisingCampaign,
   remediateMyAgeEligibility,
   resumeAdvertisingCampaign,
+  submitAdvertisingAdForReview,
   updateAdvertisingAdSetDraft,
   updateAdvertisingDestinationDraft,
   type AdvertiserAdAccount,
@@ -352,7 +354,7 @@ export function BusinessAdsManagerCampaignPage() {
     }
     if (changed) setSearchParams(next, { replace: true });
   }, [campaignId, data, searchParams, setSearchParams, workspaceQueryKey]);
-  async function run<T>(input: AdsMutationRunInput<T>, message: string) {
+  async function run<T>(input: AdsMutationRunInput<T>, message: string, onSuccessValue?: (value: T) => void) {
     const operationQueryKey = workspaceQueryKey;
     const result = await mutation.run(input, {
       successMessage: message,
@@ -364,7 +366,8 @@ export function BusinessAdsManagerCampaignPage() {
         if (workspaceQueryKeyRef.current === operationQueryKey && workspace.requestKey === operationQueryKey) setData(workspace);
         return "This draft changed in another session. We loaded the latest version.";
       },
-      afterSuccess: async () => {
+      afterSuccess: async (value) => {
+        onSuccessValue?.(value);
         const [workspace] = await Promise.all([fetchWorkspace(), refreshList()]);
         if (workspaceQueryKeyRef.current === operationQueryKey && workspace.requestKey === operationQueryKey) setData(workspace);
       },
@@ -378,12 +381,19 @@ export function BusinessAdsManagerCampaignPage() {
     const next = new URLSearchParams(searchParams);
     if (value) next.set(key, value); else next.delete(key);
     if (key === "adSet" || key === "destination") next.delete("ad");
+    next.delete("adMode");
     setSearchParams(next);
   };
-  return <><PageHeader eyebrow="Ads V2 draft workspace" title={data.campaign.name} description="Server-backed configuration. Refreshing this page reconstructs Audience, Placements, Creative, Review, Finance and Analytics." action={<Link className="text-button" to="/ads">Back to campaigns</Link>} /><InlineError message={error ?? mutationError} />{mutation.state.kind === "success" && <div className="inline-success" role="status">{mutation.state.message}</div>}{mutation.refreshWarning && <div className="readonly-note" role="status">{mutation.refreshWarning}</div>}{owner && <AdvertisingAgeEligibilityPanel />}{!owner && <div className="readonly-note">This campaign is not writable by the current owner-authoritative Ads V2 RPCs.</div>}<AccountSelectors business={campaignBusiness} adAccount={campaignAdAccount} locked /><CampaignWorkspace data={data} business={campaignBusiness} adAccount={campaignAdAccount} owner={canWrite} run={run} reload={fetchWorkspace} pending={mutation.pending} selectEntity={selectEntity} /></>;
+  const setRevisedAdMode = (enabled: boolean, selectedAdId?: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (enabled) next.set("adMode", "revised"); else next.delete("adMode");
+    if (selectedAdId) next.set("ad", selectedAdId);
+    setSearchParams(next);
+  };
+  return <><PageHeader eyebrow="Ads V2 draft workspace" title={data.campaign.name} description="Server-backed configuration. Refreshing this page reconstructs Audience, Placements, Creative, Review, Finance and Analytics." action={<Link className="text-button" to="/ads">Back to campaigns</Link>} /><InlineError message={error ?? mutationError} />{mutation.state.kind === "success" && <div className="inline-success" role="status">{mutation.state.message}</div>}{mutation.refreshWarning && <div className="readonly-note" role="status">{mutation.refreshWarning}</div>}{owner && <AdvertisingAgeEligibilityPanel />}{!owner && <div className="readonly-note">This campaign is not writable by the current owner-authoritative Ads V2 RPCs.</div>}<AccountSelectors business={campaignBusiness} adAccount={campaignAdAccount} locked /><CampaignWorkspace data={data} business={campaignBusiness} adAccount={campaignAdAccount} owner={canWrite} run={run} reload={fetchWorkspace} pending={mutation.pending} selectEntity={selectEntity} creatingRevisedAd={searchParams.get("adMode") === "revised"} setRevisedAdMode={setRevisedAdMode} /></>;
 }
 
-function CampaignWorkspace({ data, business, adAccount, owner, run, reload, pending, selectEntity }: { data: WorkspaceData; business: AdvertiserBusiness | null; adAccount: AdvertiserAdAccount | null; owner: boolean; run: <T>(input: AdsMutationRunInput<T>, message: string) => Promise<boolean>; reload: () => Promise<WorkspaceData>; pending: boolean; selectEntity: (key: "adSet" | "destination" | "ad", value: string) => void }) {
+function CampaignWorkspace({ data, business, adAccount, owner, run, reload, pending, selectEntity, creatingRevisedAd, setRevisedAdMode }: { data: WorkspaceData; business: AdvertiserBusiness | null; adAccount: AdvertiserAdAccount | null; owner: boolean; run: <T>(input: AdsMutationRunInput<T>, message: string, onSuccessValue?: (value: T) => void) => Promise<boolean>; reload: () => Promise<WorkspaceData>; pending: boolean; selectEntity: (key: "adSet" | "destination" | "ad", value: string) => void; creatingRevisedAd: boolean; setRevisedAdMode: (enabled: boolean, selectedAdId?: string) => void }) {
   const { user } = useBusinessAuth();
   const { targetingCapabilities, targetingCapabilitiesUnavailable } = useAdvertisingManager();
   const campaign = data.campaign;
@@ -411,8 +421,6 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, pend
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessOwnerId, creativeMediaKey]);
   const persistedPlacements = data.placement?.latestVersion?.placements.map((item) => item.code) ?? [];
-  const displayedPlacements = persistedPlacements;
-  const displayedPlacementLabels = placementCards(displayedPlacements).filter((item) => item.selectedPreviously).map((item) => item.label);
   const destinationIsUsable = isCurrentReleaseDestination(destination ?? null);
   const audienceLatest = data.audience?.latest_version && typeof data.audience.latest_version === "object" ? data.audience.latest_version as Record<string, unknown> : null;
   const audienceDefinition = useMemo(() => audienceDefinitionFromPayload(data.audience), [data.audience]);
@@ -525,11 +533,43 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, pend
       mediaById={mediaById}
       owner={owner}
       pending={pending}
+      forceCreate={creatingRevisedAd}
       onSelectAd={(id) => selectEntity("ad", id)}
       onSelectDestination={(id) => selectEntity("destination", id)}
-      onCreate={async (payload) => run({ operation: "ad:create", scope: payload.adSetId, payload, mutate: (key) => createAdvertisingAdDraft(payload, key), reconcile: ({ idempotencyKey }) => reconcileWorkspace((workspace) => findAdOperationResult(workspace.creatives.ads, idempotencyKey, payload), (workspace) => workspace.creatives.ads.some((item) => item.creationIdempotencyKey === idempotencyKey)) }, "Ad assembled")}
+      onCancelCreate={() => setRevisedAdMode(false)}
+      onCreate={async (payload) => {
+        const created = await run({ operation: "ad:create", scope: payload.adSetId, payload, mutate: (key) => createAdvertisingAdDraft(payload, key), reconcile: ({ idempotencyKey }) => reconcileWorkspace((workspace) => findAdOperationResult(workspace.creatives.ads, idempotencyKey, payload), (workspace) => workspace.creatives.ads.some((item) => item.creationIdempotencyKey === idempotencyKey)) }, creatingRevisedAd ? "Revised ad created" : "Ad assembled", (createdAd) => {
+          const createdAdId = typeof createdAd === "object" && createdAd !== null && "id" in createdAd && typeof createdAd.id === "string" ? createdAd.id : null;
+          if (createdAdId) setRevisedAdMode(false, createdAdId);
+        });
+        return created;
+      }}
     />
-    <section id="review" className="business-card editor-card"><p className="eyebrow">Step 8</p><h2>Review</h2>{ad ? <><div className="ads-v2-preview"><strong>{allVersions.find((item) => item.id === ad.creativeVersionId)?.headline ?? ad.name}</strong><p>{allVersions.find((item) => item.id === ad.creativeVersionId)?.primaryText}</p><span>Destination: {destination ? destinationLabel(destination.destinationType) : "Not selected"}</span><span>Audience: Adults 18+</span><span>Placements: {displayedPlacementLabels.join(", ")}</span></div><p>Review status: <StatusBadge status={ad.reviewStatus} /></p>{ad.latestRejectionMessage && <div className="readonly-note">{ad.latestRejectionMessage}</div>}<div className="readonly-note">Review submission is not available during this pre-launch phase.</div></> : <p>Assemble an Ad first.</p>}</section>
+    {!creatingRevisedAd && <BusinessReviewPanel
+      ad={ad ?? null}
+      creativeName={accountCreatives.find((creative) => creative.versions.some((version) => version.id === ad?.creativeVersionId))?.name ?? null}
+      version={allVersions.find((version) => version.id === ad?.creativeVersionId) ?? null}
+      media={allVersions.find((version) => version.id === ad?.creativeVersionId) ? mediaById[(allVersions.find((version) => version.id === ad?.creativeVersionId)?.mediaAssetId ?? allVersions.find((version) => version.id === ad?.creativeVersionId)?.videoAssetId) ?? ""] ?? null : null}
+      destination={campaign.destinations.find((item) => item.id === ad?.destinationId) ?? null}
+      owner={owner}
+      pending={pending}
+      onSubmit={async () => {
+        if (!ad) return false;
+        return run({
+          operation: "review:submit",
+          scope: ad.id,
+          payload: { adId: ad.id, creativeVersionId: ad.creativeVersionId, destinationId: ad.destinationId },
+          mutate: (key) => submitAdvertisingAdForReview(ad.id, key),
+          reconcile: async () => {
+            const workspace = await reload();
+            const canonical = workspace.creatives.ads.find((item) => item.id === ad.id);
+            if (canonical?.reviewStatus !== "not_submitted" && canonical?.submittedAt) return mutationApplied(canonical);
+            return canonical ? mutationNotApplied() : mutationDifferent();
+          },
+        }, "Ad submitted for review");
+      }}
+      onCreateRevised={() => setRevisedAdMode(true)}
+    />}
     <section id="budget" className="business-card editor-card"><p className="eyebrow">Step 9</p><h2>Budget draft</h2>{data.finance ? <div className="ads-summary-grid"><Metric label="Budget" value={formatMoney(data.finance.budgetBdag)} /><Metric label="Funded" value={formatMoney(data.finance.fundedBdag)} /><Metric label="Spent" value={formatMoney(data.finance.spentBdag)} /><Metric label="Released" value={formatMoney(data.finance.releasedBdag)} /><Metric label="Reserved" value={formatMoney(data.finance.reservedBdag)} /></div> : <form className="seller-form" aria-busy={pending} onSubmit={(event) => { event.preventDefault(); if (pending) return; const budgetBdag = Number(budget); void run({ operation: "finance:create", scope: campaign.id, payload: { campaignId: campaign.id, budgetBdag }, mutate: (key) => createAdvertisingFinanceDraft(campaign.id, budgetBdag, key), reconcile: () => reconcileWorkspace((workspace) => workspace.finance?.campaignId === campaign.id && workspace.finance.budgetBdag === budgetBdag ? workspace.finance : null, (workspace) => workspace.finance != null) }, "Budget draft created"); }}><FormField label="Budget BDAG"><input type="number" min="0.00000001" step="0.00000001" required value={budget} onChange={(event) => setBudget(event.target.value)} /></FormField><button className="primary-button" disabled={!owner || pending} type="submit">{pending ? "Saving…" : "Define budget draft"}</button></form>}<div className="readonly-note"><strong>Funding is not enabled yet.</strong> No Fund, Pay, Launch or Activate action is available.</div></section>
     <section id="readiness" className="business-card editor-card"><p className="eyebrow">Step 10</p><h2>Readiness summary</h2><p>Campaign status: <StatusBadge status={data.campaign.status} /></p><ul className="ads-v2-checklist">{checklist.map(([label, value]) => <li key={String(label)} className={value === true || (typeof value === "string" && value !== "not_submitted") ? "is-ready" : ""}><span aria-hidden="true">{value === true || (typeof value === "string" && value !== "not_submitted") ? "✓" : "○"}</span><strong>{label}</strong>{typeof value === "string" && <small>{value}</small>}</li>)}</ul><div className="business-card"><h3>Server activation readiness</h3><p>{data.readiness.structurallyReady ? `Ready for ${data.readiness.targetStatus}` : "Pre-launch requirements remain open."}</p>{data.readiness.blockers.length > 0 && <ul>{data.readiness.blockers.map((blocker) => <li key={blocker}>{blocker.replaceAll("_", " ")}</li>)}</ul>}<div className="compact-actions">{data.campaign.status === "draft" && <button type="button" disabled={!owner || !data.readiness.activationEnabled || !data.readiness.structurallyReady || pending} onClick={() => { if (pending) return; void run({ operation: "lifecycle:activate", scope: campaign.id, payload: { campaignId: campaign.id, action: "activate" }, mutate: (key) => activateAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => ["active", "scheduled"].includes(workspace.campaign.status) ? workspace.campaign : null, (workspace) => ["completed", "cancelled"].includes(workspace.campaign.status)) }, "Campaign activated"); }}>{pending ? "Saving…" : data.readiness.activationEnabled ? "Activate" : "Activation locked"}</button>}{(data.campaign.status === "active" || data.campaign.status === "scheduled") && <button type="button" disabled={!owner || pending} onClick={() => { if (pending) return; void run({ operation: "lifecycle:pause", scope: campaign.id, payload: { campaignId: campaign.id, action: "pause" }, mutate: (key) => pauseAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => workspace.campaign.status === "paused" ? workspace.campaign : null, (workspace) => ["completed", "cancelled"].includes(workspace.campaign.status)) }, "Campaign paused"); }}>{pending ? "Saving…" : "Pause"}</button>}{data.campaign.status === "paused" && <button type="button" disabled={!owner || !data.readiness.activationEnabled || !data.readiness.structurallyReady || pending} onClick={() => { if (pending) return; void run({ operation: "lifecycle:resume", scope: campaign.id, payload: { campaignId: campaign.id, action: "resume" }, mutate: (key) => resumeAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => ["active", "scheduled"].includes(workspace.campaign.status) ? workspace.campaign : null, (workspace) => ["completed", "cancelled"].includes(workspace.campaign.status)) }, "Campaign resumed"); }}>{pending ? "Saving…" : "Resume"}</button>}{["draft", "scheduled", "active", "paused"].includes(data.campaign.status) && <button className="danger-button" type="button" disabled={!owner || pending} onClick={() => { if (pending) return; void run({ operation: "lifecycle:cancel", scope: campaign.id, payload: { campaignId: campaign.id, action: "cancel" }, mutate: (key) => cancelAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => workspace.campaign.status === "cancelled" ? workspace.campaign : null, (workspace) => workspace.campaign.status === "completed") }, "Campaign cancelled"); }}>{pending ? "Saving…" : "Cancel"}</button>}</div>{data.campaign.lifecycle?.requiresFinancialSettlement && <p className="readonly-note">Reserved funds require separate financial settlement.</p>}</div><div className="ads-v2-locked"><strong>Pre-launch locked</strong><span>Campaign activation policy disabled</span><span>Funding disabled</span><span>Live delivery disabled</span></div><h3>Aggregate analytics</h3><div className="ads-summary-grid"><Metric label="Impressions" value={String(data.analytics.impressions ?? 0)} /><Metric label="Clicks" value={String(data.analytics.clicks ?? 0)} /><Metric label="Conversions" value={String(data.analytics.conversions ?? 0)} /><Metric label="CTR" value={String(data.analytics.ctr ?? 0)} /></div></section>
   </div>;

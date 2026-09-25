@@ -1,0 +1,19 @@
+{
+  "name": "nelyon-admin-web",
+  "main": "./worker.mjs",
+  "compatibility_date": "2026-09-24",
+  "account_id": "24a176456cf57435119db8caf3af61dd",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "nelyon.app/admin", "zone_name": "nelyon.app" },
+    { "pattern": "nelyon.app/admin/*", "zone_name": "nelyon.app" }
+  ],
+  "assets": {
+    "directory": "../dist",
+    "binding": "ASSETS",
+    "html_handling": "none",
+    "not_found_handling": "none",
+    "run_worker_first": true
+  }
+}

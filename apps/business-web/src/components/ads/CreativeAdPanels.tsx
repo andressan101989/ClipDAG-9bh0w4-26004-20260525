@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- preview helpers are shared by the Ads feature components */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BusinessMediaPicker, BusinessMediaPreview } from "../BusinessMedia";
 import { FormField, StatusBadge } from "../BusinessUI";
@@ -18,12 +19,12 @@ import type { BusinessMediaItem } from "../../lib/businessMediaApi";
 
 type MediaById = Record<string, BusinessMediaItem>;
 
-function versionMedia(version: AdvertisingCreativeVersion | null, mediaById: MediaById) {
+export function versionMedia(version: AdvertisingCreativeVersion | null, mediaById: MediaById) {
   const id = version?.mediaAssetId ?? version?.videoAssetId;
   return id ? mediaById[id] ?? null : null;
 }
 
-function CreativePreview({ version, media, name }: { version: Pick<AdvertisingCreativeVersion, "primaryText" | "headline" | "description" | "callToAction">; media: BusinessMediaItem | null; name: string }) {
+export function CreativePreview({ version, media, name }: { version: Pick<AdvertisingCreativeVersion, "primaryText" | "headline" | "description" | "callToAction">; media: BusinessMediaItem | null; name: string }) {
   return <article className="ads-creative-preview" aria-label={`${name} preview`}>
     <span className="ads-preview-label">Preview</span>
     <div className="ads-creative-preview-media">{media ? <BusinessMediaPreview item={media} locale="en" /> : <div className="media-placeholder">Choose media to preview</div>}</div>
@@ -146,11 +147,11 @@ export function CreativePanel({ creatives, mediaById, owner, businessOwnerId, pe
   </section>;
 }
 
-function destinationSummary(destination: AdvertisingDestination) {
+export function destinationSummary(destination: AdvertisingDestination) {
   return destination.destinationType === "external_url" ? externalWebsiteSummary(destination.externalUrl) : "Saved destination";
 }
 
-export function AdAssemblyPanel({ adSetId, creatives, ads, selectedAdId, destinations, selectedDestinationId, mediaById, owner, pending, onSelectAd, onSelectDestination, onCreate }: {
+export function AdAssemblyPanel({ adSetId, creatives, ads, selectedAdId, destinations, selectedDestinationId, mediaById, owner, pending, forceCreate = false, onSelectAd, onSelectDestination, onCreate, onCancelCreate }: {
   adSetId: string | null;
   creatives: AdvertisingCreative[];
   ads: AdvertisingAd[];
@@ -160,9 +161,11 @@ export function AdAssemblyPanel({ adSetId, creatives, ads, selectedAdId, destina
   mediaById: MediaById;
   owner: boolean;
   pending: boolean;
+  forceCreate?: boolean;
   onSelectAd: (id: string) => void;
   onSelectDestination: (id: string) => void;
   onCreate: (payload: { adSetId: string; creativeVersionId: string; destinationId: string; name: string }) => Promise<boolean>;
+  onCancelCreate?: () => void;
 }) {
   const options = useMemo(() => latestCreativeOptions(creatives, mediaById), [creatives, mediaById]);
   const [creativeVersionId, setCreativeVersionId] = useState(() => options.length === 1 ? options.at(0)?.version.id ?? "" : "");
@@ -178,9 +181,9 @@ export function AdAssemblyPanel({ adSetId, creatives, ads, selectedAdId, destina
     if (creativeVersionId && !options.some((item) => item.version.id === creativeVersionId)) setCreativeVersionId("");
   }, [creativeVersionId, options]);
 
-  if (ads.length > 1 && !selectedAd) return <section id="ad" className="business-card editor-card"><p className="eyebrow">Step 7</p><h2>Ad assembly</h2><fieldset className="ads-choice-fieldset"><legend>Choose an ad</legend><div className="ads-choice-grid">{ads.map((ad) => <label className="ads-choice-card" key={ad.id}><input type="radio" name="ad-selection" checked={false} onChange={() => onSelectAd(ad.id)} /><span><strong>{ad.name}</strong><small>{ad.reviewStatus.replaceAll("_", " ")}</small></span></label>)}</div></fieldset></section>;
+  if (!forceCreate && ads.length > 1 && !selectedAd) return <section id="ad" className="business-card editor-card"><p className="eyebrow">Step 7</p><h2>Ad assembly</h2><fieldset className="ads-choice-fieldset"><legend>Choose an ad</legend><div className="ads-choice-grid">{ads.map((ad) => <label className="ads-choice-card" key={ad.id}><input type="radio" name="ad-selection" checked={false} onChange={() => onSelectAd(ad.id)} /><span><strong>{ad.name}</strong><small>{ad.reviewStatus.replaceAll("_", " ")}</small></span></label>)}</div></fieldset></section>;
 
-  if (selectedAd) {
+  if (!forceCreate && selectedAd) {
     const pinnedCreative = creatives.find((creative) => creative.versions.some((version) => version.id === selectedAd.creativeVersionId));
     const pinnedVersion = pinnedCreative?.versions.find((version) => version.id === selectedAd.creativeVersionId) ?? null;
     const pinnedDestination = destinations.find((item) => item.id === selectedAd.destinationId) ?? null;
@@ -209,7 +212,7 @@ export function AdAssemblyPanel({ adSetId, creatives, ads, selectedAdId, destina
         return <label className={destination.id === selectedDestinationId ? "ads-choice-card is-selected" : "ads-choice-card"} aria-disabled={!usable || busy} key={destination.id}><input type="radio" name="ad-destination" disabled={!usable || busy} checked={destination.id === selectedDestinationId} onChange={() => onSelectDestination(destination.id)} /><span><strong>{destination.destinationType === "external_url" ? "External website" : "Not available yet"}</strong><small>{usable ? destinationSummary(destination) : "This destination is not available for this release."}</small></span></label>;
       })}</div></fieldset>
       {selectedOption && selectedDestination && <div className="ads-combined-preview"><CreativePreview name={selectedOption.creative.name} version={selectedOption.version} media={versionMedia(selectedOption.version, mediaById)} /><div><span className="ads-preview-label">Destination</span><strong>{destinationSummary(selectedDestination)}</strong><span>Preview links are disabled.</span></div></div>}
-      <button className="primary-button" type="submit" disabled={!owner || busy || !selectedOption || !selectedDestination}>{busy ? "Saving…" : "Create ad"}</button>
+      <div className="compact-actions"><button className="primary-button" type="submit" disabled={!owner || busy || !selectedOption || !selectedDestination}>{busy ? "Saving…" : forceCreate ? "Create revised ad" : "Create ad"}</button>{forceCreate && <button className="secondary-button" type="button" disabled={busy} onClick={onCancelCreate}>Cancel</button>}</div>
     </form>}
   </section>;
 }

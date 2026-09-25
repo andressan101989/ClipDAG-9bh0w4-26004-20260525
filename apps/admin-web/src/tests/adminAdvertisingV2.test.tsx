@@ -18,6 +18,7 @@ const overview={authority:"ads_v2" as const,range:"30d" as const,generated_at:"2
 
 beforeEach(()=>{
   vi.clearAllMocks();
+  localStorage.clear();
   vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.ads.read","content.items.read","content.items.moderate","finance.reconciliation.read"]) as never);
   vi.mocked(getAdminAdvertisingOverview).mockResolvedValue(overview);
   vi.mocked(searchAdminAdvertisingCampaigns).mockResolvedValue({items:[],next_cursor:null,page_size:0,authority:"ads_v2"});
@@ -41,7 +42,7 @@ describe("ADS-V2-J Admin Web",()=>{
   });
 
   it("keeps moderation on the canonical D RPC and requires the moderation capability for actions",async()=>{
-    vi.mocked(searchAdminAdvertisingAds).mockResolvedValue([{id:"11111111-1111-4111-8111-111111111111",name:"Review me",status:"draft",review_status:"pending",submitted_at:"2026-09-23T18:00:00Z",reviewed_at:null,campaign:{name:"Campaign"},ad_set:{name:"Set"},creative:{format:"image",primary_text:"Safe copy",headline:"Exact headline",description:"Exact description",call_to_action:"learn_more",media_status:"ready",media_mime_type:"image/png",preview_url:"https://cdn.example/creative.png"},destination:{destination_type:"external_url",external_url:"https://advertiser.example/landing"},latest_decision:null}]);
+    vi.mocked(searchAdminAdvertisingAds).mockResolvedValue([{id:"11111111-1111-4111-8111-111111111111",name:"Review me",status:"draft",review_status:"pending",submission_fingerprint:"submitted-fingerprint-v1",submitted_at:"2026-09-23T18:00:00Z",reviewed_at:null,campaign:{name:"Campaign",objective:"awareness"},ad_set:{name:"Set"},creative:{creative_version_id:"version-v1",format:"image",primary_text:"Safe copy",headline:"Exact headline",description:"Exact description",call_to_action:"learn_more",media_status:"ready",media_mime_type:"image/png",preview_url:"https://cdn.example/creative.png"},destination:{destination_type:"external_url",external_url:"https://advertiser.example/landing"},latest_decision:null}]);
     vi.mocked(reviewAdvertisingAd).mockResolvedValue({review_status:"approved"});
     render(<MemoryRouter><AdminAdvertisingReviewPage/></MemoryRouter>);
     expect(await screen.findByRole("img",{name:"Creative Review me"})).toHaveAttribute("src","https://cdn.example/creative.png");
@@ -49,23 +50,57 @@ describe("ADS-V2-J Admin Web",()=>{
     expect(screen.getByText("Exact description")).toBeInTheDocument();
     expect(screen.getByText("https://advertiser.example/landing")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button",{name:"Approve"}));
+    fireEvent.click(screen.getByRole("button",{name:"Approve ad"}));
     await waitFor(()=>expect(reviewAdvertisingAd).toHaveBeenCalledWith(expect.objectContaining({adId:"11111111-1111-4111-8111-111111111111",action:"approve"})));
   });
 
   it("submits the visible default rejection reason instead of an implicit invalid other reason",async()=>{
-    vi.mocked(searchAdminAdvertisingAds).mockResolvedValue([{id:"11111111-1111-4111-8111-111111111111",name:"Review me",status:"draft",review_status:"pending",submitted_at:"2026-09-23T18:00:00Z",reviewed_at:null,campaign:{name:"Campaign"},ad_set:{name:"Set"},creative:{format:"image",primary_text:"Safe copy"},destination:{destination_type:"external_url"},latest_decision:null}]);
+    vi.mocked(searchAdminAdvertisingAds).mockResolvedValue([{id:"11111111-1111-4111-8111-111111111111",name:"Review me",status:"draft",review_status:"pending",submission_fingerprint:"submitted-fingerprint-v1",submitted_at:"2026-09-23T18:00:00Z",reviewed_at:null,campaign:{name:"Campaign",objective:"awareness"},ad_set:{name:"Set"},creative:{format:"image",primary_text:"Safe copy",preview_url:"https://cdn.example/creative.png"},destination:{destination_type:"external_url"},latest_decision:null}]);
     vi.mocked(reviewAdvertisingAd).mockResolvedValue({review_status:"rejected"});
     render(<MemoryRouter><AdminAdvertisingReviewPage/></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button",{name:"Reject"}));
+    fireEvent.click(screen.getByRole("button",{name:"Reject ad"}));
     await waitFor(()=>expect(reviewAdvertisingAd).toHaveBeenCalledWith(expect.objectContaining({action:"reject",reasonCode:"policy_violation"})));
   });
 
+  it("keeps an uncertain decision message visible after refreshing the canonical queue",async()=>{
+    const pending=[{id:"11111111-1111-4111-8111-111111111111",name:"Review me",status:"draft",review_status:"pending",submission_fingerprint:"submitted-fingerprint-v1",submitted_at:"2026-09-23T18:00:00Z",reviewed_at:null,campaign:{name:"Campaign",objective:"awareness"},ad_set:{name:"Set"},creative:{format:"image",primary_text:"Safe copy",preview_url:"https://cdn.example/creative.png"},destination:{destination_type:"external_url",external_url:"https://advertiser.example"},latest_decision:null}];
+    vi.mocked(searchAdminAdvertisingAds).mockResolvedValue(pending);
+    vi.mocked(reviewAdvertisingAd).mockRejectedValue(new TypeError("network reset"));
+    render(<MemoryRouter><AdminAdvertisingReviewPage/></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button",{name:"Approve"}));
+    fireEvent.click(screen.getByRole("button",{name:"Approve ad"}));
+    expect(await screen.findByRole("alert")).toHaveTextContent("could not confirm this review yet");
+    expect(screen.getByText("Review me")).toBeInTheDocument();
+  });
+
   it("fails closed for approval when canonical media has no reviewable URL",async()=>{
-    vi.mocked(searchAdminAdvertisingAds).mockResolvedValue([{id:"11111111-1111-4111-8111-111111111111",name:"No preview",status:"draft",review_status:"pending",submitted_at:"2026-09-23T18:00:00Z",reviewed_at:null,campaign:{name:"Campaign"},ad_set:{name:"Set"},creative:{format:"image",primary_text:"Copy",media_status:"ready",media_mime_type:"image/png",preview_url:null},destination:{destination_type:"external_url",external_url:"https://advertiser.example"},latest_decision:null}]);
+    vi.mocked(searchAdminAdvertisingAds).mockResolvedValue([{id:"11111111-1111-4111-8111-111111111111",name:"No preview",status:"draft",review_status:"pending",submission_fingerprint:"submitted-fingerprint-v1",submitted_at:"2026-09-23T18:00:00Z",reviewed_at:null,campaign:{name:"Campaign",objective:"awareness"},ad_set:{name:"Set"},creative:{format:"image",primary_text:"Copy",media_status:"ready",media_mime_type:"image/png",preview_url:null},destination:{destination_type:"external_url",external_url:"https://advertiser.example"},latest_decision:null}]);
     render(<MemoryRouter><AdminAdvertisingReviewPage/></MemoryRouter>);
     expect(await screen.findByText("Approval unavailable until canonical media preview is available.")).toBeInTheDocument();
     expect(screen.getByRole("button",{name:"Approve"})).toBeDisabled();
     expect(screen.getByRole("button",{name:"Reject"})).toBeEnabled();
+  });
+
+  it("lets read-only moderators inspect the exact submitted version without decision controls",async()=>{
+    vi.mocked(useAdminAuth).mockReturnValue(access(["content.items.read"]) as never);
+    vi.mocked(searchAdminAdvertisingAds).mockResolvedValue([{id:"11111111-1111-4111-8111-111111111111",name:"Review exact v1",status:"draft",review_status:"pending",submission_fingerprint:"fingerprint-v1",submitted_at:"2026-09-23T18:00:00Z",reviewed_at:null,campaign:{name:"Campaign",objective:"traffic"},ad_set:{name:"Set"},creative:{creative_version_id:"exact-v1",format:"image",primary_text:"Version one copy",preview_url:"https://cdn.example/v1.png"},destination:{destination_type:"external_url",external_url:"https://advertiser.example"},latest_decision:null}]);
+    render(<MemoryRouter><AdminAdvertisingReviewPage/></MemoryRouter>);
+    expect(await screen.findByText("Version one copy")).toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Approve"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Reject"})).not.toBeInTheDocument();
+    expect(screen.queryByText("exact-v1")).not.toBeInTheDocument();
+  });
+
+  it("requires an internal note for Other and shows human rejection labels",async()=>{
+    vi.mocked(searchAdminAdvertisingAds).mockResolvedValue([{id:"11111111-1111-4111-8111-111111111111",name:"Review me",status:"draft",review_status:"pending",submission_fingerprint:"fingerprint-v1",submitted_at:"2026-09-23T18:00:00Z",reviewed_at:null,campaign:{name:"Campaign",objective:"traffic"},ad_set:{name:"Set"},creative:{format:"image",primary_text:"Copy",preview_url:"https://cdn.example/v1.png"},destination:{destination_type:"external_url",external_url:"https://advertiser.example"},latest_decision:null}]);
+    render(<MemoryRouter><AdminAdvertisingReviewPage/></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText("Rejection reason for Review me"),{target:{value:"other"}});
+    fireEvent.click(screen.getByRole("button",{name:"Reject"}));
+    expect(screen.getAllByText("Other")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button",{name:"Reject ad"}));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Add an internal note");
+    expect(reviewAdvertisingAd).not.toHaveBeenCalled();
   });
 
   it("renders the advertiser-safe review reason in campaign detail without an internal note",async()=>{

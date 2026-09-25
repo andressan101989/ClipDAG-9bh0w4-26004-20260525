@@ -31,7 +31,7 @@ test("B5 makes Creative Version replay durable and removes the unsafe overload",
   assert.doesNotMatch(sql, /activation_enabled\s*=\s*true|funding_enabled\s*=\s*true|spend_enabled\s*=\s*true|global_v2_delivery_enabled\s*=\s*true/i);
 });
 
-test("B5 Business client owns the version idempotency key and keeps review submission out of the workspace", () => {
+test("B5 Business client owns the version idempotency key while B6 review submission uses B1 coordination", () => {
   const api = readFileSync(new URL("../apps/business-web/src/lib/adsManagerApi.ts", import.meta.url), "utf8");
   const workspace = readFileSync(new URL("../apps/business-web/src/pages/ads/BusinessAdsV2Pages.tsx", import.meta.url), "utf8");
   assert.match(api, /createAdvertisingCreativeVersion\([^)]*idempotencyKey: string/);
@@ -39,6 +39,8 @@ test("B5 Business client owns the version idempotency key and keeps review submi
   assert.match(workspace, /operation:\s*"creative:version"/);
   assert.match(workspace, /createAdvertisingCreativeVersion\([^,]+,\s*key\)/);
   assert.match(workspace, /reconcile:\s*\(\{ idempotencyKey \}\)\s*=>[\s\S]*findAdOperationResult\([^,]+,\s*idempotencyKey,\s*payload\)/);
-  assert.doesNotMatch(workspace, /submitAdvertisingAdForReview/);
+  assert.match(workspace, /operation:\s*"review:submit"/);
+  assert.match(workspace, /scope:\s*ad\.id/);
+  assert.match(workspace, /submitAdvertisingAdForReview\(ad\.id,\s*key\)/);
   assert.doesNotMatch(workspace, /versions\s*\[\s*0\s*\]/);
 });

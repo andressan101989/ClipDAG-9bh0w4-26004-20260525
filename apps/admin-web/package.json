@@ -11,7 +11,9 @@
     "build:deployment": "node ../../shared/web-deployment/buildPublicSupabaseSpa.mjs",
     "test:deployment": "node --test deployment/tests/*.test.mjs ../../shared/web-deployment/*.test.mjs",
     "deploy:isolated": "npm run build:deployment && npx --yes wrangler@4.135.0 deploy --config deployment/wrangler.unbound.jsonc",
-    "upload:preview": "npm run build:deployment && npx --yes wrangler@4.135.0 versions upload --config deployment/wrangler.preview.jsonc"
+    "upload:preview": "npm run build:deployment && npx --yes wrangler@4.135.0 versions upload --config deployment/wrangler.preview.jsonc",
+    "promote:version": "npx --yes wrangler@4.135.0 versions deploy --name nelyon-admin-web --percentage 100 --yes --config deployment/wrangler.preview.jsonc --version-id",
+    "apply:production-route": "npx --yes wrangler@4.135.0 triggers deploy --config deployment/wrangler.route.jsonc"
   },
   "dependencies": {
     "@nelyon/web-media": "file:../../shared/web-media",

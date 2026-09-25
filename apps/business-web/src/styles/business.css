@@ -380,6 +380,17 @@ h1, h2, p { margin-top: 0; }
 .ads-media-empty { display: grid; gap: 4px; margin-top: 12px; padding: 18px; border: 1px dashed var(--line); border-radius: 14px; color: var(--muted); }
 .field-error { display: block; margin-top: 6px; color: var(--danger, #a51d2d); }
 .ads-combined-preview > div:last-child { display: grid; gap: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; }
+.business-review-panel { display: grid; gap: 16px; }
+.ads-review-assembly { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(220px, .8fr); gap: 18px; align-items: start; }
+.ads-review-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 14px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: #f8faff; }
+.ads-review-summary span { color: var(--muted); font-size: 12px; }
+.ads-review-summary strong { min-width: 0; overflow-wrap: anywhere; color: var(--navy); }
+.ads-review-status { display: inline-flex; width: fit-content; padding: 6px 10px; border-radius: 999px; background: #eef2fa; color: var(--navy); font-size: 12px; font-weight: 800; }
+.ads-review-status.status-approved { background: #eaf8ef; color: #14643a; }
+.ads-review-status.status-rejected { background: #fff1f2; color: #9b1c31; }
+.ads-review-callout { padding: 16px; border: 1px solid #bcd0f5; border-radius: 14px; background: #f5f8ff; }
+.ads-review-callout.needs-attention { border-color: #efc6cb; background: #fff7f8; }
+.ads-review-confirm { width: min(540px, 100%); }
 .ads-v2-checklist { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; padding: 0; list-style: none; }
 .ads-v2-checklist li { display: grid; grid-template-columns: auto 1fr; gap: 2px 9px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 12px; color: var(--muted); background: #f8faff; }
 .ads-v2-checklist li.is-ready { border-color: #b7dfc6; color: #14643a; background: #f1fbf5; }
@@ -410,6 +421,7 @@ h1, h2, p { margin-top: 0; }
   .ads-form-section:nth-child(n), .ads-review-card { grid-column: 1; grid-row: auto; }
   .ads-review-card { position: static; }
   .ads-v2-checklist { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ads-review-assembly { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 760px) {

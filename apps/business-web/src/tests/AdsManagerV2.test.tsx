@@ -14,7 +14,10 @@ const api = vi.hoisted(() => ({
   age: vi.fn(), remediateAge: vi.fn(),
   targetingCapabilities: vi.fn(), createAudienceVersion: vi.fn(),
   createAudience: vi.fn(), updateAdSet: vi.fn(), updateDestination: vi.fn(), createPlacementVersion: vi.fn(),
+  createAd: vi.fn(), submitReview: vi.fn(),
 }));
+const mediaApi = vi.hoisted(() => ({ search: vi.fn() }));
+vi.mock("../lib/businessMediaApi", async (original) => ({ ...await original<typeof import("../lib/businessMediaApi")>(), searchAllBusinessMedia: mediaApi.search }));
 vi.mock("../lib/adsManagerApi", async (original) => ({
   ...await original<typeof import("../lib/adsManagerApi")>(),
   getAdvertiserAccounts: api.accounts,
@@ -40,6 +43,8 @@ vi.mock("../lib/adsManagerApi", async (original) => ({
   updateAdvertisingAdSetDraft: api.updateAdSet,
   updateAdvertisingDestinationDraft: api.updateDestination,
   createAdvertisingPlacementSelectionVersion: api.createPlacementVersion,
+  createAdvertisingAdDraft: api.createAd,
+  submitAdvertisingAdForReview: api.submitReview,
 }));
 
 const ownerBusiness = { businessAccountId: "business-1", displayName: "Nelyon Studio", status: "active", accessType: "owner", marketplace: { linked: false, marketplaceSellerUserId: null, sellerStatus: null }, adAccounts: [{ id: "account-1", name: "Nelyon Ads", status: "active", billingCurrency: "BDAG", isDefault: true }] };
@@ -74,6 +79,9 @@ describe("Ads Manager V2 workspace", () => {
     api.updateAdSet.mockResolvedValue({ id: "set-1" });
     api.updateDestination.mockResolvedValue({ id: "destination-1" });
     api.createPlacementVersion.mockResolvedValue({ placement_selection_id: "selection-1" });
+    api.createAd.mockResolvedValue({ id: "ad-2" });
+    api.submitReview.mockResolvedValue({ id: "ad-1", review_status: "pending" });
+    mediaApi.search.mockResolvedValue([]);
   });
 
   it("offers advertiser-only onboarding without Marketplace seller, Store, or Product", async () => {
@@ -151,7 +159,7 @@ describe("Ads Manager V2 workspace", () => {
     expect(screen.getByRole("button", { name: "Choose from Media Library" })).toBeEnabled();
   });
 
-  it("restores canonical placement codes in the assembled review after refresh", async () => {
+  it("restores canonical placement codes in the placement step after refresh", async () => {
     api.campaign.mockResolvedValue({
       id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null,
       adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: null, placementSelection: { id: "selection-1", status: "draft", latestVersionNumber: 1 } }],
@@ -160,8 +168,60 @@ describe("Ads Manager V2 workspace", () => {
     api.creativeWorkspace.mockResolvedValue({ creatives: [{ id: "creative-1", adAccountId: "account-1", name: "Creative", status: "draft", versions: [{ id: "version-1", versionNumber: 1, format: "image", mediaAssetId: "media-1", videoAssetId: null, primaryText: "Copy", headline: "Headline", description: null, callToAction: "learn_more", createdAt: "2026-09-23T00:00:00Z" }] }], ads: [{ id: "ad-1", name: "Ad", campaignId: "campaign-1", adSetId: "set-1", creativeVersionId: "version-1", destinationId: "destination-1", status: "draft", reviewStatus: "not_submitted", submittedAt: null, reviewedAt: null, latestRejectionReasonCode: null, latestRejectionMessage: null }] });
     api.placement.mockResolvedValue({ placementSelectionId: "selection-1", adSetId: "set-1", status: "draft", latestVersion: { versionNumber: 1, registryPolicyVersion: "nelyon-ads-delivery-v2", definitionFingerprint: "fp", placements: [{ code: "clips", label: "Clips", surfaceFamily: "video", surfaceVerified: true, selectionEnabled: true, v2DeliveryEnabled: false }, { code: "live", label: "Live", surfaceFamily: "live", surfaceVerified: true, selectionEnabled: true, v2DeliveryEnabled: false }] }, productionDeliveryEnabled: false });
     renderHome("/ads/campaigns/campaign-1");
-    expect(await screen.findByText("Placements: Clips, Live")).toBeInTheDocument();
-    expect(screen.queryByText("Placements: Social Feed")).not.toBeInTheDocument();
+    expect(await screen.findByText("Clips")).toBeInTheDocument();
+    expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.getByText("Placements", { selector: "h2" })).toBeInTheDocument();
+  });
+
+  it("submits the exact selected Ad through the B1 review scope and reconstructs pending state", async () => {
+    api.campaign.mockResolvedValue({
+      id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null,
+      adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", updatedAt: "2026-09-23T00:00:00Z", audience: null, placementSelection: null }],
+      destinations: [{ id: "destination-1", destinationType: "external_url", externalUrl: "https://example.com", targetUserId: null, targetBusinessAccountId: null, targetProductId: null, targetStoreId: null, status: "draft", createdAt: "2026-09-23T00:00:00Z", updatedAt: "2026-09-23T00:00:00Z" }],
+    });
+    const creative = { id: "creative-1", adAccountId: "account-1", name: "Creative", status: "draft", versions: [{ id: "version-1", versionNumber: 1, format: "image", mediaAssetId: null, videoAssetId: null, primaryText: "Exact copy", headline: "Exact headline", description: null, callToAction: "learn_more", contentFingerprint: "content-fingerprint", creationIdempotencyKey: "version-key", createdAt: "2026-09-23T00:00:00Z" }] };
+    const draftAd = { id: "ad-1", name: "Ad", campaignId: "campaign-1", adSetId: "set-1", creativeVersionId: "version-1", destinationId: "destination-1", creationIdempotencyKey: "ad-key", status: "draft", reviewStatus: "not_submitted", submittedAt: null, reviewedAt: null, latestRejectionReasonCode: null, latestRejectionMessage: null };
+    const pendingAd = { ...draftAd, reviewStatus: "pending", submittedAt: "2026-09-25T12:00:00Z" };
+    api.creativeWorkspace.mockResolvedValueOnce({ creatives: [creative], ads: [draftAd] }).mockResolvedValue({ creatives: [creative], ads: [pendingAd] });
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Submit for review" }));
+    const confirm = screen.getByRole("button", { name: "Confirm submission" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(api.submitReview).toHaveBeenCalledTimes(1));
+    expect(api.submitReview).toHaveBeenCalledWith("ad-1", expect.any(String));
+    expect(await screen.findAllByText("In review")).toHaveLength(2);
+    expect(screen.queryByText(/submission_fingerprint|creative_version_id|Internal moderation detail/i)).not.toBeInTheDocument();
+  });
+
+  it("selects a newly created revised Ad instead of returning to the rejected Ad", async () => {
+    api.campaign.mockResolvedValue({
+      id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null,
+      adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", updatedAt: "2026-09-23T00:00:00Z", audience: null, placementSelection: null }],
+      destinations: [{ id: "destination-1", destinationType: "external_url", externalUrl: "https://example.com", targetUserId: null, targetBusinessAccountId: null, targetProductId: null, targetStoreId: null, status: "draft", createdAt: "2026-09-23T00:00:00Z", updatedAt: "2026-09-23T00:00:00Z" }],
+    });
+    const media = { assetId: "media-1", assetSource: "media_asset", provider: "r2", mediaKind: "image", purpose: "business_library", status: "ready", mimeType: "image/png", visibility: "public", sizeBytes: 1024, createdAt: "2026-09-23T00:00:00Z", readyAt: "2026-09-23T00:00:01Z", previewUrl: "https://cdn.example/creative.png", playbackUrl: null, thumbnailUrl: null, usage: ["library"], usageCount: 0, progress: null, errorCode: null };
+    mediaApi.search.mockResolvedValue([media]);
+    const creative = { id: "creative-1", adAccountId: "account-1", name: "Creative", status: "draft", versions: [{ id: "version-1", versionNumber: 1, format: "image", mediaAssetId: "media-1", videoAssetId: null, primaryText: "Exact copy", headline: "Exact headline", description: null, callToAction: "learn_more", contentFingerprint: "content-fingerprint", creationIdempotencyKey: "version-key", createdAt: "2026-09-23T00:00:00Z" }] };
+    const rejectedAd = { id: "ad-1", name: "Rejected Ad", campaignId: "campaign-1", adSetId: "set-1", creativeVersionId: "version-1", destinationId: "destination-1", creationIdempotencyKey: "ad-key-1", status: "draft", reviewStatus: "rejected", submittedAt: "2026-09-24T12:00:00Z", reviewedAt: "2026-09-24T13:00:00Z", latestRejectionReasonCode: "copy_invalid", latestRejectionMessage: "The ad copy could not be approved." };
+    const revisedAd = { ...rejectedAd, id: "ad-2", name: "Revised Ad", creationIdempotencyKey: "ad-key-2", reviewStatus: "not_submitted", submittedAt: null, reviewedAt: null, latestRejectionReasonCode: null, latestRejectionMessage: null };
+    api.creativeWorkspace
+      .mockResolvedValueOnce({ creatives: [creative], ads: [rejectedAd] })
+      .mockRejectedValueOnce(new Error("refresh unavailable"))
+      .mockResolvedValue({ creatives: [creative], ads: [rejectedAd, revisedAd] });
+    api.createAd.mockResolvedValue({ id: "ad-2" });
+
+    renderHome("/ads/campaigns/campaign-1?ad=ad-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Create revised ad" }));
+    fireEvent.change(await screen.findByLabelText(/Ad name/), { target: { value: "Revised Ad" } });
+    const createRevised = screen.getByRole("button", { name: "Create revised ad" });
+    await waitFor(() => expect(createRevised).toBeEnabled());
+    fireEvent.click(createRevised);
+    await waitFor(() => expect(api.createAd).toHaveBeenCalledWith(expect.objectContaining({ name: "Revised Ad" }), expect.any(String)));
+    expect(await screen.findByText("Saved, but we couldn't refresh the latest view.")).toBeInTheDocument();
+    expect(await screen.findAllByText("Ready for review")).toHaveLength(2);
+    expect(screen.getByRole("heading", { level: 3, name: "Revised Ad" })).toBeInTheDocument();
+    expect(screen.queryByText("The ad copy could not be approved.")).not.toBeInTheDocument();
   });
 
   it("requires explicit Ad Set selection when a campaign has multiple children", async () => {
