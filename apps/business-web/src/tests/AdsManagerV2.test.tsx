@@ -284,21 +284,34 @@ describe("Ads Manager V2 workspace", () => {
   it("uses server targeting capabilities and never offers launch-disabled geo or language inputs", async () => {
     api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: null, placementSelection: null }], destinations: [] });
     renderHome("/ads/campaigns/campaign-1");
-    expect(await screen.findByDisplayValue("Adults 18+")).toBeInTheDocument();
-    expect(screen.getByText("Geographic targeting is not available in the current Ads launch scope.")).toBeInTheDocument();
-    expect(screen.getByText("Language targeting is not available in the current Ads launch scope.")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Adults 18+ selected and required")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Location" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Language" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Country code")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Language tag")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Daypart start")).toBeEnabled();
-    expect(screen.getByLabelText("Max impressions")).toBeEnabled();
+    expect(screen.getByRole("radio", { name: "Any time" })).toBeEnabled();
+    expect(screen.getByRole("checkbox", { name: "Limit frequency" })).toBeEnabled();
+  });
+
+  it("keeps the canonical Audience summary readable and saving fail-closed when capabilities cannot load", async () => {
+    api.targetingCapabilities.mockRejectedValue(new Error("network_unavailable"));
+    api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: { id: "audience-1", status: "draft", latestVersionNumber: 1 }, placementSelection: null }], destinations: [] });
+    api.audience.mockResolvedValue({ audience_id: "audience-1", latest_version: { age_scope: "adults_only", geographies: [], languages: [], targeting_policy_version: "nelyon-ads-targeting-v2", dayparts: [{ timezone: "America/Caracas", weekday: 2, start: "13:00", end: "18:00" }], frequency: { max_impressions: 20, window_hours: 24 } } });
+    renderHome("/ads/campaigns/campaign-1");
+
+    expect(await screen.findByText("Tuesday, 1:00 PM–6:00 PM")).toBeInTheDocument();
+    expect(screen.getByText("Targeting settings are temporarily unavailable. Try again.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit audience" })).toBeDisabled();
+    expect(api.createAudienceVersion).not.toHaveBeenCalled();
   });
 
   it("marks a historical audience stale and creates a fresh version without rewriting it", async () => {
     api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: { id: "audience-1", status: "draft", latestVersionNumber: 1 }, placementSelection: null }], destinations: [] });
     api.audience.mockResolvedValue({ audience_id: "audience-1", latest_version: { targeting_policy_version: "nelyon-ads-targeting-v1", dayparts: [], frequency: null } });
     renderHome("/ads/campaigns/campaign-1");
-    expect(await screen.findByText("Your audience configuration uses an older targeting policy. Create an updated audience version before launch.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Create updated audience version" }));
+    expect(await screen.findByText("Your audience settings need to be reviewed before this campaign can continue.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review audience" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(api.createAudienceVersion).toHaveBeenCalledWith("audience-1", expect.objectContaining({ age_scope: "adults_only", geographies: [], languages: [] }), expect.any(String)));
   });
 
@@ -307,8 +320,8 @@ describe("Ads Manager V2 workspace", () => {
     api.audience.mockResolvedValue({ audience_id: "audience-1", latest_version: { age_scope: "adults_only", geographies: [], languages: [], targeting_policy_version: "nelyon-ads-targeting-v2", dayparts: [{ timezone: "America/New_York", weekday: 1, start: "09:00", end: "12:00" }, { timezone: "America/New_York", weekday: 5, start: "18:00", end: "21:00" }], frequency: { max_impressions: 2, window_hours: 24 } } });
     renderHome("/ads/campaigns/campaign-1");
     fireEvent.click(await screen.findByRole("button", { name: "Edit audience" }));
-    fireEvent.change(screen.getByLabelText("Max impressions"), { target: { value: "3" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create updated audience version" }));
+    fireEvent.change(screen.getByLabelText("Maximum impressions"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(api.createAudienceVersion).toHaveBeenCalledWith("audience-1", expect.objectContaining({
       dayparts: [
         { timezone: "America/New_York", weekday: 1, start: "09:00", end: "12:00" },
@@ -335,7 +348,7 @@ describe("Ads Manager V2 workspace", () => {
     let release!: (value: { audience_id: string }) => void;
     api.createAudience.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
     renderHome("/ads/campaigns/campaign-1");
-    const save = await screen.findByRole("button", { name: "Save Audience" });
+    const save = await screen.findByRole("button", { name: "Create audience" });
 
     fireEvent.click(save);
     fireEvent.click(save);
@@ -354,12 +367,13 @@ describe("Ads Manager V2 workspace", () => {
     let release!: (value: { audience_id: string }) => void;
     api.createAudience.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
     renderHome("/ads/campaigns/campaign-1");
-    const field = await screen.findByLabelText("Max impressions");
-
-    await user.click(field);
+    await screen.findByRole("button", { name: "Create audience" });
+    await user.click(screen.getByRole("radio", { name: "Custom schedule" }));
+    const timezone = screen.getByLabelText(/^Time zone/);
+    await user.click(timezone);
     await user.keyboard("{Enter}");
     await waitFor(() => expect(api.createAudience).toHaveBeenCalledTimes(1));
-    expect(field.closest("form")).toHaveAttribute("aria-busy", "true");
+    expect(timezone.closest("form")).toHaveAttribute("aria-busy", "true");
     release({ audience_id: "audience-1" });
     expect(await screen.findByText("Audience created")).toBeInTheDocument();
   });
@@ -372,7 +386,7 @@ describe("Ads Manager V2 workspace", () => {
     api.createAudience.mockRejectedValue(new Error("advertising_audience_idempotency_conflict"));
     renderHome("/ads/campaigns/campaign-1");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Save Audience" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create audience" }));
 
     expect(await screen.findByText("Already saved. We refreshed the saved version.")).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("advertising_audience_idempotency_conflict");
@@ -383,7 +397,7 @@ describe("Ads Manager V2 workspace", () => {
     const campaign = { id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: null, placementSelection: null }], destinations: [] };
     api.campaign.mockResolvedValueOnce(campaign).mockRejectedValue(new Error("refresh_network_error"));
     renderHome("/ads/campaigns/campaign-1");
-    fireEvent.click(await screen.findByRole("button", { name: "Save Audience" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create audience" }));
 
     expect(await screen.findByText("Audience created")).toBeInTheDocument();
     expect(screen.getByText("Saved, but we couldn't refresh the latest view.")).toBeInTheDocument();

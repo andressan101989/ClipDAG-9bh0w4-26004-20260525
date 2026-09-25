@@ -4,6 +4,8 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useBusinessAuth } from "../../auth/BusinessAuthProvider";
 import { FormField, InlineError, PageHeader, StatusBadge } from "../../components/BusinessUI";
 import { BusinessMediaPicker, BusinessMediaPreview } from "../../components/BusinessMedia";
+import { AudienceTargetingPanel } from "../../components/ads/AudienceTargetingPanel";
+import { audienceCapabilitiesAreSafe } from "../../lib/audienceTargetingUx";
 import type { BusinessMediaItem } from "../../lib/businessMediaApi";
 import {
   ADVERTISING_CTAS,
@@ -94,6 +96,7 @@ type AdvertisingManagerState = {
   error: string | null;
   ageEligibility: AdvertisingAgeEligibility | null;
   targetingCapabilities: AdvertisingTargetingCapabilities | null;
+  targetingCapabilitiesUnavailable: boolean;
   selectBusiness: (id: string) => void;
   selectAdAccount: (id: string) => void;
   createBusiness: (name: string) => Promise<{ refreshWarning: string | null }>;
@@ -113,15 +116,22 @@ export function AdvertisingManagerProvider({ children }: { children: ReactNode }
   const [error, setError] = useState<string | null>(null);
   const [ageEligibility, setAgeEligibility] = useState<AdvertisingAgeEligibility | null>(null);
   const [targetingCapabilities, setTargetingCapabilities] = useState<AdvertisingTargetingCapabilities | null>(null);
+  const [targetingCapabilitiesUnavailable, setTargetingCapabilitiesUnavailable] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!user) return false;
     setLoading(true); setError(null);
     try {
-      const [nextAccounts, nextCampaigns, nextAgeEligibility, nextTargetingCapabilities] = await Promise.all([getAdvertiserAccounts(), getAdvertisingCampaigns(), getMyAgeEligibility(), getAdvertisingTargetingCapabilities()]);
+      const [nextAccounts, nextCampaigns, nextAgeEligibility, targetingResult] = await Promise.all([
+        getAdvertiserAccounts(),
+        getAdvertisingCampaigns(),
+        getMyAgeEligibility(),
+        getAdvertisingTargetingCapabilities().then((value) => ({ value, unavailable: false })).catch(() => ({ value: null, unavailable: true })),
+      ]);
       setAccounts(nextAccounts); setCampaigns(nextCampaigns);
       setAgeEligibility(nextAgeEligibility);
-      setTargetingCapabilities(nextTargetingCapabilities);
+      setTargetingCapabilities(targetingResult.value);
+      setTargetingCapabilitiesUnavailable(targetingResult.unavailable);
       setSelectedBusinessId((current) => nextAccounts.some((item) => item.businessAccountId === current) ? current : nextAccounts[0]?.businessAccountId ?? "");
       return true;
     } catch (cause) { setError(advertisingUserMessage(cause)); return false; }
@@ -159,7 +169,7 @@ export function AdvertisingManagerProvider({ children }: { children: ReactNode }
     return result;
   }, []);
 
-  const value = useMemo<AdvertisingManagerState>(() => ({ accounts, campaigns, selectedBusiness, selectedAdAccount, loading, error, ageEligibility, targetingCapabilities, selectBusiness: setSelectedBusinessId, selectAdAccount: setSelectedAdAccountId, createBusiness, remediateAge, refresh }), [accounts, campaigns, selectedBusiness, selectedAdAccount, loading, error, ageEligibility, targetingCapabilities, createBusiness, remediateAge, refresh]);
+  const value = useMemo<AdvertisingManagerState>(() => ({ accounts, campaigns, selectedBusiness, selectedAdAccount, loading, error, ageEligibility, targetingCapabilities, targetingCapabilitiesUnavailable, selectBusiness: setSelectedBusinessId, selectAdAccount: setSelectedAdAccountId, createBusiness, remediateAge, refresh }), [accounts, campaigns, selectedBusiness, selectedAdAccount, loading, error, ageEligibility, targetingCapabilities, targetingCapabilitiesUnavailable, createBusiness, remediateAge, refresh]);
   return <AdvertisingManagerContext.Provider value={value}>{children}</AdvertisingManagerContext.Provider>;
 }
 
@@ -278,7 +288,6 @@ export function BusinessAdsManagerNewCampaignPage() {
 
 type WorkspaceData = { requestKey: string; campaign: AdvertisingCampaign; readiness: AdvertisingCampaignReadiness; creatives: AdvertisingCreativeWorkspace; finance: AdvertisingFinance | null; analytics: Record<string, unknown>; audience: Record<string, unknown> | null; placement: AdvertisingPlacementSelection | null; selectedAdSetId: string | null; selectedDestinationId: string | null; selectedAdId: string | null };
 
-const defaultAudience: AdvertisingAudienceDefinition = { age_scope: "adults_only", geographies: [], languages: [], dayparts: [], frequency: null };
 const datetimeLocalValue = (value: string | null) => value ? new Date(new Date(value).getTime() - new Date(value).getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : "";
 const sameInstant = (left: string | null, right: string | null) => left === right || Boolean(left && right && Date.parse(left) === Date.parse(right));
 
@@ -374,7 +383,7 @@ export function BusinessAdsManagerCampaignPage() {
 
 function CampaignWorkspace({ data, business, adAccount, owner, run, reload, pending, selectEntity }: { data: WorkspaceData; business: AdvertiserBusiness | null; adAccount: AdvertiserAdAccount | null; owner: boolean; run: <T>(input: AdsMutationRunInput<T>, message: string) => Promise<boolean>; reload: () => Promise<WorkspaceData>; pending: boolean; selectEntity: (key: "adSet" | "destination" | "ad", value: string) => void }) {
   const { user } = useBusinessAuth();
-  const { targetingCapabilities } = useAdvertisingManager();
+  const { targetingCapabilities, targetingCapabilitiesUnavailable } = useAdvertisingManager();
   const campaign = data.campaign;
   const adSet = campaign.adSets.find((item) => item.id === data.selectedAdSetId);
   const destination = campaign.destinations.find((item) => item.id === data.selectedDestinationId);
@@ -383,41 +392,32 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, pend
   const accountCreatives = data.creatives.creatives.filter((creative) => creative.adAccountId === campaign.adAccountId && creative.status === "draft");
   const versions = accountCreatives.flatMap((creative) => creative.versions.map((version) => ({ ...version, creativeName: creative.name })));
   const [adSetName, setAdSetName] = useState("Primary Ad Set"); const [startsAt, setStartsAt] = useState(""); const [endsAt, setEndsAt] = useState("");
-  const [timezone, setTimezone] = useState("America/Caracas"); const [weekday, setWeekday] = useState("1"); const [dayStart, setDayStart] = useState(""); const [dayEnd, setDayEnd] = useState(""); const [frequency, setFrequency] = useState(""); const [frequencyWindow, setFrequencyWindow] = useState("24");
   const [placements, setPlacements] = useState<string[]>(["social_feed"]);
   const [destinationType, setDestinationType] = useState("external_url"); const [destinationValue, setDestinationValue] = useState("");
   const [creativeName, setCreativeName] = useState("Primary Creative"); const [creativeFormat, setCreativeFormat] = useState<"image" | "video">("image"); const [mediaId, setMediaId] = useState(""); const [primaryText, setPrimaryText] = useState(""); const [headline, setHeadline] = useState(""); const [description, setDescription] = useState(""); const [cta, setCta] = useState("learn_more");
   const [mediaPickerOpen, setMediaPickerOpen] = useState(false); const [selectedMedia, setSelectedMedia] = useState<BusinessMediaItem | null>(null);
   const [versionId, setVersionId] = useState(versions[0]?.id ?? ""); const [adName, setAdName] = useState("Primary Ad"); const [budget, setBudget] = useState("");
-  const [editingAdSet, setEditingAdSet] = useState(false); const [editingAudience, setEditingAudience] = useState(false); const [editingPlacements, setEditingPlacements] = useState(false); const [editingDestination, setEditingDestination] = useState(false);
+  const [editingAdSet, setEditingAdSet] = useState(false); const [editingPlacements, setEditingPlacements] = useState(false); const [editingDestination, setEditingDestination] = useState(false);
   useEffect(() => { if (!versionId && versions[0]) setVersionId(versions[0].id); }, [versionId, versions]);
   const persistedPlacements = data.placement?.latestVersion?.placements.map((item) => item.code) ?? null;
   const displayedPlacements = persistedPlacements ?? placements;
   const audienceLatest = data.audience?.latest_version && typeof data.audience.latest_version === "object" ? data.audience.latest_version as Record<string, unknown> : null;
+  const audienceDefinition = useMemo(() => audienceDefinitionFromPayload(data.audience), [data.audience]);
   const audienceIsStale = Boolean(audienceLatest && targetingCapabilities && audienceLatest.targeting_policy_version !== targetingCapabilities.policyVersion);
   useEffect(() => { if (adSet) { setAdSetName(adSet.name); setStartsAt(datetimeLocalValue(adSet.startsAt)); setEndsAt(datetimeLocalValue(adSet.endsAt)); setEditingAdSet(false); } }, [adSet]);
-  useEffect(() => {
-    const current = audienceDefinitionFromPayload(data.audience);
-    const daypart = current?.dayparts[0];
-    setTimezone(daypart?.timezone ?? "America/Caracas"); setWeekday(String(daypart?.weekday ?? 1)); setDayStart(daypart?.start ?? ""); setDayEnd(daypart?.end ?? "");
-    setFrequency(current?.frequency ? String(current.frequency.max_impressions) : ""); setFrequencyWindow(current?.frequency ? String(current.frequency.window_hours) : "24");
-    setEditingAudience(false);
-  }, [data.audience]);
   useEffect(() => {
     const restored = data.placement?.latestVersion?.placements.map((item) => item.code) ?? null;
     if (restored) setPlacements(restored);
     setEditingPlacements(false);
   }, [data.placement]);
   useEffect(() => { if (destination) { setDestinationType(destination.destinationType); setDestinationValue(destination.externalUrl ?? destination.targetUserId ?? destination.targetBusinessAccountId ?? destination.targetProductId ?? destination.targetStoreId ?? ""); setEditingDestination(false); } }, [destination]);
-  const preservedDayparts = audienceDefinitionFromPayload(data.audience)?.dayparts.slice(1) ?? [];
-  const definition: AdvertisingAudienceDefinition = { ...defaultAudience, geographies: [], languages: [], dayparts: targetingCapabilities?.daypartTargetingEnabled && dayStart && dayEnd ? [{ timezone, weekday: Number(weekday), start: dayStart, end: dayEnd }, ...preservedDayparts] : [], frequency: targetingCapabilities?.frequencyTargetingEnabled && frequency ? { max_impressions: Number(frequency), window_hours: Number(frequencyWindow) } : null };
   const checklist = [
     ["Campaign draft", true], ["Ad Set configured", Boolean(adSet)], ["Audience configured", Boolean(adSet?.audience)], ["Placements configured", Boolean(adSet?.placementSelection)], ["Destination configured", Boolean(destination)], ["Creative configured", versions.length > 0], ["Ad assembled", Boolean(ad)], ["Review status", ad?.reviewStatus ?? "not_submitted"], ["Budget draft", Boolean(data.finance)],
   ];
   const workflow = deriveAdsWorkflow({
     campaign: { exists: true, status: campaign.status },
     adSet: { selected: Boolean(adSet), count: campaign.adSets.length, status: adSet?.status ?? null, scheduleValid: !adSet || ((!adSet.startsAt && !adSet.endsAt) || Boolean(adSet.startsAt && adSet.endsAt && Date.parse(adSet.startsAt) < Date.parse(adSet.endsAt))) },
-    audience: { exists: Boolean(data.audience), valid: Boolean(audienceLatest), policyCurrent: !audienceIsStale },
+    audience: { exists: Boolean(data.audience), valid: Boolean(audienceLatest), policyCurrent: audienceCapabilitiesAreSafe(targetingCapabilities) && !audienceIsStale },
     placements: { exists: Boolean(data.placement?.latestVersion), valid: Boolean(data.placement?.latestVersion?.placements.every((item) => item.selectionEnabled)) },
     destination: { selected: Boolean(destination), count: campaign.destinations.length, valid: destination?.status === "draft" },
     creative: { exists: accountCreatives.length > 0, usable: versions.length > 0 },
@@ -443,19 +443,18 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, pend
       {adSet && !editingAdSet ? <><p><strong>{adSet.name}</strong> · {adSet.startsAt ? `${formatDate(adSet.startsAt)} — ${formatDate(adSet.endsAt ?? "")}` : "No fixed schedule"}</p><button type="button" className="secondary-button" disabled={!owner || pending} onClick={() => setEditingAdSet(true)}>Edit Ad Set</button></> : null}
       {(!adSet || editingAdSet) && (campaign.adSets.length <= 1 || adSet) ? <form className="seller-form" aria-busy={pending} onSubmit={(event) => { event.preventDefault(); if (pending) return; const values = { name: adSetName.trim(), startsAt: startsAt ? new Date(startsAt).toISOString() : null, endsAt: endsAt ? new Date(endsAt).toISOString() : null }; if (adSet) { const payload = { adSetId: adSet.id, ...values, expectedUpdatedAt: adSet.updatedAt }; void run({ operation: "adSet:update", scope: adSet.id, payload, mutate: (key) => updateAdvertisingAdSetDraft(payload, key), reconcile: () => reconcileWorkspace((workspace) => workspace.campaign.adSets.find((item) => item.id === adSet.id && item.name === payload.name && sameInstant(item.startsAt, payload.startsAt) && sameInstant(item.endsAt, payload.endsAt)) ?? null, (workspace) => workspace.campaign.adSets.some((item) => item.id === adSet.id)) }, "Ad Set updated").then((saved) => { if (saved) setEditingAdSet(false); }); } else { const payload = { campaignId: campaign.id, ...values }; void run({ operation: "adSet:create", scope: campaign.id, payload, mutate: (key) => createAdvertisingAdSetDraft(payload, key), reconcile: () => reconcileWorkspace((workspace) => workspace.campaign.adSets.find((item) => item.name === payload.name && sameInstant(item.startsAt, payload.startsAt) && sameInstant(item.endsAt, payload.endsAt)) ?? null, (workspace) => workspace.campaign.adSets.length > 0) }, "Ad Set created"); } }}><FormField label="Ad Set name"><input value={adSetName} onChange={(event) => setAdSetName(event.target.value)} /></FormField><div className="two-column"><FormField label="Start (optional)" hint={`Browser timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`}><input type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} /></FormField><FormField label="End (optional)"><input type="datetime-local" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} /></FormField></div><div className="compact-actions"><button className="primary-button" disabled={!owner || pending} type="submit">{pending ? "Saving…" : adSet ? "Save changes" : "Create Ad Set"}</button>{adSet && <button className="secondary-button" type="button" disabled={pending} onClick={() => { setEditingAdSet(false); setAdSetName(adSet.name); setStartsAt(datetimeLocalValue(adSet.startsAt)); setEndsAt(datetimeLocalValue(adSet.endsAt)); }}>Cancel editing</button>}</div></form> : campaign.adSets.length > 1 && !adSet ? <p>Select an Ad Set to continue.</p> : null}
     </section>
-    <section id="audience" className="business-card editor-card">
-      <p className="eyebrow">Step 3</p>
-      <h2>Audience</h2>
-      <div className="readonly-note">Age is fixed to Adults 18+.</div>
-      <div className="readonly-note">Geographic targeting is not available in the current Ads launch scope.</div>
-      <div className="readonly-note">Language targeting is not available in the current Ads launch scope.</div>
-      {data.audience && <><p><strong>Audience v{String(audienceLatest?.version_number ?? adSet?.audience?.latestVersionNumber ?? "")}</strong> · Adults 18+</p>{!editingAudience && <button type="button" className="secondary-button" disabled={!owner || pending} onClick={() => setEditingAudience(true)}>Edit audience</button>}</>}
-      {audienceIsStale && <div className="readonly-note">Your audience configuration uses an older targeting policy. Create an updated audience version before launch.</div>}
-      {(!data.audience || audienceIsStale || editingAudience) && adSet ? <form className="seller-form" aria-busy={pending} onSubmit={(event) => {
-        event.preventDefault();
-        if (pending) return;
+    {adSet ? <AudienceTargetingPanel
+      audienceIdentity={typeof data.audience?.audience_id === "string" ? data.audience.audience_id : null}
+      definition={audienceDefinition}
+      exists={Boolean(data.audience)}
+      stale={audienceIsStale}
+      capabilities={targetingCapabilities}
+      capabilitiesUnavailable={targetingCapabilitiesUnavailable}
+      owner={owner}
+      pending={pending}
+      onSave={async (definition) => {
         const audienceId = data.audience?.audience_id as string | undefined;
-        void run({
+        return run({
           operation: audienceId ? "audience:version" : "audience:create",
           scope: audienceId ?? adSet.id,
           payload: definition,
@@ -464,20 +463,9 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, pend
             (workspace) => sameAudienceDefinition(audienceDefinitionFromPayload(workspace.audience), definition) ? workspace.audience : null,
             (workspace) => workspace.audience != null,
           ),
-          }, audienceId ? "Audience version updated" : "Audience created").then((saved) => { if (saved) setEditingAudience(false); });
-      }}>
-        <FormField label="Age"><input value="Adults 18+" readOnly /></FormField>
-        <div className="form-grid">
-          <FormField label="Timezone"><input disabled={!targetingCapabilities?.daypartTargetingEnabled} value={timezone} onChange={(event) => setTimezone(event.target.value)} /></FormField>
-          <FormField label="Weekday (1 Monday – 7 Sunday)"><input disabled={!targetingCapabilities?.daypartTargetingEnabled} type="number" min="1" max="7" value={weekday} onChange={(event) => setWeekday(event.target.value)} /></FormField>
-          <FormField label="Daypart start"><input disabled={!targetingCapabilities?.daypartTargetingEnabled} type="time" value={dayStart} onChange={(event) => setDayStart(event.target.value)} /></FormField>
-          <FormField label="Daypart end"><input disabled={!targetingCapabilities?.daypartTargetingEnabled} type="time" value={dayEnd} onChange={(event) => setDayEnd(event.target.value)} /></FormField>
-          <FormField label="Max impressions"><input disabled={!targetingCapabilities?.frequencyTargetingEnabled} type="number" min="1" max="20" value={frequency} onChange={(event) => setFrequency(event.target.value)} /></FormField>
-          <FormField label="Frequency window hours"><input disabled={!targetingCapabilities?.frequencyTargetingEnabled} type="number" min="1" max="168" value={frequencyWindow} onChange={(event) => setFrequencyWindow(event.target.value)} /></FormField>
-        </div>
-        <div className="compact-actions"><button className="primary-button" disabled={!owner || !targetingCapabilities || pending} type="submit">{pending ? "Saving…" : data.audience ? "Create updated audience version" : "Save Audience"}</button>{data.audience && <button className="secondary-button" type="button" disabled={pending} onClick={() => setEditingAudience(false)}>Cancel editing</button>}</div>
-      </form> : !adSet ? <p>Create an Ad Set first.</p> : null}
-    </section>
+        }, audienceId ? "Audience updated" : "Audience created");
+      }}
+    /> : <section id="audience" className="business-card editor-card"><p className="eyebrow">Step 3</p><h2>Audience</h2><p>Create an Ad Set first.</p></section>}
     <section id="placements" className="business-card editor-card"><p className="eyebrow">Step 4</p><h2>Placements</h2><p className="muted-copy">Every surface is configurable for a future adapter. Delivery not active.</p>
       {data.placement && !editingPlacements && <><p><strong>Selection v{data.placement.latestVersion?.versionNumber}</strong> · {displayedPlacements.join(", ")}</p><button type="button" className="secondary-button" disabled={!owner || pending} onClick={() => setEditingPlacements(true)}>Edit placements</button></>}
       {adSet && (!data.placement || editingPlacements) ? <form aria-busy={pending} onSubmit={(event) => { event.preventDefault(); if (pending) return; const payload = { codes: [...placements].sort() }; const selectionId = data.placement?.placementSelectionId; void run({ operation: selectionId ? "placements:version" : "placements:create", scope: selectionId ?? adSet.id, payload, mutate: (key) => selectionId ? createAdvertisingPlacementSelectionVersion(selectionId, placements, key) : createAdvertisingPlacementSelectionDraft(adSet.id, placements, key), reconcile: () => reconcileWorkspace((workspace) => { const current = workspace.placement?.latestVersion?.placements.map((item) => item.code) ?? []; return sameStrings(current, placements) ? workspace.placement : null; }, (workspace) => workspace.placement != null) }, selectionId ? "Placement version updated" : "Placements saved").then((saved) => { if (saved) setEditingPlacements(false); }); }}><div className="ads-placement-grid">{ADVERTISING_PLACEMENTS.map((code) => <label key={code} className={placements.includes(code) ? "ads-placement-option is-selected" : "ads-placement-option"}><input type="checkbox" checked={placements.includes(code)} onChange={() => setPlacements((current) => current.includes(code) ? current.filter((item) => item !== code) : [...current, code])} /><span><strong>{code}</strong><small>Delivery not active</small></span></label>)}</div><div className="compact-actions"><button className="primary-button" disabled={!owner || placements.length === 0 || pending} type="submit">{pending ? "Saving…" : data.placement ? "Create updated placement version" : "Save Placements"}</button>{data.placement && <button className="secondary-button" type="button" disabled={pending} onClick={() => { setPlacements(persistedPlacements ?? []); setEditingPlacements(false); }}>Cancel editing</button>}</div></form> : !adSet ? <p>Select or create an Ad Set first.</p> : null}
