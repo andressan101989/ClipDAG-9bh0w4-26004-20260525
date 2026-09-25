@@ -13,6 +13,7 @@ type MutationPresentation<T> = {
   successMessage: string;
   errorMessage: (cause: unknown) => string;
   afterSuccess?: (value: T) => Promise<void> | void;
+  afterError?: (cause: unknown) => Promise<string | void> | string | void;
 };
 
 export function useAdsMutationCoordinator() {
@@ -40,7 +41,12 @@ export function useAdsMutationCoordinator() {
       }
       return result;
     } catch (cause) {
-      setState({ kind: "error", message: presentation.errorMessage(cause) });
+      let message = presentation.errorMessage(cause);
+      if (presentation.afterError) {
+        try { message = (await presentation.afterError(cause)) ?? message; }
+        catch { /* The mutation error remains authoritative when recovery refresh also fails. */ }
+      }
+      setState({ kind: "error", message });
       return null;
     }
   }, []);

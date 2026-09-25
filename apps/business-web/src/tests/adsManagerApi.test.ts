@@ -34,6 +34,8 @@ import {
   createAdvertisingFinanceDraft,
   createAdvertisingPlacementSelectionDraft,
   createAdvertisingPlacementSelectionVersion,
+  updateAdvertisingAdSetDraft,
+  updateAdvertisingDestinationDraft,
   submitAdvertisingAdForReview,
 } from "../lib/adsManagerApi";
 
@@ -252,5 +254,24 @@ describe("Ads Manager canonical API", () => {
       expect(args).toEqual(expect.objectContaining({ p_idempotency_key: key }));
     }
     expect(randomUUID).not.toHaveBeenCalled();
+  });
+
+  it("sends optimistic concurrency and coordinator keys to B2 draft update RPCs", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: {
+      id: "row-1", campaign_id: "campaign-1", name: "Updated", status: "draft",
+      starts_at: null, ends_at: null, destination_type: "external_url",
+      external_url: "https://nelyon.app", target_user_id: null,
+      target_business_account_id: null, target_product_id: null, target_store_id: null,
+      created_at: "2026-09-24T00:00:00Z", updated_at: "2026-09-25T00:00:00Z",
+    }, error: null });
+    const client = { rpc } as unknown as BusinessSupabaseClient;
+    const key = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const expected = "2026-09-24T00:00:00Z";
+
+    await updateAdvertisingAdSetDraft({ adSetId: "set-1", name: "Updated", startsAt: null, endsAt: null, expectedUpdatedAt: expected }, key, client);
+    await updateAdvertisingDestinationDraft({ destinationId: "destination-1", type: "external_url", externalUrl: "https://nelyon.app", expectedUpdatedAt: expected }, key, client);
+
+    expect(rpc).toHaveBeenNthCalledWith(1, "update_my_advertising_ad_set_draft", expect.objectContaining({ p_ad_set_id: "set-1", p_expected_updated_at: expected, p_idempotency_key: key }));
+    expect(rpc).toHaveBeenNthCalledWith(2, "update_my_advertising_destination_draft", expect.objectContaining({ p_destination_id: "destination-1", p_expected_updated_at: expected, p_idempotency_key: key }));
   });
 });

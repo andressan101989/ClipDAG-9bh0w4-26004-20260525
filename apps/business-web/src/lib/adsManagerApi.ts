@@ -353,13 +353,13 @@ export type AdvertisingCampaignSummary = {
 };
 export type AdvertisingResumeReference = { id: string; status: string; latestVersionNumber: number | null };
 export type AdvertisingAdSet = {
-  id: string; name: string; status: string; startsAt: string | null; endsAt: string | null; createdAt: string;
+  id: string; name: string; status: string; startsAt: string | null; endsAt: string | null; createdAt: string; updatedAt: string;
   audience: AdvertisingResumeReference | null; placementSelection: AdvertisingResumeReference | null;
 };
 export type AdvertisingDestination = {
   id: string; destinationType: string; externalUrl: string | null; targetUserId: string | null;
   targetBusinessAccountId: string | null; targetProductId: string | null; targetStoreId: string | null;
-  status: string; createdAt: string;
+  status: string; createdAt: string; updatedAt: string;
 };
 export type AdvertisingCampaign = AdvertisingCampaignSummary & {
   updatedAt: string | null; archivedAt: string | null; adSets: AdvertisingAdSet[]; destinations: AdvertisingDestination[];
@@ -452,11 +452,11 @@ function parseAdvertisingCampaign(value: unknown): AdvertisingCampaign {
     lifecycle: { activationEnabled: lifecycle.activation_enabled === true, automaticTransitionsEnabled: lifecycle.automatic_transitions_enabled === true, requiresFinancialSettlement: lifecycle.requires_financial_settlement === true },
     adSets: array(row.ad_sets ?? [], "advertising_campaign_invalid").map((value) => {
       const adSet = object(value, "advertising_ad_set_invalid");
-      return { id: string(adSet.id, "advertising_ad_set_invalid"), name: string(adSet.name, "advertising_ad_set_invalid"), status: string(adSet.status, "advertising_ad_set_invalid"), startsAt: optionalString(adSet.starts_at), endsAt: optionalString(adSet.ends_at), createdAt: string(adSet.created_at, "advertising_ad_set_invalid"), audience: parseResumeReference(adSet.audience), placementSelection: parseResumeReference(adSet.placement_selection) };
+      return { id: string(adSet.id, "advertising_ad_set_invalid"), name: string(adSet.name, "advertising_ad_set_invalid"), status: string(adSet.status, "advertising_ad_set_invalid"), startsAt: optionalString(adSet.starts_at), endsAt: optionalString(adSet.ends_at), createdAt: string(adSet.created_at, "advertising_ad_set_invalid"), updatedAt: string(adSet.updated_at ?? adSet.created_at, "advertising_ad_set_invalid"), audience: parseResumeReference(adSet.audience), placementSelection: parseResumeReference(adSet.placement_selection) };
     }),
     destinations: array(row.destinations ?? [], "advertising_campaign_invalid").map((value) => {
       const destination = object(value, "advertising_destination_invalid");
-      return { id: string(destination.id, "advertising_destination_invalid"), destinationType: string(destination.destination_type, "advertising_destination_invalid"), externalUrl: optionalString(destination.external_url), targetUserId: optionalString(destination.target_user_id), targetBusinessAccountId: optionalString(destination.target_business_account_id), targetProductId: optionalString(destination.target_product_id), targetStoreId: optionalString(destination.target_store_id), status: string(destination.status, "advertising_destination_invalid"), createdAt: string(destination.created_at, "advertising_destination_invalid") };
+      return { id: string(destination.id, "advertising_destination_invalid"), destinationType: string(destination.destination_type, "advertising_destination_invalid"), externalUrl: optionalString(destination.external_url), targetUserId: optionalString(destination.target_user_id), targetBusinessAccountId: optionalString(destination.target_business_account_id), targetProductId: optionalString(destination.target_product_id), targetStoreId: optionalString(destination.target_store_id), status: string(destination.status, "advertising_destination_invalid"), createdAt: string(destination.created_at, "advertising_destination_invalid"), updatedAt: string(destination.updated_at ?? destination.created_at, "advertising_destination_invalid") };
     }),
   };
 }
@@ -607,8 +607,16 @@ export async function createAdvertisingAdSetDraft(input: { campaignId: string; n
   return object(await advertisingRpc("create_my_advertising_ad_set_draft", { p_campaign_id: input.campaignId, p_name: input.name.trim(), p_starts_at: input.startsAt || null, p_ends_at: input.endsAt || null, p_idempotency_key: idempotencyKey }, "No se pudo crear el Ad Set", client), "advertising_ad_set_invalid");
 }
 
+export async function updateAdvertisingAdSetDraft(input: { adSetId: string; name: string; startsAt?: string | null; endsAt?: string | null; expectedUpdatedAt: string }, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
+  return object(await advertisingRpc("update_my_advertising_ad_set_draft", { p_ad_set_id: input.adSetId, p_name: input.name.trim(), p_starts_at: input.startsAt || null, p_ends_at: input.endsAt || null, p_expected_updated_at: input.expectedUpdatedAt, p_idempotency_key: idempotencyKey }, "No se pudo actualizar el Ad Set", client), "advertising_ad_set_invalid");
+}
+
 export async function createAdvertisingDestinationDraft(input: { campaignId: string; type: string; externalUrl?: string | null; targetUserId?: string | null; targetBusinessAccountId?: string | null; targetProductId?: string | null; targetStoreId?: string | null }, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
   return object(await advertisingRpc("create_my_advertising_destination_draft", { p_campaign_id: input.campaignId, p_destination_type: input.type, p_idempotency_key: idempotencyKey, p_external_url: input.externalUrl || null, p_target_user_id: input.targetUserId || null, p_target_business_account_id: input.targetBusinessAccountId || null, p_target_product_id: input.targetProductId || null, p_target_store_id: input.targetStoreId || null }, "No se pudo crear el destino", client), "advertising_destination_invalid");
+}
+
+export async function updateAdvertisingDestinationDraft(input: { destinationId: string; type: string; expectedUpdatedAt: string; externalUrl?: string | null; targetUserId?: string | null; targetBusinessAccountId?: string | null; targetProductId?: string | null; targetStoreId?: string | null }, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
+  return object(await advertisingRpc("update_my_advertising_destination_draft", { p_destination_id: input.destinationId, p_destination_type: input.type, p_expected_updated_at: input.expectedUpdatedAt, p_idempotency_key: idempotencyKey, p_external_url: input.externalUrl || null, p_target_user_id: input.targetUserId || null, p_target_business_account_id: input.targetBusinessAccountId || null, p_target_product_id: input.targetProductId || null, p_target_store_id: input.targetStoreId || null }, "No se pudo actualizar el destino", client), "advertising_destination_invalid");
 }
 
 export async function createAdvertisingAudienceDraft(adSetId: string, definition: AdvertisingAudienceDefinition, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
@@ -707,6 +715,8 @@ export function isAdvertisingFinanceNotFound(cause: unknown) {
 export function advertisingUserMessage(cause: unknown) {
   const message = cause instanceof Error ? cause.message : String(cause ?? "");
   if (message.includes("advertising_adult_eligibility_required")) return "Advertising creation requires verified adult eligibility.";
+  if (message.includes("advertising_ad_set_draft_stale") || message.includes("advertising_destination_draft_stale")) return "This draft changed in another session. Refresh to load the latest version.";
+  if (message.includes("advertising_destination_in_use")) return "This destination is already used by an Ad. Create a new destination before changing the Ad.";
   if (message.includes("age_eligibility_invalid_date_of_birth")) return "Enter a valid date of birth.";
   if (message.includes("42501") || message.includes("access_denied")) return "No tienes permiso para completar esta acción.";
   return message || "No se pudo completar la acción.";

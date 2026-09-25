@@ -13,7 +13,7 @@ const api = vi.hoisted(() => ({
   activate: vi.fn(), pause: vi.fn(), resume: vi.fn(), cancel: vi.fn(),
   age: vi.fn(), remediateAge: vi.fn(),
   targetingCapabilities: vi.fn(), createAudienceVersion: vi.fn(),
-  createAudience: vi.fn(),
+  createAudience: vi.fn(), updateAdSet: vi.fn(), updateDestination: vi.fn(), createPlacementVersion: vi.fn(),
 }));
 vi.mock("../lib/adsManagerApi", async (original) => ({
   ...await original<typeof import("../lib/adsManagerApi")>(),
@@ -37,6 +37,9 @@ vi.mock("../lib/adsManagerApi", async (original) => ({
   getAdvertisingTargetingCapabilities: api.targetingCapabilities,
   createAdvertisingAudienceVersion: api.createAudienceVersion,
   createAdvertisingAudienceDraft: api.createAudience,
+  updateAdvertisingAdSetDraft: api.updateAdSet,
+  updateAdvertisingDestinationDraft: api.updateDestination,
+  createAdvertisingPlacementSelectionVersion: api.createPlacementVersion,
 }));
 
 const ownerBusiness = { businessAccountId: "business-1", displayName: "Nelyon Studio", status: "active", accessType: "owner", marketplace: { linked: false, marketplaceSellerUserId: null, sellerStatus: null }, adAccounts: [{ id: "account-1", name: "Nelyon Ads", status: "active", billingCurrency: "BDAG", isDefault: true }] };
@@ -68,6 +71,9 @@ describe("Ads Manager V2 workspace", () => {
     api.targetingCapabilities.mockResolvedValue({ policyVersion: "nelyon-ads-targeting-v2", advertiserMinimumAge: 18, audienceMinimumAge: 18, ageScope: "adults_only", geoTargetingEnabled: false, languageTargetingEnabled: false, daypartTargetingEnabled: true, frequencyTargetingEnabled: true, interestTargetingEnabled: false, behavioralTargetingEnabled: false, customAudiencesEnabled: false, lookalikeTargetingEnabled: false, sensitiveTargetingAllowed: false, preciseViewerLocationMatchingEnabled: false });
     api.createAudienceVersion.mockResolvedValue({ audience_id: "audience-1" });
     api.createAudience.mockResolvedValue({ audience_id: "audience-1" });
+    api.updateAdSet.mockResolvedValue({ id: "set-1" });
+    api.updateDestination.mockResolvedValue({ id: "destination-1" });
+    api.createPlacementVersion.mockResolvedValue({ placement_selection_id: "selection-1" });
   });
 
   it("offers advertiser-only onboarding without Marketplace seller, Store, or Product", async () => {
@@ -136,7 +142,7 @@ describe("Ads Manager V2 workspace", () => {
     api.accounts.mockResolvedValue([ownerBusiness, campaignBusiness]);
     api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-2", businessAccountId: "business-2", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [], destinations: [] });
     renderHome("/ads/campaigns/campaign-1");
-    expect(await screen.findByText("Brand")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Brand" })).toBeInTheDocument();
     expect(screen.getByLabelText("Business")).toHaveValue("business-2");
     expect(screen.getByLabelText("Ad Account")).toHaveValue("account-2");
     expect(screen.getByLabelText("Business")).toBeDisabled();
@@ -156,6 +162,75 @@ describe("Ads Manager V2 workspace", () => {
     renderHome("/ads/campaigns/campaign-1");
     expect(await screen.findByText("Placements: clips, live")).toBeInTheDocument();
     expect(screen.queryByText("Placements: social_feed")).not.toBeInTheDocument();
+  });
+
+  it("requires explicit Ad Set selection when a campaign has multiple children", async () => {
+    api.campaign.mockResolvedValue({
+      id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null,
+      adSets: [
+        { id: "set-a", name: "A", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", updatedAt: "2026-09-23T00:00:00Z", audience: { id: "audience-a", status: "draft", latestVersionNumber: 1 }, placementSelection: null },
+        { id: "set-b", name: "B", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", updatedAt: "2026-09-23T00:00:00Z", audience: { id: "audience-b", status: "draft", latestVersionNumber: 1 }, placementSelection: null },
+      ], destinations: [],
+    });
+    api.audience.mockResolvedValue({ audience_id: "audience-b", latest_version: { targeting_policy_version: "nelyon-ads-targeting-v2", dayparts: [], frequency: null } });
+    renderHome("/ads/campaigns/campaign-1");
+    const selector = await screen.findByLabelText("Ad Set selection");
+    expect(api.audience).not.toHaveBeenCalled();
+    fireEvent.change(selector, { target: { value: "set-b" } });
+    await waitFor(() => expect(api.audience).toHaveBeenCalledWith("audience-b"));
+    expect(api.updateAdSet).not.toHaveBeenCalled();
+  });
+
+  it("reconstructs the real partial-draft shape and recommends Creative without automatic writes", async () => {
+    api.campaign.mockResolvedValue({
+      id: "campaign-1", name: "el mejor jamon", status: "draft", objective: "traffic", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-24T22:40:41Z", updatedAt: "2026-09-24T22:40:41Z", archivedAt: null,
+      adSets: [{ id: "set-1", name: "Primary Ad Set", status: "draft", startsAt: "2026-09-25T17:00:00Z", endsAt: "2026-10-10T17:00:00Z", createdAt: "2026-09-24T22:41:00Z", updatedAt: "2026-09-24T22:41:00Z", audience: { id: "audience-1", status: "draft", latestVersionNumber: 1 }, placementSelection: { id: "selection-1", status: "draft", latestVersionNumber: 1 } }],
+      destinations: [{ id: "destination-1", destinationType: "external_url", externalUrl: "https://www.tlaservices.com/", targetUserId: null, targetBusinessAccountId: null, targetProductId: null, targetStoreId: null, status: "draft", createdAt: "2026-09-24T22:45:00Z", updatedAt: "2026-09-24T22:45:00Z" }],
+    });
+    api.audience.mockResolvedValue({ audience_id: "audience-1", latest_version: { targeting_policy_version: "nelyon-ads-targeting-v2", dayparts: [], frequency: null } });
+    api.placement.mockResolvedValue({ placementSelectionId: "selection-1", adSetId: "set-1", status: "draft", latestVersion: { versionNumber: 1, registryPolicyVersion: "nelyon-ads-delivery-v2", definitionFingerprint: "fp", placements: [{ code: "social_feed", label: "Social Feed", surfaceFamily: "feed", surfaceVerified: true, selectionEnabled: true, v2DeliveryEnabled: false }] }, productionDeliveryEnabled: false });
+    renderHome("/ads/campaigns/campaign-1");
+    expect(await screen.findByText("Next: Add Creative")).toBeInTheDocument();
+    expect(screen.getByText("1. Campaign")).toBeInTheDocument();
+    expect(screen.getAllByText("Complete", { selector: "span" }).length).toBeGreaterThanOrEqual(5);
+    expect(api.updateAdSet).not.toHaveBeenCalled();
+    expect(api.updateDestination).not.toHaveBeenCalled();
+    expect(api.createAudienceVersion).not.toHaveBeenCalled();
+    expect(api.createPlacementVersion).not.toHaveBeenCalled();
+  });
+
+  it("routes Ad Set, Placement and Destination draft edits through B1 coordinator keys", async () => {
+    const campaign = {
+      id: "campaign-1", name: "Draft", status: "draft", objective: "traffic", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-24T00:00:00Z", updatedAt: "2026-09-24T00:00:00Z", archivedAt: null,
+      adSets: [{ id: "set-1", name: "Old Set", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-24T00:00:00Z", updatedAt: "2026-09-24T00:00:00Z", audience: null, placementSelection: { id: "selection-1", status: "draft", latestVersionNumber: 1 } }],
+      destinations: [{ id: "destination-1", destinationType: "external_url", externalUrl: "https://old.example", targetUserId: null, targetBusinessAccountId: null, targetProductId: null, targetStoreId: null, status: "draft", createdAt: "2026-09-24T00:00:00Z", updatedAt: "2026-09-24T00:00:00Z" }],
+    };
+    api.campaign.mockResolvedValue(campaign);
+    api.placement.mockResolvedValue({ placementSelectionId: "selection-1", adSetId: "set-1", status: "draft", latestVersion: { versionNumber: 1, registryPolicyVersion: "nelyon-ads-delivery-v2", definitionFingerprint: "fp", placements: [{ code: "clips", label: "Clips", surfaceFamily: "video", surfaceVerified: true, selectionEnabled: true, v2DeliveryEnabled: false }] }, productionDeliveryEnabled: false });
+    renderHome("/ads/campaigns/campaign-1");
+
+    await waitFor(() => expect(api.campaign).toHaveBeenCalled());
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Ad Set" }));
+    fireEvent.change(screen.getByLabelText("Ad Set name"), { target: { value: "Updated Set" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(api.updateAdSet).toHaveBeenCalledWith(expect.objectContaining({ adSetId: "set-1", name: "Updated Set", expectedUpdatedAt: "2026-09-24T00:00:00Z" }), expect.any(String)));
+    await screen.findByRole("button", { name: "Edit Ad Set" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit placements" }));
+    fireEvent.click(screen.getByLabelText(/social_feed/));
+    fireEvent.click(screen.getByRole("button", { name: "Create updated placement version" }));
+    await waitFor(() => expect(api.createPlacementVersion).toHaveBeenCalledWith("selection-1", expect.arrayContaining(["clips", "social_feed"]), expect.any(String)));
+    await screen.findByRole("button", { name: "Edit placements" });
+
+    api.updateDestination.mockRejectedValueOnce(new Error("advertising_destination_draft_stale"));
+    const campaignReadsBeforeStaleSave = api.campaign.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Edit Destination" }));
+    fireEvent.change(screen.getByLabelText("HTTPS URL"), { target: { value: "https://new.example" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(api.updateDestination).toHaveBeenCalledWith(expect.objectContaining({ destinationId: "destination-1", externalUrl: "https://new.example", expectedUpdatedAt: "2026-09-24T00:00:00Z" }), expect.any(String)));
+    expect(await screen.findByText("This draft changed in another session. We loaded the latest version.")).toBeInTheDocument();
+    expect(api.campaign.mock.calls.length).toBeGreaterThan(campaignReadsBeforeStaleSave);
+    expect(screen.queryByText("advertising_destination_draft_stale")).not.toBeInTheDocument();
   });
 
   it("does not treat a finance read failure as an absent budget draft", async () => {
@@ -206,6 +281,34 @@ describe("Ads Manager V2 workspace", () => {
     expect(await screen.findByText("Your audience configuration uses an older targeting policy. Create an updated audience version before launch.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Create updated audience version" }));
     await waitFor(() => expect(api.createAudienceVersion).toHaveBeenCalledWith("audience-1", expect.objectContaining({ age_scope: "adults_only", geographies: [], languages: [] }), expect.any(String)));
+  });
+
+  it("preserves additional canonical daypart windows when editing the visible window", async () => {
+    api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: { id: "audience-1", status: "draft", latestVersionNumber: 2 }, placementSelection: null }], destinations: [] });
+    api.audience.mockResolvedValue({ audience_id: "audience-1", latest_version: { age_scope: "adults_only", geographies: [], languages: [], targeting_policy_version: "nelyon-ads-targeting-v2", dayparts: [{ timezone: "America/New_York", weekday: 1, start: "09:00", end: "12:00" }, { timezone: "America/New_York", weekday: 5, start: "18:00", end: "21:00" }], frequency: { max_impressions: 2, window_hours: 24 } } });
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Edit audience" }));
+    fireEvent.change(screen.getByLabelText("Max impressions"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create updated audience version" }));
+    await waitFor(() => expect(api.createAudienceVersion).toHaveBeenCalledWith("audience-1", expect.objectContaining({
+      dayparts: [
+        { timezone: "America/New_York", weekday: 1, start: "09:00", end: "12:00" },
+        { timezone: "America/New_York", weekday: 5, start: "18:00", end: "21:00" },
+      ],
+      frequency: { max_impressions: 3, window_hours: 24 },
+    }), expect.any(String)));
+  });
+
+  it("never selects an Ad from a different selected Ad Set or Destination", async () => {
+    api.campaign.mockResolvedValue({
+      id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null,
+      adSets: [{ id: "set-a", name: "A", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: null, placementSelection: null }, { id: "set-b", name: "B", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: null, placementSelection: null }],
+      destinations: [{ id: "destination-a", destinationType: "external_url", externalUrl: "https://a.example", status: "draft", createdAt: "2026-09-23T00:00:00Z" }, { id: "destination-b", destinationType: "external_url", externalUrl: "https://b.example", status: "draft", createdAt: "2026-09-23T00:00:00Z" }],
+    });
+    api.creativeWorkspace.mockResolvedValue({ creatives: [{ id: "creative-1", adAccountId: "account-1", name: "Creative", status: "draft", versions: [{ id: "version-1", versionNumber: 1, format: "image", mediaAssetId: "media-1", videoAssetId: null, primaryText: "Copy", headline: "Headline", description: null, callToAction: "learn_more", createdAt: "2026-09-23T00:00:00Z" }] }], ads: [{ id: "wrong-ad", name: "Wrong context ad", campaignId: "campaign-1", adSetId: "set-a", creativeVersionId: "version-1", destinationId: "destination-b", status: "draft", reviewStatus: "not_submitted", submittedAt: null, reviewedAt: null, latestRejectionReasonCode: null, latestRejectionMessage: null }] });
+    renderHome("/ads/campaigns/campaign-1?adSet=set-a&destination=destination-a&ad=wrong-ad");
+    expect(await screen.findByRole("button", { name: "Assemble Ad" })).toBeInTheDocument();
+    expect(screen.queryByText("Wrong context ad")).not.toBeInTheDocument();
   });
 
   it("coalesces a rapid Audience double submit and supplies one stable operation key", async () => {
