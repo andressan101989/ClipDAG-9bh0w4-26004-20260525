@@ -7,10 +7,12 @@ import { AudienceTargetingPanel } from "../../components/ads/AudienceTargetingPa
 import { AdAssemblyPanel, CreativePanel } from "../../components/ads/CreativeAdPanels";
 import { BusinessReviewPanel } from "../../components/ads/BusinessReviewPanel";
 import { DestinationPanel, type DestinationValues } from "../../components/ads/DestinationPanel";
+import { OperationalTruthPanels } from "../../components/ads/OperationalTruthPanels";
 import { PlacementSelectionPanel } from "../../components/ads/PlacementSelectionPanel";
 import { audienceCapabilitiesAreSafe } from "../../lib/audienceTargetingUx";
 import { destinationLabel, externalWebsiteSummary, isCurrentReleaseDestination, isCurrentReleasePlacementSelection } from "../../lib/adsPlacementDestinationUx";
 import { findAdOperationResult, isCreativeMediaSelectable, sameCreativeContent } from "../../lib/adsCreativeUx";
+import { sameBudgetDecimal, validateBudgetDecimal } from "../../lib/adsOperationalTruth";
 import { searchAllBusinessMedia, type BusinessMediaItem } from "../../lib/businessMediaApi";
 import {
   ADVERTISING_OBJECTIVES,
@@ -59,7 +61,7 @@ import {
   type AdvertisingPlacementSelection,
   type AdvertisingTargetingCapabilities,
 } from "../../lib/adsManagerApi";
-import { formatDate, formatMoney } from "../../lib/businessFormat";
+import { formatDate } from "../../lib/businessFormat";
 import { adsMutationCoordinator, areAdsMutationPayloadsEquivalent, type AdsMutationReconciliation, type AdsMutationRunInput } from "../../lib/adsMutationCoordinator";
 import { useAdsMutationCoordinator } from "../../lib/useAdsMutationCoordinator";
 import { deriveAdsWorkflow, resolveWorkspaceSelection } from "../../lib/adsWorkflowState";
@@ -185,7 +187,7 @@ function AdvertisingAgeEligibilityPanel() {
 
   if (!ageEligibility || ageEligibility.advertiser18PlusEligible) return null;
   if (ageEligibility.evaluated) {
-    return <section className="business-card ads-v2-age-gate" role="status">
+    return <section id="age-eligibility" className="business-card ads-v2-age-gate" role="status">
       <strong>{ageEligibility.ageBand === "age_13_17" ? "Advertising is available only to adults 18 or older." : "This account is not eligible to use advertising."}</strong>
       <span>Eligibility is enforced by the canonical server authority.</span>
     </section>;
@@ -201,7 +203,7 @@ function AdvertisingAgeEligibilityPanel() {
     } finally { setSaving(false); }
   }
 
-  return <section className="business-card ads-v2-age-gate">
+  return <section id="age-eligibility" className="business-card ads-v2-age-gate">
     <strong>Confirm your age to continue with advertising.</strong>
     <p>Your date of birth is sent to the server only to determine eligibility. Ads Manager does not store it.</p>
     <InlineError message={error} />
@@ -404,7 +406,6 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, pend
   const accountCreatives = data.creatives.creatives.filter((creative) => creative.adAccountId === campaign.adAccountId && creative.status === "draft");
   const allVersions = accountCreatives.flatMap((creative) => creative.versions.map((version) => ({ ...version, creativeName: creative.name })));
   const [adSetName, setAdSetName] = useState("Primary Ad Set"); const [startsAt, setStartsAt] = useState(""); const [endsAt, setEndsAt] = useState("");
-  const [budget, setBudget] = useState("");
   const [mediaById, setMediaById] = useState<Record<string, BusinessMediaItem>>({});
   const [editingAdSet, setEditingAdSet] = useState(false);
   const creativeMediaIds = useMemo(() => [...new Set(allVersions.flatMap((version) => [version.mediaAssetId, version.videoAssetId]).filter((id): id is string => Boolean(id)))].sort(), [allVersions]);
@@ -426,9 +427,6 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, pend
   const audienceDefinition = useMemo(() => audienceDefinitionFromPayload(data.audience), [data.audience]);
   const audienceIsStale = Boolean(audienceLatest && targetingCapabilities && audienceLatest.targeting_policy_version !== targetingCapabilities.policyVersion);
   useEffect(() => { if (adSet) { setAdSetName(adSet.name); setStartsAt(datetimeLocalValue(adSet.startsAt)); setEndsAt(datetimeLocalValue(adSet.endsAt)); setEditingAdSet(false); } }, [adSet]);
-  const checklist = [
-    ["Campaign draft", true], ["Ad Set configured", Boolean(adSet)], ["Audience configured", Boolean(adSet?.audience)], ["Placements configured", Boolean(adSet?.placementSelection)], ["Destination configured", Boolean(destination)], ["Creative configured", allVersions.length > 0], ["Ad assembled", Boolean(ad)], ["Review status", ad?.reviewStatus ?? "not_submitted"], ["Budget draft", Boolean(data.finance)],
-  ];
   const workflow = deriveAdsWorkflow({
     campaign: { exists: true, status: campaign.status },
     adSet: { selected: Boolean(adSet), count: campaign.adSets.length, status: adSet?.status ?? null, scheduleValid: !adSet || ((!adSet.startsAt && !adSet.endsAt) || Boolean(adSet.startsAt && adSet.endsAt && Date.parse(adSet.startsAt) < Date.parse(adSet.endsAt))) },
@@ -437,7 +435,7 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, pend
     destination: { selected: Boolean(destination), count: campaign.destinations.length, valid: destination?.status === "draft" && destinationIsUsable },
     creative: { exists: accountCreatives.length > 0, usable: allVersions.length > 0 },
     ad: { selected: Boolean(ad), count: campaignAds.length, status: ad?.status ?? null, reviewStatus: ad?.reviewStatus ?? null },
-    finance: { exists: Boolean(data.finance), valid: Boolean(data.finance && data.finance.budgetBdag > 0) },
+    finance: { exists: Boolean(data.finance), valid: Boolean(data.finance && validateBudgetDecimal(String(data.finance.budgetBdag)).valid) },
     readiness: { structurallyReady: data.readiness.structurallyReady, activationEnabled: data.readiness.activationEnabled, blockers: data.readiness.blockers },
   });
   const statusLabel = (status: string) => status.split("_").map((part) => part[0].toUpperCase() + part.slice(1)).join(" ");
@@ -446,6 +444,24 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, pend
     const matched = match(workspace);
     if (matched) return mutationApplied(matched);
     return hasDifferent(workspace) ? mutationDifferent() : mutationNotApplied();
+  }
+  async function createBudgetDraft(budgetBdag: string) {
+    return run({
+      operation: "finance:create",
+      scope: campaign.id,
+      payload: { campaignId: campaign.id, budgetBdag },
+      mutate: (key) => createAdvertisingFinanceDraft(campaign.id, budgetBdag, key),
+      reconcile: () => reconcileWorkspace(
+        (workspace) => workspace.finance?.campaignId === campaign.id && sameBudgetDecimal(workspace.finance.budgetBdag, budgetBdag) ? workspace.finance : null,
+        (workspace) => workspace.finance != null,
+      ),
+    }, "Budget saved");
+  }
+  async function runLifecycleAction(action: "activate" | "pause" | "resume" | "cancel") {
+    if (action === "activate") return run({ operation: "lifecycle:activate", scope: campaign.id, payload: { campaignId: campaign.id, action }, mutate: (key) => activateAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => ["active", "scheduled"].includes(workspace.campaign.status) ? workspace.campaign : null, (workspace) => ["completed", "cancelled"].includes(workspace.campaign.status)) }, "Campaign activated");
+    if (action === "pause") return run({ operation: "lifecycle:pause", scope: campaign.id, payload: { campaignId: campaign.id, action }, mutate: (key) => pauseAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => workspace.campaign.status === "paused" ? workspace.campaign : null, (workspace) => ["completed", "cancelled"].includes(workspace.campaign.status)) }, "Campaign paused");
+    if (action === "resume") return run({ operation: "lifecycle:resume", scope: campaign.id, payload: { campaignId: campaign.id, action }, mutate: (key) => resumeAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => ["active", "scheduled"].includes(workspace.campaign.status) ? workspace.campaign : null, (workspace) => ["completed", "cancelled"].includes(workspace.campaign.status)) }, "Campaign resumed");
+    return run({ operation: "lifecycle:cancel", scope: campaign.id, payload: { campaignId: campaign.id, action }, mutate: (key) => cancelAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => workspace.campaign.status === "cancelled" ? workspace.campaign : null, (workspace) => workspace.campaign.status === "completed") }, "Campaign cancelled");
   }
   return <div className="ads-v2-workspace">
     <nav className="editor-section-nav" aria-label="Campaign steps">{workflow.steps.map((step) => <a key={step.key} href={`#${step.key.replace("_", "-")}`} aria-current={workflow.nextAction.step === step.key ? "step" : undefined}><strong>{step.number}. {step.label}</strong><span>{statusLabel(step.status)}</span></a>)}</nav>
@@ -570,9 +586,6 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, pend
       }}
       onCreateRevised={() => setRevisedAdMode(true)}
     />}
-    <section id="budget" className="business-card editor-card"><p className="eyebrow">Step 9</p><h2>Budget draft</h2>{data.finance ? <div className="ads-summary-grid"><Metric label="Budget" value={formatMoney(data.finance.budgetBdag)} /><Metric label="Funded" value={formatMoney(data.finance.fundedBdag)} /><Metric label="Spent" value={formatMoney(data.finance.spentBdag)} /><Metric label="Released" value={formatMoney(data.finance.releasedBdag)} /><Metric label="Reserved" value={formatMoney(data.finance.reservedBdag)} /></div> : <form className="seller-form" aria-busy={pending} onSubmit={(event) => { event.preventDefault(); if (pending) return; const budgetBdag = Number(budget); void run({ operation: "finance:create", scope: campaign.id, payload: { campaignId: campaign.id, budgetBdag }, mutate: (key) => createAdvertisingFinanceDraft(campaign.id, budgetBdag, key), reconcile: () => reconcileWorkspace((workspace) => workspace.finance?.campaignId === campaign.id && workspace.finance.budgetBdag === budgetBdag ? workspace.finance : null, (workspace) => workspace.finance != null) }, "Budget draft created"); }}><FormField label="Budget BDAG"><input type="number" min="0.00000001" step="0.00000001" required value={budget} onChange={(event) => setBudget(event.target.value)} /></FormField><button className="primary-button" disabled={!owner || pending} type="submit">{pending ? "Saving…" : "Define budget draft"}</button></form>}<div className="readonly-note"><strong>Funding is not enabled yet.</strong> No Fund, Pay, Launch or Activate action is available.</div></section>
-    <section id="readiness" className="business-card editor-card"><p className="eyebrow">Step 10</p><h2>Readiness summary</h2><p>Campaign status: <StatusBadge status={data.campaign.status} /></p><ul className="ads-v2-checklist">{checklist.map(([label, value]) => <li key={String(label)} className={value === true || (typeof value === "string" && value !== "not_submitted") ? "is-ready" : ""}><span aria-hidden="true">{value === true || (typeof value === "string" && value !== "not_submitted") ? "✓" : "○"}</span><strong>{label}</strong>{typeof value === "string" && <small>{value}</small>}</li>)}</ul><div className="business-card"><h3>Server activation readiness</h3><p>{data.readiness.structurallyReady ? `Ready for ${data.readiness.targetStatus}` : "Pre-launch requirements remain open."}</p>{data.readiness.blockers.length > 0 && <ul>{data.readiness.blockers.map((blocker) => <li key={blocker}>{blocker.replaceAll("_", " ")}</li>)}</ul>}<div className="compact-actions">{data.campaign.status === "draft" && <button type="button" disabled={!owner || !data.readiness.activationEnabled || !data.readiness.structurallyReady || pending} onClick={() => { if (pending) return; void run({ operation: "lifecycle:activate", scope: campaign.id, payload: { campaignId: campaign.id, action: "activate" }, mutate: (key) => activateAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => ["active", "scheduled"].includes(workspace.campaign.status) ? workspace.campaign : null, (workspace) => ["completed", "cancelled"].includes(workspace.campaign.status)) }, "Campaign activated"); }}>{pending ? "Saving…" : data.readiness.activationEnabled ? "Activate" : "Activation locked"}</button>}{(data.campaign.status === "active" || data.campaign.status === "scheduled") && <button type="button" disabled={!owner || pending} onClick={() => { if (pending) return; void run({ operation: "lifecycle:pause", scope: campaign.id, payload: { campaignId: campaign.id, action: "pause" }, mutate: (key) => pauseAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => workspace.campaign.status === "paused" ? workspace.campaign : null, (workspace) => ["completed", "cancelled"].includes(workspace.campaign.status)) }, "Campaign paused"); }}>{pending ? "Saving…" : "Pause"}</button>}{data.campaign.status === "paused" && <button type="button" disabled={!owner || !data.readiness.activationEnabled || !data.readiness.structurallyReady || pending} onClick={() => { if (pending) return; void run({ operation: "lifecycle:resume", scope: campaign.id, payload: { campaignId: campaign.id, action: "resume" }, mutate: (key) => resumeAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => ["active", "scheduled"].includes(workspace.campaign.status) ? workspace.campaign : null, (workspace) => ["completed", "cancelled"].includes(workspace.campaign.status)) }, "Campaign resumed"); }}>{pending ? "Saving…" : "Resume"}</button>}{["draft", "scheduled", "active", "paused"].includes(data.campaign.status) && <button className="danger-button" type="button" disabled={!owner || pending} onClick={() => { if (pending) return; void run({ operation: "lifecycle:cancel", scope: campaign.id, payload: { campaignId: campaign.id, action: "cancel" }, mutate: (key) => cancelAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => workspace.campaign.status === "cancelled" ? workspace.campaign : null, (workspace) => workspace.campaign.status === "completed") }, "Campaign cancelled"); }}>{pending ? "Saving…" : "Cancel"}</button>}</div>{data.campaign.lifecycle?.requiresFinancialSettlement && <p className="readonly-note">Reserved funds require separate financial settlement.</p>}</div><div className="ads-v2-locked"><strong>Pre-launch locked</strong><span>Campaign activation policy disabled</span><span>Funding disabled</span><span>Live delivery disabled</span></div><h3>Aggregate analytics</h3><div className="ads-summary-grid"><Metric label="Impressions" value={String(data.analytics.impressions ?? 0)} /><Metric label="Clicks" value={String(data.analytics.clicks ?? 0)} /><Metric label="Conversions" value={String(data.analytics.conversions ?? 0)} /><Metric label="CTR" value={String(data.analytics.ctr ?? 0)} /></div></section>
+    <OperationalTruthPanels campaign={campaign} readiness={data.readiness} workflowSteps={workflow.steps} finance={data.finance} analytics={data.analytics} owner={owner} pending={pending} onCreateBudget={createBudgetDraft} onLifecycle={runLifecycleAction} />
   </div>;
 }
-
-function Metric({ label, value }: { label: string; value: string }) { return <article className="ads-metric-card"><span>{label}</span><strong>{value}</strong></article>; }

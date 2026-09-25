@@ -10,7 +10,7 @@ vi.mock("../auth/BusinessAuthProvider", () => ({ useBusinessAuth: () => ({ user:
 const api = vi.hoisted(() => ({
   accounts: vi.fn(), campaigns: vi.fn(), createBusiness: vi.fn(), createCampaign: vi.fn(),
   campaign: vi.fn(), readiness: vi.fn(), creativeWorkspace: vi.fn(), finance: vi.fn(), summary: vi.fn(), audience: vi.fn(), placement: vi.fn(),
-  activate: vi.fn(), pause: vi.fn(), resume: vi.fn(), cancel: vi.fn(),
+  activate: vi.fn(), pause: vi.fn(), resume: vi.fn(), cancel: vi.fn(), createFinance: vi.fn(),
   age: vi.fn(), remediateAge: vi.fn(),
   targetingCapabilities: vi.fn(), createAudienceVersion: vi.fn(),
   createAudience: vi.fn(), updateAdSet: vi.fn(), updateDestination: vi.fn(), createPlacementVersion: vi.fn(),
@@ -30,6 +30,7 @@ vi.mock("../lib/adsManagerApi", async (original) => ({
   pauseAdvertisingCampaign: api.pause,
   resumeAdvertisingCampaign: api.resume,
   cancelAdvertisingCampaign: api.cancel,
+  createAdvertisingFinanceDraft: api.createFinance,
   getAdvertisingCreativeWorkspace: api.creativeWorkspace,
   getAdvertisingFinance: api.finance,
   getAdvertisingEventSummary: api.summary,
@@ -67,6 +68,7 @@ describe("Ads Manager V2 workspace", () => {
     api.pause.mockResolvedValue({ id: "campaign-1", status: "paused" });
     api.resume.mockResolvedValue({ id: "campaign-1", status: "active" });
     api.cancel.mockResolvedValue({ id: "campaign-1", status: "cancelled" });
+    api.createFinance.mockResolvedValue({ campaignId: "campaign-1", budgetBdag: 0.01, financeStatus: "draft" });
     api.finance.mockRejectedValue(new Error("advertising_campaign_finance_not_found"));
     api.summary.mockResolvedValue({ impressions: 0, clicks: 0, conversions: 0, ctr: 0 });
     api.audience.mockResolvedValue(null);
@@ -241,18 +243,24 @@ describe("Ads Manager V2 workspace", () => {
     expect(api.updateAdSet).not.toHaveBeenCalled();
   });
 
-  it("reconstructs the real partial-draft shape and recommends Creative without automatic writes", async () => {
+  it("reconstructs the real partial-draft shape with distinct setup actions and platform locks", async () => {
     api.campaign.mockResolvedValue({
       id: "campaign-1", name: "el mejor jamon", status: "draft", objective: "traffic", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-24T22:40:41Z", updatedAt: "2026-09-24T22:40:41Z", archivedAt: null,
       adSets: [{ id: "set-1", name: "Primary Ad Set", status: "draft", startsAt: "2026-09-25T17:00:00Z", endsAt: "2026-10-10T17:00:00Z", createdAt: "2026-09-24T22:41:00Z", updatedAt: "2026-09-24T22:41:00Z", audience: { id: "audience-1", status: "draft", latestVersionNumber: 1 }, placementSelection: { id: "selection-1", status: "draft", latestVersionNumber: 1 } }],
       destinations: [{ id: "destination-1", destinationType: "external_url", externalUrl: "https://www.tlaservices.com/", targetUserId: null, targetBusinessAccountId: null, targetProductId: null, targetStoreId: null, status: "draft", createdAt: "2026-09-24T22:45:00Z", updatedAt: "2026-09-24T22:45:00Z" }],
     });
     api.audience.mockResolvedValue({ audience_id: "audience-1", latest_version: { targeting_policy_version: "nelyon-ads-targeting-v2", dayparts: [], frequency: null } });
-    api.placement.mockResolvedValue({ placementSelectionId: "selection-1", adSetId: "set-1", status: "draft", latestVersion: { versionNumber: 1, registryPolicyVersion: "nelyon-ads-delivery-v2", definitionFingerprint: "fp", placements: [{ code: "social_feed", label: "Social Feed", surfaceFamily: "feed", surfaceVerified: true, selectionEnabled: true, v2DeliveryEnabled: false }] }, productionDeliveryEnabled: false });
+    api.placement.mockResolvedValue({ placementSelectionId: "selection-1", adSetId: "set-1", status: "draft", latestVersion: { versionNumber: 1, registryPolicyVersion: "nelyon-ads-delivery-v2", definitionFingerprint: "fp", placements: ["clips", "live", "marketplace_home", "marketplace_search", "social_feed", "stories"].map((code) => ({ code, label: code, surfaceFamily: "test", surfaceVerified: true, selectionEnabled: true, v2DeliveryEnabled: false })) }, productionDeliveryEnabled: false });
+    api.readiness.mockResolvedValue({ campaignId: "campaign-1", currentStatus: "draft", structurallyReady: false, activationEnabled: false, automaticTransitionsEnabled: false, targetStatus: null, blockers: ["campaign_finance_not_funded", "no_operational_ad_set", "placement_v2_delivery_disabled"], readyAdCount: 0, currentWindowAdSetCount: 0, futureWindowAdSetCount: 0, financeReady: false, advertiserAgeReady: true });
     renderHome("/ads/campaigns/campaign-1");
-    expect(await screen.findByText("Next: Add Creative")).toBeInTheDocument();
+    expect(await screen.findByText("Next: Review Placements")).toBeInTheDocument();
     expect(screen.getByText("1. Campaign")).toBeInTheDocument();
-    expect(screen.getAllByText("Complete", { selector: "span" }).length).toBeGreaterThanOrEqual(5);
+    expect(screen.getByRole("link", { name: "Review placements" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Add Creative" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Set budget" })).toBeInTheDocument();
+    expect(screen.getByText("Ad delivery for the selected placement is not enabled yet.")).toBeInTheDocument();
+    expect(screen.getByText("Campaign activation is not available during pre-launch.")).toBeInTheDocument();
+    expect(screen.queryByText("No Ad Set is currently ready to deliver.")).not.toBeInTheDocument();
     expect(api.updateAdSet).not.toHaveBeenCalled();
     expect(api.updateDestination).not.toHaveBeenCalled();
     expect(api.createAudienceVersion).not.toHaveBeenCalled();
@@ -321,15 +329,67 @@ describe("Ads Manager V2 workspace", () => {
     expect(screen.queryByRole("button", { name: "Define budget draft" })).not.toBeInTheDocument();
   });
 
-  it("renders server readiness, keeps activation locked by policy, and sends cancellation through the canonical RPC", async () => {
+  it("renders server readiness in human language, keeps activation locked, and confirms cancellation", async () => {
     api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, lifecycle: { activationEnabled: false, automaticTransitionsEnabled: false, requiresFinancialSettlement: false }, adSets: [], destinations: [] });
     renderHome("/ads/campaigns/campaign-1");
     const locked = await screen.findByRole("button", { name: "Activation locked" });
     expect(locked).toBeDisabled();
-    expect(screen.getByText("campaign finance not funded")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText("campaign finance not funded")).not.toBeInTheDocument();
+    expect(screen.getByText("Campaign funding is not available during the current pre-launch phase.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel campaign" }));
+    expect(api.cancel).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Cancel Brand?" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm cancellation" }));
     await waitFor(() => expect(api.cancel).toHaveBeenCalledWith("campaign-1", expect.any(String)));
     expect(api.activate).not.toHaveBeenCalled();
+  });
+
+  it("preserves an exact eight-decimal budget string through the B1 finance create scope", async () => {
+    api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [], destinations: [] });
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.change(await screen.findByLabelText("Campaign budget"), { target: { value: "0.01000000" } });
+    const save = screen.getByRole("button", { name: "Set budget" });
+    fireEvent.click(save);
+    fireEvent.click(save);
+    await waitFor(() => expect(api.createFinance).toHaveBeenCalledTimes(1));
+    expect(api.createFinance).toHaveBeenCalledWith("campaign-1", "0.01000000", expect.any(String));
+  });
+
+  it.each(["0", "-1", "1.123456789", "1e-2"])("rejects invalid budget %s without a backend call", async (value) => {
+    api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [], destinations: [] });
+    renderHome("/ads/campaigns/campaign-1");
+    const input = await screen.findByLabelText("Campaign budget");
+    fireEvent.change(input, { target: { value } });
+    fireEvent.submit(input.closest("form") as HTMLFormElement);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/greater than zero|8 decimal places|valid budget/i);
+    expect(api.createFinance).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["draft", 0, 0, 0, 0, "Budget saved"],
+    ["funded", 10, 3, 0, 7, "Funded"],
+    ["settled", 10, 6, 4, 0, "Settled"],
+  ])("renders canonical %s finance accounting without edit or settlement actions", async (financeStatus, fundedBdag, spentBdag, releasedBdag, reservedBdag, label) => {
+    api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [], destinations: [] });
+    api.finance.mockResolvedValue({ campaignId: "campaign-1", currency: "BDAG", budgetBdag: 10, financeStatus, fundedBdag, spentBdag, releasedBdag, reservedBdag, fundedAt: null, settledAt: null, policy: { fundingEnabled: false, spendEnabled: false, settlementEnabled: false } });
+    renderHome("/ads/campaigns/campaign-1");
+    expect((await screen.findAllByText(label)).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("Budget metric")).toHaveTextContent("10 BDAG");
+    expect(screen.getByLabelText("Spent metric")).toHaveTextContent(`${spentBdag} BDAG`);
+    expect(screen.getByLabelText("Returned metric")).toHaveTextContent(`${releasedBdag} BDAG`);
+    expect(screen.getByLabelText("Remaining reserved budget metric")).toHaveTextContent(`${reservedBdag} BDAG`);
+    expect(screen.queryByRole("button", { name: /edit budget|settle|release|refund/i })).not.toBeInTheDocument();
+  });
+
+  it("shows no-delivery context and marks unimplemented analytics as unavailable", async () => {
+    api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [], destinations: [] });
+    api.summary.mockResolvedValue({ impressions: 0, clicks: 0, destination_opens: 0, video_views: 0, engagements: 0, conversions: 0, attributed_conversions: 0, marketplace_purchase_value_bdag: 0, ctr: 0 });
+    renderHome("/ads/campaigns/campaign-1");
+    expect(await screen.findByText("No ad delivery has occurred yet.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Impressions metric")).toHaveTextContent("0");
+    for (const label of ["Clicks", "Destination opens", "Video views", "Engagements", "CTR", "Conversions", "Attributed conversions", "Marketplace purchase value", "CPC", "CPM", "CPA"]) {
+      expect(screen.getByLabelText(`${label} metric`)).toHaveTextContent("Not available yet");
+    }
   });
 
   it("maps Campaign draft creation and renders the adult eligibility blocker safely", async () => {

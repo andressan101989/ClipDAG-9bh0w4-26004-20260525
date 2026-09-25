@@ -298,6 +298,20 @@ h1, h2, p { margin-top: 0; }
 .ads-metric-card { min-width: 0; display: grid; gap: 8px; padding: 18px; border: 1px solid var(--line); border-radius: 15px; background: white; box-shadow: 0 8px 22px rgba(12,31,79,.045); }
 .ads-metric-card span { color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
 .ads-metric-card strong { overflow-wrap: anywhere; color: var(--navy); font-size: 20px; letter-spacing: -.025em; }
+.ads-metric-card small { color: var(--muted); line-height: 1.45; }
+.ads-metric-not_available_yet, .ads-metric-platform_disabled { background: #f8faff; }
+.ads-operational-panel .readonly-note { display: grid; gap: 3px; }
+.ads-budget-form { max-width: 560px; }
+.ads-budget-input { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; overflow: hidden; border: 1px solid #cbd6e8; border-radius: 10px; background: white; }
+.ads-budget-input:focus-within { border-color: var(--electric); box-shadow: 0 0 0 3px rgba(31,121,255,.12); }
+.ads-budget-input input { min-width: 0; border: 0; box-shadow: none; }
+.ads-budget-input span { padding: 0 13px; color: var(--muted); font-size: 12px; font-weight: 800; }
+.ads-readiness-overall { display: grid; gap: 5px; margin-bottom: 18px; padding: 16px; border: 1px solid #f1d69c; border-radius: 13px; color: #76520a; background: #fff8e7; }
+.ads-readiness-group { margin-top: 20px; }
+.ads-readiness-group h3 { margin: 0 0 10px; color: var(--navy); font-size: 14px; }
+.ads-readiness-group > ul:not(.ads-v2-checklist) { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.ads-readiness-group > ul:not(.ads-v2-checklist) li { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; color: #42506a; }
+.ads-cancel-dialog { width: min(520px,100%); }
 .ads-toolbar { align-items: flex-start; }
 .ads-table { min-width: 1080px; }
 .ads-create-layout { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(320px,.65fr); gap: 18px; align-items: start; }
@@ -480,6 +494,7 @@ h1, h2, p { margin-top: 0; }
   .media-grid, .media-picker-grid { grid-template-columns: 1fr; }
   .media-dialog-backdrop { padding: 10px; }
   .ads-summary-grid { grid-template-columns: 1fr; }
+  .ads-readiness-group > ul:not(.ads-v2-checklist) li { align-items: flex-start; flex-direction: column; }
 }
 .finance-overview-grid {
   display: grid;

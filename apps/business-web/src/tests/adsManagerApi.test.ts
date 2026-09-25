@@ -260,7 +260,7 @@ describe("Ads Manager canonical API", () => {
     await createAdvertisingCreativeVersion({ creativeId: "creative-1", format: "image", mediaAssetId: "media-1", callToAction: "learn_more" }, key, client);
     await createAdvertisingAdDraft({ adSetId: "ad-set-1", creativeVersionId: "version-1", destinationId: "destination-1", name: "Ad" }, key, client);
     await submitAdvertisingAdForReview("ad-1", key, client);
-    await createAdvertisingFinanceDraft("campaign-1", 1, key, client);
+    await createAdvertisingFinanceDraft("campaign-1", "1.00000000", key, client);
     await activateAdvertisingCampaign("campaign-1", key, client);
     await pauseAdvertisingCampaign("campaign-1", key, client);
     await resumeAdvertisingCampaign("campaign-1", key, client);

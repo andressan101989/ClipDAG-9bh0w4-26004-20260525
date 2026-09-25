@@ -5,6 +5,7 @@ import test from "node:test";
 const api = readFileSync(new URL("../apps/business-web/src/lib/adsManagerApi.ts", import.meta.url), "utf8");
 const pages = readFileSync(new URL("../apps/business-web/src/pages/ads/BusinessAdsV2Pages.tsx", import.meta.url), "utf8");
 const placements = readFileSync(new URL("../apps/business-web/src/components/ads/PlacementSelectionPanel.tsx", import.meta.url), "utf8");
+const operationalTruth = readFileSync(new URL("../apps/business-web/src/components/ads/OperationalTruthPanels.tsx", import.meta.url), "utf8");
 const app = readFileSync(new URL("../apps/business-web/src/App.tsx", import.meta.url), "utf8");
 const css = readFileSync(new URL("../apps/business-web/src/styles/business.css", import.meta.url), "utf8");
 
@@ -15,8 +16,8 @@ test("Business Ads V2 exposes the canonical routes and keeps launch controls abs
   assert.match(app, /path=["']new["'][^>]+<BusinessAdsRoute create/);
   assert.match(app, /path=["']:campaignId["'][^>]+<BusinessAdsRoute detail/);
   assert.doesNotMatch(pages, /fund_my_advertising_campaign_budget_v2|spend_advertising_campaign_budget_v2|settle_advertising_campaign_budget_v2|fetch_advertising_delivery_candidates_v2|record_advertising_(?:impression|interaction)/);
-  assert.match(pages, /Campaign activation/);
-  assert.match(pages, /Funding is not enabled yet/);
+  assert.match(operationalTruth, /Campaign activation is not available during pre-launch/);
+  assert.match(operationalTruth, /Funding is not available during the current pre-launch phase/);
   assert.match(placements, /Delivery is currently paused during pre-launch/);
 });
 

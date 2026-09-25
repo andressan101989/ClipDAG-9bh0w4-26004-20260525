@@ -3,7 +3,7 @@ import {MemoryRouter} from "react-router-dom";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
 import {adminLinks} from "../layout/adminNavigation";
-import {AdminAdvertisingCampaignDetailPage,AdminAdvertisingCampaignsPage,AdminAdvertisingHealthPage,AdminAdvertisingOverviewPage,AdminAdvertisingReviewPage} from "../pages/AdminAdvertisingPages";
+import {AdminAdvertisingAnalyticsPage,AdminAdvertisingCampaignDetailPage,AdminAdvertisingCampaignsPage,AdminAdvertisingHealthPage,AdminAdvertisingOverviewPage,AdminAdvertisingReviewPage} from "../pages/AdminAdvertisingPages";
 import {getAdminAdvertisingCampaignDetail,getAdminAdvertisingHealth,getAdminAdvertisingOverview,reviewAdvertisingAd,searchAdminAdvertisingAds,searchAdminAdvertisingCampaigns} from "../lib/adminAdvertisingApi";
 
 vi.mock("../auth/AdminAuthProvider",()=>({useAdminAuth:vi.fn()}));
@@ -32,6 +32,9 @@ describe("ADS-V2-J Admin Web",()=>{
     expect(await screen.findByText("ADS V2 PRE-LAUNCH")).toBeInTheDocument();
     expect(screen.getByText("Delivery disabled")).toBeInTheDocument();
     expect(screen.getByText("Funding disabled")).toBeInTheDocument();
+    expect(screen.getByLabelText("Clicks metric")).toHaveTextContent("Not available yet");
+    expect(screen.getByLabelText("Conversions metric")).toHaveTextContent("Not available yet");
+    expect(screen.getByLabelText("Impressions metric")).toHaveTextContent("No delivery yet");
     expect(screen.queryByRole("button",{name:/launch|activate|fund|enable delivery/i})).not.toBeInTheDocument();
   });
 
@@ -39,6 +42,17 @@ describe("ADS-V2-J Admin Web",()=>{
     render(<MemoryRouter><AdminAdvertisingCampaignsPage/></MemoryRouter>);
     expect(await screen.findByText("No Ads V2 campaigns")).toBeInTheDocument();
     expect(searchAdminAdvertisingCampaigns).toHaveBeenCalledWith(expect.objectContaining({limit:50}));
+  });
+
+  it("distinguishes a measured no-delivery impression zero from unavailable interaction and attribution runtimes",async()=>{
+    render(<MemoryRouter><AdminAdvertisingAnalyticsPage/></MemoryRouter>);
+    expect(await screen.findByText("Ads V2 Analytics")).toBeInTheDocument();
+    expect(screen.getByLabelText("Impressions metric")).toHaveTextContent("0");
+    expect(screen.getByLabelText("Impressions metric")).toHaveTextContent("No delivery yet");
+    for(const label of ["Clicks","CTR","Conversions","Attributed","Purchase value"]){
+      expect(screen.getByLabelText(`${label} metric`)).toHaveTextContent("Not available yet");
+    }
+    expect(screen.getByText(/Reconciliation counters remain measured/)).toBeInTheDocument();
   });
 
   it("keeps moderation on the canonical D RPC and requires the moderation capability for actions",async()=>{
