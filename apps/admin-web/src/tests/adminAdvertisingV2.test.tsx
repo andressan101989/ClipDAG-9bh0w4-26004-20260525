@@ -44,6 +44,25 @@ describe("ADS-V2-J Admin Web",()=>{
     expect(searchAdminAdvertisingCampaigns).toHaveBeenCalledWith(expect.objectContaining({limit:50}));
   });
 
+  it("renders a safe initial read error, never a fake empty state, and recovers on explicit retry",async()=>{
+    vi.mocked(getAdminAdvertisingOverview).mockRejectedValueOnce(new Error("SQLSTATE XX000 public.get_admin_advertising_overview advertising_events")).mockResolvedValue(overview);
+    render(<MemoryRouter><AdminAdvertisingOverviewPage/></MemoryRouter>);
+    const alert=await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("couldn't load this Ads data");
+    expect(alert).not.toHaveTextContent(/XX000|get_admin|advertising_events/i);
+    fireEvent.click(screen.getByRole("button",{name:"Reintentar"}));
+    expect(await screen.findByText("ADS V2 PRE-LAUNCH")).toBeInTheDocument();
+  });
+
+  it("distinguishes a moderation read error from a canonically empty queue",async()=>{
+    vi.mocked(searchAdminAdvertisingAds).mockRejectedValueOnce(new TypeError("Failed to fetch")).mockResolvedValue([]);
+    render(<MemoryRouter><AdminAdvertisingReviewPage/></MemoryRouter>);
+    expect(await screen.findByRole("alert")).toHaveTextContent("couldn't load this review queue");
+    expect(screen.queryByText("No ads are waiting for review.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Reintentar"}));
+    expect(await screen.findByText("No ads are waiting for review.")).toBeInTheDocument();
+  });
+
   it("distinguishes a measured no-delivery impression zero from unavailable interaction and attribution runtimes",async()=>{
     render(<MemoryRouter><AdminAdvertisingAnalyticsPage/></MemoryRouter>);
     expect(await screen.findByText("Ads V2 Analytics")).toBeInTheDocument();

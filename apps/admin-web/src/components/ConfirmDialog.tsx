@@ -22,12 +22,23 @@ export function ConfirmDialog({
   onConfirm: () => void;
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null),
-    confirmRef = useRef<HTMLButtonElement>(null);
+    confirmRef = useRef<HTMLButtonElement>(null),
+    returnFocusRef = useRef<HTMLElement | null>(null);
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
   useEffect(() => {
     if (!open) return;
+    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     cancelRef.current?.focus();
+    return () => {
+      returnFocusRef.current?.focus();
+      returnFocusRef.current = null;
+    };
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !pending) onCancel();
+      if (event.key === "Escape" && !pending) onCancelRef.current();
       if (event.key !== "Tab") return;
       const first = cancelRef.current,
         last = confirmRef.current;
@@ -42,7 +53,7 @@ export function ConfirmDialog({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, pending, onCancel]);
+  }, [open, pending]);
   if (!open) return null;
   return (
     <div className="dialog-backdrop" onMouseDown={() => !pending && onCancel()}>
@@ -50,6 +61,7 @@ export function ConfirmDialog({
         aria-describedby="operation-dialog-description"
         aria-labelledby="operation-dialog-title"
         aria-modal="true"
+        aria-busy={pending}
         className="confirm-dialog"
         onMouseDown={(event) => event.stopPropagation()}
         role="dialog"

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { FormField, InlineError, StatusBadge } from "../BusinessUI";
+import { BusinessConfirmDialog } from "../BusinessConfirmDialog";
 import type { AdvertisingCampaignReadiness, AdvertisingFinance } from "../../lib/adsManagerApi";
 import type { AdsWorkflowStep } from "../../lib/adsWorkflowState";
 import {
@@ -27,9 +28,11 @@ type Props = {
   readiness: AdvertisingCampaignReadiness;
   workflowSteps: AdsWorkflowStep[];
   finance: AdvertisingFinance | null;
-  analytics: Record<string, unknown>;
+  analytics: Record<string, unknown> | null;
+  analyticsError: string | null;
   owner: boolean;
   pending: boolean;
+  onRetry: () => Promise<void>;
   onCreateBudget: (budgetBdag: string) => Promise<boolean>;
   onLifecycle: (action: LifecycleAction) => Promise<boolean>;
 };
@@ -112,7 +115,7 @@ function ReadinessGroup({ title, items }: { title: string; items: Array<{ messag
   return <section className="ads-readiness-group"><h3>{title}</h3><ul>{items.map((item, index) => <li key={`${item.message}:${index}`}><span>{item.message}</span>{item.action && <a className="text-button" href={item.action.href}>{item.action.label}</a>}</li>)}</ul></section>;
 }
 
-function ReadinessPanel({ campaign, readiness, workflowSteps, finance, owner, pending, onLifecycle }: Omit<Props, "analytics" | "onCreateBudget">) {
+function ReadinessPanel({ campaign, readiness, workflowSteps, finance, owner, pending, onLifecycle }: Omit<Props, "analytics" | "analyticsError" | "onRetry" | "onCreateBudget">) {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const fundingEnabled = finance?.policy.fundingEnabled ?? ADS_OPERATIONAL_RUNTIME.fundingEnabled;
   const presentation = useMemo(() => deriveReadinessPresentation(readiness.blockers, { fundingEnabled }), [fundingEnabled, readiness.blockers]);
@@ -144,11 +147,12 @@ function ReadinessPanel({ campaign, readiness, workflowSteps, finance, owner, pe
       {lifecycle.cancel.visible && <button className="danger-button" type="button" disabled={!owner || pending} onClick={() => setConfirmCancel(true)}>Cancel campaign</button>}
     </div></section>
     {campaign.lifecycle?.requiresFinancialSettlement && <p className="readonly-note">Unused funded budget is returned by the platform during settlement. Settlement is not a customer action.</p>}
-    {confirmCancel && <div className="media-dialog-backdrop" onMouseDown={() => { if (!pending) setConfirmCancel(false); }}><section className="media-dialog ads-cancel-dialog" role="dialog" aria-modal="true" aria-labelledby="cancel-campaign-title" onMouseDown={(event) => event.stopPropagation()}><p className="eyebrow">Campaign lifecycle</p><h3 id="cancel-campaign-title">Cancel {campaign.name}?</h3><p>This campaign will be cancelled and cannot be resumed.</p><div className="compact-actions"><button className="secondary-button" type="button" disabled={pending} onClick={() => setConfirmCancel(false)}>Keep campaign</button><button className="danger-button" type="button" aria-busy={pending} disabled={pending} onClick={() => void lifecycleAction("cancel")}>{pending ? "Cancelling…" : "Confirm cancellation"}</button></div></section></div>}
+    <BusinessConfirmDialog open={confirmCancel} title={`Cancel ${campaign.name}?`} description="This campaign will be cancelled and cannot be resumed." confirmLabel="Confirm cancellation" cancelLabel="Keep campaign" pendingLabel="Cancelling…" pending={pending} danger onCancel={() => setConfirmCancel(false)} onConfirm={() => void lifecycleAction("cancel")} />
   </section>;
 }
 
-function AnalyticsPanel({ analytics, finance }: Pick<Props, "analytics" | "finance">) {
+function AnalyticsPanel({ analytics, analyticsError, finance, onRetry }: Pick<Props, "analytics" | "analyticsError" | "finance" | "onRetry">) {
+  if (!analytics) return <section className="business-card editor-card ads-operational-panel" aria-labelledby="campaign-analytics-title"><p className="eyebrow">Measured performance</p><h2 id="campaign-analytics-title">Analytics</h2><InlineError message={analyticsError ?? "Campaign analytics are temporarily unavailable."} onRetry={() => void onRetry()} /></section>;
   const impressions = numberValue(analytics.impressions);
   const metrics: Array<[string, MetricKey]> = [
     ["Impressions", "impressions"], ["Clicks", "clicks"], ["Destination opens", "destination_opens"],
@@ -157,13 +161,13 @@ function AnalyticsPanel({ analytics, finance }: Pick<Props, "analytics" | "finan
     ["Marketplace purchase value", "marketplace_purchase_value_bdag"], ["CPC", "cpc"], ["CPM", "cpm"], ["CPA", "cpa"],
   ];
   const spend: MetricPresentation = { state: "platform_disabled", display: finance ? formatBdag(finance.spentBdag) : "No campaign finance", detail: "Ad billing is not active during pre-launch." };
-  return <section className="business-card editor-card ads-operational-panel" aria-labelledby="campaign-analytics-title"><p className="eyebrow">Measured performance</p><h2 id="campaign-analytics-title">Analytics</h2>{impressions === 0 && <div className="readonly-note"><strong>No ad delivery has occurred yet.</strong><span>Delivery is currently unavailable during pre-launch.</span></div>}<div className="ads-summary-grid">{metrics.map(([label, metric]) => <TruthMetric key={metric} label={label} presentation={analyticsPresentation(metric, analytics, impressions)} />)}<TruthMetric label="Spend" presentation={spend} /></div></section>;
+  return <section className="business-card editor-card ads-operational-panel" aria-labelledby="campaign-analytics-title"><p className="eyebrow">Measured performance</p><h2 id="campaign-analytics-title">Analytics</h2>{analyticsError && <><div className="readonly-note" role="status">Showing the last loaded analytics.</div><InlineError message={analyticsError} onRetry={() => void onRetry()} /></>}{impressions === 0 && <div className="readonly-note"><strong>No ad delivery has occurred yet.</strong><span>Delivery is currently unavailable during pre-launch.</span></div>}<div className="ads-summary-grid">{metrics.map(([label, metric]) => <TruthMetric key={metric} label={label} presentation={analyticsPresentation(metric, analytics, impressions)} />)}<TruthMetric label="Spend" presentation={spend} /></div></section>;
 }
 
 export function OperationalTruthPanels(props: Props) {
   return <>
     <BudgetPanel finance={props.finance} owner={props.owner} pending={props.pending} onCreateBudget={props.onCreateBudget} />
     <ReadinessPanel campaign={props.campaign} readiness={props.readiness} workflowSteps={props.workflowSteps} finance={props.finance} owner={props.owner} pending={props.pending} onLifecycle={props.onLifecycle} />
-    <AnalyticsPanel analytics={props.analytics} finance={props.finance} />
+    <AnalyticsPanel analytics={props.analytics} analyticsError={props.analyticsError} finance={props.finance} onRetry={props.onRetry} />
   </>;
 }

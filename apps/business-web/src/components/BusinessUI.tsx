@@ -106,8 +106,8 @@ export function FormField({
   );
 }
 
-export function InlineError({ message }: { message: string | null }) {
+export function InlineError({ message, onRetry }: { message: string | null; onRetry?: () => void }) {
   return message ? (
-    <div className="inline-error" role="alert">{message}</div>
+    <div className="inline-error" role="alert"><span>{message}</span>{onRetry && <button className="text-button" type="button" onClick={onRetry}>Try again</button>}</div>
   ) : null;
 }

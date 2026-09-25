@@ -1,5 +1,6 @@
 import type { AdsReviewItem } from "./adminAdvertisingApi";
 import type { AdminReviewIntent, AdminReviewReconciliation } from "./adminReviewCoordinator";
+import { presentAdsError } from "./adsErrorPresentation";
 
 export const reviewReasonOptions = [
   ["policy_violation", "Policy violation"],
@@ -30,14 +31,7 @@ export function reviewCtaLabel(value: unknown) {
 }
 
 export function adminReviewMessage(cause: unknown) {
-  const message = cause instanceof Error ? cause.message : String(cause ?? "");
-  if (message.includes("advertising_ad_submission_changed")) return "This ad changed after it was submitted. Refresh before reviewing it.";
-  if (message.includes("advertising_ad_not_pending")) return "This ad was already reviewed. We loaded the latest decision.";
-  if (message.includes("advertising_ad_review_idempotency_conflict")) return "This review was completed with different details. Refresh the item.";
-  if (message.includes("advertising_ad_review_other_note_required")) return "Add an internal note when the reason is Other.";
-  if (message.includes("advertising_ad_review_reason_invalid")) return "Choose a valid rejection reason.";
-  if (message.includes("42501") || /access|forbidden|permission/i.test(message)) return "You do not have permission to review this ad.";
-  return message || "The review could not be completed.";
+  return presentAdsError(cause, { operation: "moderation", resource: "review" }).message;
 }
 
 export function reconcileAdminDecision(items: AdsReviewItem[], intent: AdminReviewIntent): AdminReviewReconciliation {

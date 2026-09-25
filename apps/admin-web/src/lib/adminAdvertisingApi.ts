@@ -1,6 +1,11 @@
 import type {AdminRange,Money} from "./adminApi";
 import {supabase} from "./supabase";
 
+export class AdminAdvertisingRpcError extends Error {
+  code?: string;
+  constructor(message:string,code?:string){super(message);this.name="AdminAdvertisingRpcError";this.code=code}
+}
+
 export type JsonRecord=Record<string,unknown>;
 export type AdsCampaignCursor={created_at:string;id:string};
 export type AdsCampaignSummary={
@@ -26,7 +31,7 @@ const bool=(value:unknown,path:string):boolean=>typeof value==="boolean"?value:f
 const money=(value:unknown,path:string):Money=>(typeof value==="number"||typeof value==="string")&&Number.isFinite(Number(value))?value:fail(path);
 const date=(value:unknown,path:string):string=>{const parsed=text(value,path);return Number.isNaN(Date.parse(parsed))?fail(path):parsed};
 const uuid=(value:unknown,path:string):string=>{const parsed=text(value,path);return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(parsed)?parsed:fail(path)};
-async function rpc(name:string,args:JsonRecord={}){const {data,error}=await supabase.rpc(name,args);if(error)throw new Error(error.message||"No se pudo consultar Ads V2");return data as unknown}
+async function rpc(name:string,args:JsonRecord={}){const {data,error}=await supabase.rpc(name,args);if(error)throw new AdminAdvertisingRpcError(error.message||"No se pudo consultar Ads V2",error.code);return data as unknown}
 
 const safeRecord=(value:unknown,path:string)=>record(value,path);
 const validateCampaign=(value:unknown,path:string):AdsCampaignSummary=>{

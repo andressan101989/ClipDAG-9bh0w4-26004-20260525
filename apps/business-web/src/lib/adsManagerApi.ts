@@ -1,4 +1,5 @@
 import { supabase, type BusinessSupabaseClient } from "./supabase";
+import { presentAdsError } from "./adsErrorPresentation";
 
 type Row = Record<string, unknown>;
 export const AD_PLACEMENTS = ["marketplace_home", "marketplace_search", "social_feed"] as const;
@@ -715,15 +716,5 @@ export function isAdvertisingFinanceNotFound(cause: unknown) {
 }
 
 export function advertisingUserMessage(cause: unknown) {
-  const message = cause instanceof Error ? cause.message : String(cause ?? "");
-  if (message.includes("advertising_adult_eligibility_required")) return "Advertising creation requires verified adult eligibility.";
-  if (message.includes("advertising_ad_set_draft_stale") || message.includes("advertising_destination_draft_stale")) return "This draft changed in another session. Refresh to load the latest version.";
-  if (message.includes("advertising_destination_in_use")) return "This destination is already used by an Ad. Create a new destination before changing the Ad.";
-  if (message.includes("advertising_ad_submission_changed")) return "This ad changed after it was submitted. Refresh before trying again.";
-  if (message.includes("advertising_ad_submission_idempotency_conflict")) return "This ad was already submitted with different details. We refreshed the saved state.";
-  if (message.includes("advertising_ad_already_approved")) return "This ad is already approved.";
-  if (message.includes("advertising_ad_already_pending")) return "This ad is already in review.";
-  if (message.includes("age_eligibility_invalid_date_of_birth")) return "Enter a valid date of birth.";
-  if (message.includes("42501") || message.includes("access_denied")) return "No tienes permiso para completar esta acción.";
-  return message || "No se pudo completar la acción.";
+  return presentAdsError(cause, { operation: "mutation" }).message;
 }

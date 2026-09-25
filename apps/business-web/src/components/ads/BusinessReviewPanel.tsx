@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import type { AdvertisingAd, AdvertisingCreativeVersion, AdvertisingDestination } from "../../lib/adsManagerApi";
 import type { BusinessMediaItem } from "../../lib/businessMediaApi";
 import { formatDate } from "../../lib/businessFormat";
+import { BusinessConfirmDialog } from "../BusinessConfirmDialog";
 import { CreativePreview, destinationSummary } from "./CreativeAdPanels";
 
 const REJECTION_MESSAGES: Record<string, string> = {
@@ -64,6 +65,6 @@ export function BusinessReviewPanel({ ad, creativeName, version, media, destinat
     {ad.reviewStatus === "pending" && <div className="readonly-note" role="status"><strong>In review</strong><span>Nelyon is reviewing the submitted creative and destination.</span></div>}
     {ad.reviewStatus === "approved" && <div className="inline-success" role="status"><strong>Approved</strong><span>This ad has been approved. Campaign delivery remains subject to readiness and pre-launch controls.</span></div>}
     {ad.reviewStatus === "rejected" && <div className="ads-review-callout needs-attention" role="status"><strong>Needs changes</strong><p>{rejectionMessage(ad)}</p><p>Update the creative or destination if needed, then create a revised ad for review.</p>{owner && <button className="primary-button" type="button" onClick={onCreateRevised}>Create revised ad</button>}</div>}
-    {confirming && <div className="media-dialog-backdrop" onMouseDown={() => { if (!busy) setConfirming(false); }}><section className="media-dialog ads-review-confirm" role="dialog" aria-modal="true" aria-labelledby="business-review-confirm-title" onMouseDown={(event) => event.stopPropagation()}><p className="eyebrow">Review submission</p><h3 id="business-review-confirm-title">Submit this ad for review?</h3><p>The exact current Ad will be submitted. Later Creative versions do not change this submitted Ad. Nelyon may approve it or request changes.</p><div className="compact-actions"><button className="secondary-button" type="button" disabled={busy} onClick={() => setConfirming(false)}>Cancel</button><button className="primary-button" type="button" aria-busy={busy} disabled={busy} onClick={() => void submit()}>{busy ? "Submitting…" : "Confirm submission"}</button></div></section></div>}
+    <BusinessConfirmDialog open={confirming} title="Submit this ad for review?" description="The exact current Ad will be submitted. Later Creative versions do not change this submitted Ad. Nelyon may approve it or request changes." confirmLabel="Confirm submission" pendingLabel="Submitting…" pending={busy} onCancel={() => setConfirming(false)} onConfirm={() => void submit()} />
   </section>;
 }

@@ -95,6 +95,30 @@ describe("Ads Manager V2 workspace", () => {
     await waitFor(() => expect(api.createBusiness).toHaveBeenCalledWith("Local Studio", expect.any(String)));
   });
 
+  it("distinguishes an initial read failure from an empty account state and retries without exposing backend details", async () => {
+    api.accounts.mockRejectedValueOnce(new Error("SQLSTATE XX000 public.get_my_advertising_accounts 42c5a99b-f430-438f-b64f-fe171f9fe2ab")).mockResolvedValue([ownerBusiness]);
+    renderHome();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("couldn't load this advertiser accounts");
+    expect(alert).not.toHaveTextContent(/XX000|get_my_advertising|42c5a99b/i);
+    expect(screen.queryByText("Create your business account")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByLabelText("Business")).toHaveValue("business-1");
+  });
+
+  it("keeps healthy campaign panels available when the independent analytics read fails", async () => {
+    api.campaign.mockResolvedValue({ id: "campaign-1", name: "Partial campaign", status: "draft", objective: "traffic", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [], destinations: [] });
+    api.summary.mockRejectedValue(new TypeError("Failed to fetch"));
+    renderHome("/ads/campaigns/campaign-1");
+    expect(await screen.findByRole("heading", { level: 1, name: "Partial campaign" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Campaign budget" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Campaign readiness" })).toBeInTheDocument();
+    const analytics = screen.getByRole("heading", { name: "Analytics" }).closest("section");
+    expect(analytics).toHaveTextContent("couldn't load this campaign analytics");
+    expect(analytics).not.toHaveTextContent("Impressions");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
   it("keeps Business creation successful when the post-save refresh fails", async () => {
     api.accounts.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error("refresh unavailable"));
     renderHome();
@@ -220,7 +244,7 @@ describe("Ads Manager V2 workspace", () => {
     await waitFor(() => expect(createRevised).toBeEnabled());
     fireEvent.click(createRevised);
     await waitFor(() => expect(api.createAd).toHaveBeenCalledWith(expect.objectContaining({ name: "Revised Ad" }), expect.any(String)));
-    expect(await screen.findByText("Saved, but we couldn't refresh the latest view.")).toBeInTheDocument();
+    expect(await screen.findByText("Saved, but we couldn't refresh the latest view.", {}, { timeout: 5000 })).toBeInTheDocument();
     expect(await screen.findAllByText("Ready for review")).toHaveLength(2);
     expect(screen.getByRole("heading", { level: 3, name: "Revised Ad" })).toBeInTheDocument();
     expect(screen.queryByText("The ad copy could not be approved.")).not.toBeInTheDocument();
@@ -313,9 +337,9 @@ describe("Ads Manager V2 workspace", () => {
     api.campaign.mockResolvedValue(campaign);
     api.placement.mockResolvedValueOnce(placementV1).mockResolvedValue(placementV2);
     renderHome("/ads/campaigns/campaign-1");
-    fireEvent.click(await screen.findByRole("button", { name: "Review placements" }));
-    for (const label of ["Clips", "Live", "Marketplace Home", "Marketplace Search", "Stories"]) fireEvent.click(screen.getByRole("checkbox", { name: new RegExp(`^${label}\\b`) }));
-    fireEvent.click(screen.getByRole("button", { name: "Create updated placement version" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review placements" }, { timeout: 5000 }));
+    for (const label of ["Clips", "Live", "Marketplace Home", "Marketplace Search", "Stories"]) fireEvent.click(await screen.findByRole("checkbox", { name: new RegExp(`^${label}\\b`) }, { timeout: 5000 }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create updated placement version" }, { timeout: 5000 }));
     await waitFor(() => expect(api.createPlacementVersion).toHaveBeenCalledWith("selection-1", ["social_feed"], expect.any(String)));
     expect(await screen.findByText("Social Feed")).toBeInTheDocument();
     expect(screen.getByText("Selected")).toBeInTheDocument();
@@ -325,7 +349,8 @@ describe("Ads Manager V2 workspace", () => {
     api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [], destinations: [] });
     api.finance.mockRejectedValue(new Error("network_unavailable"));
     renderHome("/ads/campaigns/campaign-1");
-    expect(await screen.findByText("network_unavailable")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("couldn't load this campaign");
+    expect(screen.queryByText("network_unavailable")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Define budget draft" })).not.toBeInTheDocument();
   });
 
