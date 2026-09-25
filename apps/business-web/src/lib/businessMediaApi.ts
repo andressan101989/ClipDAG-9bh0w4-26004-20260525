@@ -108,6 +108,27 @@ export async function searchBusinessMedia(
   };
 }
 
+export async function searchAllBusinessMedia(
+  businessOwnerId: string,
+  filters: BusinessMediaFilters = {},
+  client: BusinessSupabaseClient = supabase,
+): Promise<BusinessMediaItem[]> {
+  const items = new Map<string, BusinessMediaItem>();
+  const seenCursors = new Set<string>();
+  let cursor = filters.cursor;
+  const limit = Math.min(50, Math.max(1, filters.limit ?? 50));
+  while (true) {
+    const page = await searchBusinessMedia(businessOwnerId, { ...filters, cursor, limit }, client);
+    for (const item of page.items) items.set(item.assetId, item);
+    if (!page.nextCursor) break;
+    const cursorKey = `${page.nextCursor.createdAt}|${page.nextCursor.source}|${page.nextCursor.assetId}`;
+    if (seenCursors.has(cursorKey)) throw new Error("business_media_cursor_repeated");
+    seenCursors.add(cursorKey);
+    cursor = page.nextCursor;
+  }
+  return [...items.values()];
+}
+
 function uploadRequest(
   url: string,
   method: "PUT" | "POST",

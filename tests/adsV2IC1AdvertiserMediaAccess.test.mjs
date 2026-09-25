@@ -9,6 +9,7 @@ const imageUpload = readFileSync(new URL("../supabase/functions/create-media-upl
 const videoUpload = readFileSync(new URL("../supabase/functions/create-stream-upload/index.ts", import.meta.url), "utf8");
 const picker = readFileSync(new URL("../apps/business-web/src/components/BusinessMedia.tsx", import.meta.url), "utf8");
 const adsWorkspace = readFileSync(new URL("../apps/business-web/src/pages/ads/BusinessAdsV2Pages.tsx", import.meta.url), "utf8");
+const creativePanels = readFileSync(new URL("../apps/business-web/src/components/ads/CreativeAdPanels.tsx", import.meta.url), "utf8");
 const creativeMigration = readFileSync(new URL("../supabase/migrations/20260922174702_ads_v2_d_creative_moderation_foundation.sql", import.meta.url), "utf8");
 
 test("repository migration history uses the production Ads V2 I version", () => {
@@ -44,7 +45,8 @@ test("existing image and video upload authorities accept only the verified adver
 
 test("Ads Manager reuses the canonical picker and uploader without a parallel storage path", () => {
   assert.match(picker, /uploadBusinessMedia\(ownerId, file, setUploadProgress\)/);
-  assert.match(adsWorkspace, /<BusinessMediaPicker[\s\S]*allowUpload=\{owner\}/);
+  assert.match(adsWorkspace, /<CreativePanel/);
+  assert.match(creativePanels, /<BusinessMediaPicker[\s\S]*allowUpload=\{owner\}/);
   assert.doesNotMatch(adsWorkspace, /Media Library is still Marketplace Business capability-scoped/);
   assert.doesNotMatch(migration, /create table|create bucket|storage\.buckets/i);
 });

@@ -340,7 +340,7 @@ describe("Ads Manager V2 workspace", () => {
     });
     api.creativeWorkspace.mockResolvedValue({ creatives: [{ id: "creative-1", adAccountId: "account-1", name: "Creative", status: "draft", versions: [{ id: "version-1", versionNumber: 1, format: "image", mediaAssetId: "media-1", videoAssetId: null, primaryText: "Copy", headline: "Headline", description: null, callToAction: "learn_more", createdAt: "2026-09-23T00:00:00Z" }] }], ads: [{ id: "wrong-ad", name: "Wrong context ad", campaignId: "campaign-1", adSetId: "set-a", creativeVersionId: "version-1", destinationId: "destination-b", status: "draft", reviewStatus: "not_submitted", submittedAt: null, reviewedAt: null, latestRejectionReasonCode: null, latestRejectionMessage: null }] });
     renderHome("/ads/campaigns/campaign-1?adSet=set-a&destination=destination-a&ad=wrong-ad");
-    expect(await screen.findByRole("button", { name: "Assemble Ad" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Create ad" })).toBeInTheDocument();
     expect(screen.queryByText("Wrong context ad")).not.toBeInTheDocument();
   });
 

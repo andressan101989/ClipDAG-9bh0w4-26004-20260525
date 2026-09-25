@@ -56,6 +56,7 @@ vi.mock("../auth/BusinessAuthProvider", () => {
 vi.mock("../lib/businessMediaApi", async (original) => ({
   ...(await original<typeof import("../lib/businessMediaApi")>()),
   searchBusinessMedia: api.media,
+  searchAllBusinessMedia: async (...args: unknown[]) => (await api.media(...args)).items,
   uploadBusinessMedia: api.upload,
 }));
 vi.mock("../lib/sellerCenterApi", async (original) => ({

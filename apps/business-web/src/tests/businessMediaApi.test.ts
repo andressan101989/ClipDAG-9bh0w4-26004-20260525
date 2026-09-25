@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { searchBusinessMedia, setBusinessStoreMedia, uploadBusinessMedia, uploadBusinessOperationalMedia } from "../lib/businessMediaApi";
+import { searchAllBusinessMedia, searchBusinessMedia, setBusinessStoreMedia, uploadBusinessMedia, uploadBusinessOperationalMedia } from "../lib/businessMediaApi";
 import type { BusinessSupabaseClient } from "../lib/supabase";
 
 vi.mock("../lib/supabase", () => ({ supabase: {} }));
@@ -54,6 +54,28 @@ describe("canonical Business Media API", () => {
     expect(page.items[0].usage).toEqual(["library"]);
     expect(page.nextCursor?.assetId).toBe(mediaRow.asset_id);
     expect(rpc).toHaveBeenCalledWith("search_my_business_media", expect.objectContaining({ p_business_owner_id: "owner-id", p_kind: "image", p_limit: 12 }));
+  });
+
+  it("exhausts canonical cursor pages so post-filtered Ads media cannot be hidden by the server cap", async () => {
+    const second = { ...mediaRow, asset_id: "22222222-2222-4222-8222-222222222222", created_at: "2026-09-15T00:00:00Z" };
+    const marketplaceRows = Array.from({ length: 50 }, (_, index) => ({
+      ...mediaRow,
+      asset_id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      purpose: "product",
+    }));
+    const rpc = vi.fn()
+      .mockResolvedValueOnce({ data: { items: marketplaceRows, next_cursor: { created_at: mediaRow.created_at, source: "media_asset", asset_id: marketplaceRows.at(-1)?.asset_id } }, error: null })
+      .mockResolvedValueOnce({ data: { items: [second], next_cursor: null }, error: null });
+    const items = await searchAllBusinessMedia("owner-id", { status: "ready" }, { rpc } as unknown as BusinessSupabaseClient);
+    expect(items).toHaveLength(51);
+    expect(items.filter((item) => item.purpose === "business_library").map((item) => item.assetId)).toEqual([second.asset_id]);
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc).toHaveBeenNthCalledWith(2, "search_my_business_media", expect.objectContaining({
+      p_cursor_created_at: mediaRow.created_at,
+      p_cursor_source: "media_asset",
+      p_cursor_id: marketplaceRows.at(-1)?.asset_id,
+      p_limit: 50,
+    }));
   });
 
   it("sends the server-returned R2 headers and canonical business scope before finalize", async () => {

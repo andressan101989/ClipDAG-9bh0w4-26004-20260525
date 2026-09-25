@@ -19,6 +19,7 @@ import {
   getAdvertisingTargetingCapabilities,
   getMyAgeEligibility,
   getAdvertisingPlacementSelection,
+  getAdvertisingCreativeWorkspace,
   isAdvertisingFinanceNotFound,
   remediateMyAgeEligibility,
   activateAdvertisingCampaign,
@@ -30,6 +31,7 @@ import {
   createAdvertisingAudienceDraft,
   createAdvertisingAudienceVersion,
   createAdvertisingCreative,
+  createAdvertisingCreativeVersion,
   createAdvertisingDestinationDraft,
   createAdvertisingFinanceDraft,
   createAdvertisingPlacementSelectionDraft,
@@ -209,6 +211,20 @@ describe("Ads Manager canonical API", () => {
     expect(selection.productionDeliveryEnabled).toBe(false);
   });
 
+  it("projects Creative Version and Ad operation keys for exact B1 reconciliation", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: {
+      creatives: [{
+        id: "creative-1", ad_account_id: "account-1", name: "Launch", status: "draft",
+        versions: [{ id: "version-1", version_number: 1, format: "image", media_asset_id: "media-1", video_asset_id: null, primary_text: "Copy", headline: null, description: null, call_to_action: "learn_more", content_fingerprint: "fingerprint", creation_idempotency_key: "creative-key", created_at: "2026-09-25T00:00:00Z" }],
+      }],
+      ads: [{ id: "ad-1", name: "Launch Ad", campaign_id: "campaign-1", ad_set_id: "set-1", creative_version_id: "version-1", destination_id: "destination-1", creation_idempotency_key: "ad-key", status: "draft", review_status: "not_submitted", submitted_at: null, reviewed_at: null, latest_rejection_reason_code: null, latest_rejection_message: null }],
+    }, error: null });
+    const workspace = await getAdvertisingCreativeWorkspace({ rpc } as unknown as BusinessSupabaseClient);
+    expect(workspace.creatives[0].versions[0].creationIdempotencyKey).toBe("creative-key");
+    expect(workspace.ads[0].creationIdempotencyKey).toBe("ad-key");
+    expect(rpc).toHaveBeenCalledWith("get_my_advertising_creative_workspace");
+  });
+
   it("distinguishes a missing finance draft from authorization and transport failures", async () => {
     const missingRpc = vi.fn().mockResolvedValue({ data: null, error: { code: "P0002", message: "advertising_campaign_finance_not_found" } });
     const deniedRpc = vi.fn().mockResolvedValue({ data: null, error: { code: "42501", message: "advertising_campaign_finance_access_denied" } });
@@ -241,6 +257,7 @@ describe("Ads Manager canonical API", () => {
     await createAdvertisingPlacementSelectionVersion("selection-1", ["social_feed"], key, client);
     await createAdvertisingDestinationDraft({ campaignId: "campaign-1", type: "external_url", externalUrl: "https://nelyon.app" }, key, client);
     await createAdvertisingCreative({ adAccountId: "ad-account-1", name: "Creative", format: "image", mediaAssetId: "media-1", callToAction: "learn_more" }, key, client);
+    await createAdvertisingCreativeVersion({ creativeId: "creative-1", format: "image", mediaAssetId: "media-1", callToAction: "learn_more" }, key, client);
     await createAdvertisingAdDraft({ adSetId: "ad-set-1", creativeVersionId: "version-1", destinationId: "destination-1", name: "Ad" }, key, client);
     await submitAdvertisingAdForReview("ad-1", key, client);
     await createAdvertisingFinanceDraft("campaign-1", 1, key, client);
@@ -249,7 +266,7 @@ describe("Ads Manager canonical API", () => {
     await resumeAdvertisingCampaign("campaign-1", key, client);
     await cancelAdvertisingCampaign("campaign-1", key, client);
 
-    expect(rpc).toHaveBeenCalledTimes(15);
+    expect(rpc).toHaveBeenCalledTimes(16);
     for (const [, args] of rpc.mock.calls) {
       expect(args).toEqual(expect.objectContaining({ p_idempotency_key: key }));
     }

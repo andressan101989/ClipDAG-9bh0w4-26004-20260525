@@ -23,6 +23,7 @@ const mediaMocks = vi.hoisted(() => ({
 }));
 vi.mock("../lib/businessMediaApi", () => ({
   searchBusinessMedia: mediaMocks.search,
+  searchAllBusinessMedia: async (...args: unknown[]) => (await mediaMocks.search(...args)).items,
   uploadBusinessMedia: mediaMocks.upload,
   uploadBusinessOperationalMedia: mediaMocks.operational,
   setBusinessStoreMedia: mediaMocks.setStore,
