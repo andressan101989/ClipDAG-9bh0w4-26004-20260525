@@ -41,6 +41,7 @@ test("adds an authenticated Ads V2 delivery adapter without finance authority", 
 test("wires a separate Ads V2 feed lane and preserves Marketplace Legacy", () => {
   const feed = read("app/(tabs)/index.tsx");
   const client = read("services/advertisingDeliveryService.ts");
+  const clientCore = read("services/advertisingDeliveryClient.mjs");
   const runtime = read("services/advertisingV2FeedRuntime.mjs");
   const card = read("components/advertising/AdvertisingFeedCardV2.tsx");
   const nativeVideo = read("components/advertising/AdvertisingFeedVideoV2.native.tsx");
@@ -48,10 +49,10 @@ test("wires a separate Ads V2 feed lane and preserves Marketplace Legacy", () =>
   assert.match(feed, /AdvertisingFeedCardV2/);
   assert.match(feed, /fetchSponsoredProducts\('social_feed'\)/);
   assert.match(feed, /SponsoredFeedCard/);
-  assert.match(client, /functions\.invoke\(["']ads-v2-delivery["']/);
-  assert.doesNotMatch(client, /\.rpc\s*\(|service_role|viewer_user_id/);
+  assert.match(clientCore, /invoke\(["']ads-v2-delivery["']/);
+  assert.doesNotMatch(`${client}\n${clientCore}`, /\.rpc\s*\(|service_role|viewer_user_id/);
   assert.match(runtime, /itemVisiblePercentThreshold:\s*50/);
-  assert.match(runtime, /minimumViewTime:\s*1000/);
+  assert.match(runtime, /QUALIFIED_VIEW_MILLISECONDS\s*=\s*1000/);
   assert.match(runtime, /markMediaReady/);
   assert.match(card, /Patrocinado/);
   assert.match(card, /AdvertisingFeedVideoV2/);
@@ -60,7 +61,7 @@ test("wires a separate Ads V2 feed lane and preserves Marketplace Legacy", () =>
   assert.match(feed, /viewerUserId:\s*string/);
   assert.match(feed, /advertisingV2OpportunityForViewer\(advertisingV2Opportunity,\s*user\?\.id\)/);
   assert.match(feed, /setAdvertisingV2Opportunity\(null\)/);
-  assert.doesNotMatch(`${feed}\n${client}\n${runtime}\n${card}\n${nativeVideo}`, /spend_advertising_campaign_budget_v2/);
+  assert.doesNotMatch(`${feed}\n${client}\n${clientCore}\n${runtime}\n${card}\n${nativeVideo}`, /spend_advertising_campaign_budget_v2/);
 });
 
 test("does not revive the orphan generic Ads service", () => {

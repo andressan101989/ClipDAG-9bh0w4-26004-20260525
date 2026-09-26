@@ -50,7 +50,7 @@ export function AdvertisingFeedVideoV2({ url, thumbnailUrl, isActive, onReady }:
   return (
     <View style={StyleSheet.absoluteFillObject}>
       {VideoView && player ? <VideoView player={player} style={StyleSheet.absoluteFillObject} contentFit="cover" nativeControls={false} /> : null}
-      {!ready && thumbnailUrl ? <Image source={{ uri: thumbnailUrl }} style={StyleSheet.absoluteFillObject} contentFit="cover" onLoad={onReady} /> : null}
+      {!ready && thumbnailUrl ? <Image source={{ uri: thumbnailUrl }} style={StyleSheet.absoluteFillObject} contentFit="cover" /> : null}
     </View>
   );
 }

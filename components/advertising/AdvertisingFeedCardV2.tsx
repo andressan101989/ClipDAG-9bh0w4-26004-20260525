@@ -38,6 +38,7 @@ export const AdvertisingFeedCardV2 = memo(function AdvertisingFeedCardV2({ ad, i
         <Text style={styles.advertiser}>{ad.advertiser.display_name}</Text>
         {ad.creative.headline ? <Text numberOfLines={2} style={styles.headline}>{ad.creative.headline}</Text> : null}
         {ad.creative.primary_text ? <Text numberOfLines={3} style={styles.primaryText}>{ad.creative.primary_text}</Text> : null}
+        {ad.creative.description ? <Text numberOfLines={3} style={styles.description}>{ad.creative.description}</Text> : null}
         {cta && onPress ? <Pressable accessibilityRole="button" onPress={onPress} style={styles.cta}><Text style={styles.ctaText}>{cta}</Text><MaterialCommunityIcons name="arrow-right" size={20} color={Colors.textOnBrand} /></Pressable> : null}
       </View>
     </View>
@@ -53,6 +54,7 @@ const styles = StyleSheet.create({
   advertiser: { color: Colors.textSecondary, fontSize: FontSize.md, fontWeight: FontWeight.medium },
   headline: { color: Colors.textPrimary, fontSize: 30, lineHeight: 36, fontWeight: FontWeight.extrabold },
   primaryText: { color: Colors.textPrimary, fontSize: FontSize.md, lineHeight: 22 },
+  description: { color: Colors.textSecondary, fontSize: FontSize.sm, lineHeight: 20 },
   cta: { marginTop: Spacing.sm, minHeight: 52, borderRadius: Radius.lg, backgroundColor: Colors.primaryLight, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: Spacing.sm, ...Shadow.brand },
   ctaText: { color: Colors.textOnBrand, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
 });

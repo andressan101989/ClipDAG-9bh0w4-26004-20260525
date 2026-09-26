@@ -56,6 +56,7 @@ import {
   ADS_V2_VIEWABILITY_CONFIG,
   advertisingV2OpportunityForViewer,
   createAdvertisingV2ImpressionController,
+  loadAdvertisingV2Opportunity,
   mixSocialFeedAdvertisingV2,
   type AdvertisingV2FeedItem,
 } from '@/services/advertisingV2FeedRuntime.mjs';
@@ -112,14 +113,14 @@ export default function FeedScreen() {
 
   useEffect(() => {
     setAdvertisingV2Opportunity(null);
-    if (!user?.id) return;
-    const viewerUserId = user.id;
     let cancelled = false;
-    void fetchAdvertisingV2SocialFeedCandidate()
-      .then((ad) => {
-        if (!cancelled) setAdvertisingV2Opportunity(ad ? { viewerUserId, ad, eventKey: randomUUID() } : null);
-      })
-      .catch(() => { if (!cancelled) setAdvertisingV2Opportunity(null); });
+    void loadAdvertisingV2Opportunity(
+      user?.id ?? null,
+      fetchAdvertisingV2SocialFeedCandidate,
+      randomUUID,
+    ).then((opportunity) => {
+      if (!cancelled) setAdvertisingV2Opportunity(opportunity);
+    });
     return () => { cancelled = true; };
   }, [user?.id]);
 
@@ -247,6 +248,18 @@ export default function FeedScreen() {
     { viewabilityConfig: ADS_V2_VIEWABILITY_CONFIG, onViewableItemsChanged: advertisingV2Viewability.current },
   ]);
 
+  useEffect(() => {
+    const controller = advertisingV2Viewability.current;
+    return () => controller.dispose();
+  }, []);
+  useEffect(() => {
+    const controller = advertisingV2Viewability.current;
+    const eventKey = currentAdvertisingV2Opportunity?.eventKey;
+    return () => {
+      if (eventKey) controller.discard(eventKey);
+    };
+  }, [currentAdvertisingV2Opportunity?.eventKey]);
+
   const handleLike = useCallback(async (videoId: string, creatorId: string) => {
     const wasLiked = isLiked(videoId);
     await toggleLike(videoId, creatorId);
@@ -280,7 +293,9 @@ export default function FeedScreen() {
     const action = advertisingDestinationAction(ad.destination);
     if (!action) return;
     if (action.kind === 'external') {
-      void Linking.openURL(action.url).catch(() => {});
+      void Linking.canOpenURL(action.url)
+        .then((supported) => supported ? Linking.openURL(action.url) : undefined)
+        .catch(() => {});
       return;
     }
     router.push({ pathname: action.pathname, params: { id: action.id } } as never);

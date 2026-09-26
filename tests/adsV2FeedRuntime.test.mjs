@@ -15,13 +15,13 @@ test("never reuses a viewer-specific opportunity after auth switch or logout", a
   assert.equal(advertisingV2OpportunityForViewer(null, opportunity.viewerUserId), null);
 });
 
-test("inserts one V2 item after the fourth organic item without removing Legacy", async () => {
+test("lets V2 consume the first sponsored slot after the fourth organic item", async () => {
   const { mixSocialFeedAdvertisingV2 } = await import(runtimeUrl);
   const items = [organic("1"), organic("2"), organic("3"), organic("4"), legacy("legacy"), organic("5")];
   const mixed = mixSocialFeedAdvertisingV2(items, ad, "70000000-0000-4000-8000-000000000001");
-  assert.deepEqual(mixed.map((item) => item.kind), ["organic", "organic", "organic", "organic", "advertising_v2", "sponsored", "organic"]);
+  assert.deepEqual(mixed.map((item) => item.kind), ["organic", "organic", "organic", "organic", "advertising_v2", "organic"]);
   assert.equal(mixed.filter((item) => item.kind === "advertising_v2").length, 1);
-  assert.equal(mixed.filter((item) => item.kind === "sponsored").length, 1);
+  assert.equal(mixed.filter((item) => item.kind === "sponsored").length, 0);
 });
 
 test("appends after available organic items when fewer than four and never before the first", async () => {
@@ -37,11 +37,14 @@ test("does not duplicate a V2 slot during pagination", async () => {
   assert.equal(paginated.filter((item) => item.kind === "advertising_v2").length, 1);
 });
 
-test("uses 50 percent and 1000ms viewability and records one impression per mount", async () => {
+test("uses a separate 50 percent viewability lane and records one impression per mount", async () => {
   const { ADS_V2_VIEWABILITY_CONFIG, createAdvertisingV2ImpressionController } = await import(runtimeUrl);
-  assert.deepEqual(ADS_V2_VIEWABILITY_CONFIG, { itemVisiblePercentThreshold: 50, minimumViewTime: 1000 });
+  assert.deepEqual(ADS_V2_VIEWABILITY_CONFIG, { itemVisiblePercentThreshold: 50 });
   const calls = [];
-  const controller = createAdvertisingV2ImpressionController(async (...args) => { calls.push(args); });
+  const controller = createAdvertisingV2ImpressionController(
+    async (...args) => { calls.push(args); },
+    { setTimeout: (callback) => { queueMicrotask(callback); return 1; }, clearTimeout: () => {} },
+  );
   const item = { kind: "advertising_v2", ad, eventKey: "70000000-0000-4000-8000-000000000001" };
   controller({ viewableItems: [{ isViewable: false, item }] });
   controller({ viewableItems: [{ isViewable: true, item }] });
@@ -55,7 +58,10 @@ test("uses 50 percent and 1000ms viewability and records one impression per moun
 test("impression failure is contained and never retried in the same mount", async () => {
   const { createAdvertisingV2ImpressionController } = await import(runtimeUrl);
   let calls = 0;
-  const controller = createAdvertisingV2ImpressionController(async () => { calls += 1; throw new Error("network"); });
+  const controller = createAdvertisingV2ImpressionController(
+    async () => { calls += 1; throw new Error("network"); },
+    { setTimeout: (callback) => { queueMicrotask(callback); return 1; }, clearTimeout: () => {} },
+  );
   const item = { kind: "advertising_v2", ad, eventKey: "70000000-0000-4000-8000-000000000001" };
   controller.markMediaReady(item.eventKey);
   controller({ viewableItems: [{ isViewable: true, item }] });
