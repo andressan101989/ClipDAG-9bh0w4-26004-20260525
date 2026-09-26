@@ -71,6 +71,7 @@ describe("Ads V2 mutation coordinator", () => {
     ["version", "audience:version", "audience-1"],
     ["review", "review:submit", "ad-1"],
     ["finance", "finance:create", "campaign-1"],
+    ["funding", "finance:fund", "campaign-1"],
     ["lifecycle", "lifecycle:cancel", "campaign-1"],
   ])("uses one network call for rapid %s submissions", async (_family, operation, scope) => {
     const coordinator = createAdsMutationCoordinator({ storage: new MemoryStorage(), uuid: () => `${operation}-key` });

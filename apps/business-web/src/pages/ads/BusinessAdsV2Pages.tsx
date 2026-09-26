@@ -29,6 +29,7 @@ import {
   createAdvertisingCreativeVersion,
   createAdvertisingDestinationDraft,
   createAdvertisingFinanceDraft,
+  fundAdvertisingCampaignBudget,
   createAdvertisingPlacementSelectionDraft,
   createAdvertisingPlacementSelectionVersion,
   getAdvertiserAccounts,
@@ -254,7 +255,7 @@ export function BusinessAdsManagerHomePage() {
       <AccountSelectors />
       {owner && <AdvertisingAgeEligibilityPanel />}
       {!owner && <div className="readonly-note">Ads V2 campaign reads and writes are currently owner-only. Member access remains unsupported by the canonical campaign RPCs.</div>}
-      <section className="business-card ads-v2-safety"><strong>Safe pre-launch workspace</strong><span>Campaign activation, funding and live delivery are unavailable. All placements remain delivery inactive.</span></section>
+      <section className="business-card ads-v2-safety"><strong>Safe pre-launch workspace</strong><span>Campaign activation and live delivery are unavailable. Funding appears only when server policy permits it for a specific Campaign.</span></section>
       <div className="seller-subnav"><Link className="is-active" to="/ads/campaigns">Campaigns</Link>{selectedBusiness?.marketplace.linked && <Link to="/ads/marketplace">Marketplace Legacy</Link>}</div>
       {visible.length === 0 ? <div className="seller-state"><strong>No campaigns yet</strong><p>Create an Ads V2 draft or open the existing Marketplace Ads workspace.</p></div> : <div className="seller-table-wrap"><table className="seller-table ads-v2-table"><thead><tr><th>Name</th><th>Objective</th><th>Authority</th><th>Status</th><th>Review</th><th>Budget</th><th>Created</th></tr></thead><tbody>{visible.map((campaign) => <tr key={`${campaign.authority}:${campaign.id}`}><td><Link aria-label={`Open ${campaign.name}`} to={campaign.authority === "ads_v2" ? `/ads/campaigns/${campaign.id}` : `/ads/marketplace/${campaign.id}`}>{campaign.name}</Link></td><td>{campaign.objective}</td><td><span className={`authority-badge ${campaign.authority}`}>{campaign.authority === "ads_v2" ? "ADS V2" : "MARKETPLACE LEGACY"}</span></td><td><StatusBadge status={campaign.status} /></td><td>{campaign.authority === "ads_v2" ? "Open workspace" : "Legacy authority"}</td><td>{campaign.authority === "ads_v2" ? "Draft state" : "Legacy finance"}</td><td>{formatDate(campaign.createdAt)}</td></tr>)}</tbody></table></div>}
     </>}
@@ -473,6 +474,22 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, refr
       ),
     }, "Budget saved");
   }
+  async function fundBudget() {
+    return run({
+      operation: "finance:fund",
+      scope: campaign.id,
+      payload: { campaignId: campaign.id },
+      mutate: (key) => fundAdvertisingCampaignBudget(campaign.id, key),
+      reconcile: () => reconcileWorkspace(
+        (workspace) => workspace.finance?.campaignId === campaign.id
+          && workspace.finance.financeStatus === "funded"
+          && sameBudgetDecimal(workspace.finance.fundedBdag, workspace.finance.budgetBdag)
+          ? workspace.finance
+          : null,
+        (workspace) => workspace.finance != null && workspace.finance.financeStatus !== "draft",
+      ),
+    }, "Budget funded");
+  }
   async function runLifecycleAction(action: "activate" | "pause" | "resume" | "cancel") {
     if (action === "activate") return run({ operation: "lifecycle:activate", scope: campaign.id, payload: { campaignId: campaign.id, action }, mutate: (key) => activateAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => ["active", "scheduled"].includes(workspace.campaign.status) ? workspace.campaign : null, (workspace) => ["completed", "cancelled"].includes(workspace.campaign.status)) }, "Campaign activated");
     if (action === "pause") return run({ operation: "lifecycle:pause", scope: campaign.id, payload: { campaignId: campaign.id, action }, mutate: (key) => pauseAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => workspace.campaign.status === "paused" ? workspace.campaign : null, (workspace) => ["completed", "cancelled"].includes(workspace.campaign.status)) }, "Campaign paused");
@@ -602,6 +619,6 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, refr
       }}
       onCreateRevised={() => setRevisedAdMode(true)}
     />}
-    <OperationalTruthPanels campaign={campaign} readiness={data.readiness} workflowSteps={workflow.steps} finance={data.finance} analytics={data.analytics} analyticsError={data.panelErrors.analytics} owner={owner} pending={pending} onRetry={refresh} onCreateBudget={createBudgetDraft} onLifecycle={runLifecycleAction} />
+    <OperationalTruthPanels campaign={campaign} readiness={data.readiness} workflowSteps={workflow.steps} finance={data.finance} analytics={data.analytics} analyticsError={data.panelErrors.analytics} owner={owner} pending={pending} onRetry={refresh} onCreateBudget={createBudgetDraft} onFundBudget={fundBudget} onLifecycle={runLifecycleAction} />
   </div>;
 }

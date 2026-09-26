@@ -34,6 +34,7 @@ type Props = {
   pending: boolean;
   onRetry: () => Promise<void>;
   onCreateBudget: (budgetBdag: string) => Promise<boolean>;
+  onFundBudget: () => Promise<boolean>;
   onLifecycle: (action: LifecycleAction) => Promise<boolean>;
 };
 
@@ -69,9 +70,10 @@ function analyticsPresentation(metric: MetricKey, analytics: Record<string, unkn
   return metricPresentation(metric, analytics[metric], ADS_OPERATIONAL_RUNTIME, { impressions });
 }
 
-function BudgetPanel({ finance, owner, pending, onCreateBudget }: Pick<Props, "finance" | "owner" | "pending" | "onCreateBudget">) {
+function BudgetPanel({ campaign, finance, owner, pending, onCreateBudget, onFundBudget }: Pick<Props, "campaign" | "finance" | "owner" | "pending" | "onCreateBudget" | "onFundBudget">) {
   const [budget, setBudget] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [confirmFunding, setConfirmFunding] = useState(false);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -80,6 +82,11 @@ function BudgetPanel({ finance, owner, pending, onCreateBudget }: Pick<Props, "f
     if (!validation.valid) { setError(validation.error); return; }
     setError(null);
     await onCreateBudget(validation.canonical);
+  }
+
+  async function fund() {
+    try { await onFundBudget(); }
+    finally { setConfirmFunding(false); }
   }
 
   return <section id="budget" className="business-card editor-card ads-operational-panel">
@@ -95,6 +102,22 @@ function BudgetPanel({ finance, owner, pending, onCreateBudget }: Pick<Props, "f
         <TruthMetric label="Returned" presentation={{ state: "measured", display: formatBdag(finance.releasedBdag), detail: null }} />
       </div>
       <p className="readonly-note">This budget is saved and can't be changed in the current pre-launch flow.</p>
+      {finance.financeStatus === "draft" && finance.fundingAvailable && <>
+        <button className="primary-button" type="button" disabled={!owner || pending} aria-busy={pending} onClick={() => setConfirmFunding(true)}>{pending ? "Funding…" : "Fund budget"}</button>
+        <BusinessConfirmDialog
+          open={confirmFunding}
+          title={`Fund ${campaign.name}?`}
+          description={`Funding ${finance.budgetBdagExact} BDAG will move that amount from your BDAG balance into Ads escrow for this Campaign.`}
+          confirmLabel="Confirm funding"
+          cancelLabel="Keep budget draft"
+          pendingLabel="Funding…"
+          pending={pending}
+          onCancel={() => setConfirmFunding(false)}
+          onConfirm={() => void fund()}
+        />
+      </>}
+      {finance.financeStatus === "draft" && !finance.fundingAvailable && finance.fundingState === "campaign_restricted" && <div className="readonly-note"><strong>Funding is not currently available for this Campaign.</strong><span>The saved budget remains unchanged.</span></div>}
+      {finance.financeStatus === "draft" && !finance.fundingAvailable && finance.fundingState !== "campaign_restricted" && <div className="readonly-note"><strong>Funding is not available during the current pre-launch phase.</strong><span>Your budget is saved. No money moves while Funding is unavailable.</span></div>}
     </> : <>
       <p>No budget has been set yet.</p>
       <form className="seller-form ads-budget-form" aria-busy={pending} onSubmit={(event) => void submit(event)} noValidate>
@@ -104,8 +127,8 @@ function BudgetPanel({ finance, owner, pending, onCreateBudget }: Pick<Props, "f
         <div id="campaign-budget-error"><InlineError message={error} /></div>
         <button className="primary-button" disabled={!owner || pending} type="submit" aria-busy={pending}>{pending ? "Saving…" : "Set budget"}</button>
       </form>
+      <div className="readonly-note"><strong>Funding is not available during the current pre-launch phase.</strong><span>You can save a budget now. No money moves until platform funding is available.</span></div>
     </>}
-    <div className="readonly-note"><strong>Funding is not available during the current pre-launch phase.</strong><span>You can save a budget now. No money moves until platform funding is available.</span></div>
     <div className="readonly-note"><strong>Ad billing is not active during pre-launch.</strong><span>Current impressions and interactions do not consume this budget.</span></div>
   </section>;
 }
@@ -115,7 +138,7 @@ function ReadinessGroup({ title, items }: { title: string; items: Array<{ messag
   return <section className="ads-readiness-group"><h3>{title}</h3><ul>{items.map((item, index) => <li key={`${item.message}:${index}`}><span>{item.message}</span>{item.action && <a className="text-button" href={item.action.href}>{item.action.label}</a>}</li>)}</ul></section>;
 }
 
-function ReadinessPanel({ campaign, readiness, workflowSteps, finance, owner, pending, onLifecycle }: Omit<Props, "analytics" | "analyticsError" | "onRetry" | "onCreateBudget">) {
+function ReadinessPanel({ campaign, readiness, workflowSteps, finance, owner, pending, onLifecycle }: Omit<Props, "analytics" | "analyticsError" | "onRetry" | "onCreateBudget" | "onFundBudget">) {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const fundingEnabled = finance?.policy.fundingEnabled ?? ADS_OPERATIONAL_RUNTIME.fundingEnabled;
   const presentation = useMemo(() => deriveReadinessPresentation(readiness.blockers, { fundingEnabled }), [fundingEnabled, readiness.blockers]);
@@ -166,7 +189,7 @@ function AnalyticsPanel({ analytics, analyticsError, finance, onRetry }: Pick<Pr
 
 export function OperationalTruthPanels(props: Props) {
   return <>
-    <BudgetPanel finance={props.finance} owner={props.owner} pending={props.pending} onCreateBudget={props.onCreateBudget} />
+    <BudgetPanel campaign={props.campaign} finance={props.finance} owner={props.owner} pending={props.pending} onCreateBudget={props.onCreateBudget} onFundBudget={props.onFundBudget} />
     <ReadinessPanel campaign={props.campaign} readiness={props.readiness} workflowSteps={props.workflowSteps} finance={props.finance} owner={props.owner} pending={props.pending} onLifecycle={props.onLifecycle} />
     <AnalyticsPanel analytics={props.analytics} analyticsError={props.analyticsError} finance={props.finance} onRetry={props.onRetry} />
   </>;

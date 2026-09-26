@@ -16,6 +16,7 @@ import {
   getAdvertisingCampaignActivationReadiness,
   getAdvertisingCampaigns,
   getAdvertisingFinance,
+  fundAdvertisingCampaignBudget,
   getAdvertisingTargetingCapabilities,
   getMyAgeEligibility,
   getAdvertisingPlacementSelection,
@@ -232,6 +233,35 @@ describe("Ads Manager canonical API", () => {
     try { await getAdvertisingFinance("campaign-1", { rpc: missingRpc } as unknown as BusinessSupabaseClient); } catch (cause) { missing = cause; }
     expect(isAdvertisingFinanceNotFound(missing)).toBe(true);
     await expect(getAdvertisingFinance("campaign-1", { rpc: deniedRpc } as unknown as BusinessSupabaseClient)).rejects.toThrow("advertising_campaign_finance_access_denied");
+  });
+
+  it("projects server Funding capability and submits only Campaign plus coordinator key", async () => {
+    const key = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const payload = {
+      campaign_id: "campaign-1", currency: "BDAG", budget_bdag: "0.01000000", budget_bdag_exact: "0.01000000",
+      finance_status: "draft", funded_bdag: 0, spent_bdag: 0, released_bdag: 0,
+      reserved_bdag: 0, funded_at: null, settled_at: null,
+      funding_available: true, funding_state: "available",
+      finance_policy: { funding_enabled: true, spend_enabled: false, settlement_enabled: false },
+    };
+    const rpc = vi.fn().mockResolvedValue({ data: payload, error: null });
+    const client = { rpc } as unknown as BusinessSupabaseClient;
+
+    expect(await getAdvertisingFinance("campaign-1", client)).toMatchObject({
+      budgetBdag: 0.01,
+      budgetBdagExact: "0.01000000",
+      fundingAvailable: true,
+      fundingState: "available",
+    });
+    await fundAdvertisingCampaignBudget("campaign-1", key, client);
+
+    expect(rpc).toHaveBeenNthCalledWith(2, "fund_my_advertising_campaign_budget_v2", {
+      p_campaign_id: "campaign-1",
+      p_idempotency_key: key,
+    });
+    expect(rpc.mock.calls[1][1]).not.toHaveProperty("p_amount");
+    expect(rpc.mock.calls[1][1]).not.toHaveProperty("p_budget_bdag");
+    expect(rpc.mock.calls.flat().join(" ")).not.toMatch(/ledger|funding_source_account|transaction/);
   });
 
   it("requires the logical operation coordinator to supply every Ads V2 idempotency key", async () => {

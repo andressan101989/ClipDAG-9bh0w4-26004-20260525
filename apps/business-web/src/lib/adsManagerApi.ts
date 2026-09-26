@@ -700,13 +700,26 @@ export async function submitAdvertisingAdForReview(adId: string, idempotencyKey:
   return object(await advertisingRpc("submit_my_advertising_ad_for_review", { p_ad_id: adId, p_idempotency_key: idempotencyKey }, "No se pudo enviar el anuncio a revisión", client), "advertising_ad_invalid");
 }
 
-export type AdvertisingFinance = { campaignId: string; currency: string; budgetBdag: number; financeStatus: string; fundedBdag: number; spentBdag: number; releasedBdag: number; reservedBdag: number; fundedAt: string | null; settledAt: string | null; policy: { fundingEnabled: boolean; spendEnabled: boolean; settlementEnabled: boolean } };
+export type AdvertisingFundingState = "platform_disabled" | "available" | "campaign_restricted" | "already_funded";
+export type AdvertisingFinance = { campaignId: string; currency: string; budgetBdag: number; budgetBdagExact: string; financeStatus: string; fundedBdag: number; spentBdag: number; releasedBdag: number; reservedBdag: number; fundedAt: string | null; settledAt: string | null; fundingAvailable: boolean; fundingState: AdvertisingFundingState; policy: { fundingEnabled: boolean; spendEnabled: boolean; settlementEnabled: boolean } };
+function exactBdag(value: unknown) {
+  if (typeof value !== "string" || !/^(?:0|[1-9]\d{0,11})\.\d{8}$/.test(value)) return null;
+  return value;
+}
 function parseAdvertisingFinance(value: unknown): AdvertisingFinance {
   const row = object(value, "advertising_finance_invalid"); const policy = object(row.finance_policy ?? {}, "advertising_finance_invalid");
-  return { campaignId: string(row.campaign_id, "advertising_finance_invalid"), currency: string(row.currency, "advertising_finance_invalid"), budgetBdag: number(row.budget_bdag), financeStatus: string(row.finance_status, "advertising_finance_invalid"), fundedBdag: number(row.funded_bdag), spentBdag: number(row.spent_bdag), releasedBdag: number(row.released_bdag), reservedBdag: number(row.reserved_bdag), fundedAt: optionalString(row.funded_at), settledAt: optionalString(row.settled_at), policy: { fundingEnabled: policy.funding_enabled === true, spendEnabled: policy.spend_enabled === true, settlementEnabled: policy.settlement_enabled === true } };
+  const rawFundingState = typeof row.funding_state === "string" ? row.funding_state : "platform_disabled";
+  const fundingState: AdvertisingFundingState = ["platform_disabled", "available", "campaign_restricted", "already_funded"].includes(rawFundingState)
+    ? rawFundingState as AdvertisingFundingState
+    : "platform_disabled";
+  const budgetBdag = number(row.budget_bdag);
+  const projectedExact = exactBdag(row.budget_bdag_exact);
+  const budgetBdagExact = projectedExact ?? exactBdag(row.budget_bdag) ?? budgetBdag.toFixed(8);
+  return { campaignId: string(row.campaign_id, "advertising_finance_invalid"), currency: string(row.currency, "advertising_finance_invalid"), budgetBdag, budgetBdagExact, financeStatus: string(row.finance_status, "advertising_finance_invalid"), fundedBdag: number(row.funded_bdag), spentBdag: number(row.spent_bdag), releasedBdag: number(row.released_bdag), reservedBdag: number(row.reserved_bdag), fundedAt: optionalString(row.funded_at), settledAt: optionalString(row.settled_at), fundingAvailable: row.funding_available === true && projectedExact !== null, fundingState, policy: { fundingEnabled: policy.funding_enabled === true, spendEnabled: policy.spend_enabled === true, settlementEnabled: policy.settlement_enabled === true } };
 }
 export async function createAdvertisingFinanceDraft(campaignId: string, budgetBdag: string, idempotencyKey: string, client: BusinessSupabaseClient = supabase) { return parseAdvertisingFinance(await advertisingRpc("create_my_advertising_campaign_finance_draft", { p_campaign_id: campaignId, p_budget_bdag: budgetBdag, p_idempotency_key: idempotencyKey }, "No se pudo definir el presupuesto", client)); }
 export async function getAdvertisingFinance(campaignId: string, client: BusinessSupabaseClient = supabase) { return parseAdvertisingFinance(await advertisingRpc("get_my_advertising_campaign_finance", { p_campaign_id: campaignId }, "advertising_campaign_finance_not_found", client)); }
+export async function fundAdvertisingCampaignBudget(campaignId: string, idempotencyKey: string, client: BusinessSupabaseClient = supabase) { return parseAdvertisingFinance(await advertisingRpc("fund_my_advertising_campaign_budget_v2", { p_campaign_id: campaignId, p_idempotency_key: idempotencyKey }, "No se pudo fondear el presupuesto", client)); }
 export async function getAdvertisingEventSummary(campaignId: string, client: BusinessSupabaseClient = supabase) { return object(await advertisingRpc("get_my_advertising_event_summary", { p_campaign_id: campaignId }, "No se pudieron cargar las métricas", client), "advertising_summary_invalid"); }
 
 export function isAdvertisingFinanceNotFound(cause: unknown) {

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,7 +10,7 @@ vi.mock("../auth/BusinessAuthProvider", () => ({ useBusinessAuth: () => ({ user:
 const api = vi.hoisted(() => ({
   accounts: vi.fn(), campaigns: vi.fn(), createBusiness: vi.fn(), createCampaign: vi.fn(),
   campaign: vi.fn(), readiness: vi.fn(), creativeWorkspace: vi.fn(), finance: vi.fn(), summary: vi.fn(), audience: vi.fn(), placement: vi.fn(),
-  activate: vi.fn(), pause: vi.fn(), resume: vi.fn(), cancel: vi.fn(), createFinance: vi.fn(),
+  activate: vi.fn(), pause: vi.fn(), resume: vi.fn(), cancel: vi.fn(), createFinance: vi.fn(), fundFinance: vi.fn(),
   age: vi.fn(), remediateAge: vi.fn(),
   targetingCapabilities: vi.fn(), createAudienceVersion: vi.fn(),
   createAudience: vi.fn(), updateAdSet: vi.fn(), updateDestination: vi.fn(), createPlacementVersion: vi.fn(),
@@ -31,6 +31,7 @@ vi.mock("../lib/adsManagerApi", async (original) => ({
   resumeAdvertisingCampaign: api.resume,
   cancelAdvertisingCampaign: api.cancel,
   createAdvertisingFinanceDraft: api.createFinance,
+  fundAdvertisingCampaignBudget: api.fundFinance,
   getAdvertisingCreativeWorkspace: api.creativeWorkspace,
   getAdvertisingFinance: api.finance,
   getAdvertisingEventSummary: api.summary,
@@ -49,6 +50,8 @@ vi.mock("../lib/adsManagerApi", async (original) => ({
 }));
 
 const ownerBusiness = { businessAccountId: "business-1", displayName: "Nelyon Studio", status: "active", accessType: "owner", marketplace: { linked: false, marketplaceSellerUserId: null, sellerStatus: null }, adAccounts: [{ id: "account-1", name: "Nelyon Ads", status: "active", billingCurrency: "BDAG", isDefault: true }] };
+const fundingCampaign = (name = "Brand") => ({ id: "campaign-1", name, status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, lifecycle: { activationEnabled: false, automaticTransitionsEnabled: false, requiresFinancialSettlement: false }, adSets: [], destinations: [] });
+const fundingFinance = (overrides: Record<string, unknown> = {}) => ({ campaignId: "campaign-1", currency: "BDAG", budgetBdag: 0.01, budgetBdagExact: "0.01000000", financeStatus: "draft", fundedBdag: 0, spentBdag: 0, releasedBdag: 0, reservedBdag: 0, fundedAt: null, settledAt: null, fundingAvailable: true, fundingState: "available", policy: { fundingEnabled: true, spendEnabled: false, settlementEnabled: false }, ...overrides });
 
 function renderHome(path = "/ads") {
   return render(<MemoryRouter initialEntries={[path]}><AdvertisingManagerProvider><Routes><Route path="/ads" element={<BusinessAdsManagerHomePage />} /><Route path="/ads/campaigns/new" element={<BusinessAdsManagerNewCampaignPage />} /><Route path="/ads/campaigns/:campaignId" element={<BusinessAdsManagerCampaignPage />} /></Routes></AdvertisingManagerProvider></MemoryRouter>);
@@ -69,6 +72,7 @@ describe("Ads Manager V2 workspace", () => {
     api.resume.mockResolvedValue({ id: "campaign-1", status: "active" });
     api.cancel.mockResolvedValue({ id: "campaign-1", status: "cancelled" });
     api.createFinance.mockResolvedValue({ campaignId: "campaign-1", budgetBdag: 0.01, financeStatus: "draft" });
+    api.fundFinance.mockResolvedValue(fundingFinance({ financeStatus: "funded", fundedBdag: 0.01, reservedBdag: 0.01, fundingAvailable: false, fundingState: "already_funded" }));
     api.finance.mockRejectedValue(new Error("advertising_campaign_finance_not_found"));
     api.summary.mockResolvedValue({ impressions: 0, clicks: 0, conversions: 0, ctr: 0 });
     api.audience.mockResolvedValue(null);
@@ -404,6 +408,181 @@ describe("Ads Manager V2 workspace", () => {
     expect(screen.getByLabelText("Returned metric")).toHaveTextContent(`${releasedBdag} BDAG`);
     expect(screen.getByLabelText("Remaining reserved budget metric")).toHaveTextContent(`${reservedBdag} BDAG`);
     expect(screen.queryByRole("button", { name: /edit budget|settle|release|refund/i })).not.toBeInTheDocument();
+  });
+
+  it("hides Funding while the server policy is disabled", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign());
+    api.finance.mockResolvedValue(fundingFinance({ fundingAvailable: false, fundingState: "platform_disabled", policy: { fundingEnabled: false, spendEnabled: false, settlementEnabled: false } }));
+    renderHome("/ads/campaigns/campaign-1");
+    expect(await screen.findByText("Funding is not available during the current pre-launch phase.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Fund budget" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a server-restricted Campaign non-actionable without advertiser-facing canary language", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign());
+    api.finance.mockResolvedValue(fundingFinance({ fundingAvailable: false, fundingState: "campaign_restricted" }));
+    renderHome("/ads/campaigns/campaign-1");
+    expect(await screen.findByText("Funding is not currently available for this Campaign.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Fund budget" })).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/canary/i);
+  });
+
+  it("renders one primary Funding control only for server-available draft Finance", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign());
+    api.finance.mockResolvedValue(fundingFinance());
+    renderHome("/ads/campaigns/campaign-1");
+    expect(await screen.findAllByRole("button", { name: "Fund budget" })).toHaveLength(1);
+  });
+
+  it("shows the exact canonical BDAG budget and Campaign name in confirmation", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign("TESLA EL CARRO AUTOMATICO"));
+    api.finance.mockResolvedValue(fundingFinance());
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Fund budget" }));
+    const dialog = screen.getByRole("dialog", { name: "Fund TESLA EL CARRO AUTOMATICO?" });
+    expect(dialog).toHaveTextContent("0.01000000 BDAG");
+    expect(dialog).toHaveTextContent(/move that amount from your BDAG balance into Ads escrow/i);
+  });
+
+  it("preserves a precision-boundary canonical budget in Funding confirmation", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign("Precision Campaign"));
+    api.finance.mockResolvedValue(fundingFinance({ budgetBdag: 1_000_000_000_000, budgetBdagExact: "999999999999.99999999" }));
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Fund budget" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("999999999999.99999999 BDAG");
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("1,000,000,000,000 BDAG");
+  });
+
+  it("opens Funding confirmation without mutating", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign());
+    api.finance.mockResolvedValue(fundingFinance());
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Fund budget" }));
+    expect(screen.getByRole("dialog")).toHaveAttribute("aria-modal", "true");
+    expect(api.fundFinance).not.toHaveBeenCalled();
+  });
+
+  it("confirms Funding through the canonical caller exactly once with a coordinator key", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign());
+    api.finance.mockResolvedValue(fundingFinance());
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Fund budget" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm funding" }));
+    await waitFor(() => expect(api.fundFinance).toHaveBeenCalledTimes(1));
+    expect(api.fundFinance).toHaveBeenCalledWith("campaign-1", expect.any(String));
+  });
+
+  it("coalesces a rapid Funding double-click into one monetary mutation", async () => {
+    let release!: (value: unknown) => void;
+    api.campaign.mockResolvedValue(fundingCampaign());
+    api.finance.mockResolvedValue(fundingFinance());
+    api.fundFinance.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Fund budget" }));
+    const confirm = screen.getByRole("button", { name: "Confirm funding" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(api.fundFinance).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
+    await act(async () => { release(fundingFinance({ financeStatus: "funded", fundedBdag: 0.01, reservedBdag: 0.01 })); });
+  });
+
+  it("uses the confirmation button as the single Funding trigger for Enter", async () => {
+    const user = userEvent.setup();
+    let release!: (value: unknown) => void;
+    api.campaign.mockResolvedValue(fundingCampaign());
+    api.finance.mockResolvedValue(fundingFinance());
+    api.fundFinance.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    renderHome("/ads/campaigns/campaign-1");
+    await user.click(await screen.findByRole("button", { name: "Fund budget" }));
+    await user.tab();
+    await user.keyboard("{Enter}{Enter}");
+    await waitFor(() => expect(api.fundFinance).toHaveBeenCalledTimes(1));
+    await act(async () => { release(fundingFinance({ financeStatus: "funded", fundedBdag: 0.01, reservedBdag: 0.01 })); });
+  });
+
+  it("reconciles a lost Funding response as success only from canonical funded Finance", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign());
+    api.fundFinance.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    api.finance
+      .mockResolvedValueOnce(fundingFinance())
+      .mockResolvedValue(fundingFinance({ financeStatus: "funded", fundedBdag: 0.01, reservedBdag: 0.01, fundingAvailable: false, fundingState: "already_funded" }));
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Fund budget" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm funding" }));
+    expect(await screen.findByText("Budget funded")).toBeInTheDocument();
+    expect(api.fundFinance).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not falsely resolve a lost Funding response while canonical Finance remains draft", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign());
+    api.fundFinance.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    api.finance.mockResolvedValue(fundingFinance());
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Fund budget" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm funding" }));
+    expect(await screen.findByText(/could not confirm whether this step was saved/i)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("Budget funded")).not.toBeInTheDocument();
+  });
+
+  it("presents insufficient BDAG balance safely", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign());
+    api.finance.mockResolvedValue(fundingFinance());
+    api.fundFinance.mockRejectedValueOnce(new Error("advertising_insufficient_bdag_balance ledger 70000000-0000-4000-8000-000000000001"));
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Fund budget" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm funding" }));
+    expect(await screen.findByText(/available BDAG balance is too low/i)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/ledger|70000000|advertising_/i);
+  });
+
+  it("presents a server Funding restriction safely", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign());
+    api.finance.mockResolvedValue(fundingFinance());
+    api.fundFinance.mockRejectedValueOnce(new Error("advertising_canary_funding_denied 42c5a99b-f430-438f-b64f-fe171f9fe2ab"));
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Fund budget" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm funding" }));
+    expect(await screen.findByText("Funding is not currently available for this campaign.")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/canary|42c5a99b|advertising_/i);
+  });
+
+  it("refetches canonical Finance after successful Funding", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign());
+    api.finance.mockResolvedValue(fundingFinance());
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Fund budget" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm funding" }));
+    await waitFor(() => expect(api.finance).toHaveBeenCalledTimes(2));
+  });
+
+  it("refetches server readiness after successful Funding", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign());
+    api.finance.mockResolvedValue(fundingFinance());
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Fund budget" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm funding" }));
+    await waitFor(() => expect(api.readiness).toHaveBeenCalledTimes(2));
+  });
+
+  it("never activates the Campaign after successful Funding", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign());
+    api.finance.mockResolvedValue(fundingFinance());
+    renderHome("/ads/campaigns/campaign-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Fund budget" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm funding" }));
+    await waitFor(() => expect(api.fundFinance).toHaveBeenCalledTimes(1));
+    expect(api.activate).not.toHaveBeenCalled();
+  });
+
+  it("does not expose Funding for el mejor jamon when the server restricts that Campaign", async () => {
+    api.campaign.mockResolvedValue(fundingCampaign("el mejor jamon"));
+    api.finance.mockResolvedValue(fundingFinance({ fundingAvailable: false, fundingState: "campaign_restricted" }));
+    renderHome("/ads/campaigns/campaign-1");
+    expect(await screen.findByRole("heading", { level: 1, name: "el mejor jamon" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Fund budget" })).not.toBeInTheDocument();
   });
 
   it("shows no-delivery context and marks unimplemented analytics as unavailable", async () => {

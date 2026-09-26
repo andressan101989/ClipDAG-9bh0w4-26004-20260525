@@ -73,6 +73,9 @@ export function presentAdsError(cause: unknown, options: ErrorOptions): AdsError
   if (/advertising_ad_already_pending/.test(signal)) return result("prerequisite_missing", "This ad is already in review.");
   if (/advertising_ad_already_approved/.test(signal)) return result("prerequisite_missing", "This ad is already approved.");
   if (/advertising_campaign_not_operationally_ready|prerequisite/.test(signal)) return result("prerequisite_missing", "Complete the required campaign setup before continuing.");
+  if (/advertising_canary_funding_denied/.test(signal)) return result("capability_disabled", "Funding is not currently available for this campaign.");
+  if (/advertising_insufficient_bdag_balance/.test(signal)) return result("prerequisite_missing", "Your available BDAG balance is too low to fund this campaign.");
+  if (/advertising_campaign_already_funded/.test(signal)) return result("permanent_rejection", "This campaign budget has already been funded. Refresh to see the latest status.", true, true);
 
   if (/upload_transport_failed|upload_failed_\d+|media_reservation_(invalid|failed)/.test(signal)) {
     return result("permanent_rejection", "Upload failed. Please try again.");
