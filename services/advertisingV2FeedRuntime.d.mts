@@ -39,6 +39,29 @@ export function createAdvertisingV2ImpressionController(
   },
 ): ((payload: { viewableItems?: Array<{ isViewable?: boolean; item?: unknown }> }) => void) & {
   markMediaReady(eventKey: string): void;
+  confirmedImpressionId(eventKey: string): string | null;
   discard(eventKey: string): void;
   dispose(): void;
 };
+
+export type AdvertisingV2ClickController = {
+  submit(opportunityKey: string, impressionEventId: string): Promise<string | null>;
+  discard(opportunityKey: string): void;
+  dispose(): void;
+};
+
+export function createAdvertisingV2ClickController(
+  recordClick: (impressionEventId: string, eventKey: string) => Promise<string>,
+  createEventKey: () => string,
+): AdvertisingV2ClickController;
+
+export function navigateAdvertisingV2WithClick(input: {
+  opportunityKey: string;
+  impressionEventId: string | null;
+  submitClick: (opportunityKey: string, impressionEventId: string) => Promise<unknown>;
+  navigate: () => void;
+  scheduler?: {
+    setTimeout?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
+    clearTimeout?: (timer: ReturnType<typeof setTimeout>) => void;
+  };
+}): Promise<void>;

@@ -3,6 +3,7 @@ export const ADS_V2_VIEWABILITY_CONFIG = Object.freeze({
 });
 
 const QUALIFIED_VIEW_MILLISECONDS = 1000;
+const CLICK_NAVIGATION_WAIT_MILLISECONDS = 500;
 
 export function advertisingV2OpportunityForViewer(opportunity, viewerUserId) {
   return opportunity?.viewerUserId && opportunity.viewerUserId === viewerUserId ? opportunity : null;
@@ -60,6 +61,7 @@ export function createAdvertisingV2ImpressionController(recordImpression, schedu
         visible: false,
         phase: "idle",
         timer: null,
+        impressionEventId: null,
       });
     }
     return states.get(eventKey);
@@ -84,7 +86,10 @@ export function createAdvertisingV2ImpressionController(recordImpression, schedu
     }
     state.phase = "submitting";
     Promise.resolve(recordImpression(adId, state.eventKey)).then(
-      () => { state.phase = "confirmed"; },
+      (impressionEventId) => {
+        state.impressionEventId = impressionEventId ?? null;
+        state.phase = "confirmed";
+      },
       () => { state.phase = state.visible ? "waiting_for_reentry" : "idle"; },
     );
   };
@@ -132,5 +137,85 @@ export function createAdvertisingV2ImpressionController(recordImpression, schedu
     for (const state of states.values()) cancelQualification(state);
     states.clear();
   };
+  onViewableItemsChanged.confirmedImpressionId = (eventKey) => {
+    const state = states.get(eventKey);
+    return state?.phase === "confirmed" ? state.impressionEventId : null;
+  };
   return onViewableItemsChanged;
+}
+
+export function createAdvertisingV2ClickController(recordClick, createEventKey) {
+  const states = new Map();
+
+  const submit = (opportunityKey, impressionEventId) => {
+    if (!opportunityKey || !impressionEventId) return Promise.resolve(null);
+    let state = states.get(opportunityKey);
+    if (!state) {
+      state = {
+        impressionEventId,
+        eventKey: createEventKey(),
+        phase: "idle",
+        interactionEventId: null,
+        inFlight: null,
+      };
+      states.set(opportunityKey, state);
+    }
+    if (state.impressionEventId !== impressionEventId) {
+      return Promise.reject(new Error("ads_v2_click_parent_conflict"));
+    }
+    if (state.phase === "confirmed") return Promise.resolve(state.interactionEventId);
+    if (state.inFlight) return state.inFlight;
+
+    state.phase = "submitting";
+    state.inFlight = Promise.resolve()
+      .then(() => recordClick(state.impressionEventId, state.eventKey))
+      .then(
+        (interactionEventId) => {
+          state.phase = "confirmed";
+          state.interactionEventId = interactionEventId;
+          state.inFlight = null;
+          return interactionEventId;
+        },
+        (error) => {
+          state.phase = "idle";
+          state.inFlight = null;
+          throw error;
+        },
+      );
+    return state.inFlight;
+  };
+
+  return {
+    submit,
+    discard(opportunityKey) { states.delete(opportunityKey); },
+    dispose() { states.clear(); },
+  };
+}
+
+export async function navigateAdvertisingV2WithClick({
+  opportunityKey,
+  impressionEventId,
+  submitClick,
+  navigate,
+  scheduler = {},
+}) {
+  if (!impressionEventId) {
+    navigate();
+    return;
+  }
+  const setTimer = scheduler.setTimeout ?? globalThis.setTimeout;
+  const clearTimer = scheduler.clearTimeout ?? globalThis.clearTimeout;
+  let timer = null;
+  const timeout = new Promise((resolve) => {
+    timer = setTimer(resolve, CLICK_NAVIGATION_WAIT_MILLISECONDS);
+  });
+  const analytics = Promise.resolve()
+    .then(() => submitClick(opportunityKey, impressionEventId))
+    .catch(() => null);
+  try {
+    await Promise.race([analytics, timeout]);
+  } finally {
+    if (timer !== null) clearTimer(timer);
+    navigate();
+  }
 }

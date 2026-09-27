@@ -44,6 +44,11 @@ export function recordAdvertisingV2SocialFeedImpressionWithInvoker(
   adId: string,
   eventKey: string,
 ): Promise<string>;
+export function recordAdvertisingV2SocialFeedClickWithInvoker(
+  invoke: AdsV2EdgeInvoker,
+  impressionEventId: string,
+  eventKey: string,
+): Promise<string>;
 export function advertisingDestinationAction(
   destination: AdvertisingDeliveryAdV2["destination"],
 ): AdvertisingDestinationAction | null;

@@ -3,6 +3,7 @@ import {
   advertisingDestinationAction,
   fetchAdvertisingV2SocialFeedCandidateWithInvoker,
   parseAdvertisingDeliveryAdV2,
+  recordAdvertisingV2SocialFeedClickWithInvoker,
   recordAdvertisingV2SocialFeedImpressionWithInvoker,
 } from "@/services/advertisingDeliveryClient.mjs";
 import type {
@@ -31,4 +32,8 @@ export async function fetchAdvertisingV2SocialFeedCandidate(): Promise<Advertisi
 
 export async function recordAdvertisingV2SocialFeedImpression(adId: string, eventKey: string): Promise<string> {
   return recordAdvertisingV2SocialFeedImpressionWithInvoker(invokeAdsV2Delivery, adId, eventKey);
+}
+
+export async function recordAdvertisingV2SocialFeedClick(impressionEventId: string, eventKey: string): Promise<string> {
+  return recordAdvertisingV2SocialFeedClickWithInvoker(invokeAdsV2Delivery, impressionEventId, eventKey);
 }

@@ -145,6 +145,24 @@ export async function recordAdvertisingV2SocialFeedImpressionWithInvoker(invoke,
   return uuid(data.impression.event_id, "impression.event_id");
 }
 
+export async function recordAdvertisingV2SocialFeedClickWithInvoker(invoke, impressionEventId, eventKey) {
+  const canonicalImpressionEventId = uuid(impressionEventId, "interaction.impression_event_id");
+  const canonicalEventKey = uuid(eventKey, "interaction.event_key");
+  const { data, error } = await invoke("ads-v2-delivery", {
+    body: {
+      action: "interaction",
+      impression_event_id: canonicalImpressionEventId,
+      event_type: "click",
+      event_key: canonicalEventKey,
+    },
+  });
+  if (error) throw error;
+  if (!isObject(data) || data.success !== true || !isObject(data.interaction)) {
+    throw new Error("ads_v2_payload_invalid:interaction");
+  }
+  return uuid(data.interaction.event_id, "interaction.event_id");
+}
+
 export function advertisingDestinationAction(destination) {
   if (destination.destination_type === "external_url" && destination.external_url) {
     try {

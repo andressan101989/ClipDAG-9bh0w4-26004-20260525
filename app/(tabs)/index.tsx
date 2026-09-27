@@ -49,15 +49,18 @@ import { AdvertisingFeedCardV2 } from '@/components/advertising/AdvertisingFeedC
 import {
   advertisingDestinationAction,
   fetchAdvertisingV2SocialFeedCandidate,
+  recordAdvertisingV2SocialFeedClick,
   recordAdvertisingV2SocialFeedImpression,
   type AdvertisingDeliveryAdV2,
 } from '@/services/advertisingDeliveryService';
 import {
   ADS_V2_VIEWABILITY_CONFIG,
   advertisingV2OpportunityForViewer,
+  createAdvertisingV2ClickController,
   createAdvertisingV2ImpressionController,
   loadAdvertisingV2Opportunity,
   mixSocialFeedAdvertisingV2,
+  navigateAdvertisingV2WithClick,
   type AdvertisingV2FeedItem,
 } from '@/services/advertisingV2FeedRuntime.mjs';
 
@@ -243,20 +246,29 @@ export default function FeedScreen() {
   });
   const viewabilityConfig = useRef(VIEWABILITY_CONFIG);
   const advertisingV2Viewability = useRef(createAdvertisingV2ImpressionController(recordAdvertisingV2SocialFeedImpression));
+  const advertisingV2Click = useRef(createAdvertisingV2ClickController(recordAdvertisingV2SocialFeedClick, randomUUID));
   const viewabilityConfigCallbackPairs = useRef([
     { viewabilityConfig: viewabilityConfig.current, onViewableItemsChanged: onViewableItemsChanged.current },
     { viewabilityConfig: ADS_V2_VIEWABILITY_CONFIG, onViewableItemsChanged: advertisingV2Viewability.current },
   ]);
 
   useEffect(() => {
-    const controller = advertisingV2Viewability.current;
-    return () => controller.dispose();
+    const impressionController = advertisingV2Viewability.current;
+    const clickController = advertisingV2Click.current;
+    return () => {
+      impressionController.dispose();
+      clickController.dispose();
+    };
   }, []);
   useEffect(() => {
-    const controller = advertisingV2Viewability.current;
+    const impressionController = advertisingV2Viewability.current;
+    const clickController = advertisingV2Click.current;
     const eventKey = currentAdvertisingV2Opportunity?.eventKey;
     return () => {
-      if (eventKey) controller.discard(eventKey);
+      if (eventKey) {
+        impressionController.discard(eventKey);
+        clickController.discard(eventKey);
+      }
     };
   }, [currentAdvertisingV2Opportunity?.eventKey]);
 
@@ -289,16 +301,22 @@ export default function FeedScreen() {
     });
   }, [router]);
 
-  const openAdvertisingDestination = useCallback((ad: AdvertisingDeliveryAdV2) => {
-    const action = advertisingDestinationAction(ad.destination);
+  const openAdvertisingDestination = useCallback((item: AdvertisingV2FeedItem<AdvertisingDeliveryAdV2>) => {
+    const action = advertisingDestinationAction(item.ad.destination);
     if (!action) return;
-    if (action.kind === 'external') {
-      void Linking.canOpenURL(action.url)
-        .then((supported) => supported ? Linking.openURL(action.url) : undefined)
-        .catch(() => {});
-      return;
-    }
-    router.push({ pathname: action.pathname, params: { id: action.id } } as never);
+    const navigate = action.kind === 'external'
+      ? () => {
+        void Linking.canOpenURL(action.url)
+          .then((supported) => supported ? Linking.openURL(action.url) : undefined)
+          .catch(() => {});
+      }
+      : () => router.push({ pathname: action.pathname, params: { id: action.id } } as never);
+    void navigateAdvertisingV2WithClick({
+      opportunityKey: item.eventKey,
+      impressionEventId: advertisingV2Viewability.current.confirmedImpressionId(item.eventKey),
+      submitClick: advertisingV2Click.current.submit,
+      navigate,
+    }).catch(() => {});
   }, [router]);
 
   const handleSave = useCallback((videoId: string) => { toggleSave(videoId); }, [toggleSave]);
@@ -453,7 +471,7 @@ export default function FeedScreen() {
             ad={item.ad}
             isActive={index === activeIndex}
             onMediaReady={() => advertisingV2Viewability.current.markMediaReady(item.eventKey)}
-            onPress={advertisingDestinationAction(item.ad.destination) ? () => openAdvertisingDestination(item.ad) : undefined}
+            onPress={advertisingDestinationAction(item.ad.destination) ? () => openAdvertisingDestination(item) : undefined}
           />
         ) : (
           <VideoCard

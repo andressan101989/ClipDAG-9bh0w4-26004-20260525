@@ -12,6 +12,13 @@ const hasViewerOverride = (body) => [
   "viewer_user_id", "viewerUserId", "user_id", "userId", "p_viewer_user_id",
 ].some((key) => Object.prototype.hasOwnProperty.call(body, key));
 
+const hasInteractionContextOverride = (body) => [
+  "campaign_id", "campaignId", "p_campaign_id",
+  "ad_id", "adId", "p_ad_id",
+  "placement", "placement_code", "placementCode", "p_placement_code",
+  "destination_id", "destinationId", "p_destination_id",
+].some((key) => Object.prototype.hasOwnProperty.call(body, key));
+
 const validUuid = (value) => typeof value === "string" && UUID.test(value);
 
 async function checkedRpc(rpc, name, args) {
@@ -63,6 +70,26 @@ export async function executeAdsV2DeliveryAction(body, viewerUserId, rpc) {
     });
     if (!validUuid(event?.id)) throw new AdsV2DeliveryError("delivery_unavailable", 503);
     return { success: true, placement: "social_feed", impression: { event_id: event.id } };
+  }
+
+  if (body.action === "interaction") {
+    if (hasInteractionContextOverride(body)) {
+      throw new AdsV2DeliveryError("interaction_context_override_denied", 403);
+    }
+    if (body.event_type !== "click") {
+      throw new AdsV2DeliveryError("interaction_type_invalid");
+    }
+    if (!validUuid(body.impression_event_id) || !validUuid(body.event_key)) {
+      throw new AdsV2DeliveryError("interaction_invalid");
+    }
+    const event = await checkedRpc(rpc, "record_advertising_interaction_v2", {
+      p_impression_event_id: body.impression_event_id,
+      p_event_type: "click",
+      p_event_key: body.event_key,
+      p_viewer_user_id: viewerUserId,
+    });
+    if (!validUuid(event?.id)) throw new AdsV2DeliveryError("delivery_unavailable", 503);
+    return { success: true, interaction: { event_id: event.id } };
   }
 
   throw new AdsV2DeliveryError("action_invalid");
