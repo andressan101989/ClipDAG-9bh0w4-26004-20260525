@@ -13,6 +13,12 @@ const migrationNames = readdirSync(new URL("../supabase/migrations/", import.met
 const migration = migrationNames.length === 1
   ? readFileSync(new URL(`../supabase/migrations/${migrationNames[0]}`, import.meta.url), "utf8")
   : "";
+const correctiveMigrationNames = readdirSync(new URL("../supabase/migrations/", import.meta.url))
+  .filter((name) => name.endsWith("_ads_v2_plr_8_c1_reconciler_determinism.sql"));
+const correctiveMigration = correctiveMigrationNames.length === 1
+  ? readFileSync(new URL(`../supabase/migrations/${correctiveMigrationNames[0]}`, import.meta.url), "utf8")
+  : "";
+const migrations = `${migration}\n${correctiveMigration}`;
 const args = (db, ...extra) => ["exec", "-i", container, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", db, ...extra];
 const run = (sql, db = database) => execFileSync("docker", args(db, "-At"), { input: sql, encoding: "utf8" }).trim();
 const execFileAsync = promisify(execFile);
@@ -128,7 +134,7 @@ test("PLR-8 cutover reconciler attributes only eligible post-cutover purchases w
   run(`create database ${database}`, "postgres");
   try {
     run(bootstrap);
-    run(migration);
+    run(migrations);
     run(`
       insert into private.advertising_destinations values
         ('18000000-0000-4000-8000-000000000003','${ids.campaignProduct}','external_url',null,null,'draft');
@@ -171,7 +177,12 @@ test("PLR-8 cutover reconciler attributes only eligible post-cutover purchases w
         ('40000000-0000-4000-8000-000000000006','${ids.buyer}','confirmed',(select marketplace_purchase_conversion_started_at-interval '1 second'from private.advertising_event_policy where singleton),null,null),
         ('40000000-0000-4000-8000-000000000007','${ids.buyer}','expired',clock_timestamp()+interval '5 seconds',null,clock_timestamp()),
         ('40000000-0000-4000-8000-000000000008','${ids.buyer}','pending_payment',null,null,null),
-        ('40000000-0000-4000-8000-000000000009','${ids.buyer}','confirmed',clock_timestamp()+interval '6 seconds',null,null);
+        ('40000000-0000-4000-8000-000000000009','${ids.buyer}','confirmed',clock_timestamp()+interval '6 seconds',null,null),
+        ('40000000-0000-4000-8000-000000000010','${ids.buyer}','processing',clock_timestamp()+interval '7 seconds',null,null),
+        ('40000000-0000-4000-8000-000000000011','${ids.buyer}','shipped',clock_timestamp()+interval '8 seconds',null,null),
+        ('40000000-0000-4000-8000-000000000012','${ids.buyer}','delivered',clock_timestamp()+interval '9 seconds',null,null),
+        ('40000000-0000-4000-8000-000000000013','${ids.buyer}','refunded',clock_timestamp()+interval '10 seconds',null,null),
+        ('40000000-0000-4000-8000-000000000014','${ids.buyer}','partially_refunded',clock_timestamp()+interval '11 seconds',null,null);
       insert into public.marketplace_order_items values
         ('50000000-0000-4000-8000-000000000001','40000000-0000-4000-8000-000000000001','${ids.product}','${ids.store}',12.50000000,'BDAG'),
         ('50000000-0000-4000-8000-000000000002','40000000-0000-4000-8000-000000000002','${ids.otherProduct}','${ids.store}',8.25000000,'BDAG'),
@@ -181,19 +192,25 @@ test("PLR-8 cutover reconciler attributes only eligible post-cutover purchases w
         ('50000000-0000-4000-8000-000000000006','40000000-0000-4000-8000-000000000006','${ids.product}','${ids.store}',4.00000000,'BDAG'),
         ('50000000-0000-4000-8000-000000000007','40000000-0000-4000-8000-000000000007','${ids.product}','${ids.store}',3.00000000,'BDAG'),
         ('50000000-0000-4000-8000-000000000008','40000000-0000-4000-8000-000000000008','${ids.product}','${ids.store}',2.00000000,'BDAG'),
-        ('50000000-0000-4000-8000-000000000009','40000000-0000-4000-8000-000000000009','14000000-0000-4000-8000-000000000099','15000000-0000-4000-8000-000000000099',1.00000000,'BDAG');
+        ('50000000-0000-4000-8000-000000000009','40000000-0000-4000-8000-000000000009','14000000-0000-4000-8000-000000000099','15000000-0000-4000-8000-000000000099',1.00000000,'BDAG'),
+        ('50000000-0000-4000-8000-000000000010','40000000-0000-4000-8000-000000000010','${ids.product}','${ids.store}',9.00000000,'BDAG'),
+        ('50000000-0000-4000-8000-000000000011','40000000-0000-4000-8000-000000000011','${ids.product}','${ids.store}',9.00000000,'BDAG'),
+        ('50000000-0000-4000-8000-000000000012','40000000-0000-4000-8000-000000000012','${ids.product}','${ids.store}',9.00000000,'BDAG'),
+        ('50000000-0000-4000-8000-000000000013','40000000-0000-4000-8000-000000000013','${ids.product}','${ids.store}',9.00000000,'BDAG'),
+        ('50000000-0000-4000-8000-000000000014','40000000-0000-4000-8000-000000000014','${ids.product}','${ids.store}',9.00000000,'BDAG');
     `);
     const before = run("select (select count(*)from public.financial_transactions)||':'||(select count(*)from public.ledger_entries)||':'||(select count(*)from public.marketplace_ad_touches)");
     const result = JSON.parse(run("select public.reconcile_advertising_marketplace_purchase_conversions_v2(100)"));
-    assert.equal(result.processed, 5);
-    assert.equal(result.converted, 2);
-    assert.equal(result.attributed, 2);
+    assert.equal(result.processed, 10);
+    assert.equal(result.converted, 7);
+    assert.equal(result.attributed, 7);
     assert.equal(result.skipped_no_touch, 3);
     assert.equal(result.errors, 0);
-    assert.equal(run("select count(*)from private.advertising_conversions"), "2");
-    assert.equal(run("select count(*)from private.advertising_attributions"), "2");
+    assert.equal(run("select count(*)from private.advertising_conversions"), "7");
+    assert.equal(run("select count(*)from private.advertising_attributions"), "7");
+    assert.equal(run("select count(*)from private.advertising_conversions where source_reference_id in('50000000-0000-4000-8000-000000000005','50000000-0000-4000-8000-000000000007','50000000-0000-4000-8000-000000000008')"), "0");
     assert.equal(run("select count(*)from private.advertising_conversions where source_reference_id='50000000-0000-4000-8000-000000000009'"), "0");
-    assert.equal(run("select touch_event_type from private.advertising_attributions where campaign_id='16000000-0000-4000-8000-000000000001'"), "click");
+    assert.equal(run("select count(*)||':'||min(touch_event_type)||':'||max(touch_event_type) from private.advertising_attributions where campaign_id='16000000-0000-4000-8000-000000000001'"), "6:click:click");
     assert.equal(run("select touch_event_type from private.advertising_attributions where campaign_id='16000000-0000-4000-8000-000000000002'"), "impression");
     assert.equal(run("select value_bdag||':'||currency from private.advertising_conversions where source_reference_id='50000000-0000-4000-8000-000000000001'"), "12.50000000:BDAG");
     run("update private.advertising_event_policy set marketplace_purchase_conversion_cursor_confirmed_at=null,marketplace_purchase_conversion_cursor_order_item_id=null where singleton");
@@ -201,9 +218,9 @@ test("PLR-8 cutover reconciler attributes only eligible post-cutover purchases w
       runAsync("select public.reconcile_advertising_marketplace_purchase_conversions_v2(100)"),
       runAsync("select public.reconcile_advertising_marketplace_purchase_conversions_v2(100)"),
     ]);
-    assert.deepEqual(concurrent.map((value) => JSON.parse(value).processed).sort((a,b) => a-b), [0,5]);
-    assert.equal(run("select count(*)from private.advertising_conversions"), "2");
-    assert.equal(run("select count(*)from private.advertising_attributions"), "2");
+    assert.deepEqual(concurrent.map((value) => JSON.parse(value).processed).sort((a,b) => a-b), [0,10]);
+    assert.equal(run("select count(*)from private.advertising_conversions"), "7");
+    assert.equal(run("select count(*)from private.advertising_attributions"), "7");
     assert.equal(run("select (select count(*)from public.financial_transactions)||':'||(select count(*)from public.ledger_entries)||':'||(select count(*)from public.marketplace_ad_touches)"), before);
     assert.equal(run("select count(*)from cron.job where jobname='reconcile-advertising-marketplace-purchase-conversions-v2'and schedule='* * * * *'and active"), "1");
     assert.equal(run("select has_function_privilege('public','public.reconcile_advertising_marketplace_purchase_conversions_v2(integer)','execute')"), "f");
@@ -212,5 +229,94 @@ test("PLR-8 cutover reconciler attributes only eligible post-cutover purchases w
     assert.equal(run("select has_function_privilege('service_role','public.reconcile_advertising_marketplace_purchase_conversions_v2(integer)','execute')"), "t");
   } finally {
     run(`select pg_terminate_backend(pid)from pg_stat_activity where datname='${database}'and pid<>pg_backend_pid();drop database if exists ${database}`, "postgres");
+  }
+});
+
+test("PLR-8 C1 refund timing does not decide conversion or attribution truth", { skip: !enabled, timeout: 120_000 }, () => {
+  const db = `${database}_refunds`;
+  run(`create database ${db}`, "postgres");
+  try {
+    run(bootstrap, db);
+    run(migrations, db);
+    const execute = (sql) => run(sql, db);
+    execute(`
+      insert into private.advertising_events values
+        ('30000000-0000-4000-8000-000000000010','click','${ids.buyer}','${ids.campaignProduct}','${ids.destinationProduct}',clock_timestamp()-interval '1 hour');
+      insert into public.marketplace_orders values
+        ('40000000-0000-4000-8000-000000000020','${ids.buyer}','confirmed',clock_timestamp(),null,null),
+        ('40000000-0000-4000-8000-000000000021','${ids.buyer}','refunded',clock_timestamp()+interval '1 second',null,null),
+        ('40000000-0000-4000-8000-000000000022','${ids.buyer}','confirmed',clock_timestamp()+interval '2 seconds',null,null),
+        ('40000000-0000-4000-8000-000000000023','${ids.buyer}','partially_refunded',clock_timestamp()+interval '3 seconds',null,null);
+      insert into public.marketplace_order_items values
+        ('50000000-0000-4000-8000-000000000020','40000000-0000-4000-8000-000000000020','${ids.product}','${ids.store}',9.00000000,'BDAG'),
+        ('50000000-0000-4000-8000-000000000021','40000000-0000-4000-8000-000000000021','${ids.product}','${ids.store}',9.00000000,'BDAG'),
+        ('50000000-0000-4000-8000-000000000022','40000000-0000-4000-8000-000000000022','${ids.product}','${ids.store}',7.00000000,'BDAG'),
+        ('50000000-0000-4000-8000-000000000023','40000000-0000-4000-8000-000000000023','${ids.product}','${ids.store}',7.00000000,'BDAG');
+    `);
+
+    assert.equal(JSON.parse(execute("select public.reconcile_advertising_marketplace_purchase_conversions_v2(1)")).converted, 1);
+    execute("update public.marketplace_orders set status='refunded' where id='40000000-0000-4000-8000-000000000020'");
+    assert.equal(JSON.parse(execute("select public.reconcile_advertising_marketplace_purchase_conversions_v2(1)")).converted, 1);
+    assert.equal(JSON.parse(execute("select public.reconcile_advertising_marketplace_purchase_conversions_v2(1)")).converted, 1);
+    execute("update public.marketplace_orders set status='partially_refunded' where id='40000000-0000-4000-8000-000000000022'");
+    assert.equal(JSON.parse(execute("select public.reconcile_advertising_marketplace_purchase_conversions_v2(1)")).converted, 1);
+
+    assert.equal(execute("select count(*) from private.advertising_conversions"), "4");
+    assert.equal(execute("select count(*) from private.advertising_attributions"), "4");
+    assert.equal(execute("select count(distinct value_bdag) from private.advertising_conversions"), "2");
+    assert.equal(execute("select count(*) from private.advertising_attributions where touch_event_type='click'"), "4");
+    assert.equal(execute("select count(*) from private.advertising_conversions where value_bdag=9 and currency='BDAG'"), "2");
+    assert.equal(execute("select count(*) from private.advertising_conversions where value_bdag=7 and currency='BDAG'"), "2");
+  } finally {
+    run(`select pg_terminate_backend(pid)from pg_stat_activity where datname='${db}'and pid<>pg_backend_pid();drop database if exists ${db}`, "postgres");
+  }
+});
+
+test("PLR-8 C1 propagates conversion failure, rolls back cursor progress, and retries safely", { skip: !enabled, timeout: 120_000 }, () => {
+  const db = `${database}_failure`;
+  run(`create database ${db}`, "postgres");
+  try {
+    run(bootstrap, db);
+    run(migrations, db);
+    const execute = (sql) => run(sql, db);
+    execute(`
+      insert into private.advertising_events values
+        ('30000000-0000-4000-8000-000000000030','click','${ids.buyer}','${ids.campaignProduct}','${ids.destinationProduct}',clock_timestamp()-interval '1 hour');
+      insert into public.marketplace_orders values
+        ('40000000-0000-4000-8000-000000000030','${ids.otherBuyer}','confirmed',clock_timestamp(),null,null),
+        ('40000000-0000-4000-8000-000000000031','${ids.buyer}','confirmed',clock_timestamp()+interval '1 second',null,null);
+      insert into public.marketplace_order_items values
+        ('50000000-0000-4000-8000-000000000030','40000000-0000-4000-8000-000000000030','${ids.product}','${ids.store}',3.00000000,'BDAG'),
+        ('50000000-0000-4000-8000-000000000031','40000000-0000-4000-8000-000000000031','${ids.product}','${ids.store}',4.00000000,'BDAG');
+      create function private.fail_ads_conversion_for_test() returns trigger language plpgsql as $$
+      begin
+        if new.source_reference_id='50000000-0000-4000-8000-000000000031' then
+          raise exception using errcode='P0001',message='forced_conversion_failure';
+        end if;
+        return new;
+      end$$;
+      create trigger fail_ads_conversion_for_test before insert on private.advertising_conversions
+      for each row execute function private.fail_ads_conversion_for_test();
+    `);
+
+    assert.throws(
+      () => execute("select public.reconcile_advertising_marketplace_purchase_conversions_v2(100)"),
+      /forced_conversion_failure/,
+    );
+    assert.equal(execute("select marketplace_purchase_conversion_cursor_confirmed_at is null and marketplace_purchase_conversion_cursor_order_item_id is null from private.advertising_event_policy where singleton"), "t");
+    assert.equal(execute("select count(*) from private.advertising_conversions"), "0");
+    assert.equal(execute("select count(*) from private.advertising_attributions"), "0");
+
+    execute("drop trigger fail_ads_conversion_for_test on private.advertising_conversions;drop function private.fail_ads_conversion_for_test()");
+    const retried = JSON.parse(execute("select public.reconcile_advertising_marketplace_purchase_conversions_v2(100)"));
+    assert.equal(retried.processed, 2);
+    assert.equal(retried.converted, 1);
+    assert.equal(retried.attributed, 1);
+    assert.equal(retried.skipped_no_touch, 1);
+    assert.equal(execute("select count(*) from private.advertising_conversions"), "1");
+    assert.equal(execute("select count(*) from private.advertising_attributions"), "1");
+    assert.equal(execute("select marketplace_purchase_conversion_cursor_order_item_id from private.advertising_event_policy where singleton"), "50000000-0000-4000-8000-000000000031");
+  } finally {
+    run(`select pg_terminate_backend(pid)from pg_stat_activity where datname='${db}'and pid<>pg_backend_pid();drop database if exists ${db}`, "postgres");
   }
 });
