@@ -85,10 +85,10 @@ test("Edge rejects all client-supplied Ads authority overrides", async () => {
   }
 });
 
-test("Edge exposes only click interactions in PLR-7A", async () => {
+test("Edge keeps video_view and engagement outside the interaction runtime", async () => {
   const { executeAdsV2DeliveryAction } = await import(edgeUrl);
   const rpc = async () => ({ data: { id: interactionId }, error: null });
-  for (const eventType of ["destination_open", "video_view", "engagement"]) {
+  for (const eventType of ["video_view", "engagement"]) {
     await assert.rejects(
       () => executeAdsV2DeliveryAction({ ...interactionBody, event_type: eventType }, viewer, rpc),
       /interaction_type_invalid/,

@@ -4,6 +4,7 @@ import {
   fetchAdvertisingV2SocialFeedCandidateWithInvoker,
   parseAdvertisingDeliveryAdV2,
   recordAdvertisingV2SocialFeedClickWithInvoker,
+  recordAdvertisingV2SocialFeedDestinationOpenWithInvoker,
   recordAdvertisingV2SocialFeedImpressionWithInvoker,
 } from "@/services/advertisingDeliveryClient.mjs";
 import type {
@@ -36,4 +37,8 @@ export async function recordAdvertisingV2SocialFeedImpression(adId: string, even
 
 export async function recordAdvertisingV2SocialFeedClick(impressionEventId: string, eventKey: string): Promise<string> {
   return recordAdvertisingV2SocialFeedClickWithInvoker(invokeAdsV2Delivery, impressionEventId, eventKey);
+}
+
+export async function recordAdvertisingV2SocialFeedDestinationOpen(impressionEventId: string, eventKey: string): Promise<string> {
+  return recordAdvertisingV2SocialFeedDestinationOpenWithInvoker(invokeAdsV2Delivery, impressionEventId, eventKey);
 }

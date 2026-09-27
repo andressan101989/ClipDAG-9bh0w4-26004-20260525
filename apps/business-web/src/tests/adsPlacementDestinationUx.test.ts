@@ -28,12 +28,12 @@ describe("Ads placement and destination presentation model", () => {
     expect(isCurrentReleasePlacementSelection(["social_feed"])).toBe(true);
   });
 
-  it("fails destination types closed unless both a safe picker and consumer exist", () => {
+  it("offers only destination types with both a safe picker and consumer", () => {
     expect(destinationSupport.external_url).toMatchObject({ safePicker: true, safeConsumer: true, selectable: true });
     expect(destinationSupport.nelyon_profile).toMatchObject({ safePicker: false, safeConsumer: true, selectable: false });
     expect(destinationSupport.business_account).toMatchObject({ safePicker: true, safeConsumer: false, selectable: false });
-    expect(destinationSupport.marketplace_product).toMatchObject({ safePicker: false, safeConsumer: true, selectable: false });
-    expect(destinationSupport.marketplace_store).toMatchObject({ safePicker: false, safeConsumer: true, selectable: false });
+    expect(destinationSupport.marketplace_product).toMatchObject({ safePicker: true, safeConsumer: true, selectable: true });
+    expect(destinationSupport.marketplace_store).toMatchObject({ safePicker: true, safeConsumer: true, selectable: true });
   });
 
   it("validates secure website destinations and renders a human hostname", () => {

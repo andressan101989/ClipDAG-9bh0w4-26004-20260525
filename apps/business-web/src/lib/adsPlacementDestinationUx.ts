@@ -78,8 +78,8 @@ export const destinationSupport: Record<DestinationType, DestinationSupport> = {
   external_url: { type: "external_url", label: "External website", description: "Send people to a secure website.", safePicker: true, safeConsumer: true, selectable: true },
   nelyon_profile: { type: "nelyon_profile", label: "Nelyon profile", description: "A safe profile picker is not available yet.", safePicker: false, safeConsumer: true, selectable: false },
   business_account: { type: "business_account", label: "Business", description: "The mobile Business destination is not available yet.", safePicker: true, safeConsumer: false, selectable: false },
-  marketplace_product: { type: "marketplace_product", label: "Marketplace product", description: "An Ads V2 product picker is not available yet.", safePicker: false, safeConsumer: true, selectable: false },
-  marketplace_store: { type: "marketplace_store", label: "Marketplace store", description: "An Ads V2 store picker is not available yet.", safePicker: false, safeConsumer: true, selectable: false },
+  marketplace_product: { type: "marketplace_product", label: "Marketplace product", description: "Attribute purchases of one eligible Marketplace product.", safePicker: true, safeConsumer: true, selectable: true },
+  marketplace_store: { type: "marketplace_store", label: "Marketplace store", description: "Attribute eligible purchases from your Marketplace store.", safePicker: true, safeConsumer: true, selectable: true },
 };
 
 export const destinationOrder = ["external_url", "nelyon_profile", "business_account", "marketplace_product", "marketplace_store"] as const;
@@ -105,6 +105,11 @@ export function destinationLabel(type: string) {
   return destinationSupport[type as DestinationType]?.label ?? "Saved destination";
 }
 
-export function isCurrentReleaseDestination(destination: { destinationType: string; externalUrl: string | null } | null) {
-  return destination?.destinationType === "external_url" && validateExternalWebsite(destination.externalUrl ?? "").ok;
+export function isCurrentReleaseDestination(destination: { destinationType: string; externalUrl: string | null; targetProductId?: string | null; targetStoreId?: string | null } | null, objective?: string) {
+  if (!destination) return false;
+  if (objective === "marketplace_sales") {
+    return (destination.destinationType === "marketplace_product" && Boolean(destination.targetProductId))
+      || (destination.destinationType === "marketplace_store" && Boolean(destination.targetStoreId));
+  }
+  return destination.destinationType === "external_url" && validateExternalWebsite(destination.externalUrl ?? "").ok;
 }

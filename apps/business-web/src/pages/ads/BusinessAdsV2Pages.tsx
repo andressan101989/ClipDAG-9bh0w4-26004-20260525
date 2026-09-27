@@ -14,6 +14,7 @@ import { destinationLabel, externalWebsiteSummary, isCurrentReleaseDestination, 
 import { findAdOperationResult, isCreativeMediaSelectable, sameCreativeContent } from "../../lib/adsCreativeUx";
 import { sameBudgetDecimal, validateBudgetDecimal } from "../../lib/adsOperationalTruth";
 import { searchAllBusinessMedia, type BusinessMediaItem } from "../../lib/businessMediaApi";
+import { searchProducts, type ProductSummary } from "../../lib/sellerCenterApi";
 import {
   ADVERTISING_OBJECTIVES,
   activateAdvertisingCampaign,
@@ -71,6 +72,12 @@ import { isAdsDraftStaleError, presentAdsError } from "../../lib/adsErrorPresent
 const mutationApplied = <T,>(value: T): AdsMutationReconciliation<T> => ({ status: "applied_as_intended", value });
 const mutationNotApplied = <T,>(): AdsMutationReconciliation<T> => ({ status: "not_applied" });
 const mutationDifferent = <T,>(): AdsMutationReconciliation<T> => ({ status: "applied_differently" });
+
+const objectiveLabels: Record<(typeof ADVERTISING_OBJECTIVES)[number], string> = {
+  awareness: "Awareness", reach: "Reach", traffic: "Traffic", engagement: "Engagement",
+  video_views: "Video views", profile_visits: "Profile visits", messages: "Messages",
+  website_conversions: "Website conversions", app_promotion: "App promotion", marketplace_sales: "Marketplace sales",
+};
 
 function sameStrings(left: string[], right: string[]) {
   return [...left].sort().join("\u0000") === [...right].sort().join("\u0000");
@@ -292,7 +299,7 @@ export function BusinessAdsManagerNewCampaignPage() {
   }
   if (accounts.length === 0) return <><PageHeader eyebrow="Ads Manager" title="Create campaign draft" description="Create a Business Account first." /><AdvertiserOnboarding /></>;
   const mutationError = mutation.state.kind === "error" || mutation.state.kind === "conflict" || mutation.state.kind === "uncertain" ? mutation.state.message : null;
-  return <><PageHeader eyebrow="Ads Manager · Step 1" title="Create campaign draft" description="This creates a general Ads V2 draft. It does not fund, activate, or deliver advertising." action={<Link className="text-button" to="/ads">Back</Link>} /><AccountSelectors /><InlineError message={mutationError} />{mutation.state.kind === "success" && <div className="inline-success" role="status">{mutation.state.message}</div>}{owner && <AdvertisingAgeEligibilityPanel />}{!owner && <div className="readonly-note">Only the Business Account owner can create Ads V2 drafts.</div>}<form className="business-card ads-v2-compact-form" aria-busy={mutation.pending} onSubmit={(event) => void submit(event)}><FormField label="Campaign name"><input required minLength={2} maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /></FormField><FormField label="Objective"><select value={objective} onChange={(event) => setObjective(event.target.value as (typeof ADVERTISING_OBJECTIVES)[number])}>{ADVERTISING_OBJECTIVES.map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</select></FormField><FormField label="Ad Account"><input readOnly value={selectedAdAccount?.name ?? ""} /></FormField><button className="primary-button" type="submit" disabled={!canWrite || !selectedAdAccount || mutation.pending}>{mutation.pending ? "Creating…" : "Create draft"}</button></form></>;
+  return <><PageHeader eyebrow="Ads Manager · Step 1" title="Create campaign draft" description="This creates a general Ads V2 draft. It does not fund, activate, or deliver advertising." action={<Link className="text-button" to="/ads">Back</Link>} /><AccountSelectors /><InlineError message={mutationError} />{mutation.state.kind === "success" && <div className="inline-success" role="status">{mutation.state.message}</div>}{owner && <AdvertisingAgeEligibilityPanel />}{!owner && <div className="readonly-note">Only the Business Account owner can create Ads V2 drafts.</div>}<form className="business-card ads-v2-compact-form" aria-busy={mutation.pending} onSubmit={(event) => void submit(event)}><FormField label="Campaign name"><input required minLength={2} maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /></FormField><FormField label="Objective"><select value={objective} onChange={(event) => setObjective(event.target.value as (typeof ADVERTISING_OBJECTIVES)[number])}>{ADVERTISING_OBJECTIVES.map((item) => <option key={item} value={item}>{objectiveLabels[item]}</option>)}</select></FormField><FormField label="Ad Account"><input readOnly value={selectedAdAccount?.name ?? ""} /></FormField><button className="primary-button" type="submit" disabled={!canWrite || !selectedAdAccount || mutation.pending}>{mutation.pending ? "Creating…" : "Create draft"}</button></form></>;
 }
 
 type WorkspaceData = { requestKey: string; campaign: AdvertisingCampaign; readiness: AdvertisingCampaignReadiness; creatives: AdvertisingCreativeWorkspace; finance: AdvertisingFinance | null; analytics: Record<string, unknown> | null; panelErrors: { analytics: string | null }; audience: Record<string, unknown> | null; placement: AdvertisingPlacementSelection | null; selectedAdSetId: string | null; selectedDestinationId: string | null; selectedAdId: string | null };
@@ -413,7 +420,7 @@ export function BusinessAdsManagerCampaignPage() {
 }
 
 function CampaignWorkspace({ data, business, adAccount, owner, lifecycleOwner, run, reload, refresh, pending, selectEntity, creatingRevisedAd, setRevisedAdMode }: { data: WorkspaceData; business: AdvertiserBusiness | null; adAccount: AdvertiserAdAccount | null; owner: boolean; lifecycleOwner: boolean; run: <T>(input: AdsMutationRunInput<T>, message: string, onSuccessValue?: (value: T) => void) => Promise<boolean>; reload: () => Promise<WorkspaceData>; refresh: () => Promise<void>; pending: boolean; selectEntity: (key: "adSet" | "destination" | "ad", value: string) => void; creatingRevisedAd: boolean; setRevisedAdMode: (enabled: boolean, selectedAdId?: string) => void }) {
-  const { user } = useBusinessAuth();
+  const { user, currentBusiness } = useBusinessAuth();
   const { targetingCapabilities, targetingCapabilitiesUnavailable } = useAdvertisingManager();
   const campaign = data.campaign;
   const adSet = campaign.adSets.find((item) => item.id === data.selectedAdSetId);
@@ -425,9 +432,14 @@ function CampaignWorkspace({ data, business, adAccount, owner, lifecycleOwner, r
   const [adSetName, setAdSetName] = useState("Primary Ad Set"); const [startsAt, setStartsAt] = useState(""); const [endsAt, setEndsAt] = useState("");
   const [mediaById, setMediaById] = useState<Record<string, BusinessMediaItem>>({});
   const [editingAdSet, setEditingAdSet] = useState(false);
+  const [marketplaceProducts, setMarketplaceProducts] = useState<ProductSummary[]>([]);
+  const [marketplaceProductsLoading, setMarketplaceProductsLoading] = useState(false);
+  const [marketplaceProductsError, setMarketplaceProductsError] = useState<string | null>(null);
   const creativeMediaIds = useMemo(() => [...new Set(allVersions.flatMap((version) => [version.mediaAssetId, version.videoAssetId]).filter((id): id is string => Boolean(id)))].sort(), [allVersions]);
   const creativeMediaKey = creativeMediaIds.join("|");
   const businessOwnerId = business?.marketplace.marketplaceSellerUserId ?? user?.id;
+  const currentMarketplaceStore = currentBusiness?.store ?? null;
+  const marketplaceStore = currentMarketplaceStore && currentMarketplaceStore.sellerId === businessOwnerId && currentMarketplaceStore.status === "active" ? currentMarketplaceStore : null;
   useEffect(() => {
     let current = true;
     if (!businessOwnerId || creativeMediaIds.length === 0) { setMediaById({}); return () => { current = false; }; }
@@ -438,10 +450,23 @@ function CampaignWorkspace({ data, business, adAccount, owner, lifecycleOwner, r
   // The stable joined key avoids re-fetching because the versions array is reconstructed during render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessOwnerId, creativeMediaKey]);
+  useEffect(() => {
+    let current = true;
+    if (campaign.objective !== "marketplace_sales" || !businessOwnerId) {
+      setMarketplaceProducts([]); setMarketplaceProductsError(null); setMarketplaceProductsLoading(false);
+      return () => { current = false; };
+    }
+    setMarketplaceProductsLoading(true); setMarketplaceProductsError(null);
+    void searchProducts(businessOwnerId, { status: "active", limit: 100 })
+      .then((page) => { if (current) setMarketplaceProducts(page.items.filter((item) => item.status === "active" && item.readinessReason === null)); })
+      .catch(() => { if (current) { setMarketplaceProducts([]); setMarketplaceProductsError("Eligible Marketplace products are temporarily unavailable."); } })
+      .finally(() => { if (current) setMarketplaceProductsLoading(false); });
+    return () => { current = false; };
+  }, [businessOwnerId, campaign.objective]);
   const persistedPlacements = data.placement?.latestVersion?.placements.map((item) => item.code) ?? [];
   const selectedPlacementDeliveryEnabled = Boolean(data.placement?.latestVersion?.placements.length)
     && data.placement!.latestVersion!.placements.every((item) => item.v2DeliveryEnabled);
-  const destinationIsUsable = isCurrentReleaseDestination(destination ?? null);
+  const destinationIsUsable = isCurrentReleaseDestination(destination ?? null, campaign.objective);
   const audienceLatest = data.audience?.latest_version && typeof data.audience.latest_version === "object" ? data.audience.latest_version as Record<string, unknown> : null;
   const audienceDefinition = useMemo(() => audienceDefinitionFromPayload(data.audience), [data.audience]);
   const audienceIsStale = Boolean(audienceLatest && targetingCapabilities && audienceLatest.targeting_policy_version !== targetingCapabilities.policyVersion);
@@ -537,7 +562,7 @@ function CampaignWorkspace({ data, business, adAccount, owner, lifecycleOwner, r
       const selectionId = data.placement?.placementSelectionId;
       return run({ operation: selectionId ? "placements:version" : "placements:create", scope: selectionId ?? adSet.id, payload, mutate: (key) => selectionId ? createAdvertisingPlacementSelectionVersion(selectionId, payload.codes, key) : createAdvertisingPlacementSelectionDraft(adSet.id, payload.codes, key), reconcile: () => reconcileWorkspace((workspace) => { const current = workspace.placement?.latestVersion?.placements.map((item) => item.code) ?? []; return sameStrings(current, payload.codes) ? workspace.placement : null; }, (workspace) => workspace.placement != null) }, selectionId ? "Placement version updated" : "Placements saved");
     }} /> : <section id="placements" className="business-card editor-card"><p className="eyebrow">Step 4</p><h2>Placements</h2><p>Select or create an Ad Set first.</p></section>}
-    {(campaign.destinations.length <= 1 || destination) ? <DestinationPanel destination={destination ?? null} referencedByAd={Boolean(destination && data.creatives.ads.some((item) => item.destinationId === destination.id))} owner={owner} pending={pending} onSave={async (values: DestinationValues) => {
+    {(campaign.destinations.length <= 1 || destination) ? <DestinationPanel destination={destination ?? null} referencedByAd={Boolean(destination && data.creatives.ads.some((item) => item.destinationId === destination.id))} owner={owner} pending={pending} objective={campaign.objective} products={marketplaceProducts} productsLoading={marketplaceProductsLoading} productsError={marketplaceProductsError} store={marketplaceStore} onSave={async (values: DestinationValues) => {
       if (destination) {
         const payload = { destinationId: destination.id, expectedUpdatedAt: destination.updatedAt, ...values };
         return run({ operation: "destination:update", scope: destination.id, payload, mutate: (key) => updateAdvertisingDestinationDraft(payload, key), reconcile: () => reconcileWorkspace((workspace) => workspace.campaign.destinations.find((item) => item.id === destination.id && item.destinationType === payload.type && item.externalUrl === payload.externalUrl && item.targetUserId === payload.targetUserId && item.targetBusinessAccountId === payload.targetBusinessAccountId && item.targetProductId === payload.targetProductId && item.targetStoreId === payload.targetStoreId) ?? null, (workspace) => workspace.campaign.destinations.some((item) => item.id === destination.id)) }, "Destination updated");

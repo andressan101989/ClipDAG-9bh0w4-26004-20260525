@@ -82,7 +82,10 @@ describe("Ads operational truth presentation", () => {
     expect(runtime).toMatchObject({ deliveryEnabled: true, fundingEnabled: true, billingRuntime: false });
     expect(businessMetricPresentation("clicks", 2, runtime)).toEqual({ state: "measured", display: "2", detail: null });
     expect(businessMetricPresentation("ctr", 0, runtime, { impressions: 0 })).toEqual({ state: "measured", display: "—", detail: "No impressions yet" });
-    for (const metric of ["destination_opens", "video_views", "engagements"] as const) {
+    expect(businessMetricPresentation("destination_opens", 7, runtime)).toEqual({ state: "measured", display: "7", detail: null });
+    expect(businessMetricPresentation("conversions", 3, runtime)).toEqual({ state: "measured", display: "3", detail: null });
+    expect(businessMetricPresentation("attributed_conversions", 2, runtime)).toEqual({ state: "measured", display: "2", detail: null });
+    for (const metric of ["video_views", "engagements"] as const) {
       expect(businessMetricPresentation(metric, 7, runtime).state).toBe("not_available_yet");
     }
   });

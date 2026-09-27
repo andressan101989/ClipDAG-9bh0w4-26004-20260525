@@ -649,9 +649,15 @@ describe("Ads Manager V2 workspace", () => {
     expect(screen.getByLabelText("Clicks metric")).toHaveTextContent("0");
     expect(screen.getByLabelText("Clicks metric")).not.toHaveTextContent("Not available yet");
     expect(screen.getByLabelText("CTR metric")).toHaveTextContent("No impressions yet");
-    for (const label of ["Destination opens", "Video views", "Engagements", "Conversions", "Attributed conversions", "Marketplace purchase value", "CPC", "CPM", "CPA"]) {
+    for (const label of ["Video views", "Engagements", "CPC", "CPM", "CPA"]) {
       expect(screen.getByLabelText(`${label} metric`)).toHaveTextContent("Not available yet");
     }
+    for (const label of ["Destination opens", "Conversions", "Attributed purchases", "Attributed purchase value (GMV)"]) {
+      expect(screen.getByLabelText(`${label} metric`)).toHaveTextContent("0");
+      expect(screen.getByLabelText(`${label} metric`)).not.toHaveTextContent("Not available yet");
+    }
+    expect(screen.getByLabelText("Conversion rate metric")).toHaveTextContent("—");
+    expect(screen.getByLabelText("ROAS metric")).toHaveTextContent("—");
     expect(document.body.textContent).not.toMatch(/pre-launch/i);
   });
 

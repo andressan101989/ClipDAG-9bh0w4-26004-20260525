@@ -24,6 +24,7 @@ const readinessCatalog: Record<string, Omit<ReadinessItem, "code">> = {
   placement_selection_missing: { category: "user_action", message: "Choose where this ad should appear.", action: { label: "Choose placements", href: "#placements" } },
   placement_v2_delivery_disabled: { category: "platform", message: "Ad delivery for the selected placement is not enabled yet.", action: null },
   ad_review_fingerprint_mismatch: { category: "user_action", message: "The submitted ad no longer matches its reviewed assembly.", action: { label: "Create a revised ad", href: "#ad" } },
+  marketplace_sales_destination_invalid: { category: "user_action", message: "Marketplace sales requires an eligible Marketplace product or active store destination.", action: { label: "Review destination", href: "#destination" } },
   creative_media_unavailable: { category: "user_action", message: "The creative media is unavailable and needs to be updated.", action: { label: "Update creative", href: "#creative" } },
   no_operational_ad_set: { category: "aggregate", message: "No Ad Set is currently ready to deliver.", action: null },
   campaign_schedule_expired: { category: "user_action", message: "The Ad Set schedule has ended.", action: { label: "Update Ad Set schedule", href: "#ad-set" } },

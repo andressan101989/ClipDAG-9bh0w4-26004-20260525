@@ -11,7 +11,7 @@
     "ios": {
       "newArchEnabled": true,
       "supportsTablet": true,
-      "buildNumber": "25",
+      "buildNumber": "26",
       "deploymentTarget": "16.4",
       "bundleIdentifier": "com.clipdag.onspaceapp",
       "infoPlist": {

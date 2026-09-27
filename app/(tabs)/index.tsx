@@ -50,6 +50,7 @@ import {
   advertisingDestinationAction,
   fetchAdvertisingV2SocialFeedCandidate,
   recordAdvertisingV2SocialFeedClick,
+  recordAdvertisingV2SocialFeedDestinationOpen,
   recordAdvertisingV2SocialFeedImpression,
   type AdvertisingDeliveryAdV2,
 } from '@/services/advertisingDeliveryService';
@@ -57,6 +58,7 @@ import {
   ADS_V2_VIEWABILITY_CONFIG,
   advertisingV2OpportunityForViewer,
   createAdvertisingV2ClickController,
+  createAdvertisingV2DestinationOpenController,
   createAdvertisingV2ImpressionController,
   loadAdvertisingV2Opportunity,
   mixSocialFeedAdvertisingV2,
@@ -247,6 +249,7 @@ export default function FeedScreen() {
   const viewabilityConfig = useRef(VIEWABILITY_CONFIG);
   const advertisingV2Viewability = useRef(createAdvertisingV2ImpressionController(recordAdvertisingV2SocialFeedImpression));
   const advertisingV2Click = useRef(createAdvertisingV2ClickController(recordAdvertisingV2SocialFeedClick, randomUUID));
+  const advertisingV2DestinationOpen = useRef(createAdvertisingV2DestinationOpenController(recordAdvertisingV2SocialFeedDestinationOpen, randomUUID));
   const viewabilityConfigCallbackPairs = useRef([
     { viewabilityConfig: viewabilityConfig.current, onViewableItemsChanged: onViewableItemsChanged.current },
     { viewabilityConfig: ADS_V2_VIEWABILITY_CONFIG, onViewableItemsChanged: advertisingV2Viewability.current },
@@ -255,19 +258,23 @@ export default function FeedScreen() {
   useEffect(() => {
     const impressionController = advertisingV2Viewability.current;
     const clickController = advertisingV2Click.current;
+    const destinationOpenController = advertisingV2DestinationOpen.current;
     return () => {
       impressionController.dispose();
       clickController.dispose();
+      destinationOpenController.dispose();
     };
   }, []);
   useEffect(() => {
     const impressionController = advertisingV2Viewability.current;
     const clickController = advertisingV2Click.current;
+    const destinationOpenController = advertisingV2DestinationOpen.current;
     const eventKey = currentAdvertisingV2Opportunity?.eventKey;
     return () => {
       if (eventKey) {
         impressionController.discard(eventKey);
         clickController.discard(eventKey);
+        destinationOpenController.discard(eventKey);
       }
     };
   }, [currentAdvertisingV2Opportunity?.eventKey]);
@@ -305,16 +312,20 @@ export default function FeedScreen() {
     const action = advertisingDestinationAction(item.ad.destination);
     if (!action) return;
     const navigate = action.kind === 'external'
-      ? () => {
-        void Linking.canOpenURL(action.url)
-          .then((supported) => supported ? Linking.openURL(action.url) : undefined)
-          .catch(() => {});
+      ? async () => {
+        const supported = await Linking.canOpenURL(action.url).catch(() => false);
+        if (!supported) return false;
+        return Linking.openURL(action.url).then(() => true, () => false);
       }
-      : () => router.push({ pathname: action.pathname, params: { id: action.id } } as never);
+      : () => {
+        router.push({ pathname: action.pathname, params: { id: action.id } } as never);
+        return true;
+      };
     void navigateAdvertisingV2WithClick({
       opportunityKey: item.eventKey,
       impressionEventId: advertisingV2Viewability.current.confirmedImpressionId(item.eventKey),
       submitClick: advertisingV2Click.current.submit,
+      submitDestinationOpen: advertisingV2DestinationOpen.current.submit,
       navigate,
     }).catch(() => {});
   }, [router]);

@@ -146,13 +146,21 @@ export async function recordAdvertisingV2SocialFeedImpressionWithInvoker(invoke,
 }
 
 export async function recordAdvertisingV2SocialFeedClickWithInvoker(invoke, impressionEventId, eventKey) {
+  return recordAdvertisingV2SocialFeedInteractionWithInvoker(invoke, impressionEventId, "click", eventKey);
+}
+
+export async function recordAdvertisingV2SocialFeedDestinationOpenWithInvoker(invoke, impressionEventId, eventKey) {
+  return recordAdvertisingV2SocialFeedInteractionWithInvoker(invoke, impressionEventId, "destination_open", eventKey);
+}
+
+async function recordAdvertisingV2SocialFeedInteractionWithInvoker(invoke, impressionEventId, eventType, eventKey) {
   const canonicalImpressionEventId = uuid(impressionEventId, "interaction.impression_event_id");
   const canonicalEventKey = uuid(eventKey, "interaction.event_key");
   const { data, error } = await invoke("ads-v2-delivery", {
     body: {
       action: "interaction",
       impression_event_id: canonicalImpressionEventId,
-      event_type: "click",
+      event_type: eventType,
       event_key: canonicalEventKey,
     },
   });

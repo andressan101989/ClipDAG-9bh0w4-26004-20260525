@@ -185,14 +185,20 @@ function AnalyticsPanel({ analytics, analyticsError, finance, deliveryEnabled, o
   const metrics: Array<[string, MetricKey]> = [
     ["Impressions", "impressions"], ["Clicks", "clicks"], ["Destination opens", "destination_opens"],
     ["Video views", "video_views"], ["Engagements", "engagements"], ["CTR", "ctr"],
-    ["Conversions", "conversions"], ["Attributed conversions", "attributed_conversions"],
-    ["Marketplace purchase value", "marketplace_purchase_value_bdag"], ["CPC", "cpc"], ["CPM", "cpm"], ["CPA", "cpa"],
+    ["Conversions", "conversions"], ["Attributed purchases", "attributed_conversions"],
+    ["Attributed purchase value (GMV)", "marketplace_purchase_value_bdag"], ["CPC", "cpc"], ["CPM", "cpm"], ["CPA", "cpa"],
   ];
   const runtime = deriveBusinessAdsRuntime({ deliveryEnabled, fundingEnabled: finance?.policy.fundingEnabled ?? false, spendEnabled: finance?.policy.spendEnabled ?? false });
   const spend: MetricPresentation = runtime.billingRuntime
     ? { state: "measured", display: finance ? formatBdag(finance.spentBdag) : "No campaign finance", detail: null }
     : { state: "platform_disabled", display: finance ? formatBdag(finance.spentBdag) : "No campaign finance", detail: "Ad billing is currently unavailable." };
-  return <section className="business-card editor-card ads-operational-panel" aria-labelledby="campaign-analytics-title"><p className="eyebrow">Measured performance</p><h2 id="campaign-analytics-title">Analytics</h2>{analyticsError && <><div className="readonly-note" role="status">Showing the last loaded analytics.</div><InlineError message={analyticsError} onRetry={() => void onRetry()} /></>}{impressions === 0 && <div className="readonly-note"><strong>No ad delivery has occurred yet.</strong><span>{deliveryEnabled ? "Delivery is available; this campaign has not delivered yet." : "Ad delivery is currently unavailable."}</span></div>}<div className="ads-summary-grid">{metrics.map(([label, metric]) => <TruthMetric key={metric} label={label} presentation={analyticsPresentation(metric, analytics, impressions, runtime)} />)}<TruthMetric label="Spend" presentation={spend} /></div></section>;
+  const clicks = numberValue(analytics.clicks);
+  const attributedConversions = numberValue(analytics.attributed_conversions);
+  const attributedValue = numberValue(analytics.marketplace_purchase_value_bdag);
+  const spent = numberValue(finance?.spentBdag);
+  const conversionRate: MetricPresentation = { state: "measured", display: clicks > 0 ? String(Math.round((attributedConversions / clicks) * 100_000_000) / 100_000_000) : "—", detail: clicks > 0 ? "Attributed purchases divided by clicks" : "No clicks yet" };
+  const roas: MetricPresentation = { state: spent > 0 ? "measured" : "platform_disabled", display: spent > 0 ? `${Math.round((attributedValue / spent) * 100_000_000) / 100_000_000}×` : "—", detail: spent > 0 ? "Attributed purchase value divided by authoritative spend" : "No authoritative ad spend yet" };
+  return <section className="business-card editor-card ads-operational-panel" aria-labelledby="campaign-analytics-title"><p className="eyebrow">Measured performance</p><h2 id="campaign-analytics-title">Analytics</h2>{analyticsError && <><div className="readonly-note" role="status">Showing the last loaded analytics.</div><InlineError message={analyticsError} onRetry={() => void onRetry()} /></>}{impressions === 0 && <div className="readonly-note"><strong>No ad delivery has occurred yet.</strong><span>{deliveryEnabled ? "Delivery is available; this campaign has not delivered yet." : "Ad delivery is currently unavailable."}</span></div>}<div className="ads-summary-grid">{metrics.map(([label, metric]) => <TruthMetric key={metric} label={label} presentation={analyticsPresentation(metric, analytics, impressions, runtime)} />)}<TruthMetric label="Conversion rate" presentation={conversionRate} /><TruthMetric label="ROAS" presentation={roas} /><TruthMetric label="Spend" presentation={spend} /></div></section>;
 }
 
 export function OperationalTruthPanels(props: Props) {

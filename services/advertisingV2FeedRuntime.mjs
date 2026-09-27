@@ -144,7 +144,7 @@ export function createAdvertisingV2ImpressionController(recordImpression, schedu
   return onViewableItemsChanged;
 }
 
-export function createAdvertisingV2ClickController(recordClick, createEventKey) {
+function createAdvertisingV2InteractionController(recordInteraction, createEventKey, parentConflictCode) {
   const states = new Map();
 
   const submit = (opportunityKey, impressionEventId) => {
@@ -161,14 +161,14 @@ export function createAdvertisingV2ClickController(recordClick, createEventKey) 
       states.set(opportunityKey, state);
     }
     if (state.impressionEventId !== impressionEventId) {
-      return Promise.reject(new Error("ads_v2_click_parent_conflict"));
+      return Promise.reject(new Error(parentConflictCode));
     }
     if (state.phase === "confirmed") return Promise.resolve(state.interactionEventId);
     if (state.inFlight) return state.inFlight;
 
     state.phase = "submitting";
     state.inFlight = Promise.resolve()
-      .then(() => recordClick(state.impressionEventId, state.eventKey))
+      .then(() => recordInteraction(state.impressionEventId, state.eventKey))
       .then(
         (interactionEventId) => {
           state.phase = "confirmed";
@@ -192,15 +192,24 @@ export function createAdvertisingV2ClickController(recordClick, createEventKey) 
   };
 }
 
+export function createAdvertisingV2ClickController(recordClick, createEventKey) {
+  return createAdvertisingV2InteractionController(recordClick, createEventKey, "ads_v2_click_parent_conflict");
+}
+
+export function createAdvertisingV2DestinationOpenController(recordDestinationOpen, createEventKey) {
+  return createAdvertisingV2InteractionController(recordDestinationOpen, createEventKey, "ads_v2_destination_open_parent_conflict");
+}
+
 export async function navigateAdvertisingV2WithClick({
   opportunityKey,
   impressionEventId,
   submitClick,
+  submitDestinationOpen,
   navigate,
   scheduler = {},
 }) {
   if (!impressionEventId) {
-    navigate();
+    await Promise.resolve().then(() => navigate()).catch(() => false);
     return;
   }
   const setTimer = scheduler.setTimeout ?? globalThis.setTimeout;
@@ -216,6 +225,11 @@ export async function navigateAdvertisingV2WithClick({
     await Promise.race([analytics, timeout]);
   } finally {
     if (timer !== null) clearTimer(timer);
-    navigate();
+    const opened = await Promise.resolve().then(() => navigate()).then((result) => result !== false, () => false);
+    if (opened && submitDestinationOpen) {
+      void Promise.resolve()
+        .then(() => submitDestinationOpen(opportunityKey, impressionEventId))
+        .catch(() => null);
+    }
   }
 }

@@ -17,6 +17,9 @@ export function deriveBusinessAdsRuntime(input: { deliveryEnabled: boolean; fund
     fundingEnabled: input.fundingEnabled,
     billingRuntime: false,
     clickRuntime: true,
+    interactionRuntime: true,
+    conversionRuntime: true,
+    attributionRuntime: true,
   };
 }
 
@@ -26,11 +29,13 @@ export function businessMetricPresentation(
   runtime: BusinessAdsRuntime,
   context: { impressions?: number } = {},
 ) {
-  const clickMeasured = metric === "clicks" || metric === "ctr";
+  const supportedInteraction = metric === "clicks" || metric === "destination_opens" || metric === "ctr";
   const presentation = metricPresentation(
     metric,
     value,
-    clickMeasured ? { ...runtime, interactionRuntime: runtime.clickRuntime } : runtime,
+    ["video_views", "engagements"].includes(metric)
+      ? { ...runtime, interactionRuntime: false }
+      : supportedInteraction ? { ...runtime, interactionRuntime: runtime.clickRuntime } : runtime,
     context,
   );
   return presentation.state === "platform_disabled"

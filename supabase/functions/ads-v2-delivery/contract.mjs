@@ -76,7 +76,7 @@ export async function executeAdsV2DeliveryAction(body, viewerUserId, rpc) {
     if (hasInteractionContextOverride(body)) {
       throw new AdsV2DeliveryError("interaction_context_override_denied", 403);
     }
-    if (body.event_type !== "click") {
+    if (body.event_type !== "click" && body.event_type !== "destination_open") {
       throw new AdsV2DeliveryError("interaction_type_invalid");
     }
     if (!validUuid(body.impression_event_id) || !validUuid(body.event_key)) {
@@ -84,7 +84,7 @@ export async function executeAdsV2DeliveryAction(body, viewerUserId, rpc) {
     }
     const event = await checkedRpc(rpc, "record_advertising_interaction_v2", {
       p_impression_event_id: body.impression_event_id,
-      p_event_type: "click",
+      p_event_type: body.event_type,
       p_event_key: body.event_key,
       p_viewer_user_id: viewerUserId,
     });

@@ -49,6 +49,9 @@ describe("PlacementSelectionPanel", () => {
 });
 
 describe("DestinationPanel", () => {
+  const product = { id: "product-1", title: "Canonical product", status: "active", price: 10, currency: "BDAG", variantCount: 1, readinessReason: null, updatedAt: "2026-09-27T00:00:00Z", thumbnailUrl: null, availableStock: 2 };
+  const store = { id: "store-1", sellerId: "owner-1", name: "Canonical store", slug: "canonical-store", description: null, logoAssetId: null, bannerAssetId: null, status: "active" as const, createdAt: "2026-09-27T00:00:00Z", updatedAt: "2026-09-27T00:00:00Z" };
+
   it("renders the real external destination without technical identifiers", () => {
     render(<DestinationPanel destination={{ id: "uuid-hidden", destinationType: "external_url", externalUrl: "https://www.tlaservices.com/", targetUserId: null, targetBusinessAccountId: null, targetProductId: null, targetStoreId: null, status: "draft", createdAt: "2026-09-24T00:00:00Z", updatedAt: "2026-09-24T00:00:00Z" }} referencedByAd={false} owner pending={false} onSave={vi.fn()} />);
     expect(screen.getByText("External website")).toBeInTheDocument();
@@ -70,6 +73,20 @@ describe("DestinationPanel", () => {
     fireEvent.change(screen.getByLabelText("Website URL"), { target: { value: "https://example.com/" } });
     fireEvent.click(screen.getByRole("button", { name: "Create destination" }));
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ type: "external_url", externalUrl: "https://example.com/", targetUserId: null, targetBusinessAccountId: null, targetProductId: null, targetStoreId: null })));
+  });
+
+  it("offers canonical product and store targets for marketplace_sales and excludes external URL", async () => {
+    const save = vi.fn().mockResolvedValue(true);
+    render(<DestinationPanel destination={null} referencedByAd={false} owner pending={false} objective="marketplace_sales" products={[product]} store={store} onSave={save} />);
+    expect(screen.getByRole("radio", { name: /External website/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /Marketplace product/ })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: /Marketplace store/ })).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("Marketplace product"), { target: { value: product.id } });
+    fireEvent.click(screen.getByRole("button", { name: "Create destination" }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith({
+      type: "marketplace_product", externalUrl: null, targetUserId: null,
+      targetBusinessAccountId: null, targetProductId: product.id, targetStoreId: null,
+    }));
   });
 
   it("disables editing when the destination is referenced by an Ad", () => {

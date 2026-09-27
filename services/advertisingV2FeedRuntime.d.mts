@@ -50,16 +50,24 @@ export type AdvertisingV2ClickController = {
   dispose(): void;
 };
 
+export type AdvertisingV2DestinationOpenController = AdvertisingV2ClickController;
+
 export function createAdvertisingV2ClickController(
   recordClick: (impressionEventId: string, eventKey: string) => Promise<string>,
   createEventKey: () => string,
 ): AdvertisingV2ClickController;
 
+export function createAdvertisingV2DestinationOpenController(
+  recordDestinationOpen: (impressionEventId: string, eventKey: string) => Promise<string>,
+  createEventKey: () => string,
+): AdvertisingV2DestinationOpenController;
+
 export function navigateAdvertisingV2WithClick(input: {
   opportunityKey: string;
   impressionEventId: string | null;
   submitClick: (opportunityKey: string, impressionEventId: string) => Promise<unknown>;
-  navigate: () => void;
+  submitDestinationOpen?: (opportunityKey: string, impressionEventId: string) => Promise<unknown>;
+  navigate: () => void | boolean | Promise<void | boolean>;
   scheduler?: {
     setTimeout?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
     clearTimeout?: (timer: ReturnType<typeof setTimeout>) => void;
