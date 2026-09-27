@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   ADS_OPERATIONAL_RUNTIME,
+  businessMetricPresentation,
+  deriveBusinessAdsRuntime,
+  deriveBusinessReadinessPresentation,
+  deriveBusinessStatusSummary,
   deriveLifecyclePresentation,
   deriveReadinessPresentation,
   metricPresentation,
   validateBudgetDecimal,
-} from "../../../../shared/adsOperationalTruth";
+} from "../lib/adsOperationalTruth";
 
 describe("Ads operational truth presentation", () => {
   it("maps every canonical readiness blocker without exposing raw codes", () => {
@@ -70,5 +74,48 @@ describe("Ads operational truth presentation", () => {
     expect(metricPresentation("clicks", 7, future)).toMatchObject({ state: "measured", display: "7" });
     expect(metricPresentation("ctr", 0, future, { impressions: 0 })).toMatchObject({ state: "measured", display: "—", detail: "No impressions yet" });
     expect(metricPresentation("conversions", 3, future)).toMatchObject({ state: "measured", display: "3" });
+  });
+
+  it("derives Business runtime truth without claiming unsupported interaction producers", () => {
+    const runtime = deriveBusinessAdsRuntime({ deliveryEnabled: true, fundingEnabled: true, spendEnabled: false });
+
+    expect(runtime).toMatchObject({ deliveryEnabled: true, fundingEnabled: true, billingRuntime: false });
+    expect(businessMetricPresentation("clicks", 2, runtime)).toEqual({ state: "measured", display: "2", detail: null });
+    expect(businessMetricPresentation("ctr", 0, runtime, { impressions: 0 })).toEqual({ state: "measured", display: "—", detail: "No impressions yet" });
+    for (const metric of ["destination_opens", "video_views", "engagements"] as const) {
+      expect(businessMetricPresentation(metric, 7, runtime).state).toBe("not_available_yet");
+    }
+  });
+
+  it("does not infer a Business billing runtime from a policy switch alone", () => {
+    const runtime = deriveBusinessAdsRuntime({ deliveryEnabled: true, fundingEnabled: true, spendEnabled: true });
+
+    expect(runtime.billingRuntime).toBe(false);
+    expect(businessMetricPresentation("spend", 4, runtime).state).toBe("platform_disabled");
+    expect(businessMetricPresentation("cpc", 2, runtime).state).toBe("platform_disabled");
+  });
+
+  it("maps locked readiness to neutral canonical platform truth", () => {
+    const locked = deriveBusinessReadinessPresentation(
+      ["campaign_finance_not_funded", "placement_v2_delivery_disabled"],
+      { fundingAvailable: false },
+    );
+
+    expect(locked.platform.map((item) => item.message)).toEqual([
+      "Campaign funding is currently unavailable.",
+      "The selected placement is currently unavailable for Ads V2 delivery.",
+    ]);
+    expect(locked.platform.every((item) => !item.message.toLowerCase().includes("pre-launch"))).toBe(true);
+  });
+
+  it.each([
+    ["draft", true, false, false, "Setup complete", "Campaign activation is currently unavailable."],
+    ["draft", true, true, false, "Setup complete", "Fund the campaign before activation."],
+    ["draft", true, true, true, "Ready to activate", "All canonical readiness checks pass."],
+    ["active", true, false, true, "Campaign active", "Delivery follows the current policy and placement state."],
+    ["paused", true, true, true, "Campaign paused", "Resume is available while canonical activation readiness remains satisfied."],
+    ["cancelled", true, false, false, "Campaign cancelled", "This campaign is terminal and cannot be resumed."],
+  ])("presents %s operational status from canonical lifecycle and readiness", (status, structurallyReady, activationEnabled, financeReady, title, detail) => {
+    expect(deriveBusinessStatusSummary({ status, structurallyReady, activationEnabled, financeReady })).toEqual({ title, detail });
   });
 });

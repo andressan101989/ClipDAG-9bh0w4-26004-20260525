@@ -4,12 +4,14 @@ import { BusinessConfirmDialog } from "../BusinessConfirmDialog";
 import type { AdvertisingCampaignReadiness, AdvertisingFinance } from "../../lib/adsManagerApi";
 import type { AdsWorkflowStep } from "../../lib/adsWorkflowState";
 import {
-  ADS_OPERATIONAL_RUNTIME,
+  businessMetricPresentation,
+  deriveBusinessAdsRuntime,
+  deriveBusinessReadinessPresentation,
+  deriveBusinessStatusSummary,
   deriveLifecyclePresentation,
-  deriveReadinessPresentation,
   deriveWorkflowSetupActions,
-  metricPresentation,
   validateBudgetDecimal,
+  type BusinessAdsRuntime,
   type MetricKey,
   type MetricPresentation,
 } from "../../lib/adsOperationalTruth";
@@ -30,7 +32,9 @@ type Props = {
   finance: AdvertisingFinance | null;
   analytics: Record<string, unknown> | null;
   analyticsError: string | null;
+  deliveryEnabled: boolean;
   owner: boolean;
+  lifecycleOwner: boolean;
   pending: boolean;
   onRetry: () => Promise<void>;
   onCreateBudget: (budgetBdag: string) => Promise<boolean>;
@@ -66,8 +70,8 @@ function TruthMetric({ label, presentation }: { label: string; presentation: Met
   </article>;
 }
 
-function analyticsPresentation(metric: MetricKey, analytics: Record<string, unknown>, impressions: number) {
-  return metricPresentation(metric, analytics[metric], ADS_OPERATIONAL_RUNTIME, { impressions });
+function analyticsPresentation(metric: MetricKey, analytics: Record<string, unknown>, impressions: number, runtime: BusinessAdsRuntime) {
+  return businessMetricPresentation(metric, analytics[metric], runtime, { impressions });
 }
 
 function BudgetPanel({ campaign, finance, owner, pending, onCreateBudget, onFundBudget }: Pick<Props, "campaign" | "finance" | "owner" | "pending" | "onCreateBudget" | "onFundBudget">) {
@@ -101,7 +105,7 @@ function BudgetPanel({ campaign, finance, owner, pending, onCreateBudget, onFund
         <TruthMetric label="Remaining reserved budget" presentation={{ state: "measured", display: formatBdag(finance.reservedBdag), detail: null }} />
         <TruthMetric label="Returned" presentation={{ state: "measured", display: formatBdag(finance.releasedBdag), detail: null }} />
       </div>
-      <p className="readonly-note">This budget is saved and can't be changed in the current pre-launch flow.</p>
+      <p className="readonly-note">This is the canonical saved budget. Finance state changes only through the available server-backed controls.</p>
       {finance.financeStatus === "draft" && finance.fundingAvailable && <>
         <button className="primary-button" type="button" disabled={!owner || pending} aria-busy={pending} onClick={() => setConfirmFunding(true)}>{pending ? "Funding…" : "Fund budget"}</button>
         <BusinessConfirmDialog
@@ -117,7 +121,7 @@ function BudgetPanel({ campaign, finance, owner, pending, onCreateBudget, onFund
         />
       </>}
       {finance.financeStatus === "draft" && !finance.fundingAvailable && finance.fundingState === "campaign_restricted" && <div className="readonly-note"><strong>Funding is not currently available for this Campaign.</strong><span>The saved budget remains unchanged.</span></div>}
-      {finance.financeStatus === "draft" && !finance.fundingAvailable && finance.fundingState !== "campaign_restricted" && <div className="readonly-note"><strong>Funding is not available during the current pre-launch phase.</strong><span>Your budget is saved. No money moves while Funding is unavailable.</span></div>}
+      {finance.financeStatus === "draft" && !finance.fundingAvailable && finance.fundingState !== "campaign_restricted" && <div className="readonly-note"><strong>Platform Funding is currently unavailable.</strong><span>Your saved budget remains unchanged. No money moves while Funding is unavailable.</span></div>}
     </> : <>
       <p>No budget has been set yet.</p>
       <form className="seller-form ads-budget-form" aria-busy={pending} onSubmit={(event) => void submit(event)} noValidate>
@@ -127,9 +131,9 @@ function BudgetPanel({ campaign, finance, owner, pending, onCreateBudget, onFund
         <div id="campaign-budget-error"><InlineError message={error} /></div>
         <button className="primary-button" disabled={!owner || pending} type="submit" aria-busy={pending}>{pending ? "Saving…" : "Set budget"}</button>
       </form>
-      <div className="readonly-note"><strong>Funding is not available during the current pre-launch phase.</strong><span>You can save a budget now. No money moves until platform funding is available.</span></div>
+      <div className="readonly-note"><strong>Set a budget to check Funding availability.</strong><span>No money moves when a budget draft is saved.</span></div>
     </>}
-    <div className="readonly-note"><strong>Ad billing is not active during pre-launch.</strong><span>Current impressions and interactions do not consume this budget.</span></div>
+    <div className="readonly-note"><strong>Ad billing is currently unavailable.</strong><span>This Business release does not present billing metrics or initiate Spend.</span></div>
   </section>;
 }
 
@@ -138,17 +142,18 @@ function ReadinessGroup({ title, items }: { title: string; items: Array<{ messag
   return <section className="ads-readiness-group"><h3>{title}</h3><ul>{items.map((item, index) => <li key={`${item.message}:${index}`}><span>{item.message}</span>{item.action && <a className="text-button" href={item.action.href}>{item.action.label}</a>}</li>)}</ul></section>;
 }
 
-function ReadinessPanel({ campaign, readiness, workflowSteps, finance, owner, pending, onLifecycle }: Omit<Props, "analytics" | "analyticsError" | "onRetry" | "onCreateBudget" | "onFundBudget">) {
+function ReadinessPanel({ campaign, readiness, workflowSteps, finance, lifecycleOwner, pending, onLifecycle }: Omit<Props, "analytics" | "analyticsError" | "deliveryEnabled" | "owner" | "onRetry" | "onCreateBudget" | "onFundBudget">) {
   const [confirmCancel, setConfirmCancel] = useState(false);
-  const fundingEnabled = finance?.policy.fundingEnabled ?? ADS_OPERATIONAL_RUNTIME.fundingEnabled;
-  const presentation = useMemo(() => deriveReadinessPresentation(readiness.blockers, { fundingEnabled }), [fundingEnabled, readiness.blockers]);
+  const fundingAvailable = finance?.fundingAvailable ?? false;
+  const presentation = useMemo(() => deriveBusinessReadinessPresentation(readiness.blockers, { fundingAvailable }), [fundingAvailable, readiness.blockers]);
   const lifecycle = deriveLifecyclePresentation(campaign.status, readiness);
+  const statusSummary = deriveBusinessStatusSummary({ status: campaign.status, structurallyReady: readiness.structurallyReady, activationEnabled: readiness.activationEnabled, financeReady: readiness.financeReady });
   const workflowActions = deriveWorkflowSetupActions(workflowSteps);
   const actionItems = [...workflowActions.map((action) => ({ message: action.label, action })), ...presentation.user]
     .filter((item, index, rows) => rows.findIndex((other) => other.action?.label === item.action?.label && other.action?.href === item.action?.href) === index);
   const platformItems = [...presentation.platform];
-  if (!fundingEnabled && !platformItems.some((item) => item.code === "campaign_finance_not_funded")) platformItems.unshift({ code: "finance_funding_disabled", category: "platform" as const, message: "Campaign funding is not available during the current pre-launch phase.", action: null });
-  if (!readiness.activationEnabled) platformItems.push({ code: "campaign_activation_disabled", category: "platform" as const, message: "Campaign activation is not available during pre-launch.", action: null });
+  if (campaign.status === "draft" && finance?.financeStatus === "draft" && !fundingAvailable && !platformItems.some((item) => item.code === "campaign_finance_not_funded")) platformItems.unshift({ code: "finance_funding_disabled", category: "platform" as const, message: "Campaign funding is currently unavailable.", action: null });
+  if (["draft", "paused"].includes(campaign.status) && !readiness.activationEnabled) platformItems.push({ code: "campaign_activation_disabled", category: "platform" as const, message: "Campaign activation is currently unavailable.", action: null });
 
   async function lifecycleAction(action: LifecycleAction) {
     const saved = await onLifecycle(action);
@@ -158,23 +163,23 @@ function ReadinessPanel({ campaign, readiness, workflowSteps, finance, owner, pe
   return <section id="readiness" className="business-card editor-card ads-operational-panel">
     <p className="eyebrow">Step 10</p>
     <h2>Campaign readiness</h2>
-    <div className="ads-readiness-overall" role="status"><strong>{readiness.structurallyReady ? "Setup complete" : "Not ready yet"}</strong><span>{readiness.structurallyReady && readiness.targetStatus === "active" ? "The campaign would start immediately when activation is available." : readiness.structurallyReady && readiness.targetStatus === "scheduled" ? "The campaign is scheduled for later." : "Complete the available setup actions while Nelyon keeps platform launch controls locked."}</span></div>
-    <section className="ads-readiness-group"><h3>Setup progress</h3><ul className="ads-v2-checklist">{workflowSteps.filter((step) => step.key !== "readiness").map((step) => <li key={step.key} className={step.status === "complete" ? "is-ready" : ""}><span aria-hidden="true">{step.status === "complete" ? "✓" : "○"}</span><strong>{step.label}</strong><small>{statusLabels[step.status] ?? "Needs attention"}</small></li>)}</ul></section>
+    <div className="ads-readiness-overall" role="status"><strong>{statusSummary.title}</strong><span>{statusSummary.detail}</span></div>
+    <section className="ads-readiness-group"><h3>Setup progress</h3><ul className="ads-v2-checklist">{workflowSteps.filter((step) => step.key !== "readiness").map((step) => <li key={step.key} className={step.status === "complete" ? "is-ready" : ""}><span aria-hidden="true">{step.status === "complete" ? "✓" : "○"}</span><strong>{step.label}</strong>{" "}<small>{statusLabels[step.status] ?? "Needs attention"}</small></li>)}</ul></section>
     <ReadinessGroup title="Actions you can take" items={actionItems} />
     <ReadinessGroup title="Account attention" items={presentation.account} />
     <ReadinessGroup title="Platform status" items={platformItems} />
     <section className="ads-readiness-group"><h3>Campaign lifecycle</h3><p>Current status: <StatusBadge status={campaign.status} /></p>{lifecycle.pause.visible && <p>Pausing holds campaign delivery until the campaign is resumed.</p>}<div className="compact-actions">
-      {lifecycle.activate.visible && <button type="button" disabled={!owner || !lifecycle.activate.enabled || pending} onClick={() => void lifecycleAction("activate")}>{pending ? "Saving…" : readiness.activationEnabled ? "Activate campaign" : "Activation locked"}</button>}
-      {lifecycle.pause.visible && <button type="button" disabled={!owner || pending} onClick={() => void lifecycleAction("pause")}>{pending ? "Saving…" : "Pause campaign"}</button>}
-      {lifecycle.resume.visible && <button type="button" disabled={!owner || !lifecycle.resume.enabled || pending} onClick={() => void lifecycleAction("resume")}>{pending ? "Saving…" : "Resume campaign"}</button>}
-      {lifecycle.cancel.visible && <button className="danger-button" type="button" disabled={!owner || pending} onClick={() => setConfirmCancel(true)}>Cancel campaign</button>}
+      {lifecycle.activate.visible && <button type="button" disabled={!lifecycleOwner || !lifecycle.activate.enabled || pending} onClick={() => void lifecycleAction("activate")}>{pending ? "Saving…" : readiness.activationEnabled ? "Activate campaign" : "Activation locked"}</button>}
+      {lifecycle.pause.visible && <button type="button" disabled={!lifecycleOwner || pending} onClick={() => void lifecycleAction("pause")}>{pending ? "Saving…" : "Pause campaign"}</button>}
+      {lifecycle.resume.visible && <button type="button" disabled={!lifecycleOwner || !lifecycle.resume.enabled || pending} onClick={() => void lifecycleAction("resume")}>{pending ? "Saving…" : "Resume campaign"}</button>}
+      {lifecycle.cancel.visible && <button className="danger-button" type="button" disabled={!lifecycleOwner || pending} onClick={() => setConfirmCancel(true)}>Cancel campaign</button>}
     </div></section>
     {campaign.lifecycle?.requiresFinancialSettlement && <p className="readonly-note">Unused funded budget is returned by the platform during settlement. Settlement is not a customer action.</p>}
     <BusinessConfirmDialog open={confirmCancel} title={`Cancel ${campaign.name}?`} description="This campaign will be cancelled and cannot be resumed." confirmLabel="Confirm cancellation" cancelLabel="Keep campaign" pendingLabel="Cancelling…" pending={pending} danger onCancel={() => setConfirmCancel(false)} onConfirm={() => void lifecycleAction("cancel")} />
   </section>;
 }
 
-function AnalyticsPanel({ analytics, analyticsError, finance, onRetry }: Pick<Props, "analytics" | "analyticsError" | "finance" | "onRetry">) {
+function AnalyticsPanel({ analytics, analyticsError, finance, deliveryEnabled, onRetry }: Pick<Props, "analytics" | "analyticsError" | "finance" | "deliveryEnabled" | "onRetry">) {
   if (!analytics) return <section className="business-card editor-card ads-operational-panel" aria-labelledby="campaign-analytics-title"><p className="eyebrow">Measured performance</p><h2 id="campaign-analytics-title">Analytics</h2><InlineError message={analyticsError ?? "Campaign analytics are temporarily unavailable."} onRetry={() => void onRetry()} /></section>;
   const impressions = numberValue(analytics.impressions);
   const metrics: Array<[string, MetricKey]> = [
@@ -183,14 +188,17 @@ function AnalyticsPanel({ analytics, analyticsError, finance, onRetry }: Pick<Pr
     ["Conversions", "conversions"], ["Attributed conversions", "attributed_conversions"],
     ["Marketplace purchase value", "marketplace_purchase_value_bdag"], ["CPC", "cpc"], ["CPM", "cpm"], ["CPA", "cpa"],
   ];
-  const spend: MetricPresentation = { state: "platform_disabled", display: finance ? formatBdag(finance.spentBdag) : "No campaign finance", detail: "Ad billing is not active during pre-launch." };
-  return <section className="business-card editor-card ads-operational-panel" aria-labelledby="campaign-analytics-title"><p className="eyebrow">Measured performance</p><h2 id="campaign-analytics-title">Analytics</h2>{analyticsError && <><div className="readonly-note" role="status">Showing the last loaded analytics.</div><InlineError message={analyticsError} onRetry={() => void onRetry()} /></>}{impressions === 0 && <div className="readonly-note"><strong>No ad delivery has occurred yet.</strong><span>Delivery is currently unavailable during pre-launch.</span></div>}<div className="ads-summary-grid">{metrics.map(([label, metric]) => <TruthMetric key={metric} label={label} presentation={analyticsPresentation(metric, analytics, impressions)} />)}<TruthMetric label="Spend" presentation={spend} /></div></section>;
+  const runtime = deriveBusinessAdsRuntime({ deliveryEnabled, fundingEnabled: finance?.policy.fundingEnabled ?? false, spendEnabled: finance?.policy.spendEnabled ?? false });
+  const spend: MetricPresentation = runtime.billingRuntime
+    ? { state: "measured", display: finance ? formatBdag(finance.spentBdag) : "No campaign finance", detail: null }
+    : { state: "platform_disabled", display: finance ? formatBdag(finance.spentBdag) : "No campaign finance", detail: "Ad billing is currently unavailable." };
+  return <section className="business-card editor-card ads-operational-panel" aria-labelledby="campaign-analytics-title"><p className="eyebrow">Measured performance</p><h2 id="campaign-analytics-title">Analytics</h2>{analyticsError && <><div className="readonly-note" role="status">Showing the last loaded analytics.</div><InlineError message={analyticsError} onRetry={() => void onRetry()} /></>}{impressions === 0 && <div className="readonly-note"><strong>No ad delivery has occurred yet.</strong><span>{deliveryEnabled ? "Delivery is available; this campaign has not delivered yet." : "Ad delivery is currently unavailable."}</span></div>}<div className="ads-summary-grid">{metrics.map(([label, metric]) => <TruthMetric key={metric} label={label} presentation={analyticsPresentation(metric, analytics, impressions, runtime)} />)}<TruthMetric label="Spend" presentation={spend} /></div></section>;
 }
 
 export function OperationalTruthPanels(props: Props) {
   return <>
     <BudgetPanel campaign={props.campaign} finance={props.finance} owner={props.owner} pending={props.pending} onCreateBudget={props.onCreateBudget} onFundBudget={props.onFundBudget} />
-    <ReadinessPanel campaign={props.campaign} readiness={props.readiness} workflowSteps={props.workflowSteps} finance={props.finance} owner={props.owner} pending={props.pending} onLifecycle={props.onLifecycle} />
-    <AnalyticsPanel analytics={props.analytics} analyticsError={props.analyticsError} finance={props.finance} onRetry={props.onRetry} />
+    <ReadinessPanel campaign={props.campaign} readiness={props.readiness} workflowSteps={props.workflowSteps} finance={props.finance} lifecycleOwner={props.lifecycleOwner} pending={props.pending} onLifecycle={props.onLifecycle} />
+    <AnalyticsPanel analytics={props.analytics} analyticsError={props.analyticsError} finance={props.finance} deliveryEnabled={props.deliveryEnabled} onRetry={props.onRetry} />
   </>;
 }

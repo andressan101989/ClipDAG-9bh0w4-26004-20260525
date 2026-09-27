@@ -59,6 +59,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .form-field { display: grid; gap: 8px; margin: 22px 0; color: #26324c; font-size: 13px; font-weight: 700; }
 .form-field input, .form-field textarea { width: 100%; border: 1px solid #d9e0ec; border-radius: 11px; padding: 12px 14px; outline: none; color: #15203a; background: #fff; font-weight: 500; transition: border-color .15s, box-shadow .15s; }
+.form-field select { width: 100%; min-width: 0; max-width: 100%; }
 .form-field textarea { resize: vertical; line-height: 1.55; }
 .form-field input:focus, .form-field textarea:focus { border-color: var(--electric); box-shadow: 0 0 0 4px rgba(31,121,255,.1); }
 .form-field small { color: #7c879c; font-weight: 500; }
@@ -263,7 +264,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .two-column { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
 .seller-form { display: grid; gap: 14px; margin-top: 17px; }
 .editor-section-nav { position: sticky; top: 72px; z-index: 4; display: flex; gap: 7px; margin-bottom: 18px; padding: 8px; overflow-x: auto; border: 1px solid var(--line); border-radius: 13px; background: rgba(255,255,255,.96); }
-.editor-section-nav a { padding: 8px 11px; color: var(--blue); font-size: 11px; font-weight: 800; text-decoration: none; }
+.editor-section-nav a { display: grid; min-width: 0; flex: 0 0 auto; gap: 2px; padding: 8px 11px; color: var(--blue); font-size: 11px; font-weight: 800; text-decoration: none; overflow-wrap: anywhere; }
+.editor-section-nav a > span { color: var(--muted); font-size: 10px; }
 .editor-card { margin-bottom: 18px; scroll-margin-top: 140px; }
 .readiness-panel { margin-bottom: 18px; padding: 15px 18px; border-left: 4px solid #f0a51d; border-radius: 10px; color: #76520a; background: #fff7df; }
 .readiness-panel p { margin: 5px 0 0; }
@@ -303,7 +305,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .ads-metric-card strong { overflow-wrap: anywhere; color: var(--navy); font-size: 20px; letter-spacing: -.025em; }
 .ads-metric-card small { color: var(--muted); line-height: 1.45; }
 .ads-metric-not_available_yet, .ads-metric-platform_disabled { background: #f8faff; }
-.ads-operational-panel .readonly-note { display: grid; gap: 3px; }
+.ads-operational-panel .readonly-note { display: grid; gap: 3px; overflow-wrap: anywhere; }
+.ads-operational-panel .compact-actions > button { max-width: 100%; white-space: normal; }
 .ads-budget-form { max-width: 560px; }
 .ads-budget-input { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; overflow: hidden; border: 1px solid #cbd6e8; border-radius: 10px; background: white; }
 .ads-budget-input:focus-within { border-color: var(--electric); box-shadow: 0 0 0 3px rgba(31,121,255,.12); }
@@ -368,7 +371,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .ads-v2-safety span { color: var(--muted); font-size: 12px; }
 .ads-v2-onboarding { max-width: 720px; margin: 42px auto; }
 .ads-v2-compact-form { display: grid; gap: 16px; max-width: 760px; }
-.ads-v2-workspace { display: grid; gap: 18px; min-width: 0; }
+.ads-v2-workspace { display: grid; gap: 18px; width: 100%; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .ads-v2-workspace .editor-card { min-width: 0; }
 .ads-v2-workspace summary { margin: 12px 0; color: var(--blue); font-weight: 800; cursor: pointer; }
 .ads-v2-definition { max-height: 320px; overflow: auto; padding: 14px; border-radius: 12px; color: #dce8ff; background: #0c1f4f; font: 11px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -485,11 +488,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .ads-detail-hero .header-actions { grid-column: auto; justify-content: flex-start; }
   .ads-v2-account-bar { grid-template-columns: 1fr; }
   .ads-v2-safety { align-items: flex-start; flex-direction: column; }
+  .editor-section-nav { position: static; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; }
+  .editor-section-nav a { width: 100%; }
   .ads-v2-checklist { grid-template-columns: 1fr; }
   .ads-v2-workspace .ads-placement-grid { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 420px) {
+@media (max-width: 430px) {
   .coming-grid { grid-template-columns: 1fr; }
   .hero-card, .store-identity { align-items: flex-start; flex-direction: column; }
   .business-form-card { padding: 22px 18px; border-radius: 17px; }
@@ -497,6 +502,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .media-grid, .media-picker-grid { grid-template-columns: 1fr; }
   .media-dialog-backdrop { padding: 10px; }
   .ads-summary-grid { grid-template-columns: 1fr; }
+  .editor-section-nav { grid-template-columns: 1fr; }
   .ads-readiness-group > ul:not(.ads-v2-checklist) li { align-items: flex-start; flex-direction: column; }
   .ads-confirm-dialog .compact-actions { align-items: stretch; flex-direction: column-reverse; }
   .ads-confirm-dialog .compact-actions button { width: 100%; }

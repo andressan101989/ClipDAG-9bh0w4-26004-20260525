@@ -14,7 +14,7 @@ type PlacementSupport = {
 const placementSupport: Record<AdvertisingPlacementCode, PlacementSupport> = {
   social_feed: {
     code: "social_feed", label: "Social Feed", description: "Reach people while they browse their main feed.",
-    state: "available_for_setup", selectable: true, status: "Available for setup · Delivery paused during pre-launch",
+    state: "available_for_setup", selectable: true, status: "Available for setup",
   },
   clips: {
     code: "clips", label: "Clips", description: "Short-form video placement.",

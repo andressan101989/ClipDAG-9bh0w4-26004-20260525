@@ -13,6 +13,15 @@ describe("Business presentation foundation", () => {
     expect(css).toContain("min-width: 0");
   });
 
+  it("keeps the Ads setup navigation readable at 430px and 390px without page overflow", () => {
+    expect(css).toMatch(/\.editor-section-nav a\s*\{[^}]*display:\s*grid;[^}]*min-width:\s*0;/s);
+    expect(css).toMatch(/@media \(max-width:\s*760px\)[\s\S]*?\.editor-section-nav\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[^}]*overflow:\s*visible;/s);
+    expect(css).toMatch(/@media \(max-width:\s*430px\)[\s\S]*?\.editor-section-nav\s*\{[^}]*grid-template-columns:\s*1fr;/s);
+    expect(css).toMatch(/\.ads-v2-workspace\s*\{[^}]*max-width:\s*100%;/s);
+    expect(css).toMatch(/\.form-field select\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*0;[^}]*max-width:\s*100%;/s);
+    expect(css).toMatch(/\.ads-operational-panel \.compact-actions > button\s*\{[^}]*white-space:\s*normal;/s);
+  });
+
   it("uses the Nelyon Business brand palette", () => {
     expect(css.toLowerCase()).toContain("#0c1f4f");
     expect(css.toLowerCase()).toContain("#123b9e");

@@ -11,7 +11,7 @@ describe("PlacementSelectionPanel", () => {
     render(<PlacementSelectionPanel savedCodes={six} hasSelection owner pending={false} supportAvailable onSave={save} />);
     expect(screen.getByText("Selected previously — not available for this Ads V2 release")).toBeInTheDocument();
     expect(screen.getAllByText(/Needs attention|Separate Marketplace promotion/).length).toBe(5);
-    expect(screen.getByText("Ad delivery is not enabled yet.")).toBeInTheDocument();
+    expect(screen.getByText("Delivery availability is controlled by current server policy.")).toBeInTheDocument();
     expect(save).not.toHaveBeenCalled();
   });
 

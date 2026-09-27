@@ -229,7 +229,7 @@ function AccountSelectors({ business: lockedBusiness, adAccount: lockedAdAccount
   return <div className="ads-v2-account-bar">
     <FormField label="Business"><select disabled={locked} value={business?.businessAccountId ?? ""} onChange={(event) => selectBusiness(event.target.value)}>{(locked && business ? [business] : accounts).map((item) => <option key={item.businessAccountId} value={item.businessAccountId}>{item.displayName}</option>)}</select></FormField>
     <FormField label="Ad Account"><select disabled={locked} value={adAccount?.id ?? ""} onChange={(event) => selectAdAccount(event.target.value)}>{(locked ? business?.adAccounts.filter((item) => item.id === adAccount?.id) : business?.adAccounts)?.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.billingCurrency}</option>)}</select></FormField>
-    <span className="ads-v2-prelaunch-badge">PRE-LAUNCH</span>
+    <span className="ads-v2-prelaunch-badge">ADS V2</span>
   </div>;
 }
 
@@ -255,7 +255,7 @@ export function BusinessAdsManagerHomePage() {
       <AccountSelectors />
       {owner && <AdvertisingAgeEligibilityPanel />}
       {!owner && <div className="readonly-note">Ads V2 campaign reads and writes are currently owner-only. Member access remains unsupported by the canonical campaign RPCs.</div>}
-      <section className="business-card ads-v2-safety"><strong>Safe pre-launch workspace</strong><span>Campaign activation and live delivery are unavailable. Funding appears only when server policy permits it for a specific Campaign.</span></section>
+      <section className="business-card ads-v2-safety"><strong>Server-backed Ads workspace</strong><span>Funding and lifecycle controls appear only when canonical server authority permits them for a Campaign.</span></section>
       <div className="seller-subnav"><Link className="is-active" to="/ads/campaigns">Campaigns</Link>{selectedBusiness?.marketplace.linked && <Link to="/ads/marketplace">Marketplace Legacy</Link>}</div>
       {visible.length === 0 ? <div className="seller-state"><strong>No campaigns yet</strong><p>Create an Ads V2 draft or open the existing Marketplace Ads workspace.</p></div> : <div className="seller-table-wrap"><table className="seller-table ads-v2-table"><thead><tr><th>Name</th><th>Objective</th><th>Authority</th><th>Status</th><th>Review</th><th>Budget</th><th>Created</th></tr></thead><tbody>{visible.map((campaign) => <tr key={`${campaign.authority}:${campaign.id}`}><td><Link aria-label={`Open ${campaign.name}`} to={campaign.authority === "ads_v2" ? `/ads/campaigns/${campaign.id}` : `/ads/marketplace/${campaign.id}`}>{campaign.name}</Link></td><td>{campaign.objective}</td><td><span className={`authority-badge ${campaign.authority}`}>{campaign.authority === "ads_v2" ? "ADS V2" : "MARKETPLACE LEGACY"}</span></td><td><StatusBadge status={campaign.status} /></td><td>{campaign.authority === "ads_v2" ? "Open workspace" : "Legacy authority"}</td><td>{campaign.authority === "ads_v2" ? "Draft state" : "Legacy finance"}</td><td>{formatDate(campaign.createdAt)}</td></tr>)}</tbody></table></div>}
     </>}
@@ -409,10 +409,10 @@ export function BusinessAdsManagerCampaignPage() {
     if (selectedAdId) next.set("ad", selectedAdId);
     setSearchParams(next);
   };
-  return <div aria-busy={loading}><PageHeader eyebrow="Ads V2 draft workspace" title={currentData.campaign.name} description="Server-backed configuration. Refreshing this page reconstructs Audience, Placements, Creative, Review, Finance and Analytics." action={<Link className="text-button" to="/ads">Back to campaigns</Link>} /><InlineError message={error ?? mutationError} onRetry={error ? () => void refreshWorkspace() : undefined} />{loading && <div className="readonly-note" role="status">Refreshing the canonical campaign state…</div>}{mutation.state.kind === "success" && <div className="inline-success" role="status">{mutation.state.message}</div>}{mutation.refreshWarning && <div className="readonly-note" role="status">{mutation.refreshWarning}</div>}{owner && <AdvertisingAgeEligibilityPanel />}{!owner && <div className="readonly-note">This campaign is not writable by the current owner-authoritative Ads V2 RPCs.</div>}<AccountSelectors business={campaignBusiness} adAccount={campaignAdAccount} locked /><CampaignWorkspace data={currentData} business={campaignBusiness} adAccount={campaignAdAccount} owner={canWrite} run={run} reload={fetchWorkspace} refresh={refreshWorkspace} pending={mutation.pending} selectEntity={selectEntity} creatingRevisedAd={searchParams.get("adMode") === "revised"} setRevisedAdMode={setRevisedAdMode} /></div>;
+  return <div aria-busy={loading}><PageHeader eyebrow="Ads V2 draft workspace" title={currentData.campaign.name} description="Server-backed configuration. Refreshing this page reconstructs Audience, Placements, Creative, Review, Finance and Analytics." action={<Link className="text-button" to="/ads">Back to campaigns</Link>} /><InlineError message={error ?? mutationError} onRetry={error ? () => void refreshWorkspace() : undefined} />{loading && <div className="readonly-note" role="status">Refreshing the canonical campaign state…</div>}{mutation.state.kind === "success" && <div className="inline-success" role="status">{mutation.state.message}</div>}{mutation.refreshWarning && <div className="readonly-note" role="status">{mutation.refreshWarning}</div>}{owner && <AdvertisingAgeEligibilityPanel />}{!owner && <div className="readonly-note">This campaign is not writable by the current owner-authoritative Ads V2 RPCs.</div>}<AccountSelectors business={campaignBusiness} adAccount={campaignAdAccount} locked /><CampaignWorkspace data={currentData} business={campaignBusiness} adAccount={campaignAdAccount} owner={canWrite} lifecycleOwner={owner} run={run} reload={fetchWorkspace} refresh={refreshWorkspace} pending={mutation.pending} selectEntity={selectEntity} creatingRevisedAd={searchParams.get("adMode") === "revised"} setRevisedAdMode={setRevisedAdMode} /></div>;
 }
 
-function CampaignWorkspace({ data, business, adAccount, owner, run, reload, refresh, pending, selectEntity, creatingRevisedAd, setRevisedAdMode }: { data: WorkspaceData; business: AdvertiserBusiness | null; adAccount: AdvertiserAdAccount | null; owner: boolean; run: <T>(input: AdsMutationRunInput<T>, message: string, onSuccessValue?: (value: T) => void) => Promise<boolean>; reload: () => Promise<WorkspaceData>; refresh: () => Promise<void>; pending: boolean; selectEntity: (key: "adSet" | "destination" | "ad", value: string) => void; creatingRevisedAd: boolean; setRevisedAdMode: (enabled: boolean, selectedAdId?: string) => void }) {
+function CampaignWorkspace({ data, business, adAccount, owner, lifecycleOwner, run, reload, refresh, pending, selectEntity, creatingRevisedAd, setRevisedAdMode }: { data: WorkspaceData; business: AdvertiserBusiness | null; adAccount: AdvertiserAdAccount | null; owner: boolean; lifecycleOwner: boolean; run: <T>(input: AdsMutationRunInput<T>, message: string, onSuccessValue?: (value: T) => void) => Promise<boolean>; reload: () => Promise<WorkspaceData>; refresh: () => Promise<void>; pending: boolean; selectEntity: (key: "adSet" | "destination" | "ad", value: string) => void; creatingRevisedAd: boolean; setRevisedAdMode: (enabled: boolean, selectedAdId?: string) => void }) {
   const { user } = useBusinessAuth();
   const { targetingCapabilities, targetingCapabilitiesUnavailable } = useAdvertisingManager();
   const campaign = data.campaign;
@@ -439,6 +439,8 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, refr
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessOwnerId, creativeMediaKey]);
   const persistedPlacements = data.placement?.latestVersion?.placements.map((item) => item.code) ?? [];
+  const selectedPlacementDeliveryEnabled = Boolean(data.placement?.latestVersion?.placements.length)
+    && data.placement!.latestVersion!.placements.every((item) => item.v2DeliveryEnabled);
   const destinationIsUsable = isCurrentReleaseDestination(destination ?? null);
   const audienceLatest = data.audience?.latest_version && typeof data.audience.latest_version === "object" ? data.audience.latest_version as Record<string, unknown> : null;
   const audienceDefinition = useMemo(() => audienceDefinitionFromPayload(data.audience), [data.audience]);
@@ -497,7 +499,7 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, refr
     return run({ operation: "lifecycle:cancel", scope: campaign.id, payload: { campaignId: campaign.id, action }, mutate: (key) => cancelAdvertisingCampaign(campaign.id, key), reconcile: () => reconcileWorkspace((workspace) => workspace.campaign.status === "cancelled" ? workspace.campaign : null, (workspace) => workspace.campaign.status === "completed") }, "Campaign cancelled");
   }
   return <div className="ads-v2-workspace">
-    <nav className="editor-section-nav" aria-label="Campaign steps">{workflow.steps.map((step) => <a key={step.key} href={`#${step.key.replace("_", "-")}`} aria-current={workflow.nextAction.step === step.key ? "step" : undefined}><strong>{step.number}. {step.label}</strong><span>{statusLabel(step.status)}</span></a>)}</nav>
+    <nav className="editor-section-nav" aria-label="Campaign steps">{workflow.steps.map((step) => <a key={step.key} href={`#${step.key.replace("_", "-")}`} aria-current={workflow.nextAction.step === step.key ? "step" : undefined}><strong>{step.number}. {step.label}</strong>{" "}<span>{statusLabel(step.status)}</span></a>)}</nav>
     <section className="business-card" aria-live="polite"><strong>Next: {workflow.nextAction.label}</strong><p>Selections and progress are restored from canonical server state.</p></section>
     <section id="campaign" className="business-card editor-card"><p className="eyebrow">Step 1</p><h2>Campaign</h2><p><strong>{campaign.name}</strong> · {campaign.objective} · <StatusBadge status={campaign.status} /></p></section>
     {campaign.adSets.length > 1 && <FormField label="Ad Set selection"><select value={adSet?.id ?? ""} onChange={(event) => selectEntity("adSet", event.target.value)}><option value="">Select an Ad Set</option>{campaign.adSets.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></FormField>}
@@ -530,7 +532,7 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, refr
         }, audienceId ? "Audience updated" : "Audience created");
       }}
     /> : <section id="audience" className="business-card editor-card"><p className="eyebrow">Step 3</p><h2>Audience</h2><p>Create an Ad Set first.</p></section>}
-    {adSet ? <PlacementSelectionPanel savedCodes={persistedPlacements} hasSelection={Boolean(data.placement)} owner={owner} pending={pending} supportAvailable onSave={async (codes) => {
+    {adSet ? <PlacementSelectionPanel savedCodes={persistedPlacements} hasSelection={Boolean(data.placement)} deliveryEnabled={selectedPlacementDeliveryEnabled} owner={owner} pending={pending} supportAvailable onSave={async (codes) => {
       const payload = { codes: [...codes].sort() };
       const selectionId = data.placement?.placementSelectionId;
       return run({ operation: selectionId ? "placements:version" : "placements:create", scope: selectionId ?? adSet.id, payload, mutate: (key) => selectionId ? createAdvertisingPlacementSelectionVersion(selectionId, payload.codes, key) : createAdvertisingPlacementSelectionDraft(adSet.id, payload.codes, key), reconcile: () => reconcileWorkspace((workspace) => { const current = workspace.placement?.latestVersion?.placements.map((item) => item.code) ?? []; return sameStrings(current, payload.codes) ? workspace.placement : null; }, (workspace) => workspace.placement != null) }, selectionId ? "Placement version updated" : "Placements saved");
@@ -619,6 +621,6 @@ function CampaignWorkspace({ data, business, adAccount, owner, run, reload, refr
       }}
       onCreateRevised={() => setRevisedAdMode(true)}
     />}
-    <OperationalTruthPanels campaign={campaign} readiness={data.readiness} workflowSteps={workflow.steps} finance={data.finance} analytics={data.analytics} analyticsError={data.panelErrors.analytics} owner={owner} pending={pending} onRetry={refresh} onCreateBudget={createBudgetDraft} onFundBudget={fundBudget} onLifecycle={runLifecycleAction} />
+    <OperationalTruthPanels campaign={campaign} readiness={data.readiness} workflowSteps={workflow.steps} finance={data.finance} analytics={data.analytics} analyticsError={data.panelErrors.analytics} deliveryEnabled={selectedPlacementDeliveryEnabled} owner={owner} lifecycleOwner={lifecycleOwner} pending={pending} onRetry={refresh} onCreateBudget={createBudgetDraft} onFundBudget={fundBudget} onLifecycle={runLifecycleAction} />
   </div>;
 }

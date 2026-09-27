@@ -9,16 +9,17 @@ const operationalTruth = readFileSync(new URL("../apps/business-web/src/componen
 const app = readFileSync(new URL("../apps/business-web/src/App.tsx", import.meta.url), "utf8");
 const css = readFileSync(new URL("../apps/business-web/src/styles/business.css", import.meta.url), "utf8");
 
-test("Business Ads V2 exposes the canonical routes and keeps launch controls absent", () => {
+test("Business Ads V2 exposes canonical routes and server-backed launch truth", () => {
   for (const route of ["campaigns", "campaigns/new", "campaigns/:campaignId", "marketplace"]) {
     assert.match(app, new RegExp(`path=["']${route.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`));
   }
   assert.match(app, /path=["']new["'][^>]+<BusinessAdsRoute create/);
   assert.match(app, /path=["']:campaignId["'][^>]+<BusinessAdsRoute detail/);
   assert.doesNotMatch(pages, /fund_my_advertising_campaign_budget_v2|spend_advertising_campaign_budget_v2|settle_advertising_campaign_budget_v2|fetch_advertising_delivery_candidates_v2|record_advertising_(?:impression|interaction)/);
-  assert.match(operationalTruth, /Campaign activation is not available during pre-launch/);
-  assert.match(operationalTruth, /Funding is not available during the current pre-launch phase/);
-  assert.match(placements, /Delivery is currently paused during pre-launch/);
+  assert.match(operationalTruth, /Campaign activation is currently unavailable/);
+  assert.match(operationalTruth, /Platform Funding is currently unavailable/);
+  assert.match(placements, /Delivery availability is controlled by current server policy/);
+  assert.doesNotMatch(`${operationalTruth}\n${placements}`, /during pre-launch|pre-launch phase/);
 });
 
 test("Business Ads V2 uses RPCs and does not create browser-side authority", () => {

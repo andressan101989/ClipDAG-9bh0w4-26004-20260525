@@ -4,13 +4,14 @@ import { isCurrentReleasePlacementSelection, placementCards } from "../../lib/ad
 type Props = {
   savedCodes: string[];
   hasSelection: boolean;
+  deliveryEnabled?: boolean;
   owner: boolean;
   pending: boolean;
   supportAvailable: boolean;
   onSave: (codes: string[]) => Promise<boolean>;
 };
 
-export function PlacementSelectionPanel({ savedCodes, hasSelection, owner, pending, supportAvailable, onSave }: Props) {
+export function PlacementSelectionPanel({ savedCodes, hasSelection, deliveryEnabled = false, owner, pending, supportAvailable, onSave }: Props) {
   const savedKey = [...savedCodes].sort().join("\u0000");
   const [editing, setEditing] = useState(!hasSelection);
   const [selected, setSelected] = useState<string[]>(hasSelection ? savedCodes : []);
@@ -37,7 +38,7 @@ export function PlacementSelectionPanel({ savedCodes, hasSelection, owner, pendi
           <strong>{item.label}</strong><span>{item.needsAttention ? item.state === "legacy_separate" ? "Separate Marketplace promotion" : "Needs attention" : "Selected"}</span>
         </article>)}
       </div>
-      <p className="ads-prelaunch-note">Ad delivery is not enabled yet.</p>
+      <p className="ads-prelaunch-note">{deliveryEnabled ? "Delivery is available for the selected placement." : "Delivery availability is controlled by current server policy."}</p>
       <button type="button" className="secondary-button" disabled={!owner || pending || !supportAvailable} onClick={() => setEditing(true)}>{needsAttention ? "Review placements" : "Edit placements"}</button>
     </>}
     {editing && <form aria-busy={pending} onSubmit={(event) => { event.preventDefault(); if (!canSave) return; void onSave(selected).then((saved) => { if (saved) setEditing(false); }); }}>
@@ -52,7 +53,7 @@ export function PlacementSelectionPanel({ savedCodes, hasSelection, owner, pendi
         })}
       </div></fieldset>
       {selected.length === 0 && <p className="field-error">Choose at least one available placement.</p>}
-      <p className="ads-prelaunch-note">Delivery is currently paused during pre-launch.</p>
+      <p className="ads-prelaunch-note">{deliveryEnabled ? "Delivery is currently available under server policy." : "Delivery availability is controlled by current server policy."}</p>
       <div className="compact-actions"><button className="primary-button" disabled={!owner || pending || !canSave} type="submit">{pending ? "Saving…" : hasSelection ? "Create updated placement version" : "Save placements"}</button>{hasSelection && <button className="secondary-button" type="button" disabled={pending} onClick={() => { setSelected(savedCodes); setEditing(false); }}>Cancel editing</button>}</div>
     </form>}
   </section>;

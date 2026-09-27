@@ -54,7 +54,7 @@ test("responsive contracts cover 320, phone, tablet, and narrow desktop widths",
   const business = read("apps/business-web/src/styles/business.css");
   const admin = read("apps/admin-web/src/styles/admin.css");
   assert.match(business, /min-width: 320px/);
-  assert.match(business, /max-width: 420px/);
+  assert.match(business, /max-width: 430px/);
   assert.match(business, /max-width: 760px/);
   assert.match(business, /max-width: 1020px/);
   assert.match(business, /overflow-wrap: anywhere/);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAdsDraftStaleError, presentAdsError } from "../../../../shared/adsErrorPresentation";
+import { isAdsDraftStaleError, presentAdsError } from "../lib/adsErrorPresentation";
 
 describe("Ads V2 error presentation taxonomy", () => {
   it.each([
@@ -18,8 +18,8 @@ describe("Ads V2 error presentation taxonomy", () => {
     [new Error("advertising_ad_not_pending"), "stale_conflict", "already reviewed"],
     [new Error("advertising_ad_already_pending"), "prerequisite_missing", "already in review"],
     [new Error("advertising_ad_already_approved"), "prerequisite_missing", "already approved"],
-    [new Error("advertising_campaign_activation_disabled"), "platform_prelaunch", "pre-launch"],
-    [new Error("advertising_finance_funding_disabled"), "platform_prelaunch", "pre-launch"],
+    [new Error("advertising_campaign_activation_disabled"), "platform_prelaunch", "currently unavailable"],
+    [new Error("advertising_finance_funding_disabled"), "platform_prelaunch", "currently unavailable"],
     [new Error("advertising_canary_funding_denied"), "capability_disabled", "not currently available"],
     [new Error("advertising_insufficient_bdag_balance"), "prerequisite_missing", "BDAG balance"],
     [new Error("advertising_campaign_already_funded"), "permanent_rejection", "already been funded"],
