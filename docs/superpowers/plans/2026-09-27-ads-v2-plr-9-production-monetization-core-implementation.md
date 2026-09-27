@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Begin implementation only after the owner/ChatGPT authorizes the one-shot PLR-9 macro.
-- Start from branch `codex/ads-v2-plr-9-production-monetization-core` at exact approved planning SHA `40ae659471ae7b19c053a92730cdd0b601709069` and keep the approved spec unchanged.
+- Start from the exact remote tip of `codex/ads-v2-plr-9-production-monetization-core` that contains the approved spec, the approved implementation plan, and the PLAN-C1 correction. The PLAN-C1 final report supplies that exact SHA; implementation must revalidate local HEAD = remote branch SHA at that tip and must not reset to the earlier spec-only or pre-C1 planning commit. Keep the approved spec unchanged.
 - Use one generated forward-only migration. Create it with `npx supabase migration new ads_v2_plr_9_production_monetization_core`; never invent its timestamp and never edit a historical migration.
 - Preserve the single existing wallet, shared Ads escrow, Ads revenue account, Campaign Finance row, Funding authority, Spend authority, Settlement authority, financial-event path, Ledger, Ads event table, and Admin audit table.
 - Do not create a second pricing authority, materializer, launch authority, Finance authority, Spend/Settlement RPC, lifecycle authority, Admin Ads module, Business Ads module, cron job, audit table, or browser-side monetary authority.
@@ -108,7 +108,8 @@ launch-policy singleton
 
 - `set_advertising_launch_mode_v2`, classifier, materializer, Funding, Activate, Resume, Spend, Settlement, lifecycle reconciler, and settlement reconciler all acquire the same singleton launch-policy row before evaluating mutable mode switches.
 - An old-mode operation either commits fully before a transition takes the singleton lock, or the transition commits first and the operation revalidates/rejects. No stale-mode commit is legal.
-- `public.set_advertising_launch_mode_v2` accepts one `p_idempotency_key uuid`; the singleton stores the last transition key and request fingerprint. Exact replay returns the current receipt; same key/different payload raises conflict.
+- `public.set_advertising_launch_mode_v2` accepts one `p_idempotency_key uuid` and uses `private.admin_action_audit` as its durable idempotency authority under stable scope `v1|system|advertising|launch_mode.transition`. The immutable audit row stores the canonical complete-payload SHA-256 fingerprint and original server receipt. Exact replay returns that original receipt without re-executing, even after later transitions; same key/different fingerprint raises the canonical conflict.
+- Launch-transition audit rows use `actor_kind = 'system_workflow'`, `actor_id = null`, `actor_role_snapshot = ARRAY[]::text[]`, `actor_capability = null`, `domain = 'advertising'`, `action = 'advertising.launch_mode.transition'`, `target_type = 'advertising_control_plane'`, `outcome = 'succeeded'`, `financial_effect = true`, `contains_pii = false`, and safe receipt metadata only. The singleton has no authoritative last-key/fingerprint/receipt fields; `private.admin_action_audit` uniqueness on `(idempotency_scope,idempotency_key)` is final protection.
 - Rate mutation RPCs use the existing `private.admin_action_audit` uniqueness on `(idempotency_scope,idempotency_key)`, a stable scope per action, `private.admin_request_fingerprint(...)`, advisory/row serialization, exact replay, and conflicting-payload rejection.
 - Materializer Spend idempotency is `md5('ads-v2-billing-spend:' || materialization_id::text)::uuid`; the canonical unique billable-event and Spend constraints remain final protection.
 - Settlement reconciliation derives `md5('ads-v2-settlement:' || campaign_id::text)::uuid` and calls only the existing Settlement RPC.
@@ -213,7 +214,7 @@ git stash list
 git log --oneline -20
 ```
 
-Require the approved implementation-start SHA, equal local/remote SHAs, and a clean worktree. STOP rather than reset, stash, discard, or clean unknown changes.
+Require the exact PLAN-C1 final-report SHA as both local HEAD and remote branch tip, plus a clean worktree. STOP rather than reset, stash, discard, or clean unknown changes.
 
 - [ ] **Step 2: Freeze the production precheck as read-only evidence**
 
@@ -273,7 +274,7 @@ Historical Campaign rows remain readable. New create/readiness/activation/delive
 
 - [ ] **Step 3: Extend the singleton launch policy**
 
-Alter the existing canary-policy singleton in place with `launch_mode`, immutable `billing_cutover_at`, canary billing caps, and last-transition idempotency/fingerprint/receipt fields. Capture `billing_cutover_at` exactly once from the database clock during migration. Keep physical `canary_enabled` for compatibility.
+Alter the existing canary-policy singleton in place with `launch_mode`, immutable `billing_cutover_at`, and canary billing caps. Do not add last-transition idempotency/fingerprint/receipt fields: durable launch-transition idempotency belongs exclusively to `private.admin_action_audit`. Capture `billing_cutover_at` exactly once from the database clock during migration. Keep physical `canary_enabled` for compatibility.
 
 Add CHECK constraints for:
 
@@ -311,7 +312,7 @@ Cover valid global/canary drafts, non-BDAG/zero/negative/>8-decimal rejection, i
 
 - [ ] **Step 2: Create authorization windows**
 
-Create `private.advertising_billing_authorization_windows` with UUID identity, mode (`CANARY_BILLING` or `PRODUCTION`), scope (`canary_campaign` or `global`), optional exact Campaign, `opened_at`, optional `expires_at`, `status` (`OPEN`,`CLOSED`), `closed_at`, canary Spend/event caps, transition idempotency reference, and timestamps. Constraints enforce mode/scope/Campaign/cap/time shapes. A partial unique index permits only one OPEN window for the singleton control plane.
+Create `private.advertising_billing_authorization_windows` with UUID identity, mode (`CANARY_BILLING` or `PRODUCTION`), scope (`canary_campaign` or `global`), optional exact Campaign, `opened_at`, optional `expires_at`, `status` (`OPEN`,`CLOSED`), `closed_at`, canary Spend/event caps, and timestamps. Add no transition-idempotency columns: the audit receipt may record `window_id`, while durable replay truth remains exclusively in `private.admin_action_audit`. Constraints enforce mode/scope/Campaign/cap/time shapes. A partial unique index permits only one OPEN window for the singleton control plane.
 
 Only the launch transition RPC may insert or close a window. Closing is a single-row O(1) update. No backlog update is part of close.
 
@@ -388,7 +389,7 @@ $env:NELYON_PLR9_LOCAL='1'; node --test --test-name-pattern="admin|audit|capabil
 
 - [ ] **Step 1: Add RED legal/illegal mode tests**
 
-Cover every row of the approved matrix, target/cap nullability, enabled placements, window/rate scope, full production coverage, exact canary coverage, illegal hybrids, direct contradictions, replay/conflict, and O(1) window close.
+Cover every row of the approved matrix, target/cap nullability, enabled placements, window/rate scope, full production coverage, exact canary coverage, illegal hybrids, direct contradictions, durable replay/conflict, delayed replay after an intervening transition, concurrent same-key requests, atomic failure/retry, and O(1) window close.
 
 - [ ] **Step 2: CREATE OR REPLACE the envelope assertion**
 
@@ -404,15 +405,19 @@ Replace `private.advertising_assert_canary_launch_envelope()` in place and prese
 
 Use the fixed signature listed above. `enabled_at`/window `opened_at` always come from one server `clock_timestamp()` captured by the RPC; the caller may supply only the future `p_expires_at` needed by a canary. PRODUCTION has no expiry. The RPC:
 
-1. locks the singleton launch policy;
-2. verifies replay/fingerprint;
-3. locks/closes an outgoing billing window in O(1);
-4. validates exact Campaign/Finance/rate coverage for the requested mode;
-5. creates the incoming authorization window only for CANARY_BILLING/PRODUCTION;
-6. writes both `launch_mode` and compatible `canary_enabled` plus every existing policy switch/placement in one transaction;
-7. clears or requires all target/cap fields;
-8. forces deferred constraints immediate;
-9. returns a receipt without performing Funding, Activation, Spend, Settlement, or Campaign mutation.
+1. locks the singleton launch policy, which also serializes transition requests in the canonical control-plane lock order;
+2. builds the complete canonical transition payload and computes its SHA-256 with `private.admin_request_fingerprint(jsonb)`;
+3. looks up `private.admin_action_audit` by `idempotency_scope = 'v1|system|advertising|launch_mode.transition'` and caller key;
+4. on an existing different fingerprint, raises the canonical idempotency conflict; on an existing matching fingerprint, returns the ORIGINAL receipt from audit metadata immediately and performs no window/switch/mode mutation, regardless of current mode;
+5. for a new command, locks/closes an outgoing billing window in O(1);
+6. validates exact Campaign/Finance/rate coverage for the requested mode;
+7. creates the incoming authorization window only for CANARY_BILLING/PRODUCTION;
+8. writes both `launch_mode` and compatible `canary_enabled` plus every existing policy switch/placement in one transaction;
+9. clears or requires all target/cap fields and forces deferred constraints immediate;
+10. creates exactly one immutable `private.admin_action_audit` success row with the approved system-workflow contract and safe server receipt (`from_mode`, `to_mode`, window ID, canary Campaign/placement when applicable, opened/closed/transition timestamps; no viewer or secret);
+11. returns that stored receipt without performing Funding, Activation, Spend, Settlement, or Campaign mutation.
+
+The audit insert and control-plane/window mutations are one atomic transaction. Any failure rolls back both, leaving no succeeded receipt that could suppress a legitimate retry. The plan must explicitly prove: immediate exact replay gives one effect/one audit row; same key with a different fingerprint conflicts; `A → B → replay A` leaves B current, creates no new window or switch mutation, keeps exactly A+B audit rows, and returns A's original receipt; concurrent same-key calls produce one effect/one audit row and one canonical replay.
 
 Grant service_role only; permit established database internal users in the function body. No Business/Admin route calls it.
 
@@ -645,8 +650,11 @@ Run and assert only the two serial outcomes for:
 7. materializer vs authorization-window close;
 8. parallel materializers for one event;
 9. publish/retire vs mode entry/coverage validation.
+10. concurrent same-key launch transitions, including one first execution and one durable replay.
 
 Require no stale-mode commit, deadlock, partial Spend, charged-without-Ledger, Ledger-without-charged, or pending charge after close.
+
+Also inject a launch-transition failure after tentative control-plane/window work but before commit. Require the entire transaction, including its audit row, to roll back; correcting the fixture and retrying the same key must execute once and store one success receipt.
 
 - [ ] **Step 3: Run EXPLAIN on representative disposable data**
 
@@ -980,6 +988,7 @@ STOP without widening scope if any of the following occurs:
 - the classifier would move money, call Spend, or process anything other than new impression/click inserts;
 - server-side rate/objective/mode/window resolution cannot fully determine the amount;
 - mode transitions cannot serialize every gated mutating RPC with the shared lock order;
+- launch-transition idempotency would require a parallel audit table/launch authority/manual cleanup, would rely on mutable singleton last-transition fields, or could not commit transition and immutable audit evidence atomically;
 - real separate-session races cannot establish only the two legal serial outcomes, or any deadlock/partial accounting/stale-mode commit is observed;
 - CANARY_BILLING caps mix Finance.spent into the window-local pending+charged cap;
 - PRODUCTION can open without complete global coverage, or safe DISARMED zero-rate state produces a reconciliation failure;
