@@ -2,6 +2,7 @@ import {
   ADS_OPERATIONAL_RUNTIME,
   deriveReadinessPresentation,
   metricPresentation,
+  serverMetricPresentation,
   type AdsOperationalRuntime,
   type MetricKey,
 } from "../../../../shared/adsOperationalTruth";
@@ -15,12 +16,22 @@ export function deriveBusinessAdsRuntime(input: { deliveryEnabled: boolean; fund
     ...ADS_OPERATIONAL_RUNTIME,
     deliveryEnabled: input.deliveryEnabled,
     fundingEnabled: input.fundingEnabled,
+    // The policy switch is not runtime capability evidence. PLR-9 billing
+    // truth is supplied by the canonical server projection instead.
     billingRuntime: false,
     clickRuntime: true,
     interactionRuntime: true,
     conversionRuntime: true,
     attributionRuntime: true,
   };
+}
+
+export function businessServerMetricPresentation(
+  value: unknown,
+  status: "available" | "no_data" | "not_applicable",
+  options: { suffix?: string; detail?: string } = {},
+) {
+  return serverMetricPresentation(value, status, options);
 }
 
 export function businessMetricPresentation(

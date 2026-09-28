@@ -80,13 +80,15 @@ describe("ADMIN-SUPERPANEL-FULL-F1 navigation",()=>{
 
   it("keeps every visual navigation entry backed by App routing and every detail route reachable",()=>{
     const app=readFileSync(join(process.cwd(),"src","App.tsx"),"utf8");
-    const guardedRoutes=new Map<string,string>();
-    for(const match of app.matchAll(/<Route element={<CapabilityRoute capability="([^"]+)"\/>}>(.*?)<\/Route>/gs)){
-      for(const route of match[2].matchAll(/path="([^"]+)"/g))guardedRoutes.set(route[1],match[1]);
+    const guardedRoutes=new Map<string,{capability:string;additionalCapabilities:string[]}>();
+    for(const match of app.matchAll(/<Route element={<CapabilityRoute capability="([^"]+)"(?: additionalCapabilities=\{\[([^\]]*)\]\})?\/>}>(.*?)<\/Route>/gs)){
+      const additionalCapabilities=[...(match[2]??"").matchAll(/"([^"]+)"/g)].map((item)=>item[1]);
+      for(const route of match[3].matchAll(/path="([^"]+)"/g))guardedRoutes.set(route[1],{capability:match[1],additionalCapabilities});
     }
     adminLinks.forEach((link)=>{
       expect(guardedRoutes.has(link.to),link.to).toBe(true);
-      expect(guardedRoutes.get(link.to),link.to).toBe(link.capability);
+      expect(guardedRoutes.get(link.to)?.capability,link.to).toBe(link.capability);
+      expect(guardedRoutes.get(link.to)?.additionalCapabilities,link.to).toEqual(link.additionalCapabilities??[]);
     });
     const administrativeRoutes=[...app.matchAll(/path="(\/[^"]+)"/g)].map((item)=>item[1]).filter((path)=>path!=="/login");
     administrativeRoutes.forEach((path)=>{

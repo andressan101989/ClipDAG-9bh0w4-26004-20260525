@@ -20,6 +20,14 @@ export type AdsCampaignPage={items:AdsCampaignSummary[];next_cursor:AdsCampaignC
 export type AdsOverview={authority:"ads_v2";range:AdminRange;generated_at:string;identity:JsonRecord;inventory:JsonRecord;review:JsonRecord;events:JsonRecord;conversions:JsonRecord;finance:JsonRecord;placements:JsonRecord[];objectives:JsonRecord[]};
 export type AdsHealth={authority:"ads_v2";production_delivery_ready:false;blockers:string[];capability_not_enabled:string[];identity:JsonRecord;age:JsonRecord;targeting:JsonRecord;delivery:JsonRecord;lifecycle:JsonRecord;events:JsonRecord;finance:JsonRecord};
 export type AdsReviewItem={id:string;name:string;status:string;review_status:string;submission_fingerprint:string|null;submitted_at:string|null;reviewed_at:string|null;campaign:JsonRecord;ad_set:JsonRecord;creative:JsonRecord;destination:JsonRecord;latest_decision:null|{event_type:string;reason_code:string|null;note:string|null;created_at:string}};
+export type AdsBillingRate={
+  id:string;objective:string;billable_event_type:"impression"|"click";placement_code:string;
+  rate_bdag:Money;currency:"BDAG";scope:"global"|"canary_campaign";scope_campaign_id:string|null;
+  state:"draft"|"published"|"retired";effective_from:string;effective_to:string|null;
+  created_at:string;updated_at:string;published_at:string|null;retired_at:string|null;
+};
+export type AdsBillingRatePage={items:AdsBillingRate[];next_cursor:{created_at:string;id:string}|null};
+export type AdsBillingRateDraftInput={objective:string;billableEventType:"impression"|"click";placementCode:string;scope:"global"|"canary_campaign";scopeCampaignId?:string|null;rateBdag:string;effectiveFrom:string;effectiveTo?:string|null;idempotencyKey:string};
 
 const fail=(path:string):never=>{throw new Error(`Respuesta Ads V2 inválida: ${path}`)};
 const record=(value:unknown,path:string):JsonRecord=>value!==null&&typeof value==="object"&&!Array.isArray(value)?value as JsonRecord:fail(path);
@@ -62,6 +70,18 @@ export async function getAdminAdvertisingHealth():Promise<AdsHealth>{
 }
 
 export async function getAdminAdvertisingFinanceHealth(){const root=record(await rpc("get_admin_advertising_finance_health"),"finance_health");if(root.authority!=="ads_v2")fail("finance_health.authority");return root}
+
+export async function getAdminAdvertisingBillingHealth(){const root=record(await rpc("get_admin_advertising_billing_health"),"billing_health");if(root.authority!=="ads_v2")fail("billing_health.authority");return root}
+
+const validateBillingRate=(value:unknown,path:string):AdsBillingRate=>{const row=record(value,path);const scopeCampaignId=row.scope_campaign_id===null?null:uuid(row.scope_campaign_id,`${path}.scope_campaign_id`);const state=text(row.state,`${path}.state`);const scope=text(row.scope,`${path}.scope`);const event=text(row.billable_event_type,`${path}.billable_event_type`);if(!["draft","published","retired"].includes(state))fail(`${path}.state`);if(!["global","canary_campaign"].includes(scope))fail(`${path}.scope`);if(!["impression","click"].includes(event))fail(`${path}.billable_event_type`);return{id:uuid(row.id,`${path}.id`),objective:text(row.objective,`${path}.objective`),billable_event_type:event as AdsBillingRate["billable_event_type"],placement_code:text(row.placement_code,`${path}.placement_code`),rate_bdag:money(row.rate_bdag,`${path}.rate_bdag`),currency:text(row.currency,`${path}.currency`) as "BDAG",scope:scope as AdsBillingRate["scope"],scope_campaign_id:scopeCampaignId,state:state as AdsBillingRate["state"],effective_from:date(row.effective_from,`${path}.effective_from`),effective_to:row.effective_to===null?null:date(row.effective_to,`${path}.effective_to`),created_at:date(row.created_at,`${path}.created_at`),updated_at:date(row.updated_at,`${path}.updated_at`),published_at:row.published_at===null?null:date(row.published_at,`${path}.published_at`),retired_at:row.retired_at===null?null:date(row.retired_at,`${path}.retired_at`)}};
+
+export async function searchAdminAdvertisingBillingRates(input:{state?:string;scope?:string;cursor?:{created_at:string;id:string};limit?:number}={}):Promise<AdsBillingRatePage>{const root=record(await rpc("search_admin_advertising_billing_rates",{p_state:input.state||null,p_scope:input.scope||null,p_cursor_created_at:input.cursor?.created_at||null,p_cursor_id:input.cursor?.id||null,p_limit:input.limit??50}),"billing_rates");const next=root.next_cursor===null?null:(()=>{const cursor=record(root.next_cursor,"billing_rates.next_cursor");return{created_at:date(cursor.created_at,"billing_rates.next_cursor.created_at"),id:uuid(cursor.id,"billing_rates.next_cursor.id")}})();return{items:array(root.items,"billing_rates.items").map((item,index)=>validateBillingRate(item,`billing_rates.items[${index}]`)),next_cursor:next}}
+
+const rateArgs=(input:AdsBillingRateDraftInput)=>({p_objective:input.objective,p_billable_event_type:input.billableEventType,p_placement_code:input.placementCode,p_scope:input.scope,p_scope_campaign_id:input.scopeCampaignId||null,p_rate_bdag:input.rateBdag,p_effective_from:input.effectiveFrom,p_idempotency_key:input.idempotencyKey});
+export async function createAdminAdvertisingBillingRateDraft(input:AdsBillingRateDraftInput){return record(await rpc("admin_create_advertising_billing_rate_draft_v2",rateArgs(input)),"rate_create")}
+export async function updateAdminAdvertisingBillingRateDraft(rateId:string,input:AdsBillingRateDraftInput){uuid(rateId,"rateId");return record(await rpc("admin_update_advertising_billing_rate_draft_v2",{p_rate_id:rateId,...rateArgs(input),p_effective_to:input.effectiveTo||null}),"rate_update")}
+export async function publishAdminAdvertisingBillingRate(rateId:string,reason:string,idempotencyKey:string){uuid(rateId,"rateId");uuid(idempotencyKey,"idempotencyKey");return record(await rpc("admin_publish_advertising_billing_rate_v2",{p_rate_id:rateId,p_reason:reason,p_idempotency_key:idempotencyKey}),"rate_publish")}
+export async function retireAdminAdvertisingBillingRate(rateId:string,reason:string,idempotencyKey:string){uuid(rateId,"rateId");uuid(idempotencyKey,"idempotencyKey");return record(await rpc("admin_retire_advertising_billing_rate_v2",{p_rate_id:rateId,p_reason:reason,p_idempotency_key:idempotencyKey}),"rate_retire")}
 
 export async function searchAdminAdvertisingAds(reviewStatus?:string):Promise<AdsReviewItem[]>{
   const root=record(await rpc("search_admin_advertising_ads",{p_review_status:reviewStatus||null,p_limit:100}),"review_queue");

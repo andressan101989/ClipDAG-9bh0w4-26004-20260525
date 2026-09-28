@@ -38,10 +38,12 @@ import {
   getAdvertisingAudience,
   getAdvertisingCampaign,
   getAdvertisingCampaignActivationReadiness,
+  getAdvertisingCampaignBilling,
   getAdvertisingCampaigns,
   getAdvertisingCreativeWorkspace,
   getAdvertisingEventSummary,
   getAdvertisingFinance,
+  getAdvertisingObjectiveCapabilities,
   getAdvertisingPlacementSelection,
   getAdvertisingTargetingCapabilities,
   isAdvertisingFinanceNotFound,
@@ -56,10 +58,13 @@ import {
   type AdvertisingAudienceDefinition,
   type AdvertisingAgeEligibility,
   type AdvertisingCampaign,
+  type AdvertisingCampaignBilling,
   type AdvertisingCampaignReadiness,
   type AdvertisingCampaignSummary,
   type AdvertisingCreativeWorkspace,
   type AdvertisingFinance,
+  type AdvertisingEventSummary,
+  type AdvertisingObjectiveCapabilities,
   type AdvertisingPlacementSelection,
   type AdvertisingTargetingCapabilities,
 } from "../../lib/adsManagerApi";
@@ -273,9 +278,19 @@ export function BusinessAdsManagerNewCampaignPage() {
   const { accounts, selectedBusiness, selectedAdAccount, ageEligibility } = useAdvertisingManager();
   const navigate = useNavigate();
   const [name, setName] = useState(""); const [objective, setObjective] = useState<(typeof ADVERTISING_OBJECTIVES)[number]>("awareness");
+  const [objectiveCapabilities, setObjectiveCapabilities] = useState<AdvertisingObjectiveCapabilities | null>(null);
+  const [objectiveError, setObjectiveError] = useState<string | null>(null);
   const mutation = useAdsMutationCoordinator();
   const owner = selectedBusiness?.accessType === "owner";
   const canWrite = owner && ageEligibility?.advertiser18PlusEligible === true;
+  useEffect(() => {
+    let current = true;
+    void getAdvertisingObjectiveCapabilities()
+      .then((value) => { if (current) { setObjectiveCapabilities(value); setObjectiveError(null); } })
+      .catch((cause) => { if (current) setObjectiveError(presentAdsError(cause, { operation: "read", resource: "objective capabilities" }).message); });
+    return () => { current = false; };
+  }, []);
+  const capabilityByObjective = new Map(objectiveCapabilities?.objectives.map((item) => [item.objective, item]) ?? []);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!canWrite || !selectedAdAccount || mutation.pending) return;
@@ -299,10 +314,10 @@ export function BusinessAdsManagerNewCampaignPage() {
   }
   if (accounts.length === 0) return <><PageHeader eyebrow="Ads Manager" title="Create campaign draft" description="Create a Business Account first." /><AdvertiserOnboarding /></>;
   const mutationError = mutation.state.kind === "error" || mutation.state.kind === "conflict" || mutation.state.kind === "uncertain" ? mutation.state.message : null;
-  return <><PageHeader eyebrow="Ads Manager · Step 1" title="Create campaign draft" description="This creates a general Ads V2 draft. It does not fund, activate, or deliver advertising." action={<Link className="text-button" to="/ads">Back</Link>} /><AccountSelectors /><InlineError message={mutationError} />{mutation.state.kind === "success" && <div className="inline-success" role="status">{mutation.state.message}</div>}{owner && <AdvertisingAgeEligibilityPanel />}{!owner && <div className="readonly-note">Only the Business Account owner can create Ads V2 drafts.</div>}<form className="business-card ads-v2-compact-form" aria-busy={mutation.pending} onSubmit={(event) => void submit(event)}><FormField label="Campaign name"><input required minLength={2} maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /></FormField><FormField label="Objective"><select value={objective} onChange={(event) => setObjective(event.target.value as (typeof ADVERTISING_OBJECTIVES)[number])}>{ADVERTISING_OBJECTIVES.map((item) => <option key={item} value={item}>{objectiveLabels[item]}</option>)}</select></FormField><FormField label="Ad Account"><input readOnly value={selectedAdAccount?.name ?? ""} /></FormField><button className="primary-button" type="submit" disabled={!canWrite || !selectedAdAccount || mutation.pending}>{mutation.pending ? "Creating…" : "Create draft"}</button></form></>;
+  return <><PageHeader eyebrow="Ads Manager · Step 1" title="Create campaign draft" description="This creates a general Ads V2 draft. It does not fund, activate, or deliver advertising." action={<Link className="text-button" to="/ads">Back</Link>} /><AccountSelectors /><InlineError message={mutationError ?? objectiveError} />{mutation.state.kind === "success" && <div className="inline-success" role="status">{mutation.state.message}</div>}{owner && <AdvertisingAgeEligibilityPanel />}{!owner && <div className="readonly-note">Only the Business Account owner can create Ads V2 drafts.</div>}<form className="business-card ads-v2-compact-form" aria-busy={mutation.pending} onSubmit={(event) => void submit(event)}><FormField label="Campaign name"><input required minLength={2} maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /></FormField><FormField label="Objective"><select value={objective} onChange={(event) => setObjective(event.target.value as (typeof ADVERTISING_OBJECTIVES)[number])}>{ADVERTISING_OBJECTIVES.map((item) => { const capability = capabilityByObjective.get(item); return <option key={item} value={item} disabled={!capability?.setupEnabled}>{objectiveLabels[item]}{capability?.setupEnabled ? "" : " — Not available yet"}</option>; })}</select></FormField><FormField label="Ad Account"><input readOnly value={selectedAdAccount?.name ?? ""} /></FormField><button className="primary-button" type="submit" disabled={!canWrite || !selectedAdAccount || mutation.pending || !capabilityByObjective.get(objective)?.setupEnabled}>{mutation.pending ? "Creating…" : "Create draft"}</button></form></>;
 }
 
-type WorkspaceData = { requestKey: string; campaign: AdvertisingCampaign; readiness: AdvertisingCampaignReadiness; creatives: AdvertisingCreativeWorkspace; finance: AdvertisingFinance | null; analytics: Record<string, unknown> | null; panelErrors: { analytics: string | null }; audience: Record<string, unknown> | null; placement: AdvertisingPlacementSelection | null; selectedAdSetId: string | null; selectedDestinationId: string | null; selectedAdId: string | null };
+type WorkspaceData = { requestKey: string; campaign: AdvertisingCampaign; readiness: AdvertisingCampaignReadiness; creatives: AdvertisingCreativeWorkspace; finance: AdvertisingFinance | null; billing: AdvertisingCampaignBilling | null; analytics: AdvertisingEventSummary | null; panelErrors: { analytics: string | null }; audience: Record<string, unknown> | null; placement: AdvertisingPlacementSelection | null; selectedAdSetId: string | null; selectedDestinationId: string | null; selectedAdId: string | null };
 
 const datetimeLocalValue = (value: string | null) => value ? new Date(new Date(value).getTime() - new Date(value).getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : "";
 const sameInstant = (left: string | null, right: string | null) => left === right || Boolean(left && right && Date.parse(left) === Date.parse(right));
@@ -330,10 +345,14 @@ export function BusinessAdsManagerCampaignPage() {
     const campaign = await getAdvertisingCampaign(campaignId, "ads_v2");
     const adSet = resolveWorkspaceSelection(campaign.adSets, requestedAdSetId).selected;
     const previous = dataRef.current?.campaign.id === campaignId ? dataRef.current : null;
-    const [readiness, creatives, finance, analyticsResult, audience, placement] = await Promise.all([
+    const [readiness, creatives, finance, billing, analyticsResult, audience, placement] = await Promise.all([
       getAdvertisingCampaignActivationReadiness(campaignId),
       getAdvertisingCreativeWorkspace(),
       getAdvertisingFinance(campaignId).catch((cause) => {
+        if (isAdvertisingFinanceNotFound(cause)) return null;
+        throw cause;
+      }),
+      getAdvertisingCampaignBilling(campaignId).catch((cause) => {
         if (isAdvertisingFinanceNotFound(cause)) return null;
         throw cause;
       }),
@@ -346,7 +365,7 @@ export function BusinessAdsManagerCampaignPage() {
     const destination = resolveWorkspaceSelection(campaign.destinations, requestedDestinationId).selected;
     const campaignAds = creatives.ads.filter((ad) => ad.campaignId === campaign.id && ad.adSetId === adSet?.id && ad.destinationId === destination?.id);
     return {
-      requestKey: workspaceQueryKey, campaign, readiness, creatives, finance, analytics: analyticsResult.value, panelErrors: { analytics: analyticsResult.error }, audience, placement,
+      requestKey: workspaceQueryKey, campaign, readiness, creatives, finance, billing, analytics: analyticsResult.value, panelErrors: { analytics: analyticsResult.error }, audience, placement,
       selectedAdSetId: adSet?.id ?? null,
       selectedDestinationId: destination?.id ?? null,
       selectedAdId: resolveWorkspaceSelection(campaignAds, requestedAdId).selected?.id ?? null,
@@ -646,6 +665,6 @@ function CampaignWorkspace({ data, business, adAccount, owner, lifecycleOwner, r
       }}
       onCreateRevised={() => setRevisedAdMode(true)}
     />}
-    <OperationalTruthPanels campaign={campaign} readiness={data.readiness} workflowSteps={workflow.steps} finance={data.finance} analytics={data.analytics} analyticsError={data.panelErrors.analytics} deliveryEnabled={selectedPlacementDeliveryEnabled} owner={owner} lifecycleOwner={lifecycleOwner} pending={pending} onRetry={refresh} onCreateBudget={createBudgetDraft} onFundBudget={fundBudget} onLifecycle={runLifecycleAction} />
+    <OperationalTruthPanels campaign={campaign} readiness={data.readiness} workflowSteps={workflow.steps} finance={data.finance} billing={data.billing} analytics={data.analytics} analyticsError={data.panelErrors.analytics} deliveryEnabled={selectedPlacementDeliveryEnabled} owner={owner} lifecycleOwner={lifecycleOwner} pending={pending} onRetry={refresh} onCreateBudget={createBudgetDraft} onFundBudget={fundBudget} onLifecycle={runLifecycleAction} />
   </div>;
 }

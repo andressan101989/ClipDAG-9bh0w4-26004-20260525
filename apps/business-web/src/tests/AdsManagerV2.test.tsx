@@ -10,6 +10,7 @@ vi.mock("../auth/BusinessAuthProvider", () => ({ useBusinessAuth: () => ({ user:
 const api = vi.hoisted(() => ({
   accounts: vi.fn(), campaigns: vi.fn(), createBusiness: vi.fn(), createCampaign: vi.fn(),
   campaign: vi.fn(), readiness: vi.fn(), creativeWorkspace: vi.fn(), finance: vi.fn(), summary: vi.fn(), audience: vi.fn(), placement: vi.fn(),
+  objectiveCapabilities: vi.fn(), billing: vi.fn(),
   activate: vi.fn(), pause: vi.fn(), resume: vi.fn(), cancel: vi.fn(), createFinance: vi.fn(), fundFinance: vi.fn(),
   age: vi.fn(), remediateAge: vi.fn(),
   targetingCapabilities: vi.fn(), createAudienceVersion: vi.fn(),
@@ -35,6 +36,8 @@ vi.mock("../lib/adsManagerApi", async (original) => ({
   getAdvertisingCreativeWorkspace: api.creativeWorkspace,
   getAdvertisingFinance: api.finance,
   getAdvertisingEventSummary: api.summary,
+  getAdvertisingObjectiveCapabilities: api.objectiveCapabilities,
+  getAdvertisingCampaignBilling: api.billing,
   getAdvertisingAudience: api.audience,
   getAdvertisingPlacementSelection: api.placement,
   getMyAgeEligibility: api.age,
@@ -75,6 +78,13 @@ describe("Ads Manager V2 workspace", () => {
     api.fundFinance.mockResolvedValue(fundingFinance({ financeStatus: "funded", fundedBdag: 0.01, reservedBdag: 0.01, fundingAvailable: false, fundingState: "already_funded" }));
     api.finance.mockRejectedValue(new Error("advertising_campaign_finance_not_found"));
     api.summary.mockResolvedValue({ impressions: 0, clicks: 0, conversions: 0, ctr: 0 });
+    api.objectiveCapabilities.mockResolvedValue({ policyVersion: "nelyon-ads-objectives-v1", objectives: [
+      { objective: "awareness", status: "runtime_ready", setupEnabled: true, deliveryRuntimeReady: true, billingRuntimeReady: true, conversionRuntimeReady: false, billableEventType: "impression" },
+      { objective: "traffic", status: "runtime_ready", setupEnabled: true, deliveryRuntimeReady: true, billingRuntimeReady: true, conversionRuntimeReady: false, billableEventType: "click" },
+      { objective: "marketplace_sales", status: "runtime_ready", setupEnabled: true, deliveryRuntimeReady: true, billingRuntimeReady: true, conversionRuntimeReady: true, billableEventType: "click" },
+      ...["reach","engagement","video_views","profile_visits","messages","website_conversions","app_promotion"].map((objective) => ({ objective, status: "not_available", setupEnabled: false, deliveryRuntimeReady: false, billingRuntimeReady: false, conversionRuntimeReady: false, billableEventType: null })),
+    ] });
+    api.billing.mockResolvedValue({ campaignId: "campaign-1", objective: "awareness", billableEventType: "impression", financeStatus: "draft", budgetBdag: 0.01, fundedBdag: 0, spentBdag: 0, releasedBdag: 0, pendingReservedBdag: 0, availableToReserveBdag: 0, anomaly: false, anomalyCode: null, billingRuntimeReady: true, rateAvailable: false, rate: null, nextBillableUnitReady: false, blockers: ["campaign_finance_not_funded","advertising_billing_rate_not_available"] });
     api.audience.mockResolvedValue(null);
     api.placement.mockResolvedValue(null);
     api.age.mockResolvedValue({ status: "eligible", ageBand: "age_18_plus", evaluated: true, advertiser18PlusEligible: true, policyVersion: "nelyon-age-v2", minimumAge: 13 });
@@ -648,9 +658,12 @@ describe("Ads Manager V2 workspace", () => {
     expect(screen.getByLabelText("Impressions metric")).toHaveTextContent("0");
     expect(screen.getByLabelText("Clicks metric")).toHaveTextContent("0");
     expect(screen.getByLabelText("Clicks metric")).not.toHaveTextContent("Not available yet");
-    expect(screen.getByLabelText("CTR metric")).toHaveTextContent("No impressions yet");
-    for (const label of ["Video views", "Engagements", "CPC", "CPM", "CPA"]) {
+    expect(screen.getByLabelText("CTR metric")).toHaveTextContent("No denominator data is available yet.");
+    for (const label of ["Video views", "Engagements"]) {
       expect(screen.getByLabelText(`${label} metric`)).toHaveTextContent("Not available yet");
+    }
+    for (const label of ["CPC", "CPM"]) {
+      expect(screen.getByLabelText(`${label} metric`)).toHaveTextContent("No denominator data is available yet.");
     }
     for (const label of ["Destination opens", "Conversions", "Attributed purchases", "Attributed purchase value (GMV)"]) {
       expect(screen.getByLabelText(`${label} metric`)).toHaveTextContent("0");

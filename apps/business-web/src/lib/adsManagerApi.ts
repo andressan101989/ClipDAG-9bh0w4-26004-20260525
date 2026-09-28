@@ -404,6 +404,57 @@ export type AdvertisingPlacementSelection = {
   };
   productionDeliveryEnabled: boolean;
 };
+export type AdvertisingObjectiveCapability = {
+  objective: string;
+  status: "supported" | "not_available";
+  setupEnabled: boolean;
+  deliveryRuntimeReady: boolean;
+  billingRuntimeReady: boolean;
+  conversionRuntimeReady: boolean;
+  billableEventType: "impression" | "click" | null;
+};
+export type AdvertisingObjectiveCapabilities = {
+  authority: "ads_v2";
+  capabilityVersion: string;
+  objectives: AdvertisingObjectiveCapability[];
+};
+export type AdvertisingCampaignBilling = {
+  campaignId: string;
+  objective: string;
+  objectiveStatus: string;
+  deliveryRuntimeReady: boolean;
+  billingRuntimeReady: boolean;
+  conversionRuntimeReady: boolean;
+  billableEventType: string | null;
+  billingBasis: string | null;
+  rateStatus: string;
+  rateVersionId: string | null;
+  rateBdag: number | null;
+  rateCurrency: string | null;
+  rateScope: string | null;
+  financeStatus: string;
+  budgetBdag: number;
+  fundedBdag: number;
+  spentBdag: number;
+  releasedBdag: number;
+  pendingReservedBdag: number;
+  availableToReserveBdag: number;
+  reservationConsistent: boolean;
+  anomalyCode: string | null;
+  nextBillableUnitReady: boolean;
+  nextBillableUnitBlocker: string | null;
+};
+export type AdvertisingMetricStatus = "available" | "no_data" | "not_applicable";
+export type AdvertisingEventSummary = Record<string, unknown> & {
+  impressions: number; clicks: number; destination_opens: number;
+  conversions: number; attributed_conversions: number;
+  marketplace_purchase_value_bdag: number; spent_bdag: number;
+  ctr: number | null; ctr_status: AdvertisingMetricStatus;
+  cpc_bdag: number | null; cpc_status: AdvertisingMetricStatus;
+  cpm_bdag: number | null; cpm_status: AdvertisingMetricStatus;
+  conversion_rate: number | null; conversion_rate_status: AdvertisingMetricStatus;
+  roas: number | null; roas_status: AdvertisingMetricStatus;
+};
 
 function parseAdvertiserBusiness(value: unknown): AdvertiserBusiness {
   const row = object(value, "advertiser_business_invalid");
@@ -473,6 +524,27 @@ async function advertisingRpc(name: string, args: Record<string, unknown> | unde
 export async function getAdvertiserAccounts(client: BusinessSupabaseClient = supabase): Promise<AdvertiserBusiness[]> {
   const payload = object(await advertisingRpc("get_my_advertiser_accounts", undefined, "No se pudieron cargar las cuentas publicitarias", client), "advertiser_accounts_invalid");
   return array(payload.businesses, "advertiser_accounts_invalid").map(parseAdvertiserBusiness);
+}
+
+export async function getAdvertisingObjectiveCapabilities(client: BusinessSupabaseClient = supabase): Promise<AdvertisingObjectiveCapabilities> {
+  const row = object(await advertisingRpc("get_my_advertising_objective_capabilities_v2", undefined, "No se pudieron cargar los objetivos publicitarios", client), "advertising_objective_capabilities_invalid");
+  return {
+    authority: "ads_v2",
+    capabilityVersion: string(row.capability_version, "advertising_objective_capabilities_invalid"),
+    objectives: array(row.objectives, "advertising_objective_capabilities_invalid").map((value) => {
+      const capability = object(value, "advertising_objective_capability_invalid");
+      const eventType = optionalString(capability.billable_event_type);
+      return {
+        objective: string(capability.objective, "advertising_objective_capability_invalid"),
+        status: string(capability.status, "advertising_objective_capability_invalid") as AdvertisingObjectiveCapability["status"],
+        setupEnabled: capability.setup_enabled === true,
+        deliveryRuntimeReady: capability.delivery_runtime_ready === true,
+        billingRuntimeReady: capability.billing_runtime_ready === true,
+        conversionRuntimeReady: capability.conversion_runtime_ready === true,
+        billableEventType: eventType === "impression" || eventType === "click" ? eventType : null,
+      };
+    }),
+  };
 }
 
 export async function createAdvertiserBusinessAccount(displayName: string, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
@@ -720,7 +792,36 @@ function parseAdvertisingFinance(value: unknown): AdvertisingFinance {
 export async function createAdvertisingFinanceDraft(campaignId: string, budgetBdag: string, idempotencyKey: string, client: BusinessSupabaseClient = supabase) { return parseAdvertisingFinance(await advertisingRpc("create_my_advertising_campaign_finance_draft", { p_campaign_id: campaignId, p_budget_bdag: budgetBdag, p_idempotency_key: idempotencyKey }, "No se pudo definir el presupuesto", client)); }
 export async function getAdvertisingFinance(campaignId: string, client: BusinessSupabaseClient = supabase) { return parseAdvertisingFinance(await advertisingRpc("get_my_advertising_campaign_finance", { p_campaign_id: campaignId }, "advertising_campaign_finance_not_found", client)); }
 export async function fundAdvertisingCampaignBudget(campaignId: string, idempotencyKey: string, client: BusinessSupabaseClient = supabase) { return parseAdvertisingFinance(await advertisingRpc("fund_my_advertising_campaign_budget_v2", { p_campaign_id: campaignId, p_idempotency_key: idempotencyKey }, "No se pudo fondear el presupuesto", client)); }
-export async function getAdvertisingEventSummary(campaignId: string, client: BusinessSupabaseClient = supabase) { return object(await advertisingRpc("get_my_advertising_event_summary", { p_campaign_id: campaignId }, "No se pudieron cargar las métricas", client), "advertising_summary_invalid"); }
+export async function getAdvertisingCampaignBilling(campaignId: string, client: BusinessSupabaseClient = supabase): Promise<AdvertisingCampaignBilling> {
+  const row = object(await advertisingRpc("get_my_advertising_campaign_billing_v2", { p_campaign_id: campaignId }, "No se pudo cargar la facturación publicitaria", client), "advertising_billing_invalid");
+  const nullableNumber = (value: unknown) => value == null ? null : number(value);
+  return {
+    campaignId: string(row.campaign_id, "advertising_billing_invalid"), objective: string(row.objective, "advertising_billing_invalid"),
+    objectiveStatus: string(row.objective_status, "advertising_billing_invalid"), deliveryRuntimeReady: row.delivery_runtime_ready === true,
+    billingRuntimeReady: row.billing_runtime_ready === true, conversionRuntimeReady: row.conversion_runtime_ready === true,
+    billableEventType: optionalString(row.billable_event_type), billingBasis: optionalString(row.billing_basis), rateStatus: string(row.rate_status, "advertising_billing_invalid"),
+    rateVersionId: optionalString(row.rate_version_id), rateBdag: nullableNumber(row.rate_bdag), rateCurrency: optionalString(row.rate_currency), rateScope: optionalString(row.rate_scope),
+    financeStatus: string(row.finance_status, "advertising_billing_invalid"), budgetBdag: number(row.budget_bdag), fundedBdag: number(row.funded_bdag),
+    spentBdag: number(row.spent_bdag), releasedBdag: number(row.released_bdag), pendingReservedBdag: number(row.pending_reserved_bdag),
+    availableToReserveBdag: number(row.available_to_reserve_bdag), reservationConsistent: row.reservation_consistent === true,
+    anomalyCode: optionalString(row.anomaly_code), nextBillableUnitReady: row.next_billable_unit_ready === true,
+    nextBillableUnitBlocker: optionalString(row.next_billable_unit_blocker),
+  };
+}
+export async function getAdvertisingEventSummary(campaignId: string, client: BusinessSupabaseClient = supabase): Promise<AdvertisingEventSummary> {
+  const row = object(await advertisingRpc("get_my_advertising_event_summary", { p_campaign_id: campaignId }, "No se pudieron cargar las métricas", client), "advertising_summary_invalid");
+  const metricStatus = (value: unknown): AdvertisingMetricStatus => value === "available" || value === "not_applicable" ? value : "no_data";
+  const nullableNumber = (value: unknown) => value == null ? null : number(value);
+  return {
+    ...row,
+    impressions: number(row.impressions), clicks: number(row.clicks), destination_opens: number(row.destination_opens),
+    conversions: number(row.conversions), attributed_conversions: number(row.attributed_conversions),
+    marketplace_purchase_value_bdag: number(row.marketplace_purchase_value_bdag), spent_bdag: number(row.spent_bdag),
+    ctr: nullableNumber(row.ctr), ctr_status: metricStatus(row.ctr_status), cpc_bdag: nullableNumber(row.cpc_bdag), cpc_status: metricStatus(row.cpc_status),
+    cpm_bdag: nullableNumber(row.cpm_bdag), cpm_status: metricStatus(row.cpm_status), conversion_rate: nullableNumber(row.conversion_rate),
+    conversion_rate_status: metricStatus(row.conversion_rate_status), roas: nullableNumber(row.roas), roas_status: metricStatus(row.roas_status),
+  };
+}
 
 export function isAdvertisingFinanceNotFound(cause: unknown) {
   return cause instanceof AdvertisingRpcError

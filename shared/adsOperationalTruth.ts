@@ -125,9 +125,26 @@ export const ADS_OPERATIONAL_RUNTIME: Readonly<AdsOperationalRuntime> = Object.f
   billingRuntime: false,
   fundingEnabled: false,
 });
-export type MetricKey = "impressions" | "clicks" | "destination_opens" | "video_views" | "engagements" | "ctr" | "conversions" | "attributed_conversions" | "marketplace_purchase_value_bdag" | "spend" | "cpc" | "cpm" | "cpa";
-export type MetricState = "measured" | "zero_no_delivery" | "not_available_yet" | "platform_disabled";
+export type MetricKey = "impressions" | "clicks" | "destination_opens" | "video_views" | "engagements" | "ctr" | "conversions" | "attributed_conversions" | "marketplace_purchase_value_bdag" | "spend" | "cpc" | "cpm" | "cpa" | "cpc_bdag" | "cpm_bdag" | "conversion_rate" | "roas";
+export type MetricState = "measured" | "zero_no_delivery" | "not_available_yet" | "platform_disabled" | "not_applicable" | "no_data";
 export type MetricPresentation = { state: MetricState; display: string; detail: string | null };
+
+export type ServerMetricStatus = "available" | "no_data" | "not_applicable";
+
+export function serverMetricPresentation(
+  value: unknown,
+  status: ServerMetricStatus,
+  options: { suffix?: string; detail?: string } = {},
+): MetricPresentation {
+  if (status === "not_applicable") return { state: "not_applicable", display: "—", detail: "Not applicable to this campaign objective." };
+  if (status === "no_data") return { state: "no_data", display: "—", detail: "No denominator data is available yet." };
+  const numeric = Number(value);
+  return {
+    state: "measured",
+    display: Number.isFinite(numeric) ? `${numeric}${options.suffix ?? ""}` : "—",
+    detail: options.detail ?? null,
+  };
+}
 
 function measured(value: unknown): MetricPresentation {
   const numeric = Number(value);

@@ -5,6 +5,7 @@ export type AdminLink={
   to:string;
   label:string;
   capability:string;
+  additionalCapabilities?:string[];
   icon:AdminIconName;
   primary?:boolean;
   end?:boolean;
@@ -31,7 +32,8 @@ export const adminLinks:AdminLink[]=[
   {to:"/advertising/review",label:"Advertising · Review Queue",capability:"content.items.read",icon:"advertising",group:"advertising",sectionLabel:"Review Queue"},
   {to:"/advertising/analytics",label:"Advertising · Analytics",capability:"advertising.ads.read",icon:"advertising",group:"advertising",sectionLabel:"Analytics"},
   {to:"/advertising/health",label:"Advertising · Health",capability:"advertising.ads.read",icon:"advertising",group:"advertising",sectionLabel:"Health"},
-  {to:"/advertising/finance-health",label:"Advertising · Finance Health",capability:"finance.reconciliation.read",icon:"advertising",group:"advertising",sectionLabel:"Finance Health"},
+  {to:"/advertising/billing",label:"Advertising · Billing",capability:"advertising.billing.read",icon:"advertising",group:"advertising",sectionLabel:"Billing & Rates"},
+  {to:"/advertising/finance-health",label:"Advertising · Finance Health",capability:"finance.reconciliation.read",additionalCapabilities:["advertising.billing.read"],icon:"advertising",group:"advertising",sectionLabel:"Finance Health"},
   {to:"/finance",label:"Finance",capability:"finance.ledger.read",icon:"finance",primary:true,end:true,group:"finance",sectionLabel:"Resumen"},
   {to:"/finance/accounts",label:"Finance · Cuentas",capability:"finance.ledger.read",icon:"finance",group:"finance",sectionLabel:"Cuentas"},
   {to:"/finance/transactions",label:"Finance · Transacciones",capability:"finance.ledger.read",icon:"finance",group:"finance",sectionLabel:"Transacciones"},

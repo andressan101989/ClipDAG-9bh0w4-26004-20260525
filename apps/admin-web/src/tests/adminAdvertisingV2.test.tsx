@@ -3,14 +3,15 @@ import {MemoryRouter} from "react-router-dom";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
 import {adminLinks} from "../layout/adminNavigation";
-import {AdminAdvertisingAnalyticsPage,AdminAdvertisingCampaignDetailPage,AdminAdvertisingCampaignsPage,AdminAdvertisingHealthPage,AdminAdvertisingOverviewPage,AdminAdvertisingReviewPage} from "../pages/AdminAdvertisingPages";
-import {getAdminAdvertisingCampaignDetail,getAdminAdvertisingHealth,getAdminAdvertisingOverview,reviewAdvertisingAd,searchAdminAdvertisingAds,searchAdminAdvertisingCampaigns} from "../lib/adminAdvertisingApi";
+import {AdminAdvertisingAnalyticsPage,AdminAdvertisingBillingPage,AdminAdvertisingCampaignDetailPage,AdminAdvertisingCampaignsPage,AdminAdvertisingHealthPage,AdminAdvertisingOverviewPage,AdminAdvertisingReviewPage} from "../pages/AdminAdvertisingPages";
+import {createAdminAdvertisingBillingRateDraft,getAdminAdvertisingBillingHealth,getAdminAdvertisingCampaignDetail,getAdminAdvertisingHealth,getAdminAdvertisingOverview,publishAdminAdvertisingBillingRate,retireAdminAdvertisingBillingRate,reviewAdvertisingAd,searchAdminAdvertisingAds,searchAdminAdvertisingBillingRates,searchAdminAdvertisingCampaigns,updateAdminAdvertisingBillingRateDraft} from "../lib/adminAdvertisingApi";
 
 vi.mock("../auth/AdminAuthProvider",()=>({useAdminAuth:vi.fn()}));
 vi.mock("../lib/adminApi",()=>({formatBdag:(value:unknown)=>`${value} BDAG`,formatDate:(value:unknown)=>String(value)}));
 vi.mock("../lib/adminAdvertisingApi",()=>({
   getAdminAdvertisingCampaignDetail:vi.fn(),getAdminAdvertisingFinanceHealth:vi.fn(),getAdminAdvertisingHealth:vi.fn(),
-  getAdminAdvertisingOverview:vi.fn(),reviewAdvertisingAd:vi.fn(),searchAdminAdvertisingAds:vi.fn(),searchAdminAdvertisingCampaigns:vi.fn(),
+  getAdminAdvertisingBillingHealth:vi.fn(),getAdminAdvertisingOverview:vi.fn(),reviewAdvertisingAd:vi.fn(),searchAdminAdvertisingAds:vi.fn(),searchAdminAdvertisingBillingRates:vi.fn(),searchAdminAdvertisingCampaigns:vi.fn(),
+  createAdminAdvertisingBillingRateDraft:vi.fn(),updateAdminAdvertisingBillingRateDraft:vi.fn(),publishAdminAdvertisingBillingRate:vi.fn(),retireAdminAdvertisingBillingRate:vi.fn(),
 }));
 
 const access=(capabilities:string[])=>({hasCapability:(capability:string)=>capabilities.includes(capability)});
@@ -19,10 +20,12 @@ const overview={authority:"ads_v2" as const,range:"30d" as const,generated_at:"2
 beforeEach(()=>{
   vi.clearAllMocks();
   localStorage.clear();
-  vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.ads.read","content.items.read","content.items.moderate","finance.reconciliation.read"]) as never);
+  vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.ads.read","advertising.billing.read","content.items.read","content.items.moderate","finance.reconciliation.read"]) as never);
   vi.mocked(getAdminAdvertisingOverview).mockResolvedValue(overview);
   vi.mocked(searchAdminAdvertisingCampaigns).mockResolvedValue({items:[],next_cursor:null,page_size:0,authority:"ads_v2"});
   vi.mocked(searchAdminAdvertisingAds).mockResolvedValue([]);
+  vi.mocked(searchAdminAdvertisingBillingRates).mockResolvedValue({items:[],next_cursor:null});
+  vi.mocked(getAdminAdvertisingBillingHealth).mockResolvedValue({authority:"ads_v2",launch_mode:"DISARMED",billing_cutover_at:"2026-09-28T00:17:06Z",production_rate_coverage_ready:false,production_rate_coverage:{ready:false},rate_versions:{draft:0,published:0,retired:0},authorization_windows:{open:0,closed:0},materializations:{pending:0,active_pending:0,charged:0,budget_exhausted:0,oldest_pending_at:null},active_pending_reservation_anomalies:0,cron_jobs:[]});
   vi.mocked(getAdminAdvertisingHealth).mockResolvedValue({authority:"ads_v2",production_delivery_ready:false,blockers:["age_authority_unavailable","campaign_activation_disabled","campaign_automatic_transitions_disabled","finance_funding_disabled","global_delivery_disabled","no_v2_placement_enabled"],capability_not_enabled:["geo_matching_disabled","language_matching_disabled"],identity:{business_accounts:47,ad_accounts:47},age:{age_eligibility_rows:0,advertiser_eligible_rows:0,advertiser_eligibility_operational:false},targeting:{targeting_policy_version:"nelyon-ads-targeting-v2",geo_targeting_enabled:false,language_targeting_enabled:false,daypart_targeting_enabled:true,frequency_targeting_enabled:true},delivery:{delivery_policy_version:"nelyon-ads-delivery-v2",global_v2_delivery_enabled:false,enabled_placement_count:0,campaign_activation_implemented:true},lifecycle:{policy_version:"nelyon-ads-campaign-lifecycle-v1",activation_enabled:false,automatic_transitions_enabled:false},events:{event_policy_version:"nelyon-ads-events-v1",events:0},finance:{finance_policy_version:"nelyon-ads-finance-v1",funding_enabled:false}});
 });
 
@@ -164,7 +167,60 @@ describe("ADS-V2-J Admin Web",()=>{
       ["/advertising/review","content.items.read"],
       ["/advertising/analytics","advertising.ads.read"],
       ["/advertising/health","advertising.ads.read"],
+      ["/advertising/billing","advertising.billing.read"],
       ["/advertising/finance-health","finance.reconciliation.read"],
     ]);
+    expect(advertising.find((link)=>link.to==="/advertising/finance-health")?.additionalCapabilities).toEqual(["advertising.billing.read"]);
+  });
+
+  it("shows operational billing health without exposing launch controls or rate mutations to read-only operators",async()=>{
+    render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
+    expect(await screen.findByText("Rates & billing health")).toBeInTheDocument();
+    expect(screen.getByText("DISARMED")).toBeInTheDocument();
+    expect(screen.getByText("No Ads billing rates")).toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Create draft"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:/launch|production|open window/i})).not.toBeInTheDocument();
+  });
+
+  it("allows only rates.manage admins to create a server-audited draft without launch controls",async()=>{
+    vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.billing.read","advertising.rates.manage"]) as never);
+    vi.mocked(createAdminAdvertisingBillingRateDraft).mockResolvedValue({rate_id:"11111111-1111-4111-8111-111111111111",state:"draft"});
+    render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText("Rate BDAG"),{target:{value:"0.00010000"}});
+    fireEvent.change(screen.getByLabelText("Effective from"),{target:{value:"2027-01-01T00:00"}});
+    fireEvent.click(screen.getByRole("button",{name:"Create draft"}));
+    await waitFor(()=>expect(createAdminAdvertisingBillingRateDraft).toHaveBeenCalledWith(expect.objectContaining({objective:"awareness",billableEventType:"impression",placementCode:"social_feed",scope:"global",rateBdag:"0.00010000"})));
+    expect(screen.queryByRole("button",{name:/launch|enable spend|open window/i})).not.toBeInTheDocument();
+  });
+
+  it("edits only a draft through the canonical audited RPC",async()=>{
+    vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.billing.read","advertising.rates.manage"]) as never);
+    vi.mocked(searchAdminAdvertisingBillingRates).mockResolvedValue({items:[{id:"11111111-1111-4111-8111-111111111111",objective:"traffic",billable_event_type:"click",placement_code:"social_feed",rate_bdag:"0.00020000",currency:"BDAG",scope:"global",scope_campaign_id:null,state:"draft",effective_from:"2027-01-01T00:00:00.000Z",effective_to:null,created_at:"2026-09-28T00:00:00.000Z",updated_at:"2026-09-28T00:00:00.000Z",published_at:null,retired_at:null}],next_cursor:null});
+    vi.mocked(updateAdminAdvertisingBillingRateDraft).mockResolvedValue({rate_id:"11111111-1111-4111-8111-111111111111",state:"draft"});
+    render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button",{name:"Edit"}));
+    expect(screen.getByRole("heading",{name:"Edit draft rate"})).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Rate BDAG"),{target:{value:"0.00030000"}});
+    fireEvent.click(screen.getByRole("button",{name:"Save draft"}));
+    await waitFor(()=>expect(updateAdminAdvertisingBillingRateDraft).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111",expect.objectContaining({objective:"traffic",billableEventType:"click",rateBdag:"0.00030000"})));
+  });
+
+  it("requires explicit confirmations and reasons for publish and retire",async()=>{
+    vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.billing.read","advertising.rates.manage"]) as never);
+    const base={objective:"awareness",billable_event_type:"impression" as const,placement_code:"social_feed",rate_bdag:"0.00010000",currency:"BDAG" as const,scope:"global" as const,scope_campaign_id:null,effective_from:"2027-01-01T00:00:00.000Z",effective_to:null,created_at:"2026-09-28T00:00:00.000Z",updated_at:"2026-09-28T00:00:00.000Z",retired_at:null};
+    vi.mocked(searchAdminAdvertisingBillingRates).mockResolvedValue({items:[{...base,id:"11111111-1111-4111-8111-111111111111",state:"draft",published_at:null},{...base,id:"22222222-2222-4222-8222-222222222222",state:"published",published_at:"2026-09-28T00:00:00.000Z"}],next_cursor:null});
+    vi.mocked(publishAdminAdvertisingBillingRate).mockResolvedValue({rate_id:"11111111-1111-4111-8111-111111111111",state:"published"});
+    vi.mocked(retireAdminAdvertisingBillingRate).mockResolvedValue({rate_id:"22222222-2222-4222-8222-222222222222",state:"retired"});
+    render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText("Rate action reason"),{target:{value:"Approved economics"}});
+    fireEvent.click(screen.getByRole("button",{name:"Publish"}));
+    expect(publishAdminAdvertisingBillingRate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button",{name:"Publish rate"}));
+    await waitFor(()=>expect(publishAdminAdvertisingBillingRate).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111","Approved economics",expect.any(String)));
+    fireEvent.change(screen.getByLabelText("Rate action reason"),{target:{value:"Retire obsolete price"}});
+    fireEvent.click(screen.getByRole("button",{name:"Retire"}));
+    expect(retireAdminAdvertisingBillingRate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button",{name:"Retire rate"}));
+    await waitFor(()=>expect(retireAdminAdvertisingBillingRate).toHaveBeenCalledWith("22222222-2222-4222-8222-222222222222","Retire obsolete price",expect.any(String)));
   });
 });

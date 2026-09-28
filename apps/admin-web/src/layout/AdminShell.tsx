@@ -10,7 +10,7 @@ const initials=(name:string)=>name.split(/\s+/).filter(Boolean).slice(0,2).map((
 export function AdminShell(){
   const {admin,hasCapability,logout}=useAdminAuth(),location=useLocation(),navigate=useNavigate();
   const [navigationOpen,setNavigationOpen]=useState(false),[query,setQuery]=useState(""),[groupOverrides,setGroupOverrides]=useState<Partial<Record<AdminNavigationGroup,boolean>>>({}),searchRef=useRef<HTMLInputElement>(null);
-  const authorized=useMemo(()=>adminLinks.filter((link)=>hasCapability(link.capability)),[hasCapability]);
+  const authorized=useMemo(()=>adminLinks.filter((link)=>[link.capability,...(link.additionalCapabilities??[])].every(hasCapability)),[hasCapability]);
   const primary=adminLinks.filter((link)=>link.primary&&(!link.group?hasCapability(link.capability):authorized.some((candidate)=>candidate.group===link.group)));
   const results=query.trim()?authorized.filter((link)=>link.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).slice(0,8):[];
   const match=[...authorized].sort((a,b)=>b.to.length-a.to.length).find((link)=>location.pathname===link.to||location.pathname.startsWith(`${link.to}/`));

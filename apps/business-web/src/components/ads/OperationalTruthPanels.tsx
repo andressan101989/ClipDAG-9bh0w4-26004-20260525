@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { FormField, InlineError, StatusBadge } from "../BusinessUI";
 import { BusinessConfirmDialog } from "../BusinessConfirmDialog";
-import type { AdvertisingCampaignReadiness, AdvertisingFinance } from "../../lib/adsManagerApi";
+import type { AdvertisingCampaignBilling, AdvertisingCampaignReadiness, AdvertisingFinance } from "../../lib/adsManagerApi";
 import type { AdsWorkflowStep } from "../../lib/adsWorkflowState";
 import {
   businessMetricPresentation,
+  businessServerMetricPresentation,
   deriveBusinessAdsRuntime,
   deriveBusinessReadinessPresentation,
   deriveBusinessStatusSummary,
@@ -30,6 +31,7 @@ type Props = {
   readiness: AdvertisingCampaignReadiness;
   workflowSteps: AdsWorkflowStep[];
   finance: AdvertisingFinance | null;
+  billing: AdvertisingCampaignBilling | null;
   analytics: Record<string, unknown> | null;
   analyticsError: string | null;
   deliveryEnabled: boolean;
@@ -74,7 +76,7 @@ function analyticsPresentation(metric: MetricKey, analytics: Record<string, unkn
   return businessMetricPresentation(metric, analytics[metric], runtime, { impressions });
 }
 
-function BudgetPanel({ campaign, finance, owner, pending, onCreateBudget, onFundBudget }: Pick<Props, "campaign" | "finance" | "owner" | "pending" | "onCreateBudget" | "onFundBudget">) {
+function BudgetPanel({ campaign, finance, billing, owner, pending, onCreateBudget, onFundBudget }: Pick<Props, "campaign" | "finance" | "billing" | "owner" | "pending" | "onCreateBudget" | "onFundBudget">) {
   const [budget, setBudget] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [confirmFunding, setConfirmFunding] = useState(false);
@@ -104,6 +106,8 @@ function BudgetPanel({ campaign, finance, owner, pending, onCreateBudget, onFund
         <TruthMetric label="Spent" presentation={{ state: "measured", display: formatBdag(finance.spentBdag), detail: null }} />
         <TruthMetric label="Remaining reserved budget" presentation={{ state: "measured", display: formatBdag(finance.reservedBdag), detail: null }} />
         <TruthMetric label="Returned" presentation={{ state: "measured", display: formatBdag(finance.releasedBdag), detail: null }} />
+        {billing && <TruthMetric label="Pending billing reservation" presentation={{ state: "measured", display: formatBdag(billing.pendingReservedBdag), detail: "Only active OPEN-window reservations are included." }} />}
+        {billing && <TruthMetric label="Available to reserve" presentation={{ state: billing.reservationConsistent ? "measured" : "platform_disabled", display: formatBdag(billing.availableToReserveBdag), detail: billing.anomalyCode }} />}
       </div>
       <p className="readonly-note">This is the canonical saved budget. Finance state changes only through the available server-backed controls.</p>
       {finance.financeStatus === "draft" && finance.fundingAvailable && <>
@@ -133,7 +137,7 @@ function BudgetPanel({ campaign, finance, owner, pending, onCreateBudget, onFund
       </form>
       <div className="readonly-note"><strong>Set a budget to check Funding availability.</strong><span>No money moves when a budget draft is saved.</span></div>
     </>}
-    <div className="readonly-note"><strong>Ad billing is currently unavailable.</strong><span>This Business release does not present billing metrics or initiate Spend.</span></div>
+    {billing && <div className="readonly-note"><strong>{billing.rateStatus === "available" ? `Billing basis: ${billing.billingBasis?.replaceAll("_", " ")}` : "Billing rate is not available."}</strong><span>{billing.rateStatus === "available" && billing.rateBdag != null ? `${formatBdag(billing.rateBdag)} per canonical ${billing.billableEventType}. Charges are calculated only by the server.` : "This Campaign is not billing-launch-ready until the canonical rate authority reports an applicable published rate."}</span></div>}
   </section>;
 }
 
@@ -142,7 +146,7 @@ function ReadinessGroup({ title, items }: { title: string; items: Array<{ messag
   return <section className="ads-readiness-group"><h3>{title}</h3><ul>{items.map((item, index) => <li key={`${item.message}:${index}`}><span>{item.message}</span>{item.action && <a className="text-button" href={item.action.href}>{item.action.label}</a>}</li>)}</ul></section>;
 }
 
-function ReadinessPanel({ campaign, readiness, workflowSteps, finance, lifecycleOwner, pending, onLifecycle }: Omit<Props, "analytics" | "analyticsError" | "deliveryEnabled" | "owner" | "onRetry" | "onCreateBudget" | "onFundBudget">) {
+function ReadinessPanel({ campaign, readiness, workflowSteps, finance, lifecycleOwner, pending, onLifecycle }: Omit<Props, "analytics" | "analyticsError" | "billing" | "deliveryEnabled" | "owner" | "onRetry" | "onCreateBudget" | "onFundBudget">) {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const fundingAvailable = finance?.fundingAvailable ?? false;
   const presentation = useMemo(() => deriveBusinessReadinessPresentation(readiness.blockers, { fundingAvailable }), [fundingAvailable, readiness.blockers]);
@@ -179,32 +183,32 @@ function ReadinessPanel({ campaign, readiness, workflowSteps, finance, lifecycle
   </section>;
 }
 
-function AnalyticsPanel({ analytics, analyticsError, finance, deliveryEnabled, onRetry }: Pick<Props, "analytics" | "analyticsError" | "finance" | "deliveryEnabled" | "onRetry">) {
+function AnalyticsPanel({ analytics, analyticsError, finance, billing, deliveryEnabled, onRetry }: Pick<Props, "analytics" | "analyticsError" | "finance" | "billing" | "deliveryEnabled" | "onRetry">) {
   if (!analytics) return <section className="business-card editor-card ads-operational-panel" aria-labelledby="campaign-analytics-title"><p className="eyebrow">Measured performance</p><h2 id="campaign-analytics-title">Analytics</h2><InlineError message={analyticsError ?? "Campaign analytics are temporarily unavailable."} onRetry={() => void onRetry()} /></section>;
   const impressions = numberValue(analytics.impressions);
   const metrics: Array<[string, MetricKey]> = [
     ["Impressions", "impressions"], ["Clicks", "clicks"], ["Destination opens", "destination_opens"],
-    ["Video views", "video_views"], ["Engagements", "engagements"], ["CTR", "ctr"],
+    ["Video views", "video_views"], ["Engagements", "engagements"],
     ["Conversions", "conversions"], ["Attributed purchases", "attributed_conversions"],
-    ["Attributed purchase value (GMV)", "marketplace_purchase_value_bdag"], ["CPC", "cpc"], ["CPM", "cpm"], ["CPA", "cpa"],
+    ["Attributed purchase value (GMV)", "marketplace_purchase_value_bdag"],
   ];
   const runtime = deriveBusinessAdsRuntime({ deliveryEnabled, fundingEnabled: finance?.policy.fundingEnabled ?? false, spendEnabled: finance?.policy.spendEnabled ?? false });
   const spend: MetricPresentation = runtime.billingRuntime
     ? { state: "measured", display: finance ? formatBdag(finance.spentBdag) : "No campaign finance", detail: null }
     : { state: "platform_disabled", display: finance ? formatBdag(finance.spentBdag) : "No campaign finance", detail: "Ad billing is currently unavailable." };
-  const clicks = numberValue(analytics.clicks);
-  const attributedConversions = numberValue(analytics.attributed_conversions);
-  const attributedValue = numberValue(analytics.marketplace_purchase_value_bdag);
-  const spent = numberValue(finance?.spentBdag);
-  const conversionRate: MetricPresentation = { state: "measured", display: clicks > 0 ? String(Math.round((attributedConversions / clicks) * 100_000_000) / 100_000_000) : "—", detail: clicks > 0 ? "Attributed purchases divided by clicks" : "No clicks yet" };
-  const roas: MetricPresentation = { state: spent > 0 ? "measured" : "platform_disabled", display: spent > 0 ? `${Math.round((attributedValue / spent) * 100_000_000) / 100_000_000}×` : "—", detail: spent > 0 ? "Attributed purchase value divided by authoritative spend" : "No authoritative ad spend yet" };
-  return <section className="business-card editor-card ads-operational-panel" aria-labelledby="campaign-analytics-title"><p className="eyebrow">Measured performance</p><h2 id="campaign-analytics-title">Analytics</h2>{analyticsError && <><div className="readonly-note" role="status">Showing the last loaded analytics.</div><InlineError message={analyticsError} onRetry={() => void onRetry()} /></>}{impressions === 0 && <div className="readonly-note"><strong>No ad delivery has occurred yet.</strong><span>{deliveryEnabled ? "Delivery is available; this campaign has not delivered yet." : "Ad delivery is currently unavailable."}</span></div>}<div className="ads-summary-grid">{metrics.map(([label, metric]) => <TruthMetric key={metric} label={label} presentation={analyticsPresentation(metric, analytics, impressions, runtime)} />)}<TruthMetric label="Conversion rate" presentation={conversionRate} /><TruthMetric label="ROAS" presentation={roas} /><TruthMetric label="Spend" presentation={spend} /></div></section>;
+  const status = (key: string) => analytics[key] === "available" || analytics[key] === "not_applicable" ? analytics[key] as "available" | "not_applicable" : "no_data";
+  const ctr = businessServerMetricPresentation(analytics.ctr, status("ctr_status"));
+  const cpc = businessServerMetricPresentation(analytics.cpc_bdag, status("cpc_status"), { suffix: " BDAG" });
+  const cpm = businessServerMetricPresentation(analytics.cpm_bdag, status("cpm_status"), { suffix: " BDAG" });
+  const conversionRate = businessServerMetricPresentation(analytics.conversion_rate, status("conversion_rate_status"));
+  const roas = businessServerMetricPresentation(analytics.roas, status("roas_status"), { suffix: "×" });
+  return <section className="business-card editor-card ads-operational-panel" aria-labelledby="campaign-analytics-title"><p className="eyebrow">Measured performance</p><h2 id="campaign-analytics-title">Analytics</h2>{analyticsError && <><div className="readonly-note" role="status">Showing the last loaded analytics.</div><InlineError message={analyticsError} onRetry={() => void onRetry()} /></>}{impressions === 0 && <div className="readonly-note"><strong>No ad delivery has occurred yet.</strong><span>{deliveryEnabled ? "Delivery is available; this campaign has not delivered yet." : "Ad delivery is currently unavailable."}</span></div>}<div className="ads-summary-grid">{metrics.map(([label, metric]) => <TruthMetric key={metric} label={label} presentation={analyticsPresentation(metric, analytics, impressions, runtime)} />)}<TruthMetric label="CTR" presentation={ctr} /><TruthMetric label="CPC" presentation={cpc} /><TruthMetric label="CPM" presentation={cpm} /><TruthMetric label="Conversion rate" presentation={conversionRate} /><TruthMetric label="ROAS" presentation={roas} /><TruthMetric label="Spend" presentation={spend} /></div>{billing?.anomalyCode && <div className="readonly-note" role="alert"><strong>Billing is blocked safely.</strong><span>{billing.anomalyCode}</span></div>}</section>;
 }
 
 export function OperationalTruthPanels(props: Props) {
   return <>
-    <BudgetPanel campaign={props.campaign} finance={props.finance} owner={props.owner} pending={props.pending} onCreateBudget={props.onCreateBudget} onFundBudget={props.onFundBudget} />
+    <BudgetPanel campaign={props.campaign} finance={props.finance} billing={props.billing} owner={props.owner} pending={props.pending} onCreateBudget={props.onCreateBudget} onFundBudget={props.onFundBudget} />
     <ReadinessPanel campaign={props.campaign} readiness={props.readiness} workflowSteps={props.workflowSteps} finance={props.finance} lifecycleOwner={props.lifecycleOwner} pending={props.pending} onLifecycle={props.onLifecycle} />
-    <AnalyticsPanel analytics={props.analytics} analyticsError={props.analyticsError} finance={props.finance} deliveryEnabled={props.deliveryEnabled} onRetry={props.onRetry} />
+    <AnalyticsPanel analytics={props.analytics} analyticsError={props.analyticsError} finance={props.finance} billing={props.billing} deliveryEnabled={props.deliveryEnabled} onRetry={props.onRetry} />
   </>;
 }
