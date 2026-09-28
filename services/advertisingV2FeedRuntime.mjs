@@ -19,32 +19,69 @@ export async function loadAdvertisingV2Opportunity(viewerUserId, fetchCandidate,
   }
 }
 
-export function mixSocialFeedAdvertisingV2(items, ad, eventKey) {
-  if (!ad || !eventKey || items.some((item) => item.kind === "advertising_v2")) return items;
-  const organicCount = items.reduce((count, item) => count + (item.kind === "organic" ? 1 : 0), 0);
-  if (organicCount === 0) return items;
+export function mixPlacementAdvertisingV2(items, opportunities) {
+  let mixed = [...items];
+  const ordered = (opportunities ?? [])
+    .filter((opportunity) => opportunity?.ad && opportunity?.eventKey && opportunity?.placement)
+    .sort((left, right) => left.afterOrganic - right.afterOrganic);
 
-  const insertionOrganicCount = Math.min(4, organicCount);
-  let seenOrganic = 0;
-  let insertionIndex = items.length;
-  for (let index = 0; index < items.length; index += 1) {
-    const item = items[index];
-    if (item.kind !== "organic") continue;
-    seenOrganic += 1;
-    if (seenOrganic === insertionOrganicCount) {
-      insertionIndex = index + 1;
-      break;
+  for (const opportunity of ordered) {
+    if (mixed.some((item) => item.kind === "advertising_v2" && item.placement === opportunity.placement)) continue;
+    const organicCount = mixed.reduce((count, item) => count + (item.kind === "organic" ? 1 : 0), 0);
+    if (organicCount === 0) continue;
+    const insertionOrganicCount = Math.min(Math.max(1, opportunity.afterOrganic), organicCount);
+    let seenOrganic = 0;
+    let insertionIndex = mixed.length;
+    for (let index = 0; index < mixed.length; index += 1) {
+      if (mixed[index].kind !== "organic") continue;
+      seenOrganic += 1;
+      if (seenOrganic === insertionOrganicCount) {
+        insertionIndex = index + 1;
+        break;
+      }
     }
-  }
-
-  const mixed = [...items];
-  const advertisingItem = { kind: "advertising_v2", ad, eventKey };
-  if (mixed[insertionIndex]?.kind === "sponsored") {
-    mixed.splice(insertionIndex, 1, advertisingItem);
-  } else {
-    mixed.splice(insertionIndex, 0, advertisingItem);
+    const advertisingItem = {
+      kind: "advertising_v2",
+      placement: opportunity.placement,
+      ad: opportunity.ad,
+      eventKey: opportunity.eventKey,
+    };
+    if (mixed[insertionIndex]?.kind === "sponsored") mixed.splice(insertionIndex, 1, advertisingItem);
+    else mixed.splice(insertionIndex, 0, advertisingItem);
   }
   return mixed;
+}
+
+export function mixSocialFeedAdvertisingV2(items, ad, eventKey) {
+  if (!ad || !eventKey || items.some((item) => item.kind === "advertising_v2")) return items;
+  return mixPlacementAdvertisingV2(items, [{
+    placement: "social_feed",
+    ad,
+    eventKey,
+    afterOrganic: 4,
+  }]);
+}
+
+export function composeAdvertisingV2StorySequence(stories, opportunity) {
+  const organic = (stories ?? []).map((story) => ({ kind: "organic_story", story }));
+  if (!opportunity?.ad || !opportunity?.eventKey || opportunity.placement !== "stories") return organic;
+  return [...organic, { kind: "advertising_v2", ...opportunity }];
+}
+
+export function mixLiveDiscoveryAdvertisingV2(streams, opportunity) {
+  const items = (streams ?? []).map((stream) => ({ kind: "live_stream", stream }));
+  if (!opportunity?.ad || !opportunity?.eventKey || opportunity.placement !== "live") return items;
+  const insertionIndex = Math.min(4, items.length);
+  items.splice(insertionIndex, 0, { kind: "advertising_v2", ...opportunity });
+  return items;
+}
+
+export function selectMarketplaceSponsoredAuthority(opportunity, legacy) {
+  if (opportunity?.ad && opportunity?.eventKey
+    && (opportunity.placement === "marketplace_home" || opportunity.placement === "marketplace_search")) {
+    return { authority: "ads_v2", opportunity, legacy: [] };
+  }
+  return { authority: "legacy", opportunity: null, legacy: legacy ?? [] };
 }
 
 export function createAdvertisingV2ImpressionController(recordImpression, scheduler = {}) {
@@ -85,7 +122,7 @@ export function createAdvertisingV2ImpressionController(recordImpression, schedu
       return;
     }
     state.phase = "submitting";
-    Promise.resolve(recordImpression(adId, state.eventKey)).then(
+    Promise.resolve(recordImpression(adId, state.eventKey, state.item?.placement ?? "social_feed")).then(
       (impressionEventId) => {
         state.impressionEventId = impressionEventId ?? null;
         state.phase = "confirmed";

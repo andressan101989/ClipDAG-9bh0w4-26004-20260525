@@ -13,7 +13,7 @@ const api = vi.hoisted(() => ({
   objectiveCapabilities: vi.fn(), billing: vi.fn(),
   activate: vi.fn(), pause: vi.fn(), resume: vi.fn(), cancel: vi.fn(), createFinance: vi.fn(), fundFinance: vi.fn(),
   age: vi.fn(), remediateAge: vi.fn(),
-  targetingCapabilities: vi.fn(), createAudienceVersion: vi.fn(),
+  targetingCapabilities: vi.fn(), placementCapabilities: vi.fn(), createAudienceVersion: vi.fn(),
   createAudience: vi.fn(), updateAdSet: vi.fn(), updateDestination: vi.fn(), createPlacementVersion: vi.fn(),
   createAd: vi.fn(), submitReview: vi.fn(),
 }));
@@ -43,6 +43,7 @@ vi.mock("../lib/adsManagerApi", async (original) => ({
   getMyAgeEligibility: api.age,
   remediateMyAgeEligibility: api.remediateAge,
   getAdvertisingTargetingCapabilities: api.targetingCapabilities,
+  getAdvertisingPlacementCapabilities: api.placementCapabilities,
   createAdvertisingAudienceVersion: api.createAudienceVersion,
   createAdvertisingAudienceDraft: api.createAudience,
   updateAdvertisingAdSetDraft: api.updateAdSet,
@@ -89,7 +90,15 @@ describe("Ads Manager V2 workspace", () => {
     api.placement.mockResolvedValue(null);
     api.age.mockResolvedValue({ status: "eligible", ageBand: "age_18_plus", evaluated: true, advertiser18PlusEligible: true, policyVersion: "nelyon-age-v2", minimumAge: 13 });
     api.remediateAge.mockResolvedValue({ status: "eligible", ageBand: "age_18_plus", evaluated: true, advertiser18PlusEligible: true, policyVersion: "nelyon-age-v2", minimumAge: 13 });
-    api.targetingCapabilities.mockResolvedValue({ policyVersion: "nelyon-ads-targeting-v2", advertiserMinimumAge: 18, audienceMinimumAge: 18, ageScope: "adults_only", geoTargetingEnabled: false, languageTargetingEnabled: false, daypartTargetingEnabled: true, frequencyTargetingEnabled: true, interestTargetingEnabled: false, behavioralTargetingEnabled: false, customAudiencesEnabled: false, lookalikeTargetingEnabled: false, sensitiveTargetingAllowed: false, preciseViewerLocationMatchingEnabled: false });
+    api.targetingCapabilities.mockResolvedValue({ policyVersion: "nelyon-ads-targeting-v3", advertiserMinimumAge: 18, audienceMinimumAge: 13, audienceMaximumAge: 120, ageScope: "age_range", geoTargetingEnabled: false, languageTargetingEnabled: false, daypartTargetingEnabled: true, frequencyTargetingEnabled: true, interestTargetingEnabled: false, behavioralTargetingEnabled: false, customAudiencesEnabled: false, lookalikeTargetingEnabled: false, sensitiveTargetingAllowed: false, preciseViewerLocationMatchingEnabled: false });
+    api.placementCapabilities.mockResolvedValue({ authority: "advertising-placement-catalog-v2", launchMode: "DISARMED", placements: [
+      { code: "social_feed", label: "Social Feed", surfaceFamily: "feed", selectionEnabled: true, adapterReady: true, productionDeliveryEnabled: false },
+      { code: "clips", label: "Clips", surfaceFamily: "video", selectionEnabled: true, adapterReady: true, productionDeliveryEnabled: false },
+      { code: "stories", label: "Stories", surfaceFamily: "stories", selectionEnabled: true, adapterReady: true, productionDeliveryEnabled: false },
+      { code: "live", label: "Live", surfaceFamily: "live", selectionEnabled: true, adapterReady: true, productionDeliveryEnabled: false },
+      { code: "marketplace_home", label: "Marketplace Home", surfaceFamily: "marketplace", selectionEnabled: true, adapterReady: true, productionDeliveryEnabled: false },
+      { code: "marketplace_search", label: "Marketplace Search", surfaceFamily: "marketplace", selectionEnabled: true, adapterReady: true, productionDeliveryEnabled: false },
+    ] });
     api.createAudienceVersion.mockResolvedValue({ audience_id: "audience-1" });
     api.createAudience.mockResolvedValue({ audience_id: "audience-1" });
     api.updateAdSet.mockResolvedValue({ id: "set-1" });
@@ -287,13 +296,13 @@ describe("Ads Manager V2 workspace", () => {
       adSets: [{ id: "set-1", name: "Primary Ad Set", status: "draft", startsAt: "2026-09-25T17:00:00Z", endsAt: "2026-10-10T17:00:00Z", createdAt: "2026-09-24T22:41:00Z", updatedAt: "2026-09-24T22:41:00Z", audience: { id: "audience-1", status: "draft", latestVersionNumber: 1 }, placementSelection: { id: "selection-1", status: "draft", latestVersionNumber: 1 } }],
       destinations: [{ id: "destination-1", destinationType: "external_url", externalUrl: "https://www.tlaservices.com/", targetUserId: null, targetBusinessAccountId: null, targetProductId: null, targetStoreId: null, status: "draft", createdAt: "2026-09-24T22:45:00Z", updatedAt: "2026-09-24T22:45:00Z" }],
     });
-    api.audience.mockResolvedValue({ audience_id: "audience-1", latest_version: { targeting_policy_version: "nelyon-ads-targeting-v2", dayparts: [], frequency: null } });
+    api.audience.mockResolvedValue({ audience_id: "audience-1", latest_version: { age_scope: "age_range", min_age: 18, max_age: null, targeting_policy_version: "nelyon-ads-targeting-v3", geographies: [], languages: [], dayparts: [], frequency: null } });
     api.placement.mockResolvedValue({ placementSelectionId: "selection-1", adSetId: "set-1", status: "draft", latestVersion: { versionNumber: 1, registryPolicyVersion: "nelyon-ads-delivery-v2", definitionFingerprint: "fp", placements: ["clips", "live", "marketplace_home", "marketplace_search", "social_feed", "stories"].map((code) => ({ code, label: code, surfaceFamily: "test", surfaceVerified: true, selectionEnabled: true, v2DeliveryEnabled: false })) }, productionDeliveryEnabled: false });
     api.readiness.mockResolvedValue({ campaignId: "campaign-1", currentStatus: "draft", structurallyReady: false, activationEnabled: false, automaticTransitionsEnabled: false, targetStatus: null, blockers: ["campaign_finance_not_funded", "no_operational_ad_set", "placement_v2_delivery_disabled"], readyAdCount: 0, currentWindowAdSetCount: 0, futureWindowAdSetCount: 0, financeReady: false, advertiserAgeReady: true });
     renderHome("/ads/campaigns/campaign-1");
-    expect(await screen.findByText("Next: Review Placements")).toBeInTheDocument();
+    expect(await screen.findByText("Next: Add Creative")).toBeInTheDocument();
     expect(screen.getByText("1. Campaign")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Review placements" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Review placements" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Add Creative" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Set budget" })).toBeInTheDocument();
     expect(screen.getByText("The selected placement is currently unavailable for Ads V2 delivery.")).toBeInTheDocument();
@@ -323,12 +332,12 @@ describe("Ads Manager V2 workspace", () => {
     await waitFor(() => expect(api.updateAdSet).toHaveBeenCalledWith(expect.objectContaining({ adSetId: "set-1", name: "Updated Set", expectedUpdatedAt: "2026-09-24T00:00:00Z" }), expect.any(String)));
     await screen.findByRole("button", { name: "Edit Ad Set" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Review placements" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit placements" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /^Clips/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: /^Social Feed/ }));
     fireEvent.click(screen.getByRole("button", { name: "Create updated placement version" }));
     await waitFor(() => expect(api.createPlacementVersion).toHaveBeenCalledWith("selection-1", ["social_feed"], expect.any(String)));
-    await screen.findByRole("button", { name: "Review placements" });
+    await screen.findByRole("button", { name: "Edit placements" });
 
     api.updateDestination.mockRejectedValueOnce(new Error("advertising_destination_draft_stale"));
     const campaignReadsBeforeStaleSave = api.campaign.mock.calls.length;
@@ -352,7 +361,7 @@ describe("Ads Manager V2 workspace", () => {
     api.campaign.mockResolvedValue(campaign);
     api.placement.mockResolvedValueOnce(placementV1).mockResolvedValue(placementV2);
     renderHome("/ads/campaigns/campaign-1");
-    fireEvent.click(await screen.findByRole("button", { name: "Review placements" }, { timeout: 5000 }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit placements" }, { timeout: 5000 }));
     for (const label of ["Clips", "Live", "Marketplace Home", "Marketplace Search", "Stories"]) fireEvent.click(await screen.findByRole("checkbox", { name: new RegExp(`^${label}\\b`) }, { timeout: 5000 }));
     fireEvent.click(await screen.findByRole("button", { name: "Create updated placement version" }, { timeout: 5000 }));
     await waitFor(() => expect(api.createPlacementVersion).toHaveBeenCalledWith("selection-1", ["social_feed"], expect.any(String)));
@@ -703,7 +712,9 @@ describe("Ads Manager V2 workspace", () => {
   it("uses server targeting capabilities and never offers launch-disabled geo or language inputs", async () => {
     api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: null, placementSelection: null }], destinations: [] });
     renderHome("/ads/campaigns/campaign-1");
-    expect(await screen.findByLabelText("Adults 18+ selected and required")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Minimum age")).toHaveValue(18);
+    expect(screen.getByLabelText("Maximum age")).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "No upper age limit" })).toBeChecked();
     expect(screen.getByRole("heading", { name: "Location" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Language" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Country code")).not.toBeInTheDocument();
@@ -731,12 +742,12 @@ describe("Ads Manager V2 workspace", () => {
     expect(await screen.findByText("Your audience settings need to be reviewed before this campaign can continue.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Review audience" }));
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(api.createAudienceVersion).toHaveBeenCalledWith("audience-1", expect.objectContaining({ age_scope: "adults_only", geographies: [], languages: [] }), expect.any(String)));
+    await waitFor(() => expect(api.createAudienceVersion).toHaveBeenCalledWith("audience-1", expect.objectContaining({ age_scope: "age_range", min_age: 18, max_age: null, geographies: [], languages: [] }), expect.any(String)));
   });
 
   it("preserves additional canonical daypart windows when editing the visible window", async () => {
     api.campaign.mockResolvedValue({ id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: { id: "audience-1", status: "draft", latestVersionNumber: 2 }, placementSelection: null }], destinations: [] });
-    api.audience.mockResolvedValue({ audience_id: "audience-1", latest_version: { age_scope: "adults_only", geographies: [], languages: [], targeting_policy_version: "nelyon-ads-targeting-v2", dayparts: [{ timezone: "America/New_York", weekday: 1, start: "09:00", end: "12:00" }, { timezone: "America/New_York", weekday: 5, start: "18:00", end: "21:00" }], frequency: { max_impressions: 2, window_hours: 24 } } });
+    api.audience.mockResolvedValue({ audience_id: "audience-1", latest_version: { age_scope: "age_range", min_age: 18, max_age: null, geographies: [], languages: [], targeting_policy_version: "nelyon-ads-targeting-v3", dayparts: [{ timezone: "America/New_York", weekday: 1, start: "09:00", end: "12:00" }, { timezone: "America/New_York", weekday: 5, start: "18:00", end: "21:00" }], frequency: { max_impressions: 2, window_hours: 24 } } });
     renderHome("/ads/campaigns/campaign-1");
     fireEvent.click(await screen.findByRole("button", { name: "Edit audience" }));
     fireEvent.change(screen.getByLabelText("Maximum impressions"), { target: { value: "3" } });
@@ -773,7 +784,7 @@ describe("Ads Manager V2 workspace", () => {
     fireEvent.click(save);
 
     await waitFor(() => expect(api.createAudience).toHaveBeenCalledTimes(1));
-    expect(api.createAudience).toHaveBeenCalledWith("set-1", expect.objectContaining({ age_scope: "adults_only" }), expect.any(String));
+    expect(api.createAudience).toHaveBeenCalledWith("set-1", expect.objectContaining({ age_scope: "age_range", min_age: 18, max_age: null }), expect.any(String));
     expect(save).toBeDisabled();
     expect(save).toHaveTextContent("Saving…");
     release({ audience_id: "audience-1" });
@@ -801,7 +812,7 @@ describe("Ads Manager V2 workspace", () => {
     const withoutAudience = { id: "campaign-1", name: "Brand", status: "draft", objective: "awareness", adAccountId: "account-1", businessAccountId: "business-1", authority: "ads_v2", writeAuthority: "ads_v2", createdAt: "2026-09-23T00:00:00Z", updatedAt: null, archivedAt: null, adSets: [{ id: "set-1", name: "Main", status: "draft", startsAt: null, endsAt: null, createdAt: "2026-09-23T00:00:00Z", audience: null, placementSelection: null }], destinations: [] };
     const withAudience = { ...withoutAudience, adSets: [{ ...withoutAudience.adSets[0], audience: { id: "audience-1", status: "draft", latestVersionNumber: 1 } }] };
     api.campaign.mockResolvedValueOnce(withoutAudience).mockResolvedValue(withAudience);
-    api.audience.mockResolvedValue({ audience_id: "audience-1", latest_version: { age_scope: "adults_only", geographies: [], languages: [], dayparts: [], frequency: null, targeting_policy_version: "nelyon-ads-targeting-v2" } });
+    api.audience.mockResolvedValue({ audience_id: "audience-1", latest_version: { age_scope: "age_range", min_age: 18, max_age: null, geographies: [], languages: [], dayparts: [], frequency: null, targeting_policy_version: "nelyon-ads-targeting-v3" } });
     api.createAudience.mockRejectedValue(new Error("advertising_audience_idempotency_conflict"));
     renderHome("/ads/campaigns/campaign-1");
 

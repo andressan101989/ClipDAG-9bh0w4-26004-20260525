@@ -8,6 +8,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, FontSize, FontWeight, Spacing } from '@/constants/theme';
 import type { StoryReactionKey } from './storyReactions';
 import type { StoryComposition } from './storyComposition';
+import type { AdvertisingDeliveryAdV2 } from '@/services/advertisingDeliveryService';
 
 const AVATAR_SIZE = 60;
 const RING_PAD = 4;
@@ -33,6 +34,7 @@ export interface StoryItem {
   createdAt: string;
   expiresAt: string;
   viewerReaction?: StoryReactionKey | null;
+  advertisingV2?: { ad: AdvertisingDeliveryAdV2; eventKey: string };
 }
 
 interface StoriesBarProps {

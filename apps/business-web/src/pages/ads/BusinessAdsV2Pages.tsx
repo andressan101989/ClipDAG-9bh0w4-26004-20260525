@@ -44,6 +44,7 @@ import {
   getAdvertisingEventSummary,
   getAdvertisingFinance,
   getAdvertisingObjectiveCapabilities,
+  getAdvertisingPlacementCapabilities,
   getAdvertisingPlacementSelection,
   getAdvertisingTargetingCapabilities,
   isAdvertisingFinanceNotFound,
@@ -66,6 +67,7 @@ import {
   type AdvertisingEventSummary,
   type AdvertisingObjectiveCapabilities,
   type AdvertisingPlacementSelection,
+  type AdvertisingPlacementCapabilities,
   type AdvertisingTargetingCapabilities,
 } from "../../lib/adsManagerApi";
 import { formatDate } from "../../lib/businessFormat";
@@ -95,7 +97,9 @@ function audienceDefinitionFromPayload(payload: Record<string, unknown> | null):
     : null;
   if (!latest) return null;
   return {
-    age_scope: "adults_only",
+    age_scope: latest.age_scope === "age_range" ? "age_range" : "adults_only",
+    min_age: typeof latest.min_age === "number" ? latest.min_age : 18,
+    max_age: typeof latest.max_age === "number" ? latest.max_age : null,
     geographies: Array.isArray(latest.geographies) ? latest.geographies as AdvertisingAudienceDefinition["geographies"] : [],
     languages: Array.isArray(latest.languages) ? latest.languages as AdvertisingAudienceDefinition["languages"] : [],
     dayparts: Array.isArray(latest.dayparts) ? latest.dayparts as AdvertisingAudienceDefinition["dayparts"] : [],
@@ -117,6 +121,8 @@ type AdvertisingManagerState = {
   ageEligibility: AdvertisingAgeEligibility | null;
   targetingCapabilities: AdvertisingTargetingCapabilities | null;
   targetingCapabilitiesUnavailable: boolean;
+  placementCapabilities: AdvertisingPlacementCapabilities | null;
+  placementCapabilitiesUnavailable: boolean;
   selectBusiness: (id: string) => void;
   selectAdAccount: (id: string) => void;
   createBusiness: (name: string) => Promise<{ refreshWarning: string | null }>;
@@ -137,21 +143,26 @@ export function AdvertisingManagerProvider({ children }: { children: ReactNode }
   const [ageEligibility, setAgeEligibility] = useState<AdvertisingAgeEligibility | null>(null);
   const [targetingCapabilities, setTargetingCapabilities] = useState<AdvertisingTargetingCapabilities | null>(null);
   const [targetingCapabilitiesUnavailable, setTargetingCapabilitiesUnavailable] = useState(false);
+  const [placementCapabilities, setPlacementCapabilities] = useState<AdvertisingPlacementCapabilities | null>(null);
+  const [placementCapabilitiesUnavailable, setPlacementCapabilitiesUnavailable] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!user) return false;
     setLoading(true); setError(null);
     try {
-      const [nextAccounts, nextCampaigns, nextAgeEligibility, targetingResult] = await Promise.all([
+      const [nextAccounts, nextCampaigns, nextAgeEligibility, targetingResult, placementResult] = await Promise.all([
         getAdvertiserAccounts(),
         getAdvertisingCampaigns(),
         getMyAgeEligibility(),
         getAdvertisingTargetingCapabilities().then((value) => ({ value, unavailable: false })).catch(() => ({ value: null, unavailable: true })),
+        getAdvertisingPlacementCapabilities().then((value) => ({ value, unavailable: false })).catch(() => ({ value: null, unavailable: true })),
       ]);
       setAccounts(nextAccounts); setCampaigns(nextCampaigns);
       setAgeEligibility(nextAgeEligibility);
       setTargetingCapabilities(targetingResult.value);
       setTargetingCapabilitiesUnavailable(targetingResult.unavailable);
+      setPlacementCapabilities(placementResult.value);
+      setPlacementCapabilitiesUnavailable(placementResult.unavailable);
       setSelectedBusinessId((current) => nextAccounts.some((item) => item.businessAccountId === current) ? current : nextAccounts[0]?.businessAccountId ?? "");
       return true;
     } catch (cause) { setError(presentAdsError(cause, { operation: "read", resource: "advertiser accounts" }).message); return false; }
@@ -189,7 +200,7 @@ export function AdvertisingManagerProvider({ children }: { children: ReactNode }
     return result;
   }, []);
 
-  const value = useMemo<AdvertisingManagerState>(() => ({ accounts, campaigns, selectedBusiness, selectedAdAccount, loading, error, ageEligibility, targetingCapabilities, targetingCapabilitiesUnavailable, selectBusiness: setSelectedBusinessId, selectAdAccount: setSelectedAdAccountId, createBusiness, remediateAge, refresh }), [accounts, campaigns, selectedBusiness, selectedAdAccount, loading, error, ageEligibility, targetingCapabilities, targetingCapabilitiesUnavailable, createBusiness, remediateAge, refresh]);
+  const value = useMemo<AdvertisingManagerState>(() => ({ accounts, campaigns, selectedBusiness, selectedAdAccount, loading, error, ageEligibility, targetingCapabilities, targetingCapabilitiesUnavailable, placementCapabilities, placementCapabilitiesUnavailable, selectBusiness: setSelectedBusinessId, selectAdAccount: setSelectedAdAccountId, createBusiness, remediateAge, refresh }), [accounts, campaigns, selectedBusiness, selectedAdAccount, loading, error, ageEligibility, targetingCapabilities, targetingCapabilitiesUnavailable, placementCapabilities, placementCapabilitiesUnavailable, createBusiness, remediateAge, refresh]);
   return <AdvertisingManagerContext.Provider value={value}>{children}</AdvertisingManagerContext.Provider>;
 }
 
@@ -440,7 +451,7 @@ export function BusinessAdsManagerCampaignPage() {
 
 function CampaignWorkspace({ data, business, adAccount, owner, lifecycleOwner, run, reload, refresh, pending, selectEntity, creatingRevisedAd, setRevisedAdMode }: { data: WorkspaceData; business: AdvertiserBusiness | null; adAccount: AdvertiserAdAccount | null; owner: boolean; lifecycleOwner: boolean; run: <T>(input: AdsMutationRunInput<T>, message: string, onSuccessValue?: (value: T) => void) => Promise<boolean>; reload: () => Promise<WorkspaceData>; refresh: () => Promise<void>; pending: boolean; selectEntity: (key: "adSet" | "destination" | "ad", value: string) => void; creatingRevisedAd: boolean; setRevisedAdMode: (enabled: boolean, selectedAdId?: string) => void }) {
   const { user, currentBusiness } = useBusinessAuth();
-  const { targetingCapabilities, targetingCapabilitiesUnavailable } = useAdvertisingManager();
+  const { targetingCapabilities, targetingCapabilitiesUnavailable, placementCapabilities, placementCapabilitiesUnavailable } = useAdvertisingManager();
   const campaign = data.campaign;
   const adSet = campaign.adSets.find((item) => item.id === data.selectedAdSetId);
   const destination = campaign.destinations.find((item) => item.id === data.selectedDestinationId);
@@ -494,7 +505,7 @@ function CampaignWorkspace({ data, business, adAccount, owner, lifecycleOwner, r
     campaign: { exists: true, status: campaign.status },
     adSet: { selected: Boolean(adSet), count: campaign.adSets.length, status: adSet?.status ?? null, scheduleValid: !adSet || ((!adSet.startsAt && !adSet.endsAt) || Boolean(adSet.startsAt && adSet.endsAt && Date.parse(adSet.startsAt) < Date.parse(adSet.endsAt))) },
     audience: { exists: Boolean(data.audience), valid: Boolean(audienceLatest), policyCurrent: audienceCapabilitiesAreSafe(targetingCapabilities) && !audienceIsStale },
-    placements: { exists: Boolean(data.placement?.latestVersion), valid: isCurrentReleasePlacementSelection(persistedPlacements) },
+    placements: { exists: Boolean(data.placement?.latestVersion), valid: isCurrentReleasePlacementSelection(persistedPlacements, placementCapabilities?.placements ?? []) },
     destination: { selected: Boolean(destination), count: campaign.destinations.length, valid: destination?.status === "draft" && destinationIsUsable },
     creative: { exists: accountCreatives.length > 0, usable: allVersions.length > 0 },
     ad: { selected: Boolean(ad), count: campaignAds.length, status: ad?.status ?? null, reviewStatus: ad?.reviewStatus ?? null },
@@ -576,7 +587,7 @@ function CampaignWorkspace({ data, business, adAccount, owner, lifecycleOwner, r
         }, audienceId ? "Audience updated" : "Audience created");
       }}
     /> : <section id="audience" className="business-card editor-card"><p className="eyebrow">Step 3</p><h2>Audience</h2><p>Create an Ad Set first.</p></section>}
-    {adSet ? <PlacementSelectionPanel savedCodes={persistedPlacements} hasSelection={Boolean(data.placement)} deliveryEnabled={selectedPlacementDeliveryEnabled} owner={owner} pending={pending} supportAvailable onSave={async (codes) => {
+    {adSet ? <PlacementSelectionPanel savedCodes={persistedPlacements} hasSelection={Boolean(data.placement)} deliveryEnabled={selectedPlacementDeliveryEnabled} owner={owner} pending={pending} supportAvailable={!placementCapabilitiesUnavailable && Boolean(placementCapabilities)} capabilities={placementCapabilities?.placements ?? []} onSave={async (codes) => {
       const payload = { codes: [...codes].sort() };
       const selectionId = data.placement?.placementSelectionId;
       return run({ operation: selectionId ? "placements:version" : "placements:create", scope: selectionId ?? adSet.id, payload, mutate: (key) => selectionId ? createAdvertisingPlacementSelectionVersion(selectionId, payload.codes, key) : createAdvertisingPlacementSelectionDraft(adSet.id, payload.codes, key), reconcile: () => reconcileWorkspace((workspace) => { const current = workspace.placement?.latestVersion?.placements.map((item) => item.code) ?? []; return sameStrings(current, payload.codes) ? workspace.placement : null; }, (workspace) => workspace.placement != null) }, selectionId ? "Placement version updated" : "Placements saved");

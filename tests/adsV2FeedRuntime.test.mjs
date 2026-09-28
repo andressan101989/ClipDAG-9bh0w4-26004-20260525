@@ -52,7 +52,7 @@ test("uses a separate 50 percent viewability lane and records one impression per
   controller.markMediaReady(item.eventKey);
   controller({ viewableItems: [{ isViewable: true, item }] });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(calls, [[ad.ad_id, item.eventKey]]);
+  assert.deepEqual(calls, [[ad.ad_id, item.eventKey, "social_feed"]]);
 });
 
 test("impression failure is contained and never retried in the same mount", async () => {

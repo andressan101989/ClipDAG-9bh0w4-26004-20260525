@@ -19,6 +19,9 @@ export type AudienceDaypartFormRow = {
 };
 
 export type AudienceFormState = {
+  minimumAge: string;
+  maximumAge: string;
+  noUpperAgeLimit: boolean;
   scheduleMode: "any_time" | "custom";
   dayparts: AudienceDaypartFormRow[];
   frequency: { enabled: boolean; maxImpressions: string; windowHours: string };
@@ -58,8 +61,9 @@ export function audienceCapabilitiesAreSafe(capabilities: AdvertisingTargetingCa
   return Boolean(capabilities
     && capabilities.policyVersion
     && capabilities.advertiserMinimumAge === 18
-    && capabilities.audienceMinimumAge === 18
-    && capabilities.ageScope === "adults_only"
+    && capabilities.audienceMinimumAge === 13
+    && capabilities.audienceMaximumAge === 120
+    && capabilities.ageScope === "age_range"
     && capabilities.daypartTargetingEnabled
     && capabilities.frequencyTargetingEnabled
     && !capabilities.geoTargetingEnabled
@@ -76,8 +80,13 @@ export function newAudienceDaypart(timezone: string, key = `schedule-${crypto.ra
   return { key, timezone, weekday: "1", start: "09:00", end: "17:00" };
 }
 
-export function createAudienceFormState(definition: AdvertisingAudienceDefinition | null, suggestedTimezone: string): AudienceFormState {
+export function createAudienceFormState(definition: AdvertisingAudienceDefinition | null, suggestedTimezone: string, capabilities?: AdvertisingTargetingCapabilities | null): AudienceFormState {
+  const minimumAge = definition?.min_age ?? (definition?.age_scope === "adults_only" ? 18 : Math.max(18, capabilities?.audienceMinimumAge ?? 18));
+  const maximumAge = definition?.age_scope === "adults_only" ? null : definition?.max_age ?? null;
   return {
+    minimumAge: String(minimumAge),
+    maximumAge: maximumAge == null ? "" : String(maximumAge),
+    noUpperAgeLimit: maximumAge == null,
     scheduleMode: definition?.dayparts.length ? "custom" : "any_time",
     dayparts: definition?.dayparts.map((item, index) => ({
       key: `saved-${index}-${item.weekday}-${item.start}-${item.end}-${item.timezone}`,
@@ -104,7 +113,9 @@ export function serializeAudienceForm(form: AudienceFormState): AdvertisingAudie
     || left.start.localeCompare(right.start)
     || left.end.localeCompare(right.end)) : [];
   return {
-    age_scope: "adults_only",
+    age_scope: "age_range",
+    min_age: Number(form.minimumAge),
+    max_age: form.noUpperAgeLimit ? null : Number(form.maximumAge),
     geographies: [],
     languages: [],
     dayparts,
@@ -115,8 +126,18 @@ export function serializeAudienceForm(form: AudienceFormState): AdvertisingAudie
   };
 }
 
-export function validateAudienceForm(form: AudienceFormState): AudienceFormValidation {
+export function validateAudienceForm(form: AudienceFormState, capabilities?: AdvertisingTargetingCapabilities | null): AudienceFormValidation {
   const fieldErrors: Record<string, string> = {};
+  const minimumAge = Number(form.minimumAge);
+  const maximumAge = Number(form.maximumAge);
+  const allowedMinimum = capabilities?.audienceMinimumAge ?? 13;
+  const allowedMaximum = capabilities?.audienceMaximumAge ?? 120;
+  if (!Number.isInteger(minimumAge) || minimumAge < allowedMinimum || minimumAge > allowedMaximum) {
+    fieldErrors.minimumAge = `Choose a minimum age between ${allowedMinimum} and ${allowedMaximum}.`;
+  }
+  if (!form.noUpperAgeLimit && (!Number.isInteger(maximumAge) || maximumAge < minimumAge || maximumAge > allowedMaximum)) {
+    fieldErrors.maximumAge = `Choose a maximum age from the minimum age through ${allowedMaximum}.`;
+  }
   if (form.scheduleMode === "custom") {
     if (form.dayparts.length === 0) fieldErrors.schedule = "Add at least one schedule window.";
     if (form.dayparts.length > 100) fieldErrors.schedule = "Use no more than 100 schedule windows.";
@@ -178,4 +199,10 @@ export function formatFrequencyWindow(hours: number) {
 export function formatAudienceFrequency(frequency: AdvertisingAudienceDefinition["frequency"]) {
   if (!frequency) return "No frequency limit configured";
   return `Up to ${frequency.max_impressions} ${frequency.max_impressions === 1 ? "impression" : "impressions"} every ${formatFrequencyWindow(frequency.window_hours)}`;
+}
+
+export function formatAudienceAgeRange(definition: AdvertisingAudienceDefinition) {
+  const minimumAge = definition.min_age ?? 18;
+  if (definition.age_scope === "adults_only" || definition.max_age == null) return `Ages ${minimumAge}+`;
+  return `Ages ${minimumAge}–${definition.max_age}`;
 }

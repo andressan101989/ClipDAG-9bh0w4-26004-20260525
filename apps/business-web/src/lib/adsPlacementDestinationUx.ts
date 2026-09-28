@@ -1,6 +1,8 @@
+import type { AdvertisingPlacementCapability } from "./adsManagerApi";
+
 export const placementOrder = ["social_feed", "clips", "stories", "live", "marketplace_home", "marketplace_search"] as const;
 export type AdvertisingPlacementCode = typeof placementOrder[number];
-export type PlacementUxState = "available_for_setup" | "not_available_yet" | "legacy_separate";
+export type PlacementUxState = "available_for_setup" | "not_available_yet";
 
 type PlacementSupport = {
   code: AdvertisingPlacementCode;
@@ -9,43 +11,50 @@ type PlacementSupport = {
   state: PlacementUxState;
   selectable: boolean;
   status: string;
+  productionDeliveryEnabled: boolean;
 };
 
 const placementSupport: Record<AdvertisingPlacementCode, PlacementSupport> = {
   social_feed: {
     code: "social_feed", label: "Social Feed", description: "Reach people while they browse their main feed.",
-    state: "available_for_setup", selectable: true, status: "Available for setup",
+    state: "not_available_yet", selectable: false, status: "Not available", productionDeliveryEnabled: false,
   },
   clips: {
     code: "clips", label: "Clips", description: "Short-form video placement.",
-    state: "not_available_yet", selectable: false, status: "Not available yet",
+    state: "not_available_yet", selectable: false, status: "Not available", productionDeliveryEnabled: false,
   },
   stories: {
     code: "stories", label: "Stories", description: "Full-screen story placement.",
-    state: "not_available_yet", selectable: false, status: "Not available yet",
+    state: "not_available_yet", selectable: false, status: "Not available", productionDeliveryEnabled: false,
   },
   live: {
     code: "live", label: "Live", description: "Placement alongside live content.",
-    state: "not_available_yet", selectable: false, status: "Not available yet",
+    state: "not_available_yet", selectable: false, status: "Not available", productionDeliveryEnabled: false,
   },
   marketplace_home: {
-    code: "marketplace_home", label: "Marketplace Home", description: "Marketplace promotions use a separate Marketplace advertising system.",
-    state: "legacy_separate", selectable: false, status: "Separate Marketplace promotion",
+    code: "marketplace_home", label: "Marketplace Home", description: "Sponsored placement on Marketplace Home.",
+    state: "not_available_yet", selectable: false, status: "Not available", productionDeliveryEnabled: false,
   },
   marketplace_search: {
-    code: "marketplace_search", label: "Marketplace Search", description: "Marketplace promotions use a separate Marketplace advertising system.",
-    state: "legacy_separate", selectable: false, status: "Separate Marketplace promotion",
+    code: "marketplace_search", label: "Marketplace Search", description: "Sponsored placement in Marketplace Search.",
+    state: "not_available_yet", selectable: false, status: "Not available", productionDeliveryEnabled: false,
   },
 };
 
 export type PlacementCard = PlacementSupport & { selectedPreviously: boolean; needsAttention: boolean };
 
-export function placementCards(savedCodes: string[]): PlacementCard[] {
+export function placementCards(savedCodes: string[], capabilities: AdvertisingPlacementCapability[] = []): PlacementCard[] {
   const saved = new Set(savedCodes);
+  const byCode = new Map(capabilities.map((item) => [item.code, item]));
   const known = placementOrder.map((code) => ({
     ...placementSupport[code],
+    label: byCode.get(code)?.label ?? placementSupport[code].label,
+    state: byCode.get(code)?.selectionEnabled && byCode.get(code)?.adapterReady ? "available_for_setup" as const : "not_available_yet" as const,
+    selectable: Boolean(byCode.get(code)?.selectionEnabled && byCode.get(code)?.adapterReady),
+    status: byCode.get(code)?.selectionEnabled && byCode.get(code)?.adapterReady ? "Available" : "Not available",
+    productionDeliveryEnabled: byCode.get(code)?.productionDeliveryEnabled === true,
     selectedPreviously: saved.has(code),
-    needsAttention: saved.has(code) && !placementSupport[code].selectable,
+    needsAttention: saved.has(code) && !(byCode.get(code)?.selectionEnabled && byCode.get(code)?.adapterReady),
   }));
   const unknown = savedCodes.filter((code) => !placementOrder.includes(code as AdvertisingPlacementCode)).map((code): PlacementCard => ({
     code: code as AdvertisingPlacementCode,
@@ -54,14 +63,16 @@ export function placementCards(savedCodes: string[]): PlacementCard[] {
     state: "not_available_yet",
     selectable: false,
     status: "Not available yet",
+    productionDeliveryEnabled: false,
     selectedPreviously: true,
     needsAttention: true,
   }));
   return [...known, ...unknown];
 }
 
-export function isCurrentReleasePlacementSelection(codes: string[]) {
-  return codes.length > 0 && codes.every((code) => code === "social_feed");
+export function isCurrentReleasePlacementSelection(codes: string[], capabilities: AdvertisingPlacementCapability[] = []) {
+  const allowed = new Set(capabilities.filter((item) => item.selectionEnabled && item.adapterReady).map((item) => item.code));
+  return codes.length > 0 && codes.every((code) => allowed.has(code as AdvertisingPlacementCode));
 }
 
 export type DestinationType = "external_url" | "nelyon_profile" | "business_account" | "marketplace_product" | "marketplace_store";

@@ -9,23 +9,29 @@ import {
 } from "../lib/adsPlacementDestinationUx";
 
 describe("Ads placement and destination presentation model", () => {
-  it("offers only the wired Social Feed for a new Ads V2 selection", () => {
-    const cards = placementCards([]);
-    expect(cards.find((item) => item.code === "social_feed")).toMatchObject({ selectable: true, state: "available_for_setup" });
-    expect(cards.find((item) => item.code === "clips")).toMatchObject({ selectable: false, state: "not_available_yet" });
-    expect(cards.find((item) => item.code === "stories")).toMatchObject({ selectable: false, state: "not_available_yet" });
-    expect(cards.find((item) => item.code === "live")).toMatchObject({ selectable: false, state: "not_available_yet" });
-    expect(cards.find((item) => item.code === "marketplace_home")).toMatchObject({ selectable: false, state: "legacy_separate" });
-    expect(cards.find((item) => item.code === "marketplace_search")).toMatchObject({ selectable: false, state: "legacy_separate" });
+  const capabilities = ["social_feed", "clips", "stories", "live", "marketplace_home", "marketplace_search"].map((code) => ({
+    code: code as "social_feed" | "clips" | "stories" | "live" | "marketplace_home" | "marketplace_search",
+    label: code,
+    surfaceFamily: "test",
+    selectionEnabled: true,
+    adapterReady: true,
+    productionDeliveryEnabled: false,
+  }));
+
+  it("offers every server-confirmed PLR-10 adapter without claiming production delivery", () => {
+    const cards = placementCards([], capabilities);
+    expect(cards).toHaveLength(6);
+    expect(cards.every((item) => item.selectable && item.state === "available_for_setup")).toBe(true);
+    expect(cards.every((item) => item.productionDeliveryEnabled === false)).toBe(true);
   });
 
-  it("keeps every historical placement visible and marks unsupported selections for removal", () => {
+  it("keeps every historical registered placement valid under the canonical capability projection", () => {
     const saved = ["clips", "live", "marketplace_home", "marketplace_search", "social_feed", "stories"];
-    const cards = placementCards(saved);
+    const cards = placementCards(saved, capabilities);
     expect(cards).toHaveLength(6);
-    expect(cards.filter((item) => item.selectedPreviously && item.needsAttention)).toHaveLength(5);
-    expect(isCurrentReleasePlacementSelection(saved)).toBe(false);
-    expect(isCurrentReleasePlacementSelection(["social_feed"])).toBe(true);
+    expect(cards.filter((item) => item.selectedPreviously && item.needsAttention)).toHaveLength(0);
+    expect(isCurrentReleasePlacementSelection(saved, capabilities)).toBe(true);
+    expect(isCurrentReleasePlacementSelection(["social_feed"], capabilities)).toBe(true);
   });
 
   it("offers only destination types with both a safe picker and consumer", () => {

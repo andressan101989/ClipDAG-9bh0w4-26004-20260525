@@ -4,6 +4,7 @@ import {
   ActivityIndicator, Animated, PanResponder, AppState, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
+import { AdvertisingFeedCardV2 } from '@/components/advertising/AdvertisingFeedCardV2';
 // expo-video — lazy-loaded to prevent Hermes crash from dynamic import() syntax
 // bundled into main.jsbundle. Static import of expo-video causes:
 //   "Invalid expression encountered" at line ~110k in main.jsbundle
@@ -63,6 +64,9 @@ interface StoryViewerProps {
   ) => Promise<StoryReactionsPage>;
   onReplyToStory?: (storyId: string, text: string, clientMessageId: string) => Promise<void>;
   onGetSharedContent?: (storyId: string) => Promise<StorySharedContent>;
+  onAdvertisingActiveChange?: (story: StoryItem, active: boolean) => void;
+  onAdvertisingMediaReady?: (story: StoryItem) => void;
+  onAdvertisingPress?: (story: StoryItem) => void;
 }
 
 interface ReadyStoryVideoProps {
@@ -268,6 +272,9 @@ export function StoryViewer({
   onGetReactions,
   onReplyToStory,
   onGetSharedContent,
+  onAdvertisingActiveChange,
+  onAdvertisingMediaReady,
+  onAdvertisingPress,
 }: StoryViewerProps) {
   const insets = useSafeAreaInsets();
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
@@ -315,6 +322,7 @@ export function StoryViewer({
   const currentStory = stories[currentIndex] || null;
   const currentStoryId = currentStory?.id;
   const currentMediaType = currentStory?.mediaType;
+  const isAdvertisingStory = Boolean(currentStory?.advertisingV2);
   const isOwnStory = Boolean(currentStory && currentStory.userId === currentUserId);
   const currentStoryIdRef = useRef<string | null>(null);
   currentStoryIdRef.current = currentStoryId ?? null;
@@ -515,8 +523,14 @@ export function StoryViewer({
   }, [currentStoryId, resetProgress, stopPhotoProgress, visible]);
 
   useEffect(() => {
-    if (visible && currentStoryId && onMarkViewed) void onMarkViewed(currentStoryId);
-  }, [currentStoryId, onMarkViewed, visible]);
+    if (visible && currentStoryId && !isAdvertisingStory && onMarkViewed) void onMarkViewed(currentStoryId);
+  }, [currentStoryId, isAdvertisingStory, onMarkViewed, visible]);
+
+  useEffect(() => {
+    if (!currentStory?.advertisingV2 || !onAdvertisingActiveChange) return;
+    onAdvertisingActiveChange(currentStory, visible);
+    return () => onAdvertisingActiveChange(currentStory, false);
+  }, [currentStory, onAdvertisingActiveChange, visible]);
 
   useEffect(() => {
     if (!currentStoryId || currentMediaType !== 'photo' || shouldPausePlayback) {
@@ -659,7 +673,14 @@ export function StoryViewer({
         {...panResponder.panHandlers}
       >
         {/* Story media */}
-        {currentStory.storyKind === 'shared' && onGetSharedContent ? (
+        {currentStory.advertisingV2 ? (
+          <AdvertisingFeedCardV2
+            ad={currentStory.advertisingV2.ad}
+            isActive={visible}
+            onMediaReady={() => { handleMediaReadyChange(currentStory.id, true); onAdvertisingMediaReady?.(currentStory); }}
+            onPress={onAdvertisingPress ? () => onAdvertisingPress(currentStory) : undefined}
+          />
+        ) : currentStory.storyKind === 'shared' && onGetSharedContent ? (
           <View style={styles.sharedContentLayer} pointerEvents="box-none">
             <StorySharedContentCard
               storyId={currentStory.id}
@@ -681,7 +702,7 @@ export function StoryViewer({
             onReset={handleMediaReset}
           />
         )}
-        <StoryCompositionOverlay composition={currentStory.composition} width={viewportWidth} height={viewportHeight} />
+        {!isAdvertisingStory && <StoryCompositionOverlay composition={currentStory.composition} width={viewportWidth} height={viewportHeight} />}
 
         <StoryReactionEffect
           reaction={reactionEffect.reaction}
@@ -722,13 +743,13 @@ export function StoryViewer({
 
         {/* Header */}
         <View style={[styles.header, { paddingTop: Math.max(insets.top + 26, 43) }]}>
-          <Avatar uri={storyGroup.avatar} username={storyGroup.username} size={38} showBorder />
+          {!isAdvertisingStory && <><Avatar uri={storyGroup.avatar} username={storyGroup.username} size={38} showBorder />
           <View style={styles.headerInfo}>
             <Text style={styles.headerUsername}>@{storyGroup.username}</Text>
             <Text style={styles.headerTime}>
               {timeAgo(currentStory.createdAt)}
             </Text>
-          </View>
+          </View></>}
           {isOwnStory && onDeleteStory ? (
             <Pressable
               accessibilityRole="button"
@@ -741,7 +762,7 @@ export function StoryViewer({
               <MaterialIcons name="delete-outline" size={22} color="rgba(255,255,255,0.9)" />
             </Pressable>
           ) : null}
-          {currentStory.storyKind === 'media' && currentStory.mediaType === 'video' ? (
+          {!isAdvertisingStory && currentStory.storyKind === 'media' && currentStory.mediaType === 'video' ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={isMuted ? 'Activar sonido' : 'Silenciar video'}
@@ -787,7 +808,7 @@ export function StoryViewer({
           />
         </View>
 
-        {!isOwnStory && onSetReaction && onReplyToStory ? (
+        {!isAdvertisingStory && !isOwnStory && onSetReaction && onReplyToStory ? (
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             pointerEvents="box-none"

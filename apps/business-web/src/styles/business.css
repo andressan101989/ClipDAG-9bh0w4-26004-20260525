@@ -756,6 +756,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .audience-required-card small { color: var(--electric); font-weight: 800; }
 .audience-required-card p { margin: 2px 0 0; color: var(--muted); }
 .audience-lock { flex: 0 0 auto; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--electric); font-weight: 900; }
+.audience-age-range { display: grid; grid-template-columns: repeat(2, minmax(0, 220px)); gap: 14px; align-items: start; }
+.audience-age-range label { min-width: 0; }
+.audience-age-range input[type="number"] { width: 100%; }
+.audience-age-range .audience-age-open { grid-column: 1 / -1; display: flex; gap: 9px; align-items: center; width: fit-content; font-weight: 800; }
+.audience-age-range > p { grid-column: 1 / -1; margin: 0; color: var(--muted); overflow-wrap: anywhere; }
 .audience-segmented { display: inline-grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; width: min(100%, 440px); padding: 5px; border: 1px solid var(--line); border-radius: 13px; background: #f5f7fb; }
 .audience-segmented label { display: flex; justify-content: center; gap: 8px; padding: 10px 12px; border-radius: 9px; cursor: pointer; font-weight: 800; }
 .audience-segmented label.is-selected { color: white; background: var(--navy); }
@@ -822,7 +827,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 @media (max-width: 620px) {
-  .audience-summary, .audience-daypart, .audience-frequency-grid, .audience-capability-grid { grid-template-columns: 1fr; }
+  .audience-summary, .audience-daypart, .audience-frequency-grid, .audience-capability-grid, .audience-age-range { grid-template-columns: 1fr; }
   .audience-segmented { width: 100%; }
   .audience-section { padding: 15px; }
 }

@@ -16,6 +16,15 @@ const CALLS_TO_ACTION = new Set([
   "visit_profile",
   "none",
 ]);
+export const ADVERTISING_V2_PLACEMENTS = Object.freeze([
+  "social_feed",
+  "clips",
+  "stories",
+  "live",
+  "marketplace_home",
+  "marketplace_search",
+]);
+const PLACEMENTS = new Set(ADVERTISING_V2_PLACEMENTS);
 
 const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -31,6 +40,13 @@ const nullableUuid = (value, path) => value === null ? null : uuid(value, path);
 const nullableText = (value, path) => {
   if (value === null) return null;
   if (typeof value !== "string") throw new Error(`ads_v2_payload_invalid:${path}`);
+  return value;
+};
+
+const placementCode = (value) => {
+  if (typeof value !== "string" || !PLACEMENTS.has(value)) {
+    throw new Error("ads_v2_placement_invalid");
+  }
   return value;
 };
 
@@ -114,46 +130,68 @@ export function parseAdvertisingDeliveryAdV2(value) {
   };
 }
 
-export async function fetchAdvertisingV2SocialFeedCandidateWithInvoker(invoke) {
+export async function fetchAdvertisingV2CandidateWithInvoker(invoke, placement) {
+  const canonicalPlacement = placementCode(placement);
   const { data, error } = await invoke("ads-v2-delivery", {
-    body: { action: "candidates", placement: "social_feed" },
+    body: { action: "candidates", placement: canonicalPlacement },
   });
   if (error) throw error;
   if (!isObject(data)
     || data.success !== true
-    || data.placement !== "social_feed"
+    || data.placement !== canonicalPlacement
     || !Array.isArray(data.ads)) {
     throw new Error("ads_v2_payload_invalid:response");
   }
   return data.ads.length > 0 ? parseAdvertisingDeliveryAdV2(data.ads[0]) : null;
 }
 
-export async function recordAdvertisingV2SocialFeedImpressionWithInvoker(invoke, adId, eventKey) {
+export async function fetchAdvertisingV2SocialFeedCandidateWithInvoker(invoke) {
+  return fetchAdvertisingV2CandidateWithInvoker(invoke, "social_feed");
+}
+
+export async function recordAdvertisingV2ImpressionWithInvoker(invoke, placement, adId, eventKey) {
+  const canonicalPlacement = placementCode(placement);
   const canonicalAdId = uuid(adId, "impression.ad_id");
   const canonicalEventKey = uuid(eventKey, "impression.event_key");
   const { data, error } = await invoke("ads-v2-delivery", {
     body: {
       action: "impression",
+      placement: canonicalPlacement,
       ad_id: canonicalAdId,
       event_key: canonicalEventKey,
     },
   });
   if (error) throw error;
-  if (!isObject(data) || data.success !== true || !isObject(data.impression)) {
+  if (!isObject(data)
+    || data.success !== true
+    || data.placement !== canonicalPlacement
+    || !isObject(data.impression)) {
     throw new Error("ads_v2_payload_invalid:impression");
   }
   return uuid(data.impression.event_id, "impression.event_id");
 }
 
+export async function recordAdvertisingV2SocialFeedImpressionWithInvoker(invoke, adId, eventKey) {
+  return recordAdvertisingV2ImpressionWithInvoker(invoke, "social_feed", adId, eventKey);
+}
+
 export async function recordAdvertisingV2SocialFeedClickWithInvoker(invoke, impressionEventId, eventKey) {
-  return recordAdvertisingV2SocialFeedInteractionWithInvoker(invoke, impressionEventId, "click", eventKey);
+  return recordAdvertisingV2ClickWithInvoker(invoke, impressionEventId, eventKey);
 }
 
 export async function recordAdvertisingV2SocialFeedDestinationOpenWithInvoker(invoke, impressionEventId, eventKey) {
-  return recordAdvertisingV2SocialFeedInteractionWithInvoker(invoke, impressionEventId, "destination_open", eventKey);
+  return recordAdvertisingV2DestinationOpenWithInvoker(invoke, impressionEventId, eventKey);
 }
 
-async function recordAdvertisingV2SocialFeedInteractionWithInvoker(invoke, impressionEventId, eventType, eventKey) {
+export async function recordAdvertisingV2ClickWithInvoker(invoke, impressionEventId, eventKey) {
+  return recordAdvertisingV2InteractionWithInvoker(invoke, impressionEventId, "click", eventKey);
+}
+
+export async function recordAdvertisingV2DestinationOpenWithInvoker(invoke, impressionEventId, eventKey) {
+  return recordAdvertisingV2InteractionWithInvoker(invoke, impressionEventId, "destination_open", eventKey);
+}
+
+async function recordAdvertisingV2InteractionWithInvoker(invoke, impressionEventId, eventType, eventKey) {
   const canonicalImpressionEventId = uuid(impressionEventId, "interaction.impression_event_id");
   const canonicalEventKey = uuid(eventKey, "interaction.event_key");
   const { data, error } = await invoke("ads-v2-delivery", {

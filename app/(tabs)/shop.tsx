@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import {
   FlatList,
+  Linking,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -23,6 +24,7 @@ import { Image } from "expo-image";
 import { MaterialCommunityIcons, MaterialIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
+import { randomUUID } from "expo-crypto";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { NelyonLogo } from "@/components/ui/NelyonLogo";
@@ -54,6 +56,24 @@ import {
   mixMarketplaceSponsoredProducts,
   type MarketplaceSponsoredMixItem,
 } from "@/services/marketplaceSponsoredMix";
+import { AdvertisingFeedCardV2 } from "@/components/advertising/AdvertisingFeedCardV2";
+import {
+  advertisingDestinationAction,
+  fetchAdvertisingV2Candidate,
+  recordAdvertisingV2Click,
+  recordAdvertisingV2DestinationOpen,
+  recordAdvertisingV2Impression,
+  type AdvertisingDeliveryAdV2,
+  type AdvertisingPlacementCodeV2,
+} from "@/services/advertisingDeliveryService";
+import {
+  createAdvertisingV2ClickController,
+  createAdvertisingV2DestinationOpenController,
+  createAdvertisingV2ImpressionController,
+  loadAdvertisingV2Opportunity,
+  navigateAdvertisingV2WithClick,
+  selectMarketplaceSponsoredAuthority,
+} from "@/services/advertisingV2FeedRuntime.mjs";
 import { Colors, FontWeight, Spacing } from "@/constants/theme";
 
 type MarketLoadError = "network" | "permission" | "request" | null;
@@ -472,7 +492,7 @@ export default function ShopScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const listRef = useRef<FlatList<GridEntry>>(null);
-  const { width: viewportWidth } = useWindowDimensions();
+  const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const { user } = useAuth();
   const walletData = useWallet();
   const balance = walletData?.balance ?? 0;
@@ -494,6 +514,30 @@ export default function ShopScreen() {
   const [ratings, setRatings] = useState<Record<string, ProductRating>>({});
   const [visibleSponsored, setVisibleSponsored] = useState<Set<string>>(
     new Set(),
+  );
+  const [advertisingOpportunity, setAdvertisingOpportunity] = useState<{
+    viewerUserId: string;
+    placement: AdvertisingPlacementCodeV2;
+    ad: AdvertisingDeliveryAdV2;
+    eventKey: string;
+  } | null>(null);
+  const advertisingCardRef = useRef<View>(null);
+  const advertisingPlacement: AdvertisingPlacementCodeV2 = searchQuery
+    ? "marketplace_search"
+    : "marketplace_home";
+  const advertisingImpression = useRef(
+    createAdvertisingV2ImpressionController((adId, eventKey, placement: AdvertisingPlacementCodeV2) =>
+      recordAdvertisingV2Impression(placement, adId, eventKey),
+    ),
+  );
+  const advertisingClick = useRef(
+    createAdvertisingV2ClickController(recordAdvertisingV2Click, randomUUID),
+  );
+  const advertisingDestinationOpen = useRef(
+    createAdvertisingV2DestinationOpenController(
+      recordAdvertisingV2DestinationOpen,
+      randomUUID,
+    ),
   );
   const reputationAttempted = useRef(new Set<string>());
   const cardWidth = Math.max(
@@ -582,6 +626,32 @@ export default function ShopScreen() {
     void loadProducts();
   }, [loadProducts]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setAdvertisingOpportunity(null);
+    void loadAdvertisingV2Opportunity(
+      user?.id,
+      () => fetchAdvertisingV2Candidate(advertisingPlacement),
+      randomUUID,
+    ).then((opportunity) => {
+      if (!cancelled && opportunity) {
+        setAdvertisingOpportunity({ ...opportunity, placement: advertisingPlacement });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [advertisingPlacement, user?.id]);
+
+  useEffect(
+    () => () => {
+      advertisingImpression.current.dispose();
+      advertisingClick.current.dispose();
+      advertisingDestinationOpen.current.dispose();
+    },
+    [],
+  );
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -642,14 +712,18 @@ export default function ShopScreen() {
     itemVisiblePercentThreshold: MARKETPLACE_AD_VISIBLE_RATIO * 100,
   }).current;
 
+  const advertisingAuthority = useMemo(
+    () => selectMarketplaceSponsoredAuthority(advertisingOpportunity, sponsored),
+    [advertisingOpportunity, sponsored],
+  );
   const mixedProducts = useMemo(
-    () => mixMarketplaceSponsoredProducts(products, sponsored),
-    [products, sponsored],
+    () => mixMarketplaceSponsoredProducts(products, advertisingAuthority.legacy),
+    [advertisingAuthority.legacy, products],
   );
   const isCatalogEmpty = mixedProducts.length === 0;
   const data: GridEntry[] =
     error ? [] : loading && isCatalogEmpty ? SKELETONS : mixedProducts;
-  const featured = sponsored[heroIndex];
+  const featured = advertisingAuthority.legacy[heroIndex];
   const hasActiveFilter = Boolean(searchQuery || category);
   const catalogTitle = searchQuery
     ? "Resultados"
@@ -674,6 +748,59 @@ export default function ShopScreen() {
     },
     [router],
   );
+
+  const updateAdvertisingVisibility = useCallback(() => {
+    const opportunity = advertisingAuthority.opportunity;
+    if (!opportunity) return;
+    advertisingCardRef.current?.measureInWindow((_x, y, _width, height) => {
+      const visible = y < viewportHeight && y + height > 0;
+      advertisingImpression.current({
+        viewableItems: visible
+          ? [{
+              isViewable: true,
+              item: {
+                kind: "advertising_v2",
+                placement: opportunity.placement,
+                ad: opportunity.ad,
+                eventKey: opportunity.eventKey,
+              },
+            }]
+          : [],
+      });
+    });
+  }, [advertisingAuthority.opportunity, viewportHeight]);
+
+  const confirmAdvertisingMediaReady = useCallback(() => {
+    const opportunity = advertisingAuthority.opportunity;
+    if (!opportunity) return;
+    advertisingImpression.current.markMediaReady(opportunity.eventKey);
+    updateAdvertisingVisibility();
+  }, [advertisingAuthority.opportunity, updateAdvertisingVisibility]);
+
+  const openAdvertisingV2 = useCallback(() => {
+    const opportunity = advertisingAuthority.opportunity;
+    if (!opportunity) return;
+    const action = advertisingDestinationAction(opportunity.ad.destination);
+    if (!action) return;
+    const navigate = action.kind === "external"
+      ? async () => {
+          if (!(await Linking.canOpenURL(action.url).catch(() => false))) return false;
+          return Linking.openURL(action.url).then(() => true, () => false);
+        }
+      : () => {
+          router.push({ pathname: action.pathname, params: { id: action.id } } as never);
+          return true;
+        };
+    void navigateAdvertisingV2WithClick({
+      opportunityKey: opportunity.eventKey,
+      impressionEventId: advertisingImpression.current.confirmedImpressionId(
+        opportunity.eventKey,
+      ),
+      submitClick: advertisingClick.current.submit,
+      submitDestinationOpen: advertisingDestinationOpen.current.submit,
+      navigate,
+    }).catch(() => {});
+  }, [advertisingAuthority.opportunity, router]);
 
   const clearFilters = useCallback(() => {
     setSearch("");
@@ -767,7 +894,7 @@ export default function ShopScreen() {
 
       <FeaturedHero
         item={featured}
-        itemCount={sponsored.length}
+        itemCount={advertisingAuthority.legacy.length}
         selectedIndex={heroIndex}
         isVisible={scrollY < 300}
         onSelect={setHeroIndex}
@@ -776,6 +903,23 @@ export default function ShopScreen() {
         }
         onOpenProduct={openSponsored}
       />
+
+      {advertisingAuthority.opportunity ? (
+        <View ref={advertisingCardRef} onLayout={updateAdvertisingVisibility}>
+          <AdvertisingFeedCardV2
+            ad={advertisingAuthority.opportunity.ad}
+            isActive
+            onMediaReady={confirmAdvertisingMediaReady}
+            onPress={
+              advertisingDestinationAction(
+                advertisingAuthority.opportunity.ad.destination,
+              )
+                ? openAdvertisingV2
+                : undefined
+            }
+          />
+        </View>
+      ) : null}
 
       <ScrollView
         horizontal
@@ -971,7 +1115,10 @@ export default function ShopScreen() {
         ]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        onScroll={(event) => setScrollY(event.nativeEvent.contentOffset.y)}
+        onScroll={(event) => {
+          setScrollY(event.nativeEvent.contentOffset.y);
+          updateAdvertisingVisibility();
+        }}
         scrollEventThrottle={100}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}

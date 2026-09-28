@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { isCurrentReleasePlacementSelection, placementCards } from "../../lib/adsPlacementDestinationUx";
+import type { AdvertisingPlacementCapability } from "../../lib/adsManagerApi";
 
 type Props = {
   savedCodes: string[];
@@ -8,18 +9,20 @@ type Props = {
   owner: boolean;
   pending: boolean;
   supportAvailable: boolean;
+  capabilities?: AdvertisingPlacementCapability[];
   onSave: (codes: string[]) => Promise<boolean>;
 };
 
-export function PlacementSelectionPanel({ savedCodes, hasSelection, deliveryEnabled = false, owner, pending, supportAvailable, onSave }: Props) {
+export function PlacementSelectionPanel({ savedCodes, hasSelection, deliveryEnabled = false, owner, pending, supportAvailable, capabilities = [], onSave }: Props) {
   const savedKey = [...savedCodes].sort().join("\u0000");
   const [editing, setEditing] = useState(!hasSelection);
   const [selected, setSelected] = useState<string[]>(hasSelection ? savedCodes : []);
   useEffect(() => { setSelected(hasSelection && savedKey ? savedKey.split("\u0000") : []); setEditing(!hasSelection); }, [hasSelection, savedKey]);
-  const cards = useMemo(() => placementCards(savedCodes), [savedCodes]);
-  const needsAttention = hasSelection && !isCurrentReleasePlacementSelection(savedCodes);
+  const cards = useMemo(() => placementCards(savedCodes, capabilities), [capabilities, savedCodes]);
+  const needsAttention = hasSelection && !isCurrentReleasePlacementSelection(savedCodes, capabilities);
   const unchanged = [...selected].sort().join("\u0000") === [...savedCodes].sort().join("\u0000");
-  const canSave = owner && !pending && supportAvailable && selected.length > 0 && selected.every((code) => code === "social_feed") && (!hasSelection || !unchanged);
+  const available = new Set(capabilities.filter((item) => item.selectionEnabled && item.adapterReady).map((item) => item.code));
+  const canSave = owner && !pending && supportAvailable && selected.length > 0 && selected.every((code) => available.has(code as AdvertisingPlacementCapability["code"])) && (!hasSelection || !unchanged);
 
   const toggle = (code: string, selectable: boolean) => {
     setSelected((current) => current.includes(code)
@@ -35,7 +38,7 @@ export function PlacementSelectionPanel({ savedCodes, hasSelection, deliveryEnab
       {needsAttention && <div className="ads-attention-note" role="status"><strong>Selected previously — not available for this Ads V2 release</strong><span>Review this selection before the campaign can continue.</span></div>}
       <div className="ads-selection-summary" aria-label="Saved placements">
         {cards.filter((item) => item.selectedPreviously).map((item) => <article key={item.code} className={item.needsAttention ? "ads-summary-item needs-attention" : "ads-summary-item"}>
-          <strong>{item.label}</strong><span>{item.needsAttention ? item.state === "legacy_separate" ? "Separate Marketplace promotion" : "Needs attention" : "Selected"}</span>
+          <strong>{item.label}</strong><span>{item.needsAttention ? "Needs attention" : "Selected"}</span>
         </article>)}
       </div>
       <p className="ads-prelaunch-note">{deliveryEnabled ? "Delivery is available for the selected placement." : "Delivery availability is controlled by current server policy."}</p>

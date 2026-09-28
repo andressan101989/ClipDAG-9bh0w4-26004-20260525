@@ -2,13 +2,35 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DestinationPanel } from "../components/ads/DestinationPanel";
 import { PlacementSelectionPanel } from "../components/ads/PlacementSelectionPanel";
+import type { AdvertisingPlacementCapability } from "../lib/adsManagerApi";
 
 const six = ["clips", "live", "marketplace_home", "marketplace_search", "social_feed", "stories"];
+const labels: Record<string, string> = {
+  clips: "Clips",
+  live: "Live",
+  marketplace_home: "Marketplace Home",
+  marketplace_search: "Marketplace Search",
+  social_feed: "Social Feed",
+  stories: "Stories",
+};
+const plr10Capabilities: AdvertisingPlacementCapability[] = six.map((code) => ({
+  code: code as AdvertisingPlacementCapability["code"],
+  label: labels[code],
+  surfaceFamily: code.startsWith("marketplace") ? "marketplace" : code === "live" ? "live" : "social",
+  selectionEnabled: true,
+  adapterReady: true,
+  productionDeliveryEnabled: false,
+}));
+const historicalSocialOnlyCapabilities = plr10Capabilities.map((capability) => ({
+  ...capability,
+  selectionEnabled: capability.code === "social_feed",
+  adapterReady: capability.code === "social_feed",
+}));
 
 describe("PlacementSelectionPanel", () => {
   it("shows the historical six-placement selection as attention without writing", () => {
     const save = vi.fn();
-    render(<PlacementSelectionPanel savedCodes={six} hasSelection owner pending={false} supportAvailable onSave={save} />);
+    render(<PlacementSelectionPanel savedCodes={six} hasSelection owner pending={false} supportAvailable capabilities={historicalSocialOnlyCapabilities} onSave={save} />);
     expect(screen.getByText("Selected previously — not available for this Ads V2 release")).toBeInTheDocument();
     expect(screen.getAllByText(/Needs attention|Separate Marketplace promotion/).length).toBe(5);
     expect(screen.getByText("Delivery availability is controlled by current server policy.")).toBeInTheDocument();
@@ -17,7 +39,7 @@ describe("PlacementSelectionPanel", () => {
 
   it("repairs a historical selection to social_feed and cannot re-add unsupported placements", async () => {
     const save = vi.fn().mockResolvedValue(true);
-    render(<PlacementSelectionPanel savedCodes={six} hasSelection owner pending={false} supportAvailable onSave={save} />);
+    render(<PlacementSelectionPanel savedCodes={six} hasSelection owner pending={false} supportAvailable capabilities={historicalSocialOnlyCapabilities} onSave={save} />);
     fireEvent.click(screen.getByRole("button", { name: "Review placements" }));
     for (const label of ["Clips", "Live", "Marketplace Home", "Marketplace Search", "Stories"]) {
       fireEvent.click(screen.getByRole("checkbox", { name: new RegExp(`^${label}`) }));
@@ -29,18 +51,18 @@ describe("PlacementSelectionPanel", () => {
 
   it("requires one available placement and fails closed when support is unavailable", () => {
     const save = vi.fn();
-    const { rerender } = render(<PlacementSelectionPanel savedCodes={[]} hasSelection={false} owner pending={false} supportAvailable onSave={save} />);
+    const { rerender } = render(<PlacementSelectionPanel savedCodes={[]} hasSelection={false} owner pending={false} supportAvailable capabilities={plr10Capabilities} onSave={save} />);
     expect(screen.getByRole("button", { name: "Save placements" })).toBeDisabled();
     fireEvent.click(screen.getByRole("checkbox", { name: /^Social Feed/ }));
     expect(screen.getByRole("button", { name: "Save placements" })).toBeEnabled();
-    rerender(<PlacementSelectionPanel savedCodes={["social_feed"]} hasSelection owner pending={false} supportAvailable={false} onSave={save} />);
+    rerender(<PlacementSelectionPanel savedCodes={["social_feed"]} hasSelection owner pending={false} supportAvailable={false} capabilities={plr10Capabilities} onSave={save} />);
     expect(screen.getByText("Placement settings are temporarily unavailable. Try again.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Edit placements" })).toBeDisabled();
   });
 
   it("denies a direct placement form submit for a non-owner", () => {
     const save = vi.fn();
-    render(<PlacementSelectionPanel savedCodes={[]} hasSelection={false} owner={false} pending={false} supportAvailable onSave={save} />);
+    render(<PlacementSelectionPanel savedCodes={[]} hasSelection={false} owner={false} pending={false} supportAvailable capabilities={plr10Capabilities} onSave={save} />);
     const checkbox = screen.getByRole("checkbox", { name: /^Social Feed/ });
     expect(checkbox).toBeDisabled();
     fireEvent.submit(screen.getByRole("button", { name: "Save placements" }).closest("form")!);

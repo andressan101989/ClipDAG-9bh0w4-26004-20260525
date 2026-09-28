@@ -1,4 +1,13 @@
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const ADS_V2_DELIVERY_PLACEMENTS = Object.freeze([
+  "social_feed",
+  "clips",
+  "stories",
+  "live",
+  "marketplace_home",
+  "marketplace_search",
+]);
+const PLACEMENTS = new Set(ADS_V2_DELIVERY_PLACEMENTS);
 
 export class AdsV2DeliveryError extends Error {
   constructor(code, status = 400) {
@@ -20,6 +29,7 @@ const hasInteractionContextOverride = (body) => [
 ].some((key) => Object.prototype.hasOwnProperty.call(body, key));
 
 const validUuid = (value) => typeof value === "string" && UUID.test(value);
+const hasOnlyKeys = (body, allowed) => Object.keys(body).every((key) => allowed.has(key));
 
 async function checkedRpc(rpc, name, args) {
   const result = await rpc(name, args);
@@ -35,9 +45,13 @@ export async function executeAdsV2DeliveryAction(body, viewerUserId, rpc) {
   if (hasViewerOverride(body)) throw new AdsV2DeliveryError("viewer_override_denied", 403);
 
   if (body.action === "candidates") {
-    if (body.placement !== "social_feed") throw new AdsV2DeliveryError("placement_invalid");
+    if (!hasOnlyKeys(body, new Set(["action", "placement"]))) {
+      throw new AdsV2DeliveryError("candidate_context_override_denied", 403);
+    }
+    if (!PLACEMENTS.has(body.placement)) throw new AdsV2DeliveryError("placement_invalid");
+    const placement = body.placement;
     const candidates = await checkedRpc(rpc, "fetch_advertising_delivery_candidates_v2", {
-      p_placement_code: "social_feed",
+      p_placement_code: placement,
       p_viewer_user_id: viewerUserId,
       p_limit: 1,
       p_at_time: null,
@@ -47,33 +61,36 @@ export async function executeAdsV2DeliveryAction(body, viewerUserId, rpc) {
       if (!validUuid(candidate?.ad_id)) continue;
       const payload = await checkedRpc(rpc, "get_advertising_delivery_render_payload_v2", {
         p_ad_id: candidate.ad_id,
-        p_placement_code: "social_feed",
+        p_placement_code: placement,
         p_viewer_user_id: viewerUserId,
       });
       if (payload && typeof payload === "object" && payload.ad_id === candidate.ad_id) ads.push(payload);
     }
-    return { success: true, placement: "social_feed", ads };
+    return { success: true, placement, ads };
   }
 
   if (body.action === "impression") {
-    if (Object.prototype.hasOwnProperty.call(body, "placement")) {
-      throw new AdsV2DeliveryError("placement_override_denied", 403);
+    if (!hasOnlyKeys(body, new Set(["action", "placement", "ad_id", "event_key"]))) {
+      throw new AdsV2DeliveryError("impression_context_override_denied", 403);
     }
+    if (!PLACEMENTS.has(body.placement)) throw new AdsV2DeliveryError("placement_invalid");
+    const placement = body.placement;
     if (!validUuid(body.ad_id) || !validUuid(body.event_key)) {
       throw new AdsV2DeliveryError("impression_invalid");
     }
     const event = await checkedRpc(rpc, "record_advertising_impression_v2", {
       p_ad_id: body.ad_id,
-      p_placement_code: "social_feed",
+      p_placement_code: placement,
       p_viewer_user_id: viewerUserId,
       p_event_key: body.event_key,
     });
     if (!validUuid(event?.id)) throw new AdsV2DeliveryError("delivery_unavailable", 503);
-    return { success: true, placement: "social_feed", impression: { event_id: event.id } };
+    return { success: true, placement, impression: { event_id: event.id } };
   }
 
   if (body.action === "interaction") {
-    if (hasInteractionContextOverride(body)) {
+    if (hasInteractionContextOverride(body)
+      || !hasOnlyKeys(body, new Set(["action", "impression_event_id", "event_type", "event_key"]))) {
       throw new AdsV2DeliveryError("interaction_context_override_denied", 403);
     }
     if (body.event_type !== "click" && body.event_type !== "destination_open") {

@@ -22,7 +22,7 @@ import { NelyonLogo } from '@/components/ui/NelyonLogo';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Audio } from 'expo-av';
 import { useScrollToTop } from '@react-navigation/native';
-import type { StoryGroup } from '@/components/feature/StoriesBar';
+import type { StoryGroup, StoryItem } from '@/components/feature/StoriesBar';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
 import { deleteMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
 import { CreatorContentProductSheet } from '@/components/marketplace/CreatorContentProductSheet';
@@ -32,7 +32,7 @@ import {
   type MarketplaceCreatorContentType,
 } from '@/services/marketplaceCreatorContentTagService';
 import { StoryEditor, type StoryEditorSource } from '@/components/feature/StoryEditor';
-import type { StoryComposition } from '@/components/feature/storyComposition';
+import { EMPTY_STORY_COMPOSITION, type StoryComposition } from '@/components/feature/storyComposition';
 import { SponsoredFeedCard } from '@/components/marketplace/SponsoredFeedCard';
 import {
   fetchSponsoredProducts,
@@ -48,10 +48,10 @@ import { randomUUID } from 'expo-crypto';
 import { AdvertisingFeedCardV2 } from '@/components/advertising/AdvertisingFeedCardV2';
 import {
   advertisingDestinationAction,
-  fetchAdvertisingV2SocialFeedCandidate,
-  recordAdvertisingV2SocialFeedClick,
-  recordAdvertisingV2SocialFeedDestinationOpen,
-  recordAdvertisingV2SocialFeedImpression,
+  fetchAdvertisingV2Candidate,
+  recordAdvertisingV2Click,
+  recordAdvertisingV2DestinationOpen,
+  recordAdvertisingV2Impression,
   type AdvertisingDeliveryAdV2,
 } from '@/services/advertisingDeliveryService';
 import {
@@ -61,7 +61,7 @@ import {
   createAdvertisingV2DestinationOpenController,
   createAdvertisingV2ImpressionController,
   loadAdvertisingV2Opportunity,
-  mixSocialFeedAdvertisingV2,
+  mixPlacementAdvertisingV2,
   navigateAdvertisingV2WithClick,
   type AdvertisingV2FeedItem,
 } from '@/services/advertisingV2FeedRuntime.mjs';
@@ -102,7 +102,7 @@ export default function FeedScreen() {
   } | null>(null);
   const [storyEditorSource, setStoryEditorSource] = useState<StoryEditorSource | null>(null);
   const [sponsoredProducts, setSponsoredProducts] = useState<SponsoredProduct[]>([]);
-  const [advertisingV2Opportunity, setAdvertisingV2Opportunity] = useState<{ viewerUserId: string; ad: AdvertisingDeliveryAdV2; eventKey: string } | null>(null);
+  const [advertisingV2Opportunities, setAdvertisingV2Opportunities] = useState<{ viewerUserId: string; placement: "social_feed" | "clips" | "stories"; ad: AdvertisingDeliveryAdV2; eventKey: string }[]>([]);
   const storyUploadAttemptsRef = useRef(new Map<string, string>());
   const sponsoredImpressionsRef = useRef(new Set<string>());
 
@@ -117,27 +117,34 @@ export default function FeedScreen() {
   useEffect(() => { void loadSponsoredProducts(); }, [loadSponsoredProducts]);
 
   useEffect(() => {
-    setAdvertisingV2Opportunity(null);
+    setAdvertisingV2Opportunities([]);
     let cancelled = false;
-    void loadAdvertisingV2Opportunity(
-      user?.id ?? null,
-      fetchAdvertisingV2SocialFeedCandidate,
-      randomUUID,
-    ).then((opportunity) => {
-      if (!cancelled) setAdvertisingV2Opportunity(opportunity);
+    void Promise.all((["social_feed", "clips", "stories"] as const).map(async (placement) => {
+      const opportunity = await loadAdvertisingV2Opportunity(
+        user?.id ?? null,
+        () => fetchAdvertisingV2Candidate(placement),
+        randomUUID,
+      );
+      return opportunity ? { ...opportunity, placement } : null;
+    })).then((opportunities) => {
+      if (!cancelled) setAdvertisingV2Opportunities(opportunities.filter((item): item is NonNullable<typeof item> => item != null));
     });
     return () => { cancelled = true; };
   }, [user?.id]);
 
-  const currentAdvertisingV2Opportunity = advertisingV2OpportunityForViewer(advertisingV2Opportunity, user?.id);
+  const currentAdvertisingV2Opportunities = useMemo(() => advertisingV2Opportunities
+    .map((opportunity) => advertisingV2OpportunityForViewer(opportunity, user?.id))
+    .filter((item): item is NonNullable<typeof item> => item != null), [advertisingV2Opportunities, user?.id]);
 
   const feedItems = useMemo<FeedItem[]>(
-    () => mixSocialFeedAdvertisingV2<SocialFeedItem<(typeof videos)[number], SponsoredProduct>, AdvertisingDeliveryAdV2>(
+    () => mixPlacementAdvertisingV2<SocialFeedItem<(typeof videos)[number], SponsoredProduct>, AdvertisingDeliveryAdV2>(
       mixSocialFeedSponsoredProducts(videos, sponsoredProducts),
-      currentAdvertisingV2Opportunity?.ad ?? null,
-      currentAdvertisingV2Opportunity?.eventKey ?? null,
+      currentAdvertisingV2Opportunities.filter((opportunity) => opportunity.placement !== "stories").map((opportunity) => ({
+        ...opportunity,
+        afterOrganic: opportunity.placement === "social_feed" ? 4 : 12,
+      })),
     ),
-    [currentAdvertisingV2Opportunity, sponsoredProducts, videos],
+    [currentAdvertisingV2Opportunities, sponsoredProducts, videos],
   );
   const feedItemsRef = useRef(feedItems);
   feedItemsRef.current = feedItems;
@@ -247,9 +254,9 @@ export default function FeedScreen() {
     }
   });
   const viewabilityConfig = useRef(VIEWABILITY_CONFIG);
-  const advertisingV2Viewability = useRef(createAdvertisingV2ImpressionController(recordAdvertisingV2SocialFeedImpression));
-  const advertisingV2Click = useRef(createAdvertisingV2ClickController(recordAdvertisingV2SocialFeedClick, randomUUID));
-  const advertisingV2DestinationOpen = useRef(createAdvertisingV2DestinationOpenController(recordAdvertisingV2SocialFeedDestinationOpen, randomUUID));
+  const advertisingV2Viewability = useRef(createAdvertisingV2ImpressionController((adId, eventKey, placement) => recordAdvertisingV2Impression(placement as "social_feed" | "clips", adId, eventKey)));
+  const advertisingV2Click = useRef(createAdvertisingV2ClickController(recordAdvertisingV2Click, randomUUID));
+  const advertisingV2DestinationOpen = useRef(createAdvertisingV2DestinationOpenController(recordAdvertisingV2DestinationOpen, randomUUID));
   const viewabilityConfigCallbackPairs = useRef([
     { viewabilityConfig: viewabilityConfig.current, onViewableItemsChanged: onViewableItemsChanged.current },
     { viewabilityConfig: ADS_V2_VIEWABILITY_CONFIG, onViewableItemsChanged: advertisingV2Viewability.current },
@@ -269,15 +276,15 @@ export default function FeedScreen() {
     const impressionController = advertisingV2Viewability.current;
     const clickController = advertisingV2Click.current;
     const destinationOpenController = advertisingV2DestinationOpen.current;
-    const eventKey = currentAdvertisingV2Opportunity?.eventKey;
+    const eventKeys = currentAdvertisingV2Opportunities.map((item) => item.eventKey);
     return () => {
-      if (eventKey) {
+      for (const eventKey of eventKeys) {
         impressionController.discard(eventKey);
         clickController.discard(eventKey);
         destinationOpenController.discard(eventKey);
       }
     };
-  }, [currentAdvertisingV2Opportunity?.eventKey]);
+  }, [currentAdvertisingV2Opportunities]);
 
   const handleLike = useCallback(async (videoId: string, creatorId: string) => {
     const wasLiked = isLiked(videoId);
@@ -431,6 +438,36 @@ export default function FeedScreen() {
   const viewingStoryGroup = viewingStoryUserId
     ? storyGroups.find(group => group.userId === viewingStoryUserId) ?? null
     : null;
+  const storiesAdvertisingOpportunity = currentAdvertisingV2Opportunities.find((item) => item.placement === 'stories') ?? null;
+  const viewingStoryGroupWithAdvertising = useMemo<StoryGroup | null>(() => {
+    if (!viewingStoryGroup || !storiesAdvertisingOpportunity) return viewingStoryGroup;
+    const sponsoredStory: StoryItem = {
+      id: `ads-v2:${storiesAdvertisingOpportunity.eventKey}`,
+      userId: storiesAdvertisingOpportunity.ad.advertiser.business_account_id,
+      mediaUrl: storiesAdvertisingOpportunity.ad.creative.media.url,
+      mediaType: storiesAdvertisingOpportunity.ad.creative.format === 'video' ? 'video' : 'photo',
+      storyKind: 'media',
+      composition: EMPTY_STORY_COMPOSITION,
+      createdAt: '2026-09-28T00:00:00.000Z',
+      expiresAt: '9999-12-31T23:59:59.000Z',
+      advertisingV2: { ad: storiesAdvertisingOpportunity.ad, eventKey: storiesAdvertisingOpportunity.eventKey },
+    };
+    return { ...viewingStoryGroup, stories: [...viewingStoryGroup.stories, sponsoredStory] };
+  }, [storiesAdvertisingOpportunity, viewingStoryGroup]);
+
+  const handleAdvertisingStoryActiveChange = useCallback((story: StoryItem, active: boolean) => {
+    if (!story.advertisingV2) return;
+    advertisingV2Viewability.current({ viewableItems: active ? [{ isViewable: true, item: {
+      kind: 'advertising_v2', placement: 'stories', ad: story.advertisingV2.ad, eventKey: story.advertisingV2.eventKey,
+    } }] : [] });
+  }, []);
+  const handleAdvertisingStoryMediaReady = useCallback((story: StoryItem) => {
+    if (story.advertisingV2) advertisingV2Viewability.current.markMediaReady(story.advertisingV2.eventKey);
+  }, []);
+  const handleAdvertisingStoryPress = useCallback((story: StoryItem) => {
+    if (!story.advertisingV2) return;
+    openAdvertisingDestination({ kind: 'advertising_v2', placement: 'stories', ...story.advertisingV2 });
+  }, [openAdvertisingDestination]);
 
   useEffect(() => {
     if (storyViewerVisible && viewingStoryUserId && !viewingStoryGroup) {
@@ -472,7 +509,7 @@ export default function FeedScreen() {
       <FlatList
         ref={feedListRef}
         data={feedItems}
-        keyExtractor={item => item.kind === 'organic' ? `video:${item.video.id}` : item.kind === 'sponsored' ? `ad:${item.product.campaign_id}` : `ads-v2:${item.ad.ad_id}`}
+        keyExtractor={item => item.kind === 'organic' ? `video:${item.video.id}` : item.kind === 'sponsored' ? `ad:${item.product.campaign_id}` : `ads-v2:${item.placement}:${item.ad.ad_id}`}
         style={styles.feedList}
         ListHeaderComponent={feedHeader}
         renderItem={({ item, index }) => item.kind === 'sponsored' ? (
@@ -574,7 +611,7 @@ export default function FeedScreen() {
 
       <StoryViewer
         visible={storyViewerVisible}
-        storyGroup={viewingStoryGroup}
+        storyGroup={viewingStoryGroupWithAdvertising}
         currentUserId={user?.id}
         onClose={() => { setStoryViewerVisible(false); setViewingStoryUserId(null); }}
         onMarkViewed={markStoryViewed}
@@ -584,6 +621,9 @@ export default function FeedScreen() {
         onGetReactions={getStoryReactions}
         onReplyToStory={replyToStory}
         onGetSharedContent={getStorySharedContent}
+        onAdvertisingActiveChange={handleAdvertisingStoryActiveChange}
+        onAdvertisingMediaReady={handleAdvertisingStoryMediaReady}
+        onAdvertisingPress={handleAdvertisingStoryPress}
       />
       <StoryEditor
         visible={Boolean(storyEditorSource)}

@@ -7,12 +7,24 @@
  * card navigates to /live/watch/[streamId].
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Dimensions, Linking } from 'react-native';
 import { Image } from '@/components/ui/SafeImage';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { getSupabaseClient } from '@/template';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
+import { useAuth } from '@/hooks/useAuth';
+import { randomUUID } from 'expo-crypto';
+import { AdvertisingFeedCardV2 } from '@/components/advertising/AdvertisingFeedCardV2';
+import {
+  advertisingDestinationAction, fetchAdvertisingV2Candidate, recordAdvertisingV2Click,
+  recordAdvertisingV2DestinationOpen, recordAdvertisingV2Impression, type AdvertisingDeliveryAdV2,
+} from '@/services/advertisingDeliveryService';
+import {
+  createAdvertisingV2ClickController, createAdvertisingV2DestinationOpenController,
+  createAdvertisingV2ImpressionController, loadAdvertisingV2Opportunity, mixLiveDiscoveryAdvertisingV2,
+  navigateAdvertisingV2WithClick,
+} from '@/services/advertisingV2FeedRuntime.mjs';
 
 const POLL_INTERVAL_MS = 10_000;
 const STALE_VISIBLE_MS = 90_000;
@@ -27,10 +39,16 @@ interface LiveStream {
 
 export function LiveStreamsList() {
   const router = useRouter();
+  const { user } = useAuth();
   const [streams, setStreams] = useState<LiveStream[]>([]);
   const [loading, setLoading] = useState(true);
   const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
+  const [advertisingOpportunity, setAdvertisingOpportunity] = useState<{ viewerUserId: string; placement: 'live'; ad: AdvertisingDeliveryAdV2; eventKey: string } | null>(null);
+  const advertisingRef = useRef<View>(null);
+  const impression = useRef(createAdvertisingV2ImpressionController((adId, eventKey) => recordAdvertisingV2Impression('live', adId, eventKey)));
+  const click = useRef(createAdvertisingV2ClickController(recordAdvertisingV2Click, randomUUID));
+  const destinationOpen = useRef(createAdvertisingV2DestinationOpenController(recordAdvertisingV2DestinationOpen, randomUUID));
 
   const fetchLiveStreams = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -72,6 +90,67 @@ export function LiveStreamsList() {
     };
   }, [fetchLiveStreams]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setAdvertisingOpportunity(null);
+    void loadAdvertisingV2Opportunity(user?.id, () => fetchAdvertisingV2Candidate('live'), randomUUID)
+      .then((opportunity) => { if (!cancelled && opportunity) setAdvertisingOpportunity({ ...opportunity, placement: 'live' }); });
+    return () => { cancelled = true; };
+  }, [user?.id]);
+
+  useEffect(() => () => {
+    impression.current.dispose();
+    click.current.dispose();
+    destinationOpen.current.dispose();
+  }, []);
+
+  const discoveryItems = mixLiveDiscoveryAdvertisingV2(streams, advertisingOpportunity);
+  const markAdvertisingVisibility = useCallback((visible: boolean) => {
+    if (!advertisingOpportunity) return;
+    impression.current({ viewableItems: visible ? [{ isViewable: true, item: {
+      kind: 'advertising_v2', placement: 'live', ad: advertisingOpportunity.ad, eventKey: advertisingOpportunity.eventKey,
+    } }] : [] });
+  }, [advertisingOpportunity]);
+  const measureAdvertisingVisibility = useCallback(() => {
+    if (!advertisingOpportunity) return;
+    advertisingRef.current?.measureInWindow((_x, y, _width, height) => {
+      markAdvertisingVisibility(y < Dimensions.get('window').height && y + height > 0);
+    });
+  }, [advertisingOpportunity, markAdvertisingVisibility]);
+  const confirmAdvertisingMediaReady = useCallback(() => {
+    if (!advertisingOpportunity) return;
+    impression.current.markMediaReady(advertisingOpportunity.eventKey);
+    measureAdvertisingVisibility();
+  }, [advertisingOpportunity, measureAdvertisingVisibility]);
+
+  useEffect(() => {
+    if (!advertisingOpportunity) return;
+    measureAdvertisingVisibility();
+    const visibilityPoll = setInterval(measureAdvertisingVisibility, 250);
+    return () => {
+      clearInterval(visibilityPoll);
+      markAdvertisingVisibility(false);
+    };
+  }, [advertisingOpportunity, markAdvertisingVisibility, measureAdvertisingVisibility]);
+  const openAdvertising = useCallback(() => {
+    if (!advertisingOpportunity) return;
+    const action = advertisingDestinationAction(advertisingOpportunity.ad.destination);
+    if (!action) return;
+    const navigate = action.kind === 'external'
+      ? async () => await Linking.canOpenURL(action.url).catch(() => false) && Linking.openURL(action.url).then(() => true, () => false)
+      : () => {
+        router.push({ pathname: action.pathname, params: { id: action.id } } as never);
+        return true;
+      };
+    void navigateAdvertisingV2WithClick({
+      opportunityKey: advertisingOpportunity.eventKey,
+      impressionEventId: impression.current.confirmedImpressionId(advertisingOpportunity.eventKey),
+      submitClick: click.current.submit,
+      submitDestinationOpen: destinationOpen.current.submit,
+      navigate,
+    }).catch(() => {});
+  }, [advertisingOpportunity, router]);
+
   if (loading) {
     return (
       <View style={s.section}>
@@ -84,11 +163,14 @@ export function LiveStreamsList() {
   return (
     <View style={s.section}>
       <Text style={s.sectionTitle}>En vivo</Text>
-      {streams.length === 0 ? (
+      {advertisingOpportunity ? <View ref={advertisingRef} onLayout={measureAdvertisingVisibility}>
+        <AdvertisingFeedCardV2 ad={advertisingOpportunity.ad} isActive onMediaReady={confirmAdvertisingMediaReady} onPress={advertisingDestinationAction(advertisingOpportunity.ad.destination) ? openAdvertising : undefined} />
+      </View> : null}
+      {discoveryItems.filter((item) => item.kind === 'live_stream').length === 0 ? (
         <Text style={s.emptyText}>No hay transmisiones en vivo</Text>
       ) : (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
-          {streams.map(stream => (
+          {discoveryItems.filter((item): item is { kind: 'live_stream'; stream: LiveStream } => item.kind === 'live_stream').map(({ stream }) => (
             <Pressable
               key={stream.id}
               style={({ pressed }) => [s.card, pressed && { opacity: 0.85 }]}

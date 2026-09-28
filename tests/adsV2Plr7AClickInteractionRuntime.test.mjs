@@ -232,7 +232,7 @@ test("safe destination behavior remains limited to http and https", async () => 
 
 test("Home Feed CTA uses the confirmed impression and canonical click controller", () => {
   const feed = readFileSync(new URL("../app/(tabs)/index.tsx", import.meta.url), "utf8");
-  assert.match(feed, /recordAdvertisingV2SocialFeedClick/);
+  assert.match(feed, /recordAdvertisingV2Click/);
   assert.match(feed, /createAdvertisingV2ClickController/);
   assert.match(feed, /confirmedImpressionId\(item\.eventKey\)/);
   assert.match(feed, /navigateAdvertisingV2WithClick/);

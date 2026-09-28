@@ -627,7 +627,8 @@ export type AdvertisingTargetingCapabilities = {
   policyVersion: string;
   advertiserMinimumAge: number;
   audienceMinimumAge: number;
-  ageScope: "adults_only";
+  audienceMaximumAge: number;
+  ageScope: "age_range";
   geoTargetingEnabled: boolean;
   languageTargetingEnabled: boolean;
   daypartTargetingEnabled: boolean;
@@ -642,12 +643,13 @@ export type AdvertisingTargetingCapabilities = {
 
 function parseAdvertisingTargetingCapabilities(value: unknown): AdvertisingTargetingCapabilities {
   const row = object(value, "advertising_targeting_capabilities_invalid");
-  if (row.age_scope !== "adults_only") throw new Error("advertising_targeting_capabilities_invalid");
+  if (row.age_scope !== "age_range") throw new Error("advertising_targeting_capabilities_invalid");
   return {
     policyVersion: string(row.policy_version, "advertising_targeting_capabilities_invalid"),
     advertiserMinimumAge: number(row.advertiser_minimum_age),
     audienceMinimumAge: number(row.audience_minimum_age),
-    ageScope: "adults_only",
+    audienceMaximumAge: number(row.audience_maximum_age),
+    ageScope: "age_range",
     geoTargetingEnabled: row.geo_targeting_enabled === true,
     languageTargetingEnabled: row.language_targeting_enabled === true,
     daypartTargetingEnabled: row.daypart_targeting_enabled === true,
@@ -671,12 +673,61 @@ export async function getAdvertisingTargetingCapabilities(client: BusinessSupaba
 }
 
 export type AdvertisingAudienceDefinition = {
-  age_scope: "adults_only";
+  age_scope: "adults_only" | "age_range";
+  min_age?: number;
+  max_age?: number | null;
   geographies: Array<{ mode: "include" | "exclude"; type: "country" | "region" | "city" | "radius"; country_code: string; region_code?: string; city_name?: string; latitude?: number; longitude?: number; radius_km?: number }>;
   languages: Array<{ mode: "include" | "exclude"; tag: string }>;
   dayparts: Array<{ timezone: string; weekday: number; start: string; end: string }>;
   frequency: { max_impressions: number; window_hours: number } | null;
 };
+
+export type AdvertisingPlacementCapability = {
+  code: "social_feed" | "clips" | "stories" | "live" | "marketplace_home" | "marketplace_search";
+  label: string;
+  surfaceFamily: string;
+  selectionEnabled: boolean;
+  adapterReady: boolean;
+  productionDeliveryEnabled: boolean;
+};
+
+export type AdvertisingPlacementCapabilities = {
+  authority: string;
+  launchMode: string;
+  placements: AdvertisingPlacementCapability[];
+};
+
+function parseAdvertisingPlacementCapabilities(value: unknown): AdvertisingPlacementCapabilities {
+  const row = object(value, "advertising_placement_capabilities_invalid");
+  const allowed = new Set(["social_feed", "clips", "stories", "live", "marketplace_home", "marketplace_search"]);
+  const parsed = array(row.placements, "advertising_placement_capabilities_invalid").map((value) => {
+    const placement = object(value, "advertising_placement_capabilities_invalid");
+    const code = string(placement.code, "advertising_placement_capabilities_invalid");
+    if (!allowed.has(code)) throw new Error("advertising_placement_capabilities_invalid");
+    return {
+      code: code as AdvertisingPlacementCapability["code"],
+      label: string(placement.label, "advertising_placement_capabilities_invalid"),
+      surfaceFamily: string(placement.surface_family, "advertising_placement_capabilities_invalid"),
+      selectionEnabled: placement.selection_enabled === true,
+      adapterReady: placement.adapter_ready === true,
+      productionDeliveryEnabled: placement.production_delivery_enabled === true,
+    };
+  });
+  return {
+    authority: string(row.authority, "advertising_placement_capabilities_invalid"),
+    launchMode: string(row.launch_mode, "advertising_placement_capabilities_invalid"),
+    placements: parsed,
+  };
+}
+
+export async function getAdvertisingPlacementCapabilities(client: BusinessSupabaseClient = supabase) {
+  return parseAdvertisingPlacementCapabilities(await advertisingRpc(
+    "get_my_advertising_placement_capabilities_v2",
+    undefined,
+    "No se pudo cargar el alcance de placements",
+    client,
+  ));
+}
 
 export async function createAdvertisingAdSetDraft(input: { campaignId: string; name: string; startsAt?: string | null; endsAt?: string | null }, idempotencyKey: string, client: BusinessSupabaseClient = supabase) {
   return object(await advertisingRpc("create_my_advertising_ad_set_draft", { p_campaign_id: input.campaignId, p_name: input.name.trim(), p_starts_at: input.startsAt || null, p_ends_at: input.endsAt || null, p_idempotency_key: idempotencyKey }, "No se pudo crear el Ad Set", client), "advertising_ad_set_invalid");

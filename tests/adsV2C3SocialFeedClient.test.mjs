@@ -78,7 +78,7 @@ function successfulImpressionInvoker() {
     calls,
     invoke: async (...args) => {
       calls.push(args);
-      return { data: { success: true, impression: { event_id: EVENT_KEY } }, error: null };
+      return { data: { success: true, placement: "social_feed", impression: { event_id: EVENT_KEY } }, error: null };
     },
   };
 }
@@ -226,15 +226,15 @@ test("B13 impression request sends one stable UUID event key", async () => {
   const { recordAdvertisingV2SocialFeedImpressionWithInvoker } = await deliveryClient();
   const transport = successfulImpressionInvoker();
   await recordAdvertisingV2SocialFeedImpressionWithInvoker(transport.invoke, AD_ID, EVENT_KEY);
-  assert.deepEqual(Object.keys(transport.calls[0][1].body).sort(), ["action", "ad_id", "event_key"]);
+  assert.deepEqual(Object.keys(transport.calls[0][1].body).sort(), ["action", "ad_id", "event_key", "placement"]);
   assert.equal(transport.calls[0][1].body.event_key, EVENT_KEY);
 });
 
-test("B14 impression request never sends placement", async () => {
+test("B14 impression request sends the wrapper's canonical social_feed placement", async () => {
   const { recordAdvertisingV2SocialFeedImpressionWithInvoker } = await deliveryClient();
   const transport = successfulImpressionInvoker();
   await recordAdvertisingV2SocialFeedImpressionWithInvoker(transport.invoke, AD_ID, EVENT_KEY);
-  assert.equal(Object.hasOwn(transport.calls[0][1].body, "placement"), false);
+  assert.equal(transport.calls[0][1].body.placement, "social_feed");
 });
 
 test("B15 impression request never sends viewer identity", async () => {
@@ -260,7 +260,7 @@ test("B16 an uncertain retry reuses the same event key", async () => {
   visible(controller, item);
   clock.tick(1000);
   await flush();
-  assert.deepEqual(calls, [[AD_ID, EVENT_KEY], [AD_ID, EVENT_KEY]]);
+  assert.deepEqual(calls, [[AD_ID, EVENT_KEY, "social_feed"], [AD_ID, EVENT_KEY, "social_feed"]]);
 });
 
 test("B17 the Ads V2 client emits no click or conversion request", async () => {
@@ -409,7 +409,7 @@ test("D33 50 percent for 1000ms with ready media records exactly once", async ()
   visible(controller, adsV2Item());
   clock.tick(1000);
   await flush();
-  assert.deepEqual(calls, [[AD_ID, EVENT_KEY]]);
+  assert.deepEqual(calls, [[AD_ID, EVENT_KEY, "social_feed"]]);
 });
 
 test("D34 visibility loss cancels a pending qualification", async () => {
@@ -431,7 +431,7 @@ test("D35 repeated visible callbacks do not duplicate qualification", async () =
   visible(controller, adsV2Item());
   clock.tick(500);
   await flush();
-  assert.deepEqual(calls, [[AD_ID, EVENT_KEY]]);
+  assert.deepEqual(calls, [[AD_ID, EVENT_KEY, "social_feed"]]);
 });
 
 test("D36 viewport re-entry after confirmation never duplicates", async () => {
@@ -478,7 +478,7 @@ test("D38 media becoming ready while visible starts a fresh full qualification",
   assert.equal(calls.length, 0);
   clock.tick(1);
   await flush();
-  assert.deepEqual(calls, [[AD_ID, EVENT_KEY]]);
+  assert.deepEqual(calls, [[AD_ID, EVENT_KEY, "social_feed"]]);
 
   const nativeVideo = readFileSync(
     new URL("../components/advertising/AdvertisingFeedVideoV2.native.tsx", import.meta.url),

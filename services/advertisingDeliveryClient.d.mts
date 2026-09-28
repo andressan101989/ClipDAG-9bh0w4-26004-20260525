@@ -5,6 +5,16 @@ export type AdvertisingDestinationType =
   | "marketplace_product"
   | "marketplace_store";
 
+export const ADVERTISING_V2_PLACEMENTS: readonly [
+  "social_feed",
+  "clips",
+  "stories",
+  "live",
+  "marketplace_home",
+  "marketplace_search",
+];
+export type AdvertisingPlacementCodeV2 = typeof ADVERTISING_V2_PLACEMENTS[number];
+
 export type AdvertisingDeliveryAdV2 = {
   ad_id: string;
   advertiser: { business_account_id: string; display_name: string };
@@ -39,8 +49,18 @@ export function parseAdvertisingDeliveryAdV2(value: unknown): AdvertisingDeliver
 export function fetchAdvertisingV2SocialFeedCandidateWithInvoker(
   invoke: AdsV2EdgeInvoker,
 ): Promise<AdvertisingDeliveryAdV2 | null>;
+export function fetchAdvertisingV2CandidateWithInvoker(
+  invoke: AdsV2EdgeInvoker,
+  placement: AdvertisingPlacementCodeV2,
+): Promise<AdvertisingDeliveryAdV2 | null>;
 export function recordAdvertisingV2SocialFeedImpressionWithInvoker(
   invoke: AdsV2EdgeInvoker,
+  adId: string,
+  eventKey: string,
+): Promise<string>;
+export function recordAdvertisingV2ImpressionWithInvoker(
+  invoke: AdsV2EdgeInvoker,
+  placement: AdvertisingPlacementCodeV2,
   adId: string,
   eventKey: string,
 ): Promise<string>;
@@ -50,6 +70,16 @@ export function recordAdvertisingV2SocialFeedClickWithInvoker(
   eventKey: string,
 ): Promise<string>;
 export function recordAdvertisingV2SocialFeedDestinationOpenWithInvoker(
+  invoke: AdsV2EdgeInvoker,
+  impressionEventId: string,
+  eventKey: string,
+): Promise<string>;
+export function recordAdvertisingV2ClickWithInvoker(
+  invoke: AdsV2EdgeInvoker,
+  impressionEventId: string,
+  eventKey: string,
+): Promise<string>;
+export function recordAdvertisingV2DestinationOpenWithInvoker(
   invoke: AdsV2EdgeInvoker,
   impressionEventId: string,
   eventKey: string,

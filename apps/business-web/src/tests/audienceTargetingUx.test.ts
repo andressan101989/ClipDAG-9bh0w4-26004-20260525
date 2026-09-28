@@ -27,7 +27,12 @@ describe("Audience targeting UX serialization", () => {
       expect.objectContaining({ timezone: "America/Caracas", weekday: "2", start: "13:00", end: "18:00" }),
     ]);
     expect(form.frequency).toEqual({ enabled: true, maxImpressions: "20", windowHours: "24" });
-    expect(serializeAudienceForm(form)).toEqual(realAudience);
+    expect(serializeAudienceForm(form)).toEqual({
+      ...realAudience,
+      age_scope: "age_range",
+      min_age: 18,
+      max_age: null,
+    });
     expect(formatAudienceSchedule(realAudience.dayparts)).toEqual([
       { primary: "Tuesday, 1:00 PM–6:00 PM", secondary: "America/Caracas" },
     ]);
@@ -71,7 +76,7 @@ describe("Audience targeting UX serialization", () => {
 
   it("accepts only the complete launch-safe capability invariant", () => {
     const safe: AdvertisingTargetingCapabilities = {
-      policyVersion: "nelyon-ads-targeting-v2", advertiserMinimumAge: 18, audienceMinimumAge: 18, ageScope: "adults_only",
+      policyVersion: "nelyon-ads-targeting-v3", advertiserMinimumAge: 18, audienceMinimumAge: 13, audienceMaximumAge: 120, ageScope: "age_range",
       geoTargetingEnabled: false, languageTargetingEnabled: false, daypartTargetingEnabled: true, frequencyTargetingEnabled: true,
       interestTargetingEnabled: false, behavioralTargetingEnabled: false, customAudiencesEnabled: false, lookalikeTargetingEnabled: false,
       sensitiveTargetingAllowed: false, preciseViewerLocationMatchingEnabled: false,

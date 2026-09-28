@@ -5,10 +5,11 @@ import { AudienceTargetingPanel } from "../components/ads/AudienceTargetingPanel
 import type { AdvertisingAudienceDefinition, AdvertisingTargetingCapabilities } from "../lib/adsManagerApi";
 
 const capabilities: AdvertisingTargetingCapabilities = {
-  policyVersion: "nelyon-ads-targeting-v2",
+  policyVersion: "nelyon-ads-targeting-v3",
   advertiserMinimumAge: 18,
-  audienceMinimumAge: 18,
-  ageScope: "adults_only",
+  audienceMinimumAge: 13,
+  audienceMaximumAge: 120,
+  ageScope: "age_range",
   geoTargetingEnabled: false,
   languageTargetingEnabled: false,
   daypartTargetingEnabled: true,
@@ -49,7 +50,7 @@ describe("AudienceTargetingPanel", () => {
   it("renders a customer summary without JSON, UUIDs, policy names, or internal fields", () => {
     const { container } = renderPanel();
 
-    expect(screen.getByText("Adults 18+")).toBeInTheDocument();
+    expect(screen.getByText("Ages 18+")).toBeInTheDocument();
     expect(screen.getByText("Tuesday, 1:00 PM–6:00 PM")).toBeInTheDocument();
     expect(screen.getByText("America/Caracas")).toBeInTheDocument();
     expect(screen.getByText("Up to 20 impressions every 1 day")).toBeInTheDocument();

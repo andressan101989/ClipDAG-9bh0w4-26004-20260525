@@ -70,15 +70,15 @@ describe("Ads Manager canonical API", () => {
 
   it("discovers the launch targeting scope through the self-only capability RPC", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: {
-      policy_version: "nelyon-ads-targeting-v2", advertiser_minimum_age: 18, audience_minimum_age: 18,
-      age_scope: "adults_only", geo_targeting_enabled: false, language_targeting_enabled: false,
+      policy_version: "nelyon-ads-targeting-v3", advertiser_minimum_age: 18, audience_minimum_age: 13,
+      audience_maximum_age: 120, age_scope: "age_range", geo_targeting_enabled: false, language_targeting_enabled: false,
       daypart_targeting_enabled: true, frequency_targeting_enabled: true,
       interest_targeting_enabled: false, behavioral_targeting_enabled: false,
       custom_audiences_enabled: false, lookalike_targeting_enabled: false,
       sensitive_targeting_allowed: false, precise_viewer_location_matching_enabled: false,
     }, error: null });
     const capabilities = await getAdvertisingTargetingCapabilities({ rpc } as unknown as BusinessSupabaseClient);
-    expect(capabilities).toMatchObject({ policyVersion: "nelyon-ads-targeting-v2", ageScope: "adults_only", geoTargetingEnabled: false, languageTargetingEnabled: false, daypartTargetingEnabled: true, frequencyTargetingEnabled: true });
+    expect(capabilities).toMatchObject({ policyVersion: "nelyon-ads-targeting-v3", audienceMinimumAge: 13, audienceMaximumAge: 120, ageScope: "age_range", geoTargetingEnabled: false, languageTargetingEnabled: false, daypartTargetingEnabled: true, frequencyTargetingEnabled: true });
     expect(rpc).toHaveBeenCalledWith("get_my_advertising_targeting_capabilities");
     expect(rpc.mock.calls.flat().join(" ")).not.toContain("p_user_id");
   });

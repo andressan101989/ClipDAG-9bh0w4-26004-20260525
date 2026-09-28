@@ -3,7 +3,7 @@ import test from "node:test";
 
 const contractUrl = new URL("../supabase/functions/ads-v2-delivery/contract.mjs", import.meta.url);
 
-test("candidates derive the viewer and clamp social_feed to one result", async () => {
+test("candidates derive the viewer and clamp each canonical placement to one result", async () => {
   const { executeAdsV2DeliveryAction } = await import(contractUrl);
   const calls = [];
   const rpc = async (name, args) => {
@@ -11,28 +11,28 @@ test("candidates derive the viewer and clamp social_feed to one result", async (
     if (name === "fetch_advertising_delivery_candidates_v2") return { data: [{ ad_id: "10000000-0000-4000-8000-000000000001" }], error: null };
     return { data: { ad_id: args.p_ad_id, advertiser: { business_account_id: "20000000-0000-4000-8000-000000000001", display_name: "Nelyon" }, creative: { format: "image", primary_text: "Hello", headline: null, description: null, call_to_action: "learn_more", media: { kind: "image", url: "https://example.test/ad.jpg", thumbnail_url: null } }, destination: { destination_type: "nelyon_profile", external_url: null, target_user_id: "30000000-0000-4000-8000-000000000001", target_business_account_id: null, target_product_id: null, target_store_id: null } }, error: null };
   };
-  const result = await executeAdsV2DeliveryAction({ action: "candidates", placement: "social_feed", limit: 99 }, "40000000-0000-4000-8000-000000000001", rpc);
+  const result = await executeAdsV2DeliveryAction({ action: "candidates", placement: "stories" }, "40000000-0000-4000-8000-000000000001", rpc);
   assert.equal(result.ads.length, 1);
-  assert.deepEqual(calls[0], ["fetch_advertising_delivery_candidates_v2", { p_placement_code: "social_feed", p_viewer_user_id: "40000000-0000-4000-8000-000000000001", p_limit: 1, p_at_time: null }]);
+  assert.deepEqual(calls[0], ["fetch_advertising_delivery_candidates_v2", { p_placement_code: "stories", p_viewer_user_id: "40000000-0000-4000-8000-000000000001", p_limit: 1, p_at_time: null }]);
   assert.equal(calls[1][0], "get_advertising_delivery_render_payload_v2");
   assert.equal(JSON.stringify(result).includes("viewer_user_id"), false);
 });
 
-test("viewer overrides and non-social placements are denied", async () => {
+test("viewer overrides and unknown placements are denied", async () => {
   const { executeAdsV2DeliveryAction } = await import(contractUrl);
   const rpc = async () => ({ data: [], error: null });
   await assert.rejects(() => executeAdsV2DeliveryAction({ action: "candidates", placement: "social_feed", viewer_user_id: "50000000-0000-4000-8000-000000000001" }, "40000000-0000-4000-8000-000000000001", rpc), /viewer_override_denied/);
-  await assert.rejects(() => executeAdsV2DeliveryAction({ action: "candidates", placement: "stories" }, "40000000-0000-4000-8000-000000000001", rpc), /placement_invalid/);
+  await assert.rejects(() => executeAdsV2DeliveryAction({ action: "candidates", placement: "unknown" }, "40000000-0000-4000-8000-000000000001", rpc), /placement_invalid/);
 });
 
 test("impression fixes viewer and placement and returns only the event id", async () => {
   const { executeAdsV2DeliveryAction } = await import(contractUrl);
   const calls = [];
   const rpc = async (name, args) => { calls.push([name, args]); return { data: { id: "60000000-0000-4000-8000-000000000001", viewer_user_id: args.p_viewer_user_id }, error: null }; };
-  const body = { action: "impression", ad_id: "10000000-0000-4000-8000-000000000001", event_key: "70000000-0000-4000-8000-000000000001" };
+  const body = { action: "impression", placement: "clips", ad_id: "10000000-0000-4000-8000-000000000001", event_key: "70000000-0000-4000-8000-000000000001" };
   const result = await executeAdsV2DeliveryAction(body, "40000000-0000-4000-8000-000000000001", rpc);
-  assert.deepEqual(calls, [["record_advertising_impression_v2", { p_ad_id: body.ad_id, p_placement_code: "social_feed", p_viewer_user_id: "40000000-0000-4000-8000-000000000001", p_event_key: body.event_key }]]);
-  assert.deepEqual(result, { success: true, placement: "social_feed", impression: { event_id: "60000000-0000-4000-8000-000000000001" } });
+  assert.deepEqual(calls, [["record_advertising_impression_v2", { p_ad_id: body.ad_id, p_placement_code: "clips", p_viewer_user_id: "40000000-0000-4000-8000-000000000001", p_event_key: body.event_key }]]);
+  assert.deepEqual(result, { success: true, placement: "clips", impression: { event_id: "60000000-0000-4000-8000-000000000001" } });
 });
 
 test("request handler denies missing authentication before executing an action", async () => {
@@ -70,10 +70,10 @@ test("empty or inconsistent candidates fail closed", async () => {
 test("impression denies viewer and placement overrides and preserves an exact retry key", async () => {
   const { executeAdsV2DeliveryAction } = await import(contractUrl);
   const viewer = "40000000-0000-4000-8000-000000000001";
-  const body = { action: "impression", ad_id: "10000000-0000-4000-8000-000000000001", event_key: "70000000-0000-4000-8000-000000000001" };
+  const body = { action: "impression", placement: "social_feed", ad_id: "10000000-0000-4000-8000-000000000001", event_key: "70000000-0000-4000-8000-000000000001" };
   const calls = [];
   const rpc = async (name, args) => { calls.push([name, args]); return { data: { id: "60000000-0000-4000-8000-000000000001" }, error: null }; };
-  await assert.rejects(() => executeAdsV2DeliveryAction({ ...body, placement: "social_feed" }, viewer, rpc), /placement_override_denied/);
+  await assert.rejects(() => executeAdsV2DeliveryAction({ ...body, campaign_id: "50000000-0000-4000-8000-000000000001" }, viewer, rpc), /impression_context_override_denied/);
   await assert.rejects(() => executeAdsV2DeliveryAction({ ...body, userId: viewer }, viewer, rpc), /viewer_override_denied/);
   await executeAdsV2DeliveryAction(body, viewer, rpc);
   await executeAdsV2DeliveryAction(body, viewer, rpc);

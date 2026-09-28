@@ -1,12 +1,42 @@
+import type { AdvertisingPlacementCodeV2 } from "./advertisingDeliveryClient.mjs";
+
 export const ADS_V2_VIEWABILITY_CONFIG: Readonly<{
   itemVisiblePercentThreshold: 50;
 }>;
 
 export type AdvertisingV2FeedItem<TAd> = {
   kind: "advertising_v2";
+  placement: AdvertisingPlacementCodeV2;
   ad: TAd;
   eventKey: string;
 };
+
+export type AdvertisingV2PlacementOpportunity<TAd> = {
+  placement: AdvertisingPlacementCodeV2;
+  ad: TAd;
+  eventKey: string;
+  afterOrganic: number;
+};
+
+export function mixPlacementAdvertisingV2<TItem, TAd>(
+  items: TItem[],
+  opportunities: AdvertisingV2PlacementOpportunity<TAd>[],
+): Array<TItem | AdvertisingV2FeedItem<TAd>>;
+
+export function composeAdvertisingV2StorySequence<TStory, TAd>(
+  stories: TStory[],
+  opportunity: Omit<AdvertisingV2PlacementOpportunity<TAd>, "afterOrganic"> | null,
+): Array<{ kind: "organic_story"; story: TStory } | (AdvertisingV2FeedItem<TAd> & { placement: AdvertisingPlacementCodeV2 })>;
+
+export function mixLiveDiscoveryAdvertisingV2<TStream, TAd>(
+  streams: TStream[],
+  opportunity: Omit<AdvertisingV2PlacementOpportunity<TAd>, "afterOrganic"> | null,
+): Array<{ kind: "live_stream"; stream: TStream } | (AdvertisingV2FeedItem<TAd> & { placement: AdvertisingPlacementCodeV2 })>;
+
+export function selectMarketplaceSponsoredAuthority<TAd, TLegacy>(
+  opportunity: Omit<AdvertisingV2PlacementOpportunity<TAd>, "afterOrganic"> | null,
+  legacy: TLegacy[],
+): { authority: "ads_v2" | "legacy"; opportunity: Omit<AdvertisingV2PlacementOpportunity<TAd>, "afterOrganic"> | null; legacy: TLegacy[] };
 
 export type AdvertisingV2Opportunity<TAd> = {
   viewerUserId: string;
@@ -32,7 +62,7 @@ export function mixSocialFeedAdvertisingV2<TItem extends { kind: string }, TAd>(
 ): Array<TItem | AdvertisingV2FeedItem<TAd>>;
 
 export function createAdvertisingV2ImpressionController(
-  recordImpression: (adId: string, eventKey: string) => Promise<unknown>,
+  recordImpression: (adId: string, eventKey: string, placement: AdvertisingPlacementCodeV2) => Promise<unknown>,
   scheduler?: {
     setTimeout?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
     clearTimeout?: (timer: ReturnType<typeof setTimeout>) => void;
