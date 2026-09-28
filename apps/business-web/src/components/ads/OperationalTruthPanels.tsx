@@ -85,6 +85,7 @@ function BudgetPanel({ campaign, finance, billing, owner, pending, onCreateBudge
   const [budget, setBudget] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [confirmFunding, setConfirmFunding] = useState(false);
+  const placementRates = billing?.placementRates ?? [];
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -142,7 +143,8 @@ function BudgetPanel({ campaign, finance, billing, owner, pending, onCreateBudge
       </form>
       <div className="readonly-note"><strong>Set a budget to check Funding availability.</strong><span>No money moves when a budget draft is saved.</span></div>
     </>}
-    {billing && <div className="readonly-note"><strong>{billing.rateStatus === "available" ? `Billing basis: ${billing.billingBasis?.replaceAll("_", " ")}` : "Billing rate is not available."}</strong><span>{billing.rateStatus === "available" && billing.rateBdag != null ? `${formatBdag(billing.rateBdag)} per canonical ${billing.billableEventType}. Charges are calculated only by the server.` : "This Campaign is not billing-launch-ready until the canonical rate authority reports an applicable published rate."}</span></div>}
+    {billing && <div className="readonly-note"><strong>{billing.rateStatus === "available" ? `Billing basis: ${billing.billingBasis?.replaceAll("_", " ")}` : "Billing rate coverage is not complete."}</strong><span>{billing.rateStatus === "available" ? `${billing.coveredPlacementCount ?? placementRates.filter((rate) => rate.rateStatus === "available").length}/${billing.selectedPlacementCount ?? placementRates.length} selected placements have a canonical published rate. Charges are calculated only by the server.` : "This Campaign is not billing-launch-ready until every selected placement has an applicable published rate."}</span></div>}
+    {placementRates.length > 0 && <div className="readonly-note"><strong>Rates by placement</strong><ul>{placementRates.map((rate) => <li key={rate.placementCode}><span>{rate.placementCode.replaceAll("_", " ")}: {rate.rateStatus === "available" && rate.rateBdag != null ? `${formatBdag(rate.rateBdag)} / ${rate.billableEventType}` : "Rate unavailable"}</span></li>)}</ul></div>}
   </section>;
 }
 

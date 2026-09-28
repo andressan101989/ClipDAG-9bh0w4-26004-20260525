@@ -25,7 +25,7 @@ beforeEach(()=>{
   vi.mocked(searchAdminAdvertisingCampaigns).mockResolvedValue({items:[],next_cursor:null,page_size:0,authority:"ads_v2"});
   vi.mocked(searchAdminAdvertisingAds).mockResolvedValue([]);
   vi.mocked(searchAdminAdvertisingBillingRates).mockResolvedValue({items:[],next_cursor:null});
-  vi.mocked(getAdminAdvertisingBillingHealth).mockResolvedValue({authority:"ads_v2",launch_mode:"DISARMED",billing_cutover_at:"2026-09-28T00:17:06Z",production_rate_coverage_ready:false,production_rate_coverage:{ready:false},rate_versions:{draft:0,published:0,retired:0},authorization_windows:{open:0,closed:0},materializations:{pending:0,active_pending:0,charged:0,budget_exhausted:0,oldest_pending_at:null},active_pending_reservation_anomalies:0,cron_jobs:[]});
+  vi.mocked(getAdminAdvertisingBillingHealth).mockResolvedValue({authority:"ads_v2",launch_mode:"DISARMED",billing_cutover_at:"2026-09-28T00:17:06Z",pricing_policy:"nelyon-ads-pricing-v1",production_rate_coverage_ready:true,production_rate_coverage:{required_count:54,covered_count:54,missing_count:0,ready:true},production_rate_coverage_by_placement:["clips","live","marketplace_home","marketplace_search","social_feed","stories"].map((placement_code)=>({placement_code,required_count:9,covered_count:9,missing_count:0,ready:true})),rate_versions:{draft:0,published:54,retired:0},authorization_windows:{open:0,closed:0},materializations:{pending:0,active_pending:0,charged:0,budget_exhausted:0,oldest_pending_at:null},active_pending_reservation_anomalies:0,cron_jobs:[]});
   vi.mocked(getAdminAdvertisingHealth).mockResolvedValue({authority:"ads_v2",production_delivery_ready:false,blockers:["age_authority_unavailable","campaign_activation_disabled","campaign_automatic_transitions_disabled","finance_funding_disabled","global_delivery_disabled","no_v2_placement_enabled"],capability_not_enabled:["geo_matching_disabled","language_matching_disabled"],identity:{business_accounts:47,ad_accounts:47},age:{age_eligibility_rows:0,advertiser_eligible_rows:0,advertiser_eligibility_operational:false},targeting:{targeting_policy_version:"nelyon-ads-targeting-v2",geo_targeting_enabled:false,language_targeting_enabled:false,daypart_targeting_enabled:true,frequency_targeting_enabled:true},delivery:{delivery_policy_version:"nelyon-ads-delivery-v2",global_v2_delivery_enabled:false,enabled_placement_count:0,campaign_activation_implemented:true},lifecycle:{policy_version:"nelyon-ads-campaign-lifecycle-v1",activation_enabled:false,automatic_transitions_enabled:false},events:{event_policy_version:"nelyon-ads-events-v1",events:0},finance:{finance_policy_version:"nelyon-ads-finance-v1",funding_enabled:false}});
 });
 
@@ -177,6 +177,8 @@ describe("ADS-V2-J Admin Web",()=>{
     render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
     expect(await screen.findByText("Rates & billing health")).toBeInTheDocument();
     expect(screen.getByText("DISARMED")).toBeInTheDocument();
+    expect(screen.getByText("Coverage by placement")).toBeInTheDocument();
+    expect(screen.getAllByText("9/9 ready")).toHaveLength(6);
     expect(screen.getByText("No Ads billing rates")).toBeInTheDocument();
     expect(screen.queryByRole("button",{name:"Create draft"})).not.toBeInTheDocument();
     expect(screen.queryByRole("button",{name:/launch|production|open window/i})).not.toBeInTheDocument();

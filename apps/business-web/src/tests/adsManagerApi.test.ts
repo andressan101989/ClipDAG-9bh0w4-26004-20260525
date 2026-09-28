@@ -21,6 +21,7 @@ import {
   getMyAgeEligibility,
   getAdvertisingPlacementSelection,
   getAdvertisingCreativeWorkspace,
+  getAdvertisingCampaignBilling,
   isAdvertisingFinanceNotFound,
   remediateMyAgeEligibility,
   activateAdvertisingCampaign,
@@ -56,6 +57,30 @@ const campaign = {
 
 describe("Ads Manager canonical API", () => {
   beforeEach(() => vi.restoreAllMocks());
+
+  it("parses canonical per-placement rates without calculating price in the browser", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: {
+      campaign_id: "campaign-1", objective: "traffic", objective_status: "supported",
+      delivery_runtime_ready: true, billing_runtime_ready: true, conversion_runtime_ready: false,
+      billable_event_type: "click", billing_basis: "per_click", rate_status: "available",
+      rate_version_id: null, rate_bdag: "36.00000000", rate_currency: "BDAG", rate_scope: "global",
+      selected_placement_count: 2, covered_placement_count: 2,
+      placement_rates: [
+        { placement_code: "clips", rate_status: "available", rate_version_id: "11111111-1111-4111-8111-111111111111", rate_bdag: "36.00000000", currency: "BDAG", billable_event_type: "click", effective_from: "2026-09-28T22:00:00Z", effective_to: null },
+        { placement_code: "social_feed", rate_status: "available", rate_version_id: "22222222-2222-4222-8222-222222222222", rate_bdag: "36.00000000", currency: "BDAG", billable_event_type: "click", effective_from: "2026-09-28T22:00:00Z", effective_to: null },
+      ],
+      finance_status: "funded", budget_bdag: "100", funded_bdag: "100", spent_bdag: "0", released_bdag: "0",
+      pending_reserved_bdag: "0", available_to_reserve_bdag: "100", reservation_consistent: true,
+      anomaly_code: null, next_billable_unit_ready: true, next_billable_unit_blocker: null,
+    }, error: null });
+    const result = await getAdvertisingCampaignBilling("campaign-1", { rpc } as unknown as BusinessSupabaseClient);
+    expect(result.placementRates).toEqual([
+      expect.objectContaining({ placementCode: "clips", rateBdag: 36, billableEventType: "click" }),
+      expect.objectContaining({ placementCode: "social_feed", rateBdag: 36, billableEventType: "click" }),
+    ]);
+    expect(result.selectedPlacementCount).toBe(2);
+    expect(result.coveredPlacementCount).toBe(2);
+  });
 
   it("reads and remediates only the current actor through canonical age RPCs", async () => {
     const payload = { status: "eligible", age_band: "age_18_plus", evaluated: true, advertiser_18_plus_eligible: true, policy_version: "nelyon-age-v2", minimum_age: 13 };

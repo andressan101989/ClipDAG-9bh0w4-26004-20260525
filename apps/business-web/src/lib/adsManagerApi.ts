@@ -420,6 +420,16 @@ export type AdvertisingObjectiveCapabilities = {
   capabilityVersion: string;
   objectives: AdvertisingObjectiveCapability[];
 };
+export type AdvertisingPlacementRate = {
+  placementCode: string;
+  rateStatus: string;
+  rateVersionId: string | null;
+  rateBdag: number | null;
+  currency: string | null;
+  billableEventType: string | null;
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
+};
 export type AdvertisingCampaignBilling = {
   campaignId: string;
   objective: string;
@@ -434,6 +444,9 @@ export type AdvertisingCampaignBilling = {
   rateBdag: number | null;
   rateCurrency: string | null;
   rateScope: string | null;
+  selectedPlacementCount: number;
+  coveredPlacementCount: number;
+  placementRates: AdvertisingPlacementRate[];
   financeStatus: string;
   budgetBdag: number;
   fundedBdag: number;
@@ -852,12 +865,26 @@ export async function fundAdvertisingCampaignBudget(campaignId: string, idempote
 export async function getAdvertisingCampaignBilling(campaignId: string, client: BusinessSupabaseClient = supabase): Promise<AdvertisingCampaignBilling> {
   const row = object(await advertisingRpc("get_my_advertising_campaign_billing_v2", { p_campaign_id: campaignId }, "No se pudo cargar la facturación publicitaria", client), "advertising_billing_invalid");
   const nullableNumber = (value: unknown) => value == null ? null : number(value);
+  const placementRates = array(row.placement_rates, "advertising_billing_invalid").map((value) => {
+    const rate = object(value, "advertising_billing_invalid");
+    return {
+      placementCode: string(rate.placement_code, "advertising_billing_invalid"),
+      rateStatus: string(rate.rate_status, "advertising_billing_invalid"),
+      rateVersionId: optionalString(rate.rate_version_id),
+      rateBdag: nullableNumber(rate.rate_bdag),
+      currency: optionalString(rate.currency),
+      billableEventType: optionalString(rate.billable_event_type),
+      effectiveFrom: optionalString(rate.effective_from),
+      effectiveTo: optionalString(rate.effective_to),
+    };
+  });
   return {
     campaignId: string(row.campaign_id, "advertising_billing_invalid"), objective: string(row.objective, "advertising_billing_invalid"),
     objectiveStatus: string(row.objective_status, "advertising_billing_invalid"), deliveryRuntimeReady: row.delivery_runtime_ready === true,
     billingRuntimeReady: row.billing_runtime_ready === true, conversionRuntimeReady: row.conversion_runtime_ready === true,
     billableEventType: optionalString(row.billable_event_type), billingBasis: optionalString(row.billing_basis), rateStatus: string(row.rate_status, "advertising_billing_invalid"),
     rateVersionId: optionalString(row.rate_version_id), rateBdag: nullableNumber(row.rate_bdag), rateCurrency: optionalString(row.rate_currency), rateScope: optionalString(row.rate_scope),
+    selectedPlacementCount: number(row.selected_placement_count), coveredPlacementCount: number(row.covered_placement_count), placementRates,
     financeStatus: string(row.finance_status, "advertising_billing_invalid"), budgetBdag: number(row.budget_bdag), fundedBdag: number(row.funded_bdag),
     spentBdag: number(row.spent_bdag), releasedBdag: number(row.released_bdag), pendingReservedBdag: number(row.pending_reserved_bdag),
     availableToReserveBdag: number(row.available_to_reserve_bdag), reservationConsistent: row.reservation_consistent === true,
