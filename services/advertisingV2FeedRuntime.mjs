@@ -237,6 +237,65 @@ export function createAdvertisingV2DestinationOpenController(recordDestinationOp
   return createAdvertisingV2InteractionController(recordDestinationOpen, createEventKey, "ads_v2_destination_open_parent_conflict");
 }
 
+export function createAdvertisingV2VideoViewController(recordVideoView, createEventKey) {
+  return createAdvertisingV2InteractionController(recordVideoView, createEventKey, "ads_v2_video_view_parent_conflict");
+}
+
+export function createAdvertisingV2VideoQualificationController(onQualified, requiredSeconds = 2) {
+  if (typeof onQualified !== "function" || !Number.isFinite(requiredSeconds) || requiredSeconds <= 0) {
+    throw new Error("ads_v2_video_qualification_invalid");
+  }
+  let ready = false;
+  let active = false;
+  let playing = false;
+  let hasPlayed = false;
+  let duration = null;
+  let lastTime = null;
+  let qualifiedSeconds = 0;
+  let emitted = false;
+  const clearSample = () => { lastTime = null; };
+  const emit = () => {
+    if (emitted) return;
+    emitted = true;
+    onQualified();
+  };
+  return {
+    setReady(value) { ready = value === true; if (!ready) clearSample(); },
+    setActive(value) { active = value === true; if (!active) clearSample(); },
+    setPlaying(value) {
+      playing = value === true;
+      if (playing) hasPlayed = true;
+      else clearSample();
+    },
+    setDuration(value) { duration = Number.isFinite(value) && value > 0 ? Number(value) : null; },
+    observeTime(value) {
+      const current = Number(value);
+      if (!Number.isFinite(current)) return;
+      if (!ready || !active || !playing) { clearSample(); return; }
+      const previous = lastTime;
+      lastTime = current;
+      if (previous === null) return;
+      const delta = current - previous;
+      if (delta <= 0 || delta > 1) return;
+      qualifiedSeconds += delta;
+      if (qualifiedSeconds >= requiredSeconds) emit();
+    },
+    complete() {
+      if (ready && active && hasPlayed && duration !== null && duration < requiredSeconds) emit();
+    },
+    reset() {
+      ready = false;
+      active = false;
+      playing = false;
+      hasPlayed = false;
+      duration = null;
+      lastTime = null;
+      qualifiedSeconds = 0;
+      emitted = false;
+    },
+  };
+}
+
 export async function navigateAdvertisingV2WithClick({
   opportunityKey,
   impressionEventId,
@@ -265,6 +324,7 @@ export async function navigateAdvertisingV2WithClick({
     const opened = await Promise.resolve().then(() => navigate()).then((result) => result !== false, () => false);
     if (opened && submitDestinationOpen) {
       void Promise.resolve()
+        .then(() => analytics)
         .then(() => submitDestinationOpen(opportunityKey, impressionEventId))
         .catch(() => null);
     }

@@ -2,6 +2,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const DESTINATION_TYPES = new Set([
   "external_url",
   "nelyon_profile",
+  "nelyon_message",
   "business_account",
   "marketplace_product",
   "marketplace_store",
@@ -191,6 +192,10 @@ export async function recordAdvertisingV2DestinationOpenWithInvoker(invoke, impr
   return recordAdvertisingV2InteractionWithInvoker(invoke, impressionEventId, "destination_open", eventKey);
 }
 
+export async function recordAdvertisingV2VideoViewWithInvoker(invoke, impressionEventId, eventKey) {
+  return recordAdvertisingV2InteractionWithInvoker(invoke, impressionEventId, "video_view", eventKey);
+}
+
 async function recordAdvertisingV2InteractionWithInvoker(invoke, impressionEventId, eventType, eventKey) {
   const canonicalImpressionEventId = uuid(impressionEventId, "interaction.impression_event_id");
   const canonicalEventKey = uuid(eventKey, "interaction.event_key");
@@ -220,6 +225,9 @@ export function advertisingDestinationAction(destination) {
   if (destination.destination_type === "nelyon_profile" && destination.target_user_id) {
     return { kind: "route", pathname: "/creator/[id]", id: destination.target_user_id };
   }
+  if (destination.destination_type === "nelyon_message" && destination.target_user_id) {
+    return { kind: "route", pathname: "/chat/[userId]", id: destination.target_user_id };
+  }
   if (destination.destination_type === "marketplace_product" && destination.target_product_id) {
     return { kind: "route", pathname: "/product/[id]", id: destination.target_product_id };
   }
@@ -227,4 +235,11 @@ export function advertisingDestinationAction(destination) {
     return { kind: "route", pathname: "/store/[id]", id: destination.target_store_id };
   }
   return null;
+}
+
+export function advertisingDestinationRouteParams(action, impressionEventId) {
+  if (action.kind !== "route") return null;
+  return action.pathname === "/chat/[userId]"
+    ? { userId: action.id, ...(impressionEventId ? { advertisingImpressionEventId: impressionEventId } : {}) }
+    : { id: action.id };
 }

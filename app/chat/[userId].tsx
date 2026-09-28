@@ -39,6 +39,7 @@ import {
   clearActiveMessageConversation,
   setActiveMessageConversation,
 } from '@/services/messageNotificationPresentation';
+import { recordAdvertisingMessageStartConversion } from '@/services/chatService';
 
 const PREMIUM_COLOR  = '#FF9D00';
 const PREMIUM_COLOR2 = '#FF5A00';
@@ -240,7 +241,10 @@ const badge = StyleSheet.create({
 // ── Main chat screen ──────────────────────────────────────────────────────────
 export default function ChatScreen() {
   // Approved Figma: 02 — Direct Conversation — Sofia (FmwCrxtAV5k8jpLFr3RTgy, node 1:112).
-  const { userId: partnerId } = useLocalSearchParams<{ userId: string }>();
+  const { userId: partnerId, advertisingImpressionEventId } = useLocalSearchParams<{
+    userId: string;
+    advertisingImpressionEventId?: string;
+  }>();
   const insets = useSafeAreaInsets();
   const router  = useRouter();
   const { user } = useAuth();
@@ -263,6 +267,19 @@ export default function ChatScreen() {
   const [text,         setText]         = useState('');
   const [isSending,    setIsSending]    = useState(false);
   const [isUploading,  setIsUploading]  = useState(false);
+  const advertisingMessageRef = useRef<{ impressionId: string; messageId: string | null; confirmed: boolean }>({
+    impressionId: advertisingImpressionEventId ?? '',
+    messageId: null,
+    confirmed: false,
+  });
+
+  useEffect(() => {
+    advertisingMessageRef.current = {
+      impressionId: advertisingImpressionEventId ?? '',
+      messageId: null,
+      confirmed: false,
+    };
+  }, [advertisingImpressionEventId]);
   const [oneTimeMediaUrl, setOneTimeMediaUrl] = useState<string | null>(null);
   const [inputHeight,  setInputHeight]  = useState(INPUT_MIN_HEIGHT);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -403,7 +420,14 @@ export default function ChatScreen() {
     isSendingRef.current = true; setIsSending(true);
     setConversationTyping(partnerId, false);
     try {
-      await sendMessage(partnerId, text.trim());
+      const sent = await sendMessage(partnerId, text.trim());
+      const evidence = advertisingMessageRef.current;
+      if (evidence.impressionId && !evidence.confirmed) {
+        evidence.messageId ??= sent.id;
+        void recordAdvertisingMessageStartConversion(evidence.messageId, evidence.impressionId)
+          .then(() => { evidence.confirmed = true; })
+          .catch(() => undefined);
+      }
       setText(''); setInputHeight(INPUT_MIN_HEIGHT);
       scrollToLatest(true);
 

@@ -125,7 +125,7 @@ export const ADS_OPERATIONAL_RUNTIME: Readonly<AdsOperationalRuntime> = Object.f
   billingRuntime: false,
   fundingEnabled: false,
 });
-export type MetricKey = "impressions" | "clicks" | "destination_opens" | "video_views" | "engagements" | "ctr" | "conversions" | "attributed_conversions" | "marketplace_purchase_value_bdag" | "spend" | "cpc" | "cpm" | "cpa" | "cpc_bdag" | "cpm_bdag" | "conversion_rate" | "roas";
+export type MetricKey = "impressions" | "unique_reach" | "clicks" | "destination_opens" | "video_views" | "engagements" | "profile_visits" | "message_starts" | "app_store_opens" | "objective_results" | "ctr" | "conversions" | "attributed_conversions" | "marketplace_purchase_value_bdag" | "spend" | "cpc" | "cpm" | "cpa" | "cpc_bdag" | "cpm_bdag" | "conversion_rate" | "roas";
 export type MetricState = "measured" | "zero_no_delivery" | "not_available_yet" | "platform_disabled" | "not_applicable" | "no_data";
 export type MetricPresentation = { state: MetricState; display: string; detail: string | null };
 
@@ -158,9 +158,13 @@ export function metricPresentation(metric: MetricKey, value: unknown, runtime: A
     if (Number(value) === 0 && !runtime.deliveryEnabled) return { state: "zero_no_delivery", display: "0", detail: "No delivery yet" };
     return result;
   }
-  if (["clicks", "destination_opens", "video_views", "engagements", "ctr"].includes(metric)) {
+  if (["clicks", "destination_opens", "video_views", "engagements", "profile_visits", "message_starts", "app_store_opens", "objective_results", "ctr"].includes(metric)) {
     if (!runtime.interactionRuntime) return { state: "not_available_yet", display: "Not available yet", detail: "Interaction measurement is not available yet." };
     if (metric === "ctr" && context.impressions === 0) return { state: "measured", display: "—", detail: "No impressions yet" };
+    return measured(value);
+  }
+  if (metric === "unique_reach") {
+    if (!runtime.impressionRuntime) return { state: "not_available_yet", display: "Not available yet", detail: "Reach measurement is not available yet." };
     return measured(value);
   }
   if (metric === "conversions" && !runtime.conversionRuntime) return { state: "not_available_yet", display: "Not available yet", detail: "Conversion measurement is not available yet." };

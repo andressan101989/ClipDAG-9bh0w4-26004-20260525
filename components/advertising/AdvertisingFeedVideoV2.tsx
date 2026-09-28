@@ -2,7 +2,7 @@ import React from "react";
 import { StyleSheet, View } from "react-native";
 import { Image } from "@/components/ui/SafeImage";
 
-type Props = { url: string; thumbnailUrl: string | null; isActive: boolean; onReady: () => void };
+type Props = { url: string; thumbnailUrl: string | null; isActive: boolean; onReady: () => void; onQualifiedView?: () => void };
 
 export function AdvertisingFeedVideoV2({ thumbnailUrl }: Props) {
   return (

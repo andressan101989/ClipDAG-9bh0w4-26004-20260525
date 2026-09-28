@@ -85,16 +85,16 @@ test("Edge rejects all client-supplied Ads authority overrides", async () => {
   }
 });
 
-test("Edge keeps video_view and engagement outside the interaction runtime", async () => {
+test("Edge adds qualified video_view while engagement remains outside the interaction runtime", async () => {
   const { executeAdsV2DeliveryAction } = await import(edgeUrl);
-  const rpc = async () => ({ data: { id: interactionId }, error: null });
-  for (const eventType of ["video_view", "engagement"]) {
-    await assert.rejects(
-      () => executeAdsV2DeliveryAction({ ...interactionBody, event_type: eventType }, viewer, rpc),
-      /interaction_type_invalid/,
-      eventType,
-    );
-  }
+  const calls = [];
+  const rpc = async (name, args) => { calls.push([name, args]); return { data: { id: interactionId }, error: null }; };
+  await executeAdsV2DeliveryAction({ ...interactionBody, event_type: "video_view" }, viewer, rpc);
+  assert.equal(calls[0][1].p_event_type, "video_view");
+  await assert.rejects(
+    () => executeAdsV2DeliveryAction({ ...interactionBody, event_type: "engagement" }, viewer, rpc),
+    /interaction_type_invalid/,
+  );
 });
 
 test("Edge rejects malformed interaction identifiers and fails closed on RPC errors", async () => {

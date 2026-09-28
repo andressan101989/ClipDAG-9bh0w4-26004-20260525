@@ -2,6 +2,7 @@ import { getSupabaseClient } from "@/template";
 import {
   ADVERTISING_V2_PLACEMENTS,
   advertisingDestinationAction,
+  advertisingDestinationRouteParams,
   fetchAdvertisingV2CandidateWithInvoker,
   fetchAdvertisingV2SocialFeedCandidateWithInvoker,
   parseAdvertisingDeliveryAdV2,
@@ -9,6 +10,7 @@ import {
   recordAdvertisingV2ImpressionWithInvoker,
   recordAdvertisingV2ClickWithInvoker,
   recordAdvertisingV2DestinationOpenWithInvoker,
+  recordAdvertisingV2VideoViewWithInvoker,
 } from "@/services/advertisingDeliveryClient.mjs";
 import type {
   AdsV2EdgeInvoker,
@@ -21,6 +23,7 @@ import type {
 export {
   ADVERTISING_V2_PLACEMENTS,
   advertisingDestinationAction,
+  advertisingDestinationRouteParams,
   parseAdvertisingDeliveryAdV2,
 };
 export type {
@@ -63,4 +66,8 @@ export async function recordAdvertisingV2Click(impressionEventId: string, eventK
 
 export async function recordAdvertisingV2DestinationOpen(impressionEventId: string, eventKey: string): Promise<string> {
   return recordAdvertisingV2DestinationOpenWithInvoker(invokeAdsV2Delivery, impressionEventId, eventKey);
+}
+
+export async function recordAdvertisingV2VideoView(impressionEventId: string, eventKey: string): Promise<string> {
+  return recordAdvertisingV2VideoViewWithInvoker(invokeAdsV2Delivery, impressionEventId, eventKey);
 }

@@ -60,6 +60,7 @@ interface StoryViewerProps {
   onGetSharedContent?: (storyId: string) => Promise<StorySharedContent>;
   onAdvertisingActiveChange?: (story: StoryItem, active: boolean) => void;
   onAdvertisingMediaReady?: (story: StoryItem) => void;
+  onAdvertisingVideoViewQualified?: (story: StoryItem) => void;
   onAdvertisingPress?: (story: StoryItem) => void;
 }
 
@@ -154,6 +155,7 @@ export function StoryViewer({
   onGetSharedContent,
   onAdvertisingActiveChange,
   onAdvertisingMediaReady,
+  onAdvertisingVideoViewQualified,
   onAdvertisingPress,
 }: StoryViewerProps) {
   const insets = useSafeAreaInsets();
@@ -533,6 +535,7 @@ export function StoryViewer({
             ad={currentStory.advertisingV2.ad}
             isActive={visible}
             onMediaReady={() => { handleMediaReadyChange(currentStory.id, true); onAdvertisingMediaReady?.(currentStory); }}
+            onQualifiedVideoView={() => onAdvertisingVideoViewQualified?.(currentStory)}
             onPress={onAdvertisingPress ? () => onAdvertisingPress(currentStory) : undefined}
           />
         ) : currentStory.storyKind === 'shared' && onGetSharedContent ? (

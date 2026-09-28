@@ -116,6 +116,19 @@ export async function sendChatMessage(input: {
   return assertData(data as ChatMessageRow | null, error);
 }
 
+export async function recordAdvertisingMessageStartConversion(
+  messageId: string,
+  impressionEventId: string,
+): Promise<string> {
+  const { data, error } = await client().rpc('record_advertising_message_start_conversion_v2', {
+    p_message_id: messageId,
+    p_impression_event_id: impressionEventId,
+  });
+  const row = assertData(data as { conversion_id?: string } | null, error);
+  if (!row.conversion_id) throw new Error('advertising_message_conversion_invalid');
+  return row.conversion_id;
+}
+
 export async function fetchChatConversations(
   cursor?: ChatConversationCursor,
 ): Promise<ChatConversationPageRow[]> {

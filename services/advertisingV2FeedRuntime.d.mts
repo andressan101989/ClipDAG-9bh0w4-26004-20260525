@@ -81,6 +81,7 @@ export type AdvertisingV2ClickController = {
 };
 
 export type AdvertisingV2DestinationOpenController = AdvertisingV2ClickController;
+export type AdvertisingV2VideoViewController = AdvertisingV2ClickController;
 
 export function createAdvertisingV2ClickController(
   recordClick: (impressionEventId: string, eventKey: string) => Promise<string>,
@@ -91,6 +92,24 @@ export function createAdvertisingV2DestinationOpenController(
   recordDestinationOpen: (impressionEventId: string, eventKey: string) => Promise<string>,
   createEventKey: () => string,
 ): AdvertisingV2DestinationOpenController;
+
+export function createAdvertisingV2VideoViewController(
+  recordVideoView: (impressionEventId: string, eventKey: string) => Promise<string>,
+  createEventKey: () => string,
+): AdvertisingV2VideoViewController;
+
+export function createAdvertisingV2VideoQualificationController(
+  onQualified: () => void,
+  requiredSeconds?: number,
+): {
+  setReady(value: boolean): void;
+  setActive(value: boolean): void;
+  setPlaying(value: boolean): void;
+  setDuration(value: number | null | undefined): void;
+  observeTime(value: number): void;
+  complete(): void;
+  reset(): void;
+};
 
 export function navigateAdvertisingV2WithClick(input: {
   opportunityKey: string;

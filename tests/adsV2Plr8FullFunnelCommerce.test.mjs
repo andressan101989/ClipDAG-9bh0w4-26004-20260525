@@ -47,12 +47,11 @@ test("Edge still rejects viewer/context overrides and unsupported interaction ty
       /override_denied/,
     );
   }
-  for (const eventType of ["video_view", "engagement"]) {
-    await assert.rejects(
-      () => executeAdsV2DeliveryAction({ ...destinationBody, event_type: eventType }, viewer, rpc),
-      /interaction_type_invalid/,
-    );
-  }
+  await executeAdsV2DeliveryAction({ ...destinationBody, event_type: "video_view" }, viewer, rpc);
+  await assert.rejects(
+    () => executeAdsV2DeliveryAction({ ...destinationBody, event_type: "engagement" }, viewer, rpc),
+    /interaction_type_invalid/,
+  );
 });
 
 test("client sends destination_open without viewer, campaign, ad, placement, or destination authority", async () => {

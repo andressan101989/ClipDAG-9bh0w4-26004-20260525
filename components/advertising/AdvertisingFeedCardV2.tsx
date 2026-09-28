@@ -7,7 +7,13 @@ import { getVideoCardHeight } from "@/components/feature/VideoCard";
 import { Colors, FontSize, FontWeight, Radius, Shadow, Spacing } from "@/constants/theme";
 import type { AdvertisingDeliveryAdV2 } from "@/services/advertisingDeliveryService";
 
-type Props = { ad: AdvertisingDeliveryAdV2; isActive: boolean; onMediaReady: () => void; onPress?: () => void };
+type Props = {
+  ad: AdvertisingDeliveryAdV2;
+  isActive: boolean;
+  onMediaReady: () => void;
+  onQualifiedVideoView?: () => void;
+  onPress?: () => void;
+};
 
 const ctaLabels: Record<AdvertisingDeliveryAdV2["creative"]["call_to_action"], string | null> = {
   learn_more: "Más información",
@@ -20,7 +26,7 @@ const ctaLabels: Record<AdvertisingDeliveryAdV2["creative"]["call_to_action"], s
   none: null,
 };
 
-export const AdvertisingFeedCardV2 = memo(function AdvertisingFeedCardV2({ ad, isActive, onMediaReady, onPress }: Props) {
+export const AdvertisingFeedCardV2 = memo(function AdvertisingFeedCardV2({ ad, isActive, onMediaReady, onQualifiedVideoView, onPress }: Props) {
   const cta = ctaLabels[ad.creative.call_to_action];
   return (
     <View accessibilityLabel={`Patrocinado: ${ad.creative.headline ?? ad.advertiser.display_name}`} style={[styles.card, { width: Dimensions.get("window").width, height: getVideoCardHeight() }]}>
@@ -28,6 +34,7 @@ export const AdvertisingFeedCardV2 = memo(function AdvertisingFeedCardV2({ ad, i
         <AdvertisingFeedVideoV2
           isActive={isActive}
           onReady={onMediaReady}
+          onQualifiedView={onQualifiedVideoView}
           thumbnailUrl={ad.creative.media.thumbnail_url}
           url={ad.creative.media.url}
         />

@@ -59,10 +59,12 @@ import {
 import { AdvertisingFeedCardV2 } from "@/components/advertising/AdvertisingFeedCardV2";
 import {
   advertisingDestinationAction,
+  advertisingDestinationRouteParams,
   fetchAdvertisingV2Candidate,
   recordAdvertisingV2Click,
   recordAdvertisingV2DestinationOpen,
   recordAdvertisingV2Impression,
+  recordAdvertisingV2VideoView,
   type AdvertisingDeliveryAdV2,
   type AdvertisingPlacementCodeV2,
 } from "@/services/advertisingDeliveryService";
@@ -70,6 +72,7 @@ import {
   createAdvertisingV2ClickController,
   createAdvertisingV2DestinationOpenController,
   createAdvertisingV2ImpressionController,
+  createAdvertisingV2VideoViewController,
   loadAdvertisingV2Opportunity,
   navigateAdvertisingV2WithClick,
   selectMarketplaceSponsoredAuthority,
@@ -539,6 +542,10 @@ export default function ShopScreen() {
       randomUUID,
     ),
   );
+  const advertisingVideoView = useRef(
+    createAdvertisingV2VideoViewController(recordAdvertisingV2VideoView, randomUUID),
+  );
+  const [advertisingVisible, setAdvertisingVisible] = useState(false);
   const reputationAttempted = useRef(new Set<string>());
   const cardWidth = Math.max(
     136,
@@ -648,6 +655,7 @@ export default function ShopScreen() {
       advertisingImpression.current.dispose();
       advertisingClick.current.dispose();
       advertisingDestinationOpen.current.dispose();
+      advertisingVideoView.current.dispose();
     },
     [],
   );
@@ -753,7 +761,9 @@ export default function ShopScreen() {
     const opportunity = advertisingAuthority.opportunity;
     if (!opportunity) return;
     advertisingCardRef.current?.measureInWindow((_x, y, _width, height) => {
-      const visible = y < viewportHeight && y + height > 0;
+      const visiblePixels = Math.max(0, Math.min(y + height, viewportHeight) - Math.max(y, 0));
+      const visible = height > 0 && visiblePixels / height >= 0.5;
+      setAdvertisingVisible(visible);
       advertisingImpression.current({
         viewableItems: visible
           ? [{
@@ -782,25 +792,31 @@ export default function ShopScreen() {
     if (!opportunity) return;
     const action = advertisingDestinationAction(opportunity.ad.destination);
     if (!action) return;
+    const impressionEventId = advertisingImpression.current.confirmedImpressionId(opportunity.eventKey);
     const navigate = action.kind === "external"
       ? async () => {
           if (!(await Linking.canOpenURL(action.url).catch(() => false))) return false;
           return Linking.openURL(action.url).then(() => true, () => false);
         }
       : () => {
-          router.push({ pathname: action.pathname, params: { id: action.id } } as never);
+          router.push({ pathname: action.pathname, params: advertisingDestinationRouteParams(action, impressionEventId) } as never);
           return true;
         };
     void navigateAdvertisingV2WithClick({
       opportunityKey: opportunity.eventKey,
-      impressionEventId: advertisingImpression.current.confirmedImpressionId(
-        opportunity.eventKey,
-      ),
+      impressionEventId,
       submitClick: advertisingClick.current.submit,
       submitDestinationOpen: advertisingDestinationOpen.current.submit,
       navigate,
     }).catch(() => {});
   }, [advertisingAuthority.opportunity, router]);
+
+  const recordQualifiedAdvertisingVideoView = useCallback(() => {
+    const opportunity = advertisingAuthority.opportunity;
+    if (!opportunity) return;
+    const impressionEventId = advertisingImpression.current.confirmedImpressionId(opportunity.eventKey);
+    if (impressionEventId) void advertisingVideoView.current.submit(opportunity.eventKey, impressionEventId).catch(() => {});
+  }, [advertisingAuthority.opportunity]);
 
   const clearFilters = useCallback(() => {
     setSearch("");
@@ -908,8 +924,9 @@ export default function ShopScreen() {
         <View ref={advertisingCardRef} onLayout={updateAdvertisingVisibility}>
           <AdvertisingFeedCardV2
             ad={advertisingAuthority.opportunity.ad}
-            isActive
+            isActive={advertisingVisible}
             onMediaReady={confirmAdvertisingMediaReady}
+            onQualifiedVideoView={recordQualifiedAdvertisingVideoView}
             onPress={
               advertisingDestinationAction(
                 advertisingAuthority.opportunity.ad.destination,

@@ -93,7 +93,7 @@ export async function executeAdsV2DeliveryAction(body, viewerUserId, rpc) {
       || !hasOnlyKeys(body, new Set(["action", "impression_event_id", "event_type", "event_key"]))) {
       throw new AdsV2DeliveryError("interaction_context_override_denied", 403);
     }
-    if (body.event_type !== "click" && body.event_type !== "destination_open") {
+    if (body.event_type !== "click" && body.event_type !== "destination_open" && body.event_type !== "video_view") {
       throw new AdsV2DeliveryError("interaction_type_invalid");
     }
     if (!validUuid(body.impression_event_id) || !validUuid(body.event_key)) {

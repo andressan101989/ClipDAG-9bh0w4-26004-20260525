@@ -1,6 +1,7 @@
 export type AdvertisingDestinationType =
   | "external_url"
   | "nelyon_profile"
+  | "nelyon_message"
   | "business_account"
   | "marketplace_product"
   | "marketplace_store";
@@ -38,7 +39,7 @@ export type AdvertisingDeliveryAdV2 = {
 
 export type AdvertisingDestinationAction =
   | { kind: "external"; url: string }
-  | { kind: "route"; pathname: "/creator/[id]" | "/product/[id]" | "/store/[id]"; id: string };
+  | { kind: "route"; pathname: "/creator/[id]" | "/chat/[userId]" | "/product/[id]" | "/store/[id]"; id: string };
 
 export type AdsV2EdgeInvoker = (
   slug: string,
@@ -84,6 +85,15 @@ export function recordAdvertisingV2DestinationOpenWithInvoker(
   impressionEventId: string,
   eventKey: string,
 ): Promise<string>;
+export function recordAdvertisingV2VideoViewWithInvoker(
+  invoke: AdsV2EdgeInvoker,
+  impressionEventId: string,
+  eventKey: string,
+): Promise<string>;
 export function advertisingDestinationAction(
   destination: AdvertisingDeliveryAdV2["destination"],
 ): AdvertisingDestinationAction | null;
+export function advertisingDestinationRouteParams(
+  action: AdvertisingDestinationAction,
+  impressionEventId: string | null,
+): { id: string } | { userId: string; advertisingImpressionEventId?: string } | null;

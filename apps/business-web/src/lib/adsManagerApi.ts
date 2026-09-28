@@ -412,6 +412,8 @@ export type AdvertisingObjectiveCapability = {
   billingRuntimeReady: boolean;
   conversionRuntimeReady: boolean;
   billableEventType: "impression" | "click" | null;
+  primaryMetric: string | null;
+  availabilityReason: string | null;
 };
 export type AdvertisingObjectiveCapabilities = {
   authority: "ads_v2";
@@ -446,7 +448,9 @@ export type AdvertisingCampaignBilling = {
 };
 export type AdvertisingMetricStatus = "available" | "no_data" | "not_applicable";
 export type AdvertisingEventSummary = Record<string, unknown> & {
-  impressions: number; clicks: number; destination_opens: number;
+  impressions: number; unique_reach: number; clicks: number; destination_opens: number; video_views: number;
+  profile_visits: number; message_starts: number; app_store_opens: number; objective_results: number | null;
+  objective_result_status: AdvertisingMetricStatus;
   conversions: number; attributed_conversions: number;
   marketplace_purchase_value_bdag: number; spent_bdag: number;
   ctr: number | null; ctr_status: AdvertisingMetricStatus;
@@ -542,6 +546,8 @@ export async function getAdvertisingObjectiveCapabilities(client: BusinessSupaba
         billingRuntimeReady: capability.billing_runtime_ready === true,
         conversionRuntimeReady: capability.conversion_runtime_ready === true,
         billableEventType: eventType === "impression" || eventType === "click" ? eventType : null,
+        primaryMetric: optionalString(capability.primary_metric),
+        availabilityReason: optionalString(capability.availability_reason),
       };
     }),
   };
@@ -865,7 +871,9 @@ export async function getAdvertisingEventSummary(campaignId: string, client: Bus
   const nullableNumber = (value: unknown) => value == null ? null : number(value);
   return {
     ...row,
-    impressions: number(row.impressions), clicks: number(row.clicks), destination_opens: number(row.destination_opens),
+    impressions: number(row.impressions), unique_reach: number(row.unique_reach), clicks: number(row.clicks), destination_opens: number(row.destination_opens),
+    video_views: number(row.video_views), profile_visits: number(row.profile_visits), message_starts: number(row.message_starts), app_store_opens: number(row.app_store_opens),
+    objective_results: row.objective_results == null ? null : number(row.objective_results), objective_result_status: metricStatus(row.objective_result_status),
     conversions: number(row.conversions), attributed_conversions: number(row.attributed_conversions),
     marketplace_purchase_value_bdag: number(row.marketplace_purchase_value_bdag), spent_bdag: number(row.spent_bdag),
     ctr: nullableNumber(row.ctr), ctr_status: metricStatus(row.ctr_status), cpc_bdag: nullableNumber(row.cpc_bdag), cpc_status: metricStatus(row.cpc_status),

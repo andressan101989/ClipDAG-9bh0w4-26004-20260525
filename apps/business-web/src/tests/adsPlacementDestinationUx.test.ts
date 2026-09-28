@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   destinationSupport,
   externalWebsiteSummary,
+  isApprovedAppStoreWebsite,
   isCurrentReleaseDestination,
   isCurrentReleasePlacementSelection,
   placementCards,
@@ -36,7 +37,8 @@ describe("Ads placement and destination presentation model", () => {
 
   it("offers only destination types with both a safe picker and consumer", () => {
     expect(destinationSupport.external_url).toMatchObject({ safePicker: true, safeConsumer: true, selectable: true });
-    expect(destinationSupport.nelyon_profile).toMatchObject({ safePicker: false, safeConsumer: true, selectable: false });
+    expect(destinationSupport.nelyon_profile).toMatchObject({ safePicker: true, safeConsumer: true, selectable: true });
+    expect(destinationSupport.nelyon_message).toMatchObject({ safePicker: true, safeConsumer: true, selectable: true });
     expect(destinationSupport.business_account).toMatchObject({ safePicker: true, safeConsumer: false, selectable: false });
     expect(destinationSupport.marketplace_product).toMatchObject({ safePicker: true, safeConsumer: true, selectable: true });
     expect(destinationSupport.marketplace_store).toMatchObject({ safePicker: true, safeConsumer: true, selectable: true });
@@ -50,5 +52,17 @@ describe("Ads placement and destination presentation model", () => {
     expect(externalWebsiteSummary("https://www.tlaservices.com/")).toBe("www.tlaservices.com");
     expect(isCurrentReleaseDestination({ destinationType: "external_url", externalUrl: "https://www.tlaservices.com/" })).toBe(true);
     expect(isCurrentReleaseDestination({ destinationType: "business_account", externalUrl: null })).toBe(false);
+  });
+
+  it("enforces objective-specific profile, message and app-store destinations", () => {
+    expect(isCurrentReleaseDestination({ destinationType: "nelyon_profile", externalUrl: null }, "profile_visits")).toBe(true);
+    expect(isCurrentReleaseDestination({ destinationType: "external_url", externalUrl: "https://example.com/" }, "profile_visits")).toBe(false);
+    expect(isCurrentReleaseDestination({ destinationType: "nelyon_message", externalUrl: null }, "messages")).toBe(true);
+    expect(isCurrentReleaseDestination({ destinationType: "nelyon_profile", externalUrl: null }, "messages")).toBe(false);
+    expect(isApprovedAppStoreWebsite("https://apps.apple.com/us/app/example/id1")).toBe(true);
+    expect(isApprovedAppStoreWebsite("https://play.google.com/store/apps/details?id=example")).toBe(true);
+    expect(isApprovedAppStoreWebsite("https://apps.apple.com.evil.test/app")).toBe(false);
+    expect(isApprovedAppStoreWebsite("https://apps.apple.com@evil.test/app")).toBe(false);
+    expect(isApprovedAppStoreWebsite("https://apps.apple.com:8443/app")).toBe(false);
   });
 });

@@ -17,12 +17,12 @@ import { useAuth } from '@/hooks/useAuth';
 import { randomUUID } from 'expo-crypto';
 import { AdvertisingFeedCardV2 } from '@/components/advertising/AdvertisingFeedCardV2';
 import {
-  advertisingDestinationAction, fetchAdvertisingV2Candidate, recordAdvertisingV2Click,
-  recordAdvertisingV2DestinationOpen, recordAdvertisingV2Impression, type AdvertisingDeliveryAdV2,
+  advertisingDestinationAction, advertisingDestinationRouteParams, fetchAdvertisingV2Candidate, recordAdvertisingV2Click,
+  recordAdvertisingV2DestinationOpen, recordAdvertisingV2Impression, recordAdvertisingV2VideoView, type AdvertisingDeliveryAdV2,
 } from '@/services/advertisingDeliveryService';
 import {
   createAdvertisingV2ClickController, createAdvertisingV2DestinationOpenController,
-  createAdvertisingV2ImpressionController, loadAdvertisingV2Opportunity, mixLiveDiscoveryAdvertisingV2,
+  createAdvertisingV2ImpressionController, createAdvertisingV2VideoViewController, loadAdvertisingV2Opportunity, mixLiveDiscoveryAdvertisingV2,
   navigateAdvertisingV2WithClick,
 } from '@/services/advertisingV2FeedRuntime.mjs';
 
@@ -49,6 +49,8 @@ export function LiveStreamsList() {
   const impression = useRef(createAdvertisingV2ImpressionController((adId, eventKey) => recordAdvertisingV2Impression('live', adId, eventKey)));
   const click = useRef(createAdvertisingV2ClickController(recordAdvertisingV2Click, randomUUID));
   const destinationOpen = useRef(createAdvertisingV2DestinationOpenController(recordAdvertisingV2DestinationOpen, randomUUID));
+  const videoView = useRef(createAdvertisingV2VideoViewController(recordAdvertisingV2VideoView, randomUUID));
+  const [advertisingVisible, setAdvertisingVisible] = useState(false);
 
   const fetchLiveStreams = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -102,6 +104,7 @@ export function LiveStreamsList() {
     impression.current.dispose();
     click.current.dispose();
     destinationOpen.current.dispose();
+    videoView.current.dispose();
   }, []);
 
   const discoveryItems = mixLiveDiscoveryAdvertisingV2(streams, advertisingOpportunity);
@@ -114,7 +117,11 @@ export function LiveStreamsList() {
   const measureAdvertisingVisibility = useCallback(() => {
     if (!advertisingOpportunity) return;
     advertisingRef.current?.measureInWindow((_x, y, _width, height) => {
-      markAdvertisingVisibility(y < Dimensions.get('window').height && y + height > 0);
+      const viewportHeight = Dimensions.get('window').height;
+      const visiblePixels = Math.max(0, Math.min(y + height, viewportHeight) - Math.max(y, 0));
+      const visible = height > 0 && visiblePixels / height >= 0.5;
+      setAdvertisingVisible(visible);
+      markAdvertisingVisibility(visible);
     });
   }, [advertisingOpportunity, markAdvertisingVisibility]);
   const confirmAdvertisingMediaReady = useCallback(() => {
@@ -136,20 +143,27 @@ export function LiveStreamsList() {
     if (!advertisingOpportunity) return;
     const action = advertisingDestinationAction(advertisingOpportunity.ad.destination);
     if (!action) return;
+    const impressionEventId = impression.current.confirmedImpressionId(advertisingOpportunity.eventKey);
     const navigate = action.kind === 'external'
       ? async () => await Linking.canOpenURL(action.url).catch(() => false) && Linking.openURL(action.url).then(() => true, () => false)
       : () => {
-        router.push({ pathname: action.pathname, params: { id: action.id } } as never);
+        router.push({ pathname: action.pathname, params: advertisingDestinationRouteParams(action, impressionEventId) } as never);
         return true;
       };
     void navigateAdvertisingV2WithClick({
       opportunityKey: advertisingOpportunity.eventKey,
-      impressionEventId: impression.current.confirmedImpressionId(advertisingOpportunity.eventKey),
+      impressionEventId,
       submitClick: click.current.submit,
       submitDestinationOpen: destinationOpen.current.submit,
       navigate,
     }).catch(() => {});
   }, [advertisingOpportunity, router]);
+
+  const recordQualifiedAdvertisingVideoView = useCallback(() => {
+    if (!advertisingOpportunity) return;
+    const impressionEventId = impression.current.confirmedImpressionId(advertisingOpportunity.eventKey);
+    if (impressionEventId) void videoView.current.submit(advertisingOpportunity.eventKey, impressionEventId).catch(() => {});
+  }, [advertisingOpportunity]);
 
   if (loading) {
     return (
@@ -164,7 +178,7 @@ export function LiveStreamsList() {
     <View style={s.section}>
       <Text style={s.sectionTitle}>En vivo</Text>
       {advertisingOpportunity ? <View ref={advertisingRef} onLayout={measureAdvertisingVisibility}>
-        <AdvertisingFeedCardV2 ad={advertisingOpportunity.ad} isActive onMediaReady={confirmAdvertisingMediaReady} onPress={advertisingDestinationAction(advertisingOpportunity.ad.destination) ? openAdvertising : undefined} />
+        <AdvertisingFeedCardV2 ad={advertisingOpportunity.ad} isActive={advertisingVisible} onMediaReady={confirmAdvertisingMediaReady} onQualifiedVideoView={recordQualifiedAdvertisingVideoView} onPress={advertisingDestinationAction(advertisingOpportunity.ad.destination) ? openAdvertising : undefined} />
       </View> : null}
       {discoveryItems.filter((item) => item.kind === 'live_stream').length === 0 ? (
         <Text style={s.emptyText}>No hay transmisiones en vivo</Text>

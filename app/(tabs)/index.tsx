@@ -48,10 +48,12 @@ import { randomUUID } from 'expo-crypto';
 import { AdvertisingFeedCardV2 } from '@/components/advertising/AdvertisingFeedCardV2';
 import {
   advertisingDestinationAction,
+  advertisingDestinationRouteParams,
   fetchAdvertisingV2Candidate,
   recordAdvertisingV2Click,
   recordAdvertisingV2DestinationOpen,
   recordAdvertisingV2Impression,
+  recordAdvertisingV2VideoView,
   type AdvertisingDeliveryAdV2,
 } from '@/services/advertisingDeliveryService';
 import {
@@ -60,6 +62,7 @@ import {
   createAdvertisingV2ClickController,
   createAdvertisingV2DestinationOpenController,
   createAdvertisingV2ImpressionController,
+  createAdvertisingV2VideoViewController,
   loadAdvertisingV2Opportunity,
   mixPlacementAdvertisingV2,
   navigateAdvertisingV2WithClick,
@@ -257,6 +260,7 @@ export default function FeedScreen() {
   const advertisingV2Viewability = useRef(createAdvertisingV2ImpressionController((adId, eventKey, placement) => recordAdvertisingV2Impression(placement as "social_feed" | "clips", adId, eventKey)));
   const advertisingV2Click = useRef(createAdvertisingV2ClickController(recordAdvertisingV2Click, randomUUID));
   const advertisingV2DestinationOpen = useRef(createAdvertisingV2DestinationOpenController(recordAdvertisingV2DestinationOpen, randomUUID));
+  const advertisingV2VideoView = useRef(createAdvertisingV2VideoViewController(recordAdvertisingV2VideoView, randomUUID));
   const viewabilityConfigCallbackPairs = useRef([
     { viewabilityConfig: viewabilityConfig.current, onViewableItemsChanged: onViewableItemsChanged.current },
     { viewabilityConfig: ADS_V2_VIEWABILITY_CONFIG, onViewableItemsChanged: advertisingV2Viewability.current },
@@ -266,22 +270,26 @@ export default function FeedScreen() {
     const impressionController = advertisingV2Viewability.current;
     const clickController = advertisingV2Click.current;
     const destinationOpenController = advertisingV2DestinationOpen.current;
+    const videoViewController = advertisingV2VideoView.current;
     return () => {
       impressionController.dispose();
       clickController.dispose();
       destinationOpenController.dispose();
+      videoViewController.dispose();
     };
   }, []);
   useEffect(() => {
     const impressionController = advertisingV2Viewability.current;
     const clickController = advertisingV2Click.current;
     const destinationOpenController = advertisingV2DestinationOpen.current;
+    const videoViewController = advertisingV2VideoView.current;
     const eventKeys = currentAdvertisingV2Opportunities.map((item) => item.eventKey);
     return () => {
       for (const eventKey of eventKeys) {
         impressionController.discard(eventKey);
         clickController.discard(eventKey);
         destinationOpenController.discard(eventKey);
+        videoViewController.discard(eventKey);
       }
     };
   }, [currentAdvertisingV2Opportunities]);
@@ -318,6 +326,7 @@ export default function FeedScreen() {
   const openAdvertisingDestination = useCallback((item: AdvertisingV2FeedItem<AdvertisingDeliveryAdV2>) => {
     const action = advertisingDestinationAction(item.ad.destination);
     if (!action) return;
+    const impressionEventId = advertisingV2Viewability.current.confirmedImpressionId(item.eventKey);
     const navigate = action.kind === 'external'
       ? async () => {
         const supported = await Linking.canOpenURL(action.url).catch(() => false);
@@ -325,17 +334,22 @@ export default function FeedScreen() {
         return Linking.openURL(action.url).then(() => true, () => false);
       }
       : () => {
-        router.push({ pathname: action.pathname, params: { id: action.id } } as never);
+        router.push({ pathname: action.pathname, params: advertisingDestinationRouteParams(action, impressionEventId) } as never);
         return true;
       };
     void navigateAdvertisingV2WithClick({
       opportunityKey: item.eventKey,
-      impressionEventId: advertisingV2Viewability.current.confirmedImpressionId(item.eventKey),
+      impressionEventId,
       submitClick: advertisingV2Click.current.submit,
       submitDestinationOpen: advertisingV2DestinationOpen.current.submit,
       navigate,
     }).catch(() => {});
   }, [router]);
+
+  const recordQualifiedAdvertisingVideoView = useCallback((eventKey: string) => {
+    const impressionEventId = advertisingV2Viewability.current.confirmedImpressionId(eventKey);
+    if (impressionEventId) void advertisingV2VideoView.current.submit(eventKey, impressionEventId).catch(() => {});
+  }, []);
 
   const handleSave = useCallback((videoId: string) => { toggleSave(videoId); }, [toggleSave]);
 
@@ -464,6 +478,9 @@ export default function FeedScreen() {
   const handleAdvertisingStoryMediaReady = useCallback((story: StoryItem) => {
     if (story.advertisingV2) advertisingV2Viewability.current.markMediaReady(story.advertisingV2.eventKey);
   }, []);
+  const handleAdvertisingStoryVideoView = useCallback((story: StoryItem) => {
+    if (story.advertisingV2) recordQualifiedAdvertisingVideoView(story.advertisingV2.eventKey);
+  }, [recordQualifiedAdvertisingVideoView]);
   const handleAdvertisingStoryPress = useCallback((story: StoryItem) => {
     if (!story.advertisingV2) return;
     openAdvertisingDestination({ kind: 'advertising_v2', placement: 'stories', ...story.advertisingV2 });
@@ -519,6 +536,7 @@ export default function FeedScreen() {
             ad={item.ad}
             isActive={index === activeIndex}
             onMediaReady={() => advertisingV2Viewability.current.markMediaReady(item.eventKey)}
+            onQualifiedVideoView={() => recordQualifiedAdvertisingVideoView(item.eventKey)}
             onPress={advertisingDestinationAction(item.ad.destination) ? () => openAdvertisingDestination(item) : undefined}
           />
         ) : (
@@ -623,6 +641,7 @@ export default function FeedScreen() {
         onGetSharedContent={getStorySharedContent}
         onAdvertisingActiveChange={handleAdvertisingStoryActiveChange}
         onAdvertisingMediaReady={handleAdvertisingStoryMediaReady}
+        onAdvertisingVideoViewQualified={handleAdvertisingStoryVideoView}
         onAdvertisingPress={handleAdvertisingStoryPress}
       />
       <StoryEditor

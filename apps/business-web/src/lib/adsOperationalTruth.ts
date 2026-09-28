@@ -40,11 +40,11 @@ export function businessMetricPresentation(
   runtime: BusinessAdsRuntime,
   context: { impressions?: number } = {},
 ) {
-  const supportedInteraction = metric === "clicks" || metric === "destination_opens" || metric === "ctr";
+  const supportedInteraction = ["clicks", "destination_opens", "video_views", "profile_visits", "message_starts", "app_store_opens", "objective_results", "ctr"].includes(metric);
   const presentation = metricPresentation(
     metric,
     value,
-    ["video_views", "engagements"].includes(metric)
+    metric === "engagements"
       ? { ...runtime, interactionRuntime: false }
       : supportedInteraction ? { ...runtime, interactionRuntime: runtime.clickRuntime } : runtime,
     context,

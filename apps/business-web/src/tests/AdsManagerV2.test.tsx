@@ -668,9 +668,8 @@ describe("Ads Manager V2 workspace", () => {
     expect(screen.getByLabelText("Clicks metric")).toHaveTextContent("0");
     expect(screen.getByLabelText("Clicks metric")).not.toHaveTextContent("Not available yet");
     expect(screen.getByLabelText("CTR metric")).toHaveTextContent("No denominator data is available yet.");
-    for (const label of ["Video views", "Engagements"]) {
-      expect(screen.getByLabelText(`${label} metric`)).toHaveTextContent("Not available yet");
-    }
+    expect(screen.getByLabelText("Video views metric")).toHaveTextContent("0");
+    expect(screen.getByLabelText("Engagements metric")).toHaveTextContent("Not available yet");
     for (const label of ["CPC", "CPM"]) {
       expect(screen.getByLabelText(`${label} metric`)).toHaveTextContent("No denominator data is available yet.");
     }

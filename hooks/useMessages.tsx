@@ -13,7 +13,7 @@ export function useMessages(): MessagesContextType {
     isLoadingOlder: {},
     presenceByUser: {},
     typingByUser: {},
-    sendMessage: async () => {},
+    sendMessage: async () => { throw new Error('messages_provider_unavailable'); },
     sendMediaMessage: async () => {},
     sendVoiceMessage: async () => {},
     openOneTimeMedia: async () => { throw new Error('messages_provider_unavailable'); },

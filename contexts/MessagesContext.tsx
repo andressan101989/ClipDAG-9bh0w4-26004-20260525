@@ -40,7 +40,7 @@ export interface MessagesContextType {
   conversations: Conversation[]; messages: Record<string, Message[]>; unreadTotal: number; isLoading: boolean;
   hasOlderMessages: Record<string, boolean>; isLoadingOlder: Record<string, boolean>;
   presenceByUser: Record<string, 'online' | 'offline'>; typingByUser: Record<string, boolean>;
-  sendMessage: (recipientId: string, text: string, mediaUrl?: string, mediaType?: string) => Promise<void>;
+  sendMessage: (recipientId: string, text: string, mediaUrl?: string, mediaType?: string) => Promise<Message>;
   sendMediaMessage: (recipientId: string, input: { text: string; mediaType: 'image' | 'video' | 'one_time_image'; mediaAssetId: string }) => Promise<void>;
   sendVoiceMessage: (recipientId: string, input: { mediaAssetId: string; durationMs: number; waveform: number[] }) => Promise<void>;
   openOneTimeMedia: (partnerId: string, messageId: string) => Promise<string>;
@@ -243,7 +243,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     }
   }, [resolveConversation, user?.id]);
 
-  const transmitMessage = useCallback(async (partnerId: string, message: Message): Promise<void> => {
+  const transmitMessage = useCallback(async (partnerId: string, message: Message): Promise<Message> => {
     const userId = user?.id; const generation = generationRef.current;
     if (!userId || message.senderId !== userId || !message.clientMessageId) throw new Error('chat_retry_not_authorized');
     const conversationId = message.conversationId || await resolveConversation(partnerId);
@@ -254,9 +254,12 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         messageType: message.mediaType as 'text' | 'image' | 'video' | 'one_time_image' | 'voice', mediaUrl: message.mediaUrl,
         mediaAssetId: message.mediaAssetId, audioDurationMs: message.audioDurationMs,
         audioWaveform: message.audioWaveform });
-      if (activeUserRef.current !== userId || generation !== generationRef.current) return;
-      setMessages(previous => ({ ...previous, [conversationId]: mergeChatMessage(previous[conversationId] || [], mapChatMessage(row)) }));
-      await fetchConversations();
+      const confirmed = mapChatMessage(row);
+      if (activeUserRef.current === userId && generation === generationRef.current) {
+        setMessages(previous => ({ ...previous, [conversationId]: mergeChatMessage(previous[conversationId] || [], confirmed) }));
+        await fetchConversations();
+      }
+      return confirmed;
     } catch (error) {
       if (activeUserRef.current === userId && generation === generationRef.current) setMessages(previous => ({ ...previous,
         [conversationId]: (previous[conversationId] || []).map(item => item.clientMessageId === message.clientMessageId
@@ -274,7 +277,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       text: normalizedText, mediaUrl, mediaType: mediaType as Message['mediaType'], read: false,
       deliveryStatus: 'pending', createdAt: new Date().toISOString() };
     setMessages(previous => ({ ...previous, [conversationId]: mergeChatMessage(previous[conversationId] || [], optimistic) }));
-    await transmitMessage(recipientId, optimistic);
+    return transmitMessage(recipientId, optimistic);
   }, [resolveConversation, transmitMessage, user?.id]);
 
   const sendMediaMessage = useCallback(async (recipientId: string, input: {
@@ -308,7 +311,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       audioDurationMs: input.durationMs, audioWaveform: input.waveform,
       read: false, deliveryStatus: 'pending', createdAt: new Date().toISOString() };
     setMessages(previous => ({ ...previous, [conversationId]: mergeChatMessage(previous[conversationId] || [], optimistic) }));
-    await acceptChatVoiceRetryOwnership(optimistic, message => transmitMessage(recipientId, message));
+    await acceptChatVoiceRetryOwnership(optimistic, async (message) => { await transmitMessage(recipientId, message); });
   }, [resolveConversation, transmitMessage, user?.id]);
 
   const openOneTimeMedia = useCallback(async (partnerId: string, messageId: string): Promise<string> => {
@@ -335,7 +338,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     const conversationId = conversationIdsRef.current.get(partnerId) || partnerId;
     const message = (messages[conversationId] || []).find(item => item.clientMessageId === clientMessageId && item.deliveryStatus === 'failed');
     if (!message) throw new Error('chat_failed_message_missing');
-    return retryFlightRef.current.run(key, () => transmitMessage(partnerId, message));
+    return retryFlightRef.current.run(key, async () => { await transmitMessage(partnerId, message); });
   }, [messages, transmitMessage, user?.id]);
 
   const loadConversationById = useCallback(async (conversationId: string) => {
@@ -398,13 +401,13 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       text: '', mediaType: 'voice', mediaAssetId: input.mediaAssetId, audioDurationMs: input.durationMs,
       audioWaveform: input.waveform, consumptionPolicy: 'standard', read: false, deliveryStatus: 'pending', createdAt: new Date().toISOString() };
     setMessages(previous => ({ ...previous, [conversationId]: mergeChatMessage(previous[conversationId] || [], optimistic) }));
-    await acceptChatVoiceRetryOwnership(optimistic, message => transmitMessage(conversationId, message));
+    await acceptChatVoiceRetryOwnership(optimistic, async (message) => { await transmitMessage(conversationId, message); });
   }, [transmitMessage, user?.id]);
 
   const retryConversationMessage = useCallback(async (conversationId: string, clientMessageId: string) => {
     const message = (messages[conversationId] || []).find(item => item.clientMessageId === clientMessageId && item.deliveryStatus === 'failed');
     if (!message) throw new Error('chat_failed_message_missing');
-    return retryFlightRef.current.run(`${user?.id || ''}:${conversationId}:${clientMessageId}`, () => transmitMessage(conversationId, message));
+    return retryFlightRef.current.run(`${user?.id || ''}:${conversationId}:${clientMessageId}`, async () => { await transmitMessage(conversationId, message); });
   }, [messages, transmitMessage, user?.id]);
 
   const createGroup = useCallback(async (name: string, memberIds: string[], requestedId?: string) => {

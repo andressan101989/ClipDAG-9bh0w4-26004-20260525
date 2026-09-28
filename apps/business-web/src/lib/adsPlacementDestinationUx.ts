@@ -75,7 +75,7 @@ export function isCurrentReleasePlacementSelection(codes: string[], capabilities
   return codes.length > 0 && codes.every((code) => allowed.has(code as AdvertisingPlacementCode));
 }
 
-export type DestinationType = "external_url" | "nelyon_profile" | "business_account" | "marketplace_product" | "marketplace_store";
+export type DestinationType = "external_url" | "nelyon_profile" | "nelyon_message" | "business_account" | "marketplace_product" | "marketplace_store";
 type DestinationSupport = {
   type: DestinationType;
   label: string;
@@ -87,13 +87,22 @@ type DestinationSupport = {
 
 export const destinationSupport: Record<DestinationType, DestinationSupport> = {
   external_url: { type: "external_url", label: "External website", description: "Send people to a secure website.", safePicker: true, safeConsumer: true, selectable: true },
-  nelyon_profile: { type: "nelyon_profile", label: "Nelyon profile", description: "A safe profile picker is not available yet.", safePicker: false, safeConsumer: true, selectable: false },
+  nelyon_profile: { type: "nelyon_profile", label: "Nelyon profile", description: "Send people to your canonical Nelyon profile.", safePicker: true, safeConsumer: true, selectable: true },
+  nelyon_message: { type: "nelyon_message", label: "Nelyon message", description: "Start a conversation with your canonical Nelyon identity.", safePicker: true, safeConsumer: true, selectable: true },
   business_account: { type: "business_account", label: "Business", description: "The mobile Business destination is not available yet.", safePicker: true, safeConsumer: false, selectable: false },
   marketplace_product: { type: "marketplace_product", label: "Marketplace product", description: "Attribute purchases of one eligible Marketplace product.", safePicker: true, safeConsumer: true, selectable: true },
   marketplace_store: { type: "marketplace_store", label: "Marketplace store", description: "Attribute eligible purchases from your Marketplace store.", safePicker: true, safeConsumer: true, selectable: true },
 };
 
-export const destinationOrder = ["external_url", "nelyon_profile", "business_account", "marketplace_product", "marketplace_store"] as const;
+export const destinationOrder = ["external_url", "nelyon_profile", "nelyon_message", "business_account", "marketplace_product", "marketplace_store"] as const;
+
+export function isApprovedAppStoreWebsite(input: string) {
+  const validated = validateExternalWebsite(input);
+  if (!validated.ok) return false;
+  const parsed = new URL(validated.value);
+  return (parsed.hostname === "apps.apple.com" || parsed.hostname === "play.google.com")
+    && !parsed.username && !parsed.password && !parsed.port;
+}
 
 export function validateExternalWebsite(input: string): { ok: true; value: string } | { ok: false; message: string } {
   const value = input.trim();
@@ -122,5 +131,8 @@ export function isCurrentReleaseDestination(destination: { destinationType: stri
     return (destination.destinationType === "marketplace_product" && Boolean(destination.targetProductId))
       || (destination.destinationType === "marketplace_store" && Boolean(destination.targetStoreId));
   }
+  if (objective === "profile_visits") return destination.destinationType === "nelyon_profile";
+  if (objective === "messages") return destination.destinationType === "nelyon_message";
+  if (objective === "app_promotion") return destination.destinationType === "external_url" && isApprovedAppStoreWebsite(destination.externalUrl ?? "");
   return destination.destinationType === "external_url" && validateExternalWebsite(destination.externalUrl ?? "").ok;
 }

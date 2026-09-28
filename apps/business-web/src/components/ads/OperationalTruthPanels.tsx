@@ -73,6 +73,11 @@ function TruthMetric({ label, presentation }: { label: string; presentation: Met
 }
 
 function analyticsPresentation(metric: MetricKey, analytics: Record<string, unknown>, impressions: number, runtime: BusinessAdsRuntime) {
+  if (metric === "objective_results") {
+    const rawStatus = analytics.objective_result_status;
+    const status = rawStatus === "available" || rawStatus === "not_applicable" ? rawStatus : "no_data";
+    return businessServerMetricPresentation(analytics.objective_results, status);
+  }
   return businessMetricPresentation(metric, analytics[metric], runtime, { impressions });
 }
 
@@ -187,8 +192,9 @@ function AnalyticsPanel({ analytics, analyticsError, finance, billing, deliveryE
   if (!analytics) return <section className="business-card editor-card ads-operational-panel" aria-labelledby="campaign-analytics-title"><p className="eyebrow">Measured performance</p><h2 id="campaign-analytics-title">Analytics</h2><InlineError message={analyticsError ?? "Campaign analytics are temporarily unavailable."} onRetry={() => void onRetry()} /></section>;
   const impressions = numberValue(analytics.impressions);
   const metrics: Array<[string, MetricKey]> = [
-    ["Impressions", "impressions"], ["Clicks", "clicks"], ["Destination opens", "destination_opens"],
-    ["Video views", "video_views"], ["Engagements", "engagements"],
+    ["Impressions", "impressions"], ["Unique reach", "unique_reach"], ["Clicks", "clicks"], ["Destination opens", "destination_opens"],
+    ["Video views", "video_views"], ["Engagements", "engagements"], ["Profile visits", "profile_visits"],
+    ["Message starts", "message_starts"], ["App-store opens", "app_store_opens"], ["Objective results", "objective_results"],
     ["Conversions", "conversions"], ["Attributed purchases", "attributed_conversions"],
     ["Attributed purchase value (GMV)", "marketplace_purchase_value_bdag"],
   ];

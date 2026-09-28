@@ -45,7 +45,7 @@ test("wires a separate Ads V2 feed lane and preserves Marketplace Legacy", () =>
   const runtime = read("services/advertisingV2FeedRuntime.mjs");
   const card = read("components/advertising/AdvertisingFeedCardV2.tsx");
   const nativeVideo = read("components/advertising/AdvertisingFeedVideoV2.native.tsx");
-  assert.match(feed, /fetchAdvertisingV2SocialFeedCandidate/);
+  assert.match(feed, /fetchAdvertisingV2Candidate/);
   assert.match(feed, /AdvertisingFeedCardV2/);
   assert.match(feed, /fetchSponsoredProducts\('social_feed'\)/);
   assert.match(feed, /SponsoredFeedCard/);
@@ -59,8 +59,8 @@ test("wires a separate Ads V2 feed lane and preserves Marketplace Legacy", () =>
   assert.match(nativeVideo, /contentType:\s*["']hls["']/);
   assert.match(nativeVideo, /readyToPlay/);
   assert.match(feed, /viewerUserId:\s*string/);
-  assert.match(feed, /advertisingV2OpportunityForViewer\(advertisingV2Opportunity,\s*user\?\.id\)/);
-  assert.match(feed, /setAdvertisingV2Opportunity\(null\)/);
+  assert.match(feed, /advertisingV2OpportunityForViewer\(opportunity,\s*user\?\.id\)/);
+  assert.match(feed, /setAdvertisingV2Opportunities\(\[\]\)/);
   assert.doesNotMatch(`${feed}\n${client}\n${clientCore}\n${runtime}\n${card}\n${nativeVideo}`, /spend_advertising_campaign_budget_v2/);
 });
 
