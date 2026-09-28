@@ -41,10 +41,10 @@ export interface MessagesContextType {
   hasOlderMessages: Record<string, boolean>; isLoadingOlder: Record<string, boolean>;
   presenceByUser: Record<string, 'online' | 'offline'>; typingByUser: Record<string, boolean>;
   sendMessage: (recipientId: string, text: string, mediaUrl?: string, mediaType?: string) => Promise<Message>;
-  sendMediaMessage: (recipientId: string, input: { text: string; mediaType: 'image' | 'video' | 'one_time_image'; mediaAssetId: string }) => Promise<void>;
-  sendVoiceMessage: (recipientId: string, input: { mediaAssetId: string; durationMs: number; waveform: number[] }) => Promise<void>;
+  sendMediaMessage: (recipientId: string, input: { text: string; mediaType: 'image' | 'video' | 'one_time_image'; mediaAssetId: string }) => Promise<Message>;
+  sendVoiceMessage: (recipientId: string, input: { mediaAssetId: string; durationMs: number; waveform: number[] }) => Promise<Message | null>;
   openOneTimeMedia: (partnerId: string, messageId: string) => Promise<string>;
-  retryMessage: (partnerId: string, clientMessageId: string) => Promise<void>;
+  retryMessage: (partnerId: string, clientMessageId: string) => Promise<Message>;
   loadConversation: (partnerId: string) => Promise<void>; loadOlderMessages: (partnerId: string) => Promise<void>;
   markConversationRead: (partnerId: string) => Promise<void>; refreshConversations: () => Promise<void>;
   activateConversation: (partnerId: string) => Promise<void>; deactivateConversation: (partnerId: string) => void;
@@ -292,12 +292,12 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       consumptionPolicy: input.mediaType === 'one_time_image' ? 'one_time' : 'standard', mediaAvailable: true,
       read: false, deliveryStatus: 'pending', createdAt: new Date().toISOString() };
     setMessages(previous => ({ ...previous, [conversationId]: mergeChatMessage(previous[conversationId] || [], optimistic) }));
-    await transmitMessage(recipientId, optimistic);
+    return transmitMessage(recipientId, optimistic);
   }, [resolveConversation, transmitMessage, user?.id]);
 
   const sendVoiceMessage = useCallback(async (recipientId: string, input: {
     mediaAssetId: string; durationMs: number; waveform: number[];
-  }) => {
+  }): Promise<Message | null> => {
     const userId = user?.id;
     if (!userId || !recipientId || !input.mediaAssetId || !Number.isInteger(input.durationMs)
       || input.durationMs < 1 || input.durationMs > 3_600_000 || input.waveform.length !== 48
@@ -311,7 +311,11 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       audioDurationMs: input.durationMs, audioWaveform: input.waveform,
       read: false, deliveryStatus: 'pending', createdAt: new Date().toISOString() };
     setMessages(previous => ({ ...previous, [conversationId]: mergeChatMessage(previous[conversationId] || [], optimistic) }));
-    await acceptChatVoiceRetryOwnership(optimistic, async (message) => { await transmitMessage(recipientId, message); });
+    let confirmed: Message | null = null;
+    const outcome = await acceptChatVoiceRetryOwnership(optimistic, async (message) => {
+      confirmed = await transmitMessage(recipientId, message);
+    });
+    return outcome.transportFailed ? null : confirmed;
   }, [resolveConversation, transmitMessage, user?.id]);
 
   const openOneTimeMedia = useCallback(async (partnerId: string, messageId: string): Promise<string> => {
@@ -338,7 +342,10 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     const conversationId = conversationIdsRef.current.get(partnerId) || partnerId;
     const message = (messages[conversationId] || []).find(item => item.clientMessageId === clientMessageId && item.deliveryStatus === 'failed');
     if (!message) throw new Error('chat_failed_message_missing');
-    return retryFlightRef.current.run(key, async () => { await transmitMessage(partnerId, message); });
+    let confirmed: Message | null = null;
+    await retryFlightRef.current.run(key, async () => { confirmed = await transmitMessage(partnerId, message); });
+    if (!confirmed) throw new Error('chat_retry_confirmation_missing');
+    return confirmed;
   }, [messages, transmitMessage, user?.id]);
 
   const loadConversationById = useCallback(async (conversationId: string) => {

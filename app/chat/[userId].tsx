@@ -39,7 +39,7 @@ import {
   clearActiveMessageConversation,
   setActiveMessageConversation,
 } from '@/services/messageNotificationPresentation';
-import { recordAdvertisingMessageStartConversion } from '@/services/chatService';
+import { AdvertisingMessageStartRetryController, recordAdvertisingMessageStartConversion } from '@/services/chatService';
 
 const PREMIUM_COLOR  = '#FF9D00';
 const PREMIUM_COLOR2 = '#FF5A00';
@@ -267,18 +267,19 @@ export default function ChatScreen() {
   const [text,         setText]         = useState('');
   const [isSending,    setIsSending]    = useState(false);
   const [isUploading,  setIsUploading]  = useState(false);
-  const advertisingMessageRef = useRef<{ impressionId: string; messageId: string | null; confirmed: boolean }>({
-    impressionId: advertisingImpressionEventId ?? '',
-    messageId: null,
-    confirmed: false,
-  });
+  const advertisingMessageRetryRef = useRef<AdvertisingMessageStartRetryController | null>(null);
+  if (!advertisingMessageRetryRef.current) {
+    advertisingMessageRetryRef.current = new AdvertisingMessageStartRetryController(
+      recordAdvertisingMessageStartConversion,
+    );
+  }
 
   useEffect(() => {
-    advertisingMessageRef.current = {
-      impressionId: advertisingImpressionEventId ?? '',
-      messageId: null,
-      confirmed: false,
-    };
+    advertisingMessageRetryRef.current?.reset();
+  }, [advertisingImpressionEventId]);
+  const recordAdvertisingMessageStartForConfirmedMessage = useCallback((message: Message | null) => {
+    if (!message?.id || !advertisingImpressionEventId) return;
+    void advertisingMessageRetryRef.current?.submit(message.id, advertisingImpressionEventId);
   }, [advertisingImpressionEventId]);
   const [oneTimeMediaUrl, setOneTimeMediaUrl] = useState<string | null>(null);
   const [inputHeight,  setInputHeight]  = useState(INPUT_MIN_HEIGHT);
@@ -421,13 +422,7 @@ export default function ChatScreen() {
     setConversationTyping(partnerId, false);
     try {
       const sent = await sendMessage(partnerId, text.trim());
-      const evidence = advertisingMessageRef.current;
-      if (evidence.impressionId && !evidence.confirmed) {
-        evidence.messageId ??= sent.id;
-        void recordAdvertisingMessageStartConversion(evidence.messageId, evidence.impressionId)
-          .then(() => { evidence.confirmed = true; })
-          .catch(() => undefined);
-      }
+      recordAdvertisingMessageStartForConfirmedMessage(sent);
       setText(''); setInputHeight(INPUT_MIN_HEIGHT);
       scrollToLatest(true);
 
@@ -446,7 +441,7 @@ export default function ChatScreen() {
     } finally {
       isSendingRef.current = false; setIsSending(false);
     }
-  }, [text, partnerId, sendMessage, pendingPayment, user?.id, supabase, walletData, showAlert, scrollToLatest, setConversationTyping]);
+  }, [text, partnerId, sendMessage, pendingPayment, user?.id, supabase, walletData, showAlert, scrollToLatest, setConversationTyping, recordAdvertisingMessageStartForConfirmedMessage]);
 
   // ── Send premium DM ───────────────────────────────────────────────────────
   const handleSendPremiumDM = useCallback(async (messageText: string, amount: number) => {
@@ -504,7 +499,8 @@ export default function ChatScreen() {
         const mimeType = asset.mimeType || (/\.mov$/i.test(asset.fileName || asset.uri) ? 'video/quicktime' : 'video/mp4');
         const mediaAssetId = await uploadPrivateChatVideo({ uri: asset.uri, mimeType,
           fileName: asset.fileName || undefined, sizeBytes: asset.fileSize });
-        await sendMediaMessage(partnerId, { text: 'Video', mediaType: 'video', mediaAssetId });
+        const sent = await sendMediaMessage(partnerId, { text: 'Video', mediaType: 'video', mediaAssetId });
+        recordAdvertisingMessageStartForConfirmedMessage(sent);
       } catch {
         showAlert('Mensaje no enviado', 'No se pudo enviar el video. Puedes intentarlo nuevamente.');
       } finally { setIsUploading(false); }
@@ -517,8 +513,9 @@ export default function ChatScreen() {
         const mimeType = asset.mimeType || detectMimeType(asset.uri, 'image/jpeg');
         const mediaAssetId = await uploadPrivateChatImage({ uri: asset.uri, mimeType,
           fileName: asset.fileName || undefined, sizeBytes: asset.fileSize });
-        await sendMediaMessage(partnerId, { text: oneTime ? 'Foto · Ver una vez' : '📷 Imagen',
+        const sent = await sendMediaMessage(partnerId, { text: oneTime ? 'Foto · Ver una vez' : '📷 Imagen',
           mediaType: oneTime ? 'one_time_image' : 'image', mediaAssetId });
+        recordAdvertisingMessageStartForConfirmedMessage(sent);
       } catch {
         showAlert('Mensaje no enviado', 'No se pudo enviar la imagen. Puedes intentarlo nuevamente.');
       } finally { setIsUploading(false); }
@@ -532,13 +529,14 @@ export default function ChatScreen() {
       { text: 'Normal', onPress: () => { void sendSelectedImage(false); } },
       { text: 'Ver una vez', onPress: () => { void sendSelectedImage(true); } },
     ]);
-  }, [user, partnerId, sendMediaMessage, showAlert]);
+  }, [user, partnerId, sendMediaMessage, showAlert, recordAdvertisingMessageStartForConfirmedMessage]);
 
   const handleSendVoice = useCallback(async (draft: ChatVoiceDraft) => {
     if (!user?.id || !partnerId) throw new Error('chat_voice_session_invalid');
-    await voiceDraftSenderRef.current!.handoff(draft, input => sendVoiceMessage(partnerId, input));
+    const sent = await voiceDraftSenderRef.current!.handoff(draft, input => sendVoiceMessage(partnerId, input));
+    recordAdvertisingMessageStartForConfirmedMessage(sent);
     scrollToLatest(true);
-  }, [partnerId, scrollToLatest, sendVoiceMessage, user?.id]);
+  }, [partnerId, scrollToLatest, sendVoiceMessage, user?.id, recordAdvertisingMessageStartForConfirmedMessage]);
 
   useEffect(() => () => { voiceDraftSenderRef.current?.clear(); }, [partnerId, user?.id]);
 
@@ -558,6 +556,7 @@ export default function ChatScreen() {
     const isCardMedia = isImage || isVideo || isOneTime;
     const handleRetry = () => item.clientMessageId && partnerId
       ? void retryMessage(partnerId, item.clientMessageId)
+        .then(recordAdvertisingMessageStartForConfirmedMessage)
         .catch(() => showAlert('Mensaje no enviado', 'No se pudo reintentar.'))
       : undefined;
 
@@ -640,7 +639,7 @@ export default function ChatScreen() {
           : null}
       </View>
     );
-  }, [user, partnerId, retryMessage, openOneTimeMedia, showAlert, activeVoiceMessageId]);
+  }, [user, partnerId, retryMessage, openOneTimeMedia, showAlert, activeVoiceMessageId, recordAdvertisingMessageStartForConfirmedMessage]);
 
   const partnerName   = conversation?.partnerUsername || 'Usuario';
   const partnerAvatar = conversation?.partnerAvatar;

@@ -129,6 +129,93 @@ export async function recordAdvertisingMessageStartConversion(
   return row.conversion_id;
 }
 
+type AdvertisingMessageStartRecorder = (
+  messageId: string,
+  impressionEventId: string,
+) => Promise<string>;
+
+type AdvertisingMessageStartRetryOptions = {
+  retryDelaysMs?: readonly number[];
+  wait?: (delayMs: number) => Promise<void>;
+};
+
+type AdvertisingMessageStartEvidence = {
+  messageId: string;
+  impressionEventId: string;
+  attempts: number;
+  confirmed: boolean;
+  generation: number;
+  completion: Promise<boolean>;
+};
+
+const waitForAdvertisingRetry = (delayMs: number) => new Promise<void>(resolve => {
+  setTimeout(resolve, delayMs);
+});
+
+export class AdvertisingMessageStartRetryController {
+  private evidence: AdvertisingMessageStartEvidence | null = null;
+  private generation = 0;
+  private readonly retryDelaysMs: readonly number[];
+  private readonly wait: (delayMs: number) => Promise<void>;
+
+  constructor(
+    private readonly record: AdvertisingMessageStartRecorder = recordAdvertisingMessageStartConversion,
+    options: AdvertisingMessageStartRetryOptions = {},
+  ) {
+    this.retryDelaysMs = options.retryDelaysMs?.length ? [...options.retryDelaysMs] : [0, 750, 2500];
+    this.wait = options.wait ?? waitForAdvertisingRetry;
+  }
+
+  submit(messageId: string, impressionEventId: string): Promise<boolean> {
+    if (!messageId || !impressionEventId) return Promise.resolve(false);
+    if (this.evidence) return this.evidence.completion;
+    const evidence: AdvertisingMessageStartEvidence = {
+      messageId,
+      impressionEventId,
+      attempts: 0,
+      confirmed: false,
+      generation: this.generation,
+      completion: Promise.resolve(false),
+    };
+    this.evidence = evidence;
+    evidence.completion = this.run(evidence);
+    return evidence.completion;
+  }
+
+  reset(): void {
+    this.generation += 1;
+    this.evidence = null;
+  }
+
+  snapshot(): Omit<AdvertisingMessageStartEvidence, 'generation' | 'completion'> | null {
+    if (!this.evidence) return null;
+    const { messageId, impressionEventId, attempts, confirmed } = this.evidence;
+    return { messageId, impressionEventId, attempts, confirmed };
+  }
+
+  private async run(evidence: AdvertisingMessageStartEvidence): Promise<boolean> {
+    let lastError: unknown;
+    for (const delayMs of this.retryDelaysMs) {
+      if (delayMs > 0) await this.wait(delayMs);
+      if (evidence.generation !== this.generation || this.evidence !== evidence) return false;
+      evidence.attempts += 1;
+      try {
+        await this.record(evidence.messageId, evidence.impressionEventId);
+        if (evidence.generation !== this.generation || this.evidence !== evidence) return false;
+        evidence.confirmed = true;
+        return true;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    console.warn('[AdsV2] message-start conversion retries exhausted', {
+      attempts: evidence.attempts,
+      error: lastError instanceof Error ? lastError.message : 'advertising_message_conversion_failed',
+    });
+    return false;
+  }
+}
+
 export async function fetchChatConversations(
   cursor?: ChatConversationCursor,
 ): Promise<ChatConversationPageRow[]> {

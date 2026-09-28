@@ -92,7 +92,7 @@ const objectiveTruth: Record<(typeof ADVERTISING_OBJECTIVES)[number], string> = 
   engagement: "Primary result: qualified ad clicks/taps; Likes and Shares are not fabricated.",
   video_views: "Primary result: qualified video views after actual playback.",
   profile_visits: "Primary result: canonical Nelyon profile visits.",
-  messages: "Primary result: conversations started after the first outbound message.",
+  messages: "Primary result: Message starts from the first outbound message after the ad.",
   website_conversions: "Website conversion tracking is not configured yet.",
   app_promotion: "Primary result: verified app-store visits; installs are not measured.",
   marketplace_sales: "Primary result: attributed Marketplace purchases.",
