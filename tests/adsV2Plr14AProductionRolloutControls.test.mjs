@@ -17,7 +17,6 @@ test("PLR-14A has exactly one forward rollout-control migration", () => {
   assert.match(sql, /^begin;/im);
   assert.match(sql, /commit;\s*$/im);
 });
-
 test("desired rollout configuration extends the two canonical authorities", () => {
   assert.match(sql, /alter table private\.advertising_delivery_policy[\s\S]*production_rollout_version[\s\S]*production_delivery_paused[\s\S]*production_rollout_config_version/i);
   assert.match(sql, /alter table private\.advertising_placement_catalog[\s\S]*production_rollout_bps[\s\S]*production_kill_switch/i);
@@ -86,4 +85,3 @@ test("Admin Web consumes server rollout truth and exposes no browser service rol
   assert.match(adminPage, /Global delivery pause/);
   assert.doesNotMatch(`${adminApi}\n${adminPage}`, /service_role|SUPABASE_SERVICE_ROLE/i);
 });
-
