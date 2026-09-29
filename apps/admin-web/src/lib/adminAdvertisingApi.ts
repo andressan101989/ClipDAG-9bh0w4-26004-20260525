@@ -28,6 +28,23 @@ export type AdsBillingRate={
 };
 export type AdsBillingRatePage={items:AdsBillingRate[];next_cursor:{created_at:string;id:string}|null};
 export type AdsBillingRateDraftInput={objective:string;billableEventType:"impression"|"click";placementCode:string;scope:"global"|"canary_campaign";scopeCampaignId?:string|null;rateBdag:string;effectiveFrom:string;effectiveTo?:string|null;idempotencyKey:string};
+export type AdsRolloutCoverage={required:number;covered:number;missing:number;ready:boolean};
+export type AdsRolloutPlacement={
+  code:string;label:string;status:string;surface_verified:boolean;selection_enabled:boolean;
+  adapter_version:string;production_rollout_bps:number;rollout_percent:number;
+  production_kill_switch:boolean;effective_runtime_enabled:boolean;
+  production_rate_coverage:AdsRolloutCoverage;
+};
+export type AdsRolloutControl={
+  authority:"ads_v2_production_rollout";launch_mode:string;global_delivery_enabled:boolean;
+  production_delivery_paused:boolean;rollout_version:string;config_version:number;
+  authorization_window:{open_count:number;current:JsonRecord|null};placements:AdsRolloutPlacement[];
+  production_ready:boolean;blockers:string[];
+};
+export type AdsRolloutMutationInput={
+  expectedConfigVersion:number;globalPaused:boolean;
+  placements:Array<{code:string;rollout_bps:number;kill_switch:boolean}>;idempotencyKey:string;
+};
 
 const fail=(path:string):never=>{throw new Error(`Respuesta Ads V2 inválida: ${path}`)};
 const record=(value:unknown,path:string):JsonRecord=>value!==null&&typeof value==="object"&&!Array.isArray(value)?value as JsonRecord:fail(path);
@@ -72,6 +89,28 @@ export async function getAdminAdvertisingHealth():Promise<AdsHealth>{
 export async function getAdminAdvertisingFinanceHealth(){const root=record(await rpc("get_admin_advertising_finance_health"),"finance_health");if(root.authority!=="ads_v2")fail("finance_health.authority");return root}
 
 export async function getAdminAdvertisingBillingHealth(){const root=record(await rpc("get_admin_advertising_billing_health"),"billing_health");if(root.authority!=="ads_v2")fail("billing_health.authority");return root}
+
+const rolloutCodes=["social_feed","clips","stories","live","marketplace_home","marketplace_search"] as const;
+const validateRolloutPlacement=(value:unknown,path:string):AdsRolloutPlacement=>{const row=record(value,path),coverage=record(row.production_rate_coverage,`${path}.production_rate_coverage`),code=text(row.code,`${path}.code`);if(!rolloutCodes.includes(code as typeof rolloutCodes[number]))fail(`${path}.code`);return{code,label:text(row.label,`${path}.label`),status:text(row.status,`${path}.status`),surface_verified:bool(row.surface_verified,`${path}.surface_verified`),selection_enabled:bool(row.selection_enabled,`${path}.selection_enabled`),adapter_version:text(row.adapter_version,`${path}.adapter_version`),production_rollout_bps:number(row.production_rollout_bps,`${path}.production_rollout_bps`),rollout_percent:number(row.rollout_percent,`${path}.rollout_percent`),production_kill_switch:bool(row.production_kill_switch,`${path}.production_kill_switch`),effective_runtime_enabled:bool(row.effective_runtime_enabled,`${path}.effective_runtime_enabled`),production_rate_coverage:{required:number(coverage.required,`${path}.coverage.required`),covered:number(coverage.covered,`${path}.coverage.covered`),missing:number(coverage.missing,`${path}.coverage.missing`),ready:bool(coverage.ready,`${path}.coverage.ready`)}}};
+
+export async function getAdminAdvertisingRolloutControl():Promise<AdsRolloutControl>{
+  const root=record(await rpc("get_admin_advertising_rollout_control_v1"),"rollout_control");
+  if(root.authority!=="ads_v2_production_rollout")fail("rollout_control.authority");
+  const window=record(root.authorization_window,"rollout_control.authorization_window");
+  const placements=array(root.placements,"rollout_control.placements").map((item,index)=>validateRolloutPlacement(item,`rollout_control.placements[${index}]`));
+  if(placements.length!==6||new Set(placements.map((item)=>item.code)).size!==6||rolloutCodes.some((code)=>!placements.some((item)=>item.code===code)))fail("rollout_control.placements");
+  return{authority:"ads_v2_production_rollout",launch_mode:text(root.launch_mode,"rollout_control.launch_mode"),global_delivery_enabled:bool(root.global_delivery_enabled,"rollout_control.global_delivery_enabled"),production_delivery_paused:bool(root.production_delivery_paused,"rollout_control.production_delivery_paused"),rollout_version:text(root.rollout_version,"rollout_control.rollout_version"),config_version:number(root.config_version,"rollout_control.config_version"),authorization_window:{open_count:number(window.open_count,"rollout_control.authorization_window.open_count"),current:window.current===null?null:record(window.current,"rollout_control.authorization_window.current")},placements,production_ready:bool(root.production_ready,"rollout_control.production_ready"),blockers:array(root.blockers,"rollout_control.blockers").map((item)=>text(item,"rollout_control.blocker"))};
+}
+
+export async function setAdminAdvertisingProductionRollout(input:AdsRolloutMutationInput){
+  if(!Number.isSafeInteger(input.expectedConfigVersion)||input.expectedConfigVersion<1)fail("rollout.expectedConfigVersion");
+  uuid(input.idempotencyKey,"rollout.idempotencyKey");
+  if(input.placements.length!==6||new Set(input.placements.map((item)=>item.code)).size!==6||rolloutCodes.some((code)=>!input.placements.some((item)=>item.code===code)))fail("rollout.placements");
+  for(const [index,item] of input.placements.entries()){if(!rolloutCodes.includes(item.code as typeof rolloutCodes[number])||!Number.isInteger(item.rollout_bps)||item.rollout_bps<0||item.rollout_bps>10000||typeof item.kill_switch!=="boolean")fail(`rollout.placements[${index}]`)}
+  return record(await rpc("set_admin_advertising_production_rollout_v1",{p_expected_config_version:input.expectedConfigVersion,p_global_paused:input.globalPaused,p_placements:input.placements,p_idempotency_key:input.idempotencyKey}),"rollout_mutation");
+}
+
+export async function setAdminAdvertisingLaunchMode(mode:"PRODUCTION"|"DISARMED",idempotencyKey:string){uuid(idempotencyKey,"launch.idempotencyKey");return record(await rpc("set_advertising_launch_mode_v2",{p_launch_mode:mode,p_idempotency_key:idempotencyKey}),"launch_mutation")}
 
 const validateBillingRate=(value:unknown,path:string):AdsBillingRate=>{const row=record(value,path);const scopeCampaignId=row.scope_campaign_id===null?null:uuid(row.scope_campaign_id,`${path}.scope_campaign_id`);const state=text(row.state,`${path}.state`);const scope=text(row.scope,`${path}.scope`);const event=text(row.billable_event_type,`${path}.billable_event_type`);if(!["draft","published","retired"].includes(state))fail(`${path}.state`);if(!["global","canary_campaign"].includes(scope))fail(`${path}.scope`);if(!["impression","click"].includes(event))fail(`${path}.billable_event_type`);return{id:uuid(row.id,`${path}.id`),objective:text(row.objective,`${path}.objective`),billable_event_type:event as AdsBillingRate["billable_event_type"],placement_code:text(row.placement_code,`${path}.placement_code`),rate_bdag:money(row.rate_bdag,`${path}.rate_bdag`),currency:text(row.currency,`${path}.currency`) as "BDAG",scope:scope as AdsBillingRate["scope"],scope_campaign_id:scopeCampaignId,state:state as AdsBillingRate["state"],effective_from:date(row.effective_from,`${path}.effective_from`),effective_to:row.effective_to===null?null:date(row.effective_to,`${path}.effective_to`),created_at:date(row.created_at,`${path}.created_at`),updated_at:date(row.updated_at,`${path}.updated_at`),published_at:row.published_at===null?null:date(row.published_at,`${path}.published_at`),retired_at:row.retired_at===null?null:date(row.retired_at,`${path}.retired_at`)}};
 

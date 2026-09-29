@@ -4,18 +4,21 @@ import {beforeEach,describe,expect,it,vi} from "vitest";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
 import {adminLinks} from "../layout/adminNavigation";
 import {AdminAdvertisingAnalyticsPage,AdminAdvertisingBillingPage,AdminAdvertisingCampaignDetailPage,AdminAdvertisingCampaignsPage,AdminAdvertisingHealthPage,AdminAdvertisingOverviewPage,AdminAdvertisingReviewPage} from "../pages/AdminAdvertisingPages";
-import {createAdminAdvertisingBillingRateDraft,getAdminAdvertisingBillingHealth,getAdminAdvertisingCampaignDetail,getAdminAdvertisingHealth,getAdminAdvertisingOverview,publishAdminAdvertisingBillingRate,retireAdminAdvertisingBillingRate,reviewAdvertisingAd,searchAdminAdvertisingAds,searchAdminAdvertisingBillingRates,searchAdminAdvertisingCampaigns,updateAdminAdvertisingBillingRateDraft} from "../lib/adminAdvertisingApi";
+import {createAdminAdvertisingBillingRateDraft,getAdminAdvertisingBillingHealth,getAdminAdvertisingCampaignDetail,getAdminAdvertisingHealth,getAdminAdvertisingOverview,getAdminAdvertisingRolloutControl,publishAdminAdvertisingBillingRate,retireAdminAdvertisingBillingRate,reviewAdvertisingAd,searchAdminAdvertisingAds,searchAdminAdvertisingBillingRates,searchAdminAdvertisingCampaigns,setAdminAdvertisingLaunchMode,setAdminAdvertisingProductionRollout,updateAdminAdvertisingBillingRateDraft} from "../lib/adminAdvertisingApi";
 
 vi.mock("../auth/AdminAuthProvider",()=>({useAdminAuth:vi.fn()}));
 vi.mock("../lib/adminApi",()=>({formatBdag:(value:unknown)=>`${value} BDAG`,formatDate:(value:unknown)=>String(value)}));
 vi.mock("../lib/adminAdvertisingApi",()=>({
   getAdminAdvertisingCampaignDetail:vi.fn(),getAdminAdvertisingFinanceHealth:vi.fn(),getAdminAdvertisingHealth:vi.fn(),
-  getAdminAdvertisingBillingHealth:vi.fn(),getAdminAdvertisingOverview:vi.fn(),reviewAdvertisingAd:vi.fn(),searchAdminAdvertisingAds:vi.fn(),searchAdminAdvertisingBillingRates:vi.fn(),searchAdminAdvertisingCampaigns:vi.fn(),
+  getAdminAdvertisingBillingHealth:vi.fn(),getAdminAdvertisingOverview:vi.fn(),getAdminAdvertisingRolloutControl:vi.fn(),reviewAdvertisingAd:vi.fn(),searchAdminAdvertisingAds:vi.fn(),searchAdminAdvertisingBillingRates:vi.fn(),searchAdminAdvertisingCampaigns:vi.fn(),
   createAdminAdvertisingBillingRateDraft:vi.fn(),updateAdminAdvertisingBillingRateDraft:vi.fn(),publishAdminAdvertisingBillingRate:vi.fn(),retireAdminAdvertisingBillingRate:vi.fn(),
+  setAdminAdvertisingLaunchMode:vi.fn(),setAdminAdvertisingProductionRollout:vi.fn(),
 }));
 
 const access=(capabilities:string[])=>({hasCapability:(capability:string)=>capabilities.includes(capability)});
 const overview={authority:"ads_v2" as const,range:"30d" as const,generated_at:"2026-09-23T18:00:00Z",identity:{business_accounts:47,ad_accounts:47},inventory:{campaigns:0,ad_sets:0,ads:0,creatives:0},review:{not_submitted:0,pending:0,approved:0,rejected:0},events:{impressions:0,clicks:0,destination_opens:0,video_views:0,engagements:0,ctr:0},conversions:{conversions:0,attributions:0,marketplace_purchase_value_bdag:0},finance:{campaign_finance_count:0,draft_finance_count:0,funded_finance_count:0,settled_finance_count:0,budget_bdag:0,funded_bdag:0,spent_bdag:0,released_bdag:0,reserved_bdag:0},placements:[],objectives:[]};
+const rolloutPlacements=["clips","live","marketplace_home","marketplace_search","social_feed","stories"].map((code)=>({code,label:code.replaceAll("_"," "),status:"active",surface_verified:true,selection_enabled:true,adapter_version:"ads-v2-plr-10",production_rollout_bps:0,rollout_percent:0,production_kill_switch:false,effective_runtime_enabled:false,production_rate_coverage:{required:9,covered:9,missing:0,ready:true}}));
+const rolloutControl={authority:"ads_v2_production_rollout" as const,launch_mode:"DISARMED",global_delivery_enabled:false,production_delivery_paused:false,rollout_version:"nelyon-ads-rollout-v1",config_version:1,authorization_window:{open_count:0,current:null},placements:rolloutPlacements,production_ready:false,blockers:["no_effective_production_placements"]};
 
 beforeEach(()=>{
   vi.clearAllMocks();
@@ -26,6 +29,9 @@ beforeEach(()=>{
   vi.mocked(searchAdminAdvertisingAds).mockResolvedValue([]);
   vi.mocked(searchAdminAdvertisingBillingRates).mockResolvedValue({items:[],next_cursor:null});
   vi.mocked(getAdminAdvertisingBillingHealth).mockResolvedValue({authority:"ads_v2",launch_mode:"DISARMED",billing_cutover_at:"2026-09-28T00:17:06Z",pricing_policy:"nelyon-ads-pricing-v1",production_rate_coverage_ready:true,production_rate_coverage:{required_count:54,covered_count:54,missing_count:0,ready:true},production_rate_coverage_by_placement:["clips","live","marketplace_home","marketplace_search","social_feed","stories"].map((placement_code)=>({placement_code,required_count:9,covered_count:9,missing_count:0,ready:true})),rate_versions:{draft:0,published:54,retired:0},authorization_windows:{open:0,closed:0},materializations:{pending:0,active_pending:0,charged:0,budget_exhausted:0,oldest_pending_at:null},active_pending_reservation_anomalies:0,cron_jobs:[]});
+  vi.mocked(getAdminAdvertisingRolloutControl).mockResolvedValue(rolloutControl);
+  vi.mocked(setAdminAdvertisingProductionRollout).mockResolvedValue({authority:"ads_v2_production_rollout",config_version:2,idempotent:false});
+  vi.mocked(setAdminAdvertisingLaunchMode).mockResolvedValue({from_mode:"DISARMED",to_mode:"PRODUCTION",idempotent:false});
   vi.mocked(getAdminAdvertisingHealth).mockResolvedValue({authority:"ads_v2",production_delivery_ready:false,blockers:["age_authority_unavailable","campaign_activation_disabled","campaign_automatic_transitions_disabled","finance_funding_disabled","global_delivery_disabled","no_v2_placement_enabled"],capability_not_enabled:["geo_matching_disabled","language_matching_disabled"],identity:{business_accounts:47,ad_accounts:47},age:{age_eligibility_rows:0,advertiser_eligible_rows:0,advertiser_eligibility_operational:false},targeting:{targeting_policy_version:"nelyon-ads-targeting-v2",geo_targeting_enabled:false,language_targeting_enabled:false,daypart_targeting_enabled:true,frequency_targeting_enabled:true},delivery:{delivery_policy_version:"nelyon-ads-delivery-v2",global_v2_delivery_enabled:false,enabled_placement_count:0,campaign_activation_implemented:true},lifecycle:{policy_version:"nelyon-ads-campaign-lifecycle-v1",activation_enabled:false,automatic_transitions_enabled:false},events:{event_policy_version:"nelyon-ads-events-v1",events:0},finance:{finance_policy_version:"nelyon-ads-finance-v1",funding_enabled:false}});
 });
 
@@ -176,9 +182,9 @@ describe("ADS-V2-J Admin Web",()=>{
   it("shows operational billing health without exposing launch controls or rate mutations to read-only operators",async()=>{
     render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
     expect(await screen.findByText("Rates & billing health")).toBeInTheDocument();
-    expect(screen.getByText("DISARMED")).toBeInTheDocument();
+    expect(screen.getAllByText("DISARMED").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Coverage by placement")).toBeInTheDocument();
-    expect(screen.getAllByText("9/9 ready")).toHaveLength(6);
+    await waitFor(()=>expect(screen.getAllByText("9/9 ready")).toHaveLength(12));
     expect(screen.getByText("No Ads billing rates")).toBeInTheDocument();
     expect(screen.queryByRole("button",{name:"Create draft"})).not.toBeInTheDocument();
     expect(screen.queryByRole("button",{name:/launch|production|open window/i})).not.toBeInTheDocument();
@@ -224,5 +230,68 @@ describe("ADS-V2-J Admin Web",()=>{
     expect(retireAdminAdvertisingBillingRate).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button",{name:"Retire rate"}));
     await waitFor(()=>expect(retireAdminAdvertisingBillingRate).toHaveBeenCalledWith("22222222-2222-4222-8222-222222222222","Retire obsolete price",expect.any(String)));
+  });
+
+  it("keeps rollout controls read-only without advertising.rollout.manage",async()=>{
+    render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
+    expect(await screen.findByText("PRODUCTION ROLLOUT")).toBeInTheDocument();
+    expect(screen.getByText("Config version 1")).toBeInTheDocument();
+    expect(screen.getAllByText("9/9 ready")).toHaveLength(12);
+    expect(screen.queryByRole("button",{name:"Save configuration"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Start Production"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Disarm Production"})).not.toBeInTheDocument();
+  });
+
+  it("lets only rollout managers save six placements with an idempotency key",async()=>{
+    vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.billing.read","advertising.rollout.manage"]) as never);
+    render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText("Social feed rollout percentage"),{target:{value:"10"}});
+    fireEvent.click(screen.getByRole("button",{name:"Save configuration"}));
+    fireEvent.click(screen.getByRole("button",{name:"Confirm rollout configuration"}));
+    await waitFor(()=>expect(setAdminAdvertisingProductionRollout).toHaveBeenCalledWith(expect.objectContaining({expectedConfigVersion:1,globalPaused:false,idempotencyKey:expect.any(String),placements:expect.arrayContaining([expect.objectContaining({code:"social_feed",rollout_bps:1000,kill_switch:false})])})));
+    expect(vi.mocked(setAdminAdvertisingProductionRollout).mock.calls[0][0].placements).toHaveLength(6);
+  });
+
+  it("requires explicit high-consequence confirmation before canonical Production launch",async()=>{
+    vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.billing.read","advertising.rollout.manage"]) as never);
+    vi.mocked(getAdminAdvertisingRolloutControl).mockResolvedValue({...rolloutControl,production_ready:true,blockers:[],placements:rolloutPlacements.map((row)=>row.code==="social_feed"?{...row,production_rollout_bps:1000,rollout_percent:10}:row)});
+    render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button",{name:"Start Production"}));
+    expect(setAdminAdvertisingLaunchMode).not.toHaveBeenCalled();
+    expect(screen.getByText(/real Ads delivery and real money may occur/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Confirm Start Production"}));
+    await waitFor(()=>expect(setAdminAdvertisingLaunchMode).toHaveBeenCalledWith("PRODUCTION",expect.any(String)));
+  });
+
+  it("saves global pause and a placement kill only through the canonical rollout mutation",async()=>{
+    vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.billing.read","advertising.rollout.manage"]) as never);
+    vi.mocked(getAdminAdvertisingRolloutControl).mockResolvedValue({...rolloutControl,launch_mode:"PRODUCTION",global_delivery_enabled:true,production_ready:true,blockers:[],placements:rolloutPlacements.map((row)=>({...row,production_rollout_bps:1000,rollout_percent:10,effective_runtime_enabled:true}))});
+    render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
+    fireEvent.click(await screen.findByLabelText("Global delivery pause"));
+    fireEvent.click(screen.getByLabelText("Stories kill switch"));
+    fireEvent.click(screen.getByRole("button",{name:"Save configuration"}));
+    expect(setAdminAdvertisingProductionRollout).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button",{name:"Confirm rollout configuration"}));
+    await waitFor(()=>expect(setAdminAdvertisingProductionRollout).toHaveBeenCalledWith(expect.objectContaining({globalPaused:true,placements:expect.arrayContaining([expect.objectContaining({code:"stories",kill_switch:true})])})));
+  });
+
+  it("requires confirmation and uses the one canonical launch RPC to disarm",async()=>{
+    vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.billing.read","advertising.rollout.manage"]) as never);
+    vi.mocked(getAdminAdvertisingRolloutControl).mockResolvedValue({...rolloutControl,launch_mode:"PRODUCTION",global_delivery_enabled:true,production_ready:true,blockers:[],placements:rolloutPlacements.map((row)=>({...row,production_rollout_bps:1000,rollout_percent:10,effective_runtime_enabled:true}))});
+    render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button",{name:"Disarm Production"}));
+    expect(setAdminAdvertisingLaunchMode).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button",{name:"Confirm Disarm Production"}));
+    await waitFor(()=>expect(setAdminAdvertisingLaunchMode).toHaveBeenCalledWith("DISARMED",expect.any(String)));
+  });
+
+  it("surfaces stale rollout versions instead of showing fake success",async()=>{
+    vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.billing.read","advertising.rollout.manage"]) as never);
+    vi.mocked(setAdminAdvertisingProductionRollout).mockRejectedValue({message:"advertising_rollout_config_version_stale",code:"40001"});
+    render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button",{name:"Save configuration"}));
+    fireEvent.click(screen.getByRole("button",{name:"Confirm rollout configuration"}));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText("Production rollout configuration saved.")).not.toBeInTheDocument();
   });
 });
