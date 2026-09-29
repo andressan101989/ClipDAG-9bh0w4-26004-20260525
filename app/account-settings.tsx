@@ -275,6 +275,13 @@ export default function AccountSettingsScreen() {
 
         <Section title="Datos y Privacidad">
           <Row
+            icon="shield-account-outline"
+            iconGradient={['#1F79FF', '#00A8E8']}
+            label="Edad y elegibilidad"
+            sublabel="Completa o consulta tu verificación de edad"
+            onPress={() => router.push('/age-eligibility')}
+          />
+          <Row
             icon="download-outline"
             iconGradient={['#00E5A0', '#2D9EFF']}
             label="Descargar mis datos"
