@@ -91,6 +91,11 @@ All calculations use `numeric` and are rounded to six decimal places.
   hours.
 - Repeat penalty: `-min(recent_exposures * 5, 20)`.
 
+Anonymous viewers and authenticated viewers with fewer than three bounded
+useful actions are in cold start. For them, short-watch, recent-completion and
+repeat-exposure penalties are suppressed because the history is not yet
+reliable; the same-session penalty remains active to prevent immediate replay.
+
 `videos.views_count`, shares, Ads signals, spend, budgets, semantic data,
 creator affinity, topic affinity, embeddings and collaborative filtering are
 excluded.
@@ -119,6 +124,11 @@ Rollout uses a stable MD5-derived bucket from viewer UUID or anonymous session
 UUID plus policy version. Zero basis points always means chronological;
 10,000 always means behavioral. Production is deployed at zero.
 
+Every delivery-affecting policy mutation must provide a new policy version.
+A private trigger rejects unversioned changes and refreshes `updated_at`, so an
+active cursor fails closed instead of silently continuing under changed
+weights, rollout, diversity, or pagination configuration.
+
 Creator diversity is deterministic across the snapshot. Pass one consumes the
 earliest remaining diversity tier, which contains at most two items per
 creator. Pass two fills any remaining slots from the best later-tier
@@ -137,7 +147,8 @@ anon/authenticated.
 The response contains the video presentation fields, creator username/avatar,
 ranking mode, policy version, rank score, feed as-of and cursor tuple. It does
 not expose raw events, other viewer identities, private policy weights or Ads
-data.
+data. It also returns the server's effective page limit so the thin client does
+not infer pagination state from a potentially different private policy cap.
 
 `services/feedRankingService.ts` only invokes and validates the RPC, maps rows
 through the existing presentation mapper and constructs the next cursor.
@@ -148,12 +159,13 @@ non-candidate lookup protected by video RLS.
 ## Index and performance design
 
 The function aggregates signals inside one set-based SQL statement over the
-bounded candidate CTE. There are no client per-candidate calls. Bounded lateral
-aggregates perform at most one index-backed probe per signal authority for each
-of the 200 candidates, preventing an unbounded scan of behavioral history. F0
-video and view indexes remain. L1 adds snapshot-aware composite indexes for
-likes, comments and saves plus a session/video view index only when the
-representative disposable EXPLAIN demonstrates their use.
+bounded candidate CTE. There are no client or SQL per-candidate calls. The
+candidate UUIDs are collected once into a bounded array; likes, comments,
+saves, global watch quality, and viewer history are each grouped once with an
+index-backed `video_id = ANY(candidate_ids)` restriction. F0 video and view
+indexes remain. L1 adds snapshot-aware composite indexes for likes, comments
+and saves plus a session/video view index only when the representative
+disposable EXPLAIN demonstrates their use.
 
 Performance proof uses thousands of synthetic videos and behavioral rows in a
 disposable PostgreSQL database. Production's six videos are not performance
@@ -165,7 +177,8 @@ evidence.
 the singleton/config domains, zero production rollout, required indexes,
 function existence/ACL/search path, raw signal and eligibility authorities,
 private policy access, absence of score materialization, and absence of Ads
-dependencies in the ranking definition.
+dependencies in the ranking definition. It also verifies that the policy
+version guard trigger remains installed.
 
 Technical observability is the response metadata plus reconciliation; no
 viewer-level log or analytics table is added. Production dry-run must report

@@ -12,6 +12,7 @@ const migrationDirectory = new URL('../supabase/migrations/', import.meta.url);
 
 const ids = {
   viewer: '31000000-0000-4000-8000-000000000001',
+  coldViewer: '31000000-0000-4000-8000-000000000008',
   creatorA: '31000000-0000-4000-8000-000000000002',
   creatorB: '31000000-0000-4000-8000-000000000003',
   creatorC: '31000000-0000-4000-8000-000000000004',
@@ -83,6 +84,12 @@ function lastLine(result) {
   return rows(result).at(-1) ?? '';
 }
 
+function setPolicy(db, version, assignments) {
+  psql(db, `update private.algo_l1_policy set
+    policy_version='${version}',
+    ${assignments};`);
+}
+
 function createDatabase() {
   const f0Sql = migration('_algo6_l1_f0_signal_eligibility_foundation.sql');
   const l1Sql = migration('_algo6_l1_behavioral_ranking.sql');
@@ -121,13 +128,15 @@ function seed(db) {
 
     insert into auth.users(id)
     select id from (values
-      ('${ids.viewer}'::uuid),('${ids.creatorA}'::uuid),('${ids.creatorB}'::uuid),
+      ('${ids.viewer}'::uuid),('${ids.coldViewer}'::uuid),
+      ('${ids.creatorA}'::uuid),('${ids.creatorB}'::uuid),
       ('${ids.creatorC}'::uuid),('${ids.privateCreator}'::uuid),('${ids.blockedCreator}'::uuid)
       ,('${ids.admin}'::uuid)
     ) x(id) on conflict do nothing;
 
     insert into public.user_profiles(id,username,is_private) values
       ('${ids.viewer}','l1_viewer',false),
+      ('${ids.coldViewer}','l1_cold_viewer',false),
       ('${ids.creatorA}','l1_creator_a',false),
       ('${ids.creatorB}','l1_creator_b',false),
       ('${ids.creatorC}','l1_creator_c',false),
@@ -206,17 +215,26 @@ test('L1 database ranks eligible organic candidates deterministically and secure
     assert.ok(chronological.length >= 8);
     assert.ok(chronological.every(row => row.includes('|chronological|0.000000')));
     assert.equal(chronological[0].split('|')[0], ids.videoA1);
+    assert.deepEqual(
+      chronological.slice(0, 4).map(row => row.split('|')[0]),
+      [ids.videoA1, ids.videoA2, ids.videoA3, ids.videoA4],
+      'chronological fallback must not apply behavioral creator diversity',
+    );
     for (const hidden of [ids.privateVideo, ids.blockedVideo, ids.moderatedVideo]) {
       assert.ok(chronological.every(row => !row.startsWith(hidden)), hidden);
     }
 
-    psql(db, `update private.algo_l1_policy set
+    assert.notEqual(psql(db,
+      'update private.algo_l1_policy set production_rollout_bps=10000',
+      { allowFailure: true }).status, 0, 'delivery changes require a new policy version');
+
+    setPolicy(db, 'nelyon-algo-l1-test-01', `
       production_rollout_bps=10000,
       freshness_weight=0, follow_weight=20,
       like_weight=0, comment_weight=0, save_weight=0,
       completion_weight=0, rewatch_weight=0, exploration_weight=0,
       short_watch_penalty=0, recent_completed_penalty=0,
-      repeat_view_penalty=0, same_session_penalty=0;`);
+      repeat_view_penalty=0, same_session_penalty=0`);
     const followed = rows(actorCall(db, 'authenticated', ids.viewer,
       rankedSql(session, { projection: "id||'|'||rank_score", limit: 20 })));
     const scoreMap = new Map(followed.map(row => {
@@ -225,8 +243,8 @@ test('L1 database ranks eligible organic candidates deterministically and secure
     }));
     assert.equal(scoreMap.get(ids.videoA1) - scoreMap.get(ids.videoB1), 20);
 
-    psql(db, `update private.algo_l1_policy set
-      follow_weight=0, freshness_weight=30, exploration_weight=0;`);
+    setPolicy(db, 'nelyon-algo-l1-test-02',
+      'follow_weight=0, freshness_weight=30, exploration_weight=0');
     const fresh = rows(actorCall(db, 'anon', null,
       rankedSql(session, { projection: "id||'|'||rank_score", limit: 20 })));
     const freshMap = new Map(fresh.map(row => {
@@ -235,10 +253,10 @@ test('L1 database ranks eligible organic candidates deterministically and secure
     }));
     assert.ok(freshMap.get(ids.videoA1) > freshMap.get(ids.videoB1));
 
+    setPolicy(db, 'nelyon-algo-l1-test-03', `
+      freshness_weight=0, like_weight=8, comment_weight=10, save_weight=12,
+      exploration_weight=0`);
     psql(db, `
-      update private.algo_l1_policy set
-        freshness_weight=0, like_weight=8, comment_weight=10, save_weight=12,
-        exploration_weight=0;
       insert into auth.users(id)
       select ('34000000-0000-4000-8000-'||lpad(i::text,12,'0'))::uuid
       from generate_series(1,10) i on conflict do nothing;
@@ -266,10 +284,10 @@ test('L1 database ranks eligible organic candidates deterministically and secure
     assert.equal(engagementMap.get(ids.videoB2), 5.195737);
     assert.equal(engagementMap.get(ids.videoC1), 6.234884);
 
+    setPolicy(db, 'nelyon-algo-l1-test-04', `
+      like_weight=0,comment_weight=0,save_weight=0,
+      completion_weight=12,rewatch_weight=6`);
     psql(db, `
-      update private.algo_l1_policy set
-        like_weight=0,comment_weight=0,save_weight=0,
-        completion_weight=12,rewatch_weight=6;
       insert into public.video_views(
         video_id,client_event_id,client_session_id,watch_duration_ms,media_duration_ms,
         completion_ratio,completed,rewatch_count,exit_reason,created_at
@@ -310,10 +328,34 @@ test('L1 database ranks eligible organic candidates deterministically and secure
     }));
     assert.equal(rewatchMap.get(ids.videoB2), 18);
 
+    setPolicy(db, 'nelyon-algo-l1-test-05', `
+      completion_weight=0,rewatch_weight=0,same_session_penalty=0,
+      short_watch_penalty=35,recent_completed_penalty=0,repeat_view_penalty=0`);
     psql(db, `
-      update private.algo_l1_policy set
-        completion_weight=0,rewatch_weight=0,same_session_penalty=100,
-        short_watch_penalty=0,recent_completed_penalty=0,repeat_view_penalty=0;
+      insert into public.video_views(
+        video_id,viewer_id,client_event_id,client_session_id,watch_duration_ms,
+        media_duration_ms,completion_ratio,completed,rewatch_count,exit_reason,created_at
+      ) values(
+        '${ids.videoC2}','${ids.coldViewer}',gen_random_uuid(),gen_random_uuid(),1000,
+        10000,0.100000,false,0,'swipe',clock_timestamp() - interval '1 minute'
+      );
+    `);
+    const coldBeforeThreshold = rows(actorCall(db, 'authenticated', ids.coldViewer,
+      rankedSql(session, { projection: "id||'|'||rank_score", limit: 20 })));
+    assert.equal(Number(coldBeforeThreshold.find(row => row.startsWith(ids.videoC2)).split('|')[1]), 0);
+    psql(db, `
+      insert into public.likes(video_id,user_id,created_at)
+      values('${ids.videoC1}','${ids.coldViewer}',clock_timestamp() - interval '1 minute');
+      insert into public.comments(video_id,user_id,text,created_at)
+      values('${ids.videoC1}','${ids.coldViewer}','threshold',clock_timestamp() - interval '1 minute');
+    `);
+    const coldAtThreshold = rows(actorCall(db, 'authenticated', ids.coldViewer,
+      rankedSql(session, { projection: "id||'|'||rank_score", limit: 20 })));
+    assert.equal(Number(coldAtThreshold.find(row => row.startsWith(ids.videoC2)).split('|')[1]), -35);
+
+    setPolicy(db, 'nelyon-algo-l1-test-06', `
+      same_session_penalty=100,short_watch_penalty=0`);
+    psql(db, `
       insert into public.video_views(
         video_id,viewer_id,client_event_id,client_session_id,watch_duration_ms,
         media_duration_ms,completion_ratio,completed,rewatch_count,exit_reason,created_at
@@ -326,10 +368,10 @@ test('L1 database ranks eligible organic candidates deterministically and secure
       rankedSql(session, { projection: "id||'|'||rank_score", limit: 20 })));
     assert.equal(Number(sameSession.find(row => row.startsWith(ids.videoA1)).split('|')[1]), -100);
 
+    setPolicy(db, 'nelyon-algo-l1-test-07', `
+      same_session_penalty=0,short_watch_penalty=35,
+      recent_completed_penalty=0,repeat_view_penalty=0`);
     psql(db, `
-      update private.algo_l1_policy set
-        same_session_penalty=0,short_watch_penalty=35,
-        recent_completed_penalty=0,repeat_view_penalty=0;
       insert into public.video_views(
         video_id,viewer_id,client_event_id,client_session_id,watch_duration_ms,
         media_duration_ms,completion_ratio,completed,rewatch_count,exit_reason,created_at
@@ -342,9 +384,9 @@ test('L1 database ranks eligible organic candidates deterministically and secure
       rankedSql(session, { projection: "id||'|'||rank_score", limit: 20 })));
     assert.equal(Number(shortWatch.find(row => row.startsWith(ids.videoA2)).split('|')[1]), -35);
 
+    setPolicy(db, 'nelyon-algo-l1-test-08',
+      'short_watch_penalty=0,recent_completed_penalty=25');
     psql(db, `
-      update private.algo_l1_policy set
-        short_watch_penalty=0,recent_completed_penalty=25;
       insert into public.video_views(
         video_id,viewer_id,client_event_id,client_session_id,watch_duration_ms,
         media_duration_ms,completion_ratio,completed,rewatch_count,exit_reason,created_at
@@ -357,9 +399,9 @@ test('L1 database ranks eligible organic candidates deterministically and secure
       rankedSql(session, { projection: "id||'|'||rank_score", limit: 20 })));
     assert.equal(Number(completed.find(row => row.startsWith(ids.videoA3)).split('|')[1]), -25);
 
+    setPolicy(db, 'nelyon-algo-l1-test-09',
+      'recent_completed_penalty=0,repeat_view_penalty=5,repeat_view_penalty_cap=20');
     psql(db, `
-      update private.algo_l1_policy set
-        recent_completed_penalty=0,repeat_view_penalty=5,repeat_view_penalty_cap=20;
       insert into public.video_views(
         video_id,viewer_id,client_event_id,client_session_id,watch_duration_ms,
         rewatch_count,exit_reason,created_at
@@ -372,11 +414,11 @@ test('L1 database ranks eligible organic candidates deterministically and secure
       rankedSql(session, { projection: "id||'|'||rank_score", limit: 20 })));
     assert.equal(Number(repeat.find(row => row.startsWith(ids.videoA4)).split('|')[1]), -20);
 
-    psql(db, `update private.algo_l1_policy set
+    setPolicy(db, 'nelyon-algo-l1-test-10', `
       freshness_weight=30,follow_weight=0,like_weight=0,comment_weight=0,save_weight=0,
       completion_weight=0,rewatch_weight=0,exploration_weight=0,
       same_session_penalty=0,short_watch_penalty=0,recent_completed_penalty=0,
-      repeat_view_penalty=0,creator_page_cap=2;`);
+      repeat_view_penalty=0,creator_page_cap=2`);
     const anonFirst = rows(actorCall(db, 'anon', null,
       rankedSql('33000000-0000-4000-8000-000000000002', {
         projection: "id||'|'||rank_score||'|'||feed_as_of||'|'||policy_version",
@@ -434,6 +476,15 @@ test('L1 database ranks eligible organic candidates deterministically and secure
     ]), 'diversity pagination must not permanently skip deferred creator items');
     assert.equal(pagedIds.length, new Set(pagedIds).size, 'ranked pages must not duplicate items');
 
+    const updatedBefore = lastLine(psql(db,
+      'select updated_at::text from private.algo_l1_policy'));
+    setPolicy(db, 'nelyon-algo-l1-test-11', 'freshness_weight=29');
+    const updatedAfter = lastLine(psql(db,
+      'select updated_at::text from private.algo_l1_policy'));
+    assert.notEqual(updatedAfter, updatedBefore, 'policy mutation must refresh updated_at');
+    assert.notEqual(actorCall(db, 'anon', null, pageTwoSql,
+      { allowFailure: true }).status, 0, 'old cursor must fail after policy mutation');
+
     assert.notEqual(actorCall(db, 'anon', null, rankedSql(session, {
       asOf: new Date(Date.now() + 60_000).toISOString(),
       score: 0,
@@ -464,11 +515,11 @@ test('L1 database ranks eligible organic candidates deterministically and secure
       rankedSql('33000000-0000-4000-8000-000000000004', {
         projection: 'user_id',
         limit: 4,
-    }))); 
+    })));
     assert.equal(singleCreator.length, 4, 'fill pass must keep a small catalog useful');
     assert.deepEqual(singleCreator, Array(4).fill(ids.creatorA));
 
-    psql(db, `update private.algo_l1_policy set production_rollout_bps=0;`);
+    setPolicy(db, 'nelyon-algo-l1-test-12', 'production_rollout_bps=0');
     assert.notEqual(actorCall(db, 'anon', null,
       'select public.reconcile_algo_l1_v1()', { allowFailure: true }).status, 0);
     assert.equal(lastLine(actorCall(db, 'service_role', null,
@@ -544,7 +595,8 @@ test('L1 query plan stays bounded and index-backed at representative synthetic v
       analyze public.comments;
       analyze public.video_saves;
       analyze public.video_views;
-      update private.algo_l1_policy set production_rollout_bps=10000;
+      update private.algo_l1_policy set
+        policy_version='nelyon-algo-l1-perf',production_rollout_bps=10000;
     `);
 
     const candidatePlan = psql(db, `
@@ -566,15 +618,15 @@ test('L1 query plan stays bounded and index-backed at representative synthetic v
       with candidates as materialized(
         select id from public.videos
         order by created_at desc,id desc limit 200
+      ), candidate_ids as materialized(
+        select array_agg(id) as ids from candidates
       )
-      select c.id,aggregate.raw_views
-      from candidates c
-      cross join lateral(
-        select count(*) as raw_views
-        from public.video_views vv
-        where vv.video_id=c.id
-          and vv.created_at <= '2100-01-01T00:00:00Z'::timestamptz
-      ) aggregate;
+      select vv.video_id,count(*) as raw_views
+      from public.video_views vv
+      cross join candidate_ids ci
+      where vv.video_id=any(ci.ids)
+        and vv.created_at <= '2100-01-01T00:00:00Z'::timestamptz
+      group by vv.video_id;
     `).stdout;
     assert.match(behaviorPlan, /video_views_video_created_idx/i);
 

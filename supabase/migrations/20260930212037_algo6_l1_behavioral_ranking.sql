@@ -125,6 +125,34 @@ insert into private.algo_l1_policy(
   30
 );
 
+create or replace function private.guard_algo_l1_policy_v1()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.created_at is distinct from old.created_at then
+    raise exception 'algo_l1_policy_created_at_immutable' using errcode = '22023';
+  end if;
+
+  if (to_jsonb(new) - 'created_at' - 'updated_at')
+       is distinct from (to_jsonb(old) - 'created_at' - 'updated_at')
+     and new.policy_version is not distinct from old.policy_version then
+    raise exception 'algo_l1_policy_version_required' using errcode = '22023';
+  end if;
+
+  new.updated_at := clock_timestamp();
+  return new;
+end;
+$$;
+
+revoke all on function private.guard_algo_l1_policy_v1()
+  from public, anon, authenticated, service_role;
+
+create trigger algo_l1_policy_version_guard
+before update on private.algo_l1_policy
+for each row execute function private.guard_algo_l1_policy_v1();
+
 create index likes_video_created_idx
   on public.likes(video_id, created_at desc);
 create index comments_video_created_idx
@@ -179,7 +207,8 @@ returns table (
   feed_as_of timestamp with time zone,
   cursor_score numeric(18,6),
   cursor_created_at timestamp with time zone,
-  cursor_id uuid
+  cursor_id uuid,
+  effective_page_limit integer
 )
 language plpgsql
 security definer
@@ -250,17 +279,24 @@ begin
     select count(*)
     into v_useful_actions
     from (
-      select l.id from public.likes l
-      where l.user_id = v_viewer_id and l.created_at <= v_as_of
-      union all
-      select c.id from public.comments c
-      where c.user_id = v_viewer_id and c.created_at <= v_as_of
-      union all
-      select s.id from public.video_saves s
-      where s.user_id = v_viewer_id and s.created_at <= v_as_of
-      union all
-      select vv.id from public.video_views vv
-      where vv.viewer_id = v_viewer_id and vv.created_at <= v_as_of
+      select 1
+      from (
+        select f.id from public.follows f
+        where f.follower_id = v_viewer_id and f.created_at <= v_as_of
+        union all
+        select l.id from public.likes l
+        where l.user_id = v_viewer_id and l.created_at <= v_as_of
+        union all
+        select c.id from public.comments c
+        where c.user_id = v_viewer_id and c.created_at <= v_as_of
+        union all
+        select s.id from public.video_saves s
+        where s.user_id = v_viewer_id and s.created_at <= v_as_of
+        union all
+        select vv.id from public.video_views vv
+        where vv.viewer_id = v_viewer_id and vv.created_at <= v_as_of
+      ) raw_actions
+      limit 3
     ) actions;
   end if;
   v_cold_start := v_viewer_id is null or v_useful_actions < 3;
@@ -299,52 +335,48 @@ begin
     order by v.created_at desc, v.id desc
     limit v_candidate_pool
   ),
-  like_features as (
-    select c.id as video_id, aggregate.raw_likes
+  candidate_ids as materialized (
+    select pg_catalog.array_agg(c.id) as ids
     from candidates c
-    cross join lateral (
-      select count(*)::bigint as raw_likes
-      from public.likes l
-      where l.video_id = c.id and l.created_at <= v_as_of
-    ) aggregate
+  ),
+  like_features as (
+    select l.video_id, count(*)::bigint as raw_likes
+    from public.likes l
+    cross join candidate_ids ci
+    where l.video_id = any(ci.ids)
+      and l.created_at <= v_as_of
+    group by l.video_id
   ),
   comment_features as (
-    select c.id as video_id, aggregate.raw_comments
-    from candidates c
-    cross join lateral (
-      select count(*)::bigint as raw_comments
-      from public.comments cmt
-      where cmt.video_id = c.id and cmt.created_at <= v_as_of
-    ) aggregate
+    select cmt.video_id, count(*)::bigint as raw_comments
+    from public.comments cmt
+    cross join candidate_ids ci
+    where cmt.video_id = any(ci.ids)
+      and cmt.created_at <= v_as_of
+    group by cmt.video_id
   ),
   save_features as (
-    select c.id as video_id, aggregate.raw_saves
-    from candidates c
-    cross join lateral (
-      select count(*)::bigint as raw_saves
-      from public.video_saves s
-      where s.video_id = c.id and s.created_at <= v_as_of
-    ) aggregate
+    select s.video_id, count(*)::bigint as raw_saves
+    from public.video_saves s
+    cross join candidate_ids ci
+    where s.video_id = any(ci.ids)
+      and s.created_at <= v_as_of
+    group by s.video_id
   ),
   watch_features as (
     select
-      c.id as video_id,
-      aggregate.raw_exposures,
-      aggregate.duration_samples,
-      aggregate.completion_rate,
-      aggregate.total_rewatches
-    from candidates c
-    cross join lateral (
-      select
-        count(*)::bigint as raw_exposures,
-        count(*) filter (where vv.media_duration_ms is not null)::bigint as duration_samples,
-        avg(case when vv.media_duration_ms is not null then vv.completed::integer end)::numeric
-          as completion_rate,
-        coalesce(sum(vv.rewatch_count) filter (where vv.media_duration_ms is not null), 0)::numeric
-          as total_rewatches
-      from public.video_views vv
-      where vv.video_id = c.id and vv.created_at <= v_as_of
-    ) aggregate
+      vv.video_id,
+      count(*)::bigint as raw_exposures,
+      count(*) filter (where vv.media_duration_ms is not null)::bigint as duration_samples,
+      avg(case when vv.media_duration_ms is not null then vv.completed::integer end)::numeric
+        as completion_rate,
+      coalesce(sum(vv.rewatch_count) filter (where vv.media_duration_ms is not null), 0)::numeric
+        as total_rewatches
+    from public.video_views vv
+    cross join candidate_ids ci
+    where vv.video_id = any(ci.ids)
+      and vv.created_at <= v_as_of
+    group by vv.video_id
   ),
   follow_features as (
     select f.following_id as creator_id, true as is_followed
@@ -355,40 +387,34 @@ begin
   ),
   viewer_history as (
     select
-      c.id as video_id,
-      history.same_session_seen,
-      history.short_watch_seen,
-      history.recent_completed,
-      history.recent_exposures
-    from candidates c
-    cross join lateral (
-      select
-        bool_or(vv.client_session_id = p_client_session_id) as same_session_seen,
-        bool_or(
-          vv.created_at >= v_as_of - make_interval(hours => v_policy.freshness_horizon_hours)
-          and vv.media_duration_ms is not null
-          and vv.completion_ratio < v_policy.short_watch_ratio_threshold
-          and vv.exit_reason in ('swipe', 'background', 'unmount')
-        ) as short_watch_seen,
-        bool_or(
-          vv.created_at >= v_as_of - make_interval(hours => v_policy.freshness_horizon_hours)
-          and vv.completed is true
-        ) as recent_completed,
-        count(*) filter (
-          where vv.created_at >= v_as_of - make_interval(hours => v_policy.freshness_horizon_hours)
-        )::bigint as recent_exposures
-      from public.video_views vv
-      where vv.video_id = c.id
-        and vv.created_at <= v_as_of
-        and (
-          (v_viewer_id is not null and vv.viewer_id = v_viewer_id)
-          or (
-            v_viewer_id is null
-            and vv.viewer_id is null
-            and vv.client_session_id = p_client_session_id
-          )
+      vv.video_id,
+      bool_or(vv.client_session_id = p_client_session_id) as same_session_seen,
+      bool_or(
+        vv.created_at >= v_as_of - make_interval(hours => v_policy.freshness_horizon_hours)
+        and vv.media_duration_ms is not null
+        and vv.completion_ratio < v_policy.short_watch_ratio_threshold
+        and vv.exit_reason in ('swipe', 'background', 'unmount')
+      ) as short_watch_seen,
+      bool_or(
+        vv.created_at >= v_as_of - make_interval(hours => v_policy.freshness_horizon_hours)
+        and vv.completed is true
+      ) as recent_completed,
+      count(*) filter (
+        where vv.created_at >= v_as_of - make_interval(hours => v_policy.freshness_horizon_hours)
+      )::bigint as recent_exposures
+    from public.video_views vv
+    cross join candidate_ids ci
+    where vv.video_id = any(ci.ids)
+      and vv.created_at <= v_as_of
+      and (
+        (v_viewer_id is not null and vv.viewer_id = v_viewer_id)
+        or (
+          v_viewer_id is null
+          and vv.viewer_id is null
+          and vv.client_session_id = p_client_session_id
         )
-    ) history
+      )
+    group by vv.video_id
   ),
   components as (
     select
@@ -442,14 +468,17 @@ begin
         as exploration_points,
       case when coalesce(vh.same_session_seen, false)
         then v_policy.same_session_penalty else 0 end as same_session_points,
-      case when coalesce(vh.short_watch_seen, false)
+      case when not v_cold_start and coalesce(vh.short_watch_seen, false)
         then v_policy.short_watch_penalty else 0 end as short_watch_points,
-      case when coalesce(vh.recent_completed, false)
+      case when not v_cold_start and coalesce(vh.recent_completed, false)
         then v_policy.recent_completed_penalty else 0 end as completed_points,
-      least(
-        v_policy.repeat_view_penalty_cap,
-        coalesce(vh.recent_exposures, 0) * v_policy.repeat_view_penalty
-      ) as repeat_points
+      case when not v_cold_start then
+        least(
+          v_policy.repeat_view_penalty_cap,
+          coalesce(vh.recent_exposures, 0) * v_policy.repeat_view_penalty
+        )
+        else 0
+      end as repeat_points
     from candidates c
     left join like_features lf on lf.video_id = c.id
     left join comment_features cf on cf.video_id = c.id
@@ -575,7 +604,8 @@ begin
     v_as_of,
     pr.delivery_score,
     pr.created_at,
-    pr.id
+    pr.id,
+    v_page_limit
   from page_rows pr
   order by pr.delivery_score desc, pr.created_at desc, pr.id desc;
 end;
@@ -658,6 +688,19 @@ as $$
         pg_catalog.has_table_privilege('anon', 'private.algo_l1_policy', 'insert,update,delete')
         or pg_catalog.has_table_privilege('authenticated', 'private.algo_l1_policy', 'insert,update,delete')
       )::integer
+    ),
+    'policy_version_guard_missing', (
+      select (count(*) <> 1)::integer
+      from pg_catalog.pg_trigger t
+      join pg_catalog.pg_class c on c.oid = t.tgrelid
+      join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'private'
+        and c.relname = 'algo_l1_policy'
+        and t.tgname = 'algo_l1_policy_version_guard'
+        and not t.tgisinternal
+        and t.tgenabled = 'O'
+        and t.tgtype = 19
+        and t.tgfoid = to_regprocedure('private.guard_algo_l1_policy_v1()')
     ),
     'raw_signal_authority_missing', (
       select (to_regclass('public.video_views') is null)::integer

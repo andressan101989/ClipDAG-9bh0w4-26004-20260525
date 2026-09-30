@@ -40,6 +40,7 @@ type RankedFeedRow = Record<string, unknown> & {
   cursor_score: string | number;
   cursor_created_at: string;
   cursor_id: string;
+  effective_page_limit: number;
 };
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -69,6 +70,9 @@ function assertRankedFeedRow(value: unknown): asserts value is RankedFeedRow {
     || !validTimestamp(row.created_at)
     || !validTimestamp(row.feed_as_of)
     || !validTimestamp(row.cursor_created_at)
+    || !Number.isInteger(row.effective_page_limit)
+    || Number(row.effective_page_limit) < 1
+    || Number(row.effective_page_limit) > 50
   ) {
     throw new Error('Invalid ranked feed row');
   }
@@ -80,7 +84,11 @@ export async function fetchRankedFeedPage<TVideo>(
   request: RankedFeedRequest,
   mapRow: (row: Record<string, unknown>, username: string, avatar: string) => TVideo,
 ): Promise<RankedFeedPage<TVideo>> {
-  const limit = request.limit ?? 10;
+  const requestedLimit = request.limit ?? 10;
+  if (!Number.isInteger(requestedLimit) || requestedLimit <= 0) {
+    throw new Error('Invalid ranked Feed limit');
+  }
+  const limit = Math.min(requestedLimit, 50);
   const cursor = request.cursor ?? null;
   const { data, error } = await client.rpc('get_ranked_feed_l1_v1', {
     p_client_session_id: request.clientSessionId,
@@ -124,7 +132,7 @@ export async function fetchRankedFeedPage<TVideo>(
       id: last.cursor_id,
       policyVersion: last.policy_version,
     },
-    hasMore: data.length === limit,
+    hasMore: data.length === first.effective_page_limit,
     rankingMode: first.ranking_mode,
     policyVersion: first.policy_version,
   };

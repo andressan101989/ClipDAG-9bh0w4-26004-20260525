@@ -34,6 +34,14 @@ test('L1 migration creates one private constrained zero-rollout policy', () => {
   ]) {
     assert.ok(sql.includes(literal), `policy seed must contain ${literal}`);
   }
+
+  assert.match(sql, /create or replace function private\.guard_algo_l1_policy_v1\(\)/i);
+  assert.match(sql, /create trigger algo_l1_policy_version_guard/i);
+  assert.match(sql, /algo_l1_policy_version_required/i);
+  assert.match(sql, /new\.updated_at\s*:=\s*clock_timestamp\(\)/i);
+  assert.match(sql, /t\.tgenabled\s*=\s*'O'/i);
+  assert.match(sql, /t\.tgtype\s*=\s*19/i);
+  assert.match(sql, /t\.tgfoid\s*=\s*to_regprocedure\('private\.guard_algo_l1_policy_v1\(\)'\)/i);
 });
 
 test('L1 ranking RPC owns candidates, scoring, diversity and snapshot pagination', () => {
@@ -52,6 +60,17 @@ test('L1 ranking RPC owns candidates, scoring, diversity and snapshot pagination
   assert.match(fn, /security definer[\s\S]{0,100}set search_path\s*(?:=|to)\s*''/i);
   assert.match(fn, /private\.admin_content_is_visible\('video',[\s\S]{0,100}private\.video_can_view_owner/i);
   assert.match(fn, /order by\s+v\.created_at desc,\s*v\.id desc[\s\S]{0,100}limit v_candidate_pool/i);
+  assert.match(fn, /candidate_ids as materialized/i);
+  assert.match(fn, /l\.video_id\s*=\s*any\(ci\.ids\)/i);
+  assert.match(fn, /cmt\.video_id\s*=\s*any\(ci\.ids\)/i);
+  assert.match(fn, /s\.video_id\s*=\s*any\(ci\.ids\)/i);
+  assert.match(fn, /vv\.video_id\s*=\s*any\(ci\.ids\)/i);
+  assert.doesNotMatch(fn, /join lateral/i);
+  assert.match(fn, /select f\.id[\s\S]{0,120}f\.follower_id\s*=\s*v_viewer_id/i);
+  assert.match(fn, /from \([\s\S]*?union all[\s\S]*?\) raw_actions\s+limit 3\s+\) actions/i);
+  assert.match(fn, /not v_cold_start[\s\S]{0,100}short_watch_penalty/i);
+  assert.match(fn, /not v_cold_start[\s\S]{0,100}recent_completed_penalty/i);
+  assert.match(fn, /not v_cold_start[\s\S]{0,160}repeat_view_penalty_cap/i);
   assert.match(fn, /row_number\(\) over\s*\(\s*partition by s\.user_id/i);
   assert.match(fn, /as creator_rank/i);
   assert.match(fn, /as diversity_tier/i);
@@ -106,6 +125,7 @@ function rankedRow(overrides = {}) {
     cursor_score: '42.125000',
     cursor_created_at: '2026-09-30T20:00:00.000Z',
     cursor_id: '32000000-0000-4000-8000-000000000001',
+    effective_page_limit: 10,
     ...overrides,
   };
 }
@@ -216,6 +236,49 @@ test('ranking client rejects RPC failures and malformed response rows', async ()
   );
 });
 
+test('ranking client clamps oversized pages to the server contract', async () => {
+  const { fetchRankedFeedPage } = await import('../services/feedRankingService.ts');
+  let args;
+  const data = Array.from({ length: 50 }, (_, index) => rankedRow({
+    id: `32000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    cursor_id: `32000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    effective_page_limit: 50,
+  }));
+  const page = await fetchRankedFeedPage({
+    async rpc(_name, input) {
+      args = input;
+      return { data, error: null };
+    },
+  }, {
+    clientSessionId: '33000000-0000-4000-8000-000000000001',
+    limit: 100,
+    cursor: null,
+  }, row => row);
+
+  assert.equal(args.p_limit, 50);
+  assert.equal(page.videos.length, 50);
+  assert.equal(page.hasMore, true);
+});
+
+test('ranking client uses the server effective page limit for continuation', async () => {
+  const { fetchRankedFeedPage } = await import('../services/feedRankingService.ts');
+  const data = Array.from({ length: 20 }, (_, index) => rankedRow({
+    id: `32000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    cursor_id: `32000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    effective_page_limit: 20,
+  }));
+  const page = await fetchRankedFeedPage({
+    rpc: async () => ({ data, error: null }),
+  }, {
+    clientSessionId: '33000000-0000-4000-8000-000000000001',
+    limit: 50,
+    cursor: null,
+  }, row => row);
+
+  assert.equal(page.videos.length, 20);
+  assert.equal(page.hasMore, true);
+});
+
 test('FeedContext consumes only the ranked organic authority for Feed pages', () => {
   const feed = readFileSync(new URL('../contexts/FeedContext.tsx', import.meta.url), 'utf8');
   const loadStart = feed.indexOf('const loadVideos = useCallback');
@@ -233,6 +296,7 @@ test('FeedContext consumes only the ranked organic authority for Feed pages', ()
   assert.match(loadBody, /setRankCursor\(page\.cursor\)/);
   assert.match(loadBody, /setHasMoreRanked\(page\.hasMore\)/);
   assert.match(feed, /setRankCursor\(null\);[\s\S]{0,250}loadVideos\(null/);
+  assert.match(feed, /const refreshFeed = useCallback\(async \(\) => \{[\s\S]{0,180}deliveryGenerationRef\.current\s*=\s*generation[\s\S]{0,250}loadVideos\(null, generation\)/);
   assert.match(feed, /if \(!isLoadingRef\.current && hasMoreRanked && rankCursor\)/);
   assert.doesNotMatch(feed, /\bSAMPLE_VIDEOS\b|\bMOCK_COMMENTS\b/);
 });

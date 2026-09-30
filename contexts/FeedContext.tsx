@@ -371,12 +371,14 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   }, [viewerId, loadVideos, loadLikesAndSaves, loadBlockedUsers]);
 
   const refreshFeed = useCallback(async () => {
+    const generation = deliveryGenerationRef.current + 1;
+    deliveryGenerationRef.current = generation;
     setRankCursor(null);
     setHasMoreRanked(true);
-    await loadVideos(null);
+    await loadVideos(null, generation);
     if (viewerId) {
-      await loadLikesAndSaves(viewerId);
-      await loadBlockedUsers(viewerId);
+      await loadLikesAndSaves(viewerId, generation);
+      await loadBlockedUsers(viewerId, generation);
     }
   }, [loadVideos, loadLikesAndSaves, loadBlockedUsers, viewerId]);
 
