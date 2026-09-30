@@ -454,3 +454,117 @@ test('L1 database ranks eligible organic candidates deterministically and secure
     dropDatabase(db);
   }
 });
+
+test('L1 query plan stays bounded and index-backed at representative synthetic volume', { skip: !enabled, timeout: 180000 }, () => {
+  const db = createDatabase();
+  const session = '33000000-0000-4000-8000-000000000099';
+  try {
+    psql(db, `
+      insert into private.age_eligibility_policy(
+        singleton,minimum_age,policy_version,creator_exclusive_minimum_age
+      ) values(true,13,'nelyon-age-v2',18)
+      on conflict(singleton) do nothing;
+
+      insert into auth.users(id)
+      select ('35000000-0000-4000-8000-'||lpad(i::text,12,'0'))::uuid
+      from generate_series(1,25) i
+      union all
+      select ('36000000-0000-4000-8000-'||lpad(i::text,12,'0'))::uuid
+      from generate_series(1,100) i;
+
+      insert into public.user_profiles(id,username,is_private)
+      select ('35000000-0000-4000-8000-'||lpad(i::text,12,'0'))::uuid,
+             'perf_creator_'||i,false
+      from generate_series(1,25) i
+      union all
+      select ('36000000-0000-4000-8000-'||lpad(i::text,12,'0'))::uuid,
+             'perf_viewer_'||i,false
+      from generate_series(1,100) i;
+
+      insert into public.videos(id,user_id,video_url,caption,created_at)
+      select ('37000000-0000-4000-8000-'||lpad(i::text,12,'0'))::uuid,
+             ('35000000-0000-4000-8000-'||lpad((((i-1)%25)+1)::text,12,'0'))::uuid,
+             'https://example.test/perf/'||i||'.mp4','perf '||i,
+             clock_timestamp() - make_interval(secs => i)
+      from generate_series(1,3000) i;
+
+      insert into public.likes(video_id,user_id,created_at)
+      select ('37000000-0000-4000-8000-'||lpad(v::text,12,'0'))::uuid,
+             ('36000000-0000-4000-8000-'||lpad(u::text,12,'0'))::uuid,
+             clock_timestamp() - interval '1 hour'
+      from generate_series(1,3000) v cross join generate_series(1,5) u;
+
+      insert into public.comments(video_id,user_id,text,created_at)
+      select ('37000000-0000-4000-8000-'||lpad((((i-1)%3000)+1)::text,12,'0'))::uuid,
+             ('36000000-0000-4000-8000-'||lpad((((i-1)%100)+1)::text,12,'0'))::uuid,
+             'performance signal',clock_timestamp() - interval '1 hour'
+      from generate_series(1,12000) i;
+
+      insert into public.video_saves(video_id,user_id,created_at)
+      select ('37000000-0000-4000-8000-'||lpad(v::text,12,'0'))::uuid,
+             ('36000000-0000-4000-8000-'||lpad(u::text,12,'0'))::uuid,
+             clock_timestamp() - interval '1 hour'
+      from generate_series(1,3000) v cross join generate_series(1,3) u;
+
+      insert into public.video_views(
+        video_id,viewer_id,client_event_id,client_session_id,watch_duration_ms,
+        media_duration_ms,completion_ratio,completed,rewatch_count,exit_reason,created_at
+      )
+      select ('37000000-0000-4000-8000-'||lpad((((i-1)%3000)+1)::text,12,'0'))::uuid,
+             ('36000000-0000-4000-8000-'||lpad((((i-1)%100)+1)::text,12,'0'))::uuid,
+             gen_random_uuid(),gen_random_uuid(),5000,10000,0.500000,false,0,'swipe',
+             clock_timestamp() - make_interval(secs => i%3600)
+      from generate_series(1,30000) i;
+
+      analyze public.videos;
+      analyze public.likes;
+      analyze public.comments;
+      analyze public.video_saves;
+      analyze public.video_views;
+      update private.algo_l1_policy set production_rollout_bps=10000;
+    `);
+
+    const candidatePlan = psql(db, `
+      explain(analyze,buffers,costs off)
+      select v.id
+      from public.videos v
+      join public.user_profiles up on up.id=v.user_id
+      where v.created_at <= '2100-01-01T00:00:00Z'::timestamptz
+        and private.admin_content_is_visible('video',v.id)
+        and private.video_can_view_owner(v.user_id)
+      order by v.created_at desc,v.id desc
+      limit 200;
+    `).stdout;
+    assert.match(candidatePlan, /videos_created_id_desc_idx/i);
+    assert.match(candidatePlan, /limit/i);
+
+    const behaviorPlan = psql(db, `
+      explain(analyze,buffers,costs off)
+      with candidates as materialized(
+        select id from public.videos
+        order by created_at desc,id desc limit 200
+      )
+      select c.id,aggregate.raw_views
+      from candidates c
+      cross join lateral(
+        select count(*) as raw_views
+        from public.video_views vv
+        where vv.video_id=c.id
+          and vv.created_at <= '2100-01-01T00:00:00Z'::timestamptz
+      ) aggregate;
+    `).stdout;
+    assert.match(behaviorPlan, /video_views_video_created_idx/i);
+
+    const functionPlan = actorCall(db, 'anon', null, `
+      explain(analyze,buffers,costs off)
+      select * from public.get_ranked_feed_l1_v1(
+        '${session}',20,null,null,null,null,null
+      )
+    `).stdout;
+    assert.match(functionPlan, /function scan on get_ranked_feed_l1_v1/i);
+    assert.match(functionPlan, /actual time=[^\n]*rows=20/i);
+    assert.doesNotMatch(functionPlan, /never executed/i);
+  } finally {
+    dropDatabase(db);
+  }
+});

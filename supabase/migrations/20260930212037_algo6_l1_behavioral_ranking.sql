@@ -300,39 +300,51 @@ begin
     limit v_candidate_pool
   ),
   like_features as (
-    select l.video_id, count(*)::bigint as raw_likes
-    from public.likes l
-    join candidates c on c.id = l.video_id
-    where l.created_at <= v_as_of
-    group by l.video_id
+    select c.id as video_id, aggregate.raw_likes
+    from candidates c
+    cross join lateral (
+      select count(*)::bigint as raw_likes
+      from public.likes l
+      where l.video_id = c.id and l.created_at <= v_as_of
+    ) aggregate
   ),
   comment_features as (
-    select cmt.video_id, count(*)::bigint as raw_comments
-    from public.comments cmt
-    join candidates c on c.id = cmt.video_id
-    where cmt.created_at <= v_as_of
-    group by cmt.video_id
+    select c.id as video_id, aggregate.raw_comments
+    from candidates c
+    cross join lateral (
+      select count(*)::bigint as raw_comments
+      from public.comments cmt
+      where cmt.video_id = c.id and cmt.created_at <= v_as_of
+    ) aggregate
   ),
   save_features as (
-    select s.video_id, count(*)::bigint as raw_saves
-    from public.video_saves s
-    join candidates c on c.id = s.video_id
-    where s.created_at <= v_as_of
-    group by s.video_id
+    select c.id as video_id, aggregate.raw_saves
+    from candidates c
+    cross join lateral (
+      select count(*)::bigint as raw_saves
+      from public.video_saves s
+      where s.video_id = c.id and s.created_at <= v_as_of
+    ) aggregate
   ),
   watch_features as (
     select
-      vv.video_id,
-      count(*)::bigint as raw_exposures,
-      count(*) filter (where vv.media_duration_ms is not null)::bigint as duration_samples,
-      avg(case when vv.media_duration_ms is not null then vv.completed::integer end)::numeric
-        as completion_rate,
-      coalesce(sum(vv.rewatch_count) filter (where vv.media_duration_ms is not null), 0)::numeric
-        as total_rewatches
-    from public.video_views vv
-    join candidates c on c.id = vv.video_id
-    where vv.created_at <= v_as_of
-    group by vv.video_id
+      c.id as video_id,
+      aggregate.raw_exposures,
+      aggregate.duration_samples,
+      aggregate.completion_rate,
+      aggregate.total_rewatches
+    from candidates c
+    cross join lateral (
+      select
+        count(*)::bigint as raw_exposures,
+        count(*) filter (where vv.media_duration_ms is not null)::bigint as duration_samples,
+        avg(case when vv.media_duration_ms is not null then vv.completed::integer end)::numeric
+          as completion_rate,
+        coalesce(sum(vv.rewatch_count) filter (where vv.media_duration_ms is not null), 0)::numeric
+          as total_rewatches
+      from public.video_views vv
+      where vv.video_id = c.id and vv.created_at <= v_as_of
+    ) aggregate
   ),
   follow_features as (
     select f.following_id as creator_id, true as is_followed
@@ -343,33 +355,40 @@ begin
   ),
   viewer_history as (
     select
-      vv.video_id,
-      bool_or(vv.client_session_id = p_client_session_id) as same_session_seen,
-      bool_or(
-        vv.created_at >= v_as_of - make_interval(hours => v_policy.freshness_horizon_hours)
-        and vv.media_duration_ms is not null
-        and vv.completion_ratio < v_policy.short_watch_ratio_threshold
-        and vv.exit_reason in ('swipe', 'background', 'unmount')
-      ) as short_watch_seen,
-      bool_or(
-        vv.created_at >= v_as_of - make_interval(hours => v_policy.freshness_horizon_hours)
-        and vv.completed is true
-      ) as recent_completed,
-      count(*) filter (
-        where vv.created_at >= v_as_of - make_interval(hours => v_policy.freshness_horizon_hours)
-      )::bigint as recent_exposures
-    from public.video_views vv
-    join candidates c on c.id = vv.video_id
-    where vv.created_at <= v_as_of
-      and (
-        (v_viewer_id is not null and vv.viewer_id = v_viewer_id)
-        or (
-          v_viewer_id is null
-          and vv.viewer_id is null
-          and vv.client_session_id = p_client_session_id
+      c.id as video_id,
+      history.same_session_seen,
+      history.short_watch_seen,
+      history.recent_completed,
+      history.recent_exposures
+    from candidates c
+    cross join lateral (
+      select
+        bool_or(vv.client_session_id = p_client_session_id) as same_session_seen,
+        bool_or(
+          vv.created_at >= v_as_of - make_interval(hours => v_policy.freshness_horizon_hours)
+          and vv.media_duration_ms is not null
+          and vv.completion_ratio < v_policy.short_watch_ratio_threshold
+          and vv.exit_reason in ('swipe', 'background', 'unmount')
+        ) as short_watch_seen,
+        bool_or(
+          vv.created_at >= v_as_of - make_interval(hours => v_policy.freshness_horizon_hours)
+          and vv.completed is true
+        ) as recent_completed,
+        count(*) filter (
+          where vv.created_at >= v_as_of - make_interval(hours => v_policy.freshness_horizon_hours)
+        )::bigint as recent_exposures
+      from public.video_views vv
+      where vv.video_id = c.id
+        and vv.created_at <= v_as_of
+        and (
+          (v_viewer_id is not null and vv.viewer_id = v_viewer_id)
+          or (
+            v_viewer_id is null
+            and vv.viewer_id is null
+            and vv.client_session_id = p_client_session_id
+          )
         )
-      )
-    group by vv.video_id
+    ) history
   ),
   components as (
     select
