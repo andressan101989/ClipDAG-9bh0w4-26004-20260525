@@ -52,9 +52,13 @@ test('L1 ranking RPC owns candidates, scoring, diversity and snapshot pagination
   assert.match(fn, /security definer[\s\S]{0,100}set search_path\s*(?:=|to)\s*''/i);
   assert.match(fn, /private\.admin_content_is_visible\('video',[\s\S]{0,100}private\.video_can_view_owner/i);
   assert.match(fn, /order by\s+v\.created_at desc,\s*v\.id desc[\s\S]{0,100}limit v_candidate_pool/i);
-  assert.match(fn, /row_number\(\) over\s*\(\s*partition by ac\.user_id/i);
+  assert.match(fn, /row_number\(\) over\s*\(\s*partition by s\.user_id/i);
   assert.match(fn, /as creator_rank/i);
-  assert.match(fn, /(?:\w+\.)?rank_score desc,\s*(?:\w+\.)?created_at desc,\s*(?:\w+\.)?id desc/i);
+  assert.match(fn, /as diversity_tier/i);
+  assert.match(fn, /as delivery_score/i);
+  assert.match(fn, /\(d\.delivery_score, d\.created_at, d\.id\)[\s\S]{0,80}< \(p_before_score, p_before_created_at, p_before_id\)/i);
+  assert.match(fn, /order by pr\.delivery_score desc,\s*pr\.created_at desc,\s*pr\.id desc/i);
+  assert.match(fn, /pr\.rank_score,[\s\S]{0,80}pr\.delivery_score/i);
   assert.doesNotMatch(fn, /\brandom\s*\(/i);
   assert.doesNotMatch(fn, /\boffset\b/i);
   assert.doesNotMatch(fn, /advertising|campaign|billing|spend|shares_count\s*[*+\/-]/i);

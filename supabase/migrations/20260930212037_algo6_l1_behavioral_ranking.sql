@@ -480,30 +480,52 @@ begin
       end::numeric(18,6) as rank_score
     from components
   ),
-  after_cursor as (
-    select s.*
-    from scored s
-    where p_as_of is null
-       or (s.rank_score, s.created_at, s.id)
-          < (p_before_score, p_before_created_at, p_before_id)
-  ),
   creator_numbered as (
     select
-      ac.*,
+      s.*,
       row_number() over (
-        partition by ac.user_id
-        order by ac.rank_score desc, ac.created_at desc, ac.id desc
+        partition by s.user_id
+        order by s.rank_score desc, s.created_at desc, s.id desc
       ) as creator_rank
+    from scored s
+  ),
+  diversified as (
+    select
+      cn.*,
+      case when v_behavioral
+        then ((cn.creator_rank - 1) / v_policy.creator_page_cap)::bigint
+        else 0::bigint
+      end as diversity_tier,
+      case when v_behavioral
+        then round(
+          cn.rank_score
+          - (((cn.creator_rank - 1) / v_policy.creator_page_cap)::numeric * 10000),
+          6
+        )
+        else cn.rank_score
+      end::numeric(18,6) as delivery_score
+    from creator_numbered cn
+  ),
+  after_cursor as (
+    select d.*
+    from diversified d
+    where p_as_of is null
+       or (d.delivery_score, d.created_at, d.id)
+          < (p_before_score, p_before_created_at, p_before_id)
+  ),
+  current_tier as (
+    select min(ac.diversity_tier) as value
     from after_cursor ac
   ),
   preferred_numbered as (
     select
-      cn.*,
+      ac.*,
       row_number() over (
-        order by cn.rank_score desc, cn.created_at desc, cn.id desc
+        order by ac.delivery_score desc, ac.created_at desc, ac.id desc
       ) as preferred_rank
-    from creator_numbered cn
-    where cn.creator_rank <= v_policy.creator_page_cap
+    from after_cursor ac
+    cross join current_tier ct
+    where ac.diversity_tier = ct.value
   ),
   pass_one as (
     select pn.*
@@ -516,12 +538,12 @@ begin
   ),
   fill_numbered as (
     select
-      cn.*,
+      ac.*,
       row_number() over (
-        order by cn.rank_score desc, cn.created_at desc, cn.id desc
+        order by ac.delivery_score desc, ac.created_at desc, ac.id desc
       ) as fill_rank
-    from creator_numbered cn
-    where not exists (select 1 from pass_one p1 where p1.id = cn.id)
+    from after_cursor ac
+    where not exists (select 1 from pass_one p1 where p1.id = ac.id)
   ),
   page_rows as (
     select p1.* from pass_one p1
@@ -551,11 +573,11 @@ begin
     v_policy.policy_version,
     pr.rank_score,
     v_as_of,
-    pr.rank_score,
+    pr.delivery_score,
     pr.created_at,
     pr.id
   from page_rows pr
-  order by pr.rank_score desc, pr.created_at desc, pr.id desc;
+  order by pr.delivery_score desc, pr.created_at desc, pr.id desc;
 end;
 $$;
 

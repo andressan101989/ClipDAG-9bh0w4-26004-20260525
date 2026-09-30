@@ -106,17 +106,25 @@ Eligibility is applied before the bounded candidate pool using
 The first request supplies no cursor; the server fixes `feed_as_of` using
 `clock_timestamp()`. Continuations must supply the same as-of, policy version,
 score, created_at and id. Future snapshots, snapshots older than 30 minutes,
-partial cursors, and policy mismatches fail closed. Final order is
-`score DESC, created_at DESC, id DESC`; chronological fallback emits score
-zero and therefore preserves `created_at DESC, id DESC`. OFFSET is absent.
+partial cursors, and policy mismatches fail closed. The behavioral delivery
+key is `rank_score - diversity_tier * 10000`, where a tier contains at most
+the configured creator cap. The 10,000 separation is larger than the full
+score domain allowed by policy constraints, so it deterministically orders
+the diversity passes without changing the auditable `rank_score`. Cursor
+ordering is `delivery_score DESC, created_at DESC, id DESC`; chronological
+fallback emits both scores as zero and therefore preserves
+`created_at DESC, id DESC`. OFFSET is absent.
 
 Rollout uses a stable MD5-derived bucket from viewer UUID or anonymous session
 UUID plus policy version. Zero basis points always means chronological;
 10,000 always means behavioral. Production is deployed at zero.
 
-Creator diversity is page-local. Pass one takes at most two items per creator.
-Pass two fills any remaining slots from the best unused candidates so a small
-or single-creator catalog is not artificially shortened.
+Creator diversity is deterministic across the snapshot. Pass one consumes the
+earliest remaining diversity tier, which contains at most two items per
+creator. Pass two fills any remaining slots from the best later-tier
+candidates so a small or single-creator catalog is not artificially shortened.
+The cursor uses the delivery score rather than the raw rank score, preventing
+deferred creator items from being skipped between pages.
 
 ## API and client
 
@@ -139,9 +147,11 @@ non-candidate lookup protected by video RLS.
 
 ## Index and performance design
 
-The function aggregates signals with CTEs joined to the bounded candidate set.
-There are no client per-candidate calls and no SQL correlated candidate loops.
-F0 video and view indexes remain. L1 adds snapshot-aware composite indexes for
+The function aggregates signals inside one set-based SQL statement over the
+bounded candidate CTE. There are no client per-candidate calls. Bounded lateral
+aggregates perform at most one index-backed probe per signal authority for each
+of the 200 candidates, preventing an unbounded scan of behavioral history. F0
+video and view indexes remain. L1 adds snapshot-aware composite indexes for
 likes, comments and saves plus a session/video view index only when the
 representative disposable EXPLAIN demonstrates their use.
 

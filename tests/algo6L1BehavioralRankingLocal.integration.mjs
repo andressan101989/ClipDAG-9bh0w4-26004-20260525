@@ -373,7 +373,10 @@ test('L1 database ranks eligible organic candidates deterministically and secure
     assert.equal(Number(repeat.find(row => row.startsWith(ids.videoA4)).split('|')[1]), -20);
 
     psql(db, `update private.algo_l1_policy set
-      repeat_view_penalty=0, exploration_weight=5, creator_page_cap=2;`);
+      freshness_weight=30,follow_weight=0,like_weight=0,comment_weight=0,save_weight=0,
+      completion_weight=0,rewatch_weight=0,exploration_weight=0,
+      same_session_penalty=0,short_watch_penalty=0,recent_completed_penalty=0,
+      repeat_view_penalty=0,creator_page_cap=2;`);
     const anonFirst = rows(actorCall(db, 'anon', null,
       rankedSql('33000000-0000-4000-8000-000000000002', {
         projection: "id||'|'||rank_score||'|'||feed_as_of||'|'||policy_version",
@@ -391,7 +394,7 @@ test('L1 database ranks eligible organic candidates deterministically and secure
 
     const pageOne = rows(actorCall(db, 'anon', null,
       rankedSql('33000000-0000-4000-8000-000000000003', {
-        projection: "id||'|'||rank_score||'|'||feed_as_of||'|'||policy_version||'|'||cursor_created_at",
+        projection: "id||'|'||cursor_score||'|'||feed_as_of||'|'||policy_version||'|'||cursor_created_at",
         limit: 3,
       })));
     const [cursorId, cursorScore, asOf, policyVersion, cursorCreatedAt] = pageOne.at(-1).split('|');
@@ -410,6 +413,26 @@ test('L1 database ranks eligible organic candidates deterministically and secure
     assert.ok(pageTwoA.every(row => row.endsWith(`|${asOf}`)));
     assert.equal(new Set([...pageOne.map(row => row.split('|')[0]), ...pageTwoA.map(row => row.split('|')[0])]).size,
       pageOne.length + pageTwoA.length);
+
+    const pagedIds = [];
+    let pageCursor = null;
+    for (let pageNumber = 0; pageNumber < 10; pageNumber++) {
+      const page = rows(actorCall(db, 'anon', null,
+        rankedSql('33000000-0000-4000-8000-000000000005', {
+          limit: 3,
+          ...(pageCursor ?? {}),
+          projection: "id||'|'||cursor_score||'|'||feed_as_of||'|'||policy_version||'|'||cursor_created_at",
+        })));
+      if (page.length === 0) break;
+      pagedIds.push(...page.map(row => row.split('|')[0]));
+      const [id, score, pageAsOf, policy, createdAt] = page.at(-1).split('|');
+      pageCursor = { id, score, asOf: pageAsOf, policy, createdAt };
+    }
+    assert.deepEqual(new Set(pagedIds), new Set([
+      ids.videoA1, ids.videoA2, ids.videoA3, ids.videoA4,
+      ids.videoB1, ids.videoB2, ids.videoC1, ids.videoC2, ids.blockedVideo,
+    ]), 'diversity pagination must not permanently skip deferred creator items');
+    assert.equal(pagedIds.length, new Set(pagedIds).size, 'ranked pages must not duplicate items');
 
     assert.notEqual(actorCall(db, 'anon', null, rankedSql(session, {
       asOf: new Date(Date.now() + 60_000).toISOString(),
