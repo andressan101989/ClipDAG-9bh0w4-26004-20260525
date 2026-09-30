@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BusinessFinancePage } from "../pages/finance/BusinessFinancePage";
@@ -13,6 +13,8 @@ vi.mock("../auth/BusinessAuthProvider", () => ({
 vi.mock("../lib/businessBillingApi", () => ({
   getBusinessBillingOverview: billing.overview,
   createStripeBdagCheckout: billing.checkout,
+  getOrCreateStripeTopupIntent: () => "11111111-1111-4111-8111-111111111111",
+  clearStripeTopupIntent: vi.fn(),
   usdInputToCents: (value: string) => /^\d+(?:\.\d{1,2})?$/.test(value) ? Math.round(Number(value) * 100) : null,
 }));
 
@@ -20,7 +22,7 @@ const oldTopupId = "11111111-1111-4111-8111-111111111111";
 const targetTopupId = "22222222-2222-4222-8222-222222222222";
 const unknownTopupId = "33333333-3333-4333-8333-333333333333";
 
-const overview = (targetStatus: "created" | "checkout_open" | "paid" | "credited" | "failed" | "expired" | "requires_review" | null = "credited") => ({
+const overview = (targetStatus: "created" | "checkout_open" | "paid" | "credited" | "failed" | "expired" | "requires_review" | "partially_refunded" | "refunded" | null = "credited") => ({
   businessOwnerId: "owner-1", bdagBalance: 250,
   stripe: {
     available: true, mode: "test" as const, currency: "usd" as const,
@@ -57,6 +59,17 @@ describe("Business Finance", () => {
     expect(screen.queryByRole("button", { name: "Continuar con Stripe" })).not.toBeInTheDocument();
   });
 
+  it("submits one stable logical intent and disables duplicate clicks", async () => {
+    billing.checkout.mockImplementation(() => new Promise(() => {}));
+    render(<MemoryRouter initialEntries={["/finance"]}><BusinessFinancePage /></MemoryRouter>);
+    const button = await screen.findByRole("button", { name: "Continuar con Stripe" });
+    fireEvent.click(button);
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(billing.checkout).toHaveBeenCalledTimes(1);
+    expect(billing.checkout).toHaveBeenCalledWith(1000, "11111111-1111-4111-8111-111111111111");
+  });
+
   it.each(["created", "checkout_open"] as const)("does not use an old credited topup to confirm a new %s target", async (status) => {
     billing.overview.mockResolvedValue(overview(status));
     render(<MemoryRouter initialEntries={[`/finance?stripe=success&topup=${targetTopupId}`]}><BusinessFinancePage /></MemoryRouter>);
@@ -81,6 +94,8 @@ describe("Business Finance", () => {
     ["failed", "El pago no pudo confirmarse."],
     ["expired", "La sesión de pago expiró."],
     ["requires_review", "El pago requiere revisión."],
+    ["partially_refunded", "El pago fue reembolsado parcialmente."],
+    ["refunded", "El pago fue reembolsado."],
   ] as const)("renders %s without claiming the balance changed", async (status, message) => {
     billing.overview.mockResolvedValue(overview(status));
     render(<MemoryRouter initialEntries={[`/finance?stripe=success&topup=${targetTopupId}`]}><BusinessFinancePage /></MemoryRouter>);

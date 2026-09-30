@@ -31,7 +31,7 @@ test("webhook verification uses the official pinned SDK and exact raw body", asy
   assert.match(webhook, /npm:stripe@22\.6\.2/);
   assert.match(webhook, /const rawBody = await req\.text\(\)/);
   assert.match(webhook, /constructEventAsync\([\s\S]*rawBody[\s\S]*signature/);
-  assert.match(webhook, /charge\.dispute\.created[\s\S]*stripe\.charges\.retrieve/);
+  assert.match(webhook, /event\.type\.startsWith\("charge\.dispute\."\)[\s\S]*stripe\.charges\.retrieve/);
   assert.doesNotMatch(webhook.slice(0, webhook.indexOf("constructEventAsync")), /JSON\.parse\(rawBody\)/);
 
   const secret = "whsec_bw_g_test";
@@ -64,12 +64,10 @@ test("one shared USD to BDAG source is reused by blockchain deposit", () => {
   assert.doesNotMatch(financePage, /100\s*BDAG|BDAG_PER_USD|USD_TO_BDAG/);
 });
 
-test("refunds and disputes require review without automatic ledger debit", () => {
+test("the original adapter marks refund and dispute evidence for provider review", () => {
   assert.match(migration, /charge\.refunded/);
   assert.match(migration, /charge\.dispute\.created/);
   assert.match(migration, /status='requires_review'/);
-  const reviewBranch = migration.slice(migration.indexOf("elsif v_event_type in ('charge.refunded'"), migration.indexOf("return jsonb_build_object('already_processed'"));
-  assert.doesNotMatch(reviewBranch, /ledger_|financial_transactions|balance\s*=/i);
 });
 
 test("provider tables and Business projection never expose card data or provider identifiers", () => {

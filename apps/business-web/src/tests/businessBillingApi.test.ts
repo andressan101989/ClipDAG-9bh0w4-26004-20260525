@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  clearStripeTopupIntent,
   createStripeBdagCheckout,
+  getOrCreateStripeTopupIntent,
   getBusinessBillingOverview,
   usdInputToCents,
 } from "../lib/businessBillingApi";
@@ -59,5 +61,29 @@ describe("Business Stripe billing client", () => {
     expect(gateway.functions.invoke).toHaveBeenCalledWith("stripe-bdag-checkout", {
       method: "POST", body: { amount_usd_cents: 1000, idempotency_key: "11111111-1111-4111-8111-111111111111" },
     });
+  });
+
+  it("reuses one session-scoped intent after an uncertain response", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => { values.set(key, value); }),
+      removeItem: vi.fn((key: string) => { values.delete(key); }),
+    };
+    const uuids = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    const createUuid = vi.fn(() => uuids.shift()!);
+
+    const first = getOrCreateStripeTopupIntent(1000, storage, () => 1_000, createUuid);
+    const retry = getOrCreateStripeTopupIntent(1000, storage, () => 2_000, createUuid);
+    expect(retry).toBe(first);
+    expect(createUuid).toHaveBeenCalledTimes(1);
+
+    const changedAmount = getOrCreateStripeTopupIntent(2000, storage, () => 3_000, createUuid);
+    expect(changedAmount).not.toBe(first);
+    clearStripeTopupIntent(storage);
+    expect(storage.removeItem).toHaveBeenCalledTimes(1);
   });
 });

@@ -9,7 +9,6 @@ import {
   sha256,
   stripeCheckoutReturnUrls,
   stripeRuntimeConfig,
-  usdCentsToBdag,
 } from "../_shared/stripeBilling.ts";
 
 type RpcResult = { data: Record<string, unknown> | null; error: { message?: string } | null };
@@ -40,7 +39,6 @@ Deno.serve(async (req: Request) => {
 
   try {
     const { amountUsdCents, idempotencyKey } = parseTopupRequest(await req.json());
-    const bdagAmount = usdCentsToBdag(amountUsdCents);
     const fingerprint = await sha256(`${user.id}|${amountUsdCents}|test`);
     const prepared = await admin.rpc("manage_stripe_bdag_adapter", {
       p_action: "prepare_checkout",
@@ -48,14 +46,14 @@ Deno.serve(async (req: Request) => {
         owner_id: user.id,
         actor_id: user.id,
         amount_usd_cents: amountUsdCents,
-        usd_to_bdag_rate: publicStripeConfig(config).bdag_per_usd,
-        bdag_amount: bdagAmount,
         idempotency_key: idempotencyKey,
         request_fingerprint: fingerprint,
         livemode: false,
       },
     }) as RpcResult;
     if (prepared.error || !prepared.data) throw new Error(prepared.error?.message || "topup_prepare_failed");
+    const bdagAmount = Number(prepared.data.bdag_amount);
+    if (!Number.isFinite(bdagAmount) || bdagAmount <= 0) throw new Error("topup_prepare_invalid_economics");
     if (typeof prepared.data.checkout_url === "string" && prepared.data.checkout_url) {
       return reply({
         checkout_url: prepared.data.checkout_url,

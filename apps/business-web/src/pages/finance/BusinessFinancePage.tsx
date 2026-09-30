@@ -3,7 +3,9 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useBusinessAuth } from "../../auth/BusinessAuthProvider";
 import { InlineError, PageHeader, StatusBadge } from "../../components/BusinessUI";
 import {
+  clearStripeTopupIntent,
   createStripeBdagCheckout,
+  getOrCreateStripeTopupIntent,
   getBusinessBillingOverview,
   usdInputToCents,
   type BusinessBillingOverview,
@@ -15,10 +17,11 @@ const STATUS_LABELS: Record<StripeTopup["status"], string> = {
   created: "Pendiente", checkout_open: "Pendiente", paid: "Confirmando",
   credited: "Acreditado", failed: "Fallido", expired: "Expirado",
   requires_review: "Revisión requerida",
+  partially_refunded: "Reembolso parcial", refunded: "Reembolsado",
 };
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const TERMINAL_TOPUP_STATUSES = new Set<StripeTopup["status"]>(["credited", "failed", "expired", "requires_review"]);
+const TERMINAL_TOPUP_STATUSES = new Set<StripeTopup["status"]>(["credited", "failed", "expired", "requires_review", "partially_refunded", "refunded"]);
 
 export function BusinessFinancePage() {
   const { currentBusiness, accessType, hasCapability } = useBusinessAuth();
@@ -61,6 +64,7 @@ export function BusinessFinancePage() {
 
   useEffect(() => {
     pollAttempts.current = 0;
+    if (stripeRedirect === "success" || stripeRedirect === "cancelled") clearStripeTopupIntent();
   }, [ownerId, redirectTopupId, stripeRedirect]);
 
   const targetTopup = redirectTopupId
@@ -90,7 +94,7 @@ export function BusinessFinancePage() {
     setSubmitting(true);
     setError(null);
     try {
-      const checkout = await createStripeBdagCheckout(cents);
+      const checkout = await createStripeBdagCheckout(cents, getOrCreateStripeTopupIntent(cents));
       window.location.assign(checkout.checkoutUrl);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo iniciar Stripe Checkout");
@@ -128,6 +132,8 @@ function StripeSuccessNotice({ target }: { target: StripeTopup | undefined }) {
   if (target.status === "failed") return <div className="finance-notice readonly-note" role="status"><strong>El pago no pudo confirmarse.</strong></div>;
   if (target.status === "expired") return <div className="finance-notice readonly-note" role="status"><strong>La sesión de pago expiró.</strong></div>;
   if (target.status === "requires_review") return <div className="finance-notice readonly-note" role="status"><strong>El pago requiere revisión.</strong></div>;
+  if (target.status === "partially_refunded") return <div className="finance-notice readonly-note" role="status"><strong>El pago fue reembolsado parcialmente.</strong></div>;
+  if (target.status === "refunded") return <div className="finance-notice readonly-note" role="status"><strong>El pago fue reembolsado.</strong></div>;
   return <div className="finance-notice success-note" role="status">
     <strong>Pago recibido por Stripe. Estamos confirmando tu saldo.</strong>
     <span>Confirmación pendiente.</span>

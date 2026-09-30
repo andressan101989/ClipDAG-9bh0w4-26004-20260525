@@ -4,7 +4,7 @@ type Row = Record<string, unknown>;
 
 export type StripeTopup = {
   id: string;
-  status: "created" | "checkout_open" | "paid" | "credited" | "failed" | "expired" | "requires_review";
+  status: "created" | "checkout_open" | "paid" | "credited" | "failed" | "expired" | "requires_review" | "partially_refunded" | "refunded";
   amountUsdCents: number;
   bdagAmount: number;
   createdAt: string;
@@ -41,7 +41,7 @@ function number(value: unknown, code: string) {
 }
 function optionalString(value: unknown) { return typeof value === "string" && value ? value : null; }
 function topupStatus(value: unknown): StripeTopup["status"] {
-  const allowed: StripeTopup["status"][] = ["created", "checkout_open", "paid", "credited", "failed", "expired", "requires_review"];
+  const allowed: StripeTopup["status"][] = ["created", "checkout_open", "paid", "credited", "failed", "expired", "requires_review", "partially_refunded", "refunded"];
   if (typeof value !== "string" || !allowed.includes(value as StripeTopup["status"])) throw new Error("billing_topup_invalid");
   return value as StripeTopup["status"];
 }
@@ -109,7 +109,7 @@ export function usdInputToCents(input: string): number | null {
 
 export async function createStripeBdagCheckout(
   amountUsdCents: number,
-  idempotencyKey = crypto.randomUUID(),
+  idempotencyKey: string,
   client: BusinessSupabaseClient = supabase,
 ) {
   const { data, error } = await client.functions.invoke("stripe-bdag-checkout", {
@@ -125,4 +125,39 @@ export async function createStripeBdagCheckout(
     topupId: string(payload.topup_id, "stripe_checkout_invalid"),
     bdagAmount: number(payload.bdag_amount, "stripe_checkout_invalid"),
   };
+}
+
+export const STRIPE_TOPUP_INTENT_STORAGE_KEY = "nelyon:stripe-bdag-topup-intent:v1";
+const STRIPE_TOPUP_INTENT_MAX_AGE_MS = 30 * 60 * 1000;
+type IntentStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+export function getOrCreateStripeTopupIntent(
+  amountUsdCents: number,
+  storage: IntentStorage = sessionStorage,
+  now: () => number = Date.now,
+  createUuid: () => string = crypto.randomUUID,
+): string {
+  try {
+    const raw = storage.getItem(STRIPE_TOPUP_INTENT_STORAGE_KEY);
+    if (raw) {
+      const stored = JSON.parse(raw) as { amountUsdCents?: unknown; idempotencyKey?: unknown; createdAt?: unknown };
+      const currentTime = now();
+      if (stored.amountUsdCents === amountUsdCents
+        && typeof stored.idempotencyKey === "string"
+        && typeof stored.createdAt === "number"
+        && currentTime - stored.createdAt >= 0
+        && currentTime - stored.createdAt <= STRIPE_TOPUP_INTENT_MAX_AGE_MS) {
+        return stored.idempotencyKey;
+      }
+    }
+  } catch {
+    storage.removeItem(STRIPE_TOPUP_INTENT_STORAGE_KEY);
+  }
+  const idempotencyKey = createUuid();
+  storage.setItem(STRIPE_TOPUP_INTENT_STORAGE_KEY, JSON.stringify({ amountUsdCents, idempotencyKey, createdAt: now() }));
+  return idempotencyKey;
+}
+
+export function clearStripeTopupIntent(storage: IntentStorage = sessionStorage) {
+  storage.removeItem(STRIPE_TOPUP_INTENT_STORAGE_KEY);
 }
