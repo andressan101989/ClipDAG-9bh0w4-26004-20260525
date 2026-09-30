@@ -136,6 +136,11 @@ test('Feed runtime uses chronological keyset delivery and RPC-only behavioral ac
   assert.match(feed, /\.order\('created_at',\s*\{ ascending: false \}\)\s*\.order\('id',\s*\{ ascending: false \}\)\s*\.limit\(10\)/);
   assert.match(feed, /videoKeysetOrFilter\(cursor\)/);
   assert.match(feed, /cursorFromVideoRows\(data\)/);
+  assert.doesNotMatch(feed, /if \(!initialLoaded\) \{\s*loadVideos/);
+  assert.match(feed, /setVideos\(\[\]\);[\s\S]{0,600}loadVideos\(null, generation\)/);
+  assert.match(feed, /deliveryGenerationRef/);
+  assert.match(feed, /generation !== deliveryGenerationRef\.current/);
+  assert.match(feed, /currentViewerId !== viewerId/);
   assert.match(feed, /\.rpc\('record_video_view_v1'/);
   assert.match(feed, /\.rpc\('get_my_video_analytics_v1'/);
   assert.doesNotMatch(feed, /\.from\('video_views'\)/);
@@ -153,6 +158,7 @@ test('native VideoCard finalizes one canonical exposure on swipe, background or 
   assert.match(nativeCard, /finishExposure\('background'\)/);
   assert.match(nativeCard, /finishExposure\('swipe'\)/);
   assert.match(nativeCard, /finishExposureRef\.current\('unmount'\)/);
+  assert.match(nativeCard, /activeViewCallbackRef/);
   assert.match(nativeCard, /onViewTracked\?: \(event: FinalizedVideoView\) => void/);
   assert.match(webCard, /onViewTracked\?: \(event: FinalizedVideoView\) => void/);
   assert.match(feedScreen, /trackView\(videoId, event\)/);

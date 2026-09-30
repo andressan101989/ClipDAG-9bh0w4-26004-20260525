@@ -443,19 +443,25 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
     playbackSessionRef.current = createVideoPlaybackSession({ now: Date.now, createEventId: randomUUID });
   }
   const onViewTrackedRef = useRef(onViewTracked);
+  const activeViewCallbackRef = useRef(onViewTracked);
   const isActiveRef = useRef(isActive);
   onViewTrackedRef.current = onViewTracked;
   isActiveRef.current = isActive;
 
   const finishExposure = useCallback((reason: FinalizedVideoView['exitReason']) => {
     const event = playbackSessionRef.current?.finish(reason);
-    if (event) onViewTrackedRef.current?.(event);
+    const callback = activeViewCallbackRef.current;
+    activeViewCallbackRef.current = undefined;
+    if (event) callback?.(event);
   }, []);
   const finishExposureRef = useRef(finishExposure);
   finishExposureRef.current = finishExposure;
 
   useEffect(() => {
     if (isActive && AppState.currentState === 'active') {
+      if (!playbackSessionRef.current?.activeEventId()) {
+        activeViewCallbackRef.current = onViewTrackedRef.current;
+      }
       playbackSessionRef.current?.start();
     } else if (!isActive) {
       finishExposure('swipe');
@@ -473,6 +479,9 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
         return;
       }
       if (isActiveRef.current) {
+        if (!playbackSessionRef.current?.activeEventId()) {
+          activeViewCallbackRef.current = onViewTrackedRef.current;
+        }
         playbackSessionRef.current?.start();
         const currentPlayer = playerRef.current as unknown as ManagedPlayer;
         acquirePlayerLock(currentPlayer);

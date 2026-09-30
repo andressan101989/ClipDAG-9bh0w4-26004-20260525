@@ -170,6 +170,14 @@ test('F0 database authority enforces telemetry, eligibility and aggregate-only a
         recordSql(ids.publicVideo, shortEvent, session, 9000, 'swipe'))),
       'replayed|9000|10000|0.900000|false|0|12',
     );
+    psql(db, `update public.video_assets set duration_seconds=20 where id='${ids.videoAsset}'`);
+    assert.equal(
+      lastLine(actorCall(db, 'authenticated', ids.viewer,
+        recordSql(ids.publicVideo, shortEvent, session, 9000, 'swipe'))),
+      'replayed|9000|10000|0.900000|false|0|12',
+      'an exact replay retains its original server derivation after metadata changes',
+    );
+    psql(db, `update public.video_assets set duration_seconds=10 where id='${ids.videoAsset}'`);
     assert.notEqual(actorCall(db, 'authenticated', ids.viewer,
       recordSql(ids.publicVideo, shortEvent, session, 9001, 'swipe'), { allowFailure: true }).status, 0);
     assert.equal(lastLine(psql(db,

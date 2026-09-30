@@ -203,17 +203,23 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 export function FeedProvider({ children }: { children: ReactNode }) {
   const authContext = useContext(AuthContext);
   const user = authContext?.user;
+  const viewerId = user?.id ?? null;
 
   // The client is stored once so backend unavailability can fail soft to an
   // empty/error state without substituting fixture content.
   const supabaseRef   = useRef<ReturnType<typeof getSupabaseClient> | null>(null);
   const supabaseOk    = useRef(true);
   const isLoadingRef  = useRef(false);
+  const deliveryGenerationRef = useRef(0);
+  const activeLoadGenerationRef = useRef<number | null>(null);
   const videosRef     = useRef<VideoWithMeta[]>([]);
-  const clientSessionIdRef = useRef<string | null>(null);
+  const playbackIdentityRef = useRef<{ viewerId: string | null; clientSessionId: string } | null>(null);
   const exactVideoFlightsRef = useRef(new Map<string, Promise<EnsureVideoLoadedResult>>());
 
-  if (!clientSessionIdRef.current) clientSessionIdRef.current = randomUUID();
+  if (!playbackIdentityRef.current || playbackIdentityRef.current.viewerId !== viewerId) {
+    playbackIdentityRef.current = { viewerId, clientSessionId: randomUUID() };
+  }
+  const clientSessionId = playbackIdentityRef.current.clientSessionId;
 
   if (!supabaseRef.current) {
     try {
@@ -230,7 +236,6 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   const [comments,        setComments]        = useState<Record<string, Comment[]>>({});
   const [isLoadingFeed,   setIsLoadingFeed]   = useState(false);
   const [dbCursor,        setDbCursor]        = useState<VideoKeysetCursor | null>(null);
-  const [initialLoaded,   setInitialLoaded]   = useState(false);
   const [hasMoreDb,       setHasMoreDb]       = useState(true);
   const [blockedUserIds,  setBlockedUserIds]  = useState<Set<string>>(new Set());
 
@@ -239,15 +244,21 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   }, [videos]);
 
   // ── Load videos ───────────────────────────────────────────────────────────
-  const loadVideos = useCallback(async (cursor: VideoKeysetCursor | null = null) => {
-    if (isLoadingRef.current) return;
+  const loadVideos = useCallback(async (
+    cursor: VideoKeysetCursor | null = null,
+    generation = deliveryGenerationRef.current,
+  ) => {
+    if (activeLoadGenerationRef.current === generation) return;
+    activeLoadGenerationRef.current = generation;
     isLoadingRef.current = true;
     setIsLoadingFeed(true);
     try {
       const supabase = supabaseRef.current;
       if (!supabase || !supabaseOk.current) {
-        if (!cursor) setVideos([]);
-        setHasMoreDb(false);
+        if (generation === deliveryGenerationRef.current) {
+          if (!cursor) setVideos([]);
+          setHasMoreDb(false);
+        }
         return;
       }
 
@@ -260,6 +271,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       if (cursor) query = query.or(videoKeysetOrFilter(cursor));
       const { data, error } = await query;
 
+      if (generation !== deliveryGenerationRef.current) return;
       if (error) throw error;
 
       if (data && data.length > 0) {
@@ -283,17 +295,24 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       }
     } catch (e) {
       console.warn('[FeedContext] loadVideos error:', e);
-      if (!cursor) setVideos([]);
-      setHasMoreDb(false);
+      if (generation === deliveryGenerationRef.current) {
+        if (!cursor) setVideos([]);
+        setHasMoreDb(false);
+      }
     } finally {
-      isLoadingRef.current = false;
-      setIsLoadingFeed(false);
-      setInitialLoaded(true);
+      if (activeLoadGenerationRef.current === generation) {
+        activeLoadGenerationRef.current = null;
+        isLoadingRef.current = false;
+        setIsLoadingFeed(false);
+      }
     }
   }, []);
 
   // ── Load blocked users ────────────────────────────────────────────────────
-  const loadBlockedUsers = useCallback(async (userId: string) => {
+  const loadBlockedUsers = useCallback(async (
+    userId: string,
+    generation = deliveryGenerationRef.current,
+  ) => {
     const supabase = supabaseRef.current;
     if (!supabase || !supabaseOk.current) return;
     try {
@@ -301,6 +320,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         .from('blocked_users')
         .select('blocked_id')
         .eq('blocker_id', userId);
+      if (generation !== deliveryGenerationRef.current) return;
       if (data) setBlockedUserIds(new Set(data.map((r: { blocked_id: string }) => r.blocked_id)));
     } catch (e) {
       console.warn('[FeedContext] loadBlockedUsers error:', e);
@@ -308,7 +328,10 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ── Load likes + saves ────────────────────────────────────────────────────
-  const loadLikesAndSaves = useCallback(async (userId: string) => {
+  const loadLikesAndSaves = useCallback(async (
+    userId: string,
+    generation = deliveryGenerationRef.current,
+  ) => {
     const supabase = supabaseRef.current;
     if (!supabase || !supabaseOk.current) {
       setLikedVideos(new Set());
@@ -320,41 +343,45 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         supabase.from('likes').select('video_id').eq('user_id', userId),
         supabase.from('video_saves').select('video_id').eq('user_id', userId),
       ]);
+      if (generation !== deliveryGenerationRef.current) return;
       setLikedVideos(new Set((likesData || []).map((l: { video_id: string }) => l.video_id)));
       if (savesData) {
         setSavedVideos(new Set(savesData.map((s: { video_id: string }) => s.video_id)));
       }
     } catch (e) {
       console.warn('[FeedContext] loadLikesAndSaves error:', e);
-      setLikedVideos(new Set());
-      setSavedVideos(new Set());
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!initialLoaded) {
-      loadVideos(null);
-      if (user) {
-        loadLikesAndSaves(user.id);
-        loadBlockedUsers(user.id);
-      } else {
+      if (generation === deliveryGenerationRef.current) {
         setLikedVideos(new Set());
         setSavedVideos(new Set());
       }
     }
-  }, [user?.id, initialLoaded]);
+  }, []);
+
+  useEffect(() => {
+    const generation = deliveryGenerationRef.current + 1;
+    deliveryGenerationRef.current = generation;
+    setVideos([]);
+    setDbCursor(null);
+    setHasMoreDb(true);
+    setBlockedUserIds(new Set());
+    setLikedVideos(new Set());
+    setSavedVideos(new Set());
+    void loadVideos(null, generation);
+    if (viewerId) {
+      void loadLikesAndSaves(viewerId, generation);
+      void loadBlockedUsers(viewerId, generation);
+    }
+  }, [viewerId, loadVideos, loadLikesAndSaves, loadBlockedUsers]);
 
   const refreshFeed = useCallback(async () => {
-    setInitialLoaded(false);
     setDbCursor(null);
     setHasMoreDb(true);
     await loadVideos(null);
-    if (user) {
-      await loadLikesAndSaves(user.id);
-      await loadBlockedUsers(user.id);
+    if (viewerId) {
+      await loadLikesAndSaves(viewerId);
+      await loadBlockedUsers(viewerId);
     }
-    setInitialLoaded(true);
-  }, [loadVideos, loadLikesAndSaves, loadBlockedUsers, user]);
+  }, [loadVideos, loadLikesAndSaves, loadBlockedUsers, viewerId]);
 
   const confirmMarketplaceContentVisible = useCallback(async (videoId: string) => {
     // The public product-tag RPC is the existing authenticated facade that
@@ -514,11 +541,15 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     const payload = {
       p_video_id: videoId,
       p_client_event_id: event.clientEventId,
-      p_client_session_id: clientSessionIdRef.current,
+      p_client_session_id: clientSessionId,
       p_watch_duration_ms: Math.max(0, Math.round(event.watchDurationMs)),
       p_exit_reason: event.exitReason,
     };
     try {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) return;
+      const currentViewerId = sessionData.session?.user.id ?? null;
+      if (currentViewerId !== viewerId) return;
       let response = await supabase.rpc('record_video_view_v1', payload);
       if (response.error) response = await supabase.rpc('record_video_view_v1', payload);
       if (response.error) throw response.error;
@@ -531,7 +562,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       console.warn('[FeedContext] trackView error:', e);
     }
-  }, []);
+  }, [clientSessionId, viewerId]);
 
   // ── Get Analytics ─────────────────────────────────────────────────────────
   const getAnalytics = useCallback(async (videoId: string): Promise<VideoAnalytics> => {
@@ -564,7 +595,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         ...defaults,
         views:          Number(result.views) || 0,
         uniqueViews:    Number(result.unique_authenticated_viewers) || 0,
-        completionRate: Math.round((Number(result.completion_rate) || 0) * 100),
+        completionRate: Math.round(Number(result.completion_rate) || 0),
         avgWatchMs:     Math.round(Number(result.avg_watch_ms) || 0),
       };
     } catch (e) {

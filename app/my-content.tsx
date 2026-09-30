@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList,
   Dimensions, ActivityIndicator, ScrollView,
@@ -95,8 +95,11 @@ export default function MyContentScreen() {
   const [isLoadingContent, setIsLoadingContent] = useState(true);
   const [ownVideos, setOwnVideos] = useState<VideoWithMeta[]>([]);
   const [savedVideos, setSavedVideos] = useState<VideoWithMeta[]>([]);
+  const contentLoadRef = useRef(0);
 
   const loadContent = useCallback(async () => {
+    const generation = contentLoadRef.current + 1;
+    contentLoadRef.current = generation;
     if (!user?.id) {
       setOwnVideos([]);
       setSavedVideos([]);
@@ -109,19 +112,24 @@ export default function MyContentScreen() {
         fetchCreatorVideoFeed(user.id, 200),
         fetchSavedVideoFeed(user.id, 200),
       ]);
-      setOwnVideos(creatorVideos);
-      setSavedVideos(saved);
+      if (contentLoadRef.current === generation) {
+        setOwnVideos(creatorVideos);
+        setSavedVideos(saved);
+      }
     } catch (error) {
       console.warn('[MyContent] server content load failed:', error);
-      setOwnVideos([]);
-      setSavedVideos([]);
+      if (contentLoadRef.current === generation) {
+        setOwnVideos([]);
+        setSavedVideos([]);
+      }
     } finally {
-      setIsLoadingContent(false);
+      if (contentLoadRef.current === generation) setIsLoadingContent(false);
     }
   }, [user?.id]);
 
   useFocusEffect(useCallback(() => {
     void loadContent();
+    return () => { contentLoadRef.current += 1; };
   }, [loadContent]));
 
   const myVideos = ownVideos;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
   TextInput, Modal, KeyboardAvoidingView, Platform,
@@ -131,23 +131,28 @@ export default function ProfileScreen() {
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [storyViewerVisible, setStoryViewerVisible] = useState(false);
   const [profileVideos, setProfileVideos] = useState<VideoWithMeta[]>([]);
+  const profileVideoLoadRef = useRef(0);
   const ownStoryGroup = getStoryGroupForUser(user?.id);
 
   const loadProfileVideos = useCallback(async () => {
+    const generation = profileVideoLoadRef.current + 1;
+    profileVideoLoadRef.current = generation;
     if (!user?.id) {
       setProfileVideos([]);
       return;
     }
     try {
-      setProfileVideos(await fetchCreatorVideoFeed(user.id));
+      const next = await fetchCreatorVideoFeed(user.id);
+      if (profileVideoLoadRef.current === generation) setProfileVideos(next);
     } catch (error) {
       console.warn('[Profile] creator video load failed:', error);
-      setProfileVideos([]);
+      if (profileVideoLoadRef.current === generation) setProfileVideos([]);
     }
   }, [user?.id]);
 
   useFocusEffect(useCallback(() => {
     void loadProfileVideos();
+    return () => { profileVideoLoadRef.current += 1; };
   }, [loadProfileVideos]));
 
   useEffect(() => {
