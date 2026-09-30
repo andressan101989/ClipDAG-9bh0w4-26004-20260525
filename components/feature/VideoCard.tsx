@@ -13,6 +13,7 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 import { formatNumber } from '@/services/mockData';
+import type { FinalizedVideoView } from '@/services/videoPlaybackSession';
 
 // ── Re-export height constants ────────────────────────────────────────────────
 export const STORIES_BAR_HEIGHT = 100;
@@ -38,7 +39,7 @@ export interface VideoCardProps {
   onSave?: () => void;
   onProfilePress: () => void;
   onSendGift?: (recipientId: string, videoId: string | null, giftType: string, dagValue: number) => Promise<{ success: boolean; error?: string }>;
-  onViewTracked?: (watchDurationMs: number, completed: boolean) => void;
+  onViewTracked?: (event: FinalizedVideoView) => void;
   productTagCount?: number;
   onProducts?: () => void;
   onAddToStory?: () => void;

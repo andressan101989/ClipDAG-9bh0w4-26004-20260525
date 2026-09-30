@@ -127,3 +127,33 @@ test('descending video keyset handles timestamp ties and intervening inserts wit
     'ffffffff-ffff-4fff-8fff-ffffffffffff',
   ]);
 });
+
+test('Feed runtime uses chronological keyset delivery and RPC-only behavioral access', () => {
+  const feed = readFileSync(new URL('../contexts/FeedContext.tsx', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(feed, /\bSAMPLE_VIDEOS\b|\bMOCK_COMMENTS\b/);
+  assert.doesNotMatch(feed, /\.range\s*\(|\bdbOffset\b/);
+  assert.match(feed, /\.order\('created_at',\s*\{ ascending: false \}\)\s*\.order\('id',\s*\{ ascending: false \}\)\s*\.limit\(10\)/);
+  assert.match(feed, /videoKeysetOrFilter\(cursor\)/);
+  assert.match(feed, /cursorFromVideoRows\(data\)/);
+  assert.match(feed, /\.rpc\('record_video_view_v1'/);
+  assert.match(feed, /\.rpc\('get_my_video_analytics_v1'/);
+  assert.doesNotMatch(feed, /\.from\('video_views'\)/);
+  assert.doesNotMatch(feed, /p_(?:viewer|completed|completion_ratio|rewatch_count|views_count)/);
+  assert.match(feed, /result\.status === 'recorded'/);
+});
+
+test('native VideoCard finalizes one canonical exposure on swipe, background or unmount', () => {
+  const nativeCard = readFileSync(new URL('../components/feature/VideoCard.native.tsx', import.meta.url), 'utf8');
+  const webCard = readFileSync(new URL('../components/feature/VideoCard.tsx', import.meta.url), 'utf8');
+  const feedScreen = readFileSync(new URL('../app/(tabs)/index.tsx', import.meta.url), 'utf8');
+
+  assert.match(nativeCard, /createVideoPlaybackSession/);
+  assert.match(nativeCard, /AppState\.addEventListener\('change'/);
+  assert.match(nativeCard, /finishExposure\('background'\)/);
+  assert.match(nativeCard, /finishExposure\('swipe'\)/);
+  assert.match(nativeCard, /finishExposureRef\.current\('unmount'\)/);
+  assert.match(nativeCard, /onViewTracked\?: \(event: FinalizedVideoView\) => void/);
+  assert.match(webCard, /onViewTracked\?: \(event: FinalizedVideoView\) => void/);
+  assert.match(feedScreen, /trackView\(videoId, event\)/);
+});

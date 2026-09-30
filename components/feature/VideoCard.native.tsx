@@ -1,8 +1,9 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Dimensions, Animated, Share,
-  FlatList, NativeScrollEvent, NativeSyntheticEvent, Modal,
+  FlatList, NativeScrollEvent, NativeSyntheticEvent, Modal, AppState,
 } from 'react-native';
+import { randomUUID } from 'expo-crypto';
 // expo-video — lazy-loaded to prevent Hermes crash from dynamic import() syntax
 // in expo-video's internal JS when bundled for iOS.
 let VideoView: any = null;
@@ -21,6 +22,10 @@ import { GiftSheet } from '@/components/feature/GiftSheet';
 import { useAlert } from '@/template';
 import { Colors, FontSize, FontWeight, Spacing, Radius } from '@/constants/theme';
 import { Video, formatNumber } from '@/services/mockData';
+import {
+  createVideoPlaybackSession,
+  type FinalizedVideoView,
+} from '@/services/videoPlaybackSession';
 
 // ── Height exports ────────────────────────────────────────────────────────────
 export const STORIES_BAR_HEIGHT = 100;
@@ -99,7 +104,7 @@ export interface VideoCardProps {
   onSave?: () => void;
   onProfilePress: () => void;
   onSendGift?: (recipientId: string, videoId: string | null, giftType: string, dagValue: number) => Promise<{ success: boolean; error?: string }>;
-  onViewTracked?: (watchDurationMs: number, completed: boolean) => void;
+  onViewTracked?: (event: FinalizedVideoView) => void;
   productTagCount?: number;
   onProducts?: () => void;
   onAddToStory?: () => void;
@@ -432,23 +437,55 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
     if (!isFullscreen) _sessionMuted = isMuted;
   }, [isMuted, isFullscreen]);
 
-  useEffect(() => {
-    return () => { releasePlayerLock(playerRef.current as unknown as ManagedPlayer); };
-  }, []);
-
   // ── View tracking ─────────────────────────────────────────────────────────
-  const viewStartRef   = useRef<number | null>(null);
-  const viewTrackedRef = useRef(false);
+  const playbackSessionRef = useRef<ReturnType<typeof createVideoPlaybackSession> | null>(null);
+  if (!playbackSessionRef.current) {
+    playbackSessionRef.current = createVideoPlaybackSession({ now: Date.now, createEventId: randomUUID });
+  }
+  const onViewTrackedRef = useRef(onViewTracked);
+  const isActiveRef = useRef(isActive);
+  onViewTrackedRef.current = onViewTracked;
+  isActiveRef.current = isActive;
+
+  const finishExposure = useCallback((reason: FinalizedVideoView['exitReason']) => {
+    const event = playbackSessionRef.current?.finish(reason);
+    if (event) onViewTrackedRef.current?.(event);
+  }, []);
+  const finishExposureRef = useRef(finishExposure);
+  finishExposureRef.current = finishExposure;
+
   useEffect(() => {
-    if (isActive) {
-      viewStartRef.current   = Date.now();
-      viewTrackedRef.current = false;
-    } else if (viewStartRef.current && !viewTrackedRef.current) {
-      viewTrackedRef.current = true;
-      onViewTracked?.(Date.now() - viewStartRef.current, false);
-      viewStartRef.current = null;
+    if (isActive && AppState.currentState === 'active') {
+      playbackSessionRef.current?.start();
+    } else if (!isActive) {
+      finishExposure('swipe');
     }
-  }, [isActive]);
+  }, [finishExposure, isActive]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState !== 'active') {
+        finishExposure('background');
+        const currentPlayer = playerRef.current as unknown as ManagedPlayer;
+        releasePlayerLock(currentPlayer);
+        try { currentPlayer.muted = true; } catch (_) {}
+        try { currentPlayer.pause(); } catch (_) {}
+        return;
+      }
+      if (isActiveRef.current) {
+        playbackSessionRef.current?.start();
+        const currentPlayer = playerRef.current as unknown as ManagedPlayer;
+        acquirePlayerLock(currentPlayer);
+        try { currentPlayer.play(); } catch (_) {}
+      }
+    });
+    return () => subscription.remove();
+  }, [finishExposure]);
+
+  useEffect(() => () => {
+    finishExposureRef.current('unmount');
+    releasePlayerLock(playerRef.current as unknown as ManagedPlayer);
+  }, []);
 
   // ── Tap / double-tap ──────────────────────────────────────────────────────
   const [showHeart, setShowHeart] = useState(false);

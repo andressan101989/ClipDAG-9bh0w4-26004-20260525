@@ -1,18 +1,4 @@
-/**
- * contexts/FeedContext.tsx — v3 (hardened against Supabase unavailability)
- *
- * CHANGES vs v2:
- *  - supabase client is stored in a ref initialised once with try/catch.
- *    If getSupabaseClient() throws (backend unavailable / missing env), the
- *    provider degrades gracefully to mock data instead of crashing the
- *    React tree.
- *  - All Supabase calls are guarded: if (!supabase) short-circuit to local
- *    fallback, never throw unhandled exceptions up to React.
- *  - toggleSave counter update migrated from stale `videos` closure to
- *    a functional setVideos lookup — prevents stale-closure race conditions.
- *  - trackView stale closure fixed: reads current video count inside setter.
- *  - loadVideos, loadLikesAndSaves, refreshFeed all guarded.
- */
+/** Canonical chronological organic delivery and interaction authority. */
 
 import React, {
   createContext, useState, useCallback, useEffect,
@@ -20,8 +6,14 @@ import React, {
 } from 'react';
 import { getSupabaseClient } from '@/template';
 import { AuthContext }        from './AuthContext';
-import { SAMPLE_VIDEOS, MOCK_COMMENTS } from '@/services/mockData';
-import type { Video, Comment }           from '@/services/mockData';
+import { randomUUID } from 'expo-crypto';
+import type { Video, Comment } from '@/services/mockData';
+import {
+  cursorFromVideoRows,
+  videoKeysetOrFilter,
+  type VideoKeysetCursor,
+} from '@/services/feedKeyset';
+import type { FinalizedVideoView } from '@/services/videoPlaybackSession';
 import {
   createMediaOperationId,
   deleteMediaAsset,
@@ -87,7 +79,7 @@ interface FeedContextType {
   addVideo:        (video: AddVideoInput) => Promise<string | undefined>;
   updateVideo:     (videoId: string, updates: { caption?: string; music?: string }) => Promise<{ success: boolean; error?: string }>;
   deleteVideo:     (videoId: string, videoUrl?: string, thumbnailUrl?: string) => Promise<{ success: boolean; error?: string }>;
-  trackView:       (videoId: string, watchDurationMs: number, completed: boolean) => Promise<void>;
+  trackView:       (videoId: string, event: FinalizedVideoView) => Promise<void>;
   getAnalytics:    (videoId: string) => Promise<VideoAnalytics>;
   sendGift:        (recipientId: string, videoId: string | null, giftType: string, dagValue: number) => Promise<{ success: boolean; error?: string }>;
   ensureVideoLoadedById: (videoId: string) => Promise<EnsureVideoLoadedResult>;
@@ -263,37 +255,28 @@ async function deleteStorageFile(
 const isMockId = (id: string) => /^v\d+$/.test(id);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-// Debounce view tracking: only log a view per video per 60s window
-const viewedRecently = new Map<string, number>();
-function canTrackView(videoId: string): boolean {
-  const last = viewedRecently.get(videoId) || 0;
-  if (Date.now() - last > 60_000) {
-    viewedRecently.set(videoId, Date.now());
-    return true;
-  }
-  return false;
-}
-
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 export function FeedProvider({ children }: { children: ReactNode }) {
   const authContext = useContext(AuthContext);
   const user = authContext?.user;
 
-  // ── Hardened Supabase client — stored in a ref, never crashes React tree ──
-  // If getSupabaseClient() throws (missing env, backend unavailable), we
-  // degrade gracefully to mock data for the entire session.
+  // The client is stored once so backend unavailability can fail soft to an
+  // empty/error state without substituting fixture content.
   const supabaseRef   = useRef<ReturnType<typeof getSupabaseClient> | null>(null);
   const supabaseOk    = useRef(true);
   const isLoadingRef  = useRef(false);
   const videosRef     = useRef<VideoWithMeta[]>([]);
+  const clientSessionIdRef = useRef<string | null>(null);
   const exactVideoFlightsRef = useRef(new Map<string, Promise<EnsureVideoLoadedResult>>());
+
+  if (!clientSessionIdRef.current) clientSessionIdRef.current = randomUUID();
 
   if (!supabaseRef.current) {
     try {
       supabaseRef.current = getSupabaseClient();
     } catch (e) {
-      console.warn('[FeedContext] getSupabaseClient failed — running on mock data:', e);
+      console.warn('[FeedContext] getSupabaseClient failed:', e);
       supabaseOk.current = false;
     }
   }
@@ -301,9 +284,9 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   const [videos,          setVideos]          = useState<VideoWithMeta[]>([]);
   const [likedVideos,     setLikedVideos]     = useState<Set<string>>(new Set());
   const [savedVideos,     setSavedVideos]     = useState<Set<string>>(new Set());
-  const [comments,        setComments]        = useState<Record<string, Comment[]>>(MOCK_COMMENTS);
+  const [comments,        setComments]        = useState<Record<string, Comment[]>>({});
   const [isLoadingFeed,   setIsLoadingFeed]   = useState(false);
-  const [dbOffset,        setDbOffset]        = useState(0);
+  const [dbCursor,        setDbCursor]        = useState<VideoKeysetCursor | null>(null);
   const [initialLoaded,   setInitialLoaded]   = useState(false);
   const [hasMoreDb,       setHasMoreDb]       = useState(true);
   const [blockedUserIds,  setBlockedUserIds]  = useState<Set<string>>(new Set());
@@ -313,53 +296,57 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   }, [videos]);
 
   // ── Load videos ───────────────────────────────────────────────────────────
-  const loadVideos = useCallback(async (offset = 0) => {
+  const loadVideos = useCallback(async (cursor: VideoKeysetCursor | null = null) => {
     if (isLoadingRef.current) return;
     isLoadingRef.current = true;
     setIsLoadingFeed(true);
     try {
       const supabase = supabaseRef.current;
       if (!supabase || !supabaseOk.current) {
-        // No backend — show sample data
-        if (offset === 0) setVideos(SAMPLE_VIDEOS);
+        if (!cursor) setVideos([]);
         setHasMoreDb(false);
-        isLoadingRef.current = false;
-        setIsLoadingFeed(false);
-        setInitialLoaded(true);
         return;
       }
 
-      const { data, error } = await supabase
+      let query = supabase
         .from('videos')
         .select('*, user_profiles!videos_user_id_fkey(username, avatar_url)')
         .order('created_at', { ascending: false })
-        .range(offset, offset + 9);
+        .order('id', { ascending: false })
+        .limit(10);
+      if (cursor) query = query.or(videoKeysetOrFilter(cursor));
+      const { data, error } = await query;
 
-      if (!error && data && data.length > 0) {
+      if (error) throw error;
+
+      if (data && data.length > 0) {
         const mapped: VideoWithMeta[] = data.map(row => {
           const profile = row.user_profiles as Record<string, string> | null;
           return mapVideo(row as unknown as Record<string, unknown>, profile?.username || 'user', profile?.avatar_url || '');
         });
-        if (offset === 0) {
-          setVideos([...mapped, ...SAMPLE_VIDEOS]);
+        if (!cursor) {
+          setVideos(mapped);
         } else {
-          setVideos(prev => [...prev, ...mapped]);
+          setVideos(prev => {
+            const existingIds = new Set(prev.map(video => video.id));
+            return [...prev, ...mapped.filter(video => !existingIds.has(video.id))];
+          });
         }
-        setDbOffset(offset + mapped.length);
+        setDbCursor(cursorFromVideoRows(data));
         setHasMoreDb(data.length === 10);
-      } else if (offset === 0) {
-        setVideos(SAMPLE_VIDEOS);
-        setHasMoreDb(false);
       } else {
+        if (!cursor) setVideos([]);
         setHasMoreDb(false);
       }
     } catch (e) {
       console.warn('[FeedContext] loadVideos error:', e);
-      if (offset === 0) setVideos(SAMPLE_VIDEOS);
+      if (!cursor) setVideos([]);
+      setHasMoreDb(false);
+    } finally {
+      isLoadingRef.current = false;
+      setIsLoadingFeed(false);
+      setInitialLoaded(true);
     }
-    isLoadingRef.current = false;
-    setIsLoadingFeed(false);
-    setInitialLoaded(true);
   }, []);
 
   // ── Load blocked users ────────────────────────────────────────────────────
@@ -381,7 +368,8 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   const loadLikesAndSaves = useCallback(async (userId: string) => {
     const supabase = supabaseRef.current;
     if (!supabase || !supabaseOk.current) {
-      setLikedVideos(new Set(SAMPLE_VIDEOS.filter(v => v.isLiked).map(v => v.id)));
+      setLikedVideos(new Set());
+      setSavedVideos(new Set());
       return;
     }
     try {
@@ -389,38 +377,35 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         supabase.from('likes').select('video_id').eq('user_id', userId),
         supabase.from('video_saves').select('video_id').eq('user_id', userId),
       ]);
-      if (likesData) {
-        setLikedVideos(new Set([
-          ...likesData.map((l: { video_id: string }) => l.video_id),
-          ...SAMPLE_VIDEOS.filter(v => v.isLiked).map(v => v.id),
-        ]));
-      }
+      setLikedVideos(new Set((likesData || []).map((l: { video_id: string }) => l.video_id)));
       if (savesData) {
         setSavedVideos(new Set(savesData.map((s: { video_id: string }) => s.video_id)));
       }
     } catch (e) {
       console.warn('[FeedContext] loadLikesAndSaves error:', e);
-      setLikedVideos(new Set(SAMPLE_VIDEOS.filter(v => v.isLiked).map(v => v.id)));
+      setLikedVideos(new Set());
+      setSavedVideos(new Set());
     }
   }, []);
 
   useEffect(() => {
     if (!initialLoaded) {
-      loadVideos(0);
+      loadVideos(null);
       if (user) {
         loadLikesAndSaves(user.id);
         loadBlockedUsers(user.id);
       } else {
-        setLikedVideos(new Set(SAMPLE_VIDEOS.filter(v => v.isLiked).map(v => v.id)));
+        setLikedVideos(new Set());
+        setSavedVideos(new Set());
       }
     }
   }, [user?.id, initialLoaded]);
 
   const refreshFeed = useCallback(async () => {
     setInitialLoaded(false);
-    setDbOffset(0);
+    setDbCursor(null);
     setHasMoreDb(true);
-    await loadVideos(0);
+    await loadVideos(null);
     if (user) {
       await loadLikesAndSaves(user.id);
       await loadBlockedUsers(user.id);
@@ -580,32 +565,30 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   }, [user, savedVideos]);
 
   // ── Track View — stale-closure-free ──────────────────────────────────────
-  const trackView = useCallback(async (videoId: string, watchDurationMs: number, completed: boolean) => {
+  const trackView = useCallback(async (videoId: string, event: FinalizedVideoView) => {
     const supabase = supabaseRef.current;
-    if (isMockId(videoId) || !canTrackView(videoId) || !supabase || !supabaseOk.current) return;
+    if (!UUID_PATTERN.test(videoId) || !supabase || !supabaseOk.current) return;
+    const payload = {
+      p_video_id: videoId,
+      p_client_event_id: event.clientEventId,
+      p_client_session_id: clientSessionIdRef.current,
+      p_watch_duration_ms: Math.max(0, Math.round(event.watchDurationMs)),
+      p_exit_reason: event.exitReason,
+    };
     try {
-      await supabase.from('video_views').insert({
-        video_id:          videoId,
-        viewer_id:         user?.id || null,
-        watch_duration_ms: Math.round(watchDurationMs),
-        completed,
-      });
-      // Functional setter — reads latest viewsCount, never stale closure
-      setVideos(prev => {
-        const current = prev.find(v => v.id === videoId);
-        if (!current) return prev;
-        const newCount = (current.viewsCount || 0) + 1;
-        return prev.map(v => v.id === videoId ? { ...v, viewsCount: newCount } : v);
-      });
-      // Atomic RPC persists the real count server-side — the local update
-      // above is just optimistic UI, not the source of truth.
-      supabase.rpc('increment_video_counter', {
-        p_video_id: videoId, p_field: 'views_count', p_delta: 1,
-      }).then(undefined, () => {});
+      let response = await supabase.rpc('record_video_view_v1', payload);
+      if (response.error) response = await supabase.rpc('record_video_view_v1', payload);
+      if (response.error) throw response.error;
+      const result = Array.isArray(response.data) ? response.data[0] : response.data;
+      if (result && result.status === 'recorded') {
+        setVideos(prev => prev.map(video => video.id === videoId
+          ? { ...video, viewsCount: Number(result.views_count) || (video.viewsCount || 0) + 1 }
+          : video));
+      }
     } catch (e) {
       console.warn('[FeedContext] trackView error:', e);
     }
-  }, [user]);
+  }, []);
 
   // ── Get Analytics ─────────────────────────────────────────────────────────
   const getAnalytics = useCallback(async (videoId: string): Promise<VideoAnalytics> => {
@@ -627,23 +610,19 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     if (isMockId(videoId) || !supabase || !supabaseOk.current) return defaults;
 
     try {
-      const { data } = await supabase
-        .from('video_views')
-        .select('viewer_id, watch_duration_ms, completed')
-        .eq('video_id', videoId);
-
-      if (!data || data.length === 0) return defaults;
-
-      const uniqueViewers    = new Set(data.filter(r => r.viewer_id).map(r => r.viewer_id)).size;
-      const completedCount   = data.filter(r => r.completed).length;
-      const totalDurationMs  = data.reduce((s, r) => s + (r.watch_duration_ms || 0), 0);
+      const { data, error } = await supabase.rpc('get_my_video_analytics_v1', {
+        p_video_id: videoId,
+      });
+      if (error) throw error;
+      const result = Array.isArray(data) ? data[0] : data;
+      if (!result) return defaults;
 
       return {
         ...defaults,
-        views:          data.length,
-        uniqueViews:    uniqueViewers,
-        completionRate: data.length > 0 ? Math.round((completedCount / data.length) * 100) : 0,
-        avgWatchMs:     data.length > 0 ? Math.round(totalDurationMs / data.length) : 0,
+        views:          Number(result.views) || 0,
+        uniqueViews:    Number(result.unique_authenticated_viewers) || 0,
+        completionRate: Math.round((Number(result.completion_rate) || 0) * 100),
+        avgWatchMs:     Math.round(Number(result.avg_watch_ms) || 0),
       };
     } catch (e) {
       console.warn('[FeedContext] getAnalytics error:', e);
@@ -705,25 +684,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   const addVideo = useCallback(async (video: AddVideoInput) => {
     const supabase = supabaseRef.current;
     if (!user) return;
-    if (!supabase || !supabaseOk.current) {
-      // Degrade gracefully — add to local state only
-      const localVideo: VideoWithMeta = {
-        id:          `local_${Date.now()}`,
-        userId:      user.id,
-        username:    user.username || 'user',
-        userAvatar:  user.avatar || '',
-        videoUrl:    video.videoUrl,
-        thumbnailUrl: video.thumbnailUrl || '',
-        caption:     video.caption,
-        likes:       0, comments: 0, shares: 0,
-        music:       video.music || 'Sin musica',
-        isLiked:     false,
-        createdAt:   new Date().toISOString(),
-        mediaUrls:   video.mediaUrls,
-      };
-      setVideos(prev => [localVideo, ...prev]);
-      return localVideo.id;
-    }
+    if (!supabase || !supabaseOk.current) return undefined;
     try {
       if (video.mediaUrls && video.mediaUrls.length >= 2) {
         const operationId=createMediaOperationId('carousel');
@@ -918,8 +879,8 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const loadMoreVideos = useCallback(async () => {
-    if (!isLoadingRef.current && hasMoreDb) await loadVideos(dbOffset);
-  }, [loadVideos, dbOffset, hasMoreDb]);
+    if (!isLoadingRef.current && hasMoreDb && dbCursor) await loadVideos(dbCursor);
+  }, [loadVideos, dbCursor, hasMoreDb]);
 
   const filteredVideos = useMemo(
     () => blockedUserIds.size > 0 ? videos.filter(v => !blockedUserIds.has(v.userId)) : videos,

@@ -24,6 +24,7 @@ import { Audio } from 'expo-av';
 import { useScrollToTop } from '@react-navigation/native';
 import type { StoryGroup, StoryItem } from '@/components/feature/StoriesBar';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
+import type { FinalizedVideoView } from '@/services/videoPlaybackSession';
 import { deleteMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
 import { CreatorContentProductSheet } from '@/components/marketplace/CreatorContentProductSheet';
 import {
@@ -353,8 +354,8 @@ export default function FeedScreen() {
 
   const handleSave = useCallback((videoId: string) => { toggleSave(videoId); }, [toggleSave]);
 
-  const handleViewTracked = useCallback((videoId: string, durationMs: number, completed: boolean) => {
-    trackView(videoId, durationMs, completed);
+  const handleViewTracked = useCallback((videoId: string, event: FinalizedVideoView) => {
+    void trackView(videoId, event);
   }, [trackView]);
 
   const publishStory = useCallback(async (
@@ -554,7 +555,7 @@ export default function FeedScreen() {
             onSave={() => handleSave(item.video.id)}
             onProfilePress={() => {}}
             onSendGift={sendGift}
-            onViewTracked={(durationMs, completed) => handleViewTracked(item.video.id, durationMs, completed)}
+            onViewTracked={event => handleViewTracked(item.video.id, event)}
             productTagCount={productTagCounts[item.video.id] ?? 0}
             onProducts={() => setProductSheet({
               contentId: item.video.id,
