@@ -261,7 +261,12 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const page = await fetchRankedFeedPage(supabase, {
+      const page = await fetchRankedFeedPage({
+        rpc: async (name, args) => {
+          const { data, error } = await supabase.rpc(name, args);
+          return { data, error: error ? { message: error.message } : null };
+        },
+      }, {
         clientSessionId,
         limit: 10,
         cursor,

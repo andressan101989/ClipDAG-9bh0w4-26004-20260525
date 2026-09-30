@@ -109,7 +109,7 @@ test('Feed runtime uses ranked server delivery and RPC-only behavioral access', 
 
   assert.doesNotMatch(feed, /\bSAMPLE_VIDEOS\b|\bMOCK_COMMENTS\b/);
   assert.doesNotMatch(feed, /\.range\s*\(|\bdbOffset\b/);
-  assert.match(feed, /fetchRankedFeedPage\(supabase/);
+  assert.match(feed, /fetchRankedFeedPage\(\{[\s\S]{0,180}supabase\.rpc\(name, args\)/);
   assert.match(feed, /setRankCursor\(page\.cursor\)/);
   assert.doesNotMatch(feed, /services\/feedKeyset/);
   assert.doesNotMatch(feed, /if \(!initialLoaded\) \{\s*loadVideos/);

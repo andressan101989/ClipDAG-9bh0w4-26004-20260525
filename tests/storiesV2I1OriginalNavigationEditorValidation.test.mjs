@@ -55,7 +55,7 @@ test('a target absent from the first page invokes exact Feed resolution', () => 
 });
 
 test('content beyond the ten-row first page uses an exact ID query', () => {
-  assert.match(feedContext, /fetchRankedFeedPage\(supabase,[\s\S]{0,180}limit: 10,[\s\S]{0,100}cursor/);
+  assert.match(feedContext, /fetchRankedFeedPage\(\{[\s\S]{0,180}supabase\.rpc\(name, args\)[\s\S]{0,220}limit: 10,[\s\S]{0,100}cursor/);
   assert.match(feedContext, /setRankCursor\(page\.cursor\)/);
   assert.doesNotMatch(feedContext, /\.range\(/);
   assert.match(ensureBody(), /\.eq\('id', normalizedId\)[\s\S]*\.maybeSingle\(\)/);

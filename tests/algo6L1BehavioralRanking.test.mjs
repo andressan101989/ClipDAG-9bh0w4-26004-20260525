@@ -222,7 +222,7 @@ test('FeedContext consumes only the ranked organic authority for Feed pages', ()
   assert.match(feed, /fetchRankedFeedPage/);
   assert.match(feed, /type RankedFeedCursor/);
   assert.doesNotMatch(feed, /services\/feedKeyset/);
-  assert.match(loadBody, /fetchRankedFeedPage\(supabase/);
+  assert.match(loadBody, /fetchRankedFeedPage\(\{[\s\S]{0,180}supabase\.rpc\(name, args\)/);
   assert.doesNotMatch(loadBody, /\.from\('videos'\)/);
   assert.doesNotMatch(loadBody, /\.order\(|\.range\(|\.or\(/);
   assert.match(loadBody, /clientSessionId/);
