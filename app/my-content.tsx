@@ -8,13 +8,14 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
 import { useFeed } from '@/hooks/useFeed';
 import { useAlert } from '@/template';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { formatNumber } from '@/services/mockData';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
+import { fetchCreatorVideoFeed, fetchSavedVideoFeed } from '@/services/creatorService';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const GRID_GAP = 2;
@@ -85,15 +86,45 @@ export default function MyContentScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
-  const { videos, savedVideoIds, deleteVideo } = useFeed();
+  const { deleteVideo } = useFeed();
   const { showAlert } = useAlert();
 
   const [activeTab, setActiveTab] = useState<ContentTab>('posts');
   const [sortBy, setSortBy] = useState<SortBy>('newest');
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isLoadingContent, setIsLoadingContent] = useState(true);
+  const [ownVideos, setOwnVideos] = useState<VideoWithMeta[]>([]);
+  const [savedVideos, setSavedVideos] = useState<VideoWithMeta[]>([]);
 
-  const myVideos = useMemo(() => videos.filter(v => v.userId === user?.id), [videos, user?.id]);
-  const savedVideos = useMemo(() => videos.filter(v => savedVideoIds.has(v.id)), [videos, savedVideoIds]);
+  const loadContent = useCallback(async () => {
+    if (!user?.id) {
+      setOwnVideos([]);
+      setSavedVideos([]);
+      setIsLoadingContent(false);
+      return;
+    }
+    setIsLoadingContent(true);
+    try {
+      const [creatorVideos, saved] = await Promise.all([
+        fetchCreatorVideoFeed(user.id, 200),
+        fetchSavedVideoFeed(user.id, 200),
+      ]);
+      setOwnVideos(creatorVideos);
+      setSavedVideos(saved);
+    } catch (error) {
+      console.warn('[MyContent] server content load failed:', error);
+      setOwnVideos([]);
+      setSavedVideos([]);
+    } finally {
+      setIsLoadingContent(false);
+    }
+  }, [user?.id]);
+
+  useFocusEffect(useCallback(() => {
+    void loadContent();
+  }, [loadContent]));
+
+  const myVideos = ownVideos;
 
   const myReels = useMemo(() => myVideos.filter(v => {
     const url = v.videoUrl || '';
@@ -169,7 +200,11 @@ export default function MyContentScreen() {
           setIsDeleting(true);
           const result = await deleteVideo(video.id, video.videoUrl, video.thumbnailUrl);
           setIsDeleting(false);
-          if (result.success) showAlert('Eliminado', 'Tu publicacion fue eliminada');
+          if (result.success) {
+            setOwnVideos(current => current.filter(item => item.id !== video.id));
+            setSavedVideos(current => current.filter(item => item.id !== video.id));
+            showAlert('Eliminado', 'Tu publicacion fue eliminada');
+          }
           else showAlert('Error', result.error || 'No se pudo eliminar');
         },
       },
@@ -270,10 +305,10 @@ export default function MyContentScreen() {
       </ScrollView>
 
       {/* Content grid */}
-      {isDeleting ? (
+      {isDeleting || isLoadingContent ? (
         <View style={styles.centered}>
           <ActivityIndicator color={Colors.primary} size="large" />
-          <Text style={styles.loadingText}>Eliminando...</Text>
+          <Text style={styles.loadingText}>{isDeleting ? 'Eliminando...' : 'Cargando contenido...'}</Text>
         </View>
       ) : currentItems.length === 0 ? (
         <View style={styles.emptyState}>

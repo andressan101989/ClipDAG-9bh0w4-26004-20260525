@@ -10,7 +10,7 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
 import { useFeed } from '@/hooks/useFeed';
 import { useNotifications } from '@/hooks/useNotifications';
@@ -35,6 +35,7 @@ import {
   uploadMediaFromUri,
 } from '@/services/mediaService';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
+import { fetchCreatorVideoFeed } from '@/services/creatorService';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const GRID_GAP = 2;
@@ -103,7 +104,7 @@ export default function ProfileScreen() {
     user, logout, updateProfile, isFollowing, toggleFollow,
     followedUsers, refreshProfile,
   } = useAuth();
-  const { videos, deleteVideo, updateVideo, getAnalytics } = useFeed();
+  const { deleteVideo, updateVideo, getAnalytics } = useFeed();
   const { showAlert } = useAlert();
   const router = useRouter();
   const { unreadCount: notifCount } = useNotifications();
@@ -129,7 +130,25 @@ export default function ProfileScreen() {
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [storyViewerVisible, setStoryViewerVisible] = useState(false);
+  const [profileVideos, setProfileVideos] = useState<VideoWithMeta[]>([]);
   const ownStoryGroup = getStoryGroupForUser(user?.id);
+
+  const loadProfileVideos = useCallback(async () => {
+    if (!user?.id) {
+      setProfileVideos([]);
+      return;
+    }
+    try {
+      setProfileVideos(await fetchCreatorVideoFeed(user.id));
+    } catch (error) {
+      console.warn('[Profile] creator video load failed:', error);
+      setProfileVideos([]);
+    }
+  }, [user?.id]);
+
+  useFocusEffect(useCallback(() => {
+    void loadProfileVideos();
+  }, [loadProfileVideos]));
 
   useEffect(() => {
     if (storyViewerVisible && !ownStoryGroup) setStoryViewerVisible(false);
@@ -168,9 +187,9 @@ export default function ProfileScreen() {
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
-    try { await Promise.all([refreshProfile(), refreshStories()]); } catch (_) {}
+    try { await Promise.all([refreshProfile(), refreshStories(), loadProfileVideos()]); } catch (_) {}
     setIsRefreshing(false);
-  }, [refreshProfile, refreshStories]);
+  }, [refreshProfile, refreshStories, loadProfileVideos]);
 
   const handlePickAvatar = useCallback(() => {
     showAlert('Foto de perfil', 'Elige una opción', [
@@ -253,7 +272,10 @@ export default function ProfileScreen() {
         text: 'Eliminar', style: 'destructive',
         onPress: async () => {
           const result = await deleteVideo(video.id, video.videoUrl, video.thumbnailUrl);
-          if (result.success) showAlert('Eliminado', 'Tu publicación fue eliminada');
+          if (result.success) {
+            setProfileVideos(current => current.filter(item => item.id !== video.id));
+            showAlert('Eliminado', 'Tu publicación fue eliminada');
+          }
           else showAlert('Error', result.error || 'No se pudo eliminar');
         },
       },
@@ -272,7 +294,7 @@ export default function ProfileScreen() {
     );
   }
 
-  const myVideos = videos.filter(v => v.userId === user.id);
+  const myVideos = profileVideos;
   const totalLikes = myVideos.reduce((s, v) => s + (v.likes || 0), 0);
   const totalViews = myVideos.reduce((s, v) => s + (v.viewsCount || 0), 0);
   const dagEarned = (totalLikes * 0.01).toFixed(2);

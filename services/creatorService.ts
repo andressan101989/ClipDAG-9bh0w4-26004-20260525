@@ -4,6 +4,8 @@
  * Creator profile data: fetch profile, stats, content, plans, followers.
  */
 import { getSupabaseClient } from '@/template';
+import type { VideoWithMeta } from '@/contexts/FeedContext';
+import { mapVideoRow } from '@/services/videoPresentation';
 
 export interface CreatorProfile {
   id: string;
@@ -47,8 +49,67 @@ export async function fetchCreatorVideos(userId: string, limit = 30) {
     .select('*')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
     .limit(limit);
   return data ?? [];
+}
+
+function profileFromVideoRow(row: Record<string, unknown>): { username: string; avatarUrl: string } {
+  const relation = row.user_profiles;
+  const profile = (Array.isArray(relation) ? relation[0] : relation) as Record<string, unknown> | null;
+  return {
+    username: typeof profile?.username === 'string' ? profile.username : 'user',
+    avatarUrl: typeof profile?.avatar_url === 'string' ? profile.avatar_url : '',
+  };
+}
+
+function presentVideoRows(rows: unknown[] | null): VideoWithMeta[] {
+  return (rows ?? []).map(raw => {
+    const row = raw as Record<string, unknown>;
+    const profile = profileFromVideoRow(row);
+    return mapVideoRow(row, profile.username, profile.avatarUrl);
+  });
+}
+
+/** Canonical creator/profile content query. public.videos RLS owns eligibility. */
+export async function fetchCreatorVideoFeed(userId: string, limit = 100): Promise<VideoWithMeta[]> {
+  const safeLimit = Math.max(1, Math.min(200, Math.trunc(limit)));
+  const { data, error } = await db()
+    .from('videos')
+    .select('*, user_profiles!videos_user_id_fkey(username, avatar_url)')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(safeLimit);
+  if (error) throw error;
+  return presentVideoRows(data);
+}
+
+/** Saved content comes from its own server authority, never the Feed page window. */
+export async function fetchSavedVideoFeed(userId: string, limit = 100): Promise<VideoWithMeta[]> {
+  const safeLimit = Math.max(1, Math.min(200, Math.trunc(limit)));
+  const { data: saves, error: savesError } = await db()
+    .from('video_saves')
+    .select('id, video_id, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(safeLimit);
+  if (savesError) throw savesError;
+
+  const orderedIds = (saves ?? []).map(save => save.video_id as string);
+  if (orderedIds.length === 0) return [];
+  const { data: videos, error: videosError } = await db()
+    .from('videos')
+    .select('*, user_profiles!videos_user_id_fkey(username, avatar_url)')
+    .in('id', orderedIds);
+  if (videosError) throw videosError;
+
+  const presentedById = new Map(presentVideoRows(videos).map(video => [video.id, video]));
+  return orderedIds.flatMap(id => {
+    const video = presentedById.get(id);
+    return video ? [video] : [];
+  });
 }
 
 /** Fetch creator's exclusive content */

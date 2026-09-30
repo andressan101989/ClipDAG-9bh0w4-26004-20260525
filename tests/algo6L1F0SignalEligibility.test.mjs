@@ -157,3 +157,21 @@ test('native VideoCard finalizes one canonical exposure on swipe, background or 
   assert.match(webCard, /onViewTracked\?: \(event: FinalizedVideoView\) => void/);
   assert.match(feedScreen, /trackView\(videoId, event\)/);
 });
+
+test('Profile and My Content load canonical creator rows instead of the Feed window', () => {
+  const creatorService = readFileSync(new URL('../services/creatorService.ts', import.meta.url), 'utf8');
+  const profile = readFileSync(new URL('../app/(tabs)/profile.tsx', import.meta.url), 'utf8');
+  const myContent = readFileSync(new URL('../app/my-content.tsx', import.meta.url), 'utf8');
+
+  assert.match(creatorService, /export async function fetchCreatorVideoFeed/);
+  assert.match(creatorService, /export async function fetchSavedVideoFeed/);
+  assert.match(creatorService, /\.eq\('user_id', userId\)/);
+  assert.match(creatorService, /\.order\('created_at', \{ ascending: false \}\)\s*\.order\('id', \{ ascending: false \}\)/);
+  assert.match(profile, /fetchCreatorVideoFeed/);
+  assert.match(profile, /setProfileVideos/);
+  assert.doesNotMatch(profile, /const \{\s*videos\s*,/);
+  assert.match(myContent, /fetchCreatorVideoFeed/);
+  assert.match(myContent, /fetchSavedVideoFeed/);
+  assert.match(myContent, /setOwnVideos/);
+  assert.doesNotMatch(myContent, /videos\.filter\(v => v\.userId === user\?\.id\)/);
+});
