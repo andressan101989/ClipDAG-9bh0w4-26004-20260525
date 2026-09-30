@@ -43,3 +43,87 @@ test('F0 migration makes chronological eligibility and query indexes canonical w
   assert.match(sql, /video_views_video_created_idx[\s\S]{0,120}\(video_id,\s*created_at desc\)/i);
   assert.doesNotMatch(sql, /\b(score|ranking|recommendation|embedding|pgvector)\b/i);
 });
+
+test('playback exposure emits once, excludes background time and keeps its event ID for retry', async () => {
+  const { createVideoPlaybackSession } = await import('../services/videoPlaybackSession.ts');
+  let now = 1_000;
+  let sequence = 0;
+  const session = createVideoPlaybackSession({
+    now: () => now,
+    createEventId: () => `event-${++sequence}`,
+  });
+
+  assert.equal(session.start(), 'event-1');
+  now = 3_500;
+  const backgroundEvent = session.finish('background');
+  assert.deepEqual(backgroundEvent, {
+    clientEventId: 'event-1',
+    watchDurationMs: 2_500,
+    exitReason: 'background',
+  });
+  assert.equal(session.finish('unmount'), null, 'duplicate lifecycle finish must not emit');
+  assert.equal(backgroundEvent?.clientEventId, 'event-1', 'the same payload can be retried');
+
+  now = 8_000;
+  assert.equal(session.start(), 'event-2', 'resume starts a new exposure after background');
+  now = 9_250;
+  assert.deepEqual(session.finish('swipe'), {
+    clientEventId: 'event-2',
+    watchDurationMs: 1_250,
+    exitReason: 'swipe',
+  });
+});
+
+test('playback start is idempotent while active and clamps a backwards clock to zero', async () => {
+  const { createVideoPlaybackSession } = await import('../services/videoPlaybackSession.ts');
+  let now = 5_000;
+  let sequence = 0;
+  const session = createVideoPlaybackSession({
+    now: () => now,
+    createEventId: () => `event-${++sequence}`,
+  });
+
+  assert.equal(session.start(), 'event-1');
+  assert.equal(session.start(), 'event-1');
+  now = 4_000;
+  assert.equal(session.finish('unknown')?.watchDurationMs, 0);
+});
+
+test('descending video keyset handles timestamp ties and intervening inserts without duplicates', async () => {
+  const {
+    cursorFromVideoRows,
+    isVideoOlderThanCursor,
+    videoKeysetOrFilter,
+  } = await import('../services/feedKeyset.ts');
+
+  const firstPage = [
+    { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', created_at: '2026-09-30T10:00:02.000Z' },
+    { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', created_at: '2026-09-30T10:00:01.000Z' },
+    { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', created_at: '2026-09-30T10:00:01.000Z' },
+  ];
+  const cursor = cursorFromVideoRows(firstPage);
+  assert.deepEqual(cursor, {
+    createdAt: '2026-09-30T10:00:01.000Z',
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  });
+  assert.equal(
+    videoKeysetOrFilter(cursor),
+    'created_at.lt.2026-09-30T10:00:01.000Z,and(created_at.eq.2026-09-30T10:00:01.000Z,id.lt.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa)',
+  );
+
+  const insertedBetweenRequests = {
+    id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    created_at: '2026-09-30T10:00:03.000Z',
+  };
+  const nextRows = [
+    insertedBetweenRequests,
+    firstPage[2],
+    { id: '99999999-9999-4999-8999-999999999999', created_at: '2026-09-30T10:00:01.000Z' },
+    { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', created_at: '2026-09-30T10:00:00.000Z' },
+  ].filter(row => isVideoOlderThanCursor(row, cursor));
+
+  assert.deepEqual(nextRows.map(row => row.id), [
+    '99999999-9999-4999-8999-999999999999',
+    'ffffffff-ffff-4fff-8fff-ffffffffffff',
+  ]);
+});
