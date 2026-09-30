@@ -12,6 +12,11 @@ import {
   fetchRankedFeedPage,
   type RankedFeedCursor,
 } from '@/services/feedRankingService';
+import {
+  logAlgoL1CanaryFirstPage,
+  maybeRequestAlgoL1CanaryEnrollment,
+  type AlgoL1CanaryDevState,
+} from '@/services/algoL1CanaryDev';
 import type { FinalizedVideoView } from '@/services/videoPlaybackSession';
 import { mapVideoRow } from '@/services/videoPresentation';
 import {
@@ -214,6 +219,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   const videosRef     = useRef<VideoWithMeta[]>([]);
   const playbackIdentityRef = useRef<{ viewerId: string | null; clientSessionId: string } | null>(null);
   const exactVideoFlightsRef = useRef(new Map<string, Promise<EnsureVideoLoadedResult>>());
+  const canaryDevStateRef = useRef<AlgoL1CanaryDevState>({ enrollmentKey: null });
 
   if (!playbackIdentityRef.current || playbackIdentityRef.current.viewerId !== viewerId) {
     playbackIdentityRef.current = { viewerId, clientSessionId: randomUUID() };
@@ -241,6 +247,24 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     videosRef.current = videos;
   }, [videos]);
+
+  useEffect(() => {
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) return;
+    void maybeRequestAlgoL1CanaryEnrollment({
+      client: {
+        rpc: async (name, args) => {
+          const { data, error } = await supabase.rpc(name, args);
+          return { data, error: error ? { message: error.message } : null };
+        },
+      },
+      isDev: __DEV__,
+      enrollFlag: process.env.EXPO_PUBLIC_ALGO_L1_CANARY_ENROLL,
+      viewerId,
+      clientSessionId,
+      state: canaryDevStateRef.current,
+    });
+  }, [viewerId, clientSessionId]);
 
   // ── Load videos ───────────────────────────────────────────────────────────
   const loadVideos = useCallback(async (
@@ -273,6 +297,16 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       }, mapVideoRow);
 
       if (generation !== deliveryGenerationRef.current) return;
+
+      if (!cursor) {
+        logAlgoL1CanaryFirstPage({
+          isDev: __DEV__,
+          enrollFlag: process.env.EXPO_PUBLIC_ALGO_L1_CANARY_ENROLL,
+          rankingMode: page.rankingMode,
+          policyVersion: page.policyVersion,
+          rowCount: page.videos.length,
+        });
+      }
 
       if (page.videos.length > 0) {
         if (!cursor) {
