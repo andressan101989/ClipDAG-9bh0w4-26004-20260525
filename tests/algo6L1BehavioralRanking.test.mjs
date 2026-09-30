@@ -76,3 +76,138 @@ test('L1 migration adds only signal query indexes and a service-only reconciler'
   assert.match(sql, /grant execute on function public\.reconcile_algo_l1_v1\(\) to service_role/i);
   assert.doesNotMatch(sql, /create table (?:public|private)\.(?:ranked|ranking_scores|feed_cache|user_feed)/i);
 });
+
+function rankedRow(overrides = {}) {
+  return {
+    id: '32000000-0000-4000-8000-000000000001',
+    user_id: '31000000-0000-4000-8000-000000000001',
+    video_url: 'https://example.test/video.mp4',
+    thumbnail_url: 'https://example.test/thumb.jpg',
+    media_urls: null,
+    caption: 'L1 row',
+    music: 'Original',
+    likes_count: 2,
+    comments_count: 3,
+    shares_count: 0,
+    views_count: 4,
+    saves_count: 1,
+    created_at: '2026-09-30T20:00:00.000Z',
+    edited_at: null,
+    creator_username: 'creator',
+    creator_avatar: 'https://example.test/avatar.jpg',
+    ranking_mode: 'behavioral_l1',
+    policy_version: 'nelyon-algo-l1-v1',
+    rank_score: '42.125000',
+    feed_as_of: '2026-09-30T21:00:00.000Z',
+    cursor_score: '42.125000',
+    cursor_created_at: '2026-09-30T20:00:00.000Z',
+    cursor_id: '32000000-0000-4000-8000-000000000001',
+    ...overrides,
+  };
+}
+
+test('ranking client calls the one RPC, validates rows, maps videos and preserves cursor', async () => {
+  const { fetchRankedFeedPage } = await import('../services/feedRankingService.ts');
+  const calls = [];
+  const client = {
+    async rpc(name, args) {
+      calls.push({ name, args });
+      return { data: [rankedRow()], error: null };
+    },
+  };
+  const mapped = [];
+  const mapRow = (row, username, avatar) => {
+    mapped.push({ row, username, avatar });
+    return { id: row.id, username, avatar };
+  };
+
+  const page = await fetchRankedFeedPage(client, {
+    clientSessionId: '33000000-0000-4000-8000-000000000001',
+    limit: 10,
+    cursor: null,
+  }, mapRow);
+
+  assert.deepEqual(calls, [{
+    name: 'get_ranked_feed_l1_v1',
+    args: {
+      p_client_session_id: '33000000-0000-4000-8000-000000000001',
+      p_limit: 10,
+      p_as_of: null,
+      p_before_score: null,
+      p_before_created_at: null,
+      p_before_id: null,
+      p_policy_version: null,
+    },
+  }]);
+  assert.equal(mapped.length, 1);
+  assert.equal(mapped[0].username, 'creator');
+  assert.equal(mapped[0].avatar, 'https://example.test/avatar.jpg');
+  assert.deepEqual(page.videos, [{
+    id: '32000000-0000-4000-8000-000000000001',
+    username: 'creator',
+    avatar: 'https://example.test/avatar.jpg',
+  }]);
+  assert.deepEqual(page.cursor, {
+    asOf: '2026-09-30T21:00:00.000Z',
+    score: '42.125000',
+    createdAt: '2026-09-30T20:00:00.000Z',
+    id: '32000000-0000-4000-8000-000000000001',
+    policyVersion: 'nelyon-algo-l1-v1',
+  });
+  assert.equal(page.rankingMode, 'behavioral_l1');
+  assert.equal(page.hasMore, false);
+});
+
+test('ranking client forwards the full cursor and returns an honest empty page', async () => {
+  const { fetchRankedFeedPage } = await import('../services/feedRankingService.ts');
+  let args;
+  const client = {
+    async rpc(_name, input) {
+      args = input;
+      return { data: [], error: null };
+    },
+  };
+  const cursor = {
+    asOf: '2026-09-30T21:00:00.000Z',
+    score: '-1.250000',
+    createdAt: '2026-09-30T19:00:00.000Z',
+    id: '32000000-0000-4000-8000-000000000002',
+    policyVersion: 'nelyon-algo-l1-v1',
+  };
+  const page = await fetchRankedFeedPage(client, {
+    clientSessionId: '33000000-0000-4000-8000-000000000001',
+    limit: 10,
+    cursor,
+  }, () => assert.fail('empty rows must not invoke the mapper'));
+
+  assert.deepEqual(args, {
+    p_client_session_id: '33000000-0000-4000-8000-000000000001',
+    p_limit: 10,
+    p_as_of: cursor.asOf,
+    p_before_score: cursor.score,
+    p_before_created_at: cursor.createdAt,
+    p_before_id: cursor.id,
+    p_policy_version: cursor.policyVersion,
+  });
+  assert.deepEqual(page, {
+    videos: [], cursor: null, hasMore: false, rankingMode: null, policyVersion: null,
+  });
+});
+
+test('ranking client rejects RPC failures and malformed response rows', async () => {
+  const { fetchRankedFeedPage } = await import('../services/feedRankingService.ts');
+  const options = {
+    clientSessionId: '33000000-0000-4000-8000-000000000001',
+    limit: 10,
+    cursor: null,
+  };
+
+  await assert.rejects(
+    fetchRankedFeedPage({ rpc: async () => ({ data: null, error: { message: 'offline' } }) }, options, row => row),
+    /offline/,
+  );
+  await assert.rejects(
+    fetchRankedFeedPage({ rpc: async () => ({ data: [rankedRow({ feed_as_of: null })], error: null }) }, options, row => row),
+    /invalid ranked feed row/i,
+  );
+});
