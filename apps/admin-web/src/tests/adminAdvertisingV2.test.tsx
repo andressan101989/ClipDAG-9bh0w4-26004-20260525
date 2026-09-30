@@ -261,6 +261,35 @@ describe("ADS-V2-J Admin Web",()=>{
     expect(screen.getByText(/real Ads delivery and real money may occur/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button",{name:"Confirm Start Production"}));
     await waitFor(()=>expect(setAdminAdvertisingLaunchMode).toHaveBeenCalledWith("PRODUCTION",expect.any(String)));
+    await waitFor(()=>expect(getAdminAdvertisingRolloutControl).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("status")).toHaveTextContent("Production launch transition completed.");
+  });
+
+  it("prevents duplicate Start Production submits while the administrative bridge is pending",async()=>{
+    vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.billing.read","advertising.rollout.manage"]) as never);
+    vi.mocked(getAdminAdvertisingRolloutControl).mockResolvedValue({...rolloutControl,production_ready:true,blockers:[],placements:rolloutPlacements.map((row)=>({...row,production_rollout_bps:100,rollout_percent:1}))});
+    let finish:(value:{from_mode:string;to_mode:string;idempotent:boolean})=>void=()=>undefined;
+    vi.mocked(setAdminAdvertisingLaunchMode).mockReturnValue(new Promise((resolve)=>{finish=resolve}));
+    render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button",{name:"Start Production"}));
+    const confirm=screen.getByRole("button",{name:"Confirm Start Production"});
+    fireEvent.click(confirm);
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(setAdminAdvertisingLaunchMode).toHaveBeenCalledTimes(1);
+    finish({from_mode:"DISARMED",to_mode:"PRODUCTION",idempotent:false});
+    await waitFor(()=>expect(screen.getByRole("status")).toHaveTextContent("Production launch transition completed."));
+  });
+
+  it("shows truthful permission feedback and no fake success when the admin bridge rejects launch",async()=>{
+    vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.billing.read","advertising.rollout.manage"]) as never);
+    vi.mocked(getAdminAdvertisingRolloutControl).mockResolvedValue({...rolloutControl,production_ready:true,blockers:[],placements:rolloutPlacements.map((row)=>({...row,production_rollout_bps:100,rollout_percent:1}))});
+    vi.mocked(setAdminAdvertisingLaunchMode).mockRejectedValue({code:"42501",message:"admin_capability_forbidden"});
+    render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button",{name:"Start Production"}));
+    fireEvent.click(screen.getByRole("button",{name:"Confirm Start Production"}));
+    expect(await screen.findByRole("alert")).toHaveTextContent("You do not have permission to complete this action.");
+    expect(screen.queryByText("Production launch transition completed.")).not.toBeInTheDocument();
   });
 
   it("saves global pause and a placement kill only through the canonical rollout mutation",async()=>{
