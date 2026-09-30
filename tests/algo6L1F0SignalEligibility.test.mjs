@@ -89,53 +89,29 @@ test('playback start is idempotent while active and clamps a backwards clock to 
   assert.equal(session.finish('unknown')?.watchDurationMs, 0);
 });
 
-test('descending video keyset handles timestamp ties and intervening inserts without duplicates', async () => {
-  const {
-    cursorFromVideoRows,
-    isVideoOlderThanCursor,
-    videoKeysetOrFilter,
-  } = await import('../services/feedKeyset.ts');
+test('Feed pagination cursor preserves the server snapshot and stable tie breakers', () => {
+  const service = readFileSync(new URL('../services/feedRankingService.ts', import.meta.url), 'utf8');
 
-  const firstPage = [
-    { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', created_at: '2026-09-30T10:00:02.000Z' },
-    { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', created_at: '2026-09-30T10:00:01.000Z' },
-    { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', created_at: '2026-09-30T10:00:01.000Z' },
-  ];
-  const cursor = cursorFromVideoRows(firstPage);
-  assert.deepEqual(cursor, {
-    createdAt: '2026-09-30T10:00:01.000Z',
-    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-  });
-  assert.equal(
-    videoKeysetOrFilter(cursor),
-    'created_at.lt.2026-09-30T10:00:01.000Z,and(created_at.eq.2026-09-30T10:00:01.000Z,id.lt.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa)',
-  );
-
-  const insertedBetweenRequests = {
-    id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-    created_at: '2026-09-30T10:00:03.000Z',
-  };
-  const nextRows = [
-    insertedBetweenRequests,
-    firstPage[2],
-    { id: '99999999-9999-4999-8999-999999999999', created_at: '2026-09-30T10:00:01.000Z' },
-    { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', created_at: '2026-09-30T10:00:00.000Z' },
-  ].filter(row => isVideoOlderThanCursor(row, cursor));
-
-  assert.deepEqual(nextRows.map(row => row.id), [
-    '99999999-9999-4999-8999-999999999999',
-    'ffffffff-ffff-4fff-8fff-ffffffffffff',
-  ]);
+  for (const field of [
+    'p_as_of: cursor?.asOf',
+    'p_before_score: cursor?.score',
+    'p_before_created_at: cursor?.createdAt',
+    'p_before_id: cursor?.id',
+    'p_policy_version: cursor?.policyVersion',
+  ]) {
+    assert.ok(service.includes(field), `rank cursor must preserve ${field}`);
+  }
+  assert.doesNotMatch(service, /\boffset\b|\.range\s*\(/i);
 });
 
-test('Feed runtime uses chronological keyset delivery and RPC-only behavioral access', () => {
+test('Feed runtime uses ranked server delivery and RPC-only behavioral access', () => {
   const feed = readFileSync(new URL('../contexts/FeedContext.tsx', import.meta.url), 'utf8');
 
   assert.doesNotMatch(feed, /\bSAMPLE_VIDEOS\b|\bMOCK_COMMENTS\b/);
   assert.doesNotMatch(feed, /\.range\s*\(|\bdbOffset\b/);
-  assert.match(feed, /\.order\('created_at',\s*\{ ascending: false \}\)\s*\.order\('id',\s*\{ ascending: false \}\)\s*\.limit\(10\)/);
-  assert.match(feed, /videoKeysetOrFilter\(cursor\)/);
-  assert.match(feed, /cursorFromVideoRows\(data\)/);
+  assert.match(feed, /fetchRankedFeedPage\(supabase/);
+  assert.match(feed, /setRankCursor\(page\.cursor\)/);
+  assert.doesNotMatch(feed, /services\/feedKeyset/);
   assert.doesNotMatch(feed, /if \(!initialLoaded\) \{\s*loadVideos/);
   assert.match(feed, /setVideos\(\[\]\);[\s\S]{0,600}loadVideos\(null, generation\)/);
   assert.match(feed, /deliveryGenerationRef/);

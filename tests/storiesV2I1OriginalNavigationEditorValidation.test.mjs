@@ -55,8 +55,8 @@ test('a target absent from the first page invokes exact Feed resolution', () => 
 });
 
 test('content beyond the ten-row first page uses an exact ID query', () => {
-  assert.match(feedContext, /\.order\('created_at', \{ ascending: false \}\)[\s\S]*\.order\('id', \{ ascending: false \}\)[\s\S]*\.limit\(10\)/);
-  assert.match(feedContext, /videoKeysetOrFilter\(cursor\)/);
+  assert.match(feedContext, /fetchRankedFeedPage\(supabase,[\s\S]{0,180}limit: 10,[\s\S]{0,100}cursor/);
+  assert.match(feedContext, /setRankCursor\(page\.cursor\)/);
   assert.doesNotMatch(feedContext, /\.range\(/);
   assert.match(ensureBody(), /\.eq\('id', normalizedId\)[\s\S]*\.maybeSingle\(\)/);
 });

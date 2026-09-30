@@ -211,3 +211,24 @@ test('ranking client rejects RPC failures and malformed response rows', async ()
     /invalid ranked feed row/i,
   );
 });
+
+test('FeedContext consumes only the ranked organic authority for Feed pages', () => {
+  const feed = readFileSync(new URL('../contexts/FeedContext.tsx', import.meta.url), 'utf8');
+  const loadStart = feed.indexOf('const loadVideos = useCallback');
+  const loadEnd = feed.indexOf('// ── Load blocked users', loadStart);
+  assert.ok(loadStart > 0 && loadEnd > loadStart);
+  const loadBody = feed.slice(loadStart, loadEnd);
+
+  assert.match(feed, /fetchRankedFeedPage/);
+  assert.match(feed, /type RankedFeedCursor/);
+  assert.doesNotMatch(feed, /services\/feedKeyset/);
+  assert.match(loadBody, /fetchRankedFeedPage\(supabase/);
+  assert.doesNotMatch(loadBody, /\.from\('videos'\)/);
+  assert.doesNotMatch(loadBody, /\.order\(|\.range\(|\.or\(/);
+  assert.match(loadBody, /clientSessionId/);
+  assert.match(loadBody, /setRankCursor\(page\.cursor\)/);
+  assert.match(loadBody, /setHasMoreRanked\(page\.hasMore\)/);
+  assert.match(feed, /setRankCursor\(null\);[\s\S]{0,250}loadVideos\(null/);
+  assert.match(feed, /if \(!isLoadingRef\.current && hasMoreRanked && rankCursor\)/);
+  assert.doesNotMatch(feed, /\bSAMPLE_VIDEOS\b|\bMOCK_COMMENTS\b/);
+});

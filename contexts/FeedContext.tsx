@@ -1,4 +1,4 @@
-/** Canonical chronological organic delivery and interaction authority. */
+/** Canonical server-ranked organic delivery and interaction authority. */
 
 import React, {
   createContext, useState, useCallback, useEffect,
@@ -9,10 +9,9 @@ import { AuthContext }        from './AuthContext';
 import { randomUUID } from 'expo-crypto';
 import type { Video, Comment } from '@/services/mockData';
 import {
-  cursorFromVideoRows,
-  videoKeysetOrFilter,
-  type VideoKeysetCursor,
-} from '@/services/feedKeyset';
+  fetchRankedFeedPage,
+  type RankedFeedCursor,
+} from '@/services/feedRankingService';
 import type { FinalizedVideoView } from '@/services/videoPlaybackSession';
 import { mapVideoRow } from '@/services/videoPresentation';
 import {
@@ -235,8 +234,8 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   const [savedVideos,     setSavedVideos]     = useState<Set<string>>(new Set());
   const [comments,        setComments]        = useState<Record<string, Comment[]>>({});
   const [isLoadingFeed,   setIsLoadingFeed]   = useState(false);
-  const [dbCursor,        setDbCursor]        = useState<VideoKeysetCursor | null>(null);
-  const [hasMoreDb,       setHasMoreDb]       = useState(true);
+  const [rankCursor,      setRankCursor]      = useState<RankedFeedCursor | null>(null);
+  const [hasMoreRanked,   setHasMoreRanked]   = useState(true);
   const [blockedUserIds,  setBlockedUserIds]  = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -245,7 +244,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
 
   // ── Load videos ───────────────────────────────────────────────────────────
   const loadVideos = useCallback(async (
-    cursor: VideoKeysetCursor | null = null,
+    cursor: RankedFeedCursor | null = null,
     generation = deliveryGenerationRef.current,
   ) => {
     if (activeLoadGenerationRef.current === generation) return;
@@ -257,47 +256,40 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       if (!supabase || !supabaseOk.current) {
         if (generation === deliveryGenerationRef.current) {
           if (!cursor) setVideos([]);
-          setHasMoreDb(false);
+          setHasMoreRanked(false);
         }
         return;
       }
 
-      let query = supabase
-        .from('videos')
-        .select('*, user_profiles!videos_user_id_fkey(username, avatar_url)')
-        .order('created_at', { ascending: false })
-        .order('id', { ascending: false })
-        .limit(10);
-      if (cursor) query = query.or(videoKeysetOrFilter(cursor));
-      const { data, error } = await query;
+      const page = await fetchRankedFeedPage(supabase, {
+        clientSessionId,
+        limit: 10,
+        cursor,
+      }, mapVideoRow);
 
       if (generation !== deliveryGenerationRef.current) return;
-      if (error) throw error;
 
-      if (data && data.length > 0) {
-        const mapped: VideoWithMeta[] = data.map(row => {
-          const profile = row.user_profiles as Record<string, string> | null;
-          return mapVideoRow(row as unknown as Record<string, unknown>, profile?.username || 'user', profile?.avatar_url || '');
-        });
+      if (page.videos.length > 0) {
         if (!cursor) {
-          setVideos(mapped);
+          setVideos(page.videos);
         } else {
           setVideos(prev => {
             const existingIds = new Set(prev.map(video => video.id));
-            return [...prev, ...mapped.filter(video => !existingIds.has(video.id))];
+            return [...prev, ...page.videos.filter(video => !existingIds.has(video.id))];
           });
         }
-        setDbCursor(cursorFromVideoRows(data));
-        setHasMoreDb(data.length === 10);
+        setRankCursor(page.cursor);
+        setHasMoreRanked(page.hasMore);
       } else {
         if (!cursor) setVideos([]);
-        setHasMoreDb(false);
+        setRankCursor(null);
+        setHasMoreRanked(false);
       }
     } catch (e) {
       console.warn('[FeedContext] loadVideos error:', e);
       if (generation === deliveryGenerationRef.current) {
         if (!cursor) setVideos([]);
-        setHasMoreDb(false);
+        setHasMoreRanked(false);
       }
     } finally {
       if (activeLoadGenerationRef.current === generation) {
@@ -306,7 +298,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         setIsLoadingFeed(false);
       }
     }
-  }, []);
+  }, [clientSessionId]);
 
   // ── Load blocked users ────────────────────────────────────────────────────
   const loadBlockedUsers = useCallback(async (
@@ -361,8 +353,8 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     const generation = deliveryGenerationRef.current + 1;
     deliveryGenerationRef.current = generation;
     setVideos([]);
-    setDbCursor(null);
-    setHasMoreDb(true);
+    setRankCursor(null);
+    setHasMoreRanked(true);
     setBlockedUserIds(new Set());
     setLikedVideos(new Set());
     setSavedVideos(new Set());
@@ -374,8 +366,8 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   }, [viewerId, loadVideos, loadLikesAndSaves, loadBlockedUsers]);
 
   const refreshFeed = useCallback(async () => {
-    setDbCursor(null);
-    setHasMoreDb(true);
+    setRankCursor(null);
+    setHasMoreRanked(true);
     await loadVideos(null);
     if (viewerId) {
       await loadLikesAndSaves(viewerId);
@@ -853,8 +845,8 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const loadMoreVideos = useCallback(async () => {
-    if (!isLoadingRef.current && hasMoreDb && dbCursor) await loadVideos(dbCursor);
-  }, [loadVideos, dbCursor, hasMoreDb]);
+    if (!isLoadingRef.current && hasMoreRanked && rankCursor) await loadVideos(rankCursor);
+  }, [loadVideos, rankCursor, hasMoreRanked]);
 
   const filteredVideos = useMemo(
     () => blockedUserIds.size > 0 ? videos.filter(v => !blockedUserIds.has(v.userId)) : videos,
