@@ -6,6 +6,7 @@ import test from 'node:test';
 const BASE = '3766a15cf2e815e2fcf1de0eeb76ff58fd9a1da0';
 const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 const feedContext = read('contexts/FeedContext.tsx');
+const videoPresentation = read('services/videoPresentation.ts');
 const home = read('app/(tabs)/index.tsx');
 const route = read('app/video/[id].tsx');
 const sharedCard = read('components/feature/StorySharedContentCard.tsx');
@@ -49,12 +50,14 @@ test('an initially loaded target scrolls directly', () => {
 });
 
 test('a target absent from the first page invokes exact Feed resolution', () => {
-  assert.match(home, /if \(index < 0\)[\s\S]*ensureVideoLoadedById\(targetVideoId\)/);
+  assert.match(home, /if \(organicIndex < 0 \|\| index < 0\)[\s\S]*ensureVideoLoadedById\(targetVideoId\)/);
   assert.match(feedContext, /ensureVideoLoadedById: \(videoId: string\)/);
 });
 
 test('content beyond the ten-row first page uses an exact ID query', () => {
-  assert.match(feedContext, /\.range\(offset, offset \+ 9\)/);
+  assert.match(feedContext, /\.order\('created_at', \{ ascending: false \}\)[\s\S]*\.order\('id', \{ ascending: false \}\)[\s\S]*\.limit\(10\)/);
+  assert.match(feedContext, /videoKeysetOrFilter\(cursor\)/);
+  assert.doesNotMatch(feedContext, /\.range\(/);
   assert.match(ensureBody(), /\.eq\('id', normalizedId\)[\s\S]*\.maybeSingle\(\)/);
 });
 
@@ -69,8 +72,8 @@ test('exact resolution remains inside the single FeedContext authority', () => {
 });
 
 test('exact resolution reuses the canonical mapVideo mapper', () => {
-  assert.equal((feedContext.match(/function mapVideo\(/g) ?? []).length, 1);
-  assert.match(ensureBody(), /const mapped = mapVideo\(/);
+  assert.equal((videoPresentation.match(/function mapVideoRow\(/g) ?? []).length, 1);
+  assert.match(ensureBody(), /const mapped = mapVideoRow\(/);
 });
 
 test('visibility is checked before the absent row is selected', () => {
