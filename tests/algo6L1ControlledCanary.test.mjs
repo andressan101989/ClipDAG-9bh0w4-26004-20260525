@@ -103,6 +103,7 @@ test('development controller enrolls once per identity session and emits PII-saf
 
   await maybeRequestAlgoL1CanaryEnrollment({ client, isDev: false, enrollFlag: '1', viewerId: viewerA, clientSessionId: 'session-a', state, log: value => logs.push(value) });
   await maybeRequestAlgoL1CanaryEnrollment({ client, isDev: true, enrollFlag: '0', viewerId: viewerA, clientSessionId: 'session-a', state, log: value => logs.push(value) });
+  await maybeRequestAlgoL1CanaryEnrollment({ client, isDev: true, enrollFlag: undefined, viewerId: viewerA, clientSessionId: 'session-a', state, log: value => logs.push(value) });
   assert.equal(calls.length, 0, 'production or disabled builds must never enroll');
 
   await maybeRequestAlgoL1CanaryEnrollment({ client, isDev: true, enrollFlag: '1', viewerId: viewerA, clientSessionId: 'session-a', state, log: value => logs.push(value) });
@@ -123,11 +124,46 @@ test('development controller enrolls once per identity session and emits PII-saf
   assert.equal(logs.at(-1), '[ALGO-L1-CANARY] mode=behavioral_l1 policy=nelyon-algo-l1-v1|canary:1:active rows=6');
 });
 
-test('FeedContext wires enrollment and first-page diagnostics only behind DEV plus the public flag', () => {
+test('first-page delivery diagnostics stay enabled in DEV when enrollment is disabled', async () => {
+  const { logAlgoL1CanaryFirstPage } = await import(devServiceUrl.href);
+  const expected = '[ALGO-L1-CANARY] mode=behavioral_l2 policy=nelyon-algo-l1-v1|canary:3:l2:active rows=7';
+  const logs = [];
+
+  for (const enrollFlag of ['1', '0', undefined]) {
+    logAlgoL1CanaryFirstPage({
+      isDev: true,
+      enrollFlag,
+      rankingMode: 'behavioral_l2',
+      policyVersion: 'nelyon-algo-l1-v1|canary:3:l2:active',
+      rowCount: 7,
+      log: value => logs.push(value),
+    });
+  }
+
+  assert.deepEqual(logs, [expected, expected, expected]);
+  assert.ok(logs.every(value => !/(?:viewer|user|video|token|jwt|email)=/i.test(value)));
+
+  for (const enrollFlag of ['1', '0', undefined]) {
+    logAlgoL1CanaryFirstPage({
+      isDev: false,
+      enrollFlag,
+      rankingMode: 'behavioral_l2',
+      policyVersion: 'nelyon-algo-l1-v1|canary:3:l2:active',
+      rowCount: 7,
+      log: value => logs.push(value),
+    });
+  }
+
+  assert.deepEqual(logs, [expected, expected, expected], 'release builds must not emit delivery diagnostics');
+});
+
+test('FeedContext keeps enrollment behind the public flag without coupling delivery diagnostics to it', () => {
   assert.match(feedContext, /EXPO_PUBLIC_ALGO_L1_CANARY_ENROLL/);
   assert.match(feedContext, /__DEV__/);
   assert.match(feedContext, /maybeRequestAlgoL1CanaryEnrollment/);
   assert.match(feedContext, /logAlgoL1CanaryFirstPage/);
+  const diagnosticOptions = feedContext.match(/logAlgoL1CanaryFirstPage\(\{([\s\S]*?)\}\);/)?.[1] ?? '';
+  assert.doesNotMatch(diagnosticOptions, /enrollFlag/);
   assert.doesNotMatch(feedContext, /\.from\(['"]algo_l1_policy['"]\)/i);
   assert.doesNotMatch(feedContext, /canary_user_id/);
 });

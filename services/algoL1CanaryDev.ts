@@ -21,7 +21,6 @@ interface EnrollmentOptions {
 
 interface FirstPageDiagnosticOptions {
   isDev: boolean;
-  enrollFlag: string | undefined;
   rankingMode: string | null;
   policyVersion: string | null;
   rowCount: number;
@@ -90,13 +89,12 @@ export async function maybeRequestAlgoL1CanaryEnrollment({
 /** First-page delivery diagnostic. No viewer or content identifiers are logged. */
 export function logAlgoL1CanaryFirstPage({
   isDev,
-  enrollFlag,
   rankingMode,
   policyVersion,
   rowCount,
   log = console.log,
 }: FirstPageDiagnosticOptions): void {
-  if (!canaryDevEnabled(isDev, enrollFlag)) return;
+  if (!isDev) return;
   const mode = rankingMode ?? 'empty';
   const policy = policyVersion ?? 'none';
   log(`[ALGO-L1-CANARY] mode=${mode} policy=${policy} rows=${Math.max(0, Math.trunc(rowCount))}`);

@@ -301,7 +301,6 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       if (!cursor) {
         logAlgoL1CanaryFirstPage({
           isDev: __DEV__,
-          enrollFlag: process.env.EXPO_PUBLIC_ALGO_L1_CANARY_ENROLL,
           rankingMode: page.rankingMode,
           policyVersion: page.policyVersion,
           rowCount: page.videos.length,
