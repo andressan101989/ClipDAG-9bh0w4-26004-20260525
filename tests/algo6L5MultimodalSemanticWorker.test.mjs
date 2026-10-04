@@ -39,6 +39,70 @@ function visualResult(overrides = {}) {
   };
 }
 
+const sensitiveHumanSemantics = [
+  'young woman walking',
+  'elderly man sitting',
+  '14-year-old boy playing',
+  'woman cooking',
+  'male athlete running',
+  'transgender person speaking',
+  'Asian man standing',
+  'Black woman dancing',
+  'Hispanic person cooking',
+  'Latino man driving',
+  'Muslim woman walking',
+  'Christian man speaking',
+  'Jewish person standing',
+  'gay couple dancing',
+  'lesbian couple walking',
+  'disabled man using a wheelchair',
+  'sick woman lying down',
+  'pregnant woman standing',
+  'Democrat supporter speaking',
+  'Republican man at an event',
+  'American man driving',
+  'Venezuelan woman cooking',
+  'Mexican person walking',
+  'Brazilian man dancing',
+  'Chinese woman speaking',
+  'Indian man standing',
+  'Barack Obama appears on stage',
+  'Taylor Swift performs at a concert',
+  'Cristiano Ronaldo plays soccer',
+  'Elon Musk stands near a car',
+  'Mr. John Smith speaks',
+  'Dr. Jane Doe walks outside',
+  'ｙｏｕｎｇ person running',
+];
+
+const personalIdentifierSemantics = [
+  'contact john@example.com',
+  'call +1 305 555 1234',
+  'person at 123 Main Street',
+  'account 12345678',
+  '@specific_person',
+];
+
+const neutralVisualSemantics = [
+  'people walking in a park',
+  'person cooking food in a kitchen',
+  'people dancing at a concert',
+  'person playing soccer on a field',
+  'people standing near a car',
+  'dog playing with a ball',
+  'cars driving on a road',
+  'food being prepared in a kitchen',
+  'city street with people walking',
+  'beach with people swimming',
+  'cat sitting near a car',
+  'football on a sports field',
+  'person gaming at a desk',
+  'person applying makeup',
+  'construction equipment at a work site',
+  'people exercising in nature',
+  'street in Brazil',
+];
+
 function imageJob(overrides = {}) {
   return {
     video_id: VIDEO_ID,
@@ -99,6 +163,52 @@ test('visual structured output is exact, bounded, and rejects sensitive concepts
   ]) assert.throws(() => validateVisualSemanticResult(invalid), /visual_structured_output_invalid/);
 });
 
+test('visual output rejects realized human traits and proper-person identities after NFKC normalization', async () => {
+  const { validateVisualSemanticResult } = await loadVisual();
+  for (const semantic of sensitiveHumanSemantics) {
+    assert.throws(
+      () => validateVisualSemanticResult(visualResult({ summary: semantic })),
+      /visual_structured_output_invalid/,
+      `summary must reject: ${semantic}`,
+    );
+  }
+});
+
+test('visual output rejects PII and named-account identifiers', async () => {
+  const { validateVisualSemanticResult } = await loadVisual();
+  for (const semantic of personalIdentifierSemantics) {
+    assert.throws(
+      () => validateVisualSemanticResult(visualResult({ summary: semantic })),
+      /visual_structured_output_invalid/,
+      `summary must reject: ${semantic}`,
+    );
+  }
+});
+
+test('every visual output field fails the whole result closed on unsafe text', async () => {
+  const { validateVisualSemanticResult } = await loadVisual();
+  for (const field of ['summary', 'topics', 'objects', 'activities', 'setting']) {
+    const unsafeValue = field === 'summary' || field === 'setting'
+      ? 'Asian man standing'
+      : ['neutral', 'Asian man standing'];
+    assert.throws(
+      () => validateVisualSemanticResult(visualResult({ [field]: unsafeValue })),
+      /visual_structured_output_invalid/,
+      `${field} must fail the entire result closed`,
+    );
+  }
+});
+
+test('neutral person and people semantics remain valid', async () => {
+  const { validateVisualSemanticResult } = await loadVisual();
+  for (const semantic of neutralVisualSemantics) {
+    assert.equal(
+      validateVisualSemanticResult(visualResult({ summary: semantic })).summary,
+      semantic,
+    );
+  }
+});
+
 test('visual prompt explicitly forbids identity, protected-trait, exact-location, PII, and instruction inference', async () => {
   const { VISUAL_SEMANTIC_SYSTEM_PROMPT } = await loadVisual();
   for (const term of [
@@ -107,6 +217,9 @@ test('visual prompt explicitly forbids identity, protected-trait, exact-location
     'disability', 'political affiliation', 'exact geolocation', 'phone', 'email',
     'address', 'untrusted', 'moderation',
   ]) assert.match(VISUAL_SEMANTIC_SYSTEM_PROMPT.toLowerCase(), new RegExp(term));
+  for (const term of ['generic tokens', 'personal names', 'celebrity names', 'public-figure names']) {
+    assert.match(VISUAL_SEMANTIC_SYSTEM_PROMPT.toLowerCase(), new RegExp(term));
+  }
 });
 
 test('deterministic frame merge preserves order, deduplicates case-insensitively, and emits canonical text', async () => {
@@ -141,6 +254,17 @@ test('deterministic frame merge preserves order, deduplicates case-insensitively
     'park',
   ].join('\n'));
   assert.ok(first.text.length <= 2500);
+});
+
+test('one unsafe frame rejects the complete visual merge', async () => {
+  const { mergeVisualSemanticResults } = await loadVisual();
+  assert.throws(
+    () => mergeVisualSemanticResults([
+      visualResult({ summary: 'people walking in a park' }),
+      visualResult({ summary: 'Taylor Swift performs at a concert' }),
+    ]),
+    /visual_structured_output_invalid/,
+  );
 });
 
 test('eligible image reuses R2 retrieval and performs exactly one visual provider call', async () => {
@@ -307,6 +431,38 @@ test('malformed visual provider output reaches fail exactly once and never compl
         bytes: new Uint8Array([1, 2, 3]), contentType: 'image/jpeg',
       }),
       runStructuredRequest: async () => visualResult({ unexpected: true }),
+    }),
+  });
+  const handle = createSemanticWorkerHandler({
+    serviceRoleKey: SERVICE_KEY,
+    supabaseUrl: 'https://project.supabase.co',
+    cloudflareAccountId: 'account',
+    cloudflareApiToken: 'token',
+    createAdminClient: fx.createAdminClient,
+    processVisualJob: fx.processVisualJob,
+  });
+  const response = await handle(request({ mode: 'process_visual', limit: 1 }));
+  assert.equal(response.status, 200);
+  assert.equal(fx.calls.some(call => call.name === 'complete_video_semantic_visual_v1'), false);
+  const failures = fx.calls.filter(call => call.name === 'fail_video_semantic_visual_v1');
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].args.p_error_code, 'visual_structured_output_invalid');
+  assert.equal(failures[0].args.p_retryable, false);
+  assert.equal(failures[0].args.p_provider_call_count, 1);
+});
+
+test('sensitive visual provider output fails nonretryably once and never completes', async () => {
+  const { createSemanticWorkerHandler } = await loadWorker();
+  const { processVisualSemanticJob } = await loadVisual();
+  const fx = workerFixture({
+    jobs: [imageJob()],
+    processVisualJob: job => processVisualSemanticJob(job, {
+      token: 'token',
+      accountId: 'account',
+      getObjectBytes: async () => ({
+        bytes: new Uint8Array([1, 2, 3]), contentType: 'image/jpeg',
+      }),
+      runStructuredRequest: async () => visualResult({ summary: 'young woman walking' }),
     }),
   });
   const handle = createSemanticWorkerHandler({
