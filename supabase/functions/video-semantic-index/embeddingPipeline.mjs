@@ -1,9 +1,13 @@
+import { processVisualSemanticJob } from './visualSemanticPipeline.mjs'
+
 export const SEMANTIC_PROVIDER = 'cloudflare_workers_ai'
 export const SEMANTIC_MODEL = '@cf/baai/bge-m3'
 export const EMBEDDING_DIMENSIONS = 1024
 export const DEFAULT_BATCH_SIZE = 8
 export const MAX_BATCH_SIZE = 25
-export const MAX_INPUT_CHARACTERS = 15000
+export const MAX_INPUT_CHARACTERS = 18000
+export const DEFAULT_VISUAL_BATCH_SIZE = 2
+export const MAX_VISUAL_BATCH_SIZE = 5
 const MAX_PROVIDER_RESPONSE_BYTES = 16 * 1024 * 1024
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
@@ -112,6 +116,22 @@ async function failJobs(client, jobs, errorCode, retryable, providerCalled) {
   return failed
 }
 
+function safeVisualErrorCode(error) {
+  const value = typeof error?.code === 'string' ? error.code : 'visual_semantic_worker_error'
+  const normalized = value.toLowerCase().replace(/[^a-z0-9_:-]+/gu, '_').slice(0, 100)
+  return normalized.length >= 2 ? normalized : 'visual_semantic_worker_error'
+}
+
+async function failVisualJob(client, job, errorCode, retryable, providerCallCount) {
+  return client.rpc('fail_video_semantic_visual_v1', {
+    p_video_id: job.video_id,
+    p_visual_source_fingerprint: job.visual_source_fingerprint,
+    p_error_code: errorCode,
+    p_retryable: retryable,
+    p_provider_call_count: providerCallCount,
+  })
+}
+
 export function createSemanticWorkerHandler({
   serviceRoleKey,
   supabaseUrl,
@@ -119,6 +139,10 @@ export function createSemanticWorkerHandler({
   cloudflareApiToken,
   createAdminClient,
   fetchImpl = fetch,
+  getObjectBytes,
+  isR2Transient,
+  streamCustomerCode,
+  processVisualJob = processVisualSemanticJob,
 }) {
   return async function handle(request) {
     if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405)
@@ -141,6 +165,74 @@ export function createSemanticWorkerHandler({
         default_batch_size: DEFAULT_BATCH_SIZE,
         max_batch_size: MAX_BATCH_SIZE,
       })
+    }
+    if (mode === 'process_visual') {
+      const limit = body.limit === undefined ? DEFAULT_VISUAL_BATCH_SIZE : Number(body.limit)
+      if (!Number.isInteger(limit) || limit < 1 || limit > MAX_VISUAL_BATCH_SIZE) {
+        return json({ error: 'invalid_visual_batch_limit' }, 400)
+      }
+      if (!supabaseUrl || !cloudflareAccountId || !cloudflareApiToken ||
+          typeof createAdminClient !== 'function' || typeof processVisualJob !== 'function') {
+        return json({ error: 'semantic_worker_configuration_missing' }, 503)
+      }
+
+      const client = createAdminClient(supabaseUrl, serviceRoleKey)
+      const claim = await client.rpc('claim_video_semantic_visual_v1', { p_limit: limit })
+      if (claim.error) return json({ error: 'visual_semantic_claim_failed' }, 502)
+      const jobs = Array.isArray(claim.data) ? claim.data : []
+      if (jobs.length > limit || jobs.length > MAX_VISUAL_BATCH_SIZE) {
+        return json({ error: 'visual_semantic_claim_contract_invalid' }, 502)
+      }
+
+      let completed = 0
+      let failed = 0
+      let stale = 0
+      for (const job of jobs) {
+        try {
+          const result = await processVisualJob(job, {
+            token: cloudflareApiToken,
+            accountId: cloudflareAccountId,
+            fetchImpl,
+            getObjectBytes,
+            isR2Transient,
+            streamCustomerCode,
+          })
+          const completion = await client.rpc('complete_video_semantic_visual_v1', {
+            p_video_id: job.video_id,
+            p_visual_source_fingerprint: job.visual_source_fingerprint,
+            p_visual_semantic_text: result.visualSemanticText,
+            p_frame_timestamps_ms: result.frameTimestampsMs,
+            p_provider_call_count: result.providerCallCount,
+          })
+          if (completion.error) {
+            await failVisualJob(
+              client,
+              job,
+              'visual_completion_rpc_error',
+              true,
+              Number.isInteger(result.providerCallCount) ? result.providerCallCount : 0,
+            )
+            failed += 1
+          } else if (completion.data?.status === 'stale') {
+            stale += 1
+          } else {
+            completed += 1
+          }
+        } catch (error) {
+          const providerCallCount = Number.isInteger(error?.providerCallCount)
+            ? error.providerCallCount
+            : error?.providerCalled ? 1 : 0
+          await failVisualJob(
+            client,
+            job,
+            safeVisualErrorCode(error),
+            Boolean(error?.retryable),
+            providerCallCount,
+          )
+          failed += 1
+        }
+      }
+      return json({ status: 'visual_processed', claimed: jobs.length, completed, failed, stale })
     }
     if (mode !== 'process') return json({ error: 'invalid_mode' }, 400)
 

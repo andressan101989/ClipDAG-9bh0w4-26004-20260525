@@ -1,5 +1,7 @@
 /* eslint-disable import/no-unresolved */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { getObjectBytes, isR2Transient } from '../_shared/r2.ts'
+import { streamCustomerCode } from '../_shared/stream.ts'
 import { createSemanticWorkerHandler } from './embeddingPipeline.mjs'
 
 const handle = createSemanticWorkerHandler({
@@ -11,6 +13,9 @@ const handle = createSemanticWorkerHandler({
     auth: { persistSession: false, autoRefreshToken: false },
   }),
   fetchImpl: fetch,
+  getObjectBytes,
+  isR2Transient,
+  streamCustomerCode,
 })
 
 Deno.serve(handle)
