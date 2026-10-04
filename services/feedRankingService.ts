@@ -1,4 +1,4 @@
-export type RankedFeedMode = 'chronological' | 'behavioral_l1' | 'behavioral_l2' | 'behavioral_l3';
+export type RankedFeedMode = 'chronological' | 'behavioral_l1' | 'behavioral_l2' | 'behavioral_l3' | 'behavioral_l4';
 
 export interface RankedFeedCursor {
   asOf: string;
@@ -60,7 +60,8 @@ function assertRankedFeedRow(value: unknown): asserts value is RankedFeedRow {
   const validMode = row.ranking_mode === 'chronological'
     || row.ranking_mode === 'behavioral_l1'
     || row.ranking_mode === 'behavioral_l2'
-    || row.ranking_mode === 'behavioral_l3';
+    || row.ranking_mode === 'behavioral_l3'
+    || row.ranking_mode === 'behavioral_l4';
   if (
     typeof row.id !== 'string' || !UUID_PATTERN.test(row.id)
     || typeof row.cursor_id !== 'string' || !UUID_PATTERN.test(row.cursor_id)
