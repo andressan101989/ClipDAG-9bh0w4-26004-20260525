@@ -141,6 +141,8 @@ test('thin Feed client validates and returns behavioral_l2 from the canonical RP
     cursor_created_at: '2026-10-03T01:00:00.000Z',
     cursor_id: '52000000-0000-4000-8000-000000000002',
     effective_page_limit: 10,
+    ranking_decision_id: null,
+    ranking_organic_position: null,
   };
   const client = {
     async rpc(name) {

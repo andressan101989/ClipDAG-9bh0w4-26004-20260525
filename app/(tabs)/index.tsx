@@ -81,7 +81,8 @@ export default function FeedScreen() {
   const {
     videos, isLiked, isSaved, toggleLike, toggleSave,
     addComment, loadMoreVideos, refreshFeed,
-    isLoadingFeed, trackView, sendGift, ensureVideoLoadedById,
+    isLoadingFeed, trackView, recordOrganicViewStarted, recordOrganicEngagement,
+    sendGift, ensureVideoLoadedById,
   } = useFeed();
   const {
     storyGroups, addStory, addSharedStory, getStorySharedContent,
@@ -298,10 +299,17 @@ export default function FeedScreen() {
   const handleLike = useCallback(async (videoId: string, creatorId: string) => {
     const wasLiked = isLiked(videoId);
     await toggleLike(videoId, creatorId);
+    void recordOrganicEngagement(videoId, wasLiked ? 'unlike' : 'like', randomUUID());
     if (!wasLiked && creatorId !== user?.id) {
       setToastVisible(true);
     }
-  }, [toggleLike, isLiked, user]);
+  }, [toggleLike, isLiked, recordOrganicEngagement, user]);
+
+  const handleFollow = useCallback(async (videoId: string, creatorId: string) => {
+    const wasFollowing = isFollowing(creatorId);
+    await toggleFollow(creatorId);
+    void recordOrganicEngagement(videoId, wasFollowing ? 'unfollow' : 'follow', randomUUID());
+  }, [isFollowing, recordOrganicEngagement, toggleFollow]);
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -352,7 +360,11 @@ export default function FeedScreen() {
     if (impressionEventId) void advertisingV2VideoView.current.submit(eventKey, impressionEventId).catch(() => {});
   }, []);
 
-  const handleSave = useCallback((videoId: string) => { toggleSave(videoId); }, [toggleSave]);
+  const handleSave = useCallback(async (videoId: string) => {
+    const wasSaved = isSaved(videoId);
+    await toggleSave(videoId);
+    void recordOrganicEngagement(videoId, wasSaved ? 'unsave' : 'save', randomUUID());
+  }, [isSaved, recordOrganicEngagement, toggleSave]);
 
   const handleViewTracked = useCallback((videoId: string, event: FinalizedVideoView) => {
     void trackView(videoId, event);
@@ -551,11 +563,14 @@ export default function FeedScreen() {
             currentUserId={user?.id || ''}
             onLike={() => handleLike(item.video.id, item.video.userId)}
             onComment={() => setCommentVideoId(item.video.id)}
-            onFollow={() => toggleFollow(item.video.userId)}
+            onFollow={() => handleFollow(item.video.id, item.video.userId)}
             onSave={() => handleSave(item.video.id)}
             onProfilePress={() => {}}
             onSendGift={sendGift}
             onViewTracked={event => handleViewTracked(item.video.id, event)}
+            onViewStarted={clientEventId => {
+              void recordOrganicViewStarted(item.video.id, clientEventId, index + 1);
+            }}
             productTagCount={productTagCounts[item.video.id] ?? 0}
             onProducts={() => setProductSheet({
               contentId: item.video.id,

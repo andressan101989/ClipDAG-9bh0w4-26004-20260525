@@ -190,6 +190,8 @@ test('thin Feed client validates behavioral_l3 from the canonical RPC', async ()
     cursor_created_at: '2026-10-03T16:00:00.000Z',
     cursor_id: '62000000-0000-4000-8000-000000000001',
     effective_page_limit: 10,
+    ranking_decision_id: null,
+    ranking_organic_position: null,
   };
   const client = {
     async rpc(name) {

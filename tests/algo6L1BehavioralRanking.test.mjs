@@ -126,6 +126,8 @@ function rankedRow(overrides = {}) {
     cursor_created_at: '2026-09-30T20:00:00.000Z',
     cursor_id: '32000000-0000-4000-8000-000000000001',
     effective_page_limit: 10,
+    ranking_decision_id: null,
+    ranking_organic_position: null,
     ...overrides,
   };
 }
@@ -215,6 +217,7 @@ test('ranking client forwards the full cursor and returns an honest empty page',
   });
   assert.deepEqual(page, {
     videos: [], cursor: null, hasMore: false, rankingMode: null, policyVersion: null,
+    observationItems: [],
   });
 });
 

@@ -40,6 +40,7 @@ export interface VideoCardProps {
   onProfilePress: () => void;
   onSendGift?: (recipientId: string, videoId: string | null, giftType: string, dagValue: number) => Promise<{ success: boolean; error?: string }>;
   onViewTracked?: (event: FinalizedVideoView) => void;
+  onViewStarted?: (clientEventId: string) => void;
   productTagCount?: number;
   onProducts?: () => void;
   onAddToStory?: () => void;

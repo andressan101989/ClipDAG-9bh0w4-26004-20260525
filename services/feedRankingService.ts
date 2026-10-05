@@ -20,6 +20,13 @@ export interface RankedFeedPage<TVideo> {
   hasMore: boolean;
   rankingMode: RankedFeedMode | null;
   policyVersion: string | null;
+  observationItems: RankedFeedObservationItem[];
+}
+
+export interface RankedFeedObservationItem {
+  videoId: string;
+  decisionId: string;
+  organicPosition: number;
 }
 
 export interface RankedFeedRpcClient {
@@ -41,6 +48,8 @@ type RankedFeedRow = Record<string, unknown> & {
   cursor_created_at: string;
   cursor_id: string;
   effective_page_limit: number;
+  ranking_decision_id: string | null;
+  ranking_organic_position: number | null;
 };
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -78,6 +87,15 @@ function assertRankedFeedRow(value: unknown): asserts value is RankedFeedRow {
     || !Number.isInteger(row.effective_page_limit)
     || Number(row.effective_page_limit) < 1
     || Number(row.effective_page_limit) > 50
+    || !(
+      (row.ranking_decision_id === null && row.ranking_organic_position === null)
+      || (
+        typeof row.ranking_decision_id === 'string'
+        && UUID_PATTERN.test(row.ranking_decision_id)
+        && Number.isInteger(row.ranking_organic_position)
+        && Number(row.ranking_organic_position) > 0
+      )
+    )
   ) {
     throw new Error('Invalid ranked feed row');
   }
@@ -114,6 +132,7 @@ export async function fetchRankedFeedPage<TVideo>(
       hasMore: false,
       rankingMode: null,
       policyVersion: null,
+      observationItems: [],
     };
   }
 
@@ -123,6 +142,18 @@ export async function fetchRankedFeedPage<TVideo>(
     row.ranking_mode !== first.ranking_mode
     || row.policy_version !== first.policy_version
     || row.feed_as_of !== first.feed_as_of
+  ))) {
+    throw new Error('Invalid ranked feed response');
+  }
+
+  const decisionId = first.ranking_decision_id;
+  if (decisionId === null) {
+    if (data.some(row => row.ranking_decision_id !== null || row.ranking_organic_position !== null)) {
+      throw new Error('Invalid ranked feed response');
+    }
+  } else if (data.some((row, index) => (
+    row.ranking_decision_id !== decisionId
+    || row.ranking_organic_position !== index + 1
   ))) {
     throw new Error('Invalid ranked feed response');
   }
@@ -140,5 +171,10 @@ export async function fetchRankedFeedPage<TVideo>(
     hasMore: data.length === first.effective_page_limit,
     rankingMode: first.ranking_mode,
     policyVersion: first.policy_version,
+    observationItems: decisionId === null ? [] : data.map(row => ({
+      videoId: row.id,
+      decisionId,
+      organicPosition: row.ranking_organic_position!,
+    })),
   };
 }

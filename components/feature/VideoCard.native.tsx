@@ -105,6 +105,7 @@ export interface VideoCardProps {
   onProfilePress: () => void;
   onSendGift?: (recipientId: string, videoId: string | null, giftType: string, dagValue: number) => Promise<{ success: boolean; error?: string }>;
   onViewTracked?: (event: FinalizedVideoView) => void;
+  onViewStarted?: (clientEventId: string) => void;
   productTagCount?: number;
   onProducts?: () => void;
   onAddToStory?: () => void;
@@ -375,7 +376,7 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
   const {
     video, isActive, isLiked, isSaved = false, isFollowing,
     currentUserDagBalance = 0, currentUserId = '',
-    onLike, onComment, onFollow, onSave = () => {}, onProfilePress, onSendGift, onViewTracked,
+    onLike, onComment, onFollow, onSave = () => {}, onProfilePress, onSendGift, onViewTracked, onViewStarted,
     productTagCount = 0, onProducts, onAddToStory,
   } = props;
 
@@ -443,9 +444,11 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
     playbackSessionRef.current = createVideoPlaybackSession({ now: Date.now, createEventId: randomUUID });
   }
   const onViewTrackedRef = useRef(onViewTracked);
+  const onViewStartedRef = useRef(onViewStarted);
   const activeViewCallbackRef = useRef(onViewTracked);
   const isActiveRef = useRef(isActive);
   onViewTrackedRef.current = onViewTracked;
+  onViewStartedRef.current = onViewStarted;
   isActiveRef.current = isActive;
 
   const finishExposure = useCallback((reason: FinalizedVideoView['exitReason']) => {
@@ -461,8 +464,11 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
     if (isActive && AppState.currentState === 'active') {
       if (!playbackSessionRef.current?.activeEventId()) {
         activeViewCallbackRef.current = onViewTrackedRef.current;
+        const clientEventId = playbackSessionRef.current?.start();
+        if (clientEventId) onViewStartedRef.current?.(clientEventId);
+      } else {
+        playbackSessionRef.current?.start();
       }
-      playbackSessionRef.current?.start();
     } else if (!isActive) {
       finishExposure('swipe');
     }
@@ -481,8 +487,11 @@ const FeedCard = memo(function FeedCard(props: VideoCardProps) {
       if (isActiveRef.current) {
         if (!playbackSessionRef.current?.activeEventId()) {
           activeViewCallbackRef.current = onViewTrackedRef.current;
+          const clientEventId = playbackSessionRef.current?.start();
+          if (clientEventId) onViewStartedRef.current?.(clientEventId);
+        } else {
+          playbackSessionRef.current?.start();
         }
-        playbackSessionRef.current?.start();
         const currentPlayer = playerRef.current as unknown as ManagedPlayer;
         acquirePlayerLock(currentPlayer);
         try { currentPlayer.play(); } catch (_) {}

@@ -18,6 +18,11 @@ import {
   type AlgoL1CanaryDevState,
 } from '@/services/algoL1CanaryDev';
 import type { FinalizedVideoView } from '@/services/videoPlaybackSession';
+import {
+  recordOrganicRankingEngagement as submitOrganicRankingEngagement,
+  recordOrganicRankingImpression as submitOrganicRankingImpression,
+  type OrganicRankingEngagementAction,
+} from '@/services/organicRankingObservationService';
 import { mapVideoRow } from '@/services/videoPresentation';
 import {
   createMediaOperationId,
@@ -85,6 +90,8 @@ interface FeedContextType {
   updateVideo:     (videoId: string, updates: { caption?: string; music?: string }) => Promise<{ success: boolean; error?: string }>;
   deleteVideo:     (videoId: string, videoUrl?: string, thumbnailUrl?: string) => Promise<{ success: boolean; error?: string }>;
   trackView:       (videoId: string, event: FinalizedVideoView) => Promise<void>;
+  recordOrganicViewStarted: (videoId: string, clientEventId: string, surfacePosition: number) => Promise<void>;
+  recordOrganicEngagement: (videoId: string, action: OrganicRankingEngagementAction, clientActionId: string) => Promise<void>;
   getAnalytics:    (videoId: string) => Promise<VideoAnalytics>;
   sendGift:        (recipientId: string, videoId: string | null, giftType: string, dagValue: number) => Promise<{ success: boolean; error?: string }>;
   ensureVideoLoadedById: (videoId: string) => Promise<EnsureVideoLoadedResult>;
@@ -220,6 +227,14 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   const playbackIdentityRef = useRef<{ viewerId: string | null; clientSessionId: string } | null>(null);
   const exactVideoFlightsRef = useRef(new Map<string, Promise<EnsureVideoLoadedResult>>());
   const canaryDevStateRef = useRef<AlgoL1CanaryDevState>({ enrollmentKey: null });
+  const organicObservationMapRef = useRef(new Map<string, {
+    decisionId: string;
+    organicPosition: number;
+  }>());
+  const activeOrganicImpressionRef = useRef(new Map<string, {
+    clientEventId: string;
+    write: Promise<string | null>;
+  }>());
 
   if (!playbackIdentityRef.current || playbackIdentityRef.current.viewerId !== viewerId) {
     playbackIdentityRef.current = { viewerId, clientSessionId: randomUUID() };
@@ -299,11 +314,20 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       if (generation !== deliveryGenerationRef.current) return;
 
       if (!cursor) {
+        organicObservationMapRef.current.clear();
+        activeOrganicImpressionRef.current.clear();
         logAlgoL1CanaryFirstPage({
           isDev: __DEV__,
           rankingMode: page.rankingMode,
           policyVersion: page.policyVersion,
           rowCount: page.videos.length,
+        });
+      }
+
+      for (const item of page.observationItems) {
+        organicObservationMapRef.current.set(item.videoId, {
+          decisionId: item.decisionId,
+          organicPosition: item.organicPosition,
         });
       }
 
@@ -396,6 +420,8 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     setBlockedUserIds(new Set());
     setLikedVideos(new Set());
     setSavedVideos(new Set());
+    organicObservationMapRef.current.clear();
+    activeOrganicImpressionRef.current.clear();
     void loadVideos(null, generation);
     if (viewerId) {
       void loadLikesAndSaves(viewerId, generation);
@@ -408,6 +434,8 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     deliveryGenerationRef.current = generation;
     setRankCursor(null);
     setHasMoreRanked(true);
+    organicObservationMapRef.current.clear();
+    activeOrganicImpressionRef.current.clear();
     await loadVideos(null, generation);
     if (viewerId) {
       await loadLikesAndSaves(viewerId, generation);
@@ -565,6 +593,55 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       ));
     }
   }, [user, savedVideos]);
+
+  const recordOrganicViewStarted = useCallback(async (
+    videoId: string,
+    clientEventId: string,
+    surfacePosition: number,
+  ) => {
+    const supabase = supabaseRef.current;
+    const metadata = organicObservationMapRef.current.get(videoId);
+    if (!metadata || !supabase || !supabaseOk.current) {
+      activeOrganicImpressionRef.current.delete(videoId);
+      return;
+    }
+    const write = submitOrganicRankingImpression({
+      rpc: async (name, args) => {
+        const { data, error } = await supabase.rpc(name, args);
+        return { data, error: error ? { message: error.message } : null };
+      },
+    }, {
+      decisionId: metadata.decisionId,
+      videoId,
+      clientEventId,
+      clientSessionId,
+      surfacePosition,
+    });
+    activeOrganicImpressionRef.current.set(videoId, { clientEventId, write });
+    await write;
+  }, [clientSessionId]);
+
+  const recordOrganicEngagement = useCallback(async (
+    videoId: string,
+    action: OrganicRankingEngagementAction,
+    clientActionId: string,
+  ) => {
+    const supabase = supabaseRef.current;
+    const active = activeOrganicImpressionRef.current.get(videoId);
+    if (!active || !supabase || !supabaseOk.current) return;
+    const impressionStatus = await active.write;
+    if (!impressionStatus) return;
+    await submitOrganicRankingEngagement({
+      rpc: async (name, args) => {
+        const { data, error } = await supabase.rpc(name, args);
+        return { data, error: error ? { message: error.message } : null };
+      },
+    }, {
+      impressionClientEventId: active.clientEventId,
+      clientActionId,
+      action,
+    });
+  }, []);
 
   // ── Track View — stale-closure-free ──────────────────────────────────────
   const trackView = useCallback(async (videoId: string, event: FinalizedVideoView) => {
@@ -898,7 +975,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       videos: filteredVideos, likedVideos, savedVideos, comments, isLoadingFeed,
       toggleLike, toggleSave, isSaved,
       addComment, addVideo, updateVideo, deleteVideo,
-      trackView, getAnalytics, sendGift,
+      trackView, recordOrganicViewStarted, recordOrganicEngagement, getAnalytics, sendGift,
       ensureVideoLoadedById, loadMoreVideos, isLiked, getComments, refreshFeed,
     }}>
       {children}

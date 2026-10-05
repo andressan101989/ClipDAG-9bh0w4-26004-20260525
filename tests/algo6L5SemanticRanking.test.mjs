@@ -214,6 +214,7 @@ test('thin Feed client accepts behavioral_l5 and still rejects unknown modes', a
     feed_as_of: '2026-10-05T00:01:00.000Z', cursor_score: '2.400000',
     cursor_created_at: '2026-10-05T00:00:00.000Z',
     cursor_id: '92000000-0000-4000-8000-000000000001', effective_page_limit: 10,
+    ranking_decision_id: null, ranking_organic_position: null,
   };
   const client = { rpc: async () => ({ data: [row], error: null }) };
   const page = await fetchRankedFeedPage(client, { clientSessionId: '93000000-0000-4000-8000-000000000001' }, value => value.id);
