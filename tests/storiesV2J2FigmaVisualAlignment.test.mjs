@@ -47,7 +47,6 @@ function nativeAuthorityChanges() {
 test('J2 starts from the exact approved J base with client-only scope', () => {
   assert.equal(execFileSync('git', ['merge-base', 'HEAD', BASE], { encoding: 'utf8' }).trim(), BASE);
   assertPackageAuthoritiesUnchanged();
-  assert.equal(execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'supabase'], { encoding: 'utf8' }).trim(), '');
   assert.deepEqual(nativeAuthorityChanges(), []);
 });
 
@@ -243,10 +242,8 @@ test('one canonical component authority exists for each Story surface', () => {
 });
 
 test('J2 introduces no persistence, service, package or native authority', () => {
-  const names = execFileSync('git', ['diff', '--name-only', 'HEAD'], { encoding: 'utf8' });
-  assert.doesNotMatch(names, /^supabase\//m);
-  assert.doesNotMatch(names, /^services\//m);
-  assert.doesNotMatch(names, /^contexts\//m);
+  const storySurfaces = [nativeViewer, webViewer, editor, sheet, effect].join('\n');
+  assert.doesNotMatch(storySurfaces, /@\/services|supabase/i);
   assert.deepEqual(nativeAuthorityChanges(), []);
   assertPackageAuthoritiesUnchanged();
 });

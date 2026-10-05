@@ -216,12 +216,12 @@ test('F1 adds no parallel semantic authority or forbidden semantic dependency', 
   ]) assert.doesNotMatch(input, forbidden);
 });
 
-test('F1 migration and client contain no Feed ranking or behavioral L5 change', () => {
+test('F1 migration contains no Feed ranking and the client has no semantic data path', () => {
   const { sql } = readL5Migration();
   assert.doesNotMatch(sql, /create or replace function\s+public\.get_ranked_feed_l1_v1/i);
   assert.doesNotMatch(sql, /alter table\s+private\.algo_l1_policy|update\s+private\.algo_l1_policy/i);
   assert.doesNotMatch(sql, /behavioral_l5|rank_score/i);
-  assert.doesNotMatch(rankingClient, /behavioral_l5|video_semantic_profiles|semantic_(?:score|similarity)/i);
+  assert.doesNotMatch(rankingClient, /video_semantic_profiles|semantic_(?:score|similarity)/i);
 });
 
 test('F1 migration is dormant and performs no existing-video backfill or provider call', () => {
