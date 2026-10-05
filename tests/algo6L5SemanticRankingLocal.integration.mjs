@@ -273,9 +273,9 @@ test('F3 migration is dormant, constraint-safe, ACL-stable and exact-disabled-pa
           select pg_get_functiondef(p.oid) into definition
           from pg_proc p join pg_namespace n on n.oid=p.pronamespace
           where n.nspname='public' and p.proname='get_ranked_feed_l1_v1';
-          execute replace(
+          execute pg_catalog.regexp_replace(
             definition,
-            E'begin\\n  if p_client_session_id',
+            E'begin\\r?\\n  if p_client_session_id',
             E'begin\\n  perform 1 from private.content_safety_visual_analyses where false;\\n  if p_client_session_id'
           );
         end
