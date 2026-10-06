@@ -16,6 +16,7 @@ console.log('[BOOT] 1 - expo-router imported');
 
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { NelyonLogo } from '@/components/ui/NelyonLogo';
+import { Colors } from '@/constants/theme';
 
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -67,7 +68,7 @@ function AppShell() {
 
   if (!isAuthReady) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#F5F7FA', alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{ flex: 1, backgroundColor: Colors.bg, alignItems: 'center', justifyContent: 'center' }}>
         <NelyonLogo style={{ width: 260, height: 64, marginBottom: 24 }} />
         <ActivityIndicator size="large" color="#1F79FF" />
       </View>
@@ -84,7 +85,7 @@ function AppShell() {
               <MarketplaceCartProvider>
                <WalletConnectProvider>
                 <AgoraCallProvider>
-                  <Stack screenOptions={{ headerShown: false }}>
+                  <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.bg } }}>
                     <Stack.Screen name="index" />
                     <Stack.Screen name="boot-test" />
                     <Stack.Screen name="stress-test" />
