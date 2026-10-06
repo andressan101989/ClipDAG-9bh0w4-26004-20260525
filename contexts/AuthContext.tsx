@@ -50,7 +50,7 @@ interface AuthContextType {
   isAuthenticated:  boolean;
   followedUsers:    Set<string>;
   login:            (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  register:         (email: string, password: string, username: string, dateOfBirth: string) => Promise<{ success: boolean; error?: string }>;
+  register:         (email: string, password: string, username: string, dateOfBirth: string) => Promise<{ success: boolean; sessionActive?: boolean; error?: string }>;
   logout:           () => Promise<void>;
   updateProfile:    (updates: Partial<AppUser>) => Promise<void>;
   updateDAGBalance: (newBalance: number) => void;
@@ -284,9 +284,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const supabase = supabaseRef.current;
     if (!supabase) return { success: false, error: 'Backend unavailable' };
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) return { success: false, error: error.message };
-      return { success: true };
+      return { success: true, sessionActive: !!data.session };
     } catch (e: any) {
       return { success: false, error: e.message || 'Error al iniciar sesion' };
     }
@@ -320,7 +320,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.log('[AuthProvider] ensure_ledger_account on signup failed (non-fatal):', e);
         }
       }
-      return { success: true };
+      return { success: true, sessionActive: !!data.session };
     } catch (e: any) {
       return { success: false, error: e.message || 'Error al registrarse' };
     }

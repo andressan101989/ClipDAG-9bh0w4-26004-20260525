@@ -1,7 +1,10 @@
 import { pathToFileURL } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
 
-const CONTRACT_VERSION = 'algo6-l6-training-readiness-v1';
+const CONTRACT_VERSIONS = new Set([
+  'algo6-l6-training-readiness-v1',
+  'algo6-l6-training-readiness-v2',
+]);
 const GLOBAL_GATE_NAMES = [
   'unique_visible_organic_impressions',
   'valid_retention_samples',
@@ -54,8 +57,8 @@ function invalid(message) {
 
 export function validateTrainingReadiness(readiness) {
   if (!isRecord(readiness)) invalid('expected an object');
-  if (readiness.contract_version !== CONTRACT_VERSION) invalid('unexpected contract version');
-  if (!['NOT_READY', 'STRUCTURAL_FAILURE', 'READY_FOR_TRAINING_PHASE'].includes(readiness.overall_status)) {
+  if (!CONTRACT_VERSIONS.has(readiness.contract_version)) invalid('unexpected contract version');
+  if (!['NOT_READY', 'STRUCTURAL_FAILURE', 'READY_FOR_TRAINING_PHASE', 'READY'].includes(readiness.overall_status)) {
     invalid('unexpected overall status');
   }
   if (typeof readiness.training_entry_ready !== 'boolean') invalid('missing training_entry_ready');
@@ -100,12 +103,13 @@ function gateLine(name, gate) {
 }
 
 function headLine(name, head) {
-  const current = head.external_mature_positive_count
+  const current = head.positive_count
+    ?? head.external_mature_positive_count
     ?? head.external_mature_event_count
     ?? head.positive_source_count
     ?? head.true_source_count
     ?? null;
-  const negative = head.negative_source_count ?? head.false_source_count;
+  const negative = head.negative_count ?? head.negative_source_count ?? head.false_source_count;
   const currentText = negative === undefined
     ? printable(current)
     : `${printable(current)}/${printable(negative)}`;
@@ -145,8 +149,8 @@ export function formatTrainingReadinessReport(input) {
     '',
     'TEMPORAL SPLIT',
     `TEMPORAL_SPLIT_STATUS = ${readiness.temporal_split.status}`,
-    gateLine('validation_sparse_support', readiness.temporal_split.validation_sparse_support),
-    gateLine('untouched_test_sparse_support', readiness.temporal_split.untouched_test_sparse_support),
+    formatSparseSupport('validation_sparse_support', readiness.temporal_split.validation_sparse_support),
+    formatSparseSupport('untouched_test_sparse_support', readiness.temporal_split.untouched_test_sparse_support),
     '',
     'DATA QUALITY',
   );
@@ -180,6 +184,16 @@ export function formatTrainingReadinessReport(input) {
   return `${lines.join('\n')}\n`;
 }
 
+function formatSparseSupport(name, support) {
+  if (!isRecord(support)) invalid(`missing ${name}`);
+  if (Object.hasOwn(support, 'current')) return gateLine(name, support);
+  const values = ['rewatch', 'save', 'like'].map(key => Number(support[key] ?? 0));
+  const current = Math.min(...values);
+  const required = Number(support.required_each ?? 500);
+  const status = current >= required ? 'PASS' : 'NOT_READY';
+  return `${name.toUpperCase()} CURRENT=${current} REQUIRED=${required} STATUS=${status}`;
+}
+
 export function exitCodeForReadiness(input) {
   try {
     const readiness = validateTrainingReadiness(input);
@@ -199,7 +213,7 @@ async function fetchTrainingReadiness() {
   const client = createClient(url, serviceSecret, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
-  const { data, error } = await client.rpc('get_algo6_l6_training_readiness_v1');
+  const { data, error } = await client.rpc('get_algo6_l6_training_readiness_v2');
   if (error) throw new Error(`Readiness RPC failed (${error.code ?? 'unknown'})`);
   return data;
 }

@@ -87,6 +87,38 @@ describe("Audience targeting UX serialization", () => {
     expect(audienceCapabilitiesAreSafe({ ...safe, sensitiveTargetingAllowed: true })).toBe(false);
   });
 
+  it("adds only V4 safe broad targeting while leaving V3 payloads unchanged", () => {
+    const v4: AdvertisingTargetingCapabilities = {
+      policyVersion: "nelyon-ads-targeting-v4", advertiserMinimumAge: 18,
+      audienceMinimumAge: 13, audienceMaximumAge: 120, ageScope: "age_range",
+      geoTargetingEnabled: true, languageTargetingEnabled: true,
+      daypartTargetingEnabled: true, frequencyTargetingEnabled: true,
+      interestTargetingEnabled: true, behavioralTargetingEnabled: true,
+      customAudiencesEnabled: false, lookalikeTargetingEnabled: false,
+      sensitiveTargetingAllowed: false, preciseViewerLocationMatchingEnabled: false,
+      interestCatalog: [{ slug: "technology", label: "Technology" }],
+    };
+    expect(audienceCapabilitiesAreSafe(v4)).toBe(true);
+    const form = createAudienceFormState(realAudience, "UTC", v4);
+    form.countryCodes = "us, MX";
+    form.languageTags = "ES, en";
+    form.interestSlugs = ["technology"];
+    expect(validateAudienceForm(form, v4).valid).toBe(true);
+    expect(serializeAudienceForm(form)).toEqual(expect.objectContaining({
+      geographies: [
+        { mode: "include", type: "country", country_code: "US" },
+        { mode: "include", type: "country", country_code: "MX" },
+      ],
+      languages: [{ mode: "include", tag: "es" }, { mode: "include", tag: "en" }],
+      interests: [{ mode: "include", slug: "technology", source: "either" }],
+    }));
+    form.interestSlugs = ["unknown"];
+    expect(validateAudienceForm(form, v4)).toEqual(expect.objectContaining({
+      valid: false,
+      fieldErrors: expect.objectContaining({ interestSlugs: expect.any(String) }),
+    }));
+  });
+
   it.each([
     [24, "1 day"],
     [48, "2 days"],

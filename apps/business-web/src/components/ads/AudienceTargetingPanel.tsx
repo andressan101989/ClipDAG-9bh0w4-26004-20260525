@@ -29,7 +29,7 @@ type Props = {
   onSave: (definition: AdvertisingAudienceDefinition) => Promise<boolean>;
 };
 
-const capabilityLabels: Array<[keyof AdvertisingTargetingCapabilities, string]> = [
+const capabilityLabels: [keyof AdvertisingTargetingCapabilities, string][] = [
   ["geoTargetingEnabled", "Location"],
   ["languageTargetingEnabled", "Language"],
   ["interestTargetingEnabled", "Interests"],
@@ -102,8 +102,9 @@ export function AudienceTargetingPanel({ audienceIdentity, definition, exists, s
       <AudienceSummaryItem label="Audience" primary={formatAudienceAgeRange(definition)} />
       <div className="audience-summary-item"><span>Schedule</span>{schedule.map((item, index) => <div key={`${item.primary}-${item.secondary ?? index}`}><strong>{item.primary}</strong>{item.secondary && <small>{item.secondary}</small>}</div>)}</div>
       <AudienceSummaryItem label="Frequency" primary={formatAudienceFrequency(definition.frequency)} />
-      <AudienceSummaryItem label="Location" primary="Not used" />
-      <AudienceSummaryItem label="Language" primary="Not used" />
+      <AudienceSummaryItem label="Location" primary={definition.geographies.map((item) => item.country_code).join(", ") || "Not used"} />
+      <AudienceSummaryItem label="Language" primary={definition.languages.map((item) => item.tag).join(", ") || "Not used"} />
+      <AudienceSummaryItem label="Interests" primary={definition.interests?.map((item) => item.slug).join(", ") || "Not used"} />
     </div>}
 
     {editing && <form className="audience-editor" aria-busy={pending} onSubmit={submit} noValidate>
@@ -159,7 +160,26 @@ export function AudienceTargetingPanel({ audienceIdentity, definition, exists, s
 
       <fieldset className="audience-section">
         <legend>Additional targeting</legend>
-        <div className="audience-capability-grid">{capabilityLabels.map(([key, label]) => <article key={key}><h3>{label}</h3><strong>Not available yet</strong></article>)}</div>
+        {capabilities?.policyVersion === "nelyon-ads-targeting-v4" && <div className="audience-personalization-targeting">
+          <label>Broad content countries
+            <input value={form.countryCodes} placeholder="US, MX" aria-invalid={Boolean(fieldErrors.countryCodes)} onChange={(event) => updateForm((current) => ({ ...current, countryCodes: event.target.value }))} />
+            <small>Two-letter broad country codes only. Precise location is never used.</small>
+            {fieldErrors.countryCodes && <span className="field-error" role="alert">{fieldErrors.countryCodes}</span>}
+          </label>
+          <label>Content languages
+            <input value={form.languageTags} placeholder="es, en" aria-invalid={Boolean(fieldErrors.languageTags)} onChange={(event) => updateForm((current) => ({ ...current, languageTags: event.target.value }))} />
+            {fieldErrors.languageTags && <span className="field-error" role="alert">{fieldErrors.languageTags}</span>}
+          </label>
+          <fieldset><legend>Safe interests</legend>
+            <div className="audience-interest-grid">{capabilities.interestCatalog?.map((interest) => <label key={interest.slug}>
+              <input type="checkbox" checked={form.interestSlugs.includes(interest.slug)} onChange={(event) => updateForm((current) => ({ ...current, interestSlugs: event.target.checked ? [...current.interestSlugs, interest.slug] : current.interestSlugs.filter((slug) => slug !== interest.slug) }))} />
+              {interest.label}
+            </label>)}</div>
+            {fieldErrors.interestSlugs && <span className="field-error" role="alert">{fieldErrors.interestSlugs}</span>}
+          </fieldset>
+          <p>Personalized matching is adult-only and requires the viewer’s consent. Advertisers never receive private behavior or embeddings.</p>
+        </div>}
+        <div className="audience-capability-grid">{capabilityLabels.filter(([key]) => !(capabilities?.policyVersion === "nelyon-ads-targeting-v4" && ["geoTargetingEnabled", "languageTargetingEnabled", "interestTargetingEnabled", "behavioralTargetingEnabled"].includes(key))).map(([key, label]) => <article key={key}><h3>{label}</h3><strong>Not available yet</strong></article>)}</div>
         <p className="audience-privacy-note">Nelyon does not use sensitive targeting or precise viewer location for this audience.</p>
       </fieldset>
 

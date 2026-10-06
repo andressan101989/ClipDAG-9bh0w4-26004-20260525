@@ -25,6 +25,10 @@ export type AudienceFormState = {
   scheduleMode: "any_time" | "custom";
   dayparts: AudienceDaypartFormRow[];
   frequency: { enabled: boolean; maxImpressions: string; windowHours: string };
+  countryCodes: string;
+  languageTags: string;
+  interestSlugs: string[];
+  personalizationTargetingEnabled: boolean;
   suggestedTimezone: string;
 };
 
@@ -58,7 +62,7 @@ export function supportedTimeZones(preferred?: string) {
 }
 
 export function audienceCapabilitiesAreSafe(capabilities: AdvertisingTargetingCapabilities | null) {
-  return Boolean(capabilities
+  const commonSafe = Boolean(capabilities
     && capabilities.policyVersion
     && capabilities.advertiserMinimumAge === 18
     && capabilities.audienceMinimumAge === 13
@@ -66,14 +70,17 @@ export function audienceCapabilitiesAreSafe(capabilities: AdvertisingTargetingCa
     && capabilities.ageScope === "age_range"
     && capabilities.daypartTargetingEnabled
     && capabilities.frequencyTargetingEnabled
-    && !capabilities.geoTargetingEnabled
-    && !capabilities.languageTargetingEnabled
-    && !capabilities.interestTargetingEnabled
-    && !capabilities.behavioralTargetingEnabled
     && !capabilities.customAudiencesEnabled
     && !capabilities.lookalikeTargetingEnabled
     && !capabilities.sensitiveTargetingAllowed
     && !capabilities.preciseViewerLocationMatchingEnabled);
+  if (!commonSafe || !capabilities) return false;
+  const legacy = !capabilities.geoTargetingEnabled && !capabilities.languageTargetingEnabled
+    && !capabilities.interestTargetingEnabled && !capabilities.behavioralTargetingEnabled;
+  const v4 = capabilities.policyVersion === "nelyon-ads-targeting-v4"
+    && capabilities.geoTargetingEnabled && capabilities.languageTargetingEnabled
+    && capabilities.interestTargetingEnabled && capabilities.behavioralTargetingEnabled;
+  return legacy || v4;
 }
 
 export function newAudienceDaypart(timezone: string, key = `schedule-${crypto.randomUUID()}`): AudienceDaypartFormRow {
@@ -98,6 +105,14 @@ export function createAudienceFormState(definition: AdvertisingAudienceDefinitio
     frequency: definition?.frequency
       ? { enabled: true, maxImpressions: String(definition.frequency.max_impressions), windowHours: String(definition.frequency.window_hours) }
       : { enabled: false, maxImpressions: "1", windowHours: "24" },
+    countryCodes: definition?.geographies
+      .filter((item) => item.mode === "include" && item.type === "country")
+      .map((item) => item.country_code).join(", ") ?? "",
+    languageTags: definition?.languages
+      .filter((item) => item.mode === "include").map((item) => item.tag).join(", ") ?? "",
+    interestSlugs: definition?.interests
+      ?.filter((item) => item.mode === "include").map((item) => item.slug) ?? [],
+    personalizationTargetingEnabled: capabilities?.policyVersion === "nelyon-ads-targeting-v4",
     suggestedTimezone,
   };
 }
@@ -112,18 +127,29 @@ export function serializeAudienceForm(form: AudienceFormState): AdvertisingAudie
     || left.weekday - right.weekday
     || left.start.localeCompare(right.start)
     || left.end.localeCompare(right.end)) : [];
-  return {
+  const definition: AdvertisingAudienceDefinition = {
     age_scope: "age_range",
     min_age: Number(form.minimumAge),
     max_age: form.noUpperAgeLimit ? null : Number(form.maximumAge),
-    geographies: [],
-    languages: [],
+    geographies: form.personalizationTargetingEnabled
+      ? form.countryCodes.split(",").map((value) => value.trim().toUpperCase()).filter(Boolean)
+        .map((country_code) => ({ mode: "include" as const, type: "country" as const, country_code }))
+      : [],
+    languages: form.personalizationTargetingEnabled
+      ? form.languageTags.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean)
+        .map((tag) => ({ mode: "include" as const, tag }))
+      : [],
     dayparts,
     frequency: form.frequency.enabled ? {
       max_impressions: Number(form.frequency.maxImpressions),
       window_hours: Number(form.frequency.windowHours),
     } : null,
   };
+  if (form.personalizationTargetingEnabled) {
+    definition.interests = [...form.interestSlugs].sort()
+      .map((slug) => ({ mode: "include" as const, slug, source: "either" as const }));
+  }
+  return definition;
 }
 
 export function validateAudienceForm(form: AudienceFormState, capabilities?: AdvertisingTargetingCapabilities | null): AudienceFormValidation {
@@ -166,6 +192,20 @@ export function validateAudienceForm(form: AudienceFormState, capabilities?: Adv
     }
     if (!Number.isInteger(windowHours) || windowHours < 1 || windowHours > 168) {
       fieldErrors.windowHours = "Choose a time window between 1 and 168 hours.";
+    }
+  }
+  if (form.personalizationTargetingEnabled) {
+    const countries = form.countryCodes.split(",").map((value) => value.trim()).filter(Boolean);
+    if (countries.some((value) => !/^[A-Za-z]{2}$/.test(value))) {
+      fieldErrors.countryCodes = "Use two-letter country codes separated by commas.";
+    }
+    const languages = form.languageTags.split(",").map((value) => value.trim()).filter(Boolean);
+    if (languages.some((value) => !/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(value))) {
+      fieldErrors.languageTags = "Use valid language tags separated by commas.";
+    }
+    const allowedInterests = new Set(capabilities?.interestCatalog?.map((item) => item.slug) ?? []);
+    if (form.interestSlugs.some((slug) => !allowedInterests.has(slug))) {
+      fieldErrors.interestSlugs = "Choose only available safe interests.";
     }
   }
   return { valid: Object.keys(fieldErrors).length === 0, fieldErrors };

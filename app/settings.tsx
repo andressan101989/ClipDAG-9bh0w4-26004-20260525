@@ -416,6 +416,17 @@ export default function SettingsScreen() {
           />
         </SettingsSection>
 
+        <SettingsSection title="Personalización">
+          <SettingsRow
+            icon="tune-variant"
+            iconColor={Colors.primary}
+            label="Personalización del feed"
+            sublabel="Idiomas, región, intereses y anuncios personalizados"
+            last
+            onPress={() => router.push('/onboarding/personalization?edit=1')}
+          />
+        </SettingsSection>
+
         {/* About */}
         <SettingsSection title="Informacion">
           <SettingsRow icon="information-outline" iconColor={Colors.blue} label="Acerca de Nelyon" value="v1.0.0" />

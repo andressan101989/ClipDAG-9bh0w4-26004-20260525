@@ -56,6 +56,7 @@ console.log('[BOOT] 8e - PushNotificationHandler imported');
 
 import { IosCallKitActionHandler } from '@/components/feature/IosCallKitActionHandler';
 import { WalletConnectReturnHandler } from '@/components/feature/WalletConnectReturnHandler';
+import { PersonalizationGate } from '@/components/feature/PersonalizationGate';
 console.log('[BOOT] 8f - IosCallKitActionHandler imported');
 
 console.log('[BOOT] 9 - all imports done');
@@ -74,6 +75,7 @@ function AppShell() {
   }
 
   return (
+    <PersonalizationGate>
     <FeedProvider>
       <StoriesProvider>
         <MessagesProvider>
@@ -87,6 +89,7 @@ function AppShell() {
                     <Stack.Screen name="boot-test" />
                     <Stack.Screen name="stress-test" />
                     <Stack.Screen name="login" />
+                    <Stack.Screen name="onboarding/personalization" />
                     <Stack.Screen name="(tabs)" />
                     <Stack.Screen name="cart" />
                     <Stack.Screen name="checkout" />
@@ -149,6 +152,7 @@ function AppShell() {
         </MessagesProvider>
       </StoriesProvider>
     </FeedProvider>
+    </PersonalizationGate>
   );
 }
 

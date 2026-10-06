@@ -97,6 +97,20 @@ function validJob(value) {
     job.attempt_count >= 1 && job.attempt_count <= 5
 }
 
+function validTaxonomyJob(value) {
+  const job = asObject(value)
+  return isUuid(job.interest_id) &&
+    isFingerprint(job.embedding_fingerprint) &&
+    typeof job.input_text === 'string' &&
+    job.input_text.length > 0 &&
+    job.input_text.length <= MAX_INPUT_CHARACTERS &&
+    job.provider === SEMANTIC_PROVIDER &&
+    job.model === SEMANTIC_MODEL &&
+    job.embedding_dimensions === EMBEDDING_DIMENSIONS &&
+    Number.isInteger(job.attempt_count) &&
+    job.attempt_count >= 1 && job.attempt_count <= 5
+}
+
 async function failJob(client, job, errorCode, retryable, providerCalled) {
   return client.rpc('fail_video_semantic_profile_v1', {
     p_video_id: job.video_id,
@@ -111,6 +125,25 @@ async function failJobs(client, jobs, errorCode, retryable, providerCalled) {
   let failed = 0
   for (const job of jobs) {
     await failJob(client, job, errorCode, retryable, providerCalled)
+    failed += 1
+  }
+  return failed
+}
+
+async function failTaxonomyJob(client, job, errorCode, retryable, providerCalled) {
+  return client.rpc('fail_personalization_taxonomy_embedding_job_v1', {
+    p_interest_id: job.interest_id,
+    p_embedding_fingerprint: job.embedding_fingerprint,
+    p_error_code: errorCode,
+    p_retryable: retryable,
+    p_provider_called: providerCalled,
+  })
+}
+
+async function failTaxonomyJobs(client, jobs, errorCode, retryable, providerCalled) {
+  let failed = 0
+  for (const job of jobs) {
+    await failTaxonomyJob(client, job, errorCode, retryable, providerCalled)
     failed += 1
   }
   return failed
@@ -233,6 +266,101 @@ export function createSemanticWorkerHandler({
         }
       }
       return json({ status: 'visual_processed', claimed: jobs.length, completed, failed, stale })
+    }
+    if (mode === 'process_taxonomy') {
+      const limit = body.limit === undefined ? DEFAULT_BATCH_SIZE : Number(body.limit)
+      if (!Number.isInteger(limit) || limit < 1 || limit > MAX_BATCH_SIZE) {
+        return json({ error: 'invalid_taxonomy_batch_limit' }, 400)
+      }
+      if (!supabaseUrl || !cloudflareAccountId || !cloudflareApiToken ||
+          typeof createAdminClient !== 'function') {
+        return json({ error: 'semantic_worker_configuration_missing' }, 503)
+      }
+
+      const client = createAdminClient(supabaseUrl, serviceRoleKey)
+      const claim = await client.rpc('claim_personalization_taxonomy_embedding_jobs_v1', {
+        p_limit: limit,
+      })
+      if (claim.error) return json({ error: 'taxonomy_semantic_claim_failed' }, 502)
+      const jobs = Array.isArray(claim.data) ? claim.data : []
+      if (jobs.length === 0) {
+        return json({ status: 'taxonomy_processed', claimed: 0, completed: 0, failed: 0, stale: 0 })
+      }
+      if (jobs.length > limit || jobs.length > MAX_BATCH_SIZE) {
+        return json({ error: 'taxonomy_semantic_claim_contract_invalid' }, 502)
+      }
+
+      const validJobs = []
+      let failed = 0
+      for (const job of jobs) {
+        if (validTaxonomyJob(job)) validJobs.push(job)
+        else {
+          await failTaxonomyJob(client, job, 'invalid_claim_payload', false, false)
+          failed += 1
+        }
+      }
+      if (validJobs.length === 0) {
+        return json({ status: 'taxonomy_processed', claimed: jobs.length, completed: 0, failed, stale: 0 })
+      }
+
+      let response
+      try {
+        response = await fetchImpl(
+          `https://api.cloudflare.com/client/v4/accounts/${cloudflareAccountId}/ai/run/${SEMANTIC_MODEL}`,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${cloudflareApiToken}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({ text: validJobs.map(job => job.input_text) }),
+          },
+        )
+      } catch {
+        failed += await failTaxonomyJobs(client, validJobs, 'provider_network_error', true, true)
+        return json({ status: 'taxonomy_processed', claimed: jobs.length, completed: 0, failed, stale: 0 })
+      }
+
+      if (!response.ok) {
+        const retryable = response.status === 408 || response.status === 425 ||
+          response.status === 429 || response.status >= 500
+        failed += await failTaxonomyJobs(
+          client,
+          validJobs,
+          `provider_http_${response.status}`,
+          retryable,
+          true,
+        )
+        return json({ status: 'taxonomy_processed', claimed: jobs.length, completed: 0, failed, stale: 0 })
+      }
+
+      let embeddings
+      try {
+        embeddings = validateEmbeddingResponse(await response.json(), validJobs.length)
+      } catch {
+        failed += await failTaxonomyJobs(client, validJobs, 'invalid_embedding_response', false, true)
+        return json({ status: 'taxonomy_processed', claimed: jobs.length, completed: 0, failed, stale: 0 })
+      }
+
+      let completed = 0
+      let stale = 0
+      for (let index = 0; index < validJobs.length; index += 1) {
+        const job = validJobs[index]
+        const completion = await client.rpc('complete_personalization_taxonomy_embedding_job_v1', {
+          p_interest_id: job.interest_id,
+          p_embedding_fingerprint: job.embedding_fingerprint,
+          p_embedding: embeddings[index],
+        })
+        if (completion.error) {
+          await failTaxonomyJob(client, job, 'completion_rpc_error', true, true)
+          failed += 1
+        } else if (completion.data?.status === 'stale') {
+          stale += 1
+        } else {
+          completed += 1
+        }
+      }
+      return json({ status: 'taxonomy_processed', claimed: jobs.length, completed, failed, stale })
     }
     if (mode !== 'process') return json({ error: 'invalid_mode' }, 400)
 

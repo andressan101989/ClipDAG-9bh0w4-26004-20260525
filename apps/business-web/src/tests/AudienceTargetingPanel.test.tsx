@@ -47,6 +47,24 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof AudienceTarg
 }
 
 describe("AudienceTargetingPanel", () => {
+  it("renders V4 broad-region, language and allowlisted-interest controls without precise location", () => {
+    const v4: AdvertisingTargetingCapabilities = {
+      ...capabilities,
+      policyVersion: "nelyon-ads-targeting-v4",
+      geoTargetingEnabled: true,
+      languageTargetingEnabled: true,
+      interestTargetingEnabled: true,
+      behavioralTargetingEnabled: true,
+      interestCatalog: [{ slug: "technology", label: "Technology" }],
+    };
+    renderPanel({ capabilities: v4 });
+    fireEvent.click(screen.getByRole("button", { name: "Edit audience" }));
+    expect(screen.getByLabelText(/Broad content countries/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Content languages/)).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Technology" })).toBeInTheDocument();
+    expect(document.body.textContent).toContain("Precise location is never used");
+  });
+
   it("renders a customer summary without JSON, UUIDs, policy names, or internal fields", () => {
     const { container } = renderPanel();
 

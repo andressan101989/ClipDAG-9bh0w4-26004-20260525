@@ -108,7 +108,7 @@ function audienceDefinitionFromPayload(payload: Record<string, unknown> | null):
     ? payload.latest_version as Record<string, unknown>
     : null;
   if (!latest) return null;
-  return {
+  const definition: AdvertisingAudienceDefinition = {
     age_scope: latest.age_scope === "age_range" ? "age_range" : "adults_only",
     min_age: typeof latest.min_age === "number" ? latest.min_age : 18,
     max_age: typeof latest.max_age === "number" ? latest.max_age : null,
@@ -117,6 +117,10 @@ function audienceDefinitionFromPayload(payload: Record<string, unknown> | null):
     dayparts: Array.isArray(latest.dayparts) ? latest.dayparts as AdvertisingAudienceDefinition["dayparts"] : [],
     frequency: latest.frequency && typeof latest.frequency === "object" ? latest.frequency as AdvertisingAudienceDefinition["frequency"] : null,
   };
+  if (Array.isArray(latest.interests)) {
+    definition.interests = latest.interests as NonNullable<AdvertisingAudienceDefinition["interests"]>;
+  }
+  return definition;
 }
 
 function sameAudienceDefinition(left: AdvertisingAudienceDefinition | null, right: AdvertisingAudienceDefinition) {

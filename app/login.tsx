@@ -80,7 +80,15 @@ export default function LoginScreen() {
       return;
     }
 
-    router.replace('/(tabs)');
+    if (result.sessionActive) {
+      router.replace('/onboarding/personalization');
+    } else {
+      showAlert(
+        'Confirma tu correo',
+        'Abre el enlace de confirmación y luego inicia sesión. La personalización aparecerá al entrar.',
+      );
+      setMode('login');
+    }
   };
 
   // ─── Login / Register form ─────────────────────────────────────────────────

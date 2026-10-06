@@ -27,11 +27,15 @@ function fixture(overrides = {}) {
   let providerCalls = 0;
   let clientCreations = 0;
   const jobs = overrides.jobs ?? [];
+  const taxonomyJobs = overrides.taxonomyJobs ?? [];
   const client = {
     async rpc(name, args = {}) {
       calls.push({ name, args });
       if (name === 'claim_video_semantic_profiles_v1') {
         return { data: jobs, error: null };
+      }
+      if (name === 'claim_personalization_taxonomy_embedding_jobs_v1') {
+        return { data: taxonomyJobs, error: null };
       }
       return { data: { status: name.startsWith('complete_') ? 'ready' : 'pending' }, error: null };
     },
@@ -46,7 +50,10 @@ function fixture(overrides = {}) {
     if (overrides.fetchImpl) return overrides.fetchImpl(url, options);
     return new Response(JSON.stringify({
       success: true,
-      result: { shape: [jobs.length, 1024], data: jobs.map(() => vector()) },
+      result: {
+        shape: [(taxonomyJobs.length || jobs.length), 1024],
+        data: (taxonomyJobs.length ? taxonomyJobs : jobs).map(() => vector()),
+      },
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   return {
@@ -160,6 +167,45 @@ test('process mode claims a finite batch and completes one validated vector per 
   const completions = fx.calls.filter(call => call.name === 'complete_video_semantic_profile_v1');
   assert.equal(completions.length, 2);
   assert.equal(completions[0].args.p_embedding.length, 1024);
+});
+
+test('process_taxonomy reuses the same provider/model and completes each fingerprint exactly once', async () => {
+  const { createSemanticWorkerHandler } = await loadWorker();
+  const taxonomyJobs = [{
+    interest_id: '71000000-0000-4000-8000-000000000001',
+    embedding_fingerprint: 'b'.repeat(64),
+    input_text: 'cars and motorsport',
+    provider: 'cloudflare_workers_ai',
+    model: '@cf/baai/bge-m3',
+    embedding_dimensions: 1024,
+    attempt_count: 1,
+  }];
+  const fx = fixture({ taxonomyJobs });
+  const handle = createSemanticWorkerHandler({
+    serviceRoleKey: 'real-service-secret',
+    supabaseUrl: 'https://project.supabase.co',
+    cloudflareAccountId: 'account',
+    cloudflareApiToken: 'token',
+    createAdminClient: fx.createAdminClient,
+    fetchImpl: fx.fetchImpl,
+  });
+  const response = await handle(request({ mode: 'process_taxonomy', limit: 1 }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    status: 'taxonomy_processed', claimed: 1, completed: 1, failed: 0, stale: 0,
+  });
+  assert.equal(fx.providerCalls, 1);
+  assert.deepEqual(JSON.parse(fx.providerRequests[0].options.body), {
+    text: ['cars and motorsport'],
+  });
+  assert.deepEqual(fx.calls[0], {
+    name: 'claim_personalization_taxonomy_embedding_jobs_v1', args: { p_limit: 1 },
+  });
+  const completion = fx.calls.find(call =>
+    call.name === 'complete_personalization_taxonomy_embedding_job_v1');
+  assert.equal(completion.args.p_interest_id, taxonomyJobs[0].interest_id);
+  assert.equal(completion.args.p_embedding_fingerprint, taxonomyJobs[0].embedding_fingerprint);
+  assert.equal(completion.args.p_embedding.length, 1024);
 });
 
 test('empty claim never calls the provider', async () => {

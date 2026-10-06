@@ -658,11 +658,21 @@ export type AdvertisingTargetingCapabilities = {
   lookalikeTargetingEnabled: boolean;
   sensitiveTargetingAllowed: boolean;
   preciseViewerLocationMatchingEnabled: boolean;
+  interestCatalog?: { slug: string; label: string }[];
 };
 
 function parseAdvertisingTargetingCapabilities(value: unknown): AdvertisingTargetingCapabilities {
   const row = object(value, "advertising_targeting_capabilities_invalid");
   if (row.age_scope !== "age_range") throw new Error("advertising_targeting_capabilities_invalid");
+  const interestCatalog = Array.isArray(row.interest_catalog)
+    ? row.interest_catalog.map((value) => {
+      const interest = object(value, "advertising_targeting_capabilities_invalid");
+      return {
+        slug: string(interest.slug, "advertising_targeting_capabilities_invalid"),
+        label: string(interest.label, "advertising_targeting_capabilities_invalid"),
+      };
+    })
+    : [];
   return {
     policyVersion: string(row.policy_version, "advertising_targeting_capabilities_invalid"),
     advertiserMinimumAge: number(row.advertiser_minimum_age),
@@ -679,6 +689,7 @@ function parseAdvertisingTargetingCapabilities(value: unknown): AdvertisingTarge
     lookalikeTargetingEnabled: row.lookalike_targeting_enabled === true,
     sensitiveTargetingAllowed: row.sensitive_targeting_allowed === true,
     preciseViewerLocationMatchingEnabled: row.precise_viewer_location_matching_enabled === true,
+    interestCatalog,
   };
 }
 
@@ -697,6 +708,7 @@ export type AdvertisingAudienceDefinition = {
   max_age?: number | null;
   geographies: Array<{ mode: "include" | "exclude"; type: "country" | "region" | "city" | "radius"; country_code: string; region_code?: string; city_name?: string; latitude?: number; longitude?: number; radius_km?: number }>;
   languages: Array<{ mode: "include" | "exclude"; tag: string }>;
+  interests?: { mode: "include" | "exclude"; slug: string; source: "explicit" | "behavioral" | "either" }[];
   dayparts: Array<{ timezone: string; weekday: number; start: string; end: string }>;
   frequency: { max_impressions: number; window_hours: number } | null;
 };
