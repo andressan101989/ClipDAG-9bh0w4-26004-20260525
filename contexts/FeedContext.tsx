@@ -23,6 +23,8 @@ import {
   recordOrganicRankingImpression as submitOrganicRankingImpression,
   type OrganicRankingEngagementAction,
 } from '@/services/organicRankingObservationService';
+import { usePersonalizationRuntime } from './PersonalizationRuntimeContext';
+import { PersonalizationFeedLoadCoordinator } from '@/services/personalizationRuntimeCoordinator';
 import { mapVideoRow } from '@/services/videoPresentation';
 import {
   createMediaOperationId,
@@ -215,6 +217,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   const authContext = useContext(AuthContext);
   const user = authContext?.user;
   const viewerId = user?.id ?? null;
+  const { feedReady, personalizationRevision } = usePersonalizationRuntime();
 
   // The client is stored once so backend unavailability can fail soft to an
   // empty/error state without substituting fixture content.
@@ -224,6 +227,9 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   const deliveryGenerationRef = useRef(0);
   const activeLoadGenerationRef = useRef<number | null>(null);
   const videosRef     = useRef<VideoWithMeta[]>([]);
+  const feedEligibilityRef = useRef({ viewerId, feedReady });
+  const feedStateViewerIdRef = useRef<string | null>(viewerId);
+  const feedLoadCoordinatorRef = useRef<PersonalizationFeedLoadCoordinator | null>(null);
   const playbackIdentityRef = useRef<{ viewerId: string | null; clientSessionId: string } | null>(null);
   const exactVideoFlightsRef = useRef(new Map<string, Promise<EnsureVideoLoadedResult>>());
   const canaryDevStateRef = useRef<AlgoL1CanaryDevState>({ enrollmentKey: null });
@@ -235,6 +241,11 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     clientEventId: string;
     write: Promise<string | null>;
   }>());
+
+  feedEligibilityRef.current = { viewerId, feedReady };
+  if (!feedLoadCoordinatorRef.current) {
+    feedLoadCoordinatorRef.current = new PersonalizationFeedLoadCoordinator();
+  }
 
   if (!playbackIdentityRef.current || playbackIdentityRef.current.viewerId !== viewerId) {
     playbackIdentityRef.current = { viewerId, clientSessionId: randomUUID() };
@@ -286,6 +297,9 @@ export function FeedProvider({ children }: { children: ReactNode }) {
     cursor: RankedFeedCursor | null = null,
     generation = deliveryGenerationRef.current,
   ) => {
+    if (generation !== deliveryGenerationRef.current) return;
+    const eligibility = feedEligibilityRef.current;
+    if (eligibility.viewerId && !eligibility.feedReady) return;
     if (activeLoadGenerationRef.current === generation) return;
     activeLoadGenerationRef.current = generation;
     isLoadingRef.current = true;
@@ -412,7 +426,36 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const generation = deliveryGenerationRef.current + 1;
+    const viewerChanged = feedStateViewerIdRef.current !== viewerId;
+    feedStateViewerIdRef.current = viewerId;
+
+    if (viewerChanged) {
+      feedLoadCoordinatorRef.current!.reset();
+      deliveryGenerationRef.current += 1;
+      activeLoadGenerationRef.current = null;
+      isLoadingRef.current = false;
+      setIsLoadingFeed(false);
+      setVideos([]);
+      setRankCursor(null);
+      setHasMoreRanked(true);
+      setBlockedUserIds(new Set());
+      setLikedVideos(new Set());
+      setSavedVideos(new Set());
+      organicObservationMapRef.current.clear();
+      activeOrganicImpressionRef.current.clear();
+    }
+
+    if (viewerId && !feedReady) return;
+    const shouldLoad = feedLoadCoordinatorRef.current!.claim({
+      viewerId,
+      feedReady,
+      personalizationRevision,
+    });
+    if (!shouldLoad) return;
+
+    const generation = viewerChanged
+      ? deliveryGenerationRef.current
+      : deliveryGenerationRef.current + 1;
     deliveryGenerationRef.current = generation;
     setVideos([]);
     setRankCursor(null);
@@ -427,9 +470,18 @@ export function FeedProvider({ children }: { children: ReactNode }) {
       void loadLikesAndSaves(viewerId, generation);
       void loadBlockedUsers(viewerId, generation);
     }
-  }, [viewerId, loadVideos, loadLikesAndSaves, loadBlockedUsers]);
+  }, [
+    viewerId,
+    feedReady,
+    personalizationRevision,
+    loadVideos,
+    loadLikesAndSaves,
+    loadBlockedUsers,
+  ]);
 
   const refreshFeed = useCallback(async () => {
+    const eligibility = feedEligibilityRef.current;
+    if (eligibility.viewerId && !eligibility.feedReady) return;
     const generation = deliveryGenerationRef.current + 1;
     deliveryGenerationRef.current = generation;
     setRankCursor(null);

@@ -9,6 +9,7 @@ import { NelyonLogo } from '@/components/ui/NelyonLogo';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { useAlert } from '@/template';
 import { useAuth } from '@/hooks/useAuth';
+import { usePersonalizationRuntime } from '@/contexts/PersonalizationRuntimeContext';
 import {
   completePersonalizationOnboarding,
   ContentLanguage,
@@ -45,6 +46,7 @@ export default function PersonalizationOnboardingScreen() {
   const isEditing = edit === '1';
   const { showAlert } = useAlert();
   const { toggleFollow, isFollowing } = useAuth();
+  const { invalidatePersonalization, revalidatePersonalization } = usePersonalizationRuntime();
   const [currentStep, setCurrentStep] = useState(0);
   const [catalog, setCatalog] = useState<PersonalizationCatalog | null>(null);
   const [primaryLanguage, setPrimaryLanguage] = useState<ContentLanguage>('es');
@@ -148,8 +150,13 @@ export default function PersonalizationOnboardingScreen() {
     if (currentStep === 2) {
       setSaving(true);
       try {
-        await savePersonalizationPreferences(preferenceInput());
+        const saved = await savePersonalizationPreferences(preferenceInput());
         if (isEditing) {
+          invalidatePersonalization();
+          const resolution = await revalidatePersonalization(saved.preferencesUpdatedAt);
+          if (!resolution.completed && !resolution.failedOpen) {
+            throw new Error('personalization_completion_incomplete');
+          }
           router.replace('/settings');
           return;
         }
@@ -182,9 +189,14 @@ export default function PersonalizationOnboardingScreen() {
   const finish = async () => {
     setSaving(true);
     try {
-      await savePersonalizationPreferences(preferenceInput());
+      const saved = await savePersonalizationPreferences(preferenceInput());
       const completion = await completePersonalizationOnboarding();
       if (!completion.completed) throw new Error('personalization_completion_incomplete');
+      invalidatePersonalization();
+      const resolution = await revalidatePersonalization(saved.preferencesUpdatedAt);
+      if (!resolution.completed && !resolution.failedOpen) {
+        throw new Error('personalization_completion_incomplete');
+      }
       router.replace(isEditing ? '/settings' : '/(tabs)');
     } catch (cause: any) {
       showAlert('Falta completar', cause?.message === 'personalization_creator_follows_required'
