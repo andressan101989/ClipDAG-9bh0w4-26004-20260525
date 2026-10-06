@@ -16,8 +16,17 @@ const ids = {
   minor: 'f1000000-0000-4000-8000-000000000002',
   creator: 'f1000000-0000-4000-8000-000000000003',
   viewerB: 'f1000000-0000-4000-8000-000000000004',
+  creatorRegionUs: 'f1000000-0000-4000-8000-000000000005',
   candidate: 'f3000000-0000-4000-8000-000000000001',
   candidateFood: 'f3000000-0000-4000-8000-000000000002',
+  exitSwipeCreator: 'f1000000-0000-4000-8000-000000000011',
+  exitBackgroundCreator: 'f1000000-0000-4000-8000-000000000012',
+  exitUnmountCreator: 'f1000000-0000-4000-8000-000000000013',
+  exitUnknownCreator: 'f1000000-0000-4000-8000-000000000014',
+  exitSwipeVideo: 'f3000000-0000-4000-8000-000000000011',
+  exitBackgroundVideo: 'f3000000-0000-4000-8000-000000000012',
+  exitUnmountVideo: 'f3000000-0000-4000-8000-000000000013',
+  exitUnknownVideo: 'f3000000-0000-4000-8000-000000000014',
 };
 
 function migration(suffix) {
@@ -94,6 +103,7 @@ function createDatabase({ macro = true } = {}) {
     for (const suffix of [
       '_algo6_personalization_foundation.sql','_algo6_personalization_ranker_v2.sql',
       '_algo6_l6_training_model_pipeline.sql','_ads_v2_personalization_targeting_v4.sql',
+      '_algo6_final_personalization_corrective_c1.sql',
     ]) psql(db, migration(suffix));
   }
   return db;
@@ -105,20 +115,23 @@ function dropDatabase(db) {
 
 function seedActors(db) {
   psql(db, `set session_replication_role=replica;
-    insert into auth.users(id) values('${ids.viewer}'),('${ids.minor}'),('${ids.creator}'),('${ids.viewerB}');
+    insert into auth.users(id) values('${ids.viewer}'),('${ids.minor}'),('${ids.creator}'),('${ids.viewerB}'),
+      ('${ids.creatorRegionUs}');
     insert into public.user_profiles(id,username,is_private) values
       ('${ids.viewer}','final_viewer',false),('${ids.minor}','final_minor',false),
-      ('${ids.creator}','final_creator',false),('${ids.viewerB}','final_viewer_b',false);
+      ('${ids.creator}','final_creator_ve',false),('${ids.viewerB}','final_viewer_b',false),
+      ('${ids.creatorRegionUs}','final_creator_us',false);
     insert into private.user_age_eligibility(
       user_id,status,minimum_age,policy_version,evaluated_at,source,age_band,birth_date
     ) values
       ('${ids.viewer}','eligible',13,'nelyon-age-v2',clock_timestamp(),'legacy_remediation','age_18_plus','1990-01-01'),
       ('${ids.minor}','eligible',13,'nelyon-age-v2',clock_timestamp(),'legacy_remediation','age_13_17','2012-01-01'),
       ('${ids.creator}','eligible',13,'nelyon-age-v2',clock_timestamp(),'legacy_remediation','age_18_plus','1991-01-01'),
-      ('${ids.viewerB}','eligible',13,'nelyon-age-v2',clock_timestamp(),'legacy_remediation','age_18_plus','1992-01-01');
+      ('${ids.viewerB}','eligible',13,'nelyon-age-v2',clock_timestamp(),'legacy_remediation','age_18_plus','1992-01-01'),
+      ('${ids.creatorRegionUs}','eligible',13,'nelyon-age-v2',clock_timestamp(),'legacy_remediation','age_18_plus','1991-01-01');
     insert into public.videos(id,user_id,video_url,caption,created_at) values
       ('${ids.candidate}','${ids.creator}','https://example.test/final.mp4','cars candidate',clock_timestamp()-interval '1 hour'),
-      ('${ids.candidateFood}','${ids.creator}','https://example.test/food.mp4','food candidate',clock_timestamp()-interval '1 hour');
+      ('${ids.candidateFood}','${ids.creatorRegionUs}','https://example.test/food.mp4','food candidate',clock_timestamp()-interval '1 hour');
     set session_replication_role=origin;`);
 }
 
@@ -192,36 +205,54 @@ test('final macro compiles and preserves one secured, adaptive authority end to 
       assert.equal(lastLine(psql(db, `select embedding_provider_call_count from
         private.personalization_interest_taxonomy where id='${taxonomyJob.interest_id}'`)), '1');
 
-      rejected(actorCall(db, 'anon', null, 'select public.get_my_personalization_onboarding_v1()',
+      rejected(actorCall(db, 'anon', null, 'select public.get_my_personalization_onboarding_v2()',
         { allowFailure: true }), 'permission denied');
       rejected(actorCall(db, 'authenticated', ids.viewer,
-        `select public.save_my_personalization_preferences_v1('es','{}','GLOBAL',array['cars_motorsport'],true,false)`,
+        `select public.save_my_personalization_preferences_v2('es','{}','US','GLOBAL',array['cars_motorsport'],true,false)`,
         { allowFailure: true }), 'parent_interest_count');
       const saved = json(actorCall(db, 'authenticated', ids.viewer,
-        `select public.save_my_personalization_preferences_v1('es',array['en'],'US',${selection},true,true)`));
+        `select public.save_my_personalization_preferences_v2('es',array['en'],'US','VE',${selection},true,true)`));
       assert.equal(saved.saved, true);
       assert.equal(json(actorCall(db, 'authenticated', ids.viewer,
-        'select public.get_my_personalization_onboarding_v1()')).completed, false);
+        'select public.get_my_personalization_onboarding_v2()')).completed, false);
       actorCall(db, 'authenticated', ids.viewer,
         `select public.follow_user('${ids.viewer}','${ids.creator}')`);
+      actorCall(db, 'authenticated', ids.viewer,
+        `select public.follow_user('${ids.viewer}','${ids.creatorRegionUs}')`);
       assert.equal(json(actorCall(db, 'authenticated', ids.viewer,
         'select public.complete_my_personalization_onboarding_v1()')).completed, true);
       // An intentional edit resets the behavior epoch after required onboarding follows.
       actorCall(db, 'authenticated', ids.viewer,
-        `select public.save_my_personalization_preferences_v1('es',array['en'],'US',${selection},true,true)`);
+        `select public.save_my_personalization_preferences_v2('es',array['en'],'US','VE',${selection},true,true)`);
 
       actorCall(db, 'authenticated', ids.viewerB,
-        `select public.save_my_personalization_preferences_v1('en',array['es'],'BR',${foodSelection},true,true)`);
+        `select public.save_my_personalization_preferences_v2('en',array['es'],'BR','BR',${foodSelection},true,true)`);
+
+      psql(db, `insert into private.user_personalization_profiles(
+          user_id,onboarding_version,primary_language_tag,additional_language_tags,
+          account_region_code,content_region_code,personalization_enabled,
+          ads_personalization_consent,preferences_updated_at,onboarding_completed_at,created_at,updated_at
+        ) values
+          ('${ids.creator}','personalization-onboarding-v2','es','{}','VE','JP',true,false,
+            clock_timestamp(),clock_timestamp(),clock_timestamp(),clock_timestamp()),
+          ('${ids.creatorRegionUs}','personalization-onboarding-v2','en','{}','US','VE',true,false,
+            clock_timestamp(),clock_timestamp(),clock_timestamp(),clock_timestamp())
+        on conflict(user_id) do update set
+          account_region_code=excluded.account_region_code,
+          content_region_code=excluded.content_region_code,
+          updated_at=excluded.updated_at;`);
       actorCall(db, 'authenticated', ids.viewerB,
         `select public.follow_user('${ids.viewerB}','${ids.creator}')`);
       actorCall(db, 'authenticated', ids.viewerB,
+        `select public.follow_user('${ids.viewerB}','${ids.creatorRegionUs}')`);
+      actorCall(db, 'authenticated', ids.viewerB,
         'select public.complete_my_personalization_onboarding_v1()');
       actorCall(db, 'authenticated', ids.viewerB,
-        `select public.save_my_personalization_preferences_v1('en',array['es'],'BR',${foodSelection},true,true)`);
+        `select public.save_my_personalization_preferences_v2('en',array['es'],'BR','BR',${foodSelection},true,true)`);
 
       markSemanticFixtureReady(db);
       psql(db, `update private.algo_l1_policy set policy_version='nelyon-algo-final-cold-start-test',
-        production_rollout_bps=10000,exploration_weight=0,freshness_weight=0,
+        production_rollout_bps=0,exploration_weight=0,freshness_weight=0,
         l2_affinity_enabled=false,l3_quality_enabled=false,l4_context_enabled=false,l5_semantic_enabled=false
         where singleton;`);
       const coldSessionA = 'f4000000-0000-4000-8000-000000000001';
@@ -248,6 +279,156 @@ test('final macro compiles and preserves one secured, adaptive authority end to 
       assert.ok(Number(coldB[ids.candidateFood].interest) > Number(coldB[ids.candidate].interest));
       assert.equal(Number(coldA[ids.candidate].language), 6);
       assert.equal(Number(coldB[ids.candidateFood].language), 6);
+      assert.equal(lastLine(psql(db, `select ranking_mode from private.organic_ranking_decisions
+        where client_session_id='${coldSessionA}' order by created_at desc limit 1`)), 'behavioral_l5');
+      assert.ok(Number(lastLine(psql(db, `select item.feature_snapshot->>'content_region_points'
+        from private.organic_ranking_items item join private.organic_ranking_decisions decision
+          on decision.id=item.decision_id where decision.client_session_id='${coldSessionA}'
+          and item.video_id='${ids.candidate}'`))) > 0);
+      assert.equal(Number(lastLine(psql(db, `select item.feature_snapshot->>'content_region_points'
+        from private.organic_ranking_items item join private.organic_ranking_decisions decision
+          on decision.id=item.decision_id where decision.client_session_id='${coldSessionA}'
+          and item.video_id='${ids.candidateFood}'`))), 0);
+
+      const creatorRecommendations = json(actorCall(db, 'authenticated', ids.viewer,
+        `select coalesce(jsonb_agg(jsonb_build_object('id',creator_id,'region',region_match)),'[]'::jsonb)
+          from public.get_my_onboarding_creator_recommendations_v1(10)`));
+      assert.equal(Number(creatorRecommendations.find(row => row.id === ids.creator).region), 1);
+      assert.equal(Number(creatorRecommendations.find(row => row.id === ids.creatorRegionUs).region), 0);
+
+      const geoUsVersion = randomUUID();
+      const geoVeVersion = randomUUID();
+      psql(db, `set session_replication_role=replica;
+        insert into private.advertising_audience_versions(
+          id,audience_id,version_number,age_scope,min_age,max_age,targeting_policy_version,
+          definition_fingerprint,creation_idempotency_key,created_by
+        ) values
+          ('${geoUsVersion}',gen_random_uuid(),1,'adults_only',18,null,'nelyon-ads-targeting-v4',
+            repeat('a',64),gen_random_uuid(),'${ids.viewer}'),
+          ('${geoVeVersion}',gen_random_uuid(),1,'adults_only',18,null,'nelyon-ads-targeting-v4',
+            repeat('b',64),gen_random_uuid(),'${ids.viewer}');
+        insert into private.advertising_geo_targets(audience_version_id,match_mode,target_type,country_code)
+        values('${geoUsVersion}','include','country','US'),('${geoVeVersion}','include','country','VE');
+        set session_replication_role=origin;`);
+      assert.equal(lastLine(psql(db, `select private.ads_v4_viewer_matches_personalization(
+        '${geoUsVersion}','${ids.viewer}',clock_timestamp())`)), 't');
+      assert.equal(lastLine(psql(db, `select private.ads_v4_viewer_matches_personalization(
+        '${geoVeVersion}','${ids.viewer}',clock_timestamp())`)), 'f');
+
+      const preferencesBeforeEdit = lastLine(psql(db, `select preferences_updated_at::text
+        from private.user_personalization_profiles where user_id='${ids.viewer}'`));
+      actorCall(db, 'authenticated', ids.viewer,
+        `select public.unfollow_user('${ids.viewer}','${ids.creator}')`);
+      actorCall(db, 'authenticated', ids.viewer,
+        `select public.unfollow_user('${ids.viewer}','${ids.creatorRegionUs}')`);
+      const edited = json(actorCall(db, 'authenticated', ids.viewer,
+        `select public.save_my_personalization_preferences_v2('es',array['en'],'US','VE',${selection},true,true)`));
+      assert.equal(edited.saved, true);
+      const completedEdit = json(actorCall(db, 'authenticated', ids.viewer,
+        'select public.complete_my_personalization_onboarding_v1()'));
+      assert.equal(completedEdit.completed, true);
+      assert.equal(completedEdit.required_creator_follows, 0);
+      assert.equal(lastLine(psql(db, `select preferences_updated_at > '${preferencesBeforeEdit}'::timestamptz
+        from private.user_personalization_profiles where user_id='${ids.viewer}'`)), 't');
+
+      rejected(actorCall(db, 'authenticated', ids.viewerB,
+        `update private.user_personalization_profiles set account_region_code='CA'
+          where user_id='${ids.viewer}'`, { allowFailure: true }), 'permission denied');
+      rejected(actorCall(db, 'authenticated', ids.viewer,
+        `select public.save_my_personalization_preferences_v2('es','{}','GLOBAL','VE',${selection},true,true)`,
+        { allowFailure: true }), 'personalization_account_region_invalid');
+
+      const exitSession = 'f4000000-0000-4000-8000-000000000010';
+      psql(db, `set session_replication_role=replica;
+        insert into auth.users(id) values
+          ('${ids.exitSwipeCreator}'),('${ids.exitBackgroundCreator}'),
+          ('${ids.exitUnmountCreator}'),('${ids.exitUnknownCreator}');
+        insert into public.user_profiles(id,username,is_private) values
+          ('${ids.exitSwipeCreator}','exit_swipe_creator',false),
+          ('${ids.exitBackgroundCreator}','exit_background_creator',false),
+          ('${ids.exitUnmountCreator}','exit_unmount_creator',false),
+          ('${ids.exitUnknownCreator}','exit_unknown_creator',false);
+        insert into private.user_age_eligibility(
+          user_id,status,minimum_age,policy_version,evaluated_at,source,age_band,birth_date
+        ) select id,'eligible',13,'nelyon-age-v2',clock_timestamp(),'legacy_remediation','age_18_plus','1990-01-01'
+          from auth.users where id in(
+            '${ids.exitSwipeCreator}','${ids.exitBackgroundCreator}',
+            '${ids.exitUnmountCreator}','${ids.exitUnknownCreator}');
+        insert into public.videos(id,user_id,video_url,caption,created_at) values
+          ('${ids.exitSwipeVideo}','${ids.exitSwipeCreator}','https://example.test/exit-swipe.mp4','exit swipe',clock_timestamp()-interval '2 hours'),
+          ('${ids.exitBackgroundVideo}','${ids.exitBackgroundCreator}','https://example.test/exit-background.mp4','exit background',clock_timestamp()-interval '2 hours'),
+          ('${ids.exitUnmountVideo}','${ids.exitUnmountCreator}','https://example.test/exit-unmount.mp4','exit unmount',clock_timestamp()-interval '2 hours'),
+          ('${ids.exitUnknownVideo}','${ids.exitUnknownCreator}','https://example.test/exit-unknown.mp4','exit unknown',clock_timestamp()-interval '2 hours');
+        set session_replication_role=origin;
+        select private.sync_video_semantic_profile_v1('${ids.exitSwipeVideo}');
+        select private.sync_video_semantic_profile_v1('${ids.exitBackgroundVideo}');
+        select private.sync_video_semantic_profile_v1('${ids.exitUnmountVideo}');
+        select private.sync_video_semantic_profile_v1('${ids.exitUnknownVideo}');
+        update private.video_semantic_profiles set semantic_input_version='video-semantic-v2',status='ready',
+          embedding=${vectorLiteral(0)},detected_language='es',attempt_count=1,started_at=null,
+          completed_at=clock_timestamp(),last_error_code=null,updated_at=clock_timestamp()
+          where video_id='${ids.exitSwipeVideo}';
+        update private.video_semantic_profiles set semantic_input_version='video-semantic-v2',status='ready',
+          embedding=${vectorLiteral(2)},detected_language='es',attempt_count=1,started_at=null,
+          completed_at=clock_timestamp(),last_error_code=null,updated_at=clock_timestamp()
+          where video_id='${ids.exitBackgroundVideo}';
+        update private.video_semantic_profiles set semantic_input_version='video-semantic-v2',status='ready',
+          embedding=${vectorLiteral(3)},detected_language='es',attempt_count=1,started_at=null,
+          completed_at=clock_timestamp(),last_error_code=null,updated_at=clock_timestamp()
+          where video_id='${ids.exitUnmountVideo}';
+        update private.video_semantic_profiles set semantic_input_version='video-semantic-v2',status='ready',
+          embedding=${vectorLiteral(4)},detected_language='es',attempt_count=1,started_at=null,
+          completed_at=clock_timestamp(),last_error_code=null,updated_at=clock_timestamp()
+          where video_id='${ids.exitUnknownVideo}';
+        delete from public.video_views where viewer_id='${ids.viewer}';
+        update private.algo_l1_policy set policy_version='nelyon-algo-c1-rollout-zero',
+          production_rollout_bps=0,l2_affinity_enabled=false,l3_quality_enabled=false,
+          l4_context_enabled=false,l5_semantic_enabled=false,
+          l2_affinity_negative_min_distinct_videos=1,l3_quality_min_samples=1,
+          l4_negative_min_distinct_videos=1,l5_semantic_negative_min_distinct_videos=1
+          where singleton;
+        insert into public.video_views(video_id,viewer_id,client_event_id,client_session_id,
+          watch_duration_ms,media_duration_ms,completion_ratio,completed,rewatch_count,exit_reason,created_at)
+        values
+          ('${ids.exitSwipeVideo}','${ids.viewer}',gen_random_uuid(),'${exitSession}',100,1000,.1,false,0,'swipe',clock_timestamp()),
+          ('${ids.exitBackgroundVideo}','${ids.viewer}',gen_random_uuid(),'${exitSession}',100,1000,.1,false,0,'background',clock_timestamp()),
+          ('${ids.exitUnmountVideo}','${ids.viewer}',gen_random_uuid(),'${exitSession}',100,1000,.1,false,0,'unmount',clock_timestamp()),
+          ('${ids.exitUnknownVideo}','${ids.viewer}',gen_random_uuid(),'${exitSession}',100,1000,.1,false,0,'unknown',clock_timestamp());`);
+      actorCall(db, 'authenticated', ids.viewer,
+        `select * from public.get_ranked_feed_l1_v1('${exitSession}',50,null,null,null,null,null)`);
+      const exitFeatures = json(psql(db, `select jsonb_object_agg(video_id::text,jsonb_build_object(
+          'l2',feature_snapshot->'creator_affinity_points',
+          'l3',feature_snapshot->'l3_quality_points',
+          'l4',feature_snapshot->'negative_creator_penalty',
+          'l5',feature_snapshot->'l5_semantic_negative_penalty',
+          'short',feature_snapshot->'short_watch_points',
+          'confidence',feature_snapshot->'behavioral_confidence',
+          'seed',feature_snapshot->'explicit_seed_weight'))
+        from private.organic_ranking_items where decision_id=(
+          select id from private.organic_ranking_decisions where client_session_id='${exitSession}'
+          order by created_at desc limit 1)`));
+      assert.equal(lastLine(psql(db, `select ranking_mode from private.organic_ranking_decisions
+        where client_session_id='${exitSession}' order by created_at desc limit 1`)), 'behavioral_l5');
+      assert.ok(Number(exitFeatures[ids.exitSwipeVideo].l2) < 0);
+      assert.ok(Number(exitFeatures[ids.exitSwipeVideo].l3) < 0);
+      assert.ok(Number(exitFeatures[ids.exitSwipeVideo].l4) > 0);
+      assert.ok(Number(exitFeatures[ids.exitSwipeVideo].l5) > 0);
+      assert.ok(Number(exitFeatures[ids.exitSwipeVideo].short) > 0);
+      for (const videoId of [ids.exitBackgroundVideo,ids.exitUnmountVideo,ids.exitUnknownVideo]) {
+        assert.equal(Number(exitFeatures[videoId].l2), 0, `${videoId} L2`);
+        assert.equal(Number(exitFeatures[videoId].l3), 0, `${videoId} L3`);
+        assert.equal(Number(exitFeatures[videoId].l4), 0, `${videoId} L4`);
+        assert.equal(Number(exitFeatures[videoId].l5), 0, `${videoId} L5`);
+        assert.equal(Number(exitFeatures[videoId].short), 0, `${videoId} viewer-history`);
+      }
+      assert.equal(Number(exitFeatures[ids.exitSwipeVideo].confidence), .05);
+      assert.equal(Number(exitFeatures[ids.exitSwipeVideo].seed), .95);
+
+      // Region semantics were proven above. Neutralize that independent stable
+      // preference so the historical behavior-adaptation fixture compares
+      // semantically equivalent candidates.
+      psql(db, `update private.user_personalization_profiles
+        set content_region_code='GLOBAL' where user_id='${ids.viewer}'`);
 
       for (const [signalCount, expected] of [[0,1],[5,.75],[10,.5],[15,.25],[20,0]]) {
         psql(db, `delete from public.video_views where viewer_id='${ids.viewer}';
@@ -353,9 +534,11 @@ test('final macro compiles and preserves one secured, adaptive authority end to 
       assert.equal(adultTraits.eligible, true);
       assert.ok(adultTraits.explicit_interest_slugs.includes('cars_motorsport'));
       actorCall(db, 'authenticated', ids.minor,
-        `select public.save_my_personalization_preferences_v1('es','{}','US',${selection},true,true)`);
+        `select public.save_my_personalization_preferences_v2('es','{}','US','US',${selection},true,true)`);
       actorCall(db, 'authenticated', ids.minor,
         `select public.follow_user('${ids.minor}','${ids.creator}')`);
+      actorCall(db, 'authenticated', ids.minor,
+        `select public.follow_user('${ids.minor}','${ids.creatorRegionUs}')`);
       actorCall(db, 'authenticated', ids.minor,
         'select public.complete_my_personalization_onboarding_v1()');
       const minorTraits = json(psql(db, `select private.resolve_safe_personalization_traits_v1('${ids.minor}')`));
@@ -397,6 +580,37 @@ test('final macro compiles and preserves one secured, adaptive authority end to 
           ('${modelTwo}','algo6-l6-test-two','candidate','organic-ranking-features-personalization-v2',
             'algo6-l6-label-contract-v1',clock_timestamp()-interval '12 weeks',clock_timestamp()-interval '1 day',250000,
             '{"promotion_eligible":true}'::jsonb,'${payload}'::jsonb);`);
+
+      psql(db, `revoke execute on function public.complete_my_personalization_onboarding_v1()
+        from authenticated;`);
+      assert.notEqual(Number(json(actorCall(db, 'service_role', null,
+        'select public.reconcile_algo_l1_v1()')).personalization_onboarding_contract_missing), 0);
+      rejected(actorCall(db, 'service_role', null,
+        `select public.manage_algo6_model_v1('candidate_to_canary','${modelOne}',null)`,
+        { allowFailure: true }), 'algo6_model_reconciler_not_clean');
+
+      psql(db, `update private.algo6_model_versions set status='canary' where id='${modelOne}';
+        update private.algo_l1_policy set l6_canary_model_id='${modelOne}',
+          policy_version='nelyon-algo-c1-dirty-canary' where singleton;`);
+      rejected(actorCall(db, 'service_role', null,
+        `select public.manage_algo6_model_v1('canary_to_active','${modelOne}',null)`,
+        { allowFailure: true }), 'algo6_model_reconciler_not_clean');
+
+      psql(db, `update private.algo6_model_versions set status='active' where id='${modelOne}';
+        update private.algo6_model_versions set status='retired' where id='${modelTwo}';
+        update private.algo_l1_policy set l6_canary_model_id=null,l6_active_model_id='${modelOne}',
+          l6_ml_enabled=true,policy_version='nelyon-algo-c1-dirty-active' where singleton;`);
+      rejected(actorCall(db, 'service_role', null,
+        `select public.manage_algo6_model_v1('rollback','${modelOne}','${modelTwo}')`,
+        { allowFailure: true }), 'algo6_model_reconciler_not_clean');
+
+      psql(db, `grant execute on function public.complete_my_personalization_onboarding_v1()
+          to authenticated;
+        update private.algo6_model_versions set status='candidate',retired_at=null where id in('${modelOne}','${modelTwo}');
+        update private.algo_l1_policy set l6_canary_model_id=null,l6_active_model_id=null,
+          l6_ml_enabled=false,policy_version='nelyon-algo-l1-v1' where singleton;`);
+      assert.deepEqual(Object.entries(json(actorCall(db, 'service_role', null,
+        'select public.reconcile_algo_l1_v1()'))).filter(([, value]) => value !== 0), []);
       actorCall(db, 'service_role', null,
         `select public.manage_algo6_model_v1('candidate_to_canary','${modelOne}',null)`);
       actorCall(db, 'service_role', null,
@@ -571,11 +785,11 @@ function seedPerformance(db, macro) {
     set session_replication_role=origin;`);
   if (macro) {
     actorCall(db, 'authenticated', viewer,
-      `select public.save_my_personalization_preferences_v1('es','{}','GLOBAL',${selection},true,false)`);
+      `select public.save_my_personalization_preferences_v2('es','{}','US','GLOBAL',${selection},true,false)`);
     actorCall(db, 'authenticated', viewer, `select public.follow_user('${viewer}','${creator}')`);
     actorCall(db, 'authenticated', viewer, 'select public.complete_my_personalization_onboarding_v1()');
     actorCall(db, 'authenticated', viewer,
-      `select public.save_my_personalization_preferences_v1('es','{}','GLOBAL',${selection},true,false)`);
+      `select public.save_my_personalization_preferences_v2('es','{}','US','GLOBAL',${selection},true,false)`);
   }
   return { viewer, creator };
 }

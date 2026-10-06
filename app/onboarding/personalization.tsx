@@ -24,6 +24,7 @@ const LANGUAGE_LABELS: Record<ContentLanguage, string> = {
   es: 'Español', en: 'English', pt: 'Português', fr: 'Français',
 };
 const SUGGESTED_REGIONS = ['GLOBAL', 'US', 'MX', 'DO', 'PR', 'CO', 'AR', 'BR', 'ES', 'FR', 'PT', 'CA'];
+const SUGGESTED_ACCOUNT_REGIONS = SUGGESTED_REGIONS.filter(region => region !== 'GLOBAL');
 
 function Chip({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
   return (
@@ -48,6 +49,7 @@ export default function PersonalizationOnboardingScreen() {
   const [catalog, setCatalog] = useState<PersonalizationCatalog | null>(null);
   const [primaryLanguage, setPrimaryLanguage] = useState<ContentLanguage>('es');
   const [additionalLanguages, setAdditionalLanguages] = useState<ContentLanguage[]>([]);
+  const [accountRegion, setAccountRegion] = useState('');
   const [contentRegion, setContentRegion] = useState('GLOBAL');
   const [selectedInterests, setSelectedInterests] = useState<Set<string>>(new Set());
   const [selectedCreators, setSelectedCreators] = useState<Set<string>>(new Set());
@@ -68,6 +70,7 @@ export default function PersonalizationOnboardingScreen() {
       setCatalog(nextCatalog);
       if (status.primaryLanguageTag) setPrimaryLanguage(status.primaryLanguageTag);
       setAdditionalLanguages(status.additionalLanguageTags);
+      setAccountRegion(status.accountRegionCode ?? '');
       setContentRegion(status.contentRegionCode ?? 'GLOBAL');
       setSelectedInterests(new Set(status.interestSlugs));
       setPersonalizationEnabled(status.personalizationEnabled);
@@ -112,7 +115,10 @@ export default function PersonalizationOnboardingScreen() {
 
   const validateStep = (): string | null => {
     if (currentStep === 0) {
-      if (!primaryLanguage || !contentRegion.trim()) return 'Selecciona un idioma principal y una región o Global.';
+      if (!primaryLanguage || !/^[A-Z]{2}$/.test(accountRegion.trim().toUpperCase())) {
+        return 'Selecciona tu país o región con un código válido de dos letras.';
+      }
+      if (!contentRegion.trim()) return 'Selecciona una región de contenido o Global.';
       if (additionalLanguages.length > 3) return 'Puedes elegir hasta tres idiomas adicionales.';
     }
     if (currentStep === 1 && selectedParents.length < (catalog?.minimumParentInterests ?? 3)) {
@@ -129,6 +135,7 @@ export default function PersonalizationOnboardingScreen() {
   const preferenceInput = () => ({
     primaryLanguageTag: primaryLanguage,
     additionalLanguageTags: additionalLanguages,
+    accountRegionCode: accountRegion.trim().toUpperCase(),
     contentRegionCode: contentRegion.trim().toUpperCase(),
     interestSlugs: [...selectedInterests],
     personalizationEnabled,
@@ -142,6 +149,10 @@ export default function PersonalizationOnboardingScreen() {
       setSaving(true);
       try {
         await savePersonalizationPreferences(preferenceInput());
+        if (isEditing) {
+          router.replace('/settings');
+          return;
+        }
         const recommendations = await getOnboardingCreatorRecommendations(12);
         setCreators(recommendations);
         setSelectedCreators(new Set(recommendations.filter(item => item.alreadyFollowing).map(item => item.creatorId)));
@@ -196,8 +207,8 @@ export default function PersonalizationOnboardingScreen() {
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
         <NelyonLogo style={styles.logo} />
-        <Text style={styles.progressLabel}>{isEditing ? 'Editar personalización' : `Paso ${currentStep + 1} de 4`}</Text>
-        <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${(currentStep + 1) * 25}%` }]} /></View>
+        <Text style={styles.progressLabel}>{isEditing ? `Editar personalización · Paso ${currentStep + 1} de 3` : `Paso ${currentStep + 1} de 4`}</Text>
+        <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${(currentStep + 1) * (isEditing ? 100 / 3 : 25)}%` }]} /></View>
       </View>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {currentStep === 0 ? <>
@@ -216,7 +227,15 @@ export default function PersonalizationOnboardingScreen() {
                 : values.length < 3 ? [...values, language] : values);
             }} />
           ))}</View>
-          <Text style={styles.sectionLabel}>País o región del contenido que quieres ver</Text>
+          <Text style={styles.sectionLabel}>Tu país o región</Text>
+          <Text style={styles.subtitle}>Este dato autodeclarado aporta contexto regional. No usamos GPS ni ubicación por IP.</Text>
+          <View style={styles.wrap}>{SUGGESTED_ACCOUNT_REGIONS.map(region => (
+            <Chip key={region} label={region} selected={accountRegion === region} onPress={() => setAccountRegion(region)} />
+          ))}</View>
+          <TextInput value={accountRegion} onChangeText={value => setAccountRegion(value.toUpperCase())}
+            autoCapitalize="characters" maxLength={2} placeholder="Código de país" placeholderTextColor={Colors.textSubtle} style={styles.input} />
+          <Text style={styles.sectionLabel}>Región del contenido que quieres ver</Text>
+          <Text style={styles.subtitle}>Esta preferencia controla el descubrimiento y puede ser Global; no define tu ubicación.</Text>
           <View style={styles.wrap}>{SUGGESTED_REGIONS.map(region => (
             <Chip key={region} label={region === 'GLOBAL' ? 'Global' : region} selected={contentRegion === region} onPress={() => setContentRegion(region)} />
           ))}</View>
@@ -262,7 +281,7 @@ export default function PersonalizationOnboardingScreen() {
       <View style={styles.footer}>
         {currentStep > 0 ? <Pressable style={styles.secondaryButton} disabled={saving} onPress={() => setCurrentStep(step => step - 1)}><Text style={styles.secondaryButtonText}>Atrás</Text></Pressable> : null}
         <Pressable style={[styles.primaryButton, saving && styles.disabled]} disabled={saving} onPress={currentStep === 3 ? finish : next}>
-          {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>{currentStep === 3 ? (isEditing ? 'Guardar cambios' : 'Ir al Feed') : 'Continuar'}</Text>}
+          {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>{currentStep === 3 ? 'Ir al Feed' : isEditing && currentStep === 2 ? 'Guardar cambios' : 'Continuar'}</Text>}
         </Pressable>
       </View>
     </SafeAreaView>

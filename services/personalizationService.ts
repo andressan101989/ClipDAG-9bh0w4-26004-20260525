@@ -14,7 +14,8 @@ export interface PersonalizationTopic {
 export interface PersonalizationCatalog {
   contractVersion: string;
   languages: ContentLanguage[];
-  regionContract: string;
+  accountRegionContract: string;
+  contentRegionContract: string;
   minimumParentInterests: number;
   maximumParentInterests: number;
   maximumCreatorFollows: number;
@@ -27,6 +28,7 @@ export interface PersonalizationOnboarding {
   onboardingCompletedAt: string | null;
   primaryLanguageTag: ContentLanguage | null;
   additionalLanguageTags: ContentLanguage[];
+  accountRegionCode: string | null;
   contentRegionCode: string | null;
   personalizationEnabled: boolean;
   adsPersonalizationConsent: boolean;
@@ -37,6 +39,7 @@ export interface PersonalizationOnboarding {
 export interface PersonalizationPreferencesInput {
   primaryLanguageTag: ContentLanguage;
   additionalLanguageTags: ContentLanguage[];
+  accountRegionCode: string;
   contentRegionCode: string;
   interestSlugs: string[];
   personalizationEnabled: boolean;
@@ -68,7 +71,7 @@ function assertNoRpcError(error: { message?: string } | null, fallback: string):
 }
 
 export async function getPersonalizationCatalog(): Promise<PersonalizationCatalog> {
-  const { data, error } = await getSupabaseClient().rpc('get_personalization_onboarding_catalog_v1');
+  const { data, error } = await getSupabaseClient().rpc('get_personalization_onboarding_catalog_v2');
   assertNoRpcError(error, 'personalization_catalog_failed');
   const value = asRecord(data);
   const topics = Array.isArray(value.topics) ? value.topics.map(entry => {
@@ -84,7 +87,8 @@ export async function getPersonalizationCatalog(): Promise<PersonalizationCatalo
   return {
     contractVersion: String(value.contract_version ?? ''),
     languages: asStringArray(value.languages) as ContentLanguage[],
-    regionContract: String(value.region_contract ?? ''),
+    accountRegionContract: String(value.account_region_contract ?? ''),
+    contentRegionContract: String(value.content_region_contract ?? ''),
     minimumParentInterests: Number(value.minimum_parent_interests ?? 3),
     maximumParentInterests: Number(value.maximum_parent_interests ?? 8),
     maximumCreatorFollows: Number(value.maximum_creator_follows ?? 5),
@@ -93,7 +97,7 @@ export async function getPersonalizationCatalog(): Promise<PersonalizationCatalo
 }
 
 export async function getPersonalizationOnboarding(): Promise<PersonalizationOnboarding> {
-  const { data, error } = await getSupabaseClient().rpc('get_my_personalization_onboarding_v1');
+  const { data, error } = await getSupabaseClient().rpc('get_my_personalization_onboarding_v2');
   assertNoRpcError(error, 'personalization_status_failed');
   const value = asRecord(data);
   return {
@@ -105,6 +109,7 @@ export async function getPersonalizationOnboarding(): Promise<PersonalizationOnb
       ? value.primary_language_tag : null,
     additionalLanguageTags: asStringArray(value.additional_language_tags)
       .filter(tag => SUPPORTED_CONTENT_LANGUAGES.includes(tag as ContentLanguage)) as ContentLanguage[],
+    accountRegionCode: typeof value.account_region_code === 'string' ? value.account_region_code : null,
     contentRegionCode: typeof value.content_region_code === 'string' ? value.content_region_code : null,
     personalizationEnabled: value.personalization_enabled !== false,
     adsPersonalizationConsent: value.ads_personalization_consent === true,
@@ -117,9 +122,10 @@ export async function getPersonalizationOnboarding(): Promise<PersonalizationOnb
 export async function savePersonalizationPreferences(
   input: PersonalizationPreferencesInput,
 ): Promise<{ saved: boolean; preferencesUpdatedAt: string | null }> {
-  const { data, error } = await getSupabaseClient().rpc('save_my_personalization_preferences_v1', {
+  const { data, error } = await getSupabaseClient().rpc('save_my_personalization_preferences_v2', {
     p_primary_language_tag: input.primaryLanguageTag,
     p_additional_language_tags: input.additionalLanguageTags,
+    p_account_region_code: input.accountRegionCode,
     p_content_region_code: input.contentRegionCode,
     p_interest_slugs: input.interestSlugs,
     p_personalization_enabled: input.personalizationEnabled,
