@@ -124,6 +124,10 @@ function loadCreateMediaUpload({ authorize = { data: true, error: null } } = {})
       }),
     },
     '../_shared/mediaPurposes.ts': purposeModule,
+    '../_shared/premiumR2Security.ts': {
+      PREMIUM_ORIGINAL_CACHE_CONTROL: 'private, no-store',
+      signPremiumOriginalPutIfAbsent: async () => 'https://upload.example.test/signed-put',
+    },
     '../_shared/r2.ts': {
       R2_PRIVATE_BUCKET: () => 'private-bucket',
       R2_PUBLIC_BUCKET: () => 'public-bucket',

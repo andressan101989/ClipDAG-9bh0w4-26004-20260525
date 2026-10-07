@@ -1,6 +1,10 @@
 import { businessActorHasAdvertiserOwnerMediaAccess,businessActorHasAnyCapability,isUuid } from '../_shared/businessMediaAuth.ts';
 import { authenticatedClient,authenticatedUser,admin,corsHeaders,json } from '../_shared/mediaAuth.ts';
 import { extensionForMime,validateMediaRequest } from '../_shared/mediaPurposes.ts';
+import {
+  PREMIUM_ORIGINAL_CACHE_CONTROL,
+  signPremiumOriginalPutIfAbsent,
+} from '../_shared/premiumR2Security.ts';
 import { R2_PRIVATE_BUCKET,R2_PUBLIC_BUCKET,signPutIfAbsent } from '../_shared/r2.ts';
 
 Deno.serve(async(req)=>{
@@ -11,6 +15,7 @@ Deno.serve(async(req)=>{
   const purpose=String(body.purpose??''),mime=String(body.mime_type??''),visibility=String(body.visibility??'');
   const premiumContentId=body.premium_content_id;
   const isPremiumPurpose=purpose==='creator_premium_teaser_image'||purpose==='creator_premium_original_image';
+  const isPremiumOriginal=purpose==='creator_premium_original_image';
   if(isPremiumPurpose){
     if(!isUuid(premiumContentId))return json({error:'invalid_premium_content'},400);
     if(body.business_owner_id!==undefined&&body.business_owner_id!==null)return json({error:'invalid_premium_media_contract'},400);
@@ -70,7 +75,13 @@ Deno.serve(async(req)=>{
   const {error}=await db.from('media_assets').insert({id,owner_id:ownerId,provider:'r2',media_kind:validated.rule.kind,purpose,visibility,bucket_name:bucket,object_key:key,mime_type:mime,size_bytes:size,original_filename:safeName,status:'pending'});
   if(error) return json({error:'asset_create_failed'},500);
   let uploadUrl:string;
-  try { uploadUrl=await signPutIfAbsent(bucket,key,mime,{}); }
+  try {
+    if(isPremiumOriginal) {
+      uploadUrl=await signPremiumOriginalPutIfAbsent(bucket,key,mime);
+    } else {
+      uploadUrl=await signPutIfAbsent(bucket,key,mime,{});
+    }
+  }
   catch {
     await db.from('media_assets').update({status:'failed',error_code:'presign_failed',updated_at:new Date().toISOString()}).eq('id',id);
     return json({error:'presign_failed'},503);
@@ -83,5 +94,8 @@ Deno.serve(async(req)=>{
     }).eq('id',id);
     return json({error:'asset_state_failed'},503);
   }
-  return json({success:true,data:{assetId:id,uploadUrl,method:'PUT',headers:{'Content-Type':mime,'If-None-Match':'*'},expiresAt:new Date(Date.now()+300_000).toISOString(),ownerId}});
+  const uploadContract=isPremiumOriginal
+    ? {headers:{'Content-Type':mime,'If-None-Match':'*','Cache-Control':PREMIUM_ORIGINAL_CACHE_CONTROL}}
+    : {headers:{'Content-Type':mime,'If-None-Match':'*'}};
+  return json({success:true,data:{assetId:id,uploadUrl,method:'PUT',...uploadContract,expiresAt:new Date(Date.now()+300_000).toISOString(),ownerId}});
 });

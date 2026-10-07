@@ -1,6 +1,10 @@
 import { businessActorHasAnyCapability } from "../_shared/businessMediaAuth.ts";
 import { authenticatedUser, admin, corsHeaders, json } from "../_shared/mediaAuth.ts";
 import {
+  PREMIUM_ORIGINAL_CACHE_CONTROL,
+  premiumOriginalHasRequiredCacheControl,
+} from "../_shared/premiumR2Security.ts";
+import {
   deleteObject,
   headObject,
   isR2NotFound,
@@ -12,7 +16,8 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export type ObjectMismatchCode =
   | "object_size_mismatch"
   | "object_content_type_mismatch"
-  | "object_size_and_content_type_mismatch";
+  | "object_size_and_content_type_mismatch"
+  | "premium_original_cache_control_mismatch";
 
 export function classifyObjectMismatch(
   expectedSize: number,
@@ -50,6 +55,28 @@ export function objectMismatchDiagnostic(
       `actual_size=${actualSize}`,
       `expected_type=${expectedContentType}`,
       `actual_type=${actualContentType}`,
+    ].join(";"),
+  };
+}
+
+export function premiumOriginalCacheControlMismatchDiagnostic(
+  purpose: unknown,
+  actualCacheControl: unknown,
+) {
+  if (
+    purpose !== "creator_premium_original_image" ||
+    premiumOriginalHasRequiredCacheControl(actualCacheControl)
+  ) return null;
+  const actualState =
+    typeof actualCacheControl === "string" && actualCacheControl.trim()
+      ? "invalid"
+      : "missing";
+  return {
+    error: "object_mismatch",
+    mismatch_code: "premium_original_cache_control_mismatch" as const,
+    details: [
+      `expected_cache_control=${PREMIUM_ORIGINAL_CACHE_CONTROL}`,
+      `actual_cache_control=${actualState}`,
     ].join(";"),
   };
 }
@@ -123,7 +150,7 @@ Deno.serve(async (req) => {
     const actualContentType = String(head.ContentType ?? "");
     const sizeMismatch = Number(head.ContentLength) !== Number(a.size_bytes);
     const contentTypeMismatch = head.ContentType !== a.mime_type;
-    const mismatchDiagnostic =
+    const contentMismatchDiagnostic =
       sizeMismatch || contentTypeMismatch
         ? objectMismatchDiagnostic(
             expectedSize,
@@ -132,6 +159,11 @@ Deno.serve(async (req) => {
             actualContentType,
           )
         : null;
+    const mismatchDiagnostic = contentMismatchDiagnostic ??
+      premiumOriginalCacheControlMismatchDiagnostic(
+        a.purpose,
+        head.CacheControl,
+      );
     if (mismatchDiagnostic) {
       console.warn("[finalize-media-upload] object mismatch", {
         mismatchCode: mismatchDiagnostic.mismatch_code,

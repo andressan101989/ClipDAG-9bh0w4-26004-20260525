@@ -391,6 +391,7 @@ const R2_RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 type R2UploadHeaders = {
   "Content-Type": string;
   "If-None-Match": "*";
+  "Cache-Control"?: string;
 };
 type R2PutResponse = Awaited<ReturnType<typeof expoFetch>>;
 type R2PutFetcher = (
