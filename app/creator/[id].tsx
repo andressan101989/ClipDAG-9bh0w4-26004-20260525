@@ -34,16 +34,13 @@ import {
   type CreatorProfile, type CreatorStats,
 } from '@/services/creatorService';
 import {
-  fetchSubscriptionPlans as fetchCreatorSubscriptionPlans, checkSubscription, subscribeToPlan,
-  type SubscriptionPlan,
-} from '@/services/subscriptionService';
-import { getPremiumDMConfig, type PremiumDMConfig } from '@/services/premiumDmService';
-import {
   boostCreatorProfile, isProfileBoosted, type BoostTier,
 } from '@/services/boostService';
-import { fetchPurchasedContentIds, purchaseContent } from '@/services/economyService';
+import {
+  CREATOR_PREMIUM_FOUNDATION_MESSAGE,
+  type CreatorPremiumCatalogItem,
+} from '@/services/creatorPremiumService';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
-import { SubscribeSheet } from '@/components/creator/SubscribeSheet';
 import { BoostProfileSheet } from '@/components/creator/BoostProfileSheet';
 import { ReportModal } from '@/components/feature/ReportModal';
 import { StoryViewer } from '@/components/feature/StoryViewer';
@@ -54,18 +51,11 @@ const { width: W } = Dimensions.get('window');
 const THUMB = (W - Spacing.md * 2 - 4) / 3;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function fmt(n: number, d = 0) {
-  return n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
-}
 function fmtShort(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
   if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'K';
   return String(n);
 }
-function daysLeft(iso: string): number {
-  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000));
-}
-
 type ProfileTab = 'videos' | 'exclusive' | 'products';
 
 
@@ -93,9 +83,7 @@ export default function CreatorProfileScreen() {
   const [creator,     setCreator]     = useState<CreatorProfile | null>(null);
   const [stats,       setStats]       = useState<CreatorStats | null>(null);
   const [videos,      setVideos]      = useState<any[]>([]);
-  const [exclusive,   setExclusive]   = useState<any[]>([]);
-  const [plans,       setPlans]       = useState<SubscriptionPlan[]>([]);
-  const [dmConfig,    setDmConfig]    = useState<PremiumDMConfig | null>(null);
+  const [exclusive,   setExclusive]   = useState<CreatorPremiumCatalogItem[]>([]);
   const [showcase,    setShowcase]    = useState<MarketplaceCreatorShowcaseProduct[]>([]);
   const [showcaseNextCursor, setShowcaseNextCursor] = useState<{ sortPosition: number; id: string } | null>(null);
   const [showcaseLoadingMore, setShowcaseLoadingMore] = useState(false);
@@ -103,16 +91,10 @@ export default function CreatorProfileScreen() {
   const [loading,     setLoading]     = useState(true);
   const showcaseLoadMoreRef = useRef(false);
 
-  // User-specific state
-  const [subStatus,     setSubStatus]     = useState<{
-    isSubscribed: boolean; freeDmsLeft: number; planName: string; expiresAt?: string;
-  }>({ isSubscribed: false, freeDmsLeft: 0, planName: '' });
   const [isBoosted,     setIsBoosted]     = useState(false);
-  const [purchasedIds,  setPurchasedIds]  = useState<Set<string>>(new Set());
 
   // UI state
   const [profileTab,    setProfileTab]    = useState<ProfileTab>('videos');
-  const [subSheetVis,   setSubSheetVis]   = useState(false);
   const [boostSheetVis, setBoostSheetVis] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
   const [reportModalVisible, setReportModalVisible] = useState(false);
@@ -138,15 +120,12 @@ export default function CreatorProfileScreen() {
         setShowcase([]);
         setShowcaseNextCursor(null);
         setShowcaseVisible(true);
-        const [profile, creatorStats, vids, excl, subPlans, dm, purchased, boosted, showcasePage] =
+        const [profile, creatorStats, vids, excl, boosted, showcasePage] =
           await Promise.all([
             fetchCreatorProfile(creatorId),
             fetchCreatorStats(creatorId),
             fetchCreatorVideos(creatorId, 24),
             fetchCreatorExclusiveContent(creatorId),
-            fetchCreatorSubscriptionPlans({ creatorId }),
-            getPremiumDMConfig(creatorId),
-            user?.id ? fetchPurchasedContentIds(user.id) : Promise.resolve(new Set<string>()),
             isProfileBoosted(creatorId),
             fetchCreatorShowcase(creatorId).catch(() => ({ items: [], nextCursor: null, visible: false })),
           ]);
@@ -156,30 +135,16 @@ export default function CreatorProfileScreen() {
         setStats(creatorStats);
         setVideos(vids);
         setExclusive(excl);
-        setPlans(subPlans);
-        setDmConfig(dm);
-        setPurchasedIds(purchased);
         setIsBoosted(boosted.boosted);
         setShowcase(showcasePage.visible === false ? [] : showcasePage.items);
         setShowcaseNextCursor(showcasePage.visible === false ? null : showcasePage.nextCursor as { sortPosition: number; id: string } | null);
         setShowcaseVisible(showcasePage.visible !== false);
 
-        // Subscription status
-        if (user?.id && user.id !== creatorId) {
-          const sub = await checkSubscription(user.id, creatorId);
-          if (cancelled) return;
-          setSubStatus({
-            isSubscribed: sub.isSubscribed,
-            freeDmsLeft: sub.freeDmsRemaining,
-            planName: sub.planName,
-          });
-        }
-
         setLoading(false);
       };
       load();
       return () => { cancelled = true; };
-    }, [creatorId, user?.id, refreshStories]),
+    }, [creatorId, refreshStories]),
   );
 
   const loadMoreShowcase = useCallback(async () => {
@@ -227,19 +192,6 @@ export default function CreatorProfileScreen() {
     setFollowLoading(false);
   }, [user?.id, creatorId, toggleFollow, isFollowingCtx, followLoading, refreshStories]);
 
-  // ── Subscribe ─────────────────────────────────────────────────────────────
-  const handleSubscribe = useCallback(async (plan: SubscriptionPlan) => {
-    if (balance < plan.price_bdag) {
-      showAlert('Saldo insuficiente', `Necesitas ${fmt(plan.price_bdag)} BDAG`);
-      return;
-    }
-    const result = await subscribeToPlan(plan.id);
-    if (!result.success) { showAlert('Error', result.error ?? 'No se pudo suscribir'); return; }
-    walletData?.fullSync?.();
-    setSubStatus({ isSubscribed: true, freeDmsLeft: 10, planName: plan.name });
-    showAlert('¡Bienvenido al club!', `Suscrito a "${plan.name}" · Activo hasta ${new Date(result.expires_at ?? '').toLocaleDateString()}`);
-  }, [balance, walletData, showAlert]);
-
   // ── Boost Profile ─────────────────────────────────────────────────────────
   const handleBoostProfile = useCallback(async (tier: BoostTier) => {
     if (balance < tier.bdag) {
@@ -252,38 +204,6 @@ export default function CreatorProfileScreen() {
     setIsBoosted(true);
     showAlert('¡Perfil patrocinado!', `@${creator?.username} aparecerá en posiciones destacadas durante ${tier.hours}h`);
   }, [balance, creatorId, creator, walletData, showAlert]);
-
-  // ── Purchase exclusive content ────────────────────────────────────────────
-  const handlePurchaseContent = useCallback(async (contentId: string, priceBdag: number) => {
-    if (subStatus.isSubscribed) {
-      showAlert('Acceso gratis', 'Eres suscriptor — acceso automático a este contenido');
-      return;
-    }
-    if (balance < priceBdag) {
-      showAlert('Saldo insuficiente', `Necesitas ${fmt(priceBdag)} BDAG`);
-      return;
-    }
-    showAlert(
-      'Desbloquear contenido',
-      `Precio: ${fmt(priceBdag)} BDAG`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: `Desbloquear · ${fmt(priceBdag)} BDAG`,
-          onPress: async () => {
-            const result = await purchaseContent(contentId);
-            if (!result.success && !result.already_owned) {
-              showAlert('Error', result.error ?? 'No se pudo completar');
-              return;
-            }
-            walletData?.fullSync?.();
-            setPurchasedIds(prev => new Set([...prev, contentId]));
-            showAlert('¡Desbloqueado!', 'Ahora tienes acceso a este contenido');
-          },
-        },
-      ]
-    );
-  }, [balance, subStatus.isSubscribed, walletData, showAlert]);
 
   if (loading) {
     return (
@@ -374,10 +294,6 @@ export default function CreatorProfileScreen() {
               <LinearGradient colors={['#FF9D00', '#FF5A00', '#A855F7']} style={styles.boostRing}>
                 <Image source={{ uri: avatarUri }} style={styles.avatarImg} contentFit="cover" transition={200} />
               </LinearGradient>
-            ) : subStatus.isSubscribed ? (
-              <LinearGradient colors={['#A855F7', '#7C5CFF']} style={styles.boostRing}>
-                <Image source={{ uri: avatarUri }} style={styles.avatarImg} contentFit="cover" transition={200} />
-              </LinearGradient>
             ) : (
               <LinearGradient colors={['#2C2C3A', '#1C1C28']} style={styles.boostRing}>
                 <Image source={{ uri: avatarUri }} style={styles.avatarImg} contentFit="cover" transition={200} />
@@ -404,17 +320,6 @@ export default function CreatorProfileScreen() {
             <Text style={styles.bio} numberOfLines={3}>{creator.bio}</Text>
           ) : null}
 
-          {/* Subscriber badge */}
-          {subStatus.isSubscribed ? (
-            <LinearGradient colors={['#A855F7', '#7C5CFF']} style={styles.subBadge}>
-              <MaterialIcons name="star" size={11} color="#fff" />
-              <Text style={styles.subBadgeText}>SUSCRIPTOR · {subStatus.planName}</Text>
-              {subStatus.freeDmsLeft > 0 ? (
-                <Text style={styles.subBadgeDMs}>{subStatus.freeDmsLeft} DMs gratis</Text>
-              ) : null}
-            </LinearGradient>
-          ) : null}
-
           {/* Stats row */}
           <View style={styles.statsRow}>
             {[
@@ -422,7 +327,6 @@ export default function CreatorProfileScreen() {
               { label: 'Seguidores', val: fmtShort(creator.followers_count) },
               { label: 'Siguiendo', val: fmtShort(creator.following_count) },
               { label: 'Likes',     val: fmtShort(stats?.total_likes ?? 0) },
-              { label: 'Suscrip.',  val: fmtShort(stats?.active_subscribers ?? 0) },
             ].map((s, i) => (
               <React.Fragment key={s.label}>
                 {i > 0 ? <View style={styles.statDivider} /> : null}
@@ -467,37 +371,22 @@ export default function CreatorProfileScreen() {
                       </Text>}
                 </Pressable>
 
-                {/* Subscribe */}
+                {/* Premium finance is deliberately unavailable during B1. */}
                 <Pressable
-                  style={[styles.actionBtn, { flex: 1 }, subStatus.isSubscribed && styles.actionBtnSubbed]}
-                  onPress={() => setSubSheetVis(true)}
+                  style={[styles.actionBtn, { flex: 1 }]}
+                  onPress={() => showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE)}
                 >
-                  {subStatus.isSubscribed ? (
-                    <LinearGradient colors={['#A855F7', '#7C5CFF']} style={styles.actionBtnGradInner}>
-                      <MaterialIcons name="star" size={14} color="#fff" />
-                      <Text style={[styles.actionBtnText, { color: '#fff' }]}>Suscrito</Text>
-                    </LinearGradient>
-                  ) : (
-                    <>
-                      <MaterialIcons name="star-border" size={14} color={Colors.textSecondary} />
-                      <Text style={styles.actionBtnText}>Suscribirse</Text>
-                    </>
-                  )}
+                  <MaterialIcons name="lock-clock" size={14} color={Colors.textSecondary} />
+                  <Text style={styles.actionBtnText}>Premium pronto</Text>
                 </Pressable>
 
                 {/* Message */}
                 <Pressable
-                  style={[styles.iconBtn, dmConfig?.enabled && styles.iconBtnPremium]}
+                  style={styles.iconBtn}
                   onPress={() => router.push(`/chat/${creatorId}`)}
                   hitSlop={4}
                 >
-                  {dmConfig?.enabled ? (
-                    <LinearGradient colors={['#FF9D00', '#FF5A00']} style={styles.iconBtnGrad}>
-                      <MaterialIcons name="mark-email-read" size={16} color="#fff" />
-                    </LinearGradient>
-                  ) : (
-                    <MaterialCommunityIcons name="message-text-outline" size={18} color={Colors.textSecondary} />
-                  )}
+                  <MaterialCommunityIcons name="message-text-outline" size={18} color={Colors.textSecondary} />
                 </Pressable>
 
                 {/* Llamar (video call) */}
@@ -520,22 +409,6 @@ export default function CreatorProfileScreen() {
                   <Text style={styles.boostBarCta}>{isBoosted ? 'Activo' : 'Boost'}</Text>
                 </LinearGradient>
               </Pressable>
-
-              {/* Premium DM hint */}
-              {dmConfig?.enabled ? (
-                <Pressable style={styles.premiumDMBar}
-                  onPress={() => router.push(`/chat/${creatorId}`)}>
-                  <LinearGradient colors={['rgba(255,157,0,0.12)', 'rgba(255,90,0,0.06)']} style={styles.premiumDMBarInner}>
-                    <MaterialIcons name="mark-email-read" size={13} color="#FF9D00" />
-                    <Text style={styles.premiumDMBarText}>
-                      DM Premium activo · {fmt(dmConfig.price_bdag)} BDAG
-                      {subStatus.isSubscribed && subStatus.freeDmsLeft > 0
-                        ? ` · ${subStatus.freeDmsLeft} gratis por tu suscripción`
-                        : ' · Responde en 72h o reembolso automático'}
-                    </Text>
-                  </LinearGradient>
-                </Pressable>
-              ) : null}
             </>
           )}
         </View>
@@ -606,43 +479,29 @@ export default function CreatorProfileScreen() {
               <Text style={styles.emptyTitle}>Sin contenido exclusivo</Text>
               {isOwnProfile ? (
                 <Pressable style={styles.emptyActionBtn}
-                  onPress={() => router.push('/(tabs)/upload')}>
-                  <Text style={styles.emptyActionText}>Publicar contenido exclusivo</Text>
+                  onPress={() => router.push('/creator-monetization')}>
+                  <Text style={styles.emptyActionText}>Ver base Premium segura</Text>
                 </Pressable>
               ) : null}
+              <Text style={styles.premiumFoundationText}>{CREATOR_PREMIUM_FOUNDATION_MESSAGE}</Text>
             </View>
           ) : (
             <View style={styles.exclusiveGrid}>
               {exclusive.map(item => {
-                const owned  = purchasedIds.has(item.id) || isOwnProfile;
-                const isFree = subStatus.isSubscribed;
-                const thumb  = item.preview_url?.startsWith('http')
-                  ? { uri: item.preview_url }
-                  : { uri: `https://picsum.photos/seed/${item.id}/300/400` };
                 return (
                   <Pressable key={item.id} style={styles.exclusiveCard}
-                    onPress={() => !owned && !isFree
-                      ? handlePurchaseContent(item.id, item.price_bdag)
-                      : showAlert('Contenido desbloqueado', 'Puedes acceder a este contenido')
-                    }
+                    onPress={() => showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE)}
                   >
-                    <Image source={thumb} style={styles.exclusiveThumb} contentFit="cover" transition={150} />
-                    {/* Blur/lock overlay for non-subscribers */}
-                    {!owned && !isFree ? (
-                      <LinearGradient colors={['rgba(7,7,15,0.3)', 'rgba(7,7,15,0.85)']}
-                        style={styles.exclusiveLockOverlay}>
-                        <View style={styles.lockIcon}>
-                          <MaterialIcons name="lock" size={16} color="#fff" />
-                        </View>
-                        <Text style={styles.exclusivePrice}>{fmt(item.price_bdag)} BDAG</Text>
-                      </LinearGradient>
-                    ) : (
-                      <View style={styles.exclusiveUnlockedBadge}>
-                        <MaterialIcons name={isFree && !owned ? 'star' : 'check'} size={10} color="#fff" />
+                    <LinearGradient colors={['rgba(124,92,255,0.16)', 'rgba(7,7,15,0.92)']}
+                      style={styles.exclusiveLockOverlay}>
+                      <View style={styles.lockIcon}>
+                        <MaterialIcons name="lock" size={16} color="#fff" />
                       </View>
-                    )}
+                      <Text style={styles.exclusiveFoundationLabel}>Acceso seguro próximamente</Text>
+                    </LinearGradient>
                     <View style={styles.exclusiveCardFooter}>
                       <Text style={styles.exclusiveCardTitle} numberOfLines={1}>{item.title}</Text>
+                      <Text style={styles.exclusiveCardMeta}>{item.content_kind === 'video' ? 'Video' : 'Imagen'}</Text>
                     </View>
                   </Pressable>
                 );
@@ -691,18 +550,6 @@ export default function CreatorProfileScreen() {
         onGetReactions={getStoryReactions}
         onReplyToStory={replyToStory}
         onGetSharedContent={getStorySharedContent}
-      />
-
-      {/* Subscribe sheet */}
-      <SubscribeSheet
-        visible={subSheetVis}
-        plans={plans}
-        balance={balance}
-        isSubscribed={subStatus.isSubscribed}
-        currentPlanName={subStatus.planName}
-        freeDmsLeft={subStatus.freeDmsLeft}
-        onClose={() => setSubSheetVis(false)}
-        onSubscribe={handleSubscribe}
       />
 
       {/* Boost profile sheet */}
@@ -809,16 +656,19 @@ const styles = StyleSheet.create({
   exclusiveThumb:      { width: '100%', height: '100%' },
   exclusiveLockOverlay:{ ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', gap: 6 },
   lockIcon:            { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
+  exclusiveFoundationLabel: { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: FontWeight.semibold, textAlign: 'center', paddingHorizontal: Spacing.md },
   exclusivePrice:      { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.bold, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.full },
   exclusiveUnlockedBadge: { position: 'absolute', top: 6, right: 6, width: 20, height: 20, borderRadius: 10, backgroundColor: 'rgba(0,229,160,0.85)', alignItems: 'center', justifyContent: 'center' },
   exclusiveCardFooter:{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.6)', padding: 6 },
   exclusiveCardTitle:  { color: '#fff', fontSize: 10, fontWeight: FontWeight.semibold },
+  exclusiveCardMeta:   { color: Colors.textSubtle, fontSize: 9, marginTop: 2 },
 
   // Empty states
   emptyState:     { alignItems: 'center', paddingVertical: 48, gap: Spacing.md },
   emptyTitle:     { color: Colors.textSubtle, fontSize: FontSize.md, fontWeight: FontWeight.semibold },
   emptyActionBtn: { backgroundColor: Colors.primaryDim, borderRadius: Radius.md, paddingHorizontal: 20, paddingVertical: 10, borderWidth: 1, borderColor: Colors.primary + '44' },
   emptyActionText:{ color: Colors.primary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  premiumFoundationText: { maxWidth: 320, color: Colors.textSubtle, fontSize: FontSize.xs, lineHeight: 18, textAlign: 'center', paddingHorizontal: Spacing.md },
 
   // Not found
   notFoundText:  { color: Colors.textSecondary, fontSize: FontSize.lg, marginBottom: Spacing.md },

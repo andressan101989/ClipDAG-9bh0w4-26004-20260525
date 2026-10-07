@@ -10,7 +10,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, Pressable, TextInput, StyleSheet,
   ActivityIndicator, Switch, Modal, KeyboardAvoidingView,
-  Platform, Alert,
+  Platform,
 } from 'react-native';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,9 +19,11 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
 import { useWallet } from '@/hooks/useWallet';
-import { getSupabaseClient } from '@/template';
 import { useAlert } from '@/template';
-import { configurePremiumDm } from '@/services/economyService';
+import {
+  CREATOR_PREMIUM_FINANCE_AVAILABLE,
+  CREATOR_PREMIUM_FOUNDATION_MESSAGE,
+} from '@/services/creatorPremiumService';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 
 const PREMIUM_COLOR  = '#FF9D00';
@@ -71,14 +73,13 @@ export default function CreatorMonetizationScreen() {
   const { user } = useAuth();
   const walletData = useWallet();
   const { showAlert } = useAlert();
-  const supabase = getSupabaseClient();
 
   // ── Premium DM state ──────────────────────────────────────────────────────
   const [dmStats,       setDmStats]       = useState<PremiumDMStats | null>(null);
   const [dmEnabled,     setDmEnabled]     = useState(false);
   const [dmPrice,       setDmPrice]       = useState('50');
   const [dmWelcome,     setDmWelcome]     = useState('');
-  const [dmSaving,      setDmSaving]      = useState(false);
+  const dmSaving = false;
   const [dmLoading,     setDmLoading]     = useState(true);
 
   // ── Subscription plans state ──────────────────────────────────────────────
@@ -86,7 +87,7 @@ export default function CreatorMonetizationScreen() {
   const [plansLoading,  setPlansLoading]  = useState(true);
   const [planModal,     setPlanModal]     = useState(false);
   const [editingPlan,   setEditingPlan]   = useState<SubscriptionPlan | null>(null);
-  const [planSaving,    setPlanSaving]    = useState(false);
+  const planSaving = false;
 
   // Plan form
   const [planName,      setPlanName]      = useState('');
@@ -103,52 +104,25 @@ export default function CreatorMonetizationScreen() {
   const loadDMConfig = useCallback(async () => {
     if (!user?.id) return;
     setDmLoading(true);
-    const { data } = await supabase
-      .from('premium_dm_config')
-      .select('*')
-      .eq('user_id', user.id)
-      .single();
-    if (data) {
-      setDmStats(data);
-      setDmEnabled(data.enabled);
-      setDmPrice(String(data.price_bdag ?? 50));
-      setDmWelcome(data.welcome_message ?? '');
-    }
+    setDmStats(null);
+    setDmEnabled(false);
     setDmLoading(false);
-  }, [user?.id, supabase]);
+  }, [user?.id]);
 
   // ── Load subscription plans ───────────────────────────────────────────────
   const loadPlans = useCallback(async () => {
     if (!user?.id) return;
     setPlansLoading(true);
-    const { data } = await supabase
-      .from('subscription_plans')
-      .select('*')
-      .eq('creator_id', user.id)
-      .neq('status', 'deleted')
-      .order('created_at', { ascending: false });
-    setPlans((data as SubscriptionPlan[]) ?? []);
+    setPlans([]);
     setPlansLoading(false);
-  }, [user?.id, supabase]);
+  }, [user?.id]);
 
   useEffect(() => { loadDMConfig(); loadPlans(); }, [loadDMConfig, loadPlans]);
 
   // ── Save premium DM config ────────────────────────────────────────────────
   const handleSaveDM = useCallback(async () => {
-    const price = parseFloat(dmPrice);
-    if (isNaN(price) || price < 1) { showAlert('Error', 'Precio mínimo: 1 BDAG'); return; }
-    setDmSaving(true);
-    const result = await configurePremiumDm({ enabled: dmEnabled, priceBdag: price, welcomeMessage: dmWelcome });
-    setDmSaving(false);
-    if (!result.success) { showAlert('Error', result.error ?? 'No se pudo guardar'); return; }
-    showAlert(
-      dmEnabled ? 'Premium DM activado' : 'Premium DM desactivado',
-      dmEnabled
-        ? `Los usuarios deberán pagar ${price} BDAG para enviarte un DM prioritario`
-        : 'Los usuarios pueden enviarte mensajes gratis'
-    );
-    loadDMConfig();
-  }, [dmEnabled, dmPrice, dmWelcome, configurePremiumDm, showAlert, loadDMConfig]);
+    showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE);
+  }, [showAlert]);
 
   // ── Open plan form ────────────────────────────────────────────────────────
   const openPlanForm = useCallback((plan?: SubscriptionPlan) => {
@@ -182,44 +156,14 @@ export default function CreatorMonetizationScreen() {
 
   // ── Save plan ─────────────────────────────────────────────────────────────
   const handleSavePlan = useCallback(async () => {
-    if (!planName.trim()) { showAlert('Error', 'Nombre requerido'); return; }
-    const price = parseFloat(planPrice);
-    if (isNaN(price) || price < 100) { showAlert('Error', 'Precio mínimo: 100 BDAG/mes'); return; }
-    if (!user?.id) return;
-
-    setPlanSaving(true);
-    const { data, error } = await supabase.rpc('upsert_subscription_plan', {
-      p_creator_id:    user.id,
-      p_name:          planName.trim(),
-      p_description:   planDesc.trim(),
-      p_price_bdag:    price,
-      p_billing_cycle: planCycle,
-      p_perks:         planPerks,
-      p_plan_id:       editingPlan?.id ?? null,
-    });
-    setPlanSaving(false);
-
-    if (error || !data?.success) {
-      showAlert('Error', data?.error ?? error?.message ?? 'No se pudo guardar el plan');
-      return;
-    }
-    closePlanForm();
-    loadPlans();
-    showAlert(
-      editingPlan ? 'Plan actualizado' : 'Plan creado',
-      `"${planName}" ya está disponible para tus seguidores`
-    );
-  }, [planName, planDesc, planPrice, planCycle, planPerks, editingPlan, user?.id, supabase, closePlanForm, loadPlans, showAlert]);
+    showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE);
+  }, [showAlert]);
 
   // ── Toggle plan status ────────────────────────────────────────────────────
   const handleTogglePlan = useCallback(async (plan: SubscriptionPlan) => {
-    const newStatus = plan.status === 'active' ? 'inactive' : 'active';
-    await supabase.from('subscription_plans')
-      .update({ status: newStatus })
-      .eq('id', plan.id)
-      .eq('creator_id', user?.id ?? '');
-    loadPlans();
-  }, [supabase, user?.id, loadPlans]);
+    void plan;
+    showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE);
+  }, [showAlert]);
 
   // ── Add perk ──────────────────────────────────────────────────────────────
   const handleAddPerk = useCallback(() => {
@@ -234,6 +178,35 @@ export default function CreatorMonetizationScreen() {
     { key: 'dm' as const,            label: 'Premium DM',     icon: 'mark-email-read', color: PREMIUM_COLOR },
     { key: 'subscriptions' as const, label: 'Suscripciones',  icon: 'star',            color: SUB_COLOR },
   ];
+
+  if (!CREATOR_PREMIUM_FINANCE_AVAILABLE) {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top }]}>
+        <StatusBar style="light" />
+        <View style={styles.header}>
+          <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
+            <MaterialCommunityIcons name="arrow-left" size={22} color={Colors.textPrimary} />
+          </Pressable>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle}>Base Premium segura</Text>
+            <Text style={styles.headerSub}>CREATOR-PREMIUM-B1</Text>
+          </View>
+        </View>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.xl, gap: Spacing.md }}>
+          <MaterialCommunityIcons name="shield-lock-outline" size={56} color={Colors.primary} />
+          <Text style={{ color: Colors.textPrimary, fontSize: FontSize.xl, fontWeight: FontWeight.bold, textAlign: 'center' }}>
+            Monetización Premium en preparación
+          </Text>
+          <Text style={{ color: Colors.textSecondary, fontSize: FontSize.sm, lineHeight: 21, textAlign: 'center' }}>
+            {CREATOR_PREMIUM_FOUNDATION_MESSAGE}
+          </Text>
+          <Text style={{ color: Colors.textSubtle, fontSize: FontSize.xs, lineHeight: 18, textAlign: 'center' }}>
+            B1 no cobra BDAG, no crea suscripciones y no habilita Premium DM. La publicación segura llegará en fases posteriores.
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>

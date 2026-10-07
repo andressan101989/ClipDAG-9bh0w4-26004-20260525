@@ -9,7 +9,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
-  ActivityIndicator, RefreshControl, Alert,
+  ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -19,9 +19,11 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
 import { useWallet } from '@/hooks/useWallet';
-import { getSupabaseClient } from '@/template';
 import { useAlert } from '@/template';
-import { subscribeToPlan, fetchSubscriptionPlans } from '@/services/economyService';
+import {
+  CREATOR_PREMIUM_FINANCE_AVAILABLE,
+  CREATOR_PREMIUM_FOUNDATION_MESSAGE,
+} from '@/services/creatorPremiumService';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 
 const SUB_COLOR  = '#A855F7';
@@ -291,39 +293,20 @@ export default function MySubscriptionsScreen() {
   const walletData = useWallet();
   const balance = walletData?.balance ?? 0;
   const { showAlert } = useAlert();
-  const supabase = getSupabaseClient();
 
   const [activeSubs,  setActiveSubs]  = useState<ActiveSub[]>([]);
   const [available,   setAvailable]   = useState<AvailablePlan[]>([]);
   const [loading,     setLoading]     = useState(true);
   const [refreshing,  setRefreshing]  = useState(false);
   const [activeTab,   setActiveTab]   = useState<'mine' | 'discover'>('mine');
-  const [subscribing, setSubscribing] = useState<string | null>(null);
-
   const subscribedPlanIds = new Set(activeSubs.map(s => s.plan_id));
 
   const loadData = useCallback(async () => {
     if (!user?.id) return;
-    const [mySubsRes, plansRes] = await Promise.all([
-      supabase
-        .from('creator_subscriptions')
-        .select(`
-          *,
-          plan:subscription_plans(
-            name, price_bdag, billing_cycle, perks,
-            creator:user_profiles!creator_id(username, avatar_url, display_name)
-          )
-        `)
-        .eq('subscriber_id', user.id)
-        .eq('status', 'active')
-        .gt('expires_at', new Date().toISOString())
-        .order('started_at', { ascending: false }),
-      fetchSubscriptionPlans({ limit: 30 }),
-    ]);
-    setActiveSubs((mySubsRes.data as ActiveSub[]) ?? []);
-    setAvailable(plansRes as AvailablePlan[]);
+    setActiveSubs([]);
+    setAvailable([]);
     setLoading(false);
-  }, [user?.id, supabase]);
+  }, [user?.id]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -334,63 +317,41 @@ export default function MySubscriptionsScreen() {
   }, [loadData]);
 
   const handleCancelSub = useCallback((sub: ActiveSub) => {
-    showAlert(
-      'Cancelar suscripción',
-      `¿Cancelar "${sub.plan.name}"? Mantendrás acceso hasta ${new Date(sub.expires_at).toLocaleDateString()}.`,
-      [
-        { text: 'Mantener', style: 'cancel' },
-        {
-          text: 'Cancelar suscripción', style: 'destructive',
-          onPress: async () => {
-            const { data } = await supabase.rpc('cancel_creator_subscription', {
-              p_subscriber_id: user?.id,
-              p_sub_id: sub.id,
-            });
-            if (data?.success) {
-              loadData();
-              showAlert('Cancelada', 'Tu suscripción fue cancelada. El acceso se mantiene hasta la fecha de expiración.');
-            } else {
-              showAlert('Error', data?.error ?? 'No se pudo cancelar');
-            }
-          },
-        },
-      ]
-    );
-  }, [user?.id, supabase, loadData, showAlert]);
+    void sub;
+    showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE);
+  }, [showAlert]);
 
   const handleSubscribe = useCallback(async (plan: AvailablePlan) => {
-    if (balance < plan.price_bdag) {
-      showAlert('Saldo insuficiente', `Necesitas ${fmt(plan.price_bdag)} BDAG. Tienes ${fmt(balance)} BDAG.`);
-      return;
-    }
-    showAlert(
-      `Suscribirse a "${plan.name}"`,
-      `@${plan.creator?.username} · ${fmt(plan.price_bdag)} BDAG/mes\n\nBeneficios incluidos:\n• Todo el contenido exclusivo\n• 10 DMs Premium gratis/mes\n• Insignia VIP`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: `Suscribirse · ${fmt(plan.price_bdag)} BDAG`,
-          onPress: async () => {
-            setSubscribing(plan.id);
-            const result = await subscribeToPlan(plan.id);
-            setSubscribing(null);
-            if (!result.success) { showAlert('Error', result.error ?? 'No se pudo suscribir'); return; }
-            walletData?.fullSync?.();
-            loadData();
-            showAlert(
-              '¡Bienvenido al club!',
-              `Suscrito a "${plan.name}" · Activo hasta ${new Date(result.expires_at ?? '').toLocaleDateString()}`
-            );
-          },
-        },
-      ]
-    );
-  }, [balance, walletData, loadData, showAlert]);
+    void plan;
+    showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE);
+  }, [showAlert]);
 
   const TABS = [
     { key: 'mine' as const,     label: 'Mis suscripciones',   icon: 'star' },
-    { key: 'discover' as const, label: 'Descubrir creadores', icon: 'compass' },
+    { key: 'discover' as const, label: 'Descubrir creadores', icon: 'explore' },
   ];
+
+  if (!CREATOR_PREMIUM_FINANCE_AVAILABLE) {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top }]}>
+        <StatusBar style="light" />
+        <View style={styles.header}>
+          <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
+            <MaterialCommunityIcons name="arrow-left" size={22} color={Colors.textPrimary} />
+          </Pressable>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle}>Suscripciones Premium</Text>
+            <Text style={styles.headerSub}>Fundación segura B1</Text>
+          </View>
+        </View>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.xl, gap: Spacing.md }}>
+          <MaterialCommunityIcons name="shield-lock-outline" size={56} color={SUB_COLOR} />
+          <Text style={styles.emptyTitle}>Suscripciones todavía no disponibles</Text>
+          <Text style={styles.emptySub}>{CREATOR_PREMIUM_FOUNDATION_MESSAGE}</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -446,7 +407,7 @@ export default function MySubscriptionsScreen() {
               <Text style={styles.emptySub}>Suscríbete a un creador para acceder a contenido exclusivo, DMs gratis y más</Text>
               <Pressable style={styles.discoverBtn} onPress={() => setActiveTab('discover')}>
                 <LinearGradient colors={[SUB_COLOR, SUB_COLOR2]} style={styles.discoverBtnGrad}>
-                  <MaterialIcons name="compass" size={16} color="#fff" />
+                  <MaterialIcons name="explore" size={16} color="#fff" />
                   <Text style={styles.discoverBtnText}>Descubrir creadores</Text>
                 </LinearGradient>
               </Pressable>

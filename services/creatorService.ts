@@ -6,6 +6,7 @@
 import { getSupabaseClient } from '@/template';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
 import { mapVideoRow } from '@/services/videoPresentation';
+import { fetchCreatorPremiumCatalog } from '@/services/creatorPremiumService';
 
 export interface CreatorProfile {
   id: string;
@@ -112,26 +113,19 @@ export async function fetchSavedVideoFeed(userId: string, limit = 100): Promise<
   });
 }
 
-/** Fetch creator's exclusive content */
+/** Fetch age-gated canonical Premium metadata. B1 intentionally has no media URLs. */
 export async function fetchCreatorExclusiveContent(userId: string) {
-  const { data } = await db()
-    .from('exclusive_content')
-    .select('*')
-    .eq('creator_id', userId)
-    .eq('status', 'active')
-    .order('created_at', { ascending: false });
-  return data ?? [];
+  try {
+    return (await fetchCreatorPremiumCatalog(userId)).items;
+  } catch {
+    return [];
+  }
 }
 
-/** Fetch creator's active subscription plans */
+/** Charging/plan discovery is deliberately unavailable until the Premium finance phase. */
 export async function fetchCreatorSubscriptionPlans(userId: string) {
-  const { data } = await db()
-    .from('subscription_plans')
-    .select('*')
-    .eq('creator_id', userId)
-    .eq('status', 'active')
-    .order('price_bdag', { ascending: true });
-  return data ?? [];
+  void userId;
+  return [];
 }
 
 /** Check if a user is following a creator */
@@ -165,23 +159,18 @@ export async function unfollowCreator(followerId: string, followingId: string): 
 
 /** Fetch creator economy stats (earnings, subscribers, etc.) */
 export async function fetchCreatorStats(userId: string): Promise<CreatorStats> {
-  const [videos, contentSales, subs] = await Promise.all([
-    db().from('videos').select('likes_count, views_count').eq('user_id', userId),
-    db().from('content_purchases').select('creator_earnings').eq('creator_id', userId).eq('status', 'completed'),
-    db().from('creator_subscriptions').select('id').eq('creator_id', userId).eq('status', 'active'),
-  ]);
+  const videos = await db().from('videos').select('likes_count, views_count').eq('user_id', userId);
 
   const totalLikes   = (videos.data ?? []).reduce((s: number, v: any) => s + Number(v.likes_count ?? 0), 0);
   const totalViews   = (videos.data ?? []).reduce((s: number, v: any) => s + Number(v.views_count ?? 0), 0);
-  const totalEarned  = (contentSales.data ?? []).reduce((s: number, r: any) => s + Number(r.creator_earnings ?? 0), 0);
 
   return {
     total_videos:        (videos.data ?? []).length,
     total_likes:         totalLikes,
     total_views:         totalViews,
-    total_earnings_bdag: totalEarned,
-    active_subscribers:  (subs.data ?? []).length,
-    content_sales:       (contentSales.data ?? []).length,
+    total_earnings_bdag: 0,
+    active_subscribers:  0,
+    content_sales:       0,
   };
 }
 

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View, Text, FlatList, Pressable, TextInput, StyleSheet,
   ActivityIndicator, RefreshControl,
@@ -17,11 +17,11 @@ import {
 } from '@expo-google-fonts/inter';
 import { useMessages } from '@/hooks/useMessages';
 import { useAuth } from '@/hooks/useAuth';
-import { getSupabaseClient } from '@/template';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, Radius, Spacing } from '@/constants/theme';
 import { timeAgo } from '@/services/mockData';
 import { MessageDeliveryIndicator } from '@/components/chat/MessageDeliveryIndicator';
+import { CREATOR_PREMIUM_FOUNDATION_MESSAGE } from '@/services/creatorPremiumService';
 import { TAB_BAR_HEIGHT } from './_layout';
 
 function InboxDeliveryStatus({ item, user }: { item: any; user?: { id?: string } | null }) {
@@ -42,7 +42,6 @@ export default function MessagesScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const { conversations, isLoading, refreshConversations, presenceByUser } = useMessages();
-  const supabase = getSupabaseClient();
   const [chatFontsLoaded] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -54,41 +53,19 @@ export default function MessagesScreen() {
   const searchInputRef = useRef<TextInput>(null);
   const [activeTab, setActiveTab] = useState<'all' | 'direct' | 'group' | 'premium'>('all');
 
-  // Premium DM payments for inbox (creator view)
-  const [premiumDMs, setPremiumDMs] = useState<any[]>([]);
-
-  const loadPremiumDMs = useCallback(async () => {
-    if (!user?.id) return;
-    const { data } = await supabase
-      .from('premium_dm_payments')
-      .select(`
-        *,
-        sender:user_profiles!sender_id(username, avatar_url)
-      `)
-      .eq('recipient_id', user.id)
-      .eq('status', 'held')
-      .order('created_at', { ascending: false })
-      .limit(20);
-    setPremiumDMs(data ?? []);
-  }, [user?.id, supabase]);
-
-  useEffect(() => { loadPremiumDMs(); }, [loadPremiumDMs]);
-
   // Filter conversations
   const filtered = conversations.filter(c => {
     if (search.trim() && !c.displayName.toLowerCase().includes(search.toLowerCase())) return false;
     if (activeTab === 'direct' && c.conversationType !== 'direct') return false;
     if (activeTab === 'group' && c.conversationType !== 'group') return false;
-    if (activeTab === 'premium' && (c.conversationType !== 'direct' || !premiumDMs.some(p => p.sender_id === c.partnerId))) return false;
+    if (activeTab === 'premium' && c.conversationType !== 'direct') return false;
+    if (activeTab === 'premium') return false;
     return true;
   });
 
-  // Sort: premium DMs at top
+  // Premium DM finance is intentionally unavailable in B1. Keep ordinary
+  // conversations authoritative and do not query the absent legacy tables.
   const sortedConversations = [...filtered].sort((a, b) => {
-    const aIsPremium = a.conversationType === 'direct' && premiumDMs.some(p => p.sender_id === a.partnerId);
-    const bIsPremium = b.conversationType === 'direct' && premiumDMs.some(p => p.sender_id === b.partnerId);
-    if (aIsPremium && !bIsPremium) return -1;
-    if (!aIsPremium && bIsPremium) return 1;
     return new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime();
   });
 
@@ -169,7 +146,13 @@ export default function MessagesScreen() {
         ))}
       </View>
 
-      {conversations.length === 0 && !isLoading ? (
+      {activeTab === 'premium' ? (
+        <View style={styles.centered}>
+          <MaterialCommunityIcons name="shield-lock-outline" size={40} color={Colors.primary} />
+          <Text style={styles.emptyTitle}>DM Premium todavía no disponible</Text>
+          <Text style={styles.emptySubtitle}>{CREATOR_PREMIUM_FOUNDATION_MESSAGE}</Text>
+        </View>
+      ) : conversations.length === 0 && !isLoading ? (
         <View style={styles.centered}>
           <View style={styles.emptyIconWrap}>
             <LinearGradient colors={['#7C5CFF22', '#FF2D7811']} style={styles.emptyIconGrad}>
@@ -196,15 +179,14 @@ export default function MessagesScreen() {
           refreshControl={
             <RefreshControl
               refreshing={isLoading}
-              onRefresh={() => { refreshConversations(); loadPremiumDMs(); }}
+              onRefresh={refreshConversations}
               tintColor={Colors.primary}
               colors={[Colors.primary]}
             />
           }
           renderItem={({ item }) => {
             const hasUnread = item.unreadCount > 0;
-            const isPremium = item.conversationType === 'direct'
-              && premiumDMs.some(p => p.sender_id === item.partnerId || p.recipient_id === item.partnerId);
+            const isPremium = false;
             return (
               <Pressable
                 style={({ pressed }) => [

@@ -213,12 +213,13 @@ test('idempotency compares voice duration waveform asset and message type', () =
   assert.match(migration, /v_existing\.audio_waveform is distinct from p_audio_waveform/);
 });
 
-test('UI uses compact recorder and voice bubble without changing calls or Premium DM', () => {
+test('UI uses compact recorder and voice bubble without enabling unsupported Premium DM finance', () => {
   assert.match(screen, /VoiceRecorderBar/); assert.match(screen, /VoiceMessageBubble/);
   assert.match(screen, /handleSendVoice[\s\S]*voiceDraftSenderRef\.current![\s\S]*sendVoiceMessage/);
   assert.ok(screen.includes('router.push(`/call/${partnerId}`)'));
   assert.ok(screen.includes('router.push(`/video-call/${partnerId}`)'));
-  assert.match(screen, /send_premium_dm/);
+  assert.doesNotMatch(screen, /supabase\.rpc\(['"]send_premium_dm['"]/);
+  assert.match(screen, /CREATOR_PREMIUM_FOUNDATION_MESSAGE/);
 });
 
 test('D migration changes no financial, marketplace, LIVE, Battle or Agora object', () => {

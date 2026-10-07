@@ -26,12 +26,12 @@ test('Inbox header keeps create and uses search while the FAB owns compose', () 
   assert.match(inbox, /width: 32, height: 32, borderRadius: 16/);
 });
 
-test('Premium is a real direct-conversation filter, not a parallel financial list', () => {
+test('Premium keeps the approved shell but is a truthful B1 foundation state', () => {
   assert.match(inbox, /activeTab === 'premium'.*conversationType !== 'direct'/);
-  assert.match(inbox, /data=\{sortedConversations\}/);
-  assert.doesNotMatch(inbox, /data=\{premiumDMs\}|PremiumDMModal|premiumBanner/);
-  assert.match(inbox, /name="crown-outline" size=\{13\}/);
-  assert.match(inbox, /\{item\.lastMessage \|\| 'Inicia la conversación'\}/);
+  assert.match(inbox, /activeTab === 'premium'\) return false/);
+  assert.match(inbox, /DM Premium todavía no disponible/);
+  assert.match(inbox, /CREATOR_PREMIUM_FOUNDATION_MESSAGE/);
+  assert.doesNotMatch(inbox, /premium_dm_payments|data=\{premiumDMs\}|PremiumDMModal|premiumBanner/);
 });
 
 test('Inbox retains exact filters, search, cards, group avatars, unread and FAB', () => {

@@ -319,10 +319,11 @@ test('receipts and polling cannot regress newer UI state', () => {
   assert.match(context, /mergeChatMessage\(previous\[partnerId\] \|\| \[\], mapChatMessage\(row\)\)/);
 });
 
-test('failed send rejects caller and Premium release follows durable reply', () => {
+test('failed send rejects caller and B1 performs no unsupported Premium release', () => {
   assert.match(context, /message send failed[\s\S]*throw error/);
   const sendBlock = screen.slice(screen.indexOf('const handleSend = useCallback'), screen.indexOf('// ── Send premium DM'));
-  assert.ok(sendBlock.indexOf('await sendMessage') < sendBlock.indexOf("release_premium_dm"));
+  assert.match(sendBlock, /await sendMessage/);
+  assert.doesNotMatch(sendBlock, /release_premium_dm|pendingPayment/);
   assert.match(sendBlock, /catch/);
   assert.match(sendBlock, /if \(!text\.trim\(\) \|\| !partnerId \|\| isSendingRef\.current\) return/);
   assert.ok(sendBlock.indexOf('isSendingRef.current = true') < sendBlock.indexOf('await sendMessage'));
@@ -347,10 +348,12 @@ test('typing UI is conversation-fenced and clears on close and background', () =
   assert.match(screen, /Escribiendo…/);
 });
 
-test('calls, video calls, Premium DM, normal image and push navigation remain wired', () => {
+test('calls, video calls, normal image and push remain wired while Premium DM is fail-closed', () => {
   assert.match(screen, /router\.push\(`\/call\/\$\{partnerId\}`\)/);
   assert.match(screen, /router\.push\(`\/video-call\/\$\{partnerId\}`\)/);
-  assert.match(screen, /send_premium_dm/); assert.match(screen, /sendMediaMessage\(partnerId,[\s\S]*mediaType: oneTime \? 'one_time_image' : 'image'/);
+  assert.doesNotMatch(screen, /supabase\.rpc\(['"]send_premium_dm['"]/);
+  assert.match(screen, /CREATOR_PREMIUM_FOUNDATION_MESSAGE/);
+  assert.match(screen, /sendMediaMessage\(partnerId,[\s\S]*mediaType: oneTime \? 'one_time_image' : 'image'/);
   assert.match(readFileSync('services/messageNotificationPresentation.ts', 'utf8'), /setActiveMessageChat/);
 });
 

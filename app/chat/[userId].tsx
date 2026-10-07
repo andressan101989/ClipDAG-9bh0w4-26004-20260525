@@ -21,8 +21,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as ScreenCapture from 'expo-screen-capture';
 import { useMessages } from '@/hooks/useMessages';
 import { useAuth } from '@/hooks/useAuth';
-import { useWallet } from '@/hooks/useWallet';
-import { getSupabaseClient, useAlert } from '@/template';
+import { useAlert } from '@/template';
 import { Avatar } from '@/components/ui/Avatar';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { timeAgo } from '@/services/mockData';
@@ -40,6 +39,7 @@ import {
   setActiveMessageConversation,
 } from '@/services/messageNotificationPresentation';
 import { AdvertisingMessageStartRetryController, recordAdvertisingMessageStartConversion } from '@/services/chatService';
+import { CREATOR_PREMIUM_FOUNDATION_MESSAGE } from '@/services/creatorPremiumService';
 
 const PREMIUM_COLOR  = '#FF9D00';
 const PREMIUM_COLOR2 = '#FF5A00';
@@ -248,15 +248,12 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const router  = useRouter();
   const { user } = useAuth();
-  const walletData = useWallet();
-  const balance = walletData?.balance ?? 0;
   const {
     messages, conversations, sendMessage, sendMediaMessage, sendVoiceMessage, openOneTimeMedia, retryMessage, loadConversation, loadOlderMessages,
     hasOlderMessages, isLoadingOlder, presenceByUser, typingByUser,
     activateConversation, deactivateConversation, setConversationTyping,
   } = useMessages();
   const { showAlert } = useAlert();
-  const supabase = getSupabaseClient();
   const [chatFontsLoaded] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -321,57 +318,16 @@ export default function ChatScreen() {
     }, [activateConversation, conversationKey, deactivateConversation, loadConversation, partnerId, setConversationTyping]),
   );
 
-  // ── Load partner's premium DM config + my subscription status ──────────────
+  // Premium DM finance is outside B1. Do not query absent legacy authorities.
   useEffect(() => {
-    if (!partnerId || !user?.id) return;
-    const load = async () => {
-      const [configResult, subResult] = await Promise.all([
-        supabase.from('premium_dm_config')
-          .select('*').eq('user_id', partnerId).single(),
-        supabase.from('creator_subscriptions')
-          .select('*, plan:subscription_plans(name)')
-          .eq('subscriber_id', user.id)
-          .eq('creator_id', partnerId)
-          .eq('status', 'active')
-          .gt('expires_at', new Date().toISOString())
-          .single(),
-      ]);
-      setPremiumConfig(configResult.data ?? null);
-      if (subResult.data) {
-        setSubStatus({
-          isSubscribed: true,
-          freeDmsRemaining: Math.max(0, (subResult.data.free_dms_quota ?? 10) - (subResult.data.free_dms_used ?? 0)),
-          planName: (subResult.data.plan as any)?.name ?? 'VIP',
-        });
-      }
-    };
-    load();
-  }, [partnerId, user?.id, supabase]);
+    setPremiumConfig(null);
+    setSubStatus(null);
+  }, [partnerId, user?.id]);
 
-  // ── Load pending premium payment (for creator view — show "Cobrar" bar) ────
+  // There is no canonical Premium DM payment authority in B1.
   useEffect(() => {
-    if (!user?.id) return;
-    const load = async () => {
-      const { data } = await supabase
-        .from('premium_dm_payments')
-        .select('id, message_id, amount_bdag, creator_earning')
-        .eq('sender_id', partnerId ?? '')
-        .eq('recipient_id', user.id)
-        .eq('status', 'held')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-      if (data) {
-        setPendingPayment({
-          payment_id: data.id,
-          message_id: data.message_id,
-          amount: Number(data.amount_bdag),
-          creator_earning: Number(data.creator_earning),
-        });
-      }
-    };
-    if (partnerId) load();
-  }, [partnerId, user?.id, chatMessages.length, supabase]);
+    setPendingPayment(null);
+  }, [partnerId, user?.id]);
 
   const scrollToLatest = useCallback((animated = true) => {
     requestAnimationFrame(() => {
@@ -426,60 +382,25 @@ export default function ChatScreen() {
       setText(''); setInputHeight(INPUT_MIN_HEIGHT);
       scrollToLatest(true);
 
-      // Release only after the reply is durably accepted by the chat server.
-      if (pendingPayment && user?.id) {
-        const { data } = await supabase.rpc('release_premium_dm', {
-          p_creator_id: user.id, p_message_id: pendingPayment.message_id,
-        });
-        if (data?.success) {
-          walletData?.fullSync?.(); setPendingPayment(null);
-          showAlert('¡Pago liberado!', `+${Number(data.creator_earned ?? pendingPayment.creator_earning).toFixed(2)} BDAG en tu wallet`);
-        }
-      }
     } catch {
       showAlert('Mensaje no enviado', 'Toca el indicador de error para reintentar.');
     } finally {
       isSendingRef.current = false; setIsSending(false);
     }
-  }, [text, partnerId, sendMessage, pendingPayment, user?.id, supabase, walletData, showAlert, scrollToLatest, setConversationTyping, recordAdvertisingMessageStartForConfirmedMessage]);
+  }, [text, partnerId, sendMessage, showAlert, scrollToLatest, setConversationTyping, recordAdvertisingMessageStartForConfirmedMessage]);
 
   // ── Send premium DM ───────────────────────────────────────────────────────
   const handleSendPremiumDM = useCallback(async (messageText: string, amount: number) => {
-    if (!partnerId || !user?.id) return;
-    const { data, error } = await supabase.rpc('send_premium_dm', {
-      p_sender_id:    user.id,
-      p_recipient_id: partnerId,
-      p_amount_bdag:  amount,
-      p_message_text: messageText,
-    });
-    if (error || !data?.success) {
-      showAlert('Error', data?.error ?? error?.message ?? 'No se pudo enviar');
-      return;
-    }
-    walletData?.fullSync?.();
-    loadConversation(partnerId);
-    scrollToLatest(true);
-    // Update free DM quota if it was free
-    if (data.is_free_dm && subStatus) {
-      setSubStatus(prev => prev ? { ...prev, freeDmsRemaining: Math.max(0, prev.freeDmsRemaining - 1) } : prev);
-    }
-  }, [partnerId, user?.id, supabase, walletData, loadConversation, subStatus, showAlert, scrollToLatest]);
+    void messageText;
+    void amount;
+    setPremiumSheetVis(false);
+    showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE);
+  }, [showAlert]);
 
   // ── Release premium payment (creator manually taps "Cobrar") ────────────
   const handleReleasePremiumPayment = useCallback(async () => {
-    if (!pendingPayment || !user?.id) return;
-    const { data } = await supabase.rpc('release_premium_dm', {
-      p_creator_id: user.id,
-      p_message_id: pendingPayment.message_id,
-    });
-    if (data?.success) {
-      walletData?.fullSync?.();
-      setPendingPayment(null);
-      showAlert('¡Pago liberado!', `+${Number(data.creator_earned ?? pendingPayment.creator_earning).toFixed(2)} BDAG`);
-    } else {
-      showAlert('Error', data?.error ?? 'No se pudo liberar');
-    }
-  }, [pendingPayment, user?.id, supabase, walletData, showAlert]);
+    showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE);
+  }, [showAlert]);
 
   // ── Pick image ────────────────────────────────────────────────────────────
   const handlePickImage = useCallback(async (mode?: 'normal' | 'one-time') => {
@@ -902,7 +823,7 @@ export default function ChatScreen() {
         visible={premiumSheetVis}
         recipientUsername={partnerName}
         dmConfig={premiumConfig}
-        balance={balance}
+        balance={0}
         isFreeFromSub={!!(subStatus?.isSubscribed && (subStatus?.freeDmsRemaining ?? 0) > 0)}
         freeLeft={subStatus?.freeDmsRemaining ?? 0}
         onClose={() => setPremiumSheetVis(false)}

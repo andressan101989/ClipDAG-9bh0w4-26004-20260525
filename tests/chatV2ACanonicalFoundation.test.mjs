@@ -256,11 +256,11 @@ test('normal text and image sending remain wired through the existing chat scree
   assert.match(context, /\['text', 'image', 'video'\]\.includes\(mediaType\)/);
 });
 
-test('Premium DM retains message UUID linkage and reply release flow', () => {
-  assert.match(premiumService, /message_id: string/);
-  assert.match(premiumService, /message:messages!message_id\(text\)/);
-  assert.match(chatScreen, /release_premium_dm/);
-  assert.match(chatScreen, /p_message_id: pendingPayment\.message_id/);
+test('historical Premium DM rendering remains while unsupported B1 finance fails closed', () => {
+  assert.match(premiumService, /creatorPremiumUnavailable/);
+  assert.match(chatScreen, /CREATOR_PREMIUM_FOUNDATION_MESSAGE/);
+  assert.doesNotMatch(chatScreen, /supabase\.rpc\(['"](?:send_premium_dm|release_premium_dm)['"]/);
+  assert.doesNotMatch(premiumService, /\.from\(['"]premium_dm_payments['"]\)|functions\.invoke\(['"]bdag-economy['"]\)/);
   assert.match(migration, /when m\.media_type = 'premium_dm' then 'premium_dm'/);
 });
 
