@@ -23,7 +23,9 @@ export type MediaPurpose =
   | "attachment"
   | "dispute_evidence"
   | "return_label"
-  | "live_cover";
+  | "live_cover"
+  | "creator_premium_teaser_image"
+  | "creator_premium_original_image";
 export type MediaVisibility = "public" | "private";
 export interface UploadMediaInput {
   uri: string;
@@ -35,6 +37,7 @@ export interface UploadMediaInput {
   visibility: MediaVisibility;
   signal?: AbortSignal;
   timeoutMs?: number;
+  premiumContentId?: string;
 }
 export interface MediaAssetDescriptor {
   assetId: string;
@@ -120,6 +123,8 @@ const IMAGE_PURPOSES = new Set<MediaPurpose>([
   "chat_image",
   "dispute_evidence",
   "live_cover",
+  "creator_premium_teaser_image",
+  "creator_premium_original_image",
 ]);
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -521,6 +526,15 @@ export async function createMediaUpload(
   operationId = createMediaOperationId(),
 ) {
   try {
+    const isPremiumImage =
+      input.purpose === "creator_premium_teaser_image" ||
+      input.purpose === "creator_premium_original_image";
+    if (isPremiumImage) {
+      if (!input.premiumContentId || !UUID_PATTERN.test(input.premiumContentId))
+        throw new Error("premium_content_required");
+    } else if (input.premiumContentId !== undefined) {
+      throw new Error("premium_context_not_allowed");
+    }
     const file = new File(input.uri);
     const size = input.sizeBytes ?? file.size;
     const { data, error } = await supabase.functions.invoke<CreateResponse>(
@@ -532,6 +546,9 @@ export async function createMediaUpload(
           size_bytes: size,
           file_name: input.fileName ?? file.name,
           visibility: input.visibility,
+          ...(isPremiumImage
+            ? { premium_content_id: input.premiumContentId }
+            : {}),
         },
       },
     );

@@ -19,13 +19,16 @@ export type MediaPurpose =
   | "attachment"
   | "dispute_evidence"
   | "return_label"
-  | "live_cover";
+  | "live_cover"
+  | "creator_premium_teaser_image"
+  | "creator_premium_original_image";
 
 type Rule = {
   kind: "image" | "audio" | "document" | "video";
   maxBytes: number;
   mimeTypes: readonly string[];
   defaultVisibility: "public" | "private";
+  exactVisibility?: boolean;
 };
 const IMAGES = ["image/jpeg", "image/png", "image/webp"] as const;
 const PUBLIC_IMAGES = [...IMAGES, "image/gif"] as const;
@@ -116,6 +119,20 @@ export const MEDIA_PURPOSES: Record<MediaPurpose, Rule> = {
     mimeTypes: PUBLIC_IMAGES,
     defaultVisibility: "public",
   },
+  creator_premium_teaser_image: {
+    kind: "image",
+    maxBytes: 25_000_000,
+    mimeTypes: IMAGES,
+    defaultVisibility: "public",
+    exactVisibility: true,
+  },
+  creator_premium_original_image: {
+    kind: "image",
+    maxBytes: 25_000_000,
+    mimeTypes: IMAGES,
+    defaultVisibility: "private",
+    exactVisibility: true,
+  },
   chat_image: {
     kind: "image",
     maxBytes: 25_000_000,
@@ -191,6 +208,8 @@ export function validateMediaRequest(
   if (!["public", "private"].includes(visibility))
     return { error: "invalid_visibility" } as const;
   if (rule.defaultVisibility === "private" && visibility !== "private")
+    return { error: "visibility_not_allowed" } as const;
+  if (rule.exactVisibility && visibility !== rule.defaultVisibility)
     return { error: "visibility_not_allowed" } as const;
   return { rule } as const;
 }

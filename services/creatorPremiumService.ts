@@ -8,8 +8,9 @@ import { getSupabaseClient } from '@/template';
 
 export const CREATOR_PREMIUM_FINANCE_AVAILABLE: boolean = false;
 export const CREATOR_PREMIUM_MEDIA_AVAILABLE: boolean = false;
+export const CREATOR_PREMIUM_IMAGE_MEDIA_AVAILABLE: boolean = true;
 export const CREATOR_PREMIUM_FOUNDATION_MESSAGE =
-  'La base segura de contenido exclusivo está lista. Las compras, suscripciones y archivos Premium todavía no están disponibles.';
+  'Las imágenes exclusivas ya usan medios privados. Las compras, suscripciones y el visor protegido todavía no están disponibles.';
 export const CREATOR_PREMIUM_UNAVAILABLE_CODE = 'creator_premium_b1_foundation_only';
 
 export type CreatorPremiumContentKind = 'image' | 'video';
@@ -40,6 +41,7 @@ export interface CreatorPremiumCatalogItem {
   entitled: boolean;
   entitlement_source: CreatorPremiumEntitlementSource;
   entitlement_expires_at: string | null;
+  teaser_url: string;
 }
 
 export interface CreatorPremiumOwnerItem {
@@ -56,6 +58,10 @@ export interface CreatorPremiumOwnerItem {
   removal_reason: string | null;
   created_at: string;
   updated_at: string;
+  teaser_url: string | null;
+  teaser_attached: boolean;
+  original_attached: boolean;
+  image_media_ready: boolean;
 }
 
 export interface CreatorPremiumLibraryItem {

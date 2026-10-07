@@ -492,6 +492,14 @@ export default function CreatorProfileScreen() {
                   <Pressable key={item.id} style={styles.exclusiveCard}
                     onPress={() => showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE)}
                   >
+                    {item.teaser_url ? (
+                      <Image
+                        source={{ uri: item.teaser_url }}
+                        style={styles.exclusiveThumb}
+                        contentFit="cover"
+                        transition={150}
+                      />
+                    ) : null}
                     <LinearGradient colors={['rgba(124,92,255,0.16)', 'rgba(7,7,15,0.92)']}
                       style={styles.exclusiveLockOverlay}>
                       <View style={styles.lockIcon}>

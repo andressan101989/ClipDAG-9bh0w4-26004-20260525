@@ -1,5 +1,5 @@
 import { businessActorHasAdvertiserOwnerMediaAccess,businessActorHasAnyCapability,isUuid } from '../_shared/businessMediaAuth.ts';
-import { authenticatedUser,admin,corsHeaders,json } from '../_shared/mediaAuth.ts';
+import { authenticatedClient,authenticatedUser,admin,corsHeaders,json } from '../_shared/mediaAuth.ts';
 import { extensionForMime,validateMediaRequest } from '../_shared/mediaPurposes.ts';
 import { R2_PRIVATE_BUCKET,R2_PUBLIC_BUCKET,signPutIfAbsent } from '../_shared/r2.ts';
 
@@ -9,6 +9,14 @@ Deno.serve(async(req)=>{
   const user=await authenticatedUser(req); if(!user) return json({error:'unauthorized'},401);
   const body=await req.json().catch(()=>({}));
   const purpose=String(body.purpose??''),mime=String(body.mime_type??''),visibility=String(body.visibility??'');
+  const premiumContentId=body.premium_content_id;
+  const isPremiumPurpose=purpose==='creator_premium_teaser_image'||purpose==='creator_premium_original_image';
+  if(isPremiumPurpose){
+    if(!isUuid(premiumContentId))return json({error:'invalid_premium_content'},400);
+    if(body.business_owner_id!==undefined&&body.business_owner_id!==null)return json({error:'invalid_premium_media_contract'},400);
+  }else if(premiumContentId!==undefined&&premiumContentId!==null){
+    return json({error:'unexpected_premium_context'},400);
+  }
   const requestedBusinessOwner=body.business_owner_id;
   let ownerId=user.id;
   if(requestedBusinessOwner!==undefined&&requestedBusinessOwner!==null) {
@@ -34,6 +42,15 @@ Deno.serve(async(req)=>{
   const size=Number(body.size_bytes);
   const validated=validateMediaRequest(purpose,mime,size,visibility);
   if('error' in validated) return json({error:validated.error},400);
+  if(isPremiumPurpose){
+    const caller=authenticatedClient(req);
+    if(!caller)return json({error:'unauthorized'},401);
+    const {data:authorized,error:authorizationError}=await caller.rpc(
+      'authorize_my_creator_premium_image_upload_v1',
+      {p_content_id:premiumContentId,p_purpose:purpose},
+    );
+    if(authorizationError||authorized!==true)return json({error:'premium_upload_forbidden'},403);
+  }
   const db=admin();
   const minute=new Date(Date.now()-60_000).toISOString();
   const [recentResult,pendingResult,bytesResult] = await Promise.all([

@@ -6,9 +6,9 @@ const corsHeaders={
   'Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods':'POST, OPTIONS',
 };
-const corsJson=(body:unknown,status=200)=>new Response(JSON.stringify(body),{
+const corsJson=(body:unknown,status=200,extraHeaders:Record<string,string>={})=>new Response(JSON.stringify(body),{
   status,
-  headers:{...corsHeaders,'Content-Type':'application/json'},
+  headers:{...corsHeaders,'Content-Type':'application/json',...extraHeaders},
 });
 
 async function sellerMayReadBuyerDisputeEvidence(assetId:string,userId:string){
@@ -118,10 +118,57 @@ Deno.serve(async(req)=>{
   if(req.method==='OPTIONS')return new Response(null,{status:204,headers:corsHeaders});
   if(req.method!=='POST') return corsJson({error:'method_not_allowed'},405);
   const user=await authenticatedUser(req); if(!user) return corsJson({error:'unauthorized'},401);
-  const {asset_id,admin_context}=await req.json().catch(()=>({}));
+  const {asset_id,admin_context,premium_content_id}=await req.json().catch(()=>({}));
+  if(premium_content_id!==undefined){
+    if(typeof premium_content_id!=='string'||!uuidPattern.test(premium_content_id))return corsJson({error:'invalid_request'},400);
+    if(asset_id!==undefined||admin_context!==undefined)return corsJson({error:'invalid_request'},400);
+    const caller=authenticatedClient(req);
+    if(!caller)return corsJson({error:'unauthorized'},401);
+    const {data:entitlementData,error:entitlementError}=await caller.rpc(
+      'get_my_creator_premium_entitlement_v1',
+      {p_content_id:premium_content_id},
+    );
+    const entitlement=Array.isArray(entitlementData)?entitlementData[0]:entitlementData;
+    if(entitlementError||entitlement?.allowed!==true)return corsJson({error:'forbidden'},403);
+
+    const database=admin();
+    const {data:links,error:linksError}=await database.from('media_asset_links')
+      .select('asset_id')
+      .eq('entity_type','creator_premium_content')
+      .eq('entity_id',premium_content_id)
+      .eq('slot','original')
+      .eq('position',0)
+      .limit(2);
+    if(linksError)return corsJson({error:'premium_media_unavailable'},503);
+    if(!links?.length)return corsJson({error:'not_found'},404);
+    if(links.length!==1)return corsJson({error:'premium_media_ambiguous'},409);
+
+    const {data:original,error:assetError}=await database.from('media_assets')
+      .select('id,purpose,provider,media_kind,visibility,status,public_url,bucket_name,object_key')
+      .eq('id',links[0].asset_id)
+      .eq('status','ready')
+      .maybeSingle();
+    if(assetError||!original)return corsJson({error:'not_found'},404);
+    if(original.purpose!=='creator_premium_original_image'
+      ||original.provider!=='r2'
+      ||original.media_kind!=='image'
+      ||original.visibility!=='private'
+      ||original.status!=='ready'
+      ||original.public_url!==null)return corsJson({error:'forbidden'},403);
+
+    let signedUrl:string;
+    try{signedUrl=await signGet(original.bucket_name,original.object_key,300);}
+    catch{return corsJson({error:'signed_access_unavailable'},503);}
+    return corsJson({success:true,data:{
+      contentId:premium_content_id,
+      url:signedUrl,
+      expiresAt:new Date(Date.now()+300_000).toISOString(),
+    }},200,{'Cache-Control':'private, no-store','Pragma':'no-cache'});
+  }
   if(typeof asset_id!=='string'||!uuidPattern.test(asset_id))return corsJson({error:'invalid_request'},400);
   const {data:a}=await admin().from('media_assets').select('*').eq('id',asset_id).eq('status','ready').maybeSingle();
   if(!a) return corsJson({error:'not_found'},404);
+  if(a.purpose==='creator_premium_original_image')return corsJson({error:'premium_context_required'},403);
   if(admin_context!==undefined){
     if(!admin_context||typeof admin_context!=='object'||!['story','reported_message','marketplace_dispute'].includes(admin_context.surface)||typeof admin_context.entity_id!=='string'||!uuidPattern.test(admin_context.entity_id))return corsJson({error:'invalid_admin_context'},400);
     if(!await adminContextAllows(req,a,admin_context as AdminContext))return corsJson({error:'forbidden'},403);
