@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -96,7 +97,93 @@ test('Premium presigner binds canonical object no-store metadata and all require
     [...signed[0].options.signableHeaders].sort(),
     ['cache-control', 'content-type', 'if-none-match'],
   );
+  assert.equal(helper.premiumOriginalHasRequiredCacheControl(noStore), true);
+  assert.equal(
+    helper.premiumOriginalHasRequiredCacheControl(`  ${noStore}  `),
+    true,
+  );
+  for (const invalid of [
+    undefined,
+    null,
+    '',
+    'Private, no-store',
+    'no-store, private',
+    'private, no-store, max-age=0',
+    'private, max-age=0',
+  ]) {
+    assert.equal(
+      helper.premiumOriginalHasRequiredCacheControl(invalid),
+      false,
+      `Unexpectedly accepted Cache-Control: ${String(invalid)}`,
+    );
+  }
 });
+
+const awsSdkNodeModules = process.env.CREATOR_PREMIUM_C1_AWS_SDK_ROOT?.trim();
+
+test(
+  'real pinned AWS presigner emits 300-second URL with all required signed headers',
+  async () => {
+    assert.ok(
+      awsSdkNodeModules,
+      'Run C1 through tests/runCreatorPremiumB2C1AwsSdk.mjs so the pinned AWS SDK proof cannot be skipped',
+    );
+    const clientPackage = path.join(
+      awsSdkNodeModules,
+      '@aws-sdk/client-s3/package.json',
+    );
+    const presignerPackage = path.join(
+      awsSdkNodeModules,
+      '@aws-sdk/s3-request-presigner/package.json',
+    );
+    assert.equal(existsSync(clientPackage), true, clientPackage);
+    assert.equal(existsSync(presignerPackage), true, presignerPackage);
+    assert.equal(JSON.parse(readFileSync(clientPackage, 'utf8')).version, '3.637.0');
+    assert.equal(
+      JSON.parse(readFileSync(presignerPackage, 'utf8')).version,
+      '3.637.0',
+    );
+
+    const sdkRequire = createRequire(clientPackage);
+    const clientSdk = sdkRequire('@aws-sdk/client-s3');
+    const presignerSdk = sdkRequire('@aws-sdk/s3-request-presigner');
+    const client = new clientSdk.S3Client({
+      region: 'auto',
+      endpoint: 'https://test-account.r2.cloudflarestorage.com',
+      credentials: {
+        accessKeyId: 'test-access-key',
+        secretAccessKey: 'test-secret-key',
+      },
+    });
+    try {
+      const helper = executeModule(
+        read('supabase/functions/_shared/premiumR2Security.ts'),
+        'premiumR2Security.real-aws.ts',
+        {
+          'npm:@aws-sdk/client-s3@3.637.0': clientSdk,
+          'npm:@aws-sdk/s3-request-presigner@3.637.0': presignerSdk,
+          './r2.ts': { r2Client: () => client },
+        },
+      );
+      const signedUrl = await helper.signPremiumOriginalPutIfAbsent(
+        'private-bucket',
+        'premium/original.jpg',
+        'image/jpeg',
+      );
+      const parsed = new URL(signedUrl);
+      assert.equal(parsed.searchParams.get('X-Amz-Expires'), '300');
+      const signedHeaders = new Set(
+        (parsed.searchParams.get('X-Amz-SignedHeaders') ?? '').split(';'),
+      );
+      assert.deepEqual(
+        [...signedHeaders].sort(),
+        ['cache-control', 'content-type', 'host', 'if-none-match'],
+      );
+    } finally {
+      client.destroy();
+    }
+  },
+);
 
 const purposeModule = executeModule(
   read('supabase/functions/_shared/mediaPurposes.ts'),
@@ -300,16 +387,20 @@ test('mobile R2 PUT forwards and preserves Premium Cache-Control across retry an
   assert.deepEqual(calls, [headers, headers]);
 });
 
-function mutationResult(result = { error: null }) {
+function mutationResult(result = { error: null }, filters = []) {
   const chain = {
-    eq() { return chain; },
-    in() { return chain; },
+    eq(column, value) { filters.push({ operator: 'eq', column, value }); return chain; },
+    in(column, values) { filters.push({ operator: 'in', column, values }); return chain; },
     then(resolve, reject) { return Promise.resolve(result).then(resolve, reject); },
   };
   return chain;
 }
 
-function loadFinalizeMediaUpload({ purpose = 'creator_premium_original_image', cacheControl } = {}) {
+function loadFinalizeMediaUpload({
+  purpose = 'creator_premium_original_image',
+  cacheControl,
+  deleteError = null,
+} = {}) {
   let handler;
   const updates = [];
   const deletes = [];
@@ -339,8 +430,12 @@ function loadFinalizeMediaUpload({ purpose = 'creator_premium_original_image', c
           };
         },
         update(row) {
-          updates.push(JSON.parse(JSON.stringify(row)));
-          return mutationResult();
+          const mutation = {
+            row: JSON.parse(JSON.stringify(row)),
+            filters: [],
+          };
+          updates.push(mutation);
+          return mutationResult({ error: null }, mutation.filters);
         },
       };
     },
@@ -365,7 +460,10 @@ function loadFinalizeMediaUpload({ purpose = 'creator_premium_original_image', c
           ETag: '"etag"',
         };
       },
-      async deleteObject(bucket, key) { deletes.push({ bucket, key }); },
+      async deleteObject(bucket, key) {
+        deletes.push({ bucket, key });
+        if (deleteError) throw deleteError;
+      },
       isR2NotFound: () => false,
       isR2Transient: () => false,
       publicUrl: key => `https://public.example.test/${key}`,
@@ -389,7 +487,7 @@ test('finalize allows Premium original ready only after provider proves exact no
     });
     assert.equal(response.status, 200);
     assert.equal(json.data.status, 'ready');
-    assert.ok(harness.updates.some(update => update.status === 'ready'));
+    assert.ok(harness.updates.some(update => update.row.status === 'ready'));
     assert.equal(harness.deletes.length, 0);
   }
 });
@@ -403,11 +501,37 @@ test('finalize rejects missing, wrong, and public Premium original Cache-Control
     assert.equal(response.status, 409);
     assert.equal(json.error, 'object_mismatch');
     assert.equal(json.mismatch_code, 'premium_original_cache_control_mismatch');
-    assert.ok(harness.updates.some(update => update.status === 'delete_pending'));
-    assert.ok(harness.updates.some(update => update.status === 'deleted'));
-    assert.equal(harness.updates.some(update => update.status === 'ready'), false);
+    assert.ok(harness.updates.some(update => update.row.status === 'delete_pending'));
+    const deleted = harness.updates.find(update => update.row.status === 'deleted');
+    assert.ok(deleted);
+    assert.ok(deleted.filters.some(filter =>
+      filter.operator === 'eq'
+      && filter.column === 'status'
+      && filter.value === 'delete_pending'));
+    assert.equal(harness.updates.some(update => update.row.status === 'ready'), false);
     assert.equal(harness.deletes.length, 1);
   }
+});
+
+test('finalize retains delete-pending retry metadata when mismatch cleanup cannot delete R2 object', async () => {
+  const harness = loadFinalizeMediaUpload({
+    cacheControl: 'public, max-age=31536000',
+    deleteError: new Error('simulated provider delete failure'),
+  });
+  const { response, json } = await post(harness.handler, {
+    asset_id: '30000000-0000-4000-8000-000000000001',
+  });
+  assert.equal(response.status, 409);
+  assert.equal(json.mismatch_code, 'premium_original_cache_control_mismatch');
+  assert.ok(harness.updates.some(update =>
+    update.row.status === 'delete_pending'
+    && update.row.error_code === 'premium_original_cache_control_mismatch'
+    && typeof update.row.next_cleanup_attempt_at === 'string'));
+  assert.ok(harness.updates.some(update =>
+    update.row.error_code === 'object_mismatch_delete_retry'));
+  assert.equal(harness.updates.some(update => update.row.status === 'deleted'), false);
+  assert.equal(harness.updates.some(update => update.row.status === 'ready'), false);
+  assert.equal(harness.deletes.length, 1);
 });
 
 test('Premium teaser does not require private no-store metadata at finalize', async () => {
@@ -420,7 +544,7 @@ test('Premium teaser does not require private no-store metadata at finalize', as
   });
   assert.equal(response.status, 200);
   assert.equal(json.data.status, 'ready');
-  assert.ok(harness.updates.some(update => update.status === 'ready'));
+  assert.ok(harness.updates.some(update => update.row.status === 'ready'));
 });
 
 test('Premium grant JSON no-store remains intact without changing get-media-url', () => {
