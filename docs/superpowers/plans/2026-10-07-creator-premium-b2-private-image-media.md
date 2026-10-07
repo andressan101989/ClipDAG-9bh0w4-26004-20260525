@@ -118,4 +118,3 @@
 - [ ] Recheck production, run linked dry-run showing exactly one B2 migration, then deploy only that migration.
 - [ ] Deploy only changed `create-media-upload` and `get-media-url` sources and prove source/version/hash parity; confirm all unrelated Edge functions have no drift.
 - [ ] Prove migration count 332, zero Premium production rows/fixtures, unchanged finance counts/balance, and classify B2-new security/performance advisor findings.
-

@@ -60,7 +60,6 @@ test('B2 disposable harness targets B1 plus exactly one generated B2 migration',
   assert.match(b2Matches[0], /^\d{14}_creator_premium_b2_private_image_media\.sql$/);
   assert.ok(b2.length > 10_000);
 });
-
 test('B2 compiles and proves image binding, privacy, replacement, catalog, and regression contracts', {
   skip: !enabled,
   timeout: 240_000,
@@ -226,4 +225,3 @@ test('B2 compiles and proves image binding, privacy, replacement, catalog, and r
     runContainer(`dropdb -U supabase_admin --force --if-exists ${db}`, { allowFailure: true });
   }
 });
-
