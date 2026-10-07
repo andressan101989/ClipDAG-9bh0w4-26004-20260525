@@ -1,6 +1,6 @@
 # NELYON MASTER ROADMAP
 
-Version: 1.0
+Version: 1.1
 
 Canonical roadmap authority for the Nelyon project.
 
@@ -1082,13 +1082,420 @@ Must include proper:
 - Ads administration;
 - operational health where approved.
 
-### ROADMAP 12 — BUSINESS ADS / SELLER CENTER FINAL CLOSURE
+#### SUPER ADMIN WEB V2 / GLOBAL CONTROL PANEL / PREMIUM REDESIGN
+
+The existing Admin Web shell must grow into the canonical global admin
+authority.
+
+Do NOT create a second Admin Web or duplicate admin portal.
+
+The future global Nelyon administrative portal must eventually cover:
+
+- dashboard / global overview;
+- users;
+- accounts;
+- creators;
+- business accounts;
+- sellers;
+- content;
+- posts;
+- Reels;
+- Stories;
+- Premium / Exclusive Content;
+- moderation;
+- reports;
+- abuse;
+- Chat operational visibility where appropriate;
+- LIVE;
+- LIVE Battles;
+- gifts;
+- Marketplace;
+- orders;
+- disputes;
+- refunds;
+- sellers;
+- products;
+- Creator Commerce;
+- Business Ads;
+- Marketplace Ads;
+- Stripe operational status;
+- wallet/ledger operational visibility where safe;
+- financial reconciliation visibility;
+- system health;
+- security;
+- admin audit trail;
+- operational settings where explicitly authorized.
+
+The Super Admin panel must NOT become an arbitrary financial mutation
+tool.
+
+Admin financial visibility does not imply permission to manually edit:
+
+- balances;
+- ledger entries;
+- escrow;
+- payouts;
+- settlements;
+- ad spend;
+- refunds;
+
+outside canonical narrow server authorities.
+
+#### SUPER ADMIN PREMIUM REDESIGN
+
+The existing Admin Web requires a future complete professional redesign.
+
+Target:
+
+- premium professional appearance;
+- desktop-first;
+- responsive tablet/mobile where appropriate;
+- clear navigation;
+- modern sidebar;
+- top navigation/header;
+- breadcrumbs;
+- searchable tables;
+- filters;
+- sorting;
+- bounded pagination;
+- dashboards;
+- charts;
+- KPIs;
+- detail pages;
+- action dialogs;
+- confirmation flows;
+- loading states;
+- empty states;
+- error/retry states;
+- denied states;
+- accessibility;
+- keyboard usability;
+- consistent typography;
+- consistent spacing;
+- Nelyon visual identity.
+
+Do not prioritize visual appearance over canonical
+authorization/security.
+
+Reuse existing Admin Web architecture.
+
+No duplicate admin portal.
+
+### ROADMAP 12 — WEB OPERATIONS SUITE — CREATOR WEB / BUSINESS ADS / SELLER CENTER ENTERPRISE
 
 STATUS:
 
-ADVANCED / OPEN.
+ADVANCED / OPEN across the existing Ads and Seller foundations.
+
+Creator Web expansion remains pending.
 
 Do not rebuild existing Business Ads or Seller Center.
+
+Web operations must preserve:
+
+- one publishing/media authority;
+- one Ads authority;
+- one Marketplace/Seller authority.
+
+#### 12A — CREATOR WEB STUDIO / CREATOR CENTER
+
+STATUS:
+
+PENDING / MUST REUSE EXISTING CONTENT AUTHORITIES.
+
+The creator must be able to manage their Nelyon presence
+from a professional browser/desktop experience.
+
+This must NOT create:
+
+- a second posts table;
+- a second media authority;
+- a second publishing backend;
+- a second analytics source.
+
+Web and mobile must use the same canonical publication/media authorities.
+
+##### CONTENT CREATION / UPLOAD
+
+Required creator web capabilities:
+
+- upload photo;
+- upload video;
+- create carousel;
+- prepare post;
+- prepare Reel;
+- configure caption;
+- hashtags;
+- product tagging where eligible;
+- visibility/privacy;
+- thumbnail/cover selection;
+- preview before publish;
+- draft saving;
+- draft editing.
+
+##### SCHEDULED PUBLISHING
+
+Creator must be able to:
+
+- publish immediately;
+- choose publication date;
+- choose publication time;
+- see timezone clearly;
+- schedule future publication;
+- edit scheduled publication;
+- cancel scheduled publication;
+- see scheduled queue;
+- see failed publication status;
+- retry safely.
+
+Scheduling authority must be server-side.
+
+Do not depend on browser remaining open.
+
+Scheduling must be:
+
+- durable;
+- idempotent;
+- auditable;
+- timezone-safe;
+- resilient to retries.
+
+No duplicate publication if scheduler retries.
+
+##### CONTENT MANAGEMENT
+
+Creator should eventually manage:
+
+- published content;
+- drafts;
+- scheduled content;
+- failed scheduled content;
+- archive/delete where permitted;
+- thumbnails/covers;
+- visibility;
+- eligible Premium Content.
+
+##### CREATOR PREMIUM INTEGRATION
+
+Creator Web must eventually integrate the SAME
+Creator Premium / Exclusive Content authority defined in ROADMAP 1.
+
+Do NOT create a web-only premium-content system.
+
+##### ANALYTICS
+
+Creator Web Studio should provide professional analytics such as:
+
+- views;
+- unique viewers where available;
+- watch time;
+- average watch time;
+- completion rate;
+- likes;
+- comments;
+- saves;
+- shares;
+- reposts;
+- follower growth;
+- audience growth;
+- content performance;
+- performance over time;
+- source/surface;
+- Creator Commerce attribution where available;
+- Premium Content revenue where canonical;
+- creator earnings where canonical.
+
+Financial analytics must remain server-derived.
+
+No client-side reconstruction of money.
+
+##### FUTURE CREATOR DASHBOARD
+
+Target browser experience:
+
+- overview;
+- content;
+- create/upload;
+- drafts;
+- scheduled;
+- analytics;
+- monetization;
+- Premium;
+- Creator Commerce;
+- account/settings.
+
+#### 12B — BUSINESS ADS MANAGER WEB V2
+
+STATUS:
+
+ADVANCED FOUNDATION / FURTHER EXPANSION REQUIRED.
+
+The existing Business Ads architecture remains canonical.
+
+Do NOT create a second advertising engine.
+
+Business Web should evolve into a professional Ads Manager.
+
+##### CAMPAIGN CREATION
+
+Business should be able to configure:
+
+- campaign name;
+- objective;
+- creative;
+- destination;
+- landing URL;
+- CTA;
+- total budget;
+- daily budget where supported;
+- start date/time;
+- end date/time;
+- placement;
+- frequency controls where supported;
+- campaign preview;
+- review status;
+- lifecycle;
+- pause/resume.
+
+##### PLACEMENTS
+
+Placements must be designed around existing Ads V2/V4 authority.
+
+Possible approved placements may include:
+
+- Social Feed;
+- Reels;
+- Stories;
+- Marketplace;
+- other future authorized surfaces.
+
+Do not activate a placement merely because it is listed in this roadmap.
+
+Each placement requires separate implementation/testing.
+
+##### GEOGRAPHIC TARGETING
+
+Business must be able to define allowed broad geography,
+subject to law/privacy/product policy.
+
+Potential targeting hierarchy:
+
+- country;
+- state/province/region;
+- city/metro where safely supported.
+
+Do NOT expose precise user GPS coordinates to advertisers.
+
+Do NOT allow advertiser access to individual user location histories.
+
+##### LANGUAGE TARGETING
+
+Support:
+
+- language;
+- multiple allowed languages where appropriate.
+
+##### AGE TARGETING
+
+Support safe legal age-range targeting where authorized.
+
+Age targeting must respect:
+
+- minors protections;
+- restricted-product rules;
+- regional law;
+- existing Nelyon age policy.
+
+##### INTEREST TARGETING
+
+Reuse Nelyon personalization taxonomy where appropriate.
+
+Potential:
+
+- broad interests;
+- subinterests;
+- safe inferred interests for eligible adults with required consent.
+
+No sensitive-category targeting.
+
+##### AUDIENCE INCLUSION / EXCLUSION
+
+Business should be able to describe:
+
+- audiences to include;
+- audiences to exclude;
+- geographic exclusions;
+- age exclusions where lawful;
+- interest exclusions;
+- language constraints.
+
+Do NOT interpret this as permission to target arbitrary named
+individuals.
+
+Advertisers must NOT receive private user profiles,
+watch history or personal behavioral vectors.
+
+Nelyon performs internal eligibility/matching.
+
+##### PERSONALIZED ADS CONTRACT
+
+Preserve the owner-approved distinction:
+
+Turning off personalized advertising does NOT mean
+the user stops receiving advertising.
+
+Personalization setting means whether permitted interests/activity
+may be used for ad selection.
+
+Required user-facing concept:
+
+"¿Permites que Nelyon use tus intereses y actividad en la app
+para mostrarte anuncios más relevantes?"
+
+Supporting meaning:
+
+If disabled, the user may still receive ads,
+but their interests/activity are not used for personalization.
+
+Do NOT change this into:
+
+"Do you want to receive ads?"
+
+##### BUSINESS ANALYTICS
+
+Ads Manager should expose authoritative metrics such as:
+
+- impressions;
+- meaningful impressions;
+- reach where supported;
+- clicks;
+- CTR;
+- destination visits;
+- attributed conversions where safely provable;
+- spend;
+- remaining budget;
+- pacing;
+- campaign status;
+- placement breakdown;
+- audience/geographic breakdown where privacy-safe;
+- campaign trend;
+- creative performance;
+- rejection/review reasons.
+
+No client-side financial calculation authority.
+
+##### PRIVACY / SAFETY
+
+Targeting must prohibit:
+
+- sensitive personal characteristics;
+- precise location histories;
+- arbitrary private-user inspection;
+- minors behavioral profiling where prohibited;
+- prohibited discriminatory targeting;
+- leaking personalization vectors.
+
+##### EXISTING ADS CLOSURE REQUIREMENTS
 
 Perform remaining:
 
@@ -1100,13 +1507,153 @@ Perform remaining:
 - authorization/security QA;
 - analytics validation.
 
-Preserve:
+Preserve one Ads authority.
 
-one Ads authority.
+#### 12C — SELLER CENTER WEB ENTERPRISE / BULK CATALOG
 
-Preserve:
+STATUS:
 
-one Marketplace/Seller authority.
+ADVANCED MOBILE/DOMAIN FOUNDATION /
+ENTERPRISE WEB EXPANSION PENDING.
+
+Reuse existing Marketplace Seller authority.
+
+Do NOT create a second catalog/order/inventory system.
+
+##### SELLER WEB CAPABILITIES
+
+Target Seller Center Web should eventually provide:
+
+- business/store dashboard;
+- create product;
+- edit product;
+- product variants;
+- SKUs;
+- inventory;
+- price;
+- images;
+- videos;
+- product status;
+- shipping;
+- promotions;
+- orders;
+- order details;
+- fulfillment;
+- tracking;
+- returns;
+- disputes;
+- analytics;
+- Marketplace Ads;
+- product performance.
+
+##### BULK CSV PRODUCT IMPORT
+
+Seller must be able to upload large product catalogs
+using CSV.
+
+Provide a canonical downloadable CSV template.
+
+Potential CSV fields include, as appropriate:
+
+- seller SKU;
+- product title;
+- description;
+- category;
+- product type;
+- price;
+- currency/unit authority if applicable;
+- stock/inventory;
+- variant group;
+- variant option;
+- variant SKU;
+- weight;
+- dimensions;
+- shipping-related values;
+- image references according to approved media contract;
+- publication state.
+
+Exact schema must be designed after auditing
+the existing canonical Marketplace product model.
+
+Do NOT invent a parallel schema.
+
+##### CSV IMPORT FLOW
+
+Required UX:
+
+download template
+→ fill CSV
+→ upload CSV
+→ parse
+→ validate
+→ display errors/warnings by row
+→ show import preview
+→ owner confirms
+→ process safely
+→ show final report.
+
+##### VALIDATION
+
+Reject or flag:
+
+- malformed CSV;
+- invalid encoding;
+- missing required columns;
+- invalid prices;
+- invalid inventory;
+- invalid variants;
+- duplicate SKU conflicts;
+- unsupported categories;
+- malformed image/media references;
+- ownership violations;
+- rows exceeding limits.
+
+##### SECURITY
+
+CSV must NEVER allow:
+
+- editing another seller's products;
+- choosing arbitrary seller_id authority;
+- arbitrary SQL-like input;
+- arbitrary storage paths;
+- bypassing product moderation;
+- bypassing inventory authority;
+- bypassing Marketplace business rules.
+
+##### IDEMPOTENCY / DUPLICATES
+
+Bulk import must be designed to avoid accidental duplicate products.
+
+Need explicit import authority using:
+
+- import job ID;
+- seller identity;
+- row identity/fingerprint;
+- SKU/upsert rules;
+- idempotency;
+- retries.
+
+Exact create/update/upsert semantics must be designed
+before implementation.
+
+Do not silently overwrite existing products.
+
+##### LARGE IMPORTS
+
+For large files, design asynchronous/batched processing if needed.
+
+Browser should not need to remain connected for the entire import.
+
+Need:
+
+- job status;
+- progress;
+- success count;
+- error count;
+- downloadable error report;
+- safe retry.
+
+Preserve one Marketplace/Seller authority.
 
 ### ROADMAP 13 — STRIPE PRODUCTION ROADMAP
 
@@ -1137,6 +1684,108 @@ Required before closure:
 - reconciliation.
 
 No parallel wallet.
+
+Stripe integration must use the EXISTING finance architecture.
+
+Stripe = external USD/card rail.
+
+Nelyon ledger = one and only internal BDAG financial authority.
+
+No second wallet.
+
+#### REAL STRIPE PRODUCTION REQUIREMENTS
+
+Must eventually include:
+
+- real Stripe business account;
+- production onboarding;
+- live API configuration;
+- secret management;
+- publishable key handling;
+- webhook signing secret;
+- livemode isolation;
+- testmode/livemode isolation;
+- card payment;
+- checkout;
+- success redirect;
+- cancel redirect;
+- canonical transaction binding;
+- webhook verification;
+- webhook idempotency;
+- webhook replay protection;
+- event ordering;
+- duplicate-event handling;
+- failure handling;
+- timeout handling;
+- reconciliation;
+- monitoring;
+- operational alerting.
+
+#### USD → BDAG FUNDING
+
+Card/top-up flow:
+
+Stripe/card USD
+→ server confirms successful payment
+→ canonical Nelyon finance authority
+→ BDAG ledger credit
+
+No browser authority for conversion.
+
+Server owns:
+
+- amount validation;
+- cents parsing;
+- conversion;
+- final ledger credit;
+- idempotency.
+
+#### BUSINESS ADS FUNDING
+
+Stripe should eventually support Business Ads funding
+without becoming the Ads spending authority.
+
+Stripe provides external funds.
+
+Ads canonical finance controls:
+
+- campaign funding;
+- budget;
+- spend;
+- release;
+- reconciliation.
+
+Do not merge Stripe webhook logic directly into
+client Ads calculations.
+
+#### REFUNDS / DISPUTES
+
+Final implementation requires:
+
+- Stripe refunds;
+- partial/full refund semantics where product allows;
+- disputes/chargebacks;
+- webhook state transitions;
+- reconciliation with Nelyon ledger;
+- no double refund;
+- no double credit;
+- auditable compensating entries.
+
+Never mutate historical ledger entries.
+
+#### PRODUCTION VALIDATION
+
+Before closure require:
+
+- real live-mode transaction;
+- correct webhook;
+- exact BDAG credit;
+- idempotent replay;
+- refund test;
+- dispute/chargeback handling plan/test where feasible;
+- reconciliation zero;
+- no secret exposure;
+- correct production URLs.
 
 ### ROADMAP 14 — FINAL MODULE-BY-MODULE ARCHITECTURE AUDIT AND CODEBASE CLEANUP
 
@@ -1352,7 +2001,13 @@ license details and compatibility POC.
 
 ### STRIPE
 
-Need real Stripe account and production credentials.
+Need:
+
+- real Stripe account;
+- production credentials;
+- webhook secrets;
+- live-mode configuration;
+- provider onboarding.
 
 ### MUSIC
 
@@ -1389,6 +2044,32 @@ Record and preserve:
 - Final cleanup must remove proven orphan/dead code.
 - Final performance work must address lag, freezing and latency.
 - No duplicate architecture.
+- The existing Admin Web must evolve into the canonical global Super
+  Admin panel; no second Admin portal.
+- Super Admin Web requires a complete premium/professional UX redesign.
+- Creators must eventually manage and publish content from a web Creator
+  Studio.
+- Creator Web must support drafts and scheduled publishing by date/time.
+- Scheduled publishing must execute server-side and not depend on the
+  browser staying open.
+- Creator Web must expose professional creator/content analytics.
+- Creator Web must reuse the same publication/media authorities as
+  mobile.
+- Business Web must evolve into a professional Ads Manager.
+- Business advertisers must be able to configure budget, destination,
+  placements and permitted audience targeting.
+- Business Ads targeting should support permitted country/region/city,
+  language, age ranges, interests and audience exclusions.
+- Ads targeting must not expose private users or precise personal
+  location histories to advertisers.
+- Disabling personalized ads does not disable advertising.
+- Seller Center Web must support enterprise catalog management.
+- Marketplace sellers must be able to bulk import products using
+  validated CSV.
+- CSV import must be seller-scoped, idempotent and protected from
+  duplicate/unauthorized product mutation.
+- Stripe must be fully productionized using the existing Nelyon ledger
+  as the only BDAG authority.
 
 ## 10. CURRENT NEXT PLANNED MACRO
 
@@ -1458,5 +2139,40 @@ Recorded:
 - final cleanup;
 - performance;
 - final QA.
+
+### v1.1 — 2026-10-06
+
+Expanded the canonical roadmap with owner-approved web operations scope.
+
+Added/expanded:
+
+- Super Admin Web V2 global control-panel requirements;
+- premium redesign requirements for the existing Admin Web;
+- Creator Web Studio / Creator Center;
+- browser content upload and management;
+- drafts;
+- server-side scheduled publishing;
+- creator analytics;
+- Creator Premium integration into Creator Web;
+- Business Ads Manager Web V2;
+- budget/destination/placement controls;
+- country/region/city targeting;
+- language/age/interest targeting subject to policy;
+- audience inclusion/exclusion;
+- personalized-ads consent semantics;
+- Seller Center Web Enterprise;
+- bulk CSV catalog import;
+- validation/import jobs;
+- idempotency and seller ownership;
+- Stripe productionization;
+- USD/card → BDAG top-up authority;
+- Business Ads Stripe funding;
+- refunds/disputes/webhook/reconciliation requirements.
+
+Execution priority remains unchanged:
+
+CREATOR PREMIUM / EXCLUSIVE CONTENT
+
+remains NEXT PLANNED.
 
 END OF CANONICAL ROADMAP.
