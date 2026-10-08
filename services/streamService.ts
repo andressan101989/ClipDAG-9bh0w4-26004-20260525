@@ -11,7 +11,7 @@ const STREAM_STATUSES=new Set(['pending','uploading','processing','ready','faile
 const SAFE_TEXT_LIMIT=240;
 const supabase=getSupabaseClient();
 
-export type StreamPurpose='feed_video';
+export type StreamPurpose='feed_video'|'creator_premium_video';
 export type StreamUploadStage=
   |'STREAM_INPUT'|'STREAM_CREATE_UPLOAD'|'STREAM_DIRECT_POST'|'STREAM_PROCESSING'
   |'STREAM_PUBLISH'|'STREAM_DELETE'|'STREAM_UNKNOWN';
@@ -28,6 +28,12 @@ export interface StreamPlaybackDescriptor {
   thumbnailUrl:string|null;
   errorCode:string|null;
   readyAt:string|null;
+}
+export interface CreatorPremiumStreamProcessingDescriptor extends StreamPlaybackDescriptor {
+  hlsUrl:null;
+  dashUrl:null;
+  thumbnailUrl:null;
+  playbackMode:'premium_entitlement_required';
 }
 export interface SafeStreamError {
   name:string;stage:StreamUploadStage;code:string;message:string;
@@ -132,7 +138,7 @@ export function extractNullableStreamRpcUuid(data:unknown,functionName:string):s
   return extractStreamRpcUuid(data,functionName);
 }
 
-interface StreamUploadContract {
+export interface StreamUploadContract {
   assetId:string;uploadUrl:string;method:'POST';formField:'file';expiresAt:string;
   maxDurationSeconds:number;maxSizeBytes:number;
 }
@@ -155,6 +161,32 @@ export async function createStreamUpload(input:{
     if(!assetId||validContract!==true) {
       if(assetId) await deleteStreamVideo(assetId).catch(()=>{});
       throw new Error('invalid_stream_upload_contract');
+    }
+    return contract as unknown as StreamUploadContract;
+  } catch(error) { throw streamError(error,'STREAM_CREATE_UPLOAD',operationId); }
+}
+
+export async function createCreatorPremiumStreamUpload(input:{
+  contentId:string;mimeType:string;sizeBytes:number;fileName:string;operationId?:string;
+}):Promise<StreamUploadContract> {
+  const operationId=input.operationId??createStreamOperationId();
+  try {
+    if(!UUID_PATTERN.test(input.contentId)) throw new Error('invalid_premium_content');
+    const {data,error}=await supabase.functions.invoke('create-stream-upload',{body:{
+      purpose:'creator_premium_video',premium_content_id:input.contentId,
+      mime_type:input.mimeType,size_bytes:input.sizeBytes,file_name:input.fileName,
+    }});
+    if(error||!data?.success||!data.data) throw await functionError(error,data?.error);
+    const contract=data.data as Record<string,unknown>;
+    const assetId=typeof contract.assetId==='string'&&UUID_PATTERN.test(contract.assetId)?contract.assetId:null;
+    const expiresAt=typeof contract.expiresAt==='string'?Date.parse(contract.expiresAt):NaN;
+    const validContract=assetId!==null&&isHttpsStreamUrl(contract.uploadUrl)
+      &&contract.method==='POST'&&contract.formField==='file'
+      &&contract.maxDurationSeconds===60&&contract.maxSizeBytes===STREAM_MAX_SIZE_BYTES
+      &&Number.isFinite(expiresAt)&&expiresAt>=Date.now()-300_000;
+    if(!assetId||validContract!==true) {
+      if(assetId) await deleteStreamVideo(assetId).catch(()=>{});
+      throw new Error('invalid_premium_stream_upload_contract');
     }
     return contract as unknown as StreamUploadContract;
   } catch(error) { throw streamError(error,'STREAM_CREATE_UPLOAD',operationId); }
@@ -210,6 +242,40 @@ export async function getStreamPlayback(assetId:string,operationId=createStreamO
     return validatePlayback(data.data,assetId);
   } catch(error) { throw streamError(error,'STREAM_PROCESSING',operationId); }
 }
+function validateCreatorPremiumProcessing(
+  data:unknown,
+  expectedAssetId:string,
+):CreatorPremiumStreamProcessingDescriptor {
+  if(!data||typeof data!=='object') throw new Error('invalid_premium_stream_processing_response');
+  const value=data as CreatorPremiumStreamProcessingDescriptor;
+  const validReady=value.status!=='ready'||(
+    Number.isFinite(value.durationSeconds)
+    && Number(value.durationSeconds)>0
+    && Number(value.durationSeconds)<=60
+    && typeof value.readyAt==='string'
+  );
+  if(value.assetId!==expectedAssetId
+    ||!STREAM_STATUSES.has(value.status)
+    ||value.playbackMode!=='premium_entitlement_required'
+    ||value.hlsUrl!==null
+    ||value.dashUrl!==null
+    ||value.thumbnailUrl!==null
+    ||!validReady) {
+    throw new Error('invalid_premium_stream_processing_response');
+  }
+  return value;
+}
+export async function getCreatorPremiumStreamProcessing(
+  assetId:string,
+  operationId=createStreamOperationId(),
+):Promise<CreatorPremiumStreamProcessingDescriptor> {
+  try {
+    if(!UUID_PATTERN.test(assetId)) throw new Error('invalid_premium_stream_asset');
+    const {data,error}=await supabase.functions.invoke('get-stream-playback',{body:{asset_id:assetId}});
+    if(error||!data?.success||!data.data) throw await functionError(error,data?.error);
+    return validateCreatorPremiumProcessing(data.data,assetId);
+  } catch(error) { throw streamError(error,'STREAM_PROCESSING',operationId); }
+}
 const delay=(milliseconds:number,signal?:AbortSignal)=>new Promise<void>((resolve,reject)=>{
   if(signal?.aborted) { reject(Object.assign(new Error('aborted'),{name:'AbortError'}));return; }
   const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve();},milliseconds);
@@ -229,6 +295,39 @@ export async function waitForStreamReady(
     let descriptor:StreamPlaybackDescriptor;
     try {
       descriptor=await getStreamPlayback(assetId,operationId);
+      transientErrors=0;
+    } catch(error) {
+      if(!isTransientStreamError(error)) throw streamError(error,'STREAM_PROCESSING',operationId);
+      if(++transientErrors>(options.maxTransientErrors??3)) throw streamError(error,'STREAM_PROCESSING',operationId);
+      await (options.sleep??delay)(options.pollIntervalMs??5_000,options.signal);
+      continue;
+    }
+    options.onProgress?.(descriptor);
+    if(descriptor.status==='ready') return descriptor;
+    if(['failed','deleted','delete_pending'].includes(descriptor.status)) {
+      throw new StreamClientError({stage:'STREAM_PROCESSING',code:descriptor.errorCode??`stream_${descriptor.status}`,
+        message:descriptor.errorCode??`stream_${descriptor.status}`,operationId});
+    }
+    await (options.sleep??delay)(options.pollIntervalMs??5_000,options.signal);
+  }
+  throw new StreamClientError({stage:'STREAM_PROCESSING',code:'stream_processing_timeout',
+    message:'stream_processing_timeout',operationId});
+}
+
+export async function waitForCreatorPremiumStreamReady(
+  assetId:string,
+  options:{signal?:AbortSignal;timeoutMs?:number;pollIntervalMs?:number;maxTransientErrors?:number;
+    onProgress?:(value:CreatorPremiumStreamProcessingDescriptor)=>void;
+    sleep?:(milliseconds:number,signal?:AbortSignal)=>Promise<void>}={},
+):Promise<CreatorPremiumStreamProcessingDescriptor> {
+  const operationId=createStreamOperationId();
+  const deadline=Date.now()+(options.timeoutMs??480_000);
+  let transientErrors=0;
+  while(Date.now()<deadline) {
+    if(options.signal?.aborted) throw streamError({name:'AbortError',message:'aborted'},'STREAM_PROCESSING',operationId);
+    let descriptor:CreatorPremiumStreamProcessingDescriptor;
+    try {
+      descriptor=await getCreatorPremiumStreamProcessing(assetId,operationId);
       transientErrors=0;
     } catch(error) {
       if(!isTransientStreamError(error)) throw streamError(error,'STREAM_PROCESSING',operationId);
