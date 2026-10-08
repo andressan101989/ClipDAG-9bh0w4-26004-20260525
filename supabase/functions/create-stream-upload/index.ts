@@ -1,5 +1,6 @@
 import { businessActorHasAdvertiserOwnerMediaAccess,businessActorHasAnyCapability,isUuid } from '../_shared/businessMediaAuth.ts';
-import { authenticatedUser,admin,corsHeaders,json } from '../_shared/mediaAuth.ts';
+import { authenticatedClient,authenticatedUser,admin,corsHeaders,json } from '../_shared/mediaAuth.ts';
+import { CREATOR_PREMIUM_STREAM_PURPOSE } from '../_shared/premiumStreamSecurity.ts';
 import {
   STREAM_MAX_DURATION_SECONDS,STREAM_MAX_SIZE_BYTES,safeFilename,sanitizeProviderError,
   streamFetch,validateStreamMime,validateStreamSize,
@@ -12,6 +13,23 @@ Deno.serve(async(req)=>{
   const body=await req.json().catch(()=>({})) as Record<string,unknown>;
   const purpose=String(body.purpose??'');
   const requestedBusinessOwner=body.business_owner_id;
+  const premiumContentId=body.premium_content_id;
+  const isPremium=purpose===CREATOR_PREMIUM_STREAM_PURPOSE;
+  if(isPremium) {
+    if(requestedBusinessOwner!==undefined&&requestedBusinessOwner!==null) {
+      return json({error:'invalid_premium_stream_contract'},400);
+    }
+    if(!isUuid(premiumContentId)) return json({error:'invalid_premium_content'},400);
+    const caller=authenticatedClient(req);
+    if(!caller) return json({error:'unauthorized'},401);
+    const {data:authorized,error:authorizationError}=await caller.rpc(
+      'authorize_my_creator_premium_video_upload_v1',
+      {p_content_id:premiumContentId},
+    );
+    if(authorizationError||authorized!==true) return json({error:'premium_upload_forbidden'},403);
+  } else if(premiumContentId!==undefined&&premiumContentId!==null) {
+    return json({error:'unexpected_premium_context'},400);
+  }
   let ownerId=user.id;
   if(requestedBusinessOwner!==undefined&&requestedBusinessOwner!==null) {
     if(!isUuid(requestedBusinessOwner)) return json({error:'invalid_business_scope'},400);
@@ -21,7 +39,7 @@ Deno.serve(async(req)=>{
     const allowed=legacyAllowed||advertiserOwnerAllowed;
     if(!allowed) return json({error:'business_media_manage_required'},403);
     ownerId=requestedBusinessOwner;
-  } else if(purpose!=='feed_video') return json({error:'invalid_purpose'},400);
+  } else if(purpose!=='feed_video'&&!isPremium) return json({error:'invalid_purpose'},400);
   const mime=validateStreamMime(body.mime_type); if(!mime) return json({error:'invalid_mime_type'},400);
   const size=validateStreamSize(body.size_bytes); if(!size) return json({error:'invalid_size'},400);
   const db=admin();
@@ -63,10 +81,14 @@ Deno.serve(async(req)=>{
 
   try {
     const environment=Deno.env.get('DENO_DEPLOYMENT_ID')?'production':'development';
-    const provider=await streamFetch('/direct_upload',{method:'POST',body:JSON.stringify({
+    const metadata:Record<string,string>={asset_id:id,purpose,environment};
+    if(isPremium) metadata.premium_content_id=String(premiumContentId);
+    const providerContract={
       maxDurationSeconds:STREAM_MAX_DURATION_SECONDS,creator:ownerId,requireSignedURLs:false,
-      allowedOrigins:[],expiry:expiresAt,meta:{asset_id:id,purpose,environment},
-    })});
+      allowedOrigins:[],expiry:expiresAt,meta:metadata,
+    };
+    if(isPremium) providerContract.requireSignedURLs=true;
+    const provider=await streamFetch('/direct_upload',{method:'POST',body:JSON.stringify(providerContract)});
     const result=provider.result as Record<string,unknown>|undefined;
     uid=typeof result?.uid==='string'?result.uid:undefined;
     const uploadUrl=typeof result?.uploadURL==='string'&&result.uploadURL.startsWith('https://')?result.uploadURL:null;

@@ -1,5 +1,8 @@
 import { admin,json } from '../_shared/mediaAuth.ts';
 import {
+  CREATOR_PREMIUM_STREAM_PURPOSE,reconcilePremiumStreamVideo,
+} from '../_shared/premiumStreamSecurity.ts';
+import {
   isUuid,reconcileStreamVideo,streamCustomerCode,streamWebhookSecret,verifyWebhook,webhookVideo,
 } from '../_shared/stream.ts';
 
@@ -28,21 +31,40 @@ Deno.serve(async(req)=>{
   if(!asset) return json({success:true},202);
   if(!asset.cloudflare_uid||uid!==asset.cloudflare_uid) return json({success:true},202);
   if(['deleted','delete_pending'].includes(asset.status)) return json({success:true});
-  const updates=reconcileStreamVideo(
-    video,streamCustomerCode(),asset.cloudflare_uid,Number(asset.max_duration_seconds??60),
-  );
+  const premium=asset.purpose===CREATOR_PREMIUM_STREAM_PURPOSE;
+  const updates=premium
+    ? reconcilePremiumStreamVideo(video,asset.cloudflare_uid,Number(asset.max_duration_seconds??60))
+    : reconcileStreamVideo(
+      video,streamCustomerCode(),asset.cloudflare_uid,Number(asset.max_duration_seconds??60),
+    );
   if(asset.status==='ready') {
-    if(updates.status!=='ready') return json({success:true});
-    const providerPlayback=video.playback&&typeof video.playback==='object'
-      ? video.playback as Record<string,unknown>:{};
-    const providerHls=typeof providerPlayback.hls==='string'?providerPlayback.hls:null;
-    updates.status='ready';
-    updates.ready_at=asset.ready_at;
-    updates.hls_url=providerHls?.startsWith('https://')?updates.hls_url:asset.hls_url;
-    updates.dash_url=updates.dash_url??asset.dash_url;
-    updates.thumbnail_url=updates.thumbnail_url??asset.thumbnail_url;
-    updates.error_code=null;
-    updates.error_message=null;
+    if(premium) {
+      if(updates.status!=='ready') {
+        if(updates.error_code!=='creator_premium_stream_signed_urls_required') {
+          return json({success:true});
+        }
+      } else {
+        updates.status='ready';
+        updates.ready_at=asset.ready_at;
+        updates.hls_url=null;
+        updates.dash_url=null;
+        updates.thumbnail_url=null;
+        updates.error_code=null;
+        updates.error_message=null;
+      }
+    } else {
+      if(updates.status!=='ready') return json({success:true});
+      const providerPlayback=video.playback&&typeof video.playback==='object'
+        ? video.playback as Record<string,unknown>:{};
+      const providerHls=typeof providerPlayback.hls==='string'?providerPlayback.hls:null;
+      updates.status='ready';
+      updates.ready_at=asset.ready_at;
+      updates.hls_url=providerHls?.startsWith('https://')?updates.hls_url:asset.hls_url;
+      updates.dash_url=updates.dash_url??asset.dash_url;
+      updates.thumbnail_url=updates.thumbnail_url??asset.thumbnail_url;
+      updates.error_code=null;
+      updates.error_message=null;
+    }
   } else if(asset.ready_at) {
     updates.ready_at=asset.ready_at;
   }
