@@ -312,6 +312,40 @@ test('webhook preserves public reconciliation and Premium ready idempotency', as
   assert.equal(readyHarness.updates.length, 0);
 });
 
+test('ready Premium webhook preserves proven protection unless provider explicitly disables signed URLs', async () => {
+  const readyAsset = {
+    id: assetId, purpose: 'creator_premium_video', status: 'ready', cloudflare_uid: 'provider-uid',
+    max_duration_seconds: 60, ready_at: 'original-ready-at',
+  };
+  const signedRequiredFailure = {
+    status: 'failed', hls_url: null, dash_url: null, thumbnail_url: null,
+    provider_metadata: { require_signed_urls: false },
+    error_code: 'creator_premium_stream_signed_urls_required',
+    error_message: 'creator_premium_stream_signed_urls_required',
+    last_provider_check_at: 'later',
+  };
+
+  for (const requireSignedURLs of [undefined, 'true']) {
+    const harness = loadWebhook({ asset: readyAsset, premiumUpdates: signedRequiredFailure });
+    const provider = {
+      uid: 'provider-uid', meta: { asset_id: assetId }, status: { state: 'ready' },
+      readyToStream: true,
+    };
+    if (requireSignedURLs !== undefined) provider.requireSignedURLs = requireSignedURLs;
+    assert.equal((await webhook(harness.handler, provider)).response.status, 200);
+    assert.equal(harness.updates.length, 0);
+  }
+
+  const disabled = loadWebhook({ asset: readyAsset, premiumUpdates: signedRequiredFailure });
+  assert.equal((await webhook(disabled.handler, {
+    uid: 'provider-uid', meta: { asset_id: assetId }, status: { state: 'ready' },
+    readyToStream: true, requireSignedURLs: false,
+  })).response.status, 200);
+  assert.equal(disabled.updates.length, 1);
+  assert.equal(disabled.updates[0].status, 'failed');
+  assert.equal(disabled.updates[0].error_code, 'creator_premium_stream_signed_urls_required');
+});
+
 function rowsChain(rows, error = null) {
   const filters = [];
   let limitValue = null;
@@ -489,5 +523,10 @@ test('B3 Stream sources contain no secret, UID, token, or signed URL logging and
     assert.doesNotMatch(source, /console\.(?:log|warn|error)\([^)]*(?:token|signed|jwk|playback|cloudflare_uid|uploadUrl)/i);
     assert.doesNotMatch(source, /STREAM_SIGNING_KEY_(?:ID|JWK_B64)\s*=/);
   }
+  assert.doesNotMatch(
+    read('supabase/functions/create-stream-upload/index.ts'),
+    /console\.(?:log|warn|error)\([^)]*\{[^}]*(?:\bassetId\b|\buid\b)/i,
+    'Premium upload recovery logs must not contain private provider or asset identifiers',
+  );
   assert.doesNotMatch(read('supabase/functions/delete-stream-video/index.ts'), /creator_premium_video/);
 });

@@ -144,6 +144,7 @@ function loadPremiumService({
     errorCode: null, readyAt: new Date().toISOString(), playbackMode: 'premium_entitlement_required',
   }),
   deleteVideo = async () => {},
+  getCleanupAssetId = () => undefined,
   rpc = async name => name === 'set_my_creator_premium_video_media_v1'
     ? { data: [{
       content_id: contentId, teaser_url: 'https://public.example.test/teaser.jpg',
@@ -181,6 +182,7 @@ function loadPremiumService({
         postVideoToStreamUploadUrl: postVideo,
         waitForCreatorPremiumStreamReady: waitVideo,
         deleteStreamVideo: deleteVideo,
+        getCreatorPremiumStreamCleanupAssetId: getCleanupAssetId,
         getSafeStreamError: error => ({ code: error?.code ?? error?.message ?? 'stream_operation_failed' }),
       };
       if (specifier === '@/template') return {
@@ -302,6 +304,56 @@ test('cleanup failures remain observable but never disclose private asset identi
       throw error;
     }
   }, /processing_failed/);
+});
+
+test('invalid Premium upload contract retries orphan cleanup and reports a safe failure', async () => {
+  const internalError = new Error('invalid_premium_stream_upload_contract');
+  const deleted = [];
+  const service = loadPremiumService({
+    createVideo: async () => { throw internalError; },
+    getCleanupAssetId: error => error === internalError ? videoAssetId : undefined,
+    deleteVideo: async assetId => {
+      deleted.push(assetId);
+      throw new Error('video_cleanup_failed');
+    },
+  });
+  await assert.rejects(async () => {
+    try { await service.uploadCreatorPremiumVideoMedia(input); }
+    catch (error) {
+      assert.deepEqual(deleted, [videoAssetId]);
+      assert.deepEqual(JSON.parse(JSON.stringify(error.cleanupFailures)), [
+        { role: 'video', code: 'video_cleanup_failed' },
+      ]);
+      assert.equal(JSON.stringify(error).includes(videoAssetId), false);
+      throw error;
+    }
+  }, /invalid_premium_stream_upload_contract/);
+});
+
+test('Premium upload-contract cleanup carrier is non-enumerable and survives a failed first delete', async () => {
+  const invokes = [];
+  const service = loadStreamService(async (name, options) => {
+    invokes.push({ name, body: structuredClone(options.body) });
+    if (name === 'create-stream-upload') return { data: { success: true, data: {
+      assetId: videoAssetId,
+      uploadUrl: 'http://invalid.example.test/direct',
+      method: 'POST', formField: 'file', expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      maxDurationSeconds: 60, maxSizeBytes: 200_000_000,
+    } }, error: null };
+    return { data: { success: false, error: 'video_cleanup_failed' }, error: null };
+  });
+  await assert.rejects(async () => {
+    try {
+      await service.createCreatorPremiumStreamUpload({
+        contentId, mimeType: 'video/mp4', sizeBytes: 1000, fileName: 'premium.mp4',
+      });
+    } catch (error) {
+      assert.equal(service.getCreatorPremiumStreamCleanupAssetId(error), videoAssetId);
+      assert.equal(JSON.stringify(error).includes(videoAssetId), false);
+      throw error;
+    }
+  }, /invalid_premium_stream_upload_contract/);
+  assert.deepEqual(invokes.map(value => value.name), ['create-stream-upload', 'delete-stream-video']);
 });
 
 test('owner state is safe and playback grant sends only content ID with strict URL and expiry validation', async () => {

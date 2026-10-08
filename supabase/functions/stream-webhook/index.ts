@@ -40,7 +40,8 @@ Deno.serve(async(req)=>{
   if(asset.status==='ready') {
     if(premium) {
       if(updates.status!=='ready') {
-        if(updates.error_code!=='creator_premium_stream_signed_urls_required') {
+        if(updates.error_code!=='creator_premium_stream_signed_urls_required'
+          ||video.requireSignedURLs!==false) {
           return json({success:true});
         }
       } else {

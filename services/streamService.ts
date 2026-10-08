@@ -10,6 +10,7 @@ const UUID_PATTERN=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 const STREAM_STATUSES=new Set(['pending','uploading','processing','ready','failed','delete_pending','deleted']);
 const SAFE_TEXT_LIMIT=240;
 const supabase=getSupabaseClient();
+const PREMIUM_STREAM_CLEANUP_ASSET_ID=Symbol('premiumStreamCleanupAssetId');
 
 export type StreamPurpose='feed_video'|'creator_premium_video';
 export type StreamUploadStage=
@@ -60,6 +61,24 @@ export class StreamClientError extends Error {
     super(input.message);this.name='StreamClientError';this.stage=input.stage;this.code=input.code;
     this.httpStatus=input.httpStatus;this.operationId=input.operationId;
   }
+}
+interface PremiumStreamCleanupCarrier {
+  [PREMIUM_STREAM_CLEANUP_ASSET_ID]?:string;
+}
+function premiumStreamUploadContractError(assetId:string,operationId:string):StreamClientError {
+  const error=new StreamClientError({
+    stage:'STREAM_CREATE_UPLOAD',code:'invalid_premium_stream_upload_contract',
+    message:'invalid_premium_stream_upload_contract',operationId,
+  });
+  Object.defineProperty(error,PREMIUM_STREAM_CLEANUP_ASSET_ID,{
+    value:assetId,enumerable:false,writable:false,configurable:false,
+  });
+  return error;
+}
+export function getCreatorPremiumStreamCleanupAssetId(error:unknown):string|undefined {
+  if(!error||typeof error!=='object') return undefined;
+  const assetId=(error as PremiumStreamCleanupCarrier)[PREMIUM_STREAM_CLEANUP_ASSET_ID];
+  return typeof assetId==='string'&&UUID_PATTERN.test(assetId)?assetId:undefined;
 }
 export function throwIfStreamAborted(
   signal:AbortSignal|undefined,
@@ -185,11 +204,17 @@ export async function createCreatorPremiumStreamUpload(input:{
       &&contract.maxDurationSeconds===60&&contract.maxSizeBytes===STREAM_MAX_SIZE_BYTES
       &&Number.isFinite(expiresAt)&&expiresAt>=Date.now()-300_000;
     if(!assetId||validContract!==true) {
-      if(assetId) await deleteStreamVideo(assetId).catch(()=>{});
+      if(assetId) {
+        try { await deleteStreamVideo(assetId); }
+        catch { throw premiumStreamUploadContractError(assetId,operationId); }
+      }
       throw new Error('invalid_premium_stream_upload_contract');
     }
     return contract as unknown as StreamUploadContract;
-  } catch(error) { throw streamError(error,'STREAM_CREATE_UPLOAD',operationId); }
+  } catch(error) {
+    if(getCreatorPremiumStreamCleanupAssetId(error)) throw error;
+    throw streamError(error,'STREAM_CREATE_UPLOAD',operationId);
+  }
 }
 
 export async function postVideoToStreamUploadUrl(input:{

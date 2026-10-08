@@ -14,6 +14,7 @@ import {
 import {
   createCreatorPremiumStreamUpload,
   deleteStreamVideo,
+  getCreatorPremiumStreamCleanupAssetId,
   getSafeStreamError,
   postVideoToStreamUploadUrl,
   waitForCreatorPremiumStreamReady,
@@ -169,6 +170,7 @@ export async function uploadCreatorPremiumVideoMedia(
       replayed:result.replayed===true,
     };
   } catch(error) {
+    videoAssetId??=getCreatorPremiumStreamCleanupAssetId(error);
     const cleanupFailures=await cleanupNewMedia({
       teaserAssetId:teaser.assetId,
       videoAssetId,

@@ -58,7 +58,7 @@ Deno.serve(async(req)=>{
   const persistRecovery=async(values:Record<string,unknown>,code:string):Promise<boolean>=>{
     const {error}=await db.from('video_assets').update(values).eq('id',id).eq('owner_id',ownerId);
     if(error) {
-      console.error('[create-stream-upload] recovery_state_persist_failed',{assetId:id,uid,code});
+      console.error('[create-stream-upload] recovery_state_persist_failed',{code});
       return false;
     }
     return true;

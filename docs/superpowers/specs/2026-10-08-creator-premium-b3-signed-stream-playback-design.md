@@ -1,7 +1,7 @@
 # Creator Premium B3 — Signed Cloudflare Stream Playback Design
 
-Date: 2026-10-08  
-Status: Proposed for owner review  
+Date: 2026-10-08
+Status: Proposed for owner review
 Base: `origin/main` at `e28399c38ab70b764668a2debe422fe7a0332122`
 
 ## Intent
