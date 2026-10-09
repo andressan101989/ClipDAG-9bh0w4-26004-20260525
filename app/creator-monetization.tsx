@@ -1,638 +1,539 @@
-/**
- * app/creator-monetization.tsx
- *
- * Full creator monetization settings screen:
- * • Premium DM — enable/disable, set price, welcome message
- * • Subscription Plans — create / edit / view plans
- * • Earnings overview
- */
-import React, { useState, useEffect, useCallback } from 'react';
-import {
-  View, Text, ScrollView, Pressable, TextInput, StyleSheet,
-  ActivityIndicator, Switch, Modal, KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
-import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { randomUUID } from 'expo-crypto';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
-import { useAuth } from '@/hooks/useAuth';
-import { useWallet } from '@/hooks/useWallet';
-import { useAlert } from '@/template';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  CREATOR_PREMIUM_FINANCE_AVAILABLE,
-  CREATOR_PREMIUM_FOUNDATION_MESSAGE,
-} from '@/services/creatorPremiumService';
+  ActivityIndicator,
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
+import {
+  activateMyCreatorPremiumPlan,
+  cloneMyCreatorPremiumPlanVersion,
+  createMyCreatorPremiumPlanDraft,
+  fetchMyCreatorPremiumContents,
+  fetchMyCreatorPremiumPlans,
+  normalizeCreatorPremiumPriceBdag,
+  retireMyCreatorPremiumPlan,
+  setMyCreatorPremiumPlanContents,
+  updateMyCreatorPremiumPlanDraft,
+  type CreatorPremiumCursor,
+  type CreatorPremiumOwnerItem,
+  type CreatorPremiumPlanItem,
+} from '@/services/creatorPremiumService';
 
-const PREMIUM_COLOR  = '#FF9D00';
-const PREMIUM_COLOR2 = '#FF5A00';
-const SUB_COLOR      = '#A855F7';
-const SUB_COLOR2     = '#7C5CFF';
+const PREMIUM = Colors.purple;
+const PREMIUM_SOFT = Colors.purpleDim;
 
-interface SubscriptionPlan {
-  id: string;
-  name: string;
-  description: string;
-  price_bdag: number;
-  billing_cycle: string;
-  perks: string[];
-  subscribers_count: number;
-  status: string;
+const contentStatus: Record<CreatorPremiumOwnerItem['lifecycle_status'], string> = {
+  draft: 'Borrador',
+  pending_review: 'En revisión',
+  published: 'Publicado',
+  quarantined: 'Restringido',
+  removed: 'Retirado',
+  deleted: 'Eliminado',
+};
+
+const planStatus: Record<CreatorPremiumPlanItem['status'], string> = {
+  draft: 'Borrador',
+  active: 'Activo',
+  retired: 'Retirado',
+};
+
+const accessLabel: Record<CreatorPremiumOwnerItem['access_mode'], string> = {
+  purchase: 'Compra',
+  subscription: 'Suscripción',
+  purchase_or_subscription: 'Compra o suscripción',
+};
+
+function errorMessage(error: unknown): string {
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim()) return message;
+  }
+  return 'No pudimos completar la operación. Inténtalo de nuevo.';
 }
 
-interface PremiumDMStats {
-  enabled: boolean;
-  price_bdag: number;
-  welcome_message: string;
-  total_earned: number;
-  messages_count: number;
+function money(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return 'Sin precio';
+  const [whole, fraction] = String(value).split('.');
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${grouped}${fraction ? `,${fraction}` : ''} BDAG`;
 }
 
-// ── Perk row ─────────────────────────────────────────────────────────────────
-function PerkRow({ perk, onRemove }: { perk: string; onRemove: () => void }) {
+function appendUnique<T extends { id: string }>(current: T[], incoming: T[]): T[] {
+  const seen = new Set(current.map(item => item.id));
+  return [...current, ...incoming.filter(item => !seen.has(item.id))];
+}
+
+function StatusChip({ label, tone = 'purple' }: { label: string; tone?: 'purple' | 'green' | 'amber' }) {
+  const color = tone === 'green' ? Colors.success : tone === 'amber' ? Colors.warning : PREMIUM;
   return (
-    <View style={pk.row}>
-      <MaterialIcons name="check-circle" size={14} color={SUB_COLOR} />
-      <Text style={pk.text}>{perk}</Text>
-      <Pressable onPress={onRemove} hitSlop={8}>
-        <MaterialIcons name="close" size={14} color={Colors.textSubtle} />
-      </Pressable>
+    <View style={[styles.chip, { backgroundColor: `${color}1F`, borderColor: `${color}66` }]}>
+      <Text style={[styles.chipText, { color }]}>{label}</Text>
     </View>
   );
 }
-const pk = StyleSheet.create({
-  row:  { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(168,85,247,0.08)', borderRadius: Radius.md, padding: 10 },
-  text: { color: Colors.textSecondary, fontSize: FontSize.sm, flex: 1 },
-});
 
-export default function CreatorMonetizationScreen() {
+function EmptyState({ icon, title, copy }: { icon: 'image-multiple-outline' | 'playlist-star'; title: string; copy: string }) {
+  return (
+    <View style={styles.empty}>
+      <MaterialCommunityIcons name={icon} size={42} color={Colors.textSubtle} />
+      <Text style={styles.emptyTitle}>{title}</Text>
+      <Text style={styles.emptyCopy}>{copy}</Text>
+    </View>
+  );
+}
+
+export default function CreatorPremiumHub() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
-  const router  = useRouter();
-  const { user } = useAuth();
-  const walletData = useWallet();
-  const { showAlert } = useAlert();
+  const [tab, setTab] = useState<'content' | 'plans'>('content');
+  const [contents, setContents] = useState<CreatorPremiumOwnerItem[]>([]);
+  const [plans, setPlans] = useState<CreatorPremiumPlanItem[]>([]);
+  const [contentNextCursor, setContentNextCursor] = useState<CreatorPremiumCursor | null>(null);
+  const [planNextCursor, setPlanNextCursor] = useState<CreatorPremiumCursor | null>(null);
+  const [loadingMore, setLoadingMore] = useState<'content' | 'plans' | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [planModal, setPlanModal] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<CreatorPremiumPlanItem | null>(null);
+  const [planName, setPlanName] = useState('');
+  const [planDescription, setPlanDescription] = useState('');
+  const [planPrice, setPlanPrice] = useState('');
+  const [planDays, setPlanDays] = useState('30');
+  const [selectedContentIds, setSelectedContentIds] = useState<string[]>([]);
+  const [savingPlan, setSavingPlan] = useState(false);
+  const planCreateAttempt = useRef<{ signature: string; key: string } | null>(null);
+  const planCloneAttempts = useRef(new Map<string, string>());
 
-  // ── Premium DM state ──────────────────────────────────────────────────────
-  const [dmStats,       setDmStats]       = useState<PremiumDMStats | null>(null);
-  const [dmEnabled,     setDmEnabled]     = useState(false);
-  const [dmPrice,       setDmPrice]       = useState('50');
-  const [dmWelcome,     setDmWelcome]     = useState('');
-  const dmSaving = false;
-  const [dmLoading,     setDmLoading]     = useState(true);
+  const subscriptionContents = useMemo(
+    () => contents.filter(item => {
+      const available = item.lifecycle_status !== 'deleted'
+        && item.lifecycle_status !== 'removed'
+        && item.lifecycle_status !== 'quarantined'
+        && item.access_mode !== 'purchase';
+      return available || selectedContentIds.includes(item.id);
+    }),
+    [contents, selectedContentIds],
+  );
+  const planGroups = useMemo(() => ([
+    { status: 'draft' as const, label: 'Borradores', items: plans.filter(plan => plan.status === 'draft') },
+    { status: 'active' as const, label: 'Activos', items: plans.filter(plan => plan.status === 'active') },
+    { status: 'retired' as const, label: 'Retirados', items: plans.filter(plan => plan.status === 'retired') },
+  ]), [plans]);
 
-  // ── Subscription plans state ──────────────────────────────────────────────
-  const [plans,         setPlans]         = useState<SubscriptionPlan[]>([]);
-  const [plansLoading,  setPlansLoading]  = useState(true);
-  const [planModal,     setPlanModal]     = useState(false);
-  const [editingPlan,   setEditingPlan]   = useState<SubscriptionPlan | null>(null);
-  const planSaving = false;
-
-  // Plan form
-  const [planName,      setPlanName]      = useState('');
-  const [planDesc,      setPlanDesc]      = useState('');
-  const [planPrice,     setPlanPrice]     = useState('2000');
-  const [planCycle,     setPlanCycle]     = useState('monthly');
-  const [planPerks,     setPlanPerks]     = useState<string[]>([]);
-  const [newPerk,       setNewPerk]       = useState('');
-
-  // Tab
-  const [activeTab, setActiveTab] = useState<'dm' | 'subscriptions'>('dm');
-
-  // ── Load premium DM config ────────────────────────────────────────────────
-  const loadDMConfig = useCallback(async () => {
-    if (!user?.id) return;
-    setDmLoading(true);
-    setDmStats(null);
-    setDmEnabled(false);
-    setDmLoading(false);
-  }, [user?.id]);
-
-  // ── Load subscription plans ───────────────────────────────────────────────
-  const loadPlans = useCallback(async () => {
-    if (!user?.id) return;
-    setPlansLoading(true);
-    setPlans([]);
-    setPlansLoading(false);
-  }, [user?.id]);
-
-  useEffect(() => { loadDMConfig(); loadPlans(); }, [loadDMConfig, loadPlans]);
-
-  // ── Save premium DM config ────────────────────────────────────────────────
-  const handleSaveDM = useCallback(async () => {
-    showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE);
-  }, [showAlert]);
-
-  // ── Open plan form ────────────────────────────────────────────────────────
-  const openPlanForm = useCallback((plan?: SubscriptionPlan) => {
-    if (plan) {
-      setEditingPlan(plan);
-      setPlanName(plan.name);
-      setPlanDesc(plan.description);
-      setPlanPrice(String(plan.price_bdag));
-      setPlanCycle(plan.billing_cycle);
-      setPlanPerks([...(plan.perks ?? [])]);
-    } else {
-      setEditingPlan(null);
-      setPlanName('');
-      setPlanDesc('');
-      setPlanPrice('2000');
-      setPlanCycle('monthly');
-      setPlanPerks([
-        'Acceso a todo el contenido exclusivo',
-        '10 DMs Premium gratis por mes',
-        'Insignia de suscriptor VIP',
+  const load = useCallback(async (refresh = false): Promise<boolean> => {
+    if (refresh) setRefreshing(true);
+    else setLoading(true);
+    setError(null);
+    try {
+      const [contentPage, planPage] = await Promise.all([
+        fetchMyCreatorPremiumContents({ limit: 100 }),
+        fetchMyCreatorPremiumPlans({ limit: 100 }),
       ]);
+      setContents(contentPage.items);
+      setPlans(planPage.items);
+      setContentNextCursor(contentPage.nextCursor);
+      setPlanNextCursor(planPage.nextCursor);
+      return true;
+    } catch (reason) {
+      setError(errorMessage(reason));
+      return false;
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
+  }, []);
+
+  const loadMoreContents = useCallback(async () => {
+    if (!contentNextCursor || loadingMore) return;
+    setLoadingMore('content');
+    try {
+      const page = await fetchMyCreatorPremiumContents({ limit: 100, cursor: contentNextCursor });
+      setContents(current => appendUnique(current, page.items));
+      setContentNextCursor(page.nextCursor);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setLoadingMore(null);
+    }
+  }, [contentNextCursor, loadingMore]);
+
+  const loadMorePlans = useCallback(async () => {
+    if (!planNextCursor || loadingMore) return;
+    setLoadingMore('plans');
+    try {
+      const page = await fetchMyCreatorPremiumPlans({ limit: 100, cursor: planNextCursor });
+      setPlans(current => appendUnique(current, page.items));
+      setPlanNextCursor(page.nextCursor);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setLoadingMore(null);
+    }
+  }, [loadingMore, planNextCursor]);
+
+  useFocusEffect(useCallback(() => {
+    void load();
+  }, [load]));
+
+  const openPlan = useCallback((plan?: CreatorPremiumPlanItem) => {
+    setEditingPlan(plan ?? null);
+    setPlanName(plan?.name ?? '');
+    setPlanDescription(plan?.description ?? '');
+    setPlanPrice(plan ? String(plan.price_bdag) : '');
+    setPlanDays(plan ? String(plan.billing_period_days) : '30');
+    setSelectedContentIds(plan?.mapped_content_ids ?? []);
     setPlanModal(true);
   }, []);
 
-  const closePlanForm = useCallback(() => {
+  const closePlan = useCallback(() => {
+    if (savingPlan) return;
     setPlanModal(false);
     setEditingPlan(null);
-    setNewPerk('');
+  }, [savingPlan]);
+
+  const toggleContent = useCallback((contentId: string) => {
+    setSelectedContentIds(current => current.includes(contentId)
+      ? current.filter(id => id !== contentId)
+      : [...current, contentId]);
   }, []);
 
-  // ── Save plan ─────────────────────────────────────────────────────────────
-  const handleSavePlan = useCallback(async () => {
-    showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE);
-  }, [showAlert]);
+  const savePlan = useCallback(async () => {
+    let price: string;
+    try {
+      price = normalizeCreatorPremiumPriceBdag(planPrice);
+    } catch {
+      Alert.alert('Revisa el plan', 'Ingresa un precio BDAG positivo con hasta 8 decimales.');
+      return;
+    }
+    const days = Number(planDays);
+    if (!planName.trim() || !Number.isInteger(days) || days < 1 || days > 365) {
+      Alert.alert('Revisa el plan', 'Completa el nombre, un precio válido y un período entre 1 y 365 días.');
+      return;
+    }
+    setSavingPlan(true);
+    try {
+      const signature = JSON.stringify([
+        planName.trim(), planDescription.trim(), price, days,
+      ]);
+      if (!editingPlan && planCreateAttempt.current?.signature !== signature) {
+        planCreateAttempt.current = { signature, key: randomUUID() };
+      }
+      const saved = editingPlan
+        ? await updateMyCreatorPremiumPlanDraft({
+            planId: editingPlan.id,
+            name: planName.trim(),
+            description: planDescription.trim(),
+            priceBdag: price,
+            billingPeriodDays: days,
+          })
+        : await createMyCreatorPremiumPlanDraft({
+            name: planName.trim(),
+            description: planDescription.trim(),
+            priceBdag: price,
+            billingPeriodDays: days,
+            clientRequestId: planCreateAttempt.current?.key ?? randomUUID(),
+          });
+      if (!saved?.id) throw new Error('creator_premium_plan_save_failed');
+      await setMyCreatorPremiumPlanContents(saved.id, selectedContentIds);
+      const refreshed = await load(true);
+      if (!refreshed) throw new Error('creator_premium_plan_refresh_failed');
+      if (!editingPlan) planCreateAttempt.current = null;
+      setPlanModal(false);
+      setEditingPlan(null);
+    } catch (reason) {
+      Alert.alert('No se guardó el plan', errorMessage(reason));
+    } finally {
+      setSavingPlan(false);
+    }
+  }, [editingPlan, load, planDays, planDescription, planName, planPrice, selectedContentIds]);
 
-  // ── Toggle plan status ────────────────────────────────────────────────────
-  const handleTogglePlan = useCallback(async (plan: SubscriptionPlan) => {
-    void plan;
-    showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE);
-  }, [showAlert]);
+  const runPlanAction = useCallback(async (plan: CreatorPremiumPlanItem, action: 'activate' | 'clone' | 'retire') => {
+    if (busyId) return;
+    setBusyId(plan.id);
+    try {
+      if (action === 'activate') await activateMyCreatorPremiumPlan(plan.id);
+      if (action === 'clone') {
+        const clientRequestId = planCloneAttempts.current.get(plan.id) ?? randomUUID();
+        planCloneAttempts.current.set(plan.id, clientRequestId);
+        await cloneMyCreatorPremiumPlanVersion(plan.id, clientRequestId);
+      }
+      if (action === 'retire') await retireMyCreatorPremiumPlan(plan.id);
+      const refreshed = await load(true);
+      if (!refreshed) throw new Error('creator_premium_plan_refresh_failed');
+      if (action === 'clone') planCloneAttempts.current.delete(plan.id);
+    } catch (reason) {
+      Alert.alert('No se actualizó el plan', errorMessage(reason));
+    } finally {
+      setBusyId(null);
+    }
+  }, [busyId, load]);
 
-  // ── Add perk ──────────────────────────────────────────────────────────────
-  const handleAddPerk = useCallback(() => {
-    if (!newPerk.trim()) return;
-    setPlanPerks(prev => [...prev, newPerk.trim()]);
-    setNewPerk('');
-  }, [newPerk]);
-
-  const totalEarnings = (dmStats?.total_earned ?? 0) + plans.reduce((s, p) => s + Number(p.price_bdag) * Number(p.subscribers_count) * 0.9, 0);
-
-  const TABS = [
-    { key: 'dm' as const,            label: 'Premium DM',     icon: 'mark-email-read', color: PREMIUM_COLOR },
-    { key: 'subscriptions' as const, label: 'Suscripciones',  icon: 'star',            color: SUB_COLOR },
-  ];
-
-  if (!CREATOR_PREMIUM_FINANCE_AVAILABLE) {
-    return (
-      <View style={[styles.root, { paddingTop: insets.top }]}>
-        <StatusBar style="light" />
-        <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
-            <MaterialCommunityIcons name="arrow-left" size={22} color={Colors.textPrimary} />
-          </Pressable>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.headerTitle}>Base Premium segura</Text>
-            <Text style={styles.headerSub}>CREATOR-PREMIUM-B1</Text>
-          </View>
-        </View>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.xl, gap: Spacing.md }}>
-          <MaterialCommunityIcons name="shield-lock-outline" size={56} color={Colors.primary} />
-          <Text style={{ color: Colors.textPrimary, fontSize: FontSize.xl, fontWeight: FontWeight.bold, textAlign: 'center' }}>
-            Monetización Premium en preparación
-          </Text>
-          <Text style={{ color: Colors.textSecondary, fontSize: FontSize.sm, lineHeight: 21, textAlign: 'center' }}>
-            {CREATOR_PREMIUM_FOUNDATION_MESSAGE}
-          </Text>
-          <Text style={{ color: Colors.textSubtle, fontSize: FontSize.xs, lineHeight: 18, textAlign: 'center' }}>
-            B1 no cobra BDAG, no crea suscripciones y no habilita Premium DM. La publicación segura llegará en fases posteriores.
-          </Text>
-        </View>
-      </View>
+  const confirmPlanAction = useCallback((plan: CreatorPremiumPlanItem, action: 'activate' | 'retire') => {
+    const activate = action === 'activate';
+    Alert.alert(
+      activate ? 'Activar plan' : 'Retirar plan',
+      activate
+        ? 'El plan quedará listo para uso futuro. Las suscripciones siguen deshabilitadas.'
+        : 'El plan dejará de aceptar futuras suscripciones cuando finanzas se habiliten.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: activate ? 'Activar' : 'Retirar', style: activate ? 'default' : 'destructive', onPress: () => void runPlanAction(plan, action) },
+      ],
     );
-  }
+  }, [runPlanAction]);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <StatusBar style="light" />
-
-      {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={Colors.textPrimary} />
+        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconButton}>
+          <MaterialCommunityIcons name="arrow-left" size={23} color={Colors.textPrimary} />
         </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Monetización</Text>
-          <Text style={styles.headerSub}>Premium DM · Suscripciones</Text>
+        <View style={styles.headerCopy}>
+          <Text style={styles.title}>Contenido Premium</Text>
+          <Text style={styles.subtitle}>Ventas y suscripciones aún no están habilitadas</Text>
         </View>
-        <LinearGradient colors={['#FF9D00', '#A855F7']} style={styles.headerBadge}>
-          <MaterialCommunityIcons name="hexagon-multiple" size={16} color="#fff" />
-          <Text style={styles.headerBadgeText}>
-            {(walletData?.balance ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} BDAG
-          </Text>
-        </LinearGradient>
+        <View style={styles.headerBadge}>
+          <MaterialCommunityIcons name="shield-lock-outline" size={20} color={PREMIUM} />
+        </View>
       </View>
 
-      {/* Earnings overview */}
-      <LinearGradient colors={['rgba(168,85,247,0.18)', 'rgba(255,157,0,0.1)']} style={styles.earningsCard}>
-        <View style={styles.earningsRow}>
-          {[
-            { label: 'Ganancias totales', val: `${totalEarnings.toFixed(0)} BDAG`, color: '#FFD700', icon: 'trending-up' },
-            { label: 'DMs Premium',       val: String(dmStats?.messages_count ?? 0),   color: PREMIUM_COLOR, icon: 'message' },
-            { label: 'Suscriptores',      val: String(plans.reduce((s, p) => s + p.subscribers_count, 0)), color: SUB_COLOR, icon: 'star' },
-          ].map((stat, i) => (
-            <React.Fragment key={stat.label}>
-              {i > 0 ? <View style={styles.earningsDivider} /> : null}
-              <View style={styles.earningsStat}>
-                <MaterialIcons name={stat.icon as any} size={14} color={stat.color} />
-                <Text style={[styles.earningsVal, { color: stat.color }]}>{stat.val}</Text>
-                <Text style={styles.earningsLabel}>{stat.label}</Text>
-              </View>
-            </React.Fragment>
-          ))}
-        </View>
-      </LinearGradient>
-
-      {/* Tab bar */}
-      <View style={styles.tabBar}>
-        {TABS.map(t => (
-          <Pressable
-            key={t.key}
-            style={[styles.tabBtn, activeTab === t.key && { borderBottomColor: t.color, borderBottomWidth: 2 }]}
-            onPress={() => setActiveTab(t.key)}
-          >
-            <MaterialIcons name={t.icon as any} size={16}
-              color={activeTab === t.key ? t.color : Colors.textSubtle} />
-            <Text style={[styles.tabText, activeTab === t.key && { color: t.color }]}>{t.label}</Text>
-          </Pressable>
-        ))}
+      <View style={styles.tabs}>
+        <Pressable onPress={() => setTab('content')} style={[styles.tab, tab === 'content' && styles.tabActive]}>
+          <Text style={[styles.tabText, tab === 'content' && styles.tabTextActive]}>Contenido</Text>
+        </Pressable>
+        <Pressable onPress={() => setTab('plans')} style={[styles.tab, tab === 'plans' && styles.tabActive]}>
+          <Text style={[styles.tabText, tab === 'plans' && styles.tabTextActive]}>Planes</Text>
+        </Pressable>
       </View>
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[styles.scroll, { paddingBottom: 60 + insets.bottom }]}
-      >
-        {/* ════ PREMIUM DM TAB ════════════════════════════════════════════ */}
-        {activeTab === 'dm' && (
-          <>
-            {dmLoading ? (
-              <View style={styles.centered}><ActivityIndicator color={PREMIUM_COLOR} /></View>
-            ) : (
-              <>
-                {/* Enable toggle */}
-                <View style={styles.card}>
-                  <LinearGradient colors={dmEnabled
-                    ? ['rgba(255,157,0,0.15)', 'rgba(255,90,0,0.07)']
-                    : ['rgba(255,255,255,0.04)', 'rgba(255,255,255,0.01)']}
-                    style={styles.cardInner}>
-                    <View style={styles.toggleRow}>
-                      <View style={styles.toggleLeft}>
-                        <LinearGradient colors={dmEnabled ? [PREMIUM_COLOR, PREMIUM_COLOR2] : [Colors.border, Colors.border]} style={styles.toggleIcon}>
-                          <MaterialIcons name="mark-email-read" size={20} color="#fff" />
-                        </LinearGradient>
-                        <View>
-                          <Text style={[styles.toggleLabel, dmEnabled && { color: PREMIUM_COLOR }]}>
-                            Premium DM
-                          </Text>
-                          <Text style={styles.toggleSub}>
-                            {dmEnabled ? 'Activo — los usuarios te pagan para enviarte DMs' : 'Inactivo — los mensajes son gratuitos'}
-                          </Text>
-                        </View>
-                      </View>
-                      <Switch
-                        value={dmEnabled}
-                        onValueChange={setDmEnabled}
-                        trackColor={{ false: Colors.border, true: PREMIUM_COLOR + '55' }}
-                        thumbColor={dmEnabled ? PREMIUM_COLOR : Colors.textSubtle}
-                        ios_backgroundColor={Colors.border}
-                      />
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator color={PREMIUM} />
+          <Text style={styles.loadingText}>Cargando tu espacio Premium…</Text>
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={PREMIUM} />}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.notice}>
+            <MaterialCommunityIcons name="information-outline" size={20} color={Colors.info} />
+            <Text style={styles.noticeText}>
+              Puedes preparar borradores y enviarlos a revisión. Solo moderación podrá publicarlos.
+            </Text>
+          </View>
+
+          {error ? (
+            <Pressable style={styles.errorCard} onPress={() => void load()}>
+              <Text style={styles.errorText}>{error}</Text>
+              <Text style={styles.retryText}>Toca para reintentar</Text>
+            </Pressable>
+          ) : null}
+
+          {tab === 'content' ? (
+            <>
+              <Pressable style={styles.primaryButton} onPress={() => router.push('/creator-premium-editor')}>
+                <MaterialCommunityIcons name="plus" size={21} color={Colors.textOnBrand} />
+                <Text style={styles.primaryButtonText}>Crear contenido Premium</Text>
+              </Pressable>
+              {contents.length === 0 ? (
+                <EmptyState
+                  icon="image-multiple-outline"
+                  title="Aún no tienes contenido Premium"
+                  copy="Crea un borrador con una vista previa pública y un original privado."
+                />
+              ) : contents.map(item => (
+                <View key={item.id} style={styles.card}>
+                  <View style={styles.contentRow}>
+                    <View style={styles.teaser}>
+                      {item.teaser_url ? (
+                        <Image source={{ uri: item.teaser_url }} style={styles.teaserImage} />
+                      ) : (
+                        <MaterialCommunityIcons name="image-outline" size={28} color={Colors.textSubtle} />
+                      )}
                     </View>
-                  </LinearGradient>
-                </View>
-
-                {/* Price */}
-                <View style={styles.formSection}>
-                  <Text style={styles.fieldLabel}>Precio por DM (BDAG)</Text>
-                  <View style={styles.priceRow}>
-                    <TextInput
-                      style={[styles.input, { flex: 1 }]}
-                      value={dmPrice}
-                      onChangeText={setDmPrice}
-                      placeholder="50"
-                      placeholderTextColor={Colors.textSubtle}
-                      keyboardType="decimal-pad"
-                    />
-                    <Text style={styles.bdagUnit}>BDAG</Text>
+                    <View style={styles.cardBody}>
+                      <View style={styles.cardHeading}>
+                        <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
+                        <StatusChip
+                          label={contentStatus[item.lifecycle_status]}
+                          tone={item.lifecycle_status === 'published' ? 'green' : item.lifecycle_status === 'pending_review' ? 'amber' : 'purple'}
+                        />
+                      </View>
+                      <Text style={styles.meta}>
+                        {item.content_kind === 'image' ? 'Imagen' : 'Video'} · {accessLabel[item.access_mode]}
+                      </Text>
+                      <Text style={styles.meta}>
+                        {(item.content_kind === 'image' ? item.image_media_ready : item.video_media_ready)
+                          ? 'Medios listos'
+                          : 'Medios pendientes'}
+                        {' · '}{item.mapped_plan_count} plan(es)
+                      </Text>
+                      {item.access_mode !== 'subscription' ? <Text style={styles.price}>{money(item.price_bdag)}</Text> : null}
+                    </View>
                   </View>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickRow}>
-                    {['25', '50', '100', '250', '500'].map(v => (
-                      <Pressable key={v}
-                        style={[styles.quickChip, dmPrice === v && styles.quickChipActive]}
-                        onPress={() => setDmPrice(v)}>
-                        <Text style={[styles.quickChipText, dmPrice === v && styles.quickChipTextActive]}>{v}</Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                  {parseFloat(dmPrice) > 0 ? (
-                    <Text style={styles.feeNote}>
-                      Tú recibes {(parseFloat(dmPrice) * 0.9).toFixed(0)} BDAG · Plataforma {(parseFloat(dmPrice) * 0.1).toFixed(0)} BDAG (10%)
-                    </Text>
-                  ) : null}
+                  {item.lifecycle_status === 'draft' ? (
+                    <Pressable
+                      style={styles.secondaryButton}
+                      onPress={() => router.push({ pathname: '/creator-premium-editor', params: { contentId: item.id } })}
+                    >
+                      <MaterialCommunityIcons name="pencil-outline" size={18} color={PREMIUM} />
+                      <Text style={styles.secondaryButtonText}>Editar borrador</Text>
+                    </Pressable>
+                  ) : (
+                    <View style={styles.readOnlyRow}>
+                      <MaterialCommunityIcons name="lock-outline" size={16} color={Colors.textSubtle} />
+                      <Text style={styles.readOnlyText}>Solo lectura en esta etapa</Text>
+                    </View>
+                  )}
                 </View>
-
-                {/* Welcome message */}
-                <View style={styles.formSection}>
-                  <Text style={styles.fieldLabel}>Mensaje de bienvenida (opcional)</Text>
-                  <TextInput
-                    style={[styles.input, { minHeight: 80, textAlignVertical: 'top', paddingTop: 12 }]}
-                    value={dmWelcome}
-                    onChangeText={setDmWelcome}
-                    placeholder="Ej: Respondo en 24h a todos los mensajes premium..."
-                    placeholderTextColor={Colors.textSubtle}
-                    multiline
-                    maxLength={200}
-                  />
-                  <Text style={styles.charCount}>{dmWelcome.length}/200</Text>
-                </View>
-
-                {/* How premium DM works */}
-                <View style={styles.infoBox}>
-                  <View style={styles.infoBoxHeader}>
-                    <MaterialIcons name="info-outline" size={14} color={PREMIUM_COLOR} />
-                    <Text style={styles.infoBoxTitle}>¿Cómo funciona?</Text>
-                  </View>
-                  {[
-                    '1. El usuario paga BDAG para enviarte un DM prioritario',
-                    '2. El BDAG queda retenido en escrow automáticamente',
-                    '3. Cuando respondes, el BDAG se libera a tu wallet',
-                    '4. Si no respondes en 72h, el usuario recibe un reembolso automático',
-                    '5. Tus suscriptores activos reciben 10 DMs Premium gratis/mes',
-                  ].map(line => (
-                    <View key={line} style={styles.infoLine}>
-                      <MaterialIcons name="chevron-right" size={13} color={PREMIUM_COLOR} />
-                      <Text style={styles.infoText}>{line}</Text>
+              ))}
+              {contentNextCursor ? (
+                <Pressable style={styles.secondaryButton} onPress={() => void loadMoreContents()} disabled={loadingMore === 'content'}>
+                  {loadingMore === 'content'
+                    ? <ActivityIndicator color={PREMIUM} />
+                    : <Text style={styles.secondaryButtonText}>Cargar más contenido</Text>}
+                </Pressable>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <Pressable style={styles.primaryButton} onPress={() => openPlan()}>
+                <MaterialCommunityIcons name="plus" size={21} color={Colors.textOnBrand} />
+                <Text style={styles.primaryButtonText}>Crear plan</Text>
+              </Pressable>
+              {plans.length === 0 ? (
+                <EmptyState
+                  icon="playlist-star"
+                  title="Aún no tienes planes"
+                  copy="Prepara un plan por días y vincula contenido compatible con suscripción."
+                />
+              ) : planGroups.map(group => group.items.length ? (
+                <View key={group.status} style={styles.planGroup}>
+                  <Text style={styles.sectionTitle}>{group.label}</Text>
+                  {group.items.map(plan => (
+                    <View key={plan.id} style={styles.card}>
+                      <View style={styles.cardHeading}>
+                        <View style={styles.cardBody}>
+                          <Text style={styles.cardTitle}>{plan.name}</Text>
+                          <Text style={styles.meta}>Versión {plan.version} · Cada {plan.billing_period_days} días</Text>
+                        </View>
+                        <StatusChip label={planStatus[plan.status]} tone={plan.status === 'active' ? 'green' : 'purple'} />
+                      </View>
+                      {plan.description ? <Text style={styles.planDescription}>{plan.description}</Text> : null}
+                      <View style={styles.planFacts}>
+                        <Text style={styles.price}>{money(plan.price_bdag)}</Text>
+                        <Text style={styles.meta}>{plan.mapped_content_count} contenido(s)</Text>
+                      </View>
+                      <View style={styles.actionRow}>
+                        {plan.status === 'draft' ? (
+                          <>
+                            <Pressable style={styles.smallButton} onPress={() => openPlan(plan)} disabled={busyId === plan.id}>
+                              <Text style={styles.smallButtonText}>Editar</Text>
+                            </Pressable>
+                            <Pressable style={styles.smallButton} onPress={() => confirmPlanAction(plan, 'activate')} disabled={busyId === plan.id}>
+                              <Text style={styles.smallButtonText}>Activar</Text>
+                            </Pressable>
+                          </>
+                        ) : (
+                          <Pressable style={styles.smallButton} onPress={() => void runPlanAction(plan, 'clone')} disabled={busyId === plan.id}>
+                            <Text style={styles.smallButtonText}>Nueva versión</Text>
+                          </Pressable>
+                        )}
+                        {plan.status === 'active' ? (
+                          <Pressable style={styles.dangerButton} onPress={() => confirmPlanAction(plan, 'retire')} disabled={busyId === plan.id}>
+                            <Text style={styles.dangerButtonText}>Retirar</Text>
+                          </Pressable>
+                        ) : null}
+                        {busyId === plan.id ? <ActivityIndicator size="small" color={PREMIUM} /> : null}
+                      </View>
                     </View>
                   ))}
                 </View>
-
-                {/* DM stats */}
-                {dmStats && dmStats.messages_count > 0 ? (
-                  <View style={styles.statsCard}>
-                    <Text style={styles.statsTitle}>Estadísticas</Text>
-                    <View style={styles.statsRow2}>
-                      <View style={styles.statBlock}>
-                        <Text style={styles.statVal}>{dmStats.messages_count}</Text>
-                        <Text style={styles.statLbl}>DMs respondidos</Text>
-                      </View>
-                      <View style={styles.statBlock}>
-                        <Text style={[styles.statVal, { color: PREMIUM_COLOR }]}>
-                          {Number(dmStats.total_earned).toFixed(0)} BDAG
-                        </Text>
-                        <Text style={styles.statLbl}>Ganado total</Text>
-                      </View>
-                    </View>
-                  </View>
-                ) : null}
-
-                {/* Save button */}
-                <Pressable style={styles.saveBtn} onPress={handleSaveDM} disabled={dmSaving}>
-                  <LinearGradient colors={[PREMIUM_COLOR, PREMIUM_COLOR2]} style={styles.saveBtnGrad}>
-                    {dmSaving
-                      ? <ActivityIndicator color="#fff" size="small" />
-                      : <MaterialIcons name="save" size={18} color="#fff" />}
-                    <Text style={styles.saveBtnText}>
-                      {dmSaving ? 'Guardando...' : 'Guardar configuración'}
-                    </Text>
-                  </LinearGradient>
+              ) : null)}
+              {planNextCursor ? (
+                <Pressable style={styles.secondaryButton} onPress={() => void loadMorePlans()} disabled={loadingMore === 'plans'}>
+                  {loadingMore === 'plans'
+                    ? <ActivityIndicator color={PREMIUM} />
+                    : <Text style={styles.secondaryButtonText}>Cargar más planes</Text>}
                 </Pressable>
-              </>
-            )}
-          </>
-        )}
+              ) : null}
+            </>
+          )}
+        </ScrollView>
+      )}
 
-        {/* ════ SUBSCRIPTIONS TAB ═════════════════════════════════════════ */}
-        {activeTab === 'subscriptions' && (
-          <>
-            {/* Create plan CTA */}
-            <Pressable style={styles.createPlanBtn} onPress={() => openPlanForm()}>
-              <LinearGradient colors={[SUB_COLOR, SUB_COLOR2]} style={styles.createPlanBtnGrad}>
-                <MaterialIcons name="add" size={20} color="#fff" />
-                <Text style={styles.createPlanBtnText}>Crear plan de suscripción</Text>
-              </LinearGradient>
-            </Pressable>
-
-            {/* How subscriptions work */}
-            <View style={[styles.infoBox, { borderColor: 'rgba(168,85,247,0.3)' }]}>
-              <View style={styles.infoBoxHeader}>
-                <MaterialIcons name="info-outline" size={14} color={SUB_COLOR} />
-                <Text style={[styles.infoBoxTitle, { color: SUB_COLOR }]}>Beneficios del suscriptor</Text>
+      <Modal visible={planModal} animationType="slide" transparent onRequestClose={closePlan}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={[styles.modalCard, { paddingBottom: Math.max(insets.bottom, Spacing.md) }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>{editingPlan ? 'Editar plan' : 'Nuevo plan'}</Text>
+                <Text style={styles.modalSub}>Las suscripciones continúan deshabilitadas.</Text>
               </View>
-              {[
-                'Acceso automático a TODO tu contenido exclusivo',
-                '10 DMs Premium gratis por mes (sin pagar BDAG)',
-                'Insignia de suscriptor VIP en chats y perfil',
-                'Acceso a tu club privado de creador',
-                'Renovación automática mensual',
-              ].map(b => (
-                <View key={b} style={styles.infoLine}>
-                  <MaterialIcons name="check-circle" size={13} color={SUB_COLOR} />
-                  <Text style={styles.infoText}>{b}</Text>
-                </View>
-              ))}
-            </View>
-
-            {plansLoading ? (
-              <View style={styles.centered}><ActivityIndicator color={SUB_COLOR} /></View>
-            ) : plans.length === 0 ? (
-              <View style={styles.emptyPlans}>
-                <MaterialCommunityIcons name="star-outline" size={52} color={Colors.border} />
-                <Text style={styles.emptyPlansTitle}>Sin planes de suscripción</Text>
-                <Text style={styles.emptyPlansSub}>Crea tu primer plan para empezar a monetizar</Text>
-              </View>
-            ) : (
-              <View style={{ gap: 12 }}>
-                {plans.map(plan => (
-                  <View key={plan.id} style={styles.planCard}>
-                    <LinearGradient
-                      colors={plan.status === 'active'
-                        ? ['rgba(168,85,247,0.15)', 'rgba(124,92,255,0.07)']
-                        : ['rgba(255,255,255,0.04)', 'rgba(255,255,255,0.01)']}
-                      style={styles.planCardInner}
-                    >
-                      {/* Plan header */}
-                      <View style={styles.planHeader}>
-                        <LinearGradient colors={[SUB_COLOR, SUB_COLOR2]} style={styles.planIcon}>
-                          <MaterialIcons name="star" size={16} color="#fff" />
-                        </LinearGradient>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.planName}>{plan.name}</Text>
-                          <Text style={styles.planPrice}>
-                            {Number(plan.price_bdag).toLocaleString(undefined, { maximumFractionDigits: 0 })} BDAG/{plan.billing_cycle === 'monthly' ? 'mes' : plan.billing_cycle}
-                          </Text>
-                        </View>
-                        <Switch
-                          value={plan.status === 'active'}
-                          onValueChange={() => handleTogglePlan(plan)}
-                          trackColor={{ false: Colors.border, true: SUB_COLOR + '55' }}
-                          thumbColor={plan.status === 'active' ? SUB_COLOR : Colors.textSubtle}
-                          ios_backgroundColor={Colors.border}
-                        />
-                      </View>
-
-                      {/* Subscriber count */}
-                      <View style={styles.planStats}>
-                        <View style={styles.planStat}>
-                          <MaterialIcons name="people" size={13} color={SUB_COLOR} />
-                          <Text style={styles.planStatVal}>{plan.subscribers_count}</Text>
-                          <Text style={styles.planStatLabel}>suscriptores</Text>
-                        </View>
-                        <View style={styles.planStat}>
-                          <MaterialIcons name="trending-up" size={13} color={Colors.accent} />
-                          <Text style={[styles.planStatVal, { color: Colors.accent }]}>
-                            {(plan.subscribers_count * Number(plan.price_bdag) * 0.9).toFixed(0)}
-                          </Text>
-                          <Text style={styles.planStatLabel}>BDAG/mes</Text>
-                        </View>
-                      </View>
-
-                      {/* Perks */}
-                      {plan.perks?.length > 0 ? (
-                        <View style={styles.planPerks}>
-                          {plan.perks.slice(0, 3).map(perk => (
-                            <View key={perk} style={styles.planPerkRow}>
-                              <MaterialIcons name="check" size={11} color={SUB_COLOR} />
-                              <Text style={styles.planPerkText} numberOfLines={1}>{perk}</Text>
-                            </View>
-                          ))}
-                        </View>
-                      ) : null}
-
-                      {/* Edit button */}
-                      <Pressable style={styles.editPlanBtn} onPress={() => openPlanForm(plan)}>
-                        <MaterialIcons name="edit" size={14} color={SUB_COLOR} />
-                        <Text style={styles.editPlanBtnText}>Editar plan</Text>
-                      </Pressable>
-                    </LinearGradient>
-                  </View>
-                ))}
-              </View>
-            )}
-          </>
-        )}
-      </ScrollView>
-
-      {/* ════ CREATE/EDIT PLAN MODAL ════════════════════════════════════════ */}
-      <Modal visible={planModal} transparent animationType="slide"
-        presentationStyle="overFullScreen" onRequestClose={closePlanForm}>
-        <Pressable style={styles.modalBackdrop} onPress={closePlanForm} />
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <ScrollView
-            style={styles.modalSheet}
-            contentContainerStyle={{ gap: 16, padding: Spacing.lg, paddingBottom: insets.bottom + 24 }}
-            keyboardShouldPersistTaps="handled"
-          >
-            <View style={styles.handle} />
-            <Text style={styles.modalTitle}>{editingPlan ? 'Editar plan' : 'Nuevo plan de suscripción'}</Text>
-
-            <Text style={styles.fieldLabel}>Nombre del plan *</Text>
-            <TextInput
-              style={styles.input}
-              value={planName}
-              onChangeText={setPlanName}
-              placeholder="Ej: VIP, Premium, Gold..."
-              placeholderTextColor={Colors.textSubtle}
-            />
-
-            <Text style={styles.fieldLabel}>Descripción</Text>
-            <TextInput
-              style={[styles.input, { minHeight: 70, textAlignVertical: 'top', paddingTop: 12 }]}
-              value={planDesc}
-              onChangeText={setPlanDesc}
-              placeholder="¿Qué ofrece este plan?"
-              placeholderTextColor={Colors.textSubtle}
-              multiline maxLength={250}
-            />
-
-            <Text style={styles.fieldLabel}>Precio mensual (BDAG) *</Text>
-            <TextInput
-              style={styles.input}
-              value={planPrice}
-              onChangeText={setPlanPrice}
-              placeholder="Mín. 100 BDAG"
-              placeholderTextColor={Colors.textSubtle}
-              keyboardType="decimal-pad"
-            />
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickRow}>
-              {['500', '1000', '2000', '5000', '10000'].map(v => (
-                <Pressable key={v}
-                  style={[styles.quickChip, planPrice === v && { ...styles.quickChipActive, backgroundColor: SUB_COLOR, borderColor: SUB_COLOR }]}
-                  onPress={() => setPlanPrice(v)}>
-                  <Text style={[styles.quickChipText, planPrice === v && styles.quickChipTextActive]}>{v}</Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-            {parseFloat(planPrice) > 0 ? (
-              <Text style={styles.feeNote}>
-                Tú recibes {(parseFloat(planPrice) * 0.9).toFixed(0)} BDAG · Plataforma {(parseFloat(planPrice) * 0.1).toFixed(0)} BDAG
-              </Text>
-            ) : null}
-
-            <Text style={styles.fieldLabel}>Ciclo de facturación</Text>
-            <View style={styles.cycleRow}>
-              {[{ k: 'monthly', l: 'Mensual' }, { k: 'quarterly', l: 'Trimestral' }, { k: 'yearly', l: 'Anual' }].map(c => (
-                <Pressable key={c.k}
-                  style={[styles.cycleChip, planCycle === c.k && styles.cycleChipActive]}
-                  onPress={() => setPlanCycle(c.k)}>
-                  <Text style={[styles.cycleChipText, planCycle === c.k && styles.cycleChipTextActive]}>{c.l}</Text>
-                </Pressable>
-              ))}
-            </View>
-
-            <Text style={styles.fieldLabel}>Beneficios del plan</Text>
-            {planPerks.map((perk, i) => (
-              <PerkRow key={i} perk={perk} onRemove={() => setPlanPerks(prev => prev.filter((_, j) => j !== i))} />
-            ))}
-            <View style={styles.addPerkRow}>
-              <TextInput
-                style={[styles.input, { flex: 1 }]}
-                value={newPerk}
-                onChangeText={setNewPerk}
-                placeholder="Agregar beneficio..."
-                placeholderTextColor={Colors.textSubtle}
-                onSubmitEditing={handleAddPerk}
-                returnKeyType="done"
-              />
-              <Pressable style={styles.addPerkBtn} onPress={handleAddPerk}>
-                <LinearGradient colors={[SUB_COLOR, SUB_COLOR2]} style={styles.addPerkBtnGrad}>
-                  <MaterialIcons name="add" size={18} color="#fff" />
-                </LinearGradient>
+              <Pressable onPress={closePlan} hitSlop={10} disabled={savingPlan}>
+                <MaterialCommunityIcons name="close" size={24} color={Colors.textSecondary} />
               </Pressable>
             </View>
-
-            {/* Default perks hint */}
-            <View style={[styles.infoBox, { borderColor: 'rgba(168,85,247,0.2)' }]}>
-              <Text style={[styles.infoBoxTitle, { color: SUB_COLOR, fontSize: FontSize.xs }]}>
-                Beneficios automáticos incluidos en TODOS los planes:
-              </Text>
-              {['Acceso a contenido exclusivo sin pago individual', '10 DMs Premium gratis por mes', 'Insignia de suscriptor'].map(b => (
-                <View key={b} style={styles.infoLine}>
-                  <MaterialIcons name="check-circle" size={11} color={SUB_COLOR} />
-                  <Text style={[styles.infoText, { fontSize: 11 }]}>{b}</Text>
-                </View>
-              ))}
-            </View>
-
-            <Pressable
-              style={[styles.saveBtn, (!planName.trim() || parseFloat(planPrice) < 100) && { opacity: 0.4 }]}
-              onPress={handleSavePlan} disabled={planSaving}>
-              <LinearGradient colors={[SUB_COLOR, SUB_COLOR2]} style={styles.saveBtnGrad}>
-                {planSaving ? <ActivityIndicator color="#fff" size="small" />
-                  : <MaterialIcons name="save" size={18} color="#fff" />}
-                <Text style={styles.saveBtnText}>
-                  {planSaving ? 'Guardando...' : editingPlan ? 'Actualizar plan' : 'Crear plan'}
-                </Text>
-              </LinearGradient>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.modalContent}>
+              <Text style={styles.label}>Nombre</Text>
+              <TextInput value={planName} onChangeText={setPlanName} style={styles.input} maxLength={80} placeholder="Plan VIP" placeholderTextColor={Colors.textSubtle} editable={!savingPlan} />
+              <Text style={styles.label}>Descripción</Text>
+              <TextInput value={planDescription} onChangeText={setPlanDescription} style={[styles.input, styles.multiline]} multiline maxLength={1000} placeholder="Qué incluye este plan" placeholderTextColor={Colors.textSubtle} editable={!savingPlan} />
+              <Text style={styles.label}>Precio futuro en BDAG</Text>
+              <TextInput value={planPrice} onChangeText={setPlanPrice} style={styles.input} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={Colors.textSubtle} editable={!savingPlan} />
+              <Text style={styles.label}>Período</Text>
+              <TextInput value={planDays} onChangeText={setPlanDays} style={styles.input} keyboardType="number-pad" placeholder="30" placeholderTextColor={Colors.textSubtle} editable={!savingPlan} />
+              <Text style={styles.helper}>Cada N días · mínimo 1, máximo 365.</Text>
+              <Text style={[styles.label, { marginTop: Spacing.md }]}>Contenido incluido</Text>
+              {subscriptionContents.length === 0 ? (
+                <Text style={styles.helper}>Primero crea contenido con acceso por suscripción.</Text>
+              ) : subscriptionContents.map(item => {
+                const selected = selectedContentIds.includes(item.id);
+                const mappingUnavailable = item.lifecycle_status === 'deleted'
+                  || item.lifecycle_status === 'removed'
+                  || item.lifecycle_status === 'quarantined'
+                  || item.access_mode === 'purchase';
+                return (
+                  <Pressable key={item.id} style={[styles.mappingRow, selected && styles.mappingRowSelected]} onPress={() => toggleContent(item.id)} disabled={savingPlan}>
+                    <MaterialCommunityIcons name={selected ? 'checkbox-marked' : 'checkbox-blank-outline'} size={22} color={selected ? PREMIUM : Colors.textSubtle} />
+                    <View style={styles.cardBody}>
+                      <Text style={styles.mappingTitle}>{item.title}</Text>
+                      <Text style={[styles.meta, mappingUnavailable && { color: Colors.warning }]}>
+                        {mappingUnavailable
+                          ? 'No disponible; quítalo para guardar esta versión.'
+                          : contentStatus[item.lifecycle_status]}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+            <Pressable style={[styles.primaryButton, savingPlan && styles.disabled]} onPress={() => void savePlan()} disabled={savingPlan}>
+              {savingPlan ? <ActivityIndicator color={Colors.textOnBrand} /> : <Text style={styles.primaryButtonText}>Guardar plan</Text>}
             </Pressable>
-            <Pressable style={styles.cancelBtn} onPress={closePlanForm}>
-              <Text style={styles.cancelText}>Cancelar</Text>
-            </Pressable>
-          </ScrollView>
+          </View>
         </KeyboardAvoidingView>
       </Modal>
     </View>
@@ -640,103 +541,67 @@ export default function CreatorMonetizationScreen() {
 }
 
 const styles = StyleSheet.create({
-  root:   { flex: 1, backgroundColor: Colors.bg },
-  scroll: { padding: Spacing.md, gap: Spacing.lg },
-  centered: { paddingVertical: 40, alignItems: 'center' },
-
-  header:       { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingHorizontal: Spacing.md, paddingBottom: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  backBtn:      { padding: 4 },
-  headerTitle:  { fontSize: FontSize.lg, fontWeight: FontWeight.bold, color: Colors.textPrimary },
-  headerSub:    { fontSize: FontSize.xs, color: Colors.textSubtle, marginTop: 1 },
-  headerBadge:  { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: Radius.md, paddingHorizontal: 10, paddingVertical: 6 },
-  headerBadgeText: { color: '#fff', fontSize: FontSize.xs, fontWeight: FontWeight.bold },
-
-  earningsCard: { marginHorizontal: Spacing.md, marginBottom: Spacing.sm, borderRadius: Radius.lg, padding: 14, borderWidth: 1, borderColor: 'rgba(168,85,247,0.2)' },
-  earningsRow:  { flexDirection: 'row', alignItems: 'center' },
-  earningsDivider: { width: 1, height: 36, backgroundColor: Colors.border },
-  earningsStat: { flex: 1, alignItems: 'center', gap: 3 },
-  earningsVal:  { fontSize: 15, fontWeight: FontWeight.bold, color: Colors.textPrimary },
-  earningsLabel:{ color: Colors.textSubtle, fontSize: 10, textAlign: 'center' },
-
-  tabBar:   { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: Colors.border, marginBottom: 2 },
-  tabBtn:   { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderBottomWidth: 2, borderBottomColor: 'transparent' },
-  tabText:  { color: Colors.textSubtle, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
-
-  card:       { marginHorizontal: Spacing.md, borderRadius: Radius.lg, overflow: 'hidden', borderWidth: 1, borderColor: Colors.border },
-  cardInner:  { padding: Spacing.md },
-  toggleRow:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.md },
-  toggleLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
-  toggleIcon: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
-  toggleLabel:{ color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.semibold },
-  toggleSub:  { color: Colors.textSubtle, fontSize: FontSize.xs, marginTop: 2 },
-
-  formSection: { marginHorizontal: Spacing.md, gap: Spacing.sm },
-  fieldLabel:  { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: FontWeight.medium },
-  priceRow:    { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  bdagUnit:    { color: PREMIUM_COLOR, fontSize: FontSize.md, fontWeight: FontWeight.bold },
-  input:       { backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.md, paddingHorizontal: Spacing.md, paddingVertical: 13, color: Colors.textPrimary, fontSize: FontSize.md },
-  charCount:   { color: Colors.textSubtle, fontSize: FontSize.xs, textAlign: 'right' },
-  quickRow:    { flexDirection: 'row', gap: 8, paddingVertical: 2 },
-  quickChip:   { paddingHorizontal: 14, paddingVertical: 8, borderRadius: Radius.full, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.border },
-  quickChipActive: { backgroundColor: PREMIUM_COLOR, borderColor: PREMIUM_COLOR },
-  quickChipText: { color: Colors.textSubtle, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
-  quickChipTextActive: { color: '#fff' },
-  feeNote:     { color: Colors.textSubtle, fontSize: 11 },
-
-  infoBox:     { marginHorizontal: Spacing.md, backgroundColor: 'rgba(255,157,0,0.07)', borderRadius: Radius.md, padding: 12, gap: 7, borderWidth: 1, borderColor: 'rgba(255,157,0,0.2)' },
-  infoBoxHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
-  infoBoxTitle: { color: PREMIUM_COLOR, fontSize: FontSize.xs, fontWeight: FontWeight.bold },
-  infoLine:    { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
-  infoText:    { color: Colors.textSecondary, fontSize: FontSize.xs, flex: 1, lineHeight: 17 },
-
-  statsCard:   { marginHorizontal: Spacing.md, backgroundColor: Colors.surfaceElevated, borderRadius: Radius.lg, padding: 14, borderWidth: 1, borderColor: Colors.border },
-  statsTitle:  { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold, marginBottom: 8 },
-  statsRow2:   { flexDirection: 'row', gap: Spacing.md },
-  statBlock:   { flex: 1, alignItems: 'center', gap: 3 },
-  statVal:     { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
-  statLbl:     { color: Colors.textSubtle, fontSize: FontSize.xs },
-
-  saveBtn:     { marginHorizontal: Spacing.md, borderRadius: Radius.md, overflow: 'hidden' },
-  saveBtnGrad: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 15 },
-  saveBtnText: { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
-
-  // Subscription plan list
-  createPlanBtn:    { marginHorizontal: Spacing.md, borderRadius: Radius.md, overflow: 'hidden' },
-  createPlanBtnGrad:{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
-  createPlanBtnText:{ color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.bold },
-  emptyPlans:       { alignItems: 'center', paddingVertical: 44, gap: 12 },
-  emptyPlansTitle:  { color: Colors.textSecondary, fontSize: FontSize.lg, fontWeight: FontWeight.semibold },
-  emptyPlansSub:    { color: Colors.textSubtle, fontSize: FontSize.sm, textAlign: 'center' },
-
-  planCard:     { marginHorizontal: Spacing.md, borderRadius: Radius.lg, overflow: 'hidden', borderWidth: 1, borderColor: Colors.border },
-  planCardInner:{ padding: Spacing.md, gap: Spacing.sm },
-  planHeader:   { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  planIcon:     { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  planName:     { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.bold },
-  planPrice:    { color: SUB_COLOR, fontSize: FontSize.sm, fontWeight: FontWeight.semibold, marginTop: 1 },
-  planStats:    { flexDirection: 'row', gap: Spacing.lg },
-  planStat:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  planStatVal:  { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
-  planStatLabel:{ color: Colors.textSubtle, fontSize: FontSize.xs },
-  planPerks:    { gap: 4 },
-  planPerkRow:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  planPerkText: { color: Colors.textSubtle, fontSize: FontSize.xs, flex: 1 },
-  editPlanBtn:  { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 10, backgroundColor: 'rgba(168,85,247,0.1)', borderRadius: Radius.sm, borderWidth: 1, borderColor: 'rgba(168,85,247,0.25)' },
-  editPlanBtnText: { color: SUB_COLOR, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
-
-  // Create plan modal
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)' },
-  modalSheet:    { backgroundColor: Colors.surfaceElevated, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '92%' },
-  handle:        { width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.border, alignSelf: 'center', marginBottom: 4 },
-  modalTitle:    { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold, textAlign: 'center' },
-  cycleRow:      { flexDirection: 'row', gap: 8 },
-  cycleChip:     { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: Radius.md, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border },
-  cycleChipActive: { backgroundColor: SUB_COLOR, borderColor: SUB_COLOR },
-  cycleChipText: { color: Colors.textSubtle, fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
-  cycleChipTextActive: { color: '#fff' },
-  addPerkRow:    { flexDirection: 'row', gap: 8 },
-  addPerkBtn:    { borderRadius: Radius.md, overflow: 'hidden' },
-  addPerkBtnGrad: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
-  cancelBtn:     { alignItems: 'center', paddingVertical: 12, backgroundColor: Colors.surface, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border },
-  cancelText:    { color: Colors.textSubtle, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  root: { flex: 1, backgroundColor: Colors.bg },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, gap: Spacing.sm },
+  headerCopy: { flex: 1 },
+  iconButton: { width: 42, height: 42, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surface },
+  headerBadge: { width: 42, height: 42, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: PREMIUM_SOFT },
+  title: { color: Colors.textPrimary, fontSize: FontSize.xl, fontWeight: FontWeight.bold },
+  subtitle: { color: Colors.textSecondary, fontSize: FontSize.xs, marginTop: 2 },
+  tabs: { marginHorizontal: Spacing.md, marginTop: Spacing.sm, padding: 4, flexDirection: 'row', backgroundColor: Colors.surface, borderRadius: Radius.lg },
+  tab: { flex: 1, minHeight: 42, alignItems: 'center', justifyContent: 'center', borderRadius: Radius.md },
+  tabActive: { backgroundColor: PREMIUM_SOFT },
+  tabText: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  tabTextActive: { color: PREMIUM },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
+  loadingText: { color: Colors.textSecondary, fontSize: FontSize.sm },
+  content: { padding: Spacing.md, gap: Spacing.md },
+  notice: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm, padding: Spacing.md, borderRadius: Radius.md, backgroundColor: Colors.blueDim, borderWidth: 1, borderColor: `${Colors.info}55` },
+  noticeText: { flex: 1, color: Colors.textSecondary, fontSize: FontSize.sm, lineHeight: 20 },
+  errorCard: { padding: Spacing.md, borderRadius: Radius.md, borderWidth: 1, borderColor: `${Colors.error}66`, backgroundColor: `${Colors.error}12` },
+  errorText: { color: Colors.error, fontSize: FontSize.sm },
+  retryText: { color: Colors.textSecondary, fontSize: FontSize.xs, marginTop: 4 },
+  primaryButton: { minHeight: 48, borderRadius: Radius.md, backgroundColor: PREMIUM, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: Spacing.sm, paddingHorizontal: Spacing.md },
+  primaryButtonText: { color: Colors.textOnBrand, fontSize: FontSize.md, fontWeight: FontWeight.bold },
+  card: { padding: Spacing.md, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface, gap: Spacing.md },
+  contentRow: { flexDirection: 'row', gap: Spacing.md },
+  teaser: { width: 82, height: 82, borderRadius: Radius.md, overflow: 'hidden', backgroundColor: Colors.surfaceElevated, alignItems: 'center', justifyContent: 'center' },
+  teaserImage: { width: '100%', height: '100%' },
+  cardBody: { flex: 1, minWidth: 0 },
+  cardHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
+  cardTitle: { flex: 1, color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.semibold },
+  meta: { color: Colors.textSecondary, fontSize: FontSize.xs, marginTop: 4 },
+  price: { color: PREMIUM, fontSize: FontSize.sm, fontWeight: FontWeight.bold, marginTop: 5 },
+  chip: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: Radius.full, borderWidth: 1 },
+  chipText: { fontSize: FontSize.xs, fontWeight: FontWeight.semibold },
+  secondaryButton: { minHeight: 42, borderRadius: Radius.md, borderWidth: 1, borderColor: `${PREMIUM}66`, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
+  secondaryButtonText: { color: PREMIUM, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  readOnlyRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
+  readOnlyText: { color: Colors.textSubtle, fontSize: FontSize.xs },
+  empty: { alignItems: 'center', paddingVertical: Spacing.xxl, paddingHorizontal: Spacing.lg },
+  emptyTitle: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.semibold, marginTop: Spacing.md, textAlign: 'center' },
+  emptyCopy: { color: Colors.textSecondary, fontSize: FontSize.sm, lineHeight: 20, textAlign: 'center', marginTop: Spacing.sm },
+  planDescription: { color: Colors.textSecondary, fontSize: FontSize.sm, lineHeight: 20 },
+  planGroup: { gap: Spacing.sm },
+  sectionTitle: { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.bold, marginTop: Spacing.sm },
+  planFacts: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  actionRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: Spacing.sm },
+  smallButton: { minHeight: 40, paddingHorizontal: Spacing.md, borderRadius: Radius.md, borderWidth: 1, borderColor: `${PREMIUM}66`, alignItems: 'center', justifyContent: 'center' },
+  smallButtonText: { color: PREMIUM, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  dangerButton: { minHeight: 40, paddingHorizontal: Spacing.md, borderRadius: Radius.md, borderWidth: 1, borderColor: `${Colors.error}66`, alignItems: 'center', justifyContent: 'center' },
+  dangerButtonText: { color: Colors.error, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: Colors.overlay },
+  modalCard: { maxHeight: '92%', backgroundColor: Colors.surfaceElevated, borderTopLeftRadius: Radius.xl, borderTopRightRadius: Radius.xl, padding: Spacing.md, gap: Spacing.md },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  modalTitle: { color: Colors.textPrimary, fontSize: FontSize.xl, fontWeight: FontWeight.bold },
+  modalSub: { color: Colors.textSecondary, fontSize: FontSize.xs, marginTop: 2 },
+  modalContent: { gap: Spacing.sm, paddingBottom: Spacing.md },
+  label: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  input: { minHeight: 46, paddingHorizontal: Spacing.md, borderRadius: Radius.md, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, color: Colors.textPrimary, fontSize: FontSize.md },
+  multiline: { minHeight: 88, paddingTop: 12, textAlignVertical: 'top' },
+  helper: { color: Colors.textSubtle, fontSize: FontSize.xs, lineHeight: 17 },
+  mappingRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, minHeight: 54, padding: Spacing.sm, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface },
+  mappingRowSelected: { borderColor: `${PREMIUM}88`, backgroundColor: PREMIUM_SOFT },
+  mappingTitle: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.medium },
+  disabled: { opacity: 0.55 },
 });

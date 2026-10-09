@@ -38,7 +38,6 @@ import { CyberButton } from '@/components/ui/CyberButton';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { uploadFileFromUri, detectMimeType } from '@/contexts/FeedContext';
 import { type MusicTrack } from '@/services/musicLibrary';
-import { createExclusiveContent } from '@/services/economyService';
 import {
   createMediaOperationId,
   deleteMediaAsset,
@@ -129,24 +128,14 @@ export function getSafeImagePickerErrorCode(error:unknown):string {
   return kind==='icloud_asset_unavailable'?'phphotos_3164':kind;
 }
 
-export async function registerExclusiveContent(opts: {
-  title: string;
-  contentType: string;
-  previewUrl: string;
-  contentUrl: string;
-  priceBdag: number;
-}): Promise<string> {
-  const result = await createExclusiveContent({
-    title: opts.title,
-    description: opts.title,
-    contentType: opts.contentType,
-    previewText: opts.title.slice(0, 80),
-    previewUrl: opts.previewUrl,
-    contentUrl: opts.contentUrl,
-    priceBdag: opts.priceBdag,
-  });
+/**
+ * Historical upload callers may still import this symbol. Keep it fail-closed:
+ * B5 creation is owned exclusively by the canonical Premium editor and RPCs.
+ */
+export async function registerExclusiveContent():Promise<string> {
+  const result:{success:boolean;content_id?:string}={success:false};
   if (result.success !== true || !result.content_id) {
-    throw new Error('EXCLUSIVE_CONTENT_REGISTRATION_FAILED');
+    throw new Error('EXCLUSIVE_CONTENT_REGISTRATION_DISABLED');
   }
   return result.content_id;
 }
@@ -928,6 +917,22 @@ export default function UploadScreen() {
         </View>
       </View>
 
+      <Pressable
+        style={styles.premiumEntry}
+        onPress={() => router.push('/creator-premium-editor')}
+        accessibilityRole="button"
+        accessibilityLabel="Crear contenido Premium"
+      >
+        <View style={styles.premiumEntryIcon}>
+          <MaterialCommunityIcons name="shield-lock-outline" size={22} color={Colors.purple} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.premiumEntryTitle}>Contenido Premium</Text>
+          <Text style={styles.premiumEntryText}>Crea un borrador con teaser público y original privado</Text>
+        </View>
+        <MaterialIcons name="chevron-right" size={23} color={Colors.textSubtle} />
+      </Pressable>
+
       {/* Mode selector */}
       <ScrollView
         horizontal
@@ -1237,7 +1242,7 @@ export default function UploadScreen() {
                     name={selectedMusic ? 'close-circle' : 'chevron-right'}
                     size={20}
                     color={Colors.textSubtle}
-                    onPress={selectedMusic ? (e) => { e.stopPropagation?.(); setSelectedMusic(null); } : undefined}
+                    onPress={selectedMusic ? (event: { stopPropagation?: () => void }) => { event.stopPropagation?.(); setSelectedMusic(null); } : undefined}
                   />
                 </LinearGradient>
               </Pressable>
@@ -1286,6 +1291,10 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: Spacing.md, paddingBottom: Spacing.xs },
   headerTitle: { fontSize: FontSize.xl, fontWeight: FontWeight.bold, color: Colors.textPrimary },
   headerSub: { color: Colors.primary, fontSize: FontSize.xs, fontWeight: FontWeight.medium, marginTop: 1 },
+  premiumEntry: { marginHorizontal: Spacing.md, marginTop: Spacing.sm, marginBottom: Spacing.md, minHeight: 64, padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.purpleDim, borderWidth: 1, borderColor: `${Colors.purple}66`, flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  premiumEntryIcon: { width: 40, height: 40, borderRadius: Radius.full, backgroundColor: `${Colors.purple}20`, alignItems: 'center', justifyContent: 'center' },
+  premiumEntryTitle: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
+  premiumEntryText: { color: Colors.textSecondary, fontSize: FontSize.xs, lineHeight: 16, marginTop: 2 },
 
   modeSelector: { marginHorizontal: Spacing.md, marginBottom: Spacing.md, maxHeight: 48 },
   modeSelectorContent: { flexDirection: 'row', gap: Spacing.sm, paddingVertical: 2 },
