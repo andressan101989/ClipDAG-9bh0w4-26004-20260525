@@ -94,7 +94,8 @@ function loadPremiumMediaService({
     ? { data: [{ content_id: contentId, teaser_url: 'https://public.example.test/teaser.jpg', teaser_attached: true, original_attached: true, media_ready: true, replayed: false, replacement_cleanup_scheduled: false }], error: null }
     : { data: [{ content_id: contentId, content_kind: 'image', lifecycle_status: 'draft', teaser_url: 'https://public.example.test/teaser.jpg', teaser_attached: true, original_attached: true, media_ready: true }], error: null },
   invokeImpl = async () => ({ data: { success: true, data: {
-    contentId, url: 'https://signed.example.test/original.jpg?token=secret',
+    contentId,
+    url: 'https://premium-private.0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/original.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=secret',
     expiresAt: new Date(Date.now() + 300_000).toISOString(),
   } }, error: null }),
 } = {}) {

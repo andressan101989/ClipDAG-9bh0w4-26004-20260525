@@ -77,6 +77,7 @@ export function useCreatorPremiumViewer(contentId: string): {
       || protectionStateRef.current !== 'protected'
     ) return;
 
+    controller.invalidate('revalidate');
     try {
       const userId = await getCurrentCreatorPremiumUserId();
       if (
@@ -102,7 +103,8 @@ export function useCreatorPremiumViewer(contentId: string): {
 
   const scheduler = useMemo(() => createCreatorPremiumRenewalScheduler({
     onRenew: () => { void refreshRef.current('timer'); },
-  }), []);
+    onExpire: () => { controller.invalidate('expired'); },
+  }), [controller]);
 
   useEffect(() => {
     requestRef.current += 1;

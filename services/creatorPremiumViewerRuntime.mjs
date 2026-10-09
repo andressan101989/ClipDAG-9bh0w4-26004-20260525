@@ -7,6 +7,7 @@ const RENEWAL_LEAD_MS = 15_000;
 const MAX_TIMER_DELAY_MS = 2_147_000_000;
 const RENEWABLE_STATUSES = new Set(['ready', 'playing', 'paused']);
 const ALLOWED_ENTITLEMENT_SOURCES = new Set(['owner', 'purchase', 'subscription']);
+const PREMIUM_R2_HOST_PATTERN = /^(?:[a-z0-9](?:[a-z0-9.-]{1,61})?[a-z0-9]\.)?[0-9a-f]{32}\.r2\.cloudflarestorage\.com$/i;
 
 function hintKey(userId, contentId) {
   return `${userId}:${contentId}`;
@@ -42,8 +43,11 @@ export function createCreatorPremiumRenewalScheduler({
   setTimeout: scheduleTimeout = globalThis.setTimeout,
   clearTimeout: cancelTimeout = globalThis.clearTimeout,
   onRenew,
+  onExpire = () => {},
 }) {
   let timer = null;
+  let renewedGrantExpiry = null;
+  let renewedEntitlementExpiry = null;
 
   function cancel() {
     if (timer === null) return;
@@ -56,18 +60,32 @@ export function createCreatorPremiumRenewalScheduler({
     if (!input?.focused || !RENEWABLE_STATUSES.has(input.status)) return;
 
     const currentTime = now();
-    const expiries = [input.grantExpiresAt, input.entitlementExpiresAt]
-      .filter(Boolean)
-      .map(value => Date.parse(value))
-      .filter(value => Number.isFinite(value));
-    if (expiries.length === 0) return;
+    const grantExpiry = input.grantExpiresAt ? Date.parse(input.grantExpiresAt) : Number.NaN;
+    const entitlementExpiry = input.entitlementExpiresAt
+      ? Date.parse(input.entitlementExpiresAt)
+      : Number.NaN;
+    const authorities = [
+      { kind: 'grant', expiry: grantExpiry, renewed: renewedGrantExpiry },
+      { kind: 'entitlement', expiry: entitlementExpiry, renewed: renewedEntitlementExpiry },
+    ].filter(authority => Number.isFinite(authority.expiry));
+    if (authorities.length === 0) return;
 
-    const delay = Math.min(
-      MAX_TIMER_DELAY_MS,
-      Math.max(0, Math.min(...expiries) - currentTime - RENEWAL_LEAD_MS),
-    );
+    const hardExpiry = Math.min(...authorities.map(authority => authority.expiry));
+    const renewal = authorities
+      .filter(authority => authority.expiry > currentTime && authority.renewed !== authority.expiry)
+      .map(authority => ({ ...authority, at: authority.expiry - RENEWAL_LEAD_MS }))
+      .sort((left, right) => left.at - right.at)[0] ?? null;
+    const renewFirst = renewal !== null && renewal.at < hardExpiry;
+    const target = renewFirst ? renewal.at : hardExpiry;
+    const delay = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, target - currentTime));
     timer = scheduleTimeout(() => {
       timer = null;
+      if (!renewFirst) {
+        onExpire();
+        return;
+      }
+      if (renewal.kind === 'grant') renewedGrantExpiry = renewal.expiry;
+      else renewedEntitlementExpiry = renewal.expiry;
       onRenew();
     }, delay);
   }
@@ -129,6 +147,19 @@ function httpsUrl(value) {
   }
 }
 
+function protectedR2Url(value) {
+  const parsed = httpsUrl(value);
+  if (!PREMIUM_R2_HOST_PATTERN.test(parsed.hostname)
+    || parsed.port
+    || parsed.username
+    || parsed.password
+    || parsed.hash
+    || parsed.pathname === '/') {
+    throw new CreatorPremiumGrantError('invalid');
+  }
+  return parsed;
+}
+
 function protectedStreamUrl(value, suffix) {
   const parsed = httpsUrl(value);
   if (!parsed.hostname.startsWith('customer-')
@@ -143,7 +174,7 @@ function protectedStreamUrl(value, suffix) {
 
 function validateImageGrant(grant, contentId, now) {
   if (!grant || grant.contentId !== contentId) throw new CreatorPremiumGrantError('invalid');
-  const url = httpsUrl(grant.url);
+  const url = protectedR2Url(grant.url);
   parseExpiry(grant.expiresAt, now);
   return {
     kind: 'image',
@@ -335,6 +366,31 @@ export function createCreatorPremiumViewerController(dependencies, onSnapshot = 
         publish({ status: 'locked', reason: 'identity_changed', grant: null, mediaKind: null });
         return;
       }
+      const finalNow = now();
+      const finalDecision = entitlementState(entitlement, finalNow);
+      if (!finalDecision.allowed) {
+        publish({
+          status: finalDecision.status,
+          reason: finalDecision.reason,
+          entitlementSource: entitlement?.source ?? 'none',
+          entitlementExpiresAt: entitlement?.expires_at ?? null,
+          grant: null,
+          mediaKind: null,
+        });
+        return;
+      }
+      const finalGrantExpiry = Date.parse(resolved.grant.expiresAt);
+      if (!Number.isFinite(finalGrantExpiry) || finalGrantExpiry <= finalNow) {
+        publish({
+          status: 'expired',
+          reason: 'grant_expired',
+          entitlementSource: entitlement.source,
+          entitlementExpiresAt: entitlement.expires_at ?? null,
+          grant: null,
+          mediaKind: null,
+        });
+        return;
+      }
       publish({
         status: 'ready',
         reason: null,
@@ -363,6 +419,8 @@ export function createCreatorPremiumViewerController(dependencies, onSnapshot = 
       ? 'locked'
       : reason === 'close'
         ? 'idle'
+        : reason === 'expired'
+          ? 'expired'
         : reason === 'security'
           ? 'error'
           : 'loading';

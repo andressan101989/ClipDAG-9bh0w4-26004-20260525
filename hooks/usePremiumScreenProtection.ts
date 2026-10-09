@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import * as ScreenCapture from 'expo-screen-capture';
 import {
@@ -16,6 +16,7 @@ export interface PremiumScreenProtectionResult {
 configureAppSwitcherProtectionModule(ScreenCapture);
 
 let nextProtectionInstance = 0;
+let nextProtectionArm = 0;
 
 export function usePremiumScreenProtection(
   scopeId: string,
@@ -27,20 +28,15 @@ export function usePremiumScreenProtection(
     instanceRef.current = nextProtectionInstance;
   }
   const [attempt, setAttempt] = useState(0);
-  const owner = useMemo(
-    () => `premium-viewer:${scopeId}:${instanceRef.current}:${attempt}`,
-    [scopeId, attempt],
-  );
-  const captureKey = useMemo(
-    () => `creator-premium-viewer:${scopeId}:${instanceRef.current}:${attempt}`,
-    [scopeId, attempt],
-  );
   const [state, setState] = useState<PremiumScreenProtectionState>('arming');
   const retry = useCallback(() => setAttempt(value => value + 1), []);
 
   useEffect(() => {
+    const armSequence = ++nextProtectionArm;
+    const owner = `premium-viewer:${scopeId}:${instanceRef.current}:${attempt}:${armSequence}`;
+    const captureKey = `creator-premium-viewer:${scopeId}:${instanceRef.current}:${attempt}:${armSequence}`;
     let active = true;
-    let captureArmed = false;
+    let captureClaimed = false;
     let switcherArmed = false;
 
     const release = async () => {
@@ -52,13 +48,13 @@ export function usePremiumScreenProtection(
         }
         switcherArmed = false;
       }
-      if (captureArmed) {
+      if (captureClaimed) {
         try {
           await ScreenCapture.allowScreenCaptureAsync(captureKey);
         } catch {
           // Releasing a keyed lock must not expose media because the screen is already covered.
         }
-        captureArmed = false;
+        captureClaimed = false;
       }
     };
 
@@ -68,8 +64,8 @@ export function usePremiumScreenProtection(
         if (!enabled || !await ScreenCapture.isAvailableAsync()) {
           throw new Error('screen_protection_unavailable');
         }
+        captureClaimed = true;
         await ScreenCapture.preventScreenCaptureAsync(captureKey);
-        captureArmed = true;
         if (!active) {
           await release();
           return;
@@ -94,7 +90,7 @@ export function usePremiumScreenProtection(
       active = false;
       void release();
     };
-  }, [attempt, captureKey, enabled, owner]);
+  }, [scopeId, attempt, enabled]);
 
   return { state, retry };
 }

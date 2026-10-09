@@ -138,6 +138,17 @@ function premiumImageGrantError(error: unknown, fallback: CreatorPremiumGrantFai
   return new CreatorPremiumMediaError(message, [], code);
 }
 
+const PREMIUM_R2_HOST_PATTERN = /^(?:[a-z0-9](?:[a-z0-9.-]{1,61})?[a-z0-9]\.)?[0-9a-f]{32}\.r2\.cloudflarestorage\.com$/i;
+
+function isAllowedPremiumR2Url(url: URL): boolean {
+  return PREMIUM_R2_HOST_PATTERN.test(url.hostname)
+    && !url.port
+    && !url.username
+    && !url.password
+    && !url.hash
+    && url.pathname !== '/';
+}
+
 export async function uploadCreatorPremiumImagePair(
   input: UploadCreatorPremiumImagePairInput,
 ): Promise<CreatorPremiumImagePairResult> {
@@ -251,6 +262,7 @@ export async function getCreatorPremiumOriginalImageGrant(
     data?.success !== true ||
     grant?.contentId !== contentId ||
     parsed.protocol !== 'https:' ||
+    !isAllowedPremiumR2Url(parsed) ||
     !Number.isFinite(expiresAt) ||
     expiresAt <= now ||
     expiresAt > now + 315_000

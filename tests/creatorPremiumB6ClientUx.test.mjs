@@ -10,11 +10,13 @@ const read = relative => readFileSync(path.join(root, relative), 'utf8');
 
 test('renewal scheduler fires about fifteen seconds before the earliest active expiry', () => {
   const NOW = Date.parse('2026-10-09T12:00:00.000Z');
+  let clock = NOW;
   const timers = [];
   const cleared = [];
   let renewals = 0;
+  let expirations = 0;
   const scheduler = createCreatorPremiumRenewalScheduler({
-    now: () => NOW,
+    now: () => clock,
     setTimeout: (callback, delay) => {
       const timer = { callback, delay, id: timers.length + 1 };
       timers.push(timer);
@@ -22,6 +24,7 @@ test('renewal scheduler fires about fifteen seconds before the earliest active e
     },
     clearTimeout: id => cleared.push(id),
     onRenew: () => { renewals += 1; },
+    onExpire: () => { expirations += 1; },
   });
 
   scheduler.schedule({
@@ -31,26 +34,63 @@ test('renewal scheduler fires about fifteen seconds before the earliest active e
     entitlementExpiresAt: new Date(NOW + 120_000).toISOString(),
   });
   assert.equal(timers.at(-1).delay, 105_000);
+  clock += timers.at(-1).delay;
   timers.at(-1).callback();
   assert.equal(renewals, 1);
 
   scheduler.schedule({
     focused: true,
-    status: 'paused',
+    status: 'ready',
     grantExpiresAt: new Date(NOW + 300_000).toISOString(),
-    entitlementExpiresAt: null,
+    entitlementExpiresAt: new Date(NOW + 120_000).toISOString(),
   });
-  assert.equal(timers.at(-1).delay, 285_000);
-  scheduler.cancel();
-  assert.equal(cleared.at(-1), timers.at(-1).id);
+  assert.equal(timers.at(-1).delay, 15_000);
+  clock += timers.at(-1).delay;
+  timers.at(-1).callback();
+  assert.equal(renewals, 1, 'the unchanged entitlement expiry must not renew in a zero-delay loop');
+  assert.equal(expirations, 1, 'the unchanged authority must fail closed at its hard expiry');
 
   scheduler.schedule({
     focused: true,
     status: 'playing',
-    grantExpiresAt: new Date(NOW - 1).toISOString(),
+    grantExpiresAt: new Date(clock - 1).toISOString(),
     entitlementExpiresAt: null,
   });
   assert.equal(timers.at(-1).delay, 0);
+  timers.at(-1).callback();
+  assert.equal(renewals, 1);
+  assert.equal(expirations, 2);
+});
+
+test('renewal scheduler renews a grant once, then preserves only its hard-expiry fail-closed timer', () => {
+  const NOW = Date.parse('2026-10-09T12:00:00.000Z');
+  let clock = NOW;
+  const timers = [];
+  let renewals = 0;
+  let expirations = 0;
+  const scheduler = createCreatorPremiumRenewalScheduler({
+    now: () => clock,
+    setTimeout: (callback, delay) => {
+      const timer = { callback, delay, id: timers.length + 1 };
+      timers.push(timer);
+      return timer.id;
+    },
+    clearTimeout: () => {},
+    onRenew: () => { renewals += 1; },
+    onExpire: () => { expirations += 1; },
+  });
+  const grantExpiresAt = new Date(NOW + 300_000).toISOString();
+  scheduler.schedule({ focused: true, status: 'paused', grantExpiresAt, entitlementExpiresAt: null });
+  assert.equal(timers.at(-1).delay, 285_000);
+  clock += timers.at(-1).delay;
+  timers.at(-1).callback();
+  assert.equal(renewals, 1);
+  scheduler.schedule({ focused: true, status: 'ready', grantExpiresAt, entitlementExpiresAt: null });
+  assert.equal(timers.at(-1).delay, 15_000);
+  clock += timers.at(-1).delay;
+  timers.at(-1).callback();
+  assert.equal(renewals, 1);
+  assert.equal(expirations, 1);
 });
 
 test('renewal scheduler never runs for hidden or denied content and cancels prior timers', () => {
@@ -96,10 +136,27 @@ test('viewer hook revalidates session, entitlement, focus, foreground, auth chan
   assert.doesNotMatch(hook, /AsyncStorage|SecureStore|SQLite|FileSystem|MediaLibrary|console\.|analytics/i);
 });
 
+test('revalidation hides the active grant before an asynchronous session lookup can cross expiry', () => {
+  const hook = read('hooks/useCreatorPremiumViewer.ts');
+  const runOpenStart = hook.indexOf('const runOpen = useCallback');
+  const runOpenEnd = hook.indexOf('refreshRef.current = runOpen');
+  const runOpen = hook.slice(runOpenStart, runOpenEnd);
+  const hideIndex = runOpen.indexOf("controller.invalidate('revalidate')");
+  const identityIndex = runOpen.indexOf('await getCurrentCreatorPremiumUserId()');
+  assert.ok(runOpenStart >= 0 && runOpenEnd > runOpenStart);
+  assert.ok(hideIndex >= 0, 'revalidation must clear the mounted grant immediately');
+  assert.ok(identityIndex > hideIndex, 'grant clearing must precede the async identity lookup');
+});
+
 test('viewer route accepts only contentId and keeps an opaque cover until native protection succeeds', () => {
   const viewer = read('app/creator-premium-viewer/[contentId].tsx');
   assert.match(viewer, /useLocalSearchParams<\{\s*contentId\?/);
   assert.match(viewer, /useCreatorPremiumViewer\(contentId\)/);
+  assert.match(
+    viewer,
+    /snapshot\.contentId\s*===\s*contentId/,
+    'a route parameter change must synchronously cover the previous content grant',
+  );
   assert.match(viewer, /protectionState\s*===\s*'protected'/);
   assert.match(viewer, /styles\.opaqueCover/);
   assert.match(viewer, /ProtectedPremiumImage/);
@@ -161,6 +218,24 @@ test('Premium library uses canonical bounded pagination, deduplication, refresh,
   assert.match(library, /pathname:\s*['"]\/creator-premium-viewer\/\[contentId\]['"]/);
   assert.match(library, /params:\s*\{\s*contentId:\s*item\.id\s*\}/);
   assert.doesNotMatch(library, /getCreatorPremiumOriginalImageGrant|getCreatorPremiumVideoPlaybackGrant|signedUrl|objectKey|assetId|cloudflareUid|hlsUrl|dashUrl|thumbnailUrl/i);
+});
+
+test('Premium library binds rows and cursors to the current account and clears them on every identity change', () => {
+  const library = read('app/my-premium-library.tsx');
+  assert.match(library, /activeUserIdRef/);
+  assert.match(library, /itemsOwnerId/);
+  assert.match(library, /visibleItems/);
+  assert.match(library, /useEffect\(\(\)\s*=>\s*\{/);
+  assert.match(library, /nextCursorRef\.current\s*=\s*null/);
+  assert.match(library, /setItems\(\[\]\)/);
+  assert.match(library, /setItemsOwnerId\(user\?\.id\s*\?\?\s*null\)/);
+  assert.match(library, /activeUserIdRef\.current\s*!==\s*expectedUserId/);
+  const resetStart = library.indexOf('if (reset) {');
+  const fetchStart = library.indexOf('const page = await fetchMyCreatorPremiumLibrary');
+  const resetPath = library.slice(resetStart, fetchStart);
+  assert.ok(resetStart >= 0 && fetchStart > resetStart);
+  assert.match(resetPath, /nextCursorRef\.current\s*=\s*null/);
+  assert.match(resetPath, /loadingMoreRef\.current\s*=\s*false/);
 });
 
 test('library teaser hydration is canonical, public-projection-only, bounded, and fail-soft', () => {

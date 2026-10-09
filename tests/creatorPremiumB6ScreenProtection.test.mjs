@@ -135,7 +135,26 @@ test('screen-protection retry uses distinct claims so late cleanup cannot disarm
   const hook = read('hooks/usePremiumScreenProtection.ts');
   assert.match(hook, /premium-viewer:\$\{scopeId\}:\$\{instanceRef\.current\}:\$\{attempt\}/);
   assert.match(hook, /creator-premium-viewer:\$\{scopeId\}:\$\{instanceRef\.current\}:\$\{attempt\}/);
-  assert.match(hook, /\[scopeId, attempt\]/);
+  assert.match(hook, /\[scopeId, attempt, enabled\]/);
+});
+
+test('React effect replay receives a fresh native claim so stale cleanup cannot disable current protection', () => {
+  const hook = read('hooks/usePremiumScreenProtection.ts');
+  assert.match(hook, /nextProtectionArm/);
+  assert.match(hook, /const armSequence = \+\+nextProtectionArm/);
+  assert.match(hook, /premium-viewer:\$\{scopeId\}:\$\{instanceRef\.current\}:\$\{attempt\}:\$\{armSequence\}/);
+  assert.match(hook, /creator-premium-viewer:\$\{scopeId\}:\$\{instanceRef\.current\}:\$\{attempt\}:\$\{armSequence\}/);
+  assert.match(hook, /useEffect\(\(\) => \{[\s\S]*?const armSequence = \+\+nextProtectionArm/);
+});
+
+test('a rejected native capture arm releases the exact Expo key before a protected retry', () => {
+  const hook = read('hooks/usePremiumScreenProtection.ts');
+  const claimedIndex = hook.indexOf('captureClaimed = true');
+  const preventIndex = hook.indexOf('await ScreenCapture.preventScreenCaptureAsync(captureKey)');
+  assert.ok(claimedIndex >= 0, 'the hook must remember the keyed Expo claim before awaiting native code');
+  assert.ok(preventIndex > claimedIndex, 'claim tracking must precede an async native rejection');
+  assert.match(hook, /if \(captureClaimed\)[\s\S]*?allowScreenCaptureAsync\(captureKey\)/);
+  assert.match(hook, /catch \{[\s\S]*?await release\(\)/);
 });
 
 test('Android relies on keyed FLAG_SECURE capture protection without invoking the iOS app-switcher API', () => {

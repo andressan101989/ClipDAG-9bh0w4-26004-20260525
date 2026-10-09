@@ -110,7 +110,7 @@ function loadPremiumMetadataService(getUser) {
 
 const imageGrant = (contentId = CONTENT_A, expiresAt = NOW + 300_000) => ({
   contentId,
-  url: 'https://private.example.test/original.jpg?signature=secret',
+  url: 'https://premium-private.0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/original.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=secret',
   expiresAt: new Date(expiresAt).toISOString(),
 });
 
@@ -269,7 +269,11 @@ test('image grants fail closed when expired, overlong, insecure, or for another 
   const cases = [
     ['expired', imageGrant(CONTENT_A, NOW - 1)],
     ['overlong', imageGrant(CONTENT_A, NOW + 315_001)],
-    ['insecure', { ...imageGrant(), url: 'http://private.example.test/original.jpg' }],
+    ['insecure', { ...imageGrant(), url: 'http://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/original.jpg' }],
+    ['unapproved-domain', { ...imageGrant(), url: 'https://private.example.test/original.jpg?signature=secret' }],
+    ['credentials', { ...imageGrant(), url: 'https://user:pass@0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/original.jpg' }],
+    ['fragment', { ...imageGrant(), url: 'https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/original.jpg#secret' }],
+    ['nondefault-port', { ...imageGrant(), url: 'https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com:8443/premium-private/original.jpg' }],
     ['cross-content', imageGrant(CONTENT_B)],
   ];
   for (const [name, grant] of cases) {
@@ -406,14 +410,59 @@ test('a user change after grant acquisition discards the result', async () => {
   assert.equal(runtime.controller.getSnapshot().grant, null);
 });
 
+test('entitlement or grant expiry during the final identity check cannot publish ready media', async t => {
+  for (const expiringAuthority of ['entitlement', 'grant']) {
+    await t.test(expiringAuthority, async () => {
+      let clock = NOW;
+      let identityChecks = 0;
+      const finalIdentity = deferred();
+      rememberCreatorPremiumContentKind(USER_A, CONTENT_A, 'image');
+      const { controller } = makeController({
+        now: () => clock,
+        getCurrentUserId: async () => {
+          identityChecks += 1;
+          return identityChecks === 1 ? USER_A : finalIdentity.promise;
+        },
+        getEntitlement: async () => entitlement({
+          source: 'subscription',
+          expires_at: expiringAuthority === 'entitlement'
+            ? new Date(NOW + 1_000).toISOString()
+            : null,
+        }),
+        getImageGrant: async () => imageGrant(
+          CONTENT_A,
+          expiringAuthority === 'grant' ? NOW + 1_000 : NOW + 300_000,
+        ),
+      });
+
+      const opening = controller.open({ userId: USER_A, contentId: CONTENT_A });
+      while (identityChecks < 2) await Promise.resolve();
+      clock = NOW + 2_000;
+      finalIdentity.resolve(USER_A);
+      await opening;
+
+      const snapshot = controller.getSnapshot();
+      assert.notEqual(snapshot.status, 'ready');
+      assert.equal(snapshot.status, 'expired');
+      assert.equal(snapshot.grant, null);
+    });
+  }
+});
+
 test('late content-A result cannot overwrite a newer content-B session', async () => {
   const grantA = deferred();
+  const enteredGrantA = deferred();
   rememberCreatorPremiumContentKind(USER_A, CONTENT_A, 'image');
   rememberCreatorPremiumContentKind(USER_A, CONTENT_B, 'image');
   const runtime = makeController({
-    getImageGrant: async contentId => contentId === CONTENT_A ? grantA.promise : imageGrant(CONTENT_B),
+    getImageGrant: async contentId => {
+      if (contentId !== CONTENT_A) return imageGrant(CONTENT_B);
+      enteredGrantA.resolve();
+      return grantA.promise;
+    },
   });
   const openingA = runtime.controller.open({ userId: USER_A, contentId: CONTENT_A });
+  await enteredGrantA.promise;
   await runtime.controller.open({ userId: USER_A, contentId: CONTENT_B });
   grantA.resolve(imageGrant(CONTENT_A));
   await openingA;
@@ -425,9 +474,16 @@ test('close and logout invalidate late grants and clear in-memory media', async 
   for (const reason of ['close', 'logout']) {
     await t.test(reason, async () => {
       const pending = deferred();
+      const enteredGrant = deferred();
       rememberCreatorPremiumContentKind(USER_A, CONTENT_A, 'image');
-      const { controller } = makeController({ getImageGrant: async () => pending.promise });
+      const { controller } = makeController({
+        getImageGrant: async () => {
+          enteredGrant.resolve();
+          return pending.promise;
+        },
+      });
       const opening = controller.open({ userId: USER_A, contentId: CONTENT_A });
+      await enteredGrant.promise;
       controller.invalidate(reason);
       pending.resolve(imageGrant());
       await opening;
@@ -439,9 +495,16 @@ test('close and logout invalidate late grants and clear in-memory media', async 
 
 test('unmount disposal prevents a late grant from restoring protected content', async () => {
   const pending = deferred();
+  const enteredGrant = deferred();
   rememberCreatorPremiumContentKind(USER_A, CONTENT_A, 'image');
-  const { controller } = makeController({ getImageGrant: async () => pending.promise });
+  const { controller } = makeController({
+    getImageGrant: async () => {
+      enteredGrant.resolve();
+      return pending.promise;
+    },
+  });
   const opening = controller.open({ userId: USER_A, contentId: CONTENT_A });
+  await enteredGrant.promise;
   controller.dispose();
   pending.resolve(imageGrant());
   await opening;
@@ -476,6 +539,18 @@ test('canonical image service returns content identity and rejects grants beyond
   }));
   await assert.rejects(
     () => overlong.getCreatorPremiumOriginalImageGrant(CONTENT_A),
+    /invalid_premium_image_grant/,
+  );
+
+  const foreignHost = loadImageGrantService(async () => ({
+    data: {
+      success: true,
+      data: { ...imageGrant(CONTENT_A, Date.now() + 300_000), url: 'https://tracker.example.test/original.jpg' },
+    },
+    error: null,
+  }));
+  await assert.rejects(
+    () => foreignHost.getCreatorPremiumOriginalImageGrant(CONTENT_A),
     /invalid_premium_image_grant/,
   );
 });

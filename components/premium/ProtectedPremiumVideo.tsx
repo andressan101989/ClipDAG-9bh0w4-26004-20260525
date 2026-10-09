@@ -52,6 +52,38 @@ export function ProtectedPremiumVideo({
   const playing = sourceKey !== null && playingKey === sourceKey;
 
   useEffect(() => {
+    if (!sourceKey) return undefined;
+    const operationSourceKey = sourceKey;
+    let terminal = false;
+    const statusSubscription = player.addListener('statusChange', ({ status }) => {
+      if (terminal || currentSourceKeyRef.current !== operationSourceKey) return;
+      if (status === 'readyToPlay') {
+        setLoadedKey(operationSourceKey);
+        return;
+      }
+      if (status === 'error') {
+        terminal = true;
+        setLoadedKey(null);
+        setFirstFrameKey(null);
+        setPlayingKey(null);
+        onPlaybackStateChange?.(false);
+        void controller.invalidate('protected_video_status_error');
+        onError?.();
+      }
+    });
+    const playingSubscription = player.addListener('playingChange', ({ isPlaying }) => {
+      if (terminal || currentSourceKeyRef.current !== operationSourceKey) return;
+      setPlayingKey(isPlaying ? operationSourceKey : null);
+      onPlaybackStateChange?.(isPlaying);
+    });
+    return () => {
+      terminal = true;
+      statusSubscription.remove();
+      playingSubscription.remove();
+    };
+  }, [controller, onError, onPlaybackStateChange, player, sourceKey]);
+
+  useEffect(() => {
     let active = true;
     currentSourceKeyRef.current = sourceKey;
     onPlaybackStateChange?.(false);
@@ -65,6 +97,9 @@ export function ProtectedPremiumVideo({
     }
 
     const operationSourceKey = sourceKey;
+    setLoadedKey(null);
+    setFirstFrameKey(null);
+    setPlayingKey(null);
     void controller.load({
       uri: grant.hlsUrl,
       contentId: grant.contentId,
@@ -76,7 +111,7 @@ export function ProtectedPremiumVideo({
         onError?.();
         return;
       }
-      setLoadedKey(operationSourceKey);
+      if (player.status === 'readyToPlay') setLoadedKey(operationSourceKey);
     }).catch(() => {
       if (!active || currentSourceKeyRef.current !== operationSourceKey) return;
       setLoadedKey(null);
@@ -88,7 +123,7 @@ export function ProtectedPremiumVideo({
       if (currentSourceKeyRef.current === operationSourceKey) currentSourceKeyRef.current = null;
       void controller.invalidate('protected_video_effect_cleanup');
     };
-  }, [controller, generation, grant, onError, onPlaybackStateChange, sourceKey]);
+  }, [controller, generation, grant, onError, onPlaybackStateChange, player, sourceKey]);
 
   useEffect(() => () => {
     void controller.dispose();

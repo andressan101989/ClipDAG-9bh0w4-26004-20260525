@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   type NativeScrollEvent,
@@ -40,6 +40,7 @@ export default function MyPremiumLibraryScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const [items, setItems] = useState<LibraryDisplayItem[]>([]);
+  const [itemsOwnerId, setItemsOwnerId] = useState<string | null>(user?.id ?? null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -47,14 +48,24 @@ export default function MyPremiumLibraryScreen() {
   const nextCursorRef = useRef<CreatorPremiumCursor | null>(null);
   const requestGeneration = useRef(0);
   const loadingMoreRef = useRef(false);
+  const activeUserIdRef = useRef<string | null>(user?.id ?? null);
+  activeUserIdRef.current = user?.id ?? null;
+  const visibleItems = itemsOwnerId === (user?.id ?? null) ? items : [];
 
-  const loadPage = useCallback(async (reset: boolean) => {
+  const loadPage = useCallback(async (
+    reset: boolean,
+    expectedUserId = activeUserIdRef.current,
+  ) => {
+    if (!expectedUserId || activeUserIdRef.current !== expectedUserId) return;
     if (!reset && (!nextCursorRef.current || loadingMoreRef.current)) return;
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
     if (reset) {
+      nextCursorRef.current = null;
+      loadingMoreRef.current = false;
       setError(false);
       setLoading(true);
+      setLoadingMore(false);
     } else {
       loadingMoreRef.current = true;
       setLoadingMore(true);
@@ -66,18 +77,28 @@ export default function MyPremiumLibraryScreen() {
         cursor: reset ? null : nextCursorRef.current,
       });
       const teasers = await fetchCreatorPremiumLibraryTeasers(page.items);
-      if (requestGeneration.current !== generation) return;
+      if (
+        requestGeneration.current !== generation
+        || activeUserIdRef.current !== expectedUserId
+      ) return;
       const hydrated = page.items.map(item => ({
         ...item,
         teaser_url: teasers[item.id] ?? null,
       }));
       setItems(current => reset ? hydrated : mergeLibraryItems(current, hydrated));
+      setItemsOwnerId(expectedUserId);
       nextCursorRef.current = page.nextCursor;
       setError(false);
     } catch {
-      if (requestGeneration.current === generation) setError(true);
+      if (
+        requestGeneration.current === generation
+        && activeUserIdRef.current === expectedUserId
+      ) setError(true);
     } finally {
-      if (requestGeneration.current === generation) {
+      if (
+        requestGeneration.current === generation
+        && activeUserIdRef.current === expectedUserId
+      ) {
         setLoading(false);
         setRefreshing(false);
         setLoadingMore(false);
@@ -85,6 +106,18 @@ export default function MyPremiumLibraryScreen() {
       }
     }
   }, []);
+
+  useEffect(() => {
+    requestGeneration.current += 1;
+    nextCursorRef.current = null;
+    loadingMoreRef.current = false;
+    setItems([]);
+    setItemsOwnerId(user?.id ?? null);
+    setLoading(Boolean(user?.id));
+    setRefreshing(false);
+    setLoadingMore(false);
+    setError(false);
+  }, [user?.id]);
 
   useFocusEffect(useCallback(() => {
     if (!user?.id) {
@@ -95,7 +128,7 @@ export default function MyPremiumLibraryScreen() {
       setError(false);
       return () => { requestGeneration.current += 1; };
     }
-    void loadPage(true);
+    void loadPage(true, user.id);
     return () => {
       requestGeneration.current += 1;
       loadingMoreRef.current = false;
@@ -181,9 +214,9 @@ export default function MyPremiumLibraryScreen() {
         <Text style={styles.noticeText}>Las compras y suscripciones aún no están habilitadas.</Text>
       </View>
 
-      {loading && items.length === 0 ? (
+      {loading && visibleItems.length === 0 ? (
         <View style={styles.center}><ActivityIndicator size="large" color={Colors.purple} /></View>
-      ) : error && items.length === 0 ? (
+      ) : error && visibleItems.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.emptyIcon}>⌁</Text>
           <Text style={styles.emptyTitle}>No pudimos cargar tu biblioteca</Text>
@@ -192,7 +225,7 @@ export default function MyPremiumLibraryScreen() {
             <Text style={styles.retryText}>Reintentar</Text>
           </Pressable>
         </View>
-      ) : items.length === 0 ? (
+      ) : visibleItems.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.emptyIcon}>▦</Text>
           <Text style={styles.emptyTitle}>Sin contenido Premium</Text>
@@ -207,7 +240,7 @@ export default function MyPremiumLibraryScreen() {
         >
           {error ? <Text style={styles.inlineError}>La actualización falló; conservamos la última vista segura.</Text> : null}
           <View style={styles.grid}>
-            {items.map(item => <React.Fragment key={item.id}>{renderItem({ item })}</React.Fragment>)}
+            {visibleItems.map(item => <React.Fragment key={item.id}>{renderItem({ item })}</React.Fragment>)}
           </View>
           {loadingMore ? <ActivityIndicator color={Colors.purple} style={styles.footer} /> : null}
         </ScrollView>

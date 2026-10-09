@@ -68,7 +68,15 @@ export interface CreatorPremiumViewerController {
   open(input: { userId: string; contentId: string }): Promise<void>;
   revalidate(reason: 'focus' | 'foreground' | 'timer' | 'manual'): Promise<void>;
   invalidate(
-    reason: 'background' | 'logout' | 'identity_change' | 'content_change' | 'close' | 'security',
+    reason:
+      | 'background'
+      | 'logout'
+      | 'identity_change'
+      | 'content_change'
+      | 'close'
+      | 'security'
+      | 'revalidate'
+      | 'expired',
   ): void;
   getSnapshot(): CreatorPremiumViewerSnapshot;
   dispose(): void;
@@ -96,6 +104,7 @@ export function createCreatorPremiumRenewalScheduler(dependencies: {
   setTimeout?: (callback: () => void, delay: number) => unknown;
   clearTimeout?: (timer: unknown) => void;
   onRenew(): void;
+  onExpire?(): void;
 }): {
   schedule(input: {
     focused: boolean;

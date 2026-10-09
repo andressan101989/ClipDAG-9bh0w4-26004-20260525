@@ -173,6 +173,19 @@ test('protected video disables caching, PiP, fullscreen, external playback, back
   assert.doesNotMatch(video, /Share|download|VideoAirPlayButton|AsyncStorage|FileSystem|MediaLibrary/i);
 });
 
+test('protected video observes native readiness, playback, and late native errors fail closed', () => {
+  const video = read('components/premium/ProtectedPremiumVideo.tsx');
+  assert.match(video, /player\.addListener\(['"]statusChange['"]/);
+  assert.match(video, /status\s*===\s*['"]readyToPlay['"]/);
+  assert.match(video, /status\s*===\s*['"]error['"]/);
+  assert.match(video, /controller\.invalidate\(['"]protected_video_status_error['"]\)/);
+  assert.match(video, /player\.addListener\(['"]playingChange['"]/);
+  assert.match(video, /isPlaying/);
+  assert.match(video, /statusSubscription\.remove\(\)/);
+  assert.match(video, /playingSubscription\.remove\(\)/);
+  assert.match(video, /currentSourceKeyRef\.current\s*!==\s*operationSourceKey/);
+});
+
 test('protected components keep an opaque cover while hidden, loading, errored, or unprotected', () => {
   for (const file of [
     'components/premium/ProtectedPremiumImage.tsx',

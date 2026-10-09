@@ -63,7 +63,8 @@ export default function CreatorPremiumViewerScreen() {
   }, [markPaused, markPlaying]);
 
   const copy = STATE_COPY[snapshot.status];
-  const protectedAndReady = protectionState === 'protected'
+  const protectedAndReady = snapshot.contentId === contentId
+    && protectionState === 'protected'
     && ['ready', 'playing', 'paused'].includes(snapshot.status)
     && snapshot.grant !== null;
   const marker = useMemo(() => pseudonymousMarker(snapshot.userId), [snapshot.userId]);
