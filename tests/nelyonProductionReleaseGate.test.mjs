@@ -950,3 +950,198 @@ test('partial paginated or source-ambiguous evidence keeps affected resources bl
   const evidence = gate.buildBaselineEvidence(baselineSnapshot(policy, { functions }));
   assert.deepEqual(evidence.blocked_resources, ['agora-token']);
 });
+
+function financeTransaction(id, overrides = {}) {
+  return {
+    id,
+    from_account_id: `from-${id}`,
+    to_account_id: `to-${id}`,
+    operation_type: 'legitimate_concurrent_transfer',
+    amount: '10.00000000',
+    fee_amount: '0.00000000',
+    currency: 'BDAG',
+    status: 'completed',
+    blockchain_txid: null,
+    reference_type: 'external_operation',
+    reference_id: `ref-${id}`,
+    idempotency_key: `idem-${id}`,
+    created_at: '2026-10-09T12:00:01.000Z',
+    ...overrides,
+  };
+}
+
+function ledgerPair(transaction, overrides = {}) {
+  return [
+    {
+      id: `debit-${transaction.id}`,
+      txn_id: transaction.id,
+      account_id: transaction.from_account_id,
+      entry_type: 'debit',
+      amount: transaction.amount,
+      metadata: { source: 'legitimate-concurrent-operation' },
+      created_at: '2026-10-09T12:00:02.000Z',
+      ...overrides,
+    },
+    {
+      id: `credit-${transaction.id}`,
+      txn_id: transaction.id,
+      account_id: transaction.to_account_id,
+      entry_type: 'credit',
+      amount: transaction.amount,
+      metadata: { source: 'legitimate-concurrent-operation' },
+      created_at: '2026-10-09T12:00:02.000Z',
+      ...overrides,
+    },
+  ];
+}
+
+function financeSnapshot({ transactions = [], ledgerEntries = [], databaseTime = '2026-10-09T12:00:05.000Z', policy = {} } = {}) {
+  const sorted = [...transactions].sort((left, right) => left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id));
+  const last = sorted.at(-1);
+  return {
+    complete: true,
+    database_time: databaseTime,
+    watermark: last ? { created_at: last.created_at, id: last.id } : null,
+    policy: {
+      purchase_enabled: false,
+      subscription_enabled: false,
+      refunds_enabled: false,
+      platform_fee_bps: 0,
+      ...policy,
+    },
+    transactions: { complete: true, count: transactions.length, items: transactions },
+    ledger_entries: { complete: true, count: ledgerEntries.length, items: ledgerEntries },
+    account_balances_digest: 'a'.repeat(64),
+  };
+}
+
+function releaseIdentity() {
+  return { releaseId: 'nelyon-20261009-001', runId: '123456789', runAttempt: 1 };
+}
+
+test('unchanged counters are not required when legitimate concurrent transactions reconcile', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const existingBefore = financeTransaction('txn-old', { status: 'pending', created_at: '2026-10-09T11:00:00.000Z' });
+  const existingAfter = { ...existingBefore, status: 'completed', blockchain_txid: '0xconfirmed-after-snapshot' };
+  const createdDuring = financeTransaction('txn-new');
+  const before = financeSnapshot({ transactions: [existingBefore] });
+  const entries = [...ledgerPair(existingAfter), ...ledgerPair(createdDuring)];
+  const after = financeSnapshot({ transactions: [existingAfter, createdDuring], ledgerEntries: entries });
+  const window = gate.classifyFinanceWindow({
+    before,
+    after,
+    transactions: [existingAfter, createdDuring],
+    ledgerEntries: entries,
+    releaseIdentity: releaseIdentity(),
+  });
+  assert.deepEqual(window.preexisting_confirmed_after_snapshot, ['txn-old']);
+  assert.deepEqual(window.new_transaction_ids, ['txn-new']);
+  const result = gate.verifyFinancePostcheck({
+    before,
+    after,
+    window,
+    reconciliationResults: { reconcile_finance: 0, reconcile_ledger: 0 },
+    expectedPolicy: policy.supabase.finance_policy,
+  });
+  assert.equal(result.integrity, 'PASS');
+  assert.equal(result.count_growth.transactions, 1);
+  assert.equal(result.count_growth.ledger_entries, 4);
+});
+
+test('database timestamp and created_at id watermarks assign boundary rows once', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const old = financeTransaction('b', { created_at: '2026-10-09T12:00:00.000Z' });
+  const boundary = financeTransaction('c', { created_at: old.created_at });
+  const later = financeTransaction('d', { created_at: '2026-10-09T12:00:01.000Z' });
+  const before = financeSnapshot({ transactions: [old], databaseTime: '2026-10-09T12:00:00.000Z' });
+  const entries = [...ledgerPair(boundary), ...ledgerPair(later)];
+  const after = financeSnapshot({ transactions: [old, boundary, later], ledgerEntries: entries });
+  const window = gate.classifyFinanceWindow({ before, after, transactions: [boundary, later], ledgerEntries: entries, releaseIdentity: releaseIdentity() });
+  assert.deepEqual(window.new_transaction_ids, ['c', 'd']);
+  assertDenied(() => gate.classifyFinanceWindow({ before, after, transactions: [boundary, boundary, later], ledgerEntries: entries, releaseIdentity: releaseIdentity() }), 'INVALID_FINANCE_WINDOW');
+});
+
+test('every new financial transaction requires balanced matching ledger entries', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const transaction = financeTransaction('txn-new');
+  const before = financeSnapshot();
+  const validEntries = ledgerPair(transaction);
+  const after = financeSnapshot({ transactions: [transaction], ledgerEntries: validEntries });
+  assert.equal(gate.classifyFinanceWindow({ before, after, transactions: [transaction], ledgerEntries: validEntries, releaseIdentity: releaseIdentity() }).integrity, 'PASS');
+  for (const entries of [
+    validEntries.slice(0, 1),
+    [validEntries[0], { ...validEntries[1], amount: '9.00000000' }],
+    [validEntries[0], { ...validEntries[1], account_id: 'wrong-account' }],
+  ]) {
+    assertDenied(() => gate.classifyFinanceWindow({ before, after, transactions: [transaction], ledgerEntries: entries, releaseIdentity: releaseIdentity() }), 'FINANCE_RECONCILIATION_FAILED');
+  }
+});
+
+test('release-attributed financial transaction or ledger metadata denies', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const transaction = financeTransaction('txn-new');
+  const before = financeSnapshot();
+  const validEntries = ledgerPair(transaction);
+  const after = financeSnapshot({ transactions: [transaction], ledgerEntries: validEntries });
+  assertDenied(() => gate.classifyFinanceWindow({
+    before,
+    after,
+    transactions: [{ ...transaction, reference_id: releaseIdentity().releaseId }],
+    ledgerEntries: validEntries,
+    releaseIdentity: releaseIdentity(),
+  }), 'RELEASE_ATTRIBUTED_FINANCE');
+  assertDenied(() => gate.classifyFinanceWindow({
+    before,
+    after,
+    transactions: [transaction],
+    ledgerEntries: ledgerPair(transaction, { metadata: { run_id: releaseIdentity().runId } }),
+    releaseIdentity: releaseIdentity(),
+  }), 'RELEASE_ATTRIBUTED_FINANCE');
+});
+
+test('changed historical immutable rows frozen policy or platform fee denies', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const terminal = financeTransaction('txn-old', { created_at: '2026-10-09T11:00:00.000Z' });
+  const before = financeSnapshot({ transactions: [terminal] });
+  const changed = { ...terminal, amount: '99.00000000' };
+  const after = financeSnapshot({ transactions: [changed] });
+  assertDenied(() => gate.classifyFinanceWindow({ before, after, transactions: [changed], ledgerEntries: [], releaseIdentity: releaseIdentity() }), 'HISTORICAL_FINANCE_MUTATION');
+  const cleanWindow = { integrity: 'PASS', count_growth: { transactions: 0, ledger_entries: 0 }, new_transaction_ids: [], preexisting_confirmed_after_snapshot: [], findings: [] };
+  assertDenied(() => gate.verifyFinancePostcheck({
+    before: financeSnapshot(),
+    after: financeSnapshot({ policy: { platform_fee_bps: 100 } }),
+    window: cleanWindow,
+    reconciliationResults: { reconcile_finance: 0 },
+    expectedPolicy: policy.supabase.finance_policy,
+  }), 'FINANCE_POLICY_CHANGED');
+});
+
+test('failed canonical reconciliation denies even when changes appear legitimate', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transaction = financeTransaction('txn-new');
+  const entries = ledgerPair(transaction);
+  const before = financeSnapshot();
+  const after = financeSnapshot({ transactions: [transaction], ledgerEntries: entries });
+  const window = gate.classifyFinanceWindow({ before, after, transactions: [transaction], ledgerEntries: entries, releaseIdentity: releaseIdentity() });
+  assertDenied(() => gate.verifyFinancePostcheck({
+    before,
+    after,
+    window,
+    reconciliationResults: { reconcile_finance: 1, reconcile_ledger: 0 },
+    expectedPolicy: policy.supabase.finance_policy,
+  }), 'FINANCE_RECONCILIATION_FAILED');
+});
+
+test('snapshot count growth is reported separately from integrity verdict', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transaction = financeTransaction('txn-new');
+  const entries = ledgerPair(transaction);
+  const before = financeSnapshot();
+  const after = financeSnapshot({ transactions: [transaction], ledgerEntries: entries });
+  assert.equal(gate.validateFinanceSnapshot(before), true);
+  assert.equal(gate.validateFinanceSnapshot(after), true);
+  const window = gate.classifyFinanceWindow({ before, after, transactions: [transaction], ledgerEntries: entries, releaseIdentity: releaseIdentity() });
+  const result = gate.verifyFinancePostcheck({ before, after, window, reconciliationResults: { all: 0 }, expectedPolicy: policy.supabase.finance_policy });
+  assert.deepEqual(result.count_growth, { ledger_entries: 2, transactions: 1 });
+  assert.equal(result.integrity, 'PASS');
+});

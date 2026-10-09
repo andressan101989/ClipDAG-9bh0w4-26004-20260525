@@ -1155,6 +1155,233 @@ export function proposeVerifiedBaseline({ policy, evidence, owner, source = 'own
   return { bytes, digest: sha256Hex(bytes), policy: proposed };
 }
 
+const FINANCE_STATUSES = new Set(['pending', 'processing', 'completed', 'failed', 'reversed']);
+const FINANCE_TERMINAL_STATUSES = new Set(['completed', 'failed', 'reversed']);
+const FINANCE_ALLOWED_TRANSITIONS = new Set([
+  'pending:processing',
+  'pending:completed',
+  'pending:failed',
+  'pending:reversed',
+  'processing:completed',
+  'processing:failed',
+  'processing:reversed',
+]);
+
+function uniqueRecords(records, label, code = 'INVALID_FINANCE_SNAPSHOT') {
+  const map = new Map();
+  for (const record of records) {
+    if (!record || typeof record.id !== 'string' || record.id.length === 0 || map.has(record.id)) {
+      deny(code, `${label} contains a missing or duplicate ID`);
+    }
+    map.set(record.id, record);
+  }
+  return map;
+}
+
+function compareWatermark(left, right) {
+  const timestamp = String(left.created_at).localeCompare(String(right.created_at));
+  return timestamp || String(left.id).localeCompare(String(right.id));
+}
+
+function financePolicyShape(policy) {
+  return {
+    purchase_enabled: policy?.purchase_enabled,
+    subscription_enabled: policy?.subscription_enabled,
+    refunds_enabled: policy?.refunds_enabled,
+    platform_fee_bps: policy?.platform_fee_bps,
+  };
+}
+
+export function validateFinanceSnapshot(snapshot) {
+  if (!snapshot || snapshot.complete !== true || !Number.isFinite(Date.parse(snapshot.database_time))) {
+    deny('INVALID_FINANCE_SNAPSHOT', 'finance snapshot identity is incomplete');
+  }
+  const policy = financePolicyShape(snapshot.policy);
+  if (typeof policy.purchase_enabled !== 'boolean'
+    || typeof policy.subscription_enabled !== 'boolean'
+    || typeof policy.refunds_enabled !== 'boolean'
+    || !Number.isInteger(policy.platform_fee_bps)) {
+    deny('INVALID_FINANCE_SNAPSHOT', 'finance policy snapshot is malformed');
+  }
+  for (const [key, label] of [['transactions', 'transaction'], ['ledger_entries', 'ledger entry']]) {
+    const inventory = snapshot[key];
+    if (!inventory || inventory.complete !== true || !Array.isArray(inventory.items) || inventory.count !== inventory.items.length) {
+      deny('INVALID_FINANCE_SNAPSHOT', `${label} inventory is incomplete`);
+    }
+    uniqueRecords(inventory.items, label);
+  }
+  const transactions = snapshot.transactions.items;
+  const ordered = [...transactions].sort(compareWatermark);
+  const last = ordered.at(-1);
+  if ((!last && snapshot.watermark !== null)
+    || (last && (!snapshot.watermark
+      || snapshot.watermark.created_at !== last.created_at
+      || snapshot.watermark.id !== last.id))) {
+    deny('INVALID_FINANCE_SNAPSHOT', 'transaction watermark does not match the complete inventory');
+  }
+  const databaseTime = Date.parse(snapshot.database_time);
+  for (const transaction of transactions) {
+    if (!FINANCE_STATUSES.has(transaction.status)
+      || transaction.currency !== 'BDAG'
+      || !Number.isFinite(Date.parse(transaction.created_at))
+      || Date.parse(transaction.created_at) > databaseTime) {
+      deny('INVALID_FINANCE_SNAPSHOT', `transaction ${transaction.id} has invalid canonical fields`);
+    }
+  }
+  return true;
+}
+
+function decimalUnits(value) {
+  const text = String(value);
+  const match = /^(-?)([0-9]+)(?:\.([0-9]{1,18}))?$/.exec(text);
+  if (!match) deny('FINANCE_RECONCILIATION_FAILED', `invalid numeric value ${text}`);
+  const units = BigInt(`${match[2]}${(match[3] ?? '').padEnd(18, '0')}`);
+  return match[1] ? -units : units;
+}
+
+function withoutTransitionFields(transaction) {
+  const { status: ignoredStatus, blockchain_txid: ignoredBlockchain, ...stable } = transaction;
+  return stable;
+}
+
+function containsReleaseIdentity(value, releaseIdentity) {
+  const forbidden = [releaseIdentity?.releaseId, releaseIdentity?.runId].filter(Boolean).map(String);
+  const visit = candidate => {
+    if (typeof candidate === 'string') return forbidden.some(token => candidate.includes(token));
+    if (Array.isArray(candidate)) return candidate.some(visit);
+    if (candidate && typeof candidate === 'object') return Object.values(candidate).some(visit);
+    return false;
+  };
+  return visit(value);
+}
+
+function assertBalancedTransaction(transaction, entries) {
+  if (transaction.status !== 'completed') return;
+  const debit = entries.filter(entry => entry.entry_type === 'debit');
+  const credit = entries.filter(entry => entry.entry_type === 'credit');
+  if (debit.length === 0 || credit.length === 0
+    || entries.some(entry => !['debit', 'credit'].includes(entry.entry_type))) {
+    deny('FINANCE_RECONCILIATION_FAILED', `transaction ${transaction.id} lacks canonical debit and credit legs`);
+  }
+  const debitTotal = debit.reduce((sum, entry) => sum + decimalUnits(entry.amount), 0n);
+  const creditTotal = credit.reduce((sum, entry) => sum + decimalUnits(entry.amount), 0n);
+  const amount = decimalUnits(transaction.amount);
+  if (amount <= 0n || debitTotal !== amount || creditTotal !== amount
+    || (transaction.from_account_id && !debit.some(entry => entry.account_id === transaction.from_account_id))
+    || (transaction.to_account_id && !credit.some(entry => entry.account_id === transaction.to_account_id))) {
+    deny('FINANCE_RECONCILIATION_FAILED', `transaction ${transaction.id} ledger legs do not reconcile`);
+  }
+}
+
+export function classifyFinanceWindow({ before, after, transactions, ledgerEntries, releaseIdentity }) {
+  validateFinanceSnapshot(before);
+  validateFinanceSnapshot(after);
+  if (!Array.isArray(transactions) || !Array.isArray(ledgerEntries)) deny('INVALID_FINANCE_WINDOW', 'finance window rows are incomplete');
+  const queriedTransactions = uniqueRecords(transactions, 'window transaction', 'INVALID_FINANCE_WINDOW');
+  const queriedLedger = uniqueRecords(ledgerEntries, 'window ledger entry', 'INVALID_FINANCE_WINDOW');
+  if ([...queriedTransactions.values(), ...queriedLedger.values()].some(record => containsReleaseIdentity(record, releaseIdentity))) {
+    deny('RELEASE_ATTRIBUTED_FINANCE', 'finance activity is attributed to the current release attempt');
+  }
+  const beforeTransactions = uniqueRecords(before.transactions.items, 'pre-snapshot transaction');
+  const afterTransactions = uniqueRecords(after.transactions.items, 'post-snapshot transaction');
+  const beforeLedger = uniqueRecords(before.ledger_entries.items, 'pre-snapshot ledger entry');
+  const afterLedger = uniqueRecords(after.ledger_entries.items, 'post-snapshot ledger entry');
+  for (const id of beforeTransactions.keys()) {
+    if (!afterTransactions.has(id)) deny('HISTORICAL_FINANCE_MUTATION', `historical transaction ${id} disappeared`);
+  }
+  for (const [id, entry] of beforeLedger) {
+    if (!afterLedger.has(id) || canonicalJson(afterLedger.get(id)) !== canonicalJson(entry)) {
+      deny('HISTORICAL_FINANCE_MUTATION', `historical ledger entry ${id} changed`);
+    }
+  }
+  const newIds = [];
+  const transitionedIds = [];
+  const changedIds = [];
+  for (const [id, current] of afterTransactions) {
+    const previous = beforeTransactions.get(id);
+    if (!previous) {
+      if (before.watermark && compareWatermark(current, before.watermark) <= 0) {
+        deny('INVALID_FINANCE_WINDOW', `new transaction ${id} falls outside the complete pre-snapshot watermark`);
+      }
+      newIds.push(id);
+      changedIds.push(id);
+      continue;
+    }
+    if (canonicalJson(current) === canonicalJson(previous)) continue;
+    if (FINANCE_TERMINAL_STATUSES.has(previous.status)
+      || !FINANCE_ALLOWED_TRANSITIONS.has(`${previous.status}:${current.status}`)
+      || canonicalJson(withoutTransitionFields(previous)) !== canonicalJson(withoutTransitionFields(current))) {
+      deny('HISTORICAL_FINANCE_MUTATION', `historical transaction ${id} changed outside an allowed status confirmation`);
+    }
+    transitionedIds.push(id);
+    changedIds.push(id);
+  }
+  const expectedChanged = [...changedIds].sort();
+  const queriedIds = [...queriedTransactions.keys()].sort();
+  if (canonicalJson(queriedIds) !== canonicalJson(expectedChanged)) {
+    deny('INVALID_FINANCE_WINDOW', 'window transaction query does not equal the complete pre/post delta');
+  }
+  for (const id of queriedIds) {
+    if (canonicalJson(queriedTransactions.get(id)) !== canonicalJson(afterTransactions.get(id))) {
+      deny('INVALID_FINANCE_WINDOW', `window transaction ${id} does not match the post-snapshot row`);
+    }
+  }
+  const newLedgerEntries = [...afterLedger.values()].filter(entry => !beforeLedger.has(entry.id));
+  const expectedLedgerIds = newLedgerEntries.map(entry => entry.id).sort();
+  if (canonicalJson([...queriedLedger.keys()].sort()) !== canonicalJson(expectedLedgerIds)) {
+    deny('FINANCE_RECONCILIATION_FAILED', 'window ledger query does not equal the complete pre/post delta');
+  }
+  for (const entry of newLedgerEntries) {
+    if (canonicalJson(queriedLedger.get(entry.id)) !== canonicalJson(entry) || !changedIds.includes(entry.txn_id)) {
+      deny('FINANCE_RECONCILIATION_FAILED', `ledger entry ${entry.id} is not tied to an eligible changed transaction`);
+    }
+  }
+  for (const id of changedIds) {
+    const transaction = afterTransactions.get(id);
+    if (!FINANCE_STATUSES.has(transaction.status) || transaction.currency !== 'BDAG') {
+      deny('FINANCE_RECONCILIATION_FAILED', `transaction ${id} has noncanonical status or currency`);
+    }
+    assertBalancedTransaction(transaction, newLedgerEntries.filter(entry => entry.txn_id === id));
+  }
+  return {
+    integrity: 'PASS',
+    new_transaction_ids: newIds.sort(),
+    preexisting_confirmed_after_snapshot: transitionedIds.sort(),
+    count_growth: {
+      transactions: after.transactions.count - before.transactions.count,
+      ledger_entries: after.ledger_entries.count - before.ledger_entries.count,
+    },
+    findings: [],
+  };
+}
+
+function allReconciliationsZero(value) {
+  if (typeof value === 'number') return Number.isFinite(value) && value === 0;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entries = Object.values(value);
+  return entries.length > 0 && entries.every(allReconciliationsZero);
+}
+
+export function verifyFinancePostcheck({ before, after, window, reconciliationResults, expectedPolicy }) {
+  validateFinanceSnapshot(before);
+  validateFinanceSnapshot(after);
+  if (canonicalJson(financePolicyShape(before.policy)) !== canonicalJson(expectedPolicy)
+    || canonicalJson(financePolicyShape(after.policy)) !== canonicalJson(expectedPolicy)) {
+    deny('FINANCE_POLICY_CHANGED', 'Premium Finance switches or platform fee changed');
+  }
+  if (window?.integrity !== 'PASS' || !allReconciliationsZero(reconciliationResults)) {
+    deny('FINANCE_RECONCILIATION_FAILED', 'canonical finance reconciliation reported a mismatch');
+  }
+  const growth = {
+    transactions: after.transactions.count - before.transactions.count,
+    ledger_entries: after.ledger_entries.count - before.ledger_entries.count,
+  };
+  if (growth.transactions < 0 || growth.ledger_entries < 0 || canonicalJson(growth) !== canonicalJson(window.count_growth)) {
+    deny('FINANCE_RECONCILIATION_FAILED', 'reported finance growth does not match complete snapshots');
+  }
+  return { integrity: 'PASS', count_growth: growth, concurrent_activity: growth.transactions > 0 || window.preexisting_confirmed_after_snapshot.length > 0 };
+}
+
 function parseCliArguments(argv) {
   const [command, ...rest] = argv;
   const values = {};
