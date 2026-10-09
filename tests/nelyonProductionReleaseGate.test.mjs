@@ -1577,4 +1577,8 @@ test('runbook covers single-owner cutover evidence approval finance and recovery
   const plan = readFileSync(planUrl, 'utf8');
   assert.match(plan, /evidencia canónica nueva[\s\S]*`cutover\.auto_deploy_off_evidence`[\s\S]*commit protegido[\s\S]*`NELYON_RELEASE_POLICY_SHA256`[\s\S]*bytes canónicos completos/);
   assert.doesNotMatch(plan, /update only the Environment evidence variables/);
+  const task15 = plan.slice(plan.indexOf('### Task 15:'), plan.indexOf('### Task 16:'));
+  assert.match(task15, /Modify: `.github\/nelyon-production-release-policy\.json`/);
+  assert.match(task15, /Produces:[\s\S]*protected policy-evidence commit/);
+  assert.doesNotMatch(task15, /No repository changes/);
 });

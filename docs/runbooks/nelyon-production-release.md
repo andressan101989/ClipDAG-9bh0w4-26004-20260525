@@ -99,8 +99,8 @@ evidence object without its `sha256` field, then calculate the SHA-256 of `canon
 token is the digest of the payload without `sha256`, not a hash of the final
 base64 text.
 
-Update `NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64` with that redacted canonical
-record. Evidence is valid for at most 15 minutes and permits at most 60 seconds
+Treat that redacted canonical record as one synchronized authority input.
+Evidence is valid for at most 15 minutes and permits at most 60 seconds
 of future clock skew. Renew it before every future release and every proof that
 requires Environment approval. The owner must specifically confirm this fresh
 evidence in the approval comment; a general or historical confirmation fails.

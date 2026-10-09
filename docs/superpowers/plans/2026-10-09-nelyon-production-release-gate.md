@@ -1010,11 +1010,11 @@ remains main-only. Do not publish another commit.
 ### Task 15: Prove `plan_only` and `gate_proof` without production mutation
 
 **Files:**
-- No repository changes
+- Modify: `.github/nelyon-production-release-policy.json`
 
 **Interfaces:**
 - Consumes: workflow on main, protected Environment, owner UI, verified zero-change production snapshots.
-- Produces: auditable workflow run IDs, artifact digests, approval evidence, and post-proof zero-mutation evidence.
+- Produces: protected policy-evidence commit, auditable workflow run IDs, artifact digests, approval evidence, and post-proof zero-mutation evidence.
 
 - [ ] **Step 1: Capture pre-proof Supabase and finance snapshots**
 
