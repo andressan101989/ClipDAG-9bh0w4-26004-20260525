@@ -1,6 +1,6 @@
 # NELYON MASTER ROADMAP
 
-Version: 1.1
+Version: 1.2
 
 Canonical roadmap authority for the Nelyon project.
 
@@ -1787,6 +1787,341 @@ Before closure require:
 - no secret exposure;
 - correct production URLs.
 
+### ROADMAP 13A — GEOLOCATION / REGIONAL DISCOVERY / LOCATION PRIVACY
+
+STATUS:
+
+FUTURE / PENDING — NOT AUTHORIZED FOR IMPLEMENTATION.
+
+GEO-1 is a cross-product Nelyon location foundation.
+
+Its purpose is to improve regional relevance without creating permanent
+precise-location surveillance.
+
+#### PRODUCT GOALS
+
+Future supported capabilities should include:
+
+- regional Feed relevance;
+- local/regional trends;
+- Discover/Search regional context;
+- nearby or regional LIVE discovery where appropriate;
+- Marketplace local/regional discovery;
+- Ads geographic targeting;
+- future events/community discovery;
+- creator/content regional affinity where useful.
+
+Location must be a relevance signal,
+not a hard content boundary.
+
+Users should continue to receive national/global content
+when relevance signals justify it.
+
+#### CANONICAL GEO AUTHORITY
+
+Nelyon must eventually use ONE shared geographic authority.
+
+Do NOT create separate incompatible location systems for:
+
+- Feed;
+- Ads;
+- Marketplace;
+- LIVE;
+- Search;
+- profile;
+- creators.
+
+Existing Ads:
+
+country / region / city targeting
+
+must be audited and reused or integrated into the shared GEO authority
+rather than duplicated.
+
+Before implementation audit existing:
+
+- country fields;
+- region/state fields;
+- city fields;
+- coordinates;
+- timezone;
+- language/locale;
+- Ads targeting geography;
+- Marketplace geography;
+- profile location;
+- IP/network-derived region;
+- any location-related analytics.
+
+#### LOCATION LEVELS
+
+Preferred long-term hierarchy:
+
+country
+→ state/province/region
+→ city/metro
+→ coarse nearby area
+→ precise coordinates only when explicitly necessary
+
+For normal content ranking,
+prefer coarse geographic context.
+
+Do NOT require permanent precise latitude/longitude
+for ordinary Feed personalization.
+
+#### GEO AFFINITY
+
+Algorithm should eventually support a signal such as:
+
+geo_affinity
+
+This signal may contribute alongside:
+
+- creator affinity;
+- watch-time signals;
+- interests;
+- language affinity;
+- freshness;
+- engagement;
+- social graph;
+- other canonical ranking signals.
+
+Geo affinity must NOT become the sole ranking authority.
+
+Example principle:
+
+A user may receive a relevance boost for content from their region,
+but highly relevant national/global content should still compete normally.
+
+#### LOCATION PERMISSIONS
+
+Device location access must use explicit platform permission flows.
+
+Do NOT request precise GPS merely because the app launches.
+
+Request location only when a feature provides understandable user value.
+
+Where platform APIs permit:
+
+prefer approximate/coarse location first.
+
+Precise location should be requested only for features
+that genuinely require it.
+
+Examples may include:
+
+- nearby Marketplace results;
+- explicitly requested nearby discovery;
+- local events;
+- other owner-approved proximity features.
+
+#### NO UNNECESSARY BACKGROUND TRACKING
+
+Ordinary Feed ranking must NOT require continuous background GPS.
+
+Do not design GEO-1 around:
+
+- permanent live tracking;
+- continuous route history;
+- unnecessary background coordinates;
+- hidden location collection.
+
+Background location would require a separately justified product feature,
+privacy review and owner authorization.
+
+#### PRIVACY / STORAGE
+
+Do not publicly expose a user's precise coordinates.
+
+Do not put exact user GPS coordinates into:
+
+- public profile metadata;
+- public posts by default;
+- public API responses;
+- share/deep-link metadata;
+- logs;
+- analytics payloads unnecessarily.
+
+Prefer storing normalized regional identifiers where sufficient.
+
+If precise coordinates are ever required:
+
+- minimize retention;
+- define purpose;
+- define TTL/retention;
+- restrict access;
+- avoid unnecessary historical tracking;
+- prevent client-side authority over sensitive geo decisions.
+
+#### USER CONTROL
+
+Future GEO UX should allow the user to understand
+why location is being requested.
+
+Provide controls appropriate to the final architecture for:
+
+- location permission;
+- approximate vs precise where supported by OS;
+- regional personalization;
+- disabling location-based personalization where product/legal requirements apply.
+
+Loss of GPS permission must not make the core app unusable
+unless a specific nearby feature technically requires it.
+
+#### FALLBACK WITHOUT GPS
+
+Nelyon must remain functional when location permission is denied.
+
+Possible coarse fallback signals may include, subject to privacy review:
+
+- account-selected country/region;
+- locale/language;
+- timezone;
+- server-derived coarse network region;
+- explicit user-selected region.
+
+Never misrepresent inferred location as precise GPS.
+
+#### MINORS / YOUTH SAFETY
+
+Location for minors requires stricter handling.
+
+Do not expose:
+
+- precise current location;
+- home/school proximity;
+- movement history;
+- exact nearby-minor discovery.
+
+Any location-based youth feature must pass dedicated:
+
+- safety review;
+- privacy review;
+- abuse analysis;
+- legal/store review.
+
+Default toward coarser location for minors.
+
+#### MARKETPLACE
+
+Marketplace may eventually use GEO authority for:
+
+- regional product discovery;
+- nearby sellers where appropriate;
+- pickup/local-commerce features if separately approved;
+- delivery/service-area relevance.
+
+Do NOT expose buyer or seller home coordinates.
+
+Marketplace address/shipping authority must remain separate from
+public discovery location.
+
+#### ADS
+
+Ads geographic targeting must reuse the canonical GEO taxonomy.
+
+Possible targeting dimensions:
+
+- country;
+- region/state/province;
+- city/metro;
+- permitted coarse radius/proximity targeting if later approved.
+
+Advertisers must NOT receive individual users' precise coordinates.
+
+Geo targeting remains server-derived and policy-controlled.
+
+Location is not a financial authority.
+
+GEO-1 does not modify Marketplace or Ads financial logic.
+
+#### LIVE / DISCOVERY
+
+LIVE may use regional affinity for discovery.
+
+Do not automatically expose broadcaster precise location.
+
+Any explicit location tag must be creator-controlled
+and validated against final privacy rules.
+
+#### SEARCH / TRENDS
+
+Search/Discover may eventually support:
+
+- trending in your country;
+- trending in your region;
+- local creator discovery;
+- local LIVE;
+- regional topics.
+
+Regional ranking must degrade gracefully if no location is available.
+
+#### SECURITY
+
+GEO-1 implementation must eventually include:
+
+- authorization;
+- input validation;
+- coordinate/range validation where relevant;
+- rate limiting where relevant;
+- abuse prevention;
+- spoofing considerations;
+- server-side normalization;
+- no service-role leakage;
+- no sensitive geo data in logs;
+- deletion/retention behavior;
+- auditability.
+
+Do not trust client-provided region/coordinates as authoritative
+for sensitive operations without server validation.
+
+#### ANALYTICS
+
+Location analytics should use the least precise geography
+that satisfies the product need.
+
+Prefer aggregated regional analytics over raw coordinate histories.
+
+Do not create an analytics location warehouse
+without explicit future authorization.
+
+#### ARCHITECTURAL RULE
+
+One shared GEO foundation.
+
+No:
+
+- Feed-only GPS database;
+- Ads-only duplicate geo taxonomy;
+- Marketplace-only user-location authority;
+- parallel coordinate stores;
+- hidden background tracker.
+
+GEO-1 must integrate with existing Nelyon authorities.
+
+#### FUTURE IMPLEMENTATION PHASING
+
+Expected future implementation may be phased approximately as:
+
+GEO-1A —
+EXISTING LOCATION / PRIVACY / CALLER AUDIT
+
+GEO-1B —
+CANONICAL GEO TAXONOMY + USER REGIONAL CONTEXT
+
+GEO-1C —
+GEO AFFINITY / FEED / DISCOVERY
+
+GEO-1D —
+MARKETPLACE / LIVE / SEARCH INTEGRATION
+
+GEO-1E —
+ADS GEO INTEGRATION / CONSOLIDATION
+
+GEO-1F —
+PHYSICAL PRIVACY / PERMISSION / PRODUCTION VALIDATION
+
+Exact phases must be re-audited when GEO-1 is authorized.
+
 ### ROADMAP 14 — FINAL MODULE-BY-MODULE ARCHITECTURE AUDIT AND CODEBASE CLEANUP
 
 STATUS:
@@ -2168,6 +2503,30 @@ Added/expanded:
 - USD/card → BDAG top-up authority;
 - Business Ads Stripe funding;
 - refunds/disputes/webhook/reconciliation requirements.
+
+Execution priority remains unchanged:
+
+CREATOR PREMIUM / EXCLUSIVE CONTENT
+
+remains NEXT PLANNED.
+
+### v1.2 — 2026-10-08
+
+Added:
+
+- ROADMAP 13A — GEOLOCATION / REGIONAL DISCOVERY / LOCATION PRIVACY;
+- internal macro identifier GEO-1;
+- one future shared geographic authority across Feed, Discover/Search,
+  LIVE, Marketplace and Ads;
+- approximate-first location and explicit permission principles;
+- precise-coordinate minimization and non-exposure requirements;
+- no unnecessary continuous background tracking;
+- user controls and fallback behavior without GPS;
+- stricter location safeguards for minors;
+- future phased audit, taxonomy, affinity, integration and production
+  validation direction.
+
+GEO-1 remains FUTURE / PENDING and is not authorized for implementation.
 
 Execution priority remains unchanged:
 
