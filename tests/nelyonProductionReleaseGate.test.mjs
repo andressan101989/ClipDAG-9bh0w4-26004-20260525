@@ -132,16 +132,20 @@ test('candidate baseline denies release but permits plan_only and gate_proof', a
   }), policy), 'BASELINE_NOT_VERIFIED');
 });
 
-test('committed verified baseline remains release-denied until cutover', async () => {
+test('committed baseline and cutover require verified external authority evidence', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   assert.equal(policy.baseline.state, 'verified');
   assert.match(policy.baseline.evidence, /^[0-9a-f]{64}$/);
   assert.deepEqual(policy.baseline.blocked_resources, []);
-  assert.equal(policy.cutover.state, 'pending');
-  assertDenied(() => gate.validateRequest(request({
+  assert.equal(policy.cutover.state, 'verified');
+  assert.equal(policy.cutover.verified_by, OWNER);
+  assert.match(policy.cutover.verified_at, /^2026-10-09T/);
+  assert.match(policy.cutover.auto_deploy_off_evidence.id, /^supabase-off-/);
+  assert.match(policy.cutover.auto_deploy_off_evidence.sha256, /^[0-9a-f]{64}$/);
+  assert.equal(gate.validateRequest(request({
     mode: 'release',
     scopeConfirmation: 'RELEASE_STANDARD',
-  }), policy), 'CUTOVER_NOT_VERIFIED');
+  }), policy).mode, 'release');
 });
 
 test('verified cutover requires an owner-bound external evidence record', async () => {
