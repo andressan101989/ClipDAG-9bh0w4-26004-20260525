@@ -8,6 +8,7 @@ import test from 'node:test';
 const policyUrl = new URL('../.github/nelyon-production-release-policy.json', import.meta.url);
 const gateUrl = new URL('../scripts/nelyon-production-release.mjs', import.meta.url);
 const workflowUrl = new URL('../.github/workflows/nelyon-production-release.yml', import.meta.url);
+const runbookUrl = new URL('../docs/runbooks/nelyon-production-release.md', import.meta.url);
 
 const OWNER = 'andressan101989';
 const REPOSITORY = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
@@ -1237,4 +1238,42 @@ test('postcheck failure cannot mark success or baseline advancement', () => {
   assert.match(deploy.slice(postcheck, success), /&&/);
   assert.doesNotMatch(deploy, /(write|update|promote)[^\n]*baseline/i);
   assert.doesNotMatch(deploy, /nelyon-production-release-policy\.json[^\n]*(>|Set-Content|Out-File)/i);
+});
+
+test('runbook covers single-owner cutover evidence approval finance and recovery controls', () => {
+  assert.ok(existsSync(runbookUrl), 'production release runbook must exist');
+  const text = readFileSync(runbookUrl, 'utf8');
+  for (const section of [
+    '## Single-owner security model',
+    '## GitHub production configuration',
+    '## Baseline candidate to verified',
+    '## Supabase automatic-deploy cutover',
+    '## Run plan_only',
+    '## Run gate_proof',
+    '## Future release procedure',
+    '## Concurrent finance reconciliation',
+    '## Failure recovery and rollback',
+    '## Stop conditions',
+    '## Zero-mutation postcheck',
+  ]) assert.match(text, new RegExp(section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  for (const literal of [
+    'andressan101989',
+    'Required reviewer: `andressan101989`',
+    'Prevent self-review: `OFF`',
+    'Deployment branches and tags: `Selected branches and tags`',
+    'main',
+    'Allow administrators to bypass configured protection rules: `OFF`',
+    'SUPABASE_ACCESS_TOKEN',
+    'SUPABASE_DB_PASSWORD',
+    'NELYON_RELEASE_POLICY_SHA256',
+    'NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64',
+    '15 minutes',
+    'Deploy to production',
+    'NELYON-APPROVE run=<run_id> attempt=<run_attempt> env=<environment_id> release=<release_id> sha=<approved_sha> manifest=<sha256> auto_deploy_evidence=<evidence_id> auto_deploy_sha256=<evidence_sha256>',
+    '`release` is forbidden during C2',
+    'forward-only corrective migration',
+    'previously approved reproducible Edge source',
+    'transactions confirmed after the pre-snapshot even when created before it',
+  ]) assert.ok(text.includes(literal), `runbook missing ${literal}`);
+  assert.doesNotMatch(text, /(SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD)\s*[=:]\s*[^`\s]+/);
 });
