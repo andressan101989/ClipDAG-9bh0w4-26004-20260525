@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 const policyUrl = new URL('../.github/nelyon-production-release-policy.json', import.meta.url);
@@ -121,4 +124,113 @@ test('canonical JSON is recursively stable and SHA-256 hashes exact UTF-8 bytes'
   assert.equal(canonical, '{"a":{"c":3,"d":4},"b":[{"x":1,"y":2}]}\n');
   assert.equal(gate.sha256Hex(Buffer.from(canonical, 'utf8')), '85815050204c5ecc64cd98ab2766a745d8fbf6fd8c9277d45ad752701cda3902');
   assert.throws(() => gate.canonicalJson({ invalid: undefined }), /unsupported/i);
+});
+
+test('NUL name-status parsing preserves spaces tabs and Unicode', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const input = Buffer.from('M\0file with spaces.txt\0A\0tab\tname.ts\0M\0unicodé.ts\0', 'utf8');
+  assert.deepEqual(gate.parseNameStatusZ(input), [
+    { status: 'M', path: 'file with spaces.txt' },
+    { status: 'A', path: 'tab\tname.ts' },
+    { status: 'M', path: 'unicodé.ts' },
+  ]);
+});
+
+test('unsupported rename copy deletion symlink submodule and unknown supabase paths deny', async () => {
+  const { gate } = await loadGateAndPolicy();
+  for (const changes of [
+    [{ status: 'R100', oldPath: 'supabase/config.toml', path: 'supabase/renamed.toml' }],
+    [{ status: 'C100', oldPath: 'supabase/config.toml', path: 'supabase/copied.toml' }],
+    [{ status: 'D', path: 'supabase/config.toml' }],
+    [{ status: 'M', path: 'supabase/config.toml', fileType: 'symlink' }],
+    [{ status: 'M', path: 'supabase/functions/stripe-webhook', fileType: 'submodule' }],
+    [{ status: 'M', path: 'supabase/unknown/state.json', fileType: 'file' }],
+  ]) {
+    assertDenied(() => gate.classifyChangedPaths(changes), 'UNSUPPORTED_GIT_CHANGE');
+  }
+});
+
+test('approved SHA must equal fetched origin main and descend from baseline', async t => {
+  const { gate } = await loadGateAndPolicy();
+  const directory = mkdtempSync(join(tmpdir(), 'nelyon-release-git-'));
+  t.after(() => rmSync(directory, { force: true, recursive: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: directory, encoding: 'utf8' }).trim();
+  execFileSync('git', ['init', '-b', 'main'], { cwd: directory });
+  git('config', 'user.email', 'release-gate@example.invalid');
+  git('config', 'user.name', 'Release Gate Test');
+  writeFileSync(join(directory, 'tracked.txt'), 'base\n');
+  git('add', 'tracked.txt');
+  git('commit', '-m', 'base');
+  const base = git('rev-parse', 'HEAD');
+  git('branch', 'side');
+  writeFileSync(join(directory, 'tracked.txt'), 'main\n');
+  git('commit', '-am', 'main');
+  const head = git('rev-parse', 'HEAD');
+  git('checkout', 'side');
+  writeFileSync(join(directory, 'side.txt'), 'side\n');
+  git('add', 'side.txt');
+  git('commit', '-m', 'side');
+  const side = git('rev-parse', 'HEAD');
+  git('checkout', 'main');
+  git('remote', 'add', 'origin', 'https://github.com/andressan101989/ClipDAG-9bh0w4-26004-20260525.git');
+  git('update-ref', 'refs/remotes/origin/main', head);
+  const runGit = args => execFileSync('git', args, { cwd: directory });
+  const state = gate.resolveGitState({
+    cwd: directory,
+    baselineSha: base,
+    approvedSha: head,
+    expectedRepository: REPOSITORY,
+    runGit,
+  });
+  assert.equal(state.originMainSha, head);
+  assert.equal(state.approvedSha, head);
+  assert.ok(state.changes.some(change => change.path === 'tracked.txt'));
+  assertDenied(() => gate.resolveGitState({ cwd: directory, baselineSha: base, approvedSha: base, expectedRepository: REPOSITORY, runGit }), 'MAIN_SHA_MISMATCH');
+  assertDenied(() => gate.resolveGitState({ cwd: directory, baselineSha: side, approvedSha: head, expectedRepository: REPOSITORY, runGit }), 'BASELINE_NOT_ANCESTOR');
+});
+
+test('only strictly newer added timestamped migrations are releasable', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const result = gate.validateMigrationDelta({
+    changes: [{ status: 'A', path: 'supabase/migrations/20261010000000_release_gate_probe.sql', fileType: 'file' }],
+    baselineLatestMigration: '20261009021414_creator_premium_b5_creator_management_ux',
+    remoteMigrations: ['20261009021414'],
+    dryRunPending: ['20261010000000'],
+  });
+  assert.deepEqual(result, [{ version: '20261010000000', path: 'supabase/migrations/20261010000000_release_gate_probe.sql' }]);
+});
+
+test('modified deleted renamed duplicate and out-of-order migrations deny', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const baseline = '20261009021414_creator_premium_b5_creator_management_ux';
+  const cases = [
+    [{ status: 'M', path: 'supabase/migrations/20261010000000_modified.sql' }],
+    [{ status: 'D', path: 'supabase/migrations/20261010000000_deleted.sql' }],
+    [{ status: 'R100', oldPath: 'supabase/migrations/20261010000000_a.sql', path: 'supabase/migrations/20261010000001_b.sql' }],
+    [
+      { status: 'A', path: 'supabase/migrations/20261010000000_first.sql' },
+      { status: 'A', path: 'supabase/migrations/20261010000000_duplicate.sql' },
+    ],
+    [{ status: 'A', path: 'supabase/migrations/20261009020000_old.sql' }],
+  ];
+  for (const changes of cases) {
+    assertDenied(() => gate.validateMigrationDelta({
+      changes,
+      baselineLatestMigration: baseline,
+      remoteMigrations: ['20261009021414'],
+      dryRunPending: [],
+    }), 'INVALID_MIGRATION_DELTA');
+  }
+});
+
+test('remote pending migrations must equal the manifest set exactly', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const input = {
+    changes: [{ status: 'A', path: 'supabase/migrations/20261010000000_expected.sql' }],
+    baselineLatestMigration: '20261009021414_creator_premium_b5_creator_management_ux',
+    remoteMigrations: ['20261009021414'],
+  };
+  assertDenied(() => gate.validateMigrationDelta({ ...input, dryRunPending: [] }), 'MIGRATION_DRY_RUN_MISMATCH');
+  assertDenied(() => gate.validateMigrationDelta({ ...input, dryRunPending: ['20261010000000', '20261011000000'] }), 'MIGRATION_DRY_RUN_MISMATCH');
+  assertDenied(() => gate.validateMigrationDelta({ ...input, remoteMigrations: ['20261010000000'], dryRunPending: ['20261010000000'] }), 'MIGRATION_ALREADY_APPLIED');
 });

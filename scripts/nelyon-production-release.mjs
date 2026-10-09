@@ -159,3 +159,200 @@ export function sha256Hex(bytes) {
   }
   return createHash('sha256').update(bytes).digest('hex');
 }
+
+function decodeUtf8(buffer, label) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch (error) {
+    deny('INVALID_GIT_OUTPUT', `${label} is not valid UTF-8`, { cause: error.message });
+  }
+}
+
+export function parseNameStatusZ(buffer) {
+  if (!(buffer instanceof Uint8Array)) deny('INVALID_GIT_OUTPUT', 'name-status output must be bytes');
+  const text = decodeUtf8(buffer, 'name-status output');
+  if (text.length === 0) return [];
+  if (!text.endsWith('\0')) deny('INVALID_GIT_OUTPUT', 'name-status output is not NUL terminated');
+  const fields = text.split('\0');
+  fields.pop();
+  const changes = [];
+  for (let index = 0; index < fields.length;) {
+    const status = fields[index++];
+    if (!/^(?:[ACDMRTUXB]|R[0-9]{1,3}|C[0-9]{1,3})$/.test(status)) {
+      deny('INVALID_GIT_OUTPUT', `unsupported name-status token: ${status}`);
+    }
+    if (status.startsWith('R') || status.startsWith('C')) {
+      const oldPath = fields[index++];
+      const path = fields[index++];
+      if (!oldPath || !path) deny('INVALID_GIT_OUTPUT', 'rename/copy record is incomplete');
+      changes.push({ status, oldPath, path });
+    } else {
+      const path = fields[index++];
+      if (!path) deny('INVALID_GIT_OUTPUT', 'name-status record is incomplete');
+      changes.push({ status, path });
+    }
+  }
+  return changes;
+}
+
+function gitText(runGit, args, cwd) {
+  const result = runGit(args, { cwd });
+  if (!(typeof result === 'string' || result instanceof Uint8Array)) {
+    deny('INVALID_GIT_OUTPUT', `git ${args[0]} returned an unsupported value`);
+  }
+  return (typeof result === 'string' ? result : decodeUtf8(result, `git ${args[0]} output`)).trim();
+}
+
+function repositoryFromRemote(remote) {
+  const normalized = remote.trim().replace(/\\/g, '/').replace(/\.git$/, '');
+  const https = normalized.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)$/i);
+  if (https) return https[1];
+  const ssh = normalized.match(/^git@github\.com:([^/]+\/[^/]+)$/i);
+  return ssh?.[1] ?? null;
+}
+
+function fileTypeAtCommit(runGit, cwd, sha, path) {
+  const record = gitText(runGit, ['ls-tree', '-z', sha, '--', path], cwd);
+  if (!record) return 'missing';
+  const match = record.match(/^(\d{6})\s+(blob|tree|commit)\s+[0-9a-f]{40}\t/);
+  if (!match) return 'unknown';
+  if (match[1] === '120000') return 'symlink';
+  if (match[1] === '160000' || match[2] === 'commit') return 'submodule';
+  if (match[2] === 'tree') return 'directory';
+  if (match[1] === '100644' || match[1] === '100755') return 'file';
+  return 'unknown';
+}
+
+export function resolveGitState({ cwd, baselineSha, approvedSha, expectedRepository, runGit }) {
+  if (typeof runGit !== 'function') throw new TypeError('runGit adapter is required');
+  if (!SHA_PATTERN.test(baselineSha ?? '') || !SHA_PATTERN.test(approvedSha ?? '')) {
+    deny('INVALID_SHA', 'baseline and approved SHA must be full lowercase commit IDs');
+  }
+  const remote = gitText(runGit, ['remote', 'get-url', 'origin'], cwd);
+  if (repositoryFromRemote(remote)?.toLowerCase() !== expectedRepository.toLowerCase()) {
+    deny('REPOSITORY_MISMATCH', 'origin does not identify the expected repository');
+  }
+  try {
+    runGit(['cat-file', '-e', `${approvedSha}^{commit}`], { cwd });
+  } catch {
+    deny('APPROVED_COMMIT_MISSING', 'approved SHA is not an available commit');
+  }
+  const originMainSha = gitText(runGit, ['rev-parse', 'refs/remotes/origin/main^{commit}'], cwd);
+  if (approvedSha !== originMainSha) deny('MAIN_SHA_MISMATCH', 'approved SHA does not equal fetched origin/main');
+  try {
+    runGit(['merge-base', '--is-ancestor', baselineSha, approvedSha], { cwd });
+  } catch {
+    deny('BASELINE_NOT_ANCESTOR', 'verified baseline is not an ancestor of approved main');
+  }
+  const raw = runGit(['diff', '--name-status', '-z', '--no-renames', baselineSha, approvedSha, '--'], { cwd });
+  const changes = parseNameStatusZ(typeof raw === 'string' ? Buffer.from(raw, 'utf8') : raw)
+    .map(change => ({
+      ...change,
+      fileType: ['A', 'M', 'T'].includes(change.status)
+        ? fileTypeAtCommit(runGit, cwd, approvedSha, change.path)
+        : undefined,
+    }));
+  return Object.freeze({ approvedSha, baselineSha, originMainSha, remote, changes });
+}
+
+function validateGitPath(path) {
+  if (typeof path !== 'string' || path.length === 0 || path.includes('\0')) {
+    deny('UNSUPPORTED_GIT_CHANGE', 'Git change contains an invalid path');
+  }
+  const normalized = path.replace(/\\/g, '/');
+  if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)
+    || normalized.split('/').some(part => part === '..' || part === '')) {
+    deny('UNSUPPORTED_GIT_CHANGE', `Git path escapes the repository: ${path}`);
+  }
+  return normalized;
+}
+
+export function classifyChangedPaths(changes) {
+  if (!Array.isArray(changes)) deny('UNSUPPORTED_GIT_CHANGE', 'Git changes must be an array');
+  const result = {
+    all: [],
+    config: [],
+    functions: [],
+    governance: [],
+    migrations: [],
+    other: [],
+    productive: [],
+    shared: [],
+  };
+  for (const raw of changes) {
+    const path = validateGitPath(raw?.path);
+    if (!['A', 'M'].includes(raw.status)) {
+      deny('UNSUPPORTED_GIT_CHANGE', `Git status ${raw.status} is not releasable`, { path });
+    }
+    if (raw.fileType && !['file', 'directory'].includes(raw.fileType)) {
+      deny('UNSUPPORTED_GIT_CHANGE', `Git path is not an ordinary file or directory`, { path, fileType: raw.fileType });
+    }
+    const change = Object.freeze({ ...raw, path });
+    result.all.push(change);
+    if (/^supabase\/migrations\/[^/]+\.sql$/.test(path)) {
+      result.migrations.push(change);
+      result.productive.push(change);
+    } else if (path === 'supabase/config.toml') {
+      result.config.push(change);
+      result.productive.push(change);
+    } else if (/^supabase\/functions\/_shared\//.test(path)) {
+      result.shared.push(change);
+      result.productive.push(change);
+    } else if (/^supabase\/functions\/[^/]+\//.test(path)) {
+      result.functions.push(change);
+      result.productive.push(change);
+    } else if (path.startsWith('supabase/')) {
+      deny('UNSUPPORTED_GIT_CHANGE', `unknown Supabase path: ${path}`, { path });
+    } else if (path === '.github/nelyon-production-release-policy.json'
+      || path === '.github/workflows/nelyon-production-release.yml'
+      || path === 'scripts/nelyon-production-release.mjs'
+      || path === 'tests/nelyonProductionReleaseGate.test.mjs'
+      || path === 'docs/runbooks/nelyon-production-release.md'
+      || path.startsWith('docs/superpowers/specs/')
+      || path.startsWith('docs/superpowers/plans/')) {
+      result.governance.push(change);
+    } else {
+      result.other.push(change);
+    }
+  }
+  return Object.freeze(Object.fromEntries(Object.entries(result).map(([key, value]) => [key, Object.freeze(value)])));
+}
+
+function migrationVersion(value) {
+  const name = String(value).replace(/\\/g, '/').split('/').at(-1);
+  return name?.match(/^(\d{14})(?:_[A-Za-z0-9][A-Za-z0-9_-]*)?(?:\.sql)?$/)?.[1] ?? null;
+}
+
+export function validateMigrationDelta({ changes, baselineLatestMigration, remoteMigrations, dryRunPending }) {
+  if (!Array.isArray(changes) || !Array.isArray(remoteMigrations) || !Array.isArray(dryRunPending)) {
+    deny('INVALID_MIGRATION_DELTA', 'migration inputs must be arrays');
+  }
+  const baselineVersion = migrationVersion(baselineLatestMigration);
+  if (!baselineVersion) deny('INVALID_MIGRATION_DELTA', 'baseline latest migration is invalid');
+  const migrations = [];
+  const seen = new Set();
+  for (const change of changes) {
+    const path = validateGitPath(change?.path);
+    if (!path.startsWith('supabase/migrations/')) continue;
+    if (change.status !== 'A') deny('INVALID_MIGRATION_DELTA', 'migrations are forward-only additions', { path, status: change.status });
+    const version = migrationVersion(path);
+    if (!version || version <= baselineVersion || seen.has(version)) {
+      deny('INVALID_MIGRATION_DELTA', 'migration timestamp is invalid, duplicate, or not newer than baseline', { path });
+    }
+    seen.add(version);
+    migrations.push({ version, path });
+  }
+  migrations.sort((left, right) => left.version.localeCompare(right.version));
+  const remote = new Set(remoteMigrations.map(migrationVersion));
+  if (remote.has(null)) deny('INVALID_MIGRATION_DELTA', 'remote migration inventory contains an invalid version');
+  for (const migration of migrations) {
+    if (remote.has(migration.version)) deny('MIGRATION_ALREADY_APPLIED', 'manifest migration already exists remotely', migration);
+  }
+  const pending = dryRunPending.map(migrationVersion);
+  if (pending.includes(null)) deny('MIGRATION_DRY_RUN_MISMATCH', 'dry-run returned an invalid migration');
+  const expected = migrations.map(migration => migration.version);
+  if (canonicalJson([...pending].sort()) !== canonicalJson(expected)) {
+    deny('MIGRATION_DRY_RUN_MISMATCH', 'remote dry-run does not exactly match the manifest migrations', { expected, pending });
+  }
+  return migrations;
+}
