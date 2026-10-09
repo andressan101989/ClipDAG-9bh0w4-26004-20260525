@@ -31,6 +31,13 @@
     "verified_by": null,
     "verified_at": null
   },
+  "baseline_authority": {
+    "source": "owner-control-plane",
+    "owner": "andressan101989",
+    "workflow_may_promote": false,
+    "requires_separate_policy_commit": true,
+    "environment_digest_variable": "NELYON_RELEASE_POLICY_SHA256"
+  },
   "cutover": {
     "state": "pending",
     "auto_deploy_off_evidence": null,

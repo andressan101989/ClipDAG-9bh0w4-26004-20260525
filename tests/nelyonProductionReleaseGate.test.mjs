@@ -757,3 +757,196 @@ test('production concurrency denies another active release run', async () => {
     currentRunId: '123',
   }), 'CONCURRENT_RELEASE');
 });
+
+function baselineSnapshot(policy, overrides = {}) {
+  const unmanaged = Array.from({ length: policy.supabase.expected_remote_function_count - MANAGED_FUNCTIONS.length }, (_, index) => ({
+    name: `remote-unmanaged-${String(index + 1).padStart(2, '0')}`,
+    version: index + 1,
+  }));
+  return {
+    complete: true,
+    source: 'owner-control-plane',
+    observed_at: '2026-10-09T12:00:00.000Z',
+    project_ref: PROJECT_REF,
+    candidate_sha: MAIN_SHA,
+    workflow_runtime: false,
+    reviewed_policy_sha256: 'f'.repeat(64),
+    migrations: {
+      complete: true,
+      items: Array.from({ length: 336 }, (_, index) => `2026${String(index).padStart(10, '0')}`),
+      latest: '20261009021414_creator_premium_b5_creator_management_ux',
+    },
+    functions: {
+      complete: true,
+      managed: MANAGED_FUNCTIONS.map((name, index) => ({ name, version: index + 1, verify_jwt: true, source_sha256: String(index + 1).padStart(64, '0'), source_parity: true })),
+      unmanaged,
+    },
+    config: { complete: true, managed_functions: MANAGED_FUNCTIONS.map(name => ({ name, verify_jwt: true })) },
+    cron_security: { complete: true, cron: [], security_findings: [] },
+    finance: {
+      complete: true,
+      policy: { purchase_enabled: false, subscription_enabled: false, refunds_enabled: false, platform_fee_bps: 0 },
+      premium_transaction_count: 0,
+      c2_attributed_bdag_movement: 0,
+    },
+    health: { complete: true, status: 'ACTIVE_HEALTHY' },
+    prior_release: {
+      kind: 'bootstrap',
+      release_id: null,
+      manifest_sha256: null,
+      postcheck_evidence_sha256: 'e'.repeat(64),
+    },
+    ...overrides,
+  };
+}
+
+test('candidate to verified requires exact migrations functions config finance cron and health evidence', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const evidence = gate.buildBaselineEvidence(baselineSnapshot(policy));
+  const verified = gate.verifyBaselineEvidence({
+    candidate: policy.baseline,
+    evidence,
+    expected: {
+      projectRef: PROJECT_REF,
+      sha: MAIN_SHA,
+      migrationCount: 336,
+      latestMigration: '20261009021414_creator_premium_b5_creator_management_ux',
+      managedFunctions: MANAGED_FUNCTIONS,
+      remoteFunctionCount: 34,
+      financePolicy: policy.supabase.finance_policy,
+      reviewedPolicySha256: 'f'.repeat(64),
+    },
+  });
+  assert.equal(verified.verification.state, 'verified');
+  assert.deepEqual(Object.keys(evidence.digests).sort(), ['config_verify_jwt', 'cron_security', 'finance', 'function_source_parity', 'managed_functions', 'migrations', 'unmanaged_functions']);
+  for (const value of Object.values(evidence.digests)) assert.match(value, /^[0-9a-f]{64}$/);
+});
+
+test('Git SHA equality alone cannot verify baseline', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  assertDenied(() => gate.buildBaselineEvidence({
+    complete: true,
+    source: 'owner-control-plane',
+    project_ref: PROJECT_REF,
+    candidate_sha: MAIN_SHA,
+  }), 'INCOMPLETE_BASELINE_EVIDENCE');
+  assert.equal(policy.baseline.state, 'candidate');
+});
+
+test('workflow actor and workflow runtime cannot promote baseline', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  for (const patch of [
+    { source: 'github-actions' },
+    { workflow_runtime: true },
+  ]) {
+    assertDenied(() => gate.buildBaselineEvidence(baselineSnapshot(policy, patch)), 'INVALID_BASELINE_AUTHORITY');
+  }
+  const evidence = gate.buildBaselineEvidence(baselineSnapshot(policy));
+  assertDenied(() => gate.proposeVerifiedBaseline({ policy, evidence, owner: OWNER, source: 'github-actions' }), 'INVALID_BASELINE_AUTHORITY');
+});
+
+test('verified baseline requires owner reviewer and a separate policy commit', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const evidence = gate.buildBaselineEvidence(baselineSnapshot(policy));
+  const verified = gate.verifyBaselineEvidence({
+    candidate: policy.baseline,
+    evidence,
+    expected: {
+      projectRef: PROJECT_REF,
+      sha: MAIN_SHA,
+      migrationCount: 336,
+      latestMigration: policy.baseline.latest_migration,
+      managedFunctions: MANAGED_FUNCTIONS,
+      remoteFunctionCount: 34,
+      financePolicy: policy.supabase.finance_policy,
+      reviewedPolicySha256: 'f'.repeat(64),
+    },
+  });
+  const original = JSON.stringify(policy);
+  assertDenied(() => gate.proposeVerifiedBaseline({ policy, evidence: verified, owner: 'someone-else' }), 'INVALID_BASELINE_AUTHORITY');
+  const proposal = gate.proposeVerifiedBaseline({ policy, evidence: verified, owner: OWNER });
+  assert.equal(JSON.stringify(policy), original, 'proposal must not mutate policy');
+  assert.equal(proposal.policy.baseline.state, 'verified');
+  assert.equal(proposal.policy.baseline.requires_separate_policy_commit, true);
+  assert.match(proposal.digest, /^[0-9a-f]{64}$/);
+  assert.equal(gate.sha256Hex(proposal.bytes), proposal.digest);
+});
+
+test('environment policy digest must match exact reviewed policy bytes', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const exactPolicyBytes = readFileSync(policyUrl);
+  const exactDigest = gate.sha256Hex(exactPolicyBytes);
+  const evidence = gate.buildBaselineEvidence(baselineSnapshot(policy, { reviewed_policy_sha256: exactDigest }));
+  assert.equal(gate.verifyBaselineEvidence({
+    candidate: policy.baseline,
+    evidence,
+    expected: {
+      projectRef: PROJECT_REF,
+      sha: MAIN_SHA,
+      migrationCount: 336,
+      latestMigration: policy.baseline.latest_migration,
+      managedFunctions: MANAGED_FUNCTIONS,
+      remoteFunctionCount: 34,
+      financePolicy: policy.supabase.finance_policy,
+      reviewedPolicyBytes: exactPolicyBytes,
+    },
+  }).verification.reviewed_policy_sha256, exactDigest);
+  assertDenied(() => gate.verifyBaselineEvidence({
+    candidate: policy.baseline,
+    evidence,
+    expected: {
+      projectRef: PROJECT_REF,
+      sha: MAIN_SHA,
+      migrationCount: 336,
+      latestMigration: policy.baseline.latest_migration,
+      managedFunctions: MANAGED_FUNCTIONS,
+      remoteFunctionCount: 34,
+      financePolicy: policy.supabase.finance_policy,
+      reviewedPolicyBytes: Buffer.from(`${exactPolicyBytes.toString('utf8')} `),
+    },
+  }), 'BASELINE_EVIDENCE_MISMATCH');
+});
+
+test('baseline advancement records prior release ID manifest and evidence digests', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const priorRelease = {
+    kind: 'post-release',
+    release_id: 'nelyon-20261009-001',
+    manifest_sha256: 'a'.repeat(64),
+    postcheck_evidence_sha256: 'b'.repeat(64),
+  };
+  const evidence = gate.buildBaselineEvidence(baselineSnapshot(policy, { prior_release: priorRelease }));
+  const verified = gate.verifyBaselineEvidence({
+    candidate: policy.baseline,
+    evidence,
+    expected: {
+      projectRef: PROJECT_REF,
+      sha: MAIN_SHA,
+      migrationCount: 336,
+      latestMigration: policy.baseline.latest_migration,
+      managedFunctions: MANAGED_FUNCTIONS,
+      remoteFunctionCount: 34,
+      financePolicy: policy.supabase.finance_policy,
+      reviewedPolicySha256: 'f'.repeat(64),
+    },
+  });
+  const proposal = gate.proposeVerifiedBaseline({ policy, evidence: verified, owner: OWNER });
+  assert.deepEqual(proposal.policy.baseline.prior_release, priorRelease);
+  assert.deepEqual(proposal.policy.baseline.evidence_digests, evidence.digests);
+});
+
+test('partial paginated or source-ambiguous evidence keeps affected resources blocked', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  for (const patch of [
+    { migrations: { ...baselineSnapshot(policy).migrations, complete: false } },
+    { functions: { ...baselineSnapshot(policy).functions, complete: false } },
+    { source: 'unknown-control-plane' },
+  ]) {
+    const code = patch.source ? 'INVALID_BASELINE_AUTHORITY' : 'INCOMPLETE_BASELINE_EVIDENCE';
+    assertDenied(() => gate.buildBaselineEvidence(baselineSnapshot(policy, patch)), code);
+  }
+  const functions = baselineSnapshot(policy).functions;
+  functions.managed[0] = { ...functions.managed[0], source_parity: false };
+  const evidence = gate.buildBaselineEvidence(baselineSnapshot(policy, { functions }));
+  assert.deepEqual(evidence.blocked_resources, ['agora-token']);
+});

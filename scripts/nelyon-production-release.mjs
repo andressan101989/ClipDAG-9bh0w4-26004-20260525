@@ -995,6 +995,166 @@ export function requiredSecretsForMode(mode, secrets) {
   return required;
 }
 
+function assertCompleteBaselineSection(section, label, { arrayKey } = {}) {
+  if (!section || section.complete !== true || (arrayKey && !Array.isArray(section[arrayKey]))) {
+    deny('INCOMPLETE_BASELINE_EVIDENCE', `${label} evidence is incomplete`);
+  }
+}
+
+function baselineEvidencePayload(evidence) {
+  const { evidence_sha256: ignored, verification: ignoredVerification, ...payload } = evidence;
+  return payload;
+}
+
+function assertBaselineEvidenceDigest(evidence) {
+  if (!evidence || !/^[0-9a-f]{64}$/.test(evidence.evidence_sha256 ?? '')) {
+    deny('BASELINE_EVIDENCE_MISMATCH', 'baseline evidence digest is missing');
+  }
+  const actual = sha256Hex(canonicalJson(baselineEvidencePayload(evidence)));
+  if (actual !== evidence.evidence_sha256) deny('BASELINE_EVIDENCE_MISMATCH', 'baseline evidence bytes do not match their digest');
+}
+
+export function buildBaselineEvidence(snapshot) {
+  if (!snapshot || (snapshot.source !== undefined && snapshot.source !== 'owner-control-plane') || snapshot.workflow_runtime === true) {
+    deny('INVALID_BASELINE_AUTHORITY', 'baseline evidence must come from the owner control plane outside a workflow runtime');
+  }
+  if (snapshot.complete !== true
+    || snapshot.source !== 'owner-control-plane'
+    || snapshot.workflow_runtime !== false
+    || !SHA_PATTERN.test(snapshot.candidate_sha ?? '')
+    || typeof snapshot.project_ref !== 'string'
+    || !Number.isFinite(Date.parse(snapshot.observed_at))
+    || !/^[0-9a-f]{64}$/.test(snapshot.reviewed_policy_sha256 ?? '')) {
+    deny('INCOMPLETE_BASELINE_EVIDENCE', 'baseline identity evidence is incomplete');
+  }
+  assertCompleteBaselineSection(snapshot.migrations, 'migration', { arrayKey: 'items' });
+  assertCompleteBaselineSection(snapshot.functions, 'function', { arrayKey: 'managed' });
+  if (!Array.isArray(snapshot.functions.unmanaged)) deny('INCOMPLETE_BASELINE_EVIDENCE', 'unmanaged function inventory is incomplete');
+  assertCompleteBaselineSection(snapshot.config, 'config and verify_jwt', { arrayKey: 'managed_functions' });
+  assertCompleteBaselineSection(snapshot.cron_security, 'cron and security', { arrayKey: 'cron' });
+  assertCompleteBaselineSection(snapshot.finance, 'finance');
+  assertCompleteBaselineSection(snapshot.health, 'project health');
+  const prior = snapshot.prior_release;
+  if (!prior || !['bootstrap', 'post-release'].includes(prior.kind)
+    || !/^[0-9a-f]{64}$/.test(prior.postcheck_evidence_sha256 ?? '')
+    || (prior.kind === 'post-release' && (!RELEASE_ID_PATTERN.test(prior.release_id ?? '')
+      || !/^[0-9a-f]{64}$/.test(prior.manifest_sha256 ?? '')))) {
+    deny('INCOMPLETE_BASELINE_EVIDENCE', 'prior release authority evidence is incomplete');
+  }
+  const managed = [...snapshot.functions.managed].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const unmanaged = [...snapshot.functions.unmanaged].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const blockedResources = managed.filter(item => item.source_parity !== true).map(item => item.name).sort();
+  const digestOf = value => sha256Hex(canonicalJson(value));
+  const payload = {
+    schema_version: 1,
+    complete: true,
+    source: snapshot.source,
+    observed_at: snapshot.observed_at,
+    project_ref: snapshot.project_ref,
+    candidate_sha: snapshot.candidate_sha,
+    workflow_runtime: false,
+    reviewed_policy_sha256: snapshot.reviewed_policy_sha256,
+    migrations: {
+      count: snapshot.migrations.items.length,
+      latest: snapshot.migrations.latest,
+      items: [...snapshot.migrations.items],
+    },
+    functions: { managed, unmanaged },
+    config: snapshot.config,
+    cron_security: snapshot.cron_security,
+    finance: snapshot.finance,
+    health: snapshot.health,
+    prior_release: prior,
+    blocked_resources: blockedResources,
+    digests: {
+      migrations: digestOf(snapshot.migrations.items),
+      managed_functions: digestOf(managed.map(item => ({ name: item.name, version: item.version, verify_jwt: item.verify_jwt }))),
+      unmanaged_functions: digestOf(unmanaged),
+      function_source_parity: digestOf(managed.map(item => ({ name: item.name, source_sha256: item.source_sha256, source_parity: item.source_parity }))),
+      config_verify_jwt: digestOf(snapshot.config),
+      cron_security: digestOf(snapshot.cron_security),
+      finance: digestOf(snapshot.finance),
+    },
+  };
+  return { ...payload, evidence_sha256: digestOf(payload) };
+}
+
+export function verifyBaselineEvidence({ candidate, evidence, expected }) {
+  assertBaselineEvidenceDigest(evidence);
+  if (candidate?.state !== 'candidate'
+    || candidate.sha !== expected?.sha
+    || evidence.complete !== true
+    || evidence.source !== 'owner-control-plane'
+    || evidence.workflow_runtime !== false
+    || evidence.project_ref !== expected?.projectRef
+    || evidence.candidate_sha !== expected?.sha
+    || evidence.migrations?.count !== expected?.migrationCount
+    || evidence.migrations?.latest !== expected?.latestMigration
+    || evidence.health?.complete !== true
+    || evidence.health?.status !== 'ACTIVE_HEALTHY') {
+    deny('BASELINE_EVIDENCE_MISMATCH', 'baseline identity, migration, or project-health evidence does not match');
+  }
+  const managedNames = (evidence.functions?.managed ?? []).map(item => item.name).sort();
+  const expectedManaged = [...(expected?.managedFunctions ?? [])].sort();
+  if (managedNames.length !== expectedManaged.length
+    || managedNames.some((name, index) => name !== expectedManaged[index])
+    || managedNames.length + (evidence.functions?.unmanaged ?? []).length !== expected?.remoteFunctionCount) {
+    deny('BASELINE_EVIDENCE_MISMATCH', 'remote function inventory does not match the controlled scope');
+  }
+  if (canonicalJson(evidence.finance?.policy) !== canonicalJson(expected?.financePolicy)
+    || evidence.finance?.premium_transaction_count !== 0
+    || evidence.finance?.c2_attributed_bdag_movement !== 0) {
+    deny('BASELINE_EVIDENCE_MISMATCH', 'finance baseline does not match the disabled zero-activity bootstrap');
+  }
+  const reviewedPolicySha256 = expected?.reviewedPolicyBytes !== undefined
+    ? sha256Hex(expected.reviewedPolicyBytes)
+    : expected?.reviewedPolicySha256;
+  if (!/^[0-9a-f]{64}$/.test(reviewedPolicySha256 ?? '')
+    || evidence.reviewed_policy_sha256 !== reviewedPolicySha256) {
+    deny('BASELINE_EVIDENCE_MISMATCH', 'reviewed policy bytes do not match the independent digest');
+  }
+  return {
+    ...evidence,
+    verification: {
+      state: 'verified',
+      source: 'owner-control-plane',
+      reviewed_policy_sha256: reviewedPolicySha256,
+      evidence_sha256: evidence.evidence_sha256,
+    },
+  };
+}
+
+export function proposeVerifiedBaseline({ policy, evidence, owner, source = 'owner-control-plane' }) {
+  if (owner !== 'andressan101989'
+    || source !== 'owner-control-plane'
+    || policy?.baseline_authority?.workflow_may_promote !== false
+    || policy?.baseline_authority?.requires_separate_policy_commit !== true
+    || evidence?.verification?.state !== 'verified'
+    || evidence?.workflow_runtime !== false) {
+    deny('INVALID_BASELINE_AUTHORITY', 'only the owner control plane may propose a separately committed baseline');
+  }
+  assertBaselineEvidenceDigest(evidence);
+  const proposed = structuredClone(policy);
+  proposed.baseline = {
+    ...proposed.baseline,
+    state: 'verified',
+    sha: evidence.candidate_sha,
+    migration_count: evidence.migrations.count,
+    latest_migration: evidence.migrations.latest,
+    evidence: evidence.evidence_sha256,
+    evidence_digests: evidence.digests,
+    blocked_resources: evidence.blocked_resources,
+    reviewed_policy_sha256: evidence.reviewed_policy_sha256,
+    prior_release: evidence.prior_release,
+    verified_by: owner,
+    verified_at: evidence.observed_at,
+    authority_source: source,
+    requires_separate_policy_commit: true,
+  };
+  const bytes = canonicalJson(proposed);
+  return { bytes, digest: sha256Hex(bytes), policy: proposed };
+}
+
 function parseCliArguments(argv) {
   const [command, ...rest] = argv;
   const values = {};
