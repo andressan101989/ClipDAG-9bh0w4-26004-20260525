@@ -17,6 +17,7 @@ import { getWithdrawalConfigFromBackend } from '@/services/walletApi';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 
 const supabase = () => getSupabaseClient();
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // ── Idempotency key factory ───────────────────────────────────────────────
 // Uses crypto.randomUUID() when available (modern RN), falls back to Math.random()
@@ -59,12 +60,13 @@ async function extractError(error: unknown): Promise<string> {
 async function invokeLedger(
   action: string,
   payload: Record<string, unknown>,
+  options: { uuidIdempotency?: boolean } = {},
 ): Promise<{ success: boolean; error?: string; data?: Record<string, unknown> }> {
-  const idempotencyKey = makeKey(action);
+  const idempotencyKey = options.uuidIdempotency ? makeUuid() : makeKey(action);
   const body = {
+    ...payload,
     action,
     idempotency_key: idempotencyKey,
-    ...payload,
   };
 
   // Log payload before every invoke (idempotency key truncated for brevity)
@@ -73,7 +75,7 @@ async function invokeLedger(
     idempotency_key: idempotencyKey.slice(0, 30) + '...',
   });
 
-  const { data, error } = await supabase.functions.invoke('bdag-ledger', { body });
+  const { data, error } = await supabase().functions.invoke('bdag-ledger', { body });
 
   if (error) {
     const msg = await extractError(error);
@@ -98,7 +100,7 @@ async function invokeLedger(
  */
 export async function getLedgerBalance(userId: string): Promise<number> {
   if (!userId) return 0;
-  const { data, error } = await supabase
+  const { data, error } = await supabase()
     .from('ledger_accounts')
     .select('balance')
     .eq('owner_id', userId)          // ← CRITICAL: always filter by owner
@@ -133,7 +135,7 @@ export async function getFinancialHistory(userId: string, limit = 30): Promise<F
   if (!userId) return [];
 
   // SECURITY FIX: always filter ledger_accounts by owner_id
-  const { data: acct, error: acctErr } = await supabase
+  const { data: acct, error: acctErr } = await supabase()
     .from('ledger_accounts')
     .select('id')
     .eq('owner_id', userId)          // ← CRITICAL: scoped to user
@@ -145,7 +147,7 @@ export async function getFinancialHistory(userId: string, limit = 30): Promise<F
     return [];
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await supabase()
     .from('financial_transactions')
     .select('id, operation_type, amount, fee_amount, currency, status, blockchain_txid, reference_type, reference_id, created_at')
     .or(`from_account_id.eq.${acct.id},to_account_id.eq.${acct.id}`)
@@ -177,7 +179,7 @@ export async function getLedgerEntries(userId: string, limit = 50): Promise<Ledg
   if (!userId) return [];
 
   // SECURITY FIX: always filter by owner_id
-  const { data: acct, error: acctErr } = await supabase
+  const { data: acct, error: acctErr } = await supabase()
     .from('ledger_accounts')
     .select('id')
     .eq('owner_id', userId)          // ← CRITICAL: scoped to user
@@ -189,7 +191,7 @@ export async function getLedgerEntries(userId: string, limit = 50): Promise<Ledg
     return [];
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await supabase()
     .from('ledger_entries')
     .select('id, txn_id, entry_type, amount, balance_after, description, created_at')
     .eq('account_id', acct.id)
@@ -205,7 +207,7 @@ export async function getLedgerEntries(userId: string, limit = 50): Promise<Ledg
 
 /** List withdrawal requests for the current user. */
 export async function listWithdrawals(): Promise<Record<string, unknown>[]> {
-  const { data } = await supabase
+  const { data } = await supabase()
     .from('withdrawal_requests')
     .select('id, status, bdag_amount, net_bdag, fee_bdag, to_address, tx_hash, failure_reason, created_at, updated_at')
     .order('created_at', { ascending: false })
@@ -227,16 +229,36 @@ export async function transferBDAG(params: {
   return invokeLedger('transfer', { to_user_id: params.toUserId, amount: params.amount });
 }
 
-/** Purchase exclusive content by content ID. Idempotent — safe to retry. */
+/** Purchase canonical Creator Premium content. Price and split are server-derived. */
 export async function purchaseContent(params: { contentId: string }) {
-  if (!params.contentId) return { success: false, error: 'content_id required' };
-  return invokeLedger('purchase', { content_id: params.contentId });
+  if (!UUID_RE.test(params.contentId)) return { success: false, error: 'creator_premium_invalid_content_id' };
+  return invokeLedger(
+    'creator_premium_purchase',
+    { content_id: params.contentId },
+    { uuidIdempotency: true },
+  );
 }
 
-/** Subscribe to a creator plan by plan ID. */
+/** Start the initial canonical Creator Premium plan period. */
 export async function subscribeToPlan(params: { planId: string }) {
-  if (!params.planId) return { success: false, error: 'plan_id required' };
-  return invokeLedger('subscribe', { plan_id: params.planId });
+  if (!UUID_RE.test(params.planId)) return { success: false, error: 'creator_premium_invalid_plan_id' };
+  return invokeLedger(
+    'creator_premium_subscribe',
+    { plan_id: params.planId },
+    { uuidIdempotency: true },
+  );
+}
+
+/** Cancel a Creator Premium relationship without moving money. */
+export async function cancelCreatorPremiumSubscription(params: { subscriptionId: string }) {
+  if (!UUID_RE.test(params.subscriptionId)) {
+    return { success: false, error: 'creator_premium_invalid_subscription_id' };
+  }
+  return invokeLedger(
+    'creator_premium_cancel_subscription',
+    { subscription_id: params.subscriptionId },
+    { uuidIdempotency: true },
+  );
 }
 
 /** Send a tip/gift to another user. Optional video attribution. 10% platform fee. */
@@ -312,7 +334,7 @@ export async function submitDeposit(params: {
 
   console.log('[ledgerClient] submitDeposit payload:', JSON.stringify(payload));
 
-  const { data, error } = await supabase.functions.invoke('bdag-deposit', { body: payload });
+  const { data, error } = await supabase().functions.invoke('bdag-deposit', { body: payload });
 
   if (error) {
     const msg = await extractError(error);
@@ -374,7 +396,7 @@ export async function requestWithdrawal(params: {
     idempotency_key: idempotencyKey.slice(0, 30) + '...',
   }));
 
-  const { data, error } = await supabase.functions.invoke('bdag-withdraw', { body: payload });
+  const { data, error } = await supabase().functions.invoke('bdag-withdraw', { body: payload });
 
   if (error) {
     const msg = await extractError(error);
@@ -415,7 +437,7 @@ export async function submitTransfer(params: {
 
   console.log('[ledgerClient] submitTransfer payload:', JSON.stringify(payload));
 
-  const { data, error } = await supabase.functions.invoke('bdag-transfer', { body: payload });
+  const { data, error } = await supabase().functions.invoke('bdag-transfer', { body: payload });
 
   if (error) {
     const msg = await extractError(error);
@@ -436,7 +458,7 @@ export async function submitTransfer(params: {
 
 /** Poll withdrawal status from queue. */
 export async function getWithdrawalStatus(withdrawalId: string) {
-  const { data, error } = await supabase.functions.invoke('bdag-withdraw', {
+  const { data, error } = await supabase().functions.invoke('bdag-withdraw', {
     body: { action: 'status', withdrawal_id: withdrawalId },
   });
   if (error) return null;
@@ -462,7 +484,7 @@ export async function getCreatorEarnings(userId: string): Promise<{
   if (!userId) return empty;
 
   // SECURITY FIX: always filter by owner_id
-  const { data: acct } = await supabase
+  const { data: acct } = await supabase()
     .from('ledger_accounts')
     .select('id')
     .eq('owner_id', userId)
@@ -471,7 +493,7 @@ export async function getCreatorEarnings(userId: string): Promise<{
 
   if (!acct) return empty;
 
-  const { data } = await supabase
+  const { data } = await supabase()
     .from('financial_transactions')
     .select('operation_type, amount, fee_amount')
     .eq('to_account_id', acct.id)

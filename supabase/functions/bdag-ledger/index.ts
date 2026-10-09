@@ -11,8 +11,9 @@
  *
  * Actions:
  *   transfer  → transfer_bdag_internal()
- *   purchase  → purchase_exclusive_content()
- *   subscribe → subscribe_to_creator()
+ *   creator_premium_purchase             → purchase_creator_premium_content_v1()
+ *   creator_premium_subscribe            → subscribe_creator_premium_plan_v1()
+ *   creator_premium_cancel_subscription  → cancel_creator_premium_subscription_v1()
  *   gift      → atomic_ledger_transfer() (gift type)
  *   boost     → purchase_boost()
  *   balance   → get_user_bdag_balance()
@@ -37,6 +38,34 @@ const VELOCITY: Record<string, { maxOps: number; maxAmount: number; windowHours:
   marketplace_order_confirm_delivery: { maxOps: 20, maxAmount: 0, windowHours: 1 },
 };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PREMIUM_CLIENT_AUTHORITY_FIELDS = new Set([
+  'amount', 'price', 'gross', 'gross_amount', 'fee', 'platform_fee',
+  'creator_net', 'platform_fee_bps', 'creator_id', 'account_id',
+  'buyer_id', 'subscriber_id', 'transaction_id',
+]);
+
+function validatePremiumCommand(
+  body: Record<string, unknown>,
+  targetField: 'content_id' | 'plan_id' | 'subscription_id',
+): string | null {
+  if (Object.keys(body).some(key => PREMIUM_CLIENT_AUTHORITY_FIELDS.has(key))) {
+    return 'creator_premium_client_financial_authority_forbidden';
+  }
+  const allowed = new Set(['action', 'idempotency_key', targetField]);
+  if (Object.keys(body).some(key => !allowed.has(key))) {
+    return 'creator_premium_request_fields_invalid';
+  }
+  if (typeof body.idempotency_key !== 'string' || !UUID_RE.test(body.idempotency_key)
+      || typeof body[targetField] !== 'string' || !UUID_RE.test(body[targetField])) {
+    return 'creator_premium_invalid_uuid';
+  }
+  return null;
+}
+
+function premiumRpcError(message: string): string {
+  const match = message.match(/creator_premium_[a-z0-9_]+/i);
+  return match?.[0] ?? 'creator_premium_finance_operation_failed';
+}
 
 function ok(data: unknown, status = 200) {
   return new Response(JSON.stringify({ success: true, data }), {
@@ -95,36 +124,65 @@ Deno.serve(async (req) => {
       return ok(data);
     }
 
-    // ════════════════════════════════════════════════════════════════════
-    // PURCHASE EXCLUSIVE CONTENT
-    // ════════════════════════════════════════════════════════════════════
-    if (action === 'purchase') {
-      const { content_id } = body;
-      if (!content_id) return fail('content_id required');
+    // Legacy Premium finance actions never call their removed RPCs.
+    if (action === 'purchase' || action === 'subscribe') {
+      return fail('creator_premium_legacy_action_disabled', 410);
+    }
 
-      const { data, error } = await admin.rpc('purchase_exclusive_content', {
-        p_buyer_id:        user.id,
-        p_content_id:      content_id,
-        p_idempotency_key: idempotency_key,
+    // ════════════════════════════════════════════════════════════════════
+    // CREATOR PREMIUM — server-authoritative purchase
+    // ════════════════════════════════════════════════════════════════════
+    if (action === 'creator_premium_purchase') {
+      const invalid = validatePremiumCommand(body, 'content_id');
+      if (invalid) return fail(invalid, 400);
+      const { data, error } = await admin.rpc('purchase_creator_premium_content_v1', {
+        p_buyer_id: user.id,
+        p_content_id: body.content_id,
+        p_idempotency_key: body.idempotency_key,
       });
-      if (error) { log('ERROR', 'purchase', { err: error.message, content_id }); return fail(error.message); }
-      if (data?.idempotent) return ok({ already_purchased: true });
+      if (error) {
+        const code = premiumRpcError(error.message);
+        log('ERROR', 'creator_premium_purchase', { user_id: user.id, code });
+        return fail(code, code.endsWith('_not_found') ? 404 : 409);
+      }
       return ok(data);
     }
 
     // ════════════════════════════════════════════════════════════════════
-    // SUBSCRIBE TO CREATOR PLAN
+    // CREATOR PREMIUM — initial server-authoritative subscription
     // ════════════════════════════════════════════════════════════════════
-    if (action === 'subscribe') {
-      const { plan_id } = body;
-      if (!plan_id) return fail('plan_id required');
-
-      const { data, error } = await admin.rpc('subscribe_to_creator', {
-        p_subscriber_id:   user.id,
-        p_plan_id:         plan_id,
-        p_idempotency_key: idempotency_key,
+    if (action === 'creator_premium_subscribe') {
+      const invalid = validatePremiumCommand(body, 'plan_id');
+      if (invalid) return fail(invalid, 400);
+      const { data, error } = await admin.rpc('subscribe_creator_premium_plan_v1', {
+        p_subscriber_id: user.id,
+        p_plan_id: body.plan_id,
+        p_idempotency_key: body.idempotency_key,
       });
-      if (error) { log('ERROR', 'subscribe', { err: error.message, plan_id }); return fail(error.message); }
+      if (error) {
+        const code = premiumRpcError(error.message);
+        log('ERROR', 'creator_premium_subscribe', { user_id: user.id, code });
+        return fail(code, code.endsWith('_not_found') ? 404 : 409);
+      }
+      return ok(data);
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // CREATOR PREMIUM — cancellation only; this action never moves money
+    // ════════════════════════════════════════════════════════════════════
+    if (action === 'creator_premium_cancel_subscription') {
+      const invalid = validatePremiumCommand(body, 'subscription_id');
+      if (invalid) return fail(invalid, 400);
+      const { data, error } = await admin.rpc('cancel_creator_premium_subscription_v1', {
+        p_subscriber_id: user.id,
+        p_subscription_id: body.subscription_id,
+        p_idempotency_key: body.idempotency_key,
+      });
+      if (error) {
+        const code = premiumRpcError(error.message);
+        log('ERROR', 'creator_premium_cancel_subscription', { user_id: user.id, code });
+        return fail(code, code.endsWith('_not_found') ? 404 : 409);
+      }
       return ok(data);
     }
 
