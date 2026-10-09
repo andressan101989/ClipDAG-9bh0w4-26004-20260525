@@ -1036,8 +1036,14 @@ not release-attributed; migrations/functions/cron/policy remain unchanged.
 
 - [ ] **Step 4: Refresh current auto-deploy-off evidence for `gate_proof`**
 
-Visually verify the toggle remains OFF, create a new redacted evidence
-ID/timestamp/digest, and update only the Environment evidence variables. No
+Visually verify the toggle remains OFF and create evidencia canónica nueva with
+a new redacted ID, timestamp, and digest calculated over the canonical payload
+without its `sha256` field. Replace `cutover.auto_deploy_off_evidence` with the
+same ID and digest, record owner/time verification, and create a commit protegido
+through the authorized Git flow. Update `NELYON_RELEASE_POLICY_SHA256` to the
+digest of the exact new policy bytes, then update
+`NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64` with bytes canónicos completos for that
+same evidence record. All three authorities must agree before dispatch. No
 Supabase secret is needed by this mode.
 
 - [ ] **Step 5: Dispatch `gate_proof` and observe the approval wait**

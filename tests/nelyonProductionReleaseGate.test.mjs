@@ -9,6 +9,7 @@ const policyUrl = new URL('../.github/nelyon-production-release-policy.json', im
 const gateUrl = new URL('../scripts/nelyon-production-release.mjs', import.meta.url);
 const workflowUrl = new URL('../.github/workflows/nelyon-production-release.yml', import.meta.url);
 const runbookUrl = new URL('../docs/runbooks/nelyon-production-release.md', import.meta.url);
+const planUrl = new URL('../docs/superpowers/plans/2026-10-09-nelyon-production-release-gate.md', import.meta.url);
 
 const OWNER = 'andressan101989';
 const REPOSITORY = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
@@ -1562,6 +1563,8 @@ test('runbook covers single-owner cutover evidence approval finance and recovery
     'Every renewed evidence record must also replace `cutover.auto_deploy_off_evidence`',
     'commit that policy transition through the protected Git flow',
     'update `NELYON_RELEASE_POLICY_SHA256` to the exact new policy bytes',
+    'SHA-256 of `canonicalJson(evidenceWithoutSha256)`',
+    'base64-encode the complete canonical JSON including `sha256`',
     '15 minutes',
     'Deploy to production',
     'NELYON-APPROVE run=<run_id> attempt=<run_attempt> env=<environment_id> release=<release_id> sha=<approved_sha> manifest=<sha256> auto_deploy_evidence=<evidence_id> auto_deploy_sha256=<evidence_sha256>',
@@ -1571,4 +1574,7 @@ test('runbook covers single-owner cutover evidence approval finance and recovery
     'transactions confirmed after the pre-snapshot even when created before it',
   ]) assert.ok(text.includes(literal), `runbook missing ${literal}`);
   assert.doesNotMatch(text, /(SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD)\s*[=:]\s*[^`\s]+/);
+  const plan = readFileSync(planUrl, 'utf8');
+  assert.match(plan, /evidencia canónica nueva[\s\S]*`cutover\.auto_deploy_off_evidence`[\s\S]*commit protegido[\s\S]*`NELYON_RELEASE_POLICY_SHA256`[\s\S]*bytes canónicos completos/);
+  assert.doesNotMatch(plan, /update only the Environment evidence variables/);
 });

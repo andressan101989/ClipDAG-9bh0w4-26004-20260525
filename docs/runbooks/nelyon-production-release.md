@@ -92,6 +92,13 @@ unique evidence ID, project reference, production branch `main`, state `off`,
 UTC observation time, observer `andressan101989`, source `owner-dashboard`, and
 a digest. Never include a session token, cookie, credential, or unrelated UI.
 
+Build the evidence digest without a circular hash: first canonicalize the
+evidence object without its `sha256` field, then calculate the SHA-256 of `canonicalJson(evidenceWithoutSha256)`. Insert that lowercase digest as the
+`sha256` field, canonicalize the complete record again, and base64-encode the complete canonical JSON including `sha256` for
+`NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64`. The digest in the policy and approval
+token is the digest of the payload without `sha256`, not a hash of the final
+base64 text.
+
 Update `NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64` with that redacted canonical
 record. Evidence is valid for at most 15 minutes and permits at most 60 seconds
 of future clock skew. Renew it before every future release and every proof that
