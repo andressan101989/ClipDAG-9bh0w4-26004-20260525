@@ -234,3 +234,125 @@ test('remote pending migrations must equal the manifest set exactly', async () =
   assertDenied(() => gate.validateMigrationDelta({ ...input, dryRunPending: ['20261010000000', '20261011000000'] }), 'MIGRATION_DRY_RUN_MISMATCH');
   assertDenied(() => gate.validateMigrationDelta({ ...input, remoteMigrations: ['20261010000000'], dryRunPending: ['20261010000000'] }), 'MIGRATION_ALREADY_APPLIED');
 });
+
+test('only exact config.toml function declarations are managed', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const toml = readFileSync(new URL('../supabase/config.toml', import.meta.url), 'utf8');
+  const config = gate.parseFunctionConfig(toml);
+  assert.deepEqual(Object.keys(config), MANAGED_FUNCTIONS);
+  assert.equal(config['agora-token'].verify_jwt, true);
+  assert.equal(config['stripe-webhook'].verify_jwt, false);
+  assert.deepEqual(Object.keys(config), policy.supabase.managed_functions);
+  assertDenied(() => gate.parseFunctionConfig(`${toml}\n[functions.agora-token]\nverify_jwt = true\n`), 'AMBIGUOUS_FUNCTION_CONFIG');
+});
+
+test('bdag-economy and undeclared functions are denied', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const graph = gate.buildFunctionGraph({
+    'supabase/functions/bdag-economy/index.ts': 'export const value = 1;\n',
+    'supabase/functions/not-declared/index.ts': 'export const value = 2;\n',
+  });
+  for (const path of [
+    'supabase/functions/bdag-economy/index.ts',
+    'supabase/functions/not-declared/index.ts',
+  ]) {
+    assertDenied(() => gate.resolveAffectedFunctions({
+      changes: [{ status: 'M', path }],
+      graph,
+      managedFunctions: policy.supabase.managed_functions,
+      forbiddenFunctions: policy.supabase.forbidden_functions,
+    }), 'FUNCTION_NOT_AUTHORIZED');
+  }
+});
+
+test('direct and multi-hop shared imports propagate to all consumers', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const graph = gate.buildFunctionGraph({
+    'supabase/functions/agora-token/index.ts': "import { a } from '../_shared/a.ts';\nexport { a };\n",
+    'supabase/functions/create-media-upload/index.ts': 'export const unrelated = true;\n',
+    'supabase/functions/_shared/a.ts': "export { b as a } from './b.ts';\n",
+    'supabase/functions/_shared/b.ts': 'export const b = 1;\n',
+  });
+  assert.deepEqual(gate.resolveAffectedFunctions({
+    changes: [{ status: 'M', path: 'supabase/functions/_shared/b.ts' }],
+    graph,
+    managedFunctions: MANAGED_FUNCTIONS,
+    forbiddenFunctions: ['bdag-economy'],
+  }), ['agora-token']);
+});
+
+test('literal dynamic imports resolve while nonliteral imports deny', async () => {
+  const { gate } = await loadGateAndPolicy();
+  assert.deepEqual(gate.parseModuleSpecifiers("await import('./worker.ts');", 'supabase/functions/agora-token/index.ts'), [
+    { kind: 'dynamic', specifier: './worker.ts' },
+  ]);
+  assertDenied(() => gate.parseModuleSpecifiers('await import(moduleName);', 'supabase/functions/agora-token/index.ts'), 'AMBIGUOUS_IMPORT');
+  assertDenied(() => gate.parseModuleSpecifiers('await import(`./${name}.ts`);', 'supabase/functions/agora-token/index.ts'), 'AMBIGUOUS_IMPORT');
+});
+
+test('unresolved escaping and ambiguous imports deny', async () => {
+  const { gate } = await loadGateAndPolicy();
+  assertDenied(() => gate.buildFunctionGraph({
+    'supabase/functions/agora-token/index.ts': "import '../../../outside.ts';\n",
+  }), 'IMPORT_ESCAPES_FUNCTIONS');
+  assertDenied(() => gate.buildFunctionGraph({
+    'supabase/functions/agora-token/index.ts': "import './missing';\n",
+  }), 'UNRESOLVED_IMPORT');
+  assertDenied(() => gate.buildFunctionGraph({
+    'supabase/functions/agora-token/index.ts': "import './choice';\n",
+    'supabase/functions/agora-token/choice.ts': 'export const a = 1;\n',
+    'supabase/functions/agora-token/choice/index.ts': 'export const a = 2;\n',
+  }), 'AMBIGUOUS_IMPORT');
+});
+
+test('floating supabase-js blocks every affected function', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const graph = gate.buildFunctionGraph({
+    'supabase/functions/agora-token/index.ts': "import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';\nexport { createClient };\n",
+    'supabase/functions/create-media-upload/index.ts': "import { createClient } from 'npm:@supabase/supabase-js@2.49.1';\nexport { createClient };\n",
+  });
+  const result = gate.analyzeFunctionReproducibility({
+    affectedFunctions: ['agora-token', 'create-media-upload'],
+    graph,
+  });
+  assert.equal(result.allowed, false);
+  assert.deepEqual(result.blockedFunctions, ['agora-token']);
+  assert.equal(result.findings[0].code, 'FLOATING_DEPENDENCY');
+  assert.equal(result.findings[0].resource, 'agora-token');
+});
+
+test('verify_jwt changes and false values are high risk', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const before = gate.parseFunctionConfig('[functions.agora-token]\nverify_jwt = true\n');
+  const after = gate.parseFunctionConfig('[functions.agora-token]\nverify_jwt = false\n');
+  const result = gate.classifyRisk({
+    affectedFunctions: ['agora-token'],
+    changedPaths: ['supabase/config.toml'],
+    configBefore: before,
+    configAfter: after,
+  });
+  assert.equal(result.level, 'HIGH');
+  assert.ok(result.findings.some(finding => finding.code === 'VERIFY_JWT_CHANGED'));
+  assert.ok(result.findings.some(finding => finding.code === 'VERIFY_JWT_DISABLED'));
+});
+
+test('finance webhook BDAG media auth moderation and gate authority are high risk', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const result = gate.classifyRisk({
+    affectedFunctions: [
+      'stripe-webhook',
+      'stripe-bdag-checkout',
+      'stream-webhook',
+      'create-media-upload',
+      'admin-user-moderation',
+      'agora-token',
+    ],
+    changedPaths: ['.github/workflows/nelyon-production-release.yml'],
+    configBefore: {},
+    configAfter: {},
+  });
+  assert.equal(result.level, 'HIGH');
+  for (const code of ['FINANCE_RESOURCE', 'WEBHOOK_RESOURCE', 'BDAG_RESOURCE', 'PRIVATE_MEDIA_RESOURCE', 'MODERATION_RESOURCE', 'AUTH_RESOURCE', 'GATE_AUTHORITY_CHANGE']) {
+    assert.ok(result.findings.some(finding => finding.code === code), `missing ${code}`);
+  }
+});

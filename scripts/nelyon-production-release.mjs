@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { posix } from 'node:path';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
@@ -355,4 +356,293 @@ export function validateMigrationDelta({ changes, baselineLatestMigration, remot
     deny('MIGRATION_DRY_RUN_MISMATCH', 'remote dry-run does not exactly match the manifest migrations', { expected, pending });
   }
   return migrations;
+}
+
+function parseTomlScalar(raw, lineNumber) {
+  const value = raw.trim();
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  if (/^-?(?:0|[1-9][0-9]*)$/.test(value)) return Number(value);
+  const quoted = value.match(/^(["'])(.*)\1$/);
+  if (quoted && !quoted[2].includes(quoted[1])) return quoted[2];
+  deny('AMBIGUOUS_FUNCTION_CONFIG', `unsupported TOML value on line ${lineNumber}`);
+}
+
+export function parseFunctionConfig(toml) {
+  if (typeof toml !== 'string') deny('AMBIGUOUS_FUNCTION_CONFIG', 'config.toml must be text');
+  const result = {};
+  let current = null;
+  const allowedKeys = new Set(['entrypoint', 'import_map', 'verify_jwt']);
+  for (const [offset, original] of toml.split(/\r?\n/).entries()) {
+    const lineNumber = offset + 1;
+    const line = original.trim();
+    if (!line || line.startsWith('#')) continue;
+    const section = line.match(/^\[functions\.([A-Za-z0-9][A-Za-z0-9-]*)\]$/);
+    if (section) {
+      current = section[1];
+      if (Object.hasOwn(result, current)) {
+        deny('AMBIGUOUS_FUNCTION_CONFIG', `duplicate function section ${current}`);
+      }
+      result[current] = {};
+      continue;
+    }
+    if (line.startsWith('[')) deny('AMBIGUOUS_FUNCTION_CONFIG', `unsupported TOML section on line ${lineNumber}`);
+    const assignment = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/);
+    if (!assignment || !current || !allowedKeys.has(assignment[1])) {
+      deny('AMBIGUOUS_FUNCTION_CONFIG', `unsupported or misplaced TOML key on line ${lineNumber}`);
+    }
+    const [, key, rawValue] = assignment;
+    if (Object.hasOwn(result[current], key)) {
+      deny('AMBIGUOUS_FUNCTION_CONFIG', `duplicate ${key} for function ${current}`);
+    }
+    result[current][key] = parseTomlScalar(rawValue, lineNumber);
+  }
+  for (const [name, config] of Object.entries(result)) {
+    if (typeof config.verify_jwt !== 'boolean') {
+      deny('AMBIGUOUS_FUNCTION_CONFIG', `function ${name} has no unambiguous verify_jwt value`);
+    }
+  }
+  return result;
+}
+
+function stripQuotedLiteral(raw) {
+  const trimmed = raw.trim();
+  const match = trimmed.match(/^(["'])([^"'\\]*(?:\\.[^"'\\]*)*)\1$/s);
+  if (!match) return null;
+  try {
+    return JSON.parse(`"${match[2].replace(/"/g, '\\"')}"`);
+  } catch {
+    return null;
+  }
+}
+
+export function parseModuleSpecifiers(source, path = '<source>') {
+  if (typeof source !== 'string') deny('AMBIGUOUS_IMPORT', `module ${path} is not text`);
+  const imports = [];
+  const seen = new Set();
+  const add = (kind, specifier) => {
+    const key = `${kind}\0${specifier}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      imports.push({ kind, specifier });
+    }
+  };
+  const dynamicPattern = /\bimport\s*\(([^)]*)\)/gs;
+  for (const match of source.matchAll(dynamicPattern)) {
+    const specifier = stripQuotedLiteral(match[1]);
+    if (!specifier) deny('AMBIGUOUS_IMPORT', `non-literal dynamic import in ${path}`);
+    add('dynamic', specifier);
+  }
+  const staticImportPattern = /\bimport\s+(?!\()(?:(?:[^'";]*?)\s+from\s+)?(["'])([^"']+)\1/g;
+  for (const match of source.matchAll(staticImportPattern)) add('static', match[2]);
+  const exportPattern = /\bexport\s+[^'";]*?\s+from\s+(["'])([^"']+)\1/g;
+  for (const match of source.matchAll(exportPattern)) add('export', match[2]);
+  return imports;
+}
+
+const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.json'];
+
+function normalizeModulePath(path) {
+  const normalized = validateGitPath(path);
+  if (!normalized.startsWith('supabase/functions/')) {
+    deny('IMPORT_ESCAPES_FUNCTIONS', `module is outside supabase/functions: ${path}`);
+  }
+  return normalized;
+}
+
+function resolveLocalModule(fromPath, specifier, available) {
+  const joined = posix.normalize(posix.join(posix.dirname(fromPath), specifier));
+  if (joined === '..' || joined.startsWith('../') || !joined.startsWith('supabase/functions/')) {
+    deny('IMPORT_ESCAPES_FUNCTIONS', `import ${specifier} from ${fromPath} escapes supabase/functions`);
+  }
+  const extension = posix.extname(joined);
+  const candidates = extension
+    ? [joined]
+    : [...MODULE_EXTENSIONS.map(item => `${joined}${item}`), ...MODULE_EXTENSIONS.map(item => `${joined}/index${item}`)];
+  const matches = candidates.filter(candidate => available.has(candidate));
+  if (matches.length === 0) deny('UNRESOLVED_IMPORT', `cannot resolve ${specifier} from ${fromPath}`);
+  if (matches.length !== 1) deny('AMBIGUOUS_IMPORT', `multiple resolutions for ${specifier} from ${fromPath}`, { matches });
+  return matches[0];
+}
+
+function functionNameForPath(path) {
+  const match = path.match(/^supabase\/functions\/([^/]+)\//);
+  return match && match[1] !== '_shared' ? match[1] : null;
+}
+
+export function buildFunctionGraph(files) {
+  if (!files || typeof files !== 'object' || Array.isArray(files)) {
+    deny('AMBIGUOUS_IMPORT', 'function graph files must be a path-to-source object');
+  }
+  const normalizedFiles = new Map();
+  for (const [rawPath, source] of Object.entries(files)) {
+    const path = normalizeModulePath(rawPath);
+    if (normalizedFiles.has(path)) deny('AMBIGUOUS_IMPORT', `duplicate normalized module path ${path}`);
+    if (typeof source !== 'string') deny('AMBIGUOUS_IMPORT', `module ${path} is not text`);
+    normalizedFiles.set(path, source);
+  }
+  const nodes = {};
+  const reverse = {};
+  for (const [path, source] of normalizedFiles) {
+    const specifiers = parseModuleSpecifiers(source, path);
+    const localImports = [];
+    const externalImports = [];
+    for (const entry of specifiers) {
+      if (entry.specifier.startsWith('.')) {
+        const resolved = resolveLocalModule(path, entry.specifier, normalizedFiles);
+        localImports.push(resolved);
+        (reverse[resolved] ??= []).push(path);
+      } else {
+        externalImports.push(entry.specifier);
+      }
+    }
+    nodes[path] = {
+      externalImports: [...new Set(externalImports)].sort(),
+      functionName: functionNameForPath(path),
+      localImports: [...new Set(localImports)].sort(),
+      path,
+      specifiers,
+    };
+  }
+  for (const importers of Object.values(reverse)) importers.sort();
+  return Object.freeze({ nodes, reverse });
+}
+
+function assertAuthorizedFunction(name, managed, forbidden) {
+  if (!name || forbidden.has(name) || !managed.has(name)) {
+    deny('FUNCTION_NOT_AUTHORIZED', `function ${name ?? '<unknown>'} is not managed by the release gate`);
+  }
+}
+
+export function resolveAffectedFunctions({ changes, graph, managedFunctions, forbiddenFunctions = [] }) {
+  if (!Array.isArray(changes) || !graph?.nodes || !graph?.reverse) {
+    deny('FUNCTION_NOT_AUTHORIZED', 'affected-function inputs are incomplete');
+  }
+  const managed = new Set(managedFunctions);
+  const forbidden = new Set(forbiddenFunctions);
+  const affected = new Set();
+  const queue = [];
+  for (const change of changes) {
+    const path = validateGitPath(change.path);
+    if (path === 'supabase/config.toml') {
+      for (const name of managed) affected.add(name);
+      continue;
+    }
+    const name = functionNameForPath(path);
+    if (name) {
+      assertAuthorizedFunction(name, managed, forbidden);
+      affected.add(name);
+    } else if (path.startsWith('supabase/functions/_shared/')) {
+      if (!graph.nodes[path]) deny('UNRESOLVED_IMPORT', `changed shared module ${path} is missing from approved tree`);
+      queue.push(path);
+    }
+  }
+  const visited = new Set(queue);
+  while (queue.length) {
+    const imported = queue.shift();
+    for (const importer of graph.reverse[imported] ?? []) {
+      const name = graph.nodes[importer]?.functionName;
+      if (name) {
+        assertAuthorizedFunction(name, managed, forbidden);
+        affected.add(name);
+      }
+      if (!visited.has(importer)) {
+        visited.add(importer);
+        queue.push(importer);
+      }
+    }
+  }
+  return [...affected].sort();
+}
+
+function isImmutableExternalSpecifier(specifier) {
+  if (specifier.startsWith('node:')) return true;
+  if (/^npm:(?:@[^/]+\/[^@/]+|[^@/]+)@\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\/.*)?$/.test(specifier)) return true;
+  if (/^jsr:@[^/]+\/[^@/]+@\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\/.*)?$/.test(specifier)) return true;
+  if (/^https?:\/\//.test(specifier)) {
+    return /@\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\/|$|\?)/.test(specifier)
+      || /(?:^|[/?#])(?:[0-9a-f]{40}|sha256-[A-Za-z0-9_-]{32,})(?:[/?#]|$)/i.test(specifier);
+  }
+  return false;
+}
+
+export function analyzeFunctionReproducibility({ affectedFunctions, graph }) {
+  const findings = [];
+  const blockedFunctions = new Set();
+  for (const functionName of affectedFunctions) {
+    const starts = Object.values(graph.nodes).filter(node => node.functionName === functionName).map(node => node.path);
+    if (starts.length === 0) {
+      findings.push({ severity: 'BLOCKING', code: 'FUNCTION_SOURCE_MISSING', path: null, resource: functionName, message: 'managed function source is missing' });
+      blockedFunctions.add(functionName);
+      continue;
+    }
+    const queue = [...starts];
+    const visited = new Set();
+    while (queue.length) {
+      const path = queue.shift();
+      if (visited.has(path)) continue;
+      visited.add(path);
+      const node = graph.nodes[path];
+      if (!node) {
+        findings.push({ severity: 'BLOCKING', code: 'UNRESOLVED_IMPORT', path, resource: functionName, message: 'resolved dependency is absent from graph' });
+        blockedFunctions.add(functionName);
+        continue;
+      }
+      for (const specifier of node.externalImports) {
+        if (!isImmutableExternalSpecifier(specifier)) {
+          findings.push({
+            severity: 'BLOCKING',
+            code: 'FLOATING_DEPENDENCY',
+            path,
+            resource: functionName,
+            message: `dependency is not immutably pinned: ${specifier}`,
+            specifier,
+          });
+          blockedFunctions.add(functionName);
+        }
+      }
+      queue.push(...node.localImports);
+    }
+  }
+  findings.sort((left, right) => `${left.resource}:${left.path}:${left.code}`.localeCompare(`${right.resource}:${right.path}:${right.code}`));
+  return Object.freeze({ allowed: findings.length === 0, blockedFunctions: [...blockedFunctions].sort(), findings });
+}
+
+function riskFinding(code, resource, path, message) {
+  return { severity: 'HIGH', code, path: path ?? null, resource: resource ?? null, message };
+}
+
+export function classifyRisk({ affectedFunctions = [], changedPaths = [], configBefore = {}, configAfter = {} }) {
+  const findings = [];
+  const seen = new Set();
+  const add = finding => {
+    const key = `${finding.code}:${finding.resource}:${finding.path}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      findings.push(finding);
+    }
+  };
+  for (const name of affectedFunctions) {
+    if (/stripe|finance|financial|checkout/.test(name)) add(riskFinding('FINANCE_RESOURCE', name, null, 'financial or Stripe resource'));
+    if (/webhook/.test(name)) add(riskFinding('WEBHOOK_RESOURCE', name, null, 'webhook resource'));
+    if (/bdag/.test(name)) add(riskFinding('BDAG_RESOURCE', name, null, 'BDAG resource'));
+    if (/media|stream/.test(name)) add(riskFinding('PRIVATE_MEDIA_RESOURCE', name, null, 'private media resource'));
+    if (/moderation|content-safety/.test(name)) add(riskFinding('MODERATION_RESOURCE', name, null, 'moderation resource'));
+    if (/auth|token|agora/.test(name)) add(riskFinding('AUTH_RESOURCE', name, null, 'authentication or token resource'));
+    const before = configBefore[name]?.verify_jwt;
+    const after = configAfter[name]?.verify_jwt;
+    if (before !== undefined && after !== undefined && before !== after) {
+      add(riskFinding('VERIFY_JWT_CHANGED', name, 'supabase/config.toml', 'verify_jwt changed'));
+    }
+    if (after === false) add(riskFinding('VERIFY_JWT_DISABLED', name, 'supabase/config.toml', 'verify_jwt is disabled'));
+  }
+  for (const path of changedPaths) {
+    if (path === '.github/nelyon-production-release-policy.json'
+      || path === '.github/workflows/nelyon-production-release.yml'
+      || path === 'scripts/nelyon-production-release.mjs') {
+      add(riskFinding('GATE_AUTHORITY_CHANGE', 'release-gate', path, 'release authority changed'));
+    }
+  }
+  findings.sort((left, right) => `${left.code}:${left.resource}:${left.path}`.localeCompare(`${right.code}:${right.resource}:${right.path}`));
+  return Object.freeze({ level: findings.length ? 'HIGH' : 'STANDARD', findings });
 }
