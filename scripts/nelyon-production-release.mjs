@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { posix } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, posix, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
@@ -645,4 +646,264 @@ export function classifyRisk({ affectedFunctions = [], changedPaths = [], config
   }
   findings.sort((left, right) => `${left.code}:${left.resource}:${left.path}`.localeCompare(`${right.code}:${right.resource}:${right.path}`));
   return Object.freeze({ level: findings.length ? 'HIGH' : 'STANDARD', findings });
+}
+
+function stableCopy(value) {
+  return JSON.parse(canonicalJson(value));
+}
+
+export function buildManifest({
+  request,
+  policy,
+  gitState,
+  classified,
+  migrations,
+  affectedFunctions,
+  reproducibility,
+  risk,
+  compiler,
+  generatedAt,
+}) {
+  validateRequest(request, policy);
+  if (!/^[0-9a-f]{64}$/.test(compiler?.sha256 ?? '')) {
+    deny('INVALID_COMPILER_IDENTITY', 'compiler SHA-256 is invalid');
+  }
+  if (!generatedAt || Number.isNaN(Date.parse(generatedAt))) {
+    deny('INVALID_MANIFEST_TIME', 'manifest generation time is invalid');
+  }
+  const files = [...(classified?.all ?? [])]
+    .map(change => ({ file_type: change.fileType ?? null, path: change.path, status: change.status }))
+    .sort((left, right) => `${left.path}:${left.status}`.localeCompare(`${right.path}:${right.status}`));
+  const blockers = [...(reproducibility?.findings ?? [])]
+    .map(stableCopy)
+    .sort((left, right) => `${left.code}:${left.resource}:${left.path}`.localeCompare(`${right.code}:${right.resource}:${right.path}`));
+  const productiveCount = classified?.productive?.length ?? 0;
+  const result = blockers.length > 0
+    ? 'DENY'
+    : productiveCount === 0
+      ? 'NO PRODUCTIVE CHANGES'
+      : 'PLAN READY';
+  return {
+    schema_version: 1,
+    generated_at: new Date(generatedAt).toISOString(),
+    identity: {
+      actor: request.actor,
+      triggering_actor: request.triggeringActor,
+      repository: request.repository,
+      workflow_ref: request.workflowRef,
+      ref: request.ref,
+      run_id: String(request.runId),
+      run_attempt: request.runAttempt,
+      release_id: request.releaseId,
+      approved_sha: request.approvedSha,
+      mode: request.mode,
+      scope_confirmation: request.scopeConfirmation,
+    },
+    baseline: {
+      state: policy.baseline.state,
+      sha: gitState.baselineSha,
+      origin_main_sha: gitState.originMainSha,
+    },
+    delta: {
+      files,
+      productive_change_count: productiveCount,
+    },
+    resources: {
+      functions: [...affectedFunctions].sort(),
+      migrations: [...migrations].map(stableCopy).sort((left, right) => left.version.localeCompare(right.version)),
+      config_changed: (classified?.config?.length ?? 0) > 0,
+    },
+    risk: stableCopy(risk),
+    blockers,
+    compiler: {
+      path: compiler.path,
+      sha256: compiler.sha256,
+    },
+    result,
+  };
+}
+
+const BUNDLE_FILES = ['manifest.json', 'manifest.sha256', 'summary.md'];
+
+function assertSafeBundleDirectory(directory) {
+  if (typeof directory !== 'string' || !isAbsolute(directory)) {
+    deny('UNSAFE_ARTIFACT', 'bundle directory must resolve to an absolute path');
+  }
+  if (!existsSync(directory)) mkdirSync(directory, { recursive: true });
+  const stat = lstatSync(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) deny('UNSAFE_ARTIFACT', 'bundle directory is not an ordinary directory');
+  const entries = readdirSync(directory);
+  for (const entry of entries) {
+    if (!BUNDLE_FILES.includes(entry)) deny('UNSAFE_ARTIFACT', `unexpected bundle entry ${entry}`);
+    const child = lstatSync(join(directory, entry));
+    if (!child.isFile() || child.isSymbolicLink()) deny('UNSAFE_ARTIFACT', `bundle entry ${entry} is not an ordinary file`);
+  }
+}
+
+function manifestSummary(manifest, digest) {
+  return [
+    '# Nelyon production release plan',
+    '',
+    `- Release: ${manifest.identity.release_id}`,
+    `- Mode: ${manifest.identity.mode}`,
+    `- SHA: ${manifest.identity.approved_sha}`,
+    `- Manifest SHA-256: ${digest}`,
+    `- Risk: ${manifest.risk.level}`,
+    `- Productive changes: ${manifest.delta.productive_change_count}`,
+    `- Result: ${manifest.result}`,
+    '',
+  ].join('\n');
+}
+
+export function writeManifestBundle({ manifest, outputDirectory }) {
+  assertSafeBundleDirectory(outputDirectory);
+  const manifestBytes = canonicalJson(manifest);
+  const digest = sha256Hex(Buffer.from(manifestBytes, 'utf8'));
+  writeFileSync(join(outputDirectory, 'manifest.json'), manifestBytes, { encoding: 'utf8', flag: 'w' });
+  writeFileSync(join(outputDirectory, 'manifest.sha256'), `${digest}\n`, { encoding: 'utf8', flag: 'w' });
+  writeFileSync(join(outputDirectory, 'summary.md'), manifestSummary(manifest, digest), { encoding: 'utf8', flag: 'w' });
+  return {
+    digest,
+    provenance: {
+      approvedSha: manifest.identity.approved_sha,
+      compilerSha256: manifest.compiler.sha256,
+      environmentName: 'production',
+      manifestDigest: digest,
+      releaseId: manifest.identity.release_id,
+      runAttempt: manifest.identity.run_attempt,
+      runId: manifest.identity.run_id,
+    },
+  };
+}
+
+function verifyArtifactEntries(entries) {
+  if (!Array.isArray(entries)) return;
+  const seen = new Set();
+  for (const entry of entries) {
+    const path = entry?.path;
+    if (typeof path !== 'string' || path.includes('\\') || path.includes('/')
+      || path === '.' || path === '..' || /^[A-Za-z]:/.test(path) || isAbsolute(path)
+      || !BUNDLE_FILES.includes(path) || entry.type !== 'file' || seen.has(path)) {
+      deny('UNSAFE_ARTIFACT', 'artifact archive contains an unsafe, duplicate, or unexpected entry', { entry });
+    }
+    seen.add(path);
+  }
+  if (seen.size !== BUNDLE_FILES.length || BUNDLE_FILES.some(path => !seen.has(path))) {
+    deny('UNSAFE_ARTIFACT', 'artifact archive does not contain exactly the expected files');
+  }
+}
+
+export function verifyManifestBundle({ directory, expected }) {
+  assertSafeBundleDirectory(directory);
+  verifyArtifactEntries(expected?.artifactEntries);
+  const actualEntries = readdirSync(directory).sort();
+  if (canonicalJson(actualEntries) !== canonicalJson([...BUNDLE_FILES].sort())) {
+    deny('UNSAFE_ARTIFACT', 'manifest bundle contains unexpected filesystem entries');
+  }
+  for (const entry of actualEntries) {
+    const stat = lstatSync(join(directory, entry));
+    if (!stat.isFile() || stat.isSymbolicLink()) deny('UNSAFE_ARTIFACT', `bundle entry ${entry} is not an ordinary file`);
+  }
+  const manifestBytes = readFileSync(join(directory, 'manifest.json'), 'utf8');
+  const claimedDigest = readFileSync(join(directory, 'manifest.sha256'), 'utf8').trim();
+  const actualDigest = sha256Hex(Buffer.from(manifestBytes, 'utf8'));
+  if (!/^[0-9a-f]{64}$/.test(claimedDigest) || claimedDigest !== actualDigest) {
+    deny('MANIFEST_DIGEST_MISMATCH', 'manifest digest does not match exact bytes');
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(manifestBytes);
+  } catch {
+    deny('MANIFEST_DIGEST_MISMATCH', 'manifest is not valid JSON');
+  }
+  if (canonicalJson(manifest) !== manifestBytes) {
+    deny('MANIFEST_DIGEST_MISMATCH', 'manifest bytes are not canonical');
+  }
+  const actualProvenance = {
+    approvedSha: manifest.identity?.approved_sha,
+    compilerSha256: manifest.compiler?.sha256,
+    environmentName: 'production',
+    manifestDigest: actualDigest,
+    releaseId: manifest.identity?.release_id,
+    runAttempt: manifest.identity?.run_attempt,
+    runId: manifest.identity?.run_id,
+  };
+  for (const key of ['approvedSha', 'compilerSha256', 'environmentName', 'manifestDigest', 'releaseId', 'runAttempt', 'runId']) {
+    if (expected?.[key] !== actualProvenance[key]) {
+      deny('ARTIFACT_PROVENANCE_MISMATCH', `artifact ${key} does not match the current release attempt`);
+    }
+  }
+  return { digest: actualDigest, manifest, provenance: actualProvenance };
+}
+
+export function validateReleaseHistory({ releaseId, pages, policy }) {
+  if (!pages || pages.complete !== true || !Array.isArray(pages.pages)) {
+    deny('INCOMPLETE_RELEASE_HISTORY', 'workflow release history pagination is incomplete');
+  }
+  const records = [];
+  for (const page of pages.pages) {
+    if (!page || !Array.isArray(page.items)) deny('INCOMPLETE_RELEASE_HISTORY', 'workflow history page is incomplete');
+    records.push(...page.items);
+  }
+  records.push(...(policy.release_history ?? []));
+  if (records.some(record => record?.release_id === releaseId || record?.releaseId === releaseId)) {
+    deny('RELEASE_ID_REPLAY', `release ID ${releaseId} has already been used`);
+  }
+  return true;
+}
+
+function parseCliArguments(argv) {
+  const [command, ...rest] = argv;
+  const values = {};
+  for (let index = 0; index < rest.length; index += 2) {
+    const flag = rest[index];
+    const value = rest[index + 1];
+    if (!flag?.startsWith('--') || value === undefined || value.startsWith('--')) {
+      throw new Error(`invalid CLI argument near ${flag ?? '<end>'}`);
+    }
+    values[flag.slice(2)] = value;
+  }
+  return { command, values };
+}
+
+function printHelp() {
+  process.stdout.write('Usage: nelyon-production-release.mjs <plan|revalidate|verify-gate|postcheck> [options]\n');
+}
+
+async function runCli(argv) {
+  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
+    printHelp();
+    return 0;
+  }
+  const { command, values } = parseCliArguments(argv);
+  if (command !== 'plan') throw new Error(`command ${command} is not implemented yet`);
+  for (const required of ['policy', 'request', 'remote-evidence', 'history', 'output']) {
+    if (!values[required]) throw new Error(`missing --${required}`);
+  }
+  const policy = loadPolicy(values.policy);
+  const releaseRequest = JSON.parse(readFileSync(values.request, 'utf8'));
+  const evidence = JSON.parse(readFileSync(values['remote-evidence'], 'utf8'));
+  const history = JSON.parse(readFileSync(values.history, 'utf8'));
+  validateRequest(releaseRequest, policy);
+  validateReleaseHistory({ releaseId: releaseRequest.releaseId, pages: history, policy });
+  const manifest = buildManifest({ ...evidence, request: releaseRequest, policy });
+  const bundle = writeManifestBundle({ manifest, outputDirectory: resolve(values.output) });
+  process.stdout.write(`${manifest.result} ${bundle.digest}\n`);
+  return 0;
+}
+
+const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : null;
+if (invokedPath === import.meta.url) {
+  runCli(process.argv.slice(2)).then(
+    code => { process.exitCode = code; },
+    error => {
+      if (error instanceof GateDeniedError) {
+        process.stderr.write(`DENY ${error.code}: ${error.message}\n`);
+        process.exitCode = 2;
+      } else {
+        process.stderr.write(`ERROR: ${error.message}\n`);
+        process.exitCode = 1;
+      }
+    },
+  );
 }

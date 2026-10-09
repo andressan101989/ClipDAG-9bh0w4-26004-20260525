@@ -356,3 +356,165 @@ test('finance webhook BDAG media auth moderation and gate authority are high ris
     assert.ok(result.findings.some(finding => finding.code === code), `missing ${code}`);
   }
 });
+
+function manifestInput(policy, overrides = {}) {
+  return {
+    request: request(),
+    policy,
+    gitState: {
+      baselineSha: policy.baseline.sha,
+      approvedSha: MAIN_SHA,
+      originMainSha: MAIN_SHA,
+      changes: [{ status: 'M', path: '.github/nelyon-production-release-policy.json', fileType: 'file' }],
+    },
+    classified: {
+      all: [{ status: 'M', path: '.github/nelyon-production-release-policy.json', fileType: 'file' }],
+      config: [],
+      functions: [],
+      governance: [{ status: 'M', path: '.github/nelyon-production-release-policy.json', fileType: 'file' }],
+      migrations: [],
+      other: [],
+      productive: [],
+      shared: [],
+    },
+    migrations: [],
+    affectedFunctions: [],
+    reproducibility: { allowed: true, blockedFunctions: [], findings: [] },
+    risk: { level: 'HIGH', findings: [{ severity: 'HIGH', code: 'GATE_AUTHORITY_CHANGE', path: '.github/nelyon-production-release-policy.json', resource: 'release-gate', message: 'release authority changed' }] },
+    compiler: { path: 'scripts/nelyon-production-release.mjs', sha256: 'a'.repeat(64) },
+    generatedAt: '2026-10-09T12:00:00.000Z',
+    ...overrides,
+  };
+}
+
+test('manifest contains exact identity delta resources risks and blockers', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const input = manifestInput(policy, {
+    classified: {
+      all: [
+        { status: 'A', path: 'supabase/migrations/20261010000000_gate.sql', fileType: 'file' },
+        { status: 'M', path: 'supabase/functions/agora-token/index.ts', fileType: 'file' },
+      ],
+      config: [],
+      functions: [{ status: 'M', path: 'supabase/functions/agora-token/index.ts', fileType: 'file' }],
+      governance: [],
+      migrations: [{ status: 'A', path: 'supabase/migrations/20261010000000_gate.sql', fileType: 'file' }],
+      other: [],
+      productive: [
+        { status: 'A', path: 'supabase/migrations/20261010000000_gate.sql', fileType: 'file' },
+        { status: 'M', path: 'supabase/functions/agora-token/index.ts', fileType: 'file' },
+      ],
+      shared: [],
+    },
+    migrations: [{ version: '20261010000000', path: 'supabase/migrations/20261010000000_gate.sql' }],
+    affectedFunctions: ['agora-token'],
+    reproducibility: {
+      allowed: false,
+      blockedFunctions: ['agora-token'],
+      findings: [{ severity: 'BLOCKING', code: 'FLOATING_DEPENDENCY', path: 'supabase/functions/agora-token/index.ts', resource: 'agora-token', message: 'floating' }],
+    },
+  });
+  const manifest = gate.buildManifest(input);
+  assert.equal(manifest.identity.run_id, '123456789');
+  assert.equal(manifest.identity.run_attempt, 1);
+  assert.equal(manifest.identity.approved_sha, MAIN_SHA);
+  assert.equal(manifest.identity.release_id, 'nelyon-20261009-001');
+  assert.equal(manifest.delta.files.length, 2);
+  assert.deepEqual(manifest.resources.migrations, input.migrations);
+  assert.deepEqual(manifest.resources.functions, ['agora-token']);
+  assert.equal(manifest.risk.level, 'HIGH');
+  assert.equal(manifest.blockers[0].code, 'FLOATING_DEPENDENCY');
+  assert.equal(manifest.result, 'DENY');
+});
+
+test('governance-only delta reports NO PRODUCTIVE CHANGES', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const manifest = gate.buildManifest(manifestInput(policy));
+  assert.equal(manifest.result, 'NO PRODUCTIVE CHANGES');
+  assert.deepEqual(manifest.resources, { functions: [], migrations: [], config_changed: false });
+});
+
+test('one-byte manifest or digest alteration denies', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const directory = mkdtempSync(join(tmpdir(), 'nelyon-release-bundle-'));
+  t.after(() => rmSync(directory, { force: true, recursive: true }));
+  const manifest = gate.buildManifest(manifestInput(policy));
+  const bundle = gate.writeManifestBundle({ manifest, outputDirectory: directory });
+  writeFileSync(join(directory, 'manifest.json'), `${readFileSync(join(directory, 'manifest.json'), 'utf8')} `);
+  assertDenied(() => gate.verifyManifestBundle({ directory, expected: bundle.provenance }), 'MANIFEST_DIGEST_MISMATCH');
+  gate.writeManifestBundle({ manifest, outputDirectory: directory });
+  writeFileSync(join(directory, 'manifest.sha256'), `${'0'.repeat(64)}\n`);
+  assertDenied(() => gate.verifyManifestBundle({ directory, expected: bundle.provenance }), 'MANIFEST_DIGEST_MISMATCH');
+});
+
+test('artifact provenance binds run attempt release SHA and compiler digest', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const directory = mkdtempSync(join(tmpdir(), 'nelyon-release-provenance-'));
+  t.after(() => rmSync(directory, { force: true, recursive: true }));
+  const manifest = gate.buildManifest(manifestInput(policy));
+  const bundle = gate.writeManifestBundle({ manifest, outputDirectory: directory });
+  assert.equal(gate.verifyManifestBundle({ directory, expected: bundle.provenance }).digest, bundle.digest);
+  for (const patch of [
+    { runId: '987654321' },
+    { runAttempt: 2 },
+    { releaseId: 'nelyon-20261009-002' },
+    { approvedSha: '1'.repeat(40) },
+    { compilerSha256: 'b'.repeat(64) },
+  ]) {
+    assertDenied(() => gate.verifyManifestBundle({ directory, expected: { ...bundle.provenance, ...patch } }), 'ARTIFACT_PROVENANCE_MISMATCH');
+  }
+});
+
+test('duplicate traversal absolute symlink and unexpected artifact entries deny', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const directory = mkdtempSync(join(tmpdir(), 'nelyon-release-entries-'));
+  t.after(() => rmSync(directory, { force: true, recursive: true }));
+  const manifest = gate.buildManifest(manifestInput(policy));
+  const bundle = gate.writeManifestBundle({ manifest, outputDirectory: directory });
+  const normal = [
+    { path: 'manifest.json', type: 'file' },
+    { path: 'manifest.sha256', type: 'file' },
+    { path: 'summary.md', type: 'file' },
+  ];
+  for (const artifactEntries of [
+    [...normal, { path: 'manifest.json', type: 'file' }],
+    [...normal, { path: '../escaped.txt', type: 'file' }],
+    [...normal, { path: 'C:/absolute.txt', type: 'file' }],
+    normal.map(entry => entry.path === 'manifest.json' ? { ...entry, type: 'symlink' } : entry),
+    [...normal, { path: 'unexpected.txt', type: 'file' }],
+  ]) {
+    assertDenied(() => gate.verifyManifestBundle({
+      directory,
+      expected: { ...bundle.provenance, artifactEntries },
+    }), 'UNSAFE_ARTIFACT');
+  }
+});
+
+test('release history pagination detects every retained replay', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  assertDenied(() => gate.validateReleaseHistory({
+    releaseId: 'nelyon-20261009-001',
+    pages: { complete: false, pages: [{ items: [] }] },
+    policy,
+  }), 'INCOMPLETE_RELEASE_HISTORY');
+  assertDenied(() => gate.validateReleaseHistory({
+    releaseId: 'nelyon-20261009-001',
+    pages: { complete: true, pages: [{ items: [] }, { items: [{ release_id: 'nelyon-20261009-001' }] }] },
+    policy,
+  }), 'RELEASE_ID_REPLAY');
+  assert.equal(gate.validateReleaseHistory({
+    releaseId: 'nelyon-20261009-001',
+    pages: { complete: true, pages: [{ items: [{ release_id: 'different-release' }] }] },
+    policy,
+  }), true);
+});
+
+test('a completed release ID stored in policy denies after artifact expiry', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const persisted = { ...policy, release_history: [{ release_id: 'nelyon-20261009-001', result: 'SUCCESS' }] };
+  assertDenied(() => gate.validateReleaseHistory({
+    releaseId: 'nelyon-20261009-001',
+    pages: { complete: true, pages: [] },
+    policy: persisted,
+  }), 'RELEASE_ID_REPLAY');
+});
