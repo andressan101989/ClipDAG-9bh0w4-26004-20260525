@@ -65,6 +65,30 @@ export interface CreatorPremiumOwnerItem {
   image_media_ready: boolean;
   video_attached: boolean;
   video_media_ready: boolean;
+  active_offer_version: number | null;
+  price_bdag: string | null;
+  mapped_plan_count: number;
+  active_plan_count: number;
+  submission_ready: boolean;
+  submission_blocker: string | null;
+}
+
+export type CreatorPremiumPlanStatus = 'draft' | 'active' | 'retired';
+
+export interface CreatorPremiumPlanItem {
+  id: string;
+  name: string;
+  description: string;
+  price_bdag: string;
+  billing_period_days: number;
+  version: number;
+  status: CreatorPremiumPlanStatus;
+  created_at: string;
+  updated_at: string;
+  activated_at: string | null;
+  retired_at: string | null;
+  mapped_content_count: number;
+  mapped_content_ids: string[];
 }
 
 export interface CreatorPremiumLibraryItem {
@@ -124,6 +148,25 @@ function page<T extends { id: string }>(
     items: rows,
     nextCursor: last ? { timestamp: timestamp(last), id: last.id } : null,
   };
+}
+
+const CREATOR_PREMIUM_PRICE_PATTERN = /^(?:0|[1-9]\d{0,11})(?:\.\d{1,8})?$/;
+
+export function normalizeCreatorPremiumPriceBdag(input: string): string {
+  const normalized = input.trim().replace(',', '.');
+  if (!CREATOR_PREMIUM_PRICE_PATTERN.test(normalized)) {
+    throw new Error('creator_premium_price_invalid');
+  }
+  const [whole, fraction = ''] = normalized.split('.');
+  const significantFraction = fraction.replace(/0+$/, '');
+  if (whole === '0' && !significantFraction) {
+    throw new Error('creator_premium_price_invalid');
+  }
+  return significantFraction ? `${whole}.${significantFraction}` : whole;
+}
+
+function firstRow<T>(data: T[] | T | null | undefined): T | undefined {
+  return Array.isArray(data) ? data[0] : data ?? undefined;
 }
 
 export function creatorPremiumUnavailable(): CreatorPremiumUnavailableResult {
@@ -210,6 +253,170 @@ export async function fetchMyCreatorPremiumContents(
   });
   if (error) throw error;
   return page((data ?? []) as CreatorPremiumOwnerItem[], limit, row => row.created_at);
+}
+
+export async function fetchMyCreatorPremiumContent(contentId: string): Promise<CreatorPremiumOwnerItem> {
+  if (!contentId) throw new Error('creator_premium_content_invalid');
+  const { data, error } = await db().rpc('get_my_creator_premium_content_v1', {
+    p_content_id: contentId,
+  });
+  if (error) throw error;
+  const item = firstRow(data) as CreatorPremiumOwnerItem | undefined;
+  if (!item) throw new Error('creator_premium_content_not_found');
+  return item;
+}
+
+export async function setMyCreatorPremiumOffer(input: {
+  contentId: string;
+  priceBdag: string;
+  clientRequestId: string;
+}) {
+  const { data, error } = await db().rpc('set_my_creator_premium_offer_v1', {
+    p_content_id: input.contentId,
+    p_price_bdag: normalizeCreatorPremiumPriceBdag(input.priceBdag),
+    p_client_request_id: input.clientRequestId,
+  });
+  if (error) throw error;
+  return firstRow(data) as {
+    content_id: string;
+    version: number;
+    price_bdag: string;
+    currency: 'BDAG';
+    status: 'active';
+    replayed: boolean;
+  } | undefined;
+}
+
+export async function createMyCreatorPremiumPlanDraft(input: {
+  name: string;
+  description?: string;
+  priceBdag: string;
+  billingPeriodDays: number;
+  clientRequestId: string;
+}) {
+  const { data, error } = await db().rpc('create_my_creator_premium_plan_draft_v1', {
+    p_name: input.name,
+    p_description: input.description ?? '',
+    p_price_bdag: normalizeCreatorPremiumPriceBdag(input.priceBdag),
+    p_billing_period_days: input.billingPeriodDays,
+    p_client_request_id: input.clientRequestId,
+  });
+  if (error) throw error;
+  return firstRow(data) as CreatorPremiumPlanItem | undefined;
+}
+
+export async function updateMyCreatorPremiumPlanDraft(input: {
+  planId: string;
+  name: string;
+  description?: string;
+  priceBdag: string;
+  billingPeriodDays: number;
+}) {
+  const { data, error } = await db().rpc('update_my_creator_premium_plan_draft_v1', {
+    p_plan_id: input.planId,
+    p_name: input.name,
+    p_description: input.description ?? '',
+    p_price_bdag: normalizeCreatorPremiumPriceBdag(input.priceBdag),
+    p_billing_period_days: input.billingPeriodDays,
+  });
+  if (error) throw error;
+  return firstRow(data) as CreatorPremiumPlanItem | undefined;
+}
+
+export async function setMyCreatorPremiumPlanContents(
+  planId: string,
+  contentIds: string[],
+) {
+  const uniqueContentIds = [...new Set(contentIds)];
+  const { data, error } = await db().rpc('set_my_creator_premium_plan_contents_v1', {
+    p_plan_id: planId,
+    p_content_ids: uniqueContentIds,
+  });
+  if (error) throw error;
+  return firstRow(data) as {
+    id: string;
+    mapped_content_count: number;
+    mapped_content_ids: string[];
+  } | undefined;
+}
+
+export async function cloneMyCreatorPremiumPlanVersion(
+  planId: string,
+  clientRequestId: string,
+) {
+  const { data, error } = await db().rpc('clone_my_creator_premium_plan_version_v1', {
+    p_plan_id: planId,
+    p_client_request_id: clientRequestId,
+  });
+  if (error) throw error;
+  return firstRow(data) as CreatorPremiumPlanItem | undefined;
+}
+
+export async function activateMyCreatorPremiumPlan(planId: string) {
+  const { data, error } = await db().rpc('activate_my_creator_premium_plan_v1', {
+    p_plan_id: planId,
+  });
+  if (error) throw error;
+  return firstRow(data) as {
+    id: string;
+    version: number;
+    status: 'active';
+    activated_at: string;
+    mapped_content_count: number;
+  } | undefined;
+}
+
+export async function retireMyCreatorPremiumPlan(planId: string) {
+  const { data, error } = await db().rpc('retire_my_creator_premium_plan_v1', {
+    p_plan_id: planId,
+  });
+  if (error) throw error;
+  return firstRow(data) as {
+    id: string;
+    version: number;
+    status: 'retired';
+    retired_at: string;
+  } | undefined;
+}
+
+export async function fetchMyCreatorPremiumPlans(
+  options: { limit?: number; cursor?: CreatorPremiumCursor | null } = {},
+): Promise<CreatorPremiumPage<CreatorPremiumPlanItem>> {
+  const limit = safeLimit(options.limit ?? 50);
+  const cursor = cursorParams(options.cursor);
+  const { data, error } = await db().rpc('get_my_creator_premium_plans_v1', {
+    p_limit: limit,
+    p_cursor_created_at: cursor.timestamp,
+    p_cursor_id: cursor.id,
+  });
+  if (error) throw error;
+  return page((data ?? []) as CreatorPremiumPlanItem[], limit, row => row.created_at);
+}
+
+export async function submitMyCreatorPremiumContentForReview(contentId: string) {
+  const { data, error } = await db().rpc('submit_my_creator_premium_content_for_review_v1', {
+    p_content_id: contentId,
+  });
+  if (error) throw error;
+  return firstRow(data) as {
+    content_id: string;
+    lifecycle_status: 'pending_review';
+    submission_ready: true;
+  } | undefined;
+}
+
+export async function deleteMyCreatorPremiumDraft(contentId: string) {
+  const { data, error } = await db().rpc('delete_my_creator_premium_draft_v1', {
+    p_content_id: contentId,
+  });
+  if (error) throw error;
+  return firstRow(data) as {
+    content_id: string;
+    lifecycle_status: 'deleted';
+    r2_assets_scheduled: number;
+    video_assets_scheduled: number;
+    cleanup_scheduled: boolean;
+  } | undefined;
 }
 
 export async function getMyCreatorPremiumEntitlement(
