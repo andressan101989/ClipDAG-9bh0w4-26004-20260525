@@ -47,6 +47,7 @@ jobs:
       digest: ${{ steps.expose.outputs.digest }}
       risk: ${{ steps.expose.outputs.risk }}
       productive_change_count: ${{ steps.expose.outputs.productive_change_count }}
+      result: ${{ steps.expose.outputs.result }}
       blocked: ${{ steps.expose.outputs.blocked }}
       approval_token: ${{ steps.expose.outputs.approval_token }}
       compiler_sha256: ${{ steps.expose.outputs.compiler_sha256 }}
@@ -161,13 +162,14 @@ jobs:
           set -euo pipefail
           node --input-type=module <<'NODE'
           import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
-          import { buildApprovalToken } from './scripts/nelyon-production-release.mjs';
+          import { buildApprovalToken, verifyAutoDeployEvidenceDigest } from './scripts/nelyon-production-release.mjs';
           const manifest = JSON.parse(readFileSync('release-artifact/bundle/manifest.json', 'utf8'));
           const digest = readFileSync('release-artifact/bundle/manifest.sha256', 'utf8').trim();
           let approvalToken = '';
           if (process.env.INPUT_MODE !== 'plan_only') {
             const environment = JSON.parse(readFileSync('release-input/environment.json', 'utf8'));
             const evidence = JSON.parse(readFileSync('release-input/auto-deploy-evidence.json', 'utf8'));
+            verifyAutoDeployEvidenceDigest(evidence);
             approvalToken = buildApprovalToken({
               runId: process.env.RUN_ID,
               runAttempt: Number(process.env.RUN_ATTEMPT),
@@ -183,6 +185,7 @@ jobs:
           appendFileSync(process.env.GITHUB_OUTPUT, `digest=${digest}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `risk=${manifest.risk.level}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `productive_change_count=${manifest.delta.productive_change_count}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `result=${manifest.result}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `blocked=${manifest.result === 'DENY'}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `approval_token=${approvalToken}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `compiler_sha256=${manifest.compiler.sha256}\n`);
@@ -201,6 +204,9 @@ jobs:
           set -euo pipefail
           cp release-input/request.json release-artifact/request.json
           cp release-input/remote-evidence.json release-artifact/remote-evidence.json
+          if [ -f release-input/auto-deploy-evidence.json ]; then
+            cp release-input/auto-deploy-evidence.json release-artifact/auto-deploy-evidence.json
+          fi
 
       - name: Upload one immutable current-run artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -216,7 +222,10 @@ jobs:
     needs: plan
     if: >-
       needs.plan.outputs.mode == 'gate_proof' ||
-      (needs.plan.outputs.mode == 'release' && needs.plan.outputs.blocked == 'false')
+      (needs.plan.outputs.mode == 'release' &&
+       needs.plan.outputs.result == 'PLAN READY' &&
+       fromJSON(needs.plan.outputs.productive_change_count) > 0 &&
+       needs.plan.outputs.blocked == 'false')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: production
@@ -227,6 +236,8 @@ jobs:
       contents: read
       actions: read
       deployments: read
+    env:
+      NELYON_RELEASE_POLICY_SHA256: ${{ vars.NELYON_RELEASE_POLICY_SHA256 }}
     steps:
       - name: Checkout exact approved SHA after approval
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -261,6 +272,8 @@ jobs:
           mkdir -p gate-evidence
           test -n "$AUTO_DEPLOY_EVIDENCE_B64"
           printf '%s' "$AUTO_DEPLOY_EVIDENCE_B64" | base64 --decode > gate-evidence/auto-deploy-evidence.json
+          test -f release-artifact/auto-deploy-evidence.json
+          cmp --silent release-artifact/auto-deploy-evidence.json gate-evidence/auto-deploy-evidence.json
           node --input-type=module <<'NODE'
           import { writeFileSync } from 'node:fs';
           const headers = { Accept: 'application/vnd.github+json', Authorization: `Bearer ${process.env.GH_TOKEN}`, 'X-GitHub-Api-Version': '2022-11-28' };
@@ -301,7 +314,7 @@ jobs:
         if: needs.plan.outputs.mode == 'gate_proof'
         run: |
           set -euo pipefail
-          node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --auto-deploy-evidence gate-evidence/auto-deploy-evidence.json --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
+          node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --auto-deploy-evidence gate-evidence/auto-deploy-evidence.json --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
           echo "GATE PROOF SUCCESS" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify release gate and required Environment secrets
@@ -311,7 +324,7 @@ jobs:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: |
           set -euo pipefail
-          node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --auto-deploy-evidence gate-evidence/auto-deploy-evidence.json --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
+          node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --auto-deploy-evidence gate-evidence/auto-deploy-evidence.json --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
 
       - name: Set up pinned Supabase CLI for an authorized release only
         if: needs.plan.outputs.mode == 'release'

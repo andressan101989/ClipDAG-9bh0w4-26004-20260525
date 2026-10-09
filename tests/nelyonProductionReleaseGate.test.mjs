@@ -56,6 +56,20 @@ function asCandidatePolicy(policy) {
   return candidate;
 }
 
+function asVerifiedCutoverPolicy(policy) {
+  const verified = structuredClone(policy);
+  verified.cutover = {
+    state: 'verified',
+    auto_deploy_off_evidence: {
+      id: 'supabase-off-20261009T120000Z',
+      sha256: 'd'.repeat(64),
+    },
+    verified_at: '2026-10-09T12:00:00.000Z',
+    verified_by: OWNER,
+  };
+  return verified;
+}
+
 function request(overrides = {}) {
   return {
     actor: OWNER,
@@ -97,6 +111,9 @@ test('policy accepts the exact repository owner project modes and managed functi
   });
   assert.deepEqual(policy.supabase.managed_functions, MANAGED_FUNCTIONS);
   assert.deepEqual(policy.supabase.forbidden_functions, ['bdag-economy']);
+  const invalidVerified = structuredClone(policy);
+  delete invalidVerified.baseline.evidence_digests;
+  assertDenied(() => gate.validatePolicy(invalidVerified), 'INVALID_VERIFIED_BASELINE');
 });
 
 test('candidate baseline denies release but permits plan_only and gate_proof', async () => {
@@ -124,6 +141,22 @@ test('committed verified baseline remains release-denied until cutover', async (
     mode: 'release',
     scopeConfirmation: 'RELEASE_STANDARD',
   }), policy), 'CUTOVER_NOT_VERIFIED');
+});
+
+test('verified cutover requires an owner-bound external evidence record', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const verified = asVerifiedCutoverPolicy(policy);
+  assert.equal(gate.validatePolicy(verified), true);
+  for (const mutate of [
+    candidate => { candidate.cutover.verified_by = 'someone-else'; },
+    candidate => { candidate.cutover.verified_at = 'not-a-time'; },
+    candidate => { candidate.cutover.auto_deploy_off_evidence.id = ''; },
+    candidate => { candidate.cutover.auto_deploy_off_evidence.sha256 = '0'.repeat(63); },
+  ]) {
+    const candidate = asVerifiedCutoverPolicy(policy);
+    mutate(candidate);
+    assertDenied(() => gate.validatePolicy(candidate), 'INVALID_VERIFIED_CUTOVER');
+  }
 });
 
 test('malformed stale foreign and non-main SHA requests are denied', async () => {
@@ -154,6 +187,21 @@ test('canonical JSON is recursively stable and SHA-256 hashes exact UTF-8 bytes'
   assert.equal(canonical, '{"a":{"c":3,"d":4},"b":[{"x":1,"y":2}]}\n');
   assert.equal(gate.sha256Hex(Buffer.from(canonical, 'utf8')), '85815050204c5ecc64cd98ab2766a745d8fbf6fd8c9277d45ad752701cda3902');
   assert.throws(() => gate.canonicalJson({ invalid: undefined }), /unsupported/i);
+});
+
+test('protected Environment policy digest must match exact policy bytes', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const bytes = readFileSync(policyUrl);
+  const digest = gate.sha256Hex(bytes);
+  assert.equal(gate.verifyPolicyDigest({ policyBytes: bytes, expectedSha256: digest }), digest);
+  assertDenied(() => gate.verifyPolicyDigest({
+    policyBytes: bytes,
+    expectedSha256: '0'.repeat(64),
+  }), 'POLICY_DIGEST_MISMATCH');
+  assertDenied(() => gate.verifyPolicyDigest({
+    policyBytes: Buffer.from(`${bytes.toString('utf8')} `),
+    expectedSha256: digest,
+  }), 'POLICY_DIGEST_MISMATCH');
 });
 
 test('NUL name-status parsing preserves spaces tabs and Unicode', async () => {
@@ -228,6 +276,20 @@ test('only strictly newer added timestamped migrations are releasable', async ()
     dryRunPending: ['20261010000000'],
   });
   assert.deepEqual(result, [{ version: '20261010000000', path: 'supabase/migrations/20261010000000_release_gate_probe.sql' }]);
+});
+
+test('static plan records migration delta before protected remote dry-run evidence exists', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const result = gate.validateMigrationDelta({
+    changes: [{ status: 'A', path: 'supabase/migrations/20261010000000_release_gate_probe.sql', fileType: 'file' }],
+    baselineLatestMigration: '20261009021414_creator_premium_b5_creator_management_ux',
+  });
+  assert.deepEqual(result, [{ version: '20261010000000', path: 'supabase/migrations/20261010000000_release_gate_probe.sql' }]);
+  assertDenied(() => gate.validateMigrationDelta({
+    changes: [],
+    baselineLatestMigration: '20261009021414_creator_premium_b5_creator_management_ux',
+    remoteMigrations: [],
+  }), 'INVALID_MIGRATION_DELTA');
 });
 
 test('modified deleted renamed duplicate and out-of-order migrations deny', async () => {
@@ -351,6 +413,22 @@ test('floating supabase-js blocks every affected function', async () => {
   assert.equal(result.findings[0].resource, 'agora-token');
 });
 
+test('HTTP imports require an approved content-addressed host and path', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const sha = 'a'.repeat(40);
+  const graph = gate.buildFunctionGraph({
+    'supabase/functions/agora-token/index.ts': `import 'https://example.com/cache/${sha}/module.ts';\n`,
+    'supabase/functions/create-media-upload/index.ts': `import 'https://raw.githubusercontent.com/example/project/${sha}/module.ts';\n`,
+  });
+  const result = gate.analyzeFunctionReproducibility({
+    affectedFunctions: ['agora-token', 'create-media-upload'],
+    graph,
+  });
+  assert.equal(result.allowed, false);
+  assert.deepEqual(result.blockedFunctions, ['agora-token']);
+  assert.equal(result.findings[0].specifier, `https://example.com/cache/${sha}/module.ts`);
+});
+
 test('verify_jwt changes and false values are high risk', async () => {
   const { gate } = await loadGateAndPolicy();
   const before = gate.parseFunctionConfig('[functions.agora-token]\nverify_jwt = true\n');
@@ -387,6 +465,19 @@ test('finance webhook BDAG media auth moderation and gate authority are high ris
   }
 });
 
+test('every database migration is high risk before any release authorization', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const path = 'supabase/migrations/20261010000000_wallet_adjustment.sql';
+  const result = gate.classifyRisk({
+    affectedFunctions: [],
+    changedPaths: [path],
+    configBefore: {},
+    configAfter: {},
+  });
+  assert.equal(result.level, 'HIGH');
+  assert.ok(result.findings.some(finding => finding.code === 'DATABASE_MIGRATION' && finding.path === path));
+});
+
 function manifestInput(policy, overrides = {}) {
   return {
     request: request(),
@@ -416,6 +507,23 @@ function manifestInput(policy, overrides = {}) {
     ...overrides,
   };
 }
+
+test('release confirmation class must match the computed manifest risk', async () => {
+  const { gate, policy: loadedPolicy } = await loadGateAndPolicy();
+  const policy = asVerifiedCutoverPolicy(loadedPolicy);
+  assertDenied(() => gate.buildManifest(manifestInput(policy, {
+    request: request({ mode: 'release', scopeConfirmation: 'RELEASE_STANDARD' }),
+  })), 'HIGH_RISK_CONFIRMATION_REQUIRED');
+  const high = gate.buildManifest(manifestInput(policy, {
+    request: request({ mode: 'release', scopeConfirmation: 'RELEASE_HIGH_RISK' }),
+  }));
+  assert.equal(high.risk.level, 'HIGH');
+  assert.equal(high.identity.scope_confirmation, 'RELEASE_HIGH_RISK');
+  assertDenied(() => gate.buildManifest(manifestInput(policy, {
+    request: request({ mode: 'release', scopeConfirmation: 'RELEASE_HIGH_RISK' }),
+    risk: { level: 'STANDARD', findings: [] },
+  })), 'SCOPE_CONFIRMATION_MISMATCH');
+});
 
 test('manifest contains exact identity delta resources risks and blockers', async () => {
   const { gate, policy } = await loadGateAndPolicy();
@@ -455,6 +563,29 @@ test('manifest contains exact identity delta resources risks and blockers', asyn
   assert.equal(manifest.risk.level, 'HIGH');
   assert.equal(manifest.blockers[0].code, 'FLOATING_DEPENDENCY');
   assert.equal(manifest.result, 'DENY');
+});
+
+test('baseline blocked resources remain unreleasable even when current imports look clean', async () => {
+  const { gate, policy: loadedPolicy } = await loadGateAndPolicy();
+  const policy = structuredClone(loadedPolicy);
+  policy.baseline.blocked_resources = ['agora-token'];
+  const input = manifestInput(policy, {
+    affectedFunctions: ['agora-token'],
+    classified: {
+      all: [{ status: 'M', path: 'supabase/functions/agora-token/index.ts', fileType: 'file' }],
+      config: [],
+      functions: [{ status: 'M', path: 'supabase/functions/agora-token/index.ts', fileType: 'file' }],
+      governance: [],
+      migrations: [],
+      other: [],
+      productive: [{ status: 'M', path: 'supabase/functions/agora-token/index.ts', fileType: 'file' }],
+      shared: [],
+    },
+    reproducibility: { allowed: true, blockedFunctions: [], findings: [] },
+  });
+  const manifest = gate.buildManifest(input);
+  assert.equal(manifest.result, 'DENY');
+  assert.ok(manifest.blockers.some(finding => finding.code === 'BASELINE_RESOURCE_UNREPRODUCIBLE' && finding.resource === 'agora-token'));
 });
 
 test('governance-only delta reports NO PRODUCTIVE CHANGES', async () => {
@@ -582,10 +713,10 @@ function environmentSnapshot(overrides = {}) {
   };
 }
 
-function autoDeployEvidence(overrides = {}) {
-  return {
+function autoDeployEvidence(gate, overrides = {}) {
+  const { sha256, ...payloadOverrides } = overrides;
+  const payload = {
     id: 'supabase-off-20261009T120000Z',
-    sha256: 'd'.repeat(64),
     project_ref: PROJECT_REF,
     production_branch: 'main',
     state: 'off',
@@ -593,8 +724,9 @@ function autoDeployEvidence(overrides = {}) {
     observed_by: OWNER,
     source: 'owner-dashboard',
     redacted: true,
-    ...overrides,
+    ...payloadOverrides,
   };
+  return { ...payload, sha256: sha256 ?? gate.sha256Hex(gate.canonicalJson(payload)) };
 }
 
 test('approval token binds run attempt environment release SHA and digest', async () => {
@@ -722,7 +854,7 @@ test('environment requires only owner reviewer self-review off main-only and no 
 
 test('release requires owner confirmation of current auto-deploy-off evidence', async () => {
   const { gate } = await loadGateAndPolicy();
-  const evidence = autoDeployEvidence();
+  const evidence = autoDeployEvidence(gate);
   assert.equal(gate.verifyAutoDeployEvidence({
     evidence,
     approval: {
@@ -732,33 +864,36 @@ test('release requires owner confirmation of current auto-deploy-off evidence', 
       productionBranch: 'main',
       owner: OWNER,
     },
+    cutoverEvidence: { id: evidence.id, sha256: evidence.sha256 },
     now: '2026-10-09T12:10:00.000Z',
   }), true);
 });
 
 test('toggle evidence older than 900 seconds denies', async () => {
   const { gate } = await loadGateAndPolicy();
-  const evidence = autoDeployEvidence();
+  const evidence = autoDeployEvidence(gate);
   assertDenied(() => gate.verifyAutoDeployEvidence({
     evidence,
     approval: { evidenceId: evidence.id, evidenceSha256: evidence.sha256, projectRef: PROJECT_REF, productionBranch: 'main', owner: OWNER },
+    cutoverEvidence: { id: evidence.id, sha256: evidence.sha256 },
     now: '2026-10-09T12:15:01.000Z',
   }), 'STALE_AUTO_DEPLOY_EVIDENCE');
 });
 
 test('future evidence beyond 60 seconds clock skew denies', async () => {
   const { gate } = await loadGateAndPolicy();
-  const evidence = autoDeployEvidence({ observed_at: '2026-10-09T12:01:01.000Z' });
+  const evidence = autoDeployEvidence(gate, { observed_at: '2026-10-09T12:01:01.000Z' });
   assertDenied(() => gate.verifyAutoDeployEvidence({
     evidence,
     approval: { evidenceId: evidence.id, evidenceSha256: evidence.sha256, projectRef: PROJECT_REF, productionBranch: 'main', owner: OWNER },
+    cutoverEvidence: { id: evidence.id, sha256: evidence.sha256 },
     now: '2026-10-09T12:00:00.000Z',
   }), 'FUTURE_AUTO_DEPLOY_EVIDENCE');
 });
 
 test('mismatched evidence ID digest project branch or approval comment denies', async () => {
   const { gate } = await loadGateAndPolicy();
-  const evidence = autoDeployEvidence();
+  const evidence = autoDeployEvidence(gate);
   const approval = { evidenceId: evidence.id, evidenceSha256: evidence.sha256, projectRef: PROJECT_REF, productionBranch: 'main', owner: OWNER };
   const cases = [
     [evidence, { ...approval, evidenceId: 'another-evidence' }],
@@ -768,7 +903,30 @@ test('mismatched evidence ID digest project branch or approval comment denies', 
     [{ ...evidence, observed_by: 'someone-else' }, approval],
   ];
   for (const [candidate, binding] of cases) {
-    assertDenied(() => gate.verifyAutoDeployEvidence({ evidence: candidate, approval: binding, now: '2026-10-09T12:10:00.000Z' }), 'INVALID_AUTO_DEPLOY_EVIDENCE');
+    assertDenied(() => gate.verifyAutoDeployEvidence({
+      evidence: candidate,
+      approval: binding,
+      cutoverEvidence: { id: evidence.id, sha256: evidence.sha256 },
+      now: '2026-10-09T12:10:00.000Z',
+    }), 'INVALID_AUTO_DEPLOY_EVIDENCE');
+  }
+});
+
+test('auto-deploy evidence digest binds canonical bytes and policy cutover record', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const evidence = autoDeployEvidence(gate);
+  const approval = { evidenceId: evidence.id, evidenceSha256: evidence.sha256, projectRef: PROJECT_REF, productionBranch: 'main', owner: OWNER };
+  for (const [candidate, cutoverEvidence] of [
+    [{ ...evidence, observed_at: '2026-10-09T12:00:01.000Z' }, { id: evidence.id, sha256: evidence.sha256 }],
+    [evidence, { id: 'historical-evidence', sha256: evidence.sha256 }],
+    [evidence, { id: evidence.id, sha256: 'e'.repeat(64) }],
+  ]) {
+    assertDenied(() => gate.verifyAutoDeployEvidence({
+      evidence: candidate,
+      approval,
+      cutoverEvidence,
+      now: '2026-10-09T12:10:00.000Z',
+    }), 'INVALID_AUTO_DEPLOY_EVIDENCE');
   }
 });
 
@@ -847,6 +1005,8 @@ test('candidate to verified requires exact migrations functions config finance c
       remoteFunctionCount: 34,
       financePolicy: policy.supabase.finance_policy,
       reviewedPolicySha256: 'f'.repeat(64),
+      evidenceDigests: evidence.digests,
+      blockedResources: evidence.blocked_resources,
     },
   });
   assert.equal(verified.verification.state, 'verified');
@@ -898,6 +1058,8 @@ test('verified baseline requires owner reviewer and a separate policy commit', a
       remoteFunctionCount: 34,
       financePolicy: policy.supabase.finance_policy,
       reviewedPolicySha256: 'f'.repeat(64),
+      evidenceDigests: evidence.digests,
+      blockedResources: evidence.blocked_resources,
     },
   });
   const original = JSON.stringify(policy);
@@ -929,6 +1091,8 @@ test('environment policy digest must match exact reviewed policy bytes', async (
       remoteFunctionCount: 34,
       financePolicy: policy.supabase.finance_policy,
       reviewedPolicyBytes: exactPolicyBytes,
+      evidenceDigests: evidence.digests,
+      blockedResources: evidence.blocked_resources,
     },
   }).verification.reviewed_policy_sha256, exactDigest);
   assertDenied(() => gate.verifyBaselineEvidence({
@@ -943,6 +1107,8 @@ test('environment policy digest must match exact reviewed policy bytes', async (
       remoteFunctionCount: 34,
       financePolicy: policy.supabase.finance_policy,
       reviewedPolicyBytes: Buffer.from(`${exactPolicyBytes.toString('utf8')} `),
+      evidenceDigests: evidence.digests,
+      blockedResources: evidence.blocked_resources,
     },
   }), 'BASELINE_EVIDENCE_MISMATCH');
 });
@@ -970,11 +1136,59 @@ test('baseline advancement records prior release ID manifest and evidence digest
       remoteFunctionCount: 34,
       financePolicy: policy.supabase.finance_policy,
       reviewedPolicySha256: 'f'.repeat(64),
+      evidenceDigests: evidence.digests,
+      blockedResources: evidence.blocked_resources,
     },
   });
   const proposal = gate.proposeVerifiedBaseline({ policy, evidence: verified, owner: OWNER });
   assert.deepEqual(proposal.policy.baseline.prior_release, priorRelease);
   assert.deepEqual(proposal.policy.baseline.evidence_digests, evidence.digests);
+});
+
+test('baseline promotion denies every independently reviewed section mismatch', async () => {
+  const loaded = await loadGateAndPolicy();
+  const { gate } = loaded;
+  const policy = asCandidatePolicy(loaded.policy);
+  const original = gate.buildBaselineEvidence(baselineSnapshot(policy));
+  const expected = {
+    projectRef: PROJECT_REF,
+    sha: MAIN_SHA,
+    migrationCount: 336,
+    latestMigration: policy.baseline.latest_migration,
+    managedFunctions: MANAGED_FUNCTIONS,
+    remoteFunctionCount: 34,
+    financePolicy: policy.supabase.finance_policy,
+    reviewedPolicySha256: 'f'.repeat(64),
+    evidenceDigests: original.digests,
+    blockedResources: [],
+  };
+  const snapshots = [];
+  const migration = baselineSnapshot(policy);
+  migration.migrations.items[10] = 'tampered-migration';
+  snapshots.push(migration);
+  const version = baselineSnapshot(policy);
+  version.functions.managed[0].version += 1;
+  snapshots.push(version);
+  const source = baselineSnapshot(policy);
+  source.functions.managed[0].source_parity = false;
+  snapshots.push(source);
+  const config = baselineSnapshot(policy);
+  config.config.managed_functions[0].verify_jwt = false;
+  snapshots.push(config);
+  const cron = baselineSnapshot(policy);
+  cron.cron_security.security_findings.push({ name: 'unexpected-warning', level: 'WARN' });
+  snapshots.push(cron);
+  const finance = baselineSnapshot(policy);
+  finance.finance.premium_ledger_entry_count = 1;
+  snapshots.push(finance);
+  for (const snapshot of snapshots) {
+    const evidence = gate.buildBaselineEvidence(snapshot);
+    assertDenied(() => gate.verifyBaselineEvidence({
+      candidate: policy.baseline,
+      evidence,
+      expected,
+    }), 'BASELINE_EVIDENCE_MISMATCH');
+  }
 });
 
 test('partial paginated or source-ambiguous evidence keeps affected resources blocked', async () => {
@@ -1088,6 +1302,33 @@ test('unchanged counters are not required when legitimate concurrent transaction
   assert.equal(result.integrity, 'PASS');
   assert.equal(result.count_growth.transactions, 1);
   assert.equal(result.count_growth.ledger_entries, 4);
+});
+
+test('postcheck authority derives finance window from raw rows instead of trusting PASS', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const existingBefore = financeTransaction('txn-old', { status: 'pending', created_at: '2026-10-09T11:00:00.000Z' });
+  const existingAfter = { ...existingBefore, status: 'completed', blockchain_txid: '0xconfirmed-after-snapshot' };
+  const entries = ledgerPair(existingAfter);
+  const before = financeSnapshot({ transactions: [existingBefore] });
+  const after = financeSnapshot({ transactions: [existingAfter], ledgerEntries: entries });
+  const result = gate.verifyFinancePostcheckFromRaw({
+    before,
+    after,
+    windowRows: { complete: true, integrity: 'PASS', transactions: [existingAfter], ledger_entries: entries },
+    reconciliationResults: { all: 0 },
+    expectedPolicy: policy.supabase.finance_policy,
+    releaseIdentity: releaseIdentity(),
+  });
+  assert.deepEqual(result.window.preexisting_confirmed_after_snapshot, ['txn-old']);
+  assert.equal(result.finance.integrity, 'PASS');
+  assertDenied(() => gate.verifyFinancePostcheckFromRaw({
+    before,
+    after,
+    windowRows: { complete: true, integrity: 'PASS', transactions: [], ledger_entries: entries },
+    reconciliationResults: { all: 0 },
+    expectedPolicy: policy.supabase.finance_policy,
+    releaseIdentity: releaseIdentity(),
+  }), 'INVALID_FINANCE_WINDOW');
 });
 
 test('database timestamp and created_at id watermarks assign boundary rows once', async () => {
@@ -1238,11 +1479,22 @@ test('deploy needs plan uses production and fixed noncancelling concurrency', ()
   assert.match(deploy, /needs: plan/);
   assert.match(deploy, /environment:\s*production/);
   assert.match(deploy, /concurrency:\s*\n\s+group: nelyon-supabase-production\s*\n\s+cancel-in-progress: false/);
+  assert.match(deploy, /NELYON_RELEASE_POLICY_SHA256:\s*\$\{\{ vars\.NELYON_RELEASE_POLICY_SHA256 \}\}/);
+  assert.match(deploy, /--policy-sha256\s+"\$NELYON_RELEASE_POLICY_SHA256"/);
+});
+
+test('deploy compares the exact auto-deploy evidence bytes planned before approval', () => {
+  const text = workflowText();
+  const plan = workflowJob(text, 'plan', 'deploy');
+  const deploy = workflowJob(text, 'deploy');
+  assert.match(plan, /cp release-input\/auto-deploy-evidence\.json release-artifact\/auto-deploy-evidence\.json/);
+  assert.match(deploy, /cmp --silent release-artifact\/auto-deploy-evidence\.json gate-evidence\/auto-deploy-evidence\.json/);
+  assert.match(deploy, /--auto-deploy-evidence gate-evidence\/auto-deploy-evidence\.json/);
 });
 
 test('plan_only cannot schedule deploy and gate_proof contains no Supabase mutation', () => {
   const deploy = workflowJob(workflowText(), 'deploy');
-  assert.match(deploy, /if: >-[\s\S]*needs\.plan\.outputs\.mode == 'gate_proof'[\s\S]*needs\.plan\.outputs\.mode == 'release'/);
+  assert.match(deploy, /if: >-[\s\S]*needs\.plan\.outputs\.mode == 'gate_proof'[\s\S]*needs\.plan\.outputs\.mode == 'release'[\s\S]*needs\.plan\.outputs\.result == 'PLAN READY'[\s\S]*fromJSON\(needs\.plan\.outputs\.productive_change_count\) > 0/);
   assert.doesNotMatch(deploy, /needs\.plan\.outputs\.mode == 'plan_only'/);
   assert.match(deploy, /if: needs\.plan\.outputs\.mode == 'gate_proof'[\s\S]*verify-gate/);
   assert.match(deploy, /if: needs\.plan\.outputs\.mode == 'release'[\s\S]*supabase\/setup-cli/);

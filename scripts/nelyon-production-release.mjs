@@ -7,6 +7,15 @@ import { pathToFileURL } from 'node:url';
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
 const EXACT_MODES = ['plan_only', 'gate_proof', 'release'];
+const BASELINE_DIGEST_KEYS = [
+  'config_verify_jwt',
+  'cron_security',
+  'finance',
+  'function_source_parity',
+  'managed_functions',
+  'migrations',
+  'unmanaged_functions',
+];
 
 export class GateDeniedError extends Error {
   constructor(code, message, details = {}) {
@@ -60,6 +69,20 @@ export function validatePolicy(policy) {
   if (!['pending', 'verified'].includes(policy.cutover?.state)) {
     deny('INVALID_CUTOVER_STATE', 'cutover state is invalid');
   }
+  if (policy.cutover.state === 'verified') {
+    const evidence = policy.cutover.auto_deploy_off_evidence;
+    if (!evidence
+      || !RELEASE_ID_PATTERN.test(evidence.id ?? '')
+      || !/^[0-9a-f]{64}$/.test(evidence.sha256 ?? '')
+      || policy.cutover.verified_by !== policy.owner
+      || !Number.isFinite(Date.parse(policy.cutover.verified_at))) {
+      deny('INVALID_VERIFIED_CUTOVER', 'verified cutover authority evidence is incomplete');
+    }
+  } else if (policy.cutover.auto_deploy_off_evidence !== null
+    || policy.cutover.verified_by !== null
+    || policy.cutover.verified_at !== null) {
+    deny('INVALID_PENDING_CUTOVER', 'pending cutover must not claim verified authority evidence');
+  }
   if (policy.supabase?.project_ref !== 'aewwdlvbwpczqyvkwvvj') {
     deny('INVALID_PROJECT_REF', 'unexpected Supabase project');
   }
@@ -68,6 +91,30 @@ export function validatePolicy(policy) {
   }
   if (new Set(policy.supabase.managed_functions).size !== policy.supabase.managed_functions.length) {
     deny('INVALID_MANAGED_FUNCTIONS', 'managed function allowlist contains duplicates');
+  }
+  if (policy.baseline.state === 'verified') {
+    const digests = policy.baseline.evidence_digests;
+    const digestKeys = digests && typeof digests === 'object' && !Array.isArray(digests)
+      ? Object.keys(digests).sort()
+      : [];
+    const blocked = policy.baseline.blocked_resources;
+    const prior = policy.baseline.prior_release;
+    if (!/^[0-9a-f]{64}$/.test(policy.baseline.evidence ?? '')
+      || !/^[0-9a-f]{64}$/.test(policy.baseline.reviewed_policy_sha256 ?? '')
+      || canonicalJson(digestKeys) !== canonicalJson(BASELINE_DIGEST_KEYS)
+      || digestKeys.some(key => !/^[0-9a-f]{64}$/.test(digests[key] ?? ''))
+      || !Array.isArray(blocked)
+      || new Set(blocked).size !== blocked.length
+      || blocked.some(name => !policy.supabase.managed_functions.includes(name))
+      || policy.baseline.verified_by !== policy.owner
+      || !Number.isFinite(Date.parse(policy.baseline.verified_at))
+      || policy.baseline.authority_source !== 'owner-control-plane'
+      || policy.baseline.requires_separate_policy_commit !== true
+      || !prior
+      || !['bootstrap', 'post-release'].includes(prior.kind)
+      || !/^[0-9a-f]{64}$/.test(prior.postcheck_evidence_sha256 ?? '')) {
+      deny('INVALID_VERIFIED_BASELINE', 'verified baseline authority evidence is incomplete');
+    }
   }
   assertExactArray(policy.supabase?.forbidden_functions, ['bdag-economy'], 'INVALID_FORBIDDEN_FUNCTIONS', 'forbidden functions');
   return true;
@@ -161,6 +208,15 @@ export function sha256Hex(bytes) {
     throw new TypeError('sha256Hex requires UTF-8 text or bytes');
   }
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+export function verifyPolicyDigest({ policyBytes, expectedSha256 }) {
+  if (!(typeof policyBytes === 'string' || policyBytes instanceof Uint8Array)
+    || !/^[0-9a-f]{64}$/.test(expectedSha256 ?? '')
+    || sha256Hex(policyBytes) !== expectedSha256) {
+    deny('POLICY_DIGEST_MISMATCH', 'policy bytes do not match the protected Environment digest');
+  }
+  return expectedSha256;
 }
 
 function decodeUtf8(buffer, label) {
@@ -327,8 +383,10 @@ function migrationVersion(value) {
 }
 
 export function validateMigrationDelta({ changes, baselineLatestMigration, remoteMigrations, dryRunPending }) {
-  if (!Array.isArray(changes) || !Array.isArray(remoteMigrations) || !Array.isArray(dryRunPending)) {
-    deny('INVALID_MIGRATION_DELTA', 'migration inputs must be arrays');
+  const hasRemoteValidation = remoteMigrations !== undefined || dryRunPending !== undefined;
+  if (!Array.isArray(changes)
+    || (hasRemoteValidation && (!Array.isArray(remoteMigrations) || !Array.isArray(dryRunPending)))) {
+    deny('INVALID_MIGRATION_DELTA', 'migration inputs must be complete arrays');
   }
   const baselineVersion = migrationVersion(baselineLatestMigration);
   if (!baselineVersion) deny('INVALID_MIGRATION_DELTA', 'baseline latest migration is invalid');
@@ -346,6 +404,7 @@ export function validateMigrationDelta({ changes, baselineLatestMigration, remot
     migrations.push({ version, path });
   }
   migrations.sort((left, right) => left.version.localeCompare(right.version));
+  if (!hasRemoteValidation) return migrations;
   const remote = new Set(remoteMigrations.map(migrationVersion));
   if (remote.has(null)) deny('INVALID_MIGRATION_DELTA', 'remote migration inventory contains an invalid version');
   for (const migration of migrations) {
@@ -562,8 +621,23 @@ function isImmutableExternalSpecifier(specifier) {
   if (/^npm:(?:@[^/]+\/[^@/]+|[^@/]+)@\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\/.*)?$/.test(specifier)) return true;
   if (/^jsr:@[^/]+\/[^@/]+@\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\/.*)?$/.test(specifier)) return true;
   if (/^https?:\/\//.test(specifier)) {
-    return /@\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\/|$|\?)/.test(specifier)
-      || /(?:^|[/?#])(?:[0-9a-f]{40}|sha256-[A-Za-z0-9_-]{32,})(?:[/?#]|$)/i.test(specifier);
+    let url;
+    try {
+      url = new URL(specifier);
+    } catch {
+      return false;
+    }
+    if (url.protocol !== 'https:') return false;
+    if (url.hostname === 'esm.sh') {
+      return /@\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\/|$)/.test(url.pathname);
+    }
+    if (url.hostname === 'deno.land') {
+      return /^\/(?:std|x\/[A-Za-z0-9._-]+)@\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\/|$)/.test(url.pathname);
+    }
+    if (url.hostname === 'raw.githubusercontent.com') {
+      return /^\/[^/]+\/[^/]+\/[0-9a-f]{40}\//i.test(url.pathname);
+    }
+    return false;
   }
   return false;
 }
@@ -639,6 +713,9 @@ export function classifyRisk({ affectedFunctions = [], changedPaths = [], config
     if (after === false) add(riskFinding('VERIFY_JWT_DISABLED', name, 'supabase/config.toml', 'verify_jwt is disabled'));
   }
   for (const path of changedPaths) {
+    if (/^supabase\/migrations\/[^/]+\.sql$/.test(path)) {
+      add(riskFinding('DATABASE_MIGRATION', 'database', path, 'production database migration'));
+    }
     if (path === '.github/nelyon-production-release-policy.json'
       || path === '.github/workflows/nelyon-production-release.yml'
       || path === 'scripts/nelyon-production-release.mjs') {
@@ -674,8 +751,6 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
   const migrations = validateMigrationDelta({
     changes: gitState.changes,
     baselineLatestMigration: policy.baseline.latest_migration,
-    remoteMigrations: [],
-    dryRunPending: [],
   });
   const graph = buildFunctionGraph(collectFunctionSources(join(cwd, 'supabase', 'functions'), cwd));
   const affectedFunctions = resolveAffectedFunctions({
@@ -723,6 +798,20 @@ export function buildManifest({
   generatedAt,
 }) {
   validateRequest(request, policy);
+  if (!risk || !['STANDARD', 'HIGH'].includes(risk.level) || !Array.isArray(risk.findings)) {
+    deny('INVALID_RISK_CLASSIFICATION', 'manifest risk classification is incomplete');
+  }
+  if (request.mode === 'release') {
+    const requiredConfirmation = risk.level === 'HIGH'
+      ? policy.scope_confirmations.release_high_risk
+      : policy.scope_confirmations.release_standard;
+    if (request.scopeConfirmation !== requiredConfirmation) {
+      deny(
+        risk.level === 'HIGH' ? 'HIGH_RISK_CONFIRMATION_REQUIRED' : 'SCOPE_CONFIRMATION_MISMATCH',
+        'release confirmation does not match the computed manifest risk',
+      );
+    }
+  }
   if (!/^[0-9a-f]{64}$/.test(compiler?.sha256 ?? '')) {
     deny('INVALID_COMPILER_IDENTITY', 'compiler SHA-256 is invalid');
   }
@@ -732,8 +821,22 @@ export function buildManifest({
   const files = [...(classified?.all ?? [])]
     .map(change => ({ file_type: change.fileType ?? null, path: change.path, status: change.status }))
     .sort((left, right) => `${left.path}:${left.status}`.localeCompare(`${right.path}:${right.status}`));
-  const blockers = [...(reproducibility?.findings ?? [])]
+  const baselineBlockers = [...affectedFunctions]
+    .filter(resource => (policy.baseline.blocked_resources ?? []).includes(resource))
+    .map(resource => ({
+      severity: 'BLOCKING',
+      code: 'BASELINE_RESOURCE_UNREPRODUCIBLE',
+      path: null,
+      resource,
+      message: 'verified baseline marks this resource unreproducible',
+    }));
+  const blockers = [...(reproducibility?.findings ?? []), ...baselineBlockers]
     .map(stableCopy)
+    .filter((finding, index, findings) => findings.findIndex(candidate => (
+      candidate.code === finding.code
+      && candidate.resource === finding.resource
+      && candidate.path === finding.path
+    )) === index)
     .sort((left, right) => `${left.code}:${left.resource}:${left.path}`.localeCompare(`${right.code}:${right.resource}:${right.path}`));
   const productiveCount = classified?.productive?.length ?? 0;
   const result = blockers.length > 0
@@ -1008,17 +1111,20 @@ export function verifyApprovalHistory({
 export function verifyAutoDeployEvidence({
   evidence,
   approval,
+  cutoverEvidence,
   now,
   maxAgeSeconds = 900,
   maxFutureSkewSeconds = 60,
 }) {
+  const evidenceSha256 = verifyAutoDeployEvidenceDigest(evidence);
   const validEvidence = evidence
     && evidence.state === 'off'
     && evidence.redacted === true
     && evidence.source === 'owner-dashboard'
     && evidence.id === approval?.evidenceId
-    && /^[0-9a-f]{64}$/.test(evidence.sha256 ?? '')
-    && evidence.sha256 === approval?.evidenceSha256
+    && evidenceSha256 === approval?.evidenceSha256
+    && cutoverEvidence?.id === evidence.id
+    && cutoverEvidence?.sha256 === evidenceSha256
     && evidence.project_ref === approval?.projectRef
     && evidence.production_branch === approval?.productionBranch
     && evidence.observed_by === approval?.owner;
@@ -1032,6 +1138,23 @@ export function verifyAutoDeployEvidence({
   if (ageSeconds > maxAgeSeconds) deny('STALE_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence has expired');
   if (ageSeconds < -maxFutureSkewSeconds) deny('FUTURE_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence is too far in the future');
   return true;
+}
+
+export function autoDeployEvidencePayload(evidence) {
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) {
+    deny('INVALID_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence must be an object');
+  }
+  const { sha256: _claimedDigest, ...payload } = evidence;
+  return payload;
+}
+
+export function verifyAutoDeployEvidenceDigest(evidence) {
+  const claimed = evidence?.sha256;
+  const actual = sha256Hex(canonicalJson(autoDeployEvidencePayload(evidence)));
+  if (!/^[0-9a-f]{64}$/.test(claimed ?? '') || claimed !== actual) {
+    deny('INVALID_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence bytes do not match their claimed digest');
+  }
+  return actual;
 }
 
 export function verifyConcurrency({ runs, currentRunId, complete }) {
@@ -1170,6 +1293,10 @@ export function verifyBaselineEvidence({ candidate, evidence, expected }) {
   if (!/^[0-9a-f]{64}$/.test(reviewedPolicySha256 ?? '')
     || evidence.reviewed_policy_sha256 !== reviewedPolicySha256) {
     deny('BASELINE_EVIDENCE_MISMATCH', 'reviewed policy bytes do not match the independent digest');
+  }
+  if (canonicalJson(evidence.digests) !== canonicalJson(expected?.evidenceDigests)
+    || canonicalJson(evidence.blocked_resources) !== canonicalJson(expected?.blockedResources)) {
+    deny('BASELINE_EVIDENCE_MISMATCH', 'baseline section digests or blocked resources do not match owner-reviewed evidence');
   }
   return {
     ...evidence,
@@ -1440,6 +1567,36 @@ export function verifyFinancePostcheck({ before, after, window, reconciliationRe
   return { integrity: 'PASS', count_growth: growth, concurrent_activity: growth.transactions > 0 || window.preexisting_confirmed_after_snapshot.length > 0 };
 }
 
+export function verifyFinancePostcheckFromRaw({
+  before,
+  after,
+  windowRows,
+  reconciliationResults,
+  expectedPolicy,
+  releaseIdentity,
+}) {
+  if (!windowRows || windowRows.complete !== true
+    || !Array.isArray(windowRows.transactions)
+    || !Array.isArray(windowRows.ledger_entries)) {
+    deny('INVALID_FINANCE_WINDOW', 'raw finance window rows are incomplete');
+  }
+  const window = classifyFinanceWindow({
+    before,
+    after,
+    transactions: windowRows.transactions,
+    ledgerEntries: windowRows.ledger_entries,
+    releaseIdentity,
+  });
+  const finance = verifyFinancePostcheck({
+    before,
+    after,
+    window,
+    reconciliationResults,
+    expectedPolicy,
+  });
+  return { finance, window };
+}
+
 function parseCliArguments(argv) {
   const [command, ...rest] = argv;
   const values = {};
@@ -1521,12 +1678,17 @@ async function runCli(argv) {
       || remote.cron_security_match !== true) {
       deny('REMOTE_POSTCHECK_FAILED', 'Supabase production postcheck evidence is incomplete or divergent');
     }
-    const finance = verifyFinancePostcheck({
+    const financeVerification = verifyFinancePostcheckFromRaw({
       before: JSON.parse(readFileSync(values['pre-finance'], 'utf8')),
       after: JSON.parse(readFileSync(values['post-finance'], 'utf8')),
-      window: JSON.parse(readFileSync(values['finance-window'], 'utf8')),
+      windowRows: JSON.parse(readFileSync(values['finance-window'], 'utf8')),
       reconciliationResults: JSON.parse(readFileSync(values.reconciliation, 'utf8')),
       expectedPolicy: policy.supabase.finance_policy,
+      releaseIdentity: {
+        releaseId: releaseRequest.releaseId,
+        runId: String(releaseRequest.runId),
+        runAttempt: releaseRequest.runAttempt,
+      },
     });
     const result = {
       schema_version: 1,
@@ -1534,7 +1696,8 @@ async function runCli(argv) {
       release_id: releaseRequest.releaseId,
       approved_sha: releaseRequest.approvedSha,
       remote_postcheck_sha256: sha256Hex(canonicalJson(remote)),
-      finance,
+      finance: financeVerification.finance,
+      finance_window_sha256: sha256Hex(canonicalJson(financeVerification.window)),
     };
     const bytes = canonicalJson(result);
     writeFileSync(resolve(values.output), bytes, { encoding: 'utf8', flag: 'wx' });
@@ -1542,9 +1705,13 @@ async function runCli(argv) {
     return 0;
   }
   if (command === 'verify-gate') {
-    for (const required of ['policy', 'request', 'bundle', 'compiler-sha256', 'environment', 'branch-policies', 'approvals', 'auto-deploy-evidence', 'runs', 'output']) {
+    for (const required of ['policy', 'policy-sha256', 'request', 'bundle', 'compiler-sha256', 'environment', 'branch-policies', 'approvals', 'auto-deploy-evidence', 'runs', 'output']) {
       if (!values[required]) throw new Error(`missing --${required}`);
     }
+    const policySha256 = verifyPolicyDigest({
+      policyBytes: readFileSync(values.policy),
+      expectedSha256: values['policy-sha256'],
+    });
     const policy = loadPolicy(values.policy);
     const releaseRequest = JSON.parse(readFileSync(values.request, 'utf8'));
     validateRequest(releaseRequest, policy);
@@ -1604,6 +1771,7 @@ async function runCli(argv) {
         productionBranch: policy.default_branch,
         owner: policy.owner,
       },
+      cutoverEvidence: policy.cutover.auto_deploy_off_evidence,
       now: new Date().toISOString(),
       maxAgeSeconds: policy.evidence.auto_deploy_max_age_seconds,
       maxFutureSkewSeconds: policy.evidence.max_future_clock_skew_seconds,
@@ -1621,6 +1789,7 @@ async function runCli(argv) {
       environment: { id: environment.id, name: environment.name },
       release_id: releaseRequest.releaseId,
       approved_sha: releaseRequest.approvedSha,
+      policy_sha256: policySha256,
       manifest_sha256: verifiedBundle.digest,
       auto_deploy_evidence: { id: autoDeployEvidence.id, sha256: autoDeployEvidence.sha256 },
       approval_token_sha256: sha256Hex(approvalToken),
