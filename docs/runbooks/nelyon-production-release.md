@@ -98,6 +98,21 @@ of future clock skew. Renew it before every future release and every proof that
 requires Environment approval. The owner must specifically confirm this fresh
 evidence in the approval comment; a general or historical confirmation fails.
 
+Every renewed evidence record must also replace `cutover.auto_deploy_off_evidence`
+in `.github/nelyon-production-release-policy.json` with the same evidence ID and
+canonical SHA-256. Keep `cutover.state="verified"`, set `verified_by` to the
+owner, and set `verified_at` to the current observation time. Then commit that policy transition through the protected Git flow.
+Next, update `NELYON_RELEASE_POLICY_SHA256` to the exact new policy bytes before
+dispatch.
+Finally set `NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64` to the exact canonical record
+referenced by the policy. Updating only the variable, only the policy, or only
+the protected digest is insufficient and must fail closed.
+
+For the initial C2 cutover, create the cutover policy commit locally only after
+the owner has verified the dashboard toggle is OFF. Do not push that commit
+until the same toggle has been verified OFF again and the Environment variable
+contains the digest of the exact policy bytes to be published.
+
 After the controlled push to `main`, verify in Supabase that no automatic
 production deployment started. If any automatic deployment appears, stop,
 cancel no unrelated work, preserve evidence, and do not dispatch the gate.
@@ -145,7 +160,9 @@ snapshot adapter is not configured.
 For a separately authorized future production release:
 
 1. verify the exact main SHA and unused release ID;
-2. renew visual auto-deploy-off evidence within 15 minutes;
+2. renew visual auto-deploy-off evidence within 15 minutes, update the exact
+   policy evidence binding through the protected Git flow, update the protected
+   policy digest, and set the repository evidence variable to identical bytes;
 3. run the plan and inspect every changed file, migration, function,
    transitive `_shared` consumer, risk, and blocker;
 4. use `RELEASE_STANDARD` or, only for explicitly reviewed sensitive scope,
