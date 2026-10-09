@@ -25,6 +25,7 @@ const b1 = migration('_creator_premium_b1_canonical_foundation.sql');
 const b2 = migration('_creator_premium_b2_private_image_media.sql');
 const b3 = migration('_creator_premium_b3_signed_stream_playback.sql');
 const b4 = migration('_creator_premium_b4_atomic_finance_authority.sql');
+const c1 = migration('_creator_premium_b4_c1_exact_fee_snapshot_binding.sql');
 
 function runContainer(command, { input, allowFailure = false } = {}) {
   const executable = wslNamespacePid ? 'wsl.exe' : 'docker';
@@ -87,10 +88,12 @@ function json(result) {
   return JSON.parse(result.stdout);
 }
 
-test('B4 disposable harness targets the complete Premium chain and one generated B4 migration', () => {
-  for (const item of [b1, b2, b3, b4]) assert.equal(item.found.length, 1);
+test('B4-C1 disposable harness targets the complete Premium chain and one generated correction migration', () => {
+  for (const item of [b1, b2, b3, b4, c1]) assert.equal(item.found.length, 1);
   assert.match(b4.found[0], /^\d{14}_creator_premium_b4_atomic_finance_authority\.sql$/);
+  assert.match(c1.found[0], /^\d{14}_creator_premium_b4_c1_exact_fee_snapshot_binding\.sql$/);
   assert.ok(b4.sql.length > 25_000);
+  assert.ok(c1.sql.length > 1_000);
 });
 
 test('B4 compiles and proves atomic charges, cancellation, exact refunds, binding and rollback', {
@@ -159,6 +162,12 @@ test('B4 compiles and proves atomic charges, cancellation, exact refunds, bindin
     select allowed from public.get_my_creator_premium_entitlement_v1('${contentId}');
     rollback;
   `).stdout;
+  const bindingUnderTamper = (mutation, validator, snapshotId) => psql(db, `
+    begin;
+    ${mutation}
+    select private.${validator}('${snapshotId}');
+    rollback;
+  `).stdout;
   const balances = () => psql(db, `
     select coalesce(jsonb_object_agg(coalesce(owner_id::text,account_type),balance order by coalesce(owner_id::text,account_type)),'{}'::jsonb)
     from public.ledger_accounts
@@ -172,7 +181,7 @@ test('B4 compiles and proves atomic charges, cancellation, exact refunds, bindin
 
   try {
     runContainer(`createdb -U supabase_admin -T ${template} ${db}`);
-    psql(db, `${b1.sql}\n${b2.sql}\n${b3.sql}\n${b4.sql}`);
+    psql(db, `${b1.sql}\n${b2.sql}\n${b3.sql}\n${b4.sql}\n${c1.sql}`);
     psql(db, `
       truncate table public.ledger_entries, public.financial_transactions, public.ledger_accounts cascade;
       insert into public.ledger_accounts(owner_id,account_type,currency,balance,frozen)
@@ -244,7 +253,7 @@ test('B4 compiles and proves atomic charges, cancellation, exact refunds, bindin
       ) values
         ('${id.offer1}','${id.purchase}','${id.creator}',1,10,'active',clock_timestamp()),
         ('${id.offer2}','${id.purchase2}','${id.creator}',1,10,'active',clock_timestamp()),
-        ('${id.offerZero}','${id.zeroFee}','${id.creator2}',1,7,'active',clock_timestamp()),
+        ('${id.offerZero}','${id.zeroFee}','${id.creator2}',1,10,'active',clock_timestamp()),
         ('${id.offerRollback}','${id.rollback}','${id.creator}',1,6,'active',clock_timestamp()),
         ('${id.offerRace}','${id.race}','${id.creator}',1,8,'active',clock_timestamp());
       insert into private.creator_premium_plans(
@@ -315,6 +324,21 @@ test('B4 compiles and proves atomic charges, cancellation, exact refunds, bindin
     assert.equal(psql(db, `select count(*) from public.ledger_entries where txn_id='${purchaseResult.financial_transaction_id}'`).stdout, '3');
     assert.equal(psql(db, `select private.creator_premium_purchase_binding_is_valid_v1('${purchaseResult.receipt_id}')`).stdout, 't');
     assert.equal(asRole(db, 'authenticated', id.buyer, `select allowed from public.get_my_creator_premium_entitlement_v1('${id.purchase}')`).stdout, 't');
+    assert.equal(psql(db, `select gross_amount_bdag||'|'||platform_fee_bps||'|'||platform_fee_bdag||'|'||creator_net_bdag from private.creator_premium_purchase_receipts where id='${purchaseResult.receipt_id}'`).stdout, '10.00000000|1000|1.00000000|9.00000000');
+    expectFailure(psql(db, `
+      begin;
+      alter table private.creator_premium_purchase_receipts disable trigger creator_premium_purchase_snapshot_guard;
+      update private.creator_premium_purchase_receipts
+      set platform_fee_bdag=2,creator_net_bdag=8
+      where id='${purchaseResult.receipt_id}';
+      rollback;
+    `, { allowFailure: true }), 'creator_premium_purchase_receipts_split_check');
+    assert.equal(bindingUnderTamper(
+      `alter table private.creator_premium_purchase_receipts drop constraint creator_premium_purchase_receipts_split_check;
+       alter table private.creator_premium_purchase_receipts disable trigger creator_premium_purchase_snapshot_guard;
+       update private.creator_premium_purchase_receipts set platform_fee_bps=2000 where id='${purchaseResult.receipt_id}';`,
+      'creator_premium_purchase_binding_is_valid_v1', purchaseResult.receipt_id,
+    ), 'f');
 
     const purchaseTx = purchaseResult.financial_transaction_id;
     const relaxPremiumTransactionConstraint = 'alter table public.financial_transactions drop constraint financial_transactions_creator_premium_integrity_check;';
@@ -382,8 +406,10 @@ test('B4 compiles and proves atomic charges, cancellation, exact refunds, bindin
     psql(db, `update private.creator_premium_finance_policy set platform_fee_bps=0,updated_at=clock_timestamp()`);
     const zero = json(command('purchase_creator_premium_content_v1', [id.buyer2, id.zeroFee, id.zeroKey]));
     assert.equal(zero.platform_fee_bdag, 0);
-    assert.equal(zero.creator_net_bdag, 7);
+    assert.equal(zero.gross_amount_bdag, 10);
+    assert.equal(zero.creator_net_bdag, 10);
     assert.equal(psql(db, `select count(*) from public.ledger_entries where txn_id='${zero.financial_transaction_id}'`).stdout, '2');
+    assert.equal(psql(db, `select gross_amount_bdag||'|'||platform_fee_bps||'|'||platform_fee_bdag||'|'||creator_net_bdag from private.creator_premium_purchase_receipts where id='${zero.receipt_id}'`).stdout, '10.00000000|0|0.00000000|10.00000000');
     psql(db, `update private.creator_premium_finance_policy set platform_fee_bps=1000,updated_at=clock_timestamp()`);
 
     const failureBalances = balances();
@@ -432,6 +458,21 @@ test('B4 compiles and proves atomic charges, cancellation, exact refunds, bindin
     assert.equal(psql(db, `select paid_through_at-starts_at from private.creator_premium_subscription_periods where id='${subscription.period_id}'`).stdout, '30 days');
     assert.equal(psql(db, `select private.creator_premium_period_binding_is_valid_v1('${subscription.period_id}')`).stdout, 't');
     assert.equal(asRole(db, 'authenticated', id.buyer, `select allowed from public.get_my_creator_premium_entitlement_v1('${id.subscription}')`).stdout, 't');
+    assert.equal(psql(db, `select gross_amount_bdag||'|'||platform_fee_bps||'|'||platform_fee_bdag||'|'||creator_net_bdag from private.creator_premium_subscription_periods where id='${subscription.period_id}'`).stdout, '20.00000000|1000|2.00000000|18.00000000');
+    expectFailure(psql(db, `
+      begin;
+      alter table private.creator_premium_subscription_periods disable trigger creator_premium_period_snapshot_guard;
+      update private.creator_premium_subscription_periods
+      set platform_fee_bdag=3,creator_net_bdag=17
+      where id='${subscription.period_id}';
+      rollback;
+    `, { allowFailure: true }), 'creator_premium_subscription_periods_split_check');
+    assert.equal(bindingUnderTamper(
+      `alter table private.creator_premium_subscription_periods drop constraint creator_premium_subscription_periods_split_check;
+       alter table private.creator_premium_subscription_periods disable trigger creator_premium_period_snapshot_guard;
+       update private.creator_premium_subscription_periods set platform_fee_bps=2000 where id='${subscription.period_id}';`,
+      'creator_premium_period_binding_is_valid_v1', subscription.period_id,
+    ), 'f');
     const subscriptionTx = subscription.financial_transaction_id;
     const subscriptionTamperMutations = [
       `${relaxPremiumTransactionConstraint} update public.financial_transactions set operation_type='creator_premium_purchase',reference_type='creator_premium_purchase_receipt' where id='${subscriptionTx}';`,

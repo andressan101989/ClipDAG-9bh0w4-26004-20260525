@@ -9,11 +9,24 @@ const sql = matches.length === 1
   ? readFileSync(new URL(`../supabase/migrations/${matches[0]}`, import.meta.url), 'utf8')
   : '';
 
+const c1Matches = readdirSync(migrations)
+  .filter(name => name.endsWith('_creator_premium_b4_c1_exact_fee_snapshot_binding.sql'));
+const c1Sql = c1Matches.length === 1
+  ? readFileSync(new URL(`../supabase/migrations/${c1Matches[0]}`, import.meta.url), 'utf8')
+  : '';
+
 const functionBody = name => {
   const start = sql.search(new RegExp(`create(?:\\s+or\\s+replace)?\\s+function\\s+(?:public|private)\\.${name}\\b`, 'i'));
   if (start < 0) return '';
   const end = sql.indexOf('\n$$;', start);
   return end < 0 ? sql.slice(start) : sql.slice(start, end + 4);
+};
+
+const c1FunctionBody = name => {
+  const start = c1Sql.search(new RegExp(`create(?:\\s+or\\s+replace)?\\s+function\\s+(?:public|private)\\.${name}\\b`, 'i'));
+  if (start < 0) return '';
+  const end = c1Sql.indexOf('\n$$;', start);
+  return end < 0 ? c1Sql.slice(start) : c1Sql.slice(start, end + 4);
 };
 
 test('purchase authority derives every financial fact and binds one active receipt atomically', () => {
@@ -134,5 +147,17 @@ test('entitlement binding ties every snapshot account to its canonical owner and
     assert.match(body, /join\s+public\.ledger_accounts\s+platform_account/i);
     assert.match(body, /platform_account\.owner_id\s+is\s+null/i);
     assert.match(body, /platform_account\.account_type\s*=\s*'platform'/i);
+  }
+});
+
+test('B4-C1 entitlement validators independently reject fee snapshots that disagree with policy bps', () => {
+  assert.equal(c1Matches.length, 1, 'exactly one generated B4-C1 migration must exist');
+  for (const [name, alias] of [
+    ['creator_premium_purchase_binding_is_valid_v1', 'receipt'],
+    ['creator_premium_period_binding_is_valid_v1', 'period'],
+  ]) {
+    const body = c1FunctionBody(name);
+    assert.ok(body.length > 0, name);
+    assert.match(body, new RegExp(`${alias}\\.platform_fee_bdag\\s*=\\s*pg_catalog\\.round\\s*\\(\\s*${alias}\\.gross_amount_bdag\\s*\\*\\s*${alias}\\.platform_fee_bps\\s*\\/\\s*10000\\s*,\\s*8\\s*\\)`, 'i'));
   }
 });

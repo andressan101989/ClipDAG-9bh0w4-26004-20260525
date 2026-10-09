@@ -12,6 +12,15 @@ const migration = migrationPath && existsSync(migrationPath)
   ? readFileSync(migrationPath, 'utf8')
   : '';
 
+const c1Matches = readdirSync(migrationDirectory)
+  .filter(name => name.endsWith('_creator_premium_b4_c1_exact_fee_snapshot_binding.sql'));
+const c1MigrationPath = c1Matches.length === 1
+  ? new URL(`../supabase/migrations/${c1Matches[0]}`, import.meta.url)
+  : null;
+const c1Migration = c1MigrationPath && existsSync(c1MigrationPath)
+  ? readFileSync(c1MigrationPath, 'utf8')
+  : '';
+
 test('B4 uses exactly one generated migration and no parallel financial authority', () => {
   assert.equal(matches.length, 1, 'exactly one generated B4 migration must exist');
   assert.match(matches[0], /^\d{14}_creator_premium_b4_atomic_finance_authority\.sql$/);
@@ -59,6 +68,21 @@ test('B4 snapshots plan periods, receipt splits, period splits, cancellation and
   assert.match(migration, /platform_fee_bdag\s*=\s*round\s*\(\s*platform_fee_bdag\s*,\s*8\s*\)/i);
   assert.match(migration, /unique\s+index[\s\S]*creator_premium_purchase_receipts[\s\S]*buyer_id\s*,\s*content_id[\s\S]*access_state\s*=\s*'active'/i);
   assert.match(migration, /creator_premium_subscription_periods_state_name_check[\s\S]*'refunded'/i);
+});
+
+test('B4-C1 binds purchase and period fee snapshots exactly to gross and policy bps', () => {
+  assert.equal(c1Matches.length, 1, 'exactly one generated B4-C1 migration must exist');
+  assert.match(c1Matches[0], /^\d{14}_creator_premium_b4_c1_exact_fee_snapshot_binding\.sql$/);
+  assert.doesNotMatch(c1Migration, /create\s+table\b/i);
+
+  for (const [table, constraint, alias] of [
+    ['creator_premium_purchase_receipts', 'creator_premium_purchase_receipts_split_check', 'receipt'],
+    ['creator_premium_subscription_periods', 'creator_premium_subscription_periods_split_check', 'period'],
+  ]) {
+    assert.match(c1Migration, new RegExp(`alter\\s+table\\s+private\\.${table}[\\s\\S]*drop\\s+constraint\\s+${constraint}[\\s\\S]*add\\s+constraint\\s+${constraint}`, 'i'));
+    assert.match(c1Migration, new RegExp(`platform_fee_bdag\\s*=\\s*pg_catalog\\.round\\s*\\(\\s*gross_amount_bdag\\s*\\*\\s*platform_fee_bps\\s*\\/\\s*10000\\s*,\\s*8\\s*\\)`, 'i'));
+    assert.match(c1Migration, new RegExp(`${alias}\\.platform_fee_bdag\\s*=\\s*pg_catalog\\.round\\s*\\(\\s*${alias}\\.gross_amount_bdag\\s*\\*\\s*${alias}\\.platform_fee_bps\\s*\\/\\s*10000\\s*,\\s*8\\s*\\)`, 'i'));
+  }
 });
 
 test('B4 freezes activated financial identity and non-draft plan grant mappings', () => {
