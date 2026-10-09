@@ -518,3 +518,242 @@ test('a completed release ID stored in policy denies after artifact expiry', asy
     policy: persisted,
   }), 'RELEASE_ID_REPLAY');
 });
+
+function approvalInput(overrides = {}) {
+  return {
+    runId: '123456789',
+    runAttempt: 1,
+    environmentId: 42,
+    environmentName: 'production',
+    releaseId: 'nelyon-20261009-001',
+    approvedSha: MAIN_SHA,
+    manifestDigest: 'c'.repeat(64),
+    evidenceId: 'supabase-off-20261009T120000Z',
+    evidenceSha256: 'd'.repeat(64),
+    ...overrides,
+  };
+}
+
+function environmentSnapshot(overrides = {}) {
+  return {
+    id: 42,
+    name: 'production',
+    can_admins_bypass: false,
+    protection_rules: [{
+      type: 'required_reviewers',
+      prevent_self_review: false,
+      reviewers: [{ type: 'User', reviewer: { login: OWNER } }],
+    }],
+    deployment_branch_policy: {
+      protected_branches: false,
+      custom_branch_policies: true,
+    },
+    ...overrides,
+  };
+}
+
+function autoDeployEvidence(overrides = {}) {
+  return {
+    id: 'supabase-off-20261009T120000Z',
+    sha256: 'd'.repeat(64),
+    project_ref: PROJECT_REF,
+    production_branch: 'main',
+    state: 'off',
+    observed_at: '2026-10-09T12:00:00.000Z',
+    observed_by: OWNER,
+    source: 'owner-dashboard',
+    redacted: true,
+    ...overrides,
+  };
+}
+
+test('approval token binds run attempt environment release SHA and digest', async () => {
+  const { gate } = await loadGateAndPolicy();
+  assert.equal(
+    gate.buildApprovalToken(approvalInput()),
+    `NELYON-APPROVE run=123456789 attempt=1 env=42 release=nelyon-20261009-001 sha=${MAIN_SHA} manifest=${'c'.repeat(64)} auto_deploy_evidence=supabase-off-20261009T120000Z auto_deploy_sha256=${'d'.repeat(64)}`,
+  );
+});
+
+test('approval from another run attempt environment or manifest denies', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const expected = approvalInput();
+  const token = gate.buildApprovalToken(expected);
+  const base = {
+    complete: true,
+    sourceRunId: expected.runId,
+    sourceRunAttempt: expected.runAttempt,
+    pages: [{ items: [{ state: 'approved', comment: token, environments: [{ id: 42, name: 'production' }], user: { login: OWNER } }] }],
+  };
+  for (const patch of [
+    { sourceRunId: '987654321' },
+    { sourceRunAttempt: 2 },
+    { pages: [{ items: [{ state: 'approved', comment: gate.buildApprovalToken(approvalInput({ environmentId: 43 })), environments: [{ id: 43, name: 'production' }], user: { login: OWNER } }] }] },
+    { pages: [{ items: [{ state: 'approved', comment: gate.buildApprovalToken(approvalInput({ manifestDigest: 'e'.repeat(64) })), environments: [{ id: 42, name: 'production' }], user: { login: OWNER } }] }] },
+  ]) {
+    assertDenied(() => gate.verifyApprovalHistory({
+      approvals: { ...base, ...patch },
+      expectedToken: token,
+      owner: OWNER,
+      environmentId: 42,
+      environmentName: 'production',
+      expectedRunId: expected.runId,
+      expectedRunAttempt: expected.runAttempt,
+    }), 'INVALID_CURRENT_APPROVAL');
+  }
+});
+
+test('historical approval cannot validate a rerun', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const current = approvalInput({ runAttempt: 2 });
+  const historicalToken = gate.buildApprovalToken(approvalInput({ runAttempt: 1 }));
+  assertDenied(() => gate.verifyApprovalHistory({
+    approvals: {
+      complete: true,
+      sourceRunId: current.runId,
+      sourceRunAttempt: current.runAttempt,
+      pages: [{ items: [{ state: 'approved', comment: historicalToken, environments: [{ id: 42, name: 'production' }], user: { login: OWNER } }] }],
+    },
+    expectedToken: gate.buildApprovalToken(current),
+    owner: OWNER,
+    environmentId: 42,
+    environmentName: 'production',
+    expectedRunId: current.runId,
+    expectedRunAttempt: current.runAttempt,
+  }), 'INVALID_CURRENT_APPROVAL');
+});
+
+test('missing wrong duplicate rejected or bypass approval denies', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const expected = approvalInput();
+  const token = gate.buildApprovalToken(expected);
+  const valid = { state: 'approved', comment: token, environments: [{ id: 42, name: 'production' }], user: { login: OWNER } };
+  for (const items of [
+    [],
+    [{ ...valid, user: { login: 'someone-else' } }],
+    [valid, valid],
+    [{ ...valid, state: 'rejected' }],
+    [{ ...valid, state: 'bypassed' }],
+  ]) {
+    assertDenied(() => gate.verifyApprovalHistory({
+      approvals: { complete: true, sourceRunId: expected.runId, sourceRunAttempt: 1, pages: [{ items }] },
+      expectedToken: token,
+      owner: OWNER,
+      environmentId: 42,
+      environmentName: 'production',
+      expectedRunId: expected.runId,
+      expectedRunAttempt: 1,
+    }), 'INVALID_CURRENT_APPROVAL');
+  }
+});
+
+test('approval pagination must be complete', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const expected = approvalInput();
+  assertDenied(() => gate.verifyApprovalHistory({
+    approvals: { complete: false, sourceRunId: expected.runId, sourceRunAttempt: 1, pages: [] },
+    expectedToken: gate.buildApprovalToken(expected),
+    owner: OWNER,
+    environmentId: 42,
+    environmentName: 'production',
+    expectedRunId: expected.runId,
+    expectedRunAttempt: 1,
+  }), 'INCOMPLETE_APPROVAL_HISTORY');
+});
+
+test('environment requires only owner reviewer self-review off main-only and no admin bypass', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const branchPolicies = { complete: true, pages: [{ items: [{ name: 'main' }] }] };
+  assert.equal(gate.verifyEnvironmentSnapshot({
+    environment: environmentSnapshot(),
+    branchPolicies,
+    expected: { id: 42, name: 'production', owner: OWNER, branch: 'main' },
+  }), true);
+  const invalidEnvironments = [
+    environmentSnapshot({ can_admins_bypass: true }),
+    environmentSnapshot({ protection_rules: [] }),
+    environmentSnapshot({ protection_rules: [{ type: 'required_reviewers', prevent_self_review: true, reviewers: [{ type: 'User', reviewer: { login: OWNER } }] }] }),
+    environmentSnapshot({ protection_rules: [{ type: 'required_reviewers', prevent_self_review: false, reviewers: [{ type: 'User', reviewer: { login: 'someone-else' } }] }] }),
+    environmentSnapshot({ deployment_branch_policy: { protected_branches: true, custom_branch_policies: false } }),
+  ];
+  for (const environment of invalidEnvironments) {
+    assertDenied(() => gate.verifyEnvironmentSnapshot({
+      environment,
+      branchPolicies,
+      expected: { id: 42, name: 'production', owner: OWNER, branch: 'main' },
+    }), 'UNSAFE_ENVIRONMENT');
+  }
+  assertDenied(() => gate.verifyEnvironmentSnapshot({
+    environment: environmentSnapshot(),
+    branchPolicies: { complete: true, pages: [{ items: [{ name: 'main' }, { name: 'dev' }] }] },
+    expected: { id: 42, name: 'production', owner: OWNER, branch: 'main' },
+  }), 'UNSAFE_ENVIRONMENT');
+});
+
+test('release requires owner confirmation of current auto-deploy-off evidence', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const evidence = autoDeployEvidence();
+  assert.equal(gate.verifyAutoDeployEvidence({
+    evidence,
+    approval: {
+      evidenceId: evidence.id,
+      evidenceSha256: evidence.sha256,
+      projectRef: PROJECT_REF,
+      productionBranch: 'main',
+      owner: OWNER,
+    },
+    now: '2026-10-09T12:10:00.000Z',
+  }), true);
+});
+
+test('toggle evidence older than 900 seconds denies', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const evidence = autoDeployEvidence();
+  assertDenied(() => gate.verifyAutoDeployEvidence({
+    evidence,
+    approval: { evidenceId: evidence.id, evidenceSha256: evidence.sha256, projectRef: PROJECT_REF, productionBranch: 'main', owner: OWNER },
+    now: '2026-10-09T12:15:01.000Z',
+  }), 'STALE_AUTO_DEPLOY_EVIDENCE');
+});
+
+test('future evidence beyond 60 seconds clock skew denies', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const evidence = autoDeployEvidence({ observed_at: '2026-10-09T12:01:01.000Z' });
+  assertDenied(() => gate.verifyAutoDeployEvidence({
+    evidence,
+    approval: { evidenceId: evidence.id, evidenceSha256: evidence.sha256, projectRef: PROJECT_REF, productionBranch: 'main', owner: OWNER },
+    now: '2026-10-09T12:00:00.000Z',
+  }), 'FUTURE_AUTO_DEPLOY_EVIDENCE');
+});
+
+test('mismatched evidence ID digest project branch or approval comment denies', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const evidence = autoDeployEvidence();
+  const approval = { evidenceId: evidence.id, evidenceSha256: evidence.sha256, projectRef: PROJECT_REF, productionBranch: 'main', owner: OWNER };
+  const cases = [
+    [evidence, { ...approval, evidenceId: 'another-evidence' }],
+    [evidence, { ...approval, evidenceSha256: 'e'.repeat(64) }],
+    [{ ...evidence, project_ref: 'wrongprojectwrongpro' }, approval],
+    [{ ...evidence, production_branch: 'dev' }, approval],
+    [{ ...evidence, observed_by: 'someone-else' }, approval],
+  ];
+  for (const [candidate, binding] of cases) {
+    assertDenied(() => gate.verifyAutoDeployEvidence({ evidence: candidate, approval: binding, now: '2026-10-09T12:10:00.000Z' }), 'INVALID_AUTO_DEPLOY_EVIDENCE');
+  }
+});
+
+test('plan_only and gate_proof never require Supabase deployment secrets', async () => {
+  const { gate } = await loadGateAndPolicy();
+  assert.deepEqual(gate.requiredSecretsForMode('plan_only', {}), []);
+  assert.deepEqual(gate.requiredSecretsForMode('gate_proof', {}), []);
+  assertDenied(() => gate.requiredSecretsForMode('release', {}), 'MISSING_SECRETS');
+});
+
+test('production concurrency denies another active release run', async () => {
+  const { gate } = await loadGateAndPolicy();
+  assert.equal(gate.verifyConcurrency({ runs: { complete: true, pages: [{ items: [{ id: 123, status: 'in_progress' }] }] }, currentRunId: '123' }), true);
+  assertDenied(() => gate.verifyConcurrency({
+    runs: { complete: true, pages: [{ items: [{ id: 123, status: 'in_progress' }, { id: 456, status: 'queued' }] }] },
+    currentRunId: '123',
+  }), 'CONCURRENT_RELEASE');
+});

@@ -852,6 +852,149 @@ export function validateReleaseHistory({ releaseId, pages, policy }) {
   return true;
 }
 
+function requireUnsignedInteger(value, code, label, { positive = false } = {}) {
+  const text = String(value ?? '');
+  if (!/^(0|[1-9][0-9]*)$/.test(text) || (positive && BigInt(text) === 0n)) {
+    deny(code, `${label} must be a ${positive ? 'positive ' : ''}unsigned integer`);
+  }
+  return text;
+}
+
+function requireTokenPart(value, code, label) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9._-]+$/.test(value)) {
+    deny(code, `${label} contains unsupported token characters`);
+  }
+  return value;
+}
+
+function flattenCompletePages(envelope, code, label) {
+  if (!envelope || envelope.complete !== true || !Array.isArray(envelope.pages)) {
+    deny(code, `${label} pagination is incomplete`);
+  }
+  const records = [];
+  for (const page of envelope.pages) {
+    if (!page || !Array.isArray(page.items)) deny(code, `${label} page is incomplete`);
+    records.push(...page.items);
+  }
+  return records;
+}
+
+export function buildApprovalToken(input) {
+  const runId = requireUnsignedInteger(input?.runId, 'INVALID_APPROVAL_TOKEN', 'run ID', { positive: true });
+  const runAttempt = requireUnsignedInteger(input?.runAttempt, 'INVALID_APPROVAL_TOKEN', 'run attempt', { positive: true });
+  const environmentId = requireUnsignedInteger(input?.environmentId, 'INVALID_APPROVAL_TOKEN', 'environment ID', { positive: true });
+  const releaseId = requireTokenPart(input?.releaseId, 'INVALID_APPROVAL_TOKEN', 'release ID');
+  const evidenceId = requireTokenPart(input?.evidenceId, 'INVALID_APPROVAL_TOKEN', 'auto-deploy evidence ID');
+  if (!SHA_PATTERN.test(input?.approvedSha ?? '')) deny('INVALID_APPROVAL_TOKEN', 'approved SHA must be a full lowercase commit ID');
+  if (!/^[0-9a-f]{64}$/.test(input?.manifestDigest ?? '')) deny('INVALID_APPROVAL_TOKEN', 'manifest digest must be lowercase SHA-256');
+  if (!/^[0-9a-f]{64}$/.test(input?.evidenceSha256 ?? '')) deny('INVALID_APPROVAL_TOKEN', 'auto-deploy evidence digest must be lowercase SHA-256');
+  return `NELYON-APPROVE run=${runId} attempt=${runAttempt} env=${environmentId} release=${releaseId} sha=${input.approvedSha} manifest=${input.manifestDigest} auto_deploy_evidence=${evidenceId} auto_deploy_sha256=${input.evidenceSha256}`;
+}
+
+export function verifyEnvironmentSnapshot({ environment, branchPolicies, expected }) {
+  const fail = message => deny('UNSAFE_ENVIRONMENT', message);
+  if (!environment || String(environment.id) !== String(expected?.id) || environment.name !== expected?.name) {
+    fail('the Environment identity does not match the current release');
+  }
+  if (environment.can_admins_bypass !== false) fail('Environment administrative bypass must be disabled');
+  if (environment.deployment_branch_policy?.protected_branches !== false
+    || environment.deployment_branch_policy?.custom_branch_policies !== true) {
+    fail('Environment must use a main-only custom deployment branch policy');
+  }
+  const reviewerRules = (environment.protection_rules ?? []).filter(rule => rule?.type === 'required_reviewers');
+  if (reviewerRules.length !== 1) fail('Environment must have exactly one required-reviewers rule');
+  const rule = reviewerRules[0];
+  const reviewers = rule?.reviewers ?? [];
+  if (rule?.prevent_self_review !== false
+    || reviewers.length !== 1
+    || reviewers[0]?.type !== 'User'
+    || reviewers[0]?.reviewer?.login !== expected?.owner) {
+    fail('Environment reviewer must be the sole owner with self-review enabled');
+  }
+  const policies = flattenCompletePages(branchPolicies, 'UNSAFE_ENVIRONMENT', 'Environment branch-policy');
+  if (policies.length !== 1 || policies[0]?.name !== expected?.branch) {
+    fail('Environment must allow deployments from main only');
+  }
+  return true;
+}
+
+export function verifyApprovalHistory({
+  approvals,
+  expectedToken,
+  owner,
+  environmentId,
+  environmentName,
+  expectedRunId,
+  expectedRunAttempt,
+}) {
+  const records = flattenCompletePages(approvals, 'INCOMPLETE_APPROVAL_HISTORY', 'deployment approval');
+  if (String(approvals.sourceRunId) !== String(expectedRunId)
+    || Number(approvals.sourceRunAttempt) !== Number(expectedRunAttempt)) {
+    deny('INVALID_CURRENT_APPROVAL', 'approval evidence was not fetched for the current workflow attempt');
+  }
+  const matching = records.filter(record => {
+    const environments = Array.isArray(record?.environments) ? record.environments : [];
+    return record?.state === 'approved'
+      && record?.comment === expectedToken
+      && record?.user?.login === owner
+      && environments.length === 1
+      && String(environments[0]?.id) === String(environmentId)
+      && environments[0]?.name === environmentName;
+  });
+  if (matching.length !== 1 || records.length !== 1) {
+    deny('INVALID_CURRENT_APPROVAL', 'exactly one owner approval bound to the current attempt is required');
+  }
+  return true;
+}
+
+export function verifyAutoDeployEvidence({
+  evidence,
+  approval,
+  now,
+  maxAgeSeconds = 900,
+  maxFutureSkewSeconds = 60,
+}) {
+  const validEvidence = evidence
+    && evidence.state === 'off'
+    && evidence.redacted === true
+    && evidence.source === 'owner-dashboard'
+    && evidence.id === approval?.evidenceId
+    && /^[0-9a-f]{64}$/.test(evidence.sha256 ?? '')
+    && evidence.sha256 === approval?.evidenceSha256
+    && evidence.project_ref === approval?.projectRef
+    && evidence.production_branch === approval?.productionBranch
+    && evidence.observed_by === approval?.owner;
+  if (!validEvidence) deny('INVALID_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence does not match the owner-approved project binding');
+  const observedAt = Date.parse(evidence.observed_at);
+  const nowAt = Date.parse(now);
+  if (!Number.isFinite(observedAt) || !Number.isFinite(nowAt)) {
+    deny('INVALID_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence timestamps are invalid');
+  }
+  const ageSeconds = (nowAt - observedAt) / 1000;
+  if (ageSeconds > maxAgeSeconds) deny('STALE_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence has expired');
+  if (ageSeconds < -maxFutureSkewSeconds) deny('FUTURE_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence is too far in the future');
+  return true;
+}
+
+export function verifyConcurrency({ runs, currentRunId, complete }) {
+  const envelope = complete === undefined ? runs : { pages: runs, complete };
+  const records = flattenCompletePages(envelope, 'INCOMPLETE_RUN_HISTORY', 'workflow run');
+  const active = new Set(['in_progress', 'pending', 'queued', 'requested', 'waiting']);
+  if (records.some(run => active.has(run?.status) && String(run?.id) !== String(currentRunId))) {
+    deny('CONCURRENT_RELEASE', 'another production release workflow is active');
+  }
+  return true;
+}
+
+export function requiredSecretsForMode(mode, secrets) {
+  if (mode === 'plan_only' || mode === 'gate_proof') return [];
+  if (mode !== 'release') deny('INVALID_MODE', 'unsupported release mode');
+  const required = ['SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD'];
+  const missing = required.filter(name => typeof secrets?.[name] !== 'string' || secrets[name].length === 0);
+  if (missing.length > 0) deny('MISSING_SECRETS', 'required Environment deployment secrets are unavailable', { missing });
+  return required;
+}
+
 function parseCliArguments(argv) {
   const [command, ...rest] = argv;
   const values = {};
@@ -876,6 +1019,94 @@ async function runCli(argv) {
     return 0;
   }
   const { command, values } = parseCliArguments(argv);
+  if (command === 'verify-gate') {
+    for (const required of ['policy', 'request', 'bundle', 'compiler-sha256', 'environment', 'branch-policies', 'approvals', 'auto-deploy-evidence', 'runs', 'output']) {
+      if (!values[required]) throw new Error(`missing --${required}`);
+    }
+    const policy = loadPolicy(values.policy);
+    const releaseRequest = JSON.parse(readFileSync(values.request, 'utf8'));
+    validateRequest(releaseRequest, policy);
+    const digest = readFileSync(join(resolve(values.bundle), 'manifest.sha256'), 'utf8').trim();
+    const verifiedBundle = verifyManifestBundle({
+      directory: resolve(values.bundle),
+      expected: {
+        approvedSha: releaseRequest.approvedSha,
+        compilerSha256: values['compiler-sha256'],
+        environmentName: policy.environment.name,
+        manifestDigest: digest,
+        releaseId: releaseRequest.releaseId,
+        runAttempt: releaseRequest.runAttempt,
+        runId: releaseRequest.runId,
+      },
+    });
+    const environment = JSON.parse(readFileSync(values.environment, 'utf8'));
+    const branchPolicies = JSON.parse(readFileSync(values['branch-policies'], 'utf8'));
+    verifyEnvironmentSnapshot({
+      environment,
+      branchPolicies,
+      expected: {
+        id: environment.id,
+        name: policy.environment.name,
+        owner: policy.owner,
+        branch: policy.environment.protected_branch,
+      },
+    });
+    const autoDeployEvidence = JSON.parse(readFileSync(values['auto-deploy-evidence'], 'utf8'));
+    const approvalToken = buildApprovalToken({
+      runId: releaseRequest.runId,
+      runAttempt: releaseRequest.runAttempt,
+      environmentId: environment.id,
+      environmentName: environment.name,
+      releaseId: releaseRequest.releaseId,
+      approvedSha: releaseRequest.approvedSha,
+      manifestDigest: verifiedBundle.digest,
+      evidenceId: autoDeployEvidence.id,
+      evidenceSha256: autoDeployEvidence.sha256,
+    });
+    const approvals = JSON.parse(readFileSync(values.approvals, 'utf8'));
+    verifyApprovalHistory({
+      approvals,
+      expectedToken: approvalToken,
+      owner: policy.owner,
+      environmentId: environment.id,
+      environmentName: environment.name,
+      expectedRunId: releaseRequest.runId,
+      expectedRunAttempt: releaseRequest.runAttempt,
+    });
+    verifyAutoDeployEvidence({
+      evidence: autoDeployEvidence,
+      approval: {
+        evidenceId: autoDeployEvidence.id,
+        evidenceSha256: autoDeployEvidence.sha256,
+        projectRef: policy.supabase.project_ref,
+        productionBranch: policy.default_branch,
+        owner: policy.owner,
+      },
+      now: new Date().toISOString(),
+      maxAgeSeconds: policy.evidence.auto_deploy_max_age_seconds,
+      maxFutureSkewSeconds: policy.evidence.max_future_clock_skew_seconds,
+    });
+    verifyConcurrency({
+      runs: JSON.parse(readFileSync(values.runs, 'utf8')),
+      currentRunId: releaseRequest.runId,
+    });
+    requiredSecretsForMode(releaseRequest.mode, releaseRequest.mode === 'release' ? process.env : {});
+    const proof = {
+      schema_version: 1,
+      result: 'GATE_VERIFIED',
+      run_id: releaseRequest.runId,
+      run_attempt: releaseRequest.runAttempt,
+      environment: { id: environment.id, name: environment.name },
+      release_id: releaseRequest.releaseId,
+      approved_sha: releaseRequest.approvedSha,
+      manifest_sha256: verifiedBundle.digest,
+      auto_deploy_evidence: { id: autoDeployEvidence.id, sha256: autoDeployEvidence.sha256 },
+      approval_token_sha256: sha256Hex(approvalToken),
+    };
+    writeFileSync(resolve(values.output), canonicalJson(proof), { encoding: 'utf8', flag: 'wx' });
+    process.stdout.write(`GATE VERIFIED ${verifiedBundle.digest}\n`);
+    return 0;
+  }
   if (command !== 'plan') throw new Error(`command ${command} is not implemented yet`);
   for (const required of ['policy', 'request', 'remote-evidence', 'history', 'output']) {
     if (!values[required]) throw new Error(`missing --${required}`);
