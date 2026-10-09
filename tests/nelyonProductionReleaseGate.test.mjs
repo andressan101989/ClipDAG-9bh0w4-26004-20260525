@@ -42,6 +42,20 @@ async function loadGateAndPolicy() {
   return { gate, policy };
 }
 
+function asCandidatePolicy(policy) {
+  const candidate = structuredClone(policy);
+  candidate.baseline = {
+    state: 'candidate',
+    sha: policy.baseline.sha,
+    migration_count: policy.baseline.migration_count,
+    latest_migration: policy.baseline.latest_migration,
+    evidence: null,
+    verified_by: null,
+    verified_at: null,
+  };
+  return candidate;
+}
+
 function request(overrides = {}) {
   return {
     actor: OWNER,
@@ -86,7 +100,9 @@ test('policy accepts the exact repository owner project modes and managed functi
 });
 
 test('candidate baseline denies release but permits plan_only and gate_proof', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const loaded = await loadGateAndPolicy();
+  const { gate } = loaded;
+  const policy = asCandidatePolicy(loaded.policy);
   assert.equal(gate.validateRequest(request(), policy).mode, 'plan_only');
   assert.equal(gate.validateRequest(request({
     mode: 'gate_proof',
@@ -96,6 +112,18 @@ test('candidate baseline denies release but permits plan_only and gate_proof', a
     mode: 'release',
     scopeConfirmation: 'RELEASE_STANDARD',
   }), policy), 'BASELINE_NOT_VERIFIED');
+});
+
+test('committed verified baseline remains release-denied until cutover', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  assert.equal(policy.baseline.state, 'verified');
+  assert.match(policy.baseline.evidence, /^[0-9a-f]{64}$/);
+  assert.deepEqual(policy.baseline.blocked_resources, []);
+  assert.equal(policy.cutover.state, 'pending');
+  assertDenied(() => gate.validateRequest(request({
+    mode: 'release',
+    scopeConfirmation: 'RELEASE_STANDARD',
+  }), policy), 'CUTOVER_NOT_VERIFIED');
 });
 
 test('malformed stale foreign and non-main SHA requests are denied', async () => {
@@ -803,7 +831,9 @@ function baselineSnapshot(policy, overrides = {}) {
 }
 
 test('candidate to verified requires exact migrations functions config finance cron and health evidence', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const loaded = await loadGateAndPolicy();
+  const { gate } = loaded;
+  const policy = asCandidatePolicy(loaded.policy);
   const evidence = gate.buildBaselineEvidence(baselineSnapshot(policy));
   const verified = gate.verifyBaselineEvidence({
     candidate: policy.baseline,
@@ -825,7 +855,9 @@ test('candidate to verified requires exact migrations functions config finance c
 });
 
 test('Git SHA equality alone cannot verify baseline', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const loaded = await loadGateAndPolicy();
+  const { gate } = loaded;
+  const policy = asCandidatePolicy(loaded.policy);
   assertDenied(() => gate.buildBaselineEvidence({
     complete: true,
     source: 'owner-control-plane',
@@ -836,7 +868,9 @@ test('Git SHA equality alone cannot verify baseline', async () => {
 });
 
 test('workflow actor and workflow runtime cannot promote baseline', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const loaded = await loadGateAndPolicy();
+  const { gate } = loaded;
+  const policy = asCandidatePolicy(loaded.policy);
   for (const patch of [
     { source: 'github-actions' },
     { workflow_runtime: true },
@@ -848,7 +882,9 @@ test('workflow actor and workflow runtime cannot promote baseline', async () => 
 });
 
 test('verified baseline requires owner reviewer and a separate policy commit', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const loaded = await loadGateAndPolicy();
+  const { gate } = loaded;
+  const policy = asCandidatePolicy(loaded.policy);
   const evidence = gate.buildBaselineEvidence(baselineSnapshot(policy));
   const verified = gate.verifyBaselineEvidence({
     candidate: policy.baseline,
@@ -875,7 +911,9 @@ test('verified baseline requires owner reviewer and a separate policy commit', a
 });
 
 test('environment policy digest must match exact reviewed policy bytes', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const loaded = await loadGateAndPolicy();
+  const { gate } = loaded;
+  const policy = asCandidatePolicy(loaded.policy);
   const exactPolicyBytes = readFileSync(policyUrl);
   const exactDigest = gate.sha256Hex(exactPolicyBytes);
   const evidence = gate.buildBaselineEvidence(baselineSnapshot(policy, { reviewed_policy_sha256: exactDigest }));
@@ -910,7 +948,9 @@ test('environment policy digest must match exact reviewed policy bytes', async (
 });
 
 test('baseline advancement records prior release ID manifest and evidence digests', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const loaded = await loadGateAndPolicy();
+  const { gate } = loaded;
+  const policy = asCandidatePolicy(loaded.policy);
   const priorRelease = {
     kind: 'post-release',
     release_id: 'nelyon-20261009-001',
