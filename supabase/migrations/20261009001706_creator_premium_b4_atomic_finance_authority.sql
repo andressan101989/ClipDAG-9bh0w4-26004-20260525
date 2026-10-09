@@ -92,12 +92,11 @@ alter table private.creator_premium_subscriptions
   add column cancel_idempotency_key uuid,
   add column cancel_request_fingerprint text,
   add constraint creator_premium_subscriptions_cancel_fields_check check (
-    (status <> 'cancelled'
-      and cancel_idempotency_key is null
-      and cancel_request_fingerprint is null)
+    (cancel_idempotency_key is null
+      and cancel_request_fingerprint is null
+      and status <> 'cancelled')
     or
-    (status = 'cancelled'
-      and cancel_idempotency_key is not null
+    (cancel_idempotency_key is not null
       and cancel_request_fingerprint ~ '^[0-9a-f]{64}$')
   );
 
@@ -428,7 +427,17 @@ stable
 security definer
 set search_path = ''
 as $$
-  select private.creator_premium_actor_is_age_eligible_v1(auth.uid());
+  select coalesce(exists (
+    select 1
+    from private.user_age_eligibility eligibility
+    join private.age_eligibility_policy policy on policy.singleton = true
+    where eligibility.user_id = auth.uid()
+      and eligibility.status = 'eligible'
+      and eligibility.age_band = 'age_18_plus'
+      and eligibility.minimum_age = policy.minimum_age
+      and eligibility.policy_version = policy.policy_version
+      and eligibility.evaluated_at is not null
+  ), false);
 $$;
 
 create function private.resolve_creator_premium_platform_account_v1()
@@ -632,6 +641,21 @@ as $$
      and finance_tx.initiated_by = receipt.buyer_id
      and finance_tx.idempotency_key = receipt.idempotency_key::text
      and finance_tx.status = 'completed'
+    join public.ledger_accounts payer_account
+      on payer_account.id = receipt.buyer_account_id
+     and payer_account.owner_id = receipt.buyer_id
+     and payer_account.account_type = 'user'
+     and payer_account.currency = 'BDAG'
+    join public.ledger_accounts creator_account
+      on creator_account.id = receipt.creator_account_id
+     and creator_account.owner_id = receipt.creator_id
+     and creator_account.account_type = 'user'
+     and creator_account.currency = 'BDAG'
+    join public.ledger_accounts platform_account
+      on platform_account.id = receipt.platform_account_id
+     and platform_account.owner_id is null
+     and platform_account.account_type = 'platform'
+     and platform_account.currency = 'BDAG'
     where receipt.id = p_receipt_id
       and receipt.access_state = 'active'
       and receipt.revoked_at is null
@@ -696,6 +720,21 @@ as $$
      and finance_tx.initiated_by = period.subscriber_id
      and finance_tx.idempotency_key = period.idempotency_key::text
      and finance_tx.status = 'completed'
+    join public.ledger_accounts payer_account
+      on payer_account.id = period.subscriber_account_id
+     and payer_account.owner_id = period.subscriber_id
+     and payer_account.account_type = 'user'
+     and payer_account.currency = 'BDAG'
+    join public.ledger_accounts creator_account
+      on creator_account.id = period.creator_account_id
+     and creator_account.owner_id = period.creator_id
+     and creator_account.account_type = 'user'
+     and creator_account.currency = 'BDAG'
+    join public.ledger_accounts platform_account
+      on platform_account.id = period.platform_account_id
+     and platform_account.owner_id is null
+     and platform_account.account_type = 'platform'
+     and platform_account.currency = 'BDAG'
     where period.id = p_period_id
       and period.access_state = 'active'
       and period.revoked_at is null
@@ -873,3 +912,872 @@ revoke all on function private.current_user_is_creator_exclusive_age_eligible()
   from public, anon, authenticated, service_role;
 revoke all on function private.resolve_creator_premium_entitlement_v1(uuid)
   from public, anon, authenticated, service_role;
+
+create function private.creator_premium_internal_finance_authority_v1()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(
+    session_user in ('postgres','supabase_admin')
+    or auth.role() = 'service_role'
+    or pg_catalog.current_setting('request.jwt.claim.role', true) = 'service_role',
+    false
+  );
+$$;
+
+create function private.creator_premium_request_fingerprint_v1(
+  p_operation text,
+  p_actor_id uuid,
+  p_reference_id uuid,
+  p_detail text default ''
+) returns text
+language sql
+immutable
+security definer
+set search_path = ''
+as $$
+  select pg_catalog.encode(
+    extensions.digest(
+      pg_catalog.concat_ws('|', p_operation, p_actor_id::text, p_reference_id::text, coalesce(p_detail,'')),
+      'sha256'
+    ),
+    'hex'
+  );
+$$;
+
+create function private.validate_creator_premium_refund_reason_v1(p_reason_code text)
+returns text
+language plpgsql
+immutable
+security definer
+set search_path = ''
+as $$
+declare
+  v_reason text := pg_catalog.btrim(coalesce(p_reason_code,''));
+begin
+  if v_reason !~ '^[a-z][a-z0-9_]{0,79}$' then
+    raise exception using errcode = '22023', message = 'creator_premium_refund_reason_invalid';
+  end if;
+  return v_reason;
+end;
+$$;
+
+create function private.post_creator_premium_refund_v1(
+  p_payer_id uuid,
+  p_creator_id uuid,
+  p_payer_account_id uuid,
+  p_creator_account_id uuid,
+  p_platform_account_id uuid,
+  p_operation_type text,
+  p_reference_type text,
+  p_reference_id uuid,
+  p_idempotency_key uuid,
+  p_gross_amount_bdag numeric,
+  p_platform_fee_bdag numeric,
+  p_creator_net_bdag numeric
+) returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_refund_transaction_id uuid := gen_random_uuid();
+  v_account public.ledger_accounts;
+begin
+  if (p_operation_type, p_reference_type) not in (
+    ('creator_premium_purchase_refund','creator_premium_purchase_receipt'),
+    ('creator_premium_subscription_refund','creator_premium_subscription_period')
+  ) then
+    raise exception using errcode = '22023', message = 'creator_premium_refund_operation_invalid';
+  end if;
+  if p_gross_amount_bdag <= 0 or p_creator_net_bdag <= 0 or p_platform_fee_bdag < 0
+     or p_gross_amount_bdag <> p_creator_net_bdag + p_platform_fee_bdag then
+    raise exception using errcode = '22023', message = 'creator_premium_refund_split_invalid';
+  end if;
+
+  perform 1
+  from public.ledger_accounts account
+  where account.id = any(array[p_payer_account_id, p_creator_account_id, p_platform_account_id])
+  order by account.id
+  for update;
+
+  select account.* into v_account from public.ledger_accounts account where account.id = p_creator_account_id;
+  if not found or v_account.owner_id is distinct from p_creator_id
+     or v_account.account_type <> 'user' or v_account.currency <> 'BDAG'
+     or v_account.frozen or v_account.balance < p_creator_net_bdag then
+    raise exception using errcode = 'P0001', message = 'creator_premium_refund_source_balance_insufficient';
+  end if;
+  select account.* into v_account from public.ledger_accounts account where account.id = p_platform_account_id;
+  if not found or v_account.owner_id is not null
+     or v_account.account_type <> 'platform' or v_account.currency <> 'BDAG'
+     or v_account.frozen or v_account.balance < p_platform_fee_bdag then
+    raise exception using errcode = 'P0001', message = 'creator_premium_refund_source_balance_insufficient';
+  end if;
+  select account.* into v_account from public.ledger_accounts account where account.id = p_payer_account_id;
+  if not found or v_account.owner_id is distinct from p_payer_id
+     or v_account.account_type <> 'user' or v_account.currency <> 'BDAG' or v_account.frozen then
+    raise exception using errcode = '55000', message = 'creator_premium_refund_destination_account_invalid';
+  end if;
+
+  insert into public.financial_transactions(
+    id, from_account_id, to_account_id, operation_type, amount, fee_amount,
+    currency, status, reference_type, reference_id, idempotency_key, initiated_by
+  ) values (
+    v_refund_transaction_id, p_creator_account_id, p_payer_account_id,
+    p_operation_type, p_gross_amount_bdag, p_platform_fee_bdag,
+    'BDAG', 'completed', p_reference_type, p_reference_id::text,
+    p_idempotency_key::text, p_payer_id
+  );
+
+  perform public.ledger_debit(
+    v_refund_transaction_id, p_creator_account_id, p_creator_net_bdag,
+    'Creator Premium refund creator',
+    pg_catalog.jsonb_build_object(
+      'fin_txn_id', v_refund_transaction_id,
+      'reference_type', p_reference_type,
+      'reference_id', p_reference_id,
+      'financial_leg', 'creator_net_debit'
+    )
+  );
+  if p_platform_fee_bdag > 0 then
+    perform public.ledger_debit(
+      v_refund_transaction_id, p_platform_account_id, p_platform_fee_bdag,
+      'Creator Premium refund platform fee',
+      pg_catalog.jsonb_build_object(
+        'fin_txn_id', v_refund_transaction_id,
+        'reference_type', p_reference_type,
+        'reference_id', p_reference_id,
+        'financial_leg', 'platform_fee_debit'
+      )
+    );
+  end if;
+  perform public.ledger_credit(
+    v_refund_transaction_id, p_payer_account_id, p_gross_amount_bdag,
+    'Creator Premium refund payer',
+    pg_catalog.jsonb_build_object(
+      'fin_txn_id', v_refund_transaction_id,
+      'reference_type', p_reference_type,
+      'reference_id', p_reference_id,
+      'financial_leg', 'payer_gross_credit'
+    )
+  );
+  return v_refund_transaction_id;
+end;
+$$;
+
+create function public.purchase_creator_premium_content_v1(
+  p_buyer_id uuid,
+  p_content_id uuid,
+  p_idempotency_key uuid
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_fingerprint text;
+  v_policy private.creator_premium_finance_policy;
+  v_content private.creator_premium_contents;
+  v_offer private.creator_premium_offer_versions;
+  v_existing private.creator_premium_purchase_receipts;
+  v_receipt_id uuid := gen_random_uuid();
+  v_charge record;
+  v_now timestamptz := pg_catalog.clock_timestamp();
+begin
+  if not private.creator_premium_internal_finance_authority_v1() then
+    raise exception using errcode = '42501', message = 'creator_premium_internal_authority_required';
+  end if;
+  if p_buyer_id is null or p_content_id is null or p_idempotency_key is null then
+    raise exception using errcode = '22023', message = 'creator_premium_purchase_invalid_input';
+  end if;
+
+  v_fingerprint := private.creator_premium_request_fingerprint_v1(
+    'creator_premium_purchase', p_buyer_id, p_content_id
+  );
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('creator-premium-purchase|' || p_buyer_id::text || '|' || p_idempotency_key::text, 0)
+  );
+
+  select receipt.* into v_existing
+  from private.creator_premium_purchase_receipts receipt
+  where receipt.buyer_id = p_buyer_id
+    and receipt.idempotency_key = p_idempotency_key
+  for update;
+  if found then
+    if v_existing.request_fingerprint <> v_fingerprint then
+      raise exception using errcode = '23505', message = 'creator_premium_purchase_idempotency_conflict';
+    end if;
+    if v_existing.access_state = 'active'
+       and not private.creator_premium_purchase_binding_is_valid_v1(v_existing.id) then
+      raise exception using errcode = '23514', message = 'creator_premium_purchase_financial_binding_invalid';
+    end if;
+    return pg_catalog.jsonb_build_object(
+      'receipt_id', v_existing.id,
+      'content_id', v_existing.content_id,
+      'financial_transaction_id', v_existing.financial_transaction_id,
+      'gross_amount_bdag', v_existing.gross_amount_bdag,
+      'platform_fee_bdag', v_existing.platform_fee_bdag,
+      'creator_net_bdag', v_existing.creator_net_bdag,
+      'access_state', v_existing.access_state,
+      'already_owned', v_existing.access_state = 'active',
+      'money_moved', false,
+      'replayed', true
+    );
+  end if;
+
+  select policy.* into v_policy
+  from private.creator_premium_finance_policy policy
+  where policy.singleton = true
+  for share;
+  if not found or not v_policy.purchase_enabled then
+    raise exception using errcode = '55000', message = 'creator_premium_purchase_disabled';
+  end if;
+  if not private.creator_premium_actor_is_age_eligible_v1(p_buyer_id) then
+    raise exception using errcode = '42501', message = 'creator_premium_age_eligibility_required';
+  end if;
+  if not private.creator_premium_actor_is_operational_v1(p_buyer_id) then
+    raise exception using errcode = '42501', message = 'creator_premium_buyer_account_restricted';
+  end if;
+
+  select content.* into v_content
+  from private.creator_premium_contents content
+  where content.id = p_content_id
+  for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'creator_premium_content_not_found';
+  end if;
+  if v_content.lifecycle_status <> 'published' then
+    raise exception using errcode = '55000', message = 'creator_premium_content_not_published';
+  end if;
+  if v_content.access_mode not in ('purchase','purchase_or_subscription') then
+    raise exception using errcode = '55000', message = 'creator_premium_purchase_access_mode_invalid';
+  end if;
+  if p_buyer_id = v_content.creator_id then
+    raise exception using errcode = '42501', message = 'creator_premium_self_purchase_forbidden';
+  end if;
+  if not private.creator_premium_actor_is_operational_v1(v_content.creator_id) then
+    raise exception using errcode = '42501', message = 'creator_premium_creator_account_restricted';
+  end if;
+  if not private.creator_premium_pair_is_unblocked_v1(p_buyer_id, v_content.creator_id) then
+    raise exception using errcode = '42501', message = 'creator_premium_blocked_relationship';
+  end if;
+
+  select offer.* into v_offer
+  from private.creator_premium_offer_versions offer
+  where offer.content_id = v_content.id
+    and offer.creator_id = v_content.creator_id
+    and offer.status = 'active'
+  for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'creator_premium_active_offer_not_found';
+  end if;
+  if v_offer.currency <> 'BDAG' then
+    raise exception using errcode = '23514', message = 'creator_premium_offer_currency_invalid';
+  end if;
+
+  select receipt.* into v_existing
+  from private.creator_premium_purchase_receipts receipt
+  where receipt.buyer_id = p_buyer_id
+    and receipt.content_id = p_content_id
+    and receipt.access_state = 'active'
+  for update;
+  if found then
+    if not private.creator_premium_purchase_binding_is_valid_v1(v_existing.id) then
+      raise exception using errcode = '23514', message = 'creator_premium_purchase_financial_binding_invalid';
+    end if;
+    return pg_catalog.jsonb_build_object(
+      'receipt_id', v_existing.id,
+      'content_id', v_existing.content_id,
+      'financial_transaction_id', v_existing.financial_transaction_id,
+      'gross_amount_bdag', v_existing.gross_amount_bdag,
+      'platform_fee_bdag', v_existing.platform_fee_bdag,
+      'creator_net_bdag', v_existing.creator_net_bdag,
+      'access_state', v_existing.access_state,
+      'already_owned', true,
+      'money_moved', false,
+      'replayed', false
+    );
+  end if;
+
+  select charge.* into v_charge
+  from private.post_creator_premium_charge_v1(
+    p_buyer_id, v_content.creator_id,
+    'creator_premium_purchase', 'creator_premium_purchase_receipt',
+    v_receipt_id, p_idempotency_key, v_offer.price_bdag, v_policy.platform_fee_bps
+  ) charge;
+
+  insert into private.creator_premium_purchase_receipts(
+    id, buyer_id, creator_id, content_id, offer_version_id,
+    financial_transaction_id, idempotency_key, request_fingerprint,
+    gross_amount_bdag, platform_fee_bdag, creator_net_bdag, platform_fee_bps,
+    buyer_account_id, creator_account_id, platform_account_id,
+    access_state, purchased_at, activated_at
+  ) values (
+    v_receipt_id, p_buyer_id, v_content.creator_id, v_content.id, v_offer.id,
+    v_charge.financial_transaction_id, p_idempotency_key, v_fingerprint,
+    v_charge.gross_amount_bdag, v_charge.platform_fee_bdag,
+    v_charge.creator_net_bdag, v_policy.platform_fee_bps,
+    v_charge.payer_account_id, v_charge.creator_account_id, v_charge.platform_account_id,
+    'active', v_now, v_now
+  );
+
+  return pg_catalog.jsonb_build_object(
+    'receipt_id', v_receipt_id,
+    'content_id', v_content.id,
+    'financial_transaction_id', v_charge.financial_transaction_id,
+    'gross_amount_bdag', v_charge.gross_amount_bdag,
+    'platform_fee_bdag', v_charge.platform_fee_bdag,
+    'creator_net_bdag', v_charge.creator_net_bdag,
+    'access_state', 'active',
+    'already_owned', false,
+    'money_moved', true,
+    'replayed', false
+  );
+end;
+$$;
+
+create function public.subscribe_creator_premium_plan_v1(
+  p_subscriber_id uuid,
+  p_plan_id uuid,
+  p_idempotency_key uuid
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_fingerprint text;
+  v_policy private.creator_premium_finance_policy;
+  v_plan private.creator_premium_plans;
+  v_existing private.creator_premium_subscriptions;
+  v_existing_period private.creator_premium_subscription_periods;
+  v_subscription_id uuid := gen_random_uuid();
+  v_period_id uuid := gen_random_uuid();
+  v_charge record;
+  v_now timestamptz := pg_catalog.clock_timestamp();
+  v_paid_through timestamptz;
+begin
+  if not private.creator_premium_internal_finance_authority_v1() then
+    raise exception using errcode = '42501', message = 'creator_premium_internal_authority_required';
+  end if;
+  if p_subscriber_id is null or p_plan_id is null or p_idempotency_key is null then
+    raise exception using errcode = '22023', message = 'creator_premium_subscription_invalid_input';
+  end if;
+  v_fingerprint := private.creator_premium_request_fingerprint_v1(
+    'creator_premium_subscription', p_subscriber_id, p_plan_id
+  );
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('creator-premium-subscription|' || p_subscriber_id::text || '|' || p_idempotency_key::text, 0)
+  );
+
+  select subscription.* into v_existing
+  from private.creator_premium_subscriptions subscription
+  where subscription.subscriber_id = p_subscriber_id
+    and subscription.idempotency_key = p_idempotency_key
+  for update;
+  if found then
+    select period.* into v_existing_period
+    from private.creator_premium_subscription_periods period
+    where period.subscription_id = v_existing.id
+    order by period.starts_at desc, period.id desc
+    limit 1
+    for update;
+    if not found or v_existing_period.request_fingerprint <> v_fingerprint then
+      raise exception using errcode = '23505', message = 'creator_premium_subscription_idempotency_conflict';
+    end if;
+    if v_existing_period.access_state = 'active'
+       and not private.creator_premium_period_binding_is_valid_v1(v_existing_period.id) then
+      raise exception using errcode = '23514', message = 'creator_premium_subscription_financial_binding_invalid';
+    end if;
+    return pg_catalog.jsonb_build_object(
+      'subscription_id', v_existing.id,
+      'period_id', v_existing_period.id,
+      'financial_transaction_id', v_existing_period.financial_transaction_id,
+      'gross_amount_bdag', v_existing_period.gross_amount_bdag,
+      'platform_fee_bdag', v_existing_period.platform_fee_bdag,
+      'creator_net_bdag', v_existing_period.creator_net_bdag,
+      'billing_period_days', v_existing_period.billing_period_days,
+      'starts_at', v_existing_period.starts_at,
+      'paid_through_at', v_existing_period.paid_through_at,
+      'status', v_existing.status,
+      'already_subscribed', v_existing.status in ('active','cancelled'),
+      'money_moved', false,
+      'replayed', true
+    );
+  end if;
+
+  select policy.* into v_policy
+  from private.creator_premium_finance_policy policy
+  where policy.singleton = true
+  for share;
+  if not found or not v_policy.subscription_enabled then
+    raise exception using errcode = '55000', message = 'creator_premium_subscription_disabled';
+  end if;
+  if not private.creator_premium_actor_is_age_eligible_v1(p_subscriber_id) then
+    raise exception using errcode = '42501', message = 'creator_premium_age_eligibility_required';
+  end if;
+  if not private.creator_premium_actor_is_operational_v1(p_subscriber_id) then
+    raise exception using errcode = '42501', message = 'creator_premium_subscriber_account_restricted';
+  end if;
+
+  select plan.* into v_plan
+  from private.creator_premium_plans plan
+  where plan.id = p_plan_id
+  for update;
+  if not found or v_plan.status <> 'active' then
+    raise exception using errcode = 'P0002', message = 'creator_premium_active_plan_not_found';
+  end if;
+  if v_plan.currency <> 'BDAG' or v_plan.billing_period_days not between 1 and 365 then
+    raise exception using errcode = '23514', message = 'creator_premium_plan_financial_identity_invalid';
+  end if;
+  if p_subscriber_id = v_plan.creator_id then
+    raise exception using errcode = '42501', message = 'creator_premium_self_subscription_forbidden';
+  end if;
+  if not private.creator_premium_actor_is_operational_v1(v_plan.creator_id) then
+    raise exception using errcode = '42501', message = 'creator_premium_creator_account_restricted';
+  end if;
+  if not private.creator_premium_pair_is_unblocked_v1(p_subscriber_id, v_plan.creator_id) then
+    raise exception using errcode = '42501', message = 'creator_premium_blocked_relationship';
+  end if;
+  if not exists (
+    select 1
+    from private.creator_premium_plan_contents grant_map
+    join private.creator_premium_contents content
+      on content.id = grant_map.content_id
+     and content.creator_id = grant_map.creator_id
+    where grant_map.plan_id = v_plan.id
+      and grant_map.creator_id = v_plan.creator_id
+      and content.lifecycle_status = 'published'
+      and content.access_mode in ('subscription','purchase_or_subscription')
+  ) then
+    raise exception using errcode = '23514', message = 'creator_premium_plan_has_no_valid_content';
+  end if;
+
+  select subscription.* into v_existing
+  from private.creator_premium_subscriptions subscription
+  where subscription.subscriber_id = p_subscriber_id
+    and subscription.plan_id = p_plan_id
+  for update;
+  if found then
+    if v_existing.status in ('expired','revoked') then
+      raise exception using errcode = '0A000', message = 'creator_premium_subscription_renewal_not_implemented';
+    end if;
+    if v_existing.status not in ('active','cancelled') then
+      raise exception using errcode = '23514', message = 'creator_premium_subscription_state_invalid';
+    end if;
+    select period.* into v_existing_period
+    from private.creator_premium_subscription_periods period
+    where period.subscription_id = v_existing.id
+    order by period.starts_at desc, period.id desc
+    limit 1
+    for update;
+    if not found or not private.creator_premium_period_binding_is_valid_v1(v_existing_period.id) then
+      raise exception using errcode = '23514', message = 'creator_premium_subscription_financial_binding_invalid';
+    end if;
+    return pg_catalog.jsonb_build_object(
+      'subscription_id', v_existing.id,
+      'period_id', v_existing_period.id,
+      'financial_transaction_id', v_existing_period.financial_transaction_id,
+      'gross_amount_bdag', v_existing_period.gross_amount_bdag,
+      'platform_fee_bdag', v_existing_period.platform_fee_bdag,
+      'creator_net_bdag', v_existing_period.creator_net_bdag,
+      'billing_period_days', v_existing_period.billing_period_days,
+      'starts_at', v_existing_period.starts_at,
+      'paid_through_at', v_existing_period.paid_through_at,
+      'status', v_existing.status,
+      'already_subscribed', true,
+      'money_moved', false,
+      'replayed', false
+    );
+  end if;
+
+  v_paid_through := v_now + pg_catalog.make_interval(days => v_plan.billing_period_days);
+  select charge.* into v_charge
+  from private.post_creator_premium_charge_v1(
+    p_subscriber_id, v_plan.creator_id,
+    'creator_premium_subscription', 'creator_premium_subscription_period',
+    v_period_id, p_idempotency_key, v_plan.price_bdag, v_policy.platform_fee_bps
+  ) charge;
+
+  insert into private.creator_premium_subscriptions(
+    id, subscriber_id, creator_id, plan_id, idempotency_key,
+    status, started_at
+  ) values (
+    v_subscription_id, p_subscriber_id, v_plan.creator_id, v_plan.id,
+    p_idempotency_key, 'active', v_now
+  );
+  insert into private.creator_premium_subscription_periods(
+    id, subscription_id, subscriber_id, creator_id, plan_id,
+    starts_at, paid_through_at, financial_transaction_id,
+    idempotency_key, request_fingerprint, billing_period_days,
+    gross_amount_bdag, platform_fee_bdag, creator_net_bdag, platform_fee_bps,
+    subscriber_account_id, creator_account_id, platform_account_id,
+    access_state
+  ) values (
+    v_period_id, v_subscription_id, p_subscriber_id, v_plan.creator_id, v_plan.id,
+    v_now, v_paid_through, v_charge.financial_transaction_id,
+    p_idempotency_key, v_fingerprint, v_plan.billing_period_days,
+    v_charge.gross_amount_bdag, v_charge.platform_fee_bdag,
+    v_charge.creator_net_bdag, v_policy.platform_fee_bps,
+    v_charge.payer_account_id, v_charge.creator_account_id, v_charge.platform_account_id,
+    'active'
+  );
+
+  return pg_catalog.jsonb_build_object(
+    'subscription_id', v_subscription_id,
+    'period_id', v_period_id,
+    'financial_transaction_id', v_charge.financial_transaction_id,
+    'gross_amount_bdag', v_charge.gross_amount_bdag,
+    'platform_fee_bdag', v_charge.platform_fee_bdag,
+    'creator_net_bdag', v_charge.creator_net_bdag,
+    'billing_period_days', v_plan.billing_period_days,
+    'starts_at', v_now,
+    'paid_through_at', v_paid_through,
+    'status', 'active',
+    'already_subscribed', false,
+    'money_moved', true,
+    'replayed', false
+  );
+end;
+$$;
+
+create function public.cancel_creator_premium_subscription_v1(
+  p_subscriber_id uuid,
+  p_subscription_id uuid,
+  p_idempotency_key uuid
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_subscription private.creator_premium_subscriptions;
+  v_fingerprint text;
+  v_paid_through timestamptz;
+begin
+  if not private.creator_premium_internal_finance_authority_v1() then
+    raise exception using errcode = '42501', message = 'creator_premium_internal_authority_required';
+  end if;
+  if p_subscriber_id is null or p_subscription_id is null or p_idempotency_key is null then
+    raise exception using errcode = '22023', message = 'creator_premium_cancellation_invalid_input';
+  end if;
+  v_fingerprint := private.creator_premium_request_fingerprint_v1(
+    'creator_premium_cancel_subscription', p_subscriber_id, p_subscription_id
+  );
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('creator-premium-cancel|' || p_subscriber_id::text || '|' || p_idempotency_key::text, 0)
+  );
+  select subscription.* into v_subscription
+  from private.creator_premium_subscriptions subscription
+  where subscription.id = p_subscription_id
+    and subscription.subscriber_id = p_subscriber_id
+  for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'creator_premium_subscription_not_found';
+  end if;
+  select pg_catalog.max(period.paid_through_at) into v_paid_through
+  from private.creator_premium_subscription_periods period
+  where period.subscription_id = v_subscription.id
+    and period.access_state = 'active';
+
+  if v_subscription.status = 'cancelled' then
+    if v_subscription.cancel_idempotency_key = p_idempotency_key
+       and v_subscription.cancel_request_fingerprint <> v_fingerprint then
+      raise exception using errcode = '23505', message = 'creator_premium_cancellation_idempotency_conflict';
+    end if;
+    return pg_catalog.jsonb_build_object(
+      'subscription_id', v_subscription.id,
+      'status', 'cancelled',
+      'paid_through_at', v_paid_through,
+      'money_moved', false,
+      'replayed', v_subscription.cancel_idempotency_key = p_idempotency_key,
+      'already_cancelled', true
+    );
+  end if;
+  if v_subscription.status <> 'active' then
+    raise exception using errcode = '55000', message = 'creator_premium_subscription_not_cancellable';
+  end if;
+
+  update private.creator_premium_subscriptions
+  set status = 'cancelled',
+      cancelled_at = pg_catalog.clock_timestamp(),
+      cancel_idempotency_key = p_idempotency_key,
+      cancel_request_fingerprint = v_fingerprint,
+      updated_at = pg_catalog.clock_timestamp()
+  where id = v_subscription.id;
+
+  return pg_catalog.jsonb_build_object(
+    'subscription_id', v_subscription.id,
+    'status', 'cancelled',
+    'paid_through_at', v_paid_through,
+    'money_moved', false,
+    'replayed', false,
+    'already_cancelled', false
+  );
+end;
+$$;
+
+create function public.refund_creator_premium_purchase_v1(
+  p_receipt_id uuid,
+  p_idempotency_key uuid,
+  p_reason_code text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_receipt private.creator_premium_purchase_receipts;
+  v_policy private.creator_premium_finance_policy;
+  v_original public.financial_transactions;
+  v_reason text;
+  v_fingerprint text;
+  v_refund_transaction_id uuid;
+  v_now timestamptz := pg_catalog.clock_timestamp();
+begin
+  if not private.creator_premium_internal_finance_authority_v1() then
+    raise exception using errcode = '42501', message = 'creator_premium_internal_authority_required';
+  end if;
+  if p_receipt_id is null or p_idempotency_key is null then
+    raise exception using errcode = '22023', message = 'creator_premium_purchase_refund_invalid_input';
+  end if;
+  v_reason := private.validate_creator_premium_refund_reason_v1(p_reason_code);
+  v_fingerprint := private.creator_premium_request_fingerprint_v1(
+    'creator_premium_purchase_refund', p_receipt_id, p_receipt_id, v_reason
+  );
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('creator-premium-purchase-refund|' || p_receipt_id::text || '|' || p_idempotency_key::text, 0)
+  );
+  select receipt.* into v_receipt
+  from private.creator_premium_purchase_receipts receipt
+  where receipt.id = p_receipt_id
+  for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'creator_premium_purchase_receipt_not_found';
+  end if;
+  if v_receipt.access_state = 'refunded' then
+    if v_receipt.refund_idempotency_key = p_idempotency_key
+       and v_receipt.refund_request_fingerprint <> v_fingerprint then
+      raise exception using errcode = '23505', message = 'creator_premium_purchase_refund_idempotency_conflict';
+    end if;
+    return pg_catalog.jsonb_build_object(
+      'receipt_id', v_receipt.id,
+      'reversal_financial_transaction_id', v_receipt.reversal_financial_transaction_id,
+      'access_state', 'refunded',
+      'money_moved', false,
+      'replayed', v_receipt.refund_idempotency_key = p_idempotency_key,
+      'already_refunded', true
+    );
+  end if;
+  select policy.* into v_policy
+  from private.creator_premium_finance_policy policy
+  where policy.singleton = true
+  for share;
+  if not found or not v_policy.refunds_enabled then
+    raise exception using errcode = '55000', message = 'creator_premium_refunds_disabled';
+  end if;
+  if not private.creator_premium_purchase_binding_is_valid_v1(v_receipt.id) then
+    raise exception using errcode = '23514', message = 'creator_premium_purchase_financial_binding_invalid';
+  end if;
+  select finance_tx.* into v_original
+  from public.financial_transactions finance_tx
+  where finance_tx.id = v_receipt.financial_transaction_id
+  for update;
+
+  v_refund_transaction_id := private.post_creator_premium_refund_v1(
+    v_receipt.buyer_id, v_receipt.creator_id,
+    v_receipt.buyer_account_id, v_receipt.creator_account_id, v_receipt.platform_account_id,
+    'creator_premium_purchase_refund', 'creator_premium_purchase_receipt',
+    v_receipt.id, p_idempotency_key,
+    v_receipt.gross_amount_bdag, v_receipt.platform_fee_bdag, v_receipt.creator_net_bdag
+  );
+  update public.financial_transactions
+  set status = 'reversed'
+  where id = v_original.id and status = 'completed';
+  if not found then
+    raise exception using errcode = '23514', message = 'creator_premium_purchase_financial_binding_invalid';
+  end if;
+  update private.creator_premium_purchase_receipts
+  set access_state = 'refunded',
+      reversal_financial_transaction_id = v_refund_transaction_id,
+      refund_idempotency_key = p_idempotency_key,
+      refund_request_fingerprint = v_fingerprint,
+      refund_reason_code = v_reason,
+      refunded_at = v_now,
+      revoked_at = v_now,
+      updated_at = v_now
+  where id = v_receipt.id;
+
+  return pg_catalog.jsonb_build_object(
+    'receipt_id', v_receipt.id,
+    'reversal_financial_transaction_id', v_refund_transaction_id,
+    'access_state', 'refunded',
+    'money_moved', true,
+    'replayed', false,
+    'already_refunded', false
+  );
+exception
+  when sqlstate 'P0001' then
+    if sqlerrm = 'creator_premium_refund_source_balance_insufficient' then
+      raise exception using errcode = 'P0001', message = 'creator_premium_refund_source_balance_insufficient';
+    end if;
+    raise;
+end;
+$$;
+
+create function public.refund_creator_premium_subscription_period_v1(
+  p_period_id uuid,
+  p_idempotency_key uuid,
+  p_reason_code text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_period private.creator_premium_subscription_periods;
+  v_subscription private.creator_premium_subscriptions;
+  v_policy private.creator_premium_finance_policy;
+  v_original public.financial_transactions;
+  v_reason text;
+  v_fingerprint text;
+  v_refund_transaction_id uuid;
+  v_now timestamptz := pg_catalog.clock_timestamp();
+begin
+  if not private.creator_premium_internal_finance_authority_v1() then
+    raise exception using errcode = '42501', message = 'creator_premium_internal_authority_required';
+  end if;
+  if p_period_id is null or p_idempotency_key is null then
+    raise exception using errcode = '22023', message = 'creator_premium_subscription_refund_invalid_input';
+  end if;
+  v_reason := private.validate_creator_premium_refund_reason_v1(p_reason_code);
+  v_fingerprint := private.creator_premium_request_fingerprint_v1(
+    'creator_premium_subscription_refund', p_period_id, p_period_id, v_reason
+  );
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('creator-premium-subscription-refund|' || p_period_id::text || '|' || p_idempotency_key::text, 0)
+  );
+  select period.* into v_period
+  from private.creator_premium_subscription_periods period
+  where period.id = p_period_id
+  for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'creator_premium_subscription_period_not_found';
+  end if;
+  if v_period.access_state = 'refunded' then
+    if v_period.refund_idempotency_key = p_idempotency_key
+       and v_period.refund_request_fingerprint <> v_fingerprint then
+      raise exception using errcode = '23505', message = 'creator_premium_subscription_refund_idempotency_conflict';
+    end if;
+    return pg_catalog.jsonb_build_object(
+      'period_id', v_period.id,
+      'subscription_id', v_period.subscription_id,
+      'reversal_financial_transaction_id', v_period.reversal_financial_transaction_id,
+      'access_state', 'refunded',
+      'money_moved', false,
+      'replayed', v_period.refund_idempotency_key = p_idempotency_key,
+      'already_refunded', true
+    );
+  end if;
+  select policy.* into v_policy
+  from private.creator_premium_finance_policy policy
+  where policy.singleton = true
+  for share;
+  if not found or not v_policy.refunds_enabled then
+    raise exception using errcode = '55000', message = 'creator_premium_refunds_disabled';
+  end if;
+  if not private.creator_premium_period_binding_is_valid_v1(v_period.id) then
+    raise exception using errcode = '23514', message = 'creator_premium_subscription_financial_binding_invalid';
+  end if;
+  select subscription.* into v_subscription
+  from private.creator_premium_subscriptions subscription
+  where subscription.id = v_period.subscription_id
+  for update;
+  if not found then
+    raise exception using errcode = '23514', message = 'creator_premium_subscription_relationship_invalid';
+  end if;
+  select finance_tx.* into v_original
+  from public.financial_transactions finance_tx
+  where finance_tx.id = v_period.financial_transaction_id
+  for update;
+
+  v_refund_transaction_id := private.post_creator_premium_refund_v1(
+    v_period.subscriber_id, v_period.creator_id,
+    v_period.subscriber_account_id, v_period.creator_account_id, v_period.platform_account_id,
+    'creator_premium_subscription_refund', 'creator_premium_subscription_period',
+    v_period.id, p_idempotency_key,
+    v_period.gross_amount_bdag, v_period.platform_fee_bdag, v_period.creator_net_bdag
+  );
+  update public.financial_transactions
+  set status = 'reversed'
+  where id = v_original.id and status = 'completed';
+  if not found then
+    raise exception using errcode = '23514', message = 'creator_premium_subscription_financial_binding_invalid';
+  end if;
+  update private.creator_premium_subscription_periods
+  set access_state = 'refunded',
+      reversal_financial_transaction_id = v_refund_transaction_id,
+      refund_idempotency_key = p_idempotency_key,
+      refund_request_fingerprint = v_fingerprint,
+      refund_reason_code = v_reason,
+      refunded_at = v_now,
+      revoked_at = v_now,
+      updated_at = v_now
+  where id = v_period.id;
+  update private.creator_premium_subscriptions
+  set status = 'revoked',
+      ended_at = v_now,
+      updated_at = v_now
+  where id = v_subscription.id;
+
+  return pg_catalog.jsonb_build_object(
+    'period_id', v_period.id,
+    'subscription_id', v_period.subscription_id,
+    'reversal_financial_transaction_id', v_refund_transaction_id,
+    'access_state', 'refunded',
+    'subscription_status', 'revoked',
+    'money_moved', true,
+    'replayed', false,
+    'already_refunded', false
+  );
+exception
+  when sqlstate 'P0001' then
+    if sqlerrm = 'creator_premium_refund_source_balance_insufficient' then
+      raise exception using errcode = 'P0001', message = 'creator_premium_refund_source_balance_insufficient';
+    end if;
+    raise;
+end;
+$$;
+
+revoke all on function private.creator_premium_internal_finance_authority_v1()
+  from public, anon, authenticated, service_role;
+revoke all on function private.creator_premium_request_fingerprint_v1(text,uuid,uuid,text)
+  from public, anon, authenticated, service_role;
+revoke all on function private.validate_creator_premium_refund_reason_v1(text)
+  from public, anon, authenticated, service_role;
+revoke all on function private.post_creator_premium_refund_v1(uuid,uuid,uuid,uuid,uuid,text,text,uuid,uuid,numeric,numeric,numeric)
+  from public, anon, authenticated, service_role;
+
+revoke all on function public.purchase_creator_premium_content_v1(uuid,uuid,uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.purchase_creator_premium_content_v1(uuid,uuid,uuid)
+  to service_role;
+revoke all on function public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid)
+  to service_role;
+revoke all on function public.cancel_creator_premium_subscription_v1(uuid,uuid,uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.cancel_creator_premium_subscription_v1(uuid,uuid,uuid)
+  to service_role;
+revoke all on function public.refund_creator_premium_purchase_v1(uuid,uuid,text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.refund_creator_premium_purchase_v1(uuid,uuid,text)
+  to service_role;
+revoke all on function public.refund_creator_premium_subscription_period_v1(uuid,uuid,text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.refund_creator_premium_subscription_period_v1(uuid,uuid,text)
+  to service_role;
