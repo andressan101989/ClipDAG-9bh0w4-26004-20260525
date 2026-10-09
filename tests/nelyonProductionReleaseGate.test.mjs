@@ -7,6 +7,7 @@ import test from 'node:test';
 
 const policyUrl = new URL('../.github/nelyon-production-release-policy.json', import.meta.url);
 const gateUrl = new URL('../scripts/nelyon-production-release.mjs', import.meta.url);
+const workflowUrl = new URL('../.github/workflows/nelyon-production-release.yml', import.meta.url);
 
 const OWNER = 'andressan101989';
 const REPOSITORY = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
@@ -1144,4 +1145,96 @@ test('snapshot count growth is reported separately from integrity verdict', asyn
   const result = gate.verifyFinancePostcheck({ before, after, window, reconciliationResults: { all: 0 }, expectedPolicy: policy.supabase.finance_policy });
   assert.deepEqual(result.count_growth, { ledger_entries: 2, transactions: 1 });
   assert.equal(result.integrity, 'PASS');
+});
+
+function workflowText() {
+  assert.ok(existsSync(workflowUrl), 'production release workflow must exist');
+  return readFileSync(workflowUrl, 'utf8');
+}
+
+function workflowJob(text, name, nextName) {
+  const start = text.indexOf(`  ${name}:\n`);
+  assert.notEqual(start, -1, `missing ${name} job`);
+  const end = nextName ? text.indexOf(`  ${nextName}:\n`, start + 1) : text.length;
+  return text.slice(start, end === -1 ? text.length : end);
+}
+
+test('workflow trigger is exclusively workflow_dispatch with four required inputs', () => {
+  const text = workflowText();
+  const trigger = text.slice(text.indexOf('on:'), text.indexOf('\npermissions:'));
+  assert.match(trigger, /^on:\s*\n\s+workflow_dispatch:/m);
+  for (const forbidden of ['push:', 'pull_request:', 'schedule:', 'workflow_run:']) assert.doesNotMatch(trigger, new RegExp(forbidden));
+  for (const input of ['approved_sha', 'release_id', 'scope_confirmation', 'mode']) {
+    assert.match(trigger, new RegExp(`\\n      ${input}:\\n        description:.*\\n        required: true`));
+  }
+  assert.match(trigger, /mode:[\s\S]*type: choice[\s\S]*- plan_only[\s\S]*- gate_proof[\s\S]*- release/);
+});
+
+test('workflow uses exact immutable action pins Node and Supabase CLI versions', () => {
+  const text = workflowText();
+  for (const pin of [
+    'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+    'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1',
+    'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9',
+    'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333',
+    'supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359',
+  ]) assert.match(text, new RegExp(pin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(text, /node-version: '24\.21\.0'/);
+  assert.match(text, /version: '2\.120\.0'/);
+  assert.doesNotMatch(text, /uses:\s+[^\n]+@(main|master|v?\d+(?:\.x)?|latest)\s*$/m);
+});
+
+test('plan has no production environment secrets or mutating commands', () => {
+  const plan = workflowJob(workflowText(), 'plan', 'deploy');
+  assert.doesNotMatch(plan, /environment:\s*production/);
+  assert.doesNotMatch(plan, /secrets\./);
+  assert.doesNotMatch(plan, /supabase\s+(db\s+push|migration\s+up|functions\s+deploy)/);
+  assert.doesNotMatch(plan, /\b(curl|fetch)\b[^\n]*(supabase\.co|api\.supabase)/i);
+});
+
+test('deploy needs plan uses production and fixed noncancelling concurrency', () => {
+  const deploy = workflowJob(workflowText(), 'deploy');
+  assert.match(deploy, /needs: plan/);
+  assert.match(deploy, /environment:\s*production/);
+  assert.match(deploy, /concurrency:\s*\n\s+group: nelyon-supabase-production\s*\n\s+cancel-in-progress: false/);
+});
+
+test('plan_only cannot schedule deploy and gate_proof contains no Supabase mutation', () => {
+  const deploy = workflowJob(workflowText(), 'deploy');
+  assert.match(deploy, /if: >-[\s\S]*needs\.plan\.outputs\.mode == 'gate_proof'[\s\S]*needs\.plan\.outputs\.mode == 'release'/);
+  assert.doesNotMatch(deploy, /needs\.plan\.outputs\.mode == 'plan_only'/);
+  assert.match(deploy, /if: needs\.plan\.outputs\.mode == 'gate_proof'[\s\S]*verify-gate/);
+  assert.match(deploy, /if: needs\.plan\.outputs\.mode == 'release'[\s\S]*supabase\/setup-cli/);
+});
+
+test('release path revalidates before secrets and before every mutation', () => {
+  const deploy = workflowJob(workflowText(), 'deploy');
+  const revalidate = deploy.indexOf(' revalidate ');
+  const verifyGate = deploy.indexOf(' verify-gate ');
+  const secretReference = deploy.indexOf('secrets.SUPABASE_ACCESS_TOKEN');
+  const migration = deploy.indexOf('supabase db push --project-ref');
+  const functions = deploy.indexOf('supabase functions deploy "$function_name"');
+  assert.ok(revalidate >= 0 && verifyGate > revalidate && secretReference > verifyGate);
+  assert.ok(migration > secretReference && functions > migration);
+  assert.match(deploy.slice(migration - 500, migration), /revalidate/);
+  assert.match(deploy.slice(functions - 500, functions), /revalidate/);
+});
+
+test('workflow has no contents write force prune bulk deploy or secret logging', () => {
+  const text = workflowText();
+  assert.match(text, /^permissions:\s*\n\s+contents: read/m);
+  assert.doesNotMatch(text, /contents:\s*write/);
+  assert.doesNotMatch(text, /(--force|--prune|git push(?:\s+[^\n]*)?\s-f(?:\s|$)|git reset|git clean)/m);
+  assert.doesNotMatch(text, /supabase functions deploy\s*(?:\\?\s*)?$/m);
+  assert.doesNotMatch(text, /(echo|printf|Write-Output)[^\n]*(SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD)/i);
+});
+
+test('postcheck failure cannot mark success or baseline advancement', () => {
+  const deploy = workflowJob(workflowText(), 'deploy');
+  const postcheck = deploy.indexOf(' postcheck ');
+  const success = deploy.indexOf('RELEASE SUCCESS');
+  assert.ok(postcheck >= 0 && success > postcheck);
+  assert.match(deploy.slice(postcheck, success), /&&/);
+  assert.doesNotMatch(deploy, /(write|update|promote)[^\n]*baseline/i);
+  assert.doesNotMatch(deploy, /nelyon-production-release-policy\.json[^\n]*(>|Set-Content|Out-File)/i);
 });

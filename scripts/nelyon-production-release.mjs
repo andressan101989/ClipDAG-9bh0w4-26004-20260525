@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, posix, resolve } from 'node:path';
+import { isAbsolute, join, posix, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
@@ -646,6 +647,63 @@ export function classifyRisk({ affectedFunctions = [], changedPaths = [], config
   }
   findings.sort((left, right) => `${left.code}:${left.resource}:${left.path}`.localeCompare(`${right.code}:${right.resource}:${right.path}`));
   return Object.freeze({ level: findings.length ? 'HIGH' : 'STANDARD', findings });
+}
+
+function collectFunctionSources(directory, root, files = {}) {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isSymbolicLink()) deny('AMBIGUOUS_IMPORT', `function source link is unsupported: ${path}`);
+    if (entry.isDirectory()) collectFunctionSources(path, root, files);
+    else if (entry.isFile() && /\.(?:ts|tsx|js|mjs)$/.test(entry.name)) {
+      files[relative(root, path).replaceAll('\\', '/')] = readFileSync(path, 'utf8');
+    }
+  }
+  return files;
+}
+
+export function compileLocalEvidence({ cwd, policy, request, generatedAt = new Date().toISOString() }) {
+  const runGit = args => execFileSync('git', args, { cwd, encoding: args.includes('-z') ? 'buffer' : 'utf8' });
+  const gitState = resolveGitState({
+    cwd,
+    baselineSha: policy.baseline.sha,
+    approvedSha: request.approvedSha,
+    expectedRepository: policy.repository,
+    runGit,
+  });
+  const classified = classifyChangedPaths(gitState.changes);
+  const migrations = validateMigrationDelta({
+    changes: gitState.changes,
+    baselineLatestMigration: policy.baseline.latest_migration,
+    remoteMigrations: [],
+    dryRunPending: [],
+  });
+  const graph = buildFunctionGraph(collectFunctionSources(join(cwd, 'supabase', 'functions'), cwd));
+  const affectedFunctions = resolveAffectedFunctions({
+    changes: gitState.changes,
+    graph,
+    managedFunctions: policy.supabase.managed_functions,
+    forbiddenFunctions: policy.supabase.forbidden_functions,
+  });
+  const reproducibility = analyzeFunctionReproducibility({ affectedFunctions, graph });
+  const baselineConfig = runGit(['show', `${policy.baseline.sha}:supabase/config.toml`]);
+  const currentConfig = readFileSync(join(cwd, 'supabase', 'config.toml'), 'utf8');
+  const risk = classifyRisk({
+    affectedFunctions,
+    changedPaths: gitState.changes.map(change => change.path),
+    configBefore: parseFunctionConfig(baselineConfig),
+    configAfter: parseFunctionConfig(currentConfig),
+  });
+  const compilerPath = join(cwd, 'scripts', 'nelyon-production-release.mjs');
+  return {
+    gitState,
+    classified,
+    migrations,
+    affectedFunctions,
+    reproducibility,
+    risk,
+    compiler: { path: 'scripts/nelyon-production-release.mjs', sha256: sha256Hex(readFileSync(compilerPath)) },
+    generatedAt,
+  };
 }
 
 function stableCopy(value) {
@@ -1406,6 +1464,83 @@ async function runCli(argv) {
     return 0;
   }
   const { command, values } = parseCliArguments(argv);
+  if (command === 'revalidate') {
+    for (const required of ['policy', 'request', 'bundle', 'compiler-sha256', 'remote-evidence', 'output']) {
+      if (!values[required]) throw new Error(`missing --${required}`);
+    }
+    const policy = loadPolicy(values.policy);
+    const releaseRequest = JSON.parse(readFileSync(values.request, 'utf8'));
+    validateRequest(releaseRequest, policy);
+    const gitState = resolveGitState({
+      cwd: process.cwd(),
+      baselineSha: policy.baseline.sha,
+      approvedSha: releaseRequest.approvedSha,
+      expectedRepository: policy.repository,
+      runGit: args => execFileSync('git', args, { cwd: process.cwd(), encoding: args.includes('-z') ? 'buffer' : 'utf8' }),
+    });
+    const evidence = JSON.parse(readFileSync(values['remote-evidence'], 'utf8'));
+    if (canonicalJson(evidence.gitState?.changes ?? []) !== canonicalJson(gitState.changes)) {
+      deny('POST_APPROVAL_DRIFT', 'regenerated Git delta differs from the approved plan');
+    }
+    const regenerated = buildManifest({ ...evidence, request: releaseRequest, policy, gitState });
+    const digest = readFileSync(join(resolve(values.bundle), 'manifest.sha256'), 'utf8').trim();
+    const verified = verifyManifestBundle({
+      directory: resolve(values.bundle),
+      expected: {
+        approvedSha: releaseRequest.approvedSha,
+        compilerSha256: values['compiler-sha256'],
+        environmentName: policy.environment.name,
+        manifestDigest: digest,
+        releaseId: releaseRequest.releaseId,
+        runAttempt: releaseRequest.runAttempt,
+        runId: releaseRequest.runId,
+      },
+    });
+    if (canonicalJson(regenerated) !== canonicalJson(verified.manifest)) {
+      deny('POST_APPROVAL_DRIFT', 'regenerated manifest differs from the approved artifact');
+    }
+    const result = { schema_version: 1, result: 'REVALIDATED', manifest_sha256: digest, approved_sha: releaseRequest.approvedSha };
+    writeFileSync(resolve(values.output), canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
+    process.stdout.write(`REVALIDATED ${digest}\n`);
+    return 0;
+  }
+  if (command === 'postcheck') {
+    for (const required of ['policy', 'request', 'pre-finance', 'post-finance', 'finance-window', 'reconciliation', 'remote-postcheck', 'output']) {
+      if (!values[required]) throw new Error(`missing --${required}`);
+    }
+    const policy = loadPolicy(values.policy);
+    const releaseRequest = JSON.parse(readFileSync(values.request, 'utf8'));
+    validateRequest(releaseRequest, policy);
+    const remote = JSON.parse(readFileSync(values['remote-postcheck'], 'utf8'));
+    if (remote?.complete !== true
+      || remote.project_ref !== policy.supabase.project_ref
+      || remote.health !== 'ACTIVE_HEALTHY'
+      || remote.unexpected_deployments !== 0
+      || remote.migrations_match !== true
+      || remote.functions_match !== true
+      || remote.cron_security_match !== true) {
+      deny('REMOTE_POSTCHECK_FAILED', 'Supabase production postcheck evidence is incomplete or divergent');
+    }
+    const finance = verifyFinancePostcheck({
+      before: JSON.parse(readFileSync(values['pre-finance'], 'utf8')),
+      after: JSON.parse(readFileSync(values['post-finance'], 'utf8')),
+      window: JSON.parse(readFileSync(values['finance-window'], 'utf8')),
+      reconciliationResults: JSON.parse(readFileSync(values.reconciliation, 'utf8')),
+      expectedPolicy: policy.supabase.finance_policy,
+    });
+    const result = {
+      schema_version: 1,
+      result: 'SUCCESS',
+      release_id: releaseRequest.releaseId,
+      approved_sha: releaseRequest.approvedSha,
+      remote_postcheck_sha256: sha256Hex(canonicalJson(remote)),
+      finance,
+    };
+    const bytes = canonicalJson(result);
+    writeFileSync(resolve(values.output), bytes, { encoding: 'utf8', flag: 'wx' });
+    process.stdout.write(`POSTCHECK SUCCESS ${sha256Hex(bytes)}\n`);
+    return 0;
+  }
   if (command === 'verify-gate') {
     for (const required of ['policy', 'request', 'bundle', 'compiler-sha256', 'environment', 'branch-policies', 'approvals', 'auto-deploy-evidence', 'runs', 'output']) {
       if (!values[required]) throw new Error(`missing --${required}`);
@@ -1495,12 +1630,15 @@ async function runCli(argv) {
     return 0;
   }
   if (command !== 'plan') throw new Error(`command ${command} is not implemented yet`);
-  for (const required of ['policy', 'request', 'remote-evidence', 'history', 'output']) {
+  for (const required of ['policy', 'request', 'history', 'output']) {
     if (!values[required]) throw new Error(`missing --${required}`);
   }
   const policy = loadPolicy(values.policy);
   const releaseRequest = JSON.parse(readFileSync(values.request, 'utf8'));
-  const evidence = JSON.parse(readFileSync(values['remote-evidence'], 'utf8'));
+  const evidence = values['remote-evidence']
+    ? JSON.parse(readFileSync(values['remote-evidence'], 'utf8'))
+    : compileLocalEvidence({ cwd: process.cwd(), policy, request: releaseRequest });
+  if (values['evidence-output']) writeFileSync(resolve(values['evidence-output']), canonicalJson(evidence), { encoding: 'utf8', flag: 'wx' });
   const history = JSON.parse(readFileSync(values.history, 'utf8'));
   validateRequest(releaseRequest, policy);
   validateReleaseHistory({ releaseId: releaseRequest.releaseId, pages: history, policy });
