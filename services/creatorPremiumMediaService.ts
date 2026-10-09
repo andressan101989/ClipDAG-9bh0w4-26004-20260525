@@ -45,9 +45,17 @@ export interface CreatorPremiumImagePairResult {
 }
 
 export interface CreatorPremiumOriginalImageGrant {
+  contentId: string;
   url: string;
   expiresAt: string;
 }
+
+export type CreatorPremiumGrantFailureCode =
+  | 'denied'
+  | 'missing'
+  | 'network'
+  | 'unavailable'
+  | 'invalid';
 
 export interface CreatorPremiumCleanupFailure {
   role: 'teaser' | 'original';
@@ -56,11 +64,17 @@ export interface CreatorPremiumCleanupFailure {
 
 export class CreatorPremiumMediaError extends Error {
   cleanupFailures: CreatorPremiumCleanupFailure[];
+  grantCode?: CreatorPremiumGrantFailureCode;
 
-  constructor(message: string, cleanupFailures: CreatorPremiumCleanupFailure[] = []) {
+  constructor(
+    message: string,
+    cleanupFailures: CreatorPremiumCleanupFailure[] = [],
+    grantCode?: CreatorPremiumGrantFailureCode,
+  ) {
     super(message);
     this.name = 'CreatorPremiumMediaError';
     this.cleanupFailures = cleanupFailures;
+    this.grantCode = grantCode;
   }
 }
 
@@ -98,6 +112,30 @@ function mediaError(error: unknown, cleanupFailures: CreatorPremiumCleanupFailur
       ? (error as { message: string }).message
       : 'creator_premium_media_failed';
   return new CreatorPremiumMediaError(message, cleanupFailures);
+}
+
+function grantFailureCode(error: unknown): CreatorPremiumGrantFailureCode {
+  const candidate = error && typeof error === 'object'
+    ? error as { status?: unknown; context?: { status?: unknown }; name?: unknown; message?: unknown }
+    : {};
+  const status = Number(candidate.status ?? candidate.context?.status);
+  if (status === 401 || status === 403) return 'denied';
+  if (status === 404) return 'missing';
+  if (status >= 500) return 'unavailable';
+  const name = String(candidate.name ?? '').toLowerCase();
+  const message = String(candidate.message ?? error ?? '').toLowerCase();
+  if (name.includes('fetch') || /network|fetch failed|offline|timeout/.test(message)) return 'network';
+  if (/unauthor|forbidden|denied|revok|restrict|blocked|entitlement/.test(message)) return 'denied';
+  if (/not.?found|missing|no.?media/.test(message)) return 'missing';
+  return 'invalid';
+}
+
+function premiumImageGrantError(error: unknown, fallback: CreatorPremiumGrantFailureCode = 'invalid') {
+  const code = error == null ? fallback : grantFailureCode(error);
+  const message = code === 'invalid'
+    ? 'invalid_premium_image_grant'
+    : `creator_premium_image_grant_${code}`;
+  return new CreatorPremiumMediaError(message, [], code);
 }
 
 export async function uploadCreatorPremiumImagePair(
@@ -190,26 +228,37 @@ export async function getCreatorPremiumOriginalImageGrant(
   contentId: string,
 ): Promise<CreatorPremiumOriginalImageGrant> {
   if (!contentId) throw new CreatorPremiumMediaError('creator_premium_invalid_content');
-  const { data, error } = await db().functions.invoke('get-media-url', {
-    body: { premium_content_id: contentId },
-  });
+  let response;
+  try {
+    response = await db().functions.invoke('get-media-url', {
+      body: { premium_content_id: contentId },
+    });
+  } catch (error) {
+    throw premiumImageGrantError(error, 'network');
+  }
+  const { data, error } = response;
+  if (error) throw premiumImageGrantError(error);
   const grant = data?.data;
   const expiresAt = typeof grant?.expiresAt === 'string' ? Date.parse(grant.expiresAt) : NaN;
+  const now = Date.now();
   let parsed: URL;
   try {
     parsed = new URL(grant?.url ?? '');
   } catch {
-    throw new CreatorPremiumMediaError('invalid_premium_image_grant');
+    throw premiumImageGrantError(null);
   }
   if (
-    error ||
     data?.success !== true ||
     grant?.contentId !== contentId ||
     parsed.protocol !== 'https:' ||
     !Number.isFinite(expiresAt) ||
-    expiresAt <= Date.now()
+    expiresAt <= now ||
+    expiresAt > now + 315_000
   ) {
-    throw new CreatorPremiumMediaError('invalid_premium_image_grant');
+    const responseError = data?.success === false
+      ? { message: String(data?.error ?? '') }
+      : null;
+    throw premiumImageGrantError(responseError);
   }
-  return { url: parsed.toString(), expiresAt: grant.expiresAt };
+  return { contentId, url: parsed.toString(), expiresAt: grant.expiresAt };
 }

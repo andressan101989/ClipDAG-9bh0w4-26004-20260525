@@ -54,7 +54,10 @@ test("Creator profiles own the accessible Contenido and Exclusivo information ar
   assert.match(creator, /key: 'videos',[^\n]+label: 'Contenido'/);
   assert.match(creator, /key: 'exclusive',[^\n]+label: 'Exclusivo'/);
   assert.match(creator, /profileTab === 'exclusive'/);
-  assert.match(creator, /fetchCreatorExclusiveContent/);
+  assert.match(creator, /fetchCreatorPremiumCatalog\(creatorId, \{ limit: 24 \}\)/);
+  assert.doesNotMatch(creator, /fetchCreatorExclusiveContent/);
+  assert.match(creator, /item\.entitled/);
+  assert.match(creator, /creator-premium-viewer\/\[contentId\]/);
   assert.match(creator, /accessibilityRole="tab"/);
   assert.match(
     creator,

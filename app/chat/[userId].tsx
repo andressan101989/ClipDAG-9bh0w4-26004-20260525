@@ -19,6 +19,10 @@ import {
 } from '@expo-google-fonts/inter';
 import * as ImagePicker from 'expo-image-picker';
 import * as ScreenCapture from 'expo-screen-capture';
+import {
+  appSwitcherProtectionCoordinator,
+  configureAppSwitcherProtectionModule,
+} from '@/services/screenProtectionCoordinator.mjs';
 import { useMessages } from '@/hooks/useMessages';
 import { useAuth } from '@/hooks/useAuth';
 import { useAlert } from '@/template';
@@ -47,13 +51,20 @@ const INPUT_MIN_HEIGHT = 44;
 const INPUT_MAX_HEIGHT = 120;
 const ONE_TIME_CAPTURE_KEY = 'chat-one-time-media';
 
+configureAppSwitcherProtectionModule(ScreenCapture);
+
 function OneTimeMediaViewer({ url, onClose }: { url: string | null; onClose: () => void }) {
   ScreenCapture.usePreventScreenCapture(ONE_TIME_CAPTURE_KEY);
+  const switcherOwner = useRef(
+    `chat-one-time-media:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}`,
+  ).current;
   useEffect(() => {
-    if (!url) return undefined;
-    void ScreenCapture.enableAppSwitcherProtectionAsync(1).catch(() => undefined);
-    return () => { void ScreenCapture.disableAppSwitcherProtectionAsync().catch(() => undefined); };
-  }, [url]);
+    if (!url || Platform.OS !== 'ios') return undefined;
+    void appSwitcherProtectionCoordinator.acquire(switcherOwner).catch(() => undefined);
+    return () => {
+      void appSwitcherProtectionCoordinator.release(switcherOwner).catch(() => undefined);
+    };
+  }, [switcherOwner, url]);
   return <Modal visible={Boolean(url)} transparent animationType="fade" onRequestClose={onClose}>
     <View style={styles.oneTimeViewer}>
       <Pressable accessibilityRole="button" accessibilityLabel="Cerrar foto" onPress={onClose} style={styles.oneTimeClose}>

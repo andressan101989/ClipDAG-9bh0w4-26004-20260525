@@ -10,8 +10,9 @@ export const CREATOR_PREMIUM_FINANCE_AVAILABLE: boolean = false;
 export const CREATOR_PREMIUM_MEDIA_AVAILABLE: boolean = false;
 export const CREATOR_PREMIUM_IMAGE_MEDIA_AVAILABLE: boolean = true;
 export const CREATOR_PREMIUM_VIDEO_MEDIA_AVAILABLE: boolean = true;
+export const CREATOR_PREMIUM_VIEWER_AVAILABLE: boolean = true;
 export const CREATOR_PREMIUM_FOUNDATION_MESSAGE =
-  'Las imágenes y los videos exclusivos ya usan medios privados. Las compras, suscripciones y el visor protegido todavía no están disponibles.';
+  'El visor protegido está disponible para usuarios con acceso vigente. Las compras y suscripciones todavía no están habilitadas.';
 export const CREATOR_PREMIUM_UNAVAILABLE_CODE = 'creator_premium_b1_foundation_only';
 
 export type CreatorPremiumContentKind = 'image' | 'video';
@@ -175,6 +176,12 @@ export function creatorPremiumUnavailable(): CreatorPremiumUnavailableResult {
     error: CREATOR_PREMIUM_FOUNDATION_MESSAGE,
     code: CREATOR_PREMIUM_UNAVAILABLE_CODE,
   };
+}
+
+export async function getCurrentCreatorPremiumUserId(): Promise<string | null> {
+  const { data, error } = await db().auth.getUser();
+  if (error) throw error;
+  return data.user?.id ?? null;
 }
 
 export async function fetchCreatorPremiumCatalog(
@@ -447,4 +454,36 @@ export async function fetchMyCreatorPremiumLibrary(
   });
   if (error) throw error;
   return page((data ?? []) as CreatorPremiumLibraryItem[], limit, row => row.published_at);
+}
+
+/**
+ * Resolves public teaser projections for a bounded library page. The private
+ * library RPC intentionally contains no media locator, so this helper joins it
+ * client-side only with the canonical public catalog projection. Missing or
+ * newly-denied catalog rows fail soft to a placeholder; they never trigger an
+ * original-media request.
+ */
+export async function fetchCreatorPremiumLibraryTeasers(
+  items: CreatorPremiumLibraryItem[],
+): Promise<Record<string, string>> {
+  const allowedContentIds = new Set(items.map(item => item.id));
+  const creatorIds = [...new Set(items.map(item => item.creator_id))];
+  const pages = await Promise.all(creatorIds.map(async creatorId => {
+    try {
+      return await fetchCreatorPremiumCatalog(creatorId, { limit: 100 });
+    } catch {
+      return null;
+    }
+  }));
+  const teasers: Record<string, string> = {};
+  for (const pageResult of pages) {
+    for (const catalogItem of pageResult?.items ?? []) {
+      if (
+        allowedContentIds.has(catalogItem.id)
+        && catalogItem.entitled
+        && catalogItem.teaser_url.startsWith('https://')
+      ) teasers[catalogItem.id] = catalogItem.teaser_url;
+    }
+  }
+  return teasers;
 }

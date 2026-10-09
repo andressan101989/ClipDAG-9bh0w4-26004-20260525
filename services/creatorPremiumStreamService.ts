@@ -64,11 +64,14 @@ export interface CreatorPremiumVideoMediaState {
 }
 
 export interface CreatorPremiumVideoPlaybackGrant {
+  contentId:string;
   hlsUrl:string;
   dashUrl:string;
   thumbnailUrl:string;
   expiresAt:string;
 }
+
+export type CreatorPremiumStreamGrantFailureCode='denied'|'missing'|'network'|'unavailable'|'invalid';
 
 export interface CreatorPremiumStreamCleanupFailure {
   role:'teaser'|'video';
@@ -77,10 +80,16 @@ export interface CreatorPremiumStreamCleanupFailure {
 
 export class CreatorPremiumStreamError extends Error {
   cleanupFailures:CreatorPremiumStreamCleanupFailure[];
-  constructor(message:string,cleanupFailures:CreatorPremiumStreamCleanupFailure[]=[]){
+  grantCode?:CreatorPremiumStreamGrantFailureCode;
+  constructor(
+    message:string,
+    cleanupFailures:CreatorPremiumStreamCleanupFailure[]=[],
+    grantCode?:CreatorPremiumStreamGrantFailureCode,
+  ){
     super(message);
     this.name='CreatorPremiumStreamError';
     this.cleanupFailures=cleanupFailures;
+    this.grantCode=grantCode;
   }
 }
 
@@ -212,13 +221,45 @@ function protectedStreamUrl(
   }
 }
 
+function streamGrantFailureCode(error:unknown):CreatorPremiumStreamGrantFailureCode {
+  const candidate=error&&typeof error==='object'
+    ?error as {status?:unknown;context?:{status?:unknown};name?:unknown;message?:unknown}
+    :{};
+  const status=Number(candidate.status??candidate.context?.status);
+  if(status===401||status===403) return 'denied';
+  if(status===404) return 'missing';
+  if(status>=500) return 'unavailable';
+  const name=String(candidate.name??'').toLowerCase();
+  const message=String(candidate.message??error??'').toLowerCase();
+  if(name.includes('fetch')||/network|fetch failed|offline|timeout/.test(message)) return 'network';
+  if(/unauthor|forbidden|denied|revok|restrict|blocked|entitlement/.test(message)) return 'denied';
+  if(/not.?found|missing|no.?media/.test(message)) return 'missing';
+  return 'invalid';
+}
+
+function premiumStreamGrantError(
+  error:unknown,
+  fallback:CreatorPremiumStreamGrantFailureCode='invalid',
+){
+  const code=error==null?fallback:streamGrantFailureCode(error);
+  const message=code==='invalid'?'invalid_premium_video_grant':`creator_premium_video_grant_${code}`;
+  return new CreatorPremiumStreamError(message,[],code);
+}
+
 export async function getCreatorPremiumVideoPlaybackGrant(
   contentId:string,
 ):Promise<CreatorPremiumVideoPlaybackGrant> {
   if(!contentId) throw new CreatorPremiumStreamError('creator_premium_invalid_content');
-  const {data,error}=await db().functions.invoke('get-stream-playback',{
-    body:{premium_content_id:contentId},
-  });
+  let response;
+  try {
+    response=await db().functions.invoke('get-stream-playback',{
+      body:{premium_content_id:contentId},
+    });
+  } catch(error) {
+    throw premiumStreamGrantError(error,'network');
+  }
+  const {data,error}=response;
+  if(error) throw premiumStreamGrantError(error);
   const grant=data?.data as Record<string,unknown>|undefined;
   const fields=grant?Object.keys(grant).sort():[];
   const hls=protectedStreamUrl(grant?.hlsUrl,'/manifest/video.m3u8');
@@ -231,17 +272,18 @@ export async function getCreatorPremiumVideoPlaybackGrant(
     &&hls.origin===thumbnail.origin
     &&hls.pathname.split('/')[1]===dash.pathname.split('/')[1]
     &&hls.pathname.split('/')[1]===thumbnail.pathname.split('/')[1];
-  if(error
-    ||data?.success!==true
+  if(data?.success!==true
     ||grant?.contentId!==contentId
     ||fields.join(',')!=='contentId,dashUrl,expiresAt,hlsUrl,thumbnailUrl'
     ||!sameAuthority
     ||!Number.isFinite(expiresAt)
     ||expiresAt<=now
     ||expiresAt>now+315_000) {
-    throw new CreatorPremiumStreamError('invalid_premium_video_grant');
+    const responseError=data?.success===false?{message:String(data?.error??'')}:null;
+    throw premiumStreamGrantError(responseError);
   }
   return {
+    contentId,
     hlsUrl:hls.toString(),
     dashUrl:dash.toString(),
     thumbnailUrl:thumbnail.toString(),
