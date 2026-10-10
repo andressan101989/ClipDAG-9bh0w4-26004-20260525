@@ -91,7 +91,7 @@ export default function CreatorPremiumOfferScreen() {
         setRefreshing(false);
       }
     }
-  }, [contentId, user?.id]);
+  }, [contentId]);
   useFocusEffect(useCallback(() => {
     void load();
     return () => { requestGeneration.current += 1; };
@@ -184,7 +184,7 @@ export default function CreatorPremiumOfferScreen() {
     } finally {
       if (generation === contextGeneration.current) setBusy(null);
     }
-  }, [contentId, reportDetails, reportReason, user?.id]);
+  }, [contentId, reportDetails, reportReason]);
 
   const financeMessage = useMemo(() => !CREATOR_PREMIUM_FINANCE_AVAILABLE
     ? 'Compras y suscripciones siguen deshabilitadas mientras se completa la activación comercial y de tiendas.'

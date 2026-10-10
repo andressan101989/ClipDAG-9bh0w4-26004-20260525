@@ -66,7 +66,7 @@ export default function MySubscriptionsScreen(){
     }finally{
       if(generation===contextGeneration.current&&request===requestGeneration.current){setLoading(false);setRefreshing(false);}
     }
-  },[user?.id]);
+  },[]);
   useFocusEffect(useCallback(()=>{void load();return()=>{requestGeneration.current+=1;}},[load]));
 
   const loadMore=useCallback(async()=>{
@@ -84,7 +84,7 @@ export default function MySubscriptionsScreen(){
     }finally{
       if(generation===contextGeneration.current&&request===requestGeneration.current)setLoadingMore(false);
     }
-  },[loadingMore,nextCursor,user?.id]);
+  },[loadingMore,nextCursor]);
 
   const cancel=useCallback((subscription:CreatorPremiumSubscriptionItem)=>{
     const generation=contextGeneration.current;
