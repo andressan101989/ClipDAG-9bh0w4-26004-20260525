@@ -25,13 +25,16 @@ import {
   activateMyCreatorPremiumPlan,
   cloneMyCreatorPremiumPlanVersion,
   createMyCreatorPremiumPlanDraft,
+  fetchMyCreatorPremiumCommercialSummary,
   fetchMyCreatorPremiumContents,
   fetchMyCreatorPremiumPlans,
   normalizeCreatorPremiumPriceBdag,
   retireMyCreatorPremiumPlan,
+  reopenMyCreatorPremiumRejected,
   setMyCreatorPremiumPlanContents,
   updateMyCreatorPremiumPlanDraft,
   type CreatorPremiumCursor,
+  type CreatorPremiumCommercialSummary,
   type CreatorPremiumOwnerItem,
   type CreatorPremiumPlanItem,
 } from '@/services/creatorPremiumService';
@@ -43,6 +46,7 @@ const contentStatus: Record<CreatorPremiumOwnerItem['lifecycle_status'], string>
   draft: 'Borrador',
   pending_review: 'En revisión',
   published: 'Publicado',
+  rejected: 'Rechazado',
   quarantined: 'Restringido',
   removed: 'Retirado',
   deleted: 'Eliminado',
@@ -102,9 +106,10 @@ function EmptyState({ icon, title, copy }: { icon: 'image-multiple-outline' | 'p
 export default function CreatorPremiumHub() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<'content' | 'plans'>('content');
+  const [tab, setTab] = useState<'content' | 'plans' | 'earnings'>('content');
   const [contents, setContents] = useState<CreatorPremiumOwnerItem[]>([]);
   const [plans, setPlans] = useState<CreatorPremiumPlanItem[]>([]);
+  const [summary, setSummary] = useState<CreatorPremiumCommercialSummary | null>(null);
   const [contentNextCursor, setContentNextCursor] = useState<CreatorPremiumCursor | null>(null);
   const [planNextCursor, setPlanNextCursor] = useState<CreatorPremiumCursor | null>(null);
   const [loadingMore, setLoadingMore] = useState<'content' | 'plans' | null>(null);
@@ -128,6 +133,7 @@ export default function CreatorPremiumHub() {
       const available = item.lifecycle_status !== 'deleted'
         && item.lifecycle_status !== 'removed'
         && item.lifecycle_status !== 'quarantined'
+        && item.lifecycle_status !== 'rejected'
         && item.access_mode !== 'purchase';
       return available || selectedContentIds.includes(item.id);
     }),
@@ -144,14 +150,16 @@ export default function CreatorPremiumHub() {
     else setLoading(true);
     setError(null);
     try {
-      const [contentPage, planPage] = await Promise.all([
+      const [contentPage, planPage, commercialSummary] = await Promise.all([
         fetchMyCreatorPremiumContents({ limit: 100 }),
         fetchMyCreatorPremiumPlans({ limit: 100 }),
+        fetchMyCreatorPremiumCommercialSummary(),
       ]);
       setContents(contentPage.items);
       setPlans(planPage.items);
       setContentNextCursor(contentPage.nextCursor);
       setPlanNextCursor(planPage.nextCursor);
+      setSummary(commercialSummary);
       return true;
     } catch (reason) {
       setError(errorMessage(reason));
@@ -301,6 +309,20 @@ export default function CreatorPremiumHub() {
     );
   }, [runPlanAction]);
 
+  const reopenRejected = useCallback(async (contentId: string) => {
+    if (busyId) return;
+    setBusyId(contentId);
+    try {
+      await reopenMyCreatorPremiumRejected(contentId);
+      await load(true);
+      router.push({ pathname: '/creator-premium-editor', params: { contentId } });
+    } catch (reason) {
+      Alert.alert('No se reabrió el borrador', errorMessage(reason));
+    } finally {
+      setBusyId(null);
+    }
+  }, [busyId, load, router]);
+
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <StatusBar style="light" />
@@ -323,6 +345,9 @@ export default function CreatorPremiumHub() {
         </Pressable>
         <Pressable onPress={() => setTab('plans')} style={[styles.tab, tab === 'plans' && styles.tabActive]}>
           <Text style={[styles.tabText, tab === 'plans' && styles.tabTextActive]}>Planes</Text>
+        </Pressable>
+        <Pressable onPress={() => setTab('earnings')} style={[styles.tab, tab === 'earnings' && styles.tabActive]}>
+          <Text style={[styles.tabText, tab === 'earnings' && styles.tabTextActive]}>Ingresos</Text>
         </Pressable>
       </View>
 
@@ -401,6 +426,19 @@ export default function CreatorPremiumHub() {
                       <MaterialCommunityIcons name="pencil-outline" size={18} color={PREMIUM} />
                       <Text style={styles.secondaryButtonText}>Editar borrador</Text>
                     </Pressable>
+                  ) : item.lifecycle_status === 'rejected' ? (
+                    <View style={styles.rejectedActions}>
+                      <Text style={styles.rejectionReason}>{item.review_reason ?? 'Moderación solicitó correcciones.'}</Text>
+                      <Pressable
+                        style={styles.secondaryButton}
+                        disabled={busyId === item.id}
+                        onPress={() => void reopenRejected(item.id)}
+                      >
+                        {busyId === item.id
+                          ? <ActivityIndicator color={PREMIUM} />
+                          : <Text style={styles.secondaryButtonText}>Corregir y reenviar</Text>}
+                      </Pressable>
+                    </View>
                   ) : (
                     <View style={styles.readOnlyRow}>
                       <MaterialCommunityIcons name="lock-outline" size={16} color={Colors.textSubtle} />
@@ -417,7 +455,7 @@ export default function CreatorPremiumHub() {
                 </Pressable>
               ) : null}
             </>
-          ) : (
+          ) : tab === 'plans' ? (
             <>
               <Pressable style={styles.primaryButton} onPress={() => openPlan()}>
                 <MaterialCommunityIcons name="plus" size={21} color={Colors.textOnBrand} />
@@ -479,6 +517,44 @@ export default function CreatorPremiumHub() {
                     : <Text style={styles.secondaryButtonText}>Cargar más planes</Text>}
                 </Pressable>
               ) : null}
+            </>
+          ) : (
+            <>
+              {!summary ? (
+                <EmptyState icon="playlist-star" title="Sin resumen comercial" copy="No pudimos obtener los datos financieros canónicos." />
+              ) : (
+                <>
+                  <View style={styles.earningsGrid}>
+                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Bruto</Text><Text style={styles.earningValue}>{money(summary.gross)}</Text></View>
+                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Comisión plataforma</Text><Text style={styles.earningValue}>{money(summary.platform_fee)}</Text></View>
+                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Neto creador</Text><Text style={styles.earningValue}>{money(summary.creator_net)}</Text></View>
+                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Reembolsos</Text><Text style={styles.earningValue}>{money(summary.refund)}</Text></View>
+                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Neto retenido</Text><Text style={styles.earningValue}>{money(summary.net_retained)}</Text></View>
+                  </View>
+                  <View style={styles.card}>
+                    <Text style={styles.sectionTitle}>Actividad verificada</Text>
+                    <View style={styles.metricRow}><Text style={styles.meta}>Compras completadas</Text><Text style={styles.metricValue}>{summary.purchase_count}</Text></View>
+                    <View style={styles.metricRow}><Text style={styles.meta}>Periodos de suscripción</Text><Text style={styles.metricValue}>{summary.subscription_period_count}</Text></View>
+                    <View style={styles.metricRow}><Text style={styles.meta}>Suscripciones con acceso vigente</Text><Text style={styles.metricValue}>{summary.active_subscription_grants}</Text></View>
+                    <View style={styles.metricRow}><Text style={styles.meta}>Accesos revocados</Text><Text style={styles.metricValue}>{summary.revoked_access_count}</Text></View>
+                    <View style={styles.metricRow}><Text style={styles.meta}>Reembolsos</Text><Text style={styles.metricValue}>{summary.refund_count}</Text></View>
+                    <Text style={styles.analyticsNotice}>Las visualizaciones no se muestran porque aún no existe instrumentación canónica para esa métrica.</Text>
+                  </View>
+                  <View style={styles.planGroup}>
+                    <Text style={styles.sectionTitle}>Rendimiento por contenido</Text>
+                    {summary.content_performance.length === 0 ? (
+                      <Text style={styles.emptyCopy}>Todavía no existen ventas verificadas.</Text>
+                    ) : summary.content_performance.map(item => (
+                      <View key={item.content_id} style={styles.card}>
+                        <Text style={styles.cardTitle}>{item.title}</Text>
+                        <View style={styles.metricRow}><Text style={styles.meta}>Compras</Text><Text style={styles.metricValue}>{item.purchase_sales}</Text></View>
+                        <View style={styles.metricRow}><Text style={styles.meta}>Neto retenido por compra</Text><Text style={styles.metricValue}>{money(item.purchase_net_retained)}</Text></View>
+                        <Text style={styles.helper}>Ingresos de suscripción no asignados a contenido individual.</Text>
+                      </View>
+                    ))}
+                  </View>
+                </>
+              )}
             </>
           )}
         </ScrollView>
@@ -578,6 +654,8 @@ const styles = StyleSheet.create({
   secondaryButtonText: { color: PREMIUM, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
   readOnlyRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
   readOnlyText: { color: Colors.textSubtle, fontSize: FontSize.xs },
+  rejectedActions: { gap: Spacing.sm },
+  rejectionReason: { color: Colors.warning, fontSize: FontSize.xs, lineHeight: 18 },
   empty: { alignItems: 'center', paddingVertical: Spacing.xxl, paddingHorizontal: Spacing.lg },
   emptyTitle: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.semibold, marginTop: Spacing.md, textAlign: 'center' },
   emptyCopy: { color: Colors.textSecondary, fontSize: FontSize.sm, lineHeight: 20, textAlign: 'center', marginTop: Spacing.sm },
@@ -585,6 +663,13 @@ const styles = StyleSheet.create({
   planGroup: { gap: Spacing.sm },
   sectionTitle: { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: FontWeight.bold, marginTop: Spacing.sm },
   planFacts: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  earningsGrid: { gap: Spacing.sm },
+  earningCard: { padding: Spacing.md, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.md },
+  earningLabel: { color: Colors.textSecondary, fontSize: FontSize.sm },
+  earningValue: { color: Colors.accent, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
+  metricRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.md },
+  metricValue: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
+  analyticsNotice: { color: Colors.textSubtle, fontSize: FontSize.xs, lineHeight: 18, marginTop: Spacing.sm },
   actionRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: Spacing.sm },
   smallButton: { minHeight: 40, paddingHorizontal: Spacing.md, borderRadius: Radius.md, borderWidth: 1, borderColor: `${PREMIUM}66`, alignItems: 'center', justifyContent: 'center' },
   smallButtonText: { color: PREMIUM, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },

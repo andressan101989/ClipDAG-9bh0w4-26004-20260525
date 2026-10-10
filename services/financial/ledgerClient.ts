@@ -60,9 +60,13 @@ async function extractError(error: unknown): Promise<string> {
 async function invokeLedger(
   action: string,
   payload: Record<string, unknown>,
-  options: { uuidIdempotency?: boolean } = {},
+  options: { uuidIdempotency?: boolean; idempotencyKey?: string } = {},
 ): Promise<{ success: boolean; error?: string; data?: Record<string, unknown> }> {
-  const idempotencyKey = options.uuidIdempotency ? makeUuid() : makeKey(action);
+  if (options.idempotencyKey && !UUID_RE.test(options.idempotencyKey)) {
+    return { success: false, error: 'invalid idempotency key' };
+  }
+  const idempotencyKey = options.idempotencyKey
+    ?? (options.uuidIdempotency ? makeUuid() : makeKey(action));
   const body = {
     ...payload,
     action,
@@ -230,34 +234,37 @@ export async function transferBDAG(params: {
 }
 
 /** Purchase canonical Creator Premium content. Price and split are server-derived. */
-export async function purchaseContent(params: { contentId: string }) {
+export async function purchaseContent(params: { contentId: string; idempotencyKey?: string }) {
   if (!UUID_RE.test(params.contentId)) return { success: false, error: 'creator_premium_invalid_content_id' };
   return invokeLedger(
     'creator_premium_purchase',
     { content_id: params.contentId },
-    { uuidIdempotency: true },
+    { uuidIdempotency: true, idempotencyKey: params.idempotencyKey },
   );
 }
 
 /** Start the initial canonical Creator Premium plan period. */
-export async function subscribeToPlan(params: { planId: string }) {
+export async function subscribeToPlan(params: { planId: string; idempotencyKey?: string }) {
   if (!UUID_RE.test(params.planId)) return { success: false, error: 'creator_premium_invalid_plan_id' };
   return invokeLedger(
     'creator_premium_subscribe',
     { plan_id: params.planId },
-    { uuidIdempotency: true },
+    { uuidIdempotency: true, idempotencyKey: params.idempotencyKey },
   );
 }
 
 /** Cancel a Creator Premium relationship without moving money. */
-export async function cancelCreatorPremiumSubscription(params: { subscriptionId: string }) {
+export async function cancelCreatorPremiumSubscription(params: {
+  subscriptionId: string;
+  idempotencyKey?: string;
+}) {
   if (!UUID_RE.test(params.subscriptionId)) {
     return { success: false, error: 'creator_premium_invalid_subscription_id' };
   }
   return invokeLedger(
     'creator_premium_cancel_subscription',
     { subscription_id: params.subscriptionId },
-    { uuidIdempotency: true },
+    { uuidIdempotency: true, idempotencyKey: params.idempotencyKey },
   );
 }
 

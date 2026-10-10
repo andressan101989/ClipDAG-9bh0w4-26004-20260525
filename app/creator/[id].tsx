@@ -495,13 +495,20 @@ export default function CreatorProfileScreen() {
               </Text>
             </View>
           ) : (
-            <View style={styles.exclusiveGrid}>
-              {exclusive.map(item => {
-                return (
+            <View>
+              <Text style={[styles.premiumFoundationText, styles.premiumDisabledNotice]}>
+                El acceso comercial todavía no está disponible. Las compras y suscripciones no están habilitadas.
+              </Text>
+              <View style={styles.exclusiveGrid}>
+                {exclusive.map(item => {
+                  return (
                   <Pressable key={item.id} style={styles.exclusiveCard}
                     onPress={() => {
                       if (!item.entitled) {
-                        showAlert('Contenido Premium bloqueado', 'Necesitas acceso vigente. Las compras y suscripciones no están habilitadas; la compra todavía no está disponible.');
+                        router.push({
+                          pathname: '/creator-premium-offer/[contentId]',
+                          params: { contentId: item.id },
+                        } as never);
                         return;
                       }
                       void getCurrentCreatorPremiumUserId().then(currentUserId => {
@@ -537,8 +544,9 @@ export default function CreatorProfileScreen() {
                       <Text style={styles.exclusiveCardMeta}>{item.content_kind === 'video' ? 'Video' : 'Imagen'}</Text>
                     </View>
                   </Pressable>
-                );
-              })}
+                  );
+                })}
+              </View>
             </View>
           )
         )}
@@ -702,6 +710,7 @@ const styles = StyleSheet.create({
   emptyActionBtn: { backgroundColor: Colors.primaryDim, borderRadius: Radius.md, paddingHorizontal: 20, paddingVertical: 10, borderWidth: 1, borderColor: Colors.primary + '44' },
   emptyActionText:{ color: Colors.primary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
   premiumFoundationText: { maxWidth: 320, color: Colors.textSubtle, fontSize: FontSize.xs, lineHeight: 18, textAlign: 'center', paddingHorizontal: Spacing.md },
+  premiumDisabledNotice: { alignSelf: 'center', marginVertical: Spacing.sm },
 
   // Not found
   notFoundText:  { color: Colors.textSecondary, fontSize: FontSize.lg, marginBottom: Spacing.md },
