@@ -123,6 +123,28 @@ test('admin refund wrappers require an explicit WRITE capability and delegate to
   assert.match(authority, /current_user\s*=\s*'postgres'/i);
 });
 
+test('admin refund replay responses and immutable audit rows tell the exact money-movement truth', () => {
+  for (const body of [
+    functionBody('admin_refund_creator_premium_purchase_v1', 'public'),
+    functionBody('admin_refund_creator_premium_subscription_period_v1', 'public'),
+  ]) {
+    assert.match(body, /v_prior\.metadata\s*->\s*'receipt'[\s\S]*jsonb_build_object\s*\([\s\S]*'money_moved'\s*,\s*false[\s\S]*'replayed'\s*,\s*true[\s\S]*'already_refunded'\s*,\s*true/i);
+    assert.match(body, /case\s+when\s+coalesce\s*\(\s*\(v_result\s*->>\s*'money_moved'\s*\)::boolean\s*,\s*false\s*\)\s+then\s+'succeeded'\s+else\s+'no_op'\s+end/i);
+    for (const field of [
+      'money_moved', 'replayed', 'already_refunded', 'reference_id',
+      'reversal_financial_transaction_id', 'idempotency_key', 'reason_code',
+    ]) assert.match(body, new RegExp(`'${field}'`, 'i'));
+    assert.match(body, /financial_effect\s*,\s*contains_pii[\s\S]*true\s*,\s*true/i);
+  }
+
+  const safeMetadata = functionBody('admin_audit_safe_metadata', 'private');
+  for (const field of [
+    'money_moved', 'replayed', 'already_refunded', 'reference_id',
+    'reversal_financial_transaction_id', 'reason_code',
+  ]) assert.match(safeMetadata, new RegExp(`'${field}'[\\s\\S]*p_financial_scope`, 'i'));
+  assert.doesNotMatch(safeMetadata, /'idempotency_key'/i, 'raw idempotency material stays private');
+});
+
 test('finance policy and fee remain untouched by B7 migration', () => {
   assert.doesNotMatch(sql, /update\s+private\.creator_premium_finance_policy/i);
   assert.doesNotMatch(sql, /insert\s+into\s+private\.creator_premium_finance_policy/i);

@@ -13,6 +13,7 @@ const streamEdge = read('supabase/functions/get-stream-playback/index.ts');
 const app = read('apps/admin-web/src/App.tsx');
 const nav = read('apps/admin-web/src/layout/adminNavigation.ts');
 const api = read('apps/admin-web/src/lib/adminApi.ts');
+const retry = read('apps/admin-web/src/lib/adminCommandRetry.ts');
 const pages = read('apps/admin-web/src/pages/AdminCreatorPremiumPages.tsx');
 const reportSubject = read('apps/admin-web/src/components/AdminReportSubject.tsx');
 
@@ -110,6 +111,52 @@ test('refund controls require both explicit write capability and enabled server 
   assert.match(pages, /Confirm|confirm|window\.confirm/i);
   assert.match(pages, /reason|motivo/i);
   assert.doesNotMatch(pages, /ledger_debit|ledger_credit|platform_fee_bps\s*[*\/+-]/i);
+});
+
+test('admin command attempts reuse one UUID for the same intent and rotate for a changed payload', async () => {
+  assert.ok(retry, 'adminCommandRetry.ts must provide the isolated retry contract');
+  const moduleUrl = new URL('../apps/admin-web/src/lib/adminCommandRetry.ts', import.meta.url);
+  const { acquireAdminCommandAttempt, adminCommandSignature } = await import(moduleUrl.href);
+  const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
+  let created = 0;
+  const makeId = () => ids[created++];
+  const signature = adminCommandSignature(['refund', 'admin-a', 'purchase', 'receipt-a', 'admin_requested']);
+  const first = acquireAdminCommandAttempt(null, signature, makeId);
+  const retryAttempt = acquireAdminCommandAttempt(first, signature, makeId);
+  const changed = acquireAdminCommandAttempt(
+    retryAttempt,
+    adminCommandSignature(['refund', 'admin-a', 'purchase', 'receipt-a', 'fraud_confirmed']),
+    makeId,
+  );
+  assert.equal(first.idempotencyKey, ids[0]);
+  assert.strictEqual(retryAttempt, first, 'ambiguous retry must retain the exact command identity');
+  assert.equal(changed.idempotencyKey, ids[1]);
+  assert.equal(created, 2);
+});
+
+test('admin Premium mutations fence double clicks, account/content changes, and ambiguous retries', () => {
+  assert.match(pages, /\{hasCapability,session\}\s*=\s*useAdminAuth\(\)/i);
+  assert.match(pages, /operationInFlightRef\s*=\s*useRef<[^>]+>\(null\)/i);
+  assert.match(pages, /reviewAttemptRef\s*=\s*useRef<AdminCommandAttempt\|null>\(null\)/i);
+  assert.match(pages, /refundAttemptRef\s*=\s*useRef<AdminCommandAttempt\|null>\(null\)/i);
+  assert.match(pages, /session\?\.user\.id/i);
+  assert.match(pages, /adminCommandSignature\(\[[^\]]*(?:session|actor)[^\]]*id[^\]]*(?:action|kind)[^\]]*(?:reason|code)/is);
+  assert.match(pages, /acquireAdminCommandAttempt/i);
+  assert.match(pages, /if\s*\(\s*operationInFlightRef\.current\s*\)\s*return/i);
+  assert.match(pages, /operationGenerationRef\.current/i);
+  assert.match(pages, /useEffect\(\(\)=>\(\)=>\{operationGenerationRef\.current\+=1;operationInFlightRef\.current=null\},\[\]\)/i);
+  assert.match(pages, /Resultado no confirmado[^"']*Reintenta[^"']*misma operación/i);
+  assert.match(pages, /Reembolso efectuado/i);
+  assert.match(pages, /Reembolso ya realizado[^"']*no se movieron fondos/i);
+  assert.doesNotMatch(pages, /idempotencyKey\s*:\s*crypto\.randomUUID\(\)/i);
+});
+
+test('admin review server replay is explicit and payload collisions remain conflicts', () => {
+  const sql = read('supabase/migrations/20261010053524_creator_premium_b7_full_functional_commercial_completion.sql');
+  const start = sql.search(/create\s+function\s+public\.admin_review_creator_premium_content_v1\b/i);
+  const body = start < 0 ? '' : sql.slice(start, sql.indexOf('\n$$;', start) + 4);
+  assert.match(body, /request_fingerprint\s*<>\s*v_fingerprint[\s\S]*admin_idempotency_conflict/i);
+  assert.match(body, /v_prior\.metadata\s*->\s*'receipt'[\s\S]*jsonb_build_object\s*\(\s*'replayed'\s*,\s*true\s*\)/i);
 });
 
 test('admin temporary grants are memory-only and cleared on lifecycle changes', () => {

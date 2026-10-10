@@ -45,6 +45,7 @@ const range=(value:unknown):AdminRange=>ranges.includes(value as AdminRange)?val
 
 class AdminRpcError extends Error{code:string|null;constructor(message:string,code?:string|null){super(message);this.name="AdminRpcError";this.code=code||null}}
 async function rpc(name:string,args:Record<string,unknown>={}){const {data,error}=await supabase.rpc(name,args);if(error)throw new AdminRpcError(error.message||"No se pudo consultar Marketplace",error.code);return data as unknown;}
+export function isAmbiguousAdminMutationError(error:unknown){return!(error instanceof AdminRpcError)||!error.code||/^PGRST00[0-3]$/.test(error.code)}
 
 export async function getAdminAccess():Promise<AdminAccess>{
   const value=object(await rpc("get_my_admin_access"),"access");
@@ -363,7 +364,43 @@ export async function getAdminCreatorPremiumImageGrant(contentId:string){const v
 export async function getAdminCreatorPremiumVideoGrant(contentId:string){const value=await premiumAdminGrant("get-stream-playback",contentId);return{contentId:uuid(value.contentId,"creator_premium_video_grant.contentId"),hlsUrl:string(value.hlsUrl,"creator_premium_video_grant.hlsUrl"),dashUrl:string(value.dashUrl,"creator_premium_video_grant.dashUrl"),thumbnailUrl:string(value.thumbnailUrl,"creator_premium_video_grant.thumbnailUrl"),expiresAt:date(value.expiresAt,"creator_premium_video_grant.expiresAt")}}
 
 export async function getAdminCreatorPremiumRefundCandidates(contentId:string){uuid(contentId,"creatorPremiumContentId");return object(await rpc("get_admin_creator_premium_refund_candidates_v1",{p_content_id:contentId}),"creator_premium_refund_candidates")}
-const validatePremiumRefundReceipt=(value:unknown)=>{const receipt=object(value,"creator_premium_refund_receipt");return{...receipt,money_moved:bool(receipt.money_moved,"creator_premium_refund_receipt.money_moved")}};
+export type AdminCreatorPremiumRefundReceipt={
+  receipt_id?:string;
+  period_id?:string;
+  subscription_id?:string;
+  reversal_financial_transaction_id:string;
+  access_state:"refunded";
+  subscription_status?:"revoked";
+  money_moved:boolean;
+  replayed:boolean;
+  already_refunded:boolean;
+};
+const validatePremiumRefundReceipt=(value:unknown):AdminCreatorPremiumRefundReceipt=>{
+  const name="creator_premium_refund_receipt",receipt=object(value,name);
+  const receiptId=receipt.receipt_id===undefined?undefined:uuid(receipt.receipt_id,`${name}.receipt_id`);
+  const periodId=receipt.period_id===undefined?undefined:uuid(receipt.period_id,`${name}.period_id`);
+  if((receiptId===undefined)===(periodId===undefined))invalid(`${name}.reference_id`);
+  const subscriptionId=receipt.subscription_id===undefined?undefined:uuid(receipt.subscription_id,`${name}.subscription_id`);
+  const accessState=string(receipt.access_state,`${name}.access_state`);
+  if(accessState!=="refunded")invalid(`${name}.access_state`);
+  const subscriptionStatus=receipt.subscription_status===undefined?undefined:string(receipt.subscription_status,`${name}.subscription_status`);
+  if(subscriptionStatus!==undefined&&subscriptionStatus!=="revoked")invalid(`${name}.subscription_status`);
+  const moneyMoved=bool(receipt.money_moved,`${name}.money_moved`);
+  const replayed=bool(receipt.replayed,`${name}.replayed`);
+  const alreadyRefunded=bool(receipt.already_refunded,`${name}.already_refunded`);
+  if(moneyMoved===alreadyRefunded||replayed&&!alreadyRefunded)invalid(`${name}.movement_truth`);
+  return{
+    ...(receiptId===undefined?{}:{receipt_id:receiptId}),
+    ...(periodId===undefined?{}:{period_id:periodId}),
+    ...(subscriptionId===undefined?{}:{subscription_id:subscriptionId}),
+    reversal_financial_transaction_id:uuid(receipt.reversal_financial_transaction_id,`${name}.reversal_financial_transaction_id`),
+    access_state:"refunded",
+    ...(subscriptionStatus===undefined?{}:{subscription_status:"revoked"}),
+    money_moved:moneyMoved,
+    replayed,
+    already_refunded:alreadyRefunded,
+  };
+};
 export async function refundAdminCreatorPremiumPurchase(input:{receiptId:string;reason:string;idempotencyKey:string}){uuid(input.receiptId,"receiptId");uuid(input.idempotencyKey,"idempotencyKey");return validatePremiumRefundReceipt(await rpc("admin_refund_creator_premium_purchase_v1",{p_receipt_id:input.receiptId,p_idempotency_key:input.idempotencyKey,p_reason_code:input.reason}))}
 export async function refundAdminCreatorPremiumSubscriptionPeriod(input:{periodId:string;reason:string;idempotencyKey:string}){uuid(input.periodId,"periodId");uuid(input.idempotencyKey,"idempotencyKey");return validatePremiumRefundReceipt(await rpc("admin_refund_creator_premium_subscription_period_v1",{p_period_id:input.periodId,p_idempotency_key:input.idempotencyKey,p_reason_code:input.reason}))}
 

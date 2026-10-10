@@ -722,7 +722,8 @@ begin
     if v_prior.request_fingerprint <> v_fingerprint then
       raise exception using errcode = '23505', message = 'admin_idempotency_conflict';
     end if;
-    return v_prior.metadata -> 'receipt';
+    return (v_prior.metadata -> 'receipt')
+      || pg_catalog.jsonb_build_object('replayed', true);
   end if;
 
   perform pg_catalog.pg_advisory_xact_lock(
@@ -1870,6 +1871,43 @@ as $$
   );
 $$;
 
+-- Preserve financial_effect as the audit sensitivity/classification flag while
+-- exposing the canonical per-invocation movement truth to finance auditors.
+create or replace function private.admin_audit_safe_metadata(
+  p_metadata jsonb,
+  p_contains_pii boolean,
+  p_financial_scope boolean
+) returns jsonb
+language sql
+immutable
+set search_path = ''
+as $$
+  select pg_catalog.jsonb_strip_nulls(pg_catalog.jsonb_build_object(
+    'result', p_metadata -> 'result',
+    'result_kind', p_metadata -> 'result_kind',
+    'status', p_metadata -> 'status',
+    'previous_status', p_metadata -> 'previous_status',
+    'final_status', p_metadata -> 'final_status',
+    'changed', p_metadata -> 'changed',
+    'money_moved', case when p_financial_scope then p_metadata -> 'money_moved' end,
+    'replayed', case when p_financial_scope then p_metadata -> 'replayed' end,
+    'already_refunded', case when p_financial_scope then p_metadata -> 'already_refunded' end,
+    'reference_id', case when p_financial_scope then p_metadata -> 'reference_id' end,
+    'reversal_financial_transaction_id',
+      case when p_financial_scope then p_metadata -> 'reversal_financial_transaction_id' end,
+    'reason_code', case when p_financial_scope then p_metadata -> 'reason_code' end,
+    'already_released', case when p_financial_scope then p_metadata -> 'already_released' end,
+    'migration', case when not p_contains_pii then p_metadata -> 'migration' end,
+    'legacy_role', case when not p_contains_pii then p_metadata -> 'legacy_role' end,
+    'source', case when not p_contains_pii then p_metadata -> 'source' end,
+    'action', case when not p_contains_pii then p_metadata -> 'action' end,
+    'target_type', case when not p_contains_pii then p_metadata -> 'target_type' end
+  ));
+$$;
+
+revoke all on function private.admin_audit_safe_metadata(jsonb,boolean,boolean)
+  from public,anon,authenticated,service_role;
+
 create function public.admin_refund_creator_premium_purchase_v1(
   p_receipt_id uuid,
   p_idempotency_key uuid,
@@ -1908,7 +1946,11 @@ begin
     if v_prior.request_fingerprint<>v_fingerprint then
       raise exception using errcode='23505',message='admin_idempotency_conflict';
     end if;
-    return v_prior.metadata->'receipt';
+    return (v_prior.metadata->'receipt') || pg_catalog.jsonb_build_object(
+      'money_moved',false,
+      'replayed',true,
+      'already_refunded',true
+    );
   end if;
   select receipt.* into v_receipt
   from private.creator_premium_purchase_receipts receipt
@@ -1926,7 +1968,20 @@ begin
     v_actor,'human_admin',private.admin_active_role_codes(v_actor),
     'creator_premium.refunds.write','creator_premium','creator_premium.purchase_refund',
     'creator_premium_purchase_receipt',p_receipt_id,p_receipt_id::text,v_reason,
-    'succeeded',true,true,pg_catalog.jsonb_build_object('receipt',v_result),
+    case when coalesce((v_result->>'money_moved')::boolean,false)
+      then 'succeeded' else 'no_op' end,
+    true,true,pg_catalog.jsonb_build_object(
+      'receipt',v_result,
+      'result',case when coalesce((v_result->>'money_moved')::boolean,false)
+        then 'refunded' else 'already_refunded' end,
+      'money_moved',coalesce((v_result->>'money_moved')::boolean,false),
+      'replayed',coalesce((v_result->>'replayed')::boolean,false),
+      'already_refunded',coalesce((v_result->>'already_refunded')::boolean,false),
+      'reference_id',p_receipt_id,
+      'reversal_financial_transaction_id',v_result->'reversal_financial_transaction_id',
+      'idempotency_key',p_idempotency_key,
+      'reason_code',v_reason
+    ),
     v_scope,p_idempotency_key,v_fingerprint);
   return v_result;
 end;
@@ -1971,7 +2026,11 @@ begin
     if v_prior.request_fingerprint<>v_fingerprint then
       raise exception using errcode='23505',message='admin_idempotency_conflict';
     end if;
-    return v_prior.metadata->'receipt';
+    return (v_prior.metadata->'receipt') || pg_catalog.jsonb_build_object(
+      'money_moved',false,
+      'replayed',true,
+      'already_refunded',true
+    );
   end if;
   select period.* into v_period
   from private.creator_premium_subscription_periods period
@@ -1989,7 +2048,20 @@ begin
     v_actor,'human_admin',private.admin_active_role_codes(v_actor),
     'creator_premium.refunds.write','creator_premium','creator_premium.subscription_refund',
     'creator_premium_subscription_period',p_period_id,p_period_id::text,v_reason,
-    'succeeded',true,true,pg_catalog.jsonb_build_object('receipt',v_result),
+    case when coalesce((v_result->>'money_moved')::boolean,false)
+      then 'succeeded' else 'no_op' end,
+    true,true,pg_catalog.jsonb_build_object(
+      'receipt',v_result,
+      'result',case when coalesce((v_result->>'money_moved')::boolean,false)
+        then 'refunded' else 'already_refunded' end,
+      'money_moved',coalesce((v_result->>'money_moved')::boolean,false),
+      'replayed',coalesce((v_result->>'replayed')::boolean,false),
+      'already_refunded',coalesce((v_result->>'already_refunded')::boolean,false),
+      'reference_id',p_period_id,
+      'reversal_financial_transaction_id',v_result->'reversal_financial_transaction_id',
+      'idempotency_key',p_idempotency_key,
+      'reason_code',v_reason
+    ),
     v_scope,p_idempotency_key,v_fingerprint);
   return v_result;
 end;
