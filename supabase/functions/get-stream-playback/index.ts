@@ -54,19 +54,29 @@ Deno.serve(async(req)=>{
   const body=await req.json().catch(()=>({})) as Record<string,unknown>;
   const hasAsset=body.asset_id!==undefined;
   const hasPremiumContent=body.premium_content_id!==undefined;
+  const hasAdminReview=body.admin_review!==undefined;
   if(hasAsset===hasPremiumContent) return json({error:'invalid_request'},400);
+  if(hasAdminReview&&body.admin_review!==true) return json({error:'invalid_request'},400);
+  if(hasAdminReview&&!hasPremiumContent) return json({error:'invalid_request'},400);
 
   if(hasPremiumContent) {
     if(!isUuid(body.premium_content_id)) return json({error:'invalid_premium_content'},400);
     const contentId=body.premium_content_id;
     const caller=authenticatedClient(req);
     if(!caller) return json({error:'unauthorized'},401);
-    const {data:entitlementData,error:entitlementError}=await caller.rpc(
-      'get_my_creator_premium_entitlement_v1',
-      {p_content_id:contentId},
-    );
-    const entitlement=Array.isArray(entitlementData)?entitlementData[0]:entitlementData;
-    if(entitlementError||entitlement?.allowed!==true) return premiumJson({error:'forbidden'},403);
+    if(body.admin_review===true){
+      const {data:adminAllowed,error:adminError}=await caller.rpc('admin_actor_has_capability',{
+        p_capability:'creator_premium.review.read',
+      });
+      if(adminError||adminAllowed!==true) return premiumJson({error:'forbidden'},403);
+    }else{
+      const {data:entitlementData,error:entitlementError}=await caller.rpc(
+        'get_my_creator_premium_entitlement_v1',
+        {p_content_id:contentId},
+      );
+      const entitlement=Array.isArray(entitlementData)?entitlementData[0]:entitlementData;
+      if(entitlementError||entitlement?.allowed!==true) return premiumJson({error:'forbidden'},403);
+    }
 
     const db=admin();
     const {data:links,error:linksError}=await db.from('video_asset_links')

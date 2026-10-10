@@ -17,12 +17,12 @@ export type OrderCursor = { created_at:string;id:string };
 export type OrderPage = { range:AdminRange;orders:OrderSummary[];next_cursor:OrderCursor|null;page_size:number };
 export type OrderDetail = {
   order:Record<string,unknown>;buyer:Record<string,unknown>;seller:Record<string,unknown>;store:Record<string,unknown>;
-  items:Array<Record<string,unknown>>;payment:Record<string,unknown>|null;payment_allocation:Record<string,unknown>|null;
+  items:Record<string,unknown>[];payment:Record<string,unknown>|null;payment_allocation:Record<string,unknown>|null;
   shipping:{ address:Record<string,unknown>|null;shipment:Record<string,unknown>|null };
-  creator_attributions:Array<Record<string,unknown>>;creator_allocations:Array<Record<string,unknown>>;
-  settlement:Record<string,unknown>|null;settlement_legs:Array<Record<string,unknown>>;
+  creator_attributions:Record<string,unknown>[];creator_allocations:Record<string,unknown>[];
+  settlement:Record<string,unknown>|null;settlement_legs:Record<string,unknown>[];
   dispute:Record<string,unknown>|null;reversal:Record<string,unknown>|null;
-  reversal_legs:Array<Record<string,unknown>>;timeline:Array<Record<string,unknown>>;
+  reversal_legs:Record<string,unknown>[];timeline:Record<string,unknown>[];
 };
 export type OrderSearch = { query?:string;status?:string;range:AdminRange;storeId?:string;sourceSurface?:string;cursor?:OrderCursor;limit?:number };
 
@@ -221,8 +221,8 @@ export type AdminWarningIdentity={id:string;username:string|null;display_name:st
 export type AdminUserWarning={id:string;status:"active"|"revoked";warning_level_at_issue:number;cycle_started_at:string|null;reason:string;internal_note:string|null;evidence_type:string|null;evidence_id:string|null;evidence_note:string|null;issued_at:string;issued_by:AdminWarningIdentity;revoked_at:string|null;revocation_reason:string|null;revoked_by:AdminWarningIdentity|null};
 export type AdminModerationHistoryItem={id:string;status:string;reason:string;requested_at:string;completed_at:string|null;provider_error_code:string|null};
 export type AdminUserDiscipline={active_warning_count:number;warning_limit:number;cycle_started_at:string|null;historical_warning_count:number;warnings:AdminUserWarning[];last_suspension:AdminModerationHistoryItem|null;last_restore:AdminModerationHistoryItem|null;enforcement_required:boolean};
-export type AdminUserDetail=AdminUserSummary&{bio:string|null;public_counters:{followers_count:number;following_count:number};active_admin_roles:Array<{assignment_id:string;role_code:string;granted_at:string;version:number}>|null;discipline:AdminUserDiscipline};
-export type AdminReportContentType="video"|"comment"|"user"|"story"|"message";
+export type AdminUserDetail=AdminUserSummary&{bio:string|null;public_counters:{followers_count:number;following_count:number};active_admin_roles:{assignment_id:string;role_code:string;granted_at:string;version:number}[]|null;discipline:AdminUserDiscipline};
+export type AdminReportContentType="video"|"comment"|"user"|"story"|"message"|"creator_premium";
 export type AdminReportSummary={id:string;reporter:{id:string;username:string|null;display_name:string|null;avatar_url:string|null};reported_content_id:string;reported_content_type:AdminReportContentType;reason:string;status:"pending"|"reviewed"|"dismissed";created_at:string};
 export type AdminReportDetail=AdminReportSummary&{details:string|null;subject:Record<string,unknown>|null;chat_context:Record<string,unknown>|null};
 export type AdminContentType="video"|"comment";
@@ -240,7 +240,7 @@ const identity=(value:unknown,name:string)=>{const row=object(value,name);return
 const pageCursor=(value:unknown,name:string,key="created_at")=>value===null?null:(()=>{const row=object(value,name);return{created_at:date(row[key],`${name}.${key}`),id:uuid(row.id,`${name}.id`)};})();
 const accountStatus=(value:unknown)=>value==="active"||value==="suspended"?value:invalid("account_status");
 const reportStatus=(value:unknown)=>value==="pending"||value==="reviewed"||value==="dismissed"?value:invalid("report_status");
-const contentType=(value:unknown):AdminReportContentType=>value==="video"||value==="comment"||value==="user"||value==="story"||value==="message"?value:invalid("reported_content_type");
+const contentType=(value:unknown):AdminReportContentType=>value==="video"||value==="comment"||value==="user"||value==="story"||value==="message"||value==="creator_premium"?value:invalid("reported_content_type");
 const moderationContentType=(value:unknown):AdminContentType=>value==="video"||value==="comment"?value:invalid("content_type");
 const visibility=(value:unknown):AdminVisibility=>value==="visible"||value==="hidden"?value:invalid("visibility");
 const storySourceStatus=(value:unknown):AdminStorySourceStatus=>value==="available"||value==="unavailable"||value==="missing"?value:invalid("story.source_status");
@@ -320,6 +320,52 @@ export async function cancelAdminLiveBattle(input:{battleId:string;reason:string
 export async function searchAdminMediaAssets(input:{query?:string;status?:string;visibility?:string;provider?:string;mediaKind?:string;purpose?:string;linkState?:string;ownerId?:string;cursor?:KeysetCursor;limit?:number}={}){const value=object(await rpc("search_admin_media_assets",{p_query:input.query||null,p_status:input.status||null,p_visibility:input.visibility||null,p_provider:input.provider||null,p_media_kind:input.mediaKind||null,p_purpose:input.purpose||null,p_link_state:input.linkState||null,p_owner_id:input.ownerId||null,p_cursor_created_at:input.cursor?.created_at||null,p_cursor_id:input.cursor?.id||null,p_limit:input.limit??50}),"media_page");const items=array(value.items,"media_items").map((entry,index):AdminMediaSummary=>{const row=object(entry,`media[${index}]`);return{id:uuid(row.id,"media.id"),owner:identity(row.owner,"media.owner"),provider:string(row.provider,"media.provider"),media_kind:string(row.media_kind,"media.media_kind"),purpose:string(row.purpose,"media.purpose"),visibility:string(row.visibility,"media.visibility"),status:string(row.status,"media.status"),mime_type:string(row.mime_type,"media.mime_type"),size_bytes:row.size_bytes===null?null:integer(row.size_bytes,"media.size_bytes"),width:row.width===null?null:integer(row.width,"media.width"),height:row.height===null?null:integer(row.height,"media.height"),duration_ms:row.duration_ms===null?null:integer(row.duration_ms,"media.duration_ms"),error_code:nullableString(row.error_code,"media.error_code"),cleanup_attempts:integer(row.cleanup_attempts,"media.cleanup_attempts"),created_at:date(row.created_at,"media.created_at"),updated_at:date(row.updated_at,"media.updated_at"),ready_at:nullableDate(row.ready_at,"media.ready_at"),deleted_at:nullableDate(row.deleted_at,"media.deleted_at"),has_valid_links:bool(row.has_valid_links,"media.has_valid_links"),link_count:integer(row.link_count,"media.link_count"),public_url:nullableString(row.public_url,"media.public_url")}});return{items,next_cursor:value.next_cursor};}
 export async function getAdminMediaAssetDetail(id:string){uuid(id,"assetId");return object(await rpc("get_admin_media_asset_detail",{p_asset_id:id}),"media_detail");}
 export async function scheduleAdminMediaCleanup(input:{assetId:string;action:"schedule_cleanup"|"retry_cleanup";reason:string;idempotencyKey:string}){uuid(input.assetId,"assetId");uuid(input.idempotencyKey,"idempotencyKey");return object(await rpc("admin_schedule_media_cleanup",{p_asset_id:input.assetId,p_action:input.action,p_reason:input.reason,p_idempotency_key:input.idempotencyKey}),"media_cleanup_receipt");}
+
+export type AdminCreatorPremiumSummary={
+  id:string;
+  creator:{id:string;username:string|null;display_name:string|null;avatar_url:string|null};
+  title:string;
+  description:string;
+  content_kind:string;
+  access_mode:string;
+  lifecycle_status:string;
+  teaser_url:string|null;
+  media_ready:boolean;
+  publication_blocker:string|null;
+  submitted_at:string;
+  reviewed_at:string|null;
+  review_reason:string|null;
+  created_at:string;
+};
+export type AdminCreatorPremiumCursor={submitted_at:string;id:string};
+export type AdminCreatorPremiumPage={items:AdminCreatorPremiumSummary[];next_cursor:AdminCreatorPremiumCursor|null};
+
+const validateAdminCreatorPremiumSummary=(value:unknown,name:string):AdminCreatorPremiumSummary=>{const row=object(value,name);return{
+  id:uuid(row.id,`${name}.id`),creator:identity(row.creator,`${name}.creator`),title:string(row.title,`${name}.title`),
+  description:string(row.description,`${name}.description`),content_kind:string(row.content_kind,`${name}.content_kind`),
+  access_mode:string(row.access_mode,`${name}.access_mode`),lifecycle_status:string(row.lifecycle_status,`${name}.lifecycle_status`),
+  teaser_url:nullableString(row.teaser_url,`${name}.teaser_url`),media_ready:bool(row.media_ready,`${name}.media_ready`),
+  publication_blocker:nullableString(row.publication_blocker,`${name}.publication_blocker`),submitted_at:date(row.submitted_at,`${name}.submitted_at`),
+  reviewed_at:nullableDate(row.reviewed_at,`${name}.reviewed_at`),review_reason:nullableString(row.review_reason,`${name}.review_reason`),
+  created_at:date(row.created_at,`${name}.created_at`),
+}};
+export async function searchAdminCreatorPremiumContent(input:{status?:string|null;query?:string;cursor?:AdminCreatorPremiumCursor;limit?:number}={}):Promise<AdminCreatorPremiumPage>{
+  const value=object(await rpc("search_admin_creator_premium_content_v1",{p_status:input.status===undefined?"pending_review":input.status,p_query:input.query||null,p_cursor_submitted_at:input.cursor?.submitted_at||null,p_cursor_id:input.cursor?.id||null,p_limit:input.limit??50}),"creator_premium_page");
+  const items=array(value.items,"creator_premium.items").map((entry,index)=>validateAdminCreatorPremiumSummary(entry,`creator_premium.items[${index}]`));
+  const next=value.next_cursor===null?null:(()=>{const cursor=object(value.next_cursor,"creator_premium.next_cursor");return{submitted_at:date(cursor.submitted_at,"creator_premium.next_cursor.submitted_at"),id:uuid(cursor.id,"creator_premium.next_cursor.id")};})();
+  return{items,next_cursor:next};
+}
+export async function getAdminCreatorPremiumContent(id:string){uuid(id,"creatorPremiumContentId");return object(await rpc("get_admin_creator_premium_content_v1",{p_content_id:id}),"creator_premium_detail")}
+export async function reviewAdminCreatorPremiumContent(input:{id:string;action:"approve"|"reject"|"quarantine"|"remove"|"restore";reason:string;idempotencyKey:string}){uuid(input.id,"creatorPremiumContentId");uuid(input.idempotencyKey,"idempotencyKey");return object(await rpc("admin_review_creator_premium_content_v1",{p_content_id:input.id,p_action:input.action,p_reason:input.reason,p_idempotency_key:input.idempotencyKey}),"creator_premium_review_receipt")}
+
+const premiumAdminGrant=async(functionName:"get-media-url"|"get-stream-playback",contentId:string)=>{uuid(contentId,"creatorPremiumContentId");const{data,error}=await supabase.functions.invoke(functionName,{body:{premium_content_id:contentId,admin_review:true}});if(error)throw new Error("No pudimos emitir el acceso temporal para revisión.");const envelope=object(data,"creator_premium_admin_grant");if(envelope.success!==true)invalid("creator_premium_admin_grant.success");return object(envelope.data,"creator_premium_admin_grant.data")};
+export async function getAdminCreatorPremiumImageGrant(contentId:string){const value=await premiumAdminGrant("get-media-url",contentId);return{contentId:uuid(value.contentId,"creator_premium_image_grant.contentId"),url:string(value.url,"creator_premium_image_grant.url"),expiresAt:date(value.expiresAt,"creator_premium_image_grant.expiresAt")}}
+export async function getAdminCreatorPremiumVideoGrant(contentId:string){const value=await premiumAdminGrant("get-stream-playback",contentId);return{contentId:uuid(value.contentId,"creator_premium_video_grant.contentId"),hlsUrl:string(value.hlsUrl,"creator_premium_video_grant.hlsUrl"),dashUrl:string(value.dashUrl,"creator_premium_video_grant.dashUrl"),thumbnailUrl:string(value.thumbnailUrl,"creator_premium_video_grant.thumbnailUrl"),expiresAt:date(value.expiresAt,"creator_premium_video_grant.expiresAt")}}
+
+export async function getAdminCreatorPremiumRefundCandidates(contentId:string){uuid(contentId,"creatorPremiumContentId");return object(await rpc("get_admin_creator_premium_refund_candidates_v1",{p_content_id:contentId}),"creator_premium_refund_candidates")}
+const validatePremiumRefundReceipt=(value:unknown)=>{const receipt=object(value,"creator_premium_refund_receipt");return{...receipt,money_moved:bool(receipt.money_moved,"creator_premium_refund_receipt.money_moved")}};
+export async function refundAdminCreatorPremiumPurchase(input:{receiptId:string;reason:string;idempotencyKey:string}){uuid(input.receiptId,"receiptId");uuid(input.idempotencyKey,"idempotencyKey");return validatePremiumRefundReceipt(await rpc("admin_refund_creator_premium_purchase_v1",{p_receipt_id:input.receiptId,p_idempotency_key:input.idempotencyKey,p_reason_code:input.reason}))}
+export async function refundAdminCreatorPremiumSubscriptionPeriod(input:{periodId:string;reason:string;idempotencyKey:string}){uuid(input.periodId,"periodId");uuid(input.idempotencyKey,"idempotencyKey");return validatePremiumRefundReceipt(await rpc("admin_refund_creator_premium_subscription_period_v1",{p_period_id:input.periodId,p_idempotency_key:input.idempotencyKey,p_reason_code:input.reason}))}
 
 export const formatBdag=(value:Money)=>`${String(value)} BDAG`;
 export const formatDate=(value:unknown)=>typeof value==="string"&&!Number.isNaN(Date.parse(value))?new Intl.DateTimeFormat("es",{dateStyle:"medium",timeStyle:"short"}).format(new Date(value)):"—";

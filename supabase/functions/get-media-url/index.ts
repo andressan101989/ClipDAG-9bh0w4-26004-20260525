@@ -118,18 +118,26 @@ Deno.serve(async(req)=>{
   if(req.method==='OPTIONS')return new Response(null,{status:204,headers:corsHeaders});
   if(req.method!=='POST') return corsJson({error:'method_not_allowed'},405);
   const user=await authenticatedUser(req); if(!user) return corsJson({error:'unauthorized'},401);
-  const {asset_id,admin_context,premium_content_id}=await req.json().catch(()=>({}));
+  const {asset_id,admin_context,premium_content_id,admin_review}=await req.json().catch(()=>({}));
   if(premium_content_id!==undefined){
     if(typeof premium_content_id!=='string'||!uuidPattern.test(premium_content_id))return corsJson({error:'invalid_request'},400);
     if(asset_id!==undefined||admin_context!==undefined)return corsJson({error:'invalid_request'},400);
+    if(admin_review!==undefined&&typeof admin_review!=='boolean')return corsJson({error:'invalid_request'},400);
     const caller=authenticatedClient(req);
     if(!caller)return corsJson({error:'unauthorized'},401);
-    const {data:entitlementData,error:entitlementError}=await caller.rpc(
-      'get_my_creator_premium_entitlement_v1',
-      {p_content_id:premium_content_id},
-    );
-    const entitlement=Array.isArray(entitlementData)?entitlementData[0]:entitlementData;
-    if(entitlementError||entitlement?.allowed!==true)return corsJson({error:'forbidden'},403);
+    if(admin_review===true){
+      const {data:adminAllowed,error:adminError}=await caller.rpc('admin_actor_has_capability',{
+        p_capability:'creator_premium.review.read',
+      });
+      if(adminError||adminAllowed!==true)return corsJson({error:'forbidden'},403);
+    }else{
+      const {data:entitlementData,error:entitlementError}=await caller.rpc(
+        'get_my_creator_premium_entitlement_v1',
+        {p_content_id:premium_content_id},
+      );
+      const entitlement=Array.isArray(entitlementData)?entitlementData[0]:entitlementData;
+      if(entitlementError||entitlement?.allowed!==true)return corsJson({error:'forbidden'},403);
+    }
 
     const database=admin();
     const {data:links,error:linksError}=await database.from('media_asset_links')
@@ -165,6 +173,7 @@ Deno.serve(async(req)=>{
       expiresAt:new Date(Date.now()+300_000).toISOString(),
     }},200,{'Cache-Control':'private, no-store','Pragma':'no-cache'});
   }
+  if(admin_review!==undefined)return corsJson({error:'invalid_request'},400);
   if(typeof asset_id!=='string'||!uuidPattern.test(asset_id))return corsJson({error:'invalid_request'},400);
   const {data:a}=await admin().from('media_assets').select('*').eq('id',asset_id).eq('status','ready').maybeSingle();
   if(!a) return corsJson({error:'not_found'},404);

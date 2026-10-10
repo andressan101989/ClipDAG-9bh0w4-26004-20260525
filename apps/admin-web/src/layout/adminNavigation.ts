@@ -23,6 +23,7 @@ export const adminLinks:AdminLink[]=[
   {to:"/live",label:"LIVE",capability:"live.sessions.read",icon:"live",primary:true},
   {to:"/battles",label:"Battles",capability:"battles.sessions.read",icon:"battles",primary:true},
   {to:"/media",label:"Media",capability:"media.assets.read",icon:"media",primary:true},
+  {to:"/creator-premium",label:"Creator Premium",capability:"creator_premium.review.read",icon:"content",primary:true},
   {to:"/content-safety",label:"Content Safety",capability:"content.items.read",icon:"content",primary:true,end:true,group:"content_safety",sectionLabel:"Alertas"},
   {to:"/content-safety/audio",label:"Content Safety · Audio AI",capability:"content.items.read",icon:"content",group:"content_safety",sectionLabel:"Audio AI"},
   {to:"/content-safety/visual",label:"Content Safety · Visual AI",capability:"content.items.read",icon:"content",group:"content_safety",sectionLabel:"Visual AI"},
