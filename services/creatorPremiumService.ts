@@ -21,6 +21,7 @@ export type CreatorPremiumLifecycle =
   | 'draft'
   | 'pending_review'
   | 'published'
+  | 'rejected'
   | 'quarantined'
   | 'removed'
   | 'deleted';
@@ -58,6 +59,10 @@ export interface CreatorPremiumOwnerItem {
   removed_at: string | null;
   deleted_at: string | null;
   removal_reason: string | null;
+  submitted_at?: string | null;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  review_reason?: string | null;
   created_at: string;
   updated_at: string;
   teaser_url: string | null;
@@ -176,6 +181,90 @@ export function creatorPremiumUnavailable(): CreatorPremiumUnavailableResult {
     error: CREATOR_PREMIUM_FOUNDATION_MESSAGE,
     code: CREATOR_PREMIUM_UNAVAILABLE_CODE,
   };
+}
+
+export interface CreatorPremiumCommerceOffer {
+  id: string;
+  version: number;
+  price_bdag: string;
+  currency: 'BDAG';
+  status: 'active';
+}
+
+export interface CreatorPremiumCommercePlan {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
+  price_bdag: string;
+  currency: 'BDAG';
+  billing_period_days: number;
+  status: 'active';
+}
+
+export interface CreatorPremiumCommerce {
+  content: Pick<CreatorPremiumCatalogItem,
+    'id' | 'creator_id' | 'title' | 'description' | 'content_kind' | 'access_mode' | 'published_at'
+  > & { teaser_url: string };
+  creator: { id: string; username: string | null; display_name: string | null; avatar_url: string | null };
+  offer: CreatorPremiumCommerceOffer | null;
+  plans: CreatorPremiumCommercePlan[];
+  entitlement: CreatorPremiumEntitlement;
+  policy: {
+    purchase_enabled: boolean;
+    subscription_enabled: boolean;
+    refunds_enabled: boolean;
+    policy_version: string;
+  };
+}
+
+export interface CreatorPremiumSubscriptionItem {
+  id: string;
+  creator: { id: string; username: string | null; display_name: string | null; avatar_url: string | null };
+  plan: CreatorPremiumCommercePlan;
+  status: 'pending' | 'active' | 'cancelled' | 'expired' | 'revoked';
+  started_at: string | null;
+  cancelled_at: string | null;
+  ended_at: string | null;
+  period: null | {
+    id: string;
+    starts_at: string;
+    paid_through_at: string;
+    access_state: 'active' | 'expired' | 'revoked' | 'refunded';
+    gross_amount_bdag: string;
+  };
+  access_active: boolean;
+  auto_renew: false;
+  renewal_supported: false;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreatorPremiumCommercialSummary {
+  range: { from: string; to: string };
+  currency: 'BDAG';
+  gross: string;
+  platform_fee: string;
+  creator_net: string;
+  refund: string;
+  net_retained: string;
+  purchase_count: number;
+  subscription_period_count: number;
+  refund_count: number;
+  published_contents: number;
+  pending_contents: number;
+  rejected_contents: number;
+  active_subscription_grants: number;
+  revoked_access_count: number;
+  content_performance: {
+    content_id: string;
+    title: string;
+    lifecycle_status: CreatorPremiumLifecycle;
+    purchase_sales: number;
+    purchase_net_retained: string;
+    subscription_revenue_allocation: 'not_allocated';
+  }[];
+  views_instrumented: false;
 }
 
 export async function getCurrentCreatorPremiumUserId(): Promise<string | null> {
@@ -454,6 +543,85 @@ export async function fetchMyCreatorPremiumLibrary(
   });
   if (error) throw error;
   return page((data ?? []) as CreatorPremiumLibraryItem[], limit, row => row.published_at);
+}
+
+export async function reopenMyCreatorPremiumRejected(contentId: string) {
+  if (!contentId) throw new Error('creator_premium_invalid_content');
+  const { data, error } = await db().rpc('reopen_my_creator_premium_rejected_v1', {
+    p_content_id: contentId,
+  });
+  if (error) throw error;
+  return firstRow(data) as {
+    content_id: string;
+    lifecycle_status: 'draft';
+    updated_at: string;
+  } | undefined;
+}
+
+export async function fetchMyCreatorPremiumSubscriptions(
+  options: { limit?: number; cursor?: CreatorPremiumCursor | null } = {},
+): Promise<CreatorPremiumPage<CreatorPremiumSubscriptionItem>> {
+  const limit = safeLimit(options.limit ?? 50);
+  const cursor = cursorParams(options.cursor);
+  const { data, error } = await db().rpc('get_my_creator_premium_subscriptions_v1', {
+    p_cursor_created_at: cursor.timestamp,
+    p_cursor_id: cursor.id,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  const result = firstRow(data) as {
+    items?: CreatorPremiumSubscriptionItem[];
+    next_cursor?: { created_at: string; id: string } | null;
+  } | undefined;
+  return {
+    items: result?.items ?? [],
+    nextCursor: result?.next_cursor
+      ? { timestamp: result.next_cursor.created_at, id: result.next_cursor.id }
+      : null,
+  };
+}
+
+export async function fetchMyCreatorPremiumCommercialSummary(
+  options: { from?: string | null; to?: string | null } = {},
+): Promise<CreatorPremiumCommercialSummary> {
+  const { data, error } = await db().rpc('get_my_creator_premium_commercial_summary_v1', {
+    p_from: options.from ?? null,
+    p_to: options.to ?? null,
+  });
+  if (error) throw error;
+  const result = firstRow(data) as CreatorPremiumCommercialSummary | undefined;
+  if (!result) throw new Error('creator_premium_summary_unavailable');
+  return result;
+}
+
+export async function reportCreatorPremiumContent(input: {
+  contentId: string;
+  reason: string;
+  details?: string;
+}): Promise<string> {
+  if (!input.contentId) throw new Error('creator_premium_invalid_content');
+  const { data, error } = await db().rpc('report_creator_premium_content_v1', {
+    p_content_id: input.contentId,
+    p_reason: input.reason,
+    p_details: input.details?.trim() || null,
+  });
+  if (error) throw error;
+  const result = firstRow(data);
+  if (typeof result !== 'string') throw new Error('creator_premium_report_failed');
+  return result;
+}
+
+export async function fetchCreatorPremiumCommerce(
+  contentId: string,
+): Promise<CreatorPremiumCommerce> {
+  if (!contentId) throw new Error('creator_premium_invalid_content');
+  const { data, error } = await db().rpc('get_creator_premium_commerce_v1', {
+    p_content_id: contentId,
+  });
+  if (error) throw error;
+  const result = firstRow(data) as CreatorPremiumCommerce | undefined;
+  if (!result) throw new Error('creator_premium_content_not_found');
+  return result;
 }
 
 /**
