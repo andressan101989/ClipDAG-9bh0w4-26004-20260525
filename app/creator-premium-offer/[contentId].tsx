@@ -61,6 +61,9 @@ export default function CreatorPremiumOfferScreen() {
   }
 
   useEffect(() => {
+    setCommerce(null);
+    setError(null);
+    setLoading(true);
     setBusy(null);
     setReportOpen(false);
     return () => {
@@ -93,9 +96,9 @@ export default function CreatorPremiumOfferScreen() {
     }
   }, [contentId]);
   useFocusEffect(useCallback(() => {
-    void load();
+    if (contextKeyRef.current === contextKey) void load();
     return () => { requestGeneration.current += 1; };
-  }, [load]));
+  }, [contextKey, load]));
 
   const openProtected = useCallback(async () => {
     if (!commerce?.entitlement.allowed) return;

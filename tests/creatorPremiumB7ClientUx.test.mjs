@@ -62,6 +62,11 @@ test('commerce and subscription requests are fenced to the active user and scree
     assert.match(source, /contextGeneration/i);
     assert.match(source, /requestGeneration/i);
     assert.match(source, /generation\s*!==\s*contextGeneration\.current/i);
+    assert.match(
+      source,
+      /useFocusEffect\(useCallback\([\s\S]{0,240}\[contextKey\s*,\s*load\]\)\)/i,
+      'an already-focused commerce surface must reload when the authenticated context changes',
+    );
   }
   assert.match(offer, /subscriptionAttempts\.current\.clear\(\)/i);
   assert.match(offer, /purchaseAttempt\.current\s*=\s*randomUUID\(\)/i);

@@ -67,7 +67,10 @@ export default function MySubscriptionsScreen(){
       if(generation===contextGeneration.current&&request===requestGeneration.current){setLoading(false);setRefreshing(false);}
     }
   },[]);
-  useFocusEffect(useCallback(()=>{void load();return()=>{requestGeneration.current+=1;}},[load]));
+  useFocusEffect(useCallback(()=>{
+    if(contextKeyRef.current===contextKey)void load();
+    return()=>{requestGeneration.current+=1;};
+  },[contextKey,load]));
 
   const loadMore=useCallback(async()=>{
     if(!nextCursor||loadingMore)return;
