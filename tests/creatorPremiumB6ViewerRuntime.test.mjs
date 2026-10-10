@@ -19,6 +19,7 @@ const CONTENT_A = '20000000-0000-4000-8000-000000000001';
 const CONTENT_B = '20000000-0000-4000-8000-000000000002';
 const NOW = Date.parse('2026-10-09T12:00:00.000Z');
 const root = path.resolve(import.meta.dirname, '..');
+const signedStreamToken = 'eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3QifQ.eyJzdWIiOiJwcm92aWRlci11aWQiLCJleHAiOjE3OTAwMDAwMDB9.c2lnbmF0dXJl';
 
 function compile(source, filename) {
   return ts.transpileModule(source, {
@@ -116,9 +117,9 @@ const imageGrant = (contentId = CONTENT_A, expiresAt = NOW + 300_000) => ({
 
 const videoGrant = (contentId = CONTENT_A, expiresAt = NOW + 300_000) => ({
   contentId,
-  hlsUrl: 'https://customer-test.cloudflarestream.com/token/manifest/video.m3u8',
-  dashUrl: 'https://customer-test.cloudflarestream.com/token/manifest/video.mpd',
-  thumbnailUrl: 'https://customer-test.cloudflarestream.com/token/thumbnails/thumbnail.jpg',
+  hlsUrl: `https://customer-test.cloudflarestream.com/${signedStreamToken}/manifest/video.m3u8`,
+  dashUrl: `https://customer-test.cloudflarestream.com/${signedStreamToken}/manifest/video.mpd`,
+  thumbnailUrl: `https://customer-test.cloudflarestream.com/${signedStreamToken}/thumbnails/thumbnail.jpg`,
   expiresAt: new Date(expiresAt).toISOString(),
 });
 
@@ -287,15 +288,49 @@ test('image grants fail closed when expired, overlong, insecure, or for another 
   }
 });
 
+test('canonical B3 signed Stream URLs remain accepted by the viewer runtime', async () => {
+  rememberCreatorPremiumContentKind(USER_A, CONTENT_A, 'video');
+  const { controller } = makeController({ getVideoGrant: async () => videoGrant() });
+  await controller.open({ userId: USER_A, contentId: CONTENT_A });
+  assert.equal(controller.getSnapshot().status, 'ready');
+  assert.deepEqual(controller.getSnapshot().grant, { kind: 'video', ...videoGrant() });
+});
+
 test('video grants fail closed for a wrong domain, token shape, content, or expiry', async t => {
   const cases = [
-    ['domain', { ...videoGrant(), hlsUrl: 'https://video.example.test/token/manifest/video.m3u8' }],
-    ['token', { ...videoGrant(), dashUrl: 'https://customer-test.cloudflarestream.com/other/manifest/video.mpd' }],
+    ['domain', { ...videoGrant(), hlsUrl: `https://video.example.test/${signedStreamToken}/manifest/video.m3u8` }],
+    ['token', { ...videoGrant(), dashUrl: 'https://customer-test.cloudflarestream.com/not-a-signed-jwt/manifest/video.mpd' }],
     ['content', videoGrant(CONTENT_B)],
     ['expiry', videoGrant(CONTENT_A, NOW + 315_001)],
   ];
   for (const [name, grant] of cases) {
     await t.test(name, async () => {
+      rememberCreatorPremiumContentKind(USER_A, CONTENT_A, 'video');
+      const { controller } = makeController({ getVideoGrant: async () => grant });
+      await controller.open({ userId: USER_A, contentId: CONTENT_A });
+      assert.equal(controller.getSnapshot().status, 'error');
+      assert.equal(controller.getSnapshot().grant, null);
+    });
+  }
+});
+
+test('viewer runtime rejects coherent noncanonical mutations across every signed Stream URL', async t => {
+  const mutations = [
+    ['credentials', value => value.replace('https://', 'https://user:pass@')],
+    ['nondefault-port', value => value.replace('.cloudflarestream.com', '.cloudflarestream.com:8443')],
+    ['fragment', value => `${value}#private`],
+    ['unexpected-query', value => `${value}?download=1`],
+    ['noncanonical-token', value => value.replace(signedStreamToken, 'not-a-signed-jwt')],
+  ];
+  for (const [name, mutate] of mutations) {
+    await t.test(name, async () => {
+      const base = videoGrant();
+      const grant = {
+        ...base,
+        hlsUrl: mutate(base.hlsUrl),
+        dashUrl: mutate(base.dashUrl),
+        thumbnailUrl: mutate(base.thumbnailUrl),
+      };
       rememberCreatorPremiumContentKind(USER_A, CONTENT_A, 'video');
       const { controller } = makeController({ getVideoGrant: async () => grant });
       await controller.open({ userId: USER_A, contentId: CONTENT_A });

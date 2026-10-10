@@ -155,6 +155,7 @@ export function ProtectedPremiumVideo({
         player={player}
         style={styles.media}
         contentFit="contain"
+        surfaceType="textureView"
         nativeControls={false}
         allowsFullscreen={false}
         fullscreenOptions={{ enable: false }}

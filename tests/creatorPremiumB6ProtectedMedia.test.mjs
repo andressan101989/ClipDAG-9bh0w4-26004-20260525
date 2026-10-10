@@ -173,6 +173,11 @@ test('protected video disables caching, PiP, fullscreen, external playback, back
   assert.doesNotMatch(video, /Share|download|VideoAirPlayButton|AsyncStorage|FileSystem|MediaLibrary/i);
 });
 
+test('protected video uses Android textureView so opaque covers and watermark can compose above playback', () => {
+  const video = read('components/premium/ProtectedPremiumVideo.tsx');
+  assert.match(video, /surfaceType="textureView"/);
+});
+
 test('protected video observes native readiness, playback, and late native errors fail closed', () => {
   const video = read('components/premium/ProtectedPremiumVideo.tsx');
   assert.match(video, /player\.addListener\(['"]statusChange['"]/);

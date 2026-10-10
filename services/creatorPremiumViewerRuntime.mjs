@@ -8,6 +8,8 @@ const MAX_TIMER_DELAY_MS = 2_147_000_000;
 const RENEWABLE_STATUSES = new Set(['ready', 'playing', 'paused']);
 const ALLOWED_ENTITLEMENT_SOURCES = new Set(['owner', 'purchase', 'subscription']);
 const PREMIUM_R2_HOST_PATTERN = /^(?:[a-z0-9](?:[a-z0-9.-]{1,61})?[a-z0-9]\.)?[0-9a-f]{32}\.r2\.cloudflarestorage\.com$/i;
+const PREMIUM_STREAM_HOST_PATTERN = /^customer-[a-z0-9]{3,128}\.cloudflarestream\.com$/i;
+const PREMIUM_STREAM_TOKEN_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 
 function hintKey(userId, contentId) {
   return `${userId}:${contentId}`;
@@ -162,13 +164,17 @@ function protectedR2Url(value) {
 
 function protectedStreamUrl(value, suffix) {
   const parsed = httpsUrl(value);
-  if (!parsed.hostname.startsWith('customer-')
-    || !parsed.hostname.endsWith('.cloudflarestream.com')
+  if (!PREMIUM_STREAM_HOST_PATTERN.test(parsed.hostname)
+    || parsed.username
+    || parsed.password
+    || parsed.port
+    || parsed.hash
+    || parsed.search
     || !parsed.pathname.endsWith(suffix)) {
     throw new CreatorPremiumGrantError('invalid');
   }
   const token = parsed.pathname.slice(1, -suffix.length);
-  if (!token || token.includes('/')) throw new CreatorPremiumGrantError('invalid');
+  if (!PREMIUM_STREAM_TOKEN_PATTERN.test(token)) throw new CreatorPremiumGrantError('invalid');
   return { parsed, token };
 }
 

@@ -94,6 +94,8 @@ export class CreatorPremiumStreamError extends Error {
 }
 
 const db=()=>getSupabaseClient();
+const PREMIUM_STREAM_HOST_PATTERN=/^customer-[a-z0-9]{3,128}\.cloudflarestream\.com$/i;
+const PREMIUM_STREAM_TOKEN_PATTERN=/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 
 function firstRow<T>(data:T[]|T|null|undefined):T|undefined {
   return Array.isArray(data)?data[0]:data??undefined;
@@ -211,11 +213,15 @@ function protectedStreamUrl(
   try {
     const parsed=new URL(value);
     if(parsed.protocol!=='https:'
-      ||!parsed.hostname.startsWith('customer-')
-      ||!parsed.hostname.endsWith('.cloudflarestream.com')
+      ||!PREMIUM_STREAM_HOST_PATTERN.test(parsed.hostname)
+      ||parsed.username
+      ||parsed.password
+      ||parsed.port
+      ||parsed.hash
+      ||parsed.search
       ||!parsed.pathname.endsWith(suffix)) return null;
     const token=parsed.pathname.slice(1,-suffix.length);
-    return token.length>0&&!token.includes('/')?parsed:null;
+    return PREMIUM_STREAM_TOKEN_PATTERN.test(token)?parsed:null;
   } catch {
     return null;
   }
