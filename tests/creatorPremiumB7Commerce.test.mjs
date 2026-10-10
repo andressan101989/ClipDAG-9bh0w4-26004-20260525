@@ -34,6 +34,15 @@ test('commerce detail is content-id-only and exposes exact active offers/plans p
   assert.match(body, /price_bdag::text/i);
   assert.match(body, /creator_premium_finance_policy/i);
   assert.match(body, /resolve_creator_premium_entitlement_v1/i);
+  assert.match(body, /creator_premium_image_is_ready_v1/i);
+  assert.match(body, /creator_premium_video_is_ready_v1/i);
+  assert.match(body, /creator_premium_subscriptions/i);
+  assert.match(body, /paid_through_at/i);
+  assert.match(body, /relationship/i);
+  assert.match(body, /operations/i);
+  assert.match(body, /purchase_available/i);
+  assert.match(body, /subscription_available/i);
+  assert.match(body, /renewal_not_implemented/i);
   for (const forbidden of ['object_key', 'bucket_name', 'cloudflare_uid', 'account_id', 'financial_transaction_id']) {
     assert.doesNotMatch(body, new RegExp(`\\b${forbidden}\\b`, 'i'));
   }
@@ -82,6 +91,12 @@ test('creator summary is canonical, exact-string, refund-aware, and does not inv
   }
   assert.match(body, /::text/i);
   assert.match(body, /active_subscription_grants/i);
+  assert.match(body, /revoked_subscription_count/i);
+  assert.match(body, /recent_transactions/i);
+  assert.match(body, /financial_transaction_id/i);
+  assert.match(body, /reversal_financial_transaction_id/i);
+  assert.match(body, /limit\s+50/i);
+  assert.doesNotMatch(body, /'revoked_access_count'/i);
   assert.doesNotMatch(body, /views_count|conversion_rate|estimated_revenue/i);
   assert.doesNotMatch(body, /create\s+table/i);
 });

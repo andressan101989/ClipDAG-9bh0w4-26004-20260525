@@ -2,7 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { randomUUID } from 'expo-crypto';
 import { StatusBar } from 'expo-status-bar';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -21,6 +21,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
+import { useAuth } from '@/hooks/useAuth';
 import {
   activateMyCreatorPremiumPlan,
   cloneMyCreatorPremiumPlanVersion,
@@ -104,8 +105,15 @@ function EmptyState({ icon, title, copy }: { icon: 'image-multiple-outline' | 'p
 }
 
 export default function CreatorPremiumHub() {
+  const { user } = useAuth();
+  const contextKey = user?.id ?? 'signed-out';
+  return <CreatorPremiumHubContent key={contextKey} />;
+}
+
+function CreatorPremiumHubContent() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const [tab, setTab] = useState<'content' | 'plans' | 'earnings'>('content');
   const [contents, setContents] = useState<CreatorPremiumOwnerItem[]>([]);
   const [plans, setPlans] = useState<CreatorPremiumPlanItem[]>([]);
@@ -127,6 +135,42 @@ export default function CreatorPremiumHub() {
   const [savingPlan, setSavingPlan] = useState(false);
   const planCreateAttempt = useRef<{ signature: string; key: string } | null>(null);
   const planCloneAttempts = useRef(new Map<string, string>());
+  const contextGeneration = useRef(0);
+  const requestGeneration = useRef(0);
+  const contentPageGeneration = useRef(0);
+  const planPageGeneration = useRef(0);
+  const loadInFlight = useRef(false);
+  const contextKey = user?.id ?? 'signed-out';
+  const contextKeyRef = useRef(contextKey);
+
+  if (contextKeyRef.current !== contextKey) {
+    contextKeyRef.current = contextKey;
+    contextGeneration.current += 1;
+    requestGeneration.current += 1;
+    contentPageGeneration.current += 1;
+    planPageGeneration.current += 1;
+    loadInFlight.current = false;
+    planCreateAttempt.current = null;
+    planCloneAttempts.current.clear();
+  }
+
+  useEffect(() => {
+    setContents([]);
+    setPlans([]);
+    setSummary(null);
+    setContentNextCursor(null);
+    setPlanNextCursor(null);
+    setLoadingMore(null);
+    loadInFlight.current = false;
+    setBusyId(null);
+    setError(null);
+    return () => {
+      contextGeneration.current += 1;
+      requestGeneration.current += 1;
+      contentPageGeneration.current += 1;
+      planPageGeneration.current += 1;
+    };
+  }, [contextKey]);
 
   const subscriptionContents = useMemo(
     () => contents.filter(item => {
@@ -146,6 +190,12 @@ export default function CreatorPremiumHub() {
   ]), [plans]);
 
   const load = useCallback(async (refresh = false): Promise<boolean> => {
+    const generation = contextGeneration.current;
+    const request = ++requestGeneration.current;
+    loadInFlight.current = true;
+    contentPageGeneration.current += 1;
+    planPageGeneration.current += 1;
+    setLoadingMore(null);
     if (refresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
@@ -155,6 +205,7 @@ export default function CreatorPremiumHub() {
         fetchMyCreatorPremiumPlans({ limit: 100 }),
         fetchMyCreatorPremiumCommercialSummary(),
       ]);
+      if (generation !== contextGeneration.current || request !== requestGeneration.current) return false;
       setContents(contentPage.items);
       setPlans(planPage.items);
       setContentNextCursor(contentPage.nextCursor);
@@ -162,45 +213,66 @@ export default function CreatorPremiumHub() {
       setSummary(commercialSummary);
       return true;
     } catch (reason) {
+      if (generation !== contextGeneration.current || request !== requestGeneration.current) return false;
       setError(errorMessage(reason));
       return false;
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (generation === contextGeneration.current && request === requestGeneration.current) {
+        loadInFlight.current = false;
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
   const loadMoreContents = useCallback(async () => {
-    if (!contentNextCursor || loadingMore) return;
+    if (!contentNextCursor || loadingMore || loadInFlight.current) return;
+    const generation = contextGeneration.current;
+    const request = ++contentPageGeneration.current;
     setLoadingMore('content');
     try {
       const page = await fetchMyCreatorPremiumContents({ limit: 100, cursor: contentNextCursor });
+      if (generation !== contextGeneration.current || request !== contentPageGeneration.current) return;
       setContents(current => appendUnique(current, page.items));
       setContentNextCursor(page.nextCursor);
     } catch (reason) {
+      if (generation !== contextGeneration.current || request !== contentPageGeneration.current) return;
       setError(errorMessage(reason));
     } finally {
-      setLoadingMore(null);
+      if (generation === contextGeneration.current && request === contentPageGeneration.current) {
+        setLoadingMore(null);
+      }
     }
   }, [contentNextCursor, loadingMore]);
 
   const loadMorePlans = useCallback(async () => {
-    if (!planNextCursor || loadingMore) return;
+    if (!planNextCursor || loadingMore || loadInFlight.current) return;
+    const generation = contextGeneration.current;
+    const request = ++planPageGeneration.current;
     setLoadingMore('plans');
     try {
       const page = await fetchMyCreatorPremiumPlans({ limit: 100, cursor: planNextCursor });
+      if (generation !== contextGeneration.current || request !== planPageGeneration.current) return;
       setPlans(current => appendUnique(current, page.items));
       setPlanNextCursor(page.nextCursor);
     } catch (reason) {
+      if (generation !== contextGeneration.current || request !== planPageGeneration.current) return;
       setError(errorMessage(reason));
     } finally {
-      setLoadingMore(null);
+      if (generation === contextGeneration.current && request === planPageGeneration.current) {
+        setLoadingMore(null);
+      }
     }
   }, [loadingMore, planNextCursor]);
 
   useFocusEffect(useCallback(() => {
-    void load();
-  }, [load]));
+    if (contextKeyRef.current === contextKey) void load();
+    return () => {
+      requestGeneration.current += 1;
+      contentPageGeneration.current += 1;
+      planPageGeneration.current += 1;
+    };
+  }, [contextKey, load]));
 
   const openPlan = useCallback((plan?: CreatorPremiumPlanItem) => {
     setEditingPlan(plan ?? null);
@@ -536,9 +608,23 @@ export default function CreatorPremiumHub() {
                     <View style={styles.metricRow}><Text style={styles.meta}>Compras completadas</Text><Text style={styles.metricValue}>{summary.purchase_count}</Text></View>
                     <View style={styles.metricRow}><Text style={styles.meta}>Periodos de suscripción</Text><Text style={styles.metricValue}>{summary.subscription_period_count}</Text></View>
                     <View style={styles.metricRow}><Text style={styles.meta}>Suscripciones con acceso vigente</Text><Text style={styles.metricValue}>{summary.active_subscription_grants}</Text></View>
-                    <View style={styles.metricRow}><Text style={styles.meta}>Accesos revocados</Text><Text style={styles.metricValue}>{summary.revoked_access_count}</Text></View>
+                    <View style={styles.metricRow}><Text style={styles.meta}>Suscripciones revocadas</Text><Text style={styles.metricValue}>{summary.revoked_subscription_count}</Text></View>
                     <View style={styles.metricRow}><Text style={styles.meta}>Reembolsos</Text><Text style={styles.metricValue}>{summary.refund_count}</Text></View>
                     <Text style={styles.analyticsNotice}>Las visualizaciones no se muestran porque aún no existe instrumentación canónica para esa métrica.</Text>
+                  </View>
+                  <View style={styles.planGroup}>
+                    <Text style={styles.sectionTitle}>Transacciones verificadas</Text>
+                    {summary.recent_transactions.length === 0 ? (
+                      <Text style={styles.emptyCopy}>Todavía no existen transacciones verificadas en este periodo.</Text>
+                    ) : summary.recent_transactions.map(transaction => (
+                      <View key={transaction.financial_transaction_id} style={styles.card}>
+                        <View style={styles.metricRow}>
+                          <Text style={styles.cardTitle}>{transaction.event_type === 'refund' ? 'Reembolso' : 'Cobro'} · {transaction.source === 'purchase' ? 'Compra' : 'Suscripción'}</Text>
+                          <Text style={styles.metricValue}>{money(transaction.creator_net_bdag)}</Text>
+                        </View>
+                        <Text style={styles.meta}>{new Intl.DateTimeFormat('es', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(transaction.created_at))}</Text>
+                      </View>
+                    ))}
                   </View>
                   <View style={styles.planGroup}>
                     <Text style={styles.sectionTitle}>Rendimiento por contenido</Text>

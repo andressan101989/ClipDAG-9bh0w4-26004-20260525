@@ -21,6 +21,10 @@ test('existing image grant adds exact admin review context without weakening B6 
   assert.match(imageEdge, /premium_content_id/i);
   assert.match(imageEdge, /creator_premium\.review\.read/i);
   assert.match(imageEdge, /admin_actor_has_capability/i);
+  assert.match(imageEdge, /get_admin_creator_premium_content_v1/i);
+  assert.match(imageEdge, /pending_review[\s\S]*published[\s\S]*rejected[\s\S]*quarantined[\s\S]*removed/i);
+  assert.match(imageEdge, /content_kind[\s\S]*image/i);
+  assert.match(imageEdge, /owner_id/i);
   assert.match(imageEdge, /creator_premium_original_image/i);
   assert.match(imageEdge, /visibility[^\n]*'private'/i);
   assert.match(imageEdge, /status[^\n]*'ready'/i);
@@ -36,6 +40,11 @@ test('existing Stream grant adds exact admin review context and retains signed-o
   assert.match(streamEdge, /admin_review/i);
   assert.match(streamEdge, /creator_premium\.review\.read/i);
   assert.match(streamEdge, /admin_actor_has_capability/i);
+  assert.match(streamEdge, /get_admin_creator_premium_content_v1/i);
+  assert.match(streamEdge, /pending_review[\s\S]*published[\s\S]*rejected[\s\S]*quarantined[\s\S]*removed/i);
+  assert.match(streamEdge, /content_kind[\s\S]*video/i);
+  assert.match(streamEdge, /owner_id/i);
+  assert.match(streamEdge, /req\.method\s*===\s*['"]OPTIONS['"][\s\S]*status\s*:\s*204/i);
   assert.match(streamEdge, /hasPremiumProviderProof/i);
   assert.match(streamEdge, /createPremiumStreamPlaybackGrant/i);
   assert.match(streamEdge, /Cache-Control['"]?\s*:\s*['"]private, no-store/i);
@@ -58,6 +67,25 @@ test('Admin Web has one capability-routed Creator Premium review surface', () =>
   assert.match(pages, /Cuarentena|quarantined/i);
   assert.match(pages, /Retirado|removed/i);
   assert.doesNotMatch(pages, /object_key|bucket_name|cloudflare_uid/i);
+  assert.match(pages, /next_cursor/i);
+  assert.match(pages, /Cargar más/i);
+  assert.match(pages, /lifecycle===['"]pending_review['"]\?\[['"]approve['"],['"]reject['"]\]/i);
+  assert.match(pages, /lifecycle===['"]rejected['"]\?\[['"]restore['"]\]/i);
+});
+
+test('Admin review pagination fences late pages when filters or retries change', () => {
+  assert.match(pages, /useRef/i);
+  assert.match(pages, /queueRequestGeneration\s*=\s*useRef\(0\)/i);
+  assert.ok(
+    (pages.match(/\+\+queueRequestGeneration\.current/g) ?? []).length >= 2,
+    'initial and paginated requests must each own a generation',
+  );
+  assert.match(pages, /request\s*===\s*queueRequestGeneration\.current/i);
+  assert.match(pages, /return\s*\(\s*\)\s*=>\s*\{[^}]*queueRequestGeneration\.current\s*\+=\s*1/i);
+  assert.match(pages, /const\s+requestedStatus\s*=\s*status/i);
+  assert.match(pages, /const\s+requestedQuery\s*=\s*query/i);
+  assert.match(pages, /requestedStatus\s*===\s*statusRef\.current/i);
+  assert.match(pages, /requestedQuery\s*===\s*queryRef\.current/i);
 });
 
 test('Admin API validates review commands, safe grants, and audited refund wrappers', () => {

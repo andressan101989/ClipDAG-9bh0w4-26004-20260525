@@ -43,8 +43,9 @@ test('commerce screen receives only contentId and renders canonical offers/plans
 
 test('purchase and subscription actions are double-gated and use stable in-memory UUID attempts', () => {
   assert.match(offer, /CREATOR_PREMIUM_FINANCE_AVAILABLE/i);
-  assert.match(offer, /purchase_enabled/i);
-  assert.match(offer, /subscription_enabled/i);
+  assert.match(offer, /operations\.purchase_available/i);
+  assert.match(offer, /plan\.subscription_available/i);
+  assert.doesNotMatch(offer, /commerce\?*\.policy\.(?:purchase_enabled|subscription_enabled)/i);
   assert.match(offer, /purchaseContent/i);
   assert.match(offer, /subscribeToPlan/i);
   assert.match(offer, /randomUUID/i);
@@ -95,8 +96,34 @@ test('creator hub exposes real earnings and rejection recovery without client ac
   assert.match(hub, /refund|reembolso/i);
   assert.match(hub, /rejected|Rechazado/i);
   assert.match(hub, /reopenMyCreatorPremiumRejected/i);
+  assert.match(hub, /recent_transactions/i);
+  assert.match(hub, /revoked_subscription_count/i);
+  assert.match(hub, /useAuth/i);
+  assert.match(hub, /contextGeneration/i);
+  assert.match(hub, /requestGeneration/i);
   assert.doesNotMatch(hub, /Number\([^\n]*(?:gross|fee|net|revenue)|parseFloat\([^\n]*(?:gross|fee|net|revenue)/i);
   assert.doesNotMatch(hub, /fake|mock|estimated_revenue|conversion_rate|views_count/i);
+});
+
+test('subscription refresh and pagination own independent requests and cannot strand spinners', () => {
+  assert.match(subscriptions, /loadRequestGeneration/i);
+  assert.match(subscriptions, /pageRequestGeneration/i);
+  assert.match(subscriptions, /setLoadingMore\(false\)/i);
+  assert.doesNotMatch(subscriptions, /const\s+request\s*=\s*\+\+requestGeneration\.current/i);
+});
+
+test('creator hub blocks pagination while a refresh owns the canonical cursor', () => {
+  assert.match(hub, /loadInFlight\s*=\s*useRef\(false\)/i);
+  assert.match(hub, /loadInFlight\.current\s*=\s*true/i);
+  assert.match(hub, /if\s*\(\s*!contentNextCursor\s*\|\|\s*loadingMore\s*\|\|\s*loadInFlight\.current\s*\)\s*return/i);
+  assert.match(hub, /if\s*\(\s*!planNextCursor\s*\|\|\s*loadingMore\s*\|\|\s*loadInFlight\.current\s*\)\s*return/i);
+  assert.match(hub, /loadInFlight\.current\s*=\s*false/i);
+});
+
+test('authenticated commerce snapshots remount before another account can render prior data', () => {
+  assert.match(hub, /export\s+default\s+function\s+CreatorPremiumHub[\s\S]*?return\s*<CreatorPremiumHubContent\s+key=\{contextKey\}/i);
+  assert.match(subscriptions, /export\s+default\s+function\s+MySubscriptionsScreen[\s\S]*?return\s*<MySubscriptionsScreenContent\s+key=\{contextKey\}/i);
+  assert.match(offer, /export\s+default\s+function\s+CreatorPremiumOfferScreen[\s\S]*?return\s*<CreatorPremiumOfferScreenContent\s+key=\{contextKey\}/i);
 });
 
 test('Premium reporting sends safe identifiers and reason text, never private grants', () => {

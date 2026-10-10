@@ -200,6 +200,15 @@ export interface CreatorPremiumCommercePlan {
   currency: 'BDAG';
   billing_period_days: number;
   status: 'active';
+  relationship: null | {
+    id: string;
+    status: 'pending' | 'active' | 'cancelled' | 'expired' | 'revoked';
+    cancelled_at: string | null;
+    paid_through_at: string | null;
+    access_state: 'active' | 'expired' | 'revoked' | 'refunded' | null;
+  };
+  subscription_available: boolean;
+  subscription_blocker: string | null;
 }
 
 export interface CreatorPremiumCommerce {
@@ -210,6 +219,10 @@ export interface CreatorPremiumCommerce {
   offer: CreatorPremiumCommerceOffer | null;
   plans: CreatorPremiumCommercePlan[];
   entitlement: CreatorPremiumEntitlement;
+  operations: {
+    purchase_available: boolean;
+    purchase_blocker: string | null;
+  };
   policy: {
     purchase_enabled: boolean;
     subscription_enabled: boolean;
@@ -255,7 +268,18 @@ export interface CreatorPremiumCommercialSummary {
   pending_contents: number;
   rejected_contents: number;
   active_subscription_grants: number;
-  revoked_access_count: number;
+  revoked_subscription_count: number;
+  recent_transactions: {
+    source: 'purchase' | 'subscription';
+    event_type: 'charge' | 'refund';
+    reference_id: string;
+    content_id: string | null;
+    financial_transaction_id: string;
+    gross_amount_bdag: string;
+    platform_fee_bdag: string;
+    creator_net_bdag: string;
+    created_at: string;
+  }[];
   content_performance: {
     content_id: string;
     title: string;
@@ -266,6 +290,13 @@ export interface CreatorPremiumCommercialSummary {
   }[];
   views_instrumented: false;
 }
+
+export const CREATOR_PREMIUM_REPORT_REASONS = [
+  'spam','harassment','violence','hate','sexual','self_harm','drugs','weapons',
+  'fraud','misinformation','child_safety','non_consensual_intimate',
+  'illegal_exploitation','other',
+] as const;
+export type CreatorPremiumReportReason = typeof CREATOR_PREMIUM_REPORT_REASONS[number];
 
 export async function getCurrentCreatorPremiumUserId(): Promise<string | null> {
   const { data, error } = await db().auth.getUser();
@@ -596,10 +627,13 @@ export async function fetchMyCreatorPremiumCommercialSummary(
 
 export async function reportCreatorPremiumContent(input: {
   contentId: string;
-  reason: string;
+  reason: CreatorPremiumReportReason;
   details?: string;
 }): Promise<string> {
   if (!input.contentId) throw new Error('creator_premium_invalid_content');
+  if (!CREATOR_PREMIUM_REPORT_REASONS.includes(input.reason)) {
+    throw new Error('creator_premium_report_invalid');
+  }
   const { data, error } = await db().rpc('report_creator_premium_content_v1', {
     p_content_id: input.contentId,
     p_reason: input.reason,

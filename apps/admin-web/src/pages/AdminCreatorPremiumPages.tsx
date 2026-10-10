@@ -1,4 +1,4 @@
-import {useEffect,useMemo,useState} from "react";
+import {useEffect,useMemo,useRef,useState} from "react";
 import {Link,useParams} from "react-router-dom";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
 import {AdminFact,AdminFactGrid,AdminIdentity,AdminMediaPreview,asRecord,asRows,humanValue,shortId} from "../components/AdminPresentation";
@@ -20,9 +20,36 @@ const text=(value:unknown)=>typeof value==="string"?value:"";
 const bool=(value:unknown)=>value===true;
 
 export function AdminCreatorPremiumPage(){
-  const [status,setStatus]=useState("pending_review"),[query,setQuery]=useState(""),[items,setItems]=useState<AdminCreatorPremiumSummary[]|null>(null),[error,setError]=useState<string|null>(null),[nonce,setNonce]=useState(0);
-  useEffect(()=>{let active=true;setItems(null);setError(null);void searchAdminCreatorPremiumContent({status:status||null,query}).then((page)=>{if(active)setItems(page.items)}).catch((cause)=>{if(active)setError(cause instanceof Error?cause.message:"No se pudo cargar la cola")});return()=>{active=false}},[status,query,nonce]);
-  return <><div className="page-heading"><div><p className="eyebrow">CREATOR PREMIUM</p><h2>Revisión Premium</h2><p>Moderación humana, publicación canónica y media privada temporal.</p></div></div><div className="filters"><label className="search"><span>⌕</span><input aria-label="Buscar Creator Premium" placeholder="Título, creador o ID" value={query} onChange={(event)=>setQuery(event.target.value)}/></label><select aria-label="Estado Premium" value={status} onChange={(event)=>setStatus(event.target.value)}><option value="">Todos</option><option value="pending_review">En revisión</option><option value="published">Publicado</option><option value="rejected">Rechazado</option><option value="quarantined">Cuarentena</option><option value="removed">Retirado</option></select></div>{error?<ErrorState message={error} onRetry={()=>setNonce((value)=>value+1)}/>:!items?<LoadingState label="Cargando revisión Premium…"/>:items.length===0?<EmptyState title="Sin contenido Premium" detail="No hay elementos para los filtros actuales."/>:<section className="table-panel"><table className="human-table"><thead><tr><th>Vista previa</th><th>Contenido</th><th>Creador</th><th>Tipo</th><th>Estado</th><th>Enviado</th></tr></thead><tbody>{items.map((item)=><tr key={item.id}><td><Link to={`/creator-premium/${item.id}`} className="admin-media-thumb">{item.teaser_url?<img src={item.teaser_url} alt="Vista previa pública"/>:<span>PREMIUM</span>}</Link></td><td><Link to={`/creator-premium/${item.id}`}><strong>{item.title}</strong><small className="mono">{shortId(item.id)}</small>{item.publication_blocker&&<span className="truncate">Bloqueo: {item.publication_blocker}</span>}</Link></td><td><AdminIdentity value={item.creator} compact/></td><td>{item.content_kind} · {item.access_mode}</td><td><em className={`badge ${item.lifecycle_status==="published"?"success":"warn"}`}>{statusLabel(item.lifecycle_status)}</em></td><td>{formatDate(item.submitted_at)}</td></tr>)}</tbody></table></section>}</>
+  const [status,setStatus]=useState("pending_review"),[query,setQuery]=useState(""),[items,setItems]=useState<AdminCreatorPremiumSummary[]|null>(null),[nextCursor,setNextCursor]=useState<Awaited<ReturnType<typeof searchAdminCreatorPremiumContent>>["next_cursor"]>(null),[loadingMore,setLoadingMore]=useState(false),[error,setError]=useState<string|null>(null),[nonce,setNonce]=useState(0);
+  const queueRequestGeneration=useRef(0),statusRef=useRef(status),queryRef=useRef(query);
+  statusRef.current=status;
+  queryRef.current=query;
+  useEffect(()=>{
+    let active=true;
+    const request=++queueRequestGeneration.current;
+    setItems(null);setNextCursor(null);setLoadingMore(false);setError(null);
+    void searchAdminCreatorPremiumContent({status:status||null,query})
+      .then((page)=>{if(active&&request===queueRequestGeneration.current){setItems(page.items);setNextCursor(page.next_cursor)}})
+      .catch((cause)=>{if(active&&request===queueRequestGeneration.current)setError(cause instanceof Error?cause.message:"No se pudo cargar la cola")});
+    return()=>{active=false;queueRequestGeneration.current+=1};
+  },[status,query,nonce]);
+  const loadMore=async()=>{
+    if(!nextCursor||loadingMore)return;
+    const request=++queueRequestGeneration.current;
+    const requestedStatus=status;
+    const requestedQuery=query;
+    const cursor=nextCursor;
+    const isCurrent=()=>request===queueRequestGeneration.current&&requestedStatus===statusRef.current&&requestedQuery===queryRef.current;
+    setLoadingMore(true);setError(null);
+    try{
+      const page=await searchAdminCreatorPremiumContent({status:requestedStatus||null,query:requestedQuery,cursor});
+      if(!isCurrent())return;
+      setItems((current)=>{const existing=new Set((current??[]).map((item)=>item.id));return[...(current??[]),...page.items.filter((item)=>!existing.has(item.id))]});
+      setNextCursor(page.next_cursor);
+    }catch(cause){if(isCurrent())setError(cause instanceof Error?cause.message:"No se pudo cargar más contenido")}
+    finally{if(isCurrent())setLoadingMore(false)}
+  };
+  return <><div className="page-heading"><div><p className="eyebrow">CREATOR PREMIUM</p><h2>Revisión Premium</h2><p>Moderación humana, publicación canónica y media privada temporal.</p></div></div><div className="filters"><label className="search"><span>⌕</span><input aria-label="Buscar Creator Premium" placeholder="Título, creador o ID" value={query} onChange={(event)=>setQuery(event.target.value)}/></label><select aria-label="Estado Premium" value={status} onChange={(event)=>setStatus(event.target.value)}><option value="">Todos</option><option value="pending_review">En revisión</option><option value="published">Publicado</option><option value="rejected">Rechazado</option><option value="quarantined">Cuarentena</option><option value="removed">Retirado</option></select></div>{error&&items?<ErrorState message={error} onRetry={()=>setNonce((value)=>value+1)}/>:null}{error&&!items?<ErrorState message={error} onRetry={()=>setNonce((value)=>value+1)}/>:!items?<LoadingState label="Cargando revisión Premium…"/>:items.length===0?<EmptyState title="Sin contenido Premium" detail="No hay elementos para los filtros actuales."/>:<section className="table-panel"><table className="human-table"><thead><tr><th>Vista previa</th><th>Contenido</th><th>Creador</th><th>Tipo</th><th>Estado</th><th>Enviado</th></tr></thead><tbody>{items.map((item)=><tr key={item.id}><td><Link to={`/creator-premium/${item.id}`} className="admin-media-thumb">{item.teaser_url?<img src={item.teaser_url} alt="Vista previa pública"/>:<span>PREMIUM</span>}</Link></td><td><Link to={`/creator-premium/${item.id}`}><strong>{item.title}</strong><small className="mono">{shortId(item.id)}</small>{item.publication_blocker&&<span className="truncate">Bloqueo: {item.publication_blocker}</span>}</Link></td><td><AdminIdentity value={item.creator} compact/></td><td>{item.content_kind} · {item.access_mode}</td><td><em className={`badge ${item.lifecycle_status==="published"?"success":"warn"}`}>{statusLabel(item.lifecycle_status)}</em></td><td>{formatDate(item.submitted_at)}</td></tr>)}</tbody></table>{nextCursor?<button className="secondary" disabled={loadingMore} onClick={()=>void loadMore()}>{loadingMore?"Cargando…":"Cargar más"}</button>:null}</section>}</>
 }
 
 type ImageGrant={url:string;expiresAt:string};
@@ -35,7 +62,7 @@ export function AdminCreatorPremiumDetailPage(){
   useEffect(()=>{if(!detail)return;let active=true;setGrantError(null);const load=detail.content_kind==="video"?getAdminCreatorPremiumVideoGrant(id):getAdminCreatorPremiumImageGrant(id);void load.then((grant)=>{if(!active)return;if("hlsUrl" in grant)setVideoGrant(grant);else setImageGrant(grant)}).catch(()=>{if(active)setGrantError("El original privado no está disponible para revisión.")});return()=>{active=false;setImageGrant(null);setVideoGrant(null)}},[detail,id]);
   const policy=asRecord(detail?.finance_policy),refundsEnabled=bool(policy.refunds_enabled),canRefund=hasCapability("creator_premium.refunds.write")&&refundsEnabled;
   useEffect(()=>{if(!canRefund||!detail)return;let active=true;void getAdminCreatorPremiumRefundCandidates(id).then((value)=>{if(active)setRefundCandidates(value)}).catch(()=>{if(active)setRefundCandidates(null)});return()=>{active=false}},[canRefund,detail,id,nonce]);
-  const lifecycle=text(detail?.lifecycle_status),allowedActions=useMemo(()=>lifecycle==="pending_review"?["approve","reject","quarantine"]:lifecycle==="published"?["quarantine","remove"]:lifecycle==="rejected"?["quarantine","remove"]:lifecycle==="quarantined"||lifecycle==="removed"?["restore"]:[],[lifecycle]);
+  const lifecycle=text(detail?.lifecycle_status),allowedActions=useMemo(()=>lifecycle==="pending_review"?["approve","reject"]:lifecycle==="published"?["quarantine","remove"]:lifecycle==="rejected"?["restore"]:lifecycle==="quarantined"?["remove","restore"]:lifecycle==="removed"?["restore"]:[],[lifecycle]);
   const review=async(action:"approve"|"reject"|"quarantine"|"remove"|"restore")=>{if(reason.trim().length<2){setError("Indica un motivo de al menos 2 caracteres.");return}setBusy(true);setError(null);try{await reviewAdminCreatorPremiumContent({id,action,reason:reason.trim(),idempotencyKey:crypto.randomUUID()});setReason("");setNonce((value)=>value+1)}catch(cause){setError(cause instanceof Error?cause.message:"No se pudo registrar la decisión")}finally{setBusy(false)}};
   const refund=async(kind:"purchase"|"subscription",targetId:string)=>{const code=refundReason.trim().toLowerCase();if(!/^[a-z][a-z0-9_]{0,79}$/.test(code)){setError("Indica un motivo seguro en formato codigo_de_motivo.");return}if(!window.confirm("Confirmar reembolso completo y revocación de acceso"))return;setBusy(true);setError(null);try{if(kind==="purchase")await refundAdminCreatorPremiumPurchase({receiptId:targetId,reason:code,idempotencyKey:crypto.randomUUID()});else await refundAdminCreatorPremiumSubscriptionPeriod({periodId:targetId,reason:code,idempotencyKey:crypto.randomUUID()});setNonce((value)=>value+1)}catch(cause){setError(cause instanceof Error?cause.message:"No se pudo ejecutar el reembolso") }finally{setBusy(false)}};
   if(error&&!detail)return <ErrorState message={error} onRetry={()=>setNonce((value)=>value+1)}/>;if(!detail)return <LoadingState label="Cargando detalle Premium…"/>;

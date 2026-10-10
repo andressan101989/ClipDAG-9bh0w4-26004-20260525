@@ -582,12 +582,35 @@ begin
         'price_bdag', plan.price_bdag::text, 'currency', plan.currency,
         'billing_period_days', plan.billing_period_days, 'status', plan.status
       ) order by plan.name, plan.version desc)
+      from (
+        select plan.*
+        from private.creator_premium_plan_contents mapping
+        join private.creator_premium_plans plan
+          on plan.id = mapping.plan_id and plan.creator_id = mapping.creator_id
+        where mapping.content_id = content.id and mapping.creator_id = content.creator_id
+          and plan.status in ('draft','active','retired')
+        order by plan.name, plan.version desc, plan.id
+        limit 100
+      ) plan
+    ), '[]'::jsonb),
+    'plan_count', (
+      select pg_catalog.count(*)
       from private.creator_premium_plan_contents mapping
       join private.creator_premium_plans plan
         on plan.id = mapping.plan_id and plan.creator_id = mapping.creator_id
       where mapping.content_id = content.id and mapping.creator_id = content.creator_id
         and plan.status in ('draft','active','retired')
-    ), '[]'::jsonb),
+    ),
+    'plans_truncated', exists (
+      select 1
+      from private.creator_premium_plan_contents mapping
+      join private.creator_premium_plans plan
+        on plan.id = mapping.plan_id and plan.creator_id = mapping.creator_id
+      where mapping.content_id = content.id and mapping.creator_id = content.creator_id
+        and plan.status in ('draft','active','retired')
+      order by plan.name, plan.version desc, plan.id
+      offset 100 limit 1
+    ),
     'finance_policy', (
       select pg_catalog.jsonb_build_object(
         'purchase_enabled', policy.purchase_enabled,
@@ -609,24 +632,38 @@ begin
         'action', audit.action, 'reason', audit.reason,
         'outcome', audit.outcome, 'created_at', audit.created_at
       ) order by audit.created_at desc, audit.id desc)
-      from private.admin_action_audit audit
-      where audit.domain = 'creator_premium'
-        and audit.target_type = 'creator_premium_content'
-        and audit.target_id = content.id
+      from (
+        select audit.id, audit.actor_id, audit.action, audit.reason,
+          audit.outcome, audit.created_at
+        from private.admin_action_audit audit
+        where audit.domain = 'creator_premium'
+          and audit.target_type = 'creator_premium_content'
+          and audit.target_id = content.id
+        order by audit.created_at desc, audit.id desc
+        limit 100
+      ) audit
     ), '[]'::jsonb),
     'reports', coalesce((
       select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
         'id', report.id, 'reason', report.reason, 'status', report.status,
         'created_at', report.created_at
       ) order by report.created_at desc, report.id desc)
-      from public.reports report
-      where report.reported_content_type = 'creator_premium'
-        and report.reported_content_id = content.id
+      from (
+        select report.id, report.reason, report.status, report.created_at
+        from public.reports report
+        where report.reported_content_type = 'creator_premium'
+          and report.reported_content_id = content.id
+        order by report.created_at desc, report.id desc
+        limit 100
+      ) report
     ), '[]'::jsonb)
   ) into v_result
   from private.creator_premium_contents content
   left join public.public_user_profiles profile on profile.id = content.creator_id
-  where content.id = p_content_id;
+  where content.id = p_content_id
+    and content.lifecycle_status in (
+      'pending_review','published','rejected','quarantined','removed'
+    );
 
   if v_result is null then
     raise exception using errcode = 'P0002', message = 'creator_premium_admin_content_not_found';
@@ -654,7 +691,7 @@ declare
   v_prior private.admin_action_audit;
   v_content private.creator_premium_contents;
   v_blocker text;
-  v_now timestamptz := pg_catalog.clock_timestamp();
+  v_now timestamptz;
   v_receipt jsonb;
 begin
   v_actor := public.admin_require_capability('creator_premium.review.moderate');
@@ -665,7 +702,7 @@ begin
   end if;
 
   v_scope := 'v1|human|' || v_actor::text
-    || '|creator_premium.review.moderate|creator_premium.' || v_action;
+    || '|creator_premium.review.moderate|creator_premium.review';
   v_fingerprint := private.admin_request_fingerprint(pg_catalog.jsonb_build_object(
     'contract_version', 1, 'actor_kind', 'human_admin', 'actor_id', v_actor,
     'capability', 'creator_premium.review.moderate',
@@ -698,6 +735,7 @@ begin
   if not found then
     raise exception using errcode = 'P0002', message = 'creator_premium_admin_content_not_found';
   end if;
+  v_now := pg_catalog.clock_timestamp();
 
   case v_action
     when 'approve' then
@@ -727,7 +765,7 @@ begin
       where content.id = v_content.id
       returning content.* into v_content;
     when 'quarantine' then
-      if v_content.lifecycle_status not in ('pending_review','published','rejected') then
+      if v_content.lifecycle_status <> 'published' then
         raise exception using errcode = '55000', message = 'creator_premium_admin_quarantine_invalid_state';
       end if;
       update private.creator_premium_contents content
@@ -737,7 +775,7 @@ begin
       where content.id = v_content.id
       returning content.* into v_content;
     when 'remove' then
-      if v_content.lifecycle_status not in ('published','quarantined','rejected') then
+      if v_content.lifecycle_status not in ('published','quarantined') then
         raise exception using errcode = '55000', message = 'creator_premium_admin_remove_invalid_state';
       end if;
       update private.creator_premium_contents content
@@ -747,7 +785,7 @@ begin
       where content.id = v_content.id
       returning content.* into v_content;
     when 'restore' then
-      if v_content.lifecycle_status not in ('quarantined','removed') then
+      if v_content.lifecycle_status not in ('rejected','quarantined','removed') then
         raise exception using errcode = '55000', message = 'creator_premium_admin_restore_invalid_state';
       end if;
       update private.creator_premium_contents content
@@ -799,6 +837,10 @@ with check (
   and reported_content_type in ('video','comment','user')
 );
 
+create unique index reports_one_pending_creator_premium_per_reporter_content_idx
+  on public.reports(reporter_user_id, reported_content_id)
+  where reported_content_type = 'creator_premium' and status = 'pending';
+
 create function public.report_creator_premium_content_v1(
   p_content_id uuid,
   p_reason text,
@@ -819,12 +861,19 @@ begin
     raise exception using errcode = '28000', message = 'authentication_required';
   end if;
   if p_content_id is null
-     or v_reason !~ '^[a-z][a-z0-9_]{1,79}$'
+     or v_reason not in (
+       'spam','harassment','violence','hate','sexual','self_harm','drugs',
+       'weapons','fraud','misinformation','child_safety',
+       'non_consensual_intimate','illegal_exploitation','other'
+     )
      or (v_details is not null and pg_catalog.char_length(v_details) > 1000) then
     raise exception using errcode = '22023', message = 'creator_premium_report_invalid';
   end if;
   if not private.creator_premium_actor_is_operational_v1(v_actor) then
     raise exception using errcode = '42501', message = 'creator_premium_account_restricted';
+  end if;
+  if not private.current_user_is_creator_exclusive_age_eligible() then
+    raise exception using errcode = '42501', message = 'creator_premium_age_eligibility_required';
   end if;
   select content.* into v_content
   from private.creator_premium_contents content
@@ -836,6 +885,21 @@ begin
   if v_content.creator_id = v_actor then
     raise exception using errcode = '42501', message = 'creator_premium_report_self_forbidden';
   end if;
+  if not private.creator_premium_actor_is_operational_v1(v_content.creator_id) then
+    raise exception using errcode = '42501', message = 'creator_premium_creator_account_restricted';
+  end if;
+  if not private.creator_premium_pair_is_unblocked_v1(v_actor, v_content.creator_id) then
+    raise exception using errcode = '42501', message = 'creator_premium_blocked_relationship';
+  end if;
+  if (v_content.content_kind = 'image'
+      and not private.creator_premium_image_is_ready_v1(v_content.id))
+     or (v_content.content_kind = 'video'
+      and not private.creator_premium_video_is_ready_v1(v_content.id)) then
+    raise exception using errcode = '55000', message = 'creator_premium_media_unavailable';
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    'creator-premium-report|' || v_actor::text || '|' || v_content.id::text, 0
+  ));
   if not exists (
     select 1
     from public.reports report
@@ -1116,6 +1180,8 @@ declare
   v_content private.creator_premium_contents;
   v_entitlement record;
   v_policy private.creator_premium_finance_policy;
+  v_media_ready boolean := false;
+  v_purchase_owned boolean := false;
   v_result jsonb;
 begin
   if v_actor is null then
@@ -1142,11 +1208,26 @@ begin
   if not private.creator_premium_pair_is_unblocked_v1(v_actor,v_content.creator_id) then
     raise exception using errcode='42501',message='creator_premium_blocked_relationship';
   end if;
+  v_media_ready := case v_content.content_kind
+    when 'image' then private.creator_premium_image_is_ready_v1(v_content.id)
+    when 'video' then private.creator_premium_video_is_ready_v1(v_content.id)
+    else false end;
+  if not v_media_ready then
+    raise exception using errcode='55000',message='creator_premium_media_unavailable';
+  end if;
   select * into v_entitlement
   from private.resolve_creator_premium_entitlement_v1(v_content.id);
   select policy.* into v_policy
   from private.creator_premium_finance_policy policy
   where policy.singleton=true;
+  select exists(
+    select 1
+    from private.creator_premium_purchase_receipts receipt
+    where receipt.buyer_id=v_actor
+      and receipt.content_id=v_content.id
+      and receipt.access_state='active'
+      and private.creator_premium_purchase_binding_is_valid_v1(receipt.id)
+  ) into v_purchase_owned;
 
   select pg_catalog.jsonb_build_object(
     'content',pg_catalog.jsonb_build_object(
@@ -1174,17 +1255,96 @@ begin
         'id',plan.id,'name',plan.name,'description',plan.description,
         'version',plan.version,'price_bdag',plan.price_bdag::text,
         'currency',plan.currency,'billing_period_days',plan.billing_period_days,
-        'status',plan.status
+        'status',plan.status,
+        'relationship',case when plan.relationship_id is null then null else
+          pg_catalog.jsonb_build_object(
+            'id',plan.relationship_id,'status',plan.relationship_status,
+            'cancelled_at',plan.relationship_cancelled_at,
+            'paid_through_at',plan.relationship_paid_through_at,
+            'access_state',plan.relationship_access_state
+          ) end,
+        'subscription_available',coalesce(v_policy.subscription_enabled,false)
+          and v_actor<>content.creator_id and plan.relationship_id is null,
+        'subscription_blocker',case
+          when v_actor=content.creator_id then 'creator_premium_self_subscription_forbidden'
+          when not coalesce(v_policy.subscription_enabled,false) then 'creator_premium_subscription_disabled'
+          when plan.relationship_status in ('expired','revoked') then 'creator_premium_subscription_renewal_not_implemented'
+          when plan.relationship_id is not null then 'creator_premium_already_subscribed'
+          else null end
       ) order by plan.price_bdag,plan.id)
+      from (
+        select plan.*,
+          relationship.id as relationship_id,
+          relationship.status as relationship_status,
+          relationship.cancelled_at as relationship_cancelled_at,
+          relationship.paid_through_at as relationship_paid_through_at,
+          relationship.access_state as relationship_access_state
+        from private.creator_premium_plan_contents mapping
+        join private.creator_premium_plans plan
+          on plan.id=mapping.plan_id and plan.creator_id=mapping.creator_id
+        left join lateral (
+          select subscription.id,subscription.status,subscription.cancelled_at,
+            period.paid_through_at,period.access_state
+          from private.creator_premium_subscriptions subscription
+          left join lateral (
+            select paid_period.paid_through_at,paid_period.access_state
+            from private.creator_premium_subscription_periods paid_period
+            where paid_period.subscription_id=subscription.id
+            order by paid_period.starts_at desc,paid_period.id desc
+            limit 1
+          ) period on true
+          where subscription.subscriber_id=v_actor
+            and subscription.plan_id=plan.id
+          order by subscription.created_at desc,subscription.id desc
+          limit 1
+        ) relationship on true
+        where mapping.content_id=content.id and mapping.creator_id=content.creator_id
+          and plan.status='active'
+        order by plan.price_bdag,plan.id
+        limit 100
+      ) plan
+    ),'[]'::jsonb),
+    'plan_count',(
+      select pg_catalog.count(*)
       from private.creator_premium_plan_contents mapping
       join private.creator_premium_plans plan
         on plan.id=mapping.plan_id and plan.creator_id=mapping.creator_id
       where mapping.content_id=content.id and mapping.creator_id=content.creator_id
         and plan.status='active'
-    ),'[]'::jsonb),
+    ),
+    'plans_truncated',exists(
+      select 1
+      from private.creator_premium_plan_contents mapping
+      join private.creator_premium_plans plan
+        on plan.id=mapping.plan_id and plan.creator_id=mapping.creator_id
+      where mapping.content_id=content.id and mapping.creator_id=content.creator_id
+        and plan.status='active'
+      order by plan.price_bdag,plan.id
+      offset 100 limit 1
+    ),
     'entitlement',pg_catalog.jsonb_build_object(
       'allowed',v_entitlement.allowed,'source',v_entitlement.source,
       'reason',v_entitlement.reason,'expires_at',v_entitlement.expires_at
+    ),
+    'operations',pg_catalog.jsonb_build_object(
+      'purchase_available',coalesce(v_policy.purchase_enabled,false)
+        and v_actor<>content.creator_id
+        and content.access_mode in ('purchase','purchase_or_subscription')
+        and not v_purchase_owned
+        and exists(select 1 from private.creator_premium_offer_versions active_offer
+          where active_offer.content_id=content.id
+            and active_offer.creator_id=content.creator_id
+            and active_offer.status='active'),
+      'purchase_blocker',case
+        when v_actor=content.creator_id then 'creator_premium_self_purchase_forbidden'
+        when content.access_mode not in ('purchase','purchase_or_subscription') then 'creator_premium_purchase_access_mode_invalid'
+        when v_purchase_owned then 'creator_premium_already_owned'
+        when not exists(select 1 from private.creator_premium_offer_versions active_offer
+          where active_offer.content_id=content.id
+            and active_offer.creator_id=content.creator_id
+            and active_offer.status='active') then 'creator_premium_active_offer_not_found'
+        when not coalesce(v_policy.purchase_enabled,false) then 'creator_premium_purchase_disabled'
+        else null end
     ),
     'policy',pg_catalog.jsonb_build_object(
       'purchase_enabled',coalesce(v_policy.purchase_enabled,false),
@@ -1489,6 +1649,8 @@ begin
 
   with purchase_facts as (
     select receipt.*,
+      original.created_at as charge_created_at,
+      reversal.created_at as refund_created_at,
       private.creator_premium_financial_fact_is_valid_v1(
         receipt.financial_transaction_id,receipt.reversal_financial_transaction_id,
         receipt.access_state,receipt.buyer_id,receipt.creator_id,
@@ -1500,10 +1662,15 @@ begin
         receipt.platform_fee_bps
       ) as verified
     from private.creator_premium_purchase_receipts receipt
+    join public.financial_transactions original
+      on original.id=receipt.financial_transaction_id
+    left join public.financial_transactions reversal
+      on reversal.id=receipt.reversal_financial_transaction_id
     where receipt.creator_id=v_actor
-      and receipt.created_at>=v_from and receipt.created_at<v_to
   ), period_facts as (
     select period.*,
+      original.created_at as charge_created_at,
+      reversal.created_at as refund_created_at,
       private.creator_premium_financial_fact_is_valid_v1(
         period.financial_transaction_id,period.reversal_financial_transaction_id,
         period.access_state,period.subscriber_id,period.creator_id,
@@ -1515,34 +1682,63 @@ begin
         period.platform_fee_bps
       ) as verified
     from private.creator_premium_subscription_periods period
+    join public.financial_transactions original
+      on original.id=period.financial_transaction_id
+    left join public.financial_transactions reversal
+      on reversal.id=period.reversal_financial_transaction_id
     where period.creator_id=v_actor
-      and period.created_at>=v_from and period.created_at<v_to
-  ), all_facts as (
-    select 'purchase'::text as source,id,content_id,
+  ), charge_events as (
+    select 'purchase'::text as source,id as reference_id,content_id,
+      financial_transaction_id as transaction_id,
       gross_amount_bdag,platform_fee_bdag,creator_net_bdag,
-      access_state,verified,created_at
+      'charge'::text as event_type,charge_created_at as event_at
     from purchase_facts
+    where verified and charge_created_at>=v_from and charge_created_at<v_to
     union all
     select 'subscription'::text,id,null::uuid,
-      gross_amount_bdag,platform_fee_bdag,creator_net_bdag,
-      access_state,verified,created_at
+      financial_transaction_id,gross_amount_bdag,platform_fee_bdag,
+      creator_net_bdag,'charge'::text,charge_created_at
     from period_facts
+    where verified and charge_created_at>=v_from and charge_created_at<v_to
+  ), refund_events as (
+    select 'purchase'::text as source,id as reference_id,content_id,
+      reversal_financial_transaction_id as transaction_id,
+      gross_amount_bdag,platform_fee_bdag,creator_net_bdag,
+      'refund'::text as event_type,refund_created_at as event_at
+    from purchase_facts
+    where verified and reversal_financial_transaction_id is not null
+      and refund_created_at>=v_from and refund_created_at<v_to
+    union all
+    select 'subscription'::text,id,null::uuid,
+      reversal_financial_transaction_id,gross_amount_bdag,platform_fee_bdag,
+      creator_net_bdag,'refund'::text,refund_created_at
+    from period_facts
+    where verified and reversal_financial_transaction_id is not null
+      and refund_created_at>=v_from and refund_created_at<v_to
+  ), all_events as (
+    select * from charge_events
+    union all
+    select * from refund_events
   ), totals as (
     select
-      coalesce(pg_catalog.sum(gross_amount_bdag) filter(where verified),0)::numeric(20,8) gross,
-      coalesce(pg_catalog.sum(platform_fee_bdag) filter(where verified),0)::numeric(20,8) platform_fee,
-      coalesce(pg_catalog.sum(creator_net_bdag) filter(where verified),0)::numeric(20,8) creator_net,
-      coalesce(pg_catalog.sum(gross_amount_bdag) filter(where verified and access_state='refunded'),0)::numeric(20,8) refund,
-      coalesce(pg_catalog.sum(creator_net_bdag) filter(where verified and access_state='refunded'),0)::numeric(20,8) creator_refund,
-      pg_catalog.count(*) filter(where verified and source='purchase') purchase_count,
-      pg_catalog.count(*) filter(where verified and source='subscription') subscription_period_count,
-      pg_catalog.count(*) filter(where verified and access_state='refunded') refund_count
-    from all_facts
+      coalesce((select pg_catalog.sum(gross_amount_bdag) from charge_events),0)::numeric(20,8) gross,
+      coalesce((select pg_catalog.sum(platform_fee_bdag) from charge_events),0)::numeric(20,8) platform_fee,
+      coalesce((select pg_catalog.sum(creator_net_bdag) from charge_events),0)::numeric(20,8) creator_net,
+      coalesce((select pg_catalog.sum(gross_amount_bdag) from refund_events),0)::numeric(20,8) refund,
+      coalesce((select pg_catalog.sum(creator_net_bdag) from refund_events),0)::numeric(20,8) creator_refund,
+      (select pg_catalog.count(*) from charge_events where source='purchase') purchase_count,
+      (select pg_catalog.count(*) from charge_events where source='subscription') subscription_period_count,
+      (select pg_catalog.count(*) from refund_events) refund_count
   ), content_metrics as (
     select content.id,content.title,content.lifecycle_status,
-      pg_catalog.count(fact.id) filter(where fact.verified) purchase_sales,
-      coalesce(pg_catalog.sum(fact.creator_net_bdag)
-        filter(where fact.verified and fact.access_state<>'refunded'),0)::numeric(20,8) purchase_net_retained
+      pg_catalog.count(fact.id) filter(where fact.verified
+        and fact.charge_created_at>=v_from and fact.charge_created_at<v_to) purchase_sales,
+      (coalesce(pg_catalog.sum(fact.creator_net_bdag) filter(where fact.verified
+          and fact.charge_created_at>=v_from and fact.charge_created_at<v_to),0)
+       -coalesce(pg_catalog.sum(fact.creator_net_bdag) filter(where fact.verified
+          and fact.reversal_financial_transaction_id is not null
+          and fact.refund_created_at>=v_from and fact.refund_created_at<v_to),0))::numeric(20,8)
+        purchase_net_retained
     from private.creator_premium_contents content
     left join purchase_facts fact on fact.content_id=content.id
     where content.creator_id=v_actor
@@ -1573,12 +1769,25 @@ begin
           where period.subscription_id=subscription.id and period.access_state='active'
             and period.paid_through_at>pg_catalog.clock_timestamp()
             and private.creator_premium_period_binding_is_valid_v1(period.id))),
-    'revoked_access_count',(
-      (select pg_catalog.count(*) from private.creator_premium_purchase_receipts receipt
-        where receipt.creator_id=v_actor and receipt.access_state in('revoked','refunded'))
-      +(select pg_catalog.count(*) from private.creator_premium_subscription_periods period
-        where period.creator_id=v_actor and period.access_state in('revoked','refunded'))
-    ),
+    'revoked_subscription_count',(select pg_catalog.count(*)
+      from private.creator_premium_subscriptions subscription
+      where subscription.creator_id=v_actor and subscription.status='revoked'),
+    'recent_transactions',coalesce((
+      select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'source',recent.source,'event_type',recent.event_type,
+        'reference_id',recent.reference_id,'content_id',recent.content_id,
+        'financial_transaction_id',recent.transaction_id,
+        'gross_amount_bdag',recent.gross_amount_bdag::text,
+        'platform_fee_bdag',recent.platform_fee_bdag::text,
+        'creator_net_bdag',recent.creator_net_bdag::text,
+        'created_at',recent.event_at
+      ) order by recent.event_at desc,recent.transaction_id desc)
+      from (
+        select event.* from all_events event
+        order by event.event_at desc,event.transaction_id desc
+        limit 50
+      ) recent
+    ),'[]'::jsonb),
     'content_performance',coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
       'content_id',metric.id,'title',metric.title,'lifecycle_status',metric.lifecycle_status,
       'purchase_sales',metric.purchase_sales,
@@ -1613,8 +1822,13 @@ begin
       'purchased_at',receipt.purchased_at,'refunded_at',receipt.refunded_at,
       'refundable',receipt.access_state='active'
     ) order by receipt.purchased_at desc,receipt.id desc)
-    from private.creator_premium_purchase_receipts receipt
-    where receipt.content_id=p_content_id),'[]'::jsonb),
+    from (
+      select receipt.*
+      from private.creator_premium_purchase_receipts receipt
+      where receipt.content_id=p_content_id
+      order by receipt.purchased_at desc,receipt.id desc
+      limit 100
+    ) receipt),'[]'::jsonb),
     'subscription_periods',coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
       'period_id',period.id,'subscriber_id',period.subscriber_id,
       'access_state',period.access_state,'gross_amount_bdag',period.gross_amount_bdag::text,
@@ -1623,10 +1837,15 @@ begin
       'starts_at',period.starts_at,'paid_through_at',period.paid_through_at,
       'refunded_at',period.refunded_at,'refundable',period.access_state='active'
     ) order by period.starts_at desc,period.id desc)
-    from private.creator_premium_subscription_periods period
-    join private.creator_premium_plan_contents mapping
-      on mapping.plan_id=period.plan_id and mapping.creator_id=period.creator_id
-    where mapping.content_id=p_content_id),'[]'::jsonb)
+    from (
+      select period.*
+      from private.creator_premium_subscription_periods period
+      join private.creator_premium_plan_contents mapping
+        on mapping.plan_id=period.plan_id and mapping.creator_id=period.creator_id
+      where mapping.content_id=p_content_id
+      order by period.starts_at desc,period.id desc
+      limit 100
+    ) period),'[]'::jsonb)
   );
 end;
 $$;

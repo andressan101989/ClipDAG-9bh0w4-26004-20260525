@@ -48,6 +48,9 @@ async function adminMayReadDisputeEvidence(req:Request,assetId:string){
 
 type AdminContext={surface:'story'|'reported_message'|'marketplace_dispute';entity_id:string};
 const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const premiumReviewableLifecycles=new Set([
+  'pending_review','published','rejected','quarantined','removed',
+]);
 async function callerHasCapability(req:Request,capability:string){
   const caller=authenticatedClient(req);if(!caller)return false;
   const {data,error}=await caller.rpc('admin_actor_has_capability',{p_capability:capability});
@@ -125,11 +128,26 @@ Deno.serve(async(req)=>{
     if(admin_review!==undefined&&typeof admin_review!=='boolean')return corsJson({error:'invalid_request'},400);
     const caller=authenticatedClient(req);
     if(!caller)return corsJson({error:'unauthorized'},401);
+    let adminReviewCreatorId:string|null=null;
     if(admin_review===true){
       const {data:adminAllowed,error:adminError}=await caller.rpc('admin_actor_has_capability',{
         p_capability:'creator_premium.review.read',
       });
       if(adminError||adminAllowed!==true)return corsJson({error:'forbidden'},403);
+      const {data:reviewDetail,error:reviewError}=await caller.rpc(
+        'get_admin_creator_premium_content_v1',{p_content_id:premium_content_id},
+      );
+      const detail=reviewDetail&&typeof reviewDetail==='object'
+        ? reviewDetail as Record<string,unknown>:null;
+      const creator=detail?.creator&&typeof detail.creator==='object'
+        ? detail.creator as Record<string,unknown>:null;
+      if(reviewError||!detail||detail.content_kind!=='image'
+        ||typeof detail.lifecycle_status!=='string'
+        ||!premiumReviewableLifecycles.has(detail.lifecycle_status)
+        ||typeof creator?.id!=='string'||!uuidPattern.test(creator.id)){
+        return corsJson({error:'forbidden'},403);
+      }
+      adminReviewCreatorId=creator.id;
     }else{
       const {data:entitlementData,error:entitlementError}=await caller.rpc(
         'get_my_creator_premium_entitlement_v1',
@@ -152,7 +170,7 @@ Deno.serve(async(req)=>{
     if(links.length!==1)return corsJson({error:'premium_media_ambiguous'},409);
 
     const {data:original,error:assetError}=await database.from('media_assets')
-      .select('id,purpose,provider,media_kind,visibility,status,public_url,bucket_name,object_key')
+      .select('id,owner_id,purpose,provider,media_kind,visibility,status,public_url,bucket_name,object_key')
       .eq('id',links[0].asset_id)
       .eq('status','ready')
       .maybeSingle();
@@ -162,6 +180,7 @@ Deno.serve(async(req)=>{
       ||original.media_kind!=='image'
       ||original.visibility!=='private'
       ||original.status!=='ready'
+      ||(admin_review===true&&original.owner_id!==adminReviewCreatorId)
       ||original.public_url!==null)return corsJson({error:'forbidden'},403);
 
     let signedUrl:string;

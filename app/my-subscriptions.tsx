@@ -24,68 +24,83 @@ const date=(value:string|null|undefined)=>value&&!Number.isNaN(Date.parse(value)
 const statusLabel:Record<CreatorPremiumSubscriptionItem['status'],string>={pending:'Pendiente',active:'Activa',cancelled:'Cancelada',expired:'Vencida',revoked:'Revocada'};
 
 export default function MySubscriptionsScreen(){
+  const {user}=useAuth();
+  const contextKey=user?.id??'signed-out';
+  return <MySubscriptionsScreenContent key={contextKey}/>;
+}
+
+function MySubscriptionsScreenContent(){
   const router=useRouter(),insets=useSafeAreaInsets();
   const {user}=useAuth();
   const[items,setItems]=useState<CreatorPremiumSubscriptionItem[]>([]),[nextCursor,setNextCursor]=useState<CreatorPremiumCursor|null>(null),[loading,setLoading]=useState(true),[refreshing,setRefreshing]=useState(false),[loadingMore,setLoadingMore]=useState(false),[error,setError]=useState<string|null>(null),[busyId,setBusyId]=useState<string|null>(null);
   const cancelAttempts=useRef(new Map<string,string>());
   const activeCancellation=useRef<string|null>(null);
   const contextGeneration=useRef(0);
-  const requestGeneration=useRef(0);
+  const loadRequestGeneration=useRef(0);
+  const pageRequestGeneration=useRef(0);
+  const loadInFlight=useRef(false);
   const contextKey=user?.id??'signed-out';
   const contextKeyRef=useRef(contextKey);
 
   if(contextKeyRef.current!==contextKey){
     contextKeyRef.current=contextKey;
     contextGeneration.current+=1;
-    requestGeneration.current+=1;
+    loadRequestGeneration.current+=1;
+    pageRequestGeneration.current+=1;
+    loadInFlight.current=false;
     cancelAttempts.current.clear();
     activeCancellation.current=null;
   }
 
   useEffect(()=>{
-    setItems([]);setNextCursor(null);setBusyId(null);setError(null);
+    setItems([]);setNextCursor(null);setBusyId(null);setError(null);setLoadingMore(false);
     return()=>{
       contextGeneration.current+=1;
-      requestGeneration.current+=1;
+      loadRequestGeneration.current+=1;
+      pageRequestGeneration.current+=1;
+      loadInFlight.current=false;
       activeCancellation.current=null;
     };
   },[contextKey]);
 
   const load=useCallback(async(refresh=false)=>{
     const generation=contextGeneration.current;
-    const request=++requestGeneration.current;
+    const request=++loadRequestGeneration.current;
+    pageRequestGeneration.current+=1;
+    loadInFlight.current=true;
+    setLoadingMore(false);
     if(refresh)setRefreshing(true);else setLoading(true);
     setError(null);
     try{
       const page=await fetchMyCreatorPremiumSubscriptions({limit:50});
-      if(generation!==contextGeneration.current||request!==requestGeneration.current)return;
+      if(generation!==contextGeneration.current||request!==loadRequestGeneration.current)return;
       setItems(page.items);setNextCursor(page.nextCursor);
     }catch(cause){
-      if(generation!==contextGeneration.current||request!==requestGeneration.current)return;
+      if(generation!==contextGeneration.current||request!==loadRequestGeneration.current)return;
       setError(cause instanceof Error?cause.message:'No pudimos cargar tus suscripciones.');
     }finally{
-      if(generation===contextGeneration.current&&request===requestGeneration.current){setLoading(false);setRefreshing(false);}
+      if(generation===contextGeneration.current&&request===loadRequestGeneration.current){loadInFlight.current=false;setLoading(false);setRefreshing(false);}
     }
   },[]);
   useFocusEffect(useCallback(()=>{
     if(contextKeyRef.current===contextKey)void load();
-    return()=>{requestGeneration.current+=1;};
+    return()=>{loadRequestGeneration.current+=1;pageRequestGeneration.current+=1;loadInFlight.current=false;};
   },[contextKey,load]));
 
   const loadMore=useCallback(async()=>{
-    if(!nextCursor||loadingMore)return;
+    if(!nextCursor||loadingMore||loadInFlight.current)return;
     const generation=contextGeneration.current;
-    const request=++requestGeneration.current;
+    const request=++pageRequestGeneration.current;
     setLoadingMore(true);
     try{
       const page=await fetchMyCreatorPremiumSubscriptions({limit:50,cursor:nextCursor});
-      if(generation!==contextGeneration.current||request!==requestGeneration.current)return;
+      if(generation!==contextGeneration.current||request!==pageRequestGeneration.current)return;
       setItems(current=>{const seen=new Set(current.map(item=>item.id));return[...current,...page.items.filter(item=>!seen.has(item.id))]});
       setNextCursor(page.nextCursor);
     }catch(cause){
-      if(generation===contextGeneration.current&&request===requestGeneration.current)setError(cause instanceof Error?cause.message:'No pudimos cargar más resultados.');
+      if(generation===contextGeneration.current&&request===pageRequestGeneration.current)setError(cause instanceof Error?cause.message:'No pudimos cargar más resultados.');
     }finally{
-      if(generation===contextGeneration.current&&request===requestGeneration.current)setLoadingMore(false);
+      if(generation===contextGeneration.current&&request===pageRequestGeneration.current)setLoadingMore(false);
     }
   },[loadingMore,nextCursor]);
 

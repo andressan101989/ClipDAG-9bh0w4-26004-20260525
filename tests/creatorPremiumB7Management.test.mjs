@@ -104,9 +104,27 @@ test('admin review projection is bounded and contains no private media locator',
   assert.match(detail, /creator_premium_teaser_url_v1/i);
   assert.match(detail, /admin_action_audit/i);
   assert.match(detail, /reports/i);
+  assert.match(detail, /from\s*\(\s*select[\s\S]*?from\s+private\.admin_action_audit[\s\S]*?limit\s+100\s*\)\s+audit/i);
+  assert.match(detail, /from\s*\(\s*select[\s\S]*?from\s+public\.reports[\s\S]*?limit\s+100\s*\)\s+report/i);
   for (const forbidden of ['object_key', 'bucket_name', 'cloudflare_uid', 'hls_url', 'dash_url', 'buyer_account_id', 'creator_account_id']) {
     assert.doesNotMatch(search, new RegExp(`\\b${forbidden}\\b`, 'i'));
     assert.doesNotMatch(detail, new RegExp(`\\b${forbidden}\\b`, 'i'));
+  }
+});
+
+test('admin refund candidates are bounded before JSON aggregation', () => {
+  const candidates = functionBody('get_admin_creator_premium_refund_candidates_v1', 'public');
+  assert.match(candidates, /from\s*\(\s*select[\s\S]*?from\s+private\.creator_premium_purchase_receipts[\s\S]*?limit\s+100\s*\)\s+receipt/i);
+  assert.match(candidates, /from\s*\(\s*select[\s\S]*?from\s+private\.creator_premium_subscription_periods[\s\S]*?limit\s+100\s*\)\s+period/i);
+});
+
+test('admin and consumer plan aggregates are bounded before JSON construction', () => {
+  const detail = functionBody('get_admin_creator_premium_content_v1', 'public');
+  const commerce = functionBody('get_creator_premium_commerce_v1', 'public');
+  for (const body of [detail, commerce]) {
+    assert.match(body, /'plan_count'/i);
+    assert.match(body, /'plans_truncated'/i);
+    assert.match(body, /'plans'[\s\S]*?from\s*\(\s*select[\s\S]*?from\s+private\.creator_premium_plan_contents[\s\S]*?limit\s+100\s*\)\s+plan/i);
   }
 });
 
@@ -123,7 +141,22 @@ test('admin decision is capability-gated, locked, idempotent, auditable, and nev
   }
   assert.match(body, /approve[\s\S]*lifecycle_status\s*=\s*'published'/i);
   assert.match(body, /restore[\s\S]*lifecycle_status\s*=\s*'pending_review'/i);
+  assert.match(body, /when\s+'quarantine'[\s\S]*lifecycle_status\s*<>\s*'published'/i);
+  assert.match(body, /when\s+'remove'[\s\S]*lifecycle_status\s+not\s+in\s*\(\s*'published'\s*,\s*'quarantined'\s*\)/i);
+  assert.match(body, /when\s+'restore'[\s\S]*lifecycle_status\s+not\s+in\s*\(\s*'rejected'\s*,\s*'quarantined'\s*,\s*'removed'\s*\)/i);
+  assert.match(body, /v_scope\s*:=\s*'v1\|human\|'[\s\S]*'\|creator_premium\.review\.moderate\|creator_premium\.review'/i);
+  const scopeAssignment = body.match(/v_scope\s*:=\s*[\s\S]*?;/i)?.[0] ?? '';
+  assert.doesNotMatch(scopeAssignment, /v_action/i, 'changed actions must collide in one command-family scope');
   assert.doesNotMatch(sql, /grant\s+execute\s+on\s+function\s+public\.admin_review_creator_premium_content_v1\([^;]+\)\s+to\s+anon/i);
+});
+
+test('admin review timestamps are captured only after the content row lock', () => {
+  const body = functionBody('admin_review_creator_premium_content_v1', 'public');
+  assert.doesNotMatch(body, /v_now\s+timestamptz\s*:=\s*pg_catalog\.clock_timestamp\(\)/i);
+  const rowLockIndex = body.search(/from\s+private\.creator_premium_contents[\s\S]*?for\s+update/i);
+  const timestampIndex = body.search(/v_now\s*:=\s*pg_catalog\.clock_timestamp\(\)/i);
+  assert.ok(rowLockIndex >= 0, 'content row lock must exist');
+  assert.ok(timestampIndex > rowLockIndex, 'serialized transition time must be captured after the row lock');
 });
 
 test('Premium reporting reuses reports and admin report center without carrying originals', () => {
@@ -132,13 +165,30 @@ test('Premium reporting reuses reports and admin report center without carrying 
   assert.match(report, /auth\.uid\(\)/i);
   assert.match(report, /lifecycle_status\s*=\s*'published'/i);
   assert.match(report, /creator_premium_report_self_forbidden/i);
+  assert.match(report, /current_user_is_creator_exclusive_age_eligible/i);
+  assert.match(report, /creator_premium_actor_is_operational_v1\(v_content\.creator_id\)/i);
+  assert.match(report, /creator_premium_pair_is_unblocked_v1/i);
+  assert.match(report, /creator_premium_(?:image|video)_is_ready_v1/i);
+  assert.match(report, /v_reason\s+not\s+in\s*\(/i);
+  for (const reason of ['spam', 'harassment', 'child_safety', 'non_consensual_intimate', 'illegal_exploitation']) {
+    assert.match(report, new RegExp(`'${reason}'`, 'i'));
+  }
+  assert.match(report, /pg_advisory_xact_lock/i);
   assert.match(report, /insert\s+into\s+public\.reports/i);
   assert.match(report, /not\s+exists[\s\S]*status\s*=\s*'pending'/i);
+  assert.match(sql, /create\s+unique\s+index\s+reports_one_pending_creator_premium_per_reporter_content_idx[\s\S]*where\s+reported_content_type\s*=\s*'creator_premium'[\s\S]*status\s*=\s*'pending'/i);
   for (const forbidden of ['signed', 'object_key', 'bucket_name', 'cloudflare_uid', 'hls_url', 'dash_url']) {
     assert.doesNotMatch(report, new RegExp(`\\b${forbidden}\\b`, 'i'));
   }
   assert.match(functionBody('search_admin_reports', 'public'), /'creator_premium'/i);
   assert.match(functionBody('get_admin_report_detail', 'public'), /creator_premium\.review\.read/i);
+});
+
+test('admin detail and media review are restricted to the canonical reviewable lifecycle', () => {
+  const detail = functionBody('get_admin_creator_premium_content_v1', 'public');
+  assert.match(detail, /content\.lifecycle_status\s+in\s*\(\s*'pending_review'\s*,\s*'published'\s*,\s*'rejected'\s*,\s*'quarantined'\s*,\s*'removed'\s*\)/i);
+  assert.doesNotMatch(detail, /lifecycle_status\s+in\s*\([^)]*'draft'/i);
+  assert.doesNotMatch(detail, /lifecycle_status\s+in\s*\([^)]*'deleted'/i);
 });
 
 test('all new management definers use empty search_path and explicit least-privilege grants', () => {
