@@ -5,6 +5,13 @@
   "production_effect": false,
   "external_budget_usd": 0,
   "provider_external_calls_authorized": false,
+  "fingerprint_contract": {
+    "algorithm": "sha256",
+    "canonicalization": "nelyon.creator_premium_candidate_rule.sha256-canonical-json.v1",
+    "scope": "All reviewable rule fields with an NFKC/lowercase/collapsed-space pattern and sorted scopes; the candidate_fingerprint_sha256 field itself is excluded.",
+    "canonical_governance_fingerprint_status": "PENDING_RULE_CREATION_AND_PREVIEW",
+    "note": "The canonical database fingerprint also binds the rule UUID and version assigned by the audited governance RPC. It must be captured from preview after creation and is not fabricated in this candidate."
+  },
   "scopes": [
     "creator_premium_text",
     "transcript"
@@ -47,6 +54,7 @@
       "false_positive_risk": "High in journalism, education, victim-support, and policy discussion because the phrase can describe prevention rather than prohibited media.",
       "proposed_approval_state": "draft",
       "proposed_enabled": false,
+      "candidate_fingerprint_sha256": "a9af9218155836a9e1063248368c5d54b62c87fd58734dd4ee7d51b8463825f1",
       "effect": "SIGNAL_ONLY_REQUIRES_HUMAN_REVIEW"
     },
     {
@@ -66,6 +74,7 @@
       "false_positive_risk": "Alto en periodismo, educación, apoyo a víctimas y políticas públicas porque la frase puede describir prevención o denuncia.",
       "proposed_approval_state": "draft",
       "proposed_enabled": false,
+      "candidate_fingerprint_sha256": "f96f7e80a945bcc71a0896cadfd54cbbee41d000a6a1ee9a11689f53a8dd406a",
       "effect": "SIGNAL_ONLY_REQUIRES_HUMAN_REVIEW"
     },
     {
@@ -85,6 +94,7 @@
       "false_positive_risk": "High for prevention, reporting, survivor advocacy, news, and educational material that names the prohibited conduct.",
       "proposed_approval_state": "draft",
       "proposed_enabled": false,
+      "candidate_fingerprint_sha256": "66e1cd92d8302cb24845e3497ec459fe6e0b21999c591a99d13cfa74d010ffc2",
       "effect": "SIGNAL_ONLY_REQUIRES_HUMAN_REVIEW"
     },
     {
@@ -104,6 +114,7 @@
       "false_positive_risk": "Alto para prevención, denuncias, apoyo a sobrevivientes, noticias y educación que nombran la conducta prohibida.",
       "proposed_approval_state": "draft",
       "proposed_enabled": false,
+      "candidate_fingerprint_sha256": "a8027665885af2ab47edadeef34e443f9b5667daf0a0117325a78ac4ca703cbc",
       "effect": "SIGNAL_ONLY_REQUIRES_HUMAN_REVIEW"
     },
     {
@@ -123,6 +134,7 @@
       "false_positive_risk": "High for legal assistance, victim support, journalism, and educational discussion that explicitly names the category.",
       "proposed_approval_state": "draft",
       "proposed_enabled": false,
+      "candidate_fingerprint_sha256": "12d3f8711c2f14f8427c18940399d02c56e3403698e1de6ca96391318632f239",
       "effect": "SIGNAL_ONLY_REQUIRES_HUMAN_REVIEW"
     },
     {
@@ -142,6 +154,7 @@
       "false_positive_risk": "Alto para asistencia legal, apoyo a víctimas, periodismo y educación que mencionan expresamente la categoría.",
       "proposed_approval_state": "draft",
       "proposed_enabled": false,
+      "candidate_fingerprint_sha256": "be583afe8bde8dd43a3d42233aef72ad3dff3818864a9f7d740f1257c941d13a",
       "effect": "SIGNAL_ONLY_REQUIRES_HUMAN_REVIEW"
     },
     {
@@ -161,6 +174,7 @@
       "false_positive_risk": "High for news, fiction, legal analysis, safety training, and quotations because context determines whether a threat is real.",
       "proposed_approval_state": "draft",
       "proposed_enabled": false,
+      "candidate_fingerprint_sha256": "51bd62a590a5e5cb127f5f7af668ce0ed82c2a6151f603955860c71d2e27db8b",
       "effect": "SIGNAL_ONLY_REQUIRES_HUMAN_REVIEW"
     },
     {
@@ -180,6 +194,7 @@
       "false_positive_risk": "Alto para noticias, ficción, análisis legal, capacitación de seguridad y citas donde el contexto define la amenaza.",
       "proposed_approval_state": "draft",
       "proposed_enabled": false,
+      "candidate_fingerprint_sha256": "810164ab80b8fd9aed872d1ec0f02b6386bd7550834f2d280486d6880fbfc944",
       "effect": "SIGNAL_ONLY_REQUIRES_HUMAN_REVIEW"
     },
     {
@@ -199,6 +214,7 @@
       "false_positive_risk": "High for documentaries, news, historical discussion, fictional narratives, and victim testimony that describe violent events.",
       "proposed_approval_state": "draft",
       "proposed_enabled": false,
+      "candidate_fingerprint_sha256": "3c8def9c6190b87657e035380fb9cb44bcce193d15254e594321b03304867742",
       "effect": "SIGNAL_ONLY_REQUIRES_HUMAN_REVIEW"
     },
     {
@@ -218,6 +234,7 @@
       "false_positive_risk": "Alto para documentales, noticias, historia, ficción y testimonios de víctimas que describen hechos violentos.",
       "proposed_approval_state": "draft",
       "proposed_enabled": false,
+      "candidate_fingerprint_sha256": "5a708668caa5205e356b100ec65b41f8cc0f5d5da915e5f826f9ee4579ed9c41",
       "effect": "SIGNAL_ONLY_REQUIRES_HUMAN_REVIEW"
     },
     {
@@ -237,6 +254,7 @@
       "false_positive_risk": "High for security education, fraud prevention, support, news, and incident response that name the tactic directly.",
       "proposed_approval_state": "draft",
       "proposed_enabled": false,
+      "candidate_fingerprint_sha256": "191f11949b309f33d9bb6727d49dd95f85c28fe6662d5ac61b6308f30d034270",
       "effect": "SIGNAL_ONLY_REQUIRES_HUMAN_REVIEW"
     },
     {
@@ -256,6 +274,7 @@
       "false_positive_risk": "Alto para educación de seguridad, prevención, soporte, noticias y respuesta a incidentes que nombran la táctica.",
       "proposed_approval_state": "draft",
       "proposed_enabled": false,
+      "candidate_fingerprint_sha256": "61f2e925e521e6d2f9bc54cf07a519b8c45ff8fa814cbf229078942928908308",
       "effect": "SIGNAL_ONLY_REQUIRES_HUMAN_REVIEW"
     }
   ],
