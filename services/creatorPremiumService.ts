@@ -25,6 +25,13 @@ export type CreatorPremiumLifecycle =
   | 'quarantined'
   | 'removed'
   | 'deleted';
+export type CreatorPremiumVerificationStatus =
+  | 'not_requested'
+  | 'pending'
+  | 'passed'
+  | 'blocked'
+  | 'restricted'
+  | 'failed';
 export type CreatorPremiumEntitlementSource = 'owner' | 'purchase' | 'subscription' | 'none';
 
 export interface CreatorPremiumCursor {
@@ -63,6 +70,10 @@ export interface CreatorPremiumOwnerItem {
   reviewed_at?: string | null;
   reviewed_by?: string | null;
   review_reason?: string | null;
+  verification_status?: CreatorPremiumVerificationStatus;
+  verification_error_code?: string | null;
+  verification_requested_at?: string | null;
+  verification_completed_at?: string | null;
   created_at: string;
   updated_at: string;
   teaser_url: string | null;
@@ -520,7 +531,7 @@ export async function fetchMyCreatorPremiumPlans(
   return page((data ?? []) as CreatorPremiumPlanItem[], limit, row => row.created_at);
 }
 
-export async function submitMyCreatorPremiumContentForReview(contentId: string) {
+export async function publishMyCreatorPremiumContent(contentId: string) {
   const { data, error } = await db().rpc('submit_my_creator_premium_content_for_review_v1', {
     p_content_id: contentId,
   });
@@ -587,6 +598,11 @@ export async function reopenMyCreatorPremiumRejected(contentId: string) {
     lifecycle_status: 'draft';
     updated_at: string;
   } | undefined;
+}
+
+/** @deprecated Kept for B5 caller compatibility; publication is now system-verified. */
+export async function submitMyCreatorPremiumContentForReview(contentId: string) {
+  return publishMyCreatorPremiumContent(contentId);
 }
 
 export async function fetchMyCreatorPremiumSubscriptions(

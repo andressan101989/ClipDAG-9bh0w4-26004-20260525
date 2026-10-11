@@ -4,6 +4,7 @@ export const VISUAL_PROVIDER = 'cloudflare_workers_ai'
 export const VISUAL_PROMPT_VERSION = 'visual-safety-v1'
 export const VISUAL_SAMPLE_STRATEGY = 'percentile_5_v1'
 export const MAX_VISUAL_IMAGE_BYTES = 10 * 1024 * 1024
+export const MAX_PREMIUM_VISUAL_IMAGE_BYTES = 25_000_000
 export const MAX_VISUAL_FRAME_BYTES = 2 * 1024 * 1024
 export const VISUAL_CATEGORIES = Object.freeze(['violence', 'threat', 'sexual', 'self_harm', 'drugs', 'weapons', 'fraud', 'spam', 'other'])
 export const VISUAL_TRIAGE_LEVELS = Object.freeze(['low', 'medium', 'high', 'critical'])
@@ -66,6 +67,18 @@ const cleanCustomerCode = code => {
   if (!/^[A-Za-z0-9-]{4,128}$/.test(value)) throw new VisualPipelineError('invalid_stream_customer_code')
   return value
 }
+const SIGNED_STREAM_TOKEN_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
+
+function signedStreamThumbnail(value) {
+  let url
+  try { url = new URL(value) } catch { throw new VisualPipelineError('stream_frame_url_rejected') }
+  if (url.protocol !== 'https:' || !/^customer-[a-z0-9-]{3,128}\.cloudflarestream\.com$/i.test(url.hostname) ||
+      url.port || url.username || url.password || url.hash || url.search ||
+      !url.pathname.endsWith('/thumbnails/thumbnail.jpg')) throw new VisualPipelineError('stream_frame_url_rejected')
+  const token = url.pathname.slice(1, -'/thumbnails/thumbnail.jpg'.length)
+  if (!SIGNED_STREAM_TOKEN_PATTERN.test(token)) throw new VisualPipelineError('stream_frame_url_rejected')
+  return url
+}
 
 export function buildStreamFrameUrl(uid, customerCode, timestampMs) {
   const safeUid = cleanUid(uid), safeCode = cleanCustomerCode(customerCode)
@@ -89,14 +102,43 @@ export function validateStreamFrameUrl(value, uid, customerCode) {
   return url.toString()
 }
 
-export async function fetchStreamFrame({ uid, customerCode, timestampMs, fetchImpl = fetch }) {
-  let current = validateStreamFrameUrl(buildStreamFrameUrl(uid, customerCode, timestampMs), uid, customerCode)
+export function buildSignedStreamFrameUrl(signedThumbnailUrl, timestampMs) {
+  if (!Number.isInteger(timestampMs) || timestampMs < 0 || timestampMs > 60000) throw new VisualPipelineError('invalid_stream_frame_timestamp')
+  const url = signedStreamThumbnail(signedThumbnailUrl)
+  url.searchParams.set('time', `${(timestampMs / 1000).toFixed(3)}s`)
+  url.searchParams.set('height', '512')
+  url.searchParams.set('fit', 'clip')
+  return url.toString()
+}
+
+export function validateSignedStreamFrameUrl(value, signedThumbnailUrl) {
+  const expected = signedStreamThumbnail(signedThumbnailUrl)
+  let url
+  try { url = new URL(value) } catch { throw new VisualPipelineError('stream_frame_url_rejected') }
+  const allowed = ['time', 'height', 'fit']
+  if (url.protocol !== 'https:' || url.origin !== expected.origin || url.pathname !== expected.pathname ||
+      url.port || url.username || url.password || url.hash ||
+      [...url.searchParams.keys()].some(key => !allowed.includes(key)) ||
+      !/^\d+(\.\d{1,3})?s$/.test(url.searchParams.get('time') ?? '') ||
+      url.searchParams.get('height') !== '512' || url.searchParams.get('fit') !== 'clip') {
+    throw new VisualPipelineError('stream_frame_url_rejected')
+  }
+  return url.toString()
+}
+
+export async function fetchStreamFrame({ uid, customerCode, timestampMs, signedThumbnailUrl, fetchImpl = fetch }) {
+  const signed = typeof signedThumbnailUrl === 'string'
+  let current = signed
+    ? validateSignedStreamFrameUrl(buildSignedStreamFrameUrl(signedThumbnailUrl, timestampMs), signedThumbnailUrl)
+    : validateStreamFrameUrl(buildStreamFrameUrl(uid, customerCode, timestampMs), uid, customerCode)
   for (let redirect = 0; redirect <= 3; redirect += 1) {
     const response = await fetchImpl(current, { redirect: 'manual' }).catch(() => { throw new VisualPipelineError('stream_frame_network_error', { retryable: true }) })
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get('location')
       if (!location || redirect === 3) throw new VisualPipelineError('stream_frame_redirect_rejected')
-      current = validateStreamFrameUrl(new URL(location, current).toString(), uid, customerCode)
+      current = signed
+        ? validateSignedStreamFrameUrl(new URL(location, current).toString(), signedThumbnailUrl)
+        : validateStreamFrameUrl(new URL(location, current).toString(), uid, customerCode)
       continue
     }
     const retryable = response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500
@@ -154,8 +196,11 @@ export function validateVisualSafetyResult(value, { sourceKind, frameIndex = nul
   return { schema_version: VISUAL_PROMPT_VERSION, review_required: value.review_required, findings, summary: value.summary }
 }
 
-export async function analyzeVisualBytes({ token, accountId, bytes, mimeType, sourceKind, frameIndex = null, fetchImpl = fetch }) {
-  const limit = sourceKind === 'eligible_stream_video' ? MAX_VISUAL_FRAME_BYTES : MAX_VISUAL_IMAGE_BYTES
+export async function analyzeVisualBytes({ token, accountId, bytes, mimeType, sourceKind, frameIndex = null, imageByteLimit = MAX_VISUAL_IMAGE_BYTES, fetchImpl = fetch }) {
+  const safeImageLimit = imageByteLimit === MAX_PREMIUM_VISUAL_IMAGE_BYTES
+    ? MAX_PREMIUM_VISUAL_IMAGE_BYTES
+    : MAX_VISUAL_IMAGE_BYTES
+  const limit = sourceKind === 'eligible_stream_video' ? MAX_VISUAL_FRAME_BYTES : safeImageLimit
   if (!(bytes instanceof Uint8Array) || !bytes.length || bytes.length > limit) throw new VisualPipelineError(bytes?.length ? 'visual_image_too_large' : 'visual_image_empty')
   let value
   try { value = await runVisualStructuredRequest({ token, accountId, request: buildVisualSafetyRequest(bytesToDataUri(bytes, mimeType), { sourceKind, frameIndex }), fetchImpl }) }

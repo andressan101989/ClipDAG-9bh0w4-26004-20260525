@@ -55,14 +55,14 @@ test('existing Stream grant adds exact admin review context and retains signed-o
   assert.doesNotMatch(premiumGrantResponse, /cloudflareUid\s*:/i);
 });
 
-test('Admin Web has one capability-routed Creator Premium review surface', () => {
+test('Admin Web has one capability-routed Creator Premium safety-exception surface', () => {
   assert.ok(pages, 'AdminCreatorPremiumPages.tsx must exist');
   assert.match(app, /AdminCreatorPremium/i);
   assert.match(app, /CapabilityRoute\s+capability="creator_premium\.review\.read"/i);
   assert.match(app, /creator-premium/i);
   assert.match(nav, /creator_premium\.review\.read/i);
-  assert.match(nav, /Creator Premium/i);
-  assert.match(pages, /Pending|pending_review|En revisión/i);
+  assert.match(nav, /Seguridad Premium/i);
+  assert.match(pages, /pending_review|Verificando|Verificación automática/i);
   assert.match(pages, /Publicado|published/i);
   assert.match(pages, /Rechazado|rejected/i);
   assert.match(pages, /Cuarentena|quarantined/i);
@@ -70,7 +70,8 @@ test('Admin Web has one capability-routed Creator Premium review surface', () =>
   assert.doesNotMatch(pages, /object_key|bucket_name|cloudflare_uid/i);
   assert.match(pages, /next_cursor/i);
   assert.match(pages, /Cargar más/i);
-  assert.match(pages, /lifecycle===['"]pending_review['"]\?\[['"]approve['"],['"]reject['"]\]/i);
+  assert.doesNotMatch(pages, /action:\s*['"]approve['"]|action:\s*['"]reject['"]|Aprobar y publicar/i);
+  assert.match(pages, /lifecycle===['"]published['"]\?\[['"]quarantine['"],['"]remove['"]\]/i);
   assert.match(pages, /lifecycle===['"]rejected['"]\?\[['"]restore['"]\]/i);
 });
 

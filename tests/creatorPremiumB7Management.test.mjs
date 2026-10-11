@@ -38,11 +38,12 @@ test('content lifecycle adds rejected and binds current review metadata without 
   assert.match(sql, /reviewed_by[\s\S]*references\s+auth\.users/i);
 });
 
-test('creator submission records review timing and creator can only reopen rejection to draft', () => {
+test('creator publication request records verification timing and creator can reopen an automatic block to draft', () => {
   const submit = functionBody('submit_my_creator_premium_content_for_review_v1', 'public');
   const reopen = functionBody('reopen_my_creator_premium_rejected_v1', 'public');
   assert.match(submit, /lifecycle_status\s*=\s*'pending_review'/i);
-  assert.match(submit, /submitted_at\s*=\s*pg_catalog\.clock_timestamp\(\)/i);
+  assert.match(submit, /submitted_at\s*=\s*coalesce\(content\.submitted_at\s*,\s*pg_catalog\.clock_timestamp\(\)\)/i);
+  assert.match(submit, /enqueue_content_safety_scan/i);
   assert.doesNotMatch(submit, /lifecycle_status\s*=\s*'published'/i);
   assert.match(reopen, /auth\.uid\(\)/i);
   assert.match(reopen, /current_user_is_creator_exclusive_age_eligible/i);
@@ -128,18 +129,18 @@ test('admin and consumer plan aggregates are bounded before JSON construction', 
   }
 });
 
-test('admin decision is capability-gated, locked, idempotent, auditable, and never a creator authority', () => {
+test('admin exception moderation is capability-gated, locked, idempotent, auditable, and cannot publish', () => {
   const body = functionBody('admin_review_creator_premium_content_v1', 'public');
   assert.match(body, /admin_require_capability\s*\(\s*'creator_premium\.review\.moderate'/i);
   assert.match(body, /pg_advisory_xact_lock/i);
   assert.match(body, /for\s+update/i);
   assert.match(body, /request_fingerprint/i);
   assert.match(body, /admin_action_audit/i);
-  assert.match(body, /creator_premium_publication_blocker_v1/i);
-  for (const action of ['approve', 'reject', 'quarantine', 'remove', 'restore']) {
+  for (const action of ['quarantine', 'remove', 'restore']) {
     assert.match(body, new RegExp(`'${action}'`, 'i'));
   }
-  assert.match(body, /approve[\s\S]*lifecycle_status\s*=\s*'published'/i);
+  assert.doesNotMatch(body, /'approve'|'reject'|lifecycle_status\s*=\s*'published'/i);
+  assert.match(body, /restore[\s\S]*enqueue_content_safety_scan/i);
   assert.match(body, /restore[\s\S]*lifecycle_status\s*=\s*'pending_review'/i);
   assert.match(body, /when\s+'quarantine'[\s\S]*lifecycle_status\s*<>\s*'published'/i);
   assert.match(body, /when\s+'remove'[\s\S]*lifecycle_status\s+not\s+in\s*\(\s*'published'\s*,\s*'quarantined'\s*\)/i);

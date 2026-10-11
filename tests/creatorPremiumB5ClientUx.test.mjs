@@ -106,17 +106,18 @@ test('Hub and editor use keyset continuation and exact owner detail beyond the f
   assert.match(editor, /loadMorePlans/);
 });
 
-test('editor supports truthful draft, media, commercial, and review workflows', () => {
+test('editor supports truthful draft, media, commercial, and automatic verification workflows', () => {
   assert.equal(existsSync(editorPath), true, 'creator Premium editor route must exist');
   for (const label of [
     'Detalles', 'Tipo', 'Acceso', 'Vista previa pública', 'Contenido privado',
     'Precio', 'Planes', 'Estado', 'Guardar borrador', 'Subir/Reemplazar medios',
-    'Enviar a revisión', 'Eliminar borrador',
+    'Publicar contenido Premium', 'Eliminar borrador',
   ]) assert.match(editor, new RegExp(label.replace('/', '\\/'), 'i'));
   assert.match(editor, /uploadCreatorPremiumImagePair/);
   assert.match(editor, /uploadCreatorPremiumVideoMedia/);
   assert.match(editor, /creator_premium_teaser_image|teaser/i);
   assert.match(editor, /pending_review/);
+  assert.match(editor, /verification_status/);
   assert.match(editor, /AbortController/);
   assert.match(editor, /processing/);
   assert.doesNotMatch(editor, /Publicar ahora/i);

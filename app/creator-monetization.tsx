@@ -45,9 +45,9 @@ const PREMIUM_SOFT = Colors.purpleDim;
 
 const contentStatus: Record<CreatorPremiumOwnerItem['lifecycle_status'], string> = {
   draft: 'Borrador',
-  pending_review: 'En revisión',
+  pending_review: 'Verificando contenido',
   published: 'Publicado',
-  rejected: 'Rechazado',
+  rejected: 'No aprobado por seguridad automática',
   quarantined: 'Restringido',
   removed: 'Retirado',
   deleted: 'Eliminado',
@@ -437,7 +437,7 @@ function CreatorPremiumHubContent() {
           <View style={styles.notice}>
             <MaterialCommunityIcons name="information-outline" size={20} color={Colors.info} />
             <Text style={styles.noticeText}>
-              Puedes preparar borradores y enviarlos a revisión. Solo moderación podrá publicarlos.
+              Tú solicitas publicar y el sistema verifica automáticamente la cuenta, los medios privados y la configuración. Moderación atiende únicamente alertas, reportes y restricciones.
             </Text>
           </View>
 
@@ -474,13 +474,20 @@ function CreatorPremiumHubContent() {
                       <View style={styles.cardHeading}>
                         <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
                         <StatusChip
-                          label={contentStatus[item.lifecycle_status]}
+                          label={item.lifecycle_status === 'pending_review' && item.verification_status === 'failed'
+                            ? 'Verificación pendiente'
+                            : contentStatus[item.lifecycle_status]}
                           tone={item.lifecycle_status === 'published' ? 'green' : item.lifecycle_status === 'pending_review' ? 'amber' : 'purple'}
                         />
                       </View>
                       <Text style={styles.meta}>
                         {item.content_kind === 'image' ? 'Imagen' : 'Video'} · {accessLabel[item.access_mode]}
                       </Text>
+                      {item.lifecycle_status === 'pending_review' ? <Text style={styles.meta}>
+                        {item.verification_status === 'failed'
+                          ? 'Error temporal · abre el contenido para reintentar'
+                          : 'Comprobaciones automáticas en curso'}
+                      </Text> : null}
                       <Text style={styles.meta}>
                         {(item.content_kind === 'image' ? item.image_media_ready : item.video_media_ready)
                           ? 'Medios listos'
@@ -500,7 +507,7 @@ function CreatorPremiumHubContent() {
                     </Pressable>
                   ) : item.lifecycle_status === 'rejected' ? (
                     <View style={styles.rejectedActions}>
-                      <Text style={styles.rejectionReason}>{item.review_reason ?? 'Moderación solicitó correcciones.'}</Text>
+                      <Text style={styles.rejectionReason}>{item.review_reason ?? 'La verificación automática bloqueó la publicación. Corrige el contenido antes de reintentarlo.'}</Text>
                       <Pressable
                         style={styles.secondaryButton}
                         disabled={busyId === item.id}

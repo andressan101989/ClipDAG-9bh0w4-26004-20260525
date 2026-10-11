@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { MAX_VISUAL_FRAME_BYTES, VISUAL_CATEGORIES, VISUAL_PROMPT_VERSION, VISUAL_SYSTEM_PROMPT, VisualPipelineError, analyzeVisualBytes, buildStreamFrameUrl, buildVisualSafetyRequest, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps, validateStreamFrameUrl, validateVisualSafetyResult } from '../supabase/functions/content-safety-scan/visualPipeline.mjs'
+import { MAX_PREMIUM_VISUAL_IMAGE_BYTES, MAX_VISUAL_FRAME_BYTES, MAX_VISUAL_IMAGE_BYTES, VISUAL_CATEGORIES, VISUAL_PROMPT_VERSION, VISUAL_SYSTEM_PROMPT, VisualPipelineError, analyzeVisualBytes, buildSignedStreamFrameUrl, buildStreamFrameUrl, buildVisualSafetyRequest, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps, validateSignedStreamFrameUrl, validateStreamFrameUrl, validateVisualSafetyResult } from '../supabase/functions/content-safety-scan/visualPipeline.mjs'
 
 const safe = { schema_version: VISUAL_PROMPT_VERSION, review_required: false, findings: [], summary: 'No review signal.' }
 const finding = index => ({ schema_version: VISUAL_PROMPT_VERSION, review_required: true, findings: [{ category: 'weapons', triage_level: 'high', description: 'Observable weapon-like object.', frame_index: index }], summary: 'Human review suggested.' })
@@ -25,6 +25,23 @@ test('frame fetch rejects unknown redirects, wrong MIME, and oversized frames', 
   await assert.rejects(() => fetchStreamFrame({ ...base, fetchImpl: async () => ({ status: 302, headers: new Headers({ location: 'https://localhost/frame.jpg' }) }) }), /stream_frame_url_rejected/)
   await assert.rejects(() => fetchStreamFrame({ ...base, fetchImpl: async () => ({ ok: true, status: 200, headers: new Headers({ 'content-type': 'text/html' }) }) }), /stream_frame_mime_rejected/)
   await assert.rejects(() => fetchStreamFrame({ ...base, fetchImpl: async () => ({ ok: true, status: 200, headers: new Headers({ 'content-type': 'image/jpeg', 'content-length': String(MAX_VISUAL_FRAME_BYTES + 1) }) }) }), /stream_frame_too_large/)
+})
+
+test('Premium Stream frames preserve the exact short-lived signed thumbnail authority', async () => {
+  const signed = 'https://customer-abc123.cloudflarestream.com/eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhYmNkZWYxMjM0NTY3ODkwIn0.signature/thumbnails/thumbnail.jpg'
+  const frame = buildSignedStreamFrameUrl(signed, 680)
+  assert.equal(validateSignedStreamFrameUrl(frame, signed), frame)
+  assert.match(frame, /time=0\.680s/)
+  await assert.rejects(() => fetchStreamFrame({
+    uid: 'abcdef1234567890', customerCode: 'abc123', timestampMs: 680,
+    signedThumbnailUrl: signed,
+    fetchImpl: async () => ({ status: 302, headers: new Headers({ location: 'https://localhost/frame.jpg' }) }),
+  }), /stream_frame_url_rejected/)
+  await assert.rejects(() => fetchStreamFrame({
+    uid: 'abcdef1234567890', customerCode: 'abc123', timestampMs: 680,
+    signedThumbnailUrl: signed.replace('https://', 'https://user:secret@'),
+    fetchImpl: async () => { throw new Error('must_not_fetch') },
+  }), /stream_frame_url_rejected/)
 })
 
 test('prompt forbids identity, age, protected-attribute inference and image prompt following', () => {
@@ -55,6 +72,19 @@ test('structured provider request maps transient failure and never returns token
   const result = await analyzeVisualBytes({ token, accountId: 'account', bytes: new Uint8Array([255, 216, 255]), mimeType: 'image/jpeg', sourceKind: 'eligible_image', fetchImpl: async (url, init) => { captured = { url, init }; return { ok: true, status: 200, json: async () => ({ success: true, result: { response: safe } }) } } })
   assert.deepEqual(result, safe); assert.match(captured.init.headers.Authorization, /^Bearer /); assert.doesNotMatch(JSON.stringify(result), /server-only-visual-token/)
   await assert.rejects(() => analyzeVisualBytes({ token, accountId: 'account', bytes: new Uint8Array([1]), mimeType: 'image/jpeg', sourceKind: 'eligible_image', fetchImpl: async () => ({ ok: false, status: 429, json: async () => ({}) }) }), error => error.code === 'visual_workers_ai_temporarily_unavailable' && error.retryable && error.providerCalled)
+})
+
+test('Premium private originals retain the canonical B2 image limit without relaxing public scans', async () => {
+  assert.equal(MAX_PREMIUM_VISUAL_IMAGE_BYTES, 25_000_000)
+  const bytes = new Uint8Array(MAX_VISUAL_IMAGE_BYTES + 1)
+  bytes[0] = 255
+  const invoke = imageByteLimit => analyzeVisualBytes({
+    token: 'server-token', accountId: 'account', bytes, mimeType: 'image/jpeg',
+    sourceKind: 'eligible_image', imageByteLimit,
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ success: true, result: { response: safe } }) }),
+  })
+  await assert.rejects(() => invoke(undefined), /visual_image_too_large/)
+  assert.deepEqual(await invoke(MAX_PREMIUM_VISUAL_IMAGE_BYTES), safe)
 })
 
 test('migration reuses scans and alerts and grants no enforcement or finance authority', () => {

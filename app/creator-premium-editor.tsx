@@ -27,9 +27,9 @@ import {
   fetchMyCreatorPremiumContent,
   fetchMyCreatorPremiumPlans,
   normalizeCreatorPremiumPriceBdag,
+  publishMyCreatorPremiumContent,
   setMyCreatorPremiumOffer,
   setMyCreatorPremiumPlanContents,
-  submitMyCreatorPremiumContentForReview,
   updateMyCreatorPremiumDraft,
   type CreatorPremiumAccessMode,
   type CreatorPremiumContentKind,
@@ -67,6 +67,10 @@ const blockerCopy: Record<string, string> = {
   creator_premium_video_media_not_ready: 'Falta completar la vista previa o el video todavía se está procesando.',
   creator_premium_active_offer_required: 'Configura un precio de compra activo.',
   creator_premium_plan_mapping_required: 'Asocia el contenido a por lo menos un plan.',
+  content_safety_policy_not_configured: 'La verificación de seguridad todavía no está disponible. Tu contenido sigue privado.',
+  content_safety_audio_policy_not_configured: 'La verificación de audio todavía no está disponible. Tu video sigue privado.',
+  creator_premium_safety_provider_failed: 'La verificación tuvo un error temporal. Puedes reintentar sin volver a subir el contenido.',
+  creator_premium_visual_proof_invalid: 'No pudimos validar el original privado. Reintenta la verificación.',
 };
 
 function messageFor(error: unknown): string {
@@ -149,14 +153,15 @@ export default function CreatorPremiumEditor() {
   const [processing, setProcessing] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  const verificationRetryable = item?.lifecycle_status === 'pending_review' && item.verification_status === 'failed';
   const readOnly = item?.lifecycle_status === 'pending_review' || item?.lifecycle_status === 'published' ||
     item?.lifecycle_status === 'quarantined' || item?.lifecycle_status === 'removed' || item?.lifecycle_status === 'deleted';
   const busy = saving || uploading || submitting || deleting;
   const mediaLocked = Boolean(item?.teaser_attached || item?.original_attached || item?.video_attached);
   const draftPlans = useMemo(() => plans.filter(plan => plan.status === 'draft'), [plans]);
 
-  const load = useCallback(async (targetId: string) => {
-    setLoading(true);
+  const load = useCallback(async (targetId: string, silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const [found, planPage] = await Promise.all([
@@ -177,7 +182,7 @@ export default function CreatorPremiumEditor() {
     } catch (reason) {
       setError(messageFor(reason));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -204,6 +209,12 @@ export default function CreatorPremiumEditor() {
     void load(routeContentId ?? '');
     return () => uploadAbort.current?.abort();
   }, [load, routeContentId]);
+
+  useEffect(() => {
+    if (!contentId || item?.lifecycle_status !== 'pending_review' || item.verification_status !== 'pending') return;
+    const timer = setInterval(() => { void load(contentId, true); }, 4000);
+    return () => clearInterval(timer);
+  }, [contentId, item?.lifecycle_status, item?.verification_status, load]);
 
   const applyPlanMappings = useCallback(async (targetId: string) => {
     if (!subscriptionModes.has(accessMode)) return;
@@ -365,20 +376,20 @@ export default function CreatorPremiumEditor() {
   }, [busy, kind, load, privateFile, readOnly, saveDraft, teaser]);
 
   const submit = useCallback(async () => {
-    if (busy || readOnly) return;
+    if (busy || (readOnly && !verificationRetryable)) return;
     setSubmitting(true);
     setError(null);
     try {
-      const id = await saveDraft();
-      await submitMyCreatorPremiumContentForReview(id);
+      const id = verificationRetryable && contentId ? contentId : await saveDraft();
+      await publishMyCreatorPremiumContent(id);
       await load(id);
-      Alert.alert('Enviado a revisión', 'El contenido quedó bloqueado para edición mientras moderación lo revisa.');
+      Alert.alert('Verificación iniciada', 'El sistema está verificando el contenido. Se publicará automáticamente solo si supera todos los controles.');
     } catch (reason) {
       setError(messageFor(reason));
     } finally {
       setSubmitting(false);
     }
-  }, [busy, load, readOnly, saveDraft]);
+  }, [busy, contentId, load, readOnly, saveDraft, verificationRetryable]);
 
   const confirmDelete = useCallback(() => {
     if (!contentId || busy || readOnly) return;
@@ -436,8 +447,14 @@ export default function CreatorPremiumEditor() {
           <View style={styles.reviewNotice}>
             <MaterialCommunityIcons name="clock-check-outline" size={21} color={Colors.warning} />
             <View style={styles.headerCopy}>
-              <Text style={styles.reviewTitle}>{item?.lifecycle_status === 'pending_review' ? 'En revisión' : 'Contenido no editable'}</Text>
-              <Text style={styles.helper}>Los metadatos y medios quedan bloqueados en este estado.</Text>
+              <Text style={styles.reviewTitle}>{item?.lifecycle_status === 'pending_review'
+                ? item.verification_status === 'failed' ? 'Error temporal de verificación' : 'Verificando contenido'
+                : 'Contenido no editable'}</Text>
+              <Text style={styles.helper}>{item?.lifecycle_status === 'pending_review'
+                ? item.verification_status === 'failed'
+                  ? blockerCopy[item.verification_error_code ?? ''] ?? 'La verificación no terminó. Puedes reintentar de forma segura.'
+                  : 'El original sigue privado mientras el sistema completa las comprobaciones.'
+                : 'Los metadatos y medios quedan bloqueados en este estado.'}</Text>
             </View>
           </View>
         ) : null}
@@ -529,22 +546,25 @@ export default function CreatorPremiumEditor() {
           </View>
           <View style={styles.statusRow}>
             <MaterialCommunityIcons name={item?.submission_ready ? 'check-circle' : 'alert-circle-outline'} size={19} color={item?.submission_ready ? Colors.success : Colors.warning} />
-            <Text style={styles.statusText}>{item?.submission_ready ? 'Listo para revisión' : blockerCopy[item?.submission_blocker ?? ''] ?? 'Completa los datos comerciales y los medios.'}</Text>
+            <Text style={styles.statusText}>{item?.lifecycle_status === 'pending_review'
+              ? item.verification_status === 'failed' ? 'Verificación pendiente · reintento disponible' : 'Verificando contenido'
+              : item?.lifecycle_status === 'published' ? 'Publicado automáticamente tras la verificación'
+              : item?.submission_ready ? 'Listo para publicar' : blockerCopy[item?.submission_blocker ?? ''] ?? 'Completa los datos comerciales y los medios.'}</Text>
           </View>
         </Section>
 
-        {!readOnly ? (
+        {!readOnly || verificationRetryable ? (
           <View style={styles.actions}>
-            <Pressable style={styles.secondaryButton} onPress={() => void handleSave()} disabled={busy}>
+            {!readOnly ? <Pressable style={styles.secondaryButton} onPress={() => void handleSave()} disabled={busy}>
               {saving ? <ActivityIndicator color={PREMIUM} /> : <><MaterialCommunityIcons name="content-save-outline" size={20} color={PREMIUM} /><Text style={styles.secondaryText}>Guardar borrador</Text></>}
-            </Pressable>
-            <Pressable style={styles.secondaryButton} onPress={() => void uploadMedia()} disabled={busy}>
+            </Pressable> : null}
+            {!readOnly ? <Pressable style={styles.secondaryButton} onPress={() => void uploadMedia()} disabled={busy}>
               {uploading ? <ActivityIndicator color={PREMIUM} /> : <><MaterialCommunityIcons name="cloud-upload-outline" size={20} color={PREMIUM} /><Text style={styles.secondaryText}>Subir/Reemplazar medios</Text></>}
-            </Pressable>
+            </Pressable> : null}
             <Pressable style={styles.primaryButton} onPress={() => void submit()} disabled={busy}>
-              {submitting ? <ActivityIndicator color={Colors.textOnBrand} /> : <><MaterialCommunityIcons name="send-check-outline" size={20} color={Colors.textOnBrand} /><Text style={styles.primaryText}>Enviar a revisión</Text></>}
+              {submitting ? <ActivityIndicator color={Colors.textOnBrand} /> : <><MaterialCommunityIcons name="send-check-outline" size={20} color={Colors.textOnBrand} /><Text style={styles.primaryText}>{verificationRetryable ? 'Reintentar verificación' : 'Publicar contenido Premium'}</Text></>}
             </Pressable>
-            {contentId ? (
+            {contentId && !readOnly ? (
               <Pressable style={styles.deleteButton} onPress={confirmDelete} disabled={busy}>
                 {deleting ? <ActivityIndicator color={Colors.error} /> : <><MaterialCommunityIcons name="trash-can-outline" size={20} color={Colors.error} /><Text style={styles.deleteText}>Eliminar borrador</Text></>}
               </Pressable>

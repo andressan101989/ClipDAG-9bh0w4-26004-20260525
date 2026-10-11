@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
@@ -97,6 +97,10 @@ test('B7 disposable harness contains executable lifecycle and financial invarian
   for (const contract of [
     'create_my_creator_premium_draft_v1',
     'submit_my_creator_premium_content_for_review_v1',
+    'claim_content_safety_scans',
+    'complete_content_safety_visual_analysis',
+    'complete_content_safety_audio_transcription',
+    'reconcile_creator_premium_publications_v1',
     'admin_review_creator_premium_content_v1',
     'purchase_creator_premium_content_v1',
     'subscribe_creator_premium_plan_v1',
@@ -125,12 +129,12 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
   const uid = () => randomUUID();
   const id = {
     creator: uid(), buyer: uid(), other: uid(), admin: uid(),
-    purchaseRequest: uid(), subscriptionRequest: uid(), moderationRequest: uid(),
-    purchaseOfferRequest: uid(), moderationOfferRequest: uid(), planRequest: uid(),
+    purchaseRequest: uid(), subscriptionRequest: uid(), moderationRequest: uid(), blockedRequest: uid(),
+    purchaseOfferRequest: uid(), moderationOfferRequest: uid(), blockedOfferRequest: uid(), planRequest: uid(),
     purchaseKey: uid(), subscriptionKey: uid(), cancelKey: uid(),
     purchaseRefundKey: uid(), periodRefundKey: uid(), rollbackKey: uid(),
-    purchaseTeaser: uid(), purchaseOriginal: uid(), subscriptionTeaser: uid(),
-    subscriptionOriginal: uid(), moderationTeaser: uid(), moderationOriginal: uid(),
+    purchaseTeaser: uid(), purchaseOriginal: uid(), subscriptionTeaser: uid(), subscriptionVideo: uid(),
+    moderationTeaser: uid(), moderationOriginal: uid(), blockedTeaser: uid(), blockedOriginal: uid(),
   };
   const service = (name, args, options = {}) => asRole(
     db, 'service_role', null,
@@ -146,9 +150,9 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     db, 'authenticated', id.admin,
     `select public.${name}(${args.map(value => `'${value}'`).join(',')})`,
   );
-  const createDraft = (title, access, request) => json(asRole(db, 'authenticated', id.creator, `
+  const createDraft = (title, access, request, kind = 'image') => json(asRole(db, 'authenticated', id.creator, `
     select to_jsonb(result) from public.create_my_creator_premium_draft_v1(
-      '${title}','B7 disposable proof','image','${access}','${request}'
+      '${title}','B7 disposable proof','${kind}','${access}','${request}'
     ) result;
   `));
   const imageAsset = (assetId, purpose, visibility, publicUrl = null) => `
@@ -161,6 +165,59 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
       'premium/${assetId}.jpg','image/jpeg',1000,'ready',clock_timestamp(),
       ${publicUrl ? `'${publicUrl}'` : 'null'}
     );`;
+  const streamAsset = assetId => `
+    insert into public.video_assets(
+      id,owner_id,provider,purpose,visibility,status,cloudflare_uid,mime_type,size_bytes,
+      max_duration_seconds,duration_seconds,ready_at,provider_metadata,hls_url,dash_url,thumbnail_url
+    ) values(
+      '${assetId}','${id.creator}','cloudflare_stream','creator_premium_video','private','ready',
+      'premium-${assetId}','video/mp4',2000,60,12,clock_timestamp(),
+      '{"require_signed_urls":true}'::jsonb,null,null,null
+    );`;
+  const completeAutomaticSafety = (blockedContentIds = []) => {
+    const blocked = new Set(blockedContentIds);
+    const textClaims = json(asRole(db, 'service_role', null, 'select public.claim_content_safety_scans(25)'));
+    for (const claim of textClaims) {
+      assert.equal(claim.target_type, 'creator_premium');
+      json(asRole(db, 'service_role', null, `select public.complete_content_safety_scan('${claim.id}','[]'::jsonb)`));
+    }
+
+    for (let index = 0; index < 10; index += 1) {
+      const claims = json(asRole(db, 'service_role', null, 'select public.claim_content_safety_audio_scans(1)'));
+      if (claims.length === 0) break;
+      const claim = claims[0];
+      assert.equal(claim.target_type, 'creator_premium');
+      const transcriptFingerprint = createHash('sha256').update(`audio:${claim.target_id}`).digest('hex');
+      json(asRole(db, 'service_role', null, `select public.complete_content_safety_audio_transcription(
+        '${claim.scan_id}','${claim.source_asset_id}','${claim.content_fingerprint}','en','safe transcript',2,
+        '[{"start":0,"end":1,"text":"safe transcript"}]'::jsonb,false,'${transcriptFingerprint}',false
+      )`));
+    }
+    const transcriptClaims = json(asRole(db, 'service_role', null, 'select public.claim_content_safety_transcript_evaluations(25)'));
+    for (const claim of transcriptClaims) {
+      json(asRole(db, 'service_role', null, `select public.complete_content_safety_transcript_evaluation(
+        '${claim.transcript_id}','${claim.ruleset_fingerprint}','[]'::jsonb
+      )`));
+    }
+
+    for (let index = 0; index < 20; index += 1) {
+      const claims = json(asRole(db, 'service_role', null, 'select public.claim_content_safety_visual_scans(1)'));
+      if (claims.length === 0) break;
+      const claim = claims[0];
+      assert.equal(claim.target_type, 'creator_premium');
+      const isBlocked = blocked.has(claim.target_id);
+      const result = isBlocked
+        ? { schema_version: 'visual-safety-v1', review_required: true, findings: [{ category: 'sexual', triage_level: 'critical', description: 'Disposable severe safety signal', frame_index: null }], summary: 'Severe disposable safety signal.' }
+        : { schema_version: 'visual-safety-v1', review_required: false, findings: [], summary: 'No disposable safety signal.' };
+      const timestamps = claim.source_kind === 'eligible_stream_video' ? 'array[0]::integer[]' : 'array[]::integer[]';
+      const analysisFingerprint = createHash('sha256').update(`visual:${claim.target_id}:${JSON.stringify(result)}`).digest('hex');
+      json(asRole(db, 'service_role', null, `select public.complete_content_safety_visual_analysis(
+        '${claim.scan_id}','${claim.content_fingerprint}','${JSON.stringify(result)}'::jsonb,
+        '${analysisFingerprint}',${timestamps}
+      )`));
+    }
+    return json(asRole(db, 'service_role', null, 'select public.reconcile_creator_premium_publications_v1(50)'));
+  };
   const balances = () => psql(db, `
     select jsonb_object_agg(coalesce(owner_id::text,account_type),balance
       order by coalesce(owner_id::text,account_type))
@@ -212,6 +269,17 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
       where owner_id='${id.buyer}' and account_type='user';
       update public.ledger_accounts set balance=30,frozen=false
       where owner_id='${id.creator}' and account_type='user';
+      insert into private.content_safety_rules(
+        code,label,category,detector_type,pattern,severity,scopes,enabled,version,
+        policy_source,policy_reference,policy_version,locale,rationale,approval_state,
+        approved_by,approved_at,created_by,updated_by
+      ) values(
+        'b7_disposable_safety','B7 disposable governed policy','child_safety','keyword',
+        'nevermatchb7safe','critical',array['creator_premium_text','transcript']::text[],true,1,
+        'community_guidelines','community-guidelines#prohibited-content','b7-f2','und',
+        'Disposable approved rule used only inside the isolated database.','approved',
+        '${id.admin}',clock_timestamp(),'${id.admin}','${id.admin}'
+      );
     `);
 
     assert.equal(psql(db, `select purchase_enabled||'|'||subscription_enabled||'|'||refunds_enabled||'|'||platform_fee_bps from private.creator_premium_finance_policy where singleton`).stdout, 'false|false|false|0');
@@ -219,33 +287,38 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     assert.equal(psql(db, `select has_function_privilege('authenticated','public.refund_creator_premium_purchase_v1(uuid,uuid,text)','execute')`).stdout, 'f');
 
     const purchase = createDraft('B7 purchase', 'purchase', id.purchaseRequest);
-    const subscription = createDraft('B7 subscription', 'subscription', id.subscriptionRequest);
+    const subscription = createDraft('B7 subscription', 'subscription', id.subscriptionRequest, 'video');
     const moderation = createDraft('B7 moderation', 'purchase', id.moderationRequest);
+    const blocked = createDraft('B7 blocked', 'purchase', id.blockedRequest);
     expectFailure(asRole(db, 'authenticated', id.other, `select * from public.update_my_creator_premium_draft_v1('${purchase.id}','stolen','stolen','image','purchase')`, { allowFailure: true }), 'creator_premium_content_not_found');
 
     psql(db, `
       ${imageAsset(id.purchaseTeaser, 'creator_premium_teaser_image', 'public', 'https://cdn.test/purchase-teaser.jpg')}
       ${imageAsset(id.purchaseOriginal, 'creator_premium_original_image', 'private')}
       ${imageAsset(id.subscriptionTeaser, 'creator_premium_teaser_image', 'public', 'https://cdn.test/subscription-teaser.jpg')}
-      ${imageAsset(id.subscriptionOriginal, 'creator_premium_original_image', 'private')}
+      ${streamAsset(id.subscriptionVideo)}
       ${imageAsset(id.moderationTeaser, 'creator_premium_teaser_image', 'public', 'https://cdn.test/moderation-teaser.jpg')}
       ${imageAsset(id.moderationOriginal, 'creator_premium_original_image', 'private')}
+      ${imageAsset(id.blockedTeaser, 'creator_premium_teaser_image', 'public', 'https://cdn.test/blocked-teaser.jpg')}
+      ${imageAsset(id.blockedOriginal, 'creator_premium_original_image', 'private')}
     `);
     for (const [contentId, teaserId, originalId] of [
       [purchase.id,id.purchaseTeaser,id.purchaseOriginal],
-      [subscription.id,id.subscriptionTeaser,id.subscriptionOriginal],
       [moderation.id,id.moderationTeaser,id.moderationOriginal],
+      [blocked.id,id.blockedTeaser,id.blockedOriginal],
     ]) {
       const attached = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_image_media_v1('${contentId}','${teaserId}','${originalId}') result`));
       assert.equal(attached.media_ready, true);
     }
+    assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_video_media_v1('${subscription.id}','${id.subscriptionTeaser}','${id.subscriptionVideo}') result`)).media_ready, true);
 
     json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${purchase.id}',10.00000000,'${id.purchaseOfferRequest}') result`));
     json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${moderation.id}',4.00000000,'${id.moderationOfferRequest}') result`));
+    json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${blocked.id}',3.00000000,'${id.blockedOfferRequest}') result`));
     const plan = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.create_my_creator_premium_plan_draft_v1('B7 plan','Disposable plan',20.00000000,30,'${id.planRequest}') result`));
     assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_plan_contents_v1('${plan.id}',array['${subscription.id}']::uuid[]) result`)).mapped_content_count, 1);
 
-    for (const contentId of [purchase.id,subscription.id,moderation.id]) {
+    for (const contentId of [purchase.id,subscription.id,moderation.id,blocked.id]) {
       assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.submit_my_creator_premium_content_for_review_v1('${contentId}') result`)).lifecycle_status, 'pending_review');
     }
     assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.activate_my_creator_premium_plan_v1('${plan.id}') result`)).status, 'active');
@@ -254,20 +327,28 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     const review = (contentId, action, reason, key = uid()) => json(adminCommand(
       'admin_review_creator_premium_content_v1',[contentId,action,reason,key],
     ));
-    const purchaseApproveKey = uid();
-    assert.equal(review(purchase.id,'approve','verified purchase content',purchaseApproveKey).lifecycle_status, 'published');
-    assert.equal(review(purchase.id,'approve','verified purchase content',purchaseApproveKey).replayed, true);
-    expectFailure(adminCommand('admin_review_creator_premium_content_v1',[purchase.id,'remove','changed payload',purchaseApproveKey], { allowFailure: true }), 'admin_idempotency_conflict');
-    assert.equal(review(subscription.id,'approve','verified subscription content').lifecycle_status, 'published');
-    assert.equal(review(moderation.id,'reject','needs correction').lifecycle_status, 'rejected');
-    assert.equal(review(moderation.id,'restore','creator may correct').lifecycle_status, 'pending_review');
-    assert.equal(review(moderation.id,'approve','correction verified').lifecycle_status, 'published');
-    assert.equal(review(moderation.id,'quarantine','safety review').lifecycle_status, 'quarantined');
+    expectFailure(adminCommand('admin_review_creator_premium_content_v1',[purchase.id,'approve','manual bypass forbidden',uid()], { allowFailure: true }), 'creator_premium_admin_review_invalid');
+    const initialReconcile = completeAutomaticSafety([blocked.id]);
+    assert.ok(initialReconcile.processed >= 4);
+    assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${purchase.id}'`).stdout, 'published|passed');
+    assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${subscription.id}'`).stdout, 'published|passed');
+    assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${moderation.id}'`).stdout, 'published|passed');
+    assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${blocked.id}'`).stdout, 'quarantined|restricted');
+
+    const quarantineKey = uid();
+    assert.equal(review(moderation.id,'quarantine','post-publication safety review',quarantineKey).lifecycle_status, 'quarantined');
+    assert.equal(review(moderation.id,'quarantine','post-publication safety review',quarantineKey).replayed, true);
+    expectFailure(adminCommand('admin_review_creator_premium_content_v1',[moderation.id,'remove','changed payload',quarantineKey], { allowFailure: true }), 'admin_idempotency_conflict');
     assert.equal(review(moderation.id,'restore','safety cleared').lifecycle_status, 'pending_review');
-    assert.equal(review(moderation.id,'approve','restored review complete').lifecycle_status, 'published');
+    const firstRestoreScan = psql(db, `select verification_scan_id from private.creator_premium_contents where id='${moderation.id}'`).stdout;
+    completeAutomaticSafety();
+    assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${moderation.id}'`).stdout, 'published|passed');
     assert.equal(review(moderation.id,'remove','owner policy removal').lifecycle_status, 'removed');
-    assert.equal(review(moderation.id,'restore','new review required').lifecycle_status, 'pending_review');
-    assert.equal(psql(db, `select count(*) from private.admin_action_audit where target_id='${moderation.id}' and action like 'creator_premium.%'`).stdout, '8');
+    assert.equal(review(moderation.id,'restore','new verification required').lifecycle_status, 'pending_review');
+    assert.equal(json(psql(db, `select private.finalize_creator_premium_safety_scan_v1('${firstRestoreScan}')`)).outcome, 'stale_scan');
+    completeAutomaticSafety();
+    assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${moderation.id}'`).stdout, 'published|passed');
+    assert.equal(psql(db, `select count(*) from private.admin_action_audit where target_id='${moderation.id}' and action like 'creator_premium.%'`).stdout, '4');
 
     assert.equal(asRole(db, 'authenticated', id.buyer, `select allowed from public.get_my_creator_premium_entitlement_v1('${purchase.id}')`).stdout, 'f');
     const disabledCounts = financeCounts(), disabledBalances = balances();

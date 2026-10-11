@@ -1,7 +1,8 @@
 begin;
 
 -- CREATOR-PREMIUM-B7
--- Complete the already-canonical Premium domain with human moderation,
+-- Complete the already-canonical Premium domain with automatic publication
+-- after canonical Content Safety verification, exception moderation,
 -- safe consumer commerce projections, administrative refund orchestration,
 -- creator earnings/analytics, and report-center integration.
 --
@@ -13,12 +14,59 @@ alter table private.creator_premium_contents
   add column submitted_at timestamptz,
   add column reviewed_at timestamptz,
   add column reviewed_by uuid,
-  add column review_reason text;
+  add column review_reason text,
+  add column verification_generation bigint not null default 0,
+  add column verification_scan_id uuid,
+  add column verification_fingerprint text,
+  add column verification_status text not null default 'not_requested',
+  add column verification_error_code text,
+  add column verification_requested_at timestamptz,
+  add column verification_completed_at timestamptz;
 
 alter table private.creator_premium_contents
   add constraint creator_premium_contents_reviewed_by_fkey
     foreign key (reviewed_by) references auth.users(id)
     on update restrict on delete restrict,
+  add constraint creator_premium_contents_verification_scan_id_fkey
+    foreign key (verification_scan_id) references private.content_safety_scans(id)
+    on update restrict on delete restrict,
+  add constraint creator_premium_contents_verification_status_check
+    check (verification_status in (
+      'not_requested','pending','passed','blocked','restricted','failed'
+    )),
+  add constraint creator_premium_contents_verification_generation_check
+    check (verification_generation >= 0),
+  add constraint creator_premium_contents_verification_fingerprint_check
+    check (
+      verification_fingerprint is null
+      or verification_fingerprint ~ '^[0-9a-f]{64}$'
+    ),
+  add constraint creator_premium_contents_verification_error_check
+    check (
+      verification_error_code is null
+      or (
+        verification_error_code = pg_catalog.btrim(verification_error_code)
+        and verification_error_code ~ '^[a-z][a-z0-9_]{1,99}$'
+      )
+    ),
+  add constraint creator_premium_contents_verification_binding_check
+    check (
+      (verification_status = 'not_requested'
+        and verification_scan_id is null
+        and verification_fingerprint is null
+        and verification_requested_at is null
+        and verification_completed_at is null)
+      or (verification_status = 'pending'
+        and verification_scan_id is not null
+        and verification_fingerprint is not null
+        and verification_requested_at is not null
+        and verification_completed_at is null)
+      or (verification_status in ('passed','blocked','restricted','failed')
+        and verification_scan_id is not null
+        and verification_fingerprint is not null
+        and verification_requested_at is not null
+        and verification_completed_at is not null)
+    ),
   add constraint creator_premium_contents_review_reason_check
     check (
       review_reason is null
@@ -31,6 +79,14 @@ alter table private.creator_premium_contents
 create index creator_premium_contents_reviewed_by_idx
   on private.creator_premium_contents(reviewed_by)
   where reviewed_by is not null;
+
+create index creator_premium_contents_verification_scan_idx
+  on private.creator_premium_contents(verification_scan_id)
+  where verification_scan_id is not null;
+
+create index creator_premium_contents_verification_queue_idx
+  on private.creator_premium_contents(verification_status, verification_requested_at, id)
+  where lifecycle_status = 'pending_review';
 
 create index creator_premium_contents_review_queue_idx
   on private.creator_premium_contents(lifecycle_status, submitted_at desc, id desc)
@@ -49,28 +105,55 @@ alter table private.creator_premium_contents
     (lifecycle_status = 'draft'
       and published_at is null and quarantined_at is null and removed_at is null
       and deleted_at is null and submitted_at is null and reviewed_at is null
-      and reviewed_by is null and review_reason is null)
+      and reviewed_by is null and review_reason is null
+      and verification_status = 'not_requested')
     or (lifecycle_status = 'pending_review'
       and published_at is null and quarantined_at is null and removed_at is null
       and deleted_at is null and submitted_at is not null and reviewed_at is null
-      and reviewed_by is null and review_reason is null)
+      and reviewed_by is null and review_reason is null
+      and verification_status in ('pending','failed'))
     or (lifecycle_status = 'published'
       and published_at is not null and quarantined_at is null and removed_at is null
-      and deleted_at is null and submitted_at is not null and reviewed_at is not null
-      and reviewed_by is not null)
+      and deleted_at is null and submitted_at is not null
+      and verification_status = 'passed')
     or (lifecycle_status = 'rejected'
       and published_at is null and quarantined_at is null and removed_at is null
-      and deleted_at is null and submitted_at is not null and reviewed_at is not null
-      and reviewed_by is not null and review_reason is not null)
+      and deleted_at is null and submitted_at is not null
+      and verification_status = 'blocked' and review_reason is not null)
     or (lifecycle_status = 'quarantined'
       and quarantined_at is not null and removed_at is null and deleted_at is null
-      and submitted_at is not null and reviewed_at is not null
-      and reviewed_by is not null and review_reason is not null)
+      and submitted_at is not null and review_reason is not null
+      and verification_status in ('restricted','passed'))
     or (lifecycle_status = 'removed'
       and removed_at is not null and deleted_at is null and submitted_at is not null
       and reviewed_at is not null and reviewed_by is not null
       and review_reason is not null)
     or (lifecycle_status = 'deleted' and deleted_at is not null)
+  );
+
+alter table private.content_safety_scans
+  drop constraint content_safety_scans_target_check,
+  add constraint content_safety_scans_target_check
+    check (target_type in (
+      'video','comment','story','live_message','message','creator_premium'
+    ));
+
+alter table private.content_safety_alerts
+  drop constraint content_safety_alerts_target_check,
+  add constraint content_safety_alerts_target_check
+    check (target_type in (
+      'video','comment','story','live_message','message','creator_premium'
+    ));
+
+alter table private.content_safety_rules
+  drop constraint content_safety_rules_scopes_check,
+  add constraint content_safety_rules_scopes_check check (
+    pg_catalog.cardinality(scopes) > 0
+    and pg_catalog.array_position(scopes, null::text) is null
+    and scopes <@ array[
+      'video_caption','comment','story_text','live_chat','reported_message',
+      'transcript','creator_premium_text'
+    ]::text[]
   );
 
 insert into private.admin_capabilities(
@@ -180,6 +263,8 @@ declare
   v_actor uuid := auth.uid();
   v_content private.creator_premium_contents;
   v_blocker text;
+  v_scan_id uuid;
+  v_fingerprint text;
 begin
   if v_actor is null then
     raise exception using errcode = '42501', message = 'creator_premium_auth_required';
@@ -205,24 +290,66 @@ begin
   if not found then
     raise exception using errcode = 'P0002', message = 'creator_premium_content_not_found';
   end if;
-  if v_content.lifecycle_status <> 'draft' then
-    raise exception using errcode = '55000', message = 'creator_premium_draft_only';
+  if v_content.lifecycle_status='pending_review' and v_content.verification_status='pending' then
+    return query select v_content.id,v_content.lifecycle_status,true;
+    return;
   end if;
-  v_blocker := private.creator_premium_submission_blocker_v1(v_content.id);
+  if v_content.lifecycle_status not in ('draft','pending_review')
+     or (v_content.lifecycle_status='pending_review' and v_content.verification_status<>'failed') then
+    raise exception using errcode='55000',message='creator_premium_publication_request_invalid_state';
+  end if;
+  if v_content.lifecycle_status='draft' then
+    v_blocker:=private.creator_premium_submission_blocker_v1(v_content.id);
+  else
+    -- A failed scan may be retried only after the still-current media and
+    -- commercial facts are ready. The retry always advances the generation so
+    -- a completed/failed scan can never be recycled as fresh publication proof.
+    v_blocker:=private.creator_premium_publication_blocker_v1(v_content.id);
+  end if;
   if v_blocker is not null then
-    raise exception using errcode = '55000', message = v_blocker;
+    raise exception using errcode='55000',message=v_blocker;
   end if;
 
   update private.creator_premium_contents content
+  set verification_generation=content.verification_generation+1,
+      updated_at=pg_catalog.clock_timestamp()
+  where content.id=v_content.id
+  returning content.* into v_content;
+
+  v_scan_id:=private.enqueue_content_safety_scan(
+    'creator_premium',v_content.id,
+    case when v_content.lifecycle_status='draft' then 'content_created' else 'retry' end
+  );
+  if v_scan_id is null then
+    raise exception using errcode='55000',message='creator_premium_safety_scan_unavailable';
+  end if;
+  select scan.content_fingerprint into v_fingerprint
+  from private.content_safety_scans scan where scan.id=v_scan_id;
+  if v_fingerprint is null then
+    raise exception using errcode='55000',message='creator_premium_safety_fingerprint_unavailable';
+  end if;
+  update private.creator_premium_contents content
   set lifecycle_status = 'pending_review',
-      submitted_at = pg_catalog.clock_timestamp(),
+      submitted_at = coalesce(content.submitted_at,pg_catalog.clock_timestamp()),
       reviewed_at = null,
       reviewed_by = null,
       review_reason = null,
       removal_reason = null,
+      verification_scan_id=v_scan_id,
+      verification_fingerprint=v_fingerprint,
+      verification_status='pending',
+      verification_error_code=null,
+      verification_requested_at=pg_catalog.clock_timestamp(),
+      verification_completed_at=null,
       updated_at = pg_catalog.clock_timestamp()
   where content.id = v_content.id
   returning content.* into v_content;
+
+  begin
+    perform public.wake_content_safety_scanner();
+  exception when others then
+    null;
+  end;
 
   return query select v_content.id, v_content.lifecycle_status, true;
 end;
@@ -252,6 +379,10 @@ create function public.get_my_creator_premium_contents_v1(
   reviewed_at timestamptz,
   reviewed_by uuid,
   review_reason text,
+  verification_status text,
+  verification_error_code text,
+  verification_requested_at timestamptz,
+  verification_completed_at timestamptz,
   created_at timestamptz,
   updated_at timestamptz,
   teaser_url text,
@@ -308,6 +439,10 @@ begin
     content.reviewed_at,
     content.reviewed_by,
     content.review_reason,
+    content.verification_status,
+    content.verification_error_code,
+    content.verification_requested_at,
+    content.verification_completed_at,
     content.created_at,
     content.updated_at,
     private.creator_premium_teaser_url_v1(content.id),
@@ -322,9 +457,14 @@ begin
     offer.price_bdag::text,
     plans.mapped_plan_count,
     plans.active_plan_count,
-    content.lifecycle_status = 'draft' and blocker.value is null,
-    case when content.lifecycle_status = 'draft'
-      then blocker.value else 'creator_premium_draft_only' end
+    (content.lifecycle_status = 'draft' and blocker.value is null)
+      or (content.lifecycle_status='pending_review' and content.verification_status='failed'),
+    case
+      when content.lifecycle_status='draft' then blocker.value
+      when content.lifecycle_status='pending_review' and content.verification_status='failed'
+        then content.verification_error_code
+      else 'creator_premium_draft_only'
+    end
   from private.creator_premium_contents content
   left join lateral (
     select exists (
@@ -387,6 +527,100 @@ begin
 end;
 $$;
 
+drop function public.get_my_creator_premium_content_v1(uuid);
+
+create function public.get_my_creator_premium_content_v1(p_content_id uuid)
+returns table (
+  id uuid,title text,description text,content_kind text,access_mode text,
+  lifecycle_status text,published_at timestamptz,quarantined_at timestamptz,
+  removed_at timestamptz,deleted_at timestamptz,removal_reason text,
+  submitted_at timestamptz,reviewed_at timestamptz,reviewed_by uuid,review_reason text,
+  verification_status text,verification_error_code text,
+  verification_requested_at timestamptz,verification_completed_at timestamptz,
+  created_at timestamptz,updated_at timestamptz,teaser_url text,
+  teaser_attached boolean,original_attached boolean,image_media_ready boolean,
+  video_attached boolean,video_media_ready boolean,active_offer_version integer,
+  price_bdag text,mapped_plan_count bigint,active_plan_count bigint,
+  submission_ready boolean,submission_blocker text
+)
+language plpgsql stable security definer set search_path=''
+as $$
+declare v_actor uuid:=auth.uid();
+begin
+  if v_actor is null then raise exception using errcode='42501',message='creator_premium_auth_required';end if;
+  if p_content_id is null then raise exception using errcode='22023',message='creator_premium_content_invalid';end if;
+  if not private.current_user_is_creator_exclusive_age_eligible() then
+    raise exception using errcode='42501',message='creator_premium_age_eligibility_required';
+  end if;
+  if not private.creator_premium_actor_is_operational_v1(v_actor) then
+    raise exception using errcode='42501',message='creator_premium_account_restricted';
+  end if;
+  return query select
+    content.id,content.title,content.description,content.content_kind,content.access_mode,
+    content.lifecycle_status,content.published_at,content.quarantined_at,content.removed_at,
+    content.deleted_at,content.removal_reason,content.submitted_at,content.reviewed_at,
+    content.reviewed_by,content.review_reason,content.verification_status,
+    content.verification_error_code,content.verification_requested_at,
+    content.verification_completed_at,content.created_at,content.updated_at,
+    private.creator_premium_teaser_url_v1(content.id),
+    private.creator_premium_teaser_url_v1(content.id) is not null,
+    media.original_attached,
+    content.content_kind='image' and private.creator_premium_image_is_ready_v1(content.id),
+    video.video_attached,
+    content.content_kind='video' and private.creator_premium_video_is_ready_v1(content.id),
+    offer.version,offer.price_bdag::text,plans.mapped_plan_count,plans.active_plan_count,
+    (content.lifecycle_status='draft' and blocker.value is null)
+      or (content.lifecycle_status='pending_review' and content.verification_status='failed'),
+    case
+      when content.lifecycle_status='draft' then blocker.value
+      when content.lifecycle_status='pending_review' and content.verification_status='failed'
+        then content.verification_error_code
+      else 'creator_premium_draft_only'
+    end
+  from private.creator_premium_contents content
+  left join lateral (
+    select exists(
+      select 1 from public.media_asset_links link
+      join public.media_assets asset on asset.id=link.asset_id
+      where link.entity_type='creator_premium_content' and link.entity_id=content.id
+        and link.slot='original' and link."position"=0
+        and asset.owner_id=content.creator_id
+        and asset.purpose='creator_premium_original_image'
+        and asset.visibility='private' and asset.status='ready' and asset.public_url is null
+    ) original_attached
+  ) media on true
+  left join lateral (
+    select exists(
+      select 1 from public.video_asset_links link
+      join public.video_assets asset on asset.id=link.asset_id
+      where link.entity_type='creator_premium_content' and link.entity_id=content.id
+        and link.slot='original' and link."position"=0
+        and asset.owner_id=content.creator_id
+        and asset.purpose='creator_premium_video' and asset.visibility='private'
+    ) video_attached
+  ) video on true
+  left join lateral (
+    select active_offer.version,active_offer.price_bdag
+    from private.creator_premium_offer_versions active_offer
+    where active_offer.content_id=content.id and active_offer.creator_id=content.creator_id
+      and active_offer.status='active'
+    order by active_offer.version desc limit 1
+  ) offer on true
+  left join lateral (
+    select pg_catalog.count(*)::bigint mapped_plan_count,
+      pg_catalog.count(*) filter(where plan.status='active')::bigint active_plan_count
+    from private.creator_premium_plan_contents mapping
+    join private.creator_premium_plans plan on plan.id=mapping.plan_id and plan.creator_id=mapping.creator_id
+    where mapping.content_id=content.id and mapping.creator_id=content.creator_id
+  ) plans on true
+  left join lateral (
+    select private.creator_premium_submission_blocker_v1(content.id) value
+  ) blocker on true
+  where content.id=p_content_id and content.creator_id=v_actor;
+  if not found then raise exception using errcode='P0002',message='creator_premium_content_not_found';end if;
+end;
+$$;
+
 create function public.reopen_my_creator_premium_rejected_v1(p_content_id uuid)
 returns jsonb
 language plpgsql
@@ -434,6 +668,9 @@ begin
   set lifecycle_status = 'draft', submitted_at = null, reviewed_at = null,
       reviewed_by = null, review_reason = null, published_at = null,
       quarantined_at = null, removed_at = null, removal_reason = null,
+      verification_scan_id = null, verification_fingerprint = null,
+      verification_status = 'not_requested', verification_error_code = null,
+      verification_requested_at = null, verification_completed_at = null,
       updated_at = pg_catalog.clock_timestamp()
   where content.id = v_content.id
   returning content.* into v_content;
@@ -483,6 +720,8 @@ begin
         content.submitted_at, content.reviewed_at, content.reviewed_by,
         content.review_reason, content.published_at, content.quarantined_at,
         content.removed_at, content.created_at, content.updated_at,
+        content.verification_status, content.verification_error_code,
+        content.verification_requested_at, content.verification_completed_at,
         profile.username, profile.display_name, profile.avatar_url,
         private.creator_premium_teaser_url_v1(content.id) as teaser_url,
         case
@@ -524,6 +763,10 @@ begin
         'media_ready', media_ready, 'publication_blocker', publication_blocker,
         'submitted_at', submitted_at, 'reviewed_at', reviewed_at,
         'reviewed_by', reviewed_by, 'review_reason', review_reason,
+        'verification_status', verification_status,
+        'verification_error_code', verification_error_code,
+        'verification_requested_at', verification_requested_at,
+        'verification_completed_at', verification_completed_at,
         'published_at', published_at, 'quarantined_at', quarantined_at,
         'removed_at', removed_at, 'created_at', created_at, 'updated_at', updated_at
       ) order by submitted_at desc, id desc), '[]'::jsonb),
@@ -560,6 +803,10 @@ begin
     'title', content.title, 'description', content.description,
     'content_kind', content.content_kind, 'access_mode', content.access_mode,
     'lifecycle_status', content.lifecycle_status,
+    'verification_status', content.verification_status,
+    'verification_error_code', content.verification_error_code,
+    'verification_requested_at', content.verification_requested_at,
+    'verification_completed_at', content.verification_completed_at,
     'teaser_url', private.creator_premium_teaser_url_v1(content.id),
     'media_ready', case
       when content.content_kind = 'image' then private.creator_premium_image_is_ready_v1(content.id)
@@ -690,13 +937,14 @@ declare
   v_fingerprint text;
   v_prior private.admin_action_audit;
   v_content private.creator_premium_contents;
-  v_blocker text;
+  v_scan_id uuid;
+  v_scan private.content_safety_scans;
   v_now timestamptz;
   v_receipt jsonb;
 begin
   v_actor := public.admin_require_capability('creator_premium.review.moderate');
   if p_content_id is null or p_idempotency_key is null
-     or v_action not in ('approve','reject','quarantine','remove','restore')
+     or v_action not in ('quarantine','remove','restore')
      or v_reason is null or pg_catalog.char_length(v_reason) not between 2 and 500 then
     raise exception using errcode = '22023', message = 'creator_premium_admin_review_invalid';
   end if;
@@ -739,32 +987,6 @@ begin
   v_now := pg_catalog.clock_timestamp();
 
   case v_action
-    when 'approve' then
-      if v_content.lifecycle_status <> 'pending_review' then
-        raise exception using errcode = '55000', message = 'creator_premium_admin_approve_invalid_state';
-      end if;
-      v_blocker := private.creator_premium_publication_blocker_v1(v_content.id);
-      if v_blocker is not null then
-        raise exception using errcode = '55000', message = v_blocker;
-      end if;
-      update private.creator_premium_contents content
-      set lifecycle_status = 'published', published_at = v_now,
-          quarantined_at = null, removed_at = null, reviewed_at = v_now,
-          reviewed_by = v_actor, review_reason = v_reason,
-          removal_reason = null, updated_at = v_now
-      where content.id = v_content.id
-      returning content.* into v_content;
-    when 'reject' then
-      if v_content.lifecycle_status <> 'pending_review' then
-        raise exception using errcode = '55000', message = 'creator_premium_admin_reject_invalid_state';
-      end if;
-      update private.creator_premium_contents content
-      set lifecycle_status = 'rejected', published_at = null,
-          quarantined_at = null, removed_at = null, reviewed_at = v_now,
-          reviewed_by = v_actor, review_reason = v_reason,
-          removal_reason = null, updated_at = v_now
-      where content.id = v_content.id
-      returning content.* into v_content;
     when 'quarantine' then
       if v_content.lifecycle_status <> 'published' then
         raise exception using errcode = '55000', message = 'creator_premium_admin_quarantine_invalid_state';
@@ -790,12 +1012,36 @@ begin
         raise exception using errcode = '55000', message = 'creator_premium_admin_restore_invalid_state';
       end if;
       update private.creator_premium_contents content
+      set verification_generation = content.verification_generation + 1,
+          updated_at = v_now
+      where content.id = v_content.id
+      returning content.* into v_content;
+      v_scan_id := private.enqueue_content_safety_scan(
+        'creator_premium', v_content.id, 'retry'
+      );
+      select scan.* into v_scan
+      from private.content_safety_scans scan
+      where scan.id = v_scan_id;
+      if not found then
+        raise exception using errcode = '55000', message = 'creator_premium_safety_enqueue_failed';
+      end if;
+      update private.creator_premium_contents content
       set lifecycle_status = 'pending_review', submitted_at = v_now,
           published_at = null, quarantined_at = null, removed_at = null,
           reviewed_at = null, reviewed_by = null, review_reason = null,
-          removal_reason = null, updated_at = v_now
+          removal_reason = null,
+          verification_scan_id = v_scan.id,
+          verification_fingerprint = v_scan.content_fingerprint,
+          verification_status = 'pending', verification_error_code = null,
+          verification_requested_at = v_now, verification_completed_at = null,
+          updated_at = v_now
       where content.id = v_content.id
       returning content.* into v_content;
+      begin
+        perform public.wake_content_safety_scanner();
+      exception when others then
+        null;
+      end;
   end case;
 
   v_receipt := pg_catalog.jsonb_build_object(
@@ -2067,6 +2313,1256 @@ begin
 end;
 $$;
 
+-- B7-F2: Creator Premium joins the one canonical Content Safety queue. The
+-- snapshot fingerprints metadata plus the exact current private original so a
+-- PASS can never be reused after a media or commercial-state change.
+create or replace function private.content_safety_target_snapshot(
+  p_target_type text,
+  p_target_id uuid
+) returns jsonb
+language plpgsql stable security definer set search_path=''
+as $$
+declare v_result jsonb;
+begin
+  if p_target_type='video' then
+    select pg_catalog.jsonb_build_object(
+      'owner_user_id',v.user_id,'scope','video_caption','text_value',coalesce(v.caption,''),
+      'reach',greatest(v.views_count,0),'path','/content/video/'||v.id::text,
+      'summary',left(nullif(btrim(v.caption),''),300),
+      'content_version',pg_catalog.jsonb_build_object('caption',v.caption,'video_url',v.video_url,'media_urls',v.media_urls,'edited_at',v.edited_at,'created_at',v.created_at)::text,
+      'shared_video_id',null
+    ) into v_result from public.videos v where v.id=p_target_id;
+  elsif p_target_type='comment' then
+    select pg_catalog.jsonb_build_object(
+      'owner_user_id',c.user_id,'scope','comment','text_value',coalesce(c.text,''),'reach',0,
+      'path','/content/comment/'||c.id::text,'summary',left(c.text,300),
+      'content_version',pg_catalog.jsonb_build_object('text',c.text,'created_at',c.created_at)::text,
+      'shared_video_id',null
+    ) into v_result from public.comments c where c.id=p_target_id;
+  elsif p_target_type='story' then
+    select pg_catalog.jsonb_build_object(
+      'owner_user_id',s.user_id,'scope','story_text',
+      'text_value',coalesce((select pg_catalog.string_agg(nullif(btrim(e->>'text'),''),' ' order by ordinality)
+        from pg_catalog.jsonb_array_elements(coalesce(s.story_composition->'elements','[]'::jsonb)) with ordinality as x(e,ordinality)
+        where e->>'type'='text'),''),
+      'reach',(select count(*) from public.story_views sv where sv.story_id=s.id),
+      'path','/stories/'||s.id::text,
+      'summary',left(coalesce((select pg_catalog.string_agg(nullif(btrim(e->>'text'),''),' ' order by ordinality)
+        from pg_catalog.jsonb_array_elements(coalesce(s.story_composition->'elements','[]'::jsonb)) with ordinality as x(e,ordinality)
+        where e->>'type'='text'),''),300),
+      'content_version',pg_catalog.jsonb_build_object('composition',s.story_composition,'media_url',s.media_url,'media_type',s.media_type,'story_kind',s.story_kind,'shared_video_id',s.shared_video_id,'created_at',s.created_at)::text,
+      'shared_video_id',s.shared_video_id
+    ) into v_result from public.stories s where s.id=p_target_id;
+  elsif p_target_type='live_message' then
+    select pg_catalog.jsonb_build_object(
+      'owner_user_id',m.user_id,'scope','live_chat','text_value',coalesce(m.message,''),'reach',0,
+      'path','/live/'||m.session_id::text,'summary',left(m.message,300),
+      'content_version',pg_catalog.jsonb_build_object('message',m.message,'created_at',m.created_at)::text,
+      'shared_video_id',null
+    ) into v_result from public.live_messages m where m.id=p_target_id;
+  elsif p_target_type='message' then
+    select pg_catalog.jsonb_build_object(
+      'owner_user_id',m.sender_id,'scope','reported_message','text_value',coalesce(m.text,''),'reach',0,
+      'path','/reports','summary',left(m.text,160),
+      'content_version',pg_catalog.jsonb_build_object('text',m.text,'message_type',m.message_type,'deleted_at',m.deleted_at,'created_at',m.created_at)::text,
+      'shared_video_id',null
+    ) into v_result
+    from public.messages m
+    where m.id=p_target_id and exists(
+      select 1 from public.reports r where r.reported_content_type='message' and r.reported_content_id=m.id
+    );
+  elsif p_target_type='creator_premium' then
+    select pg_catalog.jsonb_build_object(
+      'owner_user_id',content.creator_id,
+      'scope','creator_premium_text',
+      'text_value',content.title||E'\n'||coalesce(content.description,''),
+      'reach',0,
+      'path','/creator-premium/'||content.id::text,
+      'summary',left(content.title,300),
+      'content_version',pg_catalog.jsonb_build_object(
+        'title',content.title,'description',content.description,
+        'content_kind',content.content_kind,'access_mode',content.access_mode,
+        'verification_generation',content.verification_generation,
+        'teaser_asset_id',teaser.asset_id,'teaser_status',teaser.status,
+        'media_asset_id',image_original.asset_id,'media_status',image_original.status,
+        'video_asset_id',video_original.asset_id,'video_status',video_original.status,
+        'offer_id',offer.id,'offer_version',offer.version,'offer_price_bdag',offer.price_bdag,
+        'eligible_plan_facts',coalesce(plans.facts,'[]'::jsonb),
+        'pending_report_count',coalesce(report_signal.pending_count,0),
+        'latest_report_at',report_signal.latest_report_at
+      )::text,
+      'shared_video_id',null,
+      'media_asset_id',image_original.asset_id,
+      'video_asset_id',video_original.asset_id
+    ) into v_result
+    from private.creator_premium_contents content
+    left join lateral (
+      select asset.id asset_id,asset.status
+      from public.media_asset_links link
+      join public.media_assets asset on asset.id=link.asset_id
+      where link.entity_type='creator_premium_content' and link.entity_id=content.id
+        and link.slot='teaser' and link."position"=0
+        and asset.owner_id=content.creator_id
+        and asset.purpose='creator_premium_teaser_image'
+      limit 1
+    ) teaser on true
+    left join lateral (
+      select asset.id asset_id,asset.status
+      from public.media_asset_links link
+      join public.media_assets asset on asset.id=link.asset_id
+      where link.entity_type='creator_premium_content' and link.entity_id=content.id
+        and link.slot='original' and link."position"=0
+        and asset.owner_id=content.creator_id
+        and asset.purpose='creator_premium_original_image'
+      limit 1
+    ) image_original on true
+    left join lateral (
+      select asset.id asset_id,asset.status
+      from public.video_asset_links link
+      join public.video_assets asset on asset.id=link.asset_id
+      where link.entity_type='creator_premium_content' and link.entity_id=content.id
+        and link.slot='original' and link."position"=0
+        and asset.owner_id=content.creator_id
+        and asset.purpose='creator_premium_video'
+      limit 1
+    ) video_original on true
+    left join lateral (
+      select active_offer.id,active_offer.version,active_offer.price_bdag
+      from private.creator_premium_offer_versions active_offer
+      where active_offer.content_id=content.id and active_offer.creator_id=content.creator_id
+        and active_offer.status='active'
+      order by active_offer.version desc limit 1
+    ) offer on true
+    left join lateral (
+      select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'id',plan.id,'plan_key',plan.plan_key,'version',plan.version,
+        'price_bdag',plan.price_bdag,'billing_period_days',plan.billing_period_days
+      ) order by plan.id) facts
+      from private.creator_premium_plan_contents mapping
+      join private.creator_premium_plans plan on plan.id=mapping.plan_id and plan.creator_id=mapping.creator_id
+      where mapping.content_id=content.id and mapping.creator_id=content.creator_id
+        and plan.status in('draft','active')
+    ) plans on true
+    left join lateral (
+      select pg_catalog.count(*) filter (where report.status='pending')::bigint pending_count,
+        pg_catalog.max(report.created_at) latest_report_at
+      from public.reports report
+      where report.reported_content_type='creator_premium'
+        and report.reported_content_id=content.id
+    ) report_signal on true
+    where content.id=p_target_id
+      and content.lifecycle_status in ('draft','pending_review','published','rejected','quarantined','removed');
+  end if;
+  return v_result;
+end;
+$$;
+
+create or replace function private.content_safety_audio_source(p_target_type text,p_target_id uuid)
+returns jsonb language plpgsql stable security definer set search_path=''
+as $$
+declare v_asset public.video_assets;v_media public.media_assets;v_shared uuid;v_source jsonb;v_content private.creator_premium_contents;
+begin
+  if p_target_type='creator_premium' then
+    select * into v_content from private.creator_premium_contents where id=p_target_id;
+    if not found then return pg_catalog.jsonb_build_object('kind','not_configured','reason','creator_premium_content_not_found');end if;
+    if v_content.content_kind='image' then return pg_catalog.jsonb_build_object('kind','not_applicable','reason','canonical_image');end if;
+    select asset.* into v_asset
+    from public.video_asset_links link join public.video_assets asset on asset.id=link.asset_id
+    where link.entity_type='creator_premium_content' and link.entity_id=v_content.id
+      and link.slot='original' and link."position"=0
+      and link.owner_id=v_content.creator_id and asset.owner_id=v_content.creator_id
+      and asset.purpose='creator_premium_video'
+    order by link.created_at,link.id limit 1;
+    if found and v_asset.provider='cloudflare_stream' and v_asset.status='ready' and v_asset.deleted_at is null
+       and v_asset.visibility='private' and nullif(pg_catalog.btrim(v_asset.cloudflare_uid),'') is not null
+       and v_asset.mime_type in('video/mp4','video/quicktime','video/webm')
+       and v_asset.duration_seconds>0 and v_asset.duration_seconds<=60
+       and v_asset.provider_metadata->'require_signed_urls'='true'::jsonb
+       and v_asset.hls_url is null and v_asset.dash_url is null and v_asset.thumbnail_url is null then
+      return pg_catalog.jsonb_build_object('kind','eligible','source_asset_id',v_asset.id,
+        'cloudflare_uid',v_asset.cloudflare_uid,'duration_seconds',v_asset.duration_seconds,
+        'provider',v_asset.provider,'model','@cf/openai/whisper-large-v3-turbo');
+    end if;
+    return pg_catalog.jsonb_build_object('kind','not_configured','reason','creator_premium_private_audio_source_unavailable');
+  elsif p_target_type='video' then
+    select a.* into v_asset from public.video_asset_links l join public.video_assets a on a.id=l.asset_id
+    where l.entity_type='video_post' and l.entity_id=p_target_id and l.slot='video' and l.position=0
+    order by l.created_at,l.id limit 1;
+    if found and v_asset.provider='cloudflare_stream' and v_asset.status='ready' and v_asset.deleted_at is null
+       and nullif(btrim(v_asset.cloudflare_uid),'') is not null and v_asset.mime_type like 'video/%'
+       and v_asset.duration_seconds>0 and v_asset.duration_seconds<=60 and v_asset.visibility='public' then
+      return pg_catalog.jsonb_build_object('kind','eligible','source_asset_id',v_asset.id,'cloudflare_uid',v_asset.cloudflare_uid,
+        'duration_seconds',v_asset.duration_seconds,'provider',v_asset.provider,'model','@cf/openai/whisper-large-v3-turbo');
+    end if;
+    select a.* into v_media from public.media_asset_links l join public.media_assets a on a.id=l.asset_id
+    where l.entity_type='video_post' and l.entity_id=p_target_id and l.slot='media' and l.position=0
+    order by l.created_at,l.id limit 1;
+    if found and v_media.status='ready' and v_media.deleted_at is null and v_media.media_kind='image' and v_media.mime_type like 'image/%' then
+      return pg_catalog.jsonb_build_object('kind','not_applicable','reason','canonical_image');
+    end if;
+    return pg_catalog.jsonb_build_object('kind','not_configured','reason','canonical_audio_source_unavailable');
+  elsif p_target_type='story' then
+    select s.shared_video_id into v_shared from public.stories s where s.id=p_target_id;
+    if not found then return pg_catalog.jsonb_build_object('kind','not_configured','reason','canonical_audio_source_unavailable');end if;
+    if v_shared is not null then
+      v_source:=private.content_safety_audio_source('video',v_shared);
+      return v_source||pg_catalog.jsonb_build_object('kind',case v_source->>'kind' when 'eligible' then 'shared_video' when 'not_applicable' then 'not_applicable' else 'not_configured' end,'shared_video_id',v_shared);
+    end if;
+    select a.* into v_media from public.media_asset_links l join public.media_assets a on a.id=l.asset_id
+    where l.entity_type='story' and l.entity_id=p_target_id and l.slot='media' and l.position=0
+    order by l.created_at,l.id limit 1;
+    if found and v_media.status='ready' and v_media.deleted_at is null and v_media.media_kind='image' and v_media.mime_type like 'image/%' then
+      return pg_catalog.jsonb_build_object('kind','not_applicable','reason','canonical_image');
+    end if;
+    return pg_catalog.jsonb_build_object('kind','not_configured','reason','canonical_audio_source_unavailable');
+  end if;
+  return pg_catalog.jsonb_build_object('kind','not_applicable','reason','text_only_target');
+end;
+$$;
+
+create or replace function private.content_safety_visual_source(p_target_type text,p_target_id uuid)
+returns jsonb language plpgsql stable security definer set search_path=''
+as $$
+declare v_video public.video_assets;v_media public.media_assets;v_shared uuid;v_source jsonb;v_has_link boolean:=false;v_content private.creator_premium_contents;
+begin
+  if p_target_type='creator_premium' then
+    select * into v_content from private.creator_premium_contents where id=p_target_id;
+    if not found then return pg_catalog.jsonb_build_object('kind','not_configured','reason','creator_premium_content_not_found');end if;
+    if v_content.content_kind='image' then
+      select asset.* into v_media
+      from public.media_asset_links link join public.media_assets asset on asset.id=link.asset_id
+      where link.entity_type='creator_premium_content' and link.entity_id=v_content.id
+        and link.slot='original' and link."position"=0
+        and link.owner_id=v_content.creator_id and asset.owner_id=v_content.creator_id
+        and asset.purpose='creator_premium_original_image'
+      order by link.created_at,link.id limit 1;
+      if found and v_media.provider='r2' and v_media.status='ready' and v_media.deleted_at is null
+         and v_media.visibility='private' and v_media.public_url is null and v_media.media_kind='image'
+         and v_media.mime_type in('image/jpeg','image/png','image/webp')
+         and nullif(pg_catalog.btrim(v_media.bucket_name),'') is not null
+         and nullif(pg_catalog.btrim(v_media.object_key),'') is not null
+         and v_media.size_bytes>0 and v_media.size_bytes<=25000000 then
+        return pg_catalog.jsonb_build_object('kind','eligible_image','media_asset_id',v_media.id,
+          'bucket_name',v_media.bucket_name,'object_key',v_media.object_key,
+          'mime_type',v_media.mime_type,'size_bytes',v_media.size_bytes);
+      end if;
+    elsif v_content.content_kind='video' then
+      select asset.* into v_video
+      from public.video_asset_links link join public.video_assets asset on asset.id=link.asset_id
+      where link.entity_type='creator_premium_content' and link.entity_id=v_content.id
+        and link.slot='original' and link."position"=0
+        and link.owner_id=v_content.creator_id and asset.owner_id=v_content.creator_id
+        and asset.purpose='creator_premium_video'
+      order by link.created_at,link.id limit 1;
+      if found and v_video.provider='cloudflare_stream' and v_video.status='ready' and v_video.deleted_at is null
+         and v_video.visibility='private'
+         and v_video.provider_metadata->'require_signed_urls'='true'::jsonb
+         and nullif(pg_catalog.btrim(v_video.cloudflare_uid),'') is not null
+         and v_video.mime_type in('video/mp4','video/quicktime','video/webm')
+         and v_video.duration_seconds>0 and v_video.duration_seconds<=60
+         and v_video.hls_url is null and v_video.dash_url is null and v_video.thumbnail_url is null then
+        return pg_catalog.jsonb_build_object('kind','eligible_stream_video','video_asset_id',v_video.id,
+          'cloudflare_uid',v_video.cloudflare_uid,'duration_seconds',v_video.duration_seconds,'mime_type',v_video.mime_type);
+      end if;
+    end if;
+    return pg_catalog.jsonb_build_object('kind','not_configured','reason','creator_premium_private_visual_source_unavailable');
+  elsif p_target_type='video' then
+    select a.* into v_video from public.video_asset_links l join public.video_assets a on a.id=l.asset_id
+      where l.entity_type='video_post' and l.entity_id=p_target_id and l.slot='video' and l.position=0
+      order by l.created_at,l.id limit 1;
+    if found then
+      v_has_link:=true;
+      if v_video.provider='cloudflare_stream' and v_video.status='ready' and v_video.deleted_at is null and v_video.visibility='public'
+         and nullif(btrim(v_video.cloudflare_uid),'') is not null and v_video.mime_type like 'video/%'
+         and v_video.duration_seconds>0 and v_video.duration_seconds<=60 then
+        return pg_catalog.jsonb_build_object('kind','eligible_stream_video','video_asset_id',v_video.id,'cloudflare_uid',v_video.cloudflare_uid,
+          'duration_seconds',v_video.duration_seconds,'mime_type',v_video.mime_type);
+      end if;
+    end if;
+    select a.* into v_media from public.media_asset_links l join public.media_assets a on a.id=l.asset_id
+      where l.entity_type='video_post' and l.entity_id=p_target_id and l.slot='media' and l.position=0
+      order by l.created_at,l.id limit 1;
+    if found then
+      v_has_link:=true;
+      if v_media.provider='r2' and v_media.status='ready' and v_media.deleted_at is null and v_media.visibility='public'
+         and v_media.media_kind='image' and v_media.mime_type in('image/jpeg','image/png','image/webp')
+         and nullif(btrim(v_media.bucket_name),'') is not null and nullif(btrim(v_media.object_key),'') is not null
+         and v_media.size_bytes>0 and v_media.size_bytes<=10485760 then
+        return pg_catalog.jsonb_build_object('kind','eligible_image','media_asset_id',v_media.id,'bucket_name',v_media.bucket_name,
+          'object_key',v_media.object_key,'mime_type',v_media.mime_type,'size_bytes',v_media.size_bytes);
+      end if;
+    end if;
+    return pg_catalog.jsonb_build_object('kind','not_configured','reason','canonical_visual_source_unavailable');
+  elsif p_target_type='story' then
+    select s.shared_video_id into v_shared from public.stories s where s.id=p_target_id;
+    if not found then return pg_catalog.jsonb_build_object('kind','not_configured','reason','canonical_visual_source_unavailable');end if;
+    if v_shared is not null then
+      v_source:=private.content_safety_visual_source('video',v_shared);
+      return v_source||pg_catalog.jsonb_build_object('kind',case v_source->>'kind' when 'eligible_image' then 'shared_image' when 'eligible_stream_video' then 'shared_stream_video' else v_source->>'kind' end,'shared_video_id',v_shared);
+    end if;
+    return pg_catalog.jsonb_build_object('kind','not_configured','reason','canonical_visual_source_unavailable');
+  end if;
+  return pg_catalog.jsonb_build_object('kind','not_applicable','reason','text_only_or_private_target');
+end;
+$$;
+
+create or replace function private.enqueue_content_safety_scan(
+  p_target_type text,p_target_id uuid,p_requested_reason text
+) returns uuid language plpgsql security definer set search_path=''
+as $$
+declare
+  v_snapshot jsonb;v_fingerprint text;v_id uuid;v_source_scan uuid;v_analysis_id uuid;
+  v_audio text;v_visual text;v_audio_source jsonb;v_visual_source jsonb;
+begin
+  if p_target_type not in('video','comment','story','live_message','message','creator_premium')
+     or p_requested_reason not in('content_created','content_updated','report_signal','shared_source','backfill','retry') then
+    return null;
+  end if;
+  v_snapshot:=private.content_safety_target_snapshot(p_target_type,p_target_id);
+  if v_snapshot is null then return null; end if;
+  v_fingerprint:=private.content_safety_sha256(p_target_type||'|'||p_target_id::text||'|'||coalesce(v_snapshot->>'content_version',''));
+  if p_target_type='story' and nullif(v_snapshot->>'shared_video_id','') is not null then
+    v_source_scan:=private.enqueue_content_safety_scan('video',(v_snapshot->>'shared_video_id')::uuid,'shared_source');
+  end if;
+  v_audio:=case when p_target_type in('video','story','creator_premium') or (p_target_type='message' and coalesce(v_snapshot->>'scope','')='reported_message') then 'not_configured' else 'not_applicable' end;
+  v_visual:=case when p_target_type in('video','story','creator_premium') then 'not_configured' else 'not_applicable' end;
+  insert into private.content_safety_scans(
+    target_type,target_id,owner_user_id,content_fingerprint,media_source_scan_id,status,
+    requested_reason,text_status,audio_status,visual_status,reports_status,available_at
+  ) values(
+    p_target_type,p_target_id,(v_snapshot->>'owner_user_id')::uuid,v_fingerprint,v_source_scan,'queued',
+    p_requested_reason,'pending',v_audio,v_visual,'pending',pg_catalog.clock_timestamp()
+  )
+  on conflict(target_type,target_id,content_fingerprint) do update set
+    status=case when private.content_safety_scans.status='processing' then 'processing' else 'queued' end,
+    requested_reason=excluded.requested_reason,
+    media_source_scan_id=coalesce(excluded.media_source_scan_id,private.content_safety_scans.media_source_scan_id),
+    text_status=case when private.content_safety_scans.status='processing' then private.content_safety_scans.text_status else 'pending' end,
+    reports_status=case when private.content_safety_scans.status='processing' then private.content_safety_scans.reports_status else 'pending' end,
+    attempt_count=case when private.content_safety_scans.status='processing' then private.content_safety_scans.attempt_count else 0 end,
+    available_at=case when private.content_safety_scans.status='processing' then private.content_safety_scans.available_at else pg_catalog.clock_timestamp() end,
+    started_at=case when private.content_safety_scans.status='processing' then private.content_safety_scans.started_at else null end,
+    completed_at=case when private.content_safety_scans.status='processing' then private.content_safety_scans.completed_at else null end,
+    last_error_code=case when private.content_safety_scans.status='processing' then private.content_safety_scans.last_error_code else null end,
+    updated_at=pg_catalog.clock_timestamp()
+  returning id into v_id;
+
+  if p_target_type='creator_premium' then
+    v_audio_source:=private.content_safety_audio_source(p_target_type,p_target_id);
+    v_visual_source:=private.content_safety_visual_source(p_target_type,p_target_id);
+    update private.content_safety_scans scan set
+      audio_status=case v_audio_source->>'kind' when 'eligible' then case when scan.audio_status='analyzed' then 'analyzed' else 'pending' end when 'not_applicable' then 'not_applicable' else 'not_configured' end,
+      audio_provider=case when v_audio_source->>'kind'='eligible' then 'cloudflare_workers_ai' else null end,
+      audio_model=case when v_audio_source->>'kind'='eligible' then '@cf/openai/whisper-large-v3-turbo' else null end,
+      audio_source_asset_id=case when v_audio_source->>'source_asset_id' is null then null else (v_audio_source->>'source_asset_id')::uuid end,
+      audio_available_at=case when v_audio_source->>'kind'='eligible' and scan.audio_status<>'analyzed' then pg_catalog.clock_timestamp() else scan.audio_available_at end,
+      audio_last_error_code=case when v_audio_source->>'kind' in('eligible','not_applicable') then null else v_audio_source->>'reason' end,
+      visual_status=case when v_visual_source->>'kind' in('eligible_image','eligible_stream_video') then case when scan.visual_status='analyzed' then 'analyzed' else 'pending' end else 'not_configured' end,
+      visual_provider=case when v_visual_source->>'kind' in('eligible_image','eligible_stream_video') then 'cloudflare_workers_ai' else null end,
+      visual_model=case when v_visual_source->>'kind' in('eligible_image','eligible_stream_video') then '@cf/google/gemma-4-26b-a4b-it' else null end,
+      visual_prompt_version=case when v_visual_source->>'kind' in('eligible_image','eligible_stream_video') then 'visual-safety-v1' else null end,
+      visual_source_kind=case when v_visual_source->>'kind' in('eligible_image','eligible_stream_video') then v_visual_source->>'kind' else null end,
+      visual_video_asset_id=case when v_visual_source->>'video_asset_id' is null then null else (v_visual_source->>'video_asset_id')::uuid end,
+      visual_media_asset_id=case when v_visual_source->>'media_asset_id' is null then null else (v_visual_source->>'media_asset_id')::uuid end,
+      visual_available_at=case when v_visual_source->>'kind' in('eligible_image','eligible_stream_video') and scan.visual_status<>'analyzed' then pg_catalog.clock_timestamp() else scan.visual_available_at end,
+      visual_last_error_code=case when v_visual_source->>'kind' in('eligible_image','eligible_stream_video') then null else v_visual_source->>'reason' end,
+      updated_at=pg_catalog.clock_timestamp()
+    where scan.id=v_id;
+    select analysis.id into v_analysis_id
+    from private.content_safety_visual_analyses analysis
+    where analysis.provider='cloudflare_workers_ai'
+      and analysis.model='@cf/google/gemma-4-26b-a4b-it'
+      and analysis.prompt_version='visual-safety-v1'
+      and ((v_visual_source->>'media_asset_id' is not null
+          and analysis.media_asset_id=(v_visual_source->>'media_asset_id')::uuid
+          and analysis.sample_strategy='single_image_v1')
+        or (v_visual_source->>'video_asset_id' is not null
+          and analysis.video_asset_id=(v_visual_source->>'video_asset_id')::uuid
+          and analysis.sample_strategy='percentile_5_v1'))
+    order by analysis.created_at,analysis.id limit 1;
+    if v_analysis_id is not null then
+      perform private.content_safety_attach_visual_analysis(v_analysis_id);
+    end if;
+  end if;
+  return v_id;
+end;
+$$;
+
+create or replace function private.content_safety_visual_producer_scan_id(
+  p_video_asset_id uuid,p_media_asset_id uuid
+) returns uuid language sql stable security definer set search_path=''
+as $$
+  select scan.id
+  from private.content_safety_scans scan
+  where scan.target_type in('video','creator_premium')
+    and scan.visual_provider='cloudflare_workers_ai'
+    and scan.visual_model='@cf/google/gemma-4-26b-a4b-it'
+    and scan.visual_prompt_version='visual-safety-v1'
+    and (
+      (p_media_asset_id is not null and scan.visual_media_asset_id=p_media_asset_id and scan.visual_source_kind='eligible_image')
+      or (p_video_asset_id is not null and scan.visual_video_asset_id=p_video_asset_id and scan.visual_source_kind='eligible_stream_video')
+    )
+  order by scan.created_at,scan.id limit 1;
+$$;
+
+create or replace function public.claim_content_safety_audio_scans(p_limit integer default 1)
+returns jsonb language plpgsql security definer set search_path=''
+as $$
+declare v_row record;v_result jsonb:='[]'::jsonb;
+begin
+  if p_limit<1 or p_limit>1 then raise exception using errcode='22023',message='invalid_audio_claim_limit';end if;
+  for v_row in
+    select scan.id,scan.target_type,scan.target_id,scan.content_fingerprint,scan.audio_source_asset_id,
+      scan.audio_attempt_count,asset.cloudflare_uid,asset.duration_seconds
+    from private.content_safety_scans scan
+    join public.video_assets asset on asset.id=scan.audio_source_asset_id
+    where scan.target_type in('video','creator_premium') and scan.audio_status='pending'
+      and scan.audio_attempt_count<5 and scan.audio_available_at<=pg_catalog.clock_timestamp()
+      and (scan.audio_started_at is null or scan.audio_started_at<pg_catalog.clock_timestamp()-interval '10 minutes')
+      and asset.provider='cloudflare_stream' and asset.status='ready' and asset.deleted_at is null
+      and asset.mime_type like 'video/%' and asset.duration_seconds>0 and asset.duration_seconds<=60
+      and nullif(pg_catalog.btrim(asset.cloudflare_uid),'') is not null
+      and (
+        (scan.target_type='video' and asset.visibility='public')
+        or (scan.target_type='creator_premium' and asset.visibility='private'
+          and asset.purpose='creator_premium_video'
+          and asset.provider_metadata->'require_signed_urls'='true'::jsonb
+          and asset.hls_url is null and asset.dash_url is null and asset.thumbnail_url is null)
+      )
+    order by scan.audio_available_at,scan.created_at,scan.id
+    for update of scan skip locked limit p_limit
+  loop
+    update private.content_safety_scans set
+      audio_attempt_count=audio_attempt_count+1,audio_started_at=pg_catalog.clock_timestamp(),
+      audio_last_error_code=null,updated_at=pg_catalog.clock_timestamp()
+    where id=v_row.id;
+    v_result:=v_result||pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+      'scan_id',v_row.id,'target_type',v_row.target_type,'target_id',v_row.target_id,
+      'content_fingerprint',v_row.content_fingerprint,'source_asset_id',v_row.audio_source_asset_id,
+      'cloudflare_uid',v_row.cloudflare_uid,'duration_seconds',v_row.duration_seconds,
+      'attempt_count',v_row.audio_attempt_count+1));
+  end loop;
+  return v_result;
+end;
+$$;
+
+create or replace function public.complete_content_safety_audio_transcription(
+  p_scan_id uuid,p_source_asset_id uuid,p_content_fingerprint text,p_detected_language text,p_transcript_text text,
+  p_word_count integer,p_segments jsonb,p_no_speech boolean,p_transcript_fingerprint text,p_cleanup_pending boolean
+) returns jsonb language plpgsql security definer set search_path=''
+as $$
+declare v_scan private.content_safety_scans;v_transcript private.content_safety_audio_transcripts;
+begin
+  select * into v_scan from private.content_safety_scans where id=p_scan_id for update;
+  if not found then raise exception using errcode='P0002',message='content_safety_audio_scan_not_found';end if;
+  if v_scan.target_type not in('video','creator_premium') or v_scan.audio_status<>'pending'
+     or v_scan.audio_source_asset_id is distinct from p_source_asset_id
+     or v_scan.content_fingerprint<>p_content_fingerprint or p_transcript_fingerprint!~'^[0-9a-f]{64}$'
+     or p_word_count<0 or pg_catalog.jsonb_typeof(p_segments)<>'array'
+     or pg_catalog.pg_column_size(p_segments)>65536 or pg_catalog.char_length(coalesce(p_transcript_text,''))>100000 then
+    raise exception using errcode='22023',message='invalid_content_safety_audio_completion';
+  end if;
+  insert into private.content_safety_audio_transcripts(
+    source_scan_id,source_asset_id,source_content_fingerprint,provider,model,detected_language,
+    transcript_text,word_count,segments,no_speech,transcript_fingerprint,rule_eval_status,rule_eval_available_at
+  ) values(
+    v_scan.id,p_source_asset_id,p_content_fingerprint,'cloudflare_workers_ai','@cf/openai/whisper-large-v3-turbo',
+    nullif(pg_catalog.btrim(coalesce(p_detected_language,'')),''),coalesce(p_transcript_text,''),p_word_count,
+    p_segments,coalesce(p_no_speech,false),p_transcript_fingerprint,'pending',pg_catalog.clock_timestamp()
+  ) on conflict(source_scan_id,source_content_fingerprint,provider,model)
+    do update set updated_at=pg_catalog.clock_timestamp()
+  returning * into v_transcript;
+  update private.content_safety_scans set
+    audio_status='analyzed',audio_provider='cloudflare_workers_ai',audio_model='@cf/openai/whisper-large-v3-turbo',
+    audio_completed_at=pg_catalog.clock_timestamp(),audio_started_at=null,audio_last_error_code=null,
+    audio_cleanup_pending=coalesce(p_cleanup_pending,false),
+    audio_cleanup_attempt_count=case when coalesce(p_cleanup_pending,false) then 0 else audio_cleanup_attempt_count end,
+    audio_cleanup_available_at=case when coalesce(p_cleanup_pending,false) then pg_catalog.clock_timestamp()+interval '1 minute' else null end,
+    audio_provider_call_count=audio_provider_call_count+1,updated_at=pg_catalog.clock_timestamp()
+  where id=v_scan.id;
+  if v_scan.target_type='video' then
+    update private.content_safety_scans set audio_status='analyzed',audio_provider='cloudflare_workers_ai',
+      audio_model='@cf/openai/whisper-large-v3-turbo',audio_completed_at=pg_catalog.clock_timestamp(),
+      audio_last_error_code=null,updated_at=pg_catalog.clock_timestamp()
+    where media_source_scan_id=v_scan.id and target_type='story';
+  end if;
+  return pg_catalog.jsonb_build_object('scan_id',v_scan.id,'transcript_id',v_transcript.id,
+    'audio_status','analyzed','cleanup_pending',coalesce(p_cleanup_pending,false));
+end;
+$$;
+
+create or replace function public.claim_content_safety_visual_scans(p_limit integer default 1)
+returns jsonb language plpgsql security definer set search_path=''
+as $$
+declare v_row record;v_result jsonb:='[]'::jsonb;
+begin
+  if p_limit<1 or p_limit>1 then raise exception using errcode='22023',message='invalid_visual_claim_limit';end if;
+  for v_row in
+    select scan.id,scan.target_type,scan.target_id,scan.content_fingerprint,scan.visual_source_kind,
+      scan.visual_video_asset_id,scan.visual_media_asset_id,scan.visual_attempt_count,
+      scan.visual_provider_call_count,scan.visual_frame_cursor,scan.visual_partial_result,
+      video.cloudflare_uid,video.duration_seconds,media.bucket_name,media.object_key,media.mime_type,media.size_bytes
+    from private.content_safety_scans scan
+    left join public.video_assets video on video.id=scan.visual_video_asset_id
+    left join public.media_assets media on media.id=scan.visual_media_asset_id
+    where scan.target_type in('video','creator_premium') and scan.visual_status='pending'
+      and scan.visual_analysis_id is null and scan.visual_attempt_count<5
+      and scan.visual_provider_call_count<5 and scan.visual_available_at<=pg_catalog.clock_timestamp()
+      and (scan.visual_started_at is null or scan.visual_started_at<pg_catalog.clock_timestamp()-interval '10 minutes')
+      and scan.id=private.content_safety_visual_producer_scan_id(scan.visual_video_asset_id,scan.visual_media_asset_id)
+      and private.content_safety_visual_analysis_id_for_asset(scan.visual_video_asset_id,scan.visual_media_asset_id) is null
+      and (
+        (scan.visual_source_kind='eligible_stream_video' and video.provider='cloudflare_stream'
+          and video.status='ready' and video.deleted_at is null and video.mime_type like 'video/%'
+          and video.duration_seconds>0 and video.duration_seconds<=60
+          and nullif(pg_catalog.btrim(video.cloudflare_uid),'') is not null
+          and ((scan.target_type='video' and video.visibility='public')
+            or (scan.target_type='creator_premium' and video.visibility='private'
+              and video.purpose='creator_premium_video'
+              and video.provider_metadata->'require_signed_urls'='true'::jsonb
+              and video.hls_url is null and video.dash_url is null and video.thumbnail_url is null)))
+        or
+        (scan.visual_source_kind='eligible_image' and media.provider='r2' and media.status='ready'
+          and media.deleted_at is null and media.media_kind='image'
+          and media.mime_type in('image/jpeg','image/png','image/webp')
+          and media.size_bytes>0
+          and media.size_bytes<=case when scan.target_type='creator_premium' then 25000000 else 10485760 end
+          and nullif(pg_catalog.btrim(media.bucket_name),'') is not null
+          and nullif(pg_catalog.btrim(media.object_key),'') is not null
+          and ((scan.target_type='video' and media.visibility='public')
+            or (scan.target_type='creator_premium' and media.visibility='private'
+              and media.purpose='creator_premium_original_image' and media.public_url is null)))
+      )
+    order by scan.visual_available_at,scan.created_at,scan.id
+    for update of scan skip locked limit p_limit
+  loop
+    update private.content_safety_scans set visual_attempt_count=visual_attempt_count+1,
+      visual_started_at=pg_catalog.clock_timestamp(),visual_last_error_code=null,
+      updated_at=pg_catalog.clock_timestamp() where id=v_row.id;
+    v_result:=v_result||pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+      'scan_id',v_row.id,'target_type',v_row.target_type,'target_id',v_row.target_id,
+      'content_fingerprint',v_row.content_fingerprint,'source_kind',v_row.visual_source_kind,
+      'video_asset_id',v_row.visual_video_asset_id,'media_asset_id',v_row.visual_media_asset_id,
+      'cloudflare_uid',v_row.cloudflare_uid,'duration_seconds',v_row.duration_seconds,
+      'bucket_name',v_row.bucket_name,'object_key',v_row.object_key,'mime_type',v_row.mime_type,
+      'size_bytes',v_row.size_bytes,'frame_cursor',v_row.visual_frame_cursor,
+      'partial_result',v_row.visual_partial_result,'attempt_count',v_row.visual_attempt_count+1,
+      'provider_call_count',v_row.visual_provider_call_count));
+  end loop;
+  return v_result;
+end;
+$$;
+
+create or replace function public.advance_content_safety_visual_scan(
+  p_scan_id uuid,p_expected_cursor integer,p_frame_timestamp_ms integer,p_frame_result jsonb
+) returns jsonb language plpgsql security definer set search_path=''
+as $$
+declare v_scan private.content_safety_scans;v_frames jsonb;
+begin
+  select * into v_scan from private.content_safety_scans where id=p_scan_id for update;
+  if not found then raise exception using errcode='P0002',message='content_safety_visual_scan_not_found';end if;
+  if v_scan.target_type not in('video','creator_premium') or v_scan.visual_status<>'pending'
+     or v_scan.visual_source_kind<>'eligible_stream_video' or v_scan.visual_frame_cursor<>p_expected_cursor
+     or p_expected_cursor not between 0 and 3 or p_frame_timestamp_ms<0
+     or pg_catalog.jsonb_typeof(p_frame_result)<>'object' or pg_catalog.pg_column_size(p_frame_result)>8192
+     or v_scan.visual_provider_call_count>=5 then
+    raise exception using errcode='22023',message='invalid_content_safety_visual_advance';
+  end if;
+  v_frames:=coalesce(v_scan.visual_partial_result->'frames','[]'::jsonb)
+    ||pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+      'frame_index',p_expected_cursor,'timestamp_ms',p_frame_timestamp_ms,'result',p_frame_result));
+  if pg_catalog.pg_column_size(pg_catalog.jsonb_build_object('frames',v_frames))>32768 then
+    raise exception using errcode='22023',message='content_safety_visual_partial_too_large';
+  end if;
+  update private.content_safety_scans set visual_frame_cursor=visual_frame_cursor+1,
+    visual_partial_result=pg_catalog.jsonb_build_object('frames',v_frames),
+    visual_provider_call_count=visual_provider_call_count+1,visual_attempt_count=0,
+    visual_started_at=null,visual_available_at=pg_catalog.clock_timestamp(),updated_at=pg_catalog.clock_timestamp()
+  where id=v_scan.id;
+  return pg_catalog.jsonb_build_object('scan_id',v_scan.id,'visual_status','pending',
+    'frame_cursor',v_scan.visual_frame_cursor+1,'provider_call_count',v_scan.visual_provider_call_count+1);
+end;
+$$;
+
+create or replace function public.complete_content_safety_visual_analysis(
+  p_scan_id uuid,p_content_fingerprint text,p_analysis_result jsonb,
+  p_analysis_fingerprint text,p_frame_timestamps_ms integer[]
+) returns jsonb language plpgsql security definer set search_path=''
+as $$
+declare
+  v_scan private.content_safety_scans;v_analysis private.content_safety_visual_analyses;
+  v_finding jsonb;v_provider_calls integer;v_frame_count integer;v_strategy text;
+  v_existing_id uuid;v_producer_id uuid;v_attach jsonb;v_inserted boolean:=false;
+begin
+  select * into v_scan from private.content_safety_scans where id=p_scan_id for update;
+  if not found then raise exception using errcode='P0002',message='content_safety_visual_scan_not_found';end if;
+  v_strategy:=case when v_scan.visual_source_kind='eligible_image' then 'single_image_v1' else 'percentile_5_v1' end;
+  v_existing_id:=private.content_safety_visual_analysis_id_for_asset(v_scan.visual_video_asset_id,v_scan.visual_media_asset_id);
+  v_provider_calls:=v_scan.visual_provider_call_count+1;
+  if v_existing_id is not null then
+    update private.content_safety_scans set visual_provider_call_count=v_provider_calls,
+      visual_started_at=null,updated_at=pg_catalog.clock_timestamp() where id=v_scan.id;
+    v_attach:=private.content_safety_attach_visual_analysis(v_existing_id);
+    return pg_catalog.jsonb_build_object('scan_id',v_scan.id,'analysis_id',v_existing_id,
+      'visual_status','analyzed','alerts_processed',coalesce((v_attach->>'alerts_processed')::integer,0),
+      'provider_call_count',v_provider_calls,'race_reused',true);
+  end if;
+  v_producer_id:=private.content_safety_visual_producer_scan_id(v_scan.visual_video_asset_id,v_scan.visual_media_asset_id);
+  v_frame_count:=case when v_scan.visual_source_kind='eligible_image' then 1 else pg_catalog.cardinality(p_frame_timestamps_ms) end;
+  if v_scan.target_type not in('video','creator_premium') or v_scan.id is distinct from v_producer_id
+     or v_scan.visual_status<>'pending' or v_scan.content_fingerprint<>p_content_fingerprint
+     or v_scan.visual_source_kind not in('eligible_image','eligible_stream_video')
+     or v_provider_calls not between 1 and 5 or p_analysis_fingerprint!~'^[0-9a-f]{64}$'
+     or pg_catalog.jsonb_typeof(p_analysis_result)<>'object' or pg_catalog.pg_column_size(p_analysis_result)>32768
+     or p_analysis_result->>'schema_version'<>'visual-safety-v1'
+     or pg_catalog.jsonb_typeof(p_analysis_result->'review_required')<>'boolean'
+     or pg_catalog.jsonb_typeof(p_analysis_result->'findings')<>'array'
+     or pg_catalog.jsonb_array_length(p_analysis_result->'findings')>10
+     or pg_catalog.jsonb_typeof(p_analysis_result->'summary')<>'string'
+     or pg_catalog.char_length(p_analysis_result->>'summary')>500
+     or (v_scan.visual_source_kind='eligible_image' and pg_catalog.cardinality(p_frame_timestamps_ms)<>0)
+     or (v_scan.visual_source_kind='eligible_stream_video' and
+       (v_frame_count<1 or v_frame_count>5 or v_scan.visual_frame_cursor<>v_frame_count-1))
+     or ((p_analysis_result->>'review_required')::boolean and pg_catalog.jsonb_array_length(p_analysis_result->'findings')=0)
+     or (not (p_analysis_result->>'review_required')::boolean and pg_catalog.jsonb_array_length(p_analysis_result->'findings')<>0) then
+    raise exception using errcode='22023',message='invalid_content_safety_visual_completion';
+  end if;
+  if exists(
+    select 1 from pg_catalog.unnest(p_frame_timestamps_ms) with ordinality a(value,pos)
+    join pg_catalog.unnest(p_frame_timestamps_ms) with ordinality b(value,pos) on b.pos=a.pos+1
+    where b.value<=a.value
+  ) or exists(select 1 from pg_catalog.unnest(p_frame_timestamps_ms) value where value<0) then
+    raise exception using errcode='22023',message='invalid_visual_frame_timestamps';
+  end if;
+  for v_finding in select value from pg_catalog.jsonb_array_elements(p_analysis_result->'findings') loop
+    if pg_catalog.jsonb_typeof(v_finding)<>'object'
+       or (select count(*) from pg_catalog.jsonb_object_keys(v_finding))<>4
+       or not(v_finding?'category' and v_finding?'triage_level' and v_finding?'description' and v_finding?'frame_index')
+       or v_finding->>'category' not in('violence','threat','sexual','self_harm','drugs','weapons','fraud','spam','other')
+       or v_finding->>'triage_level' not in('low','medium','high','critical')
+       or pg_catalog.char_length(v_finding->>'description')>240
+       or (v_scan.visual_source_kind='eligible_image' and pg_catalog.jsonb_typeof(v_finding->'frame_index')<>'null')
+       or (v_scan.visual_source_kind='eligible_stream_video' and (
+         pg_catalog.jsonb_typeof(v_finding->'frame_index')<>'number'
+         or (v_finding->>'frame_index')::integer<0 or (v_finding->>'frame_index')::integer>=v_frame_count
+       )) then
+      raise exception using errcode='22023',message='invalid_content_safety_visual_finding';
+    end if;
+  end loop;
+  insert into private.content_safety_visual_analyses(
+    source_scan_id,video_asset_id,media_asset_id,source_content_fingerprint,provider,model,prompt_version,
+    sample_strategy,frame_count,frame_timestamps_ms,analysis_result,analysis_fingerprint,provider_call_count
+  ) values(
+    v_scan.id,v_scan.visual_video_asset_id,v_scan.visual_media_asset_id,v_scan.content_fingerprint,
+    'cloudflare_workers_ai','@cf/google/gemma-4-26b-a4b-it','visual-safety-v1',v_strategy,
+    v_frame_count,p_frame_timestamps_ms,p_analysis_result,p_analysis_fingerprint,v_provider_calls
+  ) on conflict do nothing returning * into v_analysis;
+  if v_analysis.id is null then
+    v_existing_id:=private.content_safety_visual_analysis_id_for_asset(v_scan.visual_video_asset_id,v_scan.visual_media_asset_id);
+    if v_existing_id is null then raise exception using errcode='23505',message='content_safety_visual_analysis_race_unresolved';end if;
+    select * into v_analysis from private.content_safety_visual_analyses where id=v_existing_id;
+  else v_inserted:=true;
+  end if;
+  update private.content_safety_scans set visual_provider_call_count=v_provider_calls,
+    visual_frame_cursor=v_frame_count,visual_started_at=null,updated_at=pg_catalog.clock_timestamp()
+  where id=v_scan.id;
+  v_attach:=private.content_safety_attach_visual_analysis(v_analysis.id);
+  return pg_catalog.jsonb_build_object('scan_id',v_scan.id,'analysis_id',v_analysis.id,
+    'visual_status','analyzed','alerts_processed',coalesce((v_attach->>'alerts_processed')::integer,0),
+    'provider_call_count',v_provider_calls,'frame_count',v_frame_count,'race_reused',not v_inserted);
+end;
+$$;
+
+create or replace function private.content_safety_create_visual_alerts_for_scan(
+  p_scan_id uuid,p_analysis_id uuid
+) returns integer language plpgsql security definer set search_path=''
+as $$
+declare
+  v_scan private.content_safety_scans;v_analysis private.content_safety_visual_analyses;
+  v_category text;v_severity text;v_description text;v_frame_indexes integer[];v_frame_times integer[];
+  v_snapshot jsonb;v_total integer;v_pending integer;v_recent integer;v_latest timestamptz;
+  v_warnings integer;v_reach bigint;v_priority integer;v_count integer:=0;
+begin
+  select * into v_scan from private.content_safety_scans where id=p_scan_id;
+  select * into v_analysis from private.content_safety_visual_analyses where id=p_analysis_id;
+  if v_scan.id is null or v_analysis.id is null or v_scan.target_type not in('video','creator_premium') then return 0;end if;
+  if not coalesce((v_analysis.analysis_result->>'review_required')::boolean,false) then return 0;end if;
+  v_snapshot:=private.content_safety_target_snapshot(v_scan.target_type,v_scan.target_id);
+  select count(*)::integer,count(*) filter(where report.status='pending')::integer,
+    count(*) filter(where report.status='pending' and report.created_at>=pg_catalog.clock_timestamp()-interval '15 minutes')::integer,
+    max(report.created_at)
+  into v_total,v_pending,v_recent,v_latest
+  from public.reports report
+  where report.reported_content_type=v_scan.target_type and report.reported_content_id=v_scan.target_id;
+  select count(*)::integer into v_warnings from private.admin_user_warnings warning
+  where warning.target_user_id=v_scan.owner_user_id and warning.status='active'
+    and warning.issued_at>coalesce((select max(action.completed_at)
+      from private.admin_user_moderation_actions action
+      where action.target_user_id=v_scan.owner_user_id and action.action='restore'
+        and action.status='succeeded'),'-infinity'::timestamptz);
+  v_warnings:=least(coalesce(v_warnings,0),3);
+  v_reach:=greatest(coalesce((v_snapshot->>'reach')::bigint,0),0);
+  for v_category in select distinct finding.value->>'category'
+    from pg_catalog.jsonb_array_elements(v_analysis.analysis_result->'findings') finding(value)
+  loop
+    select finding.value->>'triage_level' into v_severity
+    from pg_catalog.jsonb_array_elements(v_analysis.analysis_result->'findings') finding(value)
+    where finding.value->>'category'=v_category
+    order by case finding.value->>'triage_level' when 'critical' then 4 when 'high' then 3 when 'medium' then 2 else 1 end desc limit 1;
+    select left(pg_catalog.string_agg(finding.value->>'description',' · ' order by finding.ordinality),240),
+      coalesce(pg_catalog.array_agg(distinct (finding.value->>'frame_index')::integer order by (finding.value->>'frame_index')::integer)
+        filter(where pg_catalog.jsonb_typeof(finding.value->'frame_index')='number'),'{}'::integer[])
+    into v_description,v_frame_indexes
+    from pg_catalog.jsonb_array_elements(v_analysis.analysis_result->'findings') with ordinality finding(value,ordinality)
+    where finding.value->>'category'=v_category;
+    if v_analysis.video_asset_id is not null then
+      select coalesce(pg_catalog.array_agg(v_analysis.frame_timestamps_ms[index+1] order by index),'{}'::integer[])
+      into v_frame_times from pg_catalog.unnest(v_frame_indexes) index
+      where index>=0 and index<pg_catalog.cardinality(v_analysis.frame_timestamps_ms);
+    else v_frame_times:='{}'::integer[];
+    end if;
+    v_priority:=private.content_safety_priority(v_severity,v_pending,v_recent,v_warnings,v_reach);
+    insert into private.content_safety_alerts(
+      scan_id,target_type,target_id,owner_user_id,source_type,rule_id,category,severity,confidence,
+      priority_score,alert_fingerprint,reach,related_report_count,pending_report_count,reports_last_15m,
+      latest_report_at,active_warning_count,evidence
+    ) values(
+      v_scan.id,v_scan.target_type,v_scan.target_id,v_scan.owner_user_id,'visual_classifier',null,
+      v_category,v_severity,null,v_priority,
+      private.content_safety_sha256(v_scan.id::text||'|'||v_analysis.id::text||'|visual_classifier|'||v_category||'|'||v_analysis.prompt_version),
+      v_reach,v_total,v_pending,v_recent,v_latest,v_warnings,
+      pg_catalog.jsonb_build_object('visual_analysis_id',v_analysis.id,'provider',v_analysis.provider,
+        'model',v_analysis.model,'prompt_version',v_analysis.prompt_version,
+        'sample_strategy',v_analysis.sample_strategy,'category',v_category,
+        'model_triage_level',v_severity,'description',v_description,
+        'frame_indexes',pg_catalog.to_jsonb(v_frame_indexes),
+        'frame_timestamps_ms',pg_catalog.to_jsonb(v_frame_times),
+        'analysis_fingerprint',v_analysis.analysis_fingerprint)
+    ) on conflict(alert_fingerprint) do update set priority_score=excluded.priority_score,
+      reach=excluded.reach,related_report_count=excluded.related_report_count,
+      pending_report_count=excluded.pending_report_count,reports_last_15m=excluded.reports_last_15m,
+      latest_report_at=excluded.latest_report_at,active_warning_count=excluded.active_warning_count,
+      evidence=excluded.evidence,updated_at=pg_catalog.clock_timestamp();
+    v_count:=v_count+1;
+  end loop;
+  return v_count;
+end;
+$$;
+
+create or replace function private.content_safety_attach_visual_analysis(p_analysis_id uuid)
+returns jsonb language plpgsql security definer set search_path=''
+as $$
+declare
+  v_analysis private.content_safety_visual_analyses;v_scan_id uuid;
+  v_scan_count integer:=0;v_story_count integer:=0;v_alert_count integer:=0;
+begin
+  select * into v_analysis from private.content_safety_visual_analyses where id=p_analysis_id;
+  if not found then raise exception using errcode='P0002',message='content_safety_visual_analysis_not_found';end if;
+  update private.content_safety_scans scan set visual_analysis_id=v_analysis.id,
+    visual_status='analyzed',visual_provider=v_analysis.provider,visual_model=v_analysis.model,
+    visual_prompt_version=v_analysis.prompt_version,
+    visual_completed_at=coalesce(scan.visual_completed_at,v_analysis.created_at),
+    visual_started_at=null,visual_last_error_code=null,visual_attempt_count=0,
+    visual_partial_result=null,updated_at=pg_catalog.clock_timestamp()
+  where scan.target_type in('video','creator_premium') and (
+    (v_analysis.media_asset_id is not null and scan.visual_media_asset_id=v_analysis.media_asset_id and scan.visual_source_kind='eligible_image')
+    or (v_analysis.video_asset_id is not null and scan.visual_video_asset_id=v_analysis.video_asset_id and scan.visual_source_kind='eligible_stream_video')
+  );
+  get diagnostics v_scan_count=row_count;
+  update private.content_safety_scans story set visual_analysis_id=v_analysis.id,
+    visual_provider=v_analysis.provider,visual_model=v_analysis.model,
+    visual_prompt_version=v_analysis.prompt_version,
+    visual_source_kind=case when v_analysis.media_asset_id is not null then 'shared_image' else 'shared_stream_video' end,
+    visual_video_asset_id=v_analysis.video_asset_id,visual_media_asset_id=v_analysis.media_asset_id,
+    visual_status='analyzed',visual_completed_at=coalesce(story.visual_completed_at,v_analysis.created_at),
+    visual_started_at=null,visual_last_error_code=null,visual_attempt_count=0,
+    visual_partial_result=null,updated_at=pg_catalog.clock_timestamp()
+  where story.target_type='story' and exists(
+    select 1 from private.content_safety_scans source_scan
+    where source_scan.id=story.media_source_scan_id and (
+      (v_analysis.media_asset_id is not null and source_scan.visual_media_asset_id=v_analysis.media_asset_id)
+      or (v_analysis.video_asset_id is not null and source_scan.visual_video_asset_id=v_analysis.video_asset_id)
+    ));
+  get diagnostics v_story_count=row_count;
+  for v_scan_id in select scan.id from private.content_safety_scans scan
+    where scan.target_type in('video','creator_premium') and scan.visual_analysis_id=v_analysis.id
+  loop
+    v_alert_count:=v_alert_count+private.content_safety_create_visual_alerts_for_scan(v_scan_id,v_analysis.id);
+  end loop;
+  return pg_catalog.jsonb_build_object('analysis_id',v_analysis.id,'scans_attached',v_scan_count,
+    'stories_attached',v_story_count,'alerts_processed',v_alert_count);
+end;
+$$;
+
+create or replace function private.preview_content_safety_rule_definition(
+  p_rule_id uuid,p_rule_version bigint,p_detector_type text,p_pattern text,
+  p_scopes text[],p_locale text,p_limit integer
+) returns jsonb language plpgsql stable security definer set search_path=''
+as $$
+declare v_scopes text[];v_result jsonb;v_definition_fingerprint text;
+begin
+  v_scopes:=array(select distinct pg_catalog.btrim(value)
+    from pg_catalog.unnest(pg_catalog.coalesce(p_scopes,'{}'::text[])) value order by 1);
+  if p_detector_type not in('keyword','phrase')
+     or pg_catalog.nullif(pg_catalog.btrim(pg_catalog.coalesce(p_pattern,'')),'') is null
+     or pg_catalog.char_length(pg_catalog.btrim(p_pattern))>200 or pg_catalog.cardinality(v_scopes)=0
+     or not(v_scopes<@array[
+       'video_caption','comment','story_text','live_chat','reported_message','transcript','creator_premium_text'
+     ]::text[])
+     or p_locale not in('und','en','es') or p_limit<1 or p_limit>20
+     or (p_detector_type='keyword' and private.normalize_content_safety_text(p_pattern)~'[[:space:]]') then
+    raise exception using errcode='22023',message='invalid_content_safety_rule_preview';
+  end if;
+  v_definition_fingerprint:=private.content_safety_rule_definition_fingerprint(
+    p_rule_id,p_rule_version,p_detector_type,p_pattern,v_scopes,p_locale
+  );
+  with candidates as materialized (
+    select 'video'::text target_type,v.id target_id,v.user_id owner_user_id,'video_caption'::text scope,
+      pg_catalog.coalesce(v.caption,'') text_value,pg_catalog.coalesce(ms.visibility,'visible') current_visibility
+    from public.videos v left join private.admin_content_moderation_state ms
+      on ms.target_type='video' and ms.target_id=v.id
+    where 'video_caption'=any(v_scopes)
+    union all
+    select 'comment',c.id,c.user_id,'comment',pg_catalog.coalesce(c.text,''),pg_catalog.coalesce(ms.visibility,'visible')
+    from public.comments c left join private.admin_content_moderation_state ms
+      on ms.target_type='comment' and ms.target_id=c.id
+    where 'comment'=any(v_scopes)
+    union all
+    select 'story',s.id,s.user_id,'story_text',pg_catalog.coalesce((
+      select pg_catalog.string_agg(pg_catalog.nullif(pg_catalog.btrim(e->>'text'),''),' ' order by ordinality)
+      from pg_catalog.jsonb_array_elements(pg_catalog.coalesce(s.story_composition->'elements','[]'::jsonb))
+        with ordinality x(e,ordinality)
+      where e->>'type'='text'
+    ),''),pg_catalog.coalesce(ms.visibility,'visible')
+    from public.stories s left join private.admin_content_moderation_state ms
+      on ms.target_type='story' and ms.target_id=s.id
+    where 'story_text'=any(v_scopes)
+    union all
+    select 'live_message',m.id,m.user_id,'live_chat',pg_catalog.coalesce(m.message,''),'visible'
+    from public.live_messages m where 'live_chat'=any(v_scopes)
+    union all
+    select 'message',m.id,m.sender_id,'reported_message',pg_catalog.coalesce(m.text,''),'reported_only'
+    from public.messages m where 'reported_message'=any(v_scopes) and exists(
+      select 1 from public.reports r where r.reported_content_type='message' and r.reported_content_id=m.id
+    )
+    union all
+    select 'creator_premium',content.id,content.creator_id,'creator_premium_text',
+      pg_catalog.concat_ws(' ',content.title,content.description),content.lifecycle_status
+    from private.creator_premium_contents content
+    where 'creator_premium_text'=any(v_scopes) and content.lifecycle_status<>'deleted'
+  ), matches as materialized (
+    select * from candidates c
+    where private.content_safety_text_matches(c.text_value,p_pattern,p_detector_type)
+  ), samples as (
+    select m.*,p.username,p.display_name
+    from matches m left join public.user_profiles p on p.id=m.owner_user_id
+    order by m.target_type,m.target_id limit p_limit
+  )
+  select pg_catalog.jsonb_build_object(
+    'rule_id',p_rule_id,'rule_version',p_rule_version,'definition_fingerprint',v_definition_fingerprint,
+    'detector_type',p_detector_type,'normalized_pattern',private.normalize_content_safety_text(p_pattern),
+    'locale',p_locale,'scopes',v_scopes,'total_matching_content',(select pg_catalog.count(*) from matches),
+    'counts',pg_catalog.jsonb_build_object(
+      'videos',(select pg_catalog.count(*) from matches where target_type='video'),
+      'stories',(select pg_catalog.count(*) from matches where target_type='story'),
+      'comments',(select pg_catalog.count(*) from matches where target_type='comment'),
+      'live_chat',(select pg_catalog.count(*) from matches where target_type='live_message'),
+      'reported_messages',(select pg_catalog.count(*) from matches where target_type='message'),
+      'creator_premium',(select pg_catalog.count(*) from matches where target_type='creator_premium')
+    ),
+    'samples',pg_catalog.coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'target_type',target_type,'target_id',target_id,'scope',scope,
+      'author',pg_catalog.jsonb_build_object('id',owner_user_id,'username',username,'display_name',display_name),
+      'excerpt',pg_catalog.left(private.normalize_content_safety_text(text_value),240),
+      'current_visibility',current_visibility
+    ) order by target_type,target_id) from samples),'[]'::jsonb),
+    'sample_limit',p_limit,'excerpt_limit',240,'creates_alerts',false,'creates_scans',false,
+    'modifies_content',false,'ordinary_private_messages_included',false,
+    'private_premium_originals_included',false
+  ) into v_result;
+  return v_result;
+end;
+$$;
+
+create or replace function public.search_admin_content_safety_alerts(
+  p_severity text default null,p_status text default null,p_category text default null,
+  p_target_type text default null,p_source_type text default null,p_coverage text default null,
+  p_cursor_priority integer default null,p_cursor_created_at timestamptz default null,p_cursor_id uuid default null,
+  p_limit integer default 50
+) returns jsonb language plpgsql stable security definer set search_path=''
+as $$
+begin
+  perform public.admin_require_capability('content.items.read');
+  if p_limit<1 or p_limit>100
+     or (p_severity is not null and p_severity not in('low','medium','high','critical'))
+     or (p_status is not null and p_status not in('open','in_review','dismissed','resolved'))
+     or (p_target_type is not null and p_target_type not in(
+       'video','comment','story','live_message','message','creator_premium'))
+     or (p_source_type is not null and p_source_type not in(
+       'text_rule','user_reports','audio_classifier','audio_transcript_rule','visual_classifier'))
+     or (p_coverage is not null and p_coverage not in('complete','incomplete','failed','pending')) then
+    raise exception using errcode='22023',message='invalid_content_safety_filter';
+  end if;
+  return (
+    with filtered as (
+      select alert.*,scan.text_status,scan.audio_status,scan.visual_status,scan.reports_status,
+        scan.status scan_status,rule.code rule_code,rule.label rule_label,
+        case when alert.priority_score>=85 then 'critical' when alert.priority_score>=65 then 'high'
+             when alert.priority_score>=40 then 'medium' else 'low' end priority_bucket
+      from private.content_safety_alerts alert
+      join private.content_safety_scans scan on scan.id=alert.scan_id
+      left join private.content_safety_rules rule on rule.id=alert.rule_id
+      where (p_severity is null or alert.severity=p_severity)
+        and (p_status is null or alert.status=p_status)
+        and (p_category is null or alert.category=p_category)
+        and (p_target_type is null or alert.target_type=p_target_type)
+        and (p_source_type is null or alert.source_type=p_source_type)
+        and (p_coverage is null
+          or (p_coverage='complete' and scan.text_status='analyzed' and scan.reports_status='analyzed'
+            and scan.audio_status in('analyzed','not_applicable')
+            and scan.visual_status in('analyzed','not_applicable'))
+          or (p_coverage='incomplete' and (scan.audio_status='not_configured' or scan.visual_status='not_configured'))
+          or (p_coverage='failed' and (scan.text_status='failed' or scan.audio_status='failed'
+            or scan.visual_status='failed' or scan.reports_status='failed'))
+          or (p_coverage='pending' and (scan.text_status='pending' or scan.audio_status='pending'
+            or scan.visual_status='pending' or scan.reports_status='pending')))
+        and (p_cursor_priority is null or alert.priority_score<p_cursor_priority
+          or (alert.priority_score=p_cursor_priority and alert.created_at>p_cursor_created_at)
+          or (alert.priority_score=p_cursor_priority and alert.created_at=p_cursor_created_at and alert.id>p_cursor_id))
+      order by alert.priority_score desc,alert.created_at,alert.id limit p_limit
+    ), stats as (
+      select pg_catalog.count(*) filter(where status='open') open_count,
+        pg_catalog.count(*) filter(where status='in_review') in_review_count,
+        pg_catalog.count(*) filter(where status='resolved') resolved_count,
+        pg_catalog.count(*) filter(where status='dismissed') dismissed_count,
+        pg_catalog.count(*) filter(where priority_score>=85 and status in('open','in_review')) critical_count,
+        pg_catalog.count(*) filter(where priority_score between 65 and 84 and status in('open','in_review')) high_count,
+        pg_catalog.count(*) filter(where priority_score between 40 and 64 and status in('open','in_review')) medium_count,
+        pg_catalog.count(*) filter(where priority_score<40 and status in('open','in_review')) low_count
+      from private.content_safety_alerts
+    )
+    select pg_catalog.jsonb_build_object(
+      'stats',(select pg_catalog.to_jsonb(stats) from stats),
+      'active_rule_count',(select pg_catalog.count(*) from private.content_safety_rules where enabled),
+      'items',pg_catalog.coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'id',row.id,'target_type',row.target_type,'target_id',row.target_id,'owner_user_id',row.owner_user_id,
+        'author',pg_catalog.jsonb_build_object('id',profile.id,'username',profile.username,
+          'display_name',profile.display_name,'avatar_url',profile.avatar_url),
+        'source_type',row.source_type,'category',row.category,'severity',row.severity,
+        'priority_score',row.priority_score,'priority_bucket',row.priority_bucket,
+        'status',row.status,'rule_code',row.rule_code,'rule_label',row.rule_label,
+        'evidence_excerpt',pg_catalog.coalesce(row.evidence->>'matched_text_excerpt',row.evidence->>'description'),
+        'reach',row.reach,'related_report_count',row.related_report_count,
+        'pending_report_count',row.pending_report_count,'reports_last_15m',row.reports_last_15m,
+        'active_warning_count',row.active_warning_count,
+        'coverage',pg_catalog.jsonb_build_object('text',row.text_status,'audio',row.audio_status,
+          'visual',row.visual_status,'reports',row.reports_status),
+        'scan_status',row.scan_status,'created_at',row.created_at
+      ) order by row.priority_score desc,row.created_at,row.id)
+        from filtered row left join public.user_profiles profile on profile.id=row.owner_user_id),'[]'::jsonb),
+      'next_cursor',(select pg_catalog.jsonb_build_object(
+        'priority_score',row.priority_score,'created_at',row.created_at,'id',row.id)
+        from filtered row order by row.priority_score,row.created_at desc,row.id desc limit 1)
+    )
+  );
+end;
+$$;
+
+create or replace function private.content_safety_rule_targets(p_scopes text[])
+returns table(target_type text,target_id uuid)
+language sql stable security definer set search_path=''
+as $$
+  select eligible.target_type,eligible.target_id from (
+    select 'video'::text target_type,v.id target_id from public.videos v where 'video_caption'=any(p_scopes)
+    union all select 'comment',c.id from public.comments c where 'comment'=any(p_scopes)
+    union all select 'story',s.id from public.stories s where 'story_text'=any(p_scopes)
+    union all select 'live_message',m.id from public.live_messages m where 'live_chat'=any(p_scopes)
+    union all select 'message',m.id from public.messages m
+      where 'reported_message'=any(p_scopes) and exists(
+        select 1 from public.reports r where r.reported_content_type='message' and r.reported_content_id=m.id
+      )
+    union all
+    select 'creator_premium',content.id
+    from private.creator_premium_contents content
+    where content.lifecycle_status<>'deleted'
+      and ('creator_premium_text'=any(p_scopes)
+        or (content.content_kind='video' and 'transcript'=any(p_scopes)))
+  ) eligible
+$$;
+
+create or replace function public.fail_content_safety_visual_scan(
+  p_scan_id uuid,p_error_code text,p_retryable boolean default true,
+  p_provider_called boolean default false
+) returns jsonb language plpgsql security definer set search_path=''
+as $$
+declare
+  v_scan private.content_safety_scans;v_producer_id uuid;v_calls integer;
+  v_retry boolean;v_error text;v_frames_remaining integer;v_next timestamptz;
+begin
+  select * into v_scan from private.content_safety_scans where id=p_scan_id for update;
+  if not found then raise exception using errcode='P0002',message='content_safety_visual_scan_not_found';end if;
+  if v_scan.visual_analysis_id is not null then
+    perform private.content_safety_attach_visual_analysis(v_scan.visual_analysis_id);
+    return pg_catalog.jsonb_build_object('scan_id',v_scan.id,'visual_status','analyzed','reused',true,
+      'provider_call_count',v_scan.visual_provider_call_count);
+  end if;
+  v_producer_id:=private.content_safety_visual_producer_scan_id(v_scan.visual_video_asset_id,v_scan.visual_media_asset_id);
+  if v_scan.id is distinct from v_producer_id then
+    raise exception using errcode='55000',message='content_safety_visual_not_canonical_producer';
+  end if;
+  v_calls:=v_scan.visual_provider_call_count+case when coalesce(p_provider_called,false) then 1 else 0 end;
+  v_frames_remaining:=case when v_scan.visual_source_kind='eligible_stream_video' then 5-v_scan.visual_frame_cursor else 1 end;
+  v_retry:=coalesce(p_retryable,false) and v_scan.visual_attempt_count<5 and v_calls<5
+    and (v_scan.visual_source_kind='eligible_image' or v_calls+v_frames_remaining<=5);
+  v_error:=left(pg_catalog.lower(pg_catalog.regexp_replace(
+    coalesce(nullif(pg_catalog.btrim(p_error_code),''),'visual_processing_error'),'[^a-z0-9_]+','_','g')),100);
+  v_next:=case when v_retry then pg_catalog.clock_timestamp()
+    +pg_catalog.least(30,pg_catalog.power(2,pg_catalog.greatest(v_scan.visual_attempt_count,1)))::integer*interval '1 minute'
+    else v_scan.visual_available_at end;
+
+  update private.content_safety_scans scan set
+    visual_status=case when v_retry then 'pending' else 'failed' end,
+    visual_provider_call_count=case when scan.id=v_scan.id then v_calls else scan.visual_provider_call_count end,
+    visual_available_at=v_next,visual_started_at=null,
+    visual_completed_at=case when v_retry then null else pg_catalog.clock_timestamp() end,
+    visual_last_error_code=v_error,updated_at=pg_catalog.clock_timestamp()
+  where scan.target_type in('video','creator_premium') and (
+    (v_scan.visual_media_asset_id is not null and scan.visual_media_asset_id=v_scan.visual_media_asset_id
+      and scan.visual_source_kind='eligible_image')
+    or (v_scan.visual_video_asset_id is not null and scan.visual_video_asset_id=v_scan.visual_video_asset_id
+      and scan.visual_source_kind='eligible_stream_video')
+  );
+  update private.content_safety_scans story set
+    visual_status=case when v_retry then 'pending' else 'failed' end,
+    visual_started_at=null,
+    visual_completed_at=case when v_retry then null else pg_catalog.clock_timestamp() end,
+    visual_last_error_code=v_error,updated_at=pg_catalog.clock_timestamp()
+  where story.target_type='story' and exists(
+    select 1 from private.content_safety_scans source_scan
+    where source_scan.id=story.media_source_scan_id and (
+      (v_scan.visual_media_asset_id is not null and source_scan.visual_media_asset_id=v_scan.visual_media_asset_id)
+      or (v_scan.visual_video_asset_id is not null and source_scan.visual_video_asset_id=v_scan.visual_video_asset_id)
+    )
+  );
+  return pg_catalog.jsonb_build_object('scan_id',v_scan.id,
+    'visual_status',case when v_retry then 'pending' else 'failed' end,
+    'retryable',v_retry,'provider_call_count',v_calls,'canonical_producer',true);
+end;
+$$;
+
+create or replace function private.content_safety_report_trigger()
+returns trigger language plpgsql security definer set search_path=''
+as $$
+begin
+  if new.reported_content_type in('video','comment','story','message','creator_premium') then
+    perform private.enqueue_content_safety_scan(
+      new.reported_content_type,new.reported_content_id,'report_signal'
+    );
+    begin
+      perform public.wake_content_safety_scanner();
+    exception when others then null;
+    end;
+  end if;
+  return new;
+end;
+$$;
+
+create function private.finalize_creator_premium_safety_scan_v1(p_scan_id uuid)
+returns jsonb language plpgsql security definer set search_path=''
+as $$
+declare
+  v_scan private.content_safety_scans;v_content private.creator_premium_contents;
+  v_snapshot jsonb;v_current_fingerprint text;v_blocker text;v_alert_severity text;
+  v_transcript private.content_safety_audio_transcripts;v_now timestamptz:=pg_catalog.clock_timestamp();
+begin
+  select * into v_scan from private.content_safety_scans where id=p_scan_id for update;
+  if not found or v_scan.target_type<>'creator_premium' then
+    return pg_catalog.jsonb_build_object('scan_id',p_scan_id,'outcome','not_creator_premium');
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('creator-premium-content:'||v_scan.target_id::text,0)
+  );
+  select * into v_content from private.creator_premium_contents
+  where id=v_scan.target_id for update;
+  if not found then return pg_catalog.jsonb_build_object('scan_id',v_scan.id,'outcome','content_missing');end if;
+
+  -- Published content can only move toward restriction here; a report scan can
+  -- never manufacture a new PASS or overwrite its original publication proof.
+  if v_content.lifecycle_status='published' then
+    v_snapshot:=private.content_safety_target_snapshot('creator_premium',v_content.id);
+    if v_snapshot is null then
+      return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','snapshot_unavailable');
+    end if;
+    v_current_fingerprint:=private.content_safety_sha256(
+      'creator_premium|'||v_content.id::text||'|'||coalesce(v_snapshot->>'content_version','')
+    );
+    if v_current_fingerprint<>v_scan.content_fingerprint then
+      return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','stale_scan');
+    end if;
+    if exists(select 1 from private.content_safety_alerts alert where alert.scan_id=v_scan.id) then
+      update private.creator_premium_contents content set
+        lifecycle_status='quarantined',quarantined_at=v_now,
+        reviewed_at=null,reviewed_by=null,review_reason='creator_premium_safety_signal',
+        removal_reason='creator_premium_safety_signal',verification_scan_id=v_scan.id,
+        verification_fingerprint=v_scan.content_fingerprint,verification_status='restricted',
+        verification_error_code='creator_premium_safety_signal',verification_requested_at=coalesce(content.verification_requested_at,v_scan.created_at),
+        verification_completed_at=v_now,updated_at=v_now
+      where content.id=v_content.id and content.lifecycle_status='published';
+      return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','restricted','published',false);
+    end if;
+    return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','published_unchanged');
+  end if;
+
+  if v_content.lifecycle_status<>'pending_review' then
+    return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','state_changed','lifecycle_status',v_content.lifecycle_status);
+  end if;
+  if v_content.verification_scan_id is distinct from v_scan.id
+     or v_content.verification_fingerprint is distinct from v_scan.content_fingerprint then
+    return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','stale_scan');
+  end if;
+  v_snapshot:=private.content_safety_target_snapshot('creator_premium',v_content.id);
+  if v_snapshot is null then
+    update private.creator_premium_contents set verification_status='failed',
+      verification_error_code='creator_premium_snapshot_unavailable',verification_completed_at=v_now,
+      updated_at=v_now where id=v_content.id;
+    return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','failed','error','creator_premium_snapshot_unavailable');
+  end if;
+  v_current_fingerprint:=private.content_safety_sha256(
+    'creator_premium|'||v_content.id::text||'|'||coalesce(v_snapshot->>'content_version','')
+  );
+  if v_current_fingerprint<>v_scan.content_fingerprint then
+    update private.creator_premium_contents set verification_status='failed',
+      verification_error_code='creator_premium_stale_content_version',verification_completed_at=v_now,
+      updated_at=v_now where id=v_content.id;
+    return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','failed','error','creator_premium_stale_content_version');
+  end if;
+  if not private.creator_premium_actor_is_age_eligible_v1(v_content.creator_id)
+     or not private.creator_premium_actor_is_operational_v1(v_content.creator_id) then
+    update private.creator_premium_contents set lifecycle_status='quarantined',
+      quarantined_at=v_now,review_reason='creator_premium_creator_restricted',
+      removal_reason='creator_premium_creator_restricted',verification_status='restricted',
+      verification_error_code='creator_premium_creator_restricted',verification_completed_at=v_now,
+      updated_at=v_now where id=v_content.id;
+    return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','restricted','error','creator_premium_creator_restricted');
+  end if;
+
+  if v_scan.status='failed' or v_scan.text_status in('failed','not_configured')
+     or v_scan.visual_status in('failed','not_configured')
+     or (v_content.content_kind='video' and v_scan.audio_status in('failed','not_configured')) then
+    update private.creator_premium_contents set verification_status='failed',
+      verification_error_code='creator_premium_safety_provider_failed',verification_completed_at=v_now,
+      updated_at=v_now where id=v_content.id;
+    return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','failed','error','creator_premium_safety_provider_failed');
+  end if;
+  if v_scan.status<>'completed' or v_scan.text_status<>'analyzed'
+     or v_scan.reports_status<>'analyzed' or v_scan.visual_status<>'analyzed'
+     or (v_content.content_kind='image' and v_scan.audio_status<>'not_applicable')
+     or (v_content.content_kind='video' and v_scan.audio_status<>'analyzed') then
+    return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','pending');
+  end if;
+  if not exists(
+    select 1 from private.content_safety_rules rule
+    where rule.enabled and rule.approval_state='approved' and 'creator_premium_text'=any(rule.scopes)
+  ) then
+    update private.creator_premium_contents set verification_status='failed',
+      verification_error_code='content_safety_policy_not_configured',verification_completed_at=v_now,
+      updated_at=v_now where id=v_content.id;
+    return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','failed','error','content_safety_policy_not_configured');
+  end if;
+  if v_content.content_kind='video' then
+    select transcript.* into v_transcript from private.content_safety_audio_transcripts transcript
+    where transcript.source_scan_id=v_scan.id
+      and transcript.source_content_fingerprint=v_scan.content_fingerprint
+      and transcript.rule_eval_status='completed'
+    order by transcript.created_at desc,transcript.id desc limit 1;
+    if not found or not exists(
+      select 1 from private.content_safety_rules rule
+      where rule.enabled and rule.approval_state='approved' and 'transcript'=any(rule.scopes)
+    ) then
+      update private.creator_premium_contents set verification_status='failed',
+        verification_error_code='content_safety_audio_policy_not_configured',verification_completed_at=v_now,
+        updated_at=v_now where id=v_content.id;
+      return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','failed','error','content_safety_audio_policy_not_configured');
+    end if;
+  end if;
+  if not exists(
+    select 1 from private.content_safety_visual_analyses analysis
+    where analysis.id=v_scan.visual_analysis_id
+      and ((v_content.content_kind='image' and analysis.media_asset_id=v_scan.visual_media_asset_id)
+        or (v_content.content_kind='video' and analysis.video_asset_id=v_scan.visual_video_asset_id))
+  ) then
+    update private.creator_premium_contents set verification_status='failed',
+      verification_error_code='creator_premium_visual_proof_invalid',verification_completed_at=v_now,
+      updated_at=v_now where id=v_content.id;
+    return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','failed','error','creator_premium_visual_proof_invalid');
+  end if;
+
+  select alert.severity into v_alert_severity
+  from private.content_safety_alerts alert where alert.scan_id=v_scan.id
+  order by case alert.severity when 'critical' then 4 when 'high' then 3 when 'medium' then 2 else 1 end desc limit 1;
+  if found then
+    -- Canonical alerts are detection evidence, not confirmed violations. Every
+    -- signal therefore fails closed into exception moderation; no model/rule
+    -- match is silently promoted into a human-confirmed enforcement finding.
+    update private.creator_premium_contents set lifecycle_status='quarantined',published_at=null,
+      quarantined_at=v_now,removed_at=null,reviewed_at=null,reviewed_by=null,
+      review_reason=case when v_alert_severity in('high','critical')
+        then 'creator_premium_safety_high_risk' else 'creator_premium_safety_signal' end,
+      removal_reason=case when v_alert_severity in('high','critical')
+        then 'creator_premium_safety_high_risk' else 'creator_premium_safety_signal' end,
+      verification_status='restricted',verification_error_code=case when v_alert_severity in('high','critical')
+        then 'creator_premium_safety_high_risk' else 'creator_premium_safety_signal' end,
+      verification_completed_at=v_now,updated_at=v_now where id=v_content.id;
+    return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','restricted','published',false);
+  end if;
+
+  v_blocker:=private.creator_premium_publication_blocker_v1(v_content.id);
+  if v_blocker is not null then
+    update private.creator_premium_contents set verification_status='failed',
+      verification_error_code=v_blocker,verification_completed_at=v_now,updated_at=v_now
+    where id=v_content.id;
+    return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','failed','error',v_blocker);
+  end if;
+  update private.creator_premium_contents content set lifecycle_status='published',
+    published_at=v_now,quarantined_at=null,removed_at=null,reviewed_at=null,reviewed_by=null,
+    review_reason=null,removal_reason=null,verification_status='passed',
+    verification_error_code=null,verification_completed_at=v_now,updated_at=v_now
+  where content.id=v_content.id and content.lifecycle_status='pending_review'
+    and content.verification_scan_id=v_scan.id
+    and content.verification_fingerprint=v_scan.content_fingerprint;
+  if not found then return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','state_changed');end if;
+  return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','published','published',true);
+end;
+$$;
+
+create function public.reconcile_creator_premium_publications_v1(p_limit integer default 25)
+returns jsonb language plpgsql security definer set search_path=''
+as $$
+declare v_scan_id uuid;v_result jsonb;v_results jsonb:='[]'::jsonb;v_count integer:=0;
+begin
+  if auth.role()<>'service_role' then raise exception using errcode='42501',message='creator_premium_service_role_required';end if;
+  if p_limit<1 or p_limit>50 then raise exception using errcode='22023',message='creator_premium_reconcile_limit_invalid';end if;
+  for v_scan_id in
+    select scan.id
+    from private.content_safety_scans scan
+    join private.creator_premium_contents content on content.id=scan.target_id
+    where scan.target_type='creator_premium' and (
+      (content.lifecycle_status='pending_review'
+        and content.verification_status='pending'
+        and content.verification_scan_id=scan.id)
+      or (content.lifecycle_status='published' and exists(
+        select 1 from private.content_safety_alerts alert where alert.scan_id=scan.id))
+    )
+    order by scan.updated_at,scan.id limit p_limit
+    for update of scan skip locked
+  loop
+    v_result:=private.finalize_creator_premium_safety_scan_v1(v_scan_id);
+    v_results:=v_results||pg_catalog.jsonb_build_array(v_result);v_count:=v_count+1;
+  end loop;
+  return pg_catalog.jsonb_build_object('processed',v_count,'results',v_results);
+end;
+$$;
+
 revoke all on function private.creator_premium_publication_blocker_v1(uuid)
   from public, anon, authenticated, service_role;
 revoke all on function private.creator_premium_internal_finance_authority_v1()
@@ -2075,6 +3571,13 @@ revoke all on function private.creator_premium_financial_fact_is_valid_v1(
   uuid,uuid,text,uuid,uuid,uuid,uuid,uuid,text,uuid,text,text,uuid,uuid,
   numeric,numeric,numeric,integer
 ) from public, anon, authenticated, service_role;
+revoke all on function private.finalize_creator_premium_safety_scan_v1(uuid)
+  from public, anon, authenticated, service_role;
+
+revoke all on function public.reconcile_creator_premium_publications_v1(integer)
+  from public, anon, authenticated, service_role;
+grant execute on function public.reconcile_creator_premium_publications_v1(integer)
+  to service_role;
 
 revoke all on function public.submit_my_creator_premium_content_for_review_v1(uuid)
   from public, anon, authenticated, service_role;
@@ -2084,6 +3587,11 @@ grant execute on function public.submit_my_creator_premium_content_for_review_v1
 revoke all on function public.get_my_creator_premium_contents_v1(integer,timestamptz,uuid)
   from public, anon, authenticated, service_role;
 grant execute on function public.get_my_creator_premium_contents_v1(integer,timestamptz,uuid)
+  to authenticated;
+
+revoke all on function public.get_my_creator_premium_content_v1(uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.get_my_creator_premium_content_v1(uuid)
   to authenticated;
 
 revoke all on function public.reopen_my_creator_premium_rejected_v1(uuid)
@@ -2165,7 +3673,7 @@ grant execute on function public.refund_creator_premium_subscription_period_v1(u
 comment on function public.get_creator_premium_commerce_v1(uuid) is
   'B7 safe consumer commerce projection. Prices are exact server strings; no private locator or financial account is returned.';
 comment on function public.admin_review_creator_premium_content_v1(uuid,text,text,uuid) is
-  'B7 canonical, idempotent, capability-gated human moderation authority for Creator Premium.';
+  'B7-F2 canonical, idempotent, capability-gated exception moderation. It can quarantine/remove or request an automatically verified restore, but cannot manufacture a publication PASS.';
 comment on function public.get_my_creator_premium_commercial_summary_v1(timestamptz,timestamptz) is
   'B7 verified creator commercial summary derived from canonical snapshots, financial transactions, and exact charge/refund ledger legs. It does not allocate subscription revenue to content or invent view metrics.';
 
