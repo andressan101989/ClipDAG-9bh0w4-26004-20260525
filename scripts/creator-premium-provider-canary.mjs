@@ -20,6 +20,7 @@ import {
   providerAdapterArtifactFingerprint,
   validateNonProductionPreflight,
 } from './creator-premium-provider-adapter.mjs'
+import { buildF9LocalPreflight } from './creator-premium-canary-preflight.mjs'
 
 export const CANARY_MODES = Object.freeze({
   DRY_RUN: 'DRY_RUN',
@@ -261,14 +262,16 @@ function syntheticFixtures() {
   }
 }
 
-function knownCost() {
-  const visualCalls = 7
-  const audioCalls = 4
-  const streamTransformations = 11
-  const visualOutput = visualCalls * 1200 / 1_000_000 * 0.30
-  const audio = audioCalls * 0.000513
-  const stream = streamTransformations / 1000 * 0.50
-  return Number((visualOutput + audio + stream).toFixed(6))
+function knownPartialCost(mode) {
+  const componentVisualOutput = 160 / 1_000_000 * 0.30
+  const componentAudio = 3 * 0.000513
+  if (mode !== CANARY_MODES.PRIVATE_MEDIA_E2E) {
+    return Number((componentVisualOutput + componentAudio).toFixed(6))
+  }
+  const privateMediaVisualOutput = 6 * 1200 / 1_000_000 * 0.30
+  const privateMediaAudio = 0.000513
+  const sixSecondStreamDelivery = 0.1 / 1000
+  return Number((componentVisualOutput + componentAudio + privateMediaVisualOutput + privateMediaAudio + sixSecondStreamDelivery).toFixed(6))
 }
 
 function operation(kind, service, extra = {}) {
@@ -333,9 +336,32 @@ export function buildCanaryPlan(mode = CANARY_MODES.DRY_RUN) {
     },
     cost: {
       pricing_checked_at: '2026-10-11',
-      known_variable_cost_usd: knownCost(),
+      estimate_scope: mode === CANARY_MODES.PRIVATE_MEDIA_E2E ? 'PRIVATE_MEDIA_E2E' : 'COMPONENT_CANARY',
+      known_variable_cost_usd: knownPartialCost(mode),
+      known_variable_cost_is_hard_bound: false,
       includes_visual_input_or_image_units: false,
       includes_account_specific_r2_or_stream_allowances: false,
+      stream_pricing_basis: mode === CANARY_MODES.PRIVATE_MEDIA_E2E
+        ? 'MINUTES_STORED_AND_DELIVERED'
+        : 'NO_STREAM_OPERATIONS',
+      stream_prepaid_capacity_required: mode === CANARY_MODES.PRIVATE_MEDIA_E2E,
+      unverified_components: mode === CANARY_MODES.PRIVATE_MEDIA_E2E
+        ? [
+            'visual_input_or_image_units',
+            'neuron_conversion_and_account_billing',
+            'provider_error_billing',
+            'billing_rounding',
+            'stream_storage_capacity',
+            'stream_delivery_classification_for_frames_and_audio',
+            'r2_operations_and_storage',
+            'r2_billing_rounding',
+          ]
+        : [
+            'visual_input_or_image_units',
+            'neuron_conversion_and_account_billing',
+            'provider_error_billing',
+            'billing_rounding',
+          ],
       cost_bound_status: 'EXTERNAL_COST_BOUND_UNVERIFIED',
       recommended_owner_cap_usd: RECOMMENDED_OWNER_CAP_USD,
       authorized_budget_usd: 0,
@@ -685,6 +711,15 @@ export async function runSyntheticProviderCanary({
   const localContracts = runLocalContracts()
   if (mode === CANARY_MODES.DRY_RUN) {
     const nonProductionPreflight = validateNonProductionPreflight()
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+    const f9Preflight = buildF9LocalPreflight({
+      root,
+      repositorySha: repositoryHeadSha(),
+      runnerFingerprint: providerCanaryArtifactFingerprint(),
+      adapterFingerprint: providerAdapterArtifactFingerprint(),
+      plan: buildCanaryPlan(CANARY_MODES.REAL_PROVIDER_COMPONENT),
+      policyPackage: policy,
+    })
     return redactCanaryEvidence({
       schema_version: 'nelyon.creator_premium_provider_canary_result.v1',
       mode,
@@ -698,6 +733,9 @@ export async function runSyntheticProviderCanary({
         LOCAL_TRANSPORT_CONTRACT: 'PASS',
         OWNER_AUTHORITY: 'UNVERIFIED',
         NONPROD_ACCOUNT: 'PENDING',
+        CLOUDFLARE_ENVIRONMENT: f9Preflight.final_states.CLOUDFLARE_ENVIRONMENT,
+        SUPABASE_ISOLATION: f9Preflight.final_states.SUPABASE_ISOLATION,
+        EXTERNAL_COST_BOUND: f9Preflight.final_states.COST_BOUND,
         PRODUCTION_ACTIVATION: 'NOT_AUTHORIZED',
       },
       external: { network_requests: 0, remote_uploads: 0, provider_inferences: 0, spend_usd: 0 },
@@ -706,6 +744,7 @@ export async function runSyntheticProviderCanary({
       local_contracts: localContracts,
       policy,
       nonproduction_preflight: nonProductionPreflight,
+      f9_preflight: f9Preflight,
     })
   }
   if (externalExecutor !== undefined) throw new CanaryGateError('CALLER_SUPPLIED_EXECUTOR_FORBIDDEN')

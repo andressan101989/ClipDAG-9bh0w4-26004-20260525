@@ -1,4 +1,4 @@
-# Creator Premium Content Safety — F6/F7/F8 Readiness Record
+# Creator Premium Content Safety — F6/F7/F8/F9 Readiness Record
 
 Date: 2026-10-11
 Status: `POLICY_AUTHORITY_PENDING`
@@ -360,38 +360,130 @@ the historical public route and never invokes the Premium signer.
 ### Operation and cost envelope
 
 The proposed full canary hard limits are: concurrency 1, retries 0, 15 minutes,
-25,000,000 transmitted bytes, one R2 upload, one Stream upload, 11 Stream
-transformation operations, 11 AI calls, and at most two persistent remote assets
+25,000,000 transmitted bytes, one R2 upload, one Stream upload, 11 bounded
+Stream fetch/derivative operations, 11 AI calls, and at most two persistent remote assets
 before mandatory cleanup. The full plan has 20 operations: 19 expected provider
 network operations plus one PostgreSQL-disposable reconciliation. The 11 AI
 calls are seven visual calls (one component probe, one R2 original, and five
 Stream frames) and four audio calls (Spanish, English, silence, and the
-private-video transcript). The 11 Stream transformations are five still frames
-plus six seconds of audio extraction.
+private-video transcript). The 11-operation Stream counter is an internal safety
+budget for five frame fetches and six seconds of audio; it is not asserted to be
+a Cloudflare billing unit.
 
-At the public rates checked on 2026-10-11, the known variable portion is USD
-0.010072: up to USD 0.002520 for seven visual responses at the current
-1,200-output-token cap, USD 0.002052 for four conservatively rounded Whisper
-minutes, and USD 0.005500 for 11 Stream transformations. Visual input/image
-units, account-specific free allocation, R2 operations/storage, Stream storage
-and delivery, and billing rounding are not fully represented by that subtotal.
-The proposed owner cap is therefore USD 0.05, subject to a fresh account quote
-and quota check immediately before execution. Because the subtotal is
-incomplete, a future authorization must carry a fresh conservative worst-case
-estimate covering every planned operation; the runner rejects it when that
-estimate is below the known subtotal or exceeds the owner cap. The currently
-authorized budget remains USD 0, so every external call stays disabled.
+At the public rates checked on 2026-10-11, F9 separates two partial estimates.
+The component-only canary has a USD 0.001587 partial estimate: one visual
+response capped at 160 output tokens plus three audio calls each conservatively
+counted as one minute. The private-media E2E has a USD 0.004360 partial estimate:
+the component calls, six additional visual responses capped at 1,200 output
+tokens, one additional rounded audio minute, and 0.1 delivered Stream minute.
+Neither number is a hard upper bound. Visual input/image units, neuron
+conversion, provider-error billing, account allocation, billing rounding, R2
+operations/storage, Stream prepaid storage capacity, and the exact delivery
+classification of frames and extracted audio remain unverified. The proposed
+USD 0.05 cap applies only as an owner-review starting point for the component
+canary and remains unauthorized. It is not a safe cap for private-media E2E
+until account capacity and billing are verified. The currently authorized
+budget is USD 0, so every external call stays disabled.
 
 Cloudflare currently lists 10,000 Workers AI neurons/day as the free allocation
 and USD 0.011/1,000 neurons above it on paid Workers plans; default task limits
 include 720 ASR requests/minute and 300 text-generation requests/minute unless a
-model-specific paid limit applies. Stream transformations list USD 0.50/1,000
-monthly unique URL transformations with 5,000 included; a still frame counts as
-one and extracted audio counts once per output second. R2 Standard lists USD
+model-specific paid limit applies. Stream is currently billed by minutes stored
+and minutes delivered: storage capacity is prepaid in USD 5/month increments
+per 1,000 minutes and delivery is USD 1/1,000 minutes. R2 Standard lists USD
 4.50/million Class A operations and USD 0.36/million Class B operations, with
-one million and ten million respective monthly operations included. These
+one million and ten million respective monthly operations included. R2 bills
+with unit rounding, and a Stream account without available prepaid capacity may
+need a materially larger commitment than the component-canary proposal. These
 published allowances do not authorize consumption and must be rechecked for the
 specific account and billing plan.
+
+## B7-F9 environment discovery and trusted authorization preparation
+
+F9 adds one focal module, `scripts/creator-premium-canary-preflight.mjs`, and
+keeps `scripts/creator-premium-provider-canary.mjs` as the only canary runner.
+The default command remains `npm run test:safety:premium-canary`; its dry-run now
+includes a sanitized F9 inventory and an immutable authorization-request
+fingerprint while preserving zero network requests, uploads, inferences, and
+spend.
+
+### Cloudflare inventory
+
+Repository discovery found seven Wrangler configurations and one unique locally
+declared Cloudflare account fingerprint. The same account is referenced by the
+web front door plus Admin Web and Business Web deployment configurations,
+including routes on `nelyon.app`; it is therefore production-context evidence,
+not proof of a non-production account. No second account, R2 binding, Stream
+binding, local Wrangler login, Cloudflare credential, or remotely verified
+resource identity was available. Aliases and preview configuration names do not
+upgrade the evidence level. The result is:
+
+- `LOCAL_CONFIGURATION_IDENTIFIED`;
+- `REMOTE_IDENTITY_VERIFICATION_PENDING`;
+- `UNVERIFIED_SHARED_ACCOUNT_RISK`;
+- `CLOUDFLARE_ENVIRONMENT_IDENTIFIED_REMOTE_PENDING`.
+
+No authenticated Cloudflare metadata request was attempted because the host has
+no applicable credential or CLI state and F9 does not authorize inference,
+uploads, or permission expansion.
+
+### Supabase and PostgreSQL isolation
+
+The authorized read-only Supabase inventory returned one organization, one
+project (`ClipDag`), and only its default `main` branch. That project is the
+explicitly excluded production ref. No remote non-production project or preview
+branch exists in the accessible inventory. Official Supabase guidance confirms
+that preview branches are isolated instances with distinct credentials and no
+production data by default, but F9 did not create one.
+
+Docker Engine is available locally. The existing
+`nelyon-ads-v2-d-compile` PostgreSQL 17.6.1.143 container is preserved, exited
+cleanly, and has no persistent mount. B7-F5 remains the executable proof for its
+disposable fixture. It can remain the isolated canonical-data authority for a
+future private-media test, but it cannot by itself prove Cloudflare R2/Stream
+resource isolation. Supabase is not required for `REAL_PROVIDER_COMPONENT`, so
+the absence of a remote Supabase test project does not block that component
+probe. `PRIVATE_MEDIA_E2E` remains blocked on media/account isolation with the
+explicit state `REMOTE_MEDIA_ISOLATION_PENDING`.
+
+### Approval authority assessment
+
+C2 is authenticated and auditable, but it is scoped to `origin/main`, the
+GitHub `production` Environment, the production Supabase project, and release
+operations. F9 does not reuse, edit, or broaden it. No existing trusted canary
+authority was found, so `OWNER_AUTHORITY_UNVERIFIED` remains fail-closed.
+
+The prepared integration proposal is a separate, owner-created GitHub Actions
+`workflow_dispatch` protected by a distinct `premium-provider-canary`
+Environment. It must fetch approval and environment evidence itself with the
+platform token, check out the exact approved SHA, retain one immutable request
+artifact, bind every account/model/scope/budget/fingerprint/expiry field, and
+issue only a single-use capability. Production secrets and targets are
+forbidden. This proposal was not created or enabled by F9.
+
+The generated authorization request binds the repository SHA, runner, provider
+adapter, F9 preflight, canary plan, policy package, candidate account
+fingerprints, models, scopes, operation limits, cleanup, and STOP conditions.
+It deliberately contains `authorization_id=null`, `authorized_budget_usd=0`,
+`execution_authorized=false`, and `OWNER_PLATFORM_APPROVAL_REQUIRED`. A JSON
+claim, environment variable, token presence, account alias, or test fixture
+cannot convert it into execution authority.
+
+### Separate owner decisions after F9
+
+The owner must make distinct future decisions; none is implied by another:
+
+1. authorize a read-only Cloudflare identity/permission/quota/billing check;
+2. select the exact Cloudflare account/resources permitted for the canary;
+3. create or approve the separate authenticated GitHub canary authority;
+4. approve a component-canary worst-case cost and maximum budget;
+5. authorize exactly four component inferences with zero uploads and retries;
+6. later authorize synthetic R2/Stream uploads and cleanup for private-media E2E;
+7. independently approve normative Content Safety policy and rule fingerprints;
+8. independently authorize deployment or production activation.
+
+F9 ends with `REAL_PROVIDER_COMPONENT_NOT_EXECUTED` and
+`PRODUCTION_ACTIVATION_NOT_AUTHORIZED`.
 
 ### Policy approval package and fingerprints
 
@@ -485,11 +577,11 @@ Before any future production activation, all of the following remain mandatory:
 7. post-activation canary verification that no private locator, token, original,
    or sensitive provider payload reaches logs, clients, analytics, or reports.
 
-No production rule was created, approved, enabled, or changed by F6/F7/F8. No
+No production rule was created, approved, enabled, or changed by F6/F7/F8/F9. No
 production scan, media upload, provider inference, migration, Edge deployment,
 financial operation, or policy activation was performed.
 
-## Source register checked for F6/F7/F8
+## Source register checked for F6/F7/F8/F9
 
 - Nelyon canonical roadmap: `docs/roadmap/NELYON_MASTER_ROADMAP.md`, section
   "Premium Content Safety / Store Compliance".
@@ -504,6 +596,9 @@ financial operation, or policy activation was performed.
 - [Cloudflare Stream audio downloads](https://developers.cloudflare.com/stream/viewing-videos/download-videos/)
 - [Cloudflare Stream pricing](https://developers.cloudflare.com/stream/pricing/)
 - [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/)
+- [Cloudflare API token verification](https://developers.cloudflare.com/api/resources/user/subresources/tokens/methods/verify/)
+- [Supabase deployment and branching](https://supabase.com/docs/guides/deployment)
+- [Supabase branch isolation](https://supabase.com/docs/guides/deployment/branching)
 - [Apple App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)
 - [Google Play User Generated Content policy](https://support.google.com/googleplay/android-developer/answer/9876937)
 - [Google Play Payments policy](https://support.google.com/googleplay/android-developer/answer/9858738)
