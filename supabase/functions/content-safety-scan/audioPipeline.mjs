@@ -22,7 +22,7 @@ export function validateStreamAudioUrl(value, uid, customerCode) {
     .replace(/^customer-/iu, '')
     .replace(/\.cloudflarestream\.com$/iu, '')
   const expectedHost = `customer-${code}.cloudflarestream.com`
-  if (!code || !uid || url.protocol !== 'https:' || url.username || url.password || url.port) throw new AudioPipelineError('stream_audio_url_untrusted_scheme')
+  if (!code || !uid || url.protocol !== 'https:' || url.username || url.password || url.port || url.search || url.hash) throw new AudioPipelineError('stream_audio_url_untrusted_scheme')
   if (url.hostname.toLowerCase() !== expectedHost) throw new AudioPipelineError('stream_audio_url_untrusted_host')
   let pathname
   try { pathname = decodeURIComponent(url.pathname) } catch { throw new AudioPipelineError('stream_audio_url_untrusted_path') }
@@ -36,6 +36,34 @@ export function validateStreamAudioUrl(value, uid, customerCode) {
   if (!['downloads', 'dl'].includes(parts[1]?.toLowerCase())) throw new AudioPipelineError('stream_audio_url_untrusted_path')
   if (parts[2]?.toLowerCase() !== 'audio.m4a') throw new AudioPipelineError('stream_audio_url_untrusted_format')
   return url.toString()
+}
+
+const SIGNED_STREAM_TOKEN_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
+
+function signedStreamAudio(value) {
+  let url
+  try { url = new URL(String(value ?? '')) } catch { throw new AudioPipelineError('stream_audio_url_invalid') }
+  if (url.protocol !== 'https:' || !/^customer-[a-z0-9-]{3,128}\.cloudflarestream\.com$/iu.test(url.hostname) ||
+      url.username || url.password || url.port || url.search || url.hash) {
+    throw new AudioPipelineError('stream_audio_url_untrusted_scheme')
+  }
+  let pathname
+  try { pathname = decodeURIComponent(url.pathname) } catch { throw new AudioPipelineError('stream_audio_url_untrusted_path') }
+  const parts = pathname.split('/').filter(Boolean)
+  if (parts.length !== 3 || !SIGNED_STREAM_TOKEN_PATTERN.test(parts[0] ?? '') ||
+      !['downloads', 'dl'].includes(parts[1]?.toLowerCase()) || parts[2]?.toLowerCase() !== 'audio.m4a') {
+    throw new AudioPipelineError('stream_audio_url_untrusted_path')
+  }
+  return { url, token: parts[0] }
+}
+
+export function validateSignedStreamAudioUrl(value, signedAudioUrl) {
+  const expected = signedStreamAudio(signedAudioUrl)
+  const candidate = signedStreamAudio(value)
+  if (candidate.url.origin !== expected.url.origin || candidate.token !== expected.token) {
+    throw new AudioPipelineError('stream_audio_url_untrusted_identity')
+  }
+  return candidate.url.toString()
 }
 
 export function retryPolicy(status) {

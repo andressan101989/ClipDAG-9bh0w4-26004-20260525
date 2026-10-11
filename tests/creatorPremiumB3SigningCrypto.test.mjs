@@ -198,3 +198,35 @@ test('runtime signing loads only the two named secrets and returns no raw token 
   assert.doesNotMatch(serialized, /\"kty\"|\"d\"/);
   assert.equal(Object.hasOwn(grant, 'token'), false);
 });
+
+test('private Content Safety audio uses a separately scoped downloadable token', async () => {
+  const pair = await crypto.subtle.generateKey({
+    name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048,
+    publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256',
+  }, true, ['sign', 'verify']);
+  const privateJwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+  const publicJwk = await crypto.subtle.exportKey('jwk', pair.publicKey);
+  const helper = loadHelper();
+  const now = 1_800_000_000;
+  const grant = await helper.createPremiumStreamAudioDownloadGrant({
+    cloudflareUid: '0123456789abcdef0123456789abcdef',
+    customerCode: 'abc123',
+    nowSeconds: now,
+    keyId: 'test-key-id',
+    privateJwkB64: Buffer.from(JSON.stringify(privateJwk), 'utf8').toString('base64'),
+  });
+
+  assert.deepEqual(Object.keys(grant).sort(), ['audioUrl', 'expiresAt']);
+  const audio = new URL(grant.audioUrl);
+  assert.equal(audio.hostname, 'customer-abc123.cloudflarestream.com');
+  assert.match(audio.pathname, /^\/[A-Za-z0-9_.-]+\/downloads\/audio\.m4a$/);
+  assert.equal(audio.search, '');
+  assert.equal(audio.hash, '');
+  const token = audio.pathname.split('/')[1];
+  const claims = decodePart(token.split('.')[1]);
+  assert.equal(claims.sub, '0123456789abcdef0123456789abcdef');
+  assert.equal(claims.downloadable, true);
+  assert.equal(claims.exp, now + 300);
+  assert.equal(await verifyLocally(token, publicJwk, now), true);
+  assert.equal(Object.hasOwn(grant, 'token'), false);
+});

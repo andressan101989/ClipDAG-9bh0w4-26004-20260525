@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {join} from "node:path";
-import {AudioPipelineError,MAX_AUDIO_BYTES,WHISPER_MODEL,makeProbeWav,normalizeWhisperResult,retryPolicy,timecodeForMatch,validateStreamAudioUrl} from "../supabase/functions/content-safety-scan/audioPipeline.mjs";
+import {AudioPipelineError,MAX_AUDIO_BYTES,WHISPER_MODEL,makeProbeWav,normalizeWhisperResult,retryPolicy,timecodeForMatch,validateSignedStreamAudioUrl,validateStreamAudioUrl} from "../supabase/functions/content-safety-scan/audioPipeline.mjs";
 
 const root=process.cwd();
 const migration=readFileSync(join(root,"supabase","migrations","20260915130911_admin_content_safety_audio_stt_ai_v1.sql"),"utf8");
@@ -15,9 +15,25 @@ test("canonical Stream audio URLs are accepted and SSRF shapes are rejected",()=
   const derivativeIdentity="abcdefabcdefabcdefabcdefabcdefab";
   assert.equal(validateStreamAudioUrl(`https://customer-${code}.cloudflarestream.com/${derivativeIdentity}/downloads/audio.m4a`,uid,code),`https://customer-${code}.cloudflarestream.com/${derivativeIdentity}/downloads/audio.m4a`);
   assert.equal(validateStreamAudioUrl(`https://customer-${code}.cloudflarestream.com/${derivativeIdentity}/dl/audio.m4a`,uid,code),`https://customer-${code}.cloudflarestream.com/${derivativeIdentity}/dl/audio.m4a`);
-  for(const url of [`http://customer-${code}.cloudflarestream.com/${uid}/downloads/audio.m4a`,`https://localhost/${uid}/downloads/audio.m4a`,`https://127.0.0.1/${uid}/downloads/audio.m4a`,`https://evil.example/${uid}/downloads/audio.m4a`,`https://customer-${code}.cloudflarestream.com/other/downloads/audio.m4a`]){
+  for(const url of [`http://customer-${code}.cloudflarestream.com/${uid}/downloads/audio.m4a`,`https://localhost/${uid}/downloads/audio.m4a`,`https://127.0.0.1/${uid}/downloads/audio.m4a`,`https://evil.example/${uid}/downloads/audio.m4a`,`https://customer-${code}.cloudflarestream.com/other/downloads/audio.m4a`,`https://customer-${code}.cloudflarestream.com/${uid}/downloads/audio.m4a?unexpected=1`,`https://customer-${code}.cloudflarestream.com/${uid}/downloads/audio.m4a#fragment`]){
     assert.throws(()=>validateStreamAudioUrl(url,uid,code),AudioPipelineError,url);
   }
+});
+
+test("private Stream audio accepts only the exact signed token authority",()=>{
+  const host="customer-example-code.cloudflarestream.com";
+  const token="eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ2aWRlbyJ9.signature";
+  const signed=`https://${host}/${token}/downloads/audio.m4a`;
+  assert.equal(validateSignedStreamAudioUrl(signed,signed),signed);
+  assert.equal(validateSignedStreamAudioUrl(signed.replace("/downloads/","/dl/"),signed),signed.replace("/downloads/","/dl/"));
+  for(const candidate of [
+    signed.replace("https://","http://"),
+    signed.replace(host,"localhost"),
+    signed.replace(token,"other.header.signature"),
+    `${signed}?download=1`,
+    `${signed}#fragment`,
+    signed.replace("/audio.m4a","/default.mp4"),
+  ]) assert.throws(()=>validateSignedStreamAudioUrl(candidate,signed),AudioPipelineError,candidate);
 });
 
 test("Workers AI responses normalize only text, word count, language and bounded timing",()=>{
@@ -65,4 +81,6 @@ test("provider failure cannot block the existing text completion loop",()=>{
   assert.match(worker,/p_retryable: issue\.retryable/);
   assert.match(worker,/claim_content_safety_transcript_evaluations/);
   assert.match(worker,/scope: 'transcript'/);
+  assert.match(worker,/createPremiumStreamAudioDownloadGrant/);
+  assert.match(worker,/validateSignedStreamAudioUrl/);
 });
