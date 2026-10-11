@@ -232,6 +232,28 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
   `).stdout;
   try {
     docker(`createdb -U supabase_admin -T ${template} ${db}`);
+    // Schema-only production clones do not necessarily retain the complete
+    // canonical admin-role seed catalog. B7 deliberately grants moderation
+    // capabilities to MODERATOR, so restore that canonical identity in the
+    // disposable database instead of weakening the migration's foreign key.
+    psql(db, `
+      insert into private.admin_roles(
+        role_code,display_name,description,is_assignable,is_root,is_exclusive
+      ) values(
+        'MODERATOR','Moderator','Cross-domain safety and moderation authority.',
+        true,false,false
+      ) on conflict(role_code) do nothing;
+      insert into private.admin_capabilities(
+        capability_code,domain,effect,description,is_sensitive
+      ) values(
+        'content.items.moderate','content','write','Moderate content.',true
+      ) on conflict(capability_code) do nothing;
+      insert into private.admin_role_capabilities(role_code,capability_code)
+      values
+        ('SUPER_ADMIN','content.items.moderate'),
+        ('MODERATOR','content.items.moderate')
+      on conflict(role_code,capability_code) do nothing;
+    `);
     psql(db, chain.map(item => item.sql).join('\n'));
 
     const functions = psql(db, `select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('search_admin_creator_premium_content_v1','get_admin_creator_premium_content_v1','admin_review_creator_premium_content_v1','get_creator_premium_commerce_v1','get_my_creator_premium_subscriptions_v1','get_my_creator_premium_commercial_summary_v1','admin_refund_creator_premium_purchase_v1','admin_refund_creator_premium_subscription_period_v1')`).stdout;

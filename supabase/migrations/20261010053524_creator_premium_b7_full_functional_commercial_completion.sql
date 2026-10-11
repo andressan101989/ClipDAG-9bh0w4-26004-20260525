@@ -889,7 +889,7 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_query text := pg_catalog.nullif(pg_catalog.btrim(p_query), '');
+  v_query text := nullif(pg_catalog.btrim(p_query), '');
   v_limit integer := pg_catalog.least(pg_catalog.greatest(coalesce(p_limit, 50), 1), 100);
 begin
   perform public.admin_require_capability('creator_premium.review.read');
@@ -1125,7 +1125,7 @@ as $$
 declare
   v_actor uuid;
   v_action text := pg_catalog.lower(pg_catalog.btrim(coalesce(p_action, '')));
-  v_reason text := pg_catalog.nullif(pg_catalog.btrim(p_reason), '');
+  v_reason text := nullif(pg_catalog.btrim(p_reason), '');
   v_scope text;
   v_fingerprint text;
   v_prior private.admin_action_audit;
@@ -1305,7 +1305,7 @@ as $$
 declare
   v_actor uuid := auth.uid();
   v_reason text := pg_catalog.lower(pg_catalog.btrim(coalesce(p_reason, '')));
-  v_details text := pg_catalog.nullif(pg_catalog.btrim(p_details), '');
+  v_details text := nullif(pg_catalog.btrim(p_details), '');
   v_content private.creator_premium_contents;
   v_report_id uuid;
 begin
@@ -1385,7 +1385,7 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_query text := pg_catalog.nullif(pg_catalog.btrim(p_query), '');
+  v_query text := nullif(pg_catalog.btrim(p_query), '');
   v_limit integer := pg_catalog.least(pg_catalog.greatest(coalesce(p_limit, 50), 1), 100);
 begin
   perform public.admin_require_capability('reports.cases.read');
@@ -2738,7 +2738,7 @@ begin
       from public.media_asset_links link join public.media_assets asset on asset.id=link.asset_id
       where link.entity_type='creator_premium_content' and link.entity_id=v_content.id
         and link.slot='original' and link."position"=0
-        and link.owner_id=v_content.creator_id and asset.owner_id=v_content.creator_id
+        and asset.owner_id=v_content.creator_id
         and asset.purpose='creator_premium_original_image'
       order by link.created_at,link.id limit 1;
       if found and v_media.provider='r2' and v_media.status='ready' and v_media.deleted_at is null
@@ -3307,7 +3307,7 @@ begin
   update private.content_safety_scans scan set visual_analysis_id=v_analysis.id,
     visual_status='analyzed',visual_provider=v_analysis.provider,visual_model=v_analysis.model,
     visual_prompt_version=v_analysis.prompt_version,
-    visual_completed_at=coalesce(scan.visual_completed_at,v_analysis.created_at),
+    visual_completed_at=coalesce(scan.visual_completed_at,pg_catalog.clock_timestamp()),
     visual_started_at=null,visual_last_error_code=null,visual_attempt_count=0,
     visual_partial_result=null,updated_at=pg_catalog.clock_timestamp()
   where scan.target_type in('video','creator_premium') and (
@@ -3320,7 +3320,7 @@ begin
     visual_prompt_version=v_analysis.prompt_version,
     visual_source_kind=case when v_analysis.media_asset_id is not null then 'shared_image' else 'shared_stream_video' end,
     visual_video_asset_id=v_analysis.video_asset_id,visual_media_asset_id=v_analysis.media_asset_id,
-    visual_status='analyzed',visual_completed_at=coalesce(story.visual_completed_at,v_analysis.created_at),
+    visual_status='analyzed',visual_completed_at=coalesce(story.visual_completed_at,pg_catalog.clock_timestamp()),
     visual_started_at=null,visual_last_error_code=null,visual_attempt_count=0,
     visual_partial_result=null,updated_at=pg_catalog.clock_timestamp()
   where story.target_type='story' and exists(
@@ -3350,7 +3350,7 @@ begin
   v_scopes:=array(select distinct pg_catalog.btrim(value)
     from pg_catalog.unnest(pg_catalog.coalesce(p_scopes,'{}'::text[])) value order by 1);
   if p_detector_type not in('keyword','phrase')
-     or pg_catalog.nullif(pg_catalog.btrim(pg_catalog.coalesce(p_pattern,'')),'') is null
+     or nullif(pg_catalog.btrim(pg_catalog.coalesce(p_pattern,'')),'') is null
      or pg_catalog.char_length(pg_catalog.btrim(p_pattern))>200 or pg_catalog.cardinality(v_scopes)=0
      or not(v_scopes<@array[
        'video_caption','comment','story_text','live_chat','reported_message','transcript','creator_premium_text'
@@ -3375,7 +3375,7 @@ begin
     where 'comment'=any(v_scopes)
     union all
     select 'story',s.id,s.user_id,'story_text',pg_catalog.coalesce((
-      select pg_catalog.string_agg(pg_catalog.nullif(pg_catalog.btrim(e->>'text'),''),' ' order by ordinality)
+      select pg_catalog.string_agg(nullif(pg_catalog.btrim(e->>'text'),''),' ' order by ordinality)
       from pg_catalog.jsonb_array_elements(pg_catalog.coalesce(s.story_composition->'elements','[]'::jsonb))
         with ordinality x(e,ordinality)
       where e->>'type'='text'
