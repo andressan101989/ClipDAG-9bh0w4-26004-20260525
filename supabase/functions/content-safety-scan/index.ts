@@ -1,7 +1,7 @@
 /* eslint-disable import/no-unresolved */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { evaluateTextRules } from './ruleEngine.mjs'
-import { AudioPipelineError, MAX_AUDIO_BYTES, WHISPER_MODEL, bytesToBase64, makeProbeWav, normalizeWhisperResult, timecodeForMatch, validateSignedStreamAudioUrl, validateStreamAudioUrl } from './audioPipeline.mjs'
+import { AudioPipelineError, WHISPER_MODEL, bytesToBase64, downloadStreamAudioBytes, makeProbeWav, normalizeWhisperResult, selectStreamAudioDownloadRoute, timecodeForMatch, validateStreamAudioTargetType } from './audioPipeline.mjs'
 import { VISUAL_AI_PROVIDER, VISUAL_MODEL, VisualProbeError, runVisualMultiImageProviderProbe, runVisualProviderProbe } from './visualProbe.mjs'
 import { MAX_PREMIUM_VISUAL_IMAGE_BYTES, MAX_VISUAL_IMAGE_BYTES, VisualPipelineError, analyzeVisualBytes, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps } from './visualPipeline.mjs'
 import { streamAccountId, streamCustomerCode, streamFetch } from '../_shared/stream.ts'
@@ -64,7 +64,8 @@ async function workersAi(audio: Uint8Array) {
   return normalizeWhisperResult(payload)
 }
 
-async function streamAudioDownload(uid: string) {
+async function streamAudioDownload(uid: string, targetType: unknown) {
+  const canonicalTargetType = validateStreamAudioTargetType(targetType)
   let downloads = object((await streamFetch(`/${uid}/downloads`, { method: 'GET' })).result)
   let audio = object(downloads.audio)
   if (!audio.status) {
@@ -74,28 +75,14 @@ async function streamAudioDownload(uid: string) {
   const status = String(audio.status ?? '')
   if (status === 'inprogress') throw new AudioPipelineError('stream_audio_inprogress', { status: 425, retryable: true })
   if (status !== 'ready' || typeof audio.url !== 'string') throw new AudioPipelineError('stream_audio_generation_failed')
-  validateStreamAudioUrl(audio.url, uid, streamCustomerCode())
-  const signedDownload = await createPremiumStreamAudioDownloadGrant({
-    cloudflareUid: uid,
+  const route = await selectStreamAudioDownloadRoute({
+    targetType: canonicalTargetType,
+    uid,
     customerCode: streamCustomerCode(),
+    providerUrl: audio.url,
+    createPrivateGrant: createPremiumStreamAudioDownloadGrant,
   })
-  let current = validateSignedStreamAudioUrl(signedDownload.audioUrl, signedDownload.audioUrl)
-  for (let redirect = 0; redirect <= 3; redirect += 1) {
-    const response = await fetch(current, { redirect: 'manual' }).catch(() => { throw new AudioPipelineError('stream_audio_network_error', { retryable: true }) })
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
-      const location = response.headers.get('location')
-      if (!location || redirect === 3) throw new AudioPipelineError('stream_audio_redirect_rejected')
-      current = validateSignedStreamAudioUrl(new URL(location, current).toString(), signedDownload.audioUrl)
-      continue
-    }
-    if (!response.ok) throw new AudioPipelineError(response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500 ? 'stream_audio_temporarily_unavailable' : 'stream_audio_fetch_rejected', { status: response.status, retryable: response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500 })
-    const declared = Number(response.headers.get('content-length') ?? 0)
-    if (declared > MAX_AUDIO_BYTES) throw new AudioPipelineError('stream_audio_too_large')
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    if (!bytes.length || bytes.length > MAX_AUDIO_BYTES) throw new AudioPipelineError('stream_audio_too_large')
-    return bytes
-  }
-  throw new AudioPipelineError('stream_audio_redirect_rejected')
+  return downloadStreamAudioBytes({ route })
 }
 
 async function deleteStreamAudio(uid: string) {
@@ -208,7 +195,7 @@ Deno.serve(async req => {
     if (!uuid(scan.scan_id) || !uuid(scan.source_asset_id) || typeof scan.cloudflare_uid !== 'string' || typeof scan.content_fingerprint !== 'string') { audioFailed += 1; continue }
     let stage = 'stream_audio'
     try {
-      const audio = await streamAudioDownload(scan.cloudflare_uid)
+      const audio = await streamAudioDownload(scan.cloudflare_uid, scan.target_type)
       stage = 'workers_ai'
       const result = await workersAi(audio)
       stage = 'transcript_persistence'
