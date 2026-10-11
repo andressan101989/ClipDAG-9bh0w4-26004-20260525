@@ -1,4 +1,4 @@
-# Creator Premium Content Safety — F6/F7 Readiness Record
+# Creator Premium Content Safety — F6/F7/F8 Readiness Record
 
 Date: 2026-10-11
 Status: `POLICY_AUTHORITY_PENDING`
@@ -238,35 +238,102 @@ The expected F7 readiness split is:
 - `PRODUCTION_ACTIVATION_NOT_AUTHORIZED`: no rule, migration, Edge function,
   finance switch, or production resource changed.
 
+F8 adds two further local-only states:
+
+- `ADAPTER_IMPLEMENTED` / `LOCAL_TRANSPORT_CONTRACT_PASS`: the fixed-origin
+  Workers AI adapter is present and exercised against controlled HTTP servers;
+- `OWNER_AUTHORITY_UNVERIFIED`, `NONPROD_ACCOUNT_IDENTITY_PENDING`, and
+  `NONPROD_SUPABASE_IDENTITY_PENDING`: no external connection is permitted.
+
 The runner has three visibly distinct modes: `DRY_RUN`,
 `REAL_PROVIDER_COMPONENT`, and `PRIVATE_MEDIA_E2E`. A real mode fails with
 `EXTERNAL_AUTHORIZATION_REQUIRED` before any provider adapter could run unless it
-receives a separate owner-approved authorization document. Environment
-variables or free quota alone are never authorization. The document must bind
+receives a separate authorization request. Environment variables, credentials,
+free quota, aliases, and fields that merely claim owner approval are never
+authorization. The request must bind
 an owner permission identifier, exact mode and scopes, named non-production
 Supabase and Cloudflare environments, fresh quota and pricing checks, positive
 USD cap, expiry, serial execution, exact scopes and operation/byte/time
 limits, structured cleanup controls, and the complete required STOP-condition
-set. It is also bound to the normalized runner artifact, exact
-canary-plan fingerprint, exact policy-package fingerprint, and a fresh
+set. It is also bound to the repository SHA, normalized runner and adapter
+artifacts, exact canary-plan fingerprint, exact policy-package fingerprint, and a fresh
 owner-reviewed worst-case cost estimate that is no lower than the known subtotal
 and fits under the authorized cap. The internal simulator can produce only a
 `SIMULATED_*_PASS`; it cannot open a provider connection or produce a
 real-provider status.
 
-F7 deliberately ships no self-attesting real-provider adapter. A caller object
-is rejected and cannot label itself canonical, perform hidden network work, or
-obtain `REAL_PROVIDER_COMPONENT_PASS` or
+Caller-provided executors remain rejected and cannot label themselves canonical,
+perform hidden network work, or obtain `REAL_PROVIDER_COMPONENT_PASS` or
 `PREMIUM_PRIVATE_MEDIA_E2E_PASS`; that attempt fails with
-`CALLER_SUPPLIED_EXECUTOR_FORBIDDEN`. Without the internal simulator explicitly
-selected, external modes fail with `REAL_PROVIDER_EXECUTOR_NOT_IMPLEMENTED`
-before any operation. The future
-adapter must independently verify the authorized non-production account and
-project, use the exact bound plan/policy/runner fingerprints, validate canonical
-provider responses and allowlisted receipts, enforce one deadline across
-operations and cleanup, report measured usage, and prove cleanup. Until that
-separately reviewed adapter exists, both real statuses remain `PENDING` even if
-all deterministic simulations pass.
+`CALLER_SUPPLIED_EXECUTOR_FORBIDDEN`. F8 supplies the internal component adapter,
+but the JSON request cannot attest its own provenance. A structurally valid
+document therefore stops at `OWNER_AUTHORITY_UNVERIFIED` before adapter creation
+or network I/O. Both real statuses remain `PENDING` even if all deterministic
+simulations and local transport tests pass.
+
+## B7-F8 real provider adapter
+
+F8 adds the single internal module
+`scripts/creator-premium-provider-adapter.mjs`. It reuses
+`runVisualProviderProbe`, `buildVisualProbeRequest`, `normalizeWhisperResult`,
+and the existing Gemma and Whisper model constants. It is transport and contract
+tooling only: it cannot publish, moderate, grant entitlement, move ledger funds,
+approve policy, or create media resources.
+
+The adapter constructs only these allowlisted HTTPS endpoints:
+
+```text
+https://api.cloudflare.com/client/v4/accounts/{32-hex-account-id}/ai/run/@cf/google/gemma-4-26b-a4b-it
+https://api.cloudflare.com/client/v4/accounts/{32-hex-account-id}/ai/run/@cf/openai/whisper-large-v3-turbo
+```
+
+It rejects caller-selected origins, models, methods, ports, query strings,
+fragments, credentials in URLs, redirects, oversized responses, invalid JSON,
+unsuccessful Cloudflare envelopes, invalid visual schemas, invalid transcript
+envelopes, timeout, and authentication/provider errors. Redirect handling is
+`manual`, retries are zero, and cancellation uses `AbortController`. Response
+bodies are read with a streaming byte limit rather than trusted from
+`Content-Length` alone. HTTP 401/403 are terminal; 429 and transient provider
+failures remain bounded error results and never trigger an implicit fallback.
+
+Visual requests use the existing synthetic red-square/blue-circle image and
+strict JSON schema. Audio requests use the worker's existing base64 WAV envelope
+and Whisper normalizer. Silence is represented as `noSpeech=true` with
+`safety_conclusion=NOT_EVALUATED`; it is never converted into a safety PASS.
+Provider receipts contain only operation, allowlisted model, HTTP status,
+duration, retry count, numeric usage when supplied, a validated `cf-ray`
+correlation value, and validation/cost-bound status. They contain no bearer
+token, request body, raw provider response, media, signed URL, object key, or
+transcript.
+
+The non-production preflight deliberately treats format and aliases as claims,
+not provider evidence. It rejects an exact known production Supabase project or
+Cloudflare account when that production identity is supplied for comparison,
+but otherwise reports `NONPROD_ACCOUNT_IDENTITY_PENDING` and
+`NONPROD_SUPABASE_IDENTITY_PENDING`. Real read-only verification of account,
+token scopes, model availability, quotas, pricing, R2, and Stream resources is
+still external work and was not authorized in F8.
+
+The former F7 document validator is now split conceptually. A local
+authorization request can be checked for exact mode, scopes, expiry, limits,
+cleanup, stop conditions, repository SHA, runner fingerprint, adapter
+fingerprint, plan fingerprint, policy fingerprint, account ID, project claim,
+quota timestamp, pricing timestamp, and conservative cost estimate. That check
+returns only `UNVERIFIED_DOCUMENT_CLAIM`. The external execution gate then
+requires a separately governed, auditable owner authority which this repository
+does not currently provide for non-production provider canaries. Consequently,
+every real-mode attempt stops with `OWNER_AUTHORITY_UNVERIFIED`. There is no CLI
+flag, environment variable, credential, JSON field, caller executor, or newly
+created signing key that can override it.
+
+F8 does not assert a hard external cost bound. Current public list rates remain
+planning inputs, while image input accounting, neuron usage, account allowances,
+Stream delivery/transformation classification, R2 operations/storage, errors,
+and billing rounding require fresh account evidence. Provider receipts therefore
+report `estimated_cost_usd=null` and `cost_bound_status=UNVERIFIED` until an
+owner-authorized non-production preflight establishes a conservative worst case.
+The authorized and spent F8 budget is USD 0; external requests and uploads are
+zero.
 
 ### Synthetic fixtures and private-media path
 
@@ -418,16 +485,17 @@ Before any future production activation, all of the following remain mandatory:
 7. post-activation canary verification that no private locator, token, original,
    or sensitive provider payload reaches logs, clients, analytics, or reports.
 
-No production rule was created, approved, enabled, or changed by F6/F7. No
+No production rule was created, approved, enabled, or changed by F6/F7/F8. No
 production scan, media upload, provider inference, migration, Edge deployment,
 financial operation, or policy activation was performed.
 
-## Source register checked for F6/F7
+## Source register checked for F6/F7/F8
 
 - Nelyon canonical roadmap: `docs/roadmap/NELYON_MASTER_ROADMAP.md`, section
   "Premium Content Safety / Store Compliance".
 - [Cloudflare Workers AI: Gemma 4 26B A4B](https://developers.cloudflare.com/workers-ai/models/gemma-4-26b-a4b-it/)
 - [Cloudflare Workers AI: Whisper large-v3-turbo](https://developers.cloudflare.com/workers-ai/models/whisper-large-v3-turbo/)
+- [Cloudflare Workers AI REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/)
 - [Cloudflare Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/)
 - [Cloudflare Workers AI limits](https://developers.cloudflare.com/workers-ai/platform/limits/)
 - [Cloudflare Workers AI data usage](https://developers.cloudflare.com/workers-ai/platform/data-usage/)

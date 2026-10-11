@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { makeSyntheticVisualProbeImage } from '../supabase/functions/content-safety-scan/visualProbe.mjs'
+import { providerAdapterArtifactFingerprint } from '../scripts/creator-premium-provider-adapter.mjs'
 
 import {
   CANARY_MODES,
@@ -15,7 +16,9 @@ import {
   preparePolicyApprovalPackage,
   providerCanaryArtifactFingerprint,
   redactCanaryEvidence,
+  repositoryHeadSha,
   runSyntheticProviderCanary,
+  validateAuthorizationRequest,
   validateExternalAuthorization,
 } from '../scripts/creator-premium-provider-canary.mjs'
 
@@ -35,6 +38,8 @@ function authorization(overrides = {}) {
     expires_at: '2026-10-12T12:00:00.000Z',
     authorized_mode: authorizedMode,
     runner_artifact_fingerprint_sha256: providerCanaryArtifactFingerprint(),
+    provider_adapter_artifact_fingerprint_sha256: providerAdapterArtifactFingerprint(),
+    repository_sha: repositoryHeadSha(),
     canary_plan_fingerprint_sha256: plan.plan_fingerprint_sha256,
     policy_package_fingerprint_sha256: policy.package_fingerprint_sha256,
     non_production: true,
@@ -43,6 +48,7 @@ function authorization(overrides = {}) {
       name: 'creator-premium-canary-nonprod',
       supabase_project_ref: 'synthetic-nonprod-ref',
       cloudflare_account_alias: 'synthetic-nonprod-account',
+      cloudflare_account_id: '0123456789abcdef0123456789abcdef',
       production: false,
     },
     quotas_confirmed: true,
@@ -86,6 +92,10 @@ test('default canary executes a strict local dry-run with zero network and zero 
   assert.equal(result.readiness.CANARY_DRY_RUN, 'PASS')
   assert.equal(result.readiness.REAL_PROVIDER_COMPONENT, 'PENDING')
   assert.equal(result.readiness.PREMIUM_PRIVATE_MEDIA_E2E, 'PENDING')
+  assert.equal(result.readiness.REAL_PROVIDER_ADAPTER, 'IMPLEMENTED')
+  assert.equal(result.readiness.LOCAL_TRANSPORT_CONTRACT, 'PASS')
+  assert.equal(result.readiness.OWNER_AUTHORITY, 'UNVERIFIED')
+  assert.equal(result.readiness.NONPROD_ACCOUNT, 'PENDING')
   assert.equal(result.external.network_requests, 0)
   assert.equal(result.external.spend_usd, 0)
   assert.equal(result.fixtures.image.mime_type, 'image/png')
@@ -114,7 +124,7 @@ test('external modes fail before execution when owner authorization is absent or
   )
 })
 
-test('authorization rejects production, mode mismatch, stale quota, and unbounded execution', () => {
+test('authorization request rejects production, fingerprint mismatch, stale quota, and unbounded execution', () => {
   const now = new Date('2026-10-11T12:30:00.000Z')
   for (const [override, code] of [
     [{ non_production: false }, 'PRODUCTION_ENVIRONMENT_FORBIDDEN'],
@@ -133,9 +143,11 @@ test('authorization rejects production, mode mismatch, stale quota, and unbounde
     [{ canary_plan_fingerprint_sha256: '0'.repeat(64) }, 'EXTERNAL_PLAN_FINGERPRINT_MISMATCH'],
     [{ policy_package_fingerprint_sha256: '0'.repeat(64) }, 'EXTERNAL_POLICY_FINGERPRINT_MISMATCH'],
     [{ runner_artifact_fingerprint_sha256: '0'.repeat(64) }, 'EXTERNAL_RUNNER_FINGERPRINT_MISMATCH'],
+    [{ provider_adapter_artifact_fingerprint_sha256: '0'.repeat(64) }, 'EXTERNAL_ADAPTER_FINGERPRINT_MISMATCH'],
+    [{ repository_sha: '0'.repeat(40) }, 'EXTERNAL_REPOSITORY_SHA_MISMATCH'],
   ]) {
     assert.throws(
-      () => validateExternalAuthorization({
+      () => validateAuthorizationRequest({
         mode: CANARY_MODES.REAL_PROVIDER_COMPONENT,
         authorization: authorization(override),
         policyPackage: preparePolicyApprovalPackage(candidate),
@@ -145,6 +157,27 @@ test('authorization rejects production, mode mismatch, stale quota, and unbounde
       code,
     )
   }
+})
+
+test('a structurally valid owner JSON remains only a request and cannot verify its own authority', () => {
+  const policyPackage = preparePolicyApprovalPackage(candidate)
+  const request = validateAuthorizationRequest({
+    mode: CANARY_MODES.REAL_PROVIDER_COMPONENT,
+    authorization: authorization(),
+    policyPackage,
+    now: new Date('2026-10-11T12:30:00.000Z'),
+  })
+  assert.equal(request.authorization_id, 'owner-canary-approval-example')
+  assert.equal(request.authority_status, 'UNVERIFIED_DOCUMENT_CLAIM')
+  assert.throws(
+    () => validateExternalAuthorization({
+      mode: CANARY_MODES.REAL_PROVIDER_COMPONENT,
+      authorization: authorization(),
+      policyPackage,
+      now: new Date('2026-10-11T12:30:00.000Z'),
+    }),
+    error => error instanceof CanaryGateError && error.code === 'OWNER_AUTHORITY_UNVERIFIED',
+  )
 })
 
 test('the internal simulator can exercise the authorized operation plan but never claims real provider PASS', async () => {
@@ -193,8 +226,39 @@ test('no caller-supplied executor can run or self-attest any provider result', a
       authorization: authorization(),
       now: new Date('2026-10-11T12:30:00.000Z'),
     }),
-    error => error instanceof CanaryGateError && error.code === 'REAL_PROVIDER_EXECUTOR_NOT_IMPLEMENTED',
+    error => error instanceof CanaryGateError && error.code === 'OWNER_AUTHORITY_UNVERIFIED',
   )
+})
+
+test('credentials and environment flags cannot turn a forged document into network authority', async () => {
+  const previousToken = process.env.CLOUDFLARE_AI_TOKEN
+  const previousFlag = process.env.CREATOR_PREMIUM_PROVIDER_EXECUTION
+  const previousFetch = globalThis.fetch
+  let networkCalls = 0
+  process.env.CLOUDFLARE_AI_TOKEN = 'present-but-not-authority'
+  process.env.CREATOR_PREMIUM_PROVIDER_EXECUTION = 'enabled'
+  globalThis.fetch = async () => {
+    networkCalls += 1
+    throw new Error('network must remain closed')
+  }
+  try {
+    await assert.rejects(
+      runSyntheticProviderCanary({
+        mode: CANARY_MODES.REAL_PROVIDER_COMPONENT,
+        candidate,
+        authorization: authorization(),
+        now: new Date('2026-10-11T12:30:00.000Z'),
+      }),
+      error => error instanceof CanaryGateError && error.code === 'OWNER_AUTHORITY_UNVERIFIED',
+    )
+    assert.equal(networkCalls, 0)
+  } finally {
+    if (previousToken === undefined) delete process.env.CLOUDFLARE_AI_TOKEN
+    else process.env.CLOUDFLARE_AI_TOKEN = previousToken
+    if (previousFlag === undefined) delete process.env.CREATOR_PREMIUM_PROVIDER_EXECUTION
+    else process.env.CREATOR_PREMIUM_PROVIDER_EXECUTION = previousFlag
+    globalThis.fetch = previousFetch
+  }
 })
 
 test('cleanup failure is a hard failure and remains visible without leaking secret material', async () => {
@@ -345,6 +409,7 @@ test('private-media plan is bounded, serial, and inventories cleanup for exact s
   })
   assert.equal(plan.operations.find(item => item.kind === 'canonical_reconciliation').external, false)
   assert.equal(plan.cost.authorized_budget_usd, 0)
+  assert.equal(plan.cost.cost_bound_status, 'EXTERNAL_COST_BOUND_UNVERIFIED')
   assert.ok(plan.cost.recommended_owner_cap_usd > plan.cost.known_variable_cost_usd)
 })
 
@@ -500,7 +565,7 @@ test('CLI gate failures use an external authorization status, never DRY_RUN_FAIL
   assert.equal(output.error, 'EXTERNAL_AUTHORIZATION_REQUIRED')
 })
 
-test('repository exposes one canonical dry-run command and documents F7 authorization and policy decisions', () => {
+test('repository exposes one canonical dry-run command and documents F7/F8 authorization and policy decisions', () => {
   const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   const readiness = readFileSync(join(root, 'docs', 'creator-premium-content-safety-readiness.md'), 'utf8')
   assert.equal(packageJson.scripts['test:safety:premium-canary'], 'node scripts/creator-premium-provider-canary.mjs')
@@ -515,5 +580,8 @@ test('repository exposes one canonical dry-run command and documents F7 authoriz
     'Google Play User Generated Content policy',
     'Owner decisions still required',
     'Rollback and STOP',
+    'B7-F8 real provider adapter',
+    'OWNER_AUTHORITY_UNVERIFIED',
+    'NONPROD_ACCOUNT_IDENTITY_PENDING',
   ]) assert.match(readiness, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'i'), marker)
 })

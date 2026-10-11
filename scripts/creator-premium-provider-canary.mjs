@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { Buffer } from 'node:buffer'
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -15,6 +16,10 @@ import {
   makeProbeWav,
   normalizeWhisperResult,
 } from '../supabase/functions/content-safety-scan/audioPipeline.mjs'
+import {
+  providerAdapterArtifactFingerprint,
+  validateNonProductionPreflight,
+} from './creator-premium-provider-adapter.mjs'
 
 export const CANARY_MODES = Object.freeze({
   DRY_RUN: 'DRY_RUN',
@@ -26,6 +31,8 @@ const POLICY_SCHEMA = 'nelyon.creator_premium_content_safety_policy_candidate.v1
 const AUTHORIZATION_SCHEMA = 'nelyon.creator_premium_provider_canary_authorization.v1'
 const CANDIDATE_FINGERPRINT_CONTRACT = 'nelyon.creator_premium_candidate_rule.sha256-canonical-json.v1'
 const CANARY_PLAN_FINGERPRINT_CONTRACT = 'nelyon.creator_premium_provider_canary_plan.sha256-canonical-json.v1'
+const REPOSITORY_SHA = /^[0-9a-f]{40}$/u
+const CLOUDFLARE_ACCOUNT_ID = /^[0-9a-f]{32}$/u
 const RECOMMENDED_OWNER_CAP_USD = 0.05
 const QUOTA_CONFIRMATION_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const REQUIRED_CLEANUP_CONTROLS = Object.freeze({
@@ -145,6 +152,22 @@ export function candidateRuleFingerprint(rule) {
 
 export function providerCanaryArtifactFingerprint() {
   return sha256(readFileSync(fileURLToPath(import.meta.url), 'utf8').replace(/\r\n/gu, '\n'))
+}
+
+export function repositoryHeadSha() {
+  try {
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+    const value = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+    }).trim().toLowerCase()
+    if (!REPOSITORY_SHA.test(value)) throw new Error('invalid_sha')
+    return value
+  } catch {
+    throw new CanaryGateError('REPOSITORY_IDENTITY_UNAVAILABLE')
+  }
 }
 
 function validateCandidate(candidate) {
@@ -313,9 +336,17 @@ export function buildCanaryPlan(mode = CANARY_MODES.DRY_RUN) {
       known_variable_cost_usd: knownCost(),
       includes_visual_input_or_image_units: false,
       includes_account_specific_r2_or_stream_allowances: false,
+      cost_bound_status: 'EXTERNAL_COST_BOUND_UNVERIFIED',
       recommended_owner_cap_usd: RECOMMENDED_OWNER_CAP_USD,
       authorized_budget_usd: 0,
       authorization_required_before_network: true,
+    },
+    provider_adapter: {
+      status: 'ADAPTER_IMPLEMENTED',
+      artifact_fingerprint_sha256: providerAdapterArtifactFingerprint(),
+      transport_contract: 'CLOUDFLARE_WORKERS_AI_REST_FIXED_ORIGIN_V1',
+      models: [VISUAL_MODEL, WHISPER_MODEL],
+      trusted_owner_authority_required: true,
     },
   }
   return {
@@ -350,7 +381,7 @@ function validCleanupPlan(value) {
     actualKeys.every((key, index) => key === expectedKeys[index] && value[key] === REQUIRED_CLEANUP_CONTROLS[key])
 }
 
-export function validateExternalAuthorization({ mode, authorization, policyPackage, now = new Date() }) {
+export function validateAuthorizationRequest({ mode, authorization, policyPackage, now = new Date() }) {
   if (!authorization || typeof authorization !== 'object') authorizationError('EXTERNAL_AUTHORIZATION_REQUIRED')
   if (authorization.schema_version !== AUTHORIZATION_SCHEMA || authorization.authorization_source !== 'OWNER_APPROVED_DOCUMENT' ||
       typeof authorization.authorization_id !== 'string' || !authorization.authorization_id.trim() || authorization.approved_by_role !== 'product_owner') {
@@ -360,7 +391,8 @@ export function validateExternalAuthorization({ mode, authorization, policyPacka
   if (authorization.non_production !== true || authorization.environment?.production !== false) authorizationError('PRODUCTION_ENVIRONMENT_FORBIDDEN')
   if (!authorization.environment || typeof authorization.environment.name !== 'string' || !authorization.environment.name.trim() ||
       typeof authorization.environment.supabase_project_ref !== 'string' || !authorization.environment.supabase_project_ref.trim() ||
-      typeof authorization.environment.cloudflare_account_alias !== 'string' || !authorization.environment.cloudflare_account_alias.trim()) {
+      typeof authorization.environment.cloudflare_account_alias !== 'string' || !authorization.environment.cloudflare_account_alias.trim() ||
+      !CLOUDFLARE_ACCOUNT_ID.test(authorization.environment.cloudflare_account_id ?? '')) {
     authorizationError('EXTERNAL_ENVIRONMENT_NOT_AUTHORIZED')
   }
   if (authorization.account_authorized !== true) authorizationError('EXTERNAL_ACCOUNT_NOT_AUTHORIZED')
@@ -382,6 +414,12 @@ export function validateExternalAuthorization({ mode, authorization, policyPacka
   const plan = buildCanaryPlan(mode)
   if (authorization.runner_artifact_fingerprint_sha256 !== providerCanaryArtifactFingerprint()) {
     authorizationError('EXTERNAL_RUNNER_FINGERPRINT_MISMATCH')
+  }
+  if (authorization.provider_adapter_artifact_fingerprint_sha256 !== providerAdapterArtifactFingerprint()) {
+    authorizationError('EXTERNAL_ADAPTER_FINGERPRINT_MISMATCH')
+  }
+  if (!REPOSITORY_SHA.test(authorization.repository_sha ?? '') || authorization.repository_sha !== repositoryHeadSha()) {
+    authorizationError('EXTERNAL_REPOSITORY_SHA_MISMATCH')
   }
   if (authorization.canary_plan_fingerprint_sha256 !== plan.plan_fingerprint_sha256) {
     authorizationError('EXTERNAL_PLAN_FINGERPRINT_MISMATCH')
@@ -412,10 +450,13 @@ export function validateExternalAuthorization({ mode, authorization, policyPacka
   }
   return {
     authorization_id: authorization.authorization_id,
+    authority_status: 'UNVERIFIED_DOCUMENT_CLAIM',
     mode,
     max_budget_usd: Number(authorization.max_budget_usd),
     worst_case_cost_usd: Number(costEstimate.worst_case_usd),
     runner_artifact_fingerprint_sha256: authorization.runner_artifact_fingerprint_sha256,
+    provider_adapter_artifact_fingerprint_sha256: authorization.provider_adapter_artifact_fingerprint_sha256,
+    repository_sha: authorization.repository_sha,
     canary_plan_fingerprint_sha256: authorization.canary_plan_fingerprint_sha256,
     policy_package_fingerprint_sha256: authorization.policy_package_fingerprint_sha256,
     environment: { ...authorization.environment },
@@ -427,6 +468,14 @@ export function validateExternalAuthorization({ mode, authorization, policyPacka
     cleanup_plan: { ...authorization.cleanup_plan },
     stop_conditions: [...authorization.stop_conditions],
   }
+}
+
+export function validateExternalAuthorization({ mode, authorization, policyPackage, now = new Date() }) {
+  validateAuthorizationRequest({ mode, authorization, policyPackage, now })
+  // A caller-authored JSON document cannot prove owner identity or grant network authority.
+  // F8 intentionally has no self-service override: a separately governed, auditable authority
+  // must be selected and integrated by the owner before this function may return a capability.
+  authorizationError('OWNER_AUTHORITY_UNVERIFIED')
 }
 
 const REDACTED_NORMALIZED_KEYS = new Set([
@@ -635,6 +684,7 @@ export async function runSyntheticProviderCanary({
   const policy = preparePolicyApprovalPackage(candidate)
   const localContracts = runLocalContracts()
   if (mode === CANARY_MODES.DRY_RUN) {
+    const nonProductionPreflight = validateNonProductionPreflight()
     return redactCanaryEvidence({
       schema_version: 'nelyon.creator_premium_provider_canary_result.v1',
       mode,
@@ -644,6 +694,10 @@ export async function runSyntheticProviderCanary({
         CANARY_DRY_RUN: 'PASS',
         REAL_PROVIDER_COMPONENT: 'PENDING',
         PREMIUM_PRIVATE_MEDIA_E2E: 'PENDING',
+        REAL_PROVIDER_ADAPTER: 'IMPLEMENTED',
+        LOCAL_TRANSPORT_CONTRACT: 'PASS',
+        OWNER_AUTHORITY: 'UNVERIFIED',
+        NONPROD_ACCOUNT: 'PENDING',
         PRODUCTION_ACTIVATION: 'NOT_AUTHORIZED',
       },
       external: { network_requests: 0, remote_uploads: 0, provider_inferences: 0, spend_usd: 0 },
@@ -651,11 +705,13 @@ export async function runSyntheticProviderCanary({
       plan,
       local_contracts: localContracts,
       policy,
+      nonproduction_preflight: nonProductionPreflight,
     })
   }
-  const validatedAuthorization = validateExternalAuthorization({ mode, authorization, policyPackage: policy, now })
   if (externalExecutor !== undefined) throw new CanaryGateError('CALLER_SUPPLIED_EXECUTOR_FORBIDDEN')
-  if (shouldSimulateAuthorizedPlan !== true) throw new CanaryGateError('REAL_PROVIDER_EXECUTOR_NOT_IMPLEMENTED')
+  const validatedAuthorization = shouldSimulateAuthorizedPlan === true
+    ? validateAuthorizationRequest({ mode, authorization, policyPackage: policy, now })
+    : validateExternalAuthorization({ mode, authorization, policyPackage: policy, now })
   const execution = await simulateAuthorizedPlan({
     mode,
     plan,
