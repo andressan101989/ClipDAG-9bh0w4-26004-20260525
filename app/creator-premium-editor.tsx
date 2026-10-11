@@ -66,6 +66,7 @@ const blockerCopy: Record<string, string> = {
   creator_premium_image_media_not_ready: 'Falta completar la vista previa y la imagen privada.',
   creator_premium_video_media_not_ready: 'Falta completar la vista previa o el video todavía se está procesando.',
   creator_premium_active_offer_required: 'Configura un precio de compra activo.',
+  creator_premium_active_plan_required: 'Seguridad aprobada. La activación de un plan asociado completará la publicación automática.',
   creator_premium_plan_mapping_required: 'Asocia el contenido a por lo menos un plan.',
   content_safety_policy_not_configured: 'La verificación de seguridad todavía no está disponible. Tu contenido sigue privado.',
   content_safety_audio_policy_not_configured: 'La verificación de audio todavía no está disponible. Tu video sigue privado.',
@@ -211,7 +212,8 @@ export default function CreatorPremiumEditor() {
   }, [load, routeContentId]);
 
   useEffect(() => {
-    if (!contentId || item?.lifecycle_status !== 'pending_review' || item.verification_status !== 'pending') return;
+    if (!contentId || item?.lifecycle_status !== 'pending_review' ||
+        !['pending', 'commercial_pending'].includes(item.verification_status ?? '')) return;
     const timer = setInterval(() => { void load(contentId, true); }, 4000);
     return () => clearInterval(timer);
   }, [contentId, item?.lifecycle_status, item?.verification_status, load]);
@@ -448,12 +450,18 @@ export default function CreatorPremiumEditor() {
             <MaterialCommunityIcons name="clock-check-outline" size={21} color={Colors.warning} />
             <View style={styles.headerCopy}>
               <Text style={styles.reviewTitle}>{item?.lifecycle_status === 'pending_review'
-                ? item.verification_status === 'failed' ? 'Error temporal de verificación' : 'Verificando contenido'
+                ? item.verification_status === 'failed'
+                  ? 'Error temporal de verificación'
+                  : item.verification_status === 'commercial_pending'
+                    ? 'Seguridad aprobada · activación del plan pendiente'
+                    : 'Verificando contenido'
                 : 'Contenido no editable'}</Text>
               <Text style={styles.helper}>{item?.lifecycle_status === 'pending_review'
                 ? item.verification_status === 'failed'
                   ? blockerCopy[item.verification_error_code ?? ''] ?? 'La verificación no terminó. Puedes reintentar de forma segura.'
-                  : 'El original sigue privado mientras el sistema completa las comprobaciones.'
+                  : item.verification_status === 'commercial_pending'
+                    ? 'Seguridad aprobada. La activación del plan hará que el sistema revalide la publicación sin volver a escanear el original.'
+                    : 'El original sigue privado mientras el sistema completa las comprobaciones.'
                 : 'Los metadatos y medios quedan bloqueados en este estado.'}</Text>
             </View>
           </View>
@@ -547,7 +555,11 @@ export default function CreatorPremiumEditor() {
           <View style={styles.statusRow}>
             <MaterialCommunityIcons name={item?.submission_ready ? 'check-circle' : 'alert-circle-outline'} size={19} color={item?.submission_ready ? Colors.success : Colors.warning} />
             <Text style={styles.statusText}>{item?.lifecycle_status === 'pending_review'
-              ? item.verification_status === 'failed' ? 'Verificación pendiente · reintento disponible' : 'Verificando contenido'
+              ? item.verification_status === 'failed'
+                ? 'Verificación pendiente · reintento disponible'
+                : item.verification_status === 'commercial_pending'
+                  ? 'Seguridad aprobada · activación del plan pendiente'
+                  : 'Verificando contenido'
               : item?.lifecycle_status === 'published' ? 'Publicado automáticamente tras la verificación'
               : item?.submission_ready ? 'Listo para publicar' : blockerCopy[item?.submission_blocker ?? ''] ?? 'Completa los datos comerciales y los medios.'}</Text>
           </View>

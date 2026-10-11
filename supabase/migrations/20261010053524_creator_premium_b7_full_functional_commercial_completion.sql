@@ -32,7 +32,7 @@ alter table private.creator_premium_contents
     on update restrict on delete restrict,
   add constraint creator_premium_contents_verification_status_check
     check (verification_status in (
-      'not_requested','pending','passed','blocked','restricted','failed'
+      'not_requested','pending','commercial_pending','passed','blocked','restricted','failed'
     )),
   add constraint creator_premium_contents_verification_generation_check
     check (verification_generation >= 0),
@@ -61,7 +61,7 @@ alter table private.creator_premium_contents
         and verification_fingerprint is not null
         and verification_requested_at is not null
         and verification_completed_at is null)
-      or (verification_status in ('passed','blocked','restricted','failed')
+      or (verification_status in ('commercial_pending','passed','blocked','restricted','failed')
         and verification_scan_id is not null
         and verification_fingerprint is not null
         and verification_requested_at is not null
@@ -111,7 +111,7 @@ alter table private.creator_premium_contents
       and published_at is null and quarantined_at is null and removed_at is null
       and deleted_at is null and submitted_at is not null and reviewed_at is null
       and reviewed_by is null and review_reason is null
-      and verification_status in ('pending','failed'))
+      and verification_status in ('pending','commercial_pending','failed'))
     or (lifecycle_status = 'published'
       and published_at is not null and quarantined_at is null and removed_at is null
       and deleted_at is null and submitted_at is not null
@@ -352,6 +352,199 @@ begin
   end;
 
   return query select v_content.id, v_content.lifecycle_status, true;
+end;
+$$;
+
+-- Preserve the B5 activation contract while waking the canonical reconciler for
+-- completed safety proofs that were waiting only for this plan to become active.
+-- The wake uses pg_net and therefore starts after commit; no scan is recreated.
+create or replace function public.activate_my_creator_premium_plan_v1(p_plan_id uuid)
+returns table (
+  id uuid,
+  version integer,
+  status text,
+  activated_at timestamptz,
+  mapped_content_count bigint
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor uuid := auth.uid();
+  v_plan private.creator_premium_plans;
+  v_plan_key text;
+  v_count bigint;
+begin
+  if v_actor is null then
+    raise exception using errcode = '42501', message = 'creator_premium_auth_required';
+  end if;
+  if not private.current_user_is_creator_exclusive_age_eligible() then
+    raise exception using errcode = '42501', message = 'creator_premium_age_eligibility_required';
+  end if;
+  if not private.creator_premium_actor_is_operational_v1(v_actor) then
+    raise exception using errcode = '42501', message = 'creator_premium_account_restricted';
+  end if;
+  if p_plan_id is null then
+    raise exception using errcode = '22023', message = 'creator_premium_plan_invalid';
+  end if;
+
+  select plan.plan_key into v_plan_key
+  from private.creator_premium_plans plan
+  where plan.id = p_plan_id
+    and plan.creator_id = v_actor;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'creator_premium_plan_not_found';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      'creator-premium-plan-version:' || v_actor::text || ':' || v_plan_key,
+      0
+    )
+  );
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('creator-premium-plan:' || p_plan_id::text, 0)
+  );
+
+  select plan.* into v_plan
+  from private.creator_premium_plans plan
+  where plan.id = p_plan_id
+    and plan.creator_id = v_actor
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'creator_premium_plan_not_found';
+  end if;
+  if v_plan.status <> 'draft' then
+    raise exception using errcode = '55000', message = 'creator_premium_plan_draft_only';
+  end if;
+
+  perform family_plan.id
+  from private.creator_premium_plans family_plan
+  where family_plan.creator_id = v_actor
+    and family_plan.plan_key = v_plan.plan_key
+  order by family_plan.id
+  for update;
+
+  perform content.id
+  from private.creator_premium_contents content
+  where content.creator_id = v_actor
+    and content.id in (
+      select mapping.content_id
+      from private.creator_premium_plan_contents mapping
+      join private.creator_premium_plans affected_plan
+        on affected_plan.id = mapping.plan_id
+       and affected_plan.creator_id = mapping.creator_id
+      where affected_plan.creator_id = v_actor
+        and (
+          affected_plan.id = v_plan.id
+          or (
+            affected_plan.plan_key = v_plan.plan_key
+            and affected_plan.status = 'active'
+          )
+        )
+    )
+  order by content.id
+  for update;
+
+  select count(*) into v_count
+  from private.creator_premium_plan_contents mapping
+  where mapping.plan_id = v_plan.id
+    and mapping.creator_id = v_actor;
+
+  if v_count = 0 then
+    raise exception using errcode = '55000', message = 'creator_premium_plan_contents_required';
+  end if;
+
+  if exists (
+    select 1
+    from private.creator_premium_plan_contents mapping
+    join private.creator_premium_contents content
+      on content.id = mapping.content_id
+     and content.creator_id = mapping.creator_id
+    where mapping.plan_id = v_plan.id
+      and (
+        content.lifecycle_status not in ('pending_review','published')
+        or content.access_mode not in ('subscription','purchase_or_subscription')
+      )
+  ) then
+    raise exception using errcode = '55000', message = 'creator_premium_plan_content_review_required';
+  end if;
+
+  if exists (
+    select 1
+    from private.creator_premium_plan_contents mapping
+    join private.creator_premium_plans retiring_plan
+      on retiring_plan.id = mapping.plan_id
+     and retiring_plan.creator_id = mapping.creator_id
+    join private.creator_premium_contents content
+      on content.id = mapping.content_id
+     and content.creator_id = mapping.creator_id
+    where retiring_plan.creator_id = v_actor
+      and retiring_plan.plan_key = v_plan.plan_key
+      and retiring_plan.status = 'active'
+      and retiring_plan.id <> v_plan.id
+      and content.lifecycle_status = 'pending_review'
+      and content.access_mode in ('subscription','purchase_or_subscription')
+      and not exists (
+        select 1
+        from private.creator_premium_plan_contents other_mapping
+        join private.creator_premium_plans other_plan
+          on other_plan.id = other_mapping.plan_id
+         and other_plan.creator_id = other_mapping.creator_id
+        where other_mapping.content_id = content.id
+          and other_mapping.creator_id = v_actor
+          and other_plan.status in ('draft','active')
+          and not (
+            other_plan.plan_key = v_plan.plan_key
+            and other_plan.status = 'active'
+            and other_plan.id <> v_plan.id
+          )
+      )
+  ) then
+    raise exception using errcode = '55000', message = 'creator_premium_plan_content_review_locked';
+  end if;
+
+  update private.creator_premium_plans plan
+  set status = 'retired',
+      retired_at = pg_catalog.clock_timestamp(),
+      updated_at = pg_catalog.clock_timestamp()
+  where plan.creator_id = v_actor
+    and plan.plan_key = v_plan.plan_key
+    and plan.status = 'active'
+    and plan.id <> v_plan.id;
+
+  update private.creator_premium_plans plan
+  set status = 'active',
+      activated_at = pg_catalog.clock_timestamp(),
+      retired_at = null,
+      updated_at = pg_catalog.clock_timestamp()
+  where plan.id = v_plan.id
+  returning plan.* into v_plan;
+
+  if exists (
+    select 1
+    from private.creator_premium_plan_contents mapping
+    join private.creator_premium_contents content
+      on content.id = mapping.content_id
+     and content.creator_id = mapping.creator_id
+    where mapping.plan_id = v_plan.id
+      and mapping.creator_id = v_actor
+      and content.lifecycle_status = 'pending_review'
+      and content.verification_status = 'commercial_pending'
+  ) then
+    begin
+      perform public.wake_content_safety_scanner();
+    exception when others then
+      -- The existing once-per-minute dispatcher remains the durable fallback.
+      null;
+    end;
+  end if;
+
+  return query select v_plan.id, v_plan.version, v_plan.status,
+    v_plan.activated_at, v_count;
 end;
 $$;
 
@@ -1010,6 +1203,18 @@ begin
     when 'restore' then
       if v_content.lifecycle_status not in ('rejected','quarantined','removed') then
         raise exception using errcode = '55000', message = 'creator_premium_admin_restore_invalid_state';
+      end if;
+      if v_content.verification_scan_id is not null and exists (
+        select 1
+        from private.content_safety_alerts alert
+        where alert.scan_id = v_content.verification_scan_id
+          and not (
+            alert.status = 'dismissed'
+            and alert.resolution = 'no_violation'
+          )
+      ) then
+        raise exception using errcode = '55000',
+          message = 'creator_premium_safety_alert_resolution_required';
       end if;
       update private.creator_premium_contents content
       set verification_generation = content.verification_generation + 1,
@@ -3021,6 +3226,47 @@ begin
       where index>=0 and index<pg_catalog.cardinality(v_analysis.frame_timestamps_ms);
     else v_frame_times:='{}'::integer[];
     end if;
+
+    -- A canonical false-positive dismissal is an exception for one immutable
+    -- visual signal only. It is bound to the same content/owner, underlying
+    -- analysis, detector contract, finding, authorized reviewer, and audited
+    -- idempotent decision. Reports and every non-identical signal still alert.
+    if v_scan.target_type = 'creator_premium' and exists (
+      select 1
+      from private.content_safety_alerts prior_alert
+      where prior_alert.target_type = v_scan.target_type
+        and prior_alert.target_id = v_scan.target_id
+        and prior_alert.owner_user_id = v_scan.owner_user_id
+        and prior_alert.source_type = 'visual_classifier'
+        and prior_alert.category = v_category
+        and prior_alert.status = 'dismissed'
+        and prior_alert.resolution = 'no_violation'
+        and prior_alert.reviewed_by is not null
+        and prior_alert.reviewed_at is not null
+        and prior_alert.resolution_note is not null
+        and prior_alert.evidence ->> 'visual_analysis_id' = v_analysis.id::text
+        and prior_alert.evidence ->> 'provider' = v_analysis.provider
+        and prior_alert.evidence ->> 'model' = v_analysis.model
+        and prior_alert.evidence ->> 'prompt_version' = v_analysis.prompt_version
+        and prior_alert.evidence ->> 'analysis_fingerprint' = v_analysis.analysis_fingerprint
+        and prior_alert.evidence ->> 'model_triage_level' is not distinct from v_severity
+        and prior_alert.evidence ->> 'description' is not distinct from v_description
+        and exists (
+          select 1
+          from private.admin_action_audit audit
+          where audit.action = 'content_safety.alert.dismiss'
+            and audit.target_type = 'content_safety_alert'
+            and audit.target_id = prior_alert.id
+            and audit.actor_id = prior_alert.reviewed_by
+            and audit.reason = prior_alert.resolution_note
+            and audit.outcome = 'succeeded'
+            and audit.idempotency_key is not null
+            and audit.request_fingerprint is not null
+        )
+    ) then
+      continue;
+    end if;
+
     v_priority:=private.content_safety_priority(v_severity,v_pending,v_recent,v_warnings,v_reach);
     insert into private.content_safety_alerts(
       scan_id,target_type,target_id,owner_user_id,source_type,rule_id,category,severity,confidence,
@@ -3373,7 +3619,7 @@ as $$
 declare
   v_scan private.content_safety_scans;v_content private.creator_premium_contents;
   v_snapshot jsonb;v_current_fingerprint text;v_blocker text;v_alert_severity text;
-  v_transcript private.content_safety_audio_transcripts;v_now timestamptz:=pg_catalog.clock_timestamp();
+  v_transcript private.content_safety_audio_transcripts;v_now timestamptz;
 begin
   select * into v_scan from private.content_safety_scans where id=p_scan_id for update;
   if not found or v_scan.target_type<>'creator_premium' then
@@ -3385,6 +3631,7 @@ begin
   select * into v_content from private.creator_premium_contents
   where id=v_scan.target_id for update;
   if not found then return pg_catalog.jsonb_build_object('scan_id',v_scan.id,'outcome','content_missing');end if;
+  v_now:=pg_catalog.clock_timestamp();
 
   -- Published content can only move toward restriction here; a report scan can
   -- never manufacture a new PASS or overwrite its original publication proof.
@@ -3399,7 +3646,11 @@ begin
     if v_current_fingerprint<>v_scan.content_fingerprint then
       return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','stale_scan');
     end if;
-    if exists(select 1 from private.content_safety_alerts alert where alert.scan_id=v_scan.id) then
+    if exists(
+      select 1 from private.content_safety_alerts alert
+      where alert.scan_id=v_scan.id
+        and not (alert.status='dismissed' and alert.resolution='no_violation')
+    ) then
       update private.creator_premium_contents content set
         lifecycle_status='quarantined',quarantined_at=v_now,
         reviewed_at=null,reviewed_by=null,review_reason='creator_premium_safety_signal',
@@ -3499,11 +3750,12 @@ begin
 
   select alert.severity into v_alert_severity
   from private.content_safety_alerts alert where alert.scan_id=v_scan.id
+    and not (alert.status='dismissed' and alert.resolution='no_violation')
   order by case alert.severity when 'critical' then 4 when 'high' then 3 when 'medium' then 2 else 1 end desc limit 1;
   if found then
-    -- Canonical alerts are detection evidence, not confirmed violations. Every
-    -- signal therefore fails closed into exception moderation; no model/rule
-    -- match is silently promoted into a human-confirmed enforcement finding.
+    -- Canonical active alerts are detection evidence, not confirmed violations.
+    -- Every unresolved signal therefore fails closed into exception moderation;
+    -- no model/rule match is promoted into a confirmed enforcement finding.
     update private.creator_premium_contents set lifecycle_status='quarantined',published_at=null,
       quarantined_at=v_now,removed_at=null,reviewed_at=null,reviewed_by=null,
       review_reason=case when v_alert_severity in('high','critical')
@@ -3518,6 +3770,12 @@ begin
 
   v_blocker:=private.creator_premium_publication_blocker_v1(v_content.id);
   if v_blocker is not null then
+    if v_blocker='creator_premium_active_plan_required' then
+      update private.creator_premium_contents set verification_status='commercial_pending',
+        verification_error_code=v_blocker,verification_completed_at=v_now,updated_at=v_now
+      where id=v_content.id;
+      return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','commercial_pending','error',v_blocker);
+    end if;
     update private.creator_premium_contents set verification_status='failed',
       verification_error_code=v_blocker,verification_completed_at=v_now,updated_at=v_now
     where id=v_content.id;
@@ -3548,10 +3806,27 @@ begin
     join private.creator_premium_contents content on content.id=scan.target_id
     where scan.target_type='creator_premium' and (
       (content.lifecycle_status='pending_review'
-        and content.verification_status='pending'
-        and content.verification_scan_id=scan.id)
+        and content.verification_status in ('pending','commercial_pending')
+        and content.verification_scan_id=scan.id
+        and (
+          content.verification_status='pending'
+          or (
+            content.verification_status='commercial_pending'
+            and exists (
+              select 1
+              from private.creator_premium_plan_contents mapping
+              join private.creator_premium_plans plan
+                on plan.id=mapping.plan_id
+               and plan.creator_id=mapping.creator_id
+              where mapping.content_id=content.id
+                and mapping.creator_id=content.creator_id
+                and plan.status='active'
+            )
+          )
+        ))
       or (content.lifecycle_status='published' and exists(
-        select 1 from private.content_safety_alerts alert where alert.scan_id=scan.id))
+        select 1 from private.content_safety_alerts alert where alert.scan_id=scan.id
+          and not (alert.status='dismissed' and alert.resolution='no_violation')))
     )
     order by scan.updated_at,scan.id limit p_limit
     for update of scan skip locked
@@ -3582,6 +3857,11 @@ grant execute on function public.reconcile_creator_premium_publications_v1(integ
 revoke all on function public.submit_my_creator_premium_content_for_review_v1(uuid)
   from public, anon, authenticated, service_role;
 grant execute on function public.submit_my_creator_premium_content_for_review_v1(uuid)
+  to authenticated;
+
+revoke all on function public.activate_my_creator_premium_plan_v1(uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.activate_my_creator_premium_plan_v1(uuid)
   to authenticated;
 
 revoke all on function public.get_my_creator_premium_contents_v1(integer,timestamptz,uuid)

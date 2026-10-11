@@ -476,6 +476,8 @@ function CreatorPremiumHubContent() {
                         <StatusChip
                           label={item.lifecycle_status === 'pending_review' && item.verification_status === 'failed'
                             ? 'Verificación pendiente'
+                            : item.lifecycle_status === 'pending_review' && item.verification_status === 'commercial_pending'
+                              ? 'Activación comercial pendiente'
                             : contentStatus[item.lifecycle_status]}
                           tone={item.lifecycle_status === 'published' ? 'green' : item.lifecycle_status === 'pending_review' ? 'amber' : 'purple'}
                         />
@@ -486,7 +488,9 @@ function CreatorPremiumHubContent() {
                       {item.lifecycle_status === 'pending_review' ? <Text style={styles.meta}>
                         {item.verification_status === 'failed'
                           ? 'Error temporal · abre el contenido para reintentar'
-                          : 'Comprobaciones automáticas en curso'}
+                          : item.verification_status === 'commercial_pending'
+                            ? 'Seguridad aprobada · activación del plan pendiente'
+                            : 'Comprobaciones automáticas en curso'}
                       </Text> : null}
                       <Text style={styles.meta}>
                         {(item.content_kind === 'image' ? item.image_media_ready : item.video_media_ready)

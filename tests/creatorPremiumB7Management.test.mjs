@@ -142,6 +142,8 @@ test('admin exception moderation is capability-gated, locked, idempotent, audita
   assert.doesNotMatch(body, /'approve'|'reject'|lifecycle_status\s*=\s*'published'/i);
   assert.match(body, /restore[\s\S]*enqueue_content_safety_scan/i);
   assert.match(body, /restore[\s\S]*lifecycle_status\s*=\s*'pending_review'/i);
+  assert.match(body, /creator_premium_safety_alert_resolution_required/i);
+  assert.match(body, /status\s*=\s*'dismissed'[\s\S]*resolution\s*=\s*'no_violation'/i);
   assert.match(body, /when\s+'quarantine'[\s\S]*lifecycle_status\s*<>\s*'published'/i);
   assert.match(body, /when\s+'remove'[\s\S]*lifecycle_status\s+not\s+in\s*\(\s*'published'\s*,\s*'quarantined'\s*\)/i);
   assert.match(body, /when\s+'restore'[\s\S]*lifecycle_status\s+not\s+in\s*\(\s*'rejected'\s*,\s*'quarantined'\s*,\s*'removed'\s*\)/i);

@@ -28,6 +28,7 @@ export type CreatorPremiumLifecycle =
 export type CreatorPremiumVerificationStatus =
   | 'not_requested'
   | 'pending'
+  | 'commercial_pending'
   | 'passed'
   | 'blocked'
   | 'restricted'

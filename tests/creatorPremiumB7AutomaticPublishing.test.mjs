@@ -30,7 +30,7 @@ test('B7-F2 keeps one lifecycle and records immutable automatic-verification evi
     'verification_requested_at',
     'verification_completed_at',
   ]) assert.match(sql, new RegExp(`add\\s+column\\s+${column}\\b`, 'i'), column);
-  assert.match(sql, /verification_status[\s\S]*'not_requested'[\s\S]*'pending'[\s\S]*'passed'[\s\S]*'blocked'[\s\S]*'restricted'[\s\S]*'failed'/i);
+  assert.match(sql, /verification_status[\s\S]*'not_requested'[\s\S]*'pending'[\s\S]*'commercial_pending'[\s\S]*'passed'[\s\S]*'blocked'[\s\S]*'restricted'[\s\S]*'failed'/i);
   assert.doesNotMatch(sql, /create\s+table\s+(?:public|private)\.creator_premium_(?:publication|verification|safety)/i);
 });
 
@@ -107,6 +107,65 @@ test('automatic finalizer requires current scan, fingerprint, every required mod
   assert.match(body, /content_safety_policy_not_configured/i);
   assert.match(body, /detection evidence, not confirmed violations/i);
   assert.match(body, /lifecycle_status\s*=\s*'quarantined'/i);
+  const contentLock = body.search(/from\s+private\.creator_premium_contents[\s\S]*?for\s+update/i);
+  const serializedTime = body.search(/v_now\s*:=\s*pg_catalog\.clock_timestamp\(\)/i);
+  assert.ok(contentLock >= 0 && serializedTime > contentLock, 'publication time must be captured after the content lock');
+});
+
+test('completed safety evidence waits for plan activation without a second scan', () => {
+  const finalizer = lastFunctionBody('finalize_creator_premium_safety_scan_v1', 'private');
+  const reconciler = lastFunctionBody('reconcile_creator_premium_publications_v1', 'public');
+  const activate = lastFunctionBody('activate_my_creator_premium_plan_v1', 'public');
+
+  assert.match(
+    finalizer,
+    /v_blocker\s*=\s*'creator_premium_active_plan_required'[\s\S]*verification_status\s*=\s*'commercial_pending'[\s\S]*verification_error_code\s*=\s*v_blocker[\s\S]*verification_completed_at\s*=\s*v_now/i,
+  );
+  assert.match(finalizer, /'outcome'\s*,\s*'commercial_pending'/i);
+  assert.match(
+    reconciler,
+    /content\.verification_status\s+in\s*\(\s*'pending'\s*,\s*'commercial_pending'\s*\)/i,
+  );
+  assert.match(reconciler, /content\.verification_status\s*=\s*'commercial_pending'[\s\S]*plan\.status\s*=\s*'active'/i);
+  assert.match(activate, /wake_content_safety_scanner\s*\(\s*\)/i);
+  assert.doesNotMatch(activate, /enqueue_content_safety_scan/i);
+  assert.match(activate, /content\.verification_status\s*=\s*'commercial_pending'/i);
+});
+
+test('a canonical false-positive dismissal suppresses only the identical visual signal', () => {
+  const visualAlerts = lastFunctionBody('content_safety_create_visual_alerts_for_scan', 'private');
+  const finalizer = lastFunctionBody('finalize_creator_premium_safety_scan_v1', 'private');
+  const reconciler = lastFunctionBody('reconcile_creator_premium_publications_v1', 'public');
+  const moderation = lastFunctionBody('admin_review_creator_premium_content_v1', 'public');
+
+  assert.match(visualAlerts, /prior_alert\.status\s*=\s*'dismissed'/i);
+  assert.match(visualAlerts, /prior_alert\.resolution\s*=\s*'no_violation'/i);
+  assert.match(visualAlerts, /prior_alert\.target_type\s*=\s*v_scan\.target_type/i);
+  assert.match(visualAlerts, /prior_alert\.target_id\s*=\s*v_scan\.target_id/i);
+  assert.match(visualAlerts, /prior_alert\.owner_user_id\s*=\s*v_scan\.owner_user_id/i);
+  assert.match(visualAlerts, /prior_alert\.source_type\s*=\s*'visual_classifier'/i);
+  assert.match(visualAlerts, /prior_alert\.category\s*=\s*v_category/i);
+  for (const fact of [
+    'visual_analysis_id',
+    'provider',
+    'model',
+    'prompt_version',
+    'analysis_fingerprint',
+    'model_triage_level',
+    'description',
+  ]) assert.match(visualAlerts, new RegExp(`prior_alert\\.evidence[\\s\\S]*${fact}`, 'i'), fact);
+  assert.match(visualAlerts, /private\.admin_action_audit/i);
+  assert.match(visualAlerts, /audit\.action\s*=\s*'content_safety\.alert\.dismiss'/i);
+  assert.match(visualAlerts, /audit\.actor_id\s*=\s*prior_alert\.reviewed_by/i);
+  assert.match(visualAlerts, /audit\.reason\s*=\s*prior_alert\.resolution_note/i);
+  assert.match(visualAlerts, /audit\.idempotency_key\s+is\s+not\s+null/i);
+
+  const activeAlertPredicate = /not\s*\(\s*alert\.status\s*=\s*'dismissed'\s+and\s+alert\.resolution\s*=\s*'no_violation'\s*\)/gi;
+  assert.ok((finalizer.match(activeAlertPredicate) ?? []).length >= 2, 'both publication paths must ignore only canonical false-positive dismissals');
+  assert.match(reconciler, activeAlertPredicate);
+  assert.match(moderation, /creator_premium_safety_alert_resolution_required/i);
+  assert.match(moderation, activeAlertPredicate);
+  assert.doesNotMatch(moderation, /verification_status\s*=\s*'passed'|lifecycle_status\s*=\s*'published'/i);
 });
 
 test('Premium governance scope is previewable and safety alerts are searchable without original media', () => {
@@ -126,7 +185,7 @@ test('only service role can reconcile publication and late work cannot republish
   assert.match(body, /finalize_creator_premium_safety_scan_v1/i);
   assert.match(
     body,
-    /content\.lifecycle_status\s*=\s*'pending_review'\s+and\s+content\.verification_status\s*=\s*'pending'/i,
+    /content\.lifecycle_status\s*=\s*'pending_review'\s+and\s+content\.verification_status\s+in\s*\(\s*'pending'\s*,\s*'commercial_pending'\s*\)/i,
   );
   assert.match(sql, /revoke\s+all\s+on\s+function\s+public\.reconcile_creator_premium_publications_v1\([^;]*\)[\s\S]*?grant\s+execute[\s\S]*?to\s+service_role/i);
   const finalizer = lastFunctionBody('finalize_creator_premium_safety_scan_v1', 'private');
@@ -167,6 +226,9 @@ test('creator and admin UX describe automatic verification rather than routine h
   assert.match(editor, /Publicar contenido Premium/i);
   assert.match(editor, /Verificando contenido|Verificaci[oó]n pendiente/i);
   assert.match(hub, /Verificando contenido|Verificaci[oó]n pendiente/i);
+  assert.match(service, /'commercial_pending'/i);
+  assert.match(editor, /Seguridad aprobada[^\n]*activaci[oó]n[^\n]*plan/i);
+  assert.match(hub, /Seguridad aprobada[^\n]*activaci[oó]n[^\n]*plan/i);
   assert.doesNotMatch(`${editor}\n${hub}`, /Enviar a revisi[oó]n administrativa|Solo (?:un )?moderador puede publicar|Esperando aprobaci[oó]n del equipo/i);
   assert.match(admin, /Seguridad Premium|Excepciones Premium/i);
   assert.doesNotMatch(admin, /action:\s*['"]approve['"]|action:\s*['"]reject['"]|\[['"]approve['"],['"]reject['"]\]/i);

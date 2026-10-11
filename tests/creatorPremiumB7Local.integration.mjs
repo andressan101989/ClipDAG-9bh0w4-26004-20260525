@@ -102,6 +102,7 @@ test('B7 disposable harness contains executable lifecycle and financial invarian
     'complete_content_safety_audio_transcription',
     'reconcile_creator_premium_publications_v1',
     'admin_review_creator_premium_content_v1',
+    'admin_review_content_safety_alert',
     'purchase_creator_premium_content_v1',
     'subscribe_creator_premium_plan_v1',
     'cancel_creator_premium_subscription_v1',
@@ -131,7 +132,7 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     creator: uid(), buyer: uid(), other: uid(), admin: uid(),
     purchaseRequest: uid(), subscriptionRequest: uid(), moderationRequest: uid(), blockedRequest: uid(),
     purchaseOfferRequest: uid(), moderationOfferRequest: uid(), blockedOfferRequest: uid(), planRequest: uid(),
-    purchaseKey: uid(), subscriptionKey: uid(), cancelKey: uid(),
+    purchaseKey: uid(), subscriptionKey: uid(), cancelKey: uid(), safetyDismissKey: uid(),
     purchaseRefundKey: uid(), periodRefundKey: uid(), rollbackKey: uid(),
     purchaseTeaser: uid(), purchaseOriginal: uid(), subscriptionTeaser: uid(), subscriptionVideo: uid(),
     moderationTeaser: uid(), moderationOriginal: uid(), blockedTeaser: uid(), blockedOriginal: uid(),
@@ -321,19 +322,45 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     for (const contentId of [purchase.id,subscription.id,moderation.id,blocked.id]) {
       assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.submit_my_creator_premium_content_for_review_v1('${contentId}') result`)).lifecycle_status, 'pending_review');
     }
-    assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.activate_my_creator_premium_plan_v1('${plan.id}') result`)).status, 'active');
     expectFailure(asRole(db, 'authenticated', id.creator, `select public.admin_review_creator_premium_content_v1('${purchase.id}','approve','self approval','${uid()}')`, { allowFailure: true }), 'admin_capability_forbidden');
 
     const review = (contentId, action, reason, key = uid()) => json(adminCommand(
       'admin_review_creator_premium_content_v1',[contentId,action,reason,key],
     ));
     expectFailure(adminCommand('admin_review_creator_premium_content_v1',[purchase.id,'approve','manual bypass forbidden',uid()], { allowFailure: true }), 'creator_premium_admin_review_invalid');
+    const subscriptionScanBefore = psql(db, `select verification_scan_id from private.creator_premium_contents where id='${subscription.id}'`).stdout;
+    const subscriptionScanCountBefore = psql(db, `select count(*) from private.content_safety_scans where target_type='creator_premium' and target_id='${subscription.id}'`).stdout;
     const initialReconcile = completeAutomaticSafety([blocked.id]);
     assert.ok(initialReconcile.processed >= 4);
     assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${purchase.id}'`).stdout, 'published|passed');
-    assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${subscription.id}'`).stdout, 'published|passed');
+    assert.equal(psql(db, `select lifecycle_status||'|'||verification_status||'|'||verification_error_code from private.creator_premium_contents where id='${subscription.id}'`).stdout, 'pending_review|commercial_pending|creator_premium_active_plan_required');
     assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${moderation.id}'`).stdout, 'published|passed');
     assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${blocked.id}'`).stdout, 'quarantined|restricted');
+
+    assert.equal(psql(db, 'select count(*) from public.financial_transactions').stdout, '0');
+    assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.activate_my_creator_premium_plan_v1('${plan.id}') result`)).status, 'active');
+    const activationReconcile = json(asRole(db, 'service_role', null, 'select public.reconcile_creator_premium_publications_v1(50)'));
+    assert.ok(activationReconcile.processed >= 1);
+    assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${subscription.id}'`).stdout, 'published|passed');
+    assert.equal(psql(db, `select verification_scan_id from private.creator_premium_contents where id='${subscription.id}'`).stdout, subscriptionScanBefore);
+    assert.equal(psql(db, `select count(*) from private.content_safety_scans where target_type='creator_premium' and target_id='${subscription.id}'`).stdout, subscriptionScanCountBefore);
+
+    const blockedAlertId = psql(db, `select id from private.content_safety_alerts where target_type='creator_premium' and target_id='${blocked.id}' and source_type='visual_classifier' order by created_at desc limit 1`).stdout;
+    assert.match(blockedAlertId, /^[0-9a-f-]{36}$/i);
+    expectFailure(adminCommand('admin_review_creator_premium_content_v1',[blocked.id,'restore','unsafe restore without alert resolution',uid()], { allowFailure: true }), 'creator_premium_safety_alert_resolution_required');
+    expectFailure(asRole(db, 'authenticated', id.buyer, `select public.admin_review_content_safety_alert('${blockedAlertId}','dismiss','no_violation','not authorized','${uid()}')`, { allowFailure: true }), 'admin_capability_forbidden');
+    const dismissed = json(adminCommand('admin_review_content_safety_alert',[blockedAlertId,'dismiss','no_violation','Disposable verified false positive',id.safetyDismissKey]));
+    assert.equal(dismissed.status, 'dismissed');
+    assert.equal(json(adminCommand('admin_review_content_safety_alert',[blockedAlertId,'dismiss','no_violation','Disposable verified false positive',id.safetyDismissKey])).idempotent, true);
+    assert.equal(review(blocked.id,'restore','canonical false-positive resolution recorded').lifecycle_status, 'pending_review');
+    completeAutomaticSafety();
+    assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${blocked.id}'`).stdout, 'published|passed');
+    assert.equal(psql(db, `select count(*) from private.content_safety_alerts where target_type='creator_premium' and target_id='${blocked.id}' and source_type='visual_classifier'`).stdout, '1');
+    const newEvidenceReport = asRole(db, 'authenticated', id.buyer, `select public.report_creator_premium_content_v1('${blocked.id}','fraud','New disposable evidence after false-positive dismissal')`).stdout;
+    assert.match(newEvidenceReport, /^[0-9a-f-]{36}$/i);
+    completeAutomaticSafety();
+    assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${blocked.id}'`).stdout, 'quarantined|restricted');
+    expectFailure(adminCommand('admin_review_creator_premium_content_v1',[blocked.id,'restore','new evidence still active',uid()], { allowFailure: true }), 'creator_premium_safety_alert_resolution_required');
 
     const quarantineKey = uid();
     assert.equal(review(moderation.id,'quarantine','post-publication safety review',quarantineKey).lifecycle_status, 'quarantined');
