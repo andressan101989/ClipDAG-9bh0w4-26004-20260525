@@ -15,6 +15,7 @@ import React, {
   createContext, useState, useCallback, useEffect, useRef, ReactNode,
 } from 'react';
 import { getSupabaseClient } from '@/template';
+import { presentAuthError } from '@/services/authErrorPresentation';
 import { signupErrorMessage, signupMetadata } from '@/utils/signupDob';
 import { PresenceManager }   from '@/modules/realtime/PresenceManager';
 import {
@@ -282,13 +283,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const supabase = supabaseRef.current;
-    if (!supabase) return { success: false, error: 'Backend unavailable' };
+    if (!supabase) {
+      return {
+        success: false,
+        error: 'No se pudo inicializar el servicio de autenticación.',
+      };
+    }
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) return { success: false, error: error.message };
-      return { success: true, sessionActive: !!data.session };
-    } catch (e: any) {
-      return { success: false, error: e.message || 'Error al iniciar sesion' };
+      if (error) {
+        const presented = presentAuthError(error);
+        console.info('[AuthProvider] login_failed', {
+          kind: presented.kind,
+          retryable: presented.retryable,
+          status: presented.status ?? null,
+        });
+        return { success: false, error: presented.message };
+      }
+      if (!data.session || !data.user) {
+        console.info('[AuthProvider] login_failed', {
+          kind: 'session_not_established',
+          retryable: true,
+          status: null,
+        });
+        return {
+          success: false,
+          error: 'No se pudo establecer una sesión. Inténtalo de nuevo.',
+        };
+      }
+      return { success: true, sessionActive: true };
+    } catch (error: unknown) {
+      const presented = presentAuthError(error);
+      console.info('[AuthProvider] login_failed', {
+        kind: presented.kind,
+        retryable: presented.retryable,
+        status: presented.status ?? null,
+      });
+      return { success: false, error: presented.message };
     }
   }, []);
 
