@@ -23,6 +23,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/useAuth';
 import {
+  creatorPremiumCommercialSummaryErrorMessage,
+  creatorPremiumErrorMessage,
+  settleCreatorPremiumHubLoad,
+} from '@/services/creatorPremiumIntegrationState';
+import {
   activateMyCreatorPremiumPlan,
   cloneMyCreatorPremiumPlanVersion,
   createMyCreatorPremiumPlanDraft,
@@ -64,14 +69,6 @@ const accessLabel: Record<CreatorPremiumOwnerItem['access_mode'], string> = {
   subscription: 'Suscripción',
   purchase_or_subscription: 'Compra o suscripción',
 };
-
-function errorMessage(error: unknown): string {
-  if (error && typeof error === 'object' && 'message' in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === 'string' && message.trim()) return message;
-  }
-  return 'No pudimos completar la operación. Inténtalo de nuevo.';
-}
 
 function money(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return 'Sin precio';
@@ -118,6 +115,7 @@ function CreatorPremiumHubContent() {
   const [contents, setContents] = useState<CreatorPremiumOwnerItem[]>([]);
   const [plans, setPlans] = useState<CreatorPremiumPlanItem[]>([]);
   const [summary, setSummary] = useState<CreatorPremiumCommercialSummary | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [contentNextCursor, setContentNextCursor] = useState<CreatorPremiumCursor | null>(null);
   const [planNextCursor, setPlanNextCursor] = useState<CreatorPremiumCursor | null>(null);
   const [loadingMore, setLoadingMore] = useState<'content' | 'plans' | null>(null);
@@ -158,6 +156,7 @@ function CreatorPremiumHubContent() {
     setContents([]);
     setPlans([]);
     setSummary(null);
+    setSummaryError(null);
     setContentNextCursor(null);
     setPlanNextCursor(null);
     setLoadingMore(null);
@@ -199,22 +198,35 @@ function CreatorPremiumHubContent() {
     if (refresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
+    setSummaryError(null);
     try {
-      const [contentPage, planPage, commercialSummary] = await Promise.all([
-        fetchMyCreatorPremiumContents({ limit: 100 }),
-        fetchMyCreatorPremiumPlans({ limit: 100 }),
-        fetchMyCreatorPremiumCommercialSummary(),
-      ]);
+      const result = await settleCreatorPremiumHubLoad({
+        content: () => fetchMyCreatorPremiumContents({ limit: 100 }),
+        plans: () => fetchMyCreatorPremiumPlans({ limit: 100 }),
+        summary: () => fetchMyCreatorPremiumCommercialSummary(),
+      });
       if (generation !== contextGeneration.current || request !== requestGeneration.current) return false;
-      setContents(contentPage.items);
-      setPlans(planPage.items);
-      setContentNextCursor(contentPage.nextCursor);
-      setPlanNextCursor(planPage.nextCursor);
-      setSummary(commercialSummary);
+      if (result.content.value) {
+        setContents(result.content.value.items);
+        setContentNextCursor(result.content.value.nextCursor);
+      }
+      if (result.plans.value) {
+        setPlans(result.plans.value.items);
+        setPlanNextCursor(result.plans.value.nextCursor);
+      }
+      setSummary(result.summary.value);
+      setSummaryError(result.summary.error
+        ? creatorPremiumCommercialSummaryErrorMessage(result.summary.error)
+        : null);
+      const coreError = result.content.error ?? result.plans.error;
+      if (coreError) {
+        setError(creatorPremiumErrorMessage(coreError));
+        return false;
+      }
       return true;
     } catch (reason) {
       if (generation !== contextGeneration.current || request !== requestGeneration.current) return false;
-      setError(errorMessage(reason));
+      setError(creatorPremiumErrorMessage(reason));
       return false;
     } finally {
       if (generation === contextGeneration.current && request === requestGeneration.current) {
@@ -237,7 +249,7 @@ function CreatorPremiumHubContent() {
       setContentNextCursor(page.nextCursor);
     } catch (reason) {
       if (generation !== contextGeneration.current || request !== contentPageGeneration.current) return;
-      setError(errorMessage(reason));
+      setError(creatorPremiumErrorMessage(reason));
     } finally {
       if (generation === contextGeneration.current && request === contentPageGeneration.current) {
         setLoadingMore(null);
@@ -257,7 +269,7 @@ function CreatorPremiumHubContent() {
       setPlanNextCursor(page.nextCursor);
     } catch (reason) {
       if (generation !== contextGeneration.current || request !== planPageGeneration.current) return;
-      setError(errorMessage(reason));
+      setError(creatorPremiumErrorMessage(reason));
     } finally {
       if (generation === contextGeneration.current && request === planPageGeneration.current) {
         setLoadingMore(null);
@@ -340,7 +352,7 @@ function CreatorPremiumHubContent() {
       setPlanModal(false);
       setEditingPlan(null);
     } catch (reason) {
-      Alert.alert('No se guardó el plan', errorMessage(reason));
+      Alert.alert('No se guardó el plan', creatorPremiumErrorMessage(reason));
     } finally {
       setSavingPlan(false);
     }
@@ -361,7 +373,7 @@ function CreatorPremiumHubContent() {
       if (!refreshed) throw new Error('creator_premium_plan_refresh_failed');
       if (action === 'clone') planCloneAttempts.current.delete(plan.id);
     } catch (reason) {
-      Alert.alert('No se actualizó el plan', errorMessage(reason));
+      Alert.alert('No se actualizó el plan', creatorPremiumErrorMessage(reason));
     } finally {
       setBusyId(null);
     }
@@ -389,7 +401,7 @@ function CreatorPremiumHubContent() {
       await load(true);
       router.push({ pathname: '/creator-premium-editor', params: { contentId } });
     } catch (reason) {
-      Alert.alert('No se reabrió el borrador', errorMessage(reason));
+      Alert.alert('No se reabrió el borrador', creatorPremiumErrorMessage(reason));
     } finally {
       setBusyId(null);
     }
@@ -603,7 +615,12 @@ function CreatorPremiumHubContent() {
             </>
           ) : (
             <>
-              {!summary ? (
+              {summaryError ? (
+                <Pressable style={styles.errorCard} onPress={() => void load(true)}>
+                  <Text style={styles.errorText}>{summaryError}</Text>
+                  <Text style={styles.retryText}>Toca para reintentar solo la carga de datos</Text>
+                </Pressable>
+              ) : !summary ? (
                 <EmptyState icon="playlist-star" title="Sin resumen comercial" copy="No pudimos obtener los datos financieros canónicos." />
               ) : (
                 <>

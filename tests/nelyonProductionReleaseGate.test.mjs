@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -376,6 +377,30 @@ test('direct and multi-hop shared imports propagate to all consumers', async () 
     managedFunctions: MANAGED_FUNCTIONS,
     forbiddenFunctions: ['bdag-economy'],
   }), ['agora-token']);
+});
+
+test('changed function modules propagate across function boundaries and deny unmanaged consumers', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const graph = gate.buildFunctionGraph({
+    'supabase/functions/content-safety-scan/index.ts': "import { visual } from './visualPipeline.mjs';\nexport { visual };\n",
+    'supabase/functions/content-safety-scan/visualPipeline.mjs': 'export const visual = true;\n',
+    'supabase/functions/video-semantic-index/index.ts': "import { semantic } from './visualSemanticPipeline.mjs';\nexport { semantic };\n",
+    'supabase/functions/video-semantic-index/visualSemanticPipeline.mjs': "export { visual as semantic } from '../content-safety-scan/visualPipeline.mjs';\n",
+  });
+  const input = {
+    changes: [{ status: 'M', path: 'supabase/functions/content-safety-scan/visualPipeline.mjs' }],
+    graph,
+    forbiddenFunctions: ['bdag-economy'],
+  };
+
+  assertDenied(() => gate.resolveAffectedFunctions({
+    ...input,
+    managedFunctions: ['content-safety-scan'],
+  }), 'FUNCTION_NOT_AUTHORIZED');
+  assert.deepEqual(gate.resolveAffectedFunctions({
+    ...input,
+    managedFunctions: ['content-safety-scan', 'video-semantic-index'],
+  }), ['content-safety-scan', 'video-semantic-index']);
 });
 
 test('literal dynamic imports resolve while nonliteral imports deny', async () => {

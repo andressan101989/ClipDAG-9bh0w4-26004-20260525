@@ -39,6 +39,11 @@ import {
 } from '@/services/creatorPremiumService';
 import { uploadCreatorPremiumImagePair } from '@/services/creatorPremiumMediaService';
 import { uploadCreatorPremiumVideoMedia } from '@/services/creatorPremiumStreamService';
+import {
+  CREATOR_PREMIUM_BLOCKER_COPY as blockerCopy,
+  creatorPremiumErrorMessage as messageFor,
+  creatorPremiumSubmissionMediaBlocker,
+} from '@/services/creatorPremiumIntegrationState';
 
 type LocalFile = {
   uri: string;
@@ -61,26 +66,6 @@ const accessOptions: { value: CreatorPremiumAccessMode; label: string }[] = [
   { value: 'subscription', label: 'Suscripción' },
   { value: 'purchase_or_subscription', label: 'Compra o suscripción' },
 ];
-
-const blockerCopy: Record<string, string> = {
-  creator_premium_image_media_not_ready: 'Falta completar la vista previa y la imagen privada.',
-  creator_premium_video_media_not_ready: 'Falta completar la vista previa o el video todavía se está procesando.',
-  creator_premium_active_offer_required: 'Configura un precio de compra activo.',
-  creator_premium_active_plan_required: 'Seguridad aprobada. La activación de un plan asociado completará la publicación automática.',
-  creator_premium_plan_mapping_required: 'Asocia el contenido a por lo menos un plan.',
-  content_safety_policy_not_configured: 'La verificación de seguridad todavía no está disponible. Tu contenido sigue privado.',
-  content_safety_audio_policy_not_configured: 'La verificación de audio todavía no está disponible. Tu video sigue privado.',
-  creator_premium_safety_provider_failed: 'La verificación tuvo un error temporal. Puedes reintentar sin volver a subir el contenido.',
-  creator_premium_visual_proof_invalid: 'No pudimos validar el original privado. Reintenta la verificación.',
-};
-
-function messageFor(error: unknown): string {
-  if (error && typeof error === 'object' && 'message' in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === 'string' && message.trim()) return message;
-  }
-  return 'No pudimos completar la operación. Inténtalo de nuevo.';
-}
 
 async function imageFile(asset: ImagePicker.ImagePickerAsset): Promise<LocalFile> {
   let size = asset.fileSize ?? 0;
@@ -379,6 +364,17 @@ export default function CreatorPremiumEditor() {
 
   const submit = useCallback(async () => {
     if (busy || (readOnly && !verificationRetryable)) return;
+    const mediaBlocker = creatorPremiumSubmissionMediaBlocker({
+      contentKind: kind,
+      mediaReady: Boolean(item && (kind === 'image' ? item.image_media_ready : item.video_media_ready)),
+      hasPendingTeaser: Boolean(teaser),
+      hasPendingPrivate: Boolean(privateFile),
+      verificationRetryable,
+    });
+    if (mediaBlocker) {
+      setError(mediaBlocker);
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -391,7 +387,7 @@ export default function CreatorPremiumEditor() {
     } finally {
       setSubmitting(false);
     }
-  }, [busy, contentId, load, readOnly, saveDraft, verificationRetryable]);
+  }, [busy, contentId, item, kind, load, privateFile, readOnly, saveDraft, teaser, verificationRetryable]);
 
   const confirmDelete = useCallback(() => {
     if (!contentId || busy || readOnly) return;
@@ -505,7 +501,7 @@ export default function CreatorPremiumEditor() {
 
         <Section title="Contenido privado">
           <Pressable style={styles.picker} onPress={() => kind === 'image' ? void pickImage('private') : void pickVideo()} disabled={busy || readOnly}>
-            <MaterialCommunityIcons name={kind === 'image' ? 'image-lock-outline' : 'video-lock-outline'} size={34} color={PREMIUM} />
+            <MaterialCommunityIcons name={kind === 'image' ? 'image-lock-outline' : 'file-lock-outline'} size={34} color={PREMIUM} />
             <View style={styles.pickerCopy}>
               <Text style={styles.pickerTitle}>{privateFile ? privateFile.fileName : item && (item.original_attached || item.video_attached) ? 'Original privado vinculado' : `Seleccionar ${kind === 'image' ? 'imagen' : 'video'}`}</Text>
               <Text style={styles.helper}>{kind === 'video' ? 'MP4, QuickTime o WebM · máximo 200 MB y 60 segundos.' : 'El original nunca se usa como vista previa pública.'}</Text>

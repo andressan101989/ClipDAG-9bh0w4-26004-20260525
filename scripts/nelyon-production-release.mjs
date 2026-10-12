@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, posix, relative, resolve } from 'node:path';
@@ -593,6 +594,7 @@ export function resolveAffectedFunctions({ changes, graph, managedFunctions, for
     if (name) {
       assertAuthorizedFunction(name, managed, forbidden);
       affected.add(name);
+      if (graph.nodes[path]) queue.push(path);
     } else if (path.startsWith('supabase/functions/_shared/')) {
       if (!graph.nodes[path]) deny('UNRESOLVED_IMPORT', `changed shared module ${path} is missing from approved tree`);
       queue.push(path);
