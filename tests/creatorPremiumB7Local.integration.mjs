@@ -308,6 +308,14 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     assert.equal(psql(db, `select purchase_enabled||'|'||subscription_enabled||'|'||refunds_enabled||'|'||platform_fee_bps from private.creator_premium_finance_policy where singleton`).stdout, 'false|false|false|0');
     expectFailure(asRole(db, 'authenticated', id.buyer, `select public.admin_review_creator_premium_content_v1('${uid()}','approve','reviewed','${uid()}')`, { allowFailure: true }), 'admin_capability_forbidden');
     assert.equal(psql(db, `select has_function_privilege('authenticated','public.refund_creator_premium_purchase_v1(uuid,uuid,text)','execute')`).stdout, 'f');
+    const emptySubscriptions = json(asRole(
+      db,
+      'authenticated',
+      id.buyer,
+      `select public.get_my_creator_premium_subscriptions_v1(null,null,50)`,
+    ));
+    assert.deepEqual(emptySubscriptions.items, []);
+    assert.equal(emptySubscriptions.next_cursor, null);
 
     const purchase = createDraft('B7 purchase', 'purchase', id.purchaseRequest);
     const subscription = createDraft('B7 subscription', 'subscription', id.subscriptionRequest, 'video');

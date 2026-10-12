@@ -890,7 +890,7 @@ set search_path = ''
 as $$
 declare
   v_query text := nullif(pg_catalog.btrim(p_query), '');
-  v_limit integer := pg_catalog.least(pg_catalog.greatest(coalesce(p_limit, 50), 1), 100);
+  v_limit integer := least(greatest(coalesce(p_limit, 50), 1), 100);
 begin
   perform public.admin_require_capability('creator_premium.review.read');
   if p_status is not null and p_status not in (
@@ -1386,7 +1386,7 @@ set search_path = ''
 as $$
 declare
   v_query text := nullif(pg_catalog.btrim(p_query), '');
-  v_limit integer := pg_catalog.least(pg_catalog.greatest(coalesce(p_limit, 50), 1), 100);
+  v_limit integer := least(greatest(coalesce(p_limit, 50), 1), 100);
 begin
   perform public.admin_require_capability('reports.cases.read');
   if p_status is not null and p_status not in ('pending','reviewed','dismissed') then
@@ -1824,7 +1824,7 @@ set search_path = ''
 as $$
 declare
   v_actor uuid := auth.uid();
-  v_limit integer := pg_catalog.least(pg_catalog.greatest(coalesce(p_limit,50),1),100);
+  v_limit integer := least(greatest(coalesce(p_limit,50),1),100);
 begin
   if v_actor is null then
     raise exception using errcode='42501',message='creator_premium_auth_required';
@@ -3563,7 +3563,7 @@ begin
   v_error:=left(pg_catalog.lower(pg_catalog.regexp_replace(
     coalesce(nullif(pg_catalog.btrim(p_error_code),''),'visual_processing_error'),'[^a-z0-9_]+','_','g')),100);
   v_next:=case when v_retry then pg_catalog.clock_timestamp()
-    +pg_catalog.least(30,pg_catalog.power(2,pg_catalog.greatest(v_scan.visual_attempt_count,1)))::integer*interval '1 minute'
+    +least(30,pg_catalog.power(2,greatest(v_scan.visual_attempt_count,1)))::integer*interval '1 minute'
     else v_scan.visual_available_at end;
 
   update private.content_safety_scans scan set

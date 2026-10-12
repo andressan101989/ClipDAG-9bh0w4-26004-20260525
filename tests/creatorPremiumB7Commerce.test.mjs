@@ -62,6 +62,15 @@ test('subscriber projection reports real relationship and paid-period state with
   assert.doesNotMatch(body, /insert\s+into\s+private\.creator_premium_subscription_periods/i);
 });
 
+test('B7 pagination and retry bounds use PostgreSQL special forms without invalid schema qualification', () => {
+  assert.doesNotMatch(
+    sql,
+    /pg_catalog\.(?:least|greatest)\s*\(/i,
+    'LEAST and GREATEST are PostgreSQL special forms and cannot be schema-qualified',
+  );
+  assert.match(sql, /\bleast\s*\(\s*\bgreatest\s*\(/i);
+});
+
 test('creator summary is canonical, exact-string, refund-aware, and does not invent views', () => {
   const body = functionBody('get_my_creator_premium_commercial_summary_v1', 'public');
   const binding = functionBody('creator_premium_financial_fact_is_valid_v1', 'private');
