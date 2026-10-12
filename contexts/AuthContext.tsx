@@ -16,6 +16,10 @@ import React, {
 } from 'react';
 import { getSupabaseClient } from '@/template';
 import { presentAuthError } from '@/services/authErrorPresentation';
+import {
+  createAuthStartupDeadline,
+  deferAuthBootstrap,
+} from '@/services/authStartupDeadline';
 import { signupErrorMessage, signupMetadata } from '@/utils/signupDob';
 import { PresenceManager }   from '@/modules/realtime/PresenceManager';
 import {
@@ -214,54 +218,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const supabase = supabaseRef.current;
     let subscriptionRef: { unsubscribe: () => void } | null = null;
 
-    // Safety timeout: force-unblock after 5s if Supabase never responds
-    const safetyTimer = setTimeout(() => {
-      console.log('[BOOT] AuthProvider safety timeout — forcing isLoading=false');
-      setIsLoading(false);
-      setIsAuthReady(true);
-    }, 5_000);
+    // Keep this deadline armed until the complete profile bootstrap settles.
+    // An auth event can arrive before its network-bound profile work completes.
+    const startupDeadline = createAuthStartupDeadline({
+      timeoutMs: 5_000,
+      onReady: (reason) => {
+        if (reason === 'timeout') {
+          console.log('[BOOT] AuthProvider safety timeout — forcing isLoading=false');
+        }
+        setIsLoading(false);
+        setIsAuthReady(true);
+      },
+    });
 
     // Defer listener registration by one tick so it never blocks iOS route
     // registration during Expo Router startup.
     const initTimer = setTimeout(() => {
       try {
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
-          async (event, session) => {
-            clearTimeout(safetyTimer);
+          (event, session) => {
             console.log('[BOOT] AuthProvider auth event:', event);
-            try {
-              if (session?.user) {
-                const profile = await loadProfile(session.user.id, session.user.email || '');
-                setUser(profile);
-                if (profile) {
-                  await loadFollows(session.user.id);
-                  PresenceManager.initialize(session.user.id);
+            deferAuthBootstrap(async () => {
+              try {
+                if (session?.user) {
+                  const profile = await loadProfile(session.user.id, session.user.email || '');
+                  setUser(profile);
+                  if (profile) {
+                    await loadFollows(session.user.id);
+                    PresenceManager.initialize(session.user.id);
+                  }
+                } else {
+                  setUser(null);
+                  setFollowedUsers(new Set());
+                  await PresenceManager.destroy();
                 }
-              } else {
+              } catch (e) {
+                console.error('[AuthProvider] auth state handler error:', e);
                 setUser(null);
-                setFollowedUsers(new Set());
-                await PresenceManager.destroy();
+              } finally {
+                startupDeadline.complete('auth_event');
               }
-            } catch (e) {
-              console.error('[AuthProvider] auth state handler error:', e);
-              setUser(null);
-            }
-            setIsLoading(false);
-            setIsAuthReady(true);
+            });
           },
         );
         // Store subscription in outer-scope ref so cleanup can reach it
         subscriptionRef = subscription;
       } catch (e) {
         console.error('[AuthProvider] onAuthStateChange registration failed:', e);
-        clearTimeout(safetyTimer);
-        setIsLoading(false);
-        setIsAuthReady(true);
+        startupDeadline.complete('registration_error');
       }
     }, 0);
 
     return () => {
-      clearTimeout(safetyTimer);
+      startupDeadline.cancel();
       clearTimeout(initTimer);
       // Guaranteed cleanup — subscriptionRef is set by the inner callback
       subscriptionRef?.unsubscribe();

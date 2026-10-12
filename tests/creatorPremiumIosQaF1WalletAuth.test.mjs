@@ -6,6 +6,10 @@ import {
   resolveWalletConnectProjectId,
 } from '../services/walletConnectRuntime.ts';
 import { presentAuthError } from '../services/authErrorPresentation.ts';
+import {
+  createAuthStartupDeadline,
+  deferAuthBootstrap,
+} from '../services/authStartupDeadline.ts';
 
 const VALID_PROJECT_ID = '0123456789abcdef0123456789abcdef';
 
@@ -96,4 +100,67 @@ test('Auth presentation never echoes untrusted provider details or credentials',
   assert.equal(result.kind, 'backend_unreachable');
   assert.equal(result.retryable, true);
   assert.doesNotMatch(JSON.stringify(result), /private\.example|apikey|service-role-secret-value/i);
+});
+
+test('Auth startup deadline unblocks routing while profile bootstrap is still pending', () => {
+  let timeoutCallback;
+  const completions = [];
+  const deadline = createAuthStartupDeadline({
+    timeoutMs: 5_000,
+    onReady: reason => completions.push(reason),
+    setTimer: callback => {
+      timeoutCallback = callback;
+      return 17;
+    },
+    clearTimer: () => assert.fail('a fired timeout must not be cleared as an auth completion'),
+  });
+
+  assert.equal(deadline.isOpen, true);
+  assert.deepEqual(completions, []);
+
+  timeoutCallback();
+
+  assert.equal(deadline.isOpen, false);
+  assert.deepEqual(completions, ['timeout']);
+  assert.equal(deadline.complete('auth_event'), false);
+  assert.deepEqual(completions, ['timeout']);
+});
+
+test('a completed Auth bootstrap cancels its pending startup deadline exactly once', () => {
+  const completions = [];
+  const cleared = [];
+  const deadline = createAuthStartupDeadline({
+    timeoutMs: 5_000,
+    onReady: reason => completions.push(reason),
+    setTimer: () => 23,
+    clearTimer: handle => cleared.push(handle),
+  });
+
+  assert.equal(deadline.complete('auth_event'), true);
+  assert.equal(deadline.complete('auth_event'), false);
+  assert.deepEqual(cleared, [23]);
+  assert.deepEqual(completions, ['auth_event']);
+});
+
+test('profile bootstrap is deferred until the Supabase auth callback has returned', async () => {
+  let scheduledCallback;
+  let bootstrapStarted = false;
+
+  const handle = deferAuthBootstrap(
+    async () => {
+      bootstrapStarted = true;
+    },
+    callback => {
+      scheduledCallback = callback;
+      return 31;
+    },
+  );
+
+  assert.equal(handle, 31);
+  assert.equal(bootstrapStarted, false);
+
+  scheduledCallback();
+  await Promise.resolve();
+
+  assert.equal(bootstrapStarted, true);
 });
