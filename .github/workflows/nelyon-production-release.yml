@@ -295,11 +295,14 @@ jobs:
           const approvals = await get(`${process.env.API_URL}/repos/${process.env.REPOSITORY}/actions/runs/${process.env.RUN_ID}/approvals`);
           writeFileSync('gate-evidence/approvals.json', JSON.stringify({ complete: true, sourceRunId: process.env.RUN_ID, sourceRunAttempt: Number(process.env.RUN_ATTEMPT), pages: [{ items: approvals }] }));
           const runPages = [];
-          for (let page = 1; ; page += 1) {
-            const body = await get(`${process.env.API_URL}/repos/${process.env.REPOSITORY}/actions/workflows/nelyon-production-release.yml/runs?status=in_progress&per_page=100&page=${page}`);
-            const items = body.workflow_runs ?? [];
-            runPages.push({ items });
-            if (items.length < 100) break;
+          const activeStatuses = ['in_progress', 'queued', 'requested', 'waiting', 'pending'];
+          for (const status of activeStatuses) {
+            for (let page = 1; ; page += 1) {
+              const body = await get(`${process.env.API_URL}/repos/${process.env.REPOSITORY}/actions/workflows/nelyon-production-release.yml/runs?status=${status}&per_page=100&page=${page}`);
+              const items = body.workflow_runs ?? [];
+              runPages.push({ items });
+              if (items.length < 100) break;
+            }
           }
           writeFileSync('gate-evidence/runs.json', JSON.stringify({ complete: true, pages: runPages }));
           NODE
@@ -320,6 +323,7 @@ jobs:
       - name: Verify release gate and required Environment secrets
         if: needs.plan.outputs.mode == 'release'
         env:
+          SUPABASE_READ_ONLY_ACCESS_TOKEN: ${{ secrets.SUPABASE_READ_ONLY_ACCESS_TOKEN }}
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: |
@@ -332,23 +336,51 @@ jobs:
         with:
           version: '2.120.0'
 
-      - name: Release preflight and read-only snapshots
+      - name: Capture immutable read-only production pre-snapshot
+        id: pre_snapshot
+        if: needs.plan.outputs.mode == 'release'
+        env:
+          SUPABASE_READ_ONLY_ACCESS_TOKEN: ${{ secrets.SUPABASE_READ_ONLY_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-production-snapshot-adapter.mjs capture \
+            --phase pre \
+            --policy "$NELYON_POLICY" \
+            --request release-artifact/request.json \
+            --manifest release-artifact/bundle/manifest.json \
+            --output gate-evidence/production-pre.json
+
+      - name: Verify owner-reviewed production baseline before mutation
+        id: verify_pre_snapshot
+        if: needs.plan.outputs.mode == 'release'
+        run: |
+          set -euo pipefail
+          node "$NELYON_HELPER" verify-pre-snapshot \
+            --policy "$NELYON_POLICY" \
+            --request release-artifact/request.json \
+            --manifest release-artifact/bundle/manifest.json \
+            --pre-snapshot gate-evidence/production-pre.json \
+            --output gate-evidence/pre-snapshot-verification.json
+
+      - name: Verify exact remote migration dry-run before mutation
+        id: migration_dry_run
         if: needs.plan.outputs.mode == 'release'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          NO_COLOR: '1'
         run: |
           set -euo pipefail
           supabase db push --help >/dev/null
           supabase functions deploy --help >/dev/null
-          supabase db push --dry-run --project-ref "$NELYON_PROJECT_REF" > gate-evidence/migration-dry-run.txt
+          supabase db push --dry-run --project-ref "$NELYON_PROJECT_REF" --skip-vault --yes > gate-evidence/migration-dry-run.txt
           test -f gate-evidence/gate-proof.json
           test -n "$SUPABASE_DB_PASSWORD"
-          printf '{"complete":false,"reason":"reviewed snapshot adapter required"}\n' > gate-evidence/finance-pre.json
-          echo "Release remains fail-closed until the reviewed production snapshot adapter is configured." >&2
-          exit 2
+          node "$NELYON_HELPER" verify-dry-run --input gate-evidence/migration-dry-run.txt --manifest release-artifact/bundle/manifest.json --output gate-evidence/migration-dry-run.json
+          rm gate-evidence/migration-dry-run.txt
 
       - name: Apply exact manifest migrations
+        id: apply_migrations
         if: needs.plan.outputs.mode == 'release'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -356,9 +388,10 @@ jobs:
         run: |
           set -euo pipefail
           node "$NELYON_HELPER" revalidate --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json --output gate-evidence/pre-migration-revalidation.json
-          supabase db push --project-ref "$NELYON_PROJECT_REF"
+          supabase db push --project-ref "$NELYON_PROJECT_REF" --skip-vault --yes
 
       - name: Deploy each exact manifest function
+        id: deploy_functions
         if: needs.plan.outputs.mode == 'release'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -367,11 +400,86 @@ jobs:
           node "$NELYON_HELPER" revalidate --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json --output gate-evidence/pre-function-revalidation.json
           while IFS= read -r function_name; do
             test -n "$function_name"
-            supabase functions deploy "$function_name" --project-ref "$NELYON_PROJECT_REF"
+            node "$NELYON_HELPER" verify-function-contract --manifest release-artifact/bundle/manifest.json --function "$function_name"
+            supabase functions deploy "$function_name" --project-ref "$NELYON_PROJECT_REF" --use-api
           done < <(node -e "const m=require('./release-artifact/bundle/manifest.json'); for(const n of m.resources.functions) console.log(n)")
 
-      - name: Require postcheck before release success
-        if: needs.plan.outputs.mode == 'release'
+      - name: Capture immutable read-only production post-snapshot
+        id: post_snapshot
+        if: always() && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success'
+        env:
+          SUPABASE_READ_ONLY_ACCESS_TOKEN: ${{ secrets.SUPABASE_READ_ONLY_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
-          node "$NELYON_HELPER" postcheck --policy "$NELYON_POLICY" --request release-artifact/request.json --pre-finance gate-evidence/finance-pre.json --post-finance gate-evidence/finance-post.json --finance-window gate-evidence/finance-window.json --reconciliation gate-evidence/reconciliation.json --remote-postcheck gate-evidence/remote-postcheck.json --output gate-evidence/postcheck-result.json && echo "RELEASE SUCCESS" >> "$GITHUB_STEP_SUMMARY"
+          node scripts/nelyon-production-snapshot-adapter.mjs capture \
+            --phase post \
+            --policy "$NELYON_POLICY" \
+            --request release-artifact/request.json \
+            --manifest release-artifact/bundle/manifest.json \
+            --output gate-evidence/production-post.json
+
+      - name: Require postcheck before release success
+        id: postcheck
+        if: always() && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success' && steps.post_snapshot.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node "$NELYON_HELPER" postcheck --policy "$NELYON_POLICY" --request release-artifact/request.json --manifest release-artifact/bundle/manifest.json --pre-snapshot gate-evidence/production-pre.json --post-snapshot gate-evidence/production-post.json --output gate-evidence/postcheck-result.json && echo "RELEASE SUCCESS" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record sanitized release observation
+        if: always() && needs.plan.outputs.mode == 'release'
+        env:
+          PRE_SNAPSHOT_OUTCOME: ${{ steps.pre_snapshot.outcome }}
+          PRE_VERIFY_OUTCOME: ${{ steps.verify_pre_snapshot.outcome }}
+          DRY_RUN_OUTCOME: ${{ steps.migration_dry_run.outcome }}
+          MIGRATION_OUTCOME: ${{ steps.apply_migrations.outcome }}
+          FUNCTIONS_OUTCOME: ${{ steps.deploy_functions.outcome }}
+          POST_SNAPSHOT_OUTCOME: ${{ steps.post_snapshot.outcome }}
+          POSTCHECK_OUTCOME: ${{ steps.postcheck.outcome }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+          const safeDigest = path => {
+            if (!existsSync(path)) return null;
+            const body = JSON.parse(readFileSync(path, 'utf8'));
+            return typeof body.evidence_sha256 === 'string' ? body.evidence_sha256 : null;
+          };
+          const safeFileDigest = path => existsSync(path)
+            ? createHash('sha256').update(readFileSync(path)).digest('hex')
+            : null;
+          const observation = {
+            schema_version: 1,
+            result: process.env.POSTCHECK_OUTCOME === 'success' ? 'SUCCESS' : 'INCOMPLETE_OR_FAILED',
+            steps: {
+              pre_snapshot: process.env.PRE_SNAPSHOT_OUTCOME,
+              pre_verification: process.env.PRE_VERIFY_OUTCOME,
+              migration_dry_run: process.env.DRY_RUN_OUTCOME,
+              migrations: process.env.MIGRATION_OUTCOME,
+              functions: process.env.FUNCTIONS_OUTCOME,
+              post_snapshot: process.env.POST_SNAPSHOT_OUTCOME,
+              postcheck: process.env.POSTCHECK_OUTCOME,
+            },
+            pre_evidence_sha256: safeDigest('gate-evidence/production-pre.json'),
+            post_evidence_sha256: safeDigest('gate-evidence/production-post.json'),
+            postcheck_file_sha256: safeFileDigest('gate-evidence/postcheck-result.json'),
+          };
+          writeFileSync('gate-evidence/release-observation.json', `${JSON.stringify(observation)}\n`, { flag: 'wx' });
+          NODE
+
+      - name: Upload sanitized gate evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nelyon-gate-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            gate-evidence/revalidation.json
+            gate-evidence/gate-proof.json
+            gate-evidence/pre-snapshot-verification.json
+            gate-evidence/migration-dry-run.json
+            gate-evidence/pre-migration-revalidation.json
+            gate-evidence/pre-function-revalidation.json
+            gate-evidence/postcheck-result.json
+            gate-evidence/release-observation.json
+          if-no-files-found: warn
+          retention-days: 90
+          compression-level: 0

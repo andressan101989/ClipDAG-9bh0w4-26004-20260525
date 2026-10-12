@@ -196,7 +196,7 @@ export function validateVisualSafetyResult(value, { sourceKind, frameIndex = nul
   return { schema_version: VISUAL_PROMPT_VERSION, review_required: value.review_required, findings, summary: value.summary }
 }
 
-export async function analyzeVisualBytes({ token, accountId, bytes, mimeType, sourceKind, frameIndex = null, imageByteLimit = MAX_VISUAL_IMAGE_BYTES, fetchImpl = fetch }) {
+export async function analyzeVisualBytes({ token, accountId, bytes, mimeType, sourceKind, frameIndex = /** @type {number | null} */ (null), imageByteLimit = MAX_VISUAL_IMAGE_BYTES, fetchImpl = fetch }) {
   const safeImageLimit = imageByteLimit === MAX_PREMIUM_VISUAL_IMAGE_BYTES
     ? MAX_PREMIUM_VISUAL_IMAGE_BYTES
     : MAX_VISUAL_IMAGE_BYTES

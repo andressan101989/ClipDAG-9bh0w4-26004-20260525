@@ -4,10 +4,23 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, posix, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { verifyProductionPreSnapshot, verifyProductionSnapshotPair } from './nelyon-production-snapshot-adapter.mjs';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
 const EXACT_MODES = ['plan_only', 'gate_proof', 'release'];
+const REQUIRED_FINANCE_RECONCILIATIONS = [
+  'account_balance_ledger_mismatch',
+  'completed_credit_account_mismatch',
+  'completed_credit_total_mismatch',
+  'completed_debit_account_mismatch',
+  'completed_debit_total_mismatch',
+  'completed_without_credit',
+  'completed_without_debit',
+  'noncanonical_entry_type',
+  'orphan_ledger_entries',
+  'premium_finance_policy_row_count_mismatch',
+];
 const BASELINE_DIGEST_KEYS = [
   'config_verify_jwt',
   'cron_security',
@@ -53,6 +66,12 @@ export function validatePolicy(policy) {
     deny('INVALID_POLICY_WORKFLOW', 'unexpected workflow path');
   }
   assertExactArray(policy.modes, EXACT_MODES, 'INVALID_POLICY_MODES', 'modes');
+  assertExactArray(
+    policy.secrets,
+    ['SUPABASE_READ_ONLY_ACCESS_TOKEN', 'SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD'],
+    'INVALID_POLICY_SECRETS',
+    'Environment secrets',
+  );
   const confirmations = policy.scope_confirmations ?? {};
   const expectedConfirmations = {
     plan_only: 'PLAN_ONLY',
@@ -87,8 +106,8 @@ export function validatePolicy(policy) {
   if (policy.supabase?.project_ref !== 'aewwdlvbwpczqyvkwvvj') {
     deny('INVALID_PROJECT_REF', 'unexpected Supabase project');
   }
-  if (!Array.isArray(policy.supabase?.managed_functions) || policy.supabase.managed_functions.length !== 17) {
-    deny('INVALID_MANAGED_FUNCTIONS', 'managed function allowlist must contain exactly 17 functions');
+  if (!Array.isArray(policy.supabase?.managed_functions) || policy.supabase.managed_functions.length !== 18) {
+    deny('INVALID_MANAGED_FUNCTIONS', 'managed function allowlist must contain exactly 18 functions');
   }
   if (new Set(policy.supabase.managed_functions).size !== policy.supabase.managed_functions.length) {
     deny('INVALID_MANAGED_FUNCTIONS', 'managed function allowlist contains duplicates');
@@ -366,7 +385,9 @@ export function classifyChangedPaths(changes) {
     } else if (path === '.github/nelyon-production-release-policy.json'
       || path === '.github/workflows/nelyon-production-release.yml'
       || path === 'scripts/nelyon-production-release.mjs'
+      || path === 'scripts/nelyon-production-snapshot-adapter.mjs'
       || path === 'tests/nelyonProductionReleaseGate.test.mjs'
+      || path === 'tests/nelyonProductionSnapshotAdapter.test.mjs'
       || path === 'docs/runbooks/nelyon-production-release.md'
       || path.startsWith('docs/superpowers/specs/')
       || path.startsWith('docs/superpowers/plans/')) {
@@ -418,6 +439,29 @@ export function validateMigrationDelta({ changes, baselineLatestMigration, remot
     deny('MIGRATION_DRY_RUN_MISMATCH', 'remote dry-run does not exactly match the manifest migrations', { expected, pending });
   }
   return migrations;
+}
+
+export function verifyMigrationDryRun({ text, manifest }) {
+  if (typeof text !== 'string' || Buffer.byteLength(text, 'utf8') > 1024 * 1024
+    || text.includes('\0') || !Array.isArray(manifest?.resources?.migrations)) {
+    deny('MIGRATION_DRY_RUN_MISMATCH', 'migration dry-run evidence is malformed');
+  }
+  const matches = [...text.matchAll(/(?:^|[\s•])((20[0-9]{12})_[A-Za-z0-9][A-Za-z0-9_-]*\.sql)(?=\s|$)/gm)];
+  const pendingFiles = [...new Set(matches.map(match => match[1]))].sort();
+  const expectedFiles = manifest.resources.migrations.map(item => posix.basename(item?.path ?? '')).sort();
+  const expected = manifest.resources.migrations.map(item => item?.version).sort();
+  if (expected.some(version => !/^20[0-9]{12}$/.test(version ?? ''))
+    || expectedFiles.some((filename, index) => !filename.startsWith(`${expected[index]}_`)
+      || !/^[0-9]{14}_[A-Za-z0-9][A-Za-z0-9_-]*\.sql$/.test(filename))
+    || new Set(expected).size !== expected.length
+    || new Set(expectedFiles).size !== expectedFiles.length
+    || canonicalJson(pendingFiles) !== canonicalJson(expectedFiles)) {
+    deny('MIGRATION_DRY_RUN_MISMATCH', 'remote dry-run does not exactly match the manifest migrations', {
+      expected: expectedFiles,
+      pending: pendingFiles,
+    });
+  }
+  return { complete: true, pending_versions: pendingFiles.map(filename => filename.slice(0, 14)) };
 }
 
 function parseTomlScalar(raw, lineNumber) {
@@ -480,6 +524,11 @@ function stripQuotedLiteral(raw) {
 
 export function parseModuleSpecifiers(source, path = '<source>') {
   if (typeof source !== 'string') deny('AMBIGUOUS_IMPORT', `module ${path} is not text`);
+  if (/\brequire\s*\(/.test(source)
+    || /\bimport\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=/.test(source)
+    || /^\s*\/\/\/\s*<reference\b[^>]*\b(?:path|types|lib)\s*=/m.test(source)) {
+    deny('AMBIGUOUS_IMPORT', `unsupported module dependency syntax in ${path}`);
+  }
   const imports = [];
   const seen = new Set();
   const add = (kind, specifier) => {
@@ -539,6 +588,11 @@ export function buildFunctionGraph(files) {
   const normalizedFiles = new Map();
   for (const [rawPath, source] of Object.entries(files)) {
     const path = normalizeModulePath(rawPath);
+    const filename = posix.basename(path).toLowerCase();
+    if (filename === 'deno.json' || filename === 'deno.jsonc'
+      || !/\.(?:ts|tsx|js|jsx|mjs|json)$/.test(filename)) {
+      deny('UNSUPPORTED_FUNCTION_SOURCE', `function source or implicit runtime config is unsupported: ${path}`);
+    }
     if (normalizedFiles.has(path)) deny('AMBIGUOUS_IMPORT', `duplicate normalized module path ${path}`);
     if (typeof source !== 'string') deny('AMBIGUOUS_IMPORT', `module ${path} is not text`);
     normalizedFiles.set(path, source);
@@ -563,6 +617,7 @@ export function buildFunctionGraph(files) {
       functionName: functionNameForPath(path),
       localImports: [...new Set(localImports)].sort(),
       path,
+      sourceSha256: sha256Hex(Buffer.from(source, 'utf8')),
       specifiers,
     };
   }
@@ -576,7 +631,14 @@ function assertAuthorizedFunction(name, managed, forbidden) {
   }
 }
 
-export function resolveAffectedFunctions({ changes, graph, managedFunctions, forbiddenFunctions = [] }) {
+export function resolveAffectedFunctions({
+  changes,
+  graph,
+  managedFunctions,
+  forbiddenFunctions = [],
+  configBefore,
+  configAfter,
+}) {
   if (!Array.isArray(changes) || !graph?.nodes || !graph?.reverse) {
     deny('FUNCTION_NOT_AUTHORIZED', 'affected-function inputs are incomplete');
   }
@@ -587,7 +649,20 @@ export function resolveAffectedFunctions({ changes, graph, managedFunctions, for
   for (const change of changes) {
     const path = validateGitPath(change.path);
     if (path === 'supabase/config.toml') {
-      for (const name of managed) affected.add(name);
+      if (!configBefore || typeof configBefore !== 'object' || Array.isArray(configBefore)
+        || !configAfter || typeof configAfter !== 'object' || Array.isArray(configAfter)) {
+        deny('AMBIGUOUS_FUNCTION_CONFIG', 'config.toml changes require parsed before and after declarations');
+      }
+      const currentNames = Object.keys(configAfter).sort();
+      const managedNames = [...managed].sort();
+      if (canonicalJson(currentNames) !== canonicalJson(managedNames)) {
+        deny('FUNCTION_NOT_AUTHORIZED', 'current function config does not equal the managed allowlist');
+      }
+      for (const name of new Set([...Object.keys(configBefore), ...currentNames])) {
+        if (canonicalJson(configBefore[name] ?? null) === canonicalJson(configAfter[name] ?? null)) continue;
+        assertAuthorizedFunction(name, managed, forbidden);
+        affected.add(name);
+      }
       continue;
     }
     const name = functionNameForPath(path);
@@ -616,6 +691,113 @@ export function resolveAffectedFunctions({ changes, graph, managedFunctions, for
     }
   }
   return [...affected].sort();
+}
+
+function configuredFunctionPath(functionName, raw, fallback, label) {
+  if (raw === undefined) return fallback;
+  if (typeof raw !== 'string' || raw.length === 0) {
+    deny('FUNCTION_CONTRACT_MISMATCH', `${label} for ${functionName} is invalid`);
+  }
+  const replaced = raw.replaceAll('\\', '/').replace(/^\.\//, '');
+  const candidate = replaced.startsWith('supabase/functions/')
+    ? replaced
+    : replaced.startsWith('functions/')
+      ? `supabase/${replaced}`
+      : posix.join(`supabase/functions/${functionName}`, replaced);
+  const normalized = normalizeModulePath(candidate);
+  if (label === 'entrypoint' && !normalized.startsWith(`supabase/functions/${functionName}/`)) {
+    deny('FUNCTION_CONTRACT_MISMATCH', `entrypoint for ${functionName} escapes its function directory`);
+  }
+  return normalized;
+}
+
+export function buildFunctionContracts({
+  affectedFunctions,
+  graph,
+  configBefore = {},
+  configAfter,
+  changes = [],
+}) {
+  if (!Array.isArray(affectedFunctions) || !graph?.nodes || !configAfter
+    || typeof configAfter !== 'object' || Array.isArray(configAfter) || !Array.isArray(changes)) {
+    deny('FUNCTION_CONTRACT_MISMATCH', 'function contract inputs are incomplete');
+  }
+  const changedPaths = new Set(changes.map(change => validateGitPath(change.path)));
+  return [...affectedFunctions].sort().map(name => {
+    const config = configAfter[name];
+    if (!config || typeof config.verify_jwt !== 'boolean') {
+      deny('FUNCTION_CONTRACT_MISMATCH', `effective config for ${name} is unavailable`);
+    }
+    const entrypoint = configuredFunctionPath(name, config.entrypoint, `supabase/functions/${name}/index.ts`, 'entrypoint');
+    const importMap = config.import_map === undefined
+      ? null
+      : configuredFunctionPath(name, config.import_map, null, 'import map');
+    const previousConfig = configBefore[name];
+    const previousEntrypoint = previousConfig
+      ? configuredFunctionPath(name, previousConfig.entrypoint, `supabase/functions/${name}/index.ts`, 'entrypoint')
+      : null;
+    const previousImportMap = previousConfig
+      ? (previousConfig.import_map === undefined
+        ? null
+        : configuredFunctionPath(name, previousConfig.import_map, null, 'import map'))
+      : null;
+    const bundleConfigChanged = !previousConfig
+      || previousEntrypoint !== entrypoint
+      || previousImportMap !== importMap;
+    if (!graph.nodes[entrypoint]) deny('FUNCTION_CONTRACT_MISMATCH', `entrypoint for ${name} is absent from the source graph`);
+    if (importMap && !graph.nodes[importMap]) deny('FUNCTION_CONTRACT_MISMATCH', `import map for ${name} is absent from the source graph`);
+    const queue = [entrypoint];
+    const visited = new Set(importMap ? [importMap] : []);
+    while (queue.length) {
+      const path = queue.shift();
+      if (visited.has(path)) continue;
+      const node = graph.nodes[path];
+      if (!node) deny('FUNCTION_CONTRACT_MISMATCH', `transitive source ${path} is unavailable`);
+      visited.add(path);
+      queue.push(...node.localImports);
+    }
+    const sourceFiles = [...visited].sort().map(path => ({ path, sha256: graph.nodes[path].sourceSha256 }));
+    if (sourceFiles.some(item => !/^[0-9a-f]{64}$/.test(item.sha256 ?? ''))) {
+      deny('FUNCTION_CONTRACT_MISMATCH', `source digest for ${name} is invalid`);
+    }
+    const sourceIdentity = { entrypoint, import_map: importMap, source_files: sourceFiles };
+    return {
+      name,
+      entrypoint,
+      import_map: importMap,
+      verify_jwt: config.verify_jwt,
+      source_changed: bundleConfigChanged || sourceFiles.some(item => changedPaths.has(item.path)),
+      source_files: sourceFiles,
+      source_sha256: sha256Hex(canonicalJson(sourceIdentity)),
+    };
+  });
+}
+
+export function verifyFunctionContracts({ manifest, graph, configBefore = {}, configAfter, functionName }) {
+  const functions = manifest?.resources?.functions;
+  const contracts = manifest?.resources?.function_contracts;
+  if (!Array.isArray(functions) || !Array.isArray(contracts)
+    || canonicalJson(contracts.map(item => item?.name)) !== canonicalJson([...functions].sort())) {
+    deny('FUNCTION_CONTRACT_MISMATCH', 'manifest function contracts are incomplete');
+  }
+  if (functionName !== undefined && !functions.includes(functionName)) {
+    deny('FUNCTION_CONTRACT_MISMATCH', `function ${functionName} is not in the approved manifest`);
+  }
+  const rebuilt = buildFunctionContracts({
+    affectedFunctions: functions,
+    graph,
+    configBefore,
+    configAfter,
+    changes: manifest?.delta?.files ?? [],
+  });
+  if (canonicalJson(rebuilt) !== canonicalJson(contracts)) {
+    deny('FUNCTION_CONTRACT_MISMATCH', 'current source or function config differs from the approved manifest');
+  }
+  const selected = functionName === undefined ? rebuilt : rebuilt.filter(item => item.name === functionName);
+  return {
+    result: 'FUNCTION_CONTRACT_VERIFIED',
+    functions: selected.map(item => ({ name: item.name, source_sha256: item.source_sha256, verify_jwt: item.verify_jwt })),
+  };
 }
 
 function isImmutableExternalSpecifier(specifier) {
@@ -720,7 +902,8 @@ export function classifyRisk({ affectedFunctions = [], changedPaths = [], config
     }
     if (path === '.github/nelyon-production-release-policy.json'
       || path === '.github/workflows/nelyon-production-release.yml'
-      || path === 'scripts/nelyon-production-release.mjs') {
+      || path === 'scripts/nelyon-production-release.mjs'
+      || path === 'scripts/nelyon-production-snapshot-adapter.mjs') {
       add(riskFinding('GATE_AUTHORITY_CHANGE', 'release-gate', path, 'release authority changed'));
     }
   }
@@ -733,8 +916,14 @@ function collectFunctionSources(directory, root, files = {}) {
     const path = join(directory, entry.name);
     if (entry.isSymbolicLink()) deny('AMBIGUOUS_IMPORT', `function source link is unsupported: ${path}`);
     if (entry.isDirectory()) collectFunctionSources(path, root, files);
-    else if (entry.isFile() && /\.(?:ts|tsx|js|mjs)$/.test(entry.name)) {
-      files[relative(root, path).replaceAll('\\', '/')] = readFileSync(path, 'utf8');
+    else if (entry.isFile()) {
+      const relativePath = relative(root, path).replaceAll('\\', '/');
+      const filename = entry.name.toLowerCase();
+      if (filename === 'deno.json' || filename === 'deno.jsonc'
+        || !/\.(?:ts|tsx|js|jsx|mjs|json)$/.test(filename)) {
+        deny('UNSUPPORTED_FUNCTION_SOURCE', `function source or implicit runtime config is unsupported: ${relativePath}`);
+      }
+      files[relativePath] = readFileSync(path, 'utf8');
     }
   }
   return files;
@@ -755,30 +944,48 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     baselineLatestMigration: policy.baseline.latest_migration,
   });
   const graph = buildFunctionGraph(collectFunctionSources(join(cwd, 'supabase', 'functions'), cwd));
+  const baselineConfig = runGit(['show', `${policy.baseline.sha}:supabase/config.toml`]);
+  const currentConfig = readFileSync(join(cwd, 'supabase', 'config.toml'), 'utf8');
+  const configBefore = parseFunctionConfig(baselineConfig);
+  const configAfter = parseFunctionConfig(currentConfig);
   const affectedFunctions = resolveAffectedFunctions({
     changes: gitState.changes,
     graph,
     managedFunctions: policy.supabase.managed_functions,
     forbiddenFunctions: policy.supabase.forbidden_functions,
+    configBefore,
+    configAfter,
   });
   const reproducibility = analyzeFunctionReproducibility({ affectedFunctions, graph });
-  const baselineConfig = runGit(['show', `${policy.baseline.sha}:supabase/config.toml`]);
-  const currentConfig = readFileSync(join(cwd, 'supabase', 'config.toml'), 'utf8');
+  const functionContracts = buildFunctionContracts({
+    affectedFunctions,
+    graph,
+    configBefore,
+    configAfter,
+    changes: gitState.changes,
+  });
   const risk = classifyRisk({
     affectedFunctions,
     changedPaths: gitState.changes.map(change => change.path),
-    configBefore: parseFunctionConfig(baselineConfig),
-    configAfter: parseFunctionConfig(currentConfig),
+    configBefore,
+    configAfter,
   });
   const compilerPath = join(cwd, 'scripts', 'nelyon-production-release.mjs');
+  const snapshotAdapterPath = join(cwd, 'scripts', 'nelyon-production-snapshot-adapter.mjs');
   return {
     gitState,
     classified,
     migrations,
     affectedFunctions,
+    functionContracts,
     reproducibility,
     risk,
-    compiler: { path: 'scripts/nelyon-production-release.mjs', sha256: sha256Hex(readFileSync(compilerPath)) },
+    compiler: {
+      path: 'scripts/nelyon-production-release.mjs',
+      sha256: sha256Hex(readFileSync(compilerPath)),
+      snapshot_adapter_path: 'scripts/nelyon-production-snapshot-adapter.mjs',
+      snapshot_adapter_sha256: sha256Hex(readFileSync(snapshotAdapterPath)),
+    },
     generatedAt,
   };
 }
@@ -794,6 +1001,7 @@ export function buildManifest({
   classified,
   migrations,
   affectedFunctions,
+  functionContracts,
   reproducibility,
   risk,
   compiler,
@@ -814,8 +1022,23 @@ export function buildManifest({
       );
     }
   }
-  if (!/^[0-9a-f]{64}$/.test(compiler?.sha256 ?? '')) {
+  if (!/^[0-9a-f]{64}$/.test(compiler?.sha256 ?? '')
+    || compiler?.path !== 'scripts/nelyon-production-release.mjs'
+    || compiler?.snapshot_adapter_path !== 'scripts/nelyon-production-snapshot-adapter.mjs'
+    || !/^[0-9a-f]{64}$/.test(compiler?.snapshot_adapter_sha256 ?? '')) {
     deny('INVALID_COMPILER_IDENTITY', 'compiler SHA-256 is invalid');
+  }
+  const contracts = [...(functionContracts ?? [])].map(stableCopy).sort((left, right) => String(left.name).localeCompare(String(right.name)));
+  const functionNames = [...affectedFunctions].sort();
+  if (canonicalJson(contracts.map(item => item.name)) !== canonicalJson(functionNames)
+    || contracts.some(contract => typeof contract.entrypoint !== 'string'
+      || (contract.import_map !== null && typeof contract.import_map !== 'string')
+      || typeof contract.verify_jwt !== 'boolean'
+      || typeof contract.source_changed !== 'boolean'
+      || !Array.isArray(contract.source_files) || contract.source_files.length === 0
+      || !/^[0-9a-f]{64}$/.test(contract.source_sha256 ?? '')
+      || contract.source_files.some(item => typeof item?.path !== 'string' || !/^[0-9a-f]{64}$/.test(item?.sha256 ?? '')))) {
+    deny('FUNCTION_CONTRACT_MISMATCH', 'manifest function contracts do not match the affected function set');
   }
   if (!generatedAt || Number.isNaN(Date.parse(generatedAt))) {
     deny('INVALID_MANIFEST_TIME', 'manifest generation time is invalid');
@@ -873,6 +1096,7 @@ export function buildManifest({
     },
     resources: {
       functions: [...affectedFunctions].sort(),
+      function_contracts: contracts,
       migrations: [...migrations].map(stableCopy).sort((left, right) => left.version.localeCompare(right.version)),
       config_changed: (classified?.config?.length ?? 0) > 0,
     },
@@ -881,6 +1105,8 @@ export function buildManifest({
     compiler: {
       path: compiler.path,
       sha256: compiler.sha256,
+      snapshot_adapter_path: compiler.snapshot_adapter_path,
+      snapshot_adapter_sha256: compiler.snapshot_adapter_sha256,
     },
     result,
   };
@@ -1172,7 +1398,7 @@ export function verifyConcurrency({ runs, currentRunId, complete }) {
 export function requiredSecretsForMode(mode, secrets) {
   if (mode === 'plan_only' || mode === 'gate_proof') return [];
   if (mode !== 'release') deny('INVALID_MODE', 'unsupported release mode');
-  const required = ['SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD'];
+  const required = ['SUPABASE_READ_ONLY_ACCESS_TOKEN', 'SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD'];
   const missing = required.filter(name => typeof secrets?.[name] !== 'string' || secrets[name].length === 0);
   if (missing.length > 0) deny('MISSING_SECRETS', 'required Environment deployment secrets are unavailable', { missing });
   return required;
@@ -1411,7 +1637,10 @@ export function validateFinanceSnapshot(snapshot) {
     if (!FINANCE_STATUSES.has(transaction.status)
       || transaction.currency !== 'BDAG'
       || !Number.isFinite(Date.parse(transaction.created_at))
-      || Date.parse(transaction.created_at) > databaseTime) {
+      || Date.parse(transaction.created_at) > databaseTime
+      || (transaction.blockchain_txid_sha256 !== null
+        && transaction.blockchain_txid_sha256 !== undefined
+        && !/^[0-9a-f]{64}$/.test(transaction.blockchain_txid_sha256))) {
       deny('INVALID_FINANCE_SNAPSHOT', `transaction ${transaction.id} has invalid canonical fields`);
     }
   }
@@ -1427,8 +1656,19 @@ function decimalUnits(value) {
 }
 
 function withoutTransitionFields(transaction) {
-  const { status: ignoredStatus, blockchain_txid: ignoredBlockchain, ...stable } = transaction;
+  const {
+    status: ignoredStatus,
+    blockchain_txid: ignoredBlockchain,
+    blockchain_txid_sha256: ignoredBlockchainDigest,
+    ...stable
+  } = transaction;
   return stable;
+}
+
+function validBlockchainConfirmation(previous, current) {
+  const before = previous.blockchain_txid_sha256 ?? previous.blockchain_txid ?? null;
+  const after = current.blockchain_txid_sha256 ?? current.blockchain_txid ?? null;
+  return before === after || (before === null && typeof after === 'string' && /^[0-9a-f]{64}$/.test(after));
 }
 
 function containsReleaseIdentity(value, releaseIdentity) {
@@ -1497,6 +1737,7 @@ export function classifyFinanceWindow({ before, after, transactions, ledgerEntri
     if (canonicalJson(current) === canonicalJson(previous)) continue;
     if (FINANCE_TERMINAL_STATUSES.has(previous.status)
       || !FINANCE_ALLOWED_TRANSITIONS.has(`${previous.status}:${current.status}`)
+      || !validBlockchainConfirmation(previous, current)
       || canonicalJson(withoutTransitionFields(previous)) !== canonicalJson(withoutTransitionFields(current))) {
       deny('HISTORICAL_FINANCE_MUTATION', `historical transaction ${id} changed outside an allowed status confirmation`);
     }
@@ -1542,21 +1783,23 @@ export function classifyFinanceWindow({ before, after, transactions, ledgerEntri
   };
 }
 
-function allReconciliationsZero(value) {
-  if (typeof value === 'number') return Number.isFinite(value) && value === 0;
+function exactReconciliationsZero(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const entries = Object.values(value);
-  return entries.length > 0 && entries.every(allReconciliationsZero);
+  if (canonicalJson(Object.keys(value).sort()) !== canonicalJson(REQUIRED_FINANCE_RECONCILIATIONS)) return false;
+  return REQUIRED_FINANCE_RECONCILIATIONS.every(key => Number.isFinite(value[key]) && value[key] === 0);
 }
 
 export function verifyFinancePostcheck({ before, after, window, reconciliationResults, expectedPolicy }) {
   validateFinanceSnapshot(before);
   validateFinanceSnapshot(after);
+  if (Date.parse(after.database_time) < Date.parse(before.database_time)) {
+    deny('INVALID_FINANCE_WINDOW', 'post-snapshot database time precedes the pre-snapshot');
+  }
   if (canonicalJson(financePolicyShape(before.policy)) !== canonicalJson(expectedPolicy)
     || canonicalJson(financePolicyShape(after.policy)) !== canonicalJson(expectedPolicy)) {
     deny('FINANCE_POLICY_CHANGED', 'Premium Finance switches or platform fee changed');
   }
-  if (window?.integrity !== 'PASS' || !allReconciliationsZero(reconciliationResults)) {
+  if (window?.integrity !== 'PASS' || !exactReconciliationsZero(reconciliationResults)) {
     deny('FINANCE_RECONCILIATION_FAILED', 'canonical finance reconciliation reported a mismatch');
   }
   const growth = {
@@ -1614,7 +1857,7 @@ function parseCliArguments(argv) {
 }
 
 function printHelp() {
-  process.stdout.write('Usage: nelyon-production-release.mjs <plan|revalidate|verify-gate|postcheck> [options]\n');
+  process.stdout.write('Usage: nelyon-production-release.mjs <plan|revalidate|verify-gate|verify-dry-run|verify-pre-snapshot|verify-function-contract|postcheck> [options]\n');
 }
 
 async function runCli(argv) {
@@ -1623,6 +1866,58 @@ async function runCli(argv) {
     return 0;
   }
   const { command, values } = parseCliArguments(argv);
+  if (command === 'verify-function-contract') {
+    for (const required of ['manifest', 'function']) {
+      if (!values[required]) throw new Error(`missing --${required}`);
+    }
+    const manifest = JSON.parse(readFileSync(values.manifest, 'utf8'));
+    const currentConfig = parseFunctionConfig(readFileSync(join(process.cwd(), 'supabase', 'config.toml'), 'utf8'));
+    const baselineConfig = parseFunctionConfig(execFileSync('git', [
+      'show', `${manifest?.baseline?.sha}:supabase/config.toml`,
+    ], { cwd: process.cwd(), encoding: 'utf8' }));
+    const graph = buildFunctionGraph(collectFunctionSources(join(process.cwd(), 'supabase', 'functions'), process.cwd()));
+    const result = verifyFunctionContracts({
+      manifest,
+      graph,
+      configBefore: baselineConfig,
+      configAfter: currentConfig,
+      functionName: values.function,
+    });
+    process.stdout.write(`FUNCTION CONTRACT VERIFIED ${result.functions[0].name} ${result.functions[0].source_sha256}\n`);
+    return 0;
+  }
+  if (command === 'verify-pre-snapshot') {
+    for (const required of ['policy', 'request', 'manifest', 'pre-snapshot', 'output']) {
+      if (!values[required]) throw new Error(`missing --${required}`);
+    }
+    const policy = loadPolicy(values.policy);
+    const releaseRequest = JSON.parse(readFileSync(values.request, 'utf8'));
+    validateRequest(releaseRequest, policy);
+    const manifest = JSON.parse(readFileSync(values.manifest, 'utf8'));
+    const pre = JSON.parse(readFileSync(values['pre-snapshot'], 'utf8'));
+    const adapterPath = join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs');
+    const result = verifyProductionPreSnapshot({
+      pre,
+      policy,
+      request: releaseRequest,
+      manifest,
+      adapterSourceSha256: sha256Hex(readFileSync(adapterPath)),
+    });
+    writeFileSync(resolve(values.output), canonicalJson({ schema_version: 1, ...result }), { encoding: 'utf8', flag: 'wx' });
+    process.stdout.write(`PRODUCTION BASELINE VERIFIED ${result.evidence_sha256}\n`);
+    return 0;
+  }
+  if (command === 'verify-dry-run') {
+    for (const required of ['input', 'manifest', 'output']) {
+      if (!values[required]) throw new Error(`missing --${required}`);
+    }
+    const manifest = JSON.parse(readFileSync(values.manifest, 'utf8'));
+    const verified = verifyMigrationDryRun({ text: readFileSync(values.input, 'utf8'), manifest });
+    const result = { schema_version: 1, result: 'MIGRATION_DRY_RUN_VERIFIED', ...verified };
+    writeFileSync(resolve(values.output), canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
+    process.stdout.write(`MIGRATION DRY RUN VERIFIED ${verified.pending_versions.length}\n`);
+    return 0;
+  }
   if (command === 'revalidate') {
     for (const required of ['policy', 'request', 'bundle', 'compiler-sha256', 'remote-evidence', 'output']) {
       if (!values[required]) throw new Error(`missing --${required}`);
@@ -1638,6 +1933,12 @@ async function runCli(argv) {
       runGit: args => execFileSync('git', args, { cwd: process.cwd(), encoding: args.includes('-z') ? 'buffer' : 'utf8' }),
     });
     const evidence = JSON.parse(readFileSync(values['remote-evidence'], 'utf8'));
+    const currentCompilerSha256 = sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-release.mjs')));
+    const currentAdapterSha256 = sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs')));
+    if (evidence.compiler?.sha256 !== currentCompilerSha256
+      || evidence.compiler?.snapshot_adapter_sha256 !== currentAdapterSha256) {
+      deny('POST_APPROVAL_DRIFT', 'release compiler or snapshot adapter bytes differ from the approved plan');
+    }
     if (canonicalJson(evidence.gitState?.changes ?? []) !== canonicalJson(gitState.changes)) {
       deny('POST_APPROVAL_DRIFT', 'regenerated Git delta differs from the approved plan');
     }
@@ -1664,27 +1965,39 @@ async function runCli(argv) {
     return 0;
   }
   if (command === 'postcheck') {
-    for (const required of ['policy', 'request', 'pre-finance', 'post-finance', 'finance-window', 'reconciliation', 'remote-postcheck', 'output']) {
+    for (const required of ['policy', 'request', 'manifest', 'pre-snapshot', 'post-snapshot', 'output']) {
       if (!values[required]) throw new Error(`missing --${required}`);
     }
     const policy = loadPolicy(values.policy);
     const releaseRequest = JSON.parse(readFileSync(values.request, 'utf8'));
     validateRequest(releaseRequest, policy);
-    const remote = JSON.parse(readFileSync(values['remote-postcheck'], 'utf8'));
-    if (remote?.complete !== true
-      || remote.project_ref !== policy.supabase.project_ref
-      || remote.health !== 'ACTIVE_HEALTHY'
-      || remote.unexpected_deployments !== 0
-      || remote.migrations_match !== true
-      || remote.functions_match !== true
-      || remote.cron_security_match !== true) {
-      deny('REMOTE_POSTCHECK_FAILED', 'Supabase production postcheck evidence is incomplete or divergent');
-    }
+    const manifest = JSON.parse(readFileSync(values.manifest, 'utf8'));
+    const beforeEvidence = JSON.parse(readFileSync(values['pre-snapshot'], 'utf8'));
+    const afterEvidence = JSON.parse(readFileSync(values['post-snapshot'], 'utf8'));
+    const adapterPath = join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs');
+    const remote = verifyProductionSnapshotPair({
+      pre: beforeEvidence,
+      post: afterEvidence,
+      policy,
+      request: releaseRequest,
+      manifest,
+      adapterSourceSha256: sha256Hex(readFileSync(adapterPath)),
+    });
+    const beforeTransactions = new Map(beforeEvidence.finance.transactions.items.map(item => [item.id, item]));
+    const beforeLedger = new Set(beforeEvidence.finance.ledger_entries.items.map(item => item.id));
+    const windowRows = {
+      complete: true,
+      transactions: afterEvidence.finance.transactions.items.filter(item => (
+        !beforeTransactions.has(item.id)
+        || canonicalJson(beforeTransactions.get(item.id)) !== canonicalJson(item)
+      )),
+      ledger_entries: afterEvidence.finance.ledger_entries.items.filter(item => !beforeLedger.has(item.id)),
+    };
     const financeVerification = verifyFinancePostcheckFromRaw({
-      before: JSON.parse(readFileSync(values['pre-finance'], 'utf8')),
-      after: JSON.parse(readFileSync(values['post-finance'], 'utf8')),
-      windowRows: JSON.parse(readFileSync(values['finance-window'], 'utf8')),
-      reconciliationResults: JSON.parse(readFileSync(values.reconciliation, 'utf8')),
+      before: beforeEvidence.finance,
+      after: afterEvidence.finance,
+      windowRows,
+      reconciliationResults: afterEvidence.finance.reconciliation,
       expectedPolicy: policy.supabase.finance_policy,
       releaseIdentity: {
         releaseId: releaseRequest.releaseId,
@@ -1698,6 +2011,7 @@ async function runCli(argv) {
       release_id: releaseRequest.releaseId,
       approved_sha: releaseRequest.approvedSha,
       remote_postcheck_sha256: sha256Hex(canonicalJson(remote)),
+      remote,
       finance: financeVerification.finance,
       finance_window_sha256: sha256Hex(canonicalJson(financeVerification.window)),
     };
@@ -1730,6 +2044,10 @@ async function runCli(argv) {
         runId: releaseRequest.runId,
       },
     });
+    if (verifiedBundle.manifest.compiler?.sha256 !== sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-release.mjs')))
+      || verifiedBundle.manifest.compiler?.snapshot_adapter_sha256 !== sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs')))) {
+      deny('ARTIFACT_PROVENANCE_MISMATCH', 'current release authority bytes differ from the approved artifact');
+    }
     const environment = JSON.parse(readFileSync(values.environment, 'utf8'));
     const branchPolicies = JSON.parse(readFileSync(values['branch-policies'], 'utf8'));
     verifyEnvironmentSnapshot({

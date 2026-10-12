@@ -1,5 +1,5 @@
 /* eslint-disable import/no-unresolved */
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.106.1'
 import { evaluateTextRules } from './ruleEngine.mjs'
 import { AudioPipelineError, WHISPER_MODEL, bytesToBase64, downloadStreamAudioBytes, makeProbeWav, normalizeWhisperResult, selectStreamAudioDownloadRoute, timecodeForMatch, validateStreamAudioTargetType } from './audioPipeline.mjs'
 import { VISUAL_AI_PROVIDER, VISUAL_MODEL, VisualProbeError, runVisualMultiImageProviderProbe, runVisualProviderProbe } from './visualProbe.mjs'
@@ -224,7 +224,8 @@ Deno.serve(async req => {
     const transcript = object(value)
     if (!uuid(transcript.transcript_id) || typeof transcript.text !== 'string' || typeof transcript.ruleset_fingerprint !== 'string') continue
     try {
-      const matches = evaluateTextRules({ text: transcript.text, scope: 'transcript' }, rulesData).map(match => timecodeForMatch(match, transcript.segments))
+      const matches = evaluateTextRules({ text: transcript.text, scope: 'transcript' }, rulesData)
+        .map((match: Record<string, unknown>) => timecodeForMatch(match, transcript.segments))
       const { data, error } = await admin.rpc('complete_content_safety_transcript_evaluation', { p_transcript_id: transcript.transcript_id, p_ruleset_fingerprint: transcript.ruleset_fingerprint, p_matches: matches })
       if (error) throw new Error('transcript_completion_failed')
       transcriptAlerts += Number(object(data).alerts_processed ?? 0); transcriptEvaluated += 1

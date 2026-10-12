@@ -33,8 +33,16 @@ The workflow rejects any other snapshot.
 
 Create Environment secrets by name only:
 
+- `SUPABASE_READ_ONLY_ACCESS_TOKEN`
 - `SUPABASE_ACCESS_TOKEN`
 - `SUPABASE_DB_PASSWORD`
+
+`SUPABASE_READ_ONLY_ACCESS_TOKEN` is a distinct least-privilege Management API
+token. It needs only project/database/function metadata read access and the
+documented read-only SQL permission. It must not deploy functions, apply
+migrations, change configuration, or resolve to the write-capable deployment
+token. The workflow exposes it only to the fixed snapshot adapter. Mutation
+steps receive only the deployment credentials they require.
 
 Never copy a value into this runbook, the policy, a manifest, an artifact, a
 workflow input, or a log. Do not add `service_role`; this gate does not require
@@ -55,7 +63,9 @@ still requires the Environment review.
 
 ## Baseline candidate to verified
 
-The initial baseline is `candidate`. Equality with GitHub `main` is not enough.
+The current expanded 18-function baseline is `candidate`. Adding
+`video-semantic-index` to the governed set invalidated the historical
+17-function evidence; equality with GitHub `main` is not enough.
 Capture a complete read-only owner-control-plane snapshot covering:
 
 1. exact remote migration inventory, count, and latest version;
@@ -161,8 +171,21 @@ perform finance operations.
 
 `release` is forbidden during C2. Do not use it to test installation or
 cutover. It remains fail-closed while the baseline is candidate, the cutover
-state is pending, a resource is unreproducible, or the reviewed read-only
-snapshot adapter is not configured.
+state is pending, a resource is unreproducible, or the dedicated read-only
+credential is not configured. The reviewed adapter is
+`scripts/nelyon-production-snapshot-adapter.mjs`; it uses only fixed Supabase
+Management API endpoints, the read-only SQL endpoint, bounded responses,
+disabled redirects, zero retries, and sanitized receipts. Its pre/post
+snapshots are bound to the exact request, manifest, SHA, run attempt, adapter,
+and query fingerprints.
+
+The manifest binds the adapter's repository-relative path and SHA-256. Verify
+both values before resolving credentials or opening any network connection.
+The production workflow pins the Supabase CLI to `2.120.0`. Function deploys
+use the CLI's API bundler (`--use-api`) one function at a time; the trusted
+Supabase control plane therefore performs the final bundle. This is a
+reproducible governed-source contract, not a claim that a downloadable remote
+archive is byte-for-byte identical to a local bundle.
 
 For a separately authorized future production release:
 
@@ -177,11 +200,31 @@ For a separately authorized future production release:
 5. paste the exact generated approval token into the current deployment
    review;
 6. require post-approval revalidation before every mutation;
-7. apply only exact forward migrations in the manifest;
-8. deploy functions one by one by exact manifest name, never by directory or
+7. capture the bound pre-snapshot with the read-only credential and reduce the
+   CLI dry-run to an exact timestamp list equal to the manifest;
+8. apply only exact forward migrations in the manifest;
+9. deploy functions one by one by exact manifest name, never by directory or
    timestamp inference; and
-9. require all remote, finance, health, cron, and security postchecks before
+10. capture the bound post-snapshot and require all remote, finance, health,
+   cron, and security comparisons before
    success.
+
+`video-semantic-index` is a governed transitive consumer of the shared visual
+pipeline and must be included whenever that pipeline changes. The release
+compiler derives the exact function set from direct and transitive imports;
+do not add or omit functions manually. Edge imports used by the affected graph
+must be version-pinned and reproducible.
+
+The graph verifier fails closed on implicit `deno.json`/`deno.jsonc`
+configuration, unsupported source extensions, CommonJS `require(...)`,
+TypeScript `import = require`, and triple-slash references. A governed
+function's entrypoint or import-map change is a source change; a `verify_jwt`
+configuration-only change is not. Immediately before every function deploy,
+revalidate its exact entrypoint, transitive graph, source hash, import-map hash,
+and JWT contract. The post-snapshot must then prove that every listed function
+advanced version, retained the expected `verify_jwt`, and, when source changed,
+has a different sanitized remote source fingerprint. Every unlisted function
+must remain unchanged.
 
 Stripe, webhooks, BDAG, ledger, wallet, escrow, private media, moderation,
 authentication, `verify_jwt=false`, and financial migrations are always high
@@ -202,6 +245,15 @@ and only their status and blockchain confirmation field may differ. Completed,
 failed, and reversed historical rows, prior ledger entries, amounts, accounts,
 currency, references, and idempotency fields remain immutable.
 
+The owner-reviewed finance baseline additionally binds the schema digest,
+complete Premium Finance policy (including its version), Premium table/function
+bindings, Premium transaction count, all canonical reconciliation counters,
+and the constant `c2_attributed_bdag_movement=0`. Every baseline reconciliation
+counter must be zero before mutation. Preserve the stable identity of every
+pre-existing ledger account (`id`, hashed owner, type, currency, and creation
+time); legitimate new concurrent accounts are allowed but mutation or deletion
+of an existing identity is not.
+
 Every completed new or newly confirmed transaction must have matching balanced
 debit and credit ledger entries tied to its amount and accounts. Reject any
 transaction or ledger metadata containing the current release ID or run ID.
@@ -215,10 +267,36 @@ and canonical reconciliation—not on static counters.
 Premium Finance must remain exactly disabled: purchases false, subscriptions
 false, refunds false, and platform fee 0.
 
+## Content Safety and provider activation gates
+
+The Creator Premium policy package remains a candidate. Its twelve ES/EN
+rules are draft and disabled; their package fingerprint and F7 canary plan are
+review evidence, not normative approval. Before production activation, the
+owner must separately approve the policy authority, permitted/restricted
+categories, false-positive handling, appeals, retention, and store/payment
+constraints. Never autoapprove or enable these rules from the release job.
+
+The local provider adapter and dry-run do not prove real provider behavior.
+Real Gemma/Whisper component validation still requires a verified isolated
+Cloudflare account or explicitly approved isolation, trusted owner
+authorization bound to the exact SHA/fingerprints, confirmed quota and cost,
+and a separate nonzero budget. Private R2/Stream end-to-end validation also
+requires isolated synthetic media resources and cleanup authority. Until those
+gates are complete, keep fail-closed publication semantics and report real
+provider/private-media E2E as pending.
+
 ## Failure recovery and rollback
 
 A failed postcheck is a failed release and never advances baseline authority.
 Preserve the manifest, digest, exact approval, snapshots, and logs.
+
+The workflow captures a sanitized release-observation artifact even when a
+mutation or postcheck fails. It includes bounded receipts and state summaries,
+never raw snapshots, authorization headers, database credentials, private
+payloads, or signed media URLs. A numeric run-attempt value is not sufficient
+release attribution: reconciliation checks only exact, labeled release/run
+identifiers. Advisor fingerprints exclude volatile observation timestamps so
+unchanged findings compare deterministically.
 
 Database correction uses a new forward-only corrective migration reviewed in
 a later authorized release. Never perform an automatic destructive rollback.
