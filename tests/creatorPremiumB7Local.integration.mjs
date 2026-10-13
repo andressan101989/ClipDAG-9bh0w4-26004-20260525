@@ -117,6 +117,7 @@ test('B7 disposable harness contains executable lifecycle and financial invarian
     'replayed',
     'already_refunded',
     'rollback',
+    'creator_premium_legacy_reverification_required',
   ]) assert.match(source, new RegExp(contract, 'i'), `missing executable proof: ${contract}`);
   assert.match(source, /1000[\s\S]*1\.00000000[\s\S]*9\.00000000/i, 'exact eight-decimal fee fixture is required');
   assert.match(source, /count\s*\(\s*\*\s*\)[\s\S]*public\.ledger_entries/i);
@@ -136,6 +137,10 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     purchaseRefundKey: uid(), periodRefundKey: uid(), rollbackKey: uid(),
     purchaseTeaser: uid(), purchaseOriginal: uid(), subscriptionTeaser: uid(), subscriptionVideo: uid(),
     moderationTeaser: uid(), moderationOriginal: uid(), blockedTeaser: uid(), blockedOriginal: uid(),
+    legacyCreator: uid(), legacyPending: uid(), legacyDeleted: uid(),
+    legacyPendingRequest: uid(), legacyDeletedRequest: uid(), legacyOfferRequest: uid(),
+    legacyTeaser: uid(), legacyOriginal: uid(),
+    modeSwitchRequest: uid(), modeSwitchOfferRequest: uid(), modeSwitchPlanRequest: uid(),
   };
   const service = (name, args, options = {}) => asRole(
     db, 'service_role', null,
@@ -156,12 +161,12 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
       '${title}','B7 disposable proof','${kind}','${access}','${request}'
     ) result;
   `));
-  const imageAsset = (assetId, purpose, visibility, publicUrl = null) => `
+  const imageAsset = (assetId, purpose, visibility, publicUrl = null, ownerId = id.creator) => `
     insert into public.media_assets(
       id,owner_id,provider,media_kind,purpose,visibility,bucket_name,object_key,
       mime_type,size_bytes,status,ready_at,public_url
     ) values(
-      '${assetId}','${id.creator}','r2','image','${purpose}','${visibility}',
+      '${assetId}','${ownerId}','r2','image','${purpose}','${visibility}',
       '${visibility === 'public' ? 'public-bucket' : 'private-bucket'}',
       'premium/${assetId}.jpg','image/jpeg',1000,'ready',clock_timestamp(),
       ${publicUrl ? `'${publicUrl}'` : 'null'}
@@ -254,7 +259,73 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
         ('MODERATOR','content.items.moderate')
       on conflict(role_code,capability_code) do nothing;
     `);
-    psql(db, chain.map(item => item.sql).join('\n'));
+    psql(db, chain.slice(0, -1).map(item => item.sql).join('\n'));
+
+    // Reproduce the exact classes of B5 rows observed before B7: a private
+    // purchase with ready media + active offer already pending review, and a
+    // deleted row. Install B7 only after these fixtures exist.
+    psql(db, `
+      set session_replication_role=replica;
+      insert into auth.users(id,is_anonymous) values('${id.legacyCreator}',false);
+      insert into public.user_profiles(id,username) values('${id.legacyCreator}','b7_legacy_creator');
+      insert into private.user_age_eligibility(
+        user_id,status,minimum_age,policy_version,evaluated_at,source,age_band,birth_date
+      )
+      select '${id.legacyCreator}','eligible',policy.minimum_age,policy.policy_version,
+             clock_timestamp(),'signup_metadata','age_18_plus',current_date-interval '30 years'
+      from private.age_eligibility_policy policy where policy.singleton=true;
+      insert into private.creator_premium_contents(
+        id,creator_id,client_request_id,title,description,content_kind,access_mode,lifecycle_status
+      ) values(
+        '${id.legacyPending}','${id.legacyCreator}','${id.legacyPendingRequest}',
+        'Legacy B5 pending','Representative pre-B7 pending row','image','purchase','draft'
+      );
+      insert into private.creator_premium_contents(
+        id,creator_id,client_request_id,title,description,content_kind,access_mode,
+        lifecycle_status,deleted_at
+      ) values(
+        '${id.legacyDeleted}','${id.legacyCreator}','${id.legacyDeletedRequest}',
+        'Legacy B5 deleted','Representative pre-B7 deleted row','image','purchase',
+        'deleted',clock_timestamp()
+      );
+      set session_replication_role=origin;
+      ${imageAsset(id.legacyTeaser, 'creator_premium_teaser_image', 'public', 'https://cdn.test/legacy-teaser.jpg', id.legacyCreator)}
+      ${imageAsset(id.legacyOriginal, 'creator_premium_original_image', 'private', null, id.legacyCreator)}
+    `);
+    assert.equal(json(asRole(db, 'authenticated', id.legacyCreator, `
+      select to_jsonb(result) from public.set_my_creator_premium_image_media_v1(
+        '${id.legacyPending}','${id.legacyTeaser}','${id.legacyOriginal}'
+      ) result
+    `)).media_ready, true);
+    json(asRole(db, 'authenticated', id.legacyCreator, `
+      select to_jsonb(result) from public.set_my_creator_premium_offer_v1(
+        '${id.legacyPending}',7.00000000,'${id.legacyOfferRequest}'
+      ) result
+    `));
+    psql(db, `update private.creator_premium_contents
+      set lifecycle_status='pending_review',updated_at=clock_timestamp()
+      where id='${id.legacyPending}'`);
+    assert.equal(psql(db, `select lifecycle_status from private.creator_premium_contents where id='${id.legacyPending}'`).stdout, 'pending_review');
+
+    psql(db, chain.at(-1).sql);
+    assert.equal(psql(db, `
+      select lifecycle_status||'|'||verification_status||'|'||verification_error_code||'|'||
+        (submitted_at is not null)::text||'|'||
+        (select count(*) from private.content_safety_scans where target_type='creator_premium' and target_id=content.id)::text
+      from private.creator_premium_contents content where content.id='${id.legacyPending}'
+    `).stdout, 'pending_review|not_requested|creator_premium_legacy_reverification_required|true|0');
+    assert.equal(psql(db, `
+      select lifecycle_status||'|'||(deleted_at is not null)::text||'|'||verification_status
+      from private.creator_premium_contents where id='${id.legacyDeleted}'
+    `).stdout, 'deleted|true|not_requested');
+    assert.equal(json(asRole(db, 'authenticated', id.legacyCreator, `
+      select to_jsonb(result) from public.submit_my_creator_premium_content_for_review_v1('${id.legacyPending}') result
+    `)).lifecycle_status, 'pending_review');
+    assert.equal(psql(db, `
+      select verification_status||'|'||(verification_scan_id is not null)::text||'|'||
+        (select count(*) from private.content_safety_scans where target_type='creator_premium' and target_id=content.id)::text
+      from private.creator_premium_contents content where content.id='${id.legacyPending}'
+    `).stdout, 'pending|true|1');
 
     const functions = psql(db, `select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('search_admin_creator_premium_content_v1','get_admin_creator_premium_content_v1','admin_review_creator_premium_content_v1','get_creator_premium_commerce_v1','get_my_creator_premium_subscriptions_v1','get_my_creator_premium_commercial_summary_v1','admin_refund_creator_premium_purchase_v1','admin_refund_creator_premium_subscription_period_v1')`).stdout;
     assert.equal(functions, '8');
@@ -321,6 +392,7 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     const subscription = createDraft('B7 subscription', 'subscription', id.subscriptionRequest, 'video');
     const moderation = createDraft('B7 moderation', 'purchase', id.moderationRequest);
     const blocked = createDraft('B7 blocked', 'purchase', id.blockedRequest);
+    const modeSwitch = createDraft('B7 mode switch', 'purchase_or_subscription', id.modeSwitchRequest);
     expectFailure(asRole(db, 'authenticated', id.other, `select * from public.update_my_creator_premium_draft_v1('${purchase.id}','stolen','stolen','image','purchase')`, { allowFailure: true }), 'creator_premium_content_not_found');
 
     psql(db, `
@@ -346,8 +418,18 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${purchase.id}',10.00000000,'${id.purchaseOfferRequest}') result`));
     json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${moderation.id}',4.00000000,'${id.moderationOfferRequest}') result`));
     json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${blocked.id}',3.00000000,'${id.blockedOfferRequest}') result`));
+    json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${modeSwitch.id}',6.00000000,'${id.modeSwitchOfferRequest}') result`));
     const plan = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.create_my_creator_premium_plan_draft_v1('B7 plan','Disposable plan',20.00000000,30,'${id.planRequest}') result`));
     assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_plan_contents_v1('${plan.id}',array['${subscription.id}']::uuid[]) result`)).mapped_content_count, 1);
+    const modeSwitchPlan = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.create_my_creator_premium_plan_draft_v1('B7 switch plan','Disposable switch plan',15.00000000,30,'${id.modeSwitchPlanRequest}') result`));
+    assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_plan_contents_v1('${modeSwitchPlan.id}',array['${modeSwitch.id}']::uuid[]) result`)).mapped_content_count, 1);
+    json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.update_my_creator_premium_draft_v1('${modeSwitch.id}','B7 mode switch','Disposable transition','image','purchase') result`));
+    assert.equal(psql(db, `
+      select content.access_mode||'|'||
+        (select count(*) from private.creator_premium_plan_contents mapping where mapping.content_id=content.id)::text||'|'||
+        (select count(*) from private.creator_premium_offer_versions offer where offer.content_id=content.id and offer.status='active')::text
+      from private.creator_premium_contents content where content.id='${modeSwitch.id}'
+    `).stdout, 'purchase|0|1');
 
     for (const contentId of [purchase.id,subscription.id,moderation.id,blocked.id]) {
       assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.submit_my_creator_premium_content_for_review_v1('${contentId}') result`)).lifecycle_status, 'pending_review');

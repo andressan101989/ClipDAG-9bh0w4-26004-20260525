@@ -54,6 +54,16 @@ test('creator publication request records verification timing and creator can re
   assert.doesNotMatch(reopen, /lifecycle_status\s*=\s*'published'/i);
 });
 
+test('draft access-mode changes reconcile offer and plan mappings atomically in the canonical update RPC', () => {
+  const update = functionBody('update_my_creator_premium_draft_v1', 'public');
+  assert.match(update, /pg_advisory_xact_lock/i);
+  assert.match(update, /for\s+update/i);
+  assert.match(update, /p_access_mode\s*=\s*'purchase'[\s\S]*delete\s+from\s+private\.creator_premium_plan_contents/i);
+  assert.match(update, /p_access_mode\s*=\s*'subscription'[\s\S]*update\s+private\.creator_premium_offer_versions[\s\S]*status\s*=\s*'retired'/i);
+  assert.match(update, /update\s+private\.creator_premium_contents[\s\S]*access_mode\s*=\s*p_access_mode/i);
+  assert.match(update, /security\s+definer[\s\S]*set\s+search_path\s*=\s*''/i);
+});
+
 test('canonical owner list exposes bounded review feedback for correction', () => {
   const projection = functionBody('get_my_creator_premium_contents_v1', 'public');
   assert.match(sql, /drop\s+function\s+public\.get_my_creator_premium_contents_v1\s*\(\s*integer\s*,\s*timestamptz\s*,\s*uuid\s*\)/i);

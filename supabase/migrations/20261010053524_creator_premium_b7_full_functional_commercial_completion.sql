@@ -23,6 +23,16 @@ alter table private.creator_premium_contents
   add column verification_requested_at timestamptz,
   add column verification_completed_at timestamptz;
 
+-- B5 could already contain a legitimate pending_review row before automatic
+-- verification existed. Preserve that row and every relationship, but do not
+-- manufacture a scan, fingerprint, policy decision, or PASS. The explicit
+-- marker makes the one-time B7 reverification deterministic and auditable.
+update private.creator_premium_contents content
+set submitted_at = coalesce(content.submitted_at, content.updated_at, content.created_at),
+    verification_error_code = 'creator_premium_legacy_reverification_required'
+where content.lifecycle_status = 'pending_review'
+  and content.verification_status = 'not_requested';
+
 alter table private.creator_premium_contents
   add constraint creator_premium_contents_reviewed_by_fkey
     foreign key (reviewed_by) references auth.users(id)
@@ -111,7 +121,11 @@ alter table private.creator_premium_contents
       and published_at is null and quarantined_at is null and removed_at is null
       and deleted_at is null and submitted_at is not null and reviewed_at is null
       and reviewed_by is null and review_reason is null
-      and verification_status in ('pending','commercial_pending','failed'))
+      and (
+        verification_status in ('pending','commercial_pending','failed')
+        or (verification_status = 'not_requested'
+          and verification_error_code = 'creator_premium_legacy_reverification_required')
+      ))
     or (lifecycle_status = 'published'
       and published_at is not null and quarantined_at is null and removed_at is null
       and deleted_at is null and submitted_at is not null
@@ -248,6 +262,99 @@ begin
 end;
 $$;
 
+-- Keep access-mode changes and their mutually exclusive commercial bindings in
+-- one server transaction. This replaces the B1/B5 RPC; it does not introduce a
+-- second authority. purchase keeps the active offer and drops plan mappings,
+-- subscription keeps plan mappings and retires the active individual offer,
+-- while the combined mode preserves both.
+create or replace function public.update_my_creator_premium_draft_v1(
+  p_content_id uuid,
+  p_title text,
+  p_description text,
+  p_content_kind text,
+  p_access_mode text
+) returns table (
+  id uuid,
+  lifecycle_status text,
+  created_at timestamptz,
+  updated_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor uuid := auth.uid();
+  v_title text := pg_catalog.btrim(coalesce(p_title, ''));
+  v_description text := pg_catalog.btrim(coalesce(p_description, ''));
+  v_content private.creator_premium_contents;
+begin
+  if v_actor is null then
+    raise exception using errcode = '42501', message = 'creator_premium_auth_required';
+  end if;
+  if not private.current_user_is_creator_exclusive_age_eligible() then
+    raise exception using errcode = '42501', message = 'creator_premium_age_eligibility_required';
+  end if;
+  if not private.creator_premium_actor_is_operational_v1(v_actor) then
+    raise exception using errcode = '42501', message = 'creator_premium_account_restricted';
+  end if;
+  if p_content_id is null
+     or pg_catalog.char_length(v_title) not between 1 and 120
+     or pg_catalog.char_length(v_description) > 2000
+     or p_content_kind not in ('image','video')
+     or p_access_mode not in ('purchase','subscription','purchase_or_subscription') then
+    raise exception using errcode = '22023', message = 'creator_premium_invalid_draft';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('creator-premium-content:' || p_content_id::text, 0)
+  );
+  select content.* into v_content
+  from private.creator_premium_contents content
+  where content.id = p_content_id
+    and content.creator_id = v_actor
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'creator_premium_content_not_found';
+  end if;
+  if v_content.lifecycle_status <> 'draft' then
+    raise exception using errcode = '55000', message = 'creator_premium_draft_only';
+  end if;
+
+  if p_access_mode = 'purchase' then
+    delete from private.creator_premium_plan_contents mapping
+    where mapping.content_id = v_content.id
+      and mapping.creator_id = v_actor;
+  elsif p_access_mode = 'subscription' then
+    update private.creator_premium_offer_versions offer
+    set status = 'retired',
+        retired_at = coalesce(offer.retired_at, pg_catalog.clock_timestamp()),
+        updated_at = pg_catalog.clock_timestamp()
+    where offer.content_id = v_content.id
+      and offer.creator_id = v_actor
+      and offer.status = 'active';
+  end if;
+
+  update private.creator_premium_contents content
+  set title = v_title,
+      description = v_description,
+      content_kind = p_content_kind,
+      access_mode = p_access_mode,
+      updated_at = pg_catalog.clock_timestamp()
+  where content.id = v_content.id
+  returning content.* into v_content;
+
+  return query select v_content.id, v_content.lifecycle_status,
+    v_content.created_at, v_content.updated_at;
+end;
+$$;
+
+revoke all on function public.update_my_creator_premium_draft_v1(uuid,text,text,text,text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.update_my_creator_premium_draft_v1(uuid,text,text,text,text)
+  to authenticated;
+
 create or replace function public.submit_my_creator_premium_content_for_review_v1(
   p_content_id uuid
 ) returns table (
@@ -295,10 +402,11 @@ begin
     return;
   end if;
   if v_content.lifecycle_status not in ('draft','pending_review')
-     or (v_content.lifecycle_status='pending_review' and v_content.verification_status<>'failed') then
+     or (v_content.lifecycle_status='pending_review'
+       and v_content.verification_status not in ('failed','not_requested')) then
     raise exception using errcode='55000',message='creator_premium_publication_request_invalid_state';
   end if;
-  if v_content.lifecycle_status='draft' then
+  if v_content.lifecycle_status='draft' or v_content.verification_status='not_requested' then
     v_blocker:=private.creator_premium_submission_blocker_v1(v_content.id);
   else
     -- A failed scan may be retried only after the still-current media and
@@ -651,10 +759,18 @@ begin
     plans.mapped_plan_count,
     plans.active_plan_count,
     (content.lifecycle_status = 'draft' and blocker.value is null)
-      or (content.lifecycle_status='pending_review' and content.verification_status='failed'),
+      or (content.lifecycle_status='pending_review' and (
+        content.verification_status='failed'
+        or (content.verification_status='not_requested'
+          and content.verification_error_code='creator_premium_legacy_reverification_required')
+      )),
     case
       when content.lifecycle_status='draft' then blocker.value
-      when content.lifecycle_status='pending_review' and content.verification_status='failed'
+      when content.lifecycle_status='pending_review' and (
+        content.verification_status='failed'
+        or (content.verification_status='not_requested'
+          and content.verification_error_code='creator_premium_legacy_reverification_required')
+      )
         then content.verification_error_code
       else 'creator_premium_draft_only'
     end
@@ -763,10 +879,18 @@ begin
     content.content_kind='video' and private.creator_premium_video_is_ready_v1(content.id),
     offer.version,offer.price_bdag::text,plans.mapped_plan_count,plans.active_plan_count,
     (content.lifecycle_status='draft' and blocker.value is null)
-      or (content.lifecycle_status='pending_review' and content.verification_status='failed'),
+      or (content.lifecycle_status='pending_review' and (
+        content.verification_status='failed'
+        or (content.verification_status='not_requested'
+          and content.verification_error_code='creator_premium_legacy_reverification_required')
+      )),
     case
       when content.lifecycle_status='draft' then blocker.value
-      when content.lifecycle_status='pending_review' and content.verification_status='failed'
+      when content.lifecycle_status='pending_review' and (
+        content.verification_status='failed'
+        or (content.verification_status='not_requested'
+          and content.verification_error_code='creator_premium_legacy_reverification_required')
+      )
         then content.verification_error_code
       else 'creator_premium_draft_only'
     end
