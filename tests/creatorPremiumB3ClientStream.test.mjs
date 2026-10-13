@@ -11,6 +11,19 @@ const premiumServicePath = path.join(root, 'services/creatorPremiumStreamService
 const contentId = '20000000-0000-4000-8000-000000000001';
 const teaserAssetId = '30000000-0000-4000-8000-000000000001';
 const videoAssetId = '40000000-0000-4000-8000-000000000001';
+const signedStreamToken = 'eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3QifQ.eyJzdWIiOiJwcm92aWRlci11aWQiLCJleHAiOjE3OTAwMDAwMDB9.c2lnbmF0dXJl';
+
+function signedStreamGrant(overrides = {}) {
+  const base = `https://customer-test.cloudflarestream.com/${signedStreamToken}`;
+  return {
+    contentId,
+    hlsUrl: `${base}/manifest/video.m3u8`,
+    dashUrl: `${base}/manifest/video.mpd`,
+    thumbnailUrl: `${base}/thumbnails/thumbnail.jpg`,
+    expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    ...overrides,
+  };
+}
 
 function compile(source, filename) {
   return ts.transpileModule(source, {
@@ -155,13 +168,7 @@ function loadPremiumService({
       teaser_url: 'https://public.example.test/teaser.jpg', teaser_attached: true,
       video_attached: true, video_ready: true, media_ready: true,
     }], error: null },
-  invoke = async () => ({ data: { success: true, data: {
-    contentId,
-    hlsUrl: 'https://customer-test.cloudflarestream.com/token/manifest/video.m3u8',
-    dashUrl: 'https://customer-test.cloudflarestream.com/token/manifest/video.mpd',
-    thumbnailUrl: 'https://customer-test.cloudflarestream.com/token/thumbnails/thumbnail.jpg',
-    expiresAt: new Date(Date.now() + 300_000).toISOString(),
-  } }, error: null }),
+  invoke = async () => ({ data: { success: true, data: signedStreamGrant() }, error: null }),
 } = {}) {
   assert.equal(existsSync(premiumServicePath), true, 'creatorPremiumStreamService.ts must exist');
   const module = { exports: {} };
@@ -361,13 +368,7 @@ test('owner state is safe and playback grant sends only content ID with strict U
   const service = loadPremiumService({
     invoke: async (name, options) => {
       invokeCalls.push({ name, options: structuredClone(options) });
-      return { data: { success: true, data: {
-        contentId,
-        hlsUrl: 'https://customer-test.cloudflarestream.com/token/manifest/video.m3u8',
-        dashUrl: 'https://customer-test.cloudflarestream.com/token/manifest/video.mpd',
-        thumbnailUrl: 'https://customer-test.cloudflarestream.com/token/thumbnails/thumbnail.jpg',
-        expiresAt: new Date(Date.now() + 300_000).toISOString(),
-      } }, error: null };
+      return { data: { success: true, data: signedStreamGrant() }, error: null };
     },
   });
   const state = await service.fetchMyCreatorPremiumVideoMedia(contentId);
@@ -382,28 +383,57 @@ test('owner state is safe and playback grant sends only content ID with strict U
   assert.equal(Object.hasOwn(grant, 'token'), false);
 
   for (const invalid of [
-    { hlsUrl: 'http://customer-test.cloudflarestream.com/token/manifest/video.m3u8' },
-    { hlsUrl: 'https://customer-test.cloudflarestream.com/token/not-hls' },
-    { dashUrl: 'https://customer-test.cloudflarestream.com/token/not-dash' },
+    { hlsUrl: `http://customer-test.cloudflarestream.com/${signedStreamToken}/manifest/video.m3u8` },
+    { hlsUrl: `https://customer-test.cloudflarestream.com/${signedStreamToken}/not-hls` },
+    { dashUrl: `https://customer-test.cloudflarestream.com/${signedStreamToken}/not-dash` },
     { thumbnailUrl: 'file:///private.jpg' },
     { expiresAt: new Date(Date.now() - 1).toISOString() },
     { expiresAt: new Date(Date.now() + 400_000).toISOString() },
     { contentId: otherContentId },
   ]) {
     const invalidService = loadPremiumService({
-      invoke: async () => ({ data: { success: true, data: {
-        contentId,
-        hlsUrl: 'https://customer-test.cloudflarestream.com/token/manifest/video.m3u8',
-        dashUrl: 'https://customer-test.cloudflarestream.com/token/manifest/video.mpd',
-        thumbnailUrl: 'https://customer-test.cloudflarestream.com/token/thumbnails/thumbnail.jpg',
-        expiresAt: new Date(Date.now() + 300_000).toISOString(),
-        ...invalid,
-      } }, error: null }),
+      invoke: async () => ({
+        data: { success: true, data: signedStreamGrant(invalid) },
+        error: null,
+      }),
     });
     await assert.rejects(
       () => invalidService.getCreatorPremiumVideoPlaybackGrant(contentId),
       /invalid_premium_video_grant/,
     );
+  }
+});
+
+test('Premium Stream service rejects coherent noncanonical URL mutations while accepting the B3 signer contract', async t => {
+  const canonicalService = loadPremiumService({
+    invoke: async () => ({ data: { success: true, data: signedStreamGrant() }, error: null }),
+  });
+  const canonical = await canonicalService.getCreatorPremiumVideoPlaybackGrant(contentId);
+  assert.equal(canonical.hlsUrl, signedStreamGrant().hlsUrl);
+
+  const mutations = [
+    ['credentials', value => value.replace('https://', 'https://user:pass@')],
+    ['nondefault-port', value => value.replace('.cloudflarestream.com', '.cloudflarestream.com:8443')],
+    ['fragment', value => `${value}#private`],
+    ['unexpected-query', value => `${value}?download=1`],
+    ['noncanonical-token', value => value.replace(signedStreamToken, 'not-a-signed-jwt')],
+  ];
+  for (const [name, mutate] of mutations) {
+    await t.test(name, async () => {
+      const base = signedStreamGrant();
+      const service = loadPremiumService({
+        invoke: async () => ({ data: { success: true, data: {
+          ...base,
+          hlsUrl: mutate(base.hlsUrl),
+          dashUrl: mutate(base.dashUrl),
+          thumbnailUrl: mutate(base.thumbnailUrl),
+        } }, error: null }),
+      });
+      await assert.rejects(
+        () => service.getCreatorPremiumVideoPlaybackGrant(contentId),
+        /invalid_premium_video_grant/,
+      );
+    });
   }
 });
 

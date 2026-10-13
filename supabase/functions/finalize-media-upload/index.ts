@@ -205,7 +205,8 @@ Deno.serve(async (req) => {
     }
     if (
       a.purpose === "product_video" &&
-      (!Number.isSafeInteger(durationMs) ||
+      (durationMs == null ||
+        !Number.isSafeInteger(durationMs) ||
         durationMs <= 0 ||
         durationMs > 60000)
     ) {

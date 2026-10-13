@@ -1,0 +1,109 @@
+export type SettledCreatorPremiumValue<T> = {
+  value: T | null;
+  error: unknown | null;
+};
+
+export type CreatorPremiumHubLoaders<TContent, TPlans, TSummary> = {
+  content: () => Promise<TContent>;
+  plans: () => Promise<TPlans>;
+  summary: () => Promise<TSummary>;
+};
+
+export type CreatorPremiumHubLoadResult<TContent, TPlans, TSummary> = {
+  content: SettledCreatorPremiumValue<TContent>;
+  plans: SettledCreatorPremiumValue<TPlans>;
+  summary: SettledCreatorPremiumValue<TSummary>;
+};
+
+function settledValue<T>(result: PromiseSettledResult<T>): SettledCreatorPremiumValue<T> {
+  return result.status === 'fulfilled'
+    ? { value: result.value, error: null }
+    : { value: null, error: result.reason };
+}
+
+export async function settleCreatorPremiumHubLoad<TContent, TPlans, TSummary>(
+  loaders: CreatorPremiumHubLoaders<TContent, TPlans, TSummary>,
+): Promise<CreatorPremiumHubLoadResult<TContent, TPlans, TSummary>> {
+  const [content, plans, summary] = await Promise.allSettled([
+    loaders.content(),
+    loaders.plans(),
+    loaders.summary(),
+  ]);
+
+  return {
+    content: settledValue(content),
+    plans: settledValue(plans),
+    summary: settledValue(summary),
+  };
+}
+
+export const CREATOR_PREMIUM_BLOCKER_COPY: Readonly<Record<string, string>> = Object.freeze({
+  creator_premium_image_media_not_ready: 'Falta completar la vista previa y la imagen privada.',
+  creator_premium_video_media_not_ready: 'Falta completar la vista previa o el video todavía se está procesando.',
+  creator_premium_active_offer_required: 'Configura un precio de compra activo.',
+  creator_premium_active_plan_required: 'Seguridad aprobada. La activación de un plan asociado completará la publicación automática.',
+  creator_premium_plan_mapping_required: 'Asocia el contenido a por lo menos un plan.',
+  content_safety_policy_not_configured: 'La verificación de seguridad todavía no está disponible. Tu contenido sigue privado.',
+  content_safety_audio_policy_not_configured: 'La verificación de audio todavía no está disponible. Tu video sigue privado.',
+  creator_premium_safety_provider_failed: 'La verificación tuvo un error temporal. Puedes reintentar sin volver a subir el contenido.',
+  creator_premium_visual_proof_invalid: 'No pudimos validar el original privado. Reintenta la verificación.',
+});
+
+function errorField(error: unknown, field: 'code' | 'message'): string | null {
+  if (!error || typeof error !== 'object' || !(field in error)) return null;
+  const value = (error as Record<string, unknown>)[field];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+export function creatorPremiumErrorMessage(error: unknown): string {
+  const message = errorField(error, 'message');
+  if (!message) return 'No pudimos completar la operación. Inténtalo de nuevo.';
+
+  const known = CREATOR_PREMIUM_BLOCKER_COPY[message];
+  if (known) return known;
+
+  const code = errorField(error, 'code');
+  if (/^[a-z0-9]+(?:_[a-z0-9]+)+$/i.test(message)
+      || Boolean(code && (/^PGRST/i.test(code) || /^[0-9A-Z]{5}$/.test(code)))
+      || /schema cache|could not find the function|relation .+ does not exist/i.test(message)) {
+    return 'No pudimos completar la operación. Inténtalo de nuevo.';
+  }
+
+  return message;
+}
+
+export function creatorPremiumCommercialSummaryErrorMessage(error: unknown): string {
+  const code = errorField(error, 'code');
+  const message = errorField(error, 'message') ?? '';
+  if (code === 'PGRST202' || message.includes('get_my_creator_premium_commercial_summary_v1')) {
+    return 'Ingresos todavía no está disponible en este backend. Contenido y planes siguen disponibles.';
+  }
+  return 'No pudimos obtener los ingresos canónicos. Contenido y planes siguen disponibles.';
+}
+
+export function creatorPremiumSubmissionMediaBlocker(input: {
+  contentKind: 'image' | 'video';
+  mediaReady: boolean;
+  hasPendingTeaser: boolean;
+  hasPendingPrivate: boolean;
+  verificationRetryable: boolean;
+}): string | null {
+  if (input.verificationRetryable) return null;
+
+  if (input.hasPendingTeaser || input.hasPendingPrivate) {
+    if (!input.hasPendingTeaser) {
+      return 'Selecciona también una vista previa pública y usa “Subir/Reemplazar medios” antes de publicar.';
+    }
+    if (!input.hasPendingPrivate) {
+      return `Selecciona también ${input.contentKind === 'image' ? 'la imagen' : 'el video'} privado y usa “Subir/Reemplazar medios” antes de publicar.`;
+    }
+    return 'Has seleccionado medios nuevos. Usa “Subir/Reemplazar medios” antes de publicar.';
+  }
+
+  if (input.mediaReady) return null;
+  return CREATOR_PREMIUM_BLOCKER_COPY[
+    input.contentKind === 'image'
+      ? 'creator_premium_image_media_not_ready'
+      : 'creator_premium_video_media_not_ready'
+  ];
+}

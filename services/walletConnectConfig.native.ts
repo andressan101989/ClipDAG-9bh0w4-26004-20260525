@@ -7,13 +7,9 @@ import {
   type AppKitNetwork,
   type Storage,
 } from '@reown/appkit-react-native';
+import { createWalletConnectInitializer } from '@/services/walletConnectRuntime';
 
 const rawProjectId = process.env.EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID?.trim() ?? '';
-
-export const WALLETCONNECT_PROJECT_ID_PRESENT = rawProjectId.length > 0;
-export const WALLETCONNECT_INIT_ERROR = WALLETCONNECT_PROJECT_ID_PRESENT
-  ? null
-  : 'WalletConnect no está configurado en esta versión.';
 
 const storage: Storage = {
   async getKeys() {
@@ -73,25 +69,42 @@ export const walletConnectNetworkByKey: Record<string, AppKitNetwork> = {
   base: baseNetwork,
 };
 
-export const walletConnectAppKit = createAppKit({
-  projectId: rawProjectId || 'walletconnect-project-id-not-configured',
-  metadata: {
-    name: 'Nelyon',
-    description: 'Create, connect, and discover on Nelyon',
-    url: 'https://pub-d146e3d06d274db4871f5b6020fd850f.r2.dev/production/branding/nelyon/v1/',
-    icons: [
-      'https://pub-d146e3d06d274db4871f5b6020fd850f.r2.dev/production/branding/nelyon/v1/nelyon-app-icon.png',
-    ],
-    redirect: {
-      native: 'onspaceapp://wallet',
-      universal: 'https://clipdag.io',
+const walletConnectInitializer = createWalletConnectInitializer(rawProjectId, (projectId) => (
+  createAppKit({
+    projectId,
+    metadata: {
+      name: 'Nelyon',
+      description: 'Create, connect, and discover on Nelyon',
+      url: 'https://pub-d146e3d06d274db4871f5b6020fd850f.r2.dev/production/branding/nelyon/v1/',
+      icons: [
+        'https://pub-d146e3d06d274db4871f5b6020fd850f.r2.dev/production/branding/nelyon/v1/nelyon-app-icon.png',
+      ],
+      redirect: {
+        native: 'onspaceapp://wallet',
+        universal: 'https://clipdag.io',
+      },
     },
-  },
-  adapters: [new EthersAdapter()],
-  networks: [...walletConnectNetworks],
-  defaultNetwork: ethereumNetwork,
-  storage,
-  enableAnalytics: false,
-  debug: __DEV__,
-  logger: __DEV__ ? 'warn' : 'error',
-});
+    adapters: [new EthersAdapter()],
+    networks: [...walletConnectNetworks],
+    defaultNetwork: ethereumNetwork,
+    storage,
+    enableAnalytics: false,
+    debug: __DEV__,
+    // WalletConnect's internal relay retries are noisy in React Native LogBox.
+    // User-visible actions still report a bounded, sanitized error through
+    // useExternalWallet; this setting does not suppress global app errors.
+    logger: 'silent',
+  })
+));
+
+export const WALLETCONNECT_PROJECT_ID_PRESENT = walletConnectInitializer.isEnabled;
+export const walletConnectAppKit = walletConnectInitializer.getInstance();
+export const WALLETCONNECT_AVAILABLE = walletConnectAppKit !== null;
+
+export const WALLETCONNECT_INIT_ERROR = WALLETCONNECT_AVAILABLE
+  ? null
+  : walletConnectInitializer.failureCode === 'INITIALIZATION_FAILED'
+    ? 'WalletConnect no pudo inicializarse. Inténtalo de nuevo más tarde.'
+    : WALLETCONNECT_PROJECT_ID_PRESENT
+      ? 'WalletConnect no está disponible en esta versión.'
+      : 'WalletConnect no está configurado en esta versión.';

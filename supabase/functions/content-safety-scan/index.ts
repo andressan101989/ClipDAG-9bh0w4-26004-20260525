@@ -1,10 +1,11 @@
 /* eslint-disable import/no-unresolved */
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.106.1'
 import { evaluateTextRules } from './ruleEngine.mjs'
-import { AudioPipelineError, MAX_AUDIO_BYTES, WHISPER_MODEL, bytesToBase64, makeProbeWav, normalizeWhisperResult, timecodeForMatch, validateStreamAudioUrl } from './audioPipeline.mjs'
+import { AudioPipelineError, WHISPER_MODEL, bytesToBase64, downloadStreamAudioBytes, makeProbeWav, normalizeWhisperResult, selectStreamAudioDownloadRoute, timecodeForMatch, validateStreamAudioTargetType } from './audioPipeline.mjs'
 import { VISUAL_AI_PROVIDER, VISUAL_MODEL, VisualProbeError, runVisualMultiImageProviderProbe, runVisualProviderProbe } from './visualProbe.mjs'
-import { MAX_VISUAL_IMAGE_BYTES, VisualPipelineError, analyzeVisualBytes, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps } from './visualPipeline.mjs'
+import { MAX_PREMIUM_VISUAL_IMAGE_BYTES, MAX_VISUAL_IMAGE_BYTES, VisualPipelineError, analyzeVisualBytes, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps } from './visualPipeline.mjs'
 import { streamAccountId, streamCustomerCode, streamFetch } from '../_shared/stream.ts'
+import { createPremiumStreamAudioDownloadGrant, createPremiumStreamPlaybackGrant } from '../_shared/premiumStreamSecurity.ts'
 import { getObjectBytes, isR2Transient } from '../_shared/r2.ts'
 
 const BATCH_LIMIT = 25
@@ -63,7 +64,8 @@ async function workersAi(audio: Uint8Array) {
   return normalizeWhisperResult(payload)
 }
 
-async function streamAudioDownload(uid: string) {
+async function streamAudioDownload(uid: string, targetType: unknown) {
+  const canonicalTargetType = validateStreamAudioTargetType(targetType)
   let downloads = object((await streamFetch(`/${uid}/downloads`, { method: 'GET' })).result)
   let audio = object(downloads.audio)
   if (!audio.status) {
@@ -73,23 +75,14 @@ async function streamAudioDownload(uid: string) {
   const status = String(audio.status ?? '')
   if (status === 'inprogress') throw new AudioPipelineError('stream_audio_inprogress', { status: 425, retryable: true })
   if (status !== 'ready' || typeof audio.url !== 'string') throw new AudioPipelineError('stream_audio_generation_failed')
-  let current = validateStreamAudioUrl(audio.url, uid, streamCustomerCode())
-  for (let redirect = 0; redirect <= 3; redirect += 1) {
-    const response = await fetch(current, { redirect: 'manual' }).catch(() => { throw new AudioPipelineError('stream_audio_network_error', { retryable: true }) })
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
-      const location = response.headers.get('location')
-      if (!location || redirect === 3) throw new AudioPipelineError('stream_audio_redirect_rejected')
-      current = validateStreamAudioUrl(new URL(location, current).toString(), uid, streamCustomerCode())
-      continue
-    }
-    if (!response.ok) throw new AudioPipelineError(response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500 ? 'stream_audio_temporarily_unavailable' : 'stream_audio_fetch_rejected', { status: response.status, retryable: response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500 })
-    const declared = Number(response.headers.get('content-length') ?? 0)
-    if (declared > MAX_AUDIO_BYTES) throw new AudioPipelineError('stream_audio_too_large')
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    if (!bytes.length || bytes.length > MAX_AUDIO_BYTES) throw new AudioPipelineError('stream_audio_too_large')
-    return bytes
-  }
-  throw new AudioPipelineError('stream_audio_redirect_rejected')
+  const route = await selectStreamAudioDownloadRoute({
+    targetType: canonicalTargetType,
+    uid,
+    customerCode: streamCustomerCode(),
+    providerUrl: audio.url,
+    createPrivateGrant: createPremiumStreamAudioDownloadGrant,
+  })
+  return downloadStreamAudioBytes({ route })
 }
 
 async function deleteStreamAudio(uid: string) {
@@ -202,7 +195,7 @@ Deno.serve(async req => {
     if (!uuid(scan.scan_id) || !uuid(scan.source_asset_id) || typeof scan.cloudflare_uid !== 'string' || typeof scan.content_fingerprint !== 'string') { audioFailed += 1; continue }
     let stage = 'stream_audio'
     try {
-      const audio = await streamAudioDownload(scan.cloudflare_uid)
+      const audio = await streamAudioDownload(scan.cloudflare_uid, scan.target_type)
       stage = 'workers_ai'
       const result = await workersAi(audio)
       stage = 'transcript_persistence'
@@ -231,7 +224,8 @@ Deno.serve(async req => {
     const transcript = object(value)
     if (!uuid(transcript.transcript_id) || typeof transcript.text !== 'string' || typeof transcript.ruleset_fingerprint !== 'string') continue
     try {
-      const matches = evaluateTextRules({ text: transcript.text, scope: 'transcript' }, rulesData).map(match => timecodeForMatch(match, transcript.segments))
+      const matches = evaluateTextRules({ text: transcript.text, scope: 'transcript' }, rulesData)
+        .map((match: Record<string, unknown>) => timecodeForMatch(match, transcript.segments))
       const { data, error } = await admin.rpc('complete_content_safety_transcript_evaluation', { p_transcript_id: transcript.transcript_id, p_ruleset_fingerprint: transcript.ruleset_fingerprint, p_matches: matches })
       if (error) throw new Error('transcript_completion_failed')
       transcriptAlerts += Number(object(data).alerts_processed ?? 0); transcriptEvaluated += 1
@@ -253,11 +247,13 @@ Deno.serve(async req => {
     try {
       const sourceKind = String(scan.source_kind)
       const frameCursor = Number(scan.frame_cursor ?? 0)
+      const isPremium = scan.target_type === 'creator_premium'
       let bytes: Uint8Array, mimeType: string, timestampMs: number | null = null, timestamps: number[] = []
       if (sourceKind === 'eligible_image') {
         if (!uuid(scan.media_asset_id) || typeof scan.bucket_name !== 'string' || typeof scan.object_key !== 'string' ||
             !['image/jpeg', 'image/png', 'image/webp'].includes(String(scan.mime_type))) throw new VisualPipelineError('invalid_canonical_image_source')
-        const result = await getObjectBytes(scan.bucket_name, scan.object_key, MAX_VISUAL_IMAGE_BYTES).catch(error => {
+        const imageByteLimit = isPremium ? MAX_PREMIUM_VISUAL_IMAGE_BYTES : MAX_VISUAL_IMAGE_BYTES
+        const result = await getObjectBytes(scan.bucket_name, scan.object_key, imageByteLimit).catch(error => {
           throw new VisualPipelineError(isR2Transient(error) ? 'r2_visual_temporarily_unavailable' : String((error as Error)?.message ?? 'r2_visual_fetch_failed'), { retryable: isR2Transient(error) })
         })
         mimeType = String(scan.mime_type)
@@ -268,11 +264,23 @@ Deno.serve(async req => {
         timestamps = sampleVideoFrameTimestamps(scan.duration_seconds)
         if (!Number.isInteger(frameCursor) || frameCursor < 0 || frameCursor >= timestamps.length) throw new VisualPipelineError('invalid_visual_frame_cursor')
         timestampMs = timestamps[frameCursor]
-        bytes = await fetchStreamFrame({ uid: scan.cloudflare_uid, customerCode: streamCustomerCode(), timestampMs })
+        const signedThumbnailUrl = isPremium
+          ? (await createPremiumStreamPlaybackGrant({
+              cloudflareUid: scan.cloudflare_uid,
+              customerCode: streamCustomerCode(),
+            })).thumbnailUrl
+          : undefined
+        bytes = await fetchStreamFrame({
+          uid: scan.cloudflare_uid,
+          customerCode: streamCustomerCode(),
+          timestampMs,
+          signedThumbnailUrl,
+        })
         mimeType = 'image/jpeg'
       }
       const finding = await analyzeVisualBytes({ token: Deno.env.get('CLOUDFLARE_AI_TOKEN')?.trim(), accountId: streamAccountId(), bytes, mimeType,
-        sourceKind, frameIndex: sourceKind === 'eligible_stream_video' ? frameCursor : null })
+        sourceKind, frameIndex: sourceKind === 'eligible_stream_video' ? frameCursor : null,
+        imageByteLimit: isPremium ? MAX_PREMIUM_VISUAL_IMAGE_BYTES : MAX_VISUAL_IMAGE_BYTES })
       providerCalled = true
       if (sourceKind === 'eligible_stream_video' && frameCursor < timestamps.length - 1) {
         const { error } = await admin.rpc('advance_content_safety_visual_scan', { p_scan_id: scan.scan_id, p_expected_cursor: frameCursor,
@@ -299,8 +307,14 @@ Deno.serve(async req => {
       else visualFailed += 1
     }
   }
+  const { data: publicationData, error: publicationError } = await admin.rpc(
+    'reconcile_creator_premium_publications_v1',
+    { p_limit: 25 },
+  )
+  if (publicationError) return json({ success: false, error: 'creator_premium_reconcile_failed' }, 500)
   return json({ success: true, claimed: scansData.length, completed, retried, failed, alerts, external_providers: audioClaimed + visualClaimed,
     audio: { claimed: audioClaimed, analyzed: audioAnalyzed, retried: audioRetried, failed: audioFailed, cleanup_completed: cleanupCompleted },
     transcripts: { evaluated: transcriptEvaluated, alerts: transcriptAlerts },
-    visual: { claimed: visualClaimed, analyzed: visualAnalyzed, advanced: visualAdvanced, retried: visualRetried, failed: visualFailed, alerts: visualAlerts, errors: visualErrors } })
+    visual: { claimed: visualClaimed, analyzed: visualAnalyzed, advanced: visualAdvanced, retried: visualRetried, failed: visualFailed, alerts: visualAlerts, errors: visualErrors },
+    premium_publication: publicationData })
 })

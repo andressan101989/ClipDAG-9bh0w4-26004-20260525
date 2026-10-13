@@ -1,5 +1,5 @@
 /* eslint-disable import/no-unresolved */
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.106.1';
 import { corsHeaders } from './cors.ts';
 export { corsHeaders };
 export const admin=()=>createClient(Deno.env.get('SUPABASE_URL')!,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,{auth:{persistSession:false}});

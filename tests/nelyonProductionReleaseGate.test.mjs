@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import test from 'node:test';
 
 const policyUrl = new URL('../.github/nelyon-production-release-policy.json', import.meta.url);
@@ -30,6 +31,7 @@ const MANAGED_FUNCTIONS = [
   'stripe-webhook',
   'admin-user-moderation',
   'content-safety-scan',
+  'video-semantic-index',
   'ads-v2-delivery',
   'ai-handoff',
   'ai-handoff-mcp',
@@ -59,6 +61,32 @@ function asCandidatePolicy(policy) {
 
 function asVerifiedCutoverPolicy(policy) {
   const verified = structuredClone(policy);
+  verified.baseline = {
+    ...verified.baseline,
+    state: 'verified',
+    evidence: 'b'.repeat(64),
+    evidence_digests: {
+      config_verify_jwt: '1'.repeat(64),
+      cron_security: '2'.repeat(64),
+      finance: '3'.repeat(64),
+      function_source_parity: '4'.repeat(64),
+      managed_functions: '5'.repeat(64),
+      migrations: '6'.repeat(64),
+      unmanaged_functions: '7'.repeat(64),
+    },
+    blocked_resources: [],
+    reviewed_policy_sha256: '8'.repeat(64),
+    prior_release: {
+      kind: 'bootstrap',
+      release_id: null,
+      manifest_sha256: null,
+      postcheck_evidence_sha256: '9'.repeat(64),
+    },
+    verified_by: OWNER,
+    verified_at: '2026-10-09T12:00:00.000Z',
+    authority_source: 'owner-control-plane',
+    requires_separate_policy_commit: true,
+  };
   verified.cutover = {
     state: 'verified',
     auto_deploy_off_evidence: {
@@ -112,9 +140,11 @@ test('policy accepts the exact repository owner project modes and managed functi
   });
   assert.deepEqual(policy.supabase.managed_functions, MANAGED_FUNCTIONS);
   assert.deepEqual(policy.supabase.forbidden_functions, ['bdag-economy']);
-  const invalidVerified = structuredClone(policy);
-  delete invalidVerified.baseline.evidence_digests;
-  assertDenied(() => gate.validatePolicy(invalidVerified), 'INVALID_VERIFIED_BASELINE');
+  assert.deepEqual(policy.secrets, [
+    'SUPABASE_READ_ONLY_ACCESS_TOKEN',
+    'SUPABASE_ACCESS_TOKEN',
+    'SUPABASE_DB_PASSWORD',
+  ]);
 });
 
 test('candidate baseline denies release but permits plan_only and gate_proof', async () => {
@@ -132,20 +162,21 @@ test('candidate baseline denies release but permits plan_only and gate_proof', a
   }), policy), 'BASELINE_NOT_VERIFIED');
 });
 
-test('committed baseline and cutover require verified external authority evidence', async () => {
+test('expanded managed scope invalidates the historical baseline until owner evidence is refreshed', async () => {
   const { gate, policy } = await loadGateAndPolicy();
-  assert.equal(policy.baseline.state, 'verified');
-  assert.match(policy.baseline.evidence, /^[0-9a-f]{64}$/);
-  assert.deepEqual(policy.baseline.blocked_resources, []);
-  assert.equal(policy.cutover.state, 'verified');
-  assert.equal(policy.cutover.verified_by, OWNER);
-  assert.match(policy.cutover.verified_at, /^2026-10-09T/);
-  assert.match(policy.cutover.auto_deploy_off_evidence.id, /^supabase-off-/);
-  assert.match(policy.cutover.auto_deploy_off_evidence.sha256, /^[0-9a-f]{64}$/);
-  assert.equal(gate.validateRequest(request({
+  assert.equal(gate.validatePolicy(policy), true);
+  assert.equal(policy.baseline.state, 'candidate');
+  assert.equal(policy.baseline.evidence, null);
+  assert.equal(policy.baseline.verified_by, null);
+  assert.equal(policy.baseline.verified_at, null);
+  assert.equal(policy.cutover.state, 'pending');
+  assert.equal(policy.cutover.verified_by, null);
+  assert.equal(policy.cutover.verified_at, null);
+  assert.equal(policy.cutover.auto_deploy_off_evidence, null);
+  assertDenied(() => gate.validateRequest(request({
     mode: 'release',
     scopeConfirmation: 'RELEASE_STANDARD',
-  }), policy).mode, 'release');
+  }), policy), 'BASELINE_NOT_VERIFIED');
 });
 
 test('verified cutover requires an owner-bound external evidence record', async () => {
@@ -231,6 +262,20 @@ test('unsupported rename copy deletion symlink submodule and unknown supabase pa
   ]) {
     assertDenied(() => gate.classifyChangedPaths(changes), 'UNSUPPORTED_GIT_CHANGE');
   }
+});
+
+test('snapshot adapter and its tests are governed and adapter changes are high risk', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const paths = [
+    'scripts/nelyon-production-snapshot-adapter.mjs',
+    'tests/nelyonProductionSnapshotAdapter.test.mjs',
+  ];
+  const classified = gate.classifyChangedPaths(paths.map(path => ({ status: 'M', path, fileType: 'file' })));
+  assert.deepEqual(classified.governance.map(item => item.path), paths);
+  assert.deepEqual(classified.other, []);
+  const risk = gate.classifyRisk({ affectedFunctions: [], changedPaths: paths, configBefore: {}, configAfter: {} });
+  assert.ok(risk.findings.some(finding => finding.code === 'GATE_AUTHORITY_CHANGE'
+    && finding.path === 'scripts/nelyon-production-snapshot-adapter.mjs'));
 });
 
 test('approved SHA must equal fetched origin main and descend from baseline', async t => {
@@ -332,6 +377,32 @@ test('remote pending migrations must equal the manifest set exactly', async () =
   assertDenied(() => gate.validateMigrationDelta({ ...input, remoteMigrations: ['20261010000000'], dryRunPending: ['20261010000000'] }), 'MIGRATION_ALREADY_APPLIED');
 });
 
+test('Supabase dry-run text is reduced to the exact manifest migration set', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const manifest = {
+    resources: {
+      migrations: [
+        { version: '20261010053524', path: 'supabase/migrations/20261010053524_creator_premium_b7_full_functional_commercial_completion.sql' },
+      ],
+    },
+  };
+  assert.deepEqual(gate.verifyMigrationDryRun({
+    text: 'DRY RUN: migrations will not be pushed\n • 20261010053524_creator_premium_b7_full_functional_commercial_completion.sql\n',
+    manifest,
+  }), {
+    complete: true,
+    pending_versions: ['20261010053524'],
+  });
+  assertDenied(() => gate.verifyMigrationDryRun({
+    text: '20261010053524_creator_premium_b7_full_functional_commercial_completion.sql\n20261011000000_unexpected.sql\n',
+    manifest,
+  }), 'MIGRATION_DRY_RUN_MISMATCH');
+  assertDenied(() => gate.verifyMigrationDryRun({
+    text: '20261010053524_wrong_migration_name.sql\n',
+    manifest,
+  }), 'MIGRATION_DRY_RUN_MISMATCH');
+});
+
 test('only exact config.toml function declarations are managed', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const toml = readFileSync(new URL('../supabase/config.toml', import.meta.url), 'utf8');
@@ -339,6 +410,7 @@ test('only exact config.toml function declarations are managed', async () => {
   assert.deepEqual(Object.keys(config), MANAGED_FUNCTIONS);
   assert.equal(config['agora-token'].verify_jwt, true);
   assert.equal(config['stripe-webhook'].verify_jwt, false);
+  assert.equal(config['video-semantic-index'].verify_jwt, true);
   assert.deepEqual(Object.keys(config), policy.supabase.managed_functions);
   assertDenied(() => gate.parseFunctionConfig(`${toml}\n[functions.agora-token]\nverify_jwt = true\n`), 'AMBIGUOUS_FUNCTION_CONFIG');
 });
@@ -378,6 +450,179 @@ test('direct and multi-hop shared imports propagate to all consumers', async () 
   }), ['agora-token']);
 });
 
+test('changed function modules propagate across function boundaries and deny unmanaged consumers', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const graph = gate.buildFunctionGraph({
+    'supabase/functions/content-safety-scan/index.ts': "import { visual } from './visualPipeline.mjs';\nexport { visual };\n",
+    'supabase/functions/content-safety-scan/visualPipeline.mjs': 'export const visual = true;\n',
+    'supabase/functions/video-semantic-index/index.ts': "import { semantic } from './visualSemanticPipeline.mjs';\nexport { semantic };\n",
+    'supabase/functions/video-semantic-index/visualSemanticPipeline.mjs': "export { visual as semantic } from '../content-safety-scan/visualPipeline.mjs';\n",
+  });
+  const input = {
+    changes: [{ status: 'M', path: 'supabase/functions/content-safety-scan/visualPipeline.mjs' }],
+    graph,
+    forbiddenFunctions: ['bdag-economy'],
+  };
+
+  assertDenied(() => gate.resolveAffectedFunctions({
+    ...input,
+    managedFunctions: ['content-safety-scan'],
+  }), 'FUNCTION_NOT_AUTHORIZED');
+  assert.deepEqual(gate.resolveAffectedFunctions({
+    ...input,
+    managedFunctions: ['content-safety-scan', 'video-semantic-index'],
+  }), ['content-safety-scan', 'video-semantic-index']);
+});
+
+test('a config-only function declaration change affects only the exact changed managed function', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const graph = gate.buildFunctionGraph({
+    'supabase/functions/content-safety-scan/index.ts': 'export const safety = true;\n',
+    'supabase/functions/video-semantic-index/index.ts': 'export const semantic = true;\n',
+  });
+  assert.deepEqual(gate.resolveAffectedFunctions({
+    changes: [{ status: 'M', path: 'supabase/config.toml' }],
+    graph,
+    managedFunctions: ['content-safety-scan', 'video-semantic-index'],
+    forbiddenFunctions: ['bdag-economy'],
+    configBefore: { 'content-safety-scan': { verify_jwt: true } },
+    configAfter: {
+      'content-safety-scan': { verify_jwt: true },
+      'video-semantic-index': { verify_jwt: true },
+    },
+  }), ['video-semantic-index']);
+});
+
+test('per-function contracts bind entrypoint transitive bytes config and source-change state', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const graph = gate.buildFunctionGraph({
+    'supabase/functions/content-safety-scan/index.ts': "import { visual } from './visualPipeline.mjs';\nexport { visual };\n",
+    'supabase/functions/content-safety-scan/visualPipeline.mjs': "import { auth } from '../_shared/mediaAuth.ts';\nexport const visual = auth;\n",
+    'supabase/functions/content-safety-scan/unused.ts': 'export const unused = true;\n',
+    'supabase/functions/_shared/mediaAuth.ts': 'export const auth = true;\n',
+  });
+  const input = {
+    affectedFunctions: ['content-safety-scan'],
+    graph,
+    configBefore: { 'content-safety-scan': { verify_jwt: true } },
+    configAfter: { 'content-safety-scan': { verify_jwt: true } },
+    changes: [{ status: 'M', path: 'supabase/functions/_shared/mediaAuth.ts' }],
+  };
+  const contracts = gate.buildFunctionContracts(input);
+  assert.equal(contracts.length, 1);
+  assert.equal(contracts[0].entrypoint, 'supabase/functions/content-safety-scan/index.ts');
+  assert.equal(contracts[0].verify_jwt, true);
+  assert.equal(contracts[0].source_changed, true);
+  assert.deepEqual(contracts[0].source_files.map(item => item.path), [
+    'supabase/functions/_shared/mediaAuth.ts',
+    'supabase/functions/content-safety-scan/index.ts',
+    'supabase/functions/content-safety-scan/visualPipeline.mjs',
+  ]);
+  assert.match(contracts[0].source_sha256, /^[0-9a-f]{64}$/);
+  assert.equal(gate.verifyFunctionContracts({
+    manifest: { delta: { files: input.changes }, resources: { functions: ['content-safety-scan'], function_contracts: contracts } },
+    graph,
+    configBefore: input.configBefore,
+    configAfter: input.configAfter,
+    functionName: 'content-safety-scan',
+  }).result, 'FUNCTION_CONTRACT_VERIFIED');
+  const tampered = structuredClone(contracts);
+  tampered[0].source_sha256 = '0'.repeat(64);
+  assertDenied(() => gate.verifyFunctionContracts({
+    manifest: { delta: { files: input.changes }, resources: { functions: ['content-safety-scan'], function_contracts: tampered } },
+    graph,
+    configBefore: input.configBefore,
+    configAfter: input.configAfter,
+    functionName: 'content-safety-scan',
+  }), 'FUNCTION_CONTRACT_MISMATCH');
+
+  const configGraph = gate.buildFunctionGraph({
+    'supabase/functions/content-safety-scan/old.ts': 'export const version = "old";\n',
+    'supabase/functions/content-safety-scan/new.ts': 'export const version = "new";\n',
+    'supabase/functions/content-safety-scan/old-import-map.json': '{"imports":{}}',
+    'supabase/functions/content-safety-scan/new-import-map.json': '{"imports":{}}',
+  });
+  const entrypointChanged = gate.buildFunctionContracts({
+    affectedFunctions: ['content-safety-scan'],
+    graph: configGraph,
+    configBefore: { 'content-safety-scan': { entrypoint: 'old.ts', verify_jwt: true } },
+    configAfter: { 'content-safety-scan': { entrypoint: 'new.ts', verify_jwt: true } },
+    changes: [{ status: 'M', path: 'supabase/config.toml' }],
+  });
+  assert.equal(entrypointChanged[0].source_changed, true);
+  const importMapChanged = gate.buildFunctionContracts({
+    affectedFunctions: ['content-safety-scan'],
+    graph: configGraph,
+    configBefore: { 'content-safety-scan': { entrypoint: 'new.ts', import_map: 'old-import-map.json', verify_jwt: true } },
+    configAfter: { 'content-safety-scan': { entrypoint: 'new.ts', import_map: 'new-import-map.json', verify_jwt: true } },
+    changes: [{ status: 'M', path: 'supabase/config.toml' }],
+  });
+  assert.equal(importMapChanged[0].source_changed, true);
+  const verifyJwtOnly = gate.buildFunctionContracts({
+    affectedFunctions: ['content-safety-scan'],
+    graph: configGraph,
+    configBefore: { 'content-safety-scan': { entrypoint: 'new.ts', verify_jwt: true } },
+    configAfter: { 'content-safety-scan': { entrypoint: 'new.ts', verify_jwt: false } },
+    changes: [{ status: 'M', path: 'supabase/config.toml' }],
+  });
+  assert.equal(verifyJwtOnly[0].source_changed, false);
+});
+
+function collectFunctionSources(directory, root, files = {}) {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const absolute = join(directory, entry.name);
+    if (entry.isDirectory()) collectFunctionSources(absolute, root, files);
+    else if (entry.isFile() && /\.(?:ts|tsx|js|mjs)$/.test(entry.name)) {
+      files[relative(root, absolute).replaceAll('\\', '/')] = readFileSync(absolute, 'utf8');
+    }
+  }
+  return files;
+}
+
+test('real B7 release graph governs semantic-index and every consumer of pinned media auth', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const repositoryRoot = new URL('..', import.meta.url);
+  const rootPath = repositoryRoot.pathname.startsWith('/') && /^[A-Za-z]:/.test(repositoryRoot.pathname.slice(1))
+    ? decodeURIComponent(repositoryRoot.pathname.slice(1))
+    : decodeURIComponent(repositoryRoot.pathname);
+  const graph = gate.buildFunctionGraph(collectFunctionSources(join(rootPath, 'supabase', 'functions'), rootPath));
+  const changes = gate.parseNameStatusZ(execFileSync('git', [
+    'diff', '--name-status', '-z', '--find-renames=90%', '--find-copies=90%',
+    policy.baseline.sha, '--', 'supabase/functions', 'supabase/config.toml',
+  ], { cwd: rootPath, encoding: 'buffer' }));
+  const configBefore = gate.parseFunctionConfig(execFileSync('git', [
+    'show', `${policy.baseline.sha}:supabase/config.toml`,
+  ], { cwd: rootPath, encoding: 'utf8' }));
+  const configAfter = gate.parseFunctionConfig(readFileSync(join(rootPath, 'supabase', 'config.toml'), 'utf8'));
+  const affected = gate.resolveAffectedFunctions({
+    changes,
+    graph,
+    managedFunctions: policy.supabase.managed_functions,
+    forbiddenFunctions: policy.supabase.forbidden_functions,
+    configBefore,
+    configAfter,
+  });
+  assert.deepEqual(affected, [
+    'ads-v2-delivery',
+    'cleanup-stale-media-uploads',
+    'content-safety-scan',
+    'create-media-upload',
+    'create-stream-upload',
+    'delete-media-asset',
+    'delete-stream-video',
+    'finalize-media-upload',
+    'get-media-url',
+    'get-stream-playback',
+    'stream-webhook',
+    'video-semantic-index',
+  ]);
+  assert.deepEqual(gate.analyzeFunctionReproducibility({ affectedFunctions: affected, graph }), {
+    allowed: true,
+    blockedFunctions: [],
+    findings: [],
+  });
+});
+
 test('literal dynamic imports resolve while nonliteral imports deny', async () => {
   const { gate } = await loadGateAndPolicy();
   assert.deepEqual(gate.parseModuleSpecifiers("await import('./worker.ts');", 'supabase/functions/agora-token/index.ts'), [
@@ -385,6 +630,31 @@ test('literal dynamic imports resolve while nonliteral imports deny', async () =
   ]);
   assertDenied(() => gate.parseModuleSpecifiers('await import(moduleName);', 'supabase/functions/agora-token/index.ts'), 'AMBIGUOUS_IMPORT');
   assertDenied(() => gate.parseModuleSpecifiers('await import(`./${name}.ts`);', 'supabase/functions/agora-token/index.ts'), 'AMBIGUOUS_IMPORT');
+});
+
+test('implicit Deno config and module syntaxes outside the approved graph fail closed', async () => {
+  const { gate } = await loadGateAndPolicy();
+  for (const [path, source] of [
+    ['supabase/functions/agora-token/deno.json', '{"imports":{"alias":"./other.ts"}}'],
+    ['supabase/functions/agora-token/deno.jsonc', '{"imports":{}}'],
+    ['supabase/functions/agora-token/native.wasm', 'not-a-text-module'],
+  ]) {
+    assertDenied(() => gate.buildFunctionGraph({
+      'supabase/functions/agora-token/index.ts': 'export const value = true;\n',
+      [path]: source,
+    }), 'UNSUPPORTED_FUNCTION_SOURCE');
+  }
+  for (const source of [
+    "const value = require('./worker.ts');\n",
+    "import value = require('./worker.ts');\n",
+    '/// <reference path="./worker.ts" />\nexport const value = true;\n',
+    '/// <reference types="npm:@types/node" />\nexport const value = true;\n',
+  ]) {
+    assertDenied(() => gate.buildFunctionGraph({
+      'supabase/functions/agora-token/index.ts': source,
+      'supabase/functions/agora-token/worker.ts': 'export const value = true;\n',
+    }), 'AMBIGUOUS_IMPORT');
+  }
 });
 
 test('unresolved escaping and ambiguous imports deny', async () => {
@@ -484,7 +754,7 @@ test('every database migration is high risk before any release authorization', a
 });
 
 function manifestInput(policy, overrides = {}) {
-  return {
+  const result = {
     request: request(),
     policy,
     gitState: {
@@ -507,10 +777,27 @@ function manifestInput(policy, overrides = {}) {
     affectedFunctions: [],
     reproducibility: { allowed: true, blockedFunctions: [], findings: [] },
     risk: { level: 'HIGH', findings: [{ severity: 'HIGH', code: 'GATE_AUTHORITY_CHANGE', path: '.github/nelyon-production-release-policy.json', resource: 'release-gate', message: 'release authority changed' }] },
-    compiler: { path: 'scripts/nelyon-production-release.mjs', sha256: 'a'.repeat(64) },
+    compiler: {
+      path: 'scripts/nelyon-production-release.mjs',
+      sha256: 'a'.repeat(64),
+      snapshot_adapter_path: 'scripts/nelyon-production-snapshot-adapter.mjs',
+      snapshot_adapter_sha256: 'b'.repeat(64),
+    },
     generatedAt: '2026-10-09T12:00:00.000Z',
     ...overrides,
   };
+  if (!Object.hasOwn(overrides, 'functionContracts')) {
+    result.functionContracts = result.affectedFunctions.map((name, index) => ({
+      name,
+      entrypoint: `supabase/functions/${name}/index.ts`,
+      import_map: null,
+      verify_jwt: true,
+      source_changed: true,
+      source_files: [{ path: `supabase/functions/${name}/index.ts`, sha256: String(index + 1).padStart(64, '0') }],
+      source_sha256: String(index + 1).padStart(64, '0'),
+    }));
+  }
+  return result;
 }
 
 test('release confirmation class must match the computed manifest risk', async () => {
@@ -565,6 +852,8 @@ test('manifest contains exact identity delta resources risks and blockers', asyn
   assert.equal(manifest.delta.files.length, 2);
   assert.deepEqual(manifest.resources.migrations, input.migrations);
   assert.deepEqual(manifest.resources.functions, ['agora-token']);
+  assert.equal(manifest.resources.function_contracts[0].name, 'agora-token');
+  assert.equal(manifest.compiler.snapshot_adapter_sha256, 'b'.repeat(64));
   assert.equal(manifest.risk.level, 'HIGH');
   assert.equal(manifest.blockers[0].code, 'FLOATING_DEPENDENCY');
   assert.equal(manifest.result, 'DENY');
@@ -597,7 +886,7 @@ test('governance-only delta reports NO PRODUCTIVE CHANGES', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const manifest = gate.buildManifest(manifestInput(policy));
   assert.equal(manifest.result, 'NO PRODUCTIVE CHANGES');
-  assert.deepEqual(manifest.resources, { functions: [], migrations: [], config_changed: false });
+  assert.deepEqual(manifest.resources, { functions: [], function_contracts: [], migrations: [], config_changed: false });
 });
 
 test('one-byte manifest or digest alteration denies', async t => {
@@ -1222,7 +1511,7 @@ function financeTransaction(id, overrides = {}) {
     fee_amount: '0.00000000',
     currency: 'BDAG',
     status: 'completed',
-    blockchain_txid: null,
+    blockchain_txid_sha256: null,
     reference_type: 'external_operation',
     reference_id: `ref-${id}`,
     idempotency_key: `idem-${id}`,
@@ -1280,10 +1569,26 @@ function releaseIdentity() {
   return { releaseId: 'nelyon-20261009-001', runId: '123456789', runAttempt: 1 };
 }
 
+function zeroReconciliation(overrides = {}) {
+  return {
+    account_balance_ledger_mismatch: 0,
+    completed_credit_account_mismatch: 0,
+    completed_credit_total_mismatch: 0,
+    completed_debit_account_mismatch: 0,
+    completed_debit_total_mismatch: 0,
+    completed_without_credit: 0,
+    completed_without_debit: 0,
+    noncanonical_entry_type: 0,
+    orphan_ledger_entries: 0,
+    premium_finance_policy_row_count_mismatch: 0,
+    ...overrides,
+  };
+}
+
 test('unchanged counters are not required when legitimate concurrent transactions reconcile', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const existingBefore = financeTransaction('txn-old', { status: 'pending', created_at: '2026-10-09T11:00:00.000Z' });
-  const existingAfter = { ...existingBefore, status: 'completed', blockchain_txid: '0xconfirmed-after-snapshot' };
+  const existingAfter = { ...existingBefore, status: 'completed', blockchain_txid_sha256: 'a'.repeat(64) };
   const createdDuring = financeTransaction('txn-new');
   const before = financeSnapshot({ transactions: [existingBefore] });
   const entries = [...ledgerPair(existingAfter), ...ledgerPair(createdDuring)];
@@ -1301,7 +1606,7 @@ test('unchanged counters are not required when legitimate concurrent transaction
     before,
     after,
     window,
-    reconciliationResults: { reconcile_finance: 0, reconcile_ledger: 0 },
+    reconciliationResults: zeroReconciliation(),
     expectedPolicy: policy.supabase.finance_policy,
   });
   assert.equal(result.integrity, 'PASS');
@@ -1312,7 +1617,7 @@ test('unchanged counters are not required when legitimate concurrent transaction
 test('postcheck authority derives finance window from raw rows instead of trusting PASS', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const existingBefore = financeTransaction('txn-old', { status: 'pending', created_at: '2026-10-09T11:00:00.000Z' });
-  const existingAfter = { ...existingBefore, status: 'completed', blockchain_txid: '0xconfirmed-after-snapshot' };
+  const existingAfter = { ...existingBefore, status: 'completed', blockchain_txid_sha256: 'a'.repeat(64) };
   const entries = ledgerPair(existingAfter);
   const before = financeSnapshot({ transactions: [existingBefore] });
   const after = financeSnapshot({ transactions: [existingAfter], ledgerEntries: entries });
@@ -1320,7 +1625,7 @@ test('postcheck authority derives finance window from raw rows instead of trusti
     before,
     after,
     windowRows: { complete: true, integrity: 'PASS', transactions: [existingAfter], ledger_entries: entries },
-    reconciliationResults: { all: 0 },
+    reconciliationResults: zeroReconciliation(),
     expectedPolicy: policy.supabase.finance_policy,
     releaseIdentity: releaseIdentity(),
   });
@@ -1330,7 +1635,31 @@ test('postcheck authority derives finance window from raw rows instead of trusti
     before,
     after,
     windowRows: { complete: true, integrity: 'PASS', transactions: [], ledger_entries: entries },
-    reconciliationResults: { all: 0 },
+    reconciliationResults: zeroReconciliation(),
+    expectedPolicy: policy.supabase.finance_policy,
+    releaseIdentity: releaseIdentity(),
+  }), 'INVALID_FINANCE_WINDOW');
+});
+
+test('finance postcheck requires the exact reconciliation inventory and monotonic database time', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const before = financeSnapshot({ databaseTime: '2026-10-09T12:00:05.000Z' });
+  const after = financeSnapshot({ databaseTime: '2026-10-09T12:00:04.000Z' });
+  const windowRows = { complete: true, transactions: [], ledger_entries: [] };
+  const exact = zeroReconciliation();
+  assertDenied(() => gate.verifyFinancePostcheckFromRaw({
+    before,
+    after: financeSnapshot({ databaseTime: '2026-10-09T12:00:06.000Z' }),
+    windowRows,
+    reconciliationResults: { not_a_canonical_reconciliation: 0 },
+    expectedPolicy: policy.supabase.finance_policy,
+    releaseIdentity: releaseIdentity(),
+  }), 'FINANCE_RECONCILIATION_FAILED');
+  assertDenied(() => gate.verifyFinancePostcheckFromRaw({
+    before,
+    after,
+    windowRows,
+    reconciliationResults: exact,
     expectedPolicy: policy.supabase.finance_policy,
     releaseIdentity: releaseIdentity(),
   }), 'INVALID_FINANCE_WINDOW');
@@ -1399,9 +1728,28 @@ test('changed historical immutable rows frozen policy or platform fee denies', a
     before: financeSnapshot(),
     after: financeSnapshot({ policy: { platform_fee_bps: 100 } }),
     window: cleanWindow,
-    reconciliationResults: { reconcile_finance: 0 },
+    reconciliationResults: zeroReconciliation(),
     expectedPolicy: policy.supabase.finance_policy,
   }), 'FINANCE_POLICY_CHANGED');
+});
+
+test('transaction confirmation permits only null-to-hash and rejects hash replacement or removal', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const pending = financeTransaction('txn-old', {
+    status: 'pending',
+    created_at: '2026-10-09T11:00:00.000Z',
+    blockchain_txid_sha256: 'a'.repeat(64),
+  });
+  for (const blockchain_txid_sha256 of ['b'.repeat(64), null]) {
+    const completed = { ...pending, status: 'completed', blockchain_txid_sha256 };
+    assertDenied(() => gate.classifyFinanceWindow({
+      before: financeSnapshot({ transactions: [pending] }),
+      after: financeSnapshot({ transactions: [completed], ledgerEntries: ledgerPair(completed) }),
+      transactions: [completed],
+      ledgerEntries: ledgerPair(completed),
+      releaseIdentity: releaseIdentity(),
+    }), 'HISTORICAL_FINANCE_MUTATION');
+  }
 });
 
 test('failed canonical reconciliation denies even when changes appear legitimate', async () => {
@@ -1415,7 +1763,7 @@ test('failed canonical reconciliation denies even when changes appear legitimate
     before,
     after,
     window,
-    reconciliationResults: { reconcile_finance: 1, reconcile_ledger: 0 },
+    reconciliationResults: zeroReconciliation({ orphan_ledger_entries: 1 }),
     expectedPolicy: policy.supabase.finance_policy,
   }), 'FINANCE_RECONCILIATION_FAILED');
 });
@@ -1429,7 +1777,13 @@ test('snapshot count growth is reported separately from integrity verdict', asyn
   assert.equal(gate.validateFinanceSnapshot(before), true);
   assert.equal(gate.validateFinanceSnapshot(after), true);
   const window = gate.classifyFinanceWindow({ before, after, transactions: [transaction], ledgerEntries: entries, releaseIdentity: releaseIdentity() });
-  const result = gate.verifyFinancePostcheck({ before, after, window, reconciliationResults: { all: 0 }, expectedPolicy: policy.supabase.finance_policy });
+  const result = gate.verifyFinancePostcheck({
+    before,
+    after,
+    window,
+    reconciliationResults: zeroReconciliation(),
+    expectedPolicy: policy.supabase.finance_policy,
+  });
   assert.deepEqual(result.count_growth, { ledger_entries: 2, transactions: 1 });
   assert.equal(result.integrity, 'PASS');
 });
@@ -1515,7 +1869,44 @@ test('release path revalidates before secrets and before every mutation', () => 
   assert.ok(revalidate >= 0 && verifyGate > revalidate && secretReference > verifyGate);
   assert.ok(migration > secretReference && functions > migration);
   assert.match(deploy.slice(migration - 500, migration), /revalidate/);
-  assert.match(deploy.slice(functions - 500, functions), /revalidate/);
+  assert.match(deploy.slice(functions - 700, functions), /verify-function-contract/);
+  assert.match(deploy.slice(functions, functions + 220), /--use-api/);
+  assert.match(deploy, /supabase db push --dry-run --project-ref "\$NELYON_PROJECT_REF" --skip-vault --yes/);
+  assert.match(deploy, /supabase db push --project-ref "\$NELYON_PROJECT_REF" --skip-vault --yes/);
+});
+
+test('owner-reviewed production baseline is verified before every mutation', () => {
+  const deploy = workflowJob(workflowText(), 'deploy');
+  const preCapture = deploy.indexOf('production-pre.json');
+  const preVerify = deploy.indexOf(' verify-pre-snapshot ');
+  const dryRun = deploy.indexOf('supabase db push --dry-run');
+  const apply = deploy.indexOf('supabase db push --project-ref');
+  assert.ok(preCapture >= 0 && preVerify > preCapture && dryRun > preVerify && apply > preVerify);
+  assert.match(deploy, /--pre-snapshot gate-evidence\/production-pre\.json/);
+});
+
+test('workflow inventories every active release status and never relies on in-progress alone', () => {
+  const deploy = workflowJob(workflowText(), 'deploy');
+  assert.match(deploy, /\['in_progress', 'queued', 'requested', 'waiting', 'pending'\]/);
+  assert.match(deploy, /status=\$\{status\}/);
+  assert.doesNotMatch(deploy, /runs\?status=in_progress&/);
+});
+
+test('release workflow uses the reviewed snapshot adapter and retains sanitized gate evidence on failure', () => {
+  const deploy = workflowJob(workflowText(), 'deploy');
+  assert.match(deploy, /nelyon-production-snapshot-adapter\.mjs/);
+  assert.doesNotMatch(deploy, /reviewed snapshot adapter required/);
+  assert.doesNotMatch(deploy, /\{"complete":false/);
+  assert.match(deploy, /name: Upload sanitized gate evidence/);
+  assert.match(deploy, /if: always\(\)/);
+  assert.match(deploy, /migration-dry-run\.json/);
+  assert.match(deploy, /id: pre_snapshot/);
+  assert.match(deploy, /id: apply_migrations/);
+  assert.match(deploy, /id: deploy_functions/);
+  assert.match(deploy, /id: post_snapshot/);
+  assert.match(deploy, /steps\.pre_snapshot\.outcome == 'success'/);
+  assert.match(deploy, /release-observation\.json/);
+  assert.doesNotMatch(deploy.slice(deploy.indexOf('name: Upload sanitized gate evidence')), /production-(?:pre|post)\.json/);
 });
 
 test('workflow has no contents write force prune bulk deploy or secret logging', () => {
