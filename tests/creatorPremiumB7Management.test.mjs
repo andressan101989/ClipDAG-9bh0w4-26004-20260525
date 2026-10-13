@@ -58,6 +58,8 @@ test('draft access-mode changes reconcile offer and plan mappings atomically in 
   const update = functionBody('update_my_creator_premium_draft_v1', 'public');
   assert.match(update, /pg_advisory_xact_lock/i);
   assert.match(update, /for\s+update/i);
+  assert.match(update, /p_content_kind\s+is\s+distinct\s+from\s+v_content\.content_kind[\s\S]*creator_premium_content_kind_locked_by_media/i,
+    'B7 must preserve the B5 guard against changing kind while media is linked');
   assert.match(update, /p_access_mode\s*=\s*'purchase'[\s\S]*delete\s+from\s+private\.creator_premium_plan_contents/i);
   assert.match(update, /p_access_mode\s*=\s*'subscription'[\s\S]*update\s+private\.creator_premium_offer_versions[\s\S]*status\s*=\s*'retired'/i);
   assert.match(update, /update\s+private\.creator_premium_contents[\s\S]*access_mode\s*=\s*p_access_mode/i);
