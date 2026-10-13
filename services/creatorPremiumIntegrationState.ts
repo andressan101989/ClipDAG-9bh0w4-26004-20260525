@@ -43,6 +43,7 @@ export const CREATOR_PREMIUM_BLOCKER_COPY: Readonly<Record<string, string>> = Ob
   creator_premium_active_offer_required: 'Configura un precio de compra activo.',
   creator_premium_active_plan_required: 'Seguridad aprobada. La activación de un plan asociado completará la publicación automática.',
   creator_premium_plan_mapping_required: 'Asocia el contenido a por lo menos un plan.',
+  creator_premium_legacy_reverification_required: 'Este contenido pendiente necesita iniciar la verificación B7 una vez.',
   content_safety_policy_not_configured: 'La verificación de seguridad todavía no está disponible. Tu contenido sigue privado.',
   content_safety_audio_policy_not_configured: 'La verificación de audio todavía no está disponible. Tu video sigue privado.',
   creator_premium_safety_provider_failed: 'La verificación tuvo un error temporal. Puedes reintentar sin volver a subir el contenido.',
@@ -106,4 +107,86 @@ export function creatorPremiumSubmissionMediaBlocker(input: {
       ? 'creator_premium_image_media_not_ready'
       : 'creator_premium_video_media_not_ready'
   ];
+}
+
+export function creatorPremiumSubmissionCommercialBlocker(input: {
+  accessMode: 'purchase' | 'subscription' | 'purchase_or_subscription';
+  hasConfiguredPurchase: boolean;
+  mappedPlanCount: number;
+  verificationRetryable: boolean;
+}): string | null {
+  if (input.verificationRetryable) return null;
+  if ((input.accessMode === 'purchase' || input.accessMode === 'purchase_or_subscription')
+      && !input.hasConfiguredPurchase) {
+    return 'creator_premium_active_offer_required';
+  }
+  if ((input.accessMode === 'subscription' || input.accessMode === 'purchase_or_subscription')
+      && input.mappedPlanCount < 1) {
+    return 'creator_premium_plan_mapping_required';
+  }
+  return null;
+}
+
+export function creatorPremiumVerificationCanRetry(input: {
+  lifecycle_status?: string | null;
+  verification_status?: string | null;
+  verification_error_code?: string | null;
+} | null | undefined): boolean {
+  return input?.lifecycle_status === 'pending_review' && (
+    input.verification_status === 'failed'
+    || (input.verification_status === 'not_requested'
+      && input.verification_error_code === 'creator_premium_legacy_reverification_required')
+  );
+}
+
+export type CreatorPremiumSubmissionNotice = Readonly<{
+  title: string;
+  message: string;
+}>;
+
+export function creatorPremiumSubmissionNotice(input: {
+  contentId: string;
+  rpcResult: {
+    content_id?: string;
+    lifecycle_status?: string;
+    submission_ready?: boolean;
+  } | null | undefined;
+  refreshed: {
+    id?: string;
+    lifecycle_status?: string;
+    verification_status?: string | null;
+  } | null | undefined;
+}): CreatorPremiumSubmissionNotice | null {
+  const { contentId, rpcResult, refreshed } = input;
+  if (!rpcResult || rpcResult.content_id !== contentId
+      || rpcResult.lifecycle_status !== 'pending_review'
+      || rpcResult.submission_ready !== true
+      || !refreshed || refreshed.id !== contentId) return null;
+
+  if (refreshed.lifecycle_status === 'published') {
+    return {
+      title: 'Contenido publicado',
+      message: 'El servidor confirmó la publicación del contenido Premium.',
+    };
+  }
+  if (refreshed.lifecycle_status !== 'pending_review') return null;
+  if (refreshed.verification_status === 'pending') {
+    return {
+      title: 'Verificación iniciada',
+      message: 'El sistema está verificando el contenido. Se publicará automáticamente solo si supera todos los controles.',
+    };
+  }
+  if (refreshed.verification_status === 'commercial_pending') {
+    return {
+      title: 'Requisito comercial pendiente',
+      message: 'La seguridad fue aprobada. La publicación se completará cuando exista un plan activo asociado.',
+    };
+  }
+  if (refreshed.verification_status === undefined || refreshed.verification_status === null) {
+    return {
+      title: 'Contenido pendiente',
+      message: 'El backend actual guardó el contenido como pendiente, pero la verificación automática B7 todavía no está disponible.',
+    };
+  }
+  return null;
 }

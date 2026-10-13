@@ -130,6 +130,100 @@ test('editor blocks publication until selected image media is canonically upload
   }), null, 'verification retry delegates current-evidence validation to the canonical server RPC');
 });
 
+test('editor preflights the commercial contract for every access mode without replacing server authority', () => {
+  const { creatorPremiumSubmissionCommercialBlocker } = api();
+
+  assert.equal(creatorPremiumSubmissionCommercialBlocker({
+    accessMode: 'purchase',
+    hasConfiguredPurchase: false,
+    mappedPlanCount: 0,
+    verificationRetryable: false,
+  }), 'creator_premium_active_offer_required');
+  assert.equal(creatorPremiumSubmissionCommercialBlocker({
+    accessMode: 'purchase',
+    hasConfiguredPurchase: true,
+    mappedPlanCount: 0,
+    verificationRetryable: false,
+  }), null);
+
+  assert.equal(creatorPremiumSubmissionCommercialBlocker({
+    accessMode: 'subscription',
+    hasConfiguredPurchase: false,
+    mappedPlanCount: 0,
+    verificationRetryable: false,
+  }), 'creator_premium_plan_mapping_required');
+  assert.equal(creatorPremiumSubmissionCommercialBlocker({
+    accessMode: 'subscription',
+    hasConfiguredPurchase: false,
+    mappedPlanCount: 1,
+    verificationRetryable: false,
+  }), null);
+
+  assert.equal(creatorPremiumSubmissionCommercialBlocker({
+    accessMode: 'purchase_or_subscription',
+    hasConfiguredPurchase: true,
+    mappedPlanCount: 0,
+    verificationRetryable: false,
+  }), 'creator_premium_plan_mapping_required');
+  assert.equal(creatorPremiumSubmissionCommercialBlocker({
+    accessMode: 'purchase_or_subscription',
+    hasConfiguredPurchase: false,
+    mappedPlanCount: 1,
+    verificationRetryable: false,
+  }), 'creator_premium_active_offer_required');
+  assert.equal(creatorPremiumSubmissionCommercialBlocker({
+    accessMode: 'purchase_or_subscription',
+    hasConfiguredPurchase: true,
+    mappedPlanCount: 1,
+    verificationRetryable: false,
+  }), null);
+
+  assert.equal(creatorPremiumSubmissionCommercialBlocker({
+    accessMode: 'purchase_or_subscription',
+    hasConfiguredPurchase: false,
+    mappedPlanCount: 0,
+    verificationRetryable: true,
+  }), null, 'retry delegates current-evidence validation to the canonical server RPC');
+});
+
+test('submission notices require the current RPC result and freshly loaded server state', () => {
+  const { creatorPremiumSubmissionNotice } = api();
+  const rpcResult = {
+    content_id: 'content-1',
+    lifecycle_status: 'pending_review',
+    submission_ready: true,
+  };
+
+  assert.deepEqual(creatorPremiumSubmissionNotice({
+    contentId: 'content-1',
+    rpcResult,
+    refreshed: { id: 'content-1', lifecycle_status: 'pending_review', verification_status: 'pending' },
+  }), {
+    title: 'Verificación iniciada',
+    message: 'El sistema está verificando el contenido. Se publicará automáticamente solo si supera todos los controles.',
+  });
+
+  assert.deepEqual(creatorPremiumSubmissionNotice({
+    contentId: 'content-1',
+    rpcResult,
+    refreshed: { id: 'content-1', lifecycle_status: 'pending_review' },
+  }), {
+    title: 'Contenido pendiente',
+    message: 'El backend actual guardó el contenido como pendiente, pero la verificación automática B7 todavía no está disponible.',
+  }, 'a B5-only backend must not be presented as automatic verification');
+
+  assert.equal(creatorPremiumSubmissionNotice({
+    contentId: 'content-1',
+    rpcResult,
+    refreshed: { id: 'other-content', lifecycle_status: 'pending_review', verification_status: 'pending' },
+  }), null, 'stale or unrelated state cannot confirm the current submit');
+  assert.equal(creatorPremiumSubmissionNotice({
+    contentId: 'content-1',
+    rpcResult: undefined,
+    refreshed: { id: 'content-1', lifecycle_status: 'pending_review', verification_status: 'pending' },
+  }), null, 'a prior pending_review row cannot replace the current RPC result');
+});
+
 test('known server blockers and unavailable income use safe actionable copy', () => {
   const {
     creatorPremiumErrorMessage,
@@ -175,8 +269,12 @@ test('Hub and editor call the tested alignment contracts in their real execution
     editorSource.indexOf('const confirmDelete'),
   );
   const blockerIndex = submitBody.indexOf('creatorPremiumSubmissionMediaBlocker');
+  const commercialIndex = submitBody.indexOf('creatorPremiumSubmissionCommercialBlocker');
   const publishIndex = submitBody.indexOf('publishMyCreatorPremiumContent');
-  assert.ok(blockerIndex >= 0 && publishIndex > blockerIndex, 'canonical media gate must run before publication');
+  const noticeIndex = submitBody.indexOf('creatorPremiumSubmissionNotice');
+  assert.ok(blockerIndex >= 0 && commercialIndex > blockerIndex && publishIndex > commercialIndex,
+    'media and commercial gates must run before publication');
+  assert.ok(noticeIndex > publishIndex, 'success copy must be derived from the current RPC and refreshed state');
 });
 
 test('Premium private video uses an icon supported by the installed MaterialCommunityIcons contract', () => {

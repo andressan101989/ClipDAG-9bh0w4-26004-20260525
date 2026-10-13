@@ -537,11 +537,17 @@ export async function publishMyCreatorPremiumContent(contentId: string) {
     p_content_id: contentId,
   });
   if (error) throw error;
-  return firstRow(data) as {
+  const result = firstRow(data) as {
     content_id: string;
     lifecycle_status: 'pending_review';
     submission_ready: true;
   } | undefined;
+  if (!result || result.content_id !== contentId
+      || result.lifecycle_status !== 'pending_review'
+      || result.submission_ready !== true) {
+    throw new Error('creator_premium_submission_not_confirmed');
+  }
+  return result;
 }
 
 export async function deleteMyCreatorPremiumDraft(contentId: string) {
