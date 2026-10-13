@@ -146,4 +146,9 @@ test("Wallet reads only the canonical B4 ledger and treats a missing account as 
   assert.ok(accountReads.length >= 3, "expected every wallet account lookup to be covered");
   for (const read of accountReads) assert.match(read, /\.maybeSingle\(\)/,
     "a user without a ledger account is an empty state, not PostgREST 406");
+  assert.match(hook, /data:\s*ledger,\s*error:\s*balanceError[\s\S]*if\s*\(balanceError\)\s*throw\s+balanceError/i);
+  assert.match(hook, /data:\s*acct,\s*error:\s*accountError[\s\S]*if\s*\(accountError\)\s*throw\s+accountError/i);
+  assert.match(hook, /data:\s*ledgerTxns,\s*error:\s*transactionsError[\s\S]*if\s*\(transactionsError\)\s*throw\s+transactionsError/i);
+  assert.doesNotMatch(hook, /catch\s*\{\s*return\s+0;?\s*\}/,
+    "a ledger outage or authorization failure must not be presented as a zero balance");
 });

@@ -130,60 +130,20 @@ test('editor blocks publication until selected image media is canonically upload
   }), null, 'verification retry delegates current-evidence validation to the canonical server RPC');
 });
 
-test('editor preflights the commercial contract for every access mode without replacing server authority', () => {
-  const { creatorPremiumSubmissionCommercialBlocker } = api();
+test('editor preflights the canonical post-save blocker instead of stale local plan counts', async () => {
+  const editor = editorSource;
+  const submitBody = editor.slice(editor.indexOf('const submit = useCallback'), editor.indexOf('const confirmDelete'));
+  const saveIndex = submitBody.indexOf('await saveDraft()');
+  const preflightIndex = submitBody.indexOf('const preflight = await load(id, true, true)');
+  const blockerIndex = submitBody.indexOf('preflight.submission_blocker');
+  const publishIndex = submitBody.indexOf('publishMyCreatorPremiumContent');
 
-  assert.equal(creatorPremiumSubmissionCommercialBlocker({
-    accessMode: 'purchase',
-    hasConfiguredPurchase: false,
-    mappedPlanCount: 0,
-    verificationRetryable: false,
-  }), 'creator_premium_active_offer_required');
-  assert.equal(creatorPremiumSubmissionCommercialBlocker({
-    accessMode: 'purchase',
-    hasConfiguredPurchase: true,
-    mappedPlanCount: 0,
-    verificationRetryable: false,
-  }), null);
-
-  assert.equal(creatorPremiumSubmissionCommercialBlocker({
-    accessMode: 'subscription',
-    hasConfiguredPurchase: false,
-    mappedPlanCount: 0,
-    verificationRetryable: false,
-  }), 'creator_premium_plan_mapping_required');
-  assert.equal(creatorPremiumSubmissionCommercialBlocker({
-    accessMode: 'subscription',
-    hasConfiguredPurchase: false,
-    mappedPlanCount: 1,
-    verificationRetryable: false,
-  }), null);
-
-  assert.equal(creatorPremiumSubmissionCommercialBlocker({
-    accessMode: 'purchase_or_subscription',
-    hasConfiguredPurchase: true,
-    mappedPlanCount: 0,
-    verificationRetryable: false,
-  }), 'creator_premium_plan_mapping_required');
-  assert.equal(creatorPremiumSubmissionCommercialBlocker({
-    accessMode: 'purchase_or_subscription',
-    hasConfiguredPurchase: false,
-    mappedPlanCount: 1,
-    verificationRetryable: false,
-  }), 'creator_premium_active_offer_required');
-  assert.equal(creatorPremiumSubmissionCommercialBlocker({
-    accessMode: 'purchase_or_subscription',
-    hasConfiguredPurchase: true,
-    mappedPlanCount: 1,
-    verificationRetryable: false,
-  }), null);
-
-  assert.equal(creatorPremiumSubmissionCommercialBlocker({
-    accessMode: 'purchase_or_subscription',
-    hasConfiguredPurchase: false,
-    mappedPlanCount: 0,
-    verificationRetryable: true,
-  }), null, 'retry delegates current-evidence validation to the canonical server RPC');
+  assert.ok(saveIndex >= 0 && preflightIndex > saveIndex && blockerIndex > preflightIndex && publishIndex > blockerIndex,
+    'draft changes must be persisted and read back through the canonical blocker before submit');
+  assert.doesNotMatch(submitBody, /Math\.max\([^)]*mapped_plan_count/i,
+    'a stale mapped-plan count cannot authorize the current submit');
+  assert.match(editor, /throwOnError[\s\S]*if\s*\(throwOnError\)\s*throw\s+reason/i,
+    'strict confirmation reads must preserve the original server error');
 });
 
 test('submission notices require the current RPC result and freshly loaded server state', () => {
@@ -234,6 +194,12 @@ test('known server blockers and unavailable income use safe actionable copy', ()
     creatorPremiumErrorMessage(new Error('creator_premium_image_media_not_ready')),
     'Falta completar la vista previa y la imagen privada.',
   );
+  assert.equal(
+    creatorPremiumErrorMessage(new Error('creator_premium_legacy_reverification_required')),
+    'Este contenido pendiente necesita iniciar la verificación B7 una vez.',
+  );
+  assert.match(editorSource, /legacyReverificationRequired[\s\S]*Verificación requerida/,
+    'a migrated row without a scan must not be labelled as actively verifying');
   assert.doesNotMatch(
     creatorPremiumErrorMessage(new Error('creator_premium_unknown_internal_code')),
     /creator_premium_unknown_internal_code/,
@@ -269,7 +235,7 @@ test('Hub and editor call the tested alignment contracts in their real execution
     editorSource.indexOf('const confirmDelete'),
   );
   const blockerIndex = submitBody.indexOf('creatorPremiumSubmissionMediaBlocker');
-  const commercialIndex = submitBody.indexOf('creatorPremiumSubmissionCommercialBlocker');
+  const commercialIndex = submitBody.indexOf('preflight.submission_blocker');
   const publishIndex = submitBody.indexOf('publishMyCreatorPremiumContent');
   const noticeIndex = submitBody.indexOf('creatorPremiumSubmissionNotice');
   assert.ok(blockerIndex >= 0 && commercialIndex > blockerIndex && publishIndex > commercialIndex,

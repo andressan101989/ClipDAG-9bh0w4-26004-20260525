@@ -109,24 +109,6 @@ export function creatorPremiumSubmissionMediaBlocker(input: {
   ];
 }
 
-export function creatorPremiumSubmissionCommercialBlocker(input: {
-  accessMode: 'purchase' | 'subscription' | 'purchase_or_subscription';
-  hasConfiguredPurchase: boolean;
-  mappedPlanCount: number;
-  verificationRetryable: boolean;
-}): string | null {
-  if (input.verificationRetryable) return null;
-  if ((input.accessMode === 'purchase' || input.accessMode === 'purchase_or_subscription')
-      && !input.hasConfiguredPurchase) {
-    return 'creator_premium_active_offer_required';
-  }
-  if ((input.accessMode === 'subscription' || input.accessMode === 'purchase_or_subscription')
-      && input.mappedPlanCount < 1) {
-    return 'creator_premium_plan_mapping_required';
-  }
-  return null;
-}
-
 export function creatorPremiumVerificationCanRetry(input: {
   lifecycle_status?: string | null;
   verification_status?: string | null;

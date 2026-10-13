@@ -104,12 +104,13 @@ export function useWallet() {
     if (!uid || isBalWriting.current) return 0;
     isBalWriting.current = true;
     try {
-      const { data: ledger } = await supa.current
+      const { data: ledger, error: balanceError } = await supa.current
         .from('ledger_accounts')
         .select('balance')
         .eq('owner_id', uid)
         .eq('account_type', 'user')
         .maybeSingle();
+      if (balanceError) throw balanceError;
 
       if (ledger) {
         const bal = Number(ledger.balance ?? 0);
@@ -117,8 +118,6 @@ export function useWallet() {
         return bal;
       }
       updateBal.current(0);
-      return 0;
-    } catch {
       return 0;
     } finally {
       // Always reset the guard — must be in finally to handle thrown errors too
@@ -132,22 +131,24 @@ export function useWallet() {
     if (!uid) return;
     setIsLoadingTx(true);
     try {
-      const { data: acct } = await supa.current
+      const { data: acct, error: accountError } = await supa.current
         .from('ledger_accounts')
         .select('id')
         .eq('owner_id', uid)
         .eq('account_type', 'user')
         .maybeSingle();
+      if (accountError) throw accountError;
 
       const mapped: PlatformTransaction[] = [];
 
       if (acct?.id) {
-        const { data: ledgerTxns } = await supa.current
+        const { data: ledgerTxns, error: transactionsError } = await supa.current
           .from('financial_transactions')
           .select('id, operation_type, amount, fee_amount, currency, status, blockchain_txid, reference_type, reference_id, created_at, from_account_id, to_account_id')
           .or(`from_account_id.eq.${acct.id},to_account_id.eq.${acct.id}`)
           .order('created_at', { ascending: false })
           .limit(60);
+        if (transactionsError) throw transactionsError;
 
         if (ledgerTxns && Array.isArray(ledgerTxns) && ledgerTxns.length > 0) {
           for (const t of ledgerTxns) {
@@ -211,12 +212,13 @@ export function useWallet() {
       const uid = userIdRef.current;
       if (!uid) break;
       try {
-        const { data: ledger } = await supa.current
+        const { data: ledger, error: pollError } = await supa.current
           .from('ledger_accounts')
           .select('balance')
           .eq('owner_id', uid)
           .eq('account_type', 'user')
           .maybeSingle();
+        if (pollError) throw pollError;
         if (ledger) {
           const bal = Number(ledger.balance ?? 0);
           updateBal.current(bal);

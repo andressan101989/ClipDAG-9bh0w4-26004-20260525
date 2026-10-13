@@ -42,7 +42,6 @@ import { uploadCreatorPremiumVideoMedia } from '@/services/creatorPremiumStreamS
 import {
   CREATOR_PREMIUM_BLOCKER_COPY as blockerCopy,
   creatorPremiumErrorMessage as messageFor,
-  creatorPremiumSubmissionCommercialBlocker,
   creatorPremiumSubmissionMediaBlocker,
   creatorPremiumSubmissionNotice,
   creatorPremiumVerificationCanRetry,
@@ -143,13 +142,16 @@ export default function CreatorPremiumEditor() {
   const [error, setError] = useState<string | null>(null);
 
   const verificationRetryable = creatorPremiumVerificationCanRetry(item);
+  const legacyReverificationRequired = item?.lifecycle_status === 'pending_review'
+    && item.verification_status === 'not_requested'
+    && item.verification_error_code === 'creator_premium_legacy_reverification_required';
   const readOnly = item?.lifecycle_status === 'pending_review' || item?.lifecycle_status === 'published' ||
     item?.lifecycle_status === 'quarantined' || item?.lifecycle_status === 'removed' || item?.lifecycle_status === 'deleted';
   const busy = saving || uploading || submitting || deleting;
   const mediaLocked = Boolean(item?.teaser_attached || item?.original_attached || item?.video_attached);
   const draftPlans = useMemo(() => plans.filter(plan => plan.status === 'draft'), [plans]);
 
-  const load = useCallback(async (targetId: string, silent = false) => {
+  const load = useCallback(async (targetId: string, silent = false, throwOnError = false) => {
     if (!silent) setLoading(true);
     setError(null);
     try {
@@ -170,6 +172,7 @@ export default function CreatorPremiumEditor() {
       setSelectedPlanIds(planPage.items.filter(plan => plan.mapped_content_ids.includes(found.id)).map(plan => plan.id));
       return found;
     } catch (reason) {
+      if (throwOnError) throw reason;
       setError(messageFor(reason));
       return null;
     } finally {
@@ -380,22 +383,17 @@ export default function CreatorPremiumEditor() {
       setError(mediaBlocker);
       return;
     }
-    const commercialBlocker = creatorPremiumSubmissionCommercialBlocker({
-      accessMode,
-      hasConfiguredPurchase: Boolean(price.trim() || item?.active_offer_version),
-      mappedPlanCount: Math.max(selectedPlanIds.length, item?.mapped_plan_count ?? 0),
-      verificationRetryable,
-    });
-    if (commercialBlocker) {
-      setError(blockerCopy[commercialBlocker] ?? messageFor(new Error(commercialBlocker)));
-      return;
-    }
     setSubmitting(true);
     setError(null);
     try {
       const id = verificationRetryable && contentId ? contentId : await saveDraft();
+      if (!verificationRetryable) {
+        const preflight = await load(id, true, true);
+        if (!preflight) throw new Error('creator_premium_submission_not_confirmed');
+        if (preflight.submission_blocker) throw new Error(preflight.submission_blocker);
+      }
       const rpcResult = await publishMyCreatorPremiumContent(id);
-      const refreshed = await load(id);
+      const refreshed = await load(id, true, true);
       const notice = creatorPremiumSubmissionNotice({ contentId: id, rpcResult, refreshed });
       if (!notice) throw new Error('creator_premium_submission_not_confirmed');
       Alert.alert(notice.title, notice.message);
@@ -404,7 +402,7 @@ export default function CreatorPremiumEditor() {
     } finally {
       setSubmitting(false);
     }
-  }, [accessMode, busy, contentId, item, kind, load, price, privateFile, readOnly, saveDraft, selectedPlanIds, teaser, verificationRetryable]);
+  }, [busy, contentId, item, kind, load, privateFile, readOnly, saveDraft, teaser, verificationRetryable]);
 
   const confirmDelete = useCallback(() => {
     if (!contentId || busy || readOnly) return;
@@ -463,14 +461,18 @@ export default function CreatorPremiumEditor() {
             <MaterialCommunityIcons name="clock-check-outline" size={21} color={Colors.warning} />
             <View style={styles.headerCopy}>
               <Text style={styles.reviewTitle}>{item?.lifecycle_status === 'pending_review'
-                ? item.verification_status === 'failed'
+                ? legacyReverificationRequired
+                  ? 'Verificación requerida'
+                  : item.verification_status === 'failed'
                   ? 'Error temporal de verificación'
                   : item.verification_status === 'commercial_pending'
                     ? 'Seguridad aprobada · activación del plan pendiente'
                     : 'Verificando contenido'
                 : 'Contenido no editable'}</Text>
               <Text style={styles.helper}>{item?.lifecycle_status === 'pending_review'
-                ? item.verification_status === 'failed'
+                ? legacyReverificationRequired
+                  ? blockerCopy.creator_premium_legacy_reverification_required
+                  : item.verification_status === 'failed'
                   ? blockerCopy[item.verification_error_code ?? ''] ?? 'La verificación no terminó. Puedes reintentar de forma segura.'
                   : item.verification_status === 'commercial_pending'
                     ? 'Seguridad aprobada. La activación del plan hará que el sistema revalide la publicación sin volver a escanear el original.'
