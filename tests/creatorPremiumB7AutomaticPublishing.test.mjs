@@ -59,6 +59,21 @@ test('a failed verification retry revalidates readiness and receives a fresh fin
   );
 });
 
+test('B7 migrates legacy B5 pending review rows fail-closed and makes them explicitly retryable', () => {
+  const stateConstraint = sql.match(/add constraint creator_premium_contents_state_check check \([\s\S]*?\n  \);/i)?.[0] ?? '';
+  const submit = lastFunctionBody('submit_my_creator_premium_content_for_review_v1', 'public');
+  const legacyBackfill = sql.match(/update\s+private\.creator_premium_contents[\s\S]*?creator_premium_legacy_reverification_required[\s\S]*?;/i)?.[0] ?? '';
+
+  assert.match(legacyBackfill, /lifecycle_status\s*=\s*'pending_review'/i);
+  assert.match(legacyBackfill, /submitted_at\s*=\s*coalesce\s*\(/i);
+  assert.match(legacyBackfill, /verification_error_code\s*=\s*'creator_premium_legacy_reverification_required'/i);
+  assert.doesNotMatch(legacyBackfill, /verification_status\s*=\s*'(?:passed|pending|failed)'|verification_scan_id\s*=/i,
+    'migration must not fabricate scanner evidence or a completed result');
+  assert.match(stateConstraint, /lifecycle_status\s*=\s*'pending_review'[\s\S]*verification_status\s*=\s*'not_requested'[\s\S]*creator_premium_legacy_reverification_required/i);
+  assert.match(submit, /verification_status\s+not\s+in\s*\([^)]*'failed'[^)]*'not_requested'/i);
+  assert.match(sql, /creator_premium_legacy_reverification_required/g);
+});
+
 test('Premium snapshot binds text, creator, lifecycle and exact current private originals', () => {
   const body = lastFunctionBody('content_safety_target_snapshot', 'private');
   assert.match(body, /p_target_type\s*=\s*'creator_premium'/i);
