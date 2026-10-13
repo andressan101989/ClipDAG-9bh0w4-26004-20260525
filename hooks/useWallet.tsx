@@ -34,7 +34,6 @@ import {
 } from '@/services/walletApi';
 import {
   presentLedgerTransaction,
-  presentLegacyWalletTransaction,
 } from '@/services/walletTransactionPresentation.mjs';
 import type {
   WalletTransactionDirection,
@@ -110,7 +109,7 @@ export function useWallet() {
         .select('balance')
         .eq('owner_id', uid)
         .eq('account_type', 'user')
-        .single();
+        .maybeSingle();
 
       if (ledger) {
         const bal = Number(ledger.balance ?? 0);
@@ -138,7 +137,7 @@ export function useWallet() {
         .select('id')
         .eq('owner_id', uid)
         .eq('account_type', 'user')
-        .single();
+        .maybeSingle();
 
       const mapped: PlatformTransaction[] = [];
 
@@ -174,45 +173,6 @@ export function useWallet() {
               description: presentation.description,
               txHash:      t.blockchain_txid ?? undefined,
               createdAt:   t.created_at,
-            });
-          }
-        }
-      }
-
-      // Fallback: legacy transactions table
-      if (mapped.length === 0) {
-        const { data: legacyTxns } = await supa.current
-          .from('transactions').select('*')
-          .eq('user_id', uid)
-          .order('created_at', { ascending: false })
-          .limit(60);
-
-        if (legacyTxns) {
-          for (const t of legacyTxns) {
-            let presentation: WalletTransactionPresentation;
-            try {
-              presentation = presentLegacyWalletTransaction(t) as WalletTransactionPresentation;
-            } catch {
-              if (__DEV__)
-                console.warn('[useWallet] omitted legacy transaction with unknown direction', {
-                  transactionId: typeof t.id === 'string' ? t.id.slice(0, 8) : null,
-                });
-              continue;
-            }
-            mapped.push({
-              id:            t.id,
-              userId:        t.user_id,
-              amount:        presentation.amount,
-              feeAmount:     Number(t.fee_amount ?? 0),
-              type:          presentation.kind,
-              label:         presentation.label,
-              direction:     presentation.direction,
-              signedAmount:  presentation.signedAmount,
-              status:        t.status,
-              description:   presentation.description,
-              txHash:        t.tx_hash ?? undefined,
-              walletAddress: t.wallet_address ?? undefined,
-              createdAt:     t.created_at,
             });
           }
         }
@@ -256,7 +216,7 @@ export function useWallet() {
           .select('balance')
           .eq('owner_id', uid)
           .eq('account_type', 'user')
-          .single();
+          .maybeSingle();
         if (ledger) {
           const bal = Number(ledger.balance ?? 0);
           updateBal.current(bal);
