@@ -322,6 +322,22 @@ begin
     raise exception using errcode = '55000', message = 'creator_premium_draft_only';
   end if;
 
+  if p_content_kind is distinct from v_content.content_kind
+     and (
+       exists (
+         select 1 from public.media_asset_links link
+         where link.entity_type = 'creator_premium_content'
+           and link.entity_id = v_content.id
+       )
+       or exists (
+         select 1 from public.video_asset_links link
+         where link.entity_type = 'creator_premium_content'
+           and link.entity_id = v_content.id
+       )
+     ) then
+    raise exception using errcode = '55000', message = 'creator_premium_content_kind_locked_by_media';
+  end if;
+
   if p_access_mode = 'purchase' then
     delete from private.creator_premium_plan_contents mapping
     where mapping.content_id = v_content.id
