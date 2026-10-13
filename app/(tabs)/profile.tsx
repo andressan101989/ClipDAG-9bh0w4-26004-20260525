@@ -486,10 +486,10 @@ export default function ProfileScreen() {
             onPress={() => router.push('/creator-monetization')}
           />
           <QuickAction
-            icon="account-heart-outline"
-            label={t('profile.subscriptions')}
+            icon="lock-open-check-outline"
+            label="Biblioteca"
             gradient={['#2D9EFF', '#00E5A0']}
-            onPress={() => router.push('/my-subscriptions')}
+            onPress={() => router.push('/my-premium-library')}
           />
         </View>
 

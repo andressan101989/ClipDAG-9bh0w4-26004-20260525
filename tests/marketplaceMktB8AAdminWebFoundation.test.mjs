@@ -15,7 +15,8 @@ const app=JSON.parse(read("app.json"));
 
 test("B8A is an isolated Vite web package outside the Expo router",()=>{
   assert.equal(existsSync("apps/admin-web/package.json"),true);
-  assert.equal(rootPackage.main,"expo-router/entry");
+  assert.equal(rootPackage.main,"index.js");
+  assert.match(read(rootPackage.main),/import ['"]expo-router\/entry['"]/);
   assert.equal(app.expo.ios.buildNumber,"22");
   assert.equal(existsSync("app/marketplace/admin"),false);
   assert.match(read("apps/admin-web/package.json"),/"vite": "7\.1\.3"/);

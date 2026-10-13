@@ -147,9 +147,10 @@ test(
     const sdkRequire = createRequire(clientPackage);
     const clientSdk = sdkRequire('@aws-sdk/client-s3');
     const presignerSdk = sdkRequire('@aws-sdk/s3-request-presigner');
+    const fakeR2AccountId = '0123456789abcdef0123456789abcdef';
     const client = new clientSdk.S3Client({
       region: 'auto',
-      endpoint: 'https://test-account.r2.cloudflarestorage.com',
+      endpoint: `https://${fakeR2AccountId}.r2.cloudflarestorage.com`,
       credentials: {
         accessKeyId: 'test-access-key',
         secretAccessKey: 'test-secret-key',
@@ -171,6 +172,10 @@ test(
         'image/jpeg',
       );
       const parsed = new URL(signedUrl);
+      assert.equal(
+        parsed.hostname,
+        `private-bucket.${fakeR2AccountId}.r2.cloudflarestorage.com`,
+      );
       assert.equal(parsed.searchParams.get('X-Amz-Expires'), '300');
       const signedHeaders = new Set(
         (parsed.searchParams.get('X-Amz-SignedHeaders') ?? '').split(';'),

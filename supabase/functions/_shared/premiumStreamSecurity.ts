@@ -11,6 +11,13 @@ export const PREMIUM_STREAM_TOKEN_TTL_SECONDS=300;
 export const PREMIUM_STREAM_TOKEN_NBF_SKEW_SECONDS=30;
 
 type PremiumStreamStatus='uploading'|'processing'|'ready'|'failed';
+type PremiumStreamGrantInput={
+  cloudflareUid:string;
+  customerCode:string;
+  nowSeconds?:number;
+  keyId?:string;
+  privateJwkB64?:string;
+};
 
 function requiredSecret(name:string):string {
   const value=Deno.env.get(name)?.trim();
@@ -119,13 +126,7 @@ function validateSigningInput(cloudflareUid:string,customerCode:string,keyId:str
   }
 }
 
-export async function createPremiumStreamPlaybackGrant(input:{
-  cloudflareUid:string;
-  customerCode:string;
-  nowSeconds?:number;
-  keyId?:string;
-  privateJwkB64?:string;
-}) {
+async function createPremiumStreamToken(input:PremiumStreamGrantInput,downloadable:boolean) {
   const keyId=input.keyId?.trim()||requiredSecret('STREAM_SIGNING_KEY_ID');
   const encodedJwk=input.privateJwkB64?.trim()||requiredSecret('STREAM_SIGNING_KEY_JWK_B64');
   const uid=input.cloudflareUid.trim();
@@ -143,6 +144,7 @@ export async function createPremiumStreamPlaybackGrant(input:{
     kid:keyId,
     exp:expires,
     nbf:now-PREMIUM_STREAM_TOKEN_NBF_SKEW_SECONDS,
+    ...(downloadable?{downloadable:true}:{}),
   });
   const signingInput=`${header}.${claims}`;
   let key:CryptoKey;
@@ -163,12 +165,28 @@ export async function createPremiumStreamPlaybackGrant(input:{
     key,
     new TextEncoder().encode(signingInput),
   );
-  const token=`${signingInput}.${encodeBase64Url(new Uint8Array(signature))}`;
+  return {
+    token:`${signingInput}.${encodeBase64Url(new Uint8Array(signature))}`,
+    code,
+    expiresAt:new Date(expires*1000).toISOString(),
+  };
+}
+
+export async function createPremiumStreamPlaybackGrant(input:PremiumStreamGrantInput) {
+  const {token,code,expiresAt}=await createPremiumStreamToken(input,false);
   const base=`https://customer-${code}.cloudflarestream.com/${token}`;
   return {
     hlsUrl:`${base}/manifest/video.m3u8`,
     dashUrl:`${base}/manifest/video.mpd`,
     thumbnailUrl:`${base}/thumbnails/thumbnail.jpg`,
-    expiresAt:new Date(expires*1000).toISOString(),
+    expiresAt,
+  };
+}
+
+export async function createPremiumStreamAudioDownloadGrant(input:PremiumStreamGrantInput) {
+  const {token,code,expiresAt}=await createPremiumStreamToken(input,true);
+  return {
+    audioUrl:`https://customer-${code}.cloudflarestream.com/${token}/downloads/audio.m4a`,
+    expiresAt,
   };
 }

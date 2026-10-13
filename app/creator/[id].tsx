@@ -29,7 +29,7 @@ import { useWallet } from '@/hooks/useWallet';
 import { useStories } from '@/hooks/useStories';
 import { useAlert } from '@/template';
 import {
-  fetchCreatorProfile, fetchCreatorVideos, fetchCreatorExclusiveContent,
+  fetchCreatorProfile, fetchCreatorVideos,
   fetchCreatorStats,
   type CreatorProfile, type CreatorStats,
 } from '@/services/creatorService';
@@ -38,8 +38,11 @@ import {
 } from '@/services/boostService';
 import {
   CREATOR_PREMIUM_FOUNDATION_MESSAGE,
+  fetchCreatorPremiumCatalog,
+  getCurrentCreatorPremiumUserId,
   type CreatorPremiumCatalogItem,
 } from '@/services/creatorPremiumService';
+import { rememberCreatorPremiumContentKind } from '@/services/creatorPremiumViewerRuntime.mjs';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { BoostProfileSheet } from '@/components/creator/BoostProfileSheet';
 import { ReportModal } from '@/components/feature/ReportModal';
@@ -84,6 +87,7 @@ export default function CreatorProfileScreen() {
   const [stats,       setStats]       = useState<CreatorStats | null>(null);
   const [videos,      setVideos]      = useState<any[]>([]);
   const [exclusive,   setExclusive]   = useState<CreatorPremiumCatalogItem[]>([]);
+  const [premiumCatalogError, setPremiumCatalogError] = useState(false);
   const [showcase,    setShowcase]    = useState<MarketplaceCreatorShowcaseProduct[]>([]);
   const [showcaseNextCursor, setShowcaseNextCursor] = useState<{ sortPosition: number; id: string } | null>(null);
   const [showcaseLoadingMore, setShowcaseLoadingMore] = useState(false);
@@ -125,7 +129,9 @@ export default function CreatorProfileScreen() {
             fetchCreatorProfile(creatorId),
             fetchCreatorStats(creatorId),
             fetchCreatorVideos(creatorId, 24),
-            fetchCreatorExclusiveContent(creatorId),
+            fetchCreatorPremiumCatalog(creatorId, { limit: 24 })
+              .then(page => ({ items: page.items, failed: false }))
+              .catch(() => ({ items: [] as CreatorPremiumCatalogItem[], failed: true })),
             isProfileBoosted(creatorId),
             fetchCreatorShowcase(creatorId).catch(() => ({ items: [], nextCursor: null, visible: false })),
           ]);
@@ -134,7 +140,8 @@ export default function CreatorProfileScreen() {
         setCreator(profile);
         setStats(creatorStats);
         setVideos(vids);
-        setExclusive(excl);
+        setExclusive(excl.items);
+        setPremiumCatalogError(excl.failed);
         setIsBoosted(boosted.boosted);
         setShowcase(showcasePage.visible === false ? [] : showcasePage.items);
         setShowcaseNextCursor(showcasePage.visible === false ? null : showcasePage.nextCursor as { sortPosition: number; id: string } | null);
@@ -476,21 +483,44 @@ export default function CreatorProfileScreen() {
           exclusive.length === 0 ? (
             <View style={styles.emptyState}>
               <MaterialIcons name="lock" size={44} color={Colors.border} />
-              <Text style={styles.emptyTitle}>Sin contenido exclusivo</Text>
+              <Text style={styles.emptyTitle}>{premiumCatalogError ? 'Premium no disponible' : 'Sin contenido exclusivo'}</Text>
               {isOwnProfile ? (
                 <Pressable style={styles.emptyActionBtn}
                   onPress={() => router.push('/creator-monetization')}>
                   <Text style={styles.emptyActionText}>Ver base Premium segura</Text>
                 </Pressable>
               ) : null}
-              <Text style={styles.premiumFoundationText}>{CREATOR_PREMIUM_FOUNDATION_MESSAGE}</Text>
+              <Text style={styles.premiumFoundationText}>
+                {premiumCatalogError ? 'No pudimos cargar el catálogo Premium de forma segura.' : CREATOR_PREMIUM_FOUNDATION_MESSAGE}
+              </Text>
             </View>
           ) : (
-            <View style={styles.exclusiveGrid}>
-              {exclusive.map(item => {
-                return (
+            <View>
+              <Text style={[styles.premiumFoundationText, styles.premiumDisabledNotice]}>
+                El acceso comercial todavía no está disponible. Las compras y suscripciones no están habilitadas.
+              </Text>
+              <View style={styles.exclusiveGrid}>
+                {exclusive.map(item => {
+                  return (
                   <Pressable key={item.id} style={styles.exclusiveCard}
-                    onPress={() => showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE)}
+                    onPress={() => {
+                      if (!item.entitled) {
+                        router.push({
+                          pathname: '/creator-premium-offer/[contentId]',
+                          params: { contentId: item.id },
+                        } as never);
+                        return;
+                      }
+                      void getCurrentCreatorPremiumUserId().then(currentUserId => {
+                        if (currentUserId) rememberCreatorPremiumContentKind(currentUserId, item.id, item.content_kind);
+                        router.push({
+                          pathname: '/creator-premium-viewer/[contentId]',
+                          params: { contentId: item.id },
+                        } as never);
+                      }).catch(() => {
+                        showAlert('Acceso no disponible', 'Vuelve a iniciar sesión para validar este contenido.');
+                      });
+                    }}
                   >
                     {item.teaser_url ? (
                       <Image
@@ -503,17 +533,20 @@ export default function CreatorProfileScreen() {
                     <LinearGradient colors={['rgba(124,92,255,0.16)', 'rgba(7,7,15,0.92)']}
                       style={styles.exclusiveLockOverlay}>
                       <View style={styles.lockIcon}>
-                        <MaterialIcons name="lock" size={16} color="#fff" />
+                        <MaterialIcons name={item.entitled ? 'verified-user' : 'lock'} size={16} color="#fff" />
                       </View>
-                      <Text style={styles.exclusiveFoundationLabel}>Acceso seguro próximamente</Text>
+                      <Text style={styles.exclusiveFoundationLabel}>
+                        {item.entitled ? 'Abrir contenido protegido' : 'Acceso Premium requerido'}
+                      </Text>
                     </LinearGradient>
                     <View style={styles.exclusiveCardFooter}>
                       <Text style={styles.exclusiveCardTitle} numberOfLines={1}>{item.title}</Text>
                       <Text style={styles.exclusiveCardMeta}>{item.content_kind === 'video' ? 'Video' : 'Imagen'}</Text>
                     </View>
                   </Pressable>
-                );
-              })}
+                  );
+                })}
+              </View>
             </View>
           )
         )}
@@ -677,6 +710,7 @@ const styles = StyleSheet.create({
   emptyActionBtn: { backgroundColor: Colors.primaryDim, borderRadius: Radius.md, paddingHorizontal: 20, paddingVertical: 10, borderWidth: 1, borderColor: Colors.primary + '44' },
   emptyActionText:{ color: Colors.primary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
   premiumFoundationText: { maxWidth: 320, color: Colors.textSubtle, fontSize: FontSize.xs, lineHeight: 18, textAlign: 'center', paddingHorizontal: Spacing.md },
+  premiumDisabledNotice: { alignSelf: 'center', marginVertical: Spacing.sm },
 
   // Not found
   notFoundText:  { color: Colors.textSecondary, fontSize: FontSize.lg, marginBottom: Spacing.md },

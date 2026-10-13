@@ -22,7 +22,7 @@ export function validateStreamAudioUrl(value, uid, customerCode) {
     .replace(/^customer-/iu, '')
     .replace(/\.cloudflarestream\.com$/iu, '')
   const expectedHost = `customer-${code}.cloudflarestream.com`
-  if (!code || !uid || url.protocol !== 'https:' || url.username || url.password || url.port) throw new AudioPipelineError('stream_audio_url_untrusted_scheme')
+  if (!code || !uid || url.protocol !== 'https:' || url.username || url.password || url.port || url.search || url.hash) throw new AudioPipelineError('stream_audio_url_untrusted_scheme')
   if (url.hostname.toLowerCase() !== expectedHost) throw new AudioPipelineError('stream_audio_url_untrusted_host')
   let pathname
   try { pathname = decodeURIComponent(url.pathname) } catch { throw new AudioPipelineError('stream_audio_url_untrusted_path') }
@@ -36,6 +36,106 @@ export function validateStreamAudioUrl(value, uid, customerCode) {
   if (!['downloads', 'dl'].includes(parts[1]?.toLowerCase())) throw new AudioPipelineError('stream_audio_url_untrusted_path')
   if (parts[2]?.toLowerCase() !== 'audio.m4a') throw new AudioPipelineError('stream_audio_url_untrusted_format')
   return url.toString()
+}
+
+const SIGNED_STREAM_TOKEN_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
+
+function signedStreamAudio(value) {
+  let url
+  try { url = new URL(String(value ?? '')) } catch { throw new AudioPipelineError('stream_audio_url_invalid') }
+  if (url.protocol !== 'https:' || !/^customer-[a-z0-9-]{3,128}\.cloudflarestream\.com$/iu.test(url.hostname) ||
+      url.username || url.password || url.port || url.search || url.hash) {
+    throw new AudioPipelineError('stream_audio_url_untrusted_scheme')
+  }
+  let pathname
+  try { pathname = decodeURIComponent(url.pathname) } catch { throw new AudioPipelineError('stream_audio_url_untrusted_path') }
+  const parts = pathname.split('/').filter(Boolean)
+  if (parts.length !== 3 || !SIGNED_STREAM_TOKEN_PATTERN.test(parts[0] ?? '') ||
+      !['downloads', 'dl'].includes(parts[1]?.toLowerCase()) || parts[2]?.toLowerCase() !== 'audio.m4a') {
+    throw new AudioPipelineError('stream_audio_url_untrusted_path')
+  }
+  return { url, token: parts[0] }
+}
+
+export function validateSignedStreamAudioUrl(value, signedAudioUrl) {
+  const expected = signedStreamAudio(signedAudioUrl)
+  const candidate = signedStreamAudio(value)
+  if (candidate.url.origin !== expected.url.origin || candidate.token !== expected.token) {
+    throw new AudioPipelineError('stream_audio_url_untrusted_identity')
+  }
+  return candidate.url.toString()
+}
+
+export function validateStreamAudioTargetType(value) {
+  if (value !== 'video' && value !== 'creator_premium') {
+    throw new AudioPipelineError('stream_audio_target_type_invalid', { status: 422 })
+  }
+  return value
+}
+
+function streamAudioIdentity(value) {
+  return decodeURIComponent(new URL(value).pathname).split('/').filter(Boolean)[0]
+}
+
+export async function selectStreamAudioDownloadRoute({ targetType, uid, customerCode, providerUrl, createPrivateGrant }) {
+  const canonicalTargetType = validateStreamAudioTargetType(targetType)
+  const canonicalProviderUrl = validateStreamAudioUrl(providerUrl, uid, customerCode)
+  if (canonicalTargetType === 'video') {
+    const canonicalIdentity = streamAudioIdentity(canonicalProviderUrl)
+    return {
+      access: 'public',
+      url: canonicalProviderUrl,
+      validateRedirect: value => {
+        const candidate = validateStreamAudioUrl(value, uid, customerCode)
+        if (streamAudioIdentity(candidate).toLowerCase() !== canonicalIdentity.toLowerCase()) {
+          throw new AudioPipelineError('stream_audio_url_untrusted_identity')
+        }
+        return candidate
+      },
+    }
+  }
+
+  if (typeof createPrivateGrant !== 'function') {
+    throw new AudioPipelineError('stream_audio_private_signer_missing', { status: 503 })
+  }
+  const signedDownload = await createPrivateGrant({ cloudflareUid: uid, customerCode })
+  const signedAudioUrl = validateSignedStreamAudioUrl(signedDownload?.audioUrl, signedDownload?.audioUrl)
+  return {
+    access: 'premium_private',
+    url: signedAudioUrl,
+    validateRedirect: value => validateSignedStreamAudioUrl(value, signedAudioUrl),
+  }
+}
+
+export async function downloadStreamAudioBytes({ route, fetchImpl = globalThis.fetch }) {
+  if (!route || typeof route.url !== 'string' || typeof route.validateRedirect !== 'function' || typeof fetchImpl !== 'function') {
+    throw new AudioPipelineError('stream_audio_download_configuration_invalid', { status: 503 })
+  }
+  let current = route.url
+  for (let redirect = 0; redirect <= 3; redirect += 1) {
+    const response = await fetchImpl(current, { redirect: 'manual' }).catch(() => {
+      throw new AudioPipelineError('stream_audio_network_error', { retryable: true })
+    })
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get('location')
+      if (!location || redirect === 3) throw new AudioPipelineError('stream_audio_redirect_rejected')
+      current = route.validateRedirect(new URL(location, current).toString())
+      continue
+    }
+    if (!response.ok) {
+      const transient = response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500
+      throw new AudioPipelineError(transient ? 'stream_audio_temporarily_unavailable' : 'stream_audio_fetch_rejected', {
+        status: response.status,
+        retryable: transient,
+      })
+    }
+    const declared = Number(response.headers.get('content-length') ?? 0)
+    if (declared > MAX_AUDIO_BYTES) throw new AudioPipelineError('stream_audio_too_large')
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    if (!bytes.length || bytes.length > MAX_AUDIO_BYTES) throw new AudioPipelineError('stream_audio_too_large')
+    return bytes
+  }
+  throw new AudioPipelineError('stream_audio_redirect_rejected')
 }
 
 export function retryPolicy(status) {

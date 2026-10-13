@@ -42,6 +42,18 @@ module.exports = {
       },
     },
 
+    // Keep the upstream Java/Kotlin module and component descriptors, while
+    // using a shorter CMake target for New Architecture builds on Windows.
+    // The wrapper only changes build paths; runtime APIs remain canonical.
+    'react-native-keyboard-controller': {
+      platforms: {
+        android: {
+          libraryName: 'rnkc',
+          cmakeListsPath: '../../../android/rnkc/CMakeLists.txt',
+        },
+      },
+    },
+
     // ── react-native-maps: iOS EXCLUIDO ──────────────────────────────────────
     // AIRGoogleMapManager.constantsToExport calls [GMSServices openSourceLicenseInfo]
     // at module registration. No API key → nil → NSInvalidArgumentException crash.

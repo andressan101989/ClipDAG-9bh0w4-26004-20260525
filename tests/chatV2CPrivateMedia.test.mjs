@@ -9,6 +9,7 @@ const screen = readFileSync('app/chat/[userId].tsx', 'utf8');
 const edge = readFileSync('supabase/functions/get-media-url/index.ts', 'utf8');
 const mediaServiceSource = readFileSync('services/chatMediaService.ts', 'utf8');
 const chatService = readFileSync('services/chatService.ts', 'utf8');
+const screenProtectionCoordinator = readFileSync('services/screenProtectionCoordinator.mjs', 'utf8');
 
 function load(source, imports = {}) {
   const module = { exports: {} };
@@ -168,10 +169,15 @@ test('chat UI offers normal or one-time upload and never renders one-time conten
   assert.doesNotMatch(screen, /base64:\s*true/);
 });
 
-test('one-time viewer activates and cleans existing capture protection without caching content', () => {
+test('one-time viewer coordinates and cleans existing capture protection without caching content', () => {
   assert.match(screen, /usePreventScreenCapture\(ONE_TIME_CAPTURE_KEY\)/);
-  assert.match(screen, /enableAppSwitcherProtectionAsync\(1\)/);
-  assert.match(screen, /disableAppSwitcherProtectionAsync\(\)/);
+  assert.match(screen, /configureAppSwitcherProtectionModule\(ScreenCapture\)/);
+  assert.match(screen, /appSwitcherProtectionCoordinator\.acquire\(switcherOwner\)/);
+  assert.match(screen, /appSwitcherProtectionCoordinator\.release\(switcherOwner\)/);
+  assert.doesNotMatch(screen, /ScreenCapture\.enableAppSwitcherProtectionAsync/);
+  assert.doesNotMatch(screen, /ScreenCapture\.disableAppSwitcherProtectionAsync/);
+  assert.match(screenProtectionCoordinator, /enableAppSwitcherProtectionAsync\(1\)/);
+  assert.match(screenProtectionCoordinator, /disableAppSwitcherProtectionAsync\(\)/);
   assert.match(screen, /cachePolicy="none"/);
   assert.match(screen, /setOneTimeMediaUrl\(null\)/);
 });

@@ -1,0 +1,122 @@
+import {useEffect,useMemo,useRef,useState} from "react";
+import {Link,useParams} from "react-router-dom";
+import {useAdminAuth} from "../auth/AdminAuthProvider";
+import {AdminFact,AdminFactGrid,AdminIdentity,AdminMediaPreview,asRecord,asRows,humanValue,shortId} from "../components/AdminPresentation";
+import {EmptyState,ErrorState,LoadingState} from "../components/PageState";
+import {
+  formatBdag,formatDate,getAdminCreatorPremiumContent,getAdminCreatorPremiumImageGrant,
+  getAdminCreatorPremiumRefundCandidates,getAdminCreatorPremiumVideoGrant,
+  isAmbiguousAdminMutationError,
+  refundAdminCreatorPremiumPurchase,refundAdminCreatorPremiumSubscriptionPeriod,
+  reviewAdminCreatorPremiumContent,searchAdminCreatorPremiumContent,
+  type AdminCreatorPremiumSummary,
+} from "../lib/adminApi";
+import {acquireAdminCommandAttempt,adminCommandSignature,type AdminCommandAttempt} from "../lib/adminCommandRetry";
+
+const statusLabels:Record<string,string>={
+  pending_review:"Verificación automática",published:"Publicado",rejected:"Bloqueado por seguridad",
+  quarantined:"Cuarentena",removed:"Retirado",
+};
+const statusLabel=(value:unknown)=>typeof value==="string"?(statusLabels[value]??value):"—";
+const text=(value:unknown)=>typeof value==="string"?value:"";
+const bool=(value:unknown)=>value===true;
+
+export function AdminCreatorPremiumPage(){
+  const [status,setStatus]=useState("quarantined"),[query,setQuery]=useState(""),[items,setItems]=useState<AdminCreatorPremiumSummary[]|null>(null),[nextCursor,setNextCursor]=useState<Awaited<ReturnType<typeof searchAdminCreatorPremiumContent>>["next_cursor"]>(null),[loadingMore,setLoadingMore]=useState(false),[error,setError]=useState<string|null>(null),[nonce,setNonce]=useState(0);
+  const queueRequestGeneration=useRef(0),statusRef=useRef(status),queryRef=useRef(query);
+  statusRef.current=status;
+  queryRef.current=query;
+  useEffect(()=>{
+    let active=true;
+    const request=++queueRequestGeneration.current;
+    setItems(null);setNextCursor(null);setLoadingMore(false);setError(null);
+    void searchAdminCreatorPremiumContent({status:status||null,query})
+      .then((page)=>{if(active&&request===queueRequestGeneration.current){setItems(page.items);setNextCursor(page.next_cursor)}})
+      .catch((cause)=>{if(active&&request===queueRequestGeneration.current)setError(cause instanceof Error?cause.message:"No se pudo cargar la cola")});
+    return()=>{active=false;queueRequestGeneration.current+=1};
+  },[status,query,nonce]);
+  const loadMore=async()=>{
+    if(!nextCursor||loadingMore)return;
+    const request=++queueRequestGeneration.current;
+    const requestedStatus=status;
+    const requestedQuery=query;
+    const cursor=nextCursor;
+    const isCurrent=()=>request===queueRequestGeneration.current&&requestedStatus===statusRef.current&&requestedQuery===queryRef.current;
+    setLoadingMore(true);setError(null);
+    try{
+      const page=await searchAdminCreatorPremiumContent({status:requestedStatus||null,query:requestedQuery,cursor});
+      if(!isCurrent())return;
+      setItems((current)=>{const existing=new Set((current??[]).map((item)=>item.id));return[...(current??[]),...page.items.filter((item)=>!existing.has(item.id))]});
+      setNextCursor(page.next_cursor);
+    }catch(cause){if(isCurrent())setError(cause instanceof Error?cause.message:"No se pudo cargar más contenido")}
+    finally{if(isCurrent())setLoadingMore(false)}
+  };
+  return <><div className="page-heading"><div><p className="eyebrow">SEGURIDAD PREMIUM</p><h2>Excepciones Premium</h2><p>Reportes, restricciones y moderación posterior. La publicación normal se verifica automáticamente.</p></div></div><div className="filters"><label className="search"><span>⌕</span><input aria-label="Buscar Creator Premium" placeholder="Título, creador o ID" value={query} onChange={(event)=>setQuery(event.target.value)}/></label><select aria-label="Estado Premium" value={status} onChange={(event)=>setStatus(event.target.value)}><option value="">Todos</option><option value="pending_review">Verificando</option><option value="published">Publicado</option><option value="rejected">Bloqueado</option><option value="quarantined">Cuarentena</option><option value="removed">Retirado</option></select></div>{error&&items?<ErrorState message={error} onRetry={()=>setNonce((value)=>value+1)}/>:null}{error&&!items?<ErrorState message={error} onRetry={()=>setNonce((value)=>value+1)}/>:!items?<LoadingState label="Cargando seguridad Premium…"/>:items.length===0?<EmptyState title="Sin excepciones Premium" detail="No hay alertas o restricciones para los filtros actuales."/>:<section className="table-panel"><table className="human-table"><thead><tr><th>Vista previa</th><th>Contenido</th><th>Creador</th><th>Tipo</th><th>Estado</th><th>Enviado</th></tr></thead><tbody>{items.map((item)=><tr key={item.id}><td><Link to={`/creator-premium/${item.id}`} className="admin-media-thumb">{item.teaser_url?<img src={item.teaser_url} alt="Vista previa pública"/>:<span>PREMIUM</span>}</Link></td><td><Link to={`/creator-premium/${item.id}`}><strong>{item.title}</strong><small className="mono">{shortId(item.id)}</small>{item.publication_blocker&&<span className="truncate">Bloqueo: {item.publication_blocker}</span>}</Link></td><td><AdminIdentity value={item.creator} compact/></td><td>{item.content_kind} · {item.access_mode}</td><td><em className={`badge ${item.lifecycle_status==="published"?"success":"warn"}`}>{statusLabel(item.lifecycle_status)}</em></td><td>{formatDate(item.submitted_at)}</td></tr>)}</tbody></table>{nextCursor?<button className="secondary" disabled={loadingMore} onClick={()=>void loadMore()}>{loadingMore?"Cargando…":"Cargar más"}</button>:null}</section>}</>
+}
+
+type ImageGrant={url:string;expiresAt:string};
+type VideoGrant={hlsUrl:string;thumbnailUrl:string;expiresAt:string};
+
+export function AdminCreatorPremiumDetailPage(){
+  const {id=""}=useParams(),{hasCapability,session}=useAdminAuth(),actorId=session?.user.id??"";
+  const [detail,setDetail]=useState<Record<string,unknown>|null>(null),[imageGrant,setImageGrant]=useState<ImageGrant|null>(null),[videoGrant,setVideoGrant]=useState<VideoGrant|null>(null),[grantError,setGrantError]=useState<string|null>(null),[reason,setReason]=useState(""),[refundReason,setRefundReason]=useState(""),[refundCandidates,setRefundCandidates]=useState<Record<string,unknown>|null>(null),[error,setError]=useState<string|null>(null),[operationResult,setOperationResult]=useState<string|null>(null),[busy,setBusy]=useState(false),[nonce,setNonce]=useState(0);
+  const operationInFlightRef=useRef<string|null>(null),operationGenerationRef=useRef(0),reviewAttemptRef=useRef<AdminCommandAttempt|null>(null),refundAttemptRef=useRef<AdminCommandAttempt|null>(null),actorRef=useRef(actorId),contentRef=useRef(id);
+  actorRef.current=actorId;contentRef.current=id;
+  useEffect(()=>()=>{operationGenerationRef.current+=1;operationInFlightRef.current=null},[]);
+  useEffect(()=>{operationGenerationRef.current+=1;operationInFlightRef.current=null;reviewAttemptRef.current=null;refundAttemptRef.current=null;setBusy(false);setOperationResult(null)},[actorId,id]);
+  useEffect(()=>{let active=true;setDetail(null);setError(null);setImageGrant(null);setVideoGrant(null);setRefundCandidates(null);void getAdminCreatorPremiumContent(id).then((value)=>{if(active)setDetail(value)}).catch((cause)=>{if(active)setError(cause instanceof Error?cause.message:"No se pudo cargar el contenido")});return()=>{active=false;setImageGrant(null);setVideoGrant(null)}},[id,nonce]);
+  useEffect(()=>{if(!detail)return;let active=true;setGrantError(null);const load=detail.content_kind==="video"?getAdminCreatorPremiumVideoGrant(id):getAdminCreatorPremiumImageGrant(id);void load.then((grant)=>{if(!active)return;if("hlsUrl" in grant)setVideoGrant(grant);else setImageGrant(grant)}).catch(()=>{if(active)setGrantError("El original privado no está disponible para revisión.")});return()=>{active=false;setImageGrant(null);setVideoGrant(null)}},[detail,id]);
+  const policy=asRecord(detail?.finance_policy),refundsEnabled=bool(policy.refunds_enabled),canRefund=hasCapability("creator_premium.refunds.write")&&refundsEnabled;
+  useEffect(()=>{if(!canRefund||!detail)return;let active=true;void getAdminCreatorPremiumRefundCandidates(id).then((value)=>{if(active)setRefundCandidates(value)}).catch(()=>{if(active)setRefundCandidates(null)});return()=>{active=false}},[canRefund,detail,id,nonce]);
+  const lifecycle=text(detail?.lifecycle_status),allowedActions=useMemo(()=>lifecycle==="published"?["quarantine","remove"]:lifecycle==="rejected"?["restore"]:lifecycle==="quarantined"?["remove","restore"]:lifecycle==="removed"?["restore"]:[],[lifecycle]);
+  const review=async(action:"quarantine"|"remove"|"restore")=>{
+    const normalizedReason=reason.trim();
+    if(normalizedReason.length<2){setError("Indica un motivo de al menos 2 caracteres.");return}
+    if(!actorId){setError("Operación rechazada: la sesión administrativa no está disponible.");return}
+    if(operationInFlightRef.current)return;
+    const signature=adminCommandSignature(["review",actorId,id,action,normalizedReason]);
+    const attempt=acquireAdminCommandAttempt(reviewAttemptRef.current,signature,()=>crypto.randomUUID());
+    reviewAttemptRef.current=attempt;
+    const generation=++operationGenerationRef.current;
+    operationInFlightRef.current=signature;setBusy(true);setError(null);setOperationResult(null);
+    const isCurrent=()=>generation===operationGenerationRef.current&&actorRef.current===actorId&&contentRef.current===id;
+    try{
+      await reviewAdminCreatorPremiumContent({id,action,reason:normalizedReason,idempotencyKey:attempt.idempotencyKey});
+      if(!isCurrent())return;
+      reviewAttemptRef.current=null;setReason("");setOperationResult("Decisión administrativa confirmada.");setNonce((value)=>value+1);
+    }catch(cause){
+      if(!isCurrent())return;
+      if(isAmbiguousAdminMutationError(cause))setError("Resultado no confirmado. Reintenta la misma operación de forma segura.");
+      else{reviewAttemptRef.current=null;setError("Operación rechazada por la autoridad administrativa.")}
+    }finally{if(isCurrent()&&operationInFlightRef.current===signature){operationInFlightRef.current=null;setBusy(false)}}
+  };
+  const refund=async(kind:"purchase"|"subscription",targetId:string)=>{
+    const code=refundReason.trim().toLowerCase();
+    if(!/^[a-z][a-z0-9_]{0,79}$/.test(code)){setError("Indica un motivo seguro en formato codigo_de_motivo.");return}
+    if(!actorId){setError("Operación rechazada: la sesión administrativa no está disponible.");return}
+    if(operationInFlightRef.current)return;
+    if(!window.confirm("Confirmar reembolso completo y revocación de acceso"))return;
+    const signature=adminCommandSignature(["refund",actorId,id,kind,targetId,code]);
+    const attempt=acquireAdminCommandAttempt(refundAttemptRef.current,signature,()=>crypto.randomUUID());
+    refundAttemptRef.current=attempt;
+    const generation=++operationGenerationRef.current;
+    operationInFlightRef.current=signature;setBusy(true);setError(null);setOperationResult(null);
+    const isCurrent=()=>generation===operationGenerationRef.current&&actorRef.current===actorId&&contentRef.current===id;
+    try{
+      const receipt=kind==="purchase"
+        ?await refundAdminCreatorPremiumPurchase({receiptId:targetId,reason:code,idempotencyKey:attempt.idempotencyKey})
+        :await refundAdminCreatorPremiumSubscriptionPeriod({periodId:targetId,reason:code,idempotencyKey:attempt.idempotencyKey});
+      if(!isCurrent())return;
+      refundAttemptRef.current=null;
+      setOperationResult(receipt.money_moved?"Reembolso efectuado.":"Reembolso ya realizado; no se movieron fondos.");
+      setNonce((value)=>value+1);
+    }catch(cause){
+      if(!isCurrent())return;
+      if(isAmbiguousAdminMutationError(cause))setError("Resultado no confirmado. Reintenta la misma operación de forma segura.");
+      else{refundAttemptRef.current=null;setError("Operación rechazada por la autoridad financiera.")}
+    }finally{if(isCurrent()&&operationInFlightRef.current===signature){operationInFlightRef.current=null;setBusy(false)}}
+  };
+  if(error&&!detail)return <ErrorState message={error} onRetry={()=>setNonce((value)=>value+1)}/>;if(!detail)return <LoadingState label="Cargando detalle Premium…"/>;
+  const creator=asRecord(detail.creator),offer=asRecord(detail.offer),plans=asRows(detail.plans),audit=asRows(detail.audit),purchases=asRows(refundCandidates?.purchases),periods=asRows(refundCandidates?.subscription_periods),mediaUrl=imageGrant?.url??videoGrant?.hlsUrl??null;
+  return <><div className="page-heading"><div><p className="eyebrow">SEGURIDAD PREMIUM</p><h2>{humanValue(detail.title,"Contenido Premium")}</h2><p className="mono">{id}</p></div><em className={`badge ${lifecycle==="published"?"success":"warn"}`}>{statusLabel(lifecycle)}</em></div><div className="presentation-grid content-detail-grid"><div className="presentation-stack"><section className="presentation-card content-preview-card"><header><div><p className="eyebrow">ORIGINAL PRIVADO</p><h3>Inspección temporal de seguridad</h3></div><span className="badge">{humanValue(detail.content_kind)}</span></header><div className="admin-media-frame"><AdminMediaPreview url={mediaUrl} poster={videoGrant?.thumbnailUrl??text(detail.teaser_url)} kind={text(detail.content_kind)} alt="Original Premium para moderación de seguridad" error={grantError}/></div><small>El grant se mantiene solo en memoria y expira automáticamente.</small></section><section className="presentation-card"><header><h3>Detalle comercial</h3></header><p>{humanValue(detail.description,"Sin descripción")}</p><AdminFactGrid><AdminFact label="Acceso" value={humanValue(detail.access_mode)}/><AdminFact label="Oferta activa" value={offer.price_bdag?formatBdag(String(offer.price_bdag)):"No aplica"}/><AdminFact label="Planes" value={String(plans.length)}/><AdminFact label="Media lista" value={humanValue(detail.media_ready)}/><AdminFact label="Bloqueo" value={humanValue(detail.publication_blocker,"Ninguno")}/></AdminFactGrid></section></div><aside className="presentation-stack"><section className="presentation-card"><header><h3>Creador</h3></header><AdminIdentity value={creator}/></section><section className="presentation-card"><header><h3>Ciclo de vida</h3></header><AdminFactGrid><AdminFact label="Enviado" value={formatDate(detail.submitted_at)}/><AdminFact label="Intervención humana" value={formatDate(detail.reviewed_at)}/><AdminFact label="Publicado" value={formatDate(detail.published_at)}/><AdminFact label="Motivo" value={humanValue(detail.review_reason)}/><AdminFact label="Auditoría" value={String(audit.length)}/></AdminFactGrid></section></aside></div>{hasCapability("creator_premium.review.moderate")&&allowedActions.length>0&&<section className="detail-card"><h3>Moderación de excepción</h3><textarea aria-label="Motivo de moderación" placeholder="Motivo obligatorio" value={reason} onChange={(event)=>setReason(event.target.value)}/><div className="button-row">{allowedActions.map((action)=><button key={action} className={action==="remove"?"danger":""} disabled={busy} onClick={()=>void review(action as "quarantine"|"remove"|"restore")}>{action==="quarantine"?"Poner en cuarentena":action==="remove"?"Retirar":"Solicitar nueva verificación"}</button>)}</div></section>}{hasCapability("creator_premium.refunds.write")&&<section className="detail-card"><h3>Reembolsos Premium</h3>{!refundsEnabled?<p>Los reembolsos están deshabilitados por la política financiera del servidor.</p>:<><input aria-label="Motivo del reembolso" placeholder="codigo_de_motivo" value={refundReason} onChange={(event)=>setRefundReason(event.target.value)}/><div className="presentation-stack">{purchases.map((row)=><div key={text(row.receipt_id)} className="button-row"><span>Compra {shortId(row.receipt_id)} · {formatBdag(String(row.gross_amount_bdag))}</span>{row.refundable===true&&<button disabled={busy} onClick={()=>void refund("purchase",text(row.receipt_id))}>Reembolsar compra</button>}</div>)}{periods.map((row)=><div key={text(row.period_id)} className="button-row"><span>Periodo {shortId(row.period_id)} · {formatBdag(String(row.gross_amount_bdag))}</span>{row.refundable===true&&<button disabled={busy} onClick={()=>void refund("subscription",text(row.period_id))}>Reembolsar periodo</button>}</div>)}</div></>}</section>}{operationResult&&<p role="status">{operationResult}</p>}{error&&<p role="alert">{error}</p>}</>
+}

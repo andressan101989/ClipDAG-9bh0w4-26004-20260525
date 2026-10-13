@@ -40,6 +40,9 @@ verify_jwt = true
 [functions.content-safety-scan]
 verify_jwt = true
 
+[functions.video-semantic-index]
+verify_jwt = true
+
 [functions.ads-v2-delivery]
 verify_jwt = true
 

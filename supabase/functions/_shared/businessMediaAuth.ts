@@ -20,7 +20,10 @@ export async function businessActorHasAnyCapability(
     return (item as Record<string, unknown>).business_owner_id === businessOwnerId;
   }) as Record<string, unknown> | undefined;
   if (!access || !Array.isArray(access.capabilities)) return false;
-  return capabilities.some((capability) => access.capabilities.includes(capability));
+  const accessCapabilities = access.capabilities.filter(
+    (value): value is string => typeof value === "string",
+  );
+  return capabilities.some((capability) => accessCapabilities.includes(capability));
 }
 
 export async function businessActorHasAdvertiserOwnerMediaAccess(
