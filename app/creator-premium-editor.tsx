@@ -42,7 +42,10 @@ import { uploadCreatorPremiumVideoMedia } from '@/services/creatorPremiumStreamS
 import {
   CREATOR_PREMIUM_BLOCKER_COPY as blockerCopy,
   creatorPremiumErrorMessage as messageFor,
+  creatorPremiumSubmissionCommercialBlocker,
   creatorPremiumSubmissionMediaBlocker,
+  creatorPremiumSubmissionNotice,
+  creatorPremiumVerificationCanRetry,
 } from '@/services/creatorPremiumIntegrationState';
 
 type LocalFile = {
@@ -139,7 +142,7 @@ export default function CreatorPremiumEditor() {
   const [processing, setProcessing] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const verificationRetryable = item?.lifecycle_status === 'pending_review' && item.verification_status === 'failed';
+  const verificationRetryable = creatorPremiumVerificationCanRetry(item);
   const readOnly = item?.lifecycle_status === 'pending_review' || item?.lifecycle_status === 'published' ||
     item?.lifecycle_status === 'quarantined' || item?.lifecycle_status === 'removed' || item?.lifecycle_status === 'deleted';
   const busy = saving || uploading || submitting || deleting;
@@ -156,7 +159,7 @@ export default function CreatorPremiumEditor() {
       ]);
       setPlans(planPage.items);
       setPlanNextCursor(planPage.nextCursor);
-      if (!targetId) return;
+      if (!targetId) return null;
       if (!found) throw new Error('creator_premium_content_not_found');
       setItem(found);
       setTitle(found.title);
@@ -165,8 +168,10 @@ export default function CreatorPremiumEditor() {
       setAccessMode(found.access_mode);
       setPrice(found.price_bdag === null ? '' : String(found.price_bdag));
       setSelectedPlanIds(planPage.items.filter(plan => plan.mapped_content_ids.includes(found.id)).map(plan => plan.id));
+      return found;
     } catch (reason) {
       setError(messageFor(reason));
+      return null;
     } finally {
       if (!silent) setLoading(false);
     }
@@ -375,19 +380,31 @@ export default function CreatorPremiumEditor() {
       setError(mediaBlocker);
       return;
     }
+    const commercialBlocker = creatorPremiumSubmissionCommercialBlocker({
+      accessMode,
+      hasConfiguredPurchase: Boolean(price.trim() || item?.active_offer_version),
+      mappedPlanCount: Math.max(selectedPlanIds.length, item?.mapped_plan_count ?? 0),
+      verificationRetryable,
+    });
+    if (commercialBlocker) {
+      setError(blockerCopy[commercialBlocker] ?? messageFor(new Error(commercialBlocker)));
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
       const id = verificationRetryable && contentId ? contentId : await saveDraft();
-      await publishMyCreatorPremiumContent(id);
-      await load(id);
-      Alert.alert('Verificación iniciada', 'El sistema está verificando el contenido. Se publicará automáticamente solo si supera todos los controles.');
+      const rpcResult = await publishMyCreatorPremiumContent(id);
+      const refreshed = await load(id);
+      const notice = creatorPremiumSubmissionNotice({ contentId: id, rpcResult, refreshed });
+      if (!notice) throw new Error('creator_premium_submission_not_confirmed');
+      Alert.alert(notice.title, notice.message);
     } catch (reason) {
       setError(messageFor(reason));
     } finally {
       setSubmitting(false);
     }
-  }, [busy, contentId, item, kind, load, privateFile, readOnly, saveDraft, teaser, verificationRetryable]);
+  }, [accessMode, busy, contentId, item, kind, load, price, privateFile, readOnly, saveDraft, selectedPlanIds, teaser, verificationRetryable]);
 
   const confirmDelete = useCallback(() => {
     if (!contentId || busy || readOnly) return;
@@ -551,7 +568,7 @@ export default function CreatorPremiumEditor() {
           <View style={styles.statusRow}>
             <MaterialCommunityIcons name={item?.submission_ready ? 'check-circle' : 'alert-circle-outline'} size={19} color={item?.submission_ready ? Colors.success : Colors.warning} />
             <Text style={styles.statusText}>{item?.lifecycle_status === 'pending_review'
-              ? item.verification_status === 'failed'
+              ? verificationRetryable
                 ? 'Verificación pendiente · reintento disponible'
                 : item.verification_status === 'commercial_pending'
                   ? 'Seguridad aprobada · activación del plan pendiente'
