@@ -135,3 +135,15 @@ test("Wallet history uses participant direction and never text matching for sign
   assert.match(migration, /financial_transactions_select_participant/);
   assert.match(migration, /la\.owner_id = auth\.uid\(\)/);
 });
+
+test("Wallet reads only the canonical B4 ledger and treats a missing account as empty", async () => {
+  const hook = await readFile(new URL("../hooks/useWallet.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(hook, /\.from\(['"]transactions['"]\)/,
+    "the absent legacy transactions table must not be queried as a second authority");
+  assert.doesNotMatch(hook, /presentLegacyWalletTransaction/);
+  const accountReads = [...hook.matchAll(/\.from\(['"]ledger_accounts['"]\)[\s\S]{0,260}?\.(?:single|maybeSingle)\(\)/g)]
+    .map(match => match[0]);
+  assert.ok(accountReads.length >= 3, "expected every wallet account lookup to be covered");
+  for (const read of accountReads) assert.match(read, /\.maybeSingle\(\)/,
+    "a user without a ledger account is an empty state, not PostgREST 406");
+});
