@@ -127,16 +127,55 @@ schema_digest as (
     ('private','creator_premium_finance_policy'),('private','creator_premium_purchase_receipts'),
     ('private','creator_premium_subscription_periods'))
 ),
+claimed_financial_links as (
+  select e.id ledger_entry_id,e.account_id,e.entry_type,e.amount,
+    case when(e.metadata->>'fin_txn_id')~*'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      then(e.metadata->>'fin_txn_id')::uuid else null end financial_transaction_id
+  from public.ledger_entries e
+  where pg_catalog.jsonb_typeof(e.metadata)='object' and e.metadata?'fin_txn_id'
+),
+financial_entry_links as (
+  select e.id ledger_entry_id,t.id financial_transaction_id,e.account_id,e.entry_type,e.amount
+  from public.ledger_entries e
+  join public.financial_transactions t on t.id=e.txn_id
+  union
+  select c.ledger_entry_id,t.id,c.account_id,c.entry_type,c.amount
+  from claimed_financial_links c
+  join public.financial_transactions t on t.id=c.financial_transaction_id
+  union
+  select e.id,t.id,e.account_id,e.entry_type,e.amount
+  from public.financial_transactions t
+  join public.ledger_entries e on t.operation_type='withdrawal'
+    and e.created_at=t.created_at
+    and ((e.entry_type='debit' and e.account_id=t.from_account_id and e.amount=t.amount)
+      or (e.entry_type='credit' and e.account_id=t.to_account_id and e.amount=t.amount-t.fee_amount))
+),
+completed_finance as (
+  select t.id,t.operation_type,t.amount,t.fee_amount,t.from_account_id,t.to_account_id,
+    pg_catalog.count(l.ledger_entry_id)filter(where l.entry_type='debit') debit_count,
+    pg_catalog.count(l.ledger_entry_id)filter(where l.entry_type='credit') credit_count,
+    coalesce(pg_catalog.sum(l.amount)filter(where l.entry_type='debit'),0) debit_total,
+    coalesce(pg_catalog.sum(l.amount)filter(where l.entry_type='credit'),0) credit_total,
+    pg_catalog.count(l.ledger_entry_id)filter(where l.entry_type='debit' and l.account_id=t.from_account_id) debit_account_count,
+    pg_catalog.count(l.ledger_entry_id)filter(where l.entry_type='credit' and l.account_id=t.to_account_id) credit_account_count
+  from public.financial_transactions t
+  left join financial_entry_links l on l.financial_transaction_id=t.id
+  where t.status='completed'
+  group by t.id,t.operation_type,t.amount,t.fee_amount,t.from_account_id,t.to_account_id
+),
 recon as (select pg_catalog.jsonb_build_object(
-  'orphan_ledger_entries',(select pg_catalog.count(*) from public.ledger_entries e left join public.financial_transactions t on t.id=e.txn_id where t.id is null),
-  'completed_without_debit',(select pg_catalog.count(*) from public.financial_transactions t where t.status='completed' and not exists(select 1 from public.ledger_entries e where e.txn_id=t.id and e.entry_type='debit')),
-  'completed_without_credit',(select pg_catalog.count(*) from public.financial_transactions t where t.status='completed' and not exists(select 1 from public.ledger_entries e where e.txn_id=t.id and e.entry_type='credit')),
-  'completed_debit_total_mismatch',(select pg_catalog.count(*) from public.financial_transactions t where t.status='completed' and coalesce((select pg_catalog.sum(e.amount) from public.ledger_entries e where e.txn_id=t.id and e.entry_type='debit'),0)<>t.amount),
-  'completed_credit_total_mismatch',(select pg_catalog.count(*) from public.financial_transactions t where t.status='completed' and coalesce((select pg_catalog.sum(e.amount) from public.ledger_entries e where e.txn_id=t.id and e.entry_type='credit'),0)<>t.amount),
-  'completed_debit_account_mismatch',(select pg_catalog.count(*) from public.financial_transactions t where t.status='completed' and t.from_account_id is not null and not exists(select 1 from public.ledger_entries e where e.txn_id=t.id and e.entry_type='debit' and e.account_id=t.from_account_id)),
-  'completed_credit_account_mismatch',(select pg_catalog.count(*) from public.financial_transactions t where t.status='completed' and t.to_account_id is not null and not exists(select 1 from public.ledger_entries e where e.txn_id=t.id and e.entry_type='credit' and e.account_id=t.to_account_id)),
+  'orphan_ledger_entries',(select pg_catalog.count(*) from claimed_financial_links c where c.financial_transaction_id is null or not exists(select 1 from public.financial_transactions t where t.id=c.financial_transaction_id)),
+  'completed_without_debit',(select pg_catalog.count(*) from completed_finance t where t.from_account_id is not null and t.debit_count=0),
+  'completed_without_credit',(select pg_catalog.count(*) from completed_finance t where t.to_account_id is not null and t.credit_count=0),
+  'completed_debit_total_mismatch',(select pg_catalog.count(*) from completed_finance t where t.debit_total<>case when t.from_account_id is null then 0 else t.amount end),
+  'completed_credit_total_mismatch',(select pg_catalog.count(*) from completed_finance t where t.credit_total<>case when t.to_account_id is null then 0 when t.operation_type='withdrawal'then t.amount-t.fee_amount else t.amount end),
+  'completed_debit_account_mismatch',(select pg_catalog.count(*) from completed_finance t where t.from_account_id is not null and t.debit_account_count=0),
+  'completed_credit_account_mismatch',(select pg_catalog.count(*) from completed_finance t where t.to_account_id is not null and t.credit_account_count=0),
   'noncanonical_entry_type',(select pg_catalog.count(*) from public.ledger_entries e where e.entry_type not in ('debit','credit')),
-  'account_balance_ledger_mismatch',(select pg_catalog.count(*) from public.ledger_accounts a left join lateral(select e.balance_after from public.ledger_entries e where e.account_id=a.id order by e.created_at desc,e.id desc limit 1) last_entry on true where a.balance<>coalesce(last_entry.balance_after,0)),
+  'account_balance_ledger_mismatch',(select pg_catalog.count(*) from public.ledger_accounts a
+    left join lateral(select pg_catalog.max(e.created_at)latest_created_at from public.ledger_entries e where e.account_id=a.id)latest on true
+    where(latest.latest_created_at is null and a.balance<>0)
+      or(latest.latest_created_at is not null and not exists(select 1 from public.ledger_entries e where e.account_id=a.id and e.created_at=latest.latest_created_at and e.balance_after=a.balance))),
   'premium_finance_policy_row_count_mismatch',(select case when pg_catalog.count(*)=1 then 0 else 1 end from private.creator_premium_finance_policy)
 ) item)
 select pg_catalog.jsonb_build_object(
