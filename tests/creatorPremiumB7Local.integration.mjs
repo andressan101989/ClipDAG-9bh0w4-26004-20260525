@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { FINANCE_SNAPSHOT_SQL } from '../scripts/nelyon-production-snapshot-adapter.mjs';
 
 const enabled = process.env.RUN_CREATOR_PREMIUM_B7_LOCAL === '1';
 const container = process.env.CREATOR_PREMIUM_PG_CONTAINER || 'nelyon-ads-v2-d-compile';
@@ -570,6 +571,111 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     assert.doesNotMatch(JSON.stringify(summary),/estimated_revenue|conversion_rate|private.*url/i);
     psql(db, `update private.creator_premium_finance_policy set purchase_enabled=false,subscription_enabled=false,refunds_enabled=false,platform_fee_bps=0,updated_at=clock_timestamp()`);
     assert.equal(psql(db, `select purchase_enabled||'|'||subscription_enabled||'|'||refunds_enabled||'|'||platform_fee_bps from private.creator_premium_finance_policy where singleton`).stdout, 'false|false|false|0');
+  } finally {
+    docker(`dropdb -U supabase_admin --force --if-exists ${db}`, { allowFailure: true });
+  }
+});
+
+test('release finance snapshot accepts the deployed legacy journal contract and still rejects a broken canonical transaction', {
+  skip: !enabled,
+  timeout: 900_000,
+}, () => {
+  const db = `premium_b7_snapshot_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  const ids = {
+    ownerA: randomUUID(), ownerB: randomUUID(),
+    accountA: randomUUID(), accountB: randomUUID(), platform: randomUUID(), escrow: randomUUID(),
+    legacyTransfer: randomUUID(), legacyTransferJournal: randomUUID(),
+    deposit: randomUUID(), withdrawal: randomUUID(), withdrawalJournal: randomUUID(),
+    canonicalAB: randomUUID(), canonicalBA: randomUUID(), journalOnlyReward: randomUUID(),
+    brokenCanonical: randomUUID(),
+  };
+  const snapshot = () => json(psql(db, `
+    prepare nelyon_finance_snapshot(text,text) as ${FINANCE_SNAPSHOT_SQL};
+    execute nelyon_finance_snapshot('m6-fixture','m6-run');
+    deallocate nelyon_finance_snapshot;
+  `));
+  try {
+    docker(`createdb -U supabase_admin -T ${template} ${db}`);
+    psql(db, `
+      insert into private.admin_roles(
+        role_code,display_name,description,is_assignable,is_root,is_exclusive
+      ) values(
+        'MODERATOR','Moderator','Cross-domain safety and moderation authority.',
+        true,false,false
+      ) on conflict(role_code) do nothing;
+      insert into private.admin_capabilities(
+        capability_code,domain,effect,description,is_sensitive
+      ) values(
+        'content.items.moderate','content','write','Moderate content.',true
+      ) on conflict(capability_code) do nothing;
+      insert into private.admin_role_capabilities(role_code,capability_code)
+      values
+        ('SUPER_ADMIN','content.items.moderate'),
+        ('MODERATOR','content.items.moderate')
+      on conflict(role_code,capability_code) do nothing;
+    `);
+    psql(db, chain.map(item => item.sql).join('\n'));
+    psql(db, `
+      truncate table public.ledger_entries,public.financial_transactions,public.ledger_accounts cascade;
+      set session_replication_role=replica;
+      insert into auth.users(id,is_anonymous) values('${ids.ownerA}',false),('${ids.ownerB}',false);
+      insert into public.user_profiles(id,username) values('${ids.ownerA}','snapshot_owner_a'),('${ids.ownerB}','snapshot_owner_b');
+      set session_replication_role=origin;
+      insert into public.ledger_accounts(id,owner_id,account_type,currency,balance,frozen) values
+        ('${ids.accountA}','${ids.ownerA}','user','BDAG',79,false),
+        ('${ids.accountB}','${ids.ownerB}','user','BDAG',7,false),
+        ('${ids.platform}',null,'platform','BDAG',1,false),
+        ('${ids.escrow}',null,'escrow','BDAG',18,false);
+
+      insert into public.financial_transactions(
+        id,from_account_id,to_account_id,operation_type,amount,fee_amount,currency,status,
+        reference_type,reference_id,created_at
+      ) values
+        ('${ids.legacyTransfer}','${ids.accountA}','${ids.accountB}','transfer',10,1,'BDAG','completed',null,null,'2026-07-05T12:00:00Z'),
+        ('${ids.deposit}',null,'${ids.accountA}','deposit',5,0,'BDAG','completed','deposit_confirmation','fixture','2026-07-06T12:00:00Z'),
+        ('${ids.withdrawal}','${ids.accountA}','${ids.escrow}','withdrawal',20,2,'BDAG','completed',null,null,'2026-07-07T12:00:00Z'),
+        ('${ids.canonicalAB}','${ids.accountA}','${ids.accountB}','marketplace_payment_capture',1,0,'BDAG','completed','marketplace_checkout','fixture-a','2026-08-01T12:00:00Z'),
+        ('${ids.canonicalBA}','${ids.accountB}','${ids.accountA}','marketplace_return_refund',1,0,'BDAG','completed','marketplace_return_refund','fixture-b','2026-08-01T12:00:00Z');
+
+      insert into public.ledger_entries(id,txn_id,account_id,entry_type,amount,balance_after,description,metadata,created_at) values
+        ('10000000-0000-4000-8000-000000000001','${ids.legacyTransferJournal}','${ids.accountA}','debit',10,90,'legacy transfer',jsonb_build_object('fin_txn_id','${ids.legacyTransfer}'),'2026-07-05T12:00:00Z'),
+        ('10000000-0000-4000-8000-000000000002','${ids.legacyTransferJournal}','${ids.accountB}','credit',9,9,'legacy transfer',jsonb_build_object('fin_txn_id','${ids.legacyTransfer}'),'2026-07-05T12:00:00Z'),
+        ('10000000-0000-4000-8000-000000000003','${ids.legacyTransferJournal}','${ids.platform}','credit',1,1,'legacy transfer fee',jsonb_build_object('fin_txn_id','${ids.legacyTransfer}'),'2026-07-05T12:00:00Z'),
+        ('20000000-0000-4000-8000-000000000001','${ids.deposit}','${ids.accountA}','credit',5,95,'legacy external deposit',jsonb_build_object('fin_txn_id','${ids.deposit}'),'2026-07-06T12:00:00Z'),
+        ('30000000-0000-4000-8000-000000000001','${ids.withdrawalJournal}','${ids.accountA}','debit',20,75,'legacy withdrawal hold',null,'2026-07-07T12:00:00Z'),
+        ('30000000-0000-4000-8000-000000000002','${ids.withdrawalJournal}','${ids.escrow}','credit',18,18,'legacy withdrawal escrow',null,'2026-07-07T12:00:00Z'),
+        ('ffffffff-0000-4000-8000-000000000001','${ids.canonicalAB}','${ids.accountA}','debit',1,78,'canonical debit','{}','2026-08-01T12:00:00Z'),
+        ('ffffffff-0000-4000-8000-000000000002','${ids.canonicalAB}','${ids.accountB}','credit',1,8,'canonical credit','{}','2026-08-01T12:00:00Z'),
+        ('00000000-0000-4000-8000-000000000001','${ids.canonicalBA}','${ids.accountB}','debit',1,7,'canonical refund debit','{}','2026-08-01T12:00:00Z'),
+        ('00000000-0000-4000-8000-000000000002','${ids.canonicalBA}','${ids.accountA}','credit',1,79,'canonical refund credit','{}','2026-08-01T12:00:00Z'),
+        ('40000000-0000-4000-8000-000000000001','${ids.journalOnlyReward}','${ids.accountB}','credit',2,7,'legacy journal-only reward',jsonb_build_object('type','like_reward'),'2026-07-12T12:00:00Z');
+    `);
+
+    assert.deepEqual(snapshot().reconciliation, {
+      account_balance_ledger_mismatch: 0,
+      completed_credit_account_mismatch: 0,
+      completed_credit_total_mismatch: 0,
+      completed_debit_account_mismatch: 0,
+      completed_debit_total_mismatch: 0,
+      completed_without_credit: 0,
+      completed_without_debit: 0,
+      noncanonical_entry_type: 0,
+      orphan_ledger_entries: 0,
+      premium_finance_policy_row_count_mismatch: 0,
+    });
+
+    psql(db, `insert into public.financial_transactions(
+      id,from_account_id,to_account_id,operation_type,amount,fee_amount,currency,status,
+      reference_type,reference_id,created_at
+    ) values(
+      '${ids.brokenCanonical}','${ids.accountA}','${ids.accountB}','marketplace_payment_capture',3,0,'BDAG','completed',
+      'marketplace_checkout','broken-fixture','2026-08-02T12:00:00Z'
+    )`);
+    const broken = snapshot().reconciliation;
+    assert.equal(broken.completed_without_debit, 1);
+    assert.equal(broken.completed_without_credit, 1);
+    assert.equal(broken.completed_debit_total_mismatch, 1);
+    assert.equal(broken.completed_credit_total_mismatch, 1);
   } finally {
     docker(`dropdb -U supabase_admin --force --if-exists ${db}`, { allowFailure: true });
   }
