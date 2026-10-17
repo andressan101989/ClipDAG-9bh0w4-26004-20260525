@@ -550,6 +550,25 @@ export async function publishMyCreatorPremiumContent(contentId: string) {
   return result;
 }
 
+export async function cancelMyCreatorPremiumSubmission(contentId: string) {
+  if (!contentId) throw new Error('creator_premium_invalid_content');
+  const { data, error } = await db().rpc('cancel_my_creator_premium_submission_v1', {
+    p_content_id: contentId,
+  });
+  if (error) throw error;
+  const result = firstRow(data) as {
+    content_id: string;
+    lifecycle_status: 'draft';
+    verification_generation: number;
+    cancelled: boolean;
+    updated_at: string;
+  } | undefined;
+  if (!result || result.content_id !== contentId || result.lifecycle_status !== 'draft') {
+    throw new Error('creator_premium_submission_cancel_not_confirmed');
+  }
+  return result;
+}
+
 export async function deleteMyCreatorPremiumDraft(contentId: string) {
   const { data, error } = await db().rpc('delete_my_creator_premium_draft_v1', {
     p_content_id: contentId,
