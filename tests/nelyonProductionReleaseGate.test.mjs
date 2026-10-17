@@ -146,6 +146,22 @@ test('policy accepts the exact repository owner project modes and managed functi
     require_physical: true,
     required_status: 'COMPLETED',
   });
+  assert.equal(policy.environment.authorization_mode, 'automatic');
+  assert.equal(policy.environment.id, 23906772073);
+  assert.equal(policy.environment.required_reviewer, null);
+});
+
+test('policy pins the automatic main-only Environment contract', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  for (const environment of [
+    { ...policy.environment, authorization_mode: 'manual' },
+    { ...policy.environment, required_reviewer: OWNER },
+    { ...policy.environment, allow_admin_bypass: true },
+    { ...policy.environment, id: 42 },
+    { ...policy.environment, protected_branch: 'dev' },
+  ]) {
+    assertDenied(() => gate.validatePolicy({ ...policy, environment }), 'INVALID_ENVIRONMENT_POLICY');
+  }
 });
 
 test('candidate baseline denies release but permits plan_only and gate_proof', async () => {
@@ -1160,6 +1176,37 @@ test('approval pagination must be complete', async () => {
   }), 'INCOMPLETE_APPROVAL_HISTORY');
 });
 
+test('automatic authorization requires current empty deployment approval history', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const current = {
+    complete: true,
+    sourceRunId: '123456789',
+    sourceRunAttempt: 1,
+    pages: [{ items: [] }],
+  };
+  assert.equal(gate.verifyAutomaticAuthorizationHistory({
+    approvals: current,
+    expectedRunId: '123456789',
+    expectedRunAttempt: 1,
+  }), true);
+  for (const approvals of [
+    { ...current, sourceRunId: '987654321' },
+    { ...current, sourceRunAttempt: 2 },
+    { ...current, pages: [{ items: [{ state: 'approved' }] }] },
+  ]) {
+    assertDenied(() => gate.verifyAutomaticAuthorizationHistory({
+      approvals,
+      expectedRunId: '123456789',
+      expectedRunAttempt: 1,
+    }), 'INVALID_AUTOMATIC_AUTHORIZATION');
+  }
+  assertDenied(() => gate.verifyAutomaticAuthorizationHistory({
+    approvals: { complete: false, sourceRunId: '123456789', sourceRunAttempt: 1, pages: [] },
+    expectedRunId: '123456789',
+    expectedRunAttempt: 1,
+  }), 'INCOMPLETE_APPROVAL_HISTORY');
+});
+
 test('environment requires only owner reviewer self-review off main-only and no admin bypass', async () => {
   const { gate } = await loadGateAndPolicy();
   const branchPolicies = { complete: true, pages: [{ items: [{ name: 'main' }] }] };
@@ -1187,6 +1234,28 @@ test('environment requires only owner reviewer self-review off main-only and no 
     branchPolicies: { complete: true, pages: [{ items: [{ name: 'main' }, { name: 'dev' }] }] },
     expected: { id: 42, name: 'production', owner: OWNER, branch: 'main' },
   }), 'UNSAFE_ENVIRONMENT');
+});
+
+test('automatic Environment authorization permits no human gate and preserves main-only restrictions', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const branchPolicies = { complete: true, pages: [{ items: [{ name: 'main' }] }] };
+  const automaticEnvironment = environmentSnapshot({ protection_rules: [{ type: 'branch_policy' }] });
+  assert.equal(gate.verifyEnvironmentSnapshot({
+    environment: automaticEnvironment,
+    branchPolicies,
+    expected: { id: 42, name: 'production', owner: OWNER, branch: 'main', authorizationMode: 'automatic' },
+  }), true);
+  for (const environment of [
+    environmentSnapshot(),
+    environmentSnapshot({ protection_rules: [{ type: 'wait_timer', wait_timer: 1 }, { type: 'branch_policy' }] }),
+    environmentSnapshot({ can_admins_bypass: true, protection_rules: [{ type: 'branch_policy' }] }),
+  ]) {
+    assertDenied(() => gate.verifyEnvironmentSnapshot({
+      environment,
+      branchPolicies,
+      expected: { id: 42, name: 'production', owner: OWNER, branch: 'main', authorizationMode: 'automatic' },
+    }), 'UNSAFE_ENVIRONMENT');
+  }
 });
 
 test('release requires owner confirmation of current auto-deploy-off evidence', async () => {
@@ -1912,6 +1981,15 @@ test('deploy needs plan uses production and fixed noncancelling concurrency', ()
   assert.match(deploy, /--policy-sha256\s+"\$NELYON_RELEASE_POLICY_SHA256"/);
 });
 
+test('canonical workflow uses automatic Environment authorization without approval comments', () => {
+  const deploy = workflowJob(workflowText(), 'deploy');
+  assert.match(deploy, /name: Checkout exact authorized SHA/);
+  assert.match(deploy, /name: Fetch current Environment and authorization evidence/);
+  assert.match(deploy, /name: Revalidate immutable manifest after authorization/);
+  assert.doesNotMatch(deploy, /after approval/i);
+  assert.doesNotMatch(deploy, /NELYON-APPROVE/);
+});
+
 test('release compares fresh auto-deploy evidence while gate proof does not require it', () => {
   const text = workflowText();
   const plan = workflowJob(text, 'plan', 'deploy');
@@ -2023,8 +2101,8 @@ test('runbook covers the simplified single-owner release finance and recovery co
   ]) assert.match(text, new RegExp(section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   for (const literal of [
     'andressan101989',
-    'Required reviewer: `andressan101989`',
-    'Prevent self-review: `OFF`',
+    'Required reviewer: `None`',
+    'Authorization mode: `automatic`',
     'Deployment branches and tags: `Selected branches and tags`',
     'main',
     'Allow administrators to bypass configured protection rules: `OFF`',
@@ -2039,11 +2117,13 @@ test('runbook covers the simplified single-owner release finance and recovery co
     'base64-encode the complete canonical JSON including `sha256`',
     '15 minutes',
     'Deploy to production',
-    'NELYON-APPROVE run=<run_id> attempt=<run_attempt> env=<environment_id> release=<release_id> sha=<approved_sha> manifest=<sha256> auto_deploy_evidence=<evidence_id> auto_deploy_sha256=<evidence_sha256>',
+    'no deployment approval comment',
+    'current empty deployment approval history',
     'forward-only corrective migration',
     'previously approved reproducible Edge source',
     'transactions confirmed after the pre-snapshot even when created before it',
   ]) assert.ok(text.includes(literal), `runbook missing ${literal}`);
+  assert.doesNotMatch(text, /NELYON-APPROVE|Review deployments|paste the exact generated approval token/);
   assert.doesNotMatch(text, /SUPABASE_READ_ONLY_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|Every renewed evidence record must also replace/);
   assert.doesNotMatch(text, /SUPABASE_ACCESS_TOKEN\s*[=:]\s*[^`\s]+/);
 });
