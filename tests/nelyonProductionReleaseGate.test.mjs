@@ -1308,6 +1308,38 @@ test('candidate to verified requires exact migrations functions config finance c
   for (const value of Object.values(evidence.digests)) assert.match(value, /^[0-9a-f]{64}$/);
 });
 
+test('candidate baseline accepts canonical finance snapshot policy metadata', async () => {
+  const loaded = await loadGateAndPolicy();
+  const { gate } = loaded;
+  const policy = asCandidatePolicy(loaded.policy);
+  const snapshot = baselineSnapshot(policy);
+  snapshot.finance.policy = {
+    ...snapshot.finance.policy,
+    policy_version: 'creator-premium-b4-v1',
+  };
+  const evidence = gate.buildBaselineEvidence(snapshot);
+
+  const verified = gate.verifyBaselineEvidence({
+    candidate: policy.baseline,
+    evidence,
+    expected: {
+      projectRef: PROJECT_REF,
+      sha: MAIN_SHA,
+      migrationCount: 336,
+      latestMigration: policy.baseline.latest_migration,
+      managedFunctions: MANAGED_FUNCTIONS,
+      remoteFunctionCount: 34,
+      financePolicy: policy.supabase.finance_policy,
+      reviewedPolicySha256: 'f'.repeat(64),
+      evidenceDigests: evidence.digests,
+      blockedResources: evidence.blocked_resources,
+    },
+  });
+
+  assert.equal(verified.verification.state, 'verified');
+  assert.equal(verified.finance.policy.policy_version, 'creator-premium-b4-v1');
+});
+
 test('Git SHA equality alone cannot verify baseline', async () => {
   const loaded = await loadGateAndPolicy();
   const { gate } = loaded;

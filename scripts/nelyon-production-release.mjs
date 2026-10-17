@@ -1510,7 +1510,7 @@ export function verifyBaselineEvidence({ candidate, evidence, expected }) {
     || managedNames.length + (evidence.functions?.unmanaged ?? []).length !== expected?.remoteFunctionCount) {
     deny('BASELINE_EVIDENCE_MISMATCH', 'remote function inventory does not match the controlled scope');
   }
-  if (canonicalJson(evidence.finance?.policy) !== canonicalJson(expected?.financePolicy)
+  if (canonicalJson(financePolicyShape(evidence.finance?.policy)) !== canonicalJson(expected?.financePolicy)
     || evidence.finance?.premium_transaction_count !== 0
     || evidence.finance?.c2_attributed_bdag_movement !== 0) {
     deny('BASELINE_EVIDENCE_MISMATCH', 'finance baseline does not match the disabled zero-activity bootstrap');
