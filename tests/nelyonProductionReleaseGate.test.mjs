@@ -10,7 +10,6 @@ const policyUrl = new URL('../.github/nelyon-production-release-policy.json', im
 const gateUrl = new URL('../scripts/nelyon-production-release.mjs', import.meta.url);
 const workflowUrl = new URL('../.github/workflows/nelyon-production-release.yml', import.meta.url);
 const runbookUrl = new URL('../docs/runbooks/nelyon-production-release.md', import.meta.url);
-const planUrl = new URL('../docs/superpowers/plans/2026-10-09-nelyon-production-release-gate.md', import.meta.url);
 
 const OWNER = 'andressan101989';
 const REPOSITORY = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
@@ -89,7 +88,8 @@ function asVerifiedCutoverPolicy(policy) {
   };
   verified.cutover = {
     state: 'verified',
-    auto_deploy_off_evidence: {
+    control: 'supabase-github-integration-off',
+    initial_evidence: {
       id: 'supabase-off-20261009T120000Z',
       sha256: 'd'.repeat(64),
     },
@@ -140,11 +140,12 @@ test('policy accepts the exact repository owner project modes and managed functi
   });
   assert.deepEqual(policy.supabase.managed_functions, MANAGED_FUNCTIONS);
   assert.deepEqual(policy.supabase.forbidden_functions, ['bdag-economy']);
-  assert.deepEqual(policy.secrets, [
-    'SUPABASE_READ_ONLY_ACCESS_TOKEN',
-    'SUPABASE_ACCESS_TOKEN',
-    'SUPABASE_DB_PASSWORD',
-  ]);
+  assert.deepEqual(policy.secrets, ['SUPABASE_ACCESS_TOKEN']);
+  assert.deepEqual(policy.supabase.backup, {
+    max_age_seconds: 86400,
+    require_physical: true,
+    required_status: 'COMPLETED',
+  });
 });
 
 test('candidate baseline denies release but permits plan_only and gate_proof', async () => {
@@ -162,7 +163,7 @@ test('candidate baseline denies release but permits plan_only and gate_proof', a
   }), policy), 'BASELINE_NOT_VERIFIED');
 });
 
-test('expanded managed scope is bound to refreshed owner evidence before cutover', async () => {
+test('expanded managed scope has a verified static cutover control', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   assert.equal(gate.validatePolicy(policy), true);
   assert.equal(policy.baseline.state, 'verified');
@@ -171,25 +172,28 @@ test('expanded managed scope is bound to refreshed owner evidence before cutover
   assert.ok(Number.isFinite(Date.parse(policy.baseline.verified_at)));
   assert.deepEqual(policy.baseline.blocked_resources, []);
   assert.match(policy.baseline.evidence_digests.function_source_parity, /^[0-9a-f]{64}$/);
-  assert.equal(policy.cutover.state, 'pending');
-  assert.equal(policy.cutover.verified_by, null);
-  assert.equal(policy.cutover.verified_at, null);
-  assert.equal(policy.cutover.auto_deploy_off_evidence, null);
-  assertDenied(() => gate.validateRequest(request({
+  assert.equal(policy.cutover.state, 'verified');
+  assert.equal(policy.cutover.control, 'supabase-github-integration-off');
+  assert.equal(policy.cutover.verified_by, OWNER);
+  assert.ok(Number.isFinite(Date.parse(policy.cutover.verified_at)));
+  assert.match(policy.cutover.initial_evidence.id, /^supabase-off-/);
+  assert.match(policy.cutover.initial_evidence.sha256, /^[0-9a-f]{64}$/);
+  assert.equal(gate.validateRequest(request({
     mode: 'release',
     scopeConfirmation: 'RELEASE_STANDARD',
-  }), policy), 'CUTOVER_NOT_VERIFIED');
+  }), policy).mode, 'release');
 });
 
-test('verified cutover requires an owner-bound external evidence record', async () => {
+test('verified cutover requires a historical owner-bound control record', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const verified = asVerifiedCutoverPolicy(policy);
   assert.equal(gate.validatePolicy(verified), true);
   for (const mutate of [
     candidate => { candidate.cutover.verified_by = 'someone-else'; },
     candidate => { candidate.cutover.verified_at = 'not-a-time'; },
-    candidate => { candidate.cutover.auto_deploy_off_evidence.id = ''; },
-    candidate => { candidate.cutover.auto_deploy_off_evidence.sha256 = '0'.repeat(63); },
+    candidate => { candidate.cutover.control = 'another-control'; },
+    candidate => { candidate.cutover.initial_evidence.id = ''; },
+    candidate => { candidate.cutover.initial_evidence.sha256 = '0'.repeat(63); },
   ]) {
     const candidate = asVerifiedCutoverPolicy(policy);
     mutate(candidate);
@@ -978,6 +982,7 @@ test('a completed release ID stored in policy denies after artifact expiry', asy
 
 function approvalInput(overrides = {}) {
   return {
+    mode: 'release',
     runId: '123456789',
     runAttempt: 1,
     environmentId: 42,
@@ -1025,11 +1030,22 @@ function autoDeployEvidence(gate, overrides = {}) {
   return { ...payload, sha256: sha256 ?? gate.sha256Hex(gate.canonicalJson(payload)) };
 }
 
-test('approval token binds run attempt environment release SHA and digest', async () => {
+test('release approval token binds run attempt environment release SHA manifest and fresh evidence', async () => {
   const { gate } = await loadGateAndPolicy();
   assert.equal(
     gate.buildApprovalToken(approvalInput()),
     `NELYON-APPROVE run=123456789 attempt=1 env=42 release=nelyon-20261009-001 sha=${MAIN_SHA} manifest=${'c'.repeat(64)} auto_deploy_evidence=supabase-off-20261009T120000Z auto_deploy_sha256=${'d'.repeat(64)}`,
+  );
+});
+
+test('gate proof approval token binds the run without requiring auto-deploy evidence', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const input = approvalInput({ mode: 'gate_proof' });
+  delete input.evidenceId;
+  delete input.evidenceSha256;
+  assert.equal(
+    gate.buildApprovalToken(input),
+    `NELYON-APPROVE run=123456789 attempt=1 env=42 release=nelyon-20261009-001 sha=${MAIN_SHA} manifest=${'c'.repeat(64)}`,
   );
 });
 
@@ -1160,7 +1176,6 @@ test('release requires owner confirmation of current auto-deploy-off evidence', 
       productionBranch: 'main',
       owner: OWNER,
     },
-    cutoverEvidence: { id: evidence.id, sha256: evidence.sha256 },
     now: '2026-10-09T12:10:00.000Z',
   }), true);
 });
@@ -1171,7 +1186,6 @@ test('toggle evidence older than 900 seconds denies', async () => {
   assertDenied(() => gate.verifyAutoDeployEvidence({
     evidence,
     approval: { evidenceId: evidence.id, evidenceSha256: evidence.sha256, projectRef: PROJECT_REF, productionBranch: 'main', owner: OWNER },
-    cutoverEvidence: { id: evidence.id, sha256: evidence.sha256 },
     now: '2026-10-09T12:15:01.000Z',
   }), 'STALE_AUTO_DEPLOY_EVIDENCE');
 });
@@ -1182,7 +1196,6 @@ test('future evidence beyond 60 seconds clock skew denies', async () => {
   assertDenied(() => gate.verifyAutoDeployEvidence({
     evidence,
     approval: { evidenceId: evidence.id, evidenceSha256: evidence.sha256, projectRef: PROJECT_REF, productionBranch: 'main', owner: OWNER },
-    cutoverEvidence: { id: evidence.id, sha256: evidence.sha256 },
     now: '2026-10-09T12:00:00.000Z',
   }), 'FUTURE_AUTO_DEPLOY_EVIDENCE');
 });
@@ -1202,25 +1215,22 @@ test('mismatched evidence ID digest project branch or approval comment denies', 
     assertDenied(() => gate.verifyAutoDeployEvidence({
       evidence: candidate,
       approval: binding,
-      cutoverEvidence: { id: evidence.id, sha256: evidence.sha256 },
       now: '2026-10-09T12:10:00.000Z',
     }), 'INVALID_AUTO_DEPLOY_EVIDENCE');
   }
 });
 
-test('auto-deploy evidence digest binds canonical bytes and policy cutover record', async () => {
+test('auto-deploy evidence digest binds canonical bytes without requiring a policy commit', async () => {
   const { gate } = await loadGateAndPolicy();
   const evidence = autoDeployEvidence(gate);
   const approval = { evidenceId: evidence.id, evidenceSha256: evidence.sha256, projectRef: PROJECT_REF, productionBranch: 'main', owner: OWNER };
-  for (const [candidate, cutoverEvidence] of [
-    [{ ...evidence, observed_at: '2026-10-09T12:00:01.000Z' }, { id: evidence.id, sha256: evidence.sha256 }],
-    [evidence, { id: 'historical-evidence', sha256: evidence.sha256 }],
-    [evidence, { id: evidence.id, sha256: 'e'.repeat(64) }],
+  for (const candidate of [
+    { ...evidence, observed_at: '2026-10-09T12:00:01.000Z' },
+    { ...evidence, sha256: 'e'.repeat(64) },
   ]) {
     assertDenied(() => gate.verifyAutoDeployEvidence({
       evidence: candidate,
       approval,
-      cutoverEvidence,
       now: '2026-10-09T12:10:00.000Z',
     }), 'INVALID_AUTO_DEPLOY_EVIDENCE');
   }
@@ -1231,6 +1241,7 @@ test('plan_only and gate_proof never require Supabase deployment secrets', async
   assert.deepEqual(gate.requiredSecretsForMode('plan_only', {}), []);
   assert.deepEqual(gate.requiredSecretsForMode('gate_proof', {}), []);
   assertDenied(() => gate.requiredSecretsForMode('release', {}), 'MISSING_SECRETS');
+  assert.deepEqual(gate.requiredSecretsForMode('release', { SUPABASE_ACCESS_TOKEN: 'scoped-deploy-token' }), ['SUPABASE_ACCESS_TOKEN']);
 });
 
 test('production concurrency denies another active release run', async () => {
@@ -1876,13 +1887,17 @@ test('deploy needs plan uses production and fixed noncancelling concurrency', ()
   assert.match(deploy, /--policy-sha256\s+"\$NELYON_RELEASE_POLICY_SHA256"/);
 });
 
-test('deploy compares the exact auto-deploy evidence bytes planned before approval', () => {
+test('release compares fresh auto-deploy evidence while gate proof does not require it', () => {
   const text = workflowText();
   const plan = workflowJob(text, 'plan', 'deploy');
   const deploy = workflowJob(text, 'deploy');
+  assert.match(plan, /name: Fetch fresh auto-deploy-off evidence for release only\s*\n\s*if: inputs\.mode == 'release'/);
   assert.match(plan, /cp release-input\/auto-deploy-evidence\.json release-artifact\/auto-deploy-evidence\.json/);
   assert.match(deploy, /cmp --silent release-artifact\/auto-deploy-evidence\.json gate-evidence\/auto-deploy-evidence\.json/);
-  assert.match(deploy, /--auto-deploy-evidence gate-evidence\/auto-deploy-evidence\.json/);
+  const gateProofStep = deploy.slice(deploy.indexOf('name: Verify gate proof'), deploy.indexOf('name: Verify release gate'));
+  assert.doesNotMatch(gateProofStep, /auto-deploy-evidence/);
+  const releaseGateStep = deploy.slice(deploy.indexOf('name: Verify release gate'), deploy.indexOf('name: Set up pinned Supabase CLI'));
+  assert.match(releaseGateStep, /--auto-deploy-evidence gate-evidence\/auto-deploy-evidence\.json/);
 });
 
 test('plan_only cannot schedule deploy and gate_proof contains no Supabase mutation', () => {
@@ -1907,9 +1922,11 @@ test('release path revalidates before secrets and before every mutation', () => 
   assert.match(deploy.slice(functions, functions + 220), /--use-api/);
   assert.match(deploy, /supabase db push --dry-run --project-ref "\$NELYON_PROJECT_REF" --skip-vault --yes/);
   assert.match(deploy, /supabase db push --project-ref "\$NELYON_PROJECT_REF" --skip-vault --yes/);
+  assert.doesNotMatch(deploy, /SUPABASE_DB_PASSWORD|SUPABASE_READ_ONLY_ACCESS_TOKEN/);
+  assert.match(deploy, /SUPABASE_ACCESS_TOKEN:\s*\$\{\{ secrets\.SUPABASE_ACCESS_TOKEN \}\}/);
 });
 
-test('owner-reviewed production baseline is verified before every mutation', () => {
+test('fresh completed physical backup and owner-reviewed baseline are verified before every mutation', () => {
   const deploy = workflowJob(workflowText(), 'deploy');
   const preCapture = deploy.indexOf('production-pre.json');
   const preVerify = deploy.indexOf(' verify-pre-snapshot ');
@@ -1917,6 +1934,7 @@ test('owner-reviewed production baseline is verified before every mutation', () 
   const apply = deploy.indexOf('supabase db push --project-ref');
   assert.ok(preCapture >= 0 && preVerify > preCapture && dryRun > preVerify && apply > preVerify);
   assert.match(deploy, /--pre-snapshot gate-evidence\/production-pre\.json/);
+  assert.match(deploy, /nelyon-production-snapshot-adapter\.mjs capture/);
 });
 
 test('workflow inventories every active release status and never relies on in-progress alone', () => {
@@ -1962,7 +1980,7 @@ test('postcheck failure cannot mark success or baseline advancement', () => {
   assert.doesNotMatch(deploy, /nelyon-production-release-policy\.json[^\n]*(>|Set-Content|Out-File)/i);
 });
 
-test('runbook covers single-owner cutover evidence approval finance and recovery controls', () => {
+test('runbook covers the simplified single-owner release finance and recovery controls', () => {
   assert.ok(existsSync(runbookUrl), 'production release runbook must exist');
   const text = readFileSync(runbookUrl, 'utf8');
   for (const section of [
@@ -1986,28 +2004,21 @@ test('runbook covers single-owner cutover evidence approval finance and recovery
     'main',
     'Allow administrators to bypass configured protection rules: `OFF`',
     'SUPABASE_ACCESS_TOKEN',
-    'SUPABASE_DB_PASSWORD',
     'NELYON_RELEASE_POLICY_SHA256',
     'NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64',
-    'Every renewed evidence record must also replace `cutover.auto_deploy_off_evidence`',
-    'commit that policy transition through the protected Git flow',
-    'update `NELYON_RELEASE_POLICY_SHA256` to the exact new policy bytes',
+    'does not require a policy commit',
+    '`gate_proof` does not require auto-deploy evidence',
+    'temporary `cli_login_postgres` role',
+    'fresh completed physical backup',
     'SHA-256 of `canonicalJson(evidenceWithoutSha256)`',
     'base64-encode the complete canonical JSON including `sha256`',
     '15 minutes',
     'Deploy to production',
     'NELYON-APPROVE run=<run_id> attempt=<run_attempt> env=<environment_id> release=<release_id> sha=<approved_sha> manifest=<sha256> auto_deploy_evidence=<evidence_id> auto_deploy_sha256=<evidence_sha256>',
-    '`release` is forbidden during C2',
     'forward-only corrective migration',
     'previously approved reproducible Edge source',
     'transactions confirmed after the pre-snapshot even when created before it',
   ]) assert.ok(text.includes(literal), `runbook missing ${literal}`);
-  assert.doesNotMatch(text, /(SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD)\s*[=:]\s*[^`\s]+/);
-  const plan = readFileSync(planUrl, 'utf8');
-  assert.match(plan, /evidencia canónica nueva[\s\S]*`cutover\.auto_deploy_off_evidence`[\s\S]*commit protegido[\s\S]*`NELYON_RELEASE_POLICY_SHA256`[\s\S]*bytes canónicos completos/);
-  assert.doesNotMatch(plan, /update only the Environment evidence variables/);
-  const task15 = plan.slice(plan.indexOf('### Task 15:'), plan.indexOf('### Task 16:'));
-  assert.match(task15, /Modify: `.github\/nelyon-production-release-policy\.json`/);
-  assert.match(task15, /Produces:[\s\S]*protected policy-evidence commit/);
-  assert.doesNotMatch(task15, /No repository changes/);
+  assert.doesNotMatch(text, /SUPABASE_READ_ONLY_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|Every renewed evidence record must also replace/);
+  assert.doesNotMatch(text, /SUPABASE_ACCESS_TOKEN\s*[=:]\s*[^`\s]+/);
 });

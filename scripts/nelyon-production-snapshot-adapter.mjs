@@ -440,7 +440,7 @@ function validateManifestAdapterIdentity(manifest, adapterSourceSha256) {
 function validateCapturedEvidence({ evidence, phase, policy, request, manifest, adapterSourceSha256 }) {
   validateManifestAdapterIdentity(manifest, adapterSourceSha256);
   exactKeys(evidence, [
-    'adapter', 'complete', 'cron_security', 'evidence_sha256', 'finance', 'functions',
+    'adapter', 'backup', 'complete', 'cron_security', 'evidence_sha256', 'finance', 'functions',
     'health', 'identity', 'migrations', 'observed_at', 'phase', 'project_ref', 'requests', 'schema_version',
   ], 'INVALID_SNAPSHOT');
   const { evidence_sha256: claimedDigest, ...unsigned } = evidence;
@@ -471,6 +471,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     ['GET', `${base}/database/migrations`, 200],
     ['GET', `${base}/functions`, 200],
     ['GET', `${base}/advisors/security`, 200],
+    ['GET', `${base}/database/backups`, 200],
     ['POST', `${base}/database/query/read-only`, 201],
     ['POST', `${base}/database/query/read-only`, 201],
   ];
@@ -488,6 +489,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     fail('INVALID_SNAPSHOT', 'snapshot request receipts do not match the fixed read-only contract');
   }
   validateNormalizedHealth(evidence.health);
+  validateNormalizedBackup(evidence.backup, evidence.observed_at, policy.supabase.backup);
   validateNormalizedMigrations(evidence.migrations);
   validateNormalizedFunctions(evidence.functions);
   exactKeys(evidence.cron_security, ['advisors', 'complete', 'cron'], 'INVALID_REMOTE_INVENTORY');
@@ -802,6 +804,42 @@ function normalizeFunctions(body) {
   return { complete: true, count: items.length, items, sha256: sha256(canonicalJson(items)) };
 }
 
+function validateNormalizedBackup(backup, observedAt, backupPolicy) {
+  exactKeys(backup, ['id', 'inserted_at', 'is_physical_backup', 'status'], 'INVALID_BACKUP');
+  const observed = Date.parse(observedAt);
+  const inserted = Date.parse(backup.inserted_at);
+  if (typeof backup.id !== 'string' || backup.id.length === 0
+    || backup.status !== backupPolicy?.required_status
+    || backup.is_physical_backup !== backupPolicy?.require_physical
+    || !Number.isFinite(observed) || !Number.isFinite(inserted)) {
+    fail('INVALID_BACKUP', 'backup evidence does not satisfy the production policy');
+  }
+  const ageSeconds = (observed - inserted) / 1000;
+  if (ageSeconds > backupPolicy.max_age_seconds) fail('STALE_BACKUP', 'latest completed physical backup is stale');
+  if (ageSeconds < -60) fail('INVALID_BACKUP', 'backup timestamp is unexpectedly in the future');
+  return backup;
+}
+
+export function selectRecentCompletedBackup(body, observedAt, backupPolicy) {
+  if (!body || typeof body !== 'object' || Array.isArray(body) || !Array.isArray(body.backups)) {
+    fail('INVALID_BACKUP', 'backup inventory is invalid');
+  }
+  const eligible = body.backups
+    .filter(item => item?.status === backupPolicy?.required_status
+      && item?.is_physical_backup === backupPolicy?.require_physical
+      && Number.isFinite(Date.parse(item?.inserted_at)))
+    .sort((left, right) => Date.parse(right.inserted_at) - Date.parse(left.inserted_at));
+  if (eligible.length === 0) fail('INVALID_BACKUP', 'no completed physical backup is available');
+  const latest = eligible[0];
+  const normalized = {
+    id: String(latest.id ?? ''),
+    inserted_at: new Date(latest.inserted_at).toISOString(),
+    is_physical_backup: latest.is_physical_backup,
+    status: latest.status,
+  };
+  return validateNormalizedBackup(normalized, observedAt, backupPolicy);
+}
+
 function stableAdvisorValue(value) {
   if (Array.isArray(value)) return value.map(stableAdvisorValue);
   if (!value || typeof value !== 'object') return value;
@@ -829,7 +867,7 @@ function normalizeAdvisors(body) {
 function validateIdentity({ phase, policy, request, manifest, token, observedAt, adapterSourceSha256 }) {
   if (!['pre', 'post'].includes(phase)) fail('INVALID_SNAPSHOT_IDENTITY', 'phase must be pre or post');
   if (policy?.supabase?.project_ref !== PRODUCTION_PROJECT_REF) fail('INVALID_SNAPSHOT_IDENTITY', 'unexpected production project');
-  if (typeof token !== 'string' || token.length < 1) fail('MISSING_READ_ONLY_TOKEN', 'read-only token is unavailable');
+  if (typeof token !== 'string' || token.length < 1) fail('MISSING_SNAPSHOT_TOKEN', 'snapshot token is unavailable');
   if (!Number.isFinite(Date.parse(observedAt)) || !HASH_PATTERN.test(adapterSourceSha256 ?? '')) {
     fail('INVALID_SNAPSHOT_IDENTITY', 'snapshot timestamp or adapter identity is invalid');
   }
@@ -888,6 +926,7 @@ export async function captureProductionSnapshot({
   const migrationsBody = await get(`${base}/database/migrations`, 'migration inventory');
   const functionsBody = await get(`${base}/functions`, 'function inventory');
   const advisorsBody = await get(`${base}/advisors/security`, 'security advisors');
+  const backupsBody = await get(`${base}/database/backups`, 'database backups');
   const financeBody = await sql(
     FINANCE_SNAPSHOT_SQL,
     [identity.release_id, identity.run_id],
@@ -909,6 +948,7 @@ export async function captureProductionSnapshot({
     },
     observed_at: new Date(observedAt).toISOString(),
     health: normalizeHealth(healthBody),
+    backup: selectRecentCompletedBackup(backupsBody, observedAt, policy.supabase.backup),
     migrations: normalizeMigrations(migrationsBody),
     functions: normalizeFunctions(functionsBody),
     cron_security: {
@@ -953,7 +993,7 @@ async function runCli(argv) {
     policy,
     request,
     manifest,
-    token: process.env.SUPABASE_READ_ONLY_ACCESS_TOKEN,
+    token: process.env.SUPABASE_ACCESS_TOKEN,
     adapterSourceSha256: sha256(readFileSync(sourcePath)),
   });
   writeFileSync(output, canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
