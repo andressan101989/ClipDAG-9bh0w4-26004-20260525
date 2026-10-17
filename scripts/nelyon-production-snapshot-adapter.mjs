@@ -206,6 +206,93 @@ export const CRON_SNAPSHOT_SQL = `select pg_catalog.jsonb_build_object(
   ) order by j.jobid),'[]'::jsonb)
 ) snapshot from cron.job j;`;
 
+export const A2_RPC_IDENTITIES = [
+  { schema: 'public', name: 'admin_refund_creator_premium_purchase_v1', argument_types: ['uuid', 'uuid', 'text'] },
+  { schema: 'public', name: 'admin_refund_creator_premium_subscription_period_v1', argument_types: ['uuid', 'uuid', 'text'] },
+  { schema: 'public', name: 'admin_review_creator_premium_content_v1', argument_types: ['uuid', 'text', 'text', 'uuid'] },
+  { schema: 'public', name: 'get_admin_creator_premium_content_v1', argument_types: ['uuid'] },
+  { schema: 'public', name: 'get_admin_creator_premium_refund_candidates_v1', argument_types: ['uuid'] },
+  { schema: 'public', name: 'get_creator_premium_commerce_v1', argument_types: ['uuid'] },
+  { schema: 'public', name: 'get_my_creator_premium_commercial_summary_v1', argument_types: ['timestamp with time zone', 'timestamp with time zone'] },
+  { schema: 'public', name: 'get_my_creator_premium_subscriptions_v1', argument_types: ['timestamp with time zone', 'uuid', 'integer'] },
+  { schema: 'public', name: 'reopen_my_creator_premium_rejected_v1', argument_types: ['uuid'] },
+  { schema: 'public', name: 'report_creator_premium_content_v1', argument_types: ['uuid', 'text', 'text'] },
+  { schema: 'public', name: 'search_admin_creator_premium_content_v1', argument_types: ['text', 'text', 'timestamp with time zone', 'uuid', 'integer'] },
+];
+
+export const RPC_SECURITY_ATTESTATION_SQL = `with requested as (
+  select item.schema,item.name,item.argument_types
+  from pg_catalog.jsonb_to_recordset($1::jsonb)
+    as item(schema text,name text,argument_types jsonb)
+),functions as (
+  select n.nspname schema,p.proname name,
+    pg_catalog.pg_get_function_identity_arguments(p.oid) identity_arguments,
+    (select pg_catalog.jsonb_agg(pg_catalog.format_type(arg_oid,null) order by ordinality)
+      from pg_catalog.unnest(p.proargtypes::oid[]) with ordinality args(arg_oid,ordinality)) argument_types,
+    p.prosecdef security_definer,owner_role.rolname owner,
+    coalesce(pg_catalog.to_jsonb(p.proconfig),'[]'::jsonb) search_path,
+    coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'grantee',case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      'privilege_type',acl.privilege_type,'is_grantable',acl.is_grantable
+    ) order by case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      acl.privilege_type,acl.is_grantable)
+      from pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
+      left join pg_catalog.pg_roles grantee_role on grantee_role.oid=acl.grantee
+      where acl.privilege_type='EXECUTE'),'[]'::jsonb) acl,
+    pg_catalog.jsonb_build_object(
+      'public',exists(select 1 from pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) x where x.grantee=0 and x.privilege_type='EXECUTE'),
+      'anon',pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE'),
+      'authenticated',pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE'),
+      'service_role',pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE')
+    ) execute,
+    pg_catalog.pg_get_functiondef(p.oid) definition
+  from pg_catalog.pg_proc p
+  join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
+)
+select f.schema,f.name,f.identity_arguments,f.argument_types,f.security_definer,
+  f.owner,f.search_path,f.acl,f.execute,f.definition
+from functions f
+join requested r on r.schema=f.schema and r.name=f.name and r.argument_types=f.argument_types
+order by f.schema,f.name,f.argument_types::text;`;
+
+export const PREMIUM_POSTCHECK_STATE_SQL = `with relation_rows as (
+  select n.nspname schema,c.relname name,owner_role.rolname owner,
+    c.relrowsecurity rls_enabled,c.relforcerowsecurity force_rls,
+    coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'grantee',case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      'privilege_type',acl.privilege_type,'is_grantable',acl.is_grantable
+    ) order by case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      acl.privilege_type,acl.is_grantable)
+      from pg_catalog.aclexplode(coalesce(c.relacl,pg_catalog.acldefault('r',c.relowner))) acl
+      left join pg_catalog.pg_roles grantee_role on grantee_role.oid=acl.grantee),'[]'::jsonb) acl
+  from pg_catalog.pg_class c
+  join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=c.relowner
+  where n.nspname='private' and c.relkind in ('r','p')
+    and c.relname like 'creator_premium_%'
+)
+select pg_catalog.jsonb_build_object(
+  'schema_version',1,'complete',true,'query_id','nelyon-premium-postcheck-state-v1',
+  'approved_rule_count',(select pg_catalog.count(*)::integer from private.content_safety_rules where approval_state='approved'),
+  'active_rule_count',(select pg_catalog.count(*)::integer from private.content_safety_rules where approval_state='approved' and enabled=true),
+  'fabricated_pass_count',(select pg_catalog.count(*)::integer
+    from private.creator_premium_contents content
+    where content.verification_status='passed' and not exists(
+      select 1 from private.content_safety_scans scan
+      where scan.id=content.verification_scan_id
+        and scan.target_type='creator_premium' and scan.target_id=content.id
+        and scan.content_fingerprint=content.verification_fingerprint
+        and scan.status='completed' and scan.completed_at is not null)),
+  'content_count',(select pg_catalog.count(*)::integer from private.creator_premium_contents),
+  'pending_review_count',(select pg_catalog.count(*)::integer from private.creator_premium_contents where lifecycle_status='pending_review'),
+  'deleted_count',(select pg_catalog.count(*)::integer from private.creator_premium_contents where lifecycle_status='deleted'),
+  'relations',coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+    'schema',schema,'name',name,'owner',owner,'rls_enabled',rls_enabled,
+    'force_rls',force_rls,'acl',acl
+  ) order by schema,name) from relation_rows),'[]'::jsonb)
+) snapshot;`;
+
 function normalizeCanonical(value, seen = new Set()) {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
   if (typeof value === 'number') {
@@ -441,7 +528,8 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   validateManifestAdapterIdentity(manifest, adapterSourceSha256);
   exactKeys(evidence, [
     'adapter', 'backup', 'complete', 'cron_security', 'evidence_sha256', 'finance', 'functions',
-    'health', 'identity', 'migrations', 'observed_at', 'phase', 'project_ref', 'requests', 'schema_version',
+    'health', 'identity', 'migrations', 'observed_at', 'phase', 'premium_state', 'project_ref',
+    'requests', 'rpc_security', 'schema_version',
   ], 'INVALID_SNAPSHOT');
   const { evidence_sha256: claimedDigest, ...unsigned } = evidence;
   if (!HASH_PATTERN.test(claimedDigest ?? '') || claimedDigest !== sha256(canonicalJson(unsigned))) {
@@ -459,6 +547,8 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   const expectedQueries = [
     { id: 'nelyon-cron-snapshot-v1', sha256: sha256(CRON_SNAPSHOT_SQL) },
     { id: 'nelyon-finance-snapshot-v1', sha256: sha256(FINANCE_SNAPSHOT_SQL) },
+    { id: 'nelyon-premium-postcheck-state-v1', sha256: sha256(PREMIUM_POSTCHECK_STATE_SQL) },
+    { id: 'nelyon-rpc-security-attestation-v1', sha256: sha256(RPC_SECURITY_ATTESTATION_SQL) },
   ];
   if (!HASH_PATTERN.test(adapterSourceSha256 ?? '')
     || evidence.adapter.source_sha256 !== adapterSourceSha256
@@ -472,6 +562,8 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     ['GET', `${base}/functions`, 200],
     ['GET', `${base}/advisors/security`, 200],
     ['GET', `${base}/database/backups`, 200],
+    ['POST', `${base}/database/query/read-only`, 201],
+    ['POST', `${base}/database/query/read-only`, 201],
     ['POST', `${base}/database/query/read-only`, 201],
     ['POST', `${base}/database/query/read-only`, 201],
   ];
@@ -497,6 +589,9 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   validateCronSnapshot(evidence.cron_security.cron);
   validateNormalizedAdvisors(evidence.cron_security.advisors);
   validateFinanceSnapshot(evidence.finance);
+  validateRpcSecuritySnapshot(evidence.rpc_security);
+  validateA2RpcIdentitySet(evidence.rpc_security);
+  validatePremiumPostcheckState(evidence.premium_state);
   return evidence;
 }
 
@@ -864,8 +959,219 @@ function normalizeAdvisors(body) {
   return { complete: true, count: items.length, items, sha256: sha256(canonicalJson(items)) };
 }
 
+function normalizeAcl(value, code) {
+  if (!Array.isArray(value)) fail(code, 'ACL evidence must be an array');
+  const items = value.map(item => {
+    exactKeys(item, ['grantee', 'is_grantable', 'privilege_type'], code);
+    if (typeof item.grantee !== 'string' || item.grantee.length === 0
+      || typeof item.privilege_type !== 'string' || item.privilege_type.length === 0
+      || typeof item.is_grantable !== 'boolean') {
+      fail(code, 'ACL entry is incomplete');
+    }
+    return {
+      grantee: item.grantee,
+      privilege_type: item.privilege_type,
+      is_grantable: item.is_grantable,
+    };
+  }).sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
+  if (new Set(items.map(item => canonicalJson(item))).size !== items.length) fail(code, 'ACL entries are duplicate');
+  return items;
+}
+
+function rpcIdentity(item) {
+  return `${item.schema}.${item.name}(${item.argument_types.join(',')})`;
+}
+
+function validateRpcSecuritySnapshot(snapshot) {
+  exactKeys(snapshot, ['complete', 'count', 'items', 'sha256'], 'RPC_SECURITY_ATTESTATION_FAILED');
+  if (snapshot.complete !== true || !Number.isInteger(snapshot.count) || snapshot.count < 1
+    || !Array.isArray(snapshot.items) || snapshot.items.length !== snapshot.count
+    || snapshot.sha256 !== sha256(canonicalJson(snapshot.items))) {
+    fail('RPC_SECURITY_ATTESTATION_FAILED', 'RPC security snapshot is incomplete');
+  }
+  const identities = [];
+  for (const item of snapshot.items) {
+    exactKeys(item, [
+      'acl', 'argument_types', 'definition_sha256', 'execute', 'identity_arguments',
+      'name', 'owner', 'schema', 'search_path', 'security_definer',
+    ], 'RPC_SECURITY_ATTESTATION_FAILED');
+    exactKeys(item.execute, ['anon', 'authenticated', 'public', 'service_role'], 'RPC_SECURITY_ATTESTATION_FAILED');
+    if (item.schema !== 'public' || typeof item.name !== 'string' || item.name.length === 0
+      || typeof item.identity_arguments !== 'string' || item.identity_arguments.length === 0
+      || !Array.isArray(item.argument_types) || item.argument_types.some(type => typeof type !== 'string' || type.length === 0)
+      || item.security_definer !== true || item.owner !== 'postgres'
+      || !Array.isArray(item.search_path) || item.search_path.some(setting => typeof setting !== 'string')
+      || !HASH_PATTERN.test(item.definition_sha256 ?? '')
+      || canonicalJson(item.execute) !== canonicalJson({ public: false, anon: false, authenticated: true, service_role: false })) {
+      fail('RPC_SECURITY_ATTESTATION_FAILED', 'protected RPC authority is unsafe or incomplete');
+    }
+    normalizeAcl(item.acl, 'RPC_SECURITY_ATTESTATION_FAILED');
+    identities.push(rpcIdentity(item));
+  }
+  if (new Set(identities).size !== identities.length
+    || canonicalJson(identities) !== canonicalJson([...identities].sort())) {
+    fail('RPC_SECURITY_ATTESTATION_FAILED', 'protected RPC identities are duplicate or unordered');
+  }
+  return snapshot;
+}
+
+export function normalizeRpcSecurityAttestations(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) fail('RPC_SECURITY_ATTESTATION_FAILED', 'RPC catalog result is empty');
+  const items = rows.map(row => {
+    exactKeys(row, [
+      'acl', 'argument_types', 'definition', 'execute', 'identity_arguments',
+      'name', 'owner', 'schema', 'search_path', 'security_definer',
+    ], 'RPC_SECURITY_ATTESTATION_FAILED');
+    if (typeof row.definition !== 'string' || row.definition.length === 0
+      || !Array.isArray(row.argument_types) || !Array.isArray(row.search_path)) {
+      fail('RPC_SECURITY_ATTESTATION_FAILED', 'RPC catalog row is incomplete');
+    }
+    const execute = { ...row.execute };
+    exactKeys(execute, ['anon', 'authenticated', 'public', 'service_role'], 'RPC_SECURITY_ATTESTATION_FAILED');
+    const normalizedDefinition = row.definition.replace(/\r\n?/g, '\n');
+    return {
+      schema: row.schema,
+      name: row.name,
+      identity_arguments: row.identity_arguments,
+      argument_types: [...row.argument_types],
+      security_definer: row.security_definer,
+      owner: row.owner,
+      search_path: [...row.search_path].sort(),
+      acl: normalizeAcl(row.acl, 'RPC_SECURITY_ATTESTATION_FAILED'),
+      execute,
+      definition_sha256: sha256(normalizedDefinition),
+    };
+  }).sort((left, right) => rpcIdentity(left).localeCompare(rpcIdentity(right)));
+  return validateRpcSecuritySnapshot({
+    complete: true,
+    count: items.length,
+    items,
+    sha256: sha256(canonicalJson(items)),
+  });
+}
+
+function validateA2RpcIdentitySet(snapshot) {
+  const expected = A2_RPC_IDENTITIES
+    .map(item => `${item.schema}.${item.name}(${item.argument_types.join(',')})`)
+    .sort();
+  const actual = snapshot.items.map(rpcIdentity);
+  if (canonicalJson(actual) !== canonicalJson(expected)) {
+    fail('RPC_SECURITY_ATTESTATION_FAILED', 'RPC catalog does not match the exact A2 identity set');
+  }
+  return true;
+}
+
+export function validateRpcSecurityAttestations(snapshot, exceptions) {
+  validateRpcSecuritySnapshot(snapshot);
+  if (!Array.isArray(exceptions) || exceptions.length !== snapshot.items.length) {
+    fail('RPC_SECURITY_ATTESTATION_FAILED', 'exception set does not match the RPC attestation set');
+  }
+  const expectedItems = exceptions.map(exception => {
+    if (!exception?.object || !exception?.attestation) {
+      fail('RPC_SECURITY_ATTESTATION_FAILED', 'exception attestation is incomplete');
+    }
+    exactKeys(exception.object, ['argument_types', 'identity_arguments', 'name', 'schema'], 'RPC_SECURITY_ATTESTATION_FAILED');
+    exactKeys(exception.attestation, [
+      'acl', 'definition_sha256', 'execute', 'owner', 'search_path', 'security_definer',
+    ], 'RPC_SECURITY_ATTESTATION_FAILED');
+    return {
+      schema: exception.object.schema,
+      name: exception.object.name,
+      identity_arguments: exception.object.identity_arguments,
+      argument_types: exception.object.argument_types,
+      security_definer: exception.attestation.security_definer,
+      owner: exception.attestation.owner,
+      search_path: exception.attestation.search_path,
+      acl: exception.attestation.acl,
+      execute: exception.attestation.execute,
+      definition_sha256: exception.attestation.definition_sha256,
+    };
+  }).sort((left, right) => rpcIdentity(left).localeCompare(rpcIdentity(right)));
+  if (canonicalJson(snapshot.items) !== canonicalJson(expectedItems)) {
+    fail('RPC_SECURITY_ATTESTATION_FAILED', 'fresh RPC authority differs from the approved exception attestation');
+  }
+  return true;
+}
+
+function normalizeRelationSecurity(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) fail('PREMIUM_POSTCHECK_FAILED', 'relation security inventory is empty');
+  const items = rows.map(row => {
+    exactKeys(row, ['acl', 'force_rls', 'name', 'owner', 'rls_enabled', 'schema'], 'PREMIUM_POSTCHECK_FAILED');
+    if (row.schema !== 'private' || typeof row.name !== 'string' || !row.name.startsWith('creator_premium_')
+      || typeof row.owner !== 'string' || typeof row.rls_enabled !== 'boolean' || typeof row.force_rls !== 'boolean') {
+      fail('PREMIUM_POSTCHECK_FAILED', 'relation security row is incomplete');
+    }
+    return {
+      schema: row.schema,
+      name: row.name,
+      owner: row.owner,
+      rls_enabled: row.rls_enabled,
+      force_rls: row.force_rls,
+      acl: normalizeAcl(row.acl, 'PREMIUM_POSTCHECK_FAILED'),
+    };
+  }).sort((left, right) => `${left.schema}.${left.name}`.localeCompare(`${right.schema}.${right.name}`));
+  if (new Set(items.map(item => `${item.schema}.${item.name}`)).size !== items.length) {
+    fail('PREMIUM_POSTCHECK_FAILED', 'relation security identities are duplicate');
+  }
+  return { items, sha256: sha256(canonicalJson(items)) };
+}
+
+export function normalizePremiumPostcheckState(snapshot) {
+  exactKeys(snapshot, [
+    'active_rule_count', 'approved_rule_count', 'complete', 'content_count', 'deleted_count',
+    'fabricated_pass_count', 'pending_review_count', 'query_id', 'relations', 'schema_version',
+  ], 'PREMIUM_POSTCHECK_FAILED');
+  if (snapshot.schema_version !== 1 || snapshot.complete !== true
+    || snapshot.query_id !== 'nelyon-premium-postcheck-state-v1') {
+    fail('PREMIUM_POSTCHECK_FAILED', 'Premium postcheck snapshot identity is invalid');
+  }
+  const unsigned = {
+    complete: true,
+    content_safety: {
+      approved_rule_count: snapshot.approved_rule_count,
+      active_rule_count: snapshot.active_rule_count,
+      fabricated_pass_count: snapshot.fabricated_pass_count,
+    },
+    legacy: {
+      content_count: snapshot.content_count,
+      pending_review_count: snapshot.pending_review_count,
+      deleted_count: snapshot.deleted_count,
+    },
+    relation_security: normalizeRelationSecurity(snapshot.relations),
+  };
+  return { ...unsigned, sha256: sha256(canonicalJson(unsigned)) };
+}
+
+export function validatePremiumPostcheckState(state, expectedRelations = null) {
+  exactKeys(state, ['complete', 'content_safety', 'legacy', 'relation_security', 'sha256'], 'PREMIUM_POSTCHECK_FAILED');
+  const { sha256: claimed, ...unsigned } = state;
+  if (state.complete !== true || claimed !== sha256(canonicalJson(unsigned))) {
+    fail('PREMIUM_POSTCHECK_FAILED', 'Premium postcheck digest is invalid');
+  }
+  exactKeys(state.content_safety, ['active_rule_count', 'approved_rule_count', 'fabricated_pass_count'], 'PREMIUM_POSTCHECK_FAILED');
+  exactKeys(state.legacy, ['content_count', 'deleted_count', 'pending_review_count'], 'PREMIUM_POSTCHECK_FAILED');
+  if (canonicalJson(state.content_safety) !== canonicalJson({
+    approved_rule_count: 0, active_rule_count: 0, fabricated_pass_count: 0,
+  }) || canonicalJson(state.legacy) !== canonicalJson({
+    content_count: 2, pending_review_count: 1, deleted_count: 1,
+  })) {
+    fail('PREMIUM_POSTCHECK_FAILED', 'Content Safety or legacy Premium state diverged');
+  }
+  exactKeys(state.relation_security, ['items', 'sha256'], 'PREMIUM_POSTCHECK_FAILED');
+  const normalized = normalizeRelationSecurity(state.relation_security.items);
+  if (state.relation_security.sha256 !== normalized.sha256
+    || normalized.items.some(item => item.owner !== 'postgres' || item.rls_enabled !== true
+      || item.force_rls !== true || item.acl.length === 0)) {
+    fail('PREMIUM_POSTCHECK_FAILED', 'private Premium relation authority is unsafe');
+  }
+  if (expectedRelations !== null && canonicalJson(normalized.items) !== canonicalJson(expectedRelations)) {
+    fail('PREMIUM_POSTCHECK_FAILED', 'private Premium relation authority differs from the approved evidence');
+  }
+  return true;
+}
+
 function validateIdentity({ phase, policy, request, manifest, token, observedAt, adapterSourceSha256 }) {
-  if (!['pre', 'post'].includes(phase)) fail('INVALID_SNAPSHOT_IDENTITY', 'phase must be pre or post');
+  if (!['pre', 'post', 'recovery'].includes(phase)) fail('INVALID_SNAPSHOT_IDENTITY', 'phase must be pre, post, or recovery');
   if (policy?.supabase?.project_ref !== PRODUCTION_PROJECT_REF) fail('INVALID_SNAPSHOT_IDENTITY', 'unexpected production project');
   if (typeof token !== 'string' || token.length < 1) fail('MISSING_SNAPSHOT_TOKEN', 'snapshot token is unavailable');
   if (!Number.isFinite(Date.parse(observedAt)) || !HASH_PATTERN.test(adapterSourceSha256 ?? '')) {
@@ -901,6 +1207,8 @@ export async function captureProductionSnapshot({
   if (typeof fetchImpl !== 'function') fail('INVALID_TRANSPORT', 'fetch implementation is unavailable');
   assertReadOnlySql(FINANCE_SNAPSHOT_SQL);
   assertReadOnlySql(CRON_SNAPSHOT_SQL);
+  assertReadOnlySql(RPC_SECURITY_ATTESTATION_SQL);
+  assertReadOnlySql(PREMIUM_POSTCHECK_STATE_SQL);
   const base = `/v1/projects/${PRODUCTION_PROJECT_REF}`;
   const calls = [];
   const get = async (path, label) => {
@@ -933,6 +1241,14 @@ export async function captureProductionSnapshot({
     'finance snapshot',
   );
   const cronBody = await sql(CRON_SNAPSHOT_SQL, null, 'cron snapshot');
+  const rpcSecurityBody = await sql(
+    RPC_SECURITY_ATTESTATION_SQL,
+    [JSON.stringify(A2_RPC_IDENTITIES)],
+    'RPC security attestation',
+  );
+  const premiumStateBody = await sql(PREMIUM_POSTCHECK_STATE_SQL, null, 'Premium postcheck state');
+  const rpcSecurity = normalizeRpcSecurityAttestations(rpcSecurityBody);
+  validateA2RpcIdentitySet(rpcSecurity);
   const evidence = {
     schema_version: 1,
     complete: true,
@@ -944,6 +1260,8 @@ export async function captureProductionSnapshot({
       queries: [
         { id: 'nelyon-cron-snapshot-v1', sha256: sha256(CRON_SNAPSHOT_SQL) },
         { id: 'nelyon-finance-snapshot-v1', sha256: sha256(FINANCE_SNAPSHOT_SQL) },
+        { id: 'nelyon-premium-postcheck-state-v1', sha256: sha256(PREMIUM_POSTCHECK_STATE_SQL) },
+        { id: 'nelyon-rpc-security-attestation-v1', sha256: sha256(RPC_SECURITY_ATTESTATION_SQL) },
       ],
     },
     observed_at: new Date(observedAt).toISOString(),
@@ -957,6 +1275,8 @@ export async function captureProductionSnapshot({
       advisors: normalizeAdvisors(advisorsBody),
     },
     finance: singleSnapshot(financeBody, validateFinanceSnapshot, 'finance snapshot'),
+    rpc_security: rpcSecurity,
+    premium_state: singleSnapshot(premiumStateBody, normalizePremiumPostcheckState, 'Premium postcheck state'),
     requests: calls,
   };
   return { ...evidence, evidence_sha256: sha256(canonicalJson(evidence)) };
