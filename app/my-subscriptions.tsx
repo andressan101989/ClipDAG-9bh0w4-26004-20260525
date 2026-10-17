@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/useAuth';
+import { formatCreatorPremiumBdag as exactBdag } from '@/services/creatorPremiumPresentation.mjs';
 import {
   fetchMyCreatorPremiumSubscriptions,
   type CreatorPremiumCursor,
@@ -19,7 +20,6 @@ import {
 } from '@/services/creatorPremiumService';
 import { cancelCreatorPremiumSubscription } from '@/services/financial/ledgerClient';
 
-const exactBdag=(value:string)=>{const[whole,fraction]=value.split('.');return`${whole.replace(/\B(?=(\d{3})+(?!\d))/g,'.')}${fraction?`,${fraction}`:''} BDAG`};
 const date=(value:string|null|undefined)=>value&&!Number.isNaN(Date.parse(value))?new Intl.DateTimeFormat('es',{dateStyle:'medium'}).format(new Date(value)):'—';
 const statusLabel:Record<CreatorPremiumSubscriptionItem['status'],string>={pending:'Pendiente',active:'Activa',cancelled:'Cancelada',expired:'Vencida',revoked:'Revocada'};
 

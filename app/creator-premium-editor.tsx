@@ -21,6 +21,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
+import { normalizeCreatorPremiumVideoPickerAsset } from '@/services/creatorPremiumPresentation.mjs';
 import {
   createMyCreatorPremiumDraft,
   deleteMyCreatorPremiumDraft,
@@ -81,6 +82,41 @@ async function imageFile(asset: ImagePicker.ImagePickerAsset): Promise<LocalFile
     fileName: asset.fileName ?? `premium-${randomUUID()}.jpg`,
     sizeBytes: size,
   };
+}
+
+async function videoFile(asset: {
+  uri: string;
+  mimeType?: string | null;
+  fileName?: string | null;
+  sizeBytes?: number | null;
+  durationMs?: number | null;
+}): Promise<LocalFile> {
+  const fileName = asset.fileName ?? `premium-${randomUUID()}.mp4`;
+  const extension = fileName.toLowerCase().split('.').pop();
+  const mimeType = asset.mimeType
+    ?? (extension === 'mov' ? 'video/quicktime' : extension === 'webm' ? 'video/webm' : 'video/mp4');
+  let sizeBytes = asset.sizeBytes ?? 0;
+  if (!sizeBytes) {
+    const response = await fetch(asset.uri);
+    sizeBytes = (await response.blob()).size;
+  }
+  const normalized = normalizeCreatorPremiumVideoPickerAsset({
+    uri: asset.uri,
+    mimeType,
+    fileName,
+    sizeBytes,
+    durationMs: asset.durationMs,
+  });
+  if (!normalized) throw new Error('creator_premium_video_asset_invalid');
+  return normalized;
+}
+
+function videoPickerError(reason: unknown): string {
+  const code = reason instanceof Error ? reason.message : '';
+  if (code === 'creator_premium_video_mime_invalid') return 'Usa MP4, QuickTime o WebM.';
+  if (code === 'creator_premium_video_size_invalid') return 'El video debe pesar menos de 200 MB.';
+  if (code === 'creator_premium_video_duration_invalid') return 'El video debe durar como máximo 60 segundos.';
+  return messageFor(reason);
 }
 
 function appendUnique<T extends { id: string }>(current: T[], incoming: T[]): T[] {
@@ -301,7 +337,34 @@ export default function CreatorPremiumEditor() {
     }
   }, [busy, readOnly]);
 
-  const pickVideo = useCallback(async () => {
+  const pickVideoFromPhotos = useCallback(async () => {
+    if (busy || readOnly) return;
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permiso requerido', 'Permite el acceso a tus fotos para seleccionar este video.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['videos'],
+      allowsEditing: false,
+      quality: 1,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    try {
+      setPrivateFile(await videoFile({
+        uri: asset.uri,
+        mimeType: asset.mimeType,
+        fileName: asset.fileName,
+        sizeBytes: asset.fileSize,
+        durationMs: asset.duration,
+      }));
+    } catch (reason) {
+      Alert.alert('Video no compatible', videoPickerError(reason));
+    }
+  }, [busy, readOnly]);
+
+  const pickVideoFromFiles = useCallback(async () => {
     if (busy || readOnly) return;
     const result = await DocumentPicker.getDocumentAsync({
       type: ['video/mp4', 'video/quicktime', 'video/webm'],
@@ -310,16 +373,17 @@ export default function CreatorPremiumEditor() {
     });
     if (result.canceled || !result.assets[0]) return;
     const asset = result.assets[0];
-    const mimeType = asset.mimeType ?? '';
-    if (!['video/mp4', 'video/quicktime', 'video/webm'].includes(mimeType)) {
-      Alert.alert('Formato no compatible', 'Usa MP4, QuickTime o WebM.');
-      return;
+    try {
+      setPrivateFile(await videoFile({
+        uri: asset.uri,
+        mimeType: asset.mimeType,
+        fileName: asset.name,
+        sizeBytes: asset.size,
+        durationMs: null,
+      }));
+    } catch (reason) {
+      Alert.alert('Video no compatible', videoPickerError(reason));
     }
-    if (!asset.size || asset.size > 200_000_000) {
-      Alert.alert('Video no compatible', 'El video debe pesar menos de 200 MB.');
-      return;
-    }
-    setPrivateFile({ uri: asset.uri, mimeType, fileName: asset.name, sizeBytes: asset.size });
   }, [busy, readOnly]);
 
   const uploadMedia = useCallback(async () => {
@@ -519,13 +583,19 @@ export default function CreatorPremiumEditor() {
         </Section>
 
         <Section title="Contenido privado">
-          <Pressable style={styles.picker} onPress={() => kind === 'image' ? void pickImage('private') : void pickVideo()} disabled={busy || readOnly}>
+          <Pressable style={styles.picker} onPress={() => kind === 'image' ? void pickImage('private') : void pickVideoFromPhotos()} disabled={busy || readOnly}>
             <MaterialCommunityIcons name={kind === 'image' ? 'image-lock-outline' : 'file-lock-outline'} size={34} color={PREMIUM} />
             <View style={styles.pickerCopy}>
               <Text style={styles.pickerTitle}>{privateFile ? privateFile.fileName : item && (item.original_attached || item.video_attached) ? 'Original privado vinculado' : `Seleccionar ${kind === 'image' ? 'imagen' : 'video'}`}</Text>
               <Text style={styles.helper}>{kind === 'video' ? 'MP4, QuickTime o WebM · máximo 200 MB y 60 segundos.' : 'El original nunca se usa como vista previa pública.'}</Text>
             </View>
           </Pressable>
+          {kind === 'video' && !readOnly ? (
+            <Pressable style={styles.filesButton} onPress={() => void pickVideoFromFiles()} disabled={busy}>
+              <MaterialCommunityIcons name="folder-video-outline" size={18} color={PREMIUM} />
+              <Text style={styles.secondaryText}>Elegir desde Files</Text>
+            </Pressable>
+          ) : null}
           {processing ? <Text style={[styles.processing, processing === 'failed' && { color: Colors.error }]}>Estado: {processing}</Text> : null}
         </Section>
 
@@ -645,5 +715,6 @@ const styles = StyleSheet.create({
   secondaryText: { color: PREMIUM, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
   deleteButton: { minHeight: 48, borderRadius: Radius.md, borderWidth: 1, borderColor: `${Colors.error}66`, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
   deleteText: { color: Colors.error, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  filesButton: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs },
   disabled: { opacity: 0.5 },
 });

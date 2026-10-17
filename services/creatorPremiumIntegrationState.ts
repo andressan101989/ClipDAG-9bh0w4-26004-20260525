@@ -1,3 +1,5 @@
+import { creatorPremiumPolicyBlocksRetry } from './creatorPremiumPresentation.mjs';
+
 export type SettledCreatorPremiumValue<T> = {
   value: T | null;
   error: unknown | null;
@@ -115,7 +117,8 @@ export function creatorPremiumVerificationCanRetry(input: {
   verification_error_code?: string | null;
 } | null | undefined): boolean {
   return input?.lifecycle_status === 'pending_review' && (
-    input.verification_status === 'failed'
+    (input.verification_status === 'failed'
+      && !creatorPremiumPolicyBlocksRetry(input.verification_error_code))
     || (input.verification_status === 'not_requested'
       && input.verification_error_code === 'creator_premium_legacy_reverification_required')
   );
