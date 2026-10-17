@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
@@ -115,6 +116,59 @@ function cronSnapshot() {
   };
 }
 
+const A2_TEST_RPC_IDENTITIES = [
+  ['admin_refund_creator_premium_purchase_v1', ['uuid', 'uuid', 'text']],
+  ['admin_refund_creator_premium_subscription_period_v1', ['uuid', 'uuid', 'text']],
+  ['admin_review_creator_premium_content_v1', ['uuid', 'text', 'text', 'uuid']],
+  ['get_admin_creator_premium_content_v1', ['uuid']],
+  ['get_admin_creator_premium_refund_candidates_v1', ['uuid']],
+  ['get_creator_premium_commerce_v1', ['uuid']],
+  ['get_my_creator_premium_commercial_summary_v1', ['timestamp with time zone', 'timestamp with time zone']],
+  ['get_my_creator_premium_subscriptions_v1', ['timestamp with time zone', 'uuid', 'integer']],
+  ['reopen_my_creator_premium_rejected_v1', ['uuid']],
+  ['report_creator_premium_content_v1', ['uuid', 'text', 'text']],
+  ['search_admin_creator_premium_content_v1', ['text', 'text', 'timestamp with time zone', 'uuid', 'integer']],
+];
+
+function rpcSecurityRows(overrides = {}) {
+  return A2_TEST_RPC_IDENTITIES.map(([name, argumentTypes]) => ({
+    schema: 'public',
+    name,
+    identity_arguments: argumentTypes.join(', '),
+    argument_types: argumentTypes,
+    security_definer: true,
+    owner: 'postgres',
+    search_path: ['search_path='],
+    acl: [{ grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false }],
+    execute: { public: false, anon: false, authenticated: true, service_role: false },
+    definition: `CREATE FUNCTION public.${name}(${argumentTypes.join(',')})\r\nRETURNS jsonb\r\nSECURITY DEFINER`,
+    ...(overrides[name] ?? {}),
+  }));
+}
+
+function premiumPostcheckSnapshot(overrides = {}) {
+  return {
+    schema_version: 1,
+    complete: true,
+    query_id: 'nelyon-premium-postcheck-state-v1',
+    approved_rule_count: 0,
+    active_rule_count: 0,
+    fabricated_pass_count: 0,
+    content_count: 2,
+    pending_review_count: 1,
+    deleted_count: 1,
+    relations: [{
+      schema: 'private',
+      name: 'creator_premium_contents',
+      owner: 'postgres',
+      rls_enabled: true,
+      force_rls: true,
+      acl: [{ grantee: 'postgres', privilege_type: 'SELECT', is_grantable: false }],
+    }],
+    ...overrides,
+  };
+}
+
 function jsonResponse(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
     status,
@@ -159,7 +213,19 @@ function successfulFetch(log, overrides = {}) {
     if (pathname.endsWith('/advisors/security')) return jsonResponse(overrides.advisors ?? { lints: [] });
     if (pathname.endsWith('/database/query/read-only')) {
       const body = JSON.parse(options.body);
-      return jsonResponse([{ snapshot: body.parameters ? (overrides.finance ?? financeSnapshot()) : cronSnapshot() }], 201);
+      if (body.query.includes('nelyon-finance-snapshot-v1')) {
+        return jsonResponse([{ snapshot: overrides.finance ?? financeSnapshot() }], 201);
+      }
+      if (body.query.includes('nelyon-cron-snapshot-v1')) {
+        return jsonResponse([{ snapshot: overrides.cron ?? cronSnapshot() }], 201);
+      }
+      if (body.query.includes('pg_get_function_identity_arguments')) {
+        return jsonResponse(overrides.rpcSecurity ?? rpcSecurityRows(), 201);
+      }
+      if (body.query.includes('nelyon-premium-postcheck-state-v1')) {
+        return jsonResponse([{ snapshot: overrides.premiumState ?? premiumPostcheckSnapshot() }], 201);
+      }
+      throw new Error('unexpected read-only SQL query');
     }
     throw new Error(`unexpected request ${url}`);
   };
@@ -215,8 +281,8 @@ test('adapter uses only fixed documented read-only endpoints and produces saniti
   assert.equal(result.finance.reconciliation.orphan_ledger_entries, 0);
   assert.deepEqual(result.backup, completedPhysicalBackup());
   assert.match(result.evidence_sha256, /^[0-9a-f]{64}$/);
-  assert.equal(calls.length, 7);
-  assert.deepEqual(calls.map(call => call.options.method ?? 'GET'), ['GET', 'GET', 'GET', 'GET', 'GET', 'POST', 'POST']);
+  assert.equal(calls.length, 9);
+  assert.deepEqual(calls.map(call => call.options.method ?? 'GET'), ['GET', 'GET', 'GET', 'GET', 'GET', 'POST', 'POST', 'POST', 'POST']);
   for (const call of calls) {
     const url = new URL(call.url);
     assert.equal(url.protocol, 'https:');
@@ -225,7 +291,7 @@ test('adapter uses only fixed documented read-only endpoints and produces saniti
     assert.equal(call.options.redirect, 'error');
   }
   const sqlCalls = calls.filter(call => (call.options.method ?? 'GET') === 'POST');
-  assert.equal(sqlCalls.length, 2);
+  assert.equal(sqlCalls.length, 4);
   assert.ok(sqlCalls.every(call => new URL(call.url).pathname.endsWith('/database/query/read-only')));
   assert.ok(sqlCalls.every(call => !new URL(call.url).pathname.endsWith('/database/query')));
   const serialized = JSON.stringify(result);
@@ -286,6 +352,134 @@ test('SQL allowlist rejects mutations multiple statements and application reconc
   ]) {
     assert.throws(() => adapter.assertReadOnlySql(sql), /READ_ONLY_QUERY_REJECTED/);
   }
+});
+
+test('RPC security SQL and Premium postcheck SQL are fixed documented read-only statements', async () => {
+  const adapter = await loadAdapter();
+  assert.equal(adapter.assertReadOnlySql(adapter.RPC_SECURITY_ATTESTATION_SQL), true);
+  assert.equal(adapter.assertReadOnlySql(adapter.PREMIUM_POSTCHECK_STATE_SQL), true);
+  assert.match(adapter.RPC_SECURITY_ATTESTATION_SQL, /jsonb_to_recordset\(\$1::jsonb\)/i);
+  for (const contract of [
+    /pg_catalog\.pg_proc/i,
+    /pg_catalog\.pg_namespace/i,
+    /pg_catalog\.pg_roles/i,
+    /pg_catalog\.aclexplode/i,
+    /pg_catalog\.pg_get_function_identity_arguments/i,
+    /pg_catalog\.pg_get_functiondef/i,
+  ]) assert.match(adapter.RPC_SECURITY_ATTESTATION_SQL, contract);
+  for (const contract of [
+    /private\.content_safety_rules/i,
+    /private\.creator_premium_contents/i,
+    /private\.content_safety_scans/i,
+    /pg_catalog\.pg_class/i,
+    /pg_catalog\.aclexplode/i,
+  ]) assert.match(adapter.PREMIUM_POSTCHECK_STATE_SQL, contract);
+  assert.doesNotMatch(`${adapter.RPC_SECURITY_ATTESTATION_SQL}\n${adapter.PREMIUM_POSTCHECK_STATE_SQL}`, /\b(?:insert|update|delete|alter|create|drop|grant|revoke|truncate)\b/i);
+});
+
+test('RPC security normalization preserves overload identity hashes definitions and fails closed on attestation drift', async () => {
+  const adapter = await loadAdapter();
+  const raw = rpcSecurityRows();
+  const snapshot = adapter.normalizeRpcSecurityAttestations(raw);
+  assert.equal(snapshot.complete, true);
+  assert.equal(snapshot.count, 11);
+  assert.equal(snapshot.items.length, 11);
+  assert.deepEqual(snapshot.items.map(item => item.name), [...snapshot.items.map(item => item.name)].sort());
+  const firstRaw = raw.find(item => item.name === snapshot.items[0].name);
+  assert.equal(
+    snapshot.items[0].definition_sha256,
+    createHash('sha256').update(firstRaw.definition.replace(/\r\n?/g, '\n')).digest('hex'),
+  );
+  assert.doesNotMatch(JSON.stringify(snapshot), /CREATE FUNCTION|RETURNS jsonb/);
+  assert.deepEqual(snapshot.items[0].execute, {
+    public: false, anon: false, authenticated: true, service_role: false,
+  });
+
+  const exceptions = snapshot.items.map(item => ({
+    object: {
+      schema: item.schema,
+      name: item.name,
+      identity_arguments: item.identity_arguments,
+      argument_types: item.argument_types,
+    },
+    attestation: {
+      security_definer: item.security_definer,
+      owner: item.owner,
+      search_path: item.search_path,
+      acl: item.acl,
+      execute: item.execute,
+      definition_sha256: item.definition_sha256,
+    },
+  }));
+  assert.equal(adapter.validateRpcSecurityAttestations(snapshot, exceptions), true);
+  const mutations = [
+    list => list.slice(1),
+    list => [...list, structuredClone(list[0])],
+    list => [...list, { ...structuredClone(list[0]), object: { ...list[0].object, name: 'unexpected_rpc' } }],
+    list => list.map((item, index) => index ? item : { ...structuredClone(item), attestation: { ...item.attestation, owner: 'other_owner' } }),
+    list => list.map((item, index) => index ? item : { ...structuredClone(item), attestation: { ...item.attestation, acl: [] } }),
+    list => list.map((item, index) => index ? item : { ...structuredClone(item), attestation: { ...item.attestation, search_path: ['search_path=public'] } }),
+    list => list.map((item, index) => index ? item : { ...structuredClone(item), attestation: { ...item.attestation, security_definer: false } }),
+    list => list.map((item, index) => index ? item : { ...structuredClone(item), object: { ...item.object, identity_arguments: `${item.object.identity_arguments}, text` } }),
+    list => list.map((item, index) => index ? item : { ...structuredClone(item), attestation: { ...item.attestation, definition_sha256: 'f'.repeat(64) } }),
+  ];
+  for (const mutate of mutations) {
+    assert.throws(() => adapter.validateRpcSecurityAttestations(snapshot, mutate(exceptions)), /RPC_SECURITY_ATTESTATION_FAILED/);
+  }
+  const overload = adapter.normalizeRpcSecurityAttestations([
+    raw[0],
+    { ...raw[0], identity_arguments: 'uuid, text', argument_types: ['uuid', 'text'], definition: `${raw[0].definition}\n-- overload` },
+  ]);
+  assert.equal(overload.count, 2);
+  assert.notEqual(overload.items[0].identity_arguments, overload.items[1].identity_arguments);
+});
+
+test('Premium postcheck state validates fail-closed counts and exact relation security', async () => {
+  const adapter = await loadAdapter();
+  const state = adapter.normalizePremiumPostcheckState(premiumPostcheckSnapshot());
+  assert.equal(adapter.validatePremiumPostcheckState(state, state.relation_security.items), true);
+  assert.deepEqual(state.content_safety, {
+    approved_rule_count: 0,
+    active_rule_count: 0,
+    fabricated_pass_count: 0,
+  });
+  assert.deepEqual(state.legacy, { content_count: 2, pending_review_count: 1, deleted_count: 1 });
+  for (const drift of [
+    { content_safety: { ...state.content_safety, approved_rule_count: 1 } },
+    { content_safety: { ...state.content_safety, active_rule_count: 1 } },
+    { content_safety: { ...state.content_safety, fabricated_pass_count: 1 } },
+    { legacy: { ...state.legacy, content_count: 3 } },
+    { legacy: { ...state.legacy, pending_review_count: 0 } },
+    { legacy: { ...state.legacy, deleted_count: 0 } },
+  ]) assert.throws(() => adapter.validatePremiumPostcheckState({ ...state, ...drift }, state.relation_security.items), /PREMIUM_POSTCHECK_FAILED/);
+
+  const relation = state.relation_security.items[0];
+  for (const expectedRelations of [
+    [],
+    [relation, { ...relation, name: 'creator_premium_extra' }],
+    [{ ...relation, owner: 'other_owner' }],
+    [{ ...relation, rls_enabled: false }],
+    [{ ...relation, force_rls: false }],
+    [{ ...relation, acl: [] }],
+  ]) assert.throws(() => adapter.validatePremiumPostcheckState(state, expectedRelations), /PREMIUM_POSTCHECK_FAILED/);
+});
+
+test('fixed documented recovery capture uses four read-only SQL requests and redacts credentials', async () => {
+  const adapter = await loadAdapter();
+  const calls = [];
+  const result = await adapter.captureProductionSnapshot({
+    phase: 'recovery', policy, request: request(), manifest: manifest(),
+    token: 'never-serialize-recovery-token', fetchImpl: successfulFetch(calls),
+    observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
+  });
+  assert.equal(result.phase, 'recovery');
+  assert.equal(result.rpc_security.count, 11);
+  assert.equal(result.premium_state.complete, true);
+  assert.equal(calls.length, 9);
+  const sqlCalls = calls.filter(call => (call.options.method ?? 'GET') === 'POST');
+  assert.equal(sqlCalls.length, 4);
+  assert.ok(sqlCalls.every(call => new URL(call.url).pathname.endsWith('/database/query/read-only')));
+  assert.doesNotMatch(JSON.stringify(result), /never-serialize-recovery-token|authorization|CREATE FUNCTION/i);
 });
 
 test('authorization and provider failures redact secrets and fail closed', async () => {
