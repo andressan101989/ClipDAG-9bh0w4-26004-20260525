@@ -139,8 +139,32 @@ test('verification retry excludes awaiting-policy loops while preserving provide
   assert.match(integration, /content_safety_audio_policy_not_configured/);
 });
 
-test('C1 cancellation remains absent until the forward-only backend task is implemented', () => {
-  assert.match(service, /cancelMyCreatorPremiumSubmission/);
-  assert.match(migration, /cancel_my_creator_premium_submission_v1/);
+test('C1 cancellation is one canonical owner-only forward transition with stale-scan fencing', () => {
+  assert.match(service, /export\s+async\s+function\s+cancelMyCreatorPremiumSubmission/);
+  assert.match(service, /rpc\(['"]cancel_my_creator_premium_submission_v1['"]/);
+  assert.match(service, /p_content_id\s*:\s*contentId/);
+
+  assert.match(migration, /create\s+function\s+public\.cancel_my_creator_premium_submission_v1\s*\(\s*p_content_id\s+uuid\s*\)/i);
+  assert.match(migration, /security\s+definer[\s\S]*set\s+search_path\s*=\s*''/i);
+  assert.match(migration, /auth\.uid\(\)/i);
+  assert.match(migration, /current_user_is_creator_exclusive_age_eligible/i);
+  assert.match(migration, /creator_premium_actor_is_operational_v1/i);
+  assert.match(migration, /pg_advisory_xact_lock[\s\S]*creator-premium-content:/i);
+  assert.match(migration, /creator_id\s*=\s*v_actor[\s\S]*for\s+update/i);
+  assert.match(migration, /lifecycle_status\s*=\s*'draft'[\s\S]*cancelled\s*:?=\s*false/i,
+    'an already-draft replay must be an idempotent no-op');
+  assert.match(migration, /lifecycle_status\s*<>\s*'pending_review'[\s\S]*creator_premium_submission_cancel_invalid_state/i);
+  assert.match(migration, /verification_generation\s*=\s*content\.verification_generation\s*\+\s*1/i);
+  for (const field of [
+    'submitted_at', 'reviewed_at', 'reviewed_by', 'review_reason', 'removal_reason',
+    'verification_scan_id', 'verification_fingerprint', 'verification_error_code',
+    'verification_requested_at', 'verification_completed_at',
+  ]) assert.match(migration, new RegExp(`${field}\\s*=\\s*null`, 'i'), field);
+  assert.match(migration, /verification_status\s*=\s*'not_requested'/i);
+  assert.doesNotMatch(migration, /delete\s+from|truncate\s+table|drop\s+table/i);
+  assert.doesNotMatch(migration, /financial_transactions|ledger_entries|ledger_accounts/i);
+  assert.match(migration, /revoke\s+all\s+on\s+function[\s\S]*from\s+public\s*,\s*anon\s*,\s*authenticated\s*,\s*service_role/i);
+  assert.match(migration, /grant\s+execute\s+on\s+function[\s\S]*to\s+authenticated/i);
+  assert.match(migration, /alter\s+function[\s\S]*owner\s+to\s+postgres/i);
 });
 

@@ -27,6 +27,10 @@ const chain = phases.map(suffix => {
     sql: found.length === 1 ? readFileSync(new URL(`../supabase/migrations/${found[0]}`, import.meta.url), 'utf8') : '',
   };
 });
+const c1Files = readdirSync(migrations).filter(name => name.endsWith('_creator_premium_c1_submission_cancellation.sql'));
+const c1Sql = c1Files.length === 1
+  ? readFileSync(new URL(`../supabase/migrations/${c1Files[0]}`, import.meta.url), 'utf8')
+  : '';
 
 const A2_B7_BLOB = '43f014260e0ecfa6f0634e61e1646594bcf13e1d';
 const A2_RPC_SECURITY_CASES = [
@@ -160,6 +164,12 @@ test('B7 disposable harness targets the complete single-migration Premium chain'
   assert.ok(chain.at(-1).sql.length > 20_000);
 });
 
+test('C1 disposable harness binds exactly one forward-only cancellation migration', () => {
+  assert.equal(c1Files.length, 1);
+  assert.match(c1Files[0], /^\d{14}_creator_premium_c1_submission_cancellation\.sql$/);
+  assert.match(c1Sql, /cancel_my_creator_premium_submission_v1/);
+});
+
 test('B7 disposable harness contains executable lifecycle and financial invariants, not install-only smoke checks', () => {
   const source = readFileSync(new URL('./creatorPremiumB7Local.integration.mjs', import.meta.url), 'utf8');
   for (const contract of [
@@ -223,6 +233,7 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     legacyTeaser: uid(), legacyOriginal: uid(),
     modeSwitchRequest: uid(), modeSwitchOfferRequest: uid(), modeSwitchPlanRequest: uid(),
     reopenRequest: uid(), reopenOfferRequest: uid(), reopenTeaser: uid(), reopenOriginal: uid(),
+    c1CancelRequest: uid(), c1CancelOfferRequest: uid(), c1CancelTeaser: uid(), c1CancelOriginal: uid(),
   };
   const proved = new Set();
   const service = (name, args, options = {}) => asRole(
@@ -402,6 +413,10 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     assert.equal(psql(db, `select lifecycle_status from private.creator_premium_contents where id='${id.legacyPending}'`).stdout, 'pending_review');
 
     psql(db, chain.at(-1).sql);
+    psql(db, c1Sql);
+    assert.equal(psql(db, `select has_function_privilege('anon','public.cancel_my_creator_premium_submission_v1(uuid)','execute')`).stdout, 'f');
+    assert.equal(psql(db, `select has_function_privilege('service_role','public.cancel_my_creator_premium_submission_v1(uuid)','execute')`).stdout, 'f');
+    assert.equal(psql(db, `select has_function_privilege('authenticated','public.cancel_my_creator_premium_submission_v1(uuid)','execute')`).stdout, 't');
     for (const item of A2_RPC_SECURITY_CASES) {
       assert.equal(
         psql(db, `select pg_catalog.has_function_privilege('anon','${item.signature}','execute')`).stdout,
@@ -587,6 +602,7 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     const blocked = createDraft('B7 blocked', 'purchase', id.blockedRequest);
     const modeSwitch = createDraft('B7 mode switch', 'purchase_or_subscription', id.modeSwitchRequest);
     const reopen = createDraft('B7 reopen', 'purchase', id.reopenRequest);
+    const c1Cancel = createDraft('C1 cancellation', 'purchase', id.c1CancelRequest);
     expectFailure(asRole(db, 'authenticated', id.other, `select * from public.update_my_creator_premium_draft_v1('${purchase.id}','stolen','stolen','image','purchase')`, { allowFailure: true }), 'creator_premium_content_not_found');
     expectFailure(asRole(db, 'authenticated', id.creator, `select public.reopen_my_creator_premium_rejected_v1('${purchase.id}')`, { allowFailure: true }), 'creator_premium_rejected_only');
     proved.add('reopen_rejected_only');
@@ -604,12 +620,15 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
       ${imageAsset(id.blockedOriginal, 'creator_premium_original_image', 'private')}
       ${imageAsset(id.reopenTeaser, 'creator_premium_teaser_image', 'public', 'https://cdn.test/reopen-teaser.jpg')}
       ${imageAsset(id.reopenOriginal, 'creator_premium_original_image', 'private')}
+      ${imageAsset(id.c1CancelTeaser, 'creator_premium_teaser_image', 'public', 'https://cdn.test/c1-cancel-teaser.jpg')}
+      ${imageAsset(id.c1CancelOriginal, 'creator_premium_original_image', 'private')}
     `);
     for (const [contentId, teaserId, originalId] of [
       [purchase.id,id.purchaseTeaser,id.purchaseOriginal],
       [moderation.id,id.moderationTeaser,id.moderationOriginal],
       [blocked.id,id.blockedTeaser,id.blockedOriginal],
       [reopen.id,id.reopenTeaser,id.reopenOriginal],
+      [c1Cancel.id,id.c1CancelTeaser,id.c1CancelOriginal],
     ]) {
       const attached = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_image_media_v1('${contentId}','${teaserId}','${originalId}') result`));
       assert.equal(attached.media_ready, true);
@@ -620,6 +639,7 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${moderation.id}',4.00000000,'${id.moderationOfferRequest}') result`));
     json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${blocked.id}',3.00000000,'${id.blockedOfferRequest}') result`));
     json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${reopen.id}',2.00000000,'${id.reopenOfferRequest}') result`));
+    json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${c1Cancel.id}',8.00000000,'${id.c1CancelOfferRequest}') result`));
     json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${modeSwitch.id}',6.00000000,'${id.modeSwitchOfferRequest}') result`));
     const plan = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.create_my_creator_premium_plan_draft_v1('B7 plan','Disposable plan',20.00000000,30,'${id.planRequest}') result`));
     assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_plan_contents_v1('${plan.id}',array['${subscription.id}']::uuid[]) result`)).mapped_content_count, 1);
@@ -636,6 +656,41 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     for (const contentId of [purchase.id,subscription.id,moderation.id,blocked.id,reopen.id]) {
       assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.submit_my_creator_premium_content_for_review_v1('${contentId}') result`)).lifecycle_status, 'pending_review');
     }
+    assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.submit_my_creator_premium_content_for_review_v1('${c1Cancel.id}') result`)).lifecycle_status, 'pending_review');
+    expectFailure(asRole(db, 'authenticated', id.other, `select public.cancel_my_creator_premium_submission_v1('${c1Cancel.id}')`, { allowFailure: true }), 'creator_premium_content_not_found');
+    expectFailure(asRole(db, 'authenticated', null, `select public.cancel_my_creator_premium_submission_v1('${c1Cancel.id}')`, { allowFailure: true }), 'creator_premium_auth_required');
+    expectFailure(asRole(db, 'authenticated', id.legacyCreator, `select public.cancel_my_creator_premium_submission_v1('${id.legacyDeleted}')`, { allowFailure: true }), 'creator_premium_submission_cancel_invalid_state');
+    const c1Before = psql(db, `
+      select verification_generation||'|'||
+        (select count(*) from private.content_safety_scans where target_type='creator_premium' and target_id=content.id)||'|'||
+        (select count(*) from public.media_asset_links where entity_type='creator_premium_content' and entity_id=content.id)||'|'||
+        (select count(*) from private.creator_premium_offer_versions where content_id=content.id)
+      from private.creator_premium_contents content where content.id='${c1Cancel.id}'
+    `).stdout.split('|');
+    const concurrentCancel = await Promise.all([
+      asRoleAsync(db, 'authenticated', id.creator, `select to_jsonb(result) from public.cancel_my_creator_premium_submission_v1('${c1Cancel.id}') result`),
+      asRoleAsync(db, 'authenticated', id.creator, `select to_jsonb(result) from public.cancel_my_creator_premium_submission_v1('${c1Cancel.id}') result`),
+    ]);
+    assert.equal(concurrentCancel.filter(result => result.status === 0).length, 2);
+    const cancelResults = concurrentCancel.map(result => JSON.parse(result.stdout));
+    assert.equal(cancelResults.filter(result => result.cancelled === true).length, 1);
+    assert.equal(cancelResults.filter(result => result.cancelled === false).length, 1);
+    assert.equal(psql(db, `
+      select lifecycle_status||'|'||verification_status||'|'||
+        (submitted_at is null)::text||'|'||(verification_scan_id is null)::text||'|'||
+        (verification_fingerprint is null)::text||'|'||(verification_requested_at is null)::text||'|'||
+        (verification_completed_at is null)::text
+      from private.creator_premium_contents where id='${c1Cancel.id}'
+    `).stdout, 'draft|not_requested|true|true|true|true|true');
+    const c1After = psql(db, `
+      select verification_generation||'|'||
+        (select count(*) from private.content_safety_scans where target_type='creator_premium' and target_id=content.id)||'|'||
+        (select count(*) from public.media_asset_links where entity_type='creator_premium_content' and entity_id=content.id)||'|'||
+        (select count(*) from private.creator_premium_offer_versions where content_id=content.id)
+      from private.creator_premium_contents content where content.id='${c1Cancel.id}'
+    `).stdout.split('|');
+    assert.equal(Number(c1After[0]), Number(c1Before[0]) + 1);
+    assert.deepEqual(c1After.slice(1), c1Before.slice(1), 'scan history, media links, and offer versions must be preserved');
     expectFailure(asRole(db, 'authenticated', id.creator, `select public.admin_review_creator_premium_content_v1('${purchase.id}','approve','self approval','${uid()}')`, { allowFailure: true }), 'admin_capability_forbidden');
 
     const review = (contentId, action, reason, key = uid()) => json(adminCommand(
