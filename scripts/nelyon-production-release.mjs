@@ -68,7 +68,7 @@ export function validatePolicy(policy) {
   assertExactArray(policy.modes, EXACT_MODES, 'INVALID_POLICY_MODES', 'modes');
   assertExactArray(
     policy.secrets,
-    ['SUPABASE_READ_ONLY_ACCESS_TOKEN', 'SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD'],
+    ['SUPABASE_ACCESS_TOKEN'],
     'INVALID_POLICY_SECRETS',
     'Environment secrets',
   );
@@ -90,21 +90,30 @@ export function validatePolicy(policy) {
     deny('INVALID_CUTOVER_STATE', 'cutover state is invalid');
   }
   if (policy.cutover.state === 'verified') {
-    const evidence = policy.cutover.auto_deploy_off_evidence;
-    if (!evidence
+    const evidence = policy.cutover.initial_evidence;
+    if (policy.cutover.control !== 'supabase-github-integration-off'
+      || !evidence
       || !RELEASE_ID_PATTERN.test(evidence.id ?? '')
       || !/^[0-9a-f]{64}$/.test(evidence.sha256 ?? '')
       || policy.cutover.verified_by !== policy.owner
       || !Number.isFinite(Date.parse(policy.cutover.verified_at))) {
       deny('INVALID_VERIFIED_CUTOVER', 'verified cutover authority evidence is incomplete');
     }
-  } else if (policy.cutover.auto_deploy_off_evidence !== null
+  } else if (policy.cutover.control !== null
+    || policy.cutover.initial_evidence !== null
     || policy.cutover.verified_by !== null
     || policy.cutover.verified_at !== null) {
     deny('INVALID_PENDING_CUTOVER', 'pending cutover must not claim verified authority evidence');
   }
   if (policy.supabase?.project_ref !== 'aewwdlvbwpczqyvkwvvj') {
     deny('INVALID_PROJECT_REF', 'unexpected Supabase project');
+  }
+  if (canonicalJson(policy.supabase?.backup) !== canonicalJson({
+    max_age_seconds: 86400,
+    require_physical: true,
+    required_status: 'COMPLETED',
+  })) {
+    deny('INVALID_BACKUP_POLICY', 'production backup policy is invalid');
   }
   if (!Array.isArray(policy.supabase?.managed_functions) || policy.supabase.managed_functions.length !== 18) {
     deny('INVALID_MANAGED_FUNCTIONS', 'managed function allowlist must contain exactly 18 functions');
@@ -1273,11 +1282,14 @@ export function buildApprovalToken(input) {
   const runAttempt = requireUnsignedInteger(input?.runAttempt, 'INVALID_APPROVAL_TOKEN', 'run attempt', { positive: true });
   const environmentId = requireUnsignedInteger(input?.environmentId, 'INVALID_APPROVAL_TOKEN', 'environment ID', { positive: true });
   const releaseId = requireTokenPart(input?.releaseId, 'INVALID_APPROVAL_TOKEN', 'release ID');
-  const evidenceId = requireTokenPart(input?.evidenceId, 'INVALID_APPROVAL_TOKEN', 'auto-deploy evidence ID');
   if (!SHA_PATTERN.test(input?.approvedSha ?? '')) deny('INVALID_APPROVAL_TOKEN', 'approved SHA must be a full lowercase commit ID');
   if (!/^[0-9a-f]{64}$/.test(input?.manifestDigest ?? '')) deny('INVALID_APPROVAL_TOKEN', 'manifest digest must be lowercase SHA-256');
-  if (!/^[0-9a-f]{64}$/.test(input?.evidenceSha256 ?? '')) deny('INVALID_APPROVAL_TOKEN', 'auto-deploy evidence digest must be lowercase SHA-256');
-  return `NELYON-APPROVE run=${runId} attempt=${runAttempt} env=${environmentId} release=${releaseId} sha=${input.approvedSha} manifest=${input.manifestDigest} auto_deploy_evidence=${evidenceId} auto_deploy_sha256=${input.evidenceSha256}`;
+  const prefix = `NELYON-APPROVE run=${runId} attempt=${runAttempt} env=${environmentId} release=${releaseId} sha=${input.approvedSha} manifest=${input.manifestDigest}`;
+  if (input?.mode === 'gate_proof') return prefix;
+  if (input?.mode !== 'release') deny('INVALID_APPROVAL_TOKEN', 'approval mode must be gate_proof or release');
+  const evidenceId = requireTokenPart(input.evidenceId, 'INVALID_APPROVAL_TOKEN', 'auto-deploy evidence ID');
+  if (!/^[0-9a-f]{64}$/.test(input.evidenceSha256 ?? '')) deny('INVALID_APPROVAL_TOKEN', 'auto-deploy evidence digest must be lowercase SHA-256');
+  return `${prefix} auto_deploy_evidence=${evidenceId} auto_deploy_sha256=${input.evidenceSha256}`;
 }
 
 export function verifyEnvironmentSnapshot({ environment, branchPolicies, expected }) {
@@ -1339,7 +1351,6 @@ export function verifyApprovalHistory({
 export function verifyAutoDeployEvidence({
   evidence,
   approval,
-  cutoverEvidence,
   now,
   maxAgeSeconds = 900,
   maxFutureSkewSeconds = 60,
@@ -1351,8 +1362,6 @@ export function verifyAutoDeployEvidence({
     && evidence.source === 'owner-dashboard'
     && evidence.id === approval?.evidenceId
     && evidenceSha256 === approval?.evidenceSha256
-    && cutoverEvidence?.id === evidence.id
-    && cutoverEvidence?.sha256 === evidenceSha256
     && evidence.project_ref === approval?.projectRef
     && evidence.production_branch === approval?.productionBranch
     && evidence.observed_by === approval?.owner;
@@ -1398,7 +1407,7 @@ export function verifyConcurrency({ runs, currentRunId, complete }) {
 export function requiredSecretsForMode(mode, secrets) {
   if (mode === 'plan_only' || mode === 'gate_proof') return [];
   if (mode !== 'release') deny('INVALID_MODE', 'unsupported release mode');
-  const required = ['SUPABASE_READ_ONLY_ACCESS_TOKEN', 'SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD'];
+  const required = ['SUPABASE_ACCESS_TOKEN'];
   const missing = required.filter(name => typeof secrets?.[name] !== 'string' || secrets[name].length === 0);
   if (missing.length > 0) deny('MISSING_SECRETS', 'required Environment deployment secrets are unavailable', { missing });
   return required;
@@ -2021,7 +2030,7 @@ async function runCli(argv) {
     return 0;
   }
   if (command === 'verify-gate') {
-    for (const required of ['policy', 'policy-sha256', 'request', 'bundle', 'compiler-sha256', 'environment', 'branch-policies', 'approvals', 'auto-deploy-evidence', 'runs', 'output']) {
+    for (const required of ['policy', 'policy-sha256', 'request', 'bundle', 'compiler-sha256', 'environment', 'branch-policies', 'approvals', 'runs', 'output']) {
       if (!values[required]) throw new Error(`missing --${required}`);
     }
     const policySha256 = verifyPolicyDigest({
@@ -2060,8 +2069,14 @@ async function runCli(argv) {
         branch: policy.environment.protected_branch,
       },
     });
-    const autoDeployEvidence = JSON.parse(readFileSync(values['auto-deploy-evidence'], 'utf8'));
+    if (releaseRequest.mode === 'release' && !values['auto-deploy-evidence']) {
+      throw new Error('missing --auto-deploy-evidence');
+    }
+    const autoDeployEvidence = releaseRequest.mode === 'release'
+      ? JSON.parse(readFileSync(values['auto-deploy-evidence'], 'utf8'))
+      : null;
     const approvalToken = buildApprovalToken({
+      mode: releaseRequest.mode,
       runId: releaseRequest.runId,
       runAttempt: releaseRequest.runAttempt,
       environmentId: environment.id,
@@ -2069,8 +2084,10 @@ async function runCli(argv) {
       releaseId: releaseRequest.releaseId,
       approvedSha: releaseRequest.approvedSha,
       manifestDigest: verifiedBundle.digest,
-      evidenceId: autoDeployEvidence.id,
-      evidenceSha256: autoDeployEvidence.sha256,
+      ...(autoDeployEvidence ? {
+        evidenceId: autoDeployEvidence.id,
+        evidenceSha256: autoDeployEvidence.sha256,
+      } : {}),
     });
     const approvals = JSON.parse(readFileSync(values.approvals, 'utf8'));
     verifyApprovalHistory({
@@ -2082,20 +2099,21 @@ async function runCli(argv) {
       expectedRunId: releaseRequest.runId,
       expectedRunAttempt: releaseRequest.runAttempt,
     });
-    verifyAutoDeployEvidence({
-      evidence: autoDeployEvidence,
-      approval: {
-        evidenceId: autoDeployEvidence.id,
-        evidenceSha256: autoDeployEvidence.sha256,
-        projectRef: policy.supabase.project_ref,
-        productionBranch: policy.default_branch,
-        owner: policy.owner,
-      },
-      cutoverEvidence: policy.cutover.auto_deploy_off_evidence,
-      now: new Date().toISOString(),
-      maxAgeSeconds: policy.evidence.auto_deploy_max_age_seconds,
-      maxFutureSkewSeconds: policy.evidence.max_future_clock_skew_seconds,
-    });
+    if (autoDeployEvidence) {
+      verifyAutoDeployEvidence({
+        evidence: autoDeployEvidence,
+        approval: {
+          evidenceId: autoDeployEvidence.id,
+          evidenceSha256: autoDeployEvidence.sha256,
+          projectRef: policy.supabase.project_ref,
+          productionBranch: policy.default_branch,
+          owner: policy.owner,
+        },
+        now: new Date().toISOString(),
+        maxAgeSeconds: policy.evidence.auto_deploy_max_age_seconds,
+        maxFutureSkewSeconds: policy.evidence.max_future_clock_skew_seconds,
+      });
+    }
     verifyConcurrency({
       runs: JSON.parse(readFileSync(values.runs, 'utf8')),
       currentRunId: releaseRequest.runId,
@@ -2111,7 +2129,9 @@ async function runCli(argv) {
       approved_sha: releaseRequest.approvedSha,
       policy_sha256: policySha256,
       manifest_sha256: verifiedBundle.digest,
-      auto_deploy_evidence: { id: autoDeployEvidence.id, sha256: autoDeployEvidence.sha256 },
+      auto_deploy_evidence: autoDeployEvidence
+        ? { id: autoDeployEvidence.id, sha256: autoDeployEvidence.sha256 }
+        : null,
       approval_token_sha256: sha256Hex(approvalToken),
     };
     writeFileSync(resolve(values.output), canonicalJson(proof), { encoding: 'utf8', flag: 'wx' });

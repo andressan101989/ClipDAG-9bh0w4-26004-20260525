@@ -127,6 +127,16 @@ function healthyServices() {
     .map(name => ({ healthy: true, name, status: 'ACTIVE_HEALTHY' }));
 }
 
+function completedPhysicalBackup(overrides = {}) {
+  return {
+    id: '2026-10-12T05:15:56.590Z',
+    inserted_at: '2026-10-12T05:15:56.590Z',
+    is_physical_backup: true,
+    status: 'COMPLETED',
+    ...overrides,
+  };
+}
+
 function successfulFetch(log, overrides = {}) {
   return async (url, options = {}) => {
     log.push({ url: String(url), options });
@@ -137,6 +147,14 @@ function successfulFetch(log, overrides = {}) {
     }
     if (pathname.endsWith('/functions')) {
       return jsonResponse([{ slug: 'content-safety-scan', status: 'ACTIVE', version: 35, verify_jwt: true, ezbr_sha256: '5'.repeat(64) }]);
+    }
+    if (pathname.endsWith('/database/backups')) {
+      return jsonResponse({
+        backups: overrides.backups ?? [completedPhysicalBackup()],
+        pitr_enabled: false,
+        region: 'us-east-1',
+        walg_enabled: true,
+      });
     }
     if (pathname.endsWith('/advisors/security')) return jsonResponse(overrides.advisors ?? { lints: [] });
     if (pathname.endsWith('/database/query/read-only')) {
@@ -195,9 +213,10 @@ test('adapter uses only fixed documented read-only endpoints and produces saniti
   assert.equal(result.phase, 'pre');
   assert.equal(result.project_ref, policy.supabase.project_ref);
   assert.equal(result.finance.reconciliation.orphan_ledger_entries, 0);
+  assert.deepEqual(result.backup, completedPhysicalBackup());
   assert.match(result.evidence_sha256, /^[0-9a-f]{64}$/);
-  assert.equal(calls.length, 6);
-  assert.deepEqual(calls.map(call => call.options.method ?? 'GET'), ['GET', 'GET', 'GET', 'GET', 'POST', 'POST']);
+  assert.equal(calls.length, 7);
+  assert.deepEqual(calls.map(call => call.options.method ?? 'GET'), ['GET', 'GET', 'GET', 'GET', 'GET', 'POST', 'POST']);
   for (const call of calls) {
     const url = new URL(call.url);
     assert.equal(url.protocol, 'https:');
@@ -212,6 +231,27 @@ test('adapter uses only fixed documented read-only endpoints and produces saniti
   const serialized = JSON.stringify(result);
   assert.doesNotMatch(serialized, /private-read-token/);
   assert.doesNotMatch(serialized, /authorization/i);
+});
+
+test('snapshot fails closed unless a recent completed physical backup exists', async () => {
+  const adapter = await loadAdapter();
+  for (const backups of [
+    [],
+    [completedPhysicalBackup({ status: 'FAILED' })],
+    [completedPhysicalBackup({ is_physical_backup: false })],
+    [completedPhysicalBackup({ inserted_at: '2026-10-10T12:00:00.000Z' })],
+  ]) {
+    await assert.rejects(adapter.captureProductionSnapshot({
+      phase: 'pre',
+      policy,
+      request: request(),
+      manifest: manifest(),
+      token: 'scoped-deployment-token',
+      fetchImpl: successfulFetch([], { backups }),
+      observedAt: '2026-10-12T12:00:01.000Z',
+      adapterSourceSha256: '6'.repeat(64),
+    }), /INVALID_BACKUP|STALE_BACKUP/);
+  }
 });
 
 test('ledger identity inventory accepts every account type present in the canonical schema', async () => {
@@ -274,7 +314,7 @@ test('authorization and provider failures redact secrets and fail closed', async
       assert.doesNotMatch(error.message, /never-print-this-token|provider-body-must-not-leak/);
       return true;
     });
-    assert.ok(calls.length <= 5);
+    assert.ok(calls.length <= 6);
   }
 });
 
@@ -333,6 +373,10 @@ test('missing token identity drift and arbitrary public transport inputs are den
     }));
   }
   assert.equal(calls, 0);
+  await assert.rejects(adapter.captureProductionSnapshot({
+    phase: 'pre', policy, request: request(), manifest: manifest(), token: '', fetchImpl,
+    observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
+  }), /MISSING_SNAPSHOT_TOKEN/);
   assert.doesNotMatch(readFileSync(adapterUrl, 'utf8'), /--(?:url|query|transport|fetch)/);
 });
 

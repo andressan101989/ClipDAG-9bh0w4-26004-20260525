@@ -3,7 +3,7 @@
 This runbook operates the single production authority implemented by
 `.github/workflows/nelyon-production-release.yml`. It does not grant release
 authority by itself. The policy file, GitHub Environment, exact workflow run,
-fresh Supabase evidence, owner approval, and postchecks must all agree.
+fresh release evidence, owner approval, and postchecks must all agree.
 
 ## Single-owner security model
 
@@ -11,7 +11,8 @@ The only authorized human account is `andressan101989`. The same owner may
 dispatch and approve a run because there is currently no second GitHub human
 administrator. This is not independent two-person review. Compensating
 controls bind approval to one run ID, run attempt, Environment ID, release ID,
-source SHA, manifest digest, and current auto-deploy evidence digest.
+source SHA, and manifest digest. A production `release` also binds the current
+auto-deploy evidence digest; `gate_proof` does not require auto-deploy evidence.
 
 Re-running a workflow creates a new attempt. A prior approval, even from the
 owner, is invalid for that attempt. Never bypass the Environment wait or use a
@@ -31,18 +32,16 @@ Confirm the API returns the exact Environment ID, one required-reviewers rule,
 `prevent_self_review=false`, one branch policy named `main`, and no bypass.
 The workflow rejects any other snapshot.
 
-Create Environment secrets by name only:
+Create one Environment secret by name only:
 
-- `SUPABASE_READ_ONLY_ACCESS_TOKEN`
 - `SUPABASE_ACCESS_TOKEN`
-- `SUPABASE_DB_PASSWORD`
 
-`SUPABASE_READ_ONLY_ACCESS_TOKEN` is a distinct least-privilege Management API
-token. It needs only project/database/function metadata read access and the
-documented read-only SQL permission. It must not deploy functions, apply
-migrations, change configuration, or resolve to the write-capable deployment
-token. The workflow exposes it only to the fixed snapshot adapter. Mutation
-steps receive only the deployment credentials they require.
+This is the scoped project deployment token. The fixed snapshot adapter uses
+the same identity only through an immutable allowlist of Management API GET
+endpoints and `/database/query/read-only`; it does not claim that the identity
+itself is read-only. Migration dry-run and apply use the pinned official CLI,
+which provisions its temporary `cli_login_postgres` role through Supabase's
+control plane. The workflow does not store or require the PostgreSQL password.
 
 Never copy a value into this runbook, the policy, a manifest, an artifact, a
 workflow input, or a log. Do not add `service_role`; this gate does not require
@@ -63,9 +62,8 @@ still requires the Environment review.
 
 ## Baseline candidate to verified
 
-The current expanded 18-function baseline is `candidate`. Adding
-`video-semantic-index` to the governed set invalidated the historical
-17-function evidence; equality with GitHub `main` is not enough.
+The current expanded 18-function baseline is `verified`. A later managed-scope
+change returns it to `candidate`; equality with GitHub `main` is not enough.
 Capture a complete read-only owner-control-plane snapshot covering:
 
 1. exact remote migration inventory, count, and latest version;
@@ -109,26 +107,14 @@ evidence object without its `sha256` field, then calculate the SHA-256 of `canon
 token is the digest of the payload without `sha256`, not a hash of the final
 base64 text.
 
-Treat that redacted canonical record as one synchronized authority input.
+Treat that redacted canonical record as a release-time authority input.
 Evidence is valid for at most 15 minutes and permits at most 60 seconds
-of future clock skew. Renew it before every future release and every proof that
-requires Environment approval. The owner must specifically confirm this fresh
-evidence in the approval comment; a general or historical confirmation fails.
-
-Every renewed evidence record must also replace `cutover.auto_deploy_off_evidence`
-in `.github/nelyon-production-release-policy.json` with the same evidence ID and
-canonical SHA-256. Keep `cutover.state="verified"`, set `verified_by` to the
-owner, and set `verified_at` to the current observation time. Then commit that policy transition through the protected Git flow.
-Next, update `NELYON_RELEASE_POLICY_SHA256` to the exact new policy bytes before
-dispatch.
-Finally set `NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64` to the exact canonical record
-referenced by the policy. Updating only the variable, only the policy, or only
-the protected digest is insufficient and must fail closed.
-
-For the initial C2 cutover, create the cutover policy commit locally only after
-the owner has verified the dashboard toggle is OFF. Do not push that commit
-until the same toggle has been verified OFF again and the Environment variable
-contains the digest of the exact policy bytes to be published.
+of future clock skew. Renew it immediately before every production `release`.
+The owner must specifically confirm this fresh evidence in the approval
+comment; a general or historical confirmation fails. Renewal only updates
+`NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64` and does not require a policy commit.
+The protected policy retains the initial owner-bound cutover record and the
+static requirement that the GitHub integration remain OFF.
 
 After the controlled push to `main`, verify in Supabase that no automatic
 production deployment started. If any automatic deployment appears, stop,
@@ -140,20 +126,20 @@ Choose **Actions → Nelyon controlled production release → Run workflow** on
 `main`. Supply the exact 40-character current `origin/main` SHA, a new release
 ID, `PLAN_ONLY`, and mode `plan_only`.
 
-The job must produce a canonical manifest and SHA-256. For the C2 cutover,
-whose delta contains governance only, the required result is
-`NO PRODUCTIVE CHANGES`. The protected `deploy` job must not be scheduled.
+The job must produce a canonical manifest and SHA-256. For a governance-only
+delta the required result is `NO PRODUCTIVE CHANGES`. The protected `deploy`
+job must not be scheduled.
 Confirm there are no Supabase migrations, Edge deployments, financial writes,
 or BDAG movement attributable to the run.
 
 ## Run gate_proof
 
-Renew the automatic-deploy evidence first. Dispatch a new unique release ID,
-the exact current main SHA, `GATE_PROOF_NO_MUTATION`, and mode `gate_proof`.
+Dispatch a new unique release ID, the exact current main SHA,
+`GATE_PROOF_NO_MUTATION`, and mode `gate_proof`.
 The plan summary prints the only valid Environment approval comment:
 
 ```text
-NELYON-APPROVE run=<run_id> attempt=<run_attempt> env=<environment_id> release=<release_id> sha=<approved_sha> manifest=<sha256> auto_deploy_evidence=<evidence_id> auto_deploy_sha256=<evidence_sha256>
+NELYON-APPROVE run=<run_id> attempt=<run_attempt> env=<environment_id> release=<release_id> sha=<approved_sha> manifest=<sha256>
 ```
 
 Verify every field, then open **Review deployments**, select `production`,
@@ -161,7 +147,7 @@ paste that exact complete token as the review comment, and approve as
 `andressan101989`. The protected job must remain waiting until that action.
 After approval it re-fetches the approval endpoint for the current run and
 attempt, Environment configuration, branch policies, current main, manifest,
-active runs, and fresh cutover evidence.
+and active runs.
 
 Successful proof ends with `GATE PROOF SUCCESS`. It must not set up the
 Supabase CLI, read deployment secrets, apply migrations, deploy functions, or
@@ -169,10 +155,9 @@ perform finance operations.
 
 ## Future release procedure
 
-`release` is forbidden during C2. Do not use it to test installation or
-cutover. It remains fail-closed while the baseline is candidate, the cutover
-state is pending, a resource is unreproducible, or the dedicated read-only
-credential is not configured. The reviewed adapter is
+`release` remains fail-closed while the baseline is candidate, the cutover
+state is pending, a resource is unreproducible, the scoped deployment token is
+unavailable, or there is no fresh completed physical backup. The reviewed adapter is
 `scripts/nelyon-production-snapshot-adapter.mjs`; it uses only fixed Supabase
 Management API endpoints, the read-only SQL endpoint, bounded responses,
 disabled redirects, zero retries, and sanitized receipts. Its pre/post
@@ -190,9 +175,8 @@ archive is byte-for-byte identical to a local bundle.
 For a separately authorized future production release:
 
 1. verify the exact main SHA and unused release ID;
-2. renew visual auto-deploy-off evidence within 15 minutes, update the exact
-   policy evidence binding through the protected Git flow, update the protected
-   policy digest, and set the repository evidence variable to identical bytes;
+2. renew visual auto-deploy-off evidence within 15 minutes and set the
+   repository evidence variable to those exact canonical bytes;
 3. run the plan and inspect every changed file, migration, function,
    transitive `_shared` consumer, risk, and blocker;
 4. use `RELEASE_STANDARD` or, only for explicitly reviewed sensitive scope,
@@ -200,14 +184,22 @@ For a separately authorized future production release:
 5. paste the exact generated approval token into the current deployment
    review;
 6. require post-approval revalidation before every mutation;
-7. capture the bound pre-snapshot with the read-only credential and reduce the
-   CLI dry-run to an exact timestamp list equal to the manifest;
+7. capture the bound pre-snapshot through the fixed read-only transport,
+   require a fresh completed physical backup, and reduce the CLI dry-run to an
+   exact timestamp list equal to the manifest;
 8. apply only exact forward migrations in the manifest;
 9. deploy functions one by one by exact manifest name, never by directory or
    timestamp inference; and
 10. capture the bound post-snapshot and require all remote, finance, health,
    cron, and security comparisons before
    success.
+
+For `release`, the generated approval comment additionally binds the fresh
+auto-deploy evidence:
+
+```text
+NELYON-APPROVE run=<run_id> attempt=<run_attempt> env=<environment_id> release=<release_id> sha=<approved_sha> manifest=<sha256> auto_deploy_evidence=<evidence_id> auto_deploy_sha256=<evidence_sha256>
+```
 
 `video-semantic-index` is a governed transitive consumer of the shared visual
 pipeline and must be included whenever that pipeline changes. The release
@@ -328,18 +320,17 @@ to continue.
 
 ## Zero-mutation postcheck
 
-For C2 `plan_only` and `gate_proof`, record:
+For `plan_only` and `gate_proof`, record:
 
 - the before/after project health;
 - unchanged migration inventory and latest migration;
 - unchanged Edge function versions and source hashes;
 - unchanged cron/security inventory;
 - unchanged Premium Finance policy;
-- complete finance reconciliation with zero C2-attributed BDAG movement;
+- complete finance reconciliation with zero release-attributed BDAG movement;
 - no new production deployment attributable to the workflow;
 - exact GitHub run ID, run attempt, Environment ID, approval comment, SHA,
-  manifest digest, and evidence digest; and
+  manifest digest, and gate-proof digest; and
 - unchanged worktree count, stashes, B5 source, and ROADMAP.
 
-Only this evidence can support a C2 cutover conclusion. It does not authorize a
-functional release.
+This zero-mutation evidence does not authorize a functional release.
