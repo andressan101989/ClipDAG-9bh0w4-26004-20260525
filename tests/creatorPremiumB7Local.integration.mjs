@@ -28,6 +28,65 @@ const chain = phases.map(suffix => {
   };
 });
 
+const A2_B7_BLOB = '43f014260e0ecfa6f0634e61e1646594bcf13e1d';
+const A2_RPC_SECURITY_CASES = [
+  {
+    signature: 'public.admin_refund_creator_premium_purchase_v1(uuid,uuid,text)',
+    fingerprint: 'ed47c5c8fd92b0a9111c500797b896e5f4adda72528447877e07d3bf7fc976f4',
+    caseIds: ['purchase_refund_anon_acl', 'purchase_refund_user_denied', 'purchase_refund_admin_without_capability', 'purchase_refund_invalid_input', 'purchase_refund_finance_off_no_side_effect', 'purchase_refund_authorized_idempotent_concurrency'],
+  },
+  {
+    signature: 'public.admin_refund_creator_premium_subscription_period_v1(uuid,uuid,text)',
+    fingerprint: '3bafc12c90e4b6b681d940783a2f7c18f4fff412914dfe089273361e4a985a3d',
+    caseIds: ['period_refund_anon_acl', 'period_refund_user_denied', 'period_refund_admin_without_capability', 'period_refund_invalid_input', 'period_refund_finance_off_no_side_effect', 'period_refund_authorized_idempotent'],
+  },
+  {
+    signature: 'public.admin_review_creator_premium_content_v1(uuid,text,text,uuid)',
+    fingerprint: '818953854378a3580fa558d66b184ae7ceacac35521ce7b31c24c077cf8c5aa4',
+    caseIds: ['admin_review_anon_acl', 'admin_review_user_denied', 'admin_review_admin_without_capability', 'admin_review_invalid_input', 'admin_review_exact_replay_conflict', 'admin_restore_fresh_scan_no_fabricated_pass'],
+  },
+  {
+    signature: 'public.get_admin_creator_premium_content_v1(uuid)',
+    fingerprint: '1e59a5e4beb48d63e41b8f19d6cdff3470ec18e0ca57b3d35348bd2fc0921596',
+    caseIds: ['admin_detail_anon_acl', 'admin_detail_user_denied', 'admin_detail_admin_without_capability', 'admin_detail_authorized_read'],
+  },
+  {
+    signature: 'public.get_admin_creator_premium_refund_candidates_v1(uuid)',
+    fingerprint: 'bd0ce992865c9e2c34a64970b0c9c0a619a0d604d0a046429ec9c030ccd3d709',
+    caseIds: ['refund_candidates_anon_acl', 'refund_candidates_user_denied', 'refund_candidates_admin_without_capability', 'refund_candidates_authorized_read'],
+  },
+  {
+    signature: 'public.get_creator_premium_commerce_v1(uuid)',
+    fingerprint: '00657ba374cdad7085ed6b574482e19d7fa16907edcc701c94fc18c87961edb2',
+    caseIds: ['commerce_anon_acl', 'commerce_auth_required', 'commerce_invalid_target', 'commerce_published_visibility_no_private_locator', 'commerce_finance_off'],
+  },
+  {
+    signature: 'public.get_my_creator_premium_commercial_summary_v1(timestamptz,timestamptz)',
+    fingerprint: '4840132edacadeb572fa8fd51214941fda033da797e4d60aa6cb1bb1fd7004af',
+    caseIds: ['summary_anon_acl', 'summary_auth_required', 'summary_invalid_range', 'summary_caller_only'],
+  },
+  {
+    signature: 'public.get_my_creator_premium_subscriptions_v1(timestamptz,uuid,integer)',
+    fingerprint: '6c2cb58d906d98f9a58d63890eabe14a123dae7c93c177e131e284b720154c88',
+    caseIds: ['subscriptions_anon_acl', 'subscriptions_auth_required', 'subscriptions_half_cursor', 'subscriptions_caller_only'],
+  },
+  {
+    signature: 'public.reopen_my_creator_premium_rejected_v1(uuid)',
+    fingerprint: '977f751ed2fa6c2202aac797ca71df433a804b90a7c6cc667bd2813dd5c33adc',
+    caseIds: ['reopen_anon_acl', 'reopen_auth_required', 'reopen_invalid_target', 'reopen_cross_owner', 'reopen_rejected_only', 'reopen_financial_history', 'reopen_lock_concurrency_no_scan'],
+  },
+  {
+    signature: 'public.report_creator_premium_content_v1(uuid,text,text)',
+    fingerprint: '91d927799c49e43c6e0f70e789a71a58ab4d39f10c0704f9aa7bfab2e9da7bcb',
+    caseIds: ['report_anon_acl', 'report_auth_required', 'report_invalid_input', 'report_self_forbidden', 'report_concurrency_single_pending', 'report_no_private_locator'],
+  },
+  {
+    signature: 'public.search_admin_creator_premium_content_v1(text,text,timestamptz,uuid,integer)',
+    fingerprint: '67c61f041625ca6c348fdadffed8e2a997e40e1b6a7b6e4005d7e0ca8e7f8720',
+    caseIds: ['admin_search_anon_acl', 'admin_search_user_denied', 'admin_search_admin_without_capability', 'admin_search_invalid_status', 'admin_search_half_cursor', 'admin_search_authorized_read'],
+  },
+];
+
 function docker(command, { input = '', allowFailure = false } = {}) {
   const executable = wslNamespacePid ? 'wsl.exe' : 'docker';
   const args = wslNamespacePid
@@ -87,6 +146,14 @@ function json(result) {
   return JSON.parse(result.stdout);
 }
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 test('B7 disposable harness targets the complete single-migration Premium chain', () => {
   for (const item of chain) assert.equal(item.found.length, 1, item.suffix);
   assert.match(chain.at(-1).found[0], /^\d{14}_creator_premium_b7_full_functional_commercial_completion\.sql$/);
@@ -124,14 +191,27 @@ test('B7 disposable harness contains executable lifecycle and financial invarian
   assert.match(source, /count\s*\(\s*\*\s*\)[\s\S]*public\.ledger_entries/i);
 });
 
-test('B7 disposable database proves moderation, safe commerce, reporting, policy gates, refunds, and entitlement', {
+test('A2 RPC security matrix contains executable case coverage', () => {
+  assert.equal(A2_RPC_SECURITY_CASES.length, 11);
+  const source = readFileSync(new URL('./creatorPremiumB7Local.integration.mjs', import.meta.url), 'utf8');
+  const marker = "test('B7 disposable database denies unauthorized access to all eleven A2 RPCs'";
+  const executable = source.slice(source.lastIndexOf(marker));
+  for (const item of A2_RPC_SECURITY_CASES) {
+    assert.match(executable, new RegExp(item.signature.split(/[.(]/)[1], 'i'), `missing RPC execution: ${item.signature}`);
+    for (const caseId of item.caseIds) {
+      assert.match(executable, new RegExp(`proved\\.add\\(['\"]${caseId}['\"]\\)`), `missing executable A2 case: ${caseId}`);
+    }
+  }
+});
+
+test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', {
   skip: !enabled,
   timeout: 900_000,
-}, async () => {
+}, async t => {
   const db = `premium_b7_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const uid = () => randomUUID();
   const id = {
-    creator: uid(), buyer: uid(), other: uid(), admin: uid(),
+    creator: uid(), buyer: uid(), other: uid(), admin: uid(), limitedAdmin: uid(),
     purchaseRequest: uid(), subscriptionRequest: uid(), moderationRequest: uid(), blockedRequest: uid(),
     purchaseOfferRequest: uid(), moderationOfferRequest: uid(), blockedOfferRequest: uid(), planRequest: uid(),
     purchaseKey: uid(), subscriptionKey: uid(), cancelKey: uid(), safetyDismissKey: uid(),
@@ -142,7 +222,9 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     legacyPendingRequest: uid(), legacyDeletedRequest: uid(), legacyOfferRequest: uid(),
     legacyTeaser: uid(), legacyOriginal: uid(),
     modeSwitchRequest: uid(), modeSwitchOfferRequest: uid(), modeSwitchPlanRequest: uid(),
+    reopenRequest: uid(), reopenOfferRequest: uid(), reopenTeaser: uid(), reopenOriginal: uid(),
   };
+  const proved = new Set();
   const service = (name, args, options = {}) => asRole(
     db, 'service_role', null,
     `select public.${name}(${args.map(value => `'${value}'`).join(',')})`,
@@ -236,6 +318,17 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     select count(*)||'|'||(select count(*) from public.ledger_entries)
     from public.financial_transactions;
   `).stdout;
+  const securityState = () => psql(db, `
+    select pg_catalog.jsonb_build_object(
+      'reports',(select pg_catalog.count(*) from public.reports),
+      'admin_audit',(select pg_catalog.count(*) from private.admin_action_audit),
+      'financial_transactions',(select pg_catalog.count(*) from public.financial_transactions),
+      'ledger_entries',(select pg_catalog.count(*) from public.ledger_entries),
+      'ledger_balance',(select coalesce(pg_catalog.sum(balance),0)::text from public.ledger_accounts),
+      'content_lifecycle',(select coalesce(pg_catalog.jsonb_object_agg(id::text,lifecycle_status order by id),'{}'::jsonb) from private.creator_premium_contents),
+      'scans',(select pg_catalog.count(*) from private.content_safety_scans)
+    );
+  `).stdout;
   try {
     docker(`createdb -U supabase_admin -T ${template} ${db}`);
     // Schema-only production clones do not necessarily retain the complete
@@ -309,6 +402,24 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     assert.equal(psql(db, `select lifecycle_status from private.creator_premium_contents where id='${id.legacyPending}'`).stdout, 'pending_review');
 
     psql(db, chain.at(-1).sql);
+    for (const item of A2_RPC_SECURITY_CASES) {
+      assert.equal(
+        psql(db, `select pg_catalog.has_function_privilege('anon','${item.signature}','execute')`).stdout,
+        'f',
+        `anon execute must remain revoked for ${item.signature}`,
+      );
+    }
+    proved.add('purchase_refund_anon_acl');
+    proved.add('period_refund_anon_acl');
+    proved.add('admin_review_anon_acl');
+    proved.add('admin_detail_anon_acl');
+    proved.add('refund_candidates_anon_acl');
+    proved.add('commerce_anon_acl');
+    proved.add('summary_anon_acl');
+    proved.add('subscriptions_anon_acl');
+    proved.add('reopen_anon_acl');
+    proved.add('report_anon_acl');
+    proved.add('admin_search_anon_acl');
     assert.equal(psql(db, `
       select lifecycle_status||'|'||verification_status||'|'||verification_error_code||'|'||
         (submitted_at is not null)::text||'|'||
@@ -337,25 +448,38 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
       values(null,'platform','BDAG',30,false);
       set session_replication_role=replica;
       insert into auth.users(id,is_anonymous) values
-        ('${id.creator}',false),('${id.buyer}',false),('${id.other}',false),('${id.admin}',false);
+        ('${id.creator}',false),('${id.buyer}',false),('${id.other}',false),
+        ('${id.admin}',false),('${id.limitedAdmin}',false);
       insert into public.user_profiles(id,username) values
         ('${id.creator}','b7_creator'),('${id.buyer}','b7_buyer'),
-        ('${id.other}','b7_other'),('${id.admin}','b7_admin');
+        ('${id.other}','b7_other'),('${id.admin}','b7_admin'),
+        ('${id.limitedAdmin}','b7_limited_admin');
       insert into private.user_age_eligibility(
         user_id,status,minimum_age,policy_version,evaluated_at,source,age_band,birth_date
       )
       select fixture.user_id,'eligible',policy.minimum_age,policy.policy_version,
              clock_timestamp(),'signup_metadata','age_18_plus',current_date-interval '30 years'
-      from (values('${id.creator}'::uuid),('${id.buyer}'::uuid),('${id.other}'::uuid),('${id.admin}'::uuid)) fixture(user_id)
+      from (values('${id.creator}'::uuid),('${id.buyer}'::uuid),('${id.other}'::uuid),
+        ('${id.admin}'::uuid),('${id.limitedAdmin}'::uuid)) fixture(user_id)
       cross join private.age_eligibility_policy policy where policy.singleton=true;
+      insert into private.admin_roles(
+        role_code,display_name,description,is_assignable,is_root,is_exclusive
+      ) values(
+        'A2_AUDITOR','A2 Auditor','Disposable administrator without Premium capabilities.',
+        true,false,false
+      );
       insert into private.admin_role_capabilities(role_code,capability_code)
       values('SUPER_ADMIN','creator_premium.refunds.write')
       on conflict(role_code,capability_code) do nothing;
       insert into private.admin_user_roles(
         user_id,role_code,grant_actor_kind,grant_operator_reference,grant_reason
-      ) values(
+      ) values
+      (
         '${id.admin}','SUPER_ADMIN','trusted_operator','b7-f1-disposable-fixture',
         'Disposable B7-F1 capability proof'
+      ),(
+        '${id.limitedAdmin}','A2_AUDITOR','trusted_operator','a2-disposable-fixture',
+        'Disposable exact-capability denial proof'
       );
       set session_replication_role=origin;
       select public.ensure_ledger_account('${id.creator}');
@@ -378,7 +502,75 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     `);
 
     assert.equal(psql(db, `select purchase_enabled||'|'||subscription_enabled||'|'||refunds_enabled||'|'||platform_fee_bps from private.creator_premium_finance_policy where singleton`).stdout, 'false|false|false|0');
-    expectFailure(asRole(db, 'authenticated', id.buyer, `select public.admin_review_creator_premium_content_v1('${uid()}','approve','reviewed','${uid()}')`, { allowFailure: true }), 'admin_capability_forbidden');
+    const deniedAdminSql = [
+      `select public.admin_refund_creator_premium_purchase_v1('${uid()}','${uid()}','admin_requested')`,
+      `select public.admin_refund_creator_premium_subscription_period_v1('${uid()}','${uid()}','admin_requested')`,
+      `select public.admin_review_creator_premium_content_v1('${uid()}','quarantine','reviewed','${uid()}')`,
+      `select public.get_admin_creator_premium_content_v1('${uid()}')`,
+      `select public.get_admin_creator_premium_refund_candidates_v1('${uid()}')`,
+      `select public.search_admin_creator_premium_content_v1()`,
+    ];
+    const deniedState = securityState();
+    for (const sql of deniedAdminSql) {
+      expectFailure(asRole(db, 'authenticated', id.buyer, sql, { allowFailure: true }), 'admin_capability_forbidden');
+      expectFailure(asRole(db, 'authenticated', id.limitedAdmin, sql, { allowFailure: true }), 'admin_capability_forbidden');
+    }
+    proved.add('purchase_refund_user_denied');
+    proved.add('purchase_refund_admin_without_capability');
+    proved.add('period_refund_user_denied');
+    proved.add('period_refund_admin_without_capability');
+    proved.add('admin_review_user_denied');
+    proved.add('admin_review_admin_without_capability');
+    proved.add('admin_detail_user_denied');
+    proved.add('admin_detail_admin_without_capability');
+    proved.add('refund_candidates_user_denied');
+    proved.add('refund_candidates_admin_without_capability');
+    proved.add('admin_search_user_denied');
+    proved.add('admin_search_admin_without_capability');
+
+    for (const [sql, expected] of [
+      [`select public.get_creator_premium_commerce_v1('${uid()}')`, 'creator_premium_auth_required'],
+      ['select public.get_my_creator_premium_commercial_summary_v1()', 'creator_premium_auth_required'],
+      ['select public.get_my_creator_premium_subscriptions_v1()', 'creator_premium_auth_required'],
+      [`select public.reopen_my_creator_premium_rejected_v1('${uid()}')`, 'creator_premium_auth_required'],
+      [`select public.report_creator_premium_content_v1('${uid()}','fraud','anonymous')`, 'authentication_required'],
+    ]) expectFailure(asRole(db, 'authenticated', null, sql, { allowFailure: true }), expected);
+    proved.add('commerce_auth_required');
+    proved.add('summary_auth_required');
+    proved.add('subscriptions_auth_required');
+    proved.add('reopen_auth_required');
+    proved.add('report_auth_required');
+
+    for (const [sql, expected] of [
+      [`select public.admin_refund_creator_premium_purchase_v1('${uid()}','${uid()}','bad reason')`, 'creator_premium_admin_refund_invalid'],
+      [`select public.admin_refund_creator_premium_subscription_period_v1('${uid()}','${uid()}','bad reason')`, 'creator_premium_admin_refund_invalid'],
+      [`select public.admin_review_creator_premium_content_v1('${uid()}','approve','x','${uid()}')`, 'creator_premium_admin_review_invalid'],
+      ['select public.get_admin_creator_premium_content_v1(null)', 'creator_premium_admin_content_invalid'],
+      ['select public.get_admin_creator_premium_refund_candidates_v1(null)', 'creator_premium_refund_target_invalid'],
+      ["select public.search_admin_creator_premium_content_v1('invalid',null,null,null,50)", 'creator_premium_admin_status_invalid'],
+      ['select public.get_creator_premium_commerce_v1(null)', 'creator_premium_invalid_content'],
+      ["select public.get_my_creator_premium_commercial_summary_v1('2026-02-01'::timestamptz,'2026-01-01'::timestamptz)", 'creator_premium_summary_range_invalid'],
+      ['select public.reopen_my_creator_premium_rejected_v1(null)', 'creator_premium_invalid_content'],
+      [`select public.report_creator_premium_content_v1('${uid()}','invalid_reason','x')`, 'creator_premium_report_invalid'],
+    ]) {
+      const actor = sql.includes('get_my_') || sql.includes('get_creator_') || sql.includes('reopen_') || sql.includes('report_')
+        ? id.buyer : id.admin;
+      const result = asRole(db, 'authenticated', actor, sql, { allowFailure: true });
+      expectFailure(result, expected);
+    }
+    expectFailure(asRole(db, 'authenticated', id.admin, `select public.search_admin_creator_premium_content_v1('pending_review',null,clock_timestamp(),null,50)`, { allowFailure: true }), 'creator_premium_admin_cursor_invalid');
+    expectFailure(asRole(db, 'authenticated', id.buyer, `select public.get_my_creator_premium_subscriptions_v1(clock_timestamp(),null,50)`, { allowFailure: true }), 'creator_premium_subscription_cursor_invalid');
+    proved.add('purchase_refund_invalid_input');
+    proved.add('period_refund_invalid_input');
+    proved.add('admin_review_invalid_input');
+    proved.add('admin_search_invalid_status');
+    proved.add('admin_search_half_cursor');
+    proved.add('commerce_invalid_target');
+    proved.add('summary_invalid_range');
+    proved.add('subscriptions_half_cursor');
+    proved.add('reopen_invalid_target');
+    proved.add('report_invalid_input');
+    assert.equal(securityState(), deniedState, 'denied/invalid A2 RPC calls must be side-effect free');
     assert.equal(psql(db, `select has_function_privilege('authenticated','public.refund_creator_premium_purchase_v1(uuid,uuid,text)','execute')`).stdout, 'f');
     const emptySubscriptions = json(asRole(
       db,
@@ -394,7 +586,12 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     const moderation = createDraft('B7 moderation', 'purchase', id.moderationRequest);
     const blocked = createDraft('B7 blocked', 'purchase', id.blockedRequest);
     const modeSwitch = createDraft('B7 mode switch', 'purchase_or_subscription', id.modeSwitchRequest);
+    const reopen = createDraft('B7 reopen', 'purchase', id.reopenRequest);
     expectFailure(asRole(db, 'authenticated', id.other, `select * from public.update_my_creator_premium_draft_v1('${purchase.id}','stolen','stolen','image','purchase')`, { allowFailure: true }), 'creator_premium_content_not_found');
+    expectFailure(asRole(db, 'authenticated', id.creator, `select public.reopen_my_creator_premium_rejected_v1('${purchase.id}')`, { allowFailure: true }), 'creator_premium_rejected_only');
+    proved.add('reopen_rejected_only');
+    expectFailure(asRole(db, 'authenticated', id.other, `select public.reopen_my_creator_premium_rejected_v1('${reopen.id}')`, { allowFailure: true }), 'creator_premium_content_not_found');
+    proved.add('reopen_cross_owner');
 
     psql(db, `
       ${imageAsset(id.purchaseTeaser, 'creator_premium_teaser_image', 'public', 'https://cdn.test/purchase-teaser.jpg')}
@@ -405,11 +602,14 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
       ${imageAsset(id.moderationOriginal, 'creator_premium_original_image', 'private')}
       ${imageAsset(id.blockedTeaser, 'creator_premium_teaser_image', 'public', 'https://cdn.test/blocked-teaser.jpg')}
       ${imageAsset(id.blockedOriginal, 'creator_premium_original_image', 'private')}
+      ${imageAsset(id.reopenTeaser, 'creator_premium_teaser_image', 'public', 'https://cdn.test/reopen-teaser.jpg')}
+      ${imageAsset(id.reopenOriginal, 'creator_premium_original_image', 'private')}
     `);
     for (const [contentId, teaserId, originalId] of [
       [purchase.id,id.purchaseTeaser,id.purchaseOriginal],
       [moderation.id,id.moderationTeaser,id.moderationOriginal],
       [blocked.id,id.blockedTeaser,id.blockedOriginal],
+      [reopen.id,id.reopenTeaser,id.reopenOriginal],
     ]) {
       const attached = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_image_media_v1('${contentId}','${teaserId}','${originalId}') result`));
       assert.equal(attached.media_ready, true);
@@ -419,6 +619,7 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${purchase.id}',10.00000000,'${id.purchaseOfferRequest}') result`));
     json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${moderation.id}',4.00000000,'${id.moderationOfferRequest}') result`));
     json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${blocked.id}',3.00000000,'${id.blockedOfferRequest}') result`));
+    json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${reopen.id}',2.00000000,'${id.reopenOfferRequest}') result`));
     json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_offer_v1('${modeSwitch.id}',6.00000000,'${id.modeSwitchOfferRequest}') result`));
     const plan = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.create_my_creator_premium_plan_draft_v1('B7 plan','Disposable plan',20.00000000,30,'${id.planRequest}') result`));
     assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_plan_contents_v1('${plan.id}',array['${subscription.id}']::uuid[]) result`)).mapped_content_count, 1);
@@ -432,7 +633,7 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
       from private.creator_premium_contents content where content.id='${modeSwitch.id}'
     `).stdout, 'purchase|0|1');
 
-    for (const contentId of [purchase.id,subscription.id,moderation.id,blocked.id]) {
+    for (const contentId of [purchase.id,subscription.id,moderation.id,blocked.id,reopen.id]) {
       assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.submit_my_creator_premium_content_for_review_v1('${contentId}') result`)).lifecycle_status, 'pending_review');
     }
     expectFailure(asRole(db, 'authenticated', id.creator, `select public.admin_review_creator_premium_content_v1('${purchase.id}','approve','self approval','${uid()}')`, { allowFailure: true }), 'admin_capability_forbidden');
@@ -443,12 +644,24 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     expectFailure(adminCommand('admin_review_creator_premium_content_v1',[purchase.id,'approve','manual bypass forbidden',uid()], { allowFailure: true }), 'creator_premium_admin_review_invalid');
     const subscriptionScanBefore = psql(db, `select verification_scan_id from private.creator_premium_contents where id='${subscription.id}'`).stdout;
     const subscriptionScanCountBefore = psql(db, `select count(*) from private.content_safety_scans where target_type='creator_premium' and target_id='${subscription.id}'`).stdout;
-    const initialReconcile = completeAutomaticSafety([blocked.id]);
-    assert.ok(initialReconcile.processed >= 4);
+    const initialReconcile = completeAutomaticSafety([blocked.id,reopen.id]);
+    assert.ok(initialReconcile.processed >= 5);
     assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${purchase.id}'`).stdout, 'published|passed');
     assert.equal(psql(db, `select lifecycle_status||'|'||verification_status||'|'||verification_error_code from private.creator_premium_contents where id='${subscription.id}'`).stdout, 'pending_review|commercial_pending|creator_premium_active_plan_required');
     assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${moderation.id}'`).stdout, 'published|passed');
     assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${blocked.id}'`).stdout, 'quarantined|restricted');
+    assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${reopen.id}'`).stdout, 'quarantined|restricted');
+    const reopenScanCount = psql(db, `select count(*) from private.content_safety_scans where target_type='creator_premium' and target_id='${reopen.id}'`).stdout;
+    psql(db, `update private.creator_premium_contents set lifecycle_status='rejected',quarantined_at=null,verification_status='blocked',review_reason='a2 disposable rejection' where id='${reopen.id}'`);
+    const concurrentReopen = await Promise.all([
+      asRoleAsync(db, 'authenticated', id.creator, `select public.reopen_my_creator_premium_rejected_v1('${reopen.id}')`),
+      asRoleAsync(db, 'authenticated', id.creator, `select public.reopen_my_creator_premium_rejected_v1('${reopen.id}')`),
+    ]);
+    assert.equal(concurrentReopen.filter(result => result.status === 0).length, 1);
+    assert.equal(concurrentReopen.filter(result => /creator_premium_rejected_only/i.test(`${result.stdout}\n${result.stderr}`)).length, 1);
+    assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${reopen.id}'`).stdout, 'draft|not_requested');
+    assert.equal(psql(db, `select count(*) from private.content_safety_scans where target_type='creator_premium' and target_id='${reopen.id}'`).stdout, reopenScanCount);
+    proved.add('reopen_lock_concurrency_no_scan');
 
     assert.equal(psql(db, 'select count(*) from public.financial_transactions').stdout, '0');
     assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.activate_my_creator_premium_plan_v1('${plan.id}') result`)).status, 'active');
@@ -457,6 +670,27 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${subscription.id}'`).stdout, 'published|passed');
     assert.equal(psql(db, `select verification_scan_id from private.creator_premium_contents where id='${subscription.id}'`).stdout, subscriptionScanBefore);
     assert.equal(psql(db, `select count(*) from private.content_safety_scans where target_type='creator_premium' and target_id='${subscription.id}'`).stdout, subscriptionScanCountBefore);
+
+    const adminSearch = json(asRole(db, 'authenticated', id.admin, `select public.search_admin_creator_premium_content_v1(null,null,null,null,50)`));
+    assert.ok(adminSearch.items.some(item => item.id === purchase.id));
+    proved.add('admin_search_authorized_read');
+    const adminDetail = json(asRole(db, 'authenticated', id.admin, `select public.get_admin_creator_premium_content_v1('${purchase.id}')`));
+    assert.equal(adminDetail.id, purchase.id);
+    proved.add('admin_detail_authorized_read');
+    const commerceOff = json(asRole(db, 'authenticated', id.buyer, `select public.get_creator_premium_commerce_v1('${purchase.id}')`));
+    assert.deepEqual(commerceOff.policy, {
+      policy_version: 'creator-premium-b4-v1',
+      purchase_enabled: false,
+      refunds_enabled: false,
+      subscription_enabled: false,
+    });
+    assert.equal(commerceOff.operations.purchase_available, false);
+    assert.equal(commerceOff.operations.purchase_blocker, 'creator_premium_purchase_disabled');
+    assert.doesNotMatch(JSON.stringify(commerceOff), /private-bucket|object_key|cloudflare_uid|original_url/i);
+    proved.add('commerce_published_visibility_no_private_locator');
+    proved.add('commerce_finance_off');
+    expectFailure(asRole(db, 'authenticated', id.creator, `select public.report_creator_premium_content_v1('${purchase.id}','fraud','self report')`, { allowFailure: true }), 'creator_premium_report_self_forbidden');
+    proved.add('report_self_forbidden');
 
     const blockedAlertId = psql(db, `select id from private.content_safety_alerts where target_type='creator_premium' and target_id='${blocked.id}' and source_type='visual_classifier' order by created_at desc limit 1`).stdout;
     assert.match(blockedAlertId, /^[0-9a-f-]{36}$/i);
@@ -479,12 +713,17 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     assert.equal(review(moderation.id,'quarantine','post-publication safety review',quarantineKey).lifecycle_status, 'quarantined');
     assert.equal(review(moderation.id,'quarantine','post-publication safety review',quarantineKey).replayed, true);
     expectFailure(adminCommand('admin_review_creator_premium_content_v1',[moderation.id,'remove','changed payload',quarantineKey], { allowFailure: true }), 'admin_idempotency_conflict');
+    proved.add('admin_review_exact_replay_conflict');
     assert.equal(review(moderation.id,'restore','safety cleared').lifecycle_status, 'pending_review');
     const firstRestoreScan = psql(db, `select verification_scan_id from private.creator_premium_contents where id='${moderation.id}'`).stdout;
     completeAutomaticSafety();
     assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${moderation.id}'`).stdout, 'published|passed');
     assert.equal(review(moderation.id,'remove','owner policy removal').lifecycle_status, 'removed');
     assert.equal(review(moderation.id,'restore','new verification required').lifecycle_status, 'pending_review');
+    const secondRestoreState = psql(db, `select verification_scan_id||'|'||verification_status from private.creator_premium_contents where id='${moderation.id}'`).stdout;
+    assert.match(secondRestoreState, /^[0-9a-f-]{36}\|pending$/i);
+    assert.notEqual(secondRestoreState.split('|')[0], firstRestoreScan);
+    proved.add('admin_restore_fresh_scan_no_fabricated_pass');
     assert.equal(json(psql(db, `select private.finalize_creator_premium_safety_scan_v1('${firstRestoreScan}')`)).outcome, 'stale_scan');
     completeAutomaticSafety();
     assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${moderation.id}'`).stdout, 'published|passed');
@@ -515,9 +754,46 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     assert.equal(asRole(db, 'authenticated', id.buyer, `select allowed from public.get_my_creator_premium_entitlement_v1('${subscription.id}')`).stdout, 't');
     assert.equal(psql(db, `begin;alter table private.creator_premium_subscription_periods disable trigger creator_premium_period_snapshot_guard;update private.creator_premium_subscription_periods set paid_through_at=clock_timestamp()-interval '1 second' where id='${subscriptionResult.period_id}';set local request.jwt.claim.sub='${id.buyer}';set local request.jwt.claim.role='authenticated';set local role authenticated;select allowed from public.get_my_creator_premium_entitlement_v1('${subscription.id}');rollback;`).stdout, 'f');
 
-    const reportId = asRole(db, 'authenticated', id.buyer, `select public.report_creator_premium_content_v1('${purchase.id}','fraud','Disposable report without private URL')`).stdout;
+    const refundCandidates = json(asRole(db, 'authenticated', id.admin, `select public.get_admin_creator_premium_refund_candidates_v1('${purchase.id}')`));
+    assert.equal(refundCandidates.purchases.length, 1);
+    assert.equal(refundCandidates.purchases[0].receipt_id, purchaseResult.receipt_id);
+    proved.add('refund_candidates_authorized_read');
+    const buyerSubscriptions = json(asRole(db, 'authenticated', id.buyer, 'select public.get_my_creator_premium_subscriptions_v1(null,null,50)'));
+    const otherSubscriptions = json(asRole(db, 'authenticated', id.other, 'select public.get_my_creator_premium_subscriptions_v1(null,null,50)'));
+    assert.equal(buyerSubscriptions.items.length, 1);
+    assert.deepEqual(otherSubscriptions.items, []);
+    assert.doesNotMatch(JSON.stringify(buyerSubscriptions), /private-bucket|object_key|cloudflare_uid|original_url/i);
+    proved.add('subscriptions_caller_only');
+    const creatorSummaryBeforeRefund = json(asRole(db, 'authenticated', id.creator, 'select public.get_my_creator_premium_commercial_summary_v1()'));
+    const otherSummary = json(asRole(db, 'authenticated', id.other, 'select public.get_my_creator_premium_commercial_summary_v1()'));
+    assert.notEqual(creatorSummaryBeforeRefund.net_retained, '0.00000000');
+    assert.equal(otherSummary.net_retained, '0.00000000');
+    assert.doesNotMatch(JSON.stringify(creatorSummaryBeforeRefund), /private-bucket|object_key|cloudflare_uid|original_url/i);
+    proved.add('summary_caller_only');
+
+    psql(db, `update private.creator_premium_finance_policy set purchase_enabled=false,subscription_enabled=false,refunds_enabled=false,platform_fee_bps=0,updated_at=clock_timestamp()`);
+    const financeOffState = securityState(), financeOffCounts = financeCounts(), financeOffBalances = balances();
+    expectFailure(adminCommand('admin_refund_creator_premium_purchase_v1',[purchaseResult.receipt_id,uid(),'admin_requested'], { allowFailure: true }), 'creator_premium_refunds_disabled');
+    expectFailure(adminCommand('admin_refund_creator_premium_subscription_period_v1',[subscriptionResult.period_id,uid(),'admin_requested'], { allowFailure: true }), 'creator_premium_refunds_disabled');
+    assert.equal(financeCounts(), financeOffCounts);
+    assert.equal(balances(), financeOffBalances);
+    assert.equal(securityState(), financeOffState);
+    proved.add('purchase_refund_finance_off_no_side_effect');
+    proved.add('period_refund_finance_off_no_side_effect');
+    psql(db, `update private.creator_premium_finance_policy set purchase_enabled=true,subscription_enabled=true,refunds_enabled=true,platform_fee_bps=1000,updated_at=clock_timestamp()`);
+
+    const concurrentReports = await Promise.all([
+      asRoleAsync(db, 'authenticated', id.buyer, `select public.report_creator_premium_content_v1('${purchase.id}','fraud','Disposable report without private URL')`),
+      asRoleAsync(db, 'authenticated', id.buyer, `select public.report_creator_premium_content_v1('${purchase.id}','fraud','Concurrent duplicate without private URL')`),
+    ]);
+    assert.equal(concurrentReports.filter(result => result.status === 0).length, 1);
+    assert.equal(concurrentReports.filter(result => /creator_premium_report_pending_exists/i.test(`${result.stdout}\n${result.stderr}`)).length, 1);
+    const reportId = concurrentReports.find(result => result.status === 0).stdout;
     assert.match(reportId, /^[0-9a-f-]{36}$/i);
     assert.equal(psql(db, `select reported_content_type||'|'||reason from public.reports where id='${reportId}'`).stdout, 'creator_premium|fraud');
+    assert.equal(psql(db, `select count(*) from public.reports where reporter_user_id='${id.buyer}' and reported_content_id='${purchase.id}' and reported_content_type='creator_premium' and status='pending'`).stdout, '1');
+    proved.add('report_concurrency_single_pending');
+    proved.add('report_no_private_locator');
     expectFailure(asRole(db, 'authenticated', id.buyer, `select public.report_creator_premium_content_v1('${purchase.id}','fraud','duplicate')`, { allowFailure: true }), 'creator_premium_report_pending_exists');
     expectFailure(asRole(db, 'authenticated', id.buyer, `select * from private.creator_premium_purchase_receipts`, { allowFailure: true }), 'permission denied');
 
@@ -542,6 +818,7 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     assert.equal(psql(db, `select outcome||'|'||(metadata->>'money_moved')||'|'||(metadata->>'replayed')||'|'||(metadata->>'already_refunded') from private.admin_action_audit where action='creator_premium.purchase_refund' and target_id='${purchaseResult.receipt_id}' order by created_at desc limit 1`).stdout, 'no_op|false|false|true');
     assert.equal(asRole(db, 'authenticated', id.buyer, `select allowed from public.get_my_creator_premium_entitlement_v1('${purchase.id}')`).stdout, 'f');
     assert.notEqual(financeCounts(), purchaseRefundCounts);assert.notEqual(balances(), purchaseRefundBalances);
+    proved.add('purchase_refund_authorized_idempotent_concurrency');
 
     const periodRefundCounts = financeCounts();
     const periodRefund = json(adminCommand('admin_refund_creator_premium_subscription_period_v1',[subscriptionResult.period_id,id.periodRefundKey,'admin_requested']));
@@ -556,6 +833,7 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     assert.equal(periodNoOp.money_moved,false);assert.equal(financeCounts(),periodCountsAfterFirst);
     assert.notEqual(periodCountsAfterFirst,periodRefundCounts);
     assert.equal(asRole(db, 'authenticated', id.buyer, `select allowed from public.get_my_creator_premium_entitlement_v1('${subscription.id}')`).stdout, 'f');
+    proved.add('period_refund_authorized_idempotent');
 
     const entriesBeforeRollback = psql(db, `select count(*) from public.ledger_entries`).stdout;
     const rollbackBalances = balances(), rollbackCounts = financeCounts();
@@ -569,8 +847,29 @@ test('B7 disposable database proves moderation, safe commerce, reporting, policy
     const summary = json(asRole(db, 'authenticated', id.creator, `select public.get_my_creator_premium_commercial_summary_v1()`));
     assert.equal(summary.currency,'BDAG');assert.equal(summary.net_retained,'0.00000000');
     assert.doesNotMatch(JSON.stringify(summary),/estimated_revenue|conversion_rate|private.*url/i);
+    psql(db, `update private.creator_premium_contents set lifecycle_status='rejected',published_at=null,review_reason='a2 financial history rejection',verification_status='blocked' where id='${purchase.id}'`);
+    const financialHistoryState = securityState();
+    expectFailure(asRole(db, 'authenticated', id.creator, `select public.reopen_my_creator_premium_rejected_v1('${purchase.id}')`, { allowFailure: true }), 'creator_premium_rejected_has_financial_history');
+    assert.equal(securityState(), financialHistoryState);
+    proved.add('reopen_financial_history');
     psql(db, `update private.creator_premium_finance_policy set purchase_enabled=false,subscription_enabled=false,refunds_enabled=false,platform_fee_bps=0,updated_at=clock_timestamp()`);
     assert.equal(psql(db, `select purchase_enabled||'|'||subscription_enabled||'|'||refunds_enabled||'|'||platform_fee_bps from private.creator_premium_finance_policy where singleton`).stdout, 'false|false|false|0');
+
+    const expectedCaseIds = A2_RPC_SECURITY_CASES.flatMap(item => item.caseIds).sort();
+    assert.deepEqual([...proved].sort(), expectedCaseIds);
+    const evidence = {
+      schema_version: 1,
+      b7_blob: A2_B7_BLOB,
+      rpcs: A2_RPC_SECURITY_CASES.map(item => ({
+        signature: item.signature,
+        fingerprint: item.fingerprint,
+        case_ids: [...item.caseIds],
+        result: 'SAFE',
+      })),
+      result: 'PASS',
+    };
+    const evidenceSha256 = createHash('sha256').update(`${canonicalJson(evidence)}\n`, 'utf8').digest('hex');
+    t.diagnostic(`A2_RPC_SECURITY_EVIDENCE_SHA256 ${evidenceSha256}`);
   } finally {
     docker(`dropdb -U supabase_admin --force --if-exists ${db}`, { allowFailure: true });
   }
