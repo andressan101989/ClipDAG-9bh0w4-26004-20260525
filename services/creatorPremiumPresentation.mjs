@@ -147,3 +147,17 @@ export function creatorPremiumPolicyBlocksRetry(errorCode) {
   return POLICY_ERROR_CODES.has(errorCode);
 }
 
+export function creatorPremiumLifecycleActions(input = {}) {
+  const lifecycle = input.lifecycle_status;
+  const presentation = creatorPremiumLifecyclePresentation(input);
+  const editable = lifecycle === undefined || lifecycle === null || lifecycle === 'draft';
+  return Object.freeze({
+    editable,
+    canSubmit: editable,
+    canDelete: lifecycle === 'draft',
+    canCancel: presentation.canCancel,
+    canRetry: presentation.canRetry,
+    canReopen: lifecycle === 'rejected',
+  });
+}
+

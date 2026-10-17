@@ -20,6 +20,7 @@ function api() {
 const root = new URL('../', import.meta.url);
 const hubSource = readFileSync(new URL('app/creator-monetization.tsx', root), 'utf8');
 const editorSource = readFileSync(new URL('app/creator-premium-editor.tsx', root), 'utf8');
+const presentationSource = readFileSync(new URL('services/creatorPremiumPresentation.mjs', root), 'utf8');
 
 test('commercial summary failure is isolated from Content and Plans data', async () => {
   const { settleCreatorPremiumHubLoad } = api();
@@ -198,7 +199,8 @@ test('known server blockers and unavailable income use safe actionable copy', ()
     creatorPremiumErrorMessage(new Error('creator_premium_legacy_reverification_required')),
     'Este contenido pendiente necesita iniciar la verificación B7 una vez.',
   );
-  assert.match(editorSource, /legacyReverificationRequired[\s\S]*Verificación requerida/,
+  assert.match(editorSource, /lifecyclePresentation\.label/);
+  assert.match(presentationSource, /creator_premium_legacy_reverification_required[\s\S]*Verificación requerida/,
     'a migrated row without a scan must not be labelled as actively verifying');
   assert.doesNotMatch(
     creatorPremiumErrorMessage(new Error('creator_premium_unknown_internal_code')),

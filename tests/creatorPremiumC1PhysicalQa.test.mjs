@@ -168,3 +168,62 @@ test('C1 cancellation is one canonical owner-only forward transition with stale-
   assert.match(migration, /alter\s+function[\s\S]*owner\s+to\s+postgres/i);
 });
 
+test('lifecycle actions expose only server-supported commands for each state', () => {
+  const { creatorPremiumLifecycleActions: actions } = presentationApi();
+  assert.deepEqual(actions({ lifecycle_status: 'draft', verification_status: 'not_requested' }), {
+    editable: true, canSubmit: true, canDelete: true,
+    canCancel: false, canRetry: false, canReopen: false,
+  });
+  assert.deepEqual(actions({ lifecycle_status: 'pending_review', verification_status: 'pending' }), {
+    editable: false, canSubmit: false, canDelete: false,
+    canCancel: true, canRetry: false, canReopen: false,
+  });
+  assert.equal(actions({
+    lifecycle_status: 'pending_review', verification_status: 'failed',
+    verification_error_code: 'creator_premium_safety_provider_failed',
+  }).canRetry, true);
+  assert.equal(actions({
+    lifecycle_status: 'pending_review', verification_status: 'failed',
+    verification_error_code: 'content_safety_policy_not_configured',
+  }).canRetry, false);
+  assert.equal(actions({ lifecycle_status: 'rejected', verification_status: 'blocked' }).canReopen, true);
+  for (const lifecycle_status of ['published', 'quarantined', 'removed', 'deleted']) {
+    assert.deepEqual(actions({ lifecycle_status }), {
+      editable: false, canSubmit: false, canDelete: false,
+      canCancel: false, canRetry: false, canReopen: false,
+    }, lifecycle_status);
+  }
+});
+
+test('editor renders one-flight lifecycle commands, truthful state copy, and bounded polling', () => {
+  assert.match(editor, /creatorPremiumLifecycleActions/);
+  assert.match(editor, /creatorPremiumLifecyclePresentation/);
+  assert.match(editor, /cancelMyCreatorPremiumSubmission/);
+  assert.match(editor, /reopenMyCreatorPremiumRejected/);
+  assert.match(editor, /const\s+\[cancelling,\s*setCancelling\]/);
+  assert.match(editor, /const\s+\[reopening,\s*setReopening\]/);
+  assert.match(editor, /const\s+busy\s*=\s*[\s\S]*cancelling[\s\S]*reopening/);
+  assert.match(editor, /Alert\.alert\(\s*['"]Cancelar solicitud['"]/);
+  assert.match(editor, /cancelMyCreatorPremiumSubmission\(contentId\)[\s\S]*load\(contentId/);
+  assert.match(editor, /reopenMyCreatorPremiumRejected\(contentId\)[\s\S]*load\(contentId/);
+  assert.match(editor, /lifecyclePresentation\.polling/);
+  assert.doesNotMatch(editor, /\['pending',\s*'commercial_pending'\]\.includes/);
+  assert.match(editor, /lifecyclePresentation\.label/);
+  assert.match(editor, /lifecyclePresentation\.copy/);
+  assert.match(editor, /lifecycleActions\.canCancel/);
+  assert.match(editor, /lifecycleActions\.canRetry/);
+  assert.match(editor, /lifecycleActions\.canReopen/);
+  assert.match(editor, /lifecycleActions\.canDelete/);
+  assert.equal(presentationApi().creatorPremiumLifecyclePresentation({ lifecycle_status: 'deleted' }).copy,
+    'Este contenido se conserva únicamente como histórico y no puede restaurarse.');
+  assert.doesNotMatch(editor, /verification_status\s*===\s*['"]failed['"][\s\S]{0,500}Reintentar verificación/,
+    'the rendered retry command must be driven by the supported action matrix');
+});
+
+test('hub nested lifecycle commands never trigger the enclosing card navigation', () => {
+  const nestedActionRegion = hub.slice(hub.indexOf("item.lifecycle_status === 'draft'"), hub.indexOf('</Pressable>', hub.indexOf("item.lifecycle_status === 'rejected'")) + 12);
+  assert.match(nestedActionRegion, /event\.stopPropagation\(\)/);
+  assert.match(hub, /reopenRejected\(item\.id\)/);
+  assert.match(hub, /creatorPremiumLifecyclePresentation\(item\)/);
+});
+
